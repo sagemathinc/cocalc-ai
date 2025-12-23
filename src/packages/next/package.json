@@ -101,7 +101,6 @@
     "@testing-library/react": "^16.3.0",
     "@types/express": "^4.17.23",
     "@types/node": "^22.10.10",
-    "@types/pg": "^8.16.0",
     "@types/react": "^19.2.7",
     "@uiw/react-textarea-code-editor": "^3.1.1",
     "next-rspack": "^15.5.7",
