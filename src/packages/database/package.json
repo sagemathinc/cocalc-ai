@@ -48,7 +48,7 @@
     "preinstall": "npx only-allow pnpm",
     "build": "../node_modules/.bin/tsc  --build && coffee -c -o dist/ ./",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "test": "pnpm test:psql",
+    "test": "NODE_OPTIONS='--trace-deprecation' pnpm test:psql",
     "test:all": "pnpm test:psql && pnpm test:pglite",
     "test:psql": "pnpm exec jest --forceExit --maxWorkers=1 --detectOpenHandles",
     "test:pglite": "COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' pnpm exec jest  --forceExit",
