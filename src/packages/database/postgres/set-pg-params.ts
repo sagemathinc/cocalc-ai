@@ -15,8 +15,8 @@ const L = getLogger("db:set-pg-params").debug;
 interface Opts {
   client: Client;
   query: string;
-  params: string[];
-  pg_params: { [key: string]: string };
+  params: any[];
+  pg_params: { [key: string]: string | number };
   cb: (err?, result?) => void;
 }
 
