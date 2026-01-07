@@ -3,9 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { callback2 } from "@cocalc/util/async-utils";
 import { State } from "@cocalc/util/compute-states";
+import { PROJECT_GROUPS, deep_copy } from "@cocalc/util/misc";
 import { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
-import { deep_copy } from "@cocalc/util/misc";
 import {
   ExecuteCodeOptions,
   ExecuteCodeOptionsAsyncGet,
@@ -23,6 +24,10 @@ export const MAX_FILENAME_SEARCH_RESULTS = 100;
 const PROJECTS_LIMIT = 300;
 const PROJECTS_CUTOFF = "6 weeks";
 const THROTTLE_CHANGES = 1000;
+
+function isUserGroup(group: unknown): group is string {
+  return typeof group === "string" && PROJECT_GROUPS.includes(group);
+}
 
 Table({
   name: "projects",
@@ -113,6 +118,9 @@ Table({
           users(obj, db, account_id) {
             return db._user_set_query_project_users(obj, account_id);
           },
+          manage_users_owner_only(obj, db) {
+            return db._user_set_query_project_manage_users_owner_only(obj);
+          },
           action_request: true, // used to request that an action be performed, e.g., "save"; handled by before_change
           compute_image: true,
           rootfs_image: true,
@@ -125,6 +133,47 @@ Table({
         },
         required_fields: {
           project_id: true,
+        },
+        async check_hook(db, obj, account_id, _project_id, cb) {
+          // Validate manage_users_owner_only permission if it's being changed
+          if (obj.manage_users_owner_only !== undefined) {
+            try {
+              // Require actor identity before hitting the database
+              if (!account_id) {
+                throw Error(
+                  "account_id is required to change manage_users_owner_only",
+                );
+              }
+
+              const siteSettings =
+                (await callback2(db.get_server_settings_cached, {})) ?? {};
+              const siteEnforced =
+                !!siteSettings.strict_collaborator_management;
+              if (siteEnforced && obj.manage_users_owner_only !== true) {
+                throw Error(
+                  "Collaborator management is enforced by the site administrator and cannot be disabled.",
+                );
+              }
+
+              const { rows } = await db.async_query({
+                query: "SELECT users FROM projects WHERE project_id = $1",
+                params: [obj.project_id],
+              });
+              const users = rows?.[0]?.users ?? {};
+
+              // Check that the user making the change is an owner
+              const group = users?.[account_id]?.group;
+              if (!isUserGroup(group) || group !== "owner") {
+                throw Error(
+                  "Only project owners can change collaborator management settings",
+                );
+              }
+            } catch (err) {
+              cb(err.toString());
+              return;
+            }
+          }
+          cb();
         },
         before_change(database, old_val, new_val, account_id, cb) {
           database._user_set_query_project_change_before(
