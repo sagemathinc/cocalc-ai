@@ -4,7 +4,7 @@
  */
 
 import { Client, Pool, PoolClient } from "pg";
-import { syncSchema } from "@cocalc/database/postgres/schema";
+import { schemaNeedsSync, syncSchema } from "@cocalc/database/postgres/schema";
 import {
   pgdatabase as database,
   pghost as host,
@@ -31,6 +31,7 @@ const L = getLogger("db:pool");
 let pool: Pool | undefined = undefined;
 let pglitePool: PglitePool | undefined = undefined;
 let ensureExistsPromise: Promise<void> | undefined = undefined;
+let ensureSchemaPromise: Promise<void> | undefined = undefined;
 
 // This makes it so when we read dates out, if they are in a "timestamp with no timezone" field in the
 // database, then they are interpreted as having been UTC, which is always what we do.
@@ -67,6 +68,47 @@ function getPrimaryHost(): { host?: string; port: number } {
     };
   }
   return { host: hostEntry, port: 5432 };
+}
+
+const SCHEMA_LOCK_KEY = 0x434f4341;
+const SCHEMA_LOCK_WAIT_MS = 1000;
+
+// Advisory locks are session-scoped; if this client dies, Postgres releases them.
+// This assumes direct Postgres connections (pgBouncer transaction pooling breaks
+// session-level advisory locks).
+async function ensureSchemaReady(): Promise<void> {
+  if (!(await schemaNeedsSync())) {
+    return;
+  }
+
+  const lockClient = getClient();
+  await lockClient.connect();
+  try {
+    while (true) {
+      const { rows } = await lockClient.query(
+        "SELECT pg_try_advisory_lock($1) AS locked",
+        [SCHEMA_LOCK_KEY],
+      );
+      if (rows[0]?.locked) {
+        try {
+          if (await schemaNeedsSync()) {
+            await syncSchema();
+          }
+        } finally {
+          await lockClient.query("SELECT pg_advisory_unlock($1)", [
+            SCHEMA_LOCK_KEY,
+          ]);
+        }
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, SCHEMA_LOCK_WAIT_MS));
+      if (!(await schemaNeedsSync())) {
+        return;
+      }
+    }
+  } finally {
+    await lockClient.end().catch(() => undefined);
+  }
 }
 
 async function ensureDatabaseExists(): Promise<void> {
@@ -121,6 +163,13 @@ export default function getPool(options?: PoolOptionInput): Pool {
         throw err;
       });
     }
+    if (ensureExists && ensureSchemaPromise == null) {
+      const base = ensureExistsPromise ?? Promise.resolve();
+      ensureSchemaPromise = base.then(ensureSchemaReady).catch((err) => {
+        ensureSchemaPromise = undefined;
+        throw err;
+      });
+    }
     L.debug(
       `creating a new Pool(host:${host}, database:${database}, user:${user}, ssl:${JSON.stringify(ssl)} statement_timeout:${STATEMENT_TIMEOUT_MS}ms)`,
     );
@@ -149,16 +198,26 @@ export default function getPool(options?: PoolOptionInput): Pool {
     const connect = pool.connect.bind(pool);
     const query = pool.query.bind(pool);
     const ensureReady = async (): Promise<void> => {
-      await ensureExistsPromise;
+      const readyPromises: Array<Promise<void>> = [];
+      if (ensureExistsPromise != null) {
+        readyPromises.push(ensureExistsPromise);
+      }
+      if (ensureSchemaPromise != null) {
+        readyPromises.push(ensureSchemaPromise);
+      }
+      if (readyPromises.length > 0) {
+        await Promise.all(readyPromises);
+      }
     };
 
     pool.end = async () => {
       pool = undefined;
       ensureExistsPromise = undefined;
+      ensureSchemaPromise = undefined;
       return await end();
     };
 
-    if (ensureExistsPromise != null) {
+    if (ensureExistsPromise != null || ensureSchemaPromise != null) {
       pool.connect = ((...args: any[]) => {
         const lastArg = args[args.length - 1];
         if (typeof lastArg === "function") {
