@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020–2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2020–2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -768,28 +768,6 @@ export interface PostgreSQLMethods extends EventEmitter {
 
   get_coupon_history(opts: { account_id: string; cb: CB }): void;
 
-  get_project_quotas(opts: { project_id: string; cb: CB }): void;
-
-  get_user_project_upgrades(opts: { account_id: string; cb: CB }): void;
-
-  ensure_user_project_upgrades_are_valid(opts: {
-    account_id: string;
-    fix?: boolean;
-    cb: CB;
-  }): void;
-
-  ensure_all_user_project_upgrades_are_valid(opts: {
-    limit?: number;
-    cb: CB;
-  }): void;
-
-  get_project_upgrades(opts: { project_id: string; cb: CB }): void;
-
-  remove_all_user_project_upgrades(opts: {
-    account_id: string;
-    projects?: string[];
-    cb: CB;
-  }): void;
   _concurrent_warn: number;
 
   concurrent(): number;

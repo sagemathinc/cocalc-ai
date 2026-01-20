@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -2725,17 +2725,13 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           users: { [account_id]: { group: "owner", upgrades } },
         };
 
-        db.ensure_user_project_upgrades_are_valid = jest.fn();
-
         db._user_set_query_project_change_after(
           old_val,
           new_val,
           account_id,
           (err) => {
             expect(err).toBeUndefined();
-            expect(
-              db.ensure_user_project_upgrades_are_valid,
-            ).not.toHaveBeenCalled();
+            expect(db.projectControl).not.toHaveBeenCalled();
             done();
           },
         );
@@ -2758,9 +2754,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           setAllQuotas: jest.fn().mockResolvedValue(undefined),
         };
 
-        db.ensure_user_project_upgrades_are_valid = jest.fn((opts) =>
-          setImmediate(() => opts.cb()),
-        );
         db.projectControl = jest.fn().mockResolvedValue(mockProject);
 
         db._user_set_query_project_change_after(
@@ -2769,9 +2762,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           account_id,
           (err) => {
             expect(err).toBeFalsy();
-            expect(
-              db.ensure_user_project_upgrades_are_valid,
-            ).toHaveBeenCalledWith(expect.objectContaining({ account_id }));
             expect(db.projectControl).toHaveBeenCalledWith("project-1");
             expect(mockProject.setAllQuotas).toHaveBeenCalled();
             done();
@@ -2792,9 +2782,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           users: { [account_id]: { upgrades: new_upgrades } },
         };
 
-        db.ensure_user_project_upgrades_are_valid = jest.fn((opts) =>
-          setImmediate(() => opts.cb()),
-        );
         db.projectControl = undefined;
 
         db._user_set_query_project_change_after(
@@ -2803,9 +2790,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           account_id,
           (err) => {
             expect(err).toBeFalsy();
-            expect(
-              db.ensure_user_project_upgrades_are_valid,
-            ).toHaveBeenCalled();
             done();
           },
         );

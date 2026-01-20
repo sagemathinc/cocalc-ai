@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 import { EventEmitter } from "events";
@@ -90,16 +90,6 @@ import {
   whenSentProjectInvite,
 } from "./postgres/project/invites";
 import { setRunQuota } from "./postgres/project/set-run-quota";
-
-import {
-  ensureAllUserProjectUpgradesAreValid,
-  ensureUserProjectUpgradesAreValid,
-  getProjectQuotas,
-  getProjectUpgrades,
-  getUserProjectUpgrades,
-  removeAllUserProjectUpgrades,
-  RemoveAllUserProjectUpgradesOptions,
-} from "./postgres/project/upgrades";
 
 // TODO is set_account_info_if_possible used here?!
 import { is_paying_customer } from "./postgres/account/queries";
@@ -1803,52 +1793,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   async get_project_state(opts: PgMethodOpts<"get_project_state">) {
     return runWithCbResultValue(opts.cb, () => getProjectState(this, opts));
-  }
-
-  /*
-    Project quotas and upgrades
-    */
-
-  // Returns the total quotas for the project, including any
-  // upgrades to the base settings.
-  async get_project_quotas(opts: PgMethodOpts<"get_project_quotas">) {
-    return runWithCbResultValue(opts.cb, () => getProjectQuotas(this, opts));
-  }
-
-  async get_user_project_upgrades(
-    opts: PgMethodOpts<"get_user_project_upgrades">,
-  ) {
-    return runWithCbResultValue(opts.cb, () =>
-      getUserProjectUpgrades(this, opts),
-    );
-  }
-
-  async ensure_user_project_upgrades_are_valid(
-    opts: PgMethodOpts<"ensure_user_project_upgrades_are_valid">,
-  ) {
-    return runWithCbResultValue(opts.cb, () =>
-      ensureUserProjectUpgradesAreValid(this, opts),
-    );
-  }
-
-  async ensure_all_user_project_upgrades_are_valid(
-    opts: PgMethodOpts<"ensure_all_user_project_upgrades_are_valid">,
-  ) {
-    return runWithCb(opts.cb, () =>
-      ensureAllUserProjectUpgradesAreValid(this, opts),
-    );
-  }
-
-  async get_project_upgrades(opts: PgMethodOpts<"get_project_upgrades">) {
-    return runWithCbResultValue(opts.cb, () => getProjectUpgrades(this, opts));
-  }
-
-  async remove_all_user_project_upgrades(
-    opts: RemoveAllUserProjectUpgradesOptions & { cb: CB },
-  ) {
-    return runWithCbOrThrow(opts.cb, () =>
-      removeAllUserProjectUpgrades(this, opts),
-    );
   }
 
   /*

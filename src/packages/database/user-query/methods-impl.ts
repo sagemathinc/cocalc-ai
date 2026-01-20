@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -1705,11 +1705,6 @@ export async function _user_set_query_project_change_after(
     );
     let project: ProjectControl | undefined;
     try {
-      await callback_opts(
-        this.ensure_user_project_upgrades_are_valid.bind(this),
-      )({
-        account_id,
-      });
       if (this.projectControl != null) {
         dbg("get project");
         project = await this.projectControl(new_val.project_id);
