@@ -9,10 +9,9 @@ Returns array of such projects, with the following fields:
 - project state, e.g., 'running'
 */
 
-import getPool from "@cocalc/database/pool";
-import { toEpoch } from "@cocalc/database/postgres/utils/to-epoch";
-import { isValidUUID } from "@cocalc/util/misc";
-import { State } from "@cocalc/util/compute-states";
+const unsupportedSiteLicenses = (): never => {
+  throw new Error("Site licenses are not supported in this fork.");
+};
 
 export interface Project {
   project_id: string;
@@ -20,29 +19,10 @@ export interface Project {
   site_license: object;
   hidden?: boolean;
   last_edited: number; // ms since epoch
-  state?: State;
+  state?: unknown;
 }
 
-export default async function getProjects(
-  account_id: string,
-): Promise<Project[]> {
-  if (!isValidUUID(account_id)) {
-    throw Error("invalid account_id -- must be a uuid");
-  }
-
-  const pool = getPool();
-  // This excludes anything with site_license null or {}.
-
-  const { rows } = await pool.query(
-    `SELECT project_id, title, site_license,
-    users#>'{${account_id},hide}' as hidden,
-    state#>'{state}' as state,
-    last_edited
-    FROM projects
-    WHERE users ? '${account_id}' AND site_license != '{}'
-    ORDER BY last_edited DESC`,
-    [],
-  );
-  toEpoch(rows, ["last_edited"]);
-  return rows;
+export default async function getProjects(account_id: string): Promise<never> {
+  void account_id;
+  return unsupportedSiteLicenses();
 }

@@ -83,6 +83,7 @@ Table({
           settings: DEFAULT_QUOTAS,
           run_quota: null,
           status: null,
+          manage_users_owner_only: null,
           // security model is anybody with access to the project should be allowed to know this token.
           secret_token: null,
           state: null,
@@ -245,6 +246,11 @@ Table({
       type: "map",
       desc: "This is a map from account_id's to {hide:bool, group:'owner'|'collaborator', ssh:{...}}.",
       render: { type: "usersmap", editable: true },
+    },
+    manage_users_owner_only: {
+      type: "boolean",
+      desc: "If true, only project owners can add or remove collaborators. Collaborators can still remove themselves. Disabled by default (undefined or false means current behavior where collaborators can manage other collaborators).",
+      render: { type: "boolean", editable: true },
     },
     invite: {
       type: "map",

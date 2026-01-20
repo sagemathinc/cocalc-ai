@@ -12,6 +12,7 @@ export { NOT_SIGNED_IN, versionCookieName } from "./auth";
 export { CONAT_LLM_HISTORY_KEY } from "./llm";
 
 export { DUMMY_SECRET } from "./project";
+export { PORT_MAX, PORT_MIN, validatePortNumber } from "./portnumber";
 
 export {
   DEFAULT_R2_REGION,

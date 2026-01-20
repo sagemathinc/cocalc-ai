@@ -105,20 +105,6 @@ import {
 import { is_paying_customer } from "./postgres/account/queries";
 
 import {
-  number_of_projects_using_site_license,
-  projects_using_site_license,
-  site_license_usage_stats,
-} from "./postgres/site-license/analytics";
-
-import { site_license_manager_set } from "./postgres/site-license/manager";
-import { site_license_public_info } from "./postgres/site-license/public";
-import {
-  manager_site_licenses,
-  matching_site_licenses,
-} from "./postgres/site-license/search";
-import { update_site_license_usage_log } from "./postgres/site-license/usage-log";
-
-import {
   _get_project_column,
   get_account_ids_using_project,
   get_collaborator_ids,
@@ -1934,42 +1920,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   // of a given file... except ZFS snapshots.
   async delete_syncstring(opts: PgMethodOpts<"delete_syncstring">) {
     return runWithCb(opts.cb, () => delete_syncstring(this, opts));
-  }
-
-  async site_license_usage_stats() {
-    return await site_license_usage_stats(this);
-  }
-
-  async projects_using_site_license(
-    opts: DbFunctionOpts<typeof projects_using_site_license>,
-  ) {
-    return await projects_using_site_license(this, opts);
-  }
-
-  async number_of_projects_using_site_license(
-    opts: DbFunctionOpts<typeof number_of_projects_using_site_license>,
-  ) {
-    return await number_of_projects_using_site_license(this, opts);
-  }
-
-  async site_license_public_info(license_id) {
-    return await site_license_public_info(this, license_id);
-  }
-
-  async site_license_manager_set(license_id, info) {
-    return await site_license_manager_set(this, license_id, info);
-  }
-
-  async update_site_license_usage_log() {
-    return await update_site_license_usage_log(this);
-  }
-
-  async matching_site_licenses(search: string, limit: number = 5) {
-    return await matching_site_licenses(this, search, limit);
-  }
-
-  async manager_site_licenses(account_id: string) {
-    return await manager_site_licenses(this, account_id);
   }
 
   async project_datastore_set(

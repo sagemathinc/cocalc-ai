@@ -13,12 +13,9 @@ import { spawn } from "child_process";
 import { program as commander } from "commander";
 import basePath from "@cocalc/backend/base-path";
 import {
-  agentPort as DEFAULT_AGENT_PORT,
-  hubHostname as DEFAULT_HUB_HOSTNAME,
   pgConcurrentWarn as DEFAULT_DB_CONCURRENT_WARN,
-  pgdatabase,
-  pghost,
-  pguser,
+  hubHostname as DEFAULT_HUB_HOSTNAME,
+  agentPort as DEFAULT_AGENT_PORT,
 } from "@cocalc/backend/data";
 import { trimLogFileSize } from "@cocalc/backend/logger";
 import port from "@cocalc/backend/port";
@@ -61,7 +58,6 @@ import { setConatClient } from "@cocalc/conat/client";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { createProjectHostProxyHandlers } from "./proxy/project-host";
 import { maybeStartEmbeddedProjectHost } from "./servers/project-host";
-import { migrateBookmarksToConat } from "./migrate-bookmarks";
 
 // Logger tagged with 'hub' for this file.
 const logger = getLogger("hub");
@@ -95,18 +91,6 @@ async function init_update_stats(): Promise<void> {
   await update();
 }
 
-// This calculates and updates the site_license_usage_log.
-// It's important that we call this periodically, if we want
-// to be able to monitor site license usage. This is enabled
-// by default only for dev mode (so for development).
-async function init_update_site_license_usage_log() {
-  logger.info("init updating site license usage log periodically");
-  const update = async () =>
-    await getDatabase().update_site_license_usage_log();
-  setInterval(update, 31000);
-  await update();
-}
-
 async function initMetrics() {
   logger.info("Initializing Metrics Recorder...");
   MetricsRecorder.init();
@@ -122,9 +106,7 @@ async function startServer(): Promise<void> {
   logger.info("start_server");
 
   logger.info(`basePath='${basePath}'`);
-  logger.info(
-    `database: name="${pgdatabase}" host="${pghost}" user="${pguser}"`,
-  );
+  logger.info("database: using env configuration");
 
   const { metric_blocked } = await initMetrics();
 
