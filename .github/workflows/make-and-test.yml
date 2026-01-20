@@ -8,9 +8,11 @@ concurrency:
 on:
   push:
     branches:
+      - main
       - master
   pull_request:
     branches:
+      - main
       - master
   workflow_dispatch:
     inputs:
@@ -150,4 +152,3 @@ jobs:
 #           reporter: jest-junit
 #           use-actions-summary: 'true'
 #           fail-on-error: false
-
