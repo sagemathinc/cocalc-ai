@@ -5,6 +5,7 @@
 import express, { Router, type Request } from "express";
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/hub/logger";
+import getPort from "@cocalc/backend/get-port";
 import {
   activateConnector,
   createConnector,
@@ -29,6 +30,33 @@ function extractToken(req: Request): string | undefined {
   if (!header) return undefined;
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim();
+}
+
+async function ensureTunnelPort(hostId: string): Promise<number> {
+  const { rows } = await pool().query<{
+    metadata: any;
+  }>(
+    `SELECT metadata
+     FROM project_hosts
+     WHERE id=$1 AND deleted IS NULL`,
+    [hostId],
+  );
+  const metadata = rows[0]?.metadata ?? {};
+  const selfHost = { ...(metadata.self_host ?? {}) };
+  if (selfHost.tunnel_port) {
+    return Number(selfHost.tunnel_port);
+  }
+  const port = await getPort();
+  selfHost.tunnel_port = port;
+  selfHost.tunnel_port_updated_at = new Date().toISOString();
+  const nextMetadata = { ...metadata, self_host: selfHost };
+  await pool().query(
+    `UPDATE project_hosts
+     SET metadata=$2, updated=NOW()
+     WHERE id=$1 AND deleted IS NULL`,
+    [hostId, nextMetadata],
+  );
+  return port;
 }
 
 async function maybeAutoStartHost(connector: {
@@ -128,6 +156,7 @@ export default function init(router: Router) {
         res.status(400).send("host is not self-hosted");
         return;
       }
+      const tunnel_port = await ensureTunnelPort(host.id);
       let connectorId = host.region;
       const attachConnector = async (id: string) => {
         const machine = host.metadata?.machine ?? {};
@@ -139,6 +168,7 @@ export default function init(router: Router) {
           ...(host.metadata?.self_host ?? {}),
           auto_start_pending: true,
           auto_start_requested_at: new Date().toISOString(),
+          tunnel_port,
         };
         const nextMetadata = {
           ...(host.metadata ?? {}),
@@ -278,6 +308,9 @@ export default function init(router: Router) {
         connector_token: token,
         poll_interval_seconds: 10,
         launchpad: getLaunchpadOnPremConfig(mode),
+        tunnel_port: tokenInfo.host_id
+          ? await ensureTunnelPort(tokenInfo.host_id)
+          : undefined,
       });
     } catch (err) {
       logger.warn("pairing failed", err);

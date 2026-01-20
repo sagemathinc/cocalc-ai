@@ -3,10 +3,15 @@ import getLogger from "../logger";
 import { parseReq } from "./parse";
 import getPool from "@cocalc/database/pool";
 import LRU from "lru-cache";
+import { getLaunchpadMode } from "@cocalc/server/launchpad/mode";
 
 const logger = getLogger("proxy:project-host");
 
-type HostRow = { internal_url?: string; public_url?: string };
+type HostRow = {
+  internal_url?: string;
+  public_url?: string;
+  metadata?: any;
+};
 
 const cache = new LRU<string, HostRow>({ max: 10000, ttl: 60_000 });
 
@@ -15,9 +20,12 @@ async function getHost(project_id: string): Promise<HostRow> {
   if (cached) return cached;
   const { rows } = await getPool().query(
     `
-      SELECT host->>'internal_url' AS internal_url,
-             host->>'public_url'   AS public_url
-      FROM projects WHERE project_id=$1
+      SELECT project_hosts.internal_url AS internal_url,
+             project_hosts.public_url   AS public_url,
+             project_hosts.metadata     AS metadata
+      FROM projects
+      LEFT JOIN project_hosts ON project_hosts.id = projects.host_id
+      WHERE projects.project_id=$1
     `,
     [project_id],
   );
@@ -39,6 +47,15 @@ export async function createProjectHostProxyHandlers() {
   async function targetFor(req): Promise<string> {
     const { project_id } = parseReq(req.url ?? "/");
     const host = await getHost(project_id);
+    if (process.env.COCALC_MODE === "launchpad") {
+      const mode = await getLaunchpadMode();
+      if (mode === "onprem") {
+        const tunnelPort = host.metadata?.self_host?.tunnel_port;
+        if (tunnelPort) {
+          return `http://127.0.0.1:${tunnelPort}`;
+        }
+      }
+    }
     const base = host.internal_url || host.public_url;
     if (!base) {
       throw Error(`no host recorded for project ${project_id}`);
