@@ -6,7 +6,13 @@
 import { fromJS, List } from "immutable";
 
 import { Actions, redux } from "../../app-framework";
-import { user_search, User } from "../../frame-editors/generic/client";
+import {
+  user_search,
+  get_admin_assigned_membership,
+  set_admin_assigned_membership,
+  clear_admin_assigned_membership,
+  User,
+} from "../../frame-editors/generic/client";
 import { sortBy } from "lodash";
 import { StoreState, User as ImmutableUser, store } from "./store";
 
@@ -62,6 +68,30 @@ export class AdminUsersActions extends Actions<StoreState> {
 
   public set_view(view: boolean): void {
     this.setState({ view });
+  }
+
+  public async get_admin_membership(account_id: string) {
+    return await get_admin_assigned_membership({
+      user_account_id: account_id,
+    });
+  }
+
+  public async set_admin_membership(opts: {
+    account_id: string;
+    membership_class: string;
+    expires_at?: Date | null;
+    notes?: string | null;
+  }): Promise<void> {
+    await set_admin_assigned_membership({
+      user_account_id: opts.account_id,
+      membership_class: opts.membership_class,
+      expires_at: opts.expires_at,
+      notes: opts.notes,
+    });
+  }
+
+  public async clear_admin_membership(account_id: string): Promise<void> {
+    await clear_admin_assigned_membership({ user_account_id: account_id });
   }
 }
 

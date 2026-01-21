@@ -185,6 +185,14 @@ export function MembershipStatusPanel({
   const tier = membership ? tierById[membership.class] : undefined;
   const tierLabel =
     tier?.label ?? (membership ? capitalize(membership.class) : "");
+  const membershipSourceLabel =
+    membership?.source === "subscription"
+      ? "Subscription"
+      : membership?.source === "admin"
+        ? "Admin assigned"
+        : "Free";
+  const expiresLabel =
+    membership?.source === "subscription" ? "Current period ends" : "Expires";
   const entitlements = normalizeRecord(membership?.entitlements);
   const projectDefaults = normalizeRecord(entitlements.project_defaults);
   const llmLimits = normalizeRecord(entitlements.llm_limits);
@@ -236,7 +244,7 @@ export function MembershipStatusPanel({
               </Space>
             </Descriptions.Item>
             <Descriptions.Item label="Source">
-              {membership.source === "subscription" ? "Subscription" : "Free"}
+              {membershipSourceLabel}
             </Descriptions.Item>
             {membership.subscription_id != null && (
               <Descriptions.Item label="Subscription id">
@@ -244,7 +252,7 @@ export function MembershipStatusPanel({
               </Descriptions.Item>
             )}
             {membership.expires && (
-              <Descriptions.Item label="Current period ends">
+              <Descriptions.Item label={expiresLabel}>
                 <TimeAgo date={membership.expires} />
               </Descriptions.Item>
             )}
