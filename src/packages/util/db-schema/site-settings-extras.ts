@@ -89,6 +89,8 @@ const project_hosts_hyperstack_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_hyperstack_enabled"]);
 const project_hosts_lambda_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_lambda_enabled"]);
+const metrics_enabled = (conf: SiteSettings) =>
+  to_bool((conf as SiteSettings & { prometheus_metrics?: string })["prometheus_metrics"]);
 
 // Ollama and Custom OpenAI have the same schema
 function custom_llm_valid(value: string): boolean {
@@ -232,6 +234,7 @@ export type SiteSettingsExtrasKeys =
   | "github_token"
   | "github_block"
   | "prometheus_metrics"
+  | "prometheus_metrics_allowlist"
   | "pay_as_you_go_section"
   | "pay_as_you_go_min_payment"
   | "pay_as_you_go_max_project_upgrades"
@@ -723,6 +726,13 @@ export const EXTRAS: SettingsExtras = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
+  },
+  prometheus_metrics_allowlist: {
+    name: "Prometheus Metrics Allowlist",
+    desc: "Comma-separated IP/CIDR list allowed to access `/metrics`, e.g., `127.0.0.1/32, ::1/128, 10.0.0.0/8`. Leave empty to **deny all access**.",
+    default: "",
+    to_val: to_trimmed_str,
+    show: metrics_enabled,
   },
   pay_as_you_go_section: {
     name: "Pay as you Go",
