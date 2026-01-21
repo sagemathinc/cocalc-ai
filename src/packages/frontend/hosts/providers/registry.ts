@@ -1748,15 +1748,23 @@ export const getProviderEnablement = (opts: {
   customize?: { get?: (key: string) => unknown };
   showLocal: boolean;
 }): HostProviderFlags => {
+  const normalizeFlag = (value: unknown): boolean => {
+    if (value === true) return true;
+    if (value === false || value == null) return false;
+    if (typeof value === "number") return value > 0;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      return normalized === "true" || normalized === "1" || normalized === "yes";
+    }
+    return false;
+  };
   const enabled = {} as Record<HostProvider, boolean>;
   for (const entry of Object.values(PROVIDER_REGISTRY)) {
     if (entry.localOnly) {
       enabled[entry.id] = opts.showLocal;
     } else if (entry.featureFlagKey) {
       const flag = opts.customize?.get?.(entry.featureFlagKey);
-      // Default to enabled when the customize store isn't ready or key is unset,
-      // so the UI doesn't end up with an empty provider list during load/dev.
-      enabled[entry.id] = flag === undefined ? true : !!flag;
+      enabled[entry.id] = normalizeFlag(flag);
     } else {
       enabled[entry.id] = true;
     }
