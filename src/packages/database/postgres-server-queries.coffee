@@ -52,6 +52,7 @@ read = require('read')
 {projects_that_need_to_be_started} = require('./postgres/always-running');
 {calc_stats} = require('./postgres/stats')
 {getServerSettings, resetServerSettingsCache, getPassportsCached, setPassportsCached} = require('@cocalc/database/settings/server-settings');
+secretSettings = require('@cocalc/database/settings/secret-settings');
 {pii_expire} = require("./postgres/pii")
 passwordHash = require("@cocalc/backend/auth/password-hash").default;
 registrationTokens = require('./postgres/registration-tokens').default;
@@ -210,6 +211,14 @@ exports.extend_PostgreSQL = (ext) -> class PostgreSQL extends ext
             cb       : required
         async.series([
             (cb) =>
+                # Encrypt secret settings at rest before storing.
+                Promise.resolve(secretSettings.encryptSettingValue(opts.name, opts.value))
+                    .then (encrypted) =>
+                        opts.value = encrypted
+                        cb()
+                    .catch (err) =>
+                        cb(err)
+            (cb) =>
                 values =
                     'name::TEXT'  : opts.name
                     'value::TEXT' : opts.value
@@ -246,7 +255,19 @@ exports.extend_PostgreSQL = (ext) -> class PostgreSQL extends ext
             query : 'SELECT value FROM server_settings'
             where :
                 "name = $::TEXT" : opts.name
-            cb    : one_result('value', opts.cb)
+            cb    : (err, result) =>
+                if err
+                    opts.cb(err)
+                    return
+                value = result.rows?[0]?.value
+                if not value?
+                    opts.cb(undefined, value)
+                    return
+                Promise.resolve(secretSettings.decryptSettingValue(opts.name, value))
+                    .then ({value}) =>
+                        opts.cb(undefined, value)
+                    .catch (err) =>
+                        opts.cb(err)
 
     get_server_settings_cached: (opts) =>
         opts = defaults opts,

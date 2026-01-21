@@ -9,13 +9,15 @@ import { Icon, LabeledRow, Markdown } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { Config, RowType, Tag } from "@cocalc/util/db-schema/site-defaults";
 import { COLORS } from "@cocalc/util/theme";
-import { Data, IsReadonly } from "./types";
+import { Data, IsReadonly, IsSet } from "./types";
 import { RowEntry } from "./row-entry";
 
 interface RenderRowProps {
   name: string;
   conf: Config;
   data: Data | null;
+  isSet: IsSet | null;
+  isClearing: { [name: string]: boolean };
   update: () => void;
   isReadonly: IsReadonly | null;
   onChangeEntry: (name: string, value: string) => void;
@@ -25,12 +27,15 @@ interface RenderRowProps {
   isModified: (name: string) => boolean;
   isHeader: boolean;
   saveSingleSetting: (name: string) => void;
+  onClearSecret: (name: string) => void;
 }
 
 export function RenderRow({
   name,
   conf,
   data,
+  isSet,
+  isClearing,
   update,
   isReadonly,
   onChangeEntry,
@@ -40,6 +45,7 @@ export function RenderRow({
   isModified,
   isHeader,
   saveSingleSetting,
+  onClearSecret,
 }: RenderRowProps) {
   if (data == null) return null;
 
@@ -75,6 +81,8 @@ export function RenderRow({
   }
 
   const rawValue = data[name] ?? conf.default;
+  const hasSecret = isSet?.[name] ?? false;
+  const isCleared = isClearing?.[name] ?? false;
   const rowType: RowType = conf.type ?? "setting";
 
   // fallbacks: to_display? → to_val? → undefined
@@ -135,6 +143,8 @@ export function RenderRow({
         name={name}
         value={rawValue}
         password={conf.password ?? false}
+        isSet={hasSecret}
+        isClearing={isCleared}
         displayed_val={parsed_value}
         valid={conf.valid}
         hint={hint}
@@ -145,6 +155,7 @@ export function RenderRow({
         onChangeEntry={onChangeEntry}
         clearable={conf.clearable}
         update={update}
+        onClearSecret={onClearSecret}
       />
     </LabeledRow>
   );
