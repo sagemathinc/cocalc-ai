@@ -7,8 +7,9 @@ import { Router } from "express";
 import { get, new_histogram } from "@cocalc/server/metrics/metrics-recorder";
 import { join } from "path";
 import basePath from "@cocalc/backend/base-path";
-import getPool from "@cocalc/database/pool";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getLogger } from "@cocalc/hub/logger";
+import { isIpAllowed, parseAllowlist } from "@cocalc/util/ip-allowlist";
 
 const log = getLogger("metrics");
 
@@ -42,29 +43,24 @@ export function setupInstrumentation(router: Router) {
   router.use(metrics);
 }
 
-async function isEnabled(pool): Promise<boolean> {
-  const { rows } = await pool.query(
-    "SELECT value FROM server_settings WHERE name='prometheus_metrics'",
-  );
-  const enabled = rows.length > 0 && rows[0].value == "yes";
-  log.info("isEnabled", enabled);
-  return enabled;
-}
-
 export function initMetricsEndpoint(router: Router) {
   const endpoint = join(basePath, "metrics");
   log.info("initMetricsEndpoint at ", endpoint);
-  // long cache so we can easily check before each response and it is still fast.
-  const pool = getPool("long");
 
-  router.get(endpoint, async (_req, res) => {
+  router.get(endpoint, async (req, res) => {
     res.header("Content-Type", "text/plain");
     res.header("Cache-Control", "no-cache, no-store");
-    if (!(await isEnabled(pool))) {
-      res.json({
+    const settings = await getServerSettings();
+    if (!settings.prometheus_metrics) {
+      res.status(403).json({
         error:
-          "Sharing of metrics at /metrics is disabled.  Metrics can be enabled in the site administration page.",
+          "Sharing of metrics at /metrics is disabled. Metrics can be enabled in the site administration page.",
       });
+      return;
+    }
+    const allowlist = parseAllowlist(settings.prometheus_metrics_allowlist);
+    if (!isIpAllowed(req.ip, allowlist)) {
+      res.status(403).json({ error: "Metrics access denied." });
       return;
     }
     const metricsRecorder = get();

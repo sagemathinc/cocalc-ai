@@ -94,9 +94,6 @@ export type SiteSettingsKeys =
   | "i18n"
   | "dns"
   | "datastore"
-  | "ssh_gateway"
-  | "ssh_gateway_dns"
-  | "ssh_gateway_fingerprint"
   | "versions"
   | "version_min_project"
   | "version_min_browser"
@@ -116,7 +113,6 @@ export type SiteSettingsKeys =
   | "project_hosts_nebius_enabled"
   | "project_hosts_dns"
   | "launchpad_mode"
-  | "insecure_test_mode"
   | "samesite_remember_me"
   | "user_tracking";
 
@@ -169,7 +165,6 @@ export const only_for_password_reset_smtp = (conf): boolean =>
   to_bool(conf.email_enabled) && conf.password_reset_override === "smtp";
 export const only_onprem = (conf): boolean =>
   conf.kucalc === KUCALC_ON_PREMISES;
-export const only_ssh_gateway = (conf): boolean => to_bool(conf.ssh_gateway);
 export const only_cocalc_com = (conf): boolean =>
   conf.kucalc === KUCALC_COCALC_COM;
 export const not_cocalc_com = (conf): boolean => !only_cocalc_com(conf);
@@ -295,18 +290,6 @@ const commercial_to_val: ToValFunc<boolean> = (
     return to_bool(val);
   }
   return false;
-};
-
-const gateway_dns_to_val: ToValFunc<string> = (
-  val?,
-  conf?: { [key in SiteSettingsKeys]: string },
-): string => {
-  // sensible default, in case ssh gateway dns is not set – fallback to the known value in prod/test or the DNS.
-  const dns: string = to_trimmed_str(conf?.dns ?? "");
-  return (
-    (val ?? "").trim() ||
-    (conf != null && only_cocalc_com(conf) ? `ssh.${dns}` : dns)
-  );
 };
 
 export const DATASTORE_TITLE = "Cloud Storage & Remote Filesystems";
@@ -651,28 +634,6 @@ export const site_settings_conf: SiteSettings = {
     valid: parsableJson,
     tags: ["On-Prem"],
   },
-  ssh_gateway: {
-    name: "SSH Gateway",
-    desc: "Show corresponding UI elements",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-  },
-  ssh_gateway_dns: {
-    name: "SSH Gateway's DNS",
-    desc: "This is the DNS name of the SSH gateway server.  It is displayed to users as the ssh target to connect to a project.",
-    default: "",
-    valid: valid_dns_name,
-    show: only_ssh_gateway,
-    to_val: gateway_dns_to_val,
-  },
-  ssh_gateway_fingerprint: {
-    name: "SSH Gateway's Fingerprint",
-    desc: "Tell users the fingerprint of the SSH gateway server. This is used to verify that the SSH gateway server is the one they expect. E.g., `SHA256:8fa43247...`",
-    default: "",
-    show: only_ssh_gateway,
-    to_val: to_trimmed_str,
-  },
   iframe_comm_hosts: {
     name: "IFrame embedding",
     desc: "DNS hostnames, which are allowed to embed and communicate with this CoCalc instance. Strings starting with a dot will match subdomains. Hosts are tokens matching `[a-zA-Z0-9.-]+`. In production, this needs `co proxy update-config` & restart.",
@@ -862,20 +823,12 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
   },
-  insecure_test_mode: {
-    name: "Insecure Test Mode",
-    desc: "Put this server in a highly insecure test mode that is suitable for evaluating CoCalc, but **CANNOT BE USED IN PRODUCTION**.",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-    tags: ["Security"],
-  },
   samesite_remember_me: {
     name: "sameSite setting for remember_me authentication cookie",
-    desc: "The [sameSite setting](https://expressjs.com/en/resources/middleware/cookie-session.html) for the remember_me authentication token, which can be one of 'strict', 'lax', or 'none'.  The default is 'strict', which is the safest choice, as it is a useful line of defense against certain attacks.  Using 'none' is **extremely** insecure, just begging to be hacked; using 'lax' might be OK.  The non-strict options are supported since they are needed for certain development work; they could also be useful in on-prem settings.",
+    desc: "The [sameSite setting](https://expressjs.com/en/resources/middleware/cookie-session.html) for the remember_me authentication token, which can be one of 'strict' or 'lax'. The default is 'strict', which is the safest choice, as it is a useful line of defense against certain attacks. Using 'lax' might be OK for some on-prem or development setups.",
     default: "strict",
-    valid: ["strict", "lax", "none"],
-    to_val: (x) => `${x}`,
+    valid: ["strict", "lax"],
+    to_val: (x) => (x === "none" ? "lax" : `${x}`),
     tags: ["Security"],
   },
   user_tracking: {

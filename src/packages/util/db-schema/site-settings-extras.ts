@@ -22,7 +22,6 @@ import {
   displayJson,
   from_json,
   is_email_enabled,
-  onlyNonnegFloat,
   onlyPosFloat,
   only_booleans,
   only_cocalc_com,
@@ -90,6 +89,8 @@ const project_hosts_hyperstack_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_hyperstack_enabled"]);
 const project_hosts_lambda_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_lambda_enabled"]);
+const metrics_enabled = (conf: SiteSettings) =>
+  to_bool((conf as SiteSettings & { prometheus_metrics?: string })["prometheus_metrics"]);
 
 // Ollama and Custom OpenAI have the same schema
 function custom_llm_valid(value: string): boolean {
@@ -233,10 +234,8 @@ export type SiteSettingsExtrasKeys =
   | "github_token"
   | "github_block"
   | "prometheus_metrics"
+  | "prometheus_metrics_allowlist"
   | "pay_as_you_go_section"
-  | "pay_as_you_go_spending_limit"
-  | "pay_as_you_go_spending_limit_with_verified_email"
-  | "pay_as_you_go_spending_limit_with_credit"
   | "pay_as_you_go_min_payment"
   | "pay_as_you_go_max_project_upgrades"
   | "pay_as_you_go_price_project_upgrades"
@@ -409,13 +408,13 @@ export const EXTRAS: SettingsExtras = {
   pii_retention: {
     name: "PII Retention",
     desc: "How long to keep personally identifiable information, after which the server automatically deletes certain database entries that contain PII.",
-    default: "never",
+    default: "12 month",
     // values must be understood by packages/hub/utils.ts pii_expire
     valid: [
-      "never",
       "30 days",
       "3 month",
       "6 month",
+      "12 month",
       "1 year",
       "2 years",
       "5 years",
@@ -728,21 +727,19 @@ export const EXTRAS: SettingsExtras = {
     valid: only_booleans,
     to_val: to_bool,
   },
+  prometheus_metrics_allowlist: {
+    name: "Prometheus Metrics Allowlist",
+    desc: "Comma-separated IP/CIDR list allowed to access `/metrics`, e.g., `127.0.0.1/32, ::1/128, 10.0.0.0/8`. Leave empty to **deny all access**.",
+    default: "",
+    to_val: to_trimmed_str,
+    show: metrics_enabled,
+  },
   pay_as_you_go_section: {
     name: "Pay as you Go",
     desc: "",
     default: "",
     show: only_commercial,
     type: "header",
-    tags: ["Pay as you Go"],
-  },
-  pay_as_you_go_spending_limit: {
-    name: "Initial Pay As You Go Spending Limit",
-    desc: "The initial default pay as you go spending limit that all accounts get, in dollars.",
-    default: "0",
-    show: only_commercial,
-    to_val: toFloat,
-    valid: onlyNonnegFloat,
     tags: ["Pay as you Go"],
   },
   pay_as_you_go_min_payment: {
@@ -783,24 +780,6 @@ export const EXTRAS: SettingsExtras = {
     to_val: from_json,
     to_display: displayJson,
     valid: parsableJson,
-    tags: ["Pay as you Go"],
-  },
-  pay_as_you_go_spending_limit_with_verified_email: {
-    name: "Pay As You Go Spending Limit with Verified Email",
-    desc: "(NOT CURRENTLY USED) The pay as you go spending limit for accounts with a verified email address.",
-    default: "5",
-    show: only_commercial,
-    to_val: toFloat,
-    valid: onlyNonnegFloat,
-    tags: ["Pay as you Go"],
-  },
-  pay_as_you_go_spending_limit_with_credit: {
-    name: "Pay As You Go Spending Limit with Credit",
-    desc: "(NOT CURRENTLY USED) The pay as you go spending limit for accounts that have ever successfully had a positive credit.",
-    default: "15",
-    show: only_commercial,
-    to_val: toFloat,
-    valid: onlyNonnegFloat,
     tags: ["Pay as you Go"],
   },
   hyperstack_api_key: {

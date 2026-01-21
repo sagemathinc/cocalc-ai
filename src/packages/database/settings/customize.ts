@@ -52,8 +52,6 @@ export default async function getCustomize(
       isCommercial: settings.commercial,
 
       kucalc: settings.kucalc,
-      sshGateway: settings.ssh_gateway,
-      sshGatewayDNS: settings.ssh_gateway_dns,
 
       emailSignup: settings.email_signup,
       accountCreationInstructions: settings.account_creation_email_instructions,

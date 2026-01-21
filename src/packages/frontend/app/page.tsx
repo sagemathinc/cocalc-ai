@@ -42,7 +42,6 @@ import { ConnectionInfo } from "./connection-info";
 import { useAppContext } from "./context";
 import { FullscreenButton } from "./fullscreen-button";
 import { I18NBanner, useShowI18NBanner } from "./i18n-banner";
-import InsecureTestModeBanner from "./insecure-test-mode-banner";
 import { AppLogo } from "./logo";
 import { NavTab } from "./nav-tab";
 import { Notification } from "./notifications";
@@ -119,7 +118,6 @@ export const Page: React.FC = () => {
   const groups = useTypedRedux("account", "groups");
   const show_i18n = useShowI18NBanner();
   const is_commercial = useTypedRedux("customize", "is_commercial");
-  const insecure_test_mode = useTypedRedux("customize", "insecure_test_mode");
 
   function account_tab_icon(): IconName | React.JSX.Element {
     if (account_id) {
@@ -336,7 +334,6 @@ export const Page: React.FC = () => {
       onDragOver={(e) => e.preventDefault()}
       onDrop={drop}
     >
-      {insecure_test_mode && <InsecureTestModeBanner />}
       {show_file_use && (
         <div style={fileUseStyle} className="smc-vfill">
           <FileUsePage />

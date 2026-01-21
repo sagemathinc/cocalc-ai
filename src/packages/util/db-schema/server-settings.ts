@@ -90,8 +90,6 @@ export interface Customize {
   contactEmail?: string;
   isCommercial?: boolean;
   kucalc?: KucalcValues;
-  sshGateway?: boolean;
-  sshGatewayDNS?: string;
   logoSquareURL?: string;
   logoRectangularURL?: string;
   splashImage?: string;
