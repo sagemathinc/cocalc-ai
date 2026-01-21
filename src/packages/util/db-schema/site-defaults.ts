@@ -94,9 +94,6 @@ export type SiteSettingsKeys =
   | "i18n"
   | "dns"
   | "datastore"
-  | "ssh_gateway"
-  | "ssh_gateway_dns"
-  | "ssh_gateway_fingerprint"
   | "versions"
   | "version_min_project"
   | "version_min_browser"
@@ -168,7 +165,6 @@ export const only_for_password_reset_smtp = (conf): boolean =>
   to_bool(conf.email_enabled) && conf.password_reset_override === "smtp";
 export const only_onprem = (conf): boolean =>
   conf.kucalc === KUCALC_ON_PREMISES;
-export const only_ssh_gateway = (conf): boolean => to_bool(conf.ssh_gateway);
 export const only_cocalc_com = (conf): boolean =>
   conf.kucalc === KUCALC_COCALC_COM;
 export const not_cocalc_com = (conf): boolean => !only_cocalc_com(conf);
@@ -294,18 +290,6 @@ const commercial_to_val: ToValFunc<boolean> = (
     return to_bool(val);
   }
   return false;
-};
-
-const gateway_dns_to_val: ToValFunc<string> = (
-  val?,
-  conf?: { [key in SiteSettingsKeys]: string },
-): string => {
-  // sensible default, in case ssh gateway dns is not set – fallback to the known value in prod/test or the DNS.
-  const dns: string = to_trimmed_str(conf?.dns ?? "");
-  return (
-    (val ?? "").trim() ||
-    (conf != null && only_cocalc_com(conf) ? `ssh.${dns}` : dns)
-  );
 };
 
 export const DATASTORE_TITLE = "Cloud Storage & Remote Filesystems";
@@ -649,28 +633,6 @@ export const site_settings_conf: SiteSettings = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["On-Prem"],
-  },
-  ssh_gateway: {
-    name: "SSH Gateway",
-    desc: "Show corresponding UI elements",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-  },
-  ssh_gateway_dns: {
-    name: "SSH Gateway's DNS",
-    desc: "This is the DNS name of the SSH gateway server.  It is displayed to users as the ssh target to connect to a project.",
-    default: "",
-    valid: valid_dns_name,
-    show: only_ssh_gateway,
-    to_val: gateway_dns_to_val,
-  },
-  ssh_gateway_fingerprint: {
-    name: "SSH Gateway's Fingerprint",
-    desc: "Tell users the fingerprint of the SSH gateway server. This is used to verify that the SSH gateway server is the one they expect. E.g., `SHA256:8fa43247...`",
-    default: "",
-    show: only_ssh_gateway,
-    to_val: to_trimmed_str,
   },
   iframe_comm_hosts: {
     name: "IFrame embedding",

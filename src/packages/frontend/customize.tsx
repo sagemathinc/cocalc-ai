@@ -107,9 +107,6 @@ export interface CustomizeState {
   ollama_enabled: boolean;
   custom_openai_enabled: boolean;
   datastore: boolean;
-  ssh_gateway: boolean;
-  ssh_gateway_dns: string; // e.g. "ssh.cocalc.com"
-  ssh_gateway_fingerprint: string; // e.g. "SHA256:a8284..."
   account_creation_email_instructions: string;
   commercial: boolean;
   default_quotas: TypedMap<DefaultQuotaSetting>;
@@ -222,7 +219,7 @@ export class CustomizeActions extends Actions<CustomizeState> {
 export const store = redux.createStore("customize", CustomizeStore, defaults);
 const actions = redux.createActions("customize", CustomizeActions);
 // really simple way to have a default value -- gets changed below once the $?.get returns.
-actions.setState({ is_commercial: true, ssh_gateway: true });
+actions.setState({ is_commercial: true });
 
 // If we are running in the browser, then we customize the schema.  This also gets run on the backend
 // to generate static content, which can't be customized.
