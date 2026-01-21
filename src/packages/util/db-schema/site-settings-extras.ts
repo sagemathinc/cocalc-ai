@@ -90,6 +90,8 @@ const project_hosts_hyperstack_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_hyperstack_enabled"]);
 const project_hosts_lambda_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_lambda_enabled"]);
+export const project_hosts_local_enabled = (conf: SiteSettings) =>
+  to_bool(conf["project_hosts_local_enabled"]);
 
 // Ollama and Custom OpenAI have the same schema
 function custom_llm_valid(value: string): boolean {
