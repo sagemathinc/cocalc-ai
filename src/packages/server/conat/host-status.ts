@@ -2,6 +2,11 @@ import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
 import { createHostStatusService } from "@cocalc/conat/project-host/api";
 import getPool from "@cocalc/database/pool";
+import {
+  getLaunchpadMode,
+  getLaunchpadOnPremConfig,
+} from "@cocalc/server/launchpad/mode";
+import { registerSelfHostTunnelKey } from "@cocalc/server/launchpad/onprem-sshd";
 
 const logger = getLogger("server:conat:host-status");
 
@@ -10,6 +15,50 @@ export async function initHostStatusService() {
   return await createHostStatusService({
     client: await conat(),
     impl: {
+      async registerOnPremTunnel({ host_id, public_key }) {
+        if (!host_id || !public_key) {
+          throw Error("host_id and public_key are required");
+        }
+        const mode = await getLaunchpadMode();
+        if (mode !== "onprem") {
+          throw Error(`launchpad mode is '${mode}'`);
+        }
+        const config = getLaunchpadOnPremConfig(mode);
+        if (!config.sshd_port) {
+          throw Error("onprem sshd is not configured");
+        }
+        const { rows } = await getPool().query<{ id: string }>(
+          `SELECT id
+           FROM project_hosts
+           WHERE id=$1 AND deleted IS NULL`,
+          [host_id],
+        );
+        if (!rows.length) {
+          throw Error("host not found");
+        }
+        const info = await registerSelfHostTunnelKey({
+          host_id,
+          public_key,
+        });
+        const sshdHost =
+          process.env.COCALC_SSHD_HOST ??
+          process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
+          "";
+        logger.info("onprem tunnel registered", {
+          host_id,
+          sshd_host: sshdHost,
+          sshd_port: config.sshd_port,
+          http_tunnel_port: info.http_tunnel_port,
+          ssh_tunnel_port: info.ssh_tunnel_port,
+        });
+        return {
+          sshd_host: sshdHost,
+          sshd_port: config.sshd_port,
+          ssh_user: config.ssh_user ?? "user",
+          http_tunnel_port: info.http_tunnel_port,
+          ssh_tunnel_port: info.ssh_tunnel_port,
+        };
+      },
       async reportProjectState({ project_id, state, host_id }) {
         if (!project_id || !state) {
           throw Error("project_id and state are required");

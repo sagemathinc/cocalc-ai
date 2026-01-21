@@ -2,8 +2,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmod, mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
-import { randomBytes } from "micro-key-producer/utils.js";
-import ssh from "micro-key-producer/ssh.js";
 import getPool from "@cocalc/database/pool";
 import getPort from "@cocalc/backend/get-port";
 import { secrets } from "@cocalc/backend/data";
@@ -167,7 +165,7 @@ async function startSshd(): Promise<SshdState | null> {
 
 type TunnelEntry = {
   host_id: string;
-  tunnel_port: number | null;
+  http_tunnel_port: number | null;
   ssh_tunnel_port: number | null;
   tunnel_public_key: string | null;
 };
@@ -177,8 +175,8 @@ function formatAuthorizedKey(entry: TunnelEntry): string | null {
     return null;
   }
   const listens: string[] = [];
-  if (entry.tunnel_port) {
-    listens.push(`permitlisten="0.0.0.0:${entry.tunnel_port}"`);
+  if (entry.http_tunnel_port) {
+    listens.push(`permitlisten="0.0.0.0:${entry.http_tunnel_port}"`);
   }
   if (entry.ssh_tunnel_port) {
     listens.push(`permitlisten="0.0.0.0:${entry.ssh_tunnel_port}"`);
@@ -200,15 +198,16 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   if (!state) {
     return;
   }
-  const { rows } = await pool().query<{
-    host_id: string;
-    tunnel_port: string | null;
-    ssh_tunnel_port: string | null;
-    tunnel_public_key: string | null;
-  }>(
-    `
+    const { rows } = await pool().query<{
+      host_id: string;
+      http_tunnel_port: string | null;
+      ssh_tunnel_port: string | null;
+      tunnel_public_key: string | null;
+    }>(
+      `
     SELECT id AS host_id,
-           metadata->'self_host'->>'tunnel_port' AS tunnel_port,
+           COALESCE(metadata->'self_host'->>'http_tunnel_port',
+                    metadata->'self_host'->>'tunnel_port') AS http_tunnel_port,
            metadata->'self_host'->>'ssh_tunnel_port' AS ssh_tunnel_port,
            metadata->'self_host'->>'tunnel_public_key' AS tunnel_public_key
       FROM project_hosts
@@ -220,7 +219,9 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   for (const row of rows) {
     const entry: TunnelEntry = {
       host_id: row.host_id,
-      tunnel_port: row.tunnel_port ? Number(row.tunnel_port) : null,
+      http_tunnel_port: row.http_tunnel_port
+        ? Number(row.http_tunnel_port)
+        : null,
       ssh_tunnel_port: row.ssh_tunnel_port ? Number(row.ssh_tunnel_port) : null,
       tunnel_public_key: row.tunnel_public_key,
     };
@@ -233,42 +234,50 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   await writeFile(state.authorizedKeysPath, content, { mode: 0o600 });
 }
 
-export async function ensureSelfHostTunnelInfo(opts: {
+export async function registerSelfHostTunnelKey(opts: {
   host_id: string;
+  public_key: string;
 }): Promise<{
-  tunnel_port: number;
+  http_tunnel_port: number;
   ssh_tunnel_port: number;
   tunnel_public_key: string;
-  tunnel_private_key: string;
 }> {
   const hostId = opts.host_id;
+  if (!opts.public_key) {
+    throw new Error("public_key is required");
+  }
   const { rows } = await pool().query<{ metadata: any }>(
     `SELECT metadata
        FROM project_hosts
       WHERE id=$1 AND deleted IS NULL`,
     [hostId],
   );
+  if (!rows.length) {
+    throw new Error("host not found");
+  }
   const metadata = rows[0]?.metadata ?? {};
   const selfHost = { ...(metadata.self_host ?? {}) };
   let updated = false;
-  if (!selfHost.tunnel_port) {
-    selfHost.tunnel_port = await getPort();
+  if (!selfHost.http_tunnel_port && selfHost.tunnel_port) {
+    selfHost.http_tunnel_port = selfHost.tunnel_port;
+    delete selfHost.tunnel_port;
+    updated = true;
+  }
+  if (!selfHost.http_tunnel_port) {
+    selfHost.http_tunnel_port = await getPort();
     updated = true;
   }
   if (!selfHost.ssh_tunnel_port) {
     selfHost.ssh_tunnel_port = await getPort();
     updated = true;
   }
-  if (!selfHost.tunnel_public_key || !selfHost.tunnel_private_key) {
-    const seed = randomBytes(32);
-    const keypair = ssh(seed, `launchpad-tunnel-${hostId}`);
-    selfHost.tunnel_public_key = keypair.publicKey.trim();
-    selfHost.tunnel_private_key = keypair.privateKey;
-    selfHost.tunnel_key_created_at = new Date().toISOString();
+  if (selfHost.tunnel_public_key !== opts.public_key) {
+    selfHost.tunnel_public_key = opts.public_key.trim();
+    selfHost.tunnel_key_updated_at = new Date().toISOString();
     updated = true;
   }
   if (updated) {
-    selfHost.tunnel_port_updated_at = new Date().toISOString();
+    selfHost.http_tunnel_port_updated_at = new Date().toISOString();
     const nextMetadata = { ...metadata, self_host: selfHost };
     await pool().query(
       `UPDATE project_hosts
@@ -279,10 +288,9 @@ export async function ensureSelfHostTunnelInfo(opts: {
   }
   await refreshLaunchpadOnPremAuthorizedKeys();
   return {
-    tunnel_port: Number(selfHost.tunnel_port),
+    http_tunnel_port: Number(selfHost.http_tunnel_port),
     ssh_tunnel_port: Number(selfHost.ssh_tunnel_port),
     tunnel_public_key: selfHost.tunnel_public_key,
-    tunnel_private_key: selfHost.tunnel_private_key,
   };
 }
 

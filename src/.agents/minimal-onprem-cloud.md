@@ -88,9 +88,12 @@ If admin wants standard ports, they can:
 
 ## SSH Key & Access Model
 
+Host generates and manages:
+
+- host tunnel key (private key stays on host; hub only stores public key)
+
 Hub generates and manages:
 
-- host tunnel key (for host reverse tunnel)
 - sftp key (for rustic SFTP access)
 - user SSH keys for sshpiperd (existing behavior on the host)
 
@@ -124,13 +127,13 @@ Hub assigns two ports per host:
 
 ## Implementation Plan
 
-### 1) Add On-Prem Mode Config
+### 1) Add On-Prem Mode Config (done)
 
 - Add new Launchpad config block: minimal_onprem or onprem_mode.
 - Map env vars to config with defaults (base port derived ports).
 - Define and validate ports, data_dir, bind_host, proxy_prefix.
 
-### 2) Embedded sshd Lifecycle
+### 2) Embedded sshd Lifecycle (done)
 
 - Bundle sshd binaries in Launchpad release.
   - we setup [https://github.com/sagemathinc/static\-openssh\-binaries](https://github.com/sagemathinc/static-openssh-binaries) for sshd static binaries
@@ -142,28 +145,28 @@ Hub assigns two ports per host:
   - spawn sshd as a child process
   - supervise \+ restart on crash
 
-### 3) Reverse Tunnel Registration
+### 3) Reverse Tunnel Registration (done)
 
 - Extend hub to allocate reverse_port per host.
-- Provide host with assigned port + sshd endpoint.
+- Host registers public key via conat; hub returns assigned ports + sshd endpoint.
 - Host connects with ssh -N -R 0.0.0.0:<http_port>:127.0.0.1:<project_host_port>
   and ssh -N -R 0.0.0.0:<ssh_port>:127.0.0.1:<host_sshpiperd_port>.
 - Hub stores mapping host_id -> (http_port, ssh_port) for proxy routing.
 
-### 4) Proxy Integration
+### 4) Proxy Integration (done)
 
 - Hub uses http-proxy-3 to route:
   - /<prefix>/<host_id>/... to localhost:<reverse_port>.
 - Ensure WebSocket upgrade support.
 - Avoid URL conflicts by reserving the prefix path.
 
-### 5) Rustic SFTP Integration
+### 5) Rustic SFTP Integration (pending)
 
 - Generate SFTP key and write to project-host config.
 - SFTP repo path defaults to data_dir/backup-repo.
 - Keep repo single; rely on tags for per-project separation.
 
-### 6) Host Provisioning / Connector
+### 6) Host Provisioning / Connector (partial)
 
 - Connector handshake includes:
   - hub host+port
@@ -174,7 +177,7 @@ Hub assigns two ports per host:
   (minimizes admin input).
 - If changing ports is too complex, require explicit config at first bootstrap.
 
-### 7) Health & Diagnostics
+### 7) Health & Diagnostics (pending)
 
 - Hub exposes:
   - sshd running
@@ -182,7 +185,7 @@ Hub assigns two ports per host:
   - proxy route test
   - SFTP write check
 
-### 8) Documentation & Defaults
+### 8) Documentation & Defaults (partial)
 
 - Document minimal on\-prem mode:
   - single hub \+ hosts local LAN setup

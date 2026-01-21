@@ -1,19 +1,35 @@
+// On-prem launchpad only: keep an SSH reverse tunnel from the host back to the
+// hub so the hub can proxy project HTTP/WS traffic and users can SSH via a
+// host-specific port, without requiring inbound access to the host.
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { chmod, mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { sshServer } from "@cocalc/backend/data";
 import { install, ssh as sshBinary } from "@cocalc/backend/sandbox/install";
+import { createHostStatusClient } from "@cocalc/conat/project-host/api";
+import { randomBytes } from "micro-key-producer/utils.js";
+import ssh from "micro-key-producer/ssh.js";
+import { getMasterConatClient } from "./master-status";
 
 const logger = getLogger("project-host:onprem-tunnel");
 
 type TunnelConfig = {
   sshdHost: string;
   sshdPort: number;
-  tunnelPort: number;
+  httpTunnelPort: number;
   sshTunnelPort: number;
   sshUser: string;
   keyPath: string;
+};
+
+type StoredTunnelConfig = {
+  sshd_host: string;
+  sshd_port: number;
+  http_tunnel_port: number;
+  ssh_tunnel_port: number;
+  ssh_user: string;
+  public_key: string;
 };
 
 type TunnelState = {
@@ -30,6 +46,10 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
+function resolveDataDir(): string {
+  return process.env.COCALC_DATA ?? process.env.DATA ?? "/btrfs/data";
+}
+
 function parsePort(raw?: string): number | undefined {
   if (!raw) return undefined;
   const parsed = Number.parseInt(raw, 10);
@@ -37,16 +57,31 @@ function parsePort(raw?: string): number | undefined {
   return parsed;
 }
 
-async function ensureKeyPath(keyPath: string, keyContent?: string): Promise<void> {
-  if (await fileExists(keyPath)) {
-    return;
-  }
-  if (!keyContent) {
-    throw new Error("launchpad tunnel key missing");
-  }
+function resolveKeyPath(): string {
+  return (
+    process.env.COCALC_LAUNCHPAD_TUNNEL_KEY_PATH ??
+    join(resolveDataDir(), "secrets", "launchpad", "tunnel-key")
+  );
+}
+
+function resolveConfigPath(): string {
+  return join(resolveDataDir(), "secrets", "launchpad", "tunnel-config.json");
+}
+
+async function writeKeyPair(keyPath: string, hostId: string): Promise<string> {
+  const seed = randomBytes(32);
+  const keypair = ssh(seed, `launchpad-tunnel-${hostId}`);
   await mkdir(dirname(keyPath), { recursive: true });
-  await writeFile(keyPath, keyContent.trim() + "\n", { mode: 0o600 });
+  await writeFile(keyPath, keypair.privateKey.trim() + "\n", { mode: 0o600 });
   await chmod(keyPath, 0o600);
+  return keypair.publicKey.trim();
+}
+
+async function ensureKeyPair(keyPath: string, hostId: string): Promise<string> {
+  if (await fileExists(keyPath)) {
+    return "";
+  }
+  return await writeKeyPair(keyPath, hostId);
 }
 
 function buildTunnelArgs(opts: {
@@ -74,16 +109,48 @@ function buildTunnelArgs(opts: {
     String(config.sshdPort),
     `${config.sshUser}@${config.sshdHost}`,
     "-R",
-    `0.0.0.0:${config.tunnelPort}:127.0.0.1:${localHttpPort}`,
+    `0.0.0.0:${config.httpTunnelPort}:127.0.0.1:${localHttpPort}`,
     "-R",
     `0.0.0.0:${config.sshTunnelPort}:127.0.0.1:${localSshPort}`,
   ];
 }
 
-function resolveTunnelConfig(): TunnelConfig | undefined {
+async function loadStoredConfig(
+  configPath: string,
+): Promise<StoredTunnelConfig | undefined> {
+  if (!(await fileExists(configPath))) {
+    return undefined;
+  }
+  try {
+    const raw = await readFile(configPath, "utf8");
+    return JSON.parse(raw) as StoredTunnelConfig;
+  } catch (err) {
+    logger.warn("failed to read tunnel config", { err });
+    return undefined;
+  }
+}
+
+async function saveStoredConfig(
+  configPath: string,
+  config: StoredTunnelConfig,
+): Promise<void> {
+  await mkdir(dirname(configPath), { recursive: true });
+  await writeFile(configPath, JSON.stringify(config, null, 2));
+  logger.debug("stored onprem tunnel config", {
+    sshd_host: config.sshd_host,
+    sshd_port: config.sshd_port,
+    http_tunnel_port: config.http_tunnel_port,
+    ssh_tunnel_port: config.ssh_tunnel_port,
+  });
+}
+
+function resolveTunnelConfigFromEnv(): TunnelConfig | undefined {
   const sshdHost = process.env.COCALC_LAUNCHPAD_SSHD_HOST;
   const sshdPort = parsePort(process.env.COCALC_LAUNCHPAD_SSHD_PORT);
-  const tunnelPort = parsePort(process.env.COCALC_LAUNCHPAD_TUNNEL_PORT);
+  const tunnelPort = parsePort(
+    process.env.COCALC_LAUNCHPAD_HTTP_TUNNEL_PORT ??
+      process.env.COCALC_LAUNCHPAD_TUNNEL_PORT,
+  );
   const sshTunnelPort = parsePort(
     process.env.COCALC_LAUNCHPAD_SSH_TUNNEL_PORT,
   );
@@ -92,33 +159,146 @@ function resolveTunnelConfig(): TunnelConfig | undefined {
     process.env.USER ??
     process.env.LOGNAME ??
     "user";
-  const keyPath =
-    process.env.COCALC_LAUNCHPAD_TUNNEL_KEY_PATH ??
-    join(process.env.COCALC_DATA ?? "/btrfs/data", "secrets", "launchpad", "tunnel-key");
+  const keyPath = resolveKeyPath();
   if (!sshdHost || !sshdPort || !tunnelPort || !sshTunnelPort) {
     return undefined;
   }
   return {
     sshdHost,
     sshdPort,
-    tunnelPort,
+    httpTunnelPort: tunnelPort,
     sshTunnelPort,
     sshUser,
     keyPath,
   };
 }
 
+function resolveHubHost(): string | undefined {
+  const raw =
+    process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER;
+  if (!raw) return undefined;
+  try {
+    return new URL(raw).hostname;
+  } catch {
+    try {
+      return new URL(`https://${raw}`).hostname;
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+function normalizeStoredConfig(
+  stored: StoredTunnelConfig | undefined,
+  keyPath: string,
+): TunnelConfig | undefined {
+  if (!stored) return undefined;
+  if (!stored.sshd_host || !stored.sshd_port) return undefined;
+  if (!stored.http_tunnel_port || !stored.ssh_tunnel_port) return undefined;
+  return {
+    sshdHost: stored.sshd_host,
+    sshdPort: stored.sshd_port,
+    httpTunnelPort: stored.http_tunnel_port,
+    sshTunnelPort: stored.ssh_tunnel_port,
+    sshUser: stored.ssh_user || "user",
+    keyPath,
+  };
+}
+
+async function registerTunnelConfig(opts: {
+  keyPath: string;
+  configPath: string;
+  fallback?: StoredTunnelConfig;
+}): Promise<TunnelConfig | undefined> {
+  const client = getMasterConatClient();
+  if (!client) {
+    logger.debug("onprem tunnel registration skipped (no master client)");
+    return undefined;
+  }
+  const hostId = process.env.PROJECT_HOST_ID ?? "";
+  if (!hostId) {
+    logger.warn("onprem tunnel registration skipped (missing host id)");
+    return undefined;
+  }
+  let publicKey = opts.fallback?.public_key ?? "";
+  if (!publicKey) {
+    publicKey = await ensureKeyPair(opts.keyPath, hostId);
+    if (!publicKey && opts.fallback?.public_key) {
+      publicKey = opts.fallback.public_key;
+    } else if (!publicKey) {
+      logger.warn("onprem tunnel key missing; regenerating");
+      publicKey = await writeKeyPair(opts.keyPath, hostId);
+    }
+  }
+  if (!publicKey) {
+    logger.warn("onprem tunnel registration skipped (missing public key)");
+    return undefined;
+  }
+  const statusClient = createHostStatusClient({ client });
+  try {
+    const res = await statusClient.registerOnPremTunnel({
+      host_id: hostId,
+      public_key: publicKey,
+    });
+    const sshdHost = res.sshd_host || resolveHubHost();
+    if (!sshdHost) {
+      logger.warn("onprem tunnel registration missing sshd host");
+      return undefined;
+    }
+    const stored: StoredTunnelConfig = {
+      sshd_host: sshdHost,
+      sshd_port: res.sshd_port,
+      ssh_user: res.ssh_user,
+      http_tunnel_port: res.http_tunnel_port,
+      ssh_tunnel_port: res.ssh_tunnel_port,
+      public_key: publicKey,
+    };
+    await saveStoredConfig(opts.configPath, stored);
+    logger.info("onprem tunnel registered", {
+      sshd_host: stored.sshd_host,
+      sshd_port: stored.sshd_port,
+      http_tunnel_port: stored.http_tunnel_port,
+      ssh_tunnel_port: stored.ssh_tunnel_port,
+    });
+    return normalizeStoredConfig(stored, opts.keyPath);
+  } catch (err) {
+    logger.warn("onprem tunnel registration failed", { err });
+    return undefined;
+  }
+}
+
 export async function startOnPremTunnel(opts: {
   localHttpPort: number;
 }): Promise<() => void> {
-  const config = resolveTunnelConfig();
+  const keyPath = resolveKeyPath();
+  const configPath = resolveConfigPath();
+  const envConfig = resolveTunnelConfigFromEnv();
+  const storedConfig = await loadStoredConfig(configPath);
+  const fallbackConfig =
+    normalizeStoredConfig(storedConfig, keyPath) ?? envConfig;
+  if (storedConfig) {
+    logger.debug("onprem tunnel config loaded from disk");
+  } else if (envConfig) {
+    logger.debug("onprem tunnel config loaded from env");
+  }
+  const hostId = process.env.PROJECT_HOST_ID ?? "host";
+
+  await install("ssh");
+  await ensureKeyPair(keyPath, hostId);
+
+  const config =
+    (await registerTunnelConfig({
+      keyPath,
+      configPath,
+      fallback: storedConfig,
+    })) ?? fallbackConfig;
   if (!config) {
     logger.debug("onprem tunnel disabled (missing config)");
     return () => {};
   }
-  await install("ssh");
-  const keyContent = process.env.COCALC_LAUNCHPAD_TUNNEL_PRIVATE_KEY;
-  await ensureKeyPath(config.keyPath, keyContent);
+  if (fallbackConfig && config === fallbackConfig) {
+    logger.info("onprem tunnel using fallback config");
+  }
   const localSshPort = sshServer.port;
   const state: TunnelState = { stopped: false };
 
@@ -134,7 +314,7 @@ export async function startOnPremTunnel(opts: {
     logger.debug("starting onprem tunnel", {
       sshdHost: config.sshdHost,
       sshdPort: config.sshdPort,
-      tunnelPort: config.tunnelPort,
+      httpTunnelPort: config.httpTunnelPort,
       sshTunnelPort: config.sshTunnelPort,
     });
     const child = spawn(sshBinary, args);

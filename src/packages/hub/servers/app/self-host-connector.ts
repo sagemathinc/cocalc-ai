@@ -21,7 +21,6 @@ import {
   getLaunchpadMode,
   getLaunchpadOnPremConfig,
 } from "@cocalc/server/launchpad/mode";
-import { ensureSelfHostTunnelInfo } from "@cocalc/server/launchpad/onprem-sshd";
 
 const logger = getLogger("hub:servers:app:self-host-connector");
 
@@ -131,7 +130,6 @@ export default function init(router: Router) {
         res.status(400).send("host is not self-hosted");
         return;
       }
-      const tunnelInfo = await ensureSelfHostTunnelInfo({ host_id: host.id });
       let connectorId = host.region;
       const attachConnector = async (id: string) => {
         const machine = host.metadata?.machine ?? {};
@@ -143,10 +141,6 @@ export default function init(router: Router) {
           ...(host.metadata?.self_host ?? {}),
           auto_start_pending: true,
           auto_start_requested_at: new Date().toISOString(),
-          tunnel_port: tunnelInfo.tunnel_port,
-          ssh_tunnel_port: tunnelInfo.ssh_tunnel_port,
-          tunnel_public_key: tunnelInfo.tunnel_public_key,
-          tunnel_private_key: tunnelInfo.tunnel_private_key,
         };
         const nextMetadata = {
           ...(host.metadata ?? {}),
@@ -281,29 +275,11 @@ export default function init(router: Router) {
         token = created.token;
       }
       await revokePairingToken(tokenInfo.token_id);
-      let tunnelInfo:
-        | {
-            tunnel_port: number;
-            ssh_tunnel_port: number;
-            tunnel_private_key: string;
-          }
-        | undefined;
-      if (tokenInfo.host_id) {
-        const info = await ensureSelfHostTunnelInfo({
-          host_id: tokenInfo.host_id,
-        });
-        tunnelInfo = {
-          tunnel_port: info.tunnel_port,
-          ssh_tunnel_port: info.ssh_tunnel_port,
-          tunnel_private_key: info.tunnel_private_key,
-        };
-      }
       res.json({
         connector_id,
         connector_token: token,
         poll_interval_seconds: 10,
         launchpad: getLaunchpadOnPremConfig(mode),
-        ...(tunnelInfo ?? {}),
       });
     } catch (err) {
       logger.warn("pairing failed", err);

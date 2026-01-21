@@ -50,7 +50,7 @@ export async function createProjectHostProxyHandlers() {
     if (process.env.COCALC_MODE === "launchpad") {
       const mode = await getLaunchpadMode();
       if (mode === "onprem") {
-        const tunnelPort = host.metadata?.self_host?.tunnel_port;
+        const tunnelPort = host.metadata?.self_host?.http_tunnel_port;
         if (tunnelPort) {
           return `http://127.0.0.1:${tunnelPort}`;
         }
