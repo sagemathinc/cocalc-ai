@@ -11,7 +11,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "build": "pnpm exec tsc --build",
-    "test": "pnpm exec jest  --maxWorkers=1 --forceExit",
+    "test": "NODE_NO_WARNINGS=1 pnpm exec jest  --maxWorkers=1 --forceExit",
     "depcheck": "pnpm -w exec depcheck \"$PWD\"",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo"
   },
