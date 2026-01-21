@@ -11,7 +11,6 @@ export { getNames } from "@cocalc/server/accounts/get-name";
 import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "@cocalc/backend/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { uuid } from "@cocalc/util/misc";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -182,7 +181,7 @@ export async function setAdminAssignedMembership({
   }
   const pool = db();
   const assigned_at = new Date();
-  const assigned_by = account_id ?? uuid();
+  const assigned_by = account_id;
   await pool.async_query({
     query: `INSERT INTO admin_assigned_memberships
               (account_id, membership_class, assigned_by, assigned_at, expires_at, notes)
