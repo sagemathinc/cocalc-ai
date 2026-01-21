@@ -1,3 +1,12 @@
 # Regex patterns to skip when running check_doc_urls.py --all
 # One pattern per line. Lines starting with # are ignored.
 
+# Wikipedia links are stable; skip to avoid parser edge cases with parentheses.
+^https?://(www\.)?en\.wikipedia\.org/
+# Downdetector blocks automated checks (403), but links are valid in browsers.
+^https?://downdetector\.com/
+# OpenAI blocks automated checks (403) in CI.
+^https?://(www\.)?openai\.com/
+# Placeholder/example hosts in UI text; not real endpoints.
+^https?://minio\.server\.com/?$
+^https?://your\.ollama\.server(?::\d+)?/?

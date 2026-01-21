@@ -52,11 +52,7 @@ export default function Whiteboard({ customize }) {
                   Full featured online collaborative computational whiteboard
                 </Title>
                 <Paragraph>
-                  As explained in{" "}
-                  <A href="https://about.cocalc.com/2022/09/08/all-about-computational-whiteboard/">
-                    our blog
-                  </A>{" "}
-                  and{" "}
+                  As explained in our blog and{" "}
                   <A href="https://doc.cocalc.com/whiteboard.html">
                     documentation
                   </A>
@@ -154,11 +150,7 @@ export default function Whiteboard({ customize }) {
         >
           <Title level={1}>Now Available!</Title>
           <Paragraph style={{ fontSize: "14pt", margin: "15px" }}>
-            Read much more about the computational whiteboard in{" "}
-            <A href="https://about.cocalc.com/2022/09/08/all-about-computational-whiteboard/">
-              our blog
-            </A>{" "}
-            and{" "}
+            Read much more about the computational whiteboard in our blog and{" "}
             <A href="https://doc.cocalc.com/whiteboard.html">
               the documentation.
             </A>
