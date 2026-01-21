@@ -17,6 +17,10 @@ import {
   AllSiteSettingsCached as ServerSettings,
 } from "@cocalc/util/db-schema/types";
 import { site_settings_conf as CONF } from "@cocalc/util/schema";
+import {
+  decryptSettingValue,
+  encryptSettingValue,
+} from "./secret-settings";
 export type { ServerSettings };
 
 const L = getLogger("server:server-settings");
@@ -53,13 +57,24 @@ export async function getServerSettings(): Promise<ServerSettings> {
   const settings: ServerSettings = { _timestamp: Date.now() };
 
   const raw: { [key in AllSiteSettingsKeys]?: string } = {};
+  const pendingMigrations: { name: string; encrypted: string }[] = [];
   for (const row of rows) {
-    raw[row.name] = row.value;
+    const name = row.name as AllSiteSettingsKeys;
+    const { value, needsMigration } = await decryptSettingValue(
+      name,
+      row.value,
+    );
+    raw[name] = value;
+    if (needsMigration && value) {
+      const encrypted = await encryptSettingValue(name, value);
+      pendingMigrations.push({ name, encrypted });
+    }
   }
 
   // process values, including any post-processing.
   for (const row of rows) {
-    const { name, value } = row;
+    const name = row.name as AllSiteSettingsKeys;
+    const value = raw[name];
     const spec = CONF[name] ?? EXTRAS[name];
     // we only process values we know
     if (spec == null) continue;
@@ -75,6 +90,18 @@ export async function getServerSettings(): Promise<ServerSettings> {
           spec?.to_val != null ? spec.to_val(spec.default, raw) : spec.default;
       }
     }
+  }
+
+  if (pendingMigrations.length > 0) {
+    await Promise.all(
+      pendingMigrations.map(({ name, encrypted }) =>
+        pool.query("UPDATE server_settings SET value=$2 WHERE name=$1", [
+          name,
+          encrypted,
+        ]),
+      ),
+    );
+    resetServerSettingsCache();
   }
 
   cache.set(KEY, settings);

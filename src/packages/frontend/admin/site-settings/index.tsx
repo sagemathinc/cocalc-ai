@@ -25,7 +25,7 @@ import { EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { deep_copy, keys } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
-import { Data, IsReadonly, State } from "./types";
+import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
 import {
   toCustomOpenAIModel,
   toOllamaModel,
@@ -41,10 +41,12 @@ export default function SiteSettings({ close }) {
   const [state, setState] = useState<State>("load");
   const [error, setError] = useState<string>("");
   const [data, setData] = useState<Data | null>(null);
+  const [isSet, setIsSet] = useState<IsSet | null>(null);
   const [filterStr, setFilterStr] = useState<string>("");
   const [filterTag, setFilterTag] = useState<Tag | null>(null);
   const editedRef = useRef<Data | null>(null);
   const savedRef = useRef<Data | null>(null);
+  const clearSecretsRef = useRef<IsClearing>({});
   const [isReadonly, setIsReadonly] = useState<IsReadonly | null>(null);
   const update = () => {
     setData(deep_copy(editedRef.current));
@@ -60,7 +62,9 @@ export default function SiteSettings({ close }) {
     try {
       result = await query({
         query: {
-          site_settings: [{ name: null, value: null, readonly: null }],
+          site_settings: [
+            { name: null, value: null, readonly: null, is_set: null },
+          ],
         },
       });
     } catch (err) {
@@ -70,13 +74,17 @@ export default function SiteSettings({ close }) {
     }
     const data: { [name: string]: string } = {};
     const isReadonly: IsReadonly = {};
+    const isSet: IsSet = {};
     for (const x of result.query.site_settings) {
       data[x.name] = x.value;
       isReadonly[x.name] = !!x.readonly;
+      isSet[x.name] = !!x.is_set;
     }
     setState("edit");
     setData(data);
     setIsReadonly(isReadonly);
+    setIsSet(isSet);
+    clearSecretsRef.current = {};
     editedRef.current = deep_copy(data);
     savedRef.current = deep_copy(data);
     setDisableTests(false);
@@ -96,6 +104,7 @@ export default function SiteSettings({ close }) {
 
     const edited = editedRef.current[name];
     const saved = savedRef.current[name];
+    if (clearSecretsRef.current?.[name]) return true;
     return !isEqual(edited, saved);
   }
 
@@ -119,13 +128,25 @@ export default function SiteSettings({ close }) {
     if (data == null || editedRef.current == null || savedRef.current == null)
       return;
     for (const { name, value } of getModifiedSettings()) {
+      const spec = site_settings_conf[name] ?? EXTRAS[name];
+      const clearing = !!clearSecretsRef.current?.[name];
+      const outgoingValue = clearing ? "" : value;
       try {
         await query({
           query: {
-            site_settings: { name, value },
+            site_settings: { name, value: outgoingValue },
           },
         });
-        savedRef.current[name] = value;
+        savedRef.current[name] = outgoingValue;
+        if (clearing) {
+          clearSecretsRef.current[name] = false;
+        }
+        if (spec?.password && isSet != null) {
+          setIsSet((prev) => ({
+            ...(prev ?? {}),
+            [name]: outgoingValue !== "",
+          }));
+        }
       } catch (err) {
         setState("error");
         setError(err);
@@ -142,11 +163,16 @@ export default function SiteSettings({ close }) {
       <Paragraph>
         <ul>
           {getModifiedSettings().map(({ name, value }) => {
-            const label =
-              (site_settings_conf[name] ?? EXTRAS[name]).name ?? name;
+            const spec = site_settings_conf[name] ?? EXTRAS[name];
+            const label = spec?.name ?? name;
+            const displayValue = spec?.password
+              ? value
+                ? "[updated]"
+                : "[cleared]"
+              : value;
             return (
               <li key={name}>
-                <b>{label}</b>: <code>{value}</code>
+                <b>{label}</b>: <code>{displayValue}</code>
               </li>
             );
           })}
@@ -183,15 +209,27 @@ export default function SiteSettings({ close }) {
   async function saveSingleSetting(name: string): Promise<void> {
     if (data == null || editedRef.current == null || savedRef.current == null)
       return;
+    const spec = site_settings_conf[name] ?? EXTRAS[name];
     const value = editedRef.current[name];
+    const clearing = !!clearSecretsRef.current?.[name];
+    const outgoingValue = clearing ? "" : value;
     setState("save");
     try {
       await query({
         query: {
-          site_settings: { name, value },
+          site_settings: { name, value: outgoingValue },
         },
       });
-      savedRef.current[name] = value;
+      savedRef.current[name] = outgoingValue;
+      if (clearing) {
+        clearSecretsRef.current[name] = false;
+      }
+      if (spec?.password && isSet != null) {
+        setIsSet((prev) => ({
+          ...(prev ?? {}),
+          [name]: outgoingValue !== "",
+        }));
+      }
       setState("edit");
     } catch (err) {
       setState("error");
@@ -224,7 +262,16 @@ export default function SiteSettings({ close }) {
 
   function onChangeEntry(name: string, val: string) {
     if (editedRef.current == null) return;
+    clearSecretsRef.current[name] = false;
     editedRef.current[name] = val;
+    change();
+    update();
+  }
+
+  function onClearSecret(name: string) {
+    if (editedRef.current == null) return;
+    editedRef.current[name] = "";
+    clearSecretsRef.current[name] = true;
     change();
     update();
   }
@@ -333,6 +380,8 @@ export default function SiteSettings({ close }) {
                 name={name}
                 conf={conf}
                 data={data}
+                isSet={isSet}
+                isClearing={clearSecretsRef.current}
                 update={update}
                 isReadonly={isReadonly}
                 onChangeEntry={onChangeEntry}
@@ -340,13 +389,14 @@ export default function SiteSettings({ close }) {
                 isModified={isModified}
                 isHeader={isHeader(name)}
                 saveSingleSetting={saveSingleSetting}
+                onClearSecret={onClearSecret}
               />
             );
           }),
         )}
       </>
     );
-  }, [state, data, filterStr, filterTag]);
+  }, [state, data, isSet, filterStr, filterTag]);
 
   const activeFilter = !filterStr.trim() || filterTag;
 
