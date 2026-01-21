@@ -405,13 +405,13 @@ export const EXTRAS: SettingsExtras = {
   pii_retention: {
     name: "PII Retention",
     desc: "How long to keep personally identifiable information, after which the server automatically deletes certain database entries that contain PII.",
-    default: "never",
+    default: "12 month",
     // values must be understood by packages/hub/utils.ts pii_expire
     valid: [
-      "never",
       "30 days",
       "3 month",
       "6 month",
+      "12 month",
       "1 year",
       "2 years",
       "5 years",
