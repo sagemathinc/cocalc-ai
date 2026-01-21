@@ -26,7 +26,6 @@ interface MembershipTiersResponse {
 
 export default function MembershipBadge(): ReactElement | null {
   const account_id = useTypedRedux("account", "account_id");
-  const is_commercial = useTypedRedux("customize", "is_commercial");
   const [open, setOpen] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
@@ -76,7 +75,7 @@ export default function MembershipBadge(): ReactElement | null {
     }, {} as Record<string, MembershipTier>);
   }, [tiers]);
 
-  if (!is_commercial || !account_id) {
+  if (!account_id) {
     return null;
   }
 

@@ -4,6 +4,7 @@ import createSubscription from "./create-subscription";
 import { uuid } from "@cocalc/util/misc";
 import { db } from "@cocalc/database";
 import getPool from "@cocalc/database/pool";
+import membershipTiersQuery from "@cocalc/database/postgres/membership-tiers";
 import type { MembershipClass } from "@cocalc/util/db-schema/subscriptions";
 
 export async function createTestAccount(account_id: string) {
@@ -58,7 +59,7 @@ export async function createTestMembershipTier(opts: {
   price_monthly?: number;
   price_yearly?: number;
 }) {
-  await db().membershipTiers([], {
+  await membershipTiersQuery(db(), [], {
     id: opts.id,
     label: opts.id,
     store_visible: false,
@@ -69,7 +70,7 @@ export async function createTestMembershipTier(opts: {
     llm_limits: {},
     features: {},
     disabled: false,
-    notes: null,
+    notes: undefined,
   });
 }
 

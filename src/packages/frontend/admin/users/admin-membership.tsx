@@ -4,7 +4,16 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Button, DatePicker, Input, Select, Space, Spin, Typography } from "antd";
+import {
+  Button,
+  DatePicker,
+  Input,
+  Select,
+  Space,
+  Spin,
+  Typography,
+  message,
+} from "antd";
 import dayjs from "dayjs";
 import api from "@cocalc/frontend/client/api";
 import { ErrorDisplay, TimeAgo } from "@cocalc/frontend/components";
@@ -96,6 +105,10 @@ export function AdminMembership({ account_id }: { account_id: string }) {
         notes: notes.trim() ? notes.trim() : null,
       });
       await refresh();
+      message.success("Admin membership updated.");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("cocalc:membership-changed"));
+      }
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -109,6 +122,10 @@ export function AdminMembership({ account_id }: { account_id: string }) {
     try {
       await actions.clear_admin_membership(account_id);
       await refresh();
+      message.success("Admin membership cleared.");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("cocalc:membership-changed"));
+      }
     } catch (err) {
       setError(`${err}`);
     } finally {
