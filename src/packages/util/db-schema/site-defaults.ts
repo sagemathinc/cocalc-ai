@@ -116,7 +116,6 @@ export type SiteSettingsKeys =
   | "project_hosts_nebius_enabled"
   | "project_hosts_dns"
   | "launchpad_mode"
-  | "insecure_test_mode"
   | "samesite_remember_me"
   | "user_tracking";
 
@@ -861,14 +860,6 @@ export const site_settings_conf: SiteSettings = {
     valid: valid_dns_name_or_empty,
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
-  },
-  insecure_test_mode: {
-    name: "Insecure Test Mode",
-    desc: "Put this server in a highly insecure test mode that is suitable for evaluating CoCalc, but **CANNOT BE USED IN PRODUCTION**.",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-    tags: ["Security"],
   },
   samesite_remember_me: {
     name: "sameSite setting for remember_me authentication cookie",
