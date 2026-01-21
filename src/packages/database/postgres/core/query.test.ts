@@ -27,6 +27,8 @@ import { initEphemeralDatabase } from "@cocalc/database/pool";
 import { testCleanup } from "@cocalc/database/test-utils";
 import * as misc from "@cocalc/util/misc";
 
+jest.setTimeout(60000);
+
 const expectNoErr = (err: unknown) => {
   expect(err).toBeFalsy();
 };

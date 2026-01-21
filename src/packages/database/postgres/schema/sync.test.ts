@@ -6,12 +6,27 @@
 import { schemaNeedsSync } from "./sync";
 import { createIndexesQueries } from "./indexes";
 import { SCHEMA } from "@cocalc/util/schema";
-import type { DBSchema } from "./types";
+import type { DBSchema, TableSchema } from "./types";
 import { getClient } from "@cocalc/database/pool";
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   getClient: jest.fn(),
+}));
+
+jest.mock("./table", () => ({
+  __esModule: true,
+  primaryKeys: (table: string | { name?: string }) => {
+    const name = typeof table === "string" ? table : table?.name;
+    switch (name) {
+      case "embedding_cache":
+        return ["input_sha1"];
+      case "registration_tokens":
+        return ["token"];
+      default:
+        return [];
+    }
+  },
 }));
 
 type ColumnRow = {
@@ -28,15 +43,26 @@ type MockClient = {
   query: jest.Mock<Promise<QueryResult>, [string, ...any[]]>;
 };
 
-const openaiSchema: DBSchema = {
-  openai_embedding_cache: SCHEMA.openai_embedding_cache,
+const embeddingSchemaDef: TableSchema = {
+  name: "embedding_cache",
+  primary_key: "input_sha1",
+  fields: {
+    input_sha1: { type: "string" },
+    vector: { type: "array", pg_type: "TEXT[]" },
+    model: { type: "string" },
+    expire: { type: "timestamp" },
+  },
+  pg_indexes: ["expire"],
 };
 
-const openaiColumns: ColumnRow[] = [
+const embeddingSchema: DBSchema = {
+  embedding_cache: embeddingSchemaDef,
+};
+
+const embeddingColumns: ColumnRow[] = [
   {
     column_name: "input_sha1",
-    data_type: "character",
-    character_maximum_length: 40,
+    data_type: "text",
   },
   {
     column_name: "vector",
@@ -52,11 +78,11 @@ const openaiColumns: ColumnRow[] = [
   },
 ];
 
-const openaiIndexRows = createIndexesQueries(SCHEMA.openai_embedding_cache).map(
+const embeddingIndexRows = createIndexesQueries(embeddingSchemaDef).map(
   ({ name }) => ({ name }),
 );
 
-const openaiPrimaryKeyRows = [{ name: "input_sha1" }];
+const embeddingPrimaryKeyRows = [{ name: "input_sha1" }];
 
 const registrationTokensSchema: DBSchema = {
   registration_tokens: SCHEMA.registration_tokens,
@@ -120,31 +146,31 @@ describe("schemaNeedsSync column actions", () => {
 
   it("returns false when array column types match the schema", async () => {
     const client = createMockClient({
-      tableName: "openai_embedding_cache",
-      columnRows: openaiColumns,
-      indexRows: openaiIndexRows,
-      primaryKeyRows: openaiPrimaryKeyRows,
+      tableName: "embedding_cache",
+      columnRows: embeddingColumns,
+      indexRows: embeddingIndexRows,
+      primaryKeyRows: embeddingPrimaryKeyRows,
     });
     (getClient as jest.Mock).mockReturnValue(client);
 
-    const result = await schemaNeedsSync(openaiSchema);
+    const result = await schemaNeedsSync(embeddingSchema);
 
     expect(result).toBe(false);
   });
 
   it("returns true when a non-array column type mismatches", async () => {
-    const columnRows = openaiColumns.map((row) =>
+    const columnRows = embeddingColumns.map((row) =>
       row.column_name === "model" ? { ...row, data_type: "integer" } : row,
     );
     const client = createMockClient({
-      tableName: "openai_embedding_cache",
+      tableName: "embedding_cache",
       columnRows,
-      indexRows: openaiIndexRows,
-      primaryKeyRows: openaiPrimaryKeyRows,
+      indexRows: embeddingIndexRows,
+      primaryKeyRows: embeddingPrimaryKeyRows,
     });
     (getClient as jest.Mock).mockReturnValue(client);
 
-    const result = await schemaNeedsSync(openaiSchema);
+    const result = await schemaNeedsSync(embeddingSchema);
 
     expect(result).toBe(true);
   });

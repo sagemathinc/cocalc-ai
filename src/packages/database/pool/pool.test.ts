@@ -33,6 +33,36 @@ type PgMock = typeof import("pg") & {
   }) => void;
 };
 
+const originalEnv = {
+  COCALC_DB: process.env.COCALC_DB,
+  COCALC_TEST_USE_PGLITE: process.env.COCALC_TEST_USE_PGLITE,
+  COCALC_PGLITE_DATA_DIR: process.env.COCALC_PGLITE_DATA_DIR,
+};
+
+beforeAll(() => {
+  delete process.env.COCALC_DB;
+  delete process.env.COCALC_TEST_USE_PGLITE;
+  delete process.env.COCALC_PGLITE_DATA_DIR;
+});
+
+afterAll(() => {
+  if (originalEnv.COCALC_DB == null) {
+    delete process.env.COCALC_DB;
+  } else {
+    process.env.COCALC_DB = originalEnv.COCALC_DB;
+  }
+  if (originalEnv.COCALC_TEST_USE_PGLITE == null) {
+    delete process.env.COCALC_TEST_USE_PGLITE;
+  } else {
+    process.env.COCALC_TEST_USE_PGLITE = originalEnv.COCALC_TEST_USE_PGLITE;
+  }
+  if (originalEnv.COCALC_PGLITE_DATA_DIR == null) {
+    delete process.env.COCALC_PGLITE_DATA_DIR;
+  } else {
+    process.env.COCALC_PGLITE_DATA_DIR = originalEnv.COCALC_PGLITE_DATA_DIR;
+  }
+});
+
 jest.mock("@cocalc/backend/data", () => ({
   pgdatabase: "cocalc",
   pghost: "db-host:1234",
@@ -109,6 +139,9 @@ jest.mock("pg", () => {
   return {
     Pool,
     Client,
+    types: {
+      setTypeParser: jest.fn(),
+    },
     __reset: () => {
       poolInstances.length = 0;
       clientInstances.length = 0;

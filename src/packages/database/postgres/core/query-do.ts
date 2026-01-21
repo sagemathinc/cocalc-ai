@@ -463,9 +463,13 @@ export function doQuery(db: PostgreSQL, opts: QueryOptions): void {
   // needed at some point for debugging.
   //dbg("query='#{opts.query}', params=#{misc.to_json(opts.params)}")
   const runQuery = async (): Promise<void> => {
-    const client = await db._get_query_client();
+    const isListenQuery = /^\s*(listen|unlisten)\b/i.test(queryText);
+    const client = isListenQuery
+      ? await db._get_listen_client()
+      : await db._get_query_client();
     let released = false;
-    const shouldRelease = db._query_client !== client;
+    const shouldRelease =
+      db._query_client !== client && db._listen_client !== client;
     const releaseClient = (err?: unknown): void => {
       if (released || !shouldRelease) {
         return;

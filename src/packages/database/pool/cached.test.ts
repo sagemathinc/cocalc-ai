@@ -21,6 +21,7 @@ const loadCached = async () => {
   jest.doMock("./pool", () => ({
     __esModule: true,
     default: getPool,
+    shouldSkipEnsureExists: () => false,
   }));
 
   jest.doMock("@cocalc/backend/logger", () => {

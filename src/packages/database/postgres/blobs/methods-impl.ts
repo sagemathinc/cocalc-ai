@@ -192,7 +192,10 @@ export function save_blob(db: PostgreSQLType, opts: SaveBlobOpts) {
             query: "INSERT INTO blobs",
             values: {
               id: optsNormalized.uuid,
-              blob: "\\x" + blob.toString("hex"),
+              blob:
+                process.env.COCALC_DB === "pglite"
+                  ? blob
+                  : "\\x" + blob.toString("hex"),
               project_id: optsNormalized.project_id,
               account_id: optsNormalized.account_id,
               count: 0,
@@ -343,6 +346,9 @@ export function get_blob(db: PostgreSQLType, opts: GetBlobOpts) {
         } else if (x.blob != null) {
           // blob not expired and is in database
           ({ blob } = x);
+          if (blob != null && !Buffer.isBuffer(blob)) {
+            blob = Buffer.from(blob as any);
+          }
           return cb();
         } else if (x.gcloud) {
           if (COCALC_BLOB_STORE == null) {
