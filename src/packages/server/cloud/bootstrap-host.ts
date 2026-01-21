@@ -50,6 +50,10 @@ import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { getServerProvider } from "./providers";
 import {
+  getLaunchpadMode,
+  getLaunchpadOnPremConfig,
+} from "@cocalc/server/launchpad/mode";
+import {
   ensureCloudflareTunnelForHost,
   type CloudflareTunnel,
 } from "./cloudflare-tunnel";
@@ -212,6 +216,7 @@ export async function buildBootstrapScripts(
     conatPasswordCommand?: string;
     publicIpOverride?: string;
     allowEnvVarExpansion?: boolean;
+    launchpadBaseUrl?: string;
   } = {},
 ): Promise<BootstrapScripts> {
   const runtime = row.metadata?.runtime;
@@ -338,6 +343,39 @@ export async function buildBootstrapScripts(
     }
   }
 
+  const launchpadMode = await getLaunchpadMode();
+  const onPremConfig =
+    launchpadMode === "onprem" ? getLaunchpadOnPremConfig(launchpadMode) : null;
+  const selfHostMeta = metadata.self_host ?? {};
+  const tunnelPort = Number(selfHostMeta.tunnel_port);
+  const sshTunnelPort = Number(selfHostMeta.ssh_tunnel_port);
+  const tunnelPrivateKey =
+    typeof selfHostMeta.tunnel_private_key === "string"
+      ? selfHostMeta.tunnel_private_key
+      : undefined;
+  const tunnelKeyPath = `${dataDir}/secrets/launchpad/tunnel-key`;
+  let launchpadSshdHost: string | undefined;
+  if (launchpadMode === "onprem") {
+    const baseUrl = opts.launchpadBaseUrl ?? "";
+    if (baseUrl) {
+      try {
+        launchpadSshdHost = new URL(baseUrl).hostname;
+      } catch {
+        launchpadSshdHost = undefined;
+      }
+    }
+    if (!launchpadSshdHost) {
+      launchpadSshdHost = publicIp;
+    }
+  }
+  const onPremTunnelReady =
+    launchpadMode === "onprem" &&
+    !!launchpadSshdHost &&
+    Number.isFinite(onPremConfig?.sshd_port) &&
+    Number.isFinite(tunnelPort) &&
+    Number.isFinite(sshTunnelPort) &&
+    !!tunnelPrivateKey;
+
   const allowEnvVarExpansion =
     opts.allowEnvVarExpansion ?? publicIp.includes("$");
   const envLines = [
@@ -369,6 +407,16 @@ export async function buildBootstrapScripts(
     `DEBUG_CONSOLE=yes`,
     `COCALC_SSH_SERVER=0.0.0.0:${sshPort}`,
   ];
+  if (onPremTunnelReady) {
+    envLines.push(
+      `COCALC_LAUNCHPAD_SSHD_HOST=${launchpadSshdHost}`,
+      `COCALC_LAUNCHPAD_SSHD_PORT=${onPremConfig?.sshd_port}`,
+      `COCALC_LAUNCHPAD_SSHD_USER=${onPremConfig?.ssh_user ?? "user"}`,
+      `COCALC_LAUNCHPAD_TUNNEL_PORT=${tunnelPort}`,
+      `COCALC_LAUNCHPAD_SSH_TUNNEL_PORT=${sshTunnelPort}`,
+      `COCALC_LAUNCHPAD_TUNNEL_KEY_PATH=${tunnelKeyPath}`,
+    );
+  }
   if (tlsEnabled) {
     envLines.push(`COCALC_PROJECT_HOST_HTTPS_HOSTNAME=${tlsHostname}`);
   }
@@ -377,6 +425,16 @@ export async function buildBootstrapScripts(
   const envBlock = `cat <<${envQuote}${envToken}${envQuote} | sudo tee ${envFile} >/dev/null\n${envLines.join(
     "\n",
   )}\n${envToken}\n`;
+  const launchpadKeyScript = onPremTunnelReady
+    ? `
+echo "bootstrap: writing launchpad tunnel key"
+sudo mkdir -p ${dataDir}/secrets/launchpad
+sudo tee ${tunnelKeyPath} >/dev/null <<'EOF_COCALC_LAUNCHPAD_TUNNEL_KEY'
+${tunnelPrivateKey?.trim()}
+EOF_COCALC_LAUNCHPAD_TUNNEL_KEY
+sudo chmod 600 ${tunnelKeyPath}
+`
+    : "";
   const publicIpLookup = publicIp.includes("$")
     ? `
 echo "bootstrap: detecting public IP"
@@ -670,6 +728,7 @@ EOF_COCALC_CONTAINER_STORAGE_USER
 fi
 echo "bootstrap: writing project-host env to ${envFile}"
 ${envBlock}
+${launchpadKeyScript}
 `;
 
   if (opts.conatPasswordCommand) {
@@ -1005,6 +1064,7 @@ fi
     conatPasswordCommand,
     publicIpOverride: "$PUBLIC_IP",
     allowEnvVarExpansion: true,
+    launchpadBaseUrl: baseUrl,
   });
   if (!scripts.resolvedSeaUrl) {
     throw new Error("project host SEA URL not configured");

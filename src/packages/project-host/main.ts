@@ -43,6 +43,7 @@ import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
 import { handleDaemonCli } from "./daemon";
 import { startCopyWorker } from "./pending-copies";
+import { startOnPremTunnel } from "./onprem-tunnel";
 
 const logger = getLogger("project-host:main");
 
@@ -228,8 +229,10 @@ export async function main(
   // file server must be started AFTER master registration, since it connects
   // to master to get rustic backup config.
   logger.info("File-server (local btrfs + optional ssh proxy if enabled)");
+  let stopOnPremTunnel: (() => void) | undefined;
   try {
     await initFileServer({ client: conatClient });
+    stopOnPremTunnel = await startOnPremTunnel({ localHttpPort: port });
   } catch (err) {
     logger.error("FATAL: Failed to init file server", err);
     process.exit(1);
@@ -252,6 +255,7 @@ export async function main(
     stopMasterRegistration?.();
     stopReconciler?.();
     stopCopyWorker?.();
+    stopOnPremTunnel?.();
   };
   process.once("exit", close);
   ["SIGINT", "SIGTERM", "SIGQUIT"].forEach((sig) => process.once(sig, close));
