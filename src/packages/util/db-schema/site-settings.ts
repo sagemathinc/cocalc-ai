@@ -8,6 +8,7 @@
 
 import { site_settings_conf } from "./site-defaults";
 import { EXTRAS as site_settings_extras } from "./site-settings-extras";
+import { isSecretSetting } from "../secret-settings";
 import { keys } from "../misc";
 
 const site_settings_fields = keys(site_settings_conf).concat(
@@ -15,6 +16,42 @@ const site_settings_fields = keys(site_settings_conf).concat(
 );
 
 import { Table } from "./types";
+
+async function instead_of_query(db, opts: any, cb: Function): Promise<void> {
+  try {
+    const requested = opts.query?.name;
+    let names = site_settings_fields;
+    if (typeof requested === "string") {
+      names = [requested];
+    } else if (Array.isArray(requested) && requested.length > 0) {
+      names = requested;
+    }
+    db._query({
+      query: "SELECT name, value, readonly FROM server_settings",
+      where: { "name = ANY($)": names },
+      cb: (err, result) => {
+        if (err) {
+          cb(err);
+          return;
+        }
+        const rows = result.rows ?? [];
+        const data = rows.map((row) => {
+          const secret = isSecretSetting(row.name);
+          const value = row.value ?? "";
+          return {
+            name: row.name,
+            value: secret ? "" : value,
+            readonly: row.readonly ?? false,
+            is_set: secret ? value !== "" : false,
+          };
+        });
+        cb(undefined, data);
+      },
+    });
+  } catch (err) {
+    cb(err);
+  }
+}
 
 Table({
   name: "site_settings",
@@ -24,12 +61,14 @@ Table({
     user_query: {
       // NOTE: can set and get only fields in site_settings_fields, but not any others.
       get: {
+        instead_of_query,
         pg_where: [{ "name = ANY($)": site_settings_fields }],
         admin: true,
         fields: {
           name: null,
           value: null,
           readonly: null,
+          is_set: null,
         },
       },
       set: {

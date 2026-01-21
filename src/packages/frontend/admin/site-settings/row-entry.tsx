@@ -4,6 +4,7 @@
  */
 
 import humanizeList from "humanize-list";
+import { Button } from "antd";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import { SERVER_SETTINGS_ENV_PREFIX } from "@cocalc/util/consts";
 import { ConfigValid, RowType } from "@cocalc/util/db-schema/site-defaults";
@@ -25,6 +26,8 @@ export interface RowEntryInnerProps {
   value: string; // value is the rawValue (a string)
   valid?: ConfigValid;
   password: boolean;
+  isSet?: boolean;
+  isClearing?: boolean;
   multiline?: number;
   isReadonly: IsReadonly | null;
   onChangeEntry: (name: string, value: string) => void;
@@ -38,12 +41,15 @@ interface RowEntryProps extends RowEntryInnerProps {
   rowType?: RowType;
   onJsonEntryChange: (name: string, value?: string) => void;
   onChangeEntry: (name: string, value: string) => void;
+  onClearSecret?: (name: string) => void;
 }
 
 export function RowEntry({
   name,
   value,
   password,
+  isSet,
+  isClearing,
   displayed_val,
   valid,
   hint,
@@ -54,6 +60,7 @@ export function RowEntry({
   onChangeEntry,
   clearable,
   update,
+  onClearSecret,
 }: RowEntryProps) {
   if (isReadonly == null) return null; // typescript
 
@@ -100,6 +107,8 @@ export function RowEntry({
               value={value}
               valid={valid}
               password={password}
+              isSet={isSet}
+              isClearing={isClearing}
               multiline={multiline}
               onChangeEntry={onChangeEntry}
               isReadonly={isReadonly}
@@ -113,6 +122,26 @@ export function RowEntry({
               ) : undefined}
               {hint}
               <ReadOnly readonly={isReadonly[name]} />
+              {password && isSet && !value && !isClearing && (
+                <span> Stored (not shown).</span>
+              )}
+              {password && isClearing && (
+                <span> Will clear on save.</span>
+              )}
+              {password &&
+                isSet &&
+                !isReadonly[name] &&
+                onClearSecret &&
+                !isClearing && (
+                  <Button
+                    size="small"
+                    danger
+                    style={{ marginLeft: "8px" }}
+                    onClick={() => onClearSecret(name)}
+                  >
+                    Clear
+                  </Button>
+                )}
               {displayed_val != null && !password && (
                 <span>
                   {" "}
