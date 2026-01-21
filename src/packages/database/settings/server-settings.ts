@@ -73,7 +73,8 @@ export async function getServerSettings(): Promise<ServerSettings> {
 
   // process values, including any post-processing.
   for (const row of rows) {
-    const { name, value } = row;
+    const name = row.name as AllSiteSettingsKeys;
+    const value = raw[name];
     const spec = CONF[name] ?? EXTRAS[name];
     // we only process values we know
     if (spec == null) continue;
