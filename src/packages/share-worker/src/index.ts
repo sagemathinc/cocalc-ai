@@ -36,6 +36,7 @@ type R2ObjectBodyLike = R2ObjectHeadLike & {
 type ShareMeta = {
   share_id: string;
   scope: ShareScope;
+  org_id?: string | null;
   updated_at: string;
 };
 
@@ -142,6 +143,14 @@ export default {
         });
         if (!verified.ok) {
           return withCors(unauthorized(verified.error ?? "Invalid token"));
+        }
+        const validation = validateShareToken({
+          payload: verified.payload,
+          meta,
+          shareId: shareRoute.shareId,
+        });
+        if (!validation.ok) {
+          return withCors(unauthorized(validation.error ?? "Invalid token"));
         }
       }
 
@@ -641,4 +650,36 @@ async function verifyShareJwt({
   }
 
   return { ok: true, payload };
+}
+
+function validateShareToken({
+  payload,
+  meta,
+  shareId,
+}: {
+  payload: Record<string, unknown> | undefined;
+  meta: ShareMeta;
+  shareId: string;
+}): { ok: boolean; error?: string } {
+  if (!payload || typeof payload !== "object") {
+    return { ok: false, error: "Invalid token payload" };
+  }
+  const tokenShareId = payload.share_id;
+  if (typeof tokenShareId !== "string" || tokenShareId !== shareId) {
+    return { ok: false, error: "Token share mismatch" };
+  }
+  const tokenScope = payload.scope;
+  if (tokenScope !== meta.scope) {
+    return { ok: false, error: "Token scope mismatch" };
+  }
+  if (meta.scope === "org") {
+    const tokenOrgId = payload.org_id;
+    if (typeof tokenOrgId !== "string" || tokenOrgId.length === 0) {
+      return { ok: false, error: "Token org mismatch" };
+    }
+    if (!meta.org_id || tokenOrgId !== meta.org_id) {
+      return { ok: false, error: "Token org mismatch" };
+    }
+  }
+  return { ok: true };
 }

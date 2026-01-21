@@ -736,6 +736,10 @@ async function publishShare(
       progress: 82,
     });
 
+    if (opts.scope === "org" && !opts.org_id) {
+      throw new Error("org scope shares must include org_id");
+    }
+
     const {
       files: candidates,
       dirs,
@@ -902,6 +906,7 @@ async function publishShare(
       root_path: sharePath,
       root_kind: rootKind,
       scope: opts.scope,
+      org_id: opts.org_id ?? null,
       indexing_opt_in: opts.indexing_opt_in,
       share_region: opts.bucket.region ?? null,
       updated_at: createdAt,

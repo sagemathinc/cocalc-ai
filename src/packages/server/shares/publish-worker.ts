@@ -141,6 +141,7 @@ async function handlePublishOp(op: LroSummary): Promise<void> {
       path: share.path,
       scope: share.scope,
       indexing_opt_in: share.indexing_opt_in,
+      org_id: share.org_id ?? null,
       latest_manifest_id: share.latest_manifest_id,
       bucket,
       lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },

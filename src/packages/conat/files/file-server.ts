@@ -89,6 +89,7 @@ export interface SharePublishRequest {
   path: string;
   scope: "public" | "unlisted" | "authenticated" | "org";
   indexing_opt_in: boolean;
+  org_id?: string | null;
   latest_manifest_id?: string | null;
   bucket: ShareBucketConfig;
   lro?: LroRef;
