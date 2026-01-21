@@ -244,6 +244,37 @@ export async function user_search(opts: {
   return await webapp_client.users_client.user_search(opts);
 }
 
+export async function get_admin_assigned_membership(opts: {
+  user_account_id: string;
+}): Promise<
+  | {
+      account_id: string;
+      membership_class: string;
+      assigned_by: string;
+      assigned_at: Date;
+      expires_at?: Date | null;
+      notes?: string | null;
+    }
+  | undefined
+> {
+  return await webapp_client.users_client.getAdminAssignedMembership(opts);
+}
+
+export async function set_admin_assigned_membership(opts: {
+  user_account_id: string;
+  membership_class: string;
+  expires_at?: Date | null;
+  notes?: string | null;
+}): Promise<void> {
+  await webapp_client.users_client.setAdminAssignedMembership(opts);
+}
+
+export async function clear_admin_assigned_membership(opts: {
+  user_account_id: string;
+}): Promise<void> {
+  await webapp_client.users_client.clearAdminAssignedMembership(opts);
+}
+
 export async function project_websocket(project_id: string): Promise<any> {
   return await webapp_client.project_client.websocket(project_id);
 }

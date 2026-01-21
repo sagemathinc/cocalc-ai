@@ -133,6 +133,93 @@ export async function deletePassport(opts: {
   await delete_passport(db(), opts);
 }
 
+type AdminAssignedMembershipRow = {
+  account_id: string;
+  membership_class: string;
+  assigned_by: string;
+  assigned_at: Date;
+  expires_at?: Date | null;
+  notes?: string | null;
+};
+
+export async function getAdminAssignedMembership({
+  account_id,
+  user_account_id,
+}: {
+  account_id?: string;
+  user_account_id: string;
+}): Promise<AdminAssignedMembershipRow | undefined> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const pool = db();
+  const result = await pool.async_query({
+    query: `SELECT account_id, membership_class, assigned_by, assigned_at, expires_at, notes
+            FROM admin_assigned_memberships
+            WHERE account_id=$1`,
+    params: [user_account_id],
+  });
+  return result.rows?.[0] as AdminAssignedMembershipRow | undefined;
+}
+
+export async function setAdminAssignedMembership({
+  account_id,
+  user_account_id,
+  membership_class,
+  expires_at,
+  notes,
+}: {
+  account_id?: string;
+  user_account_id: string;
+  membership_class: string;
+  expires_at?: Date | null;
+  notes?: string | null;
+}): Promise<void> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const pool = db();
+  const assigned_at = new Date();
+  const assigned_by = account_id;
+  await pool.async_query({
+    query: `INSERT INTO admin_assigned_memberships
+              (account_id, membership_class, assigned_by, assigned_at, expires_at, notes)
+            VALUES ($1,$2,$3,$4,$5,$6)
+            ON CONFLICT (account_id)
+            DO UPDATE SET
+              membership_class=EXCLUDED.membership_class,
+              assigned_by=EXCLUDED.assigned_by,
+              assigned_at=EXCLUDED.assigned_at,
+              expires_at=EXCLUDED.expires_at,
+              notes=EXCLUDED.notes`,
+    params: [
+      user_account_id,
+      membership_class,
+      assigned_by,
+      assigned_at,
+      expires_at ?? null,
+      notes ?? null,
+    ],
+  });
+}
+
+export async function clearAdminAssignedMembership({
+  account_id,
+  user_account_id,
+}: {
+  account_id?: string;
+  user_account_id: string;
+}): Promise<void> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const pool = db();
+  await pool.async_query({
+    query: "DELETE FROM admin_assigned_memberships WHERE account_id=$1",
+    params: [user_account_id],
+  });
+}
+
 import { sync as salesloftSync } from "@cocalc/server/salesloft/sync";
 export async function adminSalesloftSync({
   account_id,
