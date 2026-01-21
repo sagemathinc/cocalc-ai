@@ -136,7 +136,7 @@ export function RowEntry({
                   <Button
                     size="small"
                     danger
-                    style={{ marginLeft: "8px" }}
+                    style={{ marginLeft: "8px", marginTop: "5px" }}
                     onClick={() => onClearSecret(name)}
                   >
                     Clear

@@ -7,7 +7,7 @@
 - [x] Prometheus metrics can be exposed at `/metrics` without any mention of auth/IP allow\-listing, which could leak internal data if publicly reachable. [`src/packages/util/db-schema/site-settings-extras.ts#L724`](./src/packages/util/db-schema/site-settings-extras.ts#L724)
 - [x] Pay\-as\-you\-go settings remain in admin UI \(some marked “NOT CURRENTLY USED”\), which is confusing now that PAYG is deprecated and could lead to misconfiguration. [`src/packages/util/db-schema/site-settings-extras.ts#L731`](./src/packages/util/db-schema/site-settings-extras.ts#L731)
 - [x] PII retention defaults to “never,” which can violate compliance expectations unless explicitly intended. [`src/packages/util/db-schema/site-settings-extras.ts#L409`](./src/packages/util/db-schema/site-settings-extras.ts#L409)
-- [ ] Private keys stored in DB via settings \(software license signing \+ control plane SSH\). If the DB isn’t encrypted/locked down, this is a sensitive\-secret risk; consider file\-only or secret manager. [`src/packages/util/db-schema/site-settings-extras.ts#L296`](./src/packages/util/db-schema/site-settings-extras.ts#L296), [`src/packages/util/db-schema/site-settings-extras.ts#L822`](./src/packages/util/db-schema/site-settings-extras.ts#L822)
+- [x] Private keys stored in DB via settings \(software license signing \+ control plane SSH\). If the DB isn’t encrypted/locked down, this is a sensitive\-secret risk; consider file\-only or secret manager. [`src/packages/util/db-schema/site-settings-extras.ts#L296`](./src/packages/util/db-schema/site-settings-extras.ts#L296), [`src/packages/util/db-schema/site-settings-extras.ts#L822`](./src/packages/util/db-schema/site-settings-extras.ts#L822)
 
 ## Secret Settings Hardening (Plan)
 
@@ -19,3 +19,4 @@
 - [ ] Make secrets write-only in the admin UI: do not return secret values to clients. Instead return `is_set` metadata and render inputs as “Set”/“Update” only. Update the `site_settings` query handler and the admin settings UI to avoid echoing secrets in confirmation dialogs.
 - [ ] Add basic audit logging for secret setting changes (name, actor, timestamp), without logging the value.
 - [ ] Tests: unit tests for encryption round-trip and masking, plus an integration check that secret values are not returned from the `site_settings` query.
+
