@@ -1641,7 +1641,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
   },
   "self-host": {
     id: "self-host",
-    label: "Self-hosted (Multipass)",
+    label: "Self-hosted VM",
     supports: {
       region: false,
       zone: false,
@@ -1694,6 +1694,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
     id: "none",
     label: "Local (manual setup)",
     localOnly: true,
+    featureFlagKey: "project_hosts_local_enabled",
     supports: {
       region: false,
       zone: false,
@@ -1761,7 +1762,11 @@ export const getProviderEnablement = (opts: {
   const enabled = {} as Record<HostProvider, boolean>;
   for (const entry of Object.values(PROVIDER_REGISTRY)) {
     if (entry.localOnly) {
-      enabled[entry.id] = opts.showLocal;
+      const flag = entry.featureFlagKey
+        ? opts.customize?.get?.(entry.featureFlagKey)
+        : undefined;
+      enabled[entry.id] =
+        opts.showLocal && (entry.featureFlagKey ? normalizeFlag(flag) : true);
     } else if (entry.featureFlagKey) {
       const flag = opts.customize?.get?.(entry.featureFlagKey);
       enabled[entry.id] = normalizeFlag(flag);

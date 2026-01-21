@@ -113,6 +113,7 @@ export type SiteSettingsKeys =
   | "project_hosts_google-cloud_enabled"
   | "project_hosts_hyperstack_enabled"
   | "project_hosts_lambda_enabled"
+  | "project_hosts_local_enabled"
   | "project_hosts_nebius_enabled"
   | "project_hosts_dns"
   | "launchpad_mode"
@@ -845,6 +846,14 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "Cloud"],
+  },
+  project_hosts_local_enabled: {
+    name: "Enable Project Hosts - Local (manual setup)",
+    desc: "Whether or not to include the local/manual project-host option (for development use).",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Project Hosts", "On-Prem"],
   },
   launchpad_mode: {
     name: "Launchpad Mode",
