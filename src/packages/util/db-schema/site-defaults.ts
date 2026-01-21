@@ -380,7 +380,7 @@ export const site_settings_conf: SiteSettings = {
   site_name: {
     name: "Site name",
     desc: "The heading name of your CoCalc site.",
-    default: "Open CoCalc",
+    default: "CoCalc Launchpad",
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
