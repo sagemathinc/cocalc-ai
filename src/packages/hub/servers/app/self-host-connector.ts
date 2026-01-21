@@ -3,9 +3,9 @@
 // VM lifecycle commands, and acknowledging results, all without inbound
 // access to the user’s machine.
 import express, { Router, type Request } from "express";
+
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/hub/logger";
-import getPort from "@cocalc/backend/get-port";
 import {
   activateConnector,
   createConnector,
@@ -17,7 +17,11 @@ import {
 import getAccount from "@cocalc/server/auth/get-account";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { enqueueCloudVmWorkOnce } from "@cocalc/server/cloud/db";
-import { getLaunchpadMode, getLaunchpadOnPremConfig } from "@cocalc/server/launchpad/mode";
+import {
+  getLaunchpadMode,
+  getLaunchpadOnPremConfig,
+} from "@cocalc/server/launchpad/mode";
+import { ensureSelfHostTunnelInfo } from "@cocalc/server/launchpad/onprem-sshd";
 
 const logger = getLogger("hub:servers:app:self-host-connector");
 
@@ -30,33 +34,6 @@ function extractToken(req: Request): string | undefined {
   if (!header) return undefined;
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim();
-}
-
-async function ensureTunnelPort(hostId: string): Promise<number> {
-  const { rows } = await pool().query<{
-    metadata: any;
-  }>(
-    `SELECT metadata
-     FROM project_hosts
-     WHERE id=$1 AND deleted IS NULL`,
-    [hostId],
-  );
-  const metadata = rows[0]?.metadata ?? {};
-  const selfHost = { ...(metadata.self_host ?? {}) };
-  if (selfHost.tunnel_port) {
-    return Number(selfHost.tunnel_port);
-  }
-  const port = await getPort();
-  selfHost.tunnel_port = port;
-  selfHost.tunnel_port_updated_at = new Date().toISOString();
-  const nextMetadata = { ...metadata, self_host: selfHost };
-  await pool().query(
-    `UPDATE project_hosts
-     SET metadata=$2, updated=NOW()
-     WHERE id=$1 AND deleted IS NULL`,
-    [hostId, nextMetadata],
-  );
-  return port;
 }
 
 async function maybeAutoStartHost(connector: {
@@ -76,9 +53,7 @@ async function maybeAutoStartHost(connector: {
     [connector.connector_id, connector.account_id],
   );
   if (!rows.length) return;
-  const host = rows.find(
-    (row) => row.metadata?.machine?.cloud === "self-host",
-  );
+  const host = rows.find((row) => row.metadata?.machine?.cloud === "self-host");
   if (!host || host.status !== "off") return;
   const nextMetadata = { ...(host.metadata ?? {}) };
   const selfHostMeta = { ...(nextMetadata.self_host ?? {}) };
@@ -156,7 +131,7 @@ export default function init(router: Router) {
         res.status(400).send("host is not self-hosted");
         return;
       }
-      const tunnel_port = await ensureTunnelPort(host.id);
+      const tunnelInfo = await ensureSelfHostTunnelInfo({ host_id: host.id });
       let connectorId = host.region;
       const attachConnector = async (id: string) => {
         const machine = host.metadata?.machine ?? {};
@@ -168,7 +143,10 @@ export default function init(router: Router) {
           ...(host.metadata?.self_host ?? {}),
           auto_start_pending: true,
           auto_start_requested_at: new Date().toISOString(),
-          tunnel_port,
+          tunnel_port: tunnelInfo.tunnel_port,
+          ssh_tunnel_port: tunnelInfo.ssh_tunnel_port,
+          tunnel_public_key: tunnelInfo.tunnel_public_key,
+          tunnel_private_key: tunnelInfo.tunnel_private_key,
         };
         const nextMetadata = {
           ...(host.metadata ?? {}),
@@ -303,14 +281,29 @@ export default function init(router: Router) {
         token = created.token;
       }
       await revokePairingToken(tokenInfo.token_id);
+      let tunnelInfo:
+        | {
+            tunnel_port: number;
+            ssh_tunnel_port: number;
+            tunnel_private_key: string;
+          }
+        | undefined;
+      if (tokenInfo.host_id) {
+        const info = await ensureSelfHostTunnelInfo({
+          host_id: tokenInfo.host_id,
+        });
+        tunnelInfo = {
+          tunnel_port: info.tunnel_port,
+          ssh_tunnel_port: info.ssh_tunnel_port,
+          tunnel_private_key: info.tunnel_private_key,
+        };
+      }
       res.json({
         connector_id,
         connector_token: token,
         poll_interval_seconds: 10,
         launchpad: getLaunchpadOnPremConfig(mode),
-        tunnel_port: tokenInfo.host_id
-          ? await ensureTunnelPort(tokenInfo.host_id)
-          : undefined,
+        ...(tunnelInfo ?? {}),
       });
     } catch (err) {
       logger.warn("pairing failed", err);
@@ -382,7 +375,14 @@ export default function init(router: Router) {
         return;
       }
       const action = String(req.body?.action ?? "");
-      const allowed = new Set(["create", "start", "stop", "delete", "status", "resize"]);
+      const allowed = new Set([
+        "create",
+        "start",
+        "stop",
+        "delete",
+        "status",
+        "resize",
+      ]);
       if (!allowed.has(action)) {
         res.status(400).send("invalid action");
         return;
@@ -397,10 +397,7 @@ export default function init(router: Router) {
         res.status(404).send("connector not found");
         return;
       }
-      if (
-        connectorAccount !== account_id &&
-        !(await isAdmin(account_id))
-      ) {
+      if (connectorAccount !== account_id && !(await isAdmin(account_id))) {
         res.status(403).send("not authorized");
         return;
       }

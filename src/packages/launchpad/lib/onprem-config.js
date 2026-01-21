@@ -48,7 +48,6 @@ function applyLaunchpadDefaults() {
   process.env.PORT ??= String(httpsPort);
   process.env.COCALC_HTTP_PORT ??= String(Math.max(basePort - 1, 1));
   process.env.COCALC_SSHD_PORT ??= String(basePort + 1);
-  process.env.COCALC_SSHPIPERD_PORT ??= String(basePort + 2);
 }
 
 module.exports = {
@@ -59,7 +58,6 @@ module.exports = {
       https_port: process.env.COCALC_HTTPS_PORT ?? process.env.PORT,
       http_port: process.env.COCALC_HTTP_PORT,
       sshd_port: process.env.COCALC_SSHD_PORT,
-      sshpiperd_port: process.env.COCALC_SSHPIPERD_PORT,
     };
     console.log("launchpad config:", summary);
   },

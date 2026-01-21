@@ -254,13 +254,13 @@ to make a binary with that version
 ---
 */
   ssh: {
-    desc: "statically linked compressed openssh binaries: ssh, scp, ssh-keygen",
+    desc: "statically linked compressed openssh binaries: ssh, ssh-keygen, sshd",
     path: join(binPath, "ssh"),
     platforms: ["linux"],
     VERSION: "OpenSSH_9.9p2",
     getVersion: "ssh -V 2>&1 | cut -f 1 -d ','",
     script: () =>
-      `curl -L https://github.com/sagemathinc/static-openssh-binaries/releases/download/${SPEC.ssh.VERSION}/openssh-static-$(uname -m)-small-${SPEC.ssh.VERSION}.tar.gz | tar -xz -C ${binPath} --strip-components=2 openssh/bin/ssh openssh/bin/ssh-keygen openssh/libexec/sftp-server`,
+      `curl -L https://github.com/sagemathinc/static-openssh-binaries/releases/download/${SPEC.ssh.VERSION}/openssh-static-$(uname -m)-small-${SPEC.ssh.VERSION}.tar.gz | tar -xz -C ${binPath} --strip-components=2 openssh/bin/ssh openssh/bin/ssh-keygen openssh/sbin/sshd openssh/libexec/sftp-server openssh/libexec/sshd-session`,
   },
 
   // See https://github.com/moparisthebest/static-curl/releases
@@ -310,6 +310,10 @@ export const sshpiper = SPEC.sshpiper.path;
 export const btm = SPEC.btm.path;
 export const dropbear = SPEC.dropbear.path;
 export const ssh = SPEC.ssh.path;
+export const sshd = join(binPath, "sshd");
+export const sshKeygen = join(binPath, "ssh-keygen");
+export const sftpServer = join(binPath, "sftp-server");
+export const sshdSession = join(binPath, "sshd-session");
 export const curl = SPEC.curl.path;
 
 type App = keyof typeof SPEC;

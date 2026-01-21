@@ -35,6 +35,7 @@ import initIdleTimeout from "@cocalc/server/projects/control/stop-idle-projects"
 import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
+import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
 import {
   cloudHostHandlers,
   startCloudCatalogWorker,
@@ -94,7 +95,6 @@ async function init_update_stats(): Promise<void> {
   await update();
 }
 
-
 async function initMetrics() {
   logger.info("Initializing Metrics Recorder...");
   MetricsRecorder.init();
@@ -149,6 +149,7 @@ async function startServer(): Promise<void> {
 
   // set server settings based on environment variables
   await load_server_settings_from_env(database);
+  await maybeStartLaunchpadOnPremServices();
 
   if (program.agentPort) {
     logger.info("Configure agent port");

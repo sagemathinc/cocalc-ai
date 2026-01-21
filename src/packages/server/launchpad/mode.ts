@@ -38,7 +38,7 @@ export type LaunchpadOnPremConfig = {
   mode: LaunchpadMode;
   https_port?: number;
   sshd_port?: number;
-  sshpiperd_port?: number;
+  ssh_user?: string;
   proxy_prefix?: string;
   sftp_root?: string;
 };
@@ -51,21 +51,22 @@ export function getLaunchpadOnPremConfig(
     10,
   );
   const sshdPort = Number.parseInt(process.env.COCALC_SSHD_PORT ?? "", 10);
-  const sshpiperdPort = Number.parseInt(
-    process.env.COCALC_SSHPIPERD_PORT ?? "",
-    10,
-  );
   const dataDir = process.env.COCALC_DATA_DIR ?? process.env.DATA;
   const sftpRoot =
     process.env.COCALC_SFTP_ROOT ??
     (dataDir ? `${dataDir}/backup-repo` : undefined);
   const proxyPrefix = process.env.COCALC_PROXY_PREFIX ?? "/host";
+  const sshUser =
+    process.env.COCALC_SSHD_USER ??
+    process.env.USER ??
+    process.env.LOGNAME ??
+    undefined;
 
   return {
     mode: modeOverride ?? normalizeMode(process.env.COCALC_LAUNCHPAD_MODE),
     https_port: Number.isFinite(httpsPort) ? httpsPort : undefined,
     sshd_port: Number.isFinite(sshdPort) ? sshdPort : undefined,
-    sshpiperd_port: Number.isFinite(sshpiperdPort) ? sshpiperdPort : undefined,
+    ssh_user: sshUser,
     proxy_prefix: proxyPrefix,
     sftp_root: sftpRoot,
   };

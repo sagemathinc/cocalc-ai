@@ -18,10 +18,8 @@ flowchart TD
   subgraph HubA["Hub A (Launchpad)"]
     HUB[Hub server<br/>HTTPS/WSS + proxy]
     SSHD[Embedded sshd<br/>reverse tunnels + SFTP]
-    SSHP[sshpiperd<br/>user SSH]
     REPO[(Rustic repo<br/>local dir)]
     HUB --> SSHD
-    HUB --> SSHP
     SSHD --> REPO
   end
 
@@ -30,7 +28,7 @@ flowchart TD
   end
 
   Users["User browsers"] -->|HTTPS/WSS| HUB
-  UsersSSH["User SSH clients"] -->|SSH| SSHP
+  UsersSSH["User SSH clients"] -->|SSH to host-specific port| SSHD
   PH -->|WSS conat| HUB
   PH -->|ssh -R tunnel + SFTP| SSHD
   HUB -->|proxy /host/<id>/| SSHD
@@ -39,11 +37,10 @@ flowchart TD
 - Single hub runs:
   - Launchpad hub server (HTTPS + WebSocket)
   - sshd (embedded, user-mode, for host reverse tunnels + SFTP)
-  - sshpiperd (user-mode, for end-user SSH to projects)
   - http-proxy-3 (or equivalent) for host WebSocket/HTTP proxying
 - Project hosts run:
-  - project-host daemon
-  - reverse SSH tunnel to hub’s embedded sshd
+  - project-host daemon (includes sshpiperd for user SSH)
+  - reverse SSH tunnel to hub’s embedded sshd (one port for HTTP proxy, one port for SSH)
   - outbound WSS to hub for conat
 - Backups:
   - rustic uses SFTP to hub sshd
@@ -55,10 +52,10 @@ flowchart TD
 
 - Host B only needs outbound access to Hub A:
   - HTTPS/WSS to hub port
-  - SSH to sshd port (reverse tunnel)
+  - SSH to sshd port (reverse tunnel; publishes two ports on hub)
 - Hub can reach Host B via the reverse tunnel for:
   - WebSocket proxy to project-host services
-  - sshpiperd proxy for project SSH access
+  - per-host SSH ports forwarded to host sshpiperd
 
 ## Configuration (Admin-Facing)
 
@@ -72,7 +69,6 @@ Proposed defaults (base port model):
 - COCALC_HTTPS_PORT=COCALC_BASE_PORT
 - COCALC_HTTP_PORT=COCALC_BASE_PORT-1 (optional; can be disabled)
 - COCALC_SSHD_PORT=COCALC_BASE_PORT+1 (embedded sshd for reverse tunnel + SFTP)
-- COCALC_SSHPIPERD_PORT=COCALC_BASE_PORT+2 (end-user SSH)
 - COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
 
 Optional overrides:
@@ -83,12 +79,12 @@ Optional overrides:
 - COCALC_SFTP_USER=cocalc (user name inside sshd)
 - COCALC_SFTP_ROOT=${COCALC_DATA_DIR}/backup-repo
 - Explicit port overrides (rare): COCALC_HTTPS_PORT, COCALC_HTTP_PORT,
-  COCALC_SSHD_PORT, COCALC_SSHPIPERD_PORT
+  COCALC_SSHD_PORT
 
 If admin wants standard ports, they can:
 
 - run under privileged port forwarding or
-- start with COCALC_HTTPS_PORT=443, COCALC_SSHD_PORT=22, COCALC_SSHPIPERD_PORT=22xx (requires permissions)
+- start with COCALC_HTTPS_PORT=443, COCALC_SSHD_PORT=22 (requires permissions)
 
 ## SSH Key & Access Model
 
@@ -96,11 +92,11 @@ Hub generates and manages:
 
 - host tunnel key (for host reverse tunnel)
 - sftp key (for rustic SFTP access)
-- user SSH keys for sshpiperd (existing behavior)
+- user SSH keys for sshpiperd (existing behavior on the host)
 
 sshd config highlights (user-mode safe):
 
-- GatewayPorts no (bind reverse ports to localhost only)
+- GatewayPorts clientspecified (allow public reverse ports per host)
 - AllowTcpForwarding yes for host tunnel keys
 - PermitOpen/permitlisten restrictions per key
 - ForceCommand internal-sftp -d <repo> for SFTP keys
@@ -108,11 +104,15 @@ sshd config highlights (user-mode safe):
 
 ## Host Tunnel Mapping
 
-Hub assigns a single local port per host to proxy all project-host traffic.
-Example:
+Hub assigns two ports per host:
 
-- Host B connects with ssh -N -R 127.0.0.1:<port>:127.0.0.1:<host_service_port>.
-- Hub proxy routes /host/<host_id>/... to localhost:<port>.
+- one for HTTP/WS proxy traffic
+- one for SSH (host sshpiperd)
+  Example:
+
+- Host B connects with ssh -N -R 0.0.0.0:<http_port>:127.0.0.1:<host_service_port>
+  and ssh -N -R 0.0.0.0:<ssh_port>:127.0.0.1:<host_sshpiperd_port>.
+- Hub proxy routes /host/<host_id>/... to localhost:<http_port>.
   - Optimization: if host and hub are on the same machine, skip SSH tunnel and
     proxy directly to localhost host_service_port.
 
@@ -130,24 +130,25 @@ Example:
 - Map env vars to config with defaults (base port derived ports).
 - Define and validate ports, data_dir, bind_host, proxy_prefix.
 
-### 2) Embedded sshd + sshpiperd Lifecycle
+### 2) Embedded sshd Lifecycle
 
-- Bundle sshd \+ sshpiperd binaries in Launchpad release.
-  - we setup [https://github.com/sagemathinc/static\-openssh\-binaries](https://github.com/sagemathinc/static-openssh-binaries)  for sshd static binaries
+- Bundle sshd binaries in Launchpad release.
+  - we setup [https://github.com/sagemathinc/static\-openssh\-binaries](https://github.com/sagemathinc/static-openssh-binaries) for sshd static binaries
 - On hub startup:
-  - create data\_dir/ssh/ for keys \+ configs
-  - render sshd\_config for:
+  - create data_dir/ssh/ for keys \+ configs
+  - render sshd_config for:
     - reverse tunnel keys
     - SFTP keys
-  - spawn sshd \+ sshpiperd as child processes
+  - spawn sshd as a child process
   - supervise \+ restart on crash
 
 ### 3) Reverse Tunnel Registration
 
 - Extend hub to allocate reverse_port per host.
 - Provide host with assigned port + sshd endpoint.
-- Host connects with ssh -N -R 127.0.0.1:<port>:127.0.0.1:<project_host_port>.
-- Hub stores mapping host_id -> port for proxy routing.
+- Host connects with ssh -N -R 0.0.0.0:<http_port>:127.0.0.1:<project_host_port>
+  and ssh -N -R 0.0.0.0:<ssh_port>:127.0.0.1:<host_sshpiperd_port>.
+- Hub stores mapping host_id -> (http_port, ssh_port) for proxy routing.
 
 ### 4) Proxy Integration
 
@@ -177,7 +178,6 @@ Example:
 
 - Hub exposes:
   - sshd running
-  - sshpiperd running
   - tunnel connectivity per host
   - proxy route test
   - SFTP write check
@@ -196,8 +196,8 @@ Example:
 ## Open Questions
 
 - Do we allow dynamic port changes after install, or require restart?
-  - ANSWER: let's require restart.  This should be rare, and we need to keep scope manageable.
-- Should LP\_HTTP\_PORT be disabled by default?
+  - ANSWER: let's require restart. This should be rare, and we need to keep scope manageable.
+- Should LP_HTTP_PORT be disabled by default?
   - ANSWER: yes and when enabled it should just be a redirect.
 - Do we need a simple built\-in UI to view tunnel status?
   - ANSWER: I think the current host drawer / host page can do this.
