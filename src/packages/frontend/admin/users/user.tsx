@@ -22,6 +22,7 @@ import { PaymentsButton } from "@cocalc/frontend/purchases/payments";
 import { CreatePaymentButton } from "./create-payment";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import Money from "./money";
+import { AdminMembership } from "./admin-membership";
 
 interface State {
   projects: boolean;
@@ -30,6 +31,7 @@ interface State {
   impersonate: boolean;
   password: boolean;
   ban: boolean;
+  membership: boolean;
 }
 
 type More =
@@ -38,7 +40,8 @@ type More =
   | "activity"
   | "impersonate"
   | "password"
-  | "ban";
+  | "ban"
+  | "membership";
 
 export function UserResult({
   first_name,
@@ -57,6 +60,7 @@ export function UserResult({
     impersonate: false,
     password: false,
     ban: false,
+    membership: false,
   });
 
   const renderCreated = () => {
@@ -146,6 +150,7 @@ export function UserResult({
             {renderMoreLink("ban")}
             {renderMoreLink("projects")}
             {renderMoreLink("purchases")}
+            {renderMoreLink("membership")}
           </Space>
           {state.impersonate && (
             <Impersonate
@@ -196,6 +201,11 @@ export function UserResult({
                 <div style={{ height: "15px" }} />
                 <CreatePaymentButton account_id={account_id} />
               </div>
+            </Card>
+          )}
+          {state.membership && (
+            <Card title="Membership">
+              <AdminMembership account_id={account_id} />
             </Card>
           )}
         </div>
