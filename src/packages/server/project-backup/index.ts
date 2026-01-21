@@ -4,6 +4,10 @@ import { join } from "path";
 import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import {
+  getLaunchpadMode,
+  getLaunchpadOnPremConfig,
+} from "@cocalc/server/launchpad/mode";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   DEFAULT_R2_REGION,
@@ -15,6 +19,9 @@ import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
 
 const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
+const DEFAULT_ONPREM_SFTP_KEY_PATH =
+  process.env.COCALC_LAUNCHPAD_SFTP_KEY_PATH ??
+  "/btrfs/data/secrets/launchpad/sftp-key";
 const BUCKET_PROVIDER = "r2";
 const BUCKET_PURPOSE = "project-backups";
 
@@ -382,6 +389,38 @@ export async function getBackupConfig({
   }
 
   await assertHostProjectAccess(host_id, project_id);
+
+  const launchpadMode = await getLaunchpadMode();
+  if (launchpadMode === "onprem") {
+    const config = getLaunchpadOnPremConfig(launchpadMode);
+    if (!config.sshd_port || !config.sftp_root) {
+      return { toml: "", ttl_seconds: 0 };
+    }
+    const sshdHost =
+      process.env.COCALC_SSHD_HOST ??
+      process.env.COCALC_LAUNCHPAD_SSHD_HOST;
+    if (!sshdHost) {
+      return { toml: "", ttl_seconds: 0 };
+    }
+    const root = project_id
+      ? `${config.sftp_root}/${DEFAULT_BACKUP_ROOT}/project-${project_id}`
+      : `${config.sftp_root}/${DEFAULT_BACKUP_ROOT}/host-${host_id}`;
+    const password = project_id ? await getProjectBackupSecret(project_id) : "";
+    const endpoint = `ssh://${sshdHost}:${config.sshd_port}`;
+    const toml = [
+      "[repository]",
+      'repository = "opendal:sftp"',
+      `password = \"${password}\"`,
+      "",
+      "[repository.options]",
+      `endpoint = \"${endpoint}\"`,
+      `user = \"${config.ssh_user ?? "user"}\"`,
+      `root = \"${root}\"`,
+      `key = \"${DEFAULT_ONPREM_SFTP_KEY_PATH}\"`,
+      "",
+    ].join("\n");
+    return { toml, ttl_seconds: DEFAULT_BACKUP_TTL_SECONDS };
+  }
 
   const hostRegion = rows[0]?.region ?? null;
   const hostR2Region = mapCloudRegionToR2Region(

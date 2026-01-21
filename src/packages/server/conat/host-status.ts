@@ -6,7 +6,11 @@ import {
   getLaunchpadMode,
   getLaunchpadOnPremConfig,
 } from "@cocalc/server/launchpad/mode";
-import { registerSelfHostTunnelKey } from "@cocalc/server/launchpad/onprem-sshd";
+import { mkdir } from "node:fs/promises";
+import {
+  registerSelfHostSftpKey,
+  registerSelfHostTunnelKey,
+} from "@cocalc/server/launchpad/onprem-sshd";
 
 const logger = getLogger("server:conat:host-status");
 
@@ -57,6 +61,52 @@ export async function initHostStatusService() {
           ssh_user: config.ssh_user ?? "user",
           http_tunnel_port: info.http_tunnel_port,
           ssh_tunnel_port: info.ssh_tunnel_port,
+        };
+      },
+      async registerOnPremSftpKey({ host_id, public_key }) {
+        if (!host_id || !public_key) {
+          throw Error("host_id and public_key are required");
+        }
+        const mode = await getLaunchpadMode();
+        if (mode !== "onprem") {
+          throw Error(`launchpad mode is '${mode}'`);
+        }
+        const config = getLaunchpadOnPremConfig(mode);
+        if (!config.sshd_port) {
+          throw Error("onprem sshd is not configured");
+        }
+        if (!config.sftp_root) {
+          throw Error("onprem sftp root is not configured");
+        }
+        const { rows } = await getPool().query<{ id: string }>(
+          `SELECT id
+           FROM project_hosts
+           WHERE id=$1 AND deleted IS NULL`,
+          [host_id],
+        );
+        if (!rows.length) {
+          throw Error("host not found");
+        }
+        await mkdir(config.sftp_root, { recursive: true });
+        await registerSelfHostSftpKey({
+          host_id,
+          public_key,
+        });
+        const sshdHost =
+          process.env.COCALC_SSHD_HOST ??
+          process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
+          "";
+        logger.info("onprem sftp key registered", {
+          host_id,
+          sshd_host: sshdHost,
+          sshd_port: config.sshd_port,
+          sftp_root: config.sftp_root,
+        });
+        return {
+          sshd_host: sshdHost,
+          sshd_port: config.sshd_port,
+          ssh_user: config.ssh_user ?? "user",
+          sftp_root: config.sftp_root,
         };
       },
       async reportProjectState({ project_id, state, host_id }) {

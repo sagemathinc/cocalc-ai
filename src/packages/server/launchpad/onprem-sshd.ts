@@ -170,6 +170,11 @@ type TunnelEntry = {
   tunnel_public_key: string | null;
 };
 
+type SftpEntry = {
+  host_id: string;
+  sftp_public_key: string | null;
+};
+
 function formatAuthorizedKey(entry: TunnelEntry): string | null {
   if (!entry.tunnel_public_key) {
     return null;
@@ -193,23 +198,50 @@ function formatAuthorizedKey(entry: TunnelEntry): string | null {
   return `${options.join(",")} ${entry.tunnel_public_key} host-${entry.host_id}`;
 }
 
+function formatSftpAuthorizedKey(
+  entry: SftpEntry,
+  sftpRoot?: string,
+): string | null {
+  if (!entry.sftp_public_key || !sftpRoot) {
+    return null;
+  }
+  const options = [
+    `command="${sftpServer} -d ${sftpRoot}"`,
+    "no-agent-forwarding",
+    "no-X11-forwarding",
+    "no-pty",
+    "no-port-forwarding",
+  ];
+  return `${options.join(",")} ${entry.sftp_public_key} host-${entry.host_id}-sftp`;
+}
+
 export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   const state = await startSshd();
   if (!state) {
     return;
   }
-    const { rows } = await pool().query<{
-      host_id: string;
-      http_tunnel_port: string | null;
-      ssh_tunnel_port: string | null;
-      tunnel_public_key: string | null;
-    }>(
-      `
+  const config = getLaunchpadOnPremConfig("onprem");
+  const sftpRoot = config.sftp_root;
+  if (!sftpRoot) {
+    logger.warn("onprem sftp disabled (missing COCALC_SFTP_ROOT)");
+  }
+  if (sftpRoot) {
+    await mkdir(sftpRoot, { recursive: true });
+  }
+  const { rows } = await pool().query<{
+    host_id: string;
+    http_tunnel_port: string | null;
+    ssh_tunnel_port: string | null;
+    tunnel_public_key: string | null;
+    sftp_public_key: string | null;
+  }>(
+    `
     SELECT id AS host_id,
            COALESCE(metadata->'self_host'->>'http_tunnel_port',
                     metadata->'self_host'->>'tunnel_port') AS http_tunnel_port,
            metadata->'self_host'->>'ssh_tunnel_port' AS ssh_tunnel_port,
-           metadata->'self_host'->>'tunnel_public_key' AS tunnel_public_key
+           metadata->'self_host'->>'tunnel_public_key' AS tunnel_public_key,
+           metadata->'self_host'->>'sftp_public_key' AS sftp_public_key
       FROM project_hosts
      WHERE deleted IS NULL
        AND metadata ? 'self_host'
@@ -229,9 +261,54 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
     if (line) {
       lines.push(line);
     }
+    const sftpLine = formatSftpAuthorizedKey(
+      { host_id: row.host_id, sftp_public_key: row.sftp_public_key },
+      sftpRoot,
+    );
+    if (sftpLine) {
+      lines.push(sftpLine);
+    }
   }
   const content = lines.join("\n") + (lines.length ? "\n" : "");
   await writeFile(state.authorizedKeysPath, content, { mode: 0o600 });
+}
+
+export async function registerSelfHostSftpKey(opts: {
+  host_id: string;
+  public_key: string;
+}): Promise<{ sftp_public_key: string }> {
+  const hostId = opts.host_id;
+  if (!opts.public_key) {
+    throw new Error("public_key is required");
+  }
+  const { rows } = await pool().query<{ metadata: any }>(
+    `SELECT metadata
+       FROM project_hosts
+      WHERE id=$1 AND deleted IS NULL`,
+    [hostId],
+  );
+  if (!rows.length) {
+    throw new Error("host not found");
+  }
+  const metadata = rows[0]?.metadata ?? {};
+  const selfHost = { ...(metadata.self_host ?? {}) };
+  let updated = false;
+  if (selfHost.sftp_public_key !== opts.public_key) {
+    selfHost.sftp_public_key = opts.public_key.trim();
+    selfHost.sftp_key_updated_at = new Date().toISOString();
+    updated = true;
+  }
+  if (updated) {
+    const nextMetadata = { ...metadata, self_host: selfHost };
+    await pool().query(
+      `UPDATE project_hosts
+         SET metadata=$2, updated=NOW()
+       WHERE id=$1 AND deleted IS NULL`,
+      [hostId, nextMetadata],
+    );
+  }
+  await refreshLaunchpadOnPremAuthorizedKeys();
+  return { sftp_public_key: selfHost.sftp_public_key };
 }
 
 export async function registerSelfHostTunnelKey(opts: {
