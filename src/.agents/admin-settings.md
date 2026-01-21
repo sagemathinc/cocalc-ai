@@ -1,0 +1,9 @@
+# Admin Settings Cleanup
+
+## Cleanup
+- sameSite cookie setting can be set to `none`, which removes a CSRF defense; consider removing or hiding unless explicitly in a safe on-prem dev mode. [`src/packages/util/db-schema/site-defaults.ts#L826`](./src/packages/util/db-schema/site-defaults.ts#L826)
+- Prometheus metrics can be exposed at `/metrics` without any mention of auth/IP allow-listing, which could leak internal data if publicly reachable. [`src/packages/util/db-schema/site-settings-extras.ts#L724`](./src/packages/util/db-schema/site-settings-extras.ts#L724)
+- Public share server and GitHub proxy settings are still configurable even though share-server is being deprecated for XSS risk; these settings could re-enable insecure paths. [`src/packages/util/db-schema/site-defaults.ts#L668`](./src/packages/util/db-schema/site-defaults.ts#L668), [`src/packages/util/db-schema/site-settings-extras.ts#L567`](./src/packages/util/db-schema/site-settings-extras.ts#L567)
+- Pay-as-you-go settings remain in admin UI (some marked “NOT CURRENTLY USED”), which is confusing now that PAYG is deprecated and could lead to misconfiguration. [`src/packages/util/db-schema/site-settings-extras.ts#L731`](./src/packages/util/db-schema/site-settings-extras.ts#L731)
+- PII retention defaults to “never,” which can violate compliance expectations unless explicitly intended. [`src/packages/util/db-schema/site-settings-extras.ts#L409`](./src/packages/util/db-schema/site-settings-extras.ts#L409)
+- Private keys stored in DB via settings (software license signing + control plane SSH). If the DB isn’t encrypted/locked down, this is a sensitive-secret risk; consider file-only or secret manager. [`src/packages/util/db-schema/site-settings-extras.ts#L296`](./src/packages/util/db-schema/site-settings-extras.ts#L296), [`src/packages/util/db-schema/site-settings-extras.ts#L822`](./src/packages/util/db-schema/site-settings-extras.ts#L822)
