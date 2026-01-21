@@ -8,23 +8,17 @@ concurrency:
 on:
   push:
     branches:
-      - master
+      - main
   pull_request:
     branches:
-      - master
+      - main
   workflow_dispatch:
     inputs:
       debug_enabled:
         type: boolean
-        description: "Run the build with tmate debugging enabled (https://github.com/marketplace/actions/debugging-with-tmate)"
+        description: "Run the build."
         required: false
         default: false
-
-env:
-  PGDATABASE: smc
-  PGUSER: smc
-  PGHOST: localhost
-  COCALC_MODE: "single-user"
 
 jobs:
   test:
@@ -44,20 +38,17 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Install python3 requests for checking doc links
-        run: sudo apt-get update && sudo apt-get install -y python3-requests
-
       - name: Install btrfs-progs for @cocalc/file-server
         run: sudo apt-get update && sudo apt-get install -y btrfs-progs
 
       - name: Set up Python venv and Jupyter kernel
         run: |
+          sudo apt-get update && sudo apt-get install -y python3
           python3 -m pip install --upgrade pip virtualenv
           python3 -m virtualenv venv
           source venv/bin/activate
-          pip install ipykernel
+          pip install ipykernel requests yapf
           python -m ipykernel install --prefix=./jupyter-local --name python3-local --display-name "Python 3 (Local)"
-
 
       - name: install pnpm
         uses: pnpm/action-setup@v4
@@ -65,17 +56,11 @@ jobs:
           version: 10
           run_install: false
 
+      - name: Configure pnpm store
+        run: pnpm config set store-dir ~/.pnpm-store
+
       - name: build
-        run: cd src && pnpm run make
+        run: cd src && pnpm build-dev
 
-      # This runs all the tests with text output and jest-junit reporters to generate junit.xml reports
-      # That test-github-ci target runs workspaces.py for testing, which in turn runs the depchecks
       - name: test
-        run: source venv/bin/activate && cd src && pnpm run test-github-ci --report
-
-      - name: upload test results
-        uses: actions/upload-artifact@v4  # upload test results
-        if: ${{ !cancelled() }}           # run this step even if previous step failed
-        with:
-          name: "test-results-node-${{ matrix.node-version }}"
-          path: 'src/packages/*/junit.xml'
+        run: source venv/bin/activate && cd src && pnpm test
