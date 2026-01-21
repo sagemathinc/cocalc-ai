@@ -10,7 +10,7 @@ export interface MembershipEntitlements {
 
 export interface MembershipResolution {
   class: MembershipClass;
-  source: "subscription" | "free";
+  source: "subscription" | "admin" | "free";
   entitlements: MembershipEntitlements;
   subscription_id?: number;
   expires?: Date;
