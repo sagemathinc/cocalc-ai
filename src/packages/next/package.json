@@ -25,8 +25,8 @@
   ],
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "build": "NEXT_TELEMETRY_DISABLED=1 pnpm patch-openapi && rm -rf .next && pnpm build-dev && NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS='--max_old_space_size=8000' next build && pnpm generate-openapi",
-    "build-dev": "pnpm patch-openapi && pnpm exec next telemetry disable && rm -rf dist && pnpm software && pnpm generate-api-v2-manifest && ../node_modules/.bin/tsc --build tsconfig-dist.json && pnpm generate-openapi",
+    "build": "NEXT_TELEMETRY_DISABLED=1 pnpm patch-openapi && rm -rf .next && pnpm build-dev && NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS='--max_old_space_size=8000' next build && COCALC_DB_SKIP_ENSURE_EXISTS=true pnpm generate-openapi",
+    "build-dev": "pnpm patch-openapi && pnpm exec next telemetry disable && rm -rf dist && pnpm software && pnpm generate-api-v2-manifest && ../node_modules/.bin/tsc --build tsconfig-dist.json && COCALC_DB_SKIP_ENSURE_EXISTS=true pnpm generate-openapi",
     "ts-build": "pnpm generate-api-v2-manifest && ../node_modules/.bin/tsc --build tsconfig-dist.json",
     "software": "bash ./software-inventory/setup.sh",
     "build-deps": "cd ../backend && pnpm build && cd ../util && pnpm build",

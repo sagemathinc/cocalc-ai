@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2021-2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2021-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -27,7 +27,7 @@ import { Pool, type QueryResult } from "pg";
 import getLogger from "@cocalc/backend/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 
-import getPool, { type PoolOptionInput } from "./pool";
+import getPool, { shouldSkipEnsureExists, type PoolOptionInput } from "./pool";
 
 const L = getLogger("db:pool:cached");
 
@@ -100,7 +100,8 @@ function normalizePoolOptions(opts?: PoolOptionInput): PoolOptions {
 }
 
 export default function getCachedPool(options?: PoolOptionInput) {
-  const { cacheTime, ensureExists = true } = normalizePoolOptions(options);
+  const { cacheTime, ensureExists = !shouldSkipEnsureExists() } =
+    normalizePoolOptions(options);
   if (!cacheTime) {
     return getPool({ ensureExists });
   }

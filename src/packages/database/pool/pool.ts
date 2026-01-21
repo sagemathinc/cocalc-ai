@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2025-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -43,6 +43,15 @@ export type PoolOptions = {
 };
 
 export type PoolOptionInput = CacheTime | PoolOptions | undefined;
+
+export function shouldSkipEnsureExists(): boolean {
+  const value = process.env.COCALC_DB_SKIP_ENSURE_EXISTS;
+  if (!value) {
+    return false;
+  }
+  const normalized = value.toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
 
 function normalizePoolOptions(opts?: PoolOptionInput): PoolOptions {
   if (typeof opts === "string") {
@@ -147,7 +156,8 @@ async function ensureDatabaseExists(): Promise<void> {
 }
 
 export default function getPool(options?: PoolOptionInput): Pool {
-  const { cacheTime, ensureExists = true } = normalizePoolOptions(options);
+  const { cacheTime, ensureExists = !shouldSkipEnsureExists() } =
+    normalizePoolOptions(options);
   if (cacheTime != null) {
     return getCachedPool({ cacheTime, ensureExists });
   }
@@ -249,7 +259,10 @@ export default function getPool(options?: PoolOptionInput): Pool {
 // that is returned from getTransactionClient()!  E.g., for unit testing
 // if you don't do this  you exhaust the limit of 2 on the pool size,
 // (see above) and everything hangs!
-export type IsolationLevel = "READ COMMITTED" | "REPEATABLE READ" | "SERIALIZABLE";
+export type IsolationLevel =
+  | "READ COMMITTED"
+  | "REPEATABLE READ"
+  | "SERIALIZABLE";
 
 export type TransactionOptions =
   | (PoolOptions & { isolationLevel?: IsolationLevel })
