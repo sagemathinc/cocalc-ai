@@ -1,0 +1,3 @@
+# Regex patterns to skip when running check_doc_urls.py --all
+# One pattern per line. Lines starting with # are ignored.
+

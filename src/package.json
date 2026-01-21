@@ -23,6 +23,7 @@
     "c": "LOGS=/tmp/ DEBUG='cocalc:*' ./scripts/c",
     "version-check": "cd packages && pnpm check-deps",
     "check-doc-urls": "cd scripts; python3 check_doc_urls.py",
+    "check-all-urls": "cd scripts; python3 check_doc_urls.py --all --react",
     "test:parallel": "unset DEBUG && pnpm run version-check && cd packages && pnpm run -r --parallel test",
     "test": "unset DEBUG && pnpm check-doc-urls && pnpm run depcheck && pnpm run version-check && ./workspaces.py test",
     "depcheck": "cd packages && pnpm run -r --workspace-concurrency=4 depcheck",
