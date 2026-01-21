@@ -7,16 +7,21 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Button,
   DatePicker,
+  Divider,
   Input,
   Select,
   Space,
   Spin,
+  Table,
+  Tag,
   Typography,
   message,
 } from "antd";
 import dayjs from "dayjs";
 import api from "@cocalc/frontend/client/api";
 import { ErrorDisplay, TimeAgo } from "@cocalc/frontend/components";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { MembershipDetails } from "@cocalc/conat/hub/api/purchases";
 import { actions } from "./actions";
 
 const { Text } = Typography;
@@ -49,6 +54,7 @@ export function AdminMembership({ account_id }: { account_id: string }) {
   const [error, setError] = useState<string>("");
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
   const [assignment, setAssignment] = useState<AdminAssignment | null>(null);
+  const [details, setDetails] = useState<MembershipDetails | null>(null);
   const [selectedTier, setSelectedTier] = useState<string | undefined>();
   const [expiresAt, setExpiresAt] = useState<dayjs.Dayjs | null>(null);
   const [notes, setNotes] = useState<string>("");
@@ -65,13 +71,41 @@ export function AdminMembership({ account_id }: { account_id: string }) {
       }));
   }, [tiers]);
 
+  const tierLabels = useMemo(() => {
+    return tiers.reduce((acc, tier) => {
+      acc[tier.id] = tier.label ?? tier.id;
+      return acc;
+    }, {} as Record<string, string>);
+  }, [tiers]);
+
+  const candidateRows = useMemo(() => {
+    const candidates = details?.candidates ?? [];
+    return candidates.map((candidate) => {
+      const selected =
+        details?.selected.class === candidate.class &&
+        details?.selected.source === candidate.source;
+      return {
+        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? "admin"}`,
+        tier: tierLabels[candidate.class] ?? candidate.class,
+        source: candidate.source === "subscription" ? "Subscription" : "Admin assigned",
+        priority: candidate.priority,
+        expires: candidate.expires,
+        subscription_id: candidate.subscription_id,
+        selected,
+      };
+    });
+  }, [details, tierLabels]);
+
   async function refresh() {
     setLoading(true);
     setError("");
     try {
-      const [assignmentResult, tiersResult] = await Promise.all([
+      const [assignmentResult, tiersResult, detailsResult] = await Promise.all([
         actions.get_admin_membership(account_id),
         api("purchases/get-membership-tiers"),
+        webapp_client.conat_client.hub.purchases.getMembershipDetails({
+          user_account_id: account_id,
+        }),
       ]);
       const tierData = tiersResult as MembershipTiersResponse;
       if (tierData?.error) {
@@ -80,6 +114,7 @@ export function AdminMembership({ account_id }: { account_id: string }) {
       setTiers(tierData?.tiers ?? []);
       const nextAssignment = (assignmentResult as AdminAssignment | undefined) ?? null;
       setAssignment(nextAssignment);
+      setDetails(detailsResult as MembershipDetails);
       setSelectedTier(nextAssignment?.membership_class ?? undefined);
       setExpiresAt(nextAssignment?.expires_at ? dayjs(nextAssignment.expires_at) : null);
       setNotes(nextAssignment?.notes ?? "");
@@ -213,6 +248,48 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                 assignments.
               </Text>
             </Space>
+          </div>
+          <Divider style={{ margin: "16px 0" }} />
+          <div>
+            <Text strong>Active membership sources</Text>
+            {candidateRows.length === 0 ? (
+              <div style={{ marginTop: "8px" }}>
+                <Text type="secondary">
+                  No active subscriptions or admin assignments.
+                </Text>
+              </div>
+            ) : (
+              <Table
+                style={{ marginTop: "8px" }}
+                size="small"
+                pagination={false}
+                dataSource={candidateRows}
+                columns={[
+                  {
+                    title: "Tier",
+                    dataIndex: "tier",
+                    render: (value, row) => (
+                      <Space>
+                        {value}
+                        {row.selected && <Tag color="blue">Selected</Tag>}
+                      </Space>
+                    ),
+                  },
+                  { title: "Source", dataIndex: "source" },
+                  { title: "Priority", dataIndex: "priority" },
+                  {
+                    title: "Expires",
+                    dataIndex: "expires",
+                    render: (value) => (value ? <TimeAgo date={value} /> : "Never"),
+                  },
+                  {
+                    title: "Subscription id",
+                    dataIndex: "subscription_id",
+                    render: (value) => value ?? "—",
+                  },
+                ]}
+              />
+            )}
           </div>
         </>
       )}

@@ -1,14 +1,14 @@
 import getPool from "@cocalc/database/pool";
 import type {
   MembershipClass,
+  MembershipCandidate,
+  MembershipDetails,
   MembershipEntitlements,
   MembershipResolution,
 } from "@cocalc/conat/hub/api/purchases";
 import { getMembershipTierMap, MembershipTierRecord } from "./tiers";
 
-function tierToEntitlements(
-  tier?: MembershipTierRecord,
-): MembershipEntitlements {
+function tierToEntitlements(tier?: MembershipTierRecord): MembershipEntitlements {
   if (!tier) return {};
   return {
     project_defaults: tier.project_defaults,
@@ -17,10 +17,10 @@ function tierToEntitlements(
   };
 }
 
-export async function resolveMembershipForAccount(
+async function buildMembershipCandidates(
   account_id: string,
-): Promise<MembershipResolution> {
-  const tiers = await getMembershipTierMap({ includeDisabled: true });
+  tiers: Record<string, MembershipTierRecord>,
+): Promise<MembershipCandidate[]> {
   const pool = getPool("medium");
   const [subResult, adminResult] = await Promise.all([
     pool.query(
@@ -44,14 +44,7 @@ export async function resolveMembershipForAccount(
     ),
   ]);
 
-  const candidates: Array<{
-    class: MembershipClass;
-    source: "subscription" | "admin";
-    priority: number;
-    entitlements: MembershipEntitlements;
-    subscription_id?: number;
-    expires?: Date;
-  }> = [];
+  const candidates: MembershipCandidate[] = [];
 
   const sub = subResult.rows[0];
   if (sub) {
@@ -81,6 +74,13 @@ export async function resolveMembershipForAccount(
     });
   }
 
+  return candidates;
+}
+
+function pickBestMembership(
+  candidates: MembershipCandidate[],
+  tiers: Record<string, MembershipTierRecord>,
+): MembershipResolution {
   if (candidates.length > 0) {
     const sourceRank = {
       subscription: 2,
@@ -108,4 +108,22 @@ export async function resolveMembershipForAccount(
     source: "free",
     entitlements: tierToEntitlements(tiers["free"]),
   };
+}
+
+export async function resolveMembershipDetailsForAccount(
+  account_id: string,
+): Promise<MembershipDetails> {
+  const tiers = await getMembershipTierMap({ includeDisabled: true });
+  const candidates = await buildMembershipCandidates(account_id, tiers);
+  return {
+    selected: pickBestMembership(candidates, tiers),
+    candidates,
+  };
+}
+
+export async function resolveMembershipForAccount(
+  account_id: string,
+): Promise<MembershipResolution> {
+  const details = await resolveMembershipDetailsForAccount(account_id);
+  return details.selected;
 }

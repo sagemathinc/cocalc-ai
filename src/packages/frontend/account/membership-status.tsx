@@ -6,10 +6,12 @@
 import {
   Alert,
   Button,
+  Collapse,
   Descriptions,
   Divider,
   Space,
   Tag,
+  Table,
   Typography,
 } from "antd";
 import { type ReactElement, useMemo, useState } from "react";
@@ -24,8 +26,12 @@ import { LLMUsageStatus } from "@cocalc/frontend/misc/llm-cost-estimation";
 import { labels } from "@cocalc/frontend/i18n";
 import { upgrades } from "@cocalc/util/upgrade-spec";
 import { capitalize, round2 } from "@cocalc/util/misc";
-import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
+import type {
+  MembershipDetails,
+  MembershipResolution,
+} from "@cocalc/conat/hub/api/purchases";
 import MembershipPurchaseModal from "./membership-purchase-modal";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const { Text } = Typography;
 
@@ -128,6 +134,7 @@ export function MembershipStatusPanel({
     null,
   );
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
+  const [details, setDetails] = useState<MembershipDetails | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
@@ -142,13 +149,15 @@ export function MembershipStatusPanel({
       setLoading(true);
       setError("");
       try {
-        const [membershipResult, tiersResult] = await Promise.all([
+        const [membershipResult, tiersResult, detailsResult] = await Promise.all([
           api("purchases/get-membership"),
           api("purchases/get-membership-tiers"),
+          webapp_client.conat_client.hub.purchases.getMembershipDetails({}),
         ]);
         if (!isMounted()) return;
         setMembership(membershipResult as MembershipResolution);
         setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
+        setDetails((detailsResult as MembershipDetails) ?? null);
       } catch (err) {
         if (!isMounted()) return;
         setError(`${err}`);
@@ -202,6 +211,25 @@ export function MembershipStatusPanel({
   const featureTags = Object.entries(features)
     .map(([key, value]) => formatFeatureTag(key, value))
     .filter((value): value is string => !!value);
+
+  const candidateRows = useMemo(() => {
+    const candidates = details?.candidates ?? [];
+    return candidates.map((candidate) => {
+      const selected =
+        details?.selected.class === candidate.class &&
+        details?.selected.source === candidate.source;
+      const tierLabel = tierById[candidate.class]?.label ?? candidate.class;
+      return {
+        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? "admin"}`,
+        tier: tierLabel,
+        source: candidate.source === "subscription" ? "Subscription" : "Admin assigned",
+        priority: candidate.priority,
+        expires: candidate.expires,
+        subscription_id: candidate.subscription_id,
+        selected,
+      };
+    });
+  }, [details, tierById]);
 
   const projectDefaultsItems = PROJECT_DEFAULT_KEYS.map((key) => {
     if (!(key in projectDefaults)) return null;
@@ -323,6 +351,52 @@ export function MembershipStatusPanel({
               )}
             </div>
           </div>
+
+          <Collapse
+            items={[
+              {
+                key: "membership-sources",
+                label: "Why this membership?",
+                children:
+                  candidateRows.length === 0 ? (
+                    <Text type="secondary">
+                      No active subscriptions or admin assignments.
+                    </Text>
+                  ) : (
+                    <Table
+                      size="small"
+                      pagination={false}
+                      dataSource={candidateRows}
+                      columns={[
+                        {
+                          title: "Tier",
+                          dataIndex: "tier",
+                          render: (value, row) => (
+                            <Space>
+                              {value}
+                              {row.selected && <Tag color="blue">Selected</Tag>}
+                            </Space>
+                          ),
+                        },
+                        { title: "Source", dataIndex: "source" },
+                        { title: "Priority", dataIndex: "priority" },
+                        {
+                          title: "Expires",
+                          dataIndex: "expires",
+                          render: (value) =>
+                            value ? <TimeAgo date={value} /> : "Never",
+                        },
+                        {
+                          title: "Subscription id",
+                          dataIndex: "subscription_id",
+                          render: (value) => value ?? "—",
+                        },
+                      ]}
+                    />
+                  ),
+              },
+            ]}
+          />
         </Space>
       )}
       <MembershipPurchaseModal
