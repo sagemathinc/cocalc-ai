@@ -22,7 +22,6 @@ import {
   displayJson,
   from_json,
   is_email_enabled,
-  onlyNonnegFloat,
   onlyPosFloat,
   only_booleans,
   only_cocalc_com,
@@ -234,9 +233,6 @@ export type SiteSettingsExtrasKeys =
   | "github_block"
   | "prometheus_metrics"
   | "pay_as_you_go_section"
-  | "pay_as_you_go_spending_limit"
-  | "pay_as_you_go_spending_limit_with_verified_email"
-  | "pay_as_you_go_spending_limit_with_credit"
   | "pay_as_you_go_min_payment"
   | "pay_as_you_go_max_project_upgrades"
   | "pay_as_you_go_price_project_upgrades"
@@ -736,15 +732,6 @@ export const EXTRAS: SettingsExtras = {
     type: "header",
     tags: ["Pay as you Go"],
   },
-  pay_as_you_go_spending_limit: {
-    name: "Initial Pay As You Go Spending Limit",
-    desc: "The initial default pay as you go spending limit that all accounts get, in dollars.",
-    default: "0",
-    show: only_commercial,
-    to_val: toFloat,
-    valid: onlyNonnegFloat,
-    tags: ["Pay as you Go"],
-  },
   pay_as_you_go_min_payment: {
     name: "Pay As You Go - Minimum Payment",
     desc: "The minimum transaction size that a user can pay towards their pay-as-you-go balance, in dollars.",
@@ -783,24 +770,6 @@ export const EXTRAS: SettingsExtras = {
     to_val: from_json,
     to_display: displayJson,
     valid: parsableJson,
-    tags: ["Pay as you Go"],
-  },
-  pay_as_you_go_spending_limit_with_verified_email: {
-    name: "Pay As You Go Spending Limit with Verified Email",
-    desc: "(NOT CURRENTLY USED) The pay as you go spending limit for accounts with a verified email address.",
-    default: "5",
-    show: only_commercial,
-    to_val: toFloat,
-    valid: onlyNonnegFloat,
-    tags: ["Pay as you Go"],
-  },
-  pay_as_you_go_spending_limit_with_credit: {
-    name: "Pay As You Go Spending Limit with Credit",
-    desc: "(NOT CURRENTLY USED) The pay as you go spending limit for accounts that have ever successfully had a positive credit.",
-    default: "15",
-    show: only_commercial,
-    to_val: toFloat,
-    valid: onlyNonnegFloat,
     tags: ["Pay as you Go"],
   },
   hyperstack_api_key: {
