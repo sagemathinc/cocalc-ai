@@ -818,9 +818,9 @@ export const site_settings_conf: SiteSettings = {
   },
   launchpad_mode: {
     name: "Launchpad Mode",
-    desc: "Select how Launchpad routes traffic. 'onprem' starts local SSH services and uses local backups; 'cloud' expects Cloudflare + bucket settings. Default is 'unset' to require explicit selection.",
+    desc: "Select how Launchpad routes traffic. 'local' starts local SSH services and uses local backups; 'cloud' expects Cloudflare + bucket settings. Default is 'unset' to require explicit selection.",
     default: "unset",
-    valid: ["unset", "onprem", "cloud"],
+    valid: ["unset", "local", "cloud", "onprem"],
     to_val: to_trimmed_str,
     tags: ["On-Prem", "Cloud"],
   },

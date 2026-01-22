@@ -3,7 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { X509Certificate } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
+import getLogger from "@cocalc/backend/logger";
+import { secrets } from "@cocalc/backend/data";
 import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
 import type { Strategy } from "@cocalc/util/types/sso";
 import { ServerSettings, getServerSettings } from "./server-settings";
@@ -14,6 +19,50 @@ export type { Customize };
 
 const fallback = (a?: string, b?: string): string =>
   typeof a == "string" && a.length > 0 ? a : `${b}`;
+
+const logger = getLogger("server:settings:customize");
+
+const normalizeLaunchpadMode = (
+  value?: string | null,
+  source?: string,
+): string | undefined => {
+  const raw = (value ?? "").trim();
+  if (!raw) return undefined;
+  const mode = raw.toLowerCase();
+  if (mode === "local" || mode === "cloud") return mode;
+  const message = `Invalid launchpad mode '${raw}'`;
+  logger.error(message, { source });
+  throw new Error(message);
+};
+
+const resolveLaunchpadSelfSigned = (): boolean => {
+  const explicit = process.env.COCALC_LAUNCHPAD_SELF_SIGNED;
+  if (explicit === "1") return true;
+  if (explicit === "0") return false;
+  const envCertPath = process.env.COCALC_LAUNCHPAD_HTTPS_CERT;
+  const fallbackPath = join(secrets, "launchpad-https", "cert.pem");
+  const certPath = envCertPath ?? (existsSync(fallbackPath) ? fallbackPath : undefined);
+  if (!certPath) return false;
+  try {
+    const certBytes = readFileSync(certPath);
+    const cert = new X509Certificate(certBytes);
+    return cert.issuer === cert.subject;
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err) {
+      const code = (err as { code?: string }).code;
+      if (code === "ENOENT") {
+        return false;
+      }
+    }
+    if (envCertPath || existsSync(certPath)) {
+      logger.debug("unable to detect self-signed launchpad cert", {
+        certPath,
+        err,
+      });
+    }
+    return false;
+  }
+};
 
 /*
 Create a Javascript object that describes properties of the server.
@@ -75,8 +124,16 @@ export default async function getCustomize(
       support: settings.support,
       supportVideoCall: settings.support_video_call,
       launchpad_mode:
-        process.env.COCALC_ONPREM === "1" ? "onprem" : settings.launchpad_mode,
-      launchpad_self_signed: process.env.COCALC_LAUNCHPAD_SELF_SIGNED === "1",
+        normalizeLaunchpadMode(
+          process.env.COCALC_DEPLOYMENT_MODE,
+          "COCALC_DEPLOYMENT_MODE",
+        ) ??
+        normalizeLaunchpadMode(
+          process.env.COCALC_LAUNCHPAD_MODE,
+          "COCALC_LAUNCHPAD_MODE",
+        ) ??
+        normalizeLaunchpadMode(settings.launchpad_mode, "settings.launchpad_mode"),
+      launchpad_self_signed: resolveLaunchpadSelfSigned(),
 
       // Is important for invite emails, password reset, etc. (e.g., so we can construct a url to our site).
       // This *can* start with http:// to explicitly use http instead of https, and can end

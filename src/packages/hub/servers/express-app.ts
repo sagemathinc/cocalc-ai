@@ -105,10 +105,7 @@ export default async function init(opts: Options): Promise<{
   router.use("/robots.txt", initRobots());
 
   // setup the analytics.js endpoint (skip for launchpad/minimal modes)
-  if (
-    process.env.COCALC_MODE !== "launchpad" &&
-    !process.env.COCALC_DISABLE_ANALYTICS
-  ) {
+  if (!isLaunchpadMode() && !process.env.COCALC_DISABLE_ANALYTICS) {
     const analyticsModule = lazyRequire(join(__dirname, "..", "analytics")) as {
       initAnalytics?: (router: express.Router, db: any) => Promise<void>;
     };

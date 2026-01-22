@@ -223,10 +223,9 @@ export async function buildBootstrapScripts(
   const sshUser = runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
   const providerId = normalizeProviderId(machine.cloud);
   const launchpadMode = await getLaunchpadMode();
-  const isOnPrem =
-    launchpadMode === "onprem" || process.env.COCALC_ONPREM === "1";
+  const isLocalMode = launchpadMode === "local";
   const isSelfHost = providerId === "self-host";
-  const useOnPremSettings = isOnPrem && isSelfHost;
+  const useOnPremSettings = isLocalMode && isSelfHost;
   const publicIp = opts.publicIpOverride ?? runtime?.public_ip ?? "";
   if (!publicIp && !useOnPremSettings) {
     throw new Error("bootstrap requires public_ip");

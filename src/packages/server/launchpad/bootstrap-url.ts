@@ -38,8 +38,8 @@ export async function resolveLaunchpadBootstrapUrl(opts?: {
   fallbackProtocol?: string | null;
 }): Promise<BootstrapBase> {
   const mode = await getLaunchpadMode();
-  const onprem = process.env.COCALC_ONPREM === "1" || mode === "onprem";
-  if (!onprem) {
+  const localMode = mode === "local";
+  if (!localMode) {
     return { baseUrl: await siteURL() };
   }
   const host = resolveOnPremHost(opts?.fallbackHost);
@@ -52,7 +52,7 @@ export async function resolveLaunchpadBootstrapUrl(opts?: {
   } else {
     protocol = caCert ? "https" : "http";
     if (!caCert) {
-      logger.warn("launchpad onprem bootstrap using http (no TLS cert found)", {
+      logger.warn("launchpad local bootstrap using http (no TLS cert found)", {
         host,
         port,
       });

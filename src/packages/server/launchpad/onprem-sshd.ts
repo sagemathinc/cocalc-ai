@@ -13,9 +13,13 @@ import {
   sshKeygen as bundledSshKeygen,
   sshd as bundledSshd,
 } from "@cocalc/backend/sandbox/install";
-import { getLaunchpadMode, getLaunchpadOnPremConfig } from "./mode";
+import {
+  getLaunchpadMode,
+  getLaunchpadLocalConfig,
+  isLaunchpadProduct,
+} from "./mode";
 
-const logger = getLogger("launchpad:onprem:sshd");
+const logger = getLogger("launchpad:local:sshd");
 
 type SshdState = {
   sshdDir: string;
@@ -157,26 +161,25 @@ async function ensureAuthorizedKeysPath(path: string): Promise<void> {
 
 async function startSshd(): Promise<SshdState | null> {
   const mode = await getLaunchpadMode();
-  const onprem =
-    process.env.COCALC_ONPREM === "1" || mode === "onprem";
-  if (!onprem) {
+  const localMode = mode === "local";
+  if (!localMode) {
     return null;
   }
-  if (process.env.COCALC_MODE !== "launchpad") {
-    logger.warn("starting onprem sshd outside launchpad mode", {
-      mode: process.env.COCALC_MODE,
+  if (!isLaunchpadProduct()) {
+    logger.warn("starting local network sshd outside launchpad product", {
+      product: process.env.COCALC_PRODUCT,
     });
   }
   if (sshdState) {
     return sshdState;
   }
-  const config = getLaunchpadOnPremConfig("onprem");
+  const config = getLaunchpadLocalConfig("local");
   if (!config.sshd_port) {
-    logger.warn("onprem sshd disabled (missing COCALC_SSHD_PORT)");
+    logger.warn("local sshd disabled (missing COCALC_SSHD_PORT)");
     return null;
   }
   const sshBins = await resolveSshBins();
-  logger.info("onprem sshd binary selection", {
+  logger.info("local sshd binary selection", {
     source: sshBins.source,
     sshd: sshBins.sshdPath,
     sftp: sshBins.sftpServerPath,
@@ -205,7 +208,7 @@ async function startSshd(): Promise<SshdState | null> {
     PATH: `${dirname(sshBins.sshBinaryPath)}:${process.env.PATH ?? ""}`,
   };
   const args = ["-D", "-e", "-f", configPath];
-  logger.info("starting onprem sshd", {
+  logger.info("starting local sshd", {
     port: config.sshd_port,
     sshUser,
     configPath,
@@ -218,7 +221,7 @@ async function startSshd(): Promise<SshdState | null> {
     logger.debug(chunk.toString());
   });
   child.on("exit", (code, signal) => {
-    logger.error("onprem sshd exited", { code, signal });
+    logger.error("local sshd exited", { code, signal });
   });
   sshdState = { sshdDir, authorizedKeysPath, child };
   return sshdState;
@@ -281,10 +284,10 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   if (!state) {
     return;
   }
-  const config = getLaunchpadOnPremConfig("onprem");
+  const config = getLaunchpadLocalConfig("local");
   const sftpRoot = config.sftp_root;
   if (!sftpRoot) {
-    logger.warn("onprem sftp disabled (missing COCALC_SFTP_ROOT)");
+    logger.warn("local sftp disabled (missing COCALC_SFTP_ROOT)");
   }
   if (sftpRoot) {
     await mkdir(sftpRoot, { recursive: true });
@@ -396,11 +399,6 @@ export async function registerSelfHostTunnelKey(opts: {
   const metadata = rows[0]?.metadata ?? {};
   const selfHost = { ...(metadata.self_host ?? {}) };
   let updated = false;
-  if (!selfHost.http_tunnel_port && selfHost.tunnel_port) {
-    selfHost.http_tunnel_port = selfHost.tunnel_port;
-    delete selfHost.tunnel_port;
-    updated = true;
-  }
   if (!selfHost.http_tunnel_port) {
     selfHost.http_tunnel_port = await getPort();
     updated = true;

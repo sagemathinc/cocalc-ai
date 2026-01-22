@@ -4,6 +4,7 @@ import {
 } from "@cocalc/backend/auth/cookie-names";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getLaunchpadMode, isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
 import Cookies from "cookies";
 
 // 6 months by default, but sometimes (e.g., impersonate) is MUCH shorter.
@@ -28,10 +29,9 @@ async function setRememberMeCookie({ req, res, account_id, maxAge }) {
   const { value } = await createRememberMeCookie(account_id, maxAge / 1000);
   const cookies = new Cookies(req, res);
   const { samesite_remember_me } = await getServerSettings();
-  const onprem =
-    process.env.COCALC_ONPREM === "1" ||
-    process.env.COCALC_LAUNCHPAD_MODE === "onprem";
-  const sameSite = onprem ? "lax" : samesite_remember_me;
+  const launchpadMode = await getLaunchpadMode();
+  const isLocalLaunchpad = isLaunchpadProduct() && launchpadMode === "local";
+  const sameSite = isLocalLaunchpad ? "lax" : samesite_remember_me;
   cookies.set(REMEMBER_ME_COOKIE_NAME, value, {
     maxAge,
     sameSite,

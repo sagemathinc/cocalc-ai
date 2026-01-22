@@ -130,7 +130,7 @@ export const useHostsPageViewModel = () => {
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const launchpadMode = useTypedRedux("customize", "launchpad_mode");
   const launchpadSelfSigned = useTypedRedux("customize", "launchpad_self_signed");
-  const onpremMode = launchpadMode === "onprem";
+  const onpremMode = launchpadMode === "local";
   const connectorInsecure = onpremMode && !!launchpadSelfSigned;
   const flags = useHostFeatureFlags();
   const [showAdmin, setShowAdmin] = React.useState(false);

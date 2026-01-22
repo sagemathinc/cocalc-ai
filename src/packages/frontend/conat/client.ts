@@ -194,7 +194,7 @@ export class ConatClient extends EventEmitter {
     }
     const customize = redux.getStore("customize");
     const launchpadMode = customize?.get?.("launchpad_mode");
-    if (launchpadMode === "onprem" && typeof window !== "undefined") {
+    if (launchpadMode === "local" && typeof window !== "undefined") {
       const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
       return `${window.location.origin}${basePath}/${project_id}`;
     }

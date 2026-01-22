@@ -1,8 +1,56 @@
+import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
-export type LaunchpadMode = "unset" | "onprem" | "cloud";
+const logger = getLogger("server:launchpad:mode");
 
-const VALID_MODES: LaunchpadMode[] = ["unset", "onprem", "cloud"];
+export type CocalcProduct = "plus" | "launchpad" | "rocket";
+export type LaunchpadMode = "unset" | "local" | "cloud";
+
+const VALID_PRODUCTS: CocalcProduct[] = ["plus", "launchpad", "rocket"];
+const VALID_MODES: LaunchpadMode[] = ["unset", "local", "cloud"];
+
+function normalizeProduct(value?: string | null): CocalcProduct | undefined {
+  const raw = (value ?? "").trim();
+  if (!raw) return undefined;
+  const product = raw.toLowerCase();
+  if ((VALID_PRODUCTS as string[]).includes(product)) {
+    return product as CocalcProduct;
+  }
+  throw new Error(`Invalid COCALC_PRODUCT '${raw}'`);
+}
+
+let cachedProduct: CocalcProduct | undefined;
+let warnedProduct = false;
+let warnedLegacyMode = false;
+
+export function getCocalcProduct(): CocalcProduct {
+  if (cachedProduct) return cachedProduct;
+  const envProduct = normalizeProduct(process.env.COCALC_PRODUCT);
+  if (envProduct) {
+    cachedProduct = envProduct;
+    return envProduct;
+  }
+  if (process.env.COCALC_MODE && !warnedLegacyMode) {
+    warnedLegacyMode = true;
+    logger.warn("COCALC_MODE is deprecated and ignored; use COCALC_PRODUCT", {
+      mode: process.env.COCALC_MODE,
+    });
+  }
+  if (!warnedProduct) {
+    warnedProduct = true;
+    logger.warn("COCALC_PRODUCT not set; defaulting to plus");
+  }
+  cachedProduct = "plus";
+  return cachedProduct;
+}
+
+export function isLaunchpadProduct(): boolean {
+  return getCocalcProduct() === "launchpad";
+}
+
+export function isRocketProduct(): boolean {
+  return getCocalcProduct() === "rocket";
+}
 
 function normalizeMode(value?: string | null): LaunchpadMode {
   const mode = (value ?? "").trim().toLowerCase();
@@ -12,40 +60,51 @@ function normalizeMode(value?: string | null): LaunchpadMode {
   return "unset";
 }
 
+let warnedLegacyDeployment = false;
+
 export async function getLaunchpadMode(): Promise<LaunchpadMode> {
-  const envMode = process.env.COCALC_LAUNCHPAD_MODE;
+  const envMode = process.env.COCALC_DEPLOYMENT_MODE;
   if (envMode) {
     return normalizeMode(envMode);
+  }
+  const legacyEnv = process.env.COCALC_LAUNCHPAD_MODE;
+  if (legacyEnv) {
+    if (!warnedLegacyDeployment) {
+      warnedLegacyDeployment = true;
+      logger.warn("COCALC_LAUNCHPAD_MODE is deprecated; use COCALC_DEPLOYMENT_MODE", {
+        mode: legacyEnv,
+      });
+    }
+    return normalizeMode(legacyEnv);
   }
   const settings = await getServerSettings();
   return normalizeMode(settings.launchpad_mode);
 }
 
 export async function requireLaunchpadModeSelected(): Promise<LaunchpadMode> {
-  if (process.env.COCALC_MODE !== "launchpad") {
+  if (!isLaunchpadProduct() && !isRocketProduct()) {
     return "cloud";
   }
   const mode = await getLaunchpadMode();
   if (mode === "unset") {
     throw new Error(
-      "Launchpad mode not selected. Set Admin Settings → Launchpad Mode or COCALC_LAUNCHPAD_MODE.",
+      "Launchpad mode not selected. Set Admin Settings → Launchpad Mode or COCALC_DEPLOYMENT_MODE.",
     );
   }
   return mode;
 }
 
-export type LaunchpadOnPremConfig = {
+export type LaunchpadLocalConfig = {
   mode: LaunchpadMode;
   https_port?: number;
   sshd_port?: number;
   ssh_user?: string;
-  proxy_prefix?: string;
   sftp_root?: string;
 };
 
-export function getLaunchpadOnPremConfig(
+export function getLaunchpadLocalConfig(
   modeOverride?: LaunchpadMode,
-): LaunchpadOnPremConfig {
+): LaunchpadLocalConfig {
   const basePortRaw =
     process.env.COCALC_BASE_PORT ??
     process.env.COCALC_HTTPS_PORT ??
@@ -67,7 +126,6 @@ export function getLaunchpadOnPremConfig(
   const sftpRoot =
     process.env.COCALC_SFTP_ROOT ??
     (dataDir ? `${dataDir}/backup-repo` : undefined);
-  const proxyPrefix = process.env.COCALC_PROXY_PREFIX ?? "/host";
   const sshUser =
     process.env.COCALC_SSHD_USER ??
     process.env.USER ??
@@ -75,11 +133,10 @@ export function getLaunchpadOnPremConfig(
     undefined;
 
   return {
-    mode: modeOverride ?? normalizeMode(process.env.COCALC_LAUNCHPAD_MODE),
+    mode: modeOverride ?? normalizeMode(process.env.COCALC_DEPLOYMENT_MODE),
     https_port: Number.isFinite(httpsPort) ? httpsPort : undefined,
     sshd_port: Number.isFinite(sshdPort) ? sshdPort : undefined,
     ssh_user: sshUser,
-    proxy_prefix: proxyPrefix,
     sftp_root: sftpRoot,
   };
 }

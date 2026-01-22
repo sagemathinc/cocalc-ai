@@ -159,10 +159,7 @@ async function saveStoredConfig(
 function resolveTunnelConfigFromEnv(): TunnelConfig | undefined {
   const sshdHost = process.env.COCALC_LAUNCHPAD_SSHD_HOST;
   const sshdPort = parsePort(process.env.COCALC_LAUNCHPAD_SSHD_PORT);
-  const tunnelPort = parsePort(
-    process.env.COCALC_LAUNCHPAD_HTTP_TUNNEL_PORT ??
-      process.env.COCALC_LAUNCHPAD_TUNNEL_PORT,
-  );
+  const tunnelPort = parsePort(process.env.COCALC_LAUNCHPAD_HTTP_TUNNEL_PORT);
   const sshTunnelPort = parsePort(
     process.env.COCALC_LAUNCHPAD_SSH_TUNNEL_PORT,
   );

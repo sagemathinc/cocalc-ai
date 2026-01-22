@@ -11,6 +11,7 @@ const logger = getLogger("onprem:tls");
 
 const DEFAULT_ROTATE_DAYS = 30;
 const DEFAULT_CERT_DIR = join(secrets, "launchpad-https");
+let warnedLegacyHost = false;
 
 export type OnPremTlsInfo = {
   keyPath: string;
@@ -20,8 +21,16 @@ export type OnPremTlsInfo = {
 };
 
 export function resolveOnPremHost(fallbackHost?: string | null): string {
-  const explicit =
+  const legacyHost =
     process.env.COCALC_LAUNCHPAD_HOST ?? process.env.COCALC_ONPREM_HOST;
+  if (!process.env.COCALC_PUBLIC_HOST && legacyHost && !warnedLegacyHost) {
+    warnedLegacyHost = true;
+    logger.warn(
+      "COCALC_LAUNCHPAD_HOST/COCALC_ONPREM_HOST is deprecated; use COCALC_PUBLIC_HOST",
+      { host: legacyHost },
+    );
+  }
+  const explicit = process.env.COCALC_PUBLIC_HOST ?? legacyHost;
   const raw =
     explicit ??
     process.env.HOST ??

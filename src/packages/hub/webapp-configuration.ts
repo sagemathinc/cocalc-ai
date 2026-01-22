@@ -156,10 +156,7 @@ export class WebappConfiguration {
       return {};
     }
     const vID = this.get_vanity_id(host);
-    const launchpadMode =
-      process.env.COCALC_ONPREM === "1"
-        ? "onprem"
-        : await getLaunchpadMode();
+    const launchpadMode = await getLaunchpadMode();
     const config = this.data.pub;
     const vanity = await this.get_vanity(vID);
     return {

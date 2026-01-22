@@ -40,7 +40,6 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["cocalc-hub-server"]
           args:
-            - "--mode={{ .Values.mode }}"
             - "--conat-router"
             - "--hostname=0.0.0.0"
           ports:
@@ -53,8 +52,12 @@ spec:
               value: "5000"
             - name: DATA
               value: "{{ .Values.data.path }}"
-            - name: COCALC_MODE
-              value: "{{ .Values.mode }}"
+            - name: COCALC_PRODUCT
+              value: "{{ .Values.product }}"
+            - name: COCALC_DEPLOYMENT_MODE
+              value: "{{ .Values.deploymentMode }}"
+            - name: COCALC_ROCKET_CONTROL_PLANE
+              value: "{{ .Values.controlPlane }}"
             - name: CONAT_CLUSTER_PORT
               value: "5000"
             - name: CONAT_CLUSTER_HEALTH_PORT

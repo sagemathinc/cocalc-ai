@@ -6,7 +6,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import {
   getLaunchpadMode,
-  getLaunchpadOnPremConfig,
+  getLaunchpadLocalConfig,
 } from "@cocalc/server/launchpad/mode";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -389,8 +389,8 @@ export async function getBackupConfig({
   await assertHostProjectAccess(host_id, project_id);
 
   const launchpadMode = await getLaunchpadMode();
-  if (launchpadMode === "onprem") {
-    const config = getLaunchpadOnPremConfig(launchpadMode);
+  if (launchpadMode === "local") {
+    const config = getLaunchpadLocalConfig(launchpadMode);
     if (!config.sshd_port || !config.sftp_root) {
       return { toml: "", ttl_seconds: 0 };
     }

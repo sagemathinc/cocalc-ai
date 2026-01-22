@@ -4,7 +4,7 @@ import { createHostStatusService } from "@cocalc/conat/project-host/api";
 import getPool from "@cocalc/database/pool";
 import {
   getLaunchpadMode,
-  getLaunchpadOnPremConfig,
+  getLaunchpadLocalConfig,
 } from "@cocalc/server/launchpad/mode";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { mkdir } from "node:fs/promises";
@@ -25,12 +25,12 @@ export async function initHostStatusService() {
           throw Error("host_id and public_key are required");
         }
         const mode = await getLaunchpadMode();
-        if (mode !== "onprem") {
+        if (mode !== "local") {
           throw Error(`launchpad mode is '${mode}'`);
         }
-        const config = getLaunchpadOnPremConfig(mode);
+        const config = getLaunchpadLocalConfig(mode);
         if (!config.sshd_port) {
-          throw Error("onprem sshd is not configured");
+          throw Error("local network sshd is not configured");
         }
         const { rows } = await getPool().query<{ id: string }>(
           `SELECT id
@@ -49,7 +49,7 @@ export async function initHostStatusService() {
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
           resolveOnPremHost();
-        logger.info("onprem tunnel registered", {
+        logger.info("local tunnel registered", {
           host_id,
           sshd_host: sshdHost,
           sshd_port: config.sshd_port,
@@ -69,15 +69,15 @@ export async function initHostStatusService() {
           throw Error("host_id and public_key are required");
         }
         const mode = await getLaunchpadMode();
-        if (mode !== "onprem") {
+        if (mode !== "local") {
           throw Error(`launchpad mode is '${mode}'`);
         }
-        const config = getLaunchpadOnPremConfig(mode);
+        const config = getLaunchpadLocalConfig(mode);
         if (!config.sshd_port) {
-          throw Error("onprem sshd is not configured");
+          throw Error("local network sshd is not configured");
         }
         if (!config.sftp_root) {
-          throw Error("onprem sftp root is not configured");
+          throw Error("local network sftp root is not configured");
         }
         const { rows } = await getPool().query<{ id: string }>(
           `SELECT id
@@ -97,7 +97,7 @@ export async function initHostStatusService() {
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
           resolveOnPremHost();
-        logger.info("onprem sftp key registered", {
+        logger.info("local sftp key registered", {
           host_id,
           sshd_host: sshdHost,
           sshd_port: config.sshd_port,

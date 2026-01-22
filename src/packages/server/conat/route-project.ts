@@ -5,7 +5,11 @@ import getPool, {
 } from "@cocalc/database/pool";
 import LRU from "lru-cache";
 import { isValidUUID } from "@cocalc/util/misc";
-import { getLaunchpadMode, type LaunchpadMode } from "@cocalc/server/launchpad/mode";
+import {
+  getLaunchpadMode,
+  isLaunchpadProduct,
+  type LaunchpadMode,
+} from "@cocalc/server/launchpad/mode";
 
 const log = getLogger("server:conat:route-project");
 
@@ -22,7 +26,7 @@ const MODE_TTL_MS = 60_000;
 let cachedLaunchpadMode: { value: LaunchpadMode; at: number } | undefined;
 
 async function getLaunchpadModeCached(): Promise<LaunchpadMode | undefined> {
-  if (process.env.COCALC_MODE !== "launchpad") {
+  if (!isLaunchpadProduct()) {
     return undefined;
   }
   const now = Date.now();
@@ -37,12 +41,9 @@ async function getLaunchpadModeCached(): Promise<LaunchpadMode | undefined> {
   return value;
 }
 
-async function isOnPremMode(): Promise<boolean> {
-  if (process.env.COCALC_ONPREM === "1") {
-    return true;
-  }
+async function isLocalMode(): Promise<boolean> {
   const mode = await getLaunchpadModeCached();
-  return mode === "onprem";
+  return mode === "local";
 }
 
 function onPremTunnelAddress(metadata: any): string | undefined {
@@ -123,7 +124,7 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
   }
   inflight[project_id] = (async () => {
     try {
-      const isOnPrem = await isOnPremMode();
+      const isLocal = await isLocalMode();
       const { rows } = await getPool().query<{
         host_id: string | null;
         internal_url?: string | null;
@@ -139,7 +140,7 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
         [project_id],
       );
       const row = rows[0];
-      if (!isOnPrem && (row?.internal_url || row?.public_url)) {
+      if (!isLocal && (row?.internal_url || row?.public_url)) {
         cacheHost(project_id, row);
         return;
       }
@@ -158,16 +159,17 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
           [row.host_id],
         );
         const hostRow = hostRows[0];
-        if (isOnPrem) {
+        if (isLocal) {
           const addr = onPremTunnelAddress(hostRow?.metadata);
-          if (addr) {
-            cache.set(project_id, addr);
+          if (!addr) {
+            log.debug("local tunnel port missing for project", {
+              project_id,
+              host_id: row.host_id,
+            });
             return;
           }
-          log.debug("onprem tunnel port missing for project", {
-            project_id,
-            host_id: row.host_id,
-          });
+          cache.set(project_id, addr);
+          return;
         }
         if (hostRow?.public_url || hostRow?.internal_url) {
           cacheHost(project_id, hostRow);
@@ -213,7 +215,7 @@ async function handleNotification(msg: {
     const payload = JSON.parse(msg.payload);
     const { project_id, host } = payload;
     if (!project_id || !isValidUUID(project_id)) return;
-    if (await isOnPremMode()) {
+    if (await isLocalMode()) {
       cache.delete(project_id);
       void fetchHostAddress(project_id);
       return;

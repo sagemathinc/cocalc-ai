@@ -45,8 +45,8 @@ function findArgValue(flag) {
 }
 
 function ensureLaunchpadTls() {
-  const mode = (process.env.COCALC_LAUNCHPAD_MODE ?? "").trim().toLowerCase();
-  if (mode && mode !== "onprem") {
+  const mode = (process.env.COCALC_DEPLOYMENT_MODE ?? "").trim().toLowerCase();
+  if (mode && mode !== "local" && mode !== "onprem") {
     return null;
   }
   const existingKey = findArgValue("--https-key");
@@ -60,8 +60,8 @@ function ensureLaunchpadTls() {
 }
 
 function scheduleLaunchpadCertRotation() {
-  const mode = (process.env.COCALC_LAUNCHPAD_MODE ?? "").trim().toLowerCase();
-  if (mode && mode !== "onprem") {
+  const mode = (process.env.COCALC_DEPLOYMENT_MODE ?? "").trim().toLowerCase();
+  if (mode && mode !== "local" && mode !== "onprem") {
     return;
   }
   const existingKey = findArgValue("--https-key");
@@ -77,7 +77,8 @@ function scheduleLaunchpadCertRotation() {
 function applyLaunchpadDefaults() {
   process.env.COCALC_DB ??= "pglite";
   process.env.COCALC_DISABLE_NEXT ??= "1";
-  process.env.COCALC_MODE ??= "launchpad";
+  process.env.COCALC_PRODUCT ??= "launchpad";
+  process.env.COCALC_DEPLOYMENT_MODE ??= "local";
 
   const dataDir = resolveDataDir();
   process.env.DATA ??= dataDir;

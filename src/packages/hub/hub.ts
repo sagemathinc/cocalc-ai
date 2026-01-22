@@ -9,7 +9,6 @@
 
 import { callback } from "awaiting";
 import blocked from "blocked";
-import { spawn } from "child_process";
 import { program as commander } from "commander";
 import basePath from "@cocalc/backend/base-path";
 import {
@@ -38,7 +37,12 @@ import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
-import { getLaunchpadMode } from "@cocalc/server/launchpad/mode";
+import {
+  getCocalcProduct,
+  getLaunchpadMode,
+  isLaunchpadProduct,
+  isRocketProduct,
+} from "@cocalc/server/launchpad/mode";
 import {
   ensureOnPremTls,
   scheduleOnPremCertRotation,
@@ -114,12 +118,10 @@ async function initMetrics() {
 }
 
 async function maybeInitOnPremTls(): Promise<void> {
-  const isLaunchpad = process.env.COCALC_MODE === "launchpad";
   const launchpadMode = await getLaunchpadMode();
-  const onprem =
-    process.env.COCALC_ONPREM === "1" ||
-    (isLaunchpad && launchpadMode === "onprem");
-  if (!onprem) {
+  const localMode =
+    (isLaunchpadProduct() || isRocketProduct()) && launchpadMode === "local";
+  if (!localMode) {
     return;
   }
   const tls = ensureOnPremTls({
@@ -142,12 +144,12 @@ async function maybeInitOnPremTls(): Promise<void> {
         fallbackProtocol: program.httpsKey ? "https" : "http",
       });
       setConatServer(baseUrl);
-      logger.info("onprem conat server resolved", { address: baseUrl });
+      logger.info("local network conat server resolved", { address: baseUrl });
     } catch (err) {
-      logger.warn("onprem conat server resolution failed", { err });
+      logger.warn("local network conat server resolution failed", { err });
     }
   } else {
-    logger.info("onprem conat server using explicit CONAT_SERVER", {
+    logger.info("local network conat server using explicit CONAT_SERVER", {
       address: process.env.CONAT_SERVER,
     });
   }
@@ -215,9 +217,6 @@ async function startServer(): Promise<void> {
   // Project control
   logger.info("initializing project control...");
   const projectControl = initProjectControl();
-  // used for nextjs hot module reloading dev server
-  process.env["COCALC_MODE"] = program.mode;
-
   if (program.mode != "kucalc" && program.conatServer) {
     // We handle idle timeout of projects.
     // This can be disabled via COCALC_NO_IDLE_TIMEOUT.
@@ -265,27 +264,6 @@ async function startServer(): Promise<void> {
   await maybeStartEmbeddedProjectHost();
 
   if (program.conatServer) {
-    if (program.mode == "single-user" && process.env.USER == "user") {
-      // Definitely in dev mode, probably on cocalc.com in a project, so we kill
-      // all the running projects when starting the hub:
-      // Whenever we start the dev server, we just assume
-      // all projects are stopped, since assuming they are
-      // running when they are not is bad.  Something similar
-      // is done in cocalc-docker.
-      logger.info("killing all projects...");
-      await callback2(database._query, {
-        safety_check: false,
-        query: 'update projects set state=\'{"state":"opened"}\'',
-      });
-      await spawn("pkill", ["-f", "node_modules/.bin/cocalc-project"]);
-
-      // Also, unrelated to killing projects, for purposes of developing
-      // custom software images, we inject a couple of random nonsense entries
-      // into the table in the DB:
-      logger.info("inserting random nonsense compute images in database");
-      await callback2(database.insert_random_compute_images);
-    }
-
     if (program.mode != "kucalc") {
       await init_update_stats();
       // This is async but runs forever, so don't wait for it.
@@ -379,11 +357,6 @@ async function main(): Promise<void> {
   commander
     .name("cocalc-hub-server")
     .usage("options")
-    .option(
-      "--mode <string>",
-      `REQUIRED mode in which to run CoCalc or set COCALC_MODE env var`,
-      "",
-    )
     .option(
       "--all",
       "runs all of the servers: websocket, proxy, next (so you don't have to pass all those opts separately), and also mentions updator and updates db schema on startup; use this in situations where there is a single hub that serves everything (instead of a microservice situation like kucalc)",
@@ -488,15 +461,7 @@ async function main(): Promise<void> {
   for (const name in opts) {
     program[name] = opts[name];
   }
-  if (!program.mode) {
-    program.mode = process.env.COCALC_MODE;
-    if (!program.mode) {
-      throw Error(
-        `the --mode option must be specified or the COCALC_MODE env var`,
-      );
-      process.exit(1);
-    }
-  }
+  program.mode = getCocalcProduct() === "rocket" ? "kucalc" : "launchpad";
   if (program.all) {
     program.conatServer =
       program.proxyServer =

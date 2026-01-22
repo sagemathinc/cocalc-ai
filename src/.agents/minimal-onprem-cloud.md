@@ -2,12 +2,82 @@
 
 ## Goal
 
-Provide a purely on‑prem deployment mode for CoCalc Launchpad with max simplicity:
+Provide a clean, minimal set of modes with max simplicity:
 
-- no Cloudflare tunnels
-- no R2 or external buckets
-- no root-required services by default
-- minimal admin input and minimal moving parts
+- CoCalc Plus (single project, sqlite, local)
+- Launchpad Cloud Mode (Cloudflare + bucket)
+- Launchpad Local Network Mode (all data local, hub‑centric routing)
+
+Key requirement: no mixed modes and no confusing legacy options.
+
+## Target Modes (User-Facing)
+
+### CoCalc Plus
+
+- Single project + frontend + sqlite
+- No cloud services or launchpad services
+
+### Launchpad Cloud Mode
+
+- Hub and all VM hosts only listen on localhost behind firewall
+- All routing/DNS/HTTPS via Cloudflare tunnels
+- All non-disk data stored in remote S3-style bucket
+- No public IPs exposed
+- All traffic flows through Cloudflare
+
+### Launchpad Local Network Mode
+
+- All data stays local
+- Hub acts as the sole entry point
+- VM hosts connect back to hub via SSH reverse tunnel
+- Hub proxies HTTP/WSS to hosts
+- Rustic uses SFTP to a local repo next to hub
+- Optional custom TLS cert; otherwise auto self-signed
+
+## Product + Mode Matrix (Rocket Alignment)
+
+We treat product and deployment mode as orthogonal axes. Rocket adds a
+control-plane scale axis.
+
+### Axes
+
+- Product: plus | launchpad | rocket
+- Deployment mode: cloud | local
+- Rocket control plane: single | multi
+
+### Mermaid diagram
+
+```mermaid
+flowchart LR
+  subgraph Products
+    PLUS[Plus]
+    LP[Launchpad]
+    RKT[Rocket]
+  end
+  subgraph Modes
+    CLOUD[Cloud]
+    LOCAL[Local Network]
+  end
+  subgraph RocketScale["Rocket control plane"]
+    SINGLE[Single-hub]
+    MULTI[Multi-hub]
+  end
+  PLUS --> LOCAL
+  LP --> CLOUD
+  LP --> LOCAL
+  RKT --> CLOUD
+  RKT --> LOCAL
+  RKT --> SINGLE
+  RKT --> MULTI
+```
+
+### Summary table
+
+| Product | Cloud Mode | Local Network Mode | Control Plane |
+| --- | --- | --- | --- |
+| Plus | N/A (single project) | Default | Single (embedded) |
+| Launchpad | Hub + Cloudflare + bucket | Hub + SSH tunnels + local repo | Single hub |
+| Rocket | Cloud infra + external DB | Local infra + external DB | Single or Multi hub |
 
 ## Summary Architecture
 
@@ -16,7 +86,7 @@ Provide a purely on‑prem deployment mode for CoCalc Launchpad with max simplic
 ```mermaid
 flowchart TD
   subgraph HubA["Hub A (Launchpad)"]
-    HUB[Hub server<br/>HTTPS/WSS + proxy]
+    HUB[Hub server<br/>HTTPS/WSS + proxy<br/>/project_id]
     SSHD[Embedded sshd<br/>reverse tunnels + SFTP]
     REPO[(Rustic repo<br/>local dir)]
     HUB --> SSHD
@@ -31,7 +101,7 @@ flowchart TD
   UsersSSH["User SSH clients"] -->|SSH to host-specific port| SSHD
   PH -->|WSS conat| HUB
   PH -->|ssh -R tunnel + SFTP| SSHD
-  HUB -->|proxy /host/<id>/| SSHD
+  HUB -->|proxy /<project_id>/| SSHD
 ```
 
 - Single hub runs:
@@ -46,7 +116,7 @@ flowchart TD
   - rustic uses SFTP to hub sshd
   - single repo for all projects (use host tag per project)
 - No wildcard DNS required; use path-based routing:
-  - /host/<host_id>/... proxied to a local tunnel port
+  - /<project_id>/... proxied to a local tunnel port
 
 ## Networking Model (Hub A + Host B behind NAT)
 
@@ -57,34 +127,48 @@ flowchart TD
   - WebSocket proxy to project-host services
   - per-host SSH ports forwarded to host sshpiperd
 
-## Configuration (Admin-Facing)
+## Configuration Simplification Plan (Target State)
 
-Provide env vars and admin settings with sane defaults.
-Defaults aim for rootless usage; admin may override to use 443/80/22 if desired.
-Prefer a single "base port" for minimal admin input, with derived defaults.
+Replace the current env sprawl with a small set of top-level selectors and a
+derived config. Env vars only provide defaults; admin settings are the source
+of truth.
 
-Proposed defaults (base port model):
+### Required (minimal)
 
-- COCALC_BASE_PORT=8443
-- COCALC_HTTPS_PORT=COCALC_BASE_PORT
-- COCALC_HTTP_PORT=COCALC_BASE_PORT-1 (optional; can be disabled)
-- COCALC_SSHD_PORT=COCALC_BASE_PORT+1 (embedded sshd for reverse tunnel + SFTP)
-- COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
+- COCALC_PRODUCT=plus|launchpad|rocket (default: plus)
+- COCALC_DEPLOYMENT_MODE=cloud|local (launchpad + rocket)
+- COCALC_ROCKET_CONTROL_PLANE=single|multi (only when product=rocket)
+- COCALC_DATA_DIR (default: ~/.local/share/cocalc/launchpad)
+- COCALC_BASE_PORT (default: 9200)
 
-Optional overrides:
+### Optional (local network)
 
-- COCALC_BIND_HOST=0.0.0.0
-- COCALC_DISABLE_HTTP=true
-- COCALC_PROXY_PREFIX=/host
-- COCALC_SFTP_USER=cocalc (user name inside sshd)
-- COCALC_SFTP_ROOT=${COCALC_DATA_DIR}/backup-repo
-- Explicit port overrides (rare): COCALC_HTTPS_PORT, COCALC_HTTP_PORT,
-  COCALC_SSHD_PORT
+- COCALC_PUBLIC_HOST (bootstrap URL + connector)
+- COCALC_TLS_CERT / COCALC_TLS_KEY (if unset, auto self-signed)
+- COCALC_CONNECTOR_INSECURE=1 (only with self-signed)
 
-If admin wants standard ports, they can:
+### Optional (cloud)
 
-- run under privileged port forwarding or
-- start with COCALC_HTTPS_PORT=443, COCALC_SSHD_PORT=22 (requires permissions)
+- Cloudflare credentials
+- Rustic repo target \(S3\-style bucket or possibly anything rustic supports\) \+ credentials
+
+### Derived defaults (base port model)
+
+- HTTPS port = COCALC_BASE_PORT
+- SSHD port = COCALC_BASE_PORT + 1
+- Project-host HTTP port = 9002 (internal only)
+- Proxy prefix uses /<project_id>/… (no host prefix)
+
+## Cleanup / Code Deletion (Important)
+
+Once the simplified config is implemented, delete legacy/overlapping code
+paths to keep the system understandable:
+
+- Remove legacy COCALC\_MODE single\-user semantics from production paths and the `--mode` flag.
+- Drop mixed\-mode fallbacks and conflicting env overrides.
+- Remove unused /host/<id> proxy prefix logic.
+- Remove routing branches that bypass local\-network tunnels.
+- Simplify bootstrap logic in src/packages/server/cloud/bootstrap\-host.ts.
 
 ## SSH Key & Access Model
 
@@ -115,7 +199,7 @@ Hub assigns two ports per host:
 
 - Host B connects with ssh -N -R 0.0.0.0:<http_port>:127.0.0.1:<host_service_port>
   and ssh -N -R 0.0.0.0:<ssh_port>:127.0.0.1:<host_sshpiperd_port>.
-- Hub proxy routes /host/<host_id>/... to localhost:<http_port>.
+- Hub proxy routes /<project_id>/... to localhost:<http_port>.
   - Optimization: if host and hub are on the same machine, skip SSH tunnel and
     proxy directly to localhost host_service_port.
 
@@ -127,11 +211,17 @@ Hub assigns two ports per host:
 
 ## Implementation Plan
 
-### 1) Add On-Prem Mode Config (done)
+### 0) Unify config surface (done)
 
-- Add new Launchpad config block: minimal_onprem or onprem_mode.
+- Introduce a single normalized config object (product + launchpad mode).
+- Enforce explicit mode selection when product=launchpad.
+- Remove legacy COCALC_MODE from production logic (keep dev-only).
+
+### 1) Add Local Network Mode Config (done)
+
+- Add new Launchpad config block: minimal_local or local_mode.
 - Map env vars to config with defaults (base port derived ports).
-- Define and validate ports, data_dir, bind_host, proxy_prefix.
+- Define and validate ports and data_dir.
 
 ### 2) Embedded sshd Lifecycle (done)
 
@@ -156,9 +246,10 @@ Hub assigns two ports per host:
 ### 4) Proxy Integration (done)
 
 - Hub uses http-proxy-3 to route:
-  - /<prefix>/<host_id>/... to localhost:<reverse_port>.
+  - /<project_id>/... to localhost:<reverse_port>.
 - Ensure WebSocket upgrade support.
-- Avoid URL conflicts by reserving the prefix path.
+- Avoid URL conflicts by reserving the project-id path segment.
+- Rewrite /<project_id>/conat -> /conat when proxying to the host.
 
 ### 5) Rustic SFTP Integration (pending)
 
@@ -209,8 +300,7 @@ Hub assigns two ports per host:
 
 - Add a dedicated admin guidance UI for selecting modes, validating config, and
   onboarding (defer until core plumbing is complete).
-- After on-prem bootstrap is stable, nail down the minimal config surface.
-  - For on-prem project-hosts we likely only need `HOST=127.0.0.1` and
+- After local-network bootstrap is stable, nail down the minimal config surface.
+  - For local-network project-hosts we likely only need `HOST=127.0.0.1` and
     `PORT=9002` (except local dev); simplify inputs and
     `src/packages/server/cloud/bootstrap-host.ts` accordingly.
-
