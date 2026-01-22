@@ -58,7 +58,6 @@ import { slateDiff } from "./slate-diff";
 import { useEmojis } from "./slate-emojis";
 import { useMentions } from "./slate-mentions";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
-import { NODE_CHILDREN_DIRTY } from "./slate-react/utils/weak-maps";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
 import type { SlateEditor } from "./types";
@@ -674,7 +673,6 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           // again this makes things fastest.
           // DRAWBACK: this doesn't preserve scroll position and breaks selection.
           editor.syncCausedUpdate = true;
-          NODE_CHILDREN_DIRTY.set(editor, true);
           // we call "onChange" instead of setEditorValue, since
           // we want all the change handler stuff to happen, e.g.,
           // broadcasting cursors.
