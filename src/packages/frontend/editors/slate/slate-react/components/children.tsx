@@ -85,6 +85,10 @@ const Children: React.FC<Props> = React.memo(
         }
       }
 
+      const n = node.children[index] as Descendant;
+      NODE_TO_INDEX.set(n, index);
+      NODE_TO_PARENT.set(n, node);
+
       if (hiddenChildren?.has(index)) {
         // TRICK: We use a small positive height since a height of 0 gets ignored, as it often
         // appears when scrolling and allowing that breaks everything (for now!).
@@ -95,7 +99,6 @@ const Children: React.FC<Props> = React.memo(
           />
         );
       }
-      const n = node.children[index] as Descendant;
       const key = ReactEditor.findKey(editor, n);
       const p = path.concat(index);
       let range: Range | null = null;
@@ -178,12 +181,6 @@ const Children: React.FC<Props> = React.memo(
         );
       }
     };
-
-    for (let i = 0; i < node.children.length; i++) {
-      const n = node.children[i];
-      NODE_TO_INDEX.set(n, i);
-      NODE_TO_PARENT.set(n, node);
-    }
 
     const virtuosoRef = useRef<VirtuosoHandle>(null);
     const scrollerRef = useRef<HTMLDivElement | null>(null);
