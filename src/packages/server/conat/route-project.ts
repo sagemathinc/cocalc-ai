@@ -5,6 +5,7 @@ import getPool, {
 } from "@cocalc/database/pool";
 import LRU from "lru-cache";
 import { isValidUUID } from "@cocalc/util/misc";
+import { getLaunchpadMode, type LaunchpadMode } from "@cocalc/server/launchpad/mode";
 
 const log = getLogger("server:conat:route-project");
 
@@ -17,6 +18,38 @@ const cache = new LRU<string, string>({
 
 const inflight: Partial<Record<string, Promise<void>>> = {};
 let listenerStarted: boolean = false;
+const MODE_TTL_MS = 60_000;
+let cachedLaunchpadMode: { value: LaunchpadMode; at: number } | undefined;
+
+async function getLaunchpadModeCached(): Promise<LaunchpadMode | undefined> {
+  if (process.env.COCALC_MODE !== "launchpad") {
+    return undefined;
+  }
+  const now = Date.now();
+  if (
+    cachedLaunchpadMode &&
+    now - cachedLaunchpadMode.at < MODE_TTL_MS
+  ) {
+    return cachedLaunchpadMode.value;
+  }
+  const value = await getLaunchpadMode();
+  cachedLaunchpadMode = { value, at: now };
+  return value;
+}
+
+async function isOnPremMode(): Promise<boolean> {
+  if (process.env.COCALC_ONPREM === "1") {
+    return true;
+  }
+  const mode = await getLaunchpadModeCached();
+  return mode === "onprem";
+}
+
+function onPremTunnelAddress(metadata: any): string | undefined {
+  const port = metadata?.self_host?.http_tunnel_port;
+  if (!port) return undefined;
+  return `http://127.0.0.1:${port}`;
+}
 
 function extractProjectId(subject: string): string | undefined {
   // there's a similar function in the frontend in src/packages/frontend/conat/client.ts
@@ -90,6 +123,7 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
   }
   inflight[project_id] = (async () => {
     try {
+      const isOnPrem = await isOnPremMode();
       const { rows } = await getPool().query<{
         host_id: string | null;
         internal_url?: string | null;
@@ -105,7 +139,7 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
         [project_id],
       );
       const row = rows[0];
-      if (row?.internal_url || row?.public_url) {
+      if (!isOnPrem && (row?.internal_url || row?.public_url)) {
         cacheHost(project_id, row);
         return;
       }
@@ -114,15 +148,27 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
           public_url?: string | null;
           internal_url?: string | null;
           ssh_server?: string | null;
+          metadata?: any;
         }>(
           `
-            SELECT public_url, internal_url, ssh_server
+            SELECT public_url, internal_url, ssh_server, metadata
             FROM project_hosts
             WHERE id=$1 AND deleted IS NULL
           `,
           [row.host_id],
         );
         const hostRow = hostRows[0];
+        if (isOnPrem) {
+          const addr = onPremTunnelAddress(hostRow?.metadata);
+          if (addr) {
+            cache.set(project_id, addr);
+            return;
+          }
+          log.debug("onprem tunnel port missing for project", {
+            project_id,
+            host_id: row.host_id,
+          });
+        }
         if (hostRow?.public_url || hostRow?.internal_url) {
           cacheHost(project_id, hostRow);
           await updateProjectHostSnapshot(project_id, hostRow);
@@ -158,12 +204,20 @@ export function routeProjectSubject(
   return;
 }
 
-function handleNotification(msg: { channel: string; payload?: string | null }) {
+async function handleNotification(msg: {
+  channel: string;
+  payload?: string | null;
+}) {
   if (msg.channel !== CHANNEL || !msg.payload) return;
   try {
     const payload = JSON.parse(msg.payload);
     const { project_id, host } = payload;
     if (!project_id || !isValidUUID(project_id)) return;
+    if (await isOnPremMode()) {
+      cache.delete(project_id);
+      void fetchHostAddress(project_id);
+      return;
+    }
     cacheHost(project_id, host);
   } catch (err) {
     log.debug("handleNotification parse failed", { err, payload: msg.payload });
@@ -195,7 +249,9 @@ export async function listenForUpdates() {
       } else {
         client = await pool.connect();
       }
-      client.on("notification", handleNotification);
+      client.on("notification", (msg) => {
+        void handleNotification(msg as any);
+      });
       client.on("error", (err) => {
         log.warn("project_host_update listener error", err);
         cleanup();
