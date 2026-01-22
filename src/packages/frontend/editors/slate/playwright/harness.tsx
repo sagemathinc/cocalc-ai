@@ -15,6 +15,7 @@ import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate
 
 import { Editable, Slate, withReact } from "../slate-react";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-react/utils/environment";
+import { withDeleteBackward } from "../format/delete-backward";
 
 declare global {
   interface Window {
@@ -35,7 +36,10 @@ const initialValue: Descendant[] = [
 ];
 
 function Harness(): React.JSX.Element {
-  const editor = useMemo(() => withReact(createEditor()), []);
+  const editor = useMemo(
+    () => withDeleteBackward(withReact(createEditor())),
+    [],
+  );
   const [value, setValue] = useState<Descendant[]>(initialValue);
   const valueRef = useRef(value);
 
