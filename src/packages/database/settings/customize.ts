@@ -74,6 +74,9 @@ export default async function getCustomize(
       policies: settings.policies,
       support: settings.support,
       supportVideoCall: settings.support_video_call,
+      launchpad_mode:
+        process.env.COCALC_ONPREM === "1" ? "onprem" : settings.launchpad_mode,
+      launchpad_self_signed: process.env.COCALC_LAUNCHPAD_SELF_SIGNED === "1",
 
       // Is important for invite emails, password reset, etc. (e.g., so we can construct a url to our site).
       // This *can* start with http:// to explicitly use http instead of https, and can end

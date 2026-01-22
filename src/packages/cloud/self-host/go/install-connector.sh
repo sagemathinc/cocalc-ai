@@ -11,6 +11,7 @@ Options:
   --replace                    Allow replacing an existing connector config.
   --no-daemon                  Run in foreground (default is daemon).
   --no-service                 Skip installing an auto-start service.
+  --insecure                   Skip TLS verification (self-signed on-prem).
   --software-base-url <url>    Defaults to https://software.cocalc.ai/software
   --install-dir <path>         Linux install dir (default /usr/local/bin).
   -h, --help                   Show this help.
@@ -27,6 +28,7 @@ NAME_ARG=""
 REPLACE="0"
 DAEMON="1"
 INSTALL_SERVICE="1"
+INSECURE="0"
 SOFTWARE_BASE_URL="https://software.cocalc.ai/software"
 INSTALL_DIR=""
 
@@ -54,6 +56,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-service)
       INSTALL_SERVICE="0"
+      shift
+      ;;
+    --insecure)
+      INSECURE="1"
       shift
       ;;
     --software-base-url)
@@ -315,6 +321,9 @@ if [[ -n "$NAME_ARG" ]]; then
 fi
 if [[ "$REPLACE" == "1" ]]; then
   pair_args+=("--replace")
+fi
+if [[ "$INSECURE" == "1" ]]; then
+  pair_args+=("--insecure")
 fi
 "${pair_args[@]}"
 

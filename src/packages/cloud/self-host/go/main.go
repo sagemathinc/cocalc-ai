@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -41,6 +42,7 @@ type Config struct {
 	ConnectorToken      string `json:"connector_token,omitempty"`
 	PollIntervalSeconds int    `json:"poll_interval_seconds,omitempty"`
 	Name                string `json:"name,omitempty"`
+	InsecureSkipVerify  bool   `json:"insecure_skip_verify,omitempty"`
 }
 
 type CommandEnvelope struct {
@@ -112,6 +114,8 @@ func runPair(args []string) {
 	token := fs.String("token", "", "Pairing token")
 	name := fs.String("name", "", "Connector name")
 	replace := fs.Bool("replace", false, "Replace existing config if present")
+	insecure := fs.Bool("insecure", false, "Skip TLS certificate verification (self-signed on-prem)")
+	skipTLS := fs.Bool("skip-tls-verify", false, "Alias for --insecure")
 	cfgPath := fs.String("config", "", "Config path")
 	fs.Parse(args)
 
@@ -144,8 +148,9 @@ func runPair(args []string) {
 	if err != nil {
 		fail(fmt.Sprintf("pair payload: %v", err))
 	}
+	skipVerify := *insecure || *skipTLS || os.Getenv("COCALC_CONNECTOR_INSECURE") == "1"
 	endpoint := normalizeBaseURL(*baseURL) + "/self-host/pair"
-	respBody, status, err := httpRequest("POST", endpoint, "", "application/json", body)
+	respBody, status, err := httpRequest("POST", endpoint, "", "application/json", body, skipVerify)
 	if err != nil {
 		fail(fmt.Sprintf("pair request failed: %v", err))
 	}
@@ -166,6 +171,7 @@ func runPair(args []string) {
 		ConnectorToken:      resp.ConnectorToken,
 		PollIntervalSeconds: resp.PollIntervalSeconds,
 		Name:                *name,
+		InsecureSkipVerify:  skipVerify,
 	}
 	saveJSON(path, cfg)
 	logLine("paired connector", map[string]interface{}{
@@ -217,7 +223,7 @@ func stopDaemonCmd(args []string) {
 
 func printHelp() {
 	fmt.Println(`Usage:
-  cocalc-self-host-connector pair --base-url <url> --token <pairing_token> [--name <name>] [--replace]
+  cocalc-self-host-connector pair --base-url <url> --token <pairing_token> [--name <name>] [--replace] [--insecure]
   cocalc-self-host-connector run [--config <path>] [--daemon]
   cocalc-self-host-connector stop [--config <path>]
   cocalc-self-host-connector once [--config <path>]
@@ -399,7 +405,7 @@ func pollOnce(cfg Config, state State, statePath string) (bool, error) {
 	if cfg.ConnectorToken == "" {
 		return false, errors.New("connector_token missing in config")
 	}
-	body, status, err := httpRequest("GET", base+"/self-host/next", cfg.ConnectorToken, "", nil)
+	body, status, err := httpRequest("GET", base+"/self-host/next", cfg.ConnectorToken, "", nil, cfg.InsecureSkipVerify)
 	if err != nil {
 		return false, err
 	}
@@ -431,7 +437,7 @@ func pollOnce(cfg Config, state State, statePath string) (bool, error) {
 		"error":  errMsg,
 	}
 	ackBody, _ := json.Marshal(ackPayload)
-	_, ackStatus, _ := httpRequest("POST", base+"/self-host/ack", cfg.ConnectorToken, "application/json", ackBody)
+	_, ackStatus, _ := httpRequest("POST", base+"/self-host/ack", cfg.ConnectorToken, "application/json", ackBody, cfg.InsecureSkipVerify)
 	if ackStatus < 200 || ackStatus >= 300 {
 		logLine("ack failed", map[string]interface{}{"id": cmd.ID, "status": ackStatus})
 	}
@@ -935,8 +941,13 @@ func cloudInitBaseDir() string {
 	return filepath.Join(home, "cocalc-connector", "cloud-init")
 }
 
-func httpRequest(method, url, token, contentType string, body []byte) ([]byte, int, error) {
+func httpRequest(method, url, token, contentType string, body []byte, insecure bool) ([]byte, int, error) {
 	client := &http.Client{Timeout: defaultTimeout}
+	if insecure {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)

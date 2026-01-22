@@ -17,6 +17,7 @@ type SelfHostSetupModalProps = {
   expires?: string;
   loading: boolean;
   error?: string;
+  insecure?: boolean;
   onCancel: () => void;
   onRefresh: () => void;
 };
@@ -30,6 +31,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
   expires,
   loading,
   error,
+  insecure,
   onCancel,
   onRefresh,
 }) => {
@@ -44,8 +46,9 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
     host?.name?.trim() ||
     `connector-${connectorId}`;
   const quoteShell = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+  const insecureFlag = insecure ? " --insecure" : "";
   const installCommand = token
-    ? `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --base-url ${base} --token ${token} --name ${quoteShell(safeName)}`
+    ? `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --base-url ${base} --token ${token} --name ${quoteShell(safeName)}${insecureFlag}`
     : undefined;
 
   React.useEffect(() => {
