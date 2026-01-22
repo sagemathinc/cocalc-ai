@@ -46,6 +46,7 @@ import { normalizeProviderId } from "@cocalc/cloud";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import type { HostRuntime } from "@cocalc/cloud/types";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getLaunchpadMode } from "@cocalc/server/launchpad/mode";
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { getServerProvider } from "./providers";
@@ -220,8 +221,14 @@ export async function buildBootstrapScripts(
   const machine: HostMachine = metadata.machine ?? {};
   const hasGpu = machineHasGpu(machine);
   const sshUser = runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+  const providerId = normalizeProviderId(machine.cloud);
+  const launchpadMode = await getLaunchpadMode();
+  const isOnPrem =
+    launchpadMode === "onprem" || process.env.COCALC_ONPREM === "1";
+  const isSelfHost = providerId === "self-host";
+  const useOnPremSettings = isOnPrem && isSelfHost;
   const publicIp = opts.publicIpOverride ?? runtime?.public_ip ?? "";
-  if (!publicIp) {
+  if (!publicIp && !useOnPremSettings) {
     throw new Error("bootstrap requires public_ip");
   }
 
@@ -234,7 +241,6 @@ export async function buildBootstrapScripts(
   if (!softwareBaseUrl) {
     throw new Error("project host software base URL is not configured");
   }
-  const providerId = normalizeProviderId(machine.cloud);
   const targetPlatform = await resolveTargetPlatform({
     providerId,
     row,
@@ -312,30 +318,41 @@ export async function buildBootstrapScripts(
   const dataDiskDevices =
     provider?.getBootstrapDataDiskDevices?.(spec, storageMode) ?? "";
   const imageSizeGb = Math.max(20, Number(spec.disk_gb ?? 100));
-  const port = tunnelEnabled ? 9002 : 443;
+  const onPremPortRaw = process.env.COCALC_PROJECT_HOST_PORT ?? "";
+  const onPremPort = Number.isFinite(Number.parseInt(onPremPortRaw, 10))
+    ? Number.parseInt(onPremPortRaw, 10)
+    : 9002;
+  const onPremBindHost = process.env.COCALC_PROJECT_HOST_BIND ?? "127.0.0.1";
+  const onPremUrlHost =
+    onPremBindHost === "0.0.0.0" ? "127.0.0.1" : onPremBindHost;
+  const port = useOnPremSettings ? onPremPort : tunnelEnabled ? 9002 : 443;
   const sshPort = 2222;
-  const publicUrl = tunnel?.hostname
-    ? `https://${tunnel.hostname}`
-    : row.public_url
-      ? row.public_url.replace(/^http:\/\//, "https://")
-      : `https://${publicIp}`;
-  const internalUrl = tunnel?.hostname
-    ? `https://${tunnel.hostname}`
-    : row.internal_url
-      ? row.internal_url.replace(/^http:\/\//, "https://")
-      : `https://${publicIp}`;
-  const sshServer = row.ssh_server ?? `${publicIp}:${sshPort}`;
+  const publicUrl = useOnPremSettings
+    ? `http://${onPremUrlHost}:${port}`
+    : tunnel?.hostname
+      ? `https://${tunnel.hostname}`
+      : row.public_url
+        ? row.public_url.replace(/^http:\/\//, "https://")
+        : `https://${publicIp || onPremUrlHost}`;
+  const internalUrl = useOnPremSettings
+    ? `http://${onPremUrlHost}:${port}`
+    : tunnel?.hostname
+      ? `https://${tunnel.hostname}`
+      : row.internal_url
+        ? row.internal_url.replace(/^http:\/\//, "https://")
+        : `https://${publicIp || onPremUrlHost}`;
+  const sshServer = row.ssh_server ?? `${publicIp || onPremUrlHost}:${sshPort}`;
   const dataDir = "/btrfs/data";
   const envFile = "/etc/cocalc/project-host.env";
   const seaRemote = "/opt/cocalc/project-host.tar.xz";
   const dataDiskCandidates = dataDiskDevices || "none";
-  let tlsHostname = publicIp;
-  const tlsEnabled = !tunnelEnabled;
+  let tlsHostname = publicIp || onPremUrlHost;
+  const tlsEnabled = useOnPremSettings ? false : !tunnelEnabled;
   if (!publicUrl.includes("$")) {
     try {
-      tlsHostname = new URL(publicUrl).hostname || publicIp;
+      tlsHostname = new URL(publicUrl).hostname || publicIp || onPremUrlHost;
     } catch {
-      tlsHostname = publicIp;
+      tlsHostname = publicIp || onPremUrlHost;
     }
   }
 
@@ -364,7 +381,7 @@ export async function buildBootstrapScripts(
     `TMP=/btrfs/data/tmp`,
     `TEMP=/btrfs/data/tmp`,
     `COCALC_PROJECT_HOST_HTTPS=${tlsEnabled ? "1" : "0"}`,
-    `HOST=0.0.0.0`,
+    `HOST=${useOnPremSettings ? onPremBindHost : "0.0.0.0"}`,
     `PORT=${port}`,
     `DEBUG=cocalc:*`,
     `DEBUG_CONSOLE=yes`,

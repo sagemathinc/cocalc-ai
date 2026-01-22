@@ -46,11 +46,23 @@ export type LaunchpadOnPremConfig = {
 export function getLaunchpadOnPremConfig(
   modeOverride?: LaunchpadMode,
 ): LaunchpadOnPremConfig {
-  const httpsPort = Number.parseInt(
-    process.env.COCALC_HTTPS_PORT ?? process.env.PORT ?? "",
-    10,
-  );
-  const sshdPort = Number.parseInt(process.env.COCALC_SSHD_PORT ?? "", 10);
+  const basePortRaw =
+    process.env.COCALC_BASE_PORT ??
+    process.env.COCALC_HTTPS_PORT ??
+    process.env.PORT ??
+    "";
+  const basePortParsed = Number.parseInt(basePortRaw, 10);
+  const basePort = Number.isFinite(basePortParsed) ? basePortParsed : 8443;
+  const httpsPortRaw = process.env.COCALC_HTTPS_PORT ?? process.env.PORT ?? "";
+  const httpsPortParsed = Number.parseInt(httpsPortRaw, 10);
+  const httpsPort = Number.isFinite(httpsPortParsed)
+    ? httpsPortParsed
+    : basePort;
+  const sshdPortRaw = process.env.COCALC_SSHD_PORT ?? "";
+  const sshdPortParsed = Number.parseInt(sshdPortRaw, 10);
+  const sshdPort = Number.isFinite(sshdPortParsed)
+    ? sshdPortParsed
+    : basePort + 1;
   const dataDir = process.env.COCALC_DATA_DIR ?? process.env.DATA;
   const sftpRoot =
     process.env.COCALC_SFTP_ROOT ??

@@ -209,3 +209,8 @@ Hub assigns two ports per host:
 
 - Add a dedicated admin guidance UI for selecting modes, validating config, and
   onboarding (defer until core plumbing is complete).
+- After on-prem bootstrap is stable, nail down the minimal config surface.
+  - For on-prem project-hosts we likely only need `HOST=127.0.0.1` and
+    `PORT=9002` (except local dev); simplify inputs and
+    `src/packages/server/cloud/bootstrap-host.ts` accordingly.
+

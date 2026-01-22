@@ -8,10 +8,10 @@ import { secrets } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
 import {
   install,
-  sftpServer,
-  ssh as sshBinary,
-  sshKeygen,
-  sshd,
+  sftpServer as bundledSftpServer,
+  ssh as bundledSsh,
+  sshKeygen as bundledSshKeygen,
+  sshd as bundledSshd,
 } from "@cocalc/backend/sandbox/install";
 import { getLaunchpadMode, getLaunchpadOnPremConfig } from "./mode";
 
@@ -47,17 +47,67 @@ function resolveSshUser(): string {
   );
 }
 
-async function ensureHostKey(hostKeyPath: string): Promise<void> {
+type SshBins = {
+  sshdPath: string;
+  sshKeygenPath: string;
+  sftpServerPath: string;
+  sshBinaryPath: string;
+  source: "system" | "bundled";
+};
+
+async function resolveSshBins(): Promise<SshBins> {
+  const systemSshd = "/usr/sbin/sshd";
+  const systemSshKeygen = "/usr/bin/ssh-keygen";
+  const systemSftpCandidates = [
+    "/usr/lib/openssh/sftp-server",
+    "/usr/lib/ssh/sftp-server",
+  ];
+  let systemSftpServer: string | undefined;
+  for (const candidate of systemSftpCandidates) {
+    if (await fileExists(candidate)) {
+      systemSftpServer = candidate;
+      break;
+    }
+  }
+  const systemSsh = "/usr/bin/ssh";
+  const systemReady =
+    (await fileExists(systemSshd)) &&
+    (await fileExists(systemSshKeygen)) &&
+    !!systemSftpServer;
+  if (systemReady) {
+    return {
+      sshdPath: systemSshd,
+      sshKeygenPath: systemSshKeygen,
+      sftpServerPath: systemSftpServer as string,
+      sshBinaryPath: (await fileExists(systemSsh)) ? systemSsh : systemSshd,
+      source: "system",
+    };
+  }
+  await install("ssh");
+  return {
+    sshdPath: bundledSshd,
+    sshKeygenPath: bundledSshKeygen,
+    sftpServerPath: bundledSftpServer,
+    sshBinaryPath: bundledSsh,
+    source: "bundled",
+  };
+}
+
+async function ensureHostKey(
+  hostKeyPath: string,
+  sshKeygenPath: string,
+  sshBinaryPath: string,
+): Promise<void> {
   if (await fileExists(hostKeyPath)) {
     return;
   }
   await mkdir(dirname(hostKeyPath), { recursive: true });
   await executeCode({
-    command: sshKeygen,
+    command: sshKeygenPath,
     args: ["-t", "ed25519", "-N", "", "-f", hostKeyPath],
     env: {
       ...process.env,
-      PATH: `${dirname(sshBinary)}:${process.env.PATH ?? ""}`,
+      PATH: `${dirname(sshBinaryPath)}:${process.env.PATH ?? ""}`,
     },
   });
   await chmod(hostKeyPath, 0o600);
@@ -70,6 +120,7 @@ async function writeSshdConfig(opts: {
   pidPath: string;
   sshUser: string;
   sshdPort: number;
+  sftpServerPath: string;
 }): Promise<void> {
   const permitRootLogin = opts.sshUser === "root" ? "prohibit-password" : "no";
   const lines = [
@@ -90,7 +141,7 @@ async function writeSshdConfig(opts: {
     "X11Forwarding no",
     "AllowTcpForwarding yes",
     "GatewayPorts clientspecified",
-    `Subsystem sftp ${sftpServer}`,
+    `Subsystem sftp ${opts.sftpServerPath}`,
     "StrictModes no",
   ];
   const configText = lines.join("\n") + "\n";
@@ -105,22 +156,31 @@ async function ensureAuthorizedKeysPath(path: string): Promise<void> {
 }
 
 async function startSshd(): Promise<SshdState | null> {
-  if (process.env.COCALC_MODE !== "launchpad") {
+  const mode = await getLaunchpadMode();
+  const onprem =
+    process.env.COCALC_ONPREM === "1" || mode === "onprem";
+  if (!onprem) {
     return null;
   }
-  const mode = await getLaunchpadMode();
-  if (mode !== "onprem") {
-    return null;
+  if (process.env.COCALC_MODE !== "launchpad") {
+    logger.warn("starting onprem sshd outside launchpad mode", {
+      mode: process.env.COCALC_MODE,
+    });
   }
   if (sshdState) {
     return sshdState;
   }
-  const config = getLaunchpadOnPremConfig(mode);
+  const config = getLaunchpadOnPremConfig("onprem");
   if (!config.sshd_port) {
     logger.warn("onprem sshd disabled (missing COCALC_SSHD_PORT)");
     return null;
   }
-  await install("ssh");
+  const sshBins = await resolveSshBins();
+  logger.info("onprem sshd binary selection", {
+    source: sshBins.source,
+    sshd: sshBins.sshdPath,
+    sftp: sshBins.sftpServerPath,
+  });
   const sshUser = resolveSshUser();
   const sshdDir = join(secrets, "launchpad-sshd");
   const configPath = join(sshdDir, "sshd_config");
@@ -128,7 +188,7 @@ async function startSshd(): Promise<SshdState | null> {
   const authorizedKeysPath = join(sshdDir, "authorized_keys");
   const pidPath = join(sshdDir, "sshd.pid");
   await mkdir(sshdDir, { recursive: true });
-  await ensureHostKey(hostKeyPath);
+  await ensureHostKey(hostKeyPath, sshBins.sshKeygenPath, sshBins.sshBinaryPath);
   await ensureAuthorizedKeysPath(authorizedKeysPath);
   await writeSshdConfig({
     configPath,
@@ -137,11 +197,12 @@ async function startSshd(): Promise<SshdState | null> {
     pidPath,
     sshUser,
     sshdPort: config.sshd_port,
+    sftpServerPath: sshBins.sftpServerPath,
   });
 
   const env = {
     ...process.env,
-    PATH: `${dirname(sshBinary)}:${process.env.PATH ?? ""}`,
+    PATH: `${dirname(sshBins.sshBinaryPath)}:${process.env.PATH ?? ""}`,
   };
   const args = ["-D", "-e", "-f", configPath];
   logger.info("starting onprem sshd", {
@@ -149,7 +210,7 @@ async function startSshd(): Promise<SshdState | null> {
     sshUser,
     configPath,
   });
-  const child = spawn(sshd, args, { env });
+  const child = spawn(sshBins.sshdPath, args, { env });
   child.stderr.on("data", (chunk) => {
     logger.debug(chunk.toString());
   });
@@ -206,7 +267,7 @@ function formatSftpAuthorizedKey(
     return null;
   }
   const options = [
-    `command="${sftpServer} -d ${sftpRoot}"`,
+    `command="internal-sftp -d ${sftpRoot}"`,
     "no-agent-forwarding",
     "no-X11-forwarding",
     "no-pty",

@@ -6,6 +6,7 @@ import {
   getLaunchpadMode,
   getLaunchpadOnPremConfig,
 } from "@cocalc/server/launchpad/mode";
+import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { mkdir } from "node:fs/promises";
 import {
   registerSelfHostSftpKey,
@@ -47,7 +48,7 @@ export async function initHostStatusService() {
         const sshdHost =
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
-          "";
+          resolveOnPremHost();
         logger.info("onprem tunnel registered", {
           host_id,
           sshd_host: sshdHost,
@@ -95,7 +96,7 @@ export async function initHostStatusService() {
         const sshdHost =
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
-          "";
+          resolveOnPremHost();
         logger.info("onprem sftp key registered", {
           host_id,
           sshd_host: sshdHost,
