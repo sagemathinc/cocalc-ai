@@ -82,13 +82,11 @@ export const useUpdateDOMSelection = ({
     } catch (err) {
       // in rare cases when document / selection seriously "messed up", this
       // can happen because Editor.before throws below.  In such cases we
-      // give up by setting the selection to empty, so it will get cleared in
-      // the DOM.  I saw this once in development.
+      // leave selection unchanged to avoid a spurious jump.
       console.warn(
-        `getWindowedSelection warning - ${err} - so clearing selection`,
+        `getWindowedSelection warning - ${err} - leaving selection unchanged`,
       );
-      Transforms.deselect(editor); // just clear selection
-      selection = undefined;
+      return;
     }
     const isCropped = !isEqual(editor.selection, selection);
     if (!isCropped) {
