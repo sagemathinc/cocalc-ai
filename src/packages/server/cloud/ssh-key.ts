@@ -11,6 +11,7 @@ import {
   getServerSettings,
   resetServerSettingsCache,
 } from "@cocalc/database/settings/server-settings";
+import { encryptSettingValue } from "@cocalc/database/settings/secret-settings";
 
 const logger = getLogger("server:cloud:ssh-key");
 const pool = () => getPool();
@@ -71,6 +72,10 @@ async function derivePublicKeyFromString(
 }
 
 async function storePrivateKey(privateKey: string): Promise<void> {
+  const encrypted = await encryptSettingValue(
+    "control_plane_ssh_private_key",
+    privateKey,
+  );
   await pool().query(
     `
       INSERT INTO server_settings (name, value, readonly)
@@ -78,7 +83,7 @@ async function storePrivateKey(privateKey: string): Promise<void> {
       ON CONFLICT (name)
       DO UPDATE SET value=EXCLUDED.value, readonly=false
     `,
-    ["control_plane_ssh_private_key", privateKey],
+    ["control_plane_ssh_private_key", encrypted],
   );
   resetServerSettingsCache();
 }

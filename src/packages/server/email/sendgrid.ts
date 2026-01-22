@@ -9,7 +9,7 @@ https://app.sendgrid.com/suppressions/advanced_suppression_manager
 
 import sgMail from "@sendgrid/mail";
 
-import getPool from "@cocalc/database/pool";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { SENDGRID_TEMPLATE_ID } from "@cocalc/util/theme";
 import appendFooter from "./footer";
 import getHelpEmail from "./help";
@@ -24,18 +24,15 @@ export async function getSendgrid(): Promise<any> {
     // initialized recently
     return sgMail;
   }
-  const pool = getPool("long");
-  const { rows } = await pool.query(
-    "SELECT value FROM server_settings WHERE name='sendgrid_key'",
-  );
-  if (rows.length == 0 || !rows[0]?.value) {
+  const { sendgrid_key: apiKey } = await getServerSettings();
+  if (!apiKey) {
     if (initialized) {
       // no key now, but there was a key before -- so clear it and error
       sgMail.setApiKey("");
     }
     throw Error("no sendgrid key");
   }
-  sgMail.setApiKey(rows[0].value);
+  sgMail.setApiKey(apiKey);
   initialized = Date.now();
   return sgMail;
 }

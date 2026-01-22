@@ -3,11 +3,13 @@ import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getPool from "@cocalc/database/pool";
 import {
   getLaunchpadMode,
   getLaunchpadOnPremConfig,
 } from "@cocalc/server/launchpad/mode";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   DEFAULT_R2_REGION,
@@ -38,15 +40,12 @@ function pool() {
 }
 
 async function getSiteSetting(name: string): Promise<string | undefined> {
-  const { rows } = await pool().query<{ value: string | null }>(
-    "SELECT value FROM server_settings WHERE name=$1",
-    [name],
-  );
-  const value = rows[0]?.value ?? undefined;
+  const settings = await getServerSettings();
+  const value = (settings as any)[name];
   if (value == null || value === "") {
     return undefined;
   }
-  return value;
+  return typeof value === "string" ? value : String(value);
 }
 
 type BucketRow = {

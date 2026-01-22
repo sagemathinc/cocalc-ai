@@ -4,6 +4,7 @@ let queryMock: jest.Mock;
 let readFileMock: jest.Mock;
 let writeFileMock: jest.Mock;
 let createBucketMock: jest.Mock;
+let settings: Record<string, string | undefined> = {};
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -31,6 +32,10 @@ const BUCKET_ID = "33333333-3333-3333-3333-333333333333";
 describe("project-backup", () => {
   beforeEach(() => {
     jest.resetModules();
+    jest.doMock("@cocalc/database/settings/server-settings", () => ({
+      __esModule: true,
+      getServerSettings: jest.fn(async () => settings),
+    }));
     createBucketMock = jest.fn(async () => ({
       name: "cocalc-backups-wnam",
       location: "wnam",
@@ -122,7 +127,6 @@ describe("project-backup", () => {
   });
 
   const masterKeyBase64 = Buffer.alloc(32, 7).toString("base64");
-  let settings: Record<string, string | undefined> = {};
 
   it("builds per-project config when settings exist", async () => {
     settings = {

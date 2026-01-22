@@ -281,8 +281,7 @@ const dataSource = [
           course management
         </A>
         , <A href="https://doc.cocalc.com/tasks.html">task management</A>,{" "}
-        <A href="https://doc.cocalc.com/chat.html">Chat</A>,{" "}
-        <A href="https://about.cocalc.com/">and more...</A>
+        <A href="https://doc.cocalc.com/chat.html">Chat</A>, and more...
       </>
     ),
   },
@@ -307,12 +306,6 @@ export default function Features({ customize }) {
                 <li>
                   see how <A href="/share">other people are using CoCalc</A>,
                   and
-                </li>
-                <li>
-                  learn about our{" "}
-                  <A href="https://about.cocalc.com">
-                    mission, developers and features.
-                  </A>
                 </li>
               </ul>
             </>

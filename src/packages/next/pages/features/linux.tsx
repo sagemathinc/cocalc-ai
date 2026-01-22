@@ -209,7 +209,7 @@ export default function Linux({ customize }) {
             </Paragraph>
             <Paragraph>
               Besides{" "}
-              <A href="https://https://www.postgresql.org/">PostgreSQL</A>,
+              <A href="https://www.postgresql.org/">PostgreSQL</A>,
               CoCalc also supports <A href="https://www.mysql.com/">MySQL</A>{" "}
               and <A href="https://sqlite.org">SQLite</A>.
             </Paragraph>
@@ -225,7 +225,7 @@ export default function Linux({ customize }) {
               insert data. Finally, the{" "}
               <A href="/features/jupyter-notebook">Jupyter Notebook</A> on the
               left connects via the{" "}
-              <A href="http://initd.org/psycopg/docs/">psycopg2</A> library and
+              <A href="https://www.psycopg.org/">psycopg2</A> library and
               issues a query to the database!
             </Paragraph>
           </Info>
