@@ -644,7 +644,9 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       : slateDiff(previousEditorValue, nextEditorValue);
 
     if (!shouldDirectSet && operations.length == 0) {
-      // no actual change needed.
+      // No ops needed, but still update markdown bookkeeping.
+      editor.resetHasUnsavedChanges();
+      editor.markdownValue = value;
       return;
     }
 
