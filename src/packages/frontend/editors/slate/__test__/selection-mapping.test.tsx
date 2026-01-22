@@ -49,3 +49,30 @@ test("slate selection mapping handles zero-width and void nodes", () => {
 
   unmount();
 });
+
+test("slate selection mapping works with placeholders", () => {
+  const editor = withReact(createEditor());
+  editor.isVoid = (element) => element.type === "hr";
+
+  const value: Descendant[] = [
+    { type: "paragraph", children: [{ text: "" }] },
+  ];
+
+  const { unmount } = render(
+    <Slate editor={editor} value={value} onChange={() => undefined}>
+      <Editable renderElement={renderElement} placeholder="Type here..." />
+    </Slate>,
+  );
+
+  const point = { path: [0, 0], offset: 0 };
+  const domPoint = ReactEditor.toDOMPoint(editor, point);
+  const roundTripPoint = ReactEditor.toSlatePoint(editor, domPoint);
+  expect(roundTripPoint).toEqual(point);
+
+  const range: Range = { anchor: point, focus: point };
+  const domRange = ReactEditor.toDOMRange(editor, range);
+  const roundTripRange = ReactEditor.toSlateRange(editor, domRange);
+  expect(roundTripRange).toEqual(range);
+
+  unmount();
+});
