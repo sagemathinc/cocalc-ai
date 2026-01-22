@@ -342,7 +342,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
           const [targetRange] = event.getTargetRanges();
 
           if (targetRange) {
-            let range;
+            let range = selection;
             try {
               range = ReactEditor.toSlateRange(editor, targetRange);
             } catch (err) {
@@ -351,10 +351,10 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
                 targetRange,
                 err,
               );
-              return;
+              // Fall back to the current editor selection instead of dropping input.
             }
 
-            if (!selection || !Range.equals(selection, range)) {
+            if (range && (!selection || !Range.equals(selection, range))) {
               Transforms.select(editor, range);
             }
           }
