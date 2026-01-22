@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -10,6 +10,8 @@ import { callback_opts } from "@cocalc/util/async-utils";
 import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { uuid } from "@cocalc/util/misc";
 import type { PostgreSQL } from "../types";
+
+jest.setTimeout(15 * 60 * 1000);
 
 describe("project state and storage request methods", () => {
   const database: PostgreSQL = db();

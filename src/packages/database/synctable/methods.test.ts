@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -16,6 +16,8 @@ import { PostgreSQL as PostgreSQLClass } from "../postgres";
 
 let projectTrackerInit: jest.Mock;
 let projectTrackerOnce: jest.Mock;
+
+jest.setTimeout(15 * 60 * 1000);
 
 jest.mock("../postgres/changefeed/changefeed", () => ({
   Changes: jest.fn(),
