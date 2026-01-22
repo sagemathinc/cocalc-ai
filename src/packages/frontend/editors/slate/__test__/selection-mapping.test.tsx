@@ -167,3 +167,101 @@ test("slate selection mapping round-trips ranges across inline nodes", () => {
 
   unmount();
 });
+
+test("slate selection mapping handles multiple text nodes", () => {
+  const editor = withReact(createEditor());
+
+  const value: Descendant[] = [
+    {
+      type: "paragraph",
+      children: [{ text: "hello" }, { text: " world" }],
+    },
+  ];
+
+  const { unmount } = render(
+    <Slate editor={editor} value={value} onChange={() => undefined}>
+      <Editable renderElement={renderElement} />
+    </Slate>,
+  );
+
+  const points = [
+    { path: [0, 0], offset: 4 },
+    { path: [0, 1], offset: 3 },
+  ];
+
+  for (const point of points) {
+    const domPoint = ReactEditor.toDOMPoint(editor, point);
+    const roundTripPoint = ReactEditor.toSlatePoint(editor, domPoint);
+    expect(roundTripPoint).toEqual(point);
+  }
+
+  const range: Range = {
+    anchor: { path: [0, 0], offset: 2 },
+    focus: { path: [0, 1], offset: 2 },
+  };
+  const domRange = ReactEditor.toDOMRange(editor, range);
+  const roundTripRange = ReactEditor.toSlateRange(editor, domRange);
+  expect(roundTripRange).toEqual(range);
+
+  unmount();
+});
+
+test("slate selection mapping handles ranges across blocks", () => {
+  const editor = withReact(createEditor());
+
+  const value: Descendant[] = [
+    { type: "paragraph", children: [{ text: "first" }] },
+    { type: "paragraph", children: [{ text: "second" }] },
+  ];
+
+  const { unmount } = render(
+    <Slate editor={editor} value={value} onChange={() => undefined}>
+      <Editable renderElement={renderElement} />
+    </Slate>,
+  );
+
+  const range: Range = {
+    anchor: { path: [0, 0], offset: 2 },
+    focus: { path: [1, 0], offset: 3 },
+  };
+
+  const domRange = ReactEditor.toDOMRange(editor, range);
+  const roundTripRange = ReactEditor.toSlateRange(editor, domRange);
+  expect(roundTripRange).toEqual(range);
+
+  unmount();
+});
+
+test("slate selection mapping normalizes backward ranges", () => {
+  const editor = withReact(createEditor());
+
+  const value: Descendant[] = [
+    { type: "paragraph", children: [{ text: "alpha" }] },
+    { type: "paragraph", children: [{ text: "beta" }] },
+  ];
+
+  const { unmount } = render(
+    <Slate editor={editor} value={value} onChange={() => undefined}>
+      <Editable renderElement={renderElement} />
+    </Slate>,
+  );
+
+  const backwardRange: Range = {
+    anchor: { path: [1, 0], offset: 2 },
+    focus: { path: [0, 0], offset: 1 },
+  };
+
+  const domRange = ReactEditor.toDOMRange(editor, backwardRange);
+  const roundTripRange = ReactEditor.toSlateRange(editor, domRange);
+
+  const normalizedRange: Range = {
+    anchor: { path: [0, 0], offset: 1 },
+    focus: { path: [1, 0], offset: 2 },
+  };
+
+  expect(Range.isBackward(backwardRange)).toBe(true);
+  expect(Range.isBackward(roundTripRange)).toBe(false);
+  expect(roundTripRange).toEqual(normalizedRange);
+
+  unmount();
+});
