@@ -71,9 +71,10 @@ const Text = (props: {
     }
 
     // It's also CRITICAL to update the selection after changing the text,
-    // at least when using windowing.
-    // See comment in selection-sync.ts about this.
-    editor.updateDOMSelection?.();
+    // at least when using windowing. See comment in selection-sync.ts.
+    if (ReactEditor.isUsingWindowing(editor)) {
+      editor.updateDOMSelection?.();
+    }
   });
 
   return (

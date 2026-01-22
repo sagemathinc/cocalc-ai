@@ -151,12 +151,16 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
     latestElement: DOMElement | null;
     shiftKey: boolean;
     ignoreSelection: boolean;
+    updatingSelection: boolean;
+    pendingSelectionReset: boolean;
   } = useMemo(
     () => ({
       isComposing: false,
       latestElement: null as DOMElement | null,
       shiftKey: false,
       ignoreSelection: false,
+      updatingSelection: false,
+      pendingSelectionReset: false,
     }),
     [],
   );

@@ -19,9 +19,9 @@ import { useCallback } from "react";
 import { useIsomorphicLayoutEffect } from "../hooks/use-isomorphic-layout-effect";
 import { ReactEditor } from "..";
 import { EDITOR_TO_ELEMENT } from "../utils/weak-maps";
-import { Editor, Point, Range, Selection, Transforms } from "slate";
+import { Editor, Path, Point, Range, Selection, Transforms } from "slate";
 import { hasEditableTarget, isTargetInsideVoid } from "./dom-utils";
-import { DOMElement } from "../utils/dom";
+import { DOMElement, DOMSelection } from "../utils/dom";
 import { isEqual } from "lodash";
 
 interface SelectionState {
@@ -40,6 +40,10 @@ interface SelectionState {
 
   // if true, the selection sync hooks are temporarily disabled.
   ignoreSelection: boolean;
+
+  // true when we are programmatically updating the DOM selection.
+  updatingSelection: boolean;
+  pendingSelectionReset: boolean;
 }
 
 export const useUpdateDOMSelection = ({
@@ -165,12 +169,17 @@ export const useUpdateDOMSelection = ({
       // record that we're making a change that diverges from true selection.
       state.windowedSelection = true;
     }
-    domSelection.setBaseAndExtent(
-      newDomRange.startContainer,
-      newDomRange.startOffset,
-      newDomRange.endContainer,
-      newDomRange.endOffset,
-    );
+    state.updatingSelection = true;
+    try {
+      domSelection.setBaseAndExtent(
+        newDomRange.startContainer,
+        newDomRange.startOffset,
+        newDomRange.endContainer,
+        newDomRange.endOffset,
+      );
+    } finally {
+      scheduleSelectionReset(state);
+    }
   };
 
   // Always ensure DOM selection gets set to slate selection
@@ -201,7 +210,12 @@ export const useDOMSelectionChange = ({
   // while a selection is being dragged.
 
   const onDOMSelectionChange = useCallback(() => {
-    if (readOnly || state.isComposing || state.ignoreSelection) {
+    if (
+      readOnly ||
+      state.isComposing ||
+      state.ignoreSelection ||
+      state.updatingSelection
+    ) {
       return;
     }
 
@@ -290,6 +304,15 @@ export const useDOMSelectionChange = ({
       }
     }
 
+    if (
+      selection != null &&
+      range != null &&
+      !Range.equals(selection, range) &&
+      shouldLogSelectionMismatch(editor, selection, range, state)
+    ) {
+      logSelectionMismatch(editor, selection, range, domSelection, state);
+    }
+
     if (selection == null || !Range.equals(selection, range)) {
       Transforms.select(editor, range);
     }
@@ -356,4 +379,120 @@ function clipPoint(
 
 function isSelectable(editor, node): boolean {
   return hasEditableTarget(editor, node) || isTargetInsideVoid(editor, node);
+}
+
+const SELECTION_MISMATCH_LOG_INTERVAL_MS = 2000;
+let lastSelectionMismatchLog = 0;
+let suppressedSelectionMismatchLogs = 0;
+
+function shouldLogSelectionMismatch(
+  editor: ReactEditor,
+  selection: Range,
+  range: Range,
+  state: SelectionState,
+): boolean {
+  if (
+    state.shiftKey ||
+    state.isComposing ||
+    state.ignoreSelection ||
+    state.updatingSelection ||
+    state.windowedSelection != null
+  ) {
+    return false;
+  }
+  if (!ReactEditor.isFocused(editor)) {
+    return false;
+  }
+  if (!Range.isCollapsed(selection) || !Range.isCollapsed(range)) {
+    return false;
+  }
+  const samePath = Path.equals(selection.anchor.path, range.anchor.path);
+  const offsetDiff = Math.abs(selection.anchor.offset - range.anchor.offset);
+  if (samePath && offsetDiff <= 1) {
+    // Likely normal caret movement while typing.
+    return false;
+  }
+  return true;
+}
+
+function logSelectionMismatch(
+  editor: ReactEditor,
+  selection: Range,
+  range: Range,
+  domSelection: DOMSelection,
+  state: SelectionState,
+): void {
+  const now = Date.now();
+  if (now - lastSelectionMismatchLog < SELECTION_MISMATCH_LOG_INTERVAL_MS) {
+    suppressedSelectionMismatchLogs += 1;
+    return;
+  }
+  const suppressed = suppressedSelectionMismatchLogs;
+  suppressedSelectionMismatchLogs = 0;
+  lastSelectionMismatchLog = now;
+
+  const visibleRange = editor.windowedListRef?.current?.visibleRange;
+  console.warn("SLATE selection mismatch (DOM vs Slate)", {
+    selection,
+    range,
+    domSelection: describeDomSelection(domSelection),
+    editorFocused: ReactEditor.isFocused(editor),
+    windowed: editor.windowedListRef?.current != null,
+    visibleRange,
+    state: {
+      shiftKey: state.shiftKey,
+      isComposing: state.isComposing,
+      ignoreSelection: state.ignoreSelection,
+      updatingSelection: state.updatingSelection,
+      windowedSelection: state.windowedSelection,
+    },
+    suppressed,
+  });
+}
+
+function describeDomSelection(domSelection: DOMSelection) {
+  return {
+    type: domSelection.type,
+    isCollapsed: domSelection.isCollapsed,
+    anchorNode: describeDomNode(domSelection.anchorNode),
+    anchorOffset: domSelection.anchorOffset,
+    focusNode: describeDomNode(domSelection.focusNode),
+    focusOffset: domSelection.focusOffset,
+  };
+}
+
+function describeDomNode(node: Node | null): string | null {
+  if (!node) return null;
+  if (node.nodeType === 3) {
+    const text = node.textContent ?? "";
+    const preview = text.length > 30 ? `${text.slice(0, 30)}...` : text;
+    return `#text("${preview}")`;
+  }
+  if (node.nodeType === 1) {
+    const el = node as Element;
+    const tag = el.tagName.toLowerCase();
+    const attrs: string[] = [];
+    const slateNode = el.getAttribute("data-slate-node");
+    const slateLeaf = el.getAttribute("data-slate-leaf");
+    const slateZero = el.getAttribute("data-slate-zero-width");
+    if (slateNode) attrs.push(`data-slate-node=${slateNode}`);
+    if (slateLeaf != null) attrs.push("data-slate-leaf");
+    if (slateZero) attrs.push(`data-slate-zero-width=${slateZero}`);
+    return attrs.length ? `${tag}[${attrs.join(" ")}]` : tag;
+  }
+  return `nodeType=${node.nodeType}`;
+}
+
+function scheduleSelectionReset(state: SelectionState): void {
+  if (state.pendingSelectionReset) return;
+  state.pendingSelectionReset = true;
+  const reset = () => {
+    state.updatingSelection = false;
+    state.pendingSelectionReset = false;
+  };
+  if (typeof window !== "undefined" && window.requestAnimationFrame) {
+    window.requestAnimationFrame(reset);
+  } else {
+    setTimeout(reset, 0);
+  }
 }
