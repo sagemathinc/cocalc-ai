@@ -24,7 +24,7 @@ import {
 } from "../utils/dom";
 
 import { markdownAutoformat } from "../../format/auto-format";
-import { SlateEditor } from "../../editable-markdown";
+import type { SlateEditor } from "../../editable-markdown";
 
 /**
  * A React and DOM-specific version of the `Editor` interface.

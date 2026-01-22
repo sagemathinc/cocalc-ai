@@ -10,7 +10,7 @@ import { NODE_TO_INDEX, NODE_TO_PARENT } from "../utils/weak-maps";
 import { RenderElementProps, RenderLeafProps } from "./editable";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { shallowCompare } from "@cocalc/util/misc";
-import { SlateEditor } from "../../editable-markdown";
+import type { SlateEditor } from "../../editable-markdown";
 
 export interface WindowingParams {
   rowStyle?: React.CSSProperties;
