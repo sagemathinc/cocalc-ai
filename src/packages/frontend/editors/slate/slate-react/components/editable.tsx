@@ -247,23 +247,46 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
     }
   }, [autoFocus]);
 
+  const scrollRafRef = useRef<number | null>(null);
+
   useIsomorphicLayoutEffect(() => {
     // Whenever the selection changes and is collapsed, make
-    // sure the cursor is visible.  Also, have a facility to
-    // ignore a single iteration of this, which we use when
-    // the selection change is being caused by realtime
-    // collaboration.
+    // sure the cursor is visible. Debounce to one per frame
+    // and skip programmatic updates.
 
     // @ts-ignore
-    const skip = editor.syncCausedUpdate;
+    const skip = editor.syncCausedUpdate || state.updatingSelection;
     if (
       editor.selection != null &&
       Range.isCollapsed(editor.selection) &&
       !skip
     ) {
-      editor.scrollCaretIntoView();
+      if (scrollRafRef.current != null) {
+        return;
+      }
+      scrollRafRef.current = window.requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        // @ts-ignore
+        const skipNow = editor.syncCausedUpdate || state.updatingSelection;
+        if (
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection) &&
+          !skipNow
+        ) {
+          editor.scrollCaretIntoView();
+        }
+      });
     }
   }, [editor.selection]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current != null) {
+        window.cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
+  }, []);
 
   // Listen on the native `beforeinput` event to get real "Level 2" events. This
   // is required because React's `beforeinput` is fake and never really attaches
