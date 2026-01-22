@@ -62,8 +62,8 @@ export default function Overview() {
       </OverviewRow>
 
       <p>
-        You can also <A href="/store/membership">buy a membership</A> at{" "}
-        <A href="/store">the store</A> and browse{" "}
+        You can also <A href="/settings/store">buy a membership</A> in the{" "}
+        <A href="/settings/store">store</A> and browse{" "}
         <A external href="/settings/licenses">
           your software licenses
         </A>{" "}

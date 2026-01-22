@@ -9,7 +9,7 @@ import Footer from "components/landing/footer";
 import Head from "components/landing/head";
 import Header from "components/landing/header";
 import { Paragraph } from "components/misc";
-import Memberships from "components/store/memberships";
+import A from "components/misc/A";
 import { MAX_WIDTH } from "lib/config";
 import { Customize } from "lib/customize";
 import withCustomize from "lib/with-customize";
@@ -43,7 +43,10 @@ function Body(): JSX.Element {
         Memberships replace legacy project licenses. Pick a plan below to cover
         workspace resources and included entitlements.
       </Paragraph>
-      <Memberships />
+      <Paragraph>
+        Sign in to view membership tiers in the app store:{" "}
+        <A href="/settings/store">Open store</A>.
+      </Paragraph>
     </div>
   );
 }

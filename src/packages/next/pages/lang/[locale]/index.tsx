@@ -378,7 +378,7 @@ function Features() {
                 components={{
                   strong: <strong />,
                   A2: <A style={style} href="/auth/sign-up" />,
-                  A: <A style={style} href="/store" />,
+                  A: <A style={style} href="/settings/store" />,
                   li: <li style={style} />,
                   ul: <ul />,
                   p: <Paragraph style={style} />,

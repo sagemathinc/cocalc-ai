@@ -40,6 +40,9 @@ export const RESUME_SUBSCRIPTION = "resume-subscription";
 // change membership tiers directly in-app
 export const MEMBERSHIP_CHANGE = "membership-change";
 
+// purchase credit vouchers directly in-app
+export const VOUCHER_PURCHASE = "voucher-purchase";
+
 // for paying a statement the purpose is `statement-${statement_id}`
 // (Maybe we should be usig metadata for this though?)
 

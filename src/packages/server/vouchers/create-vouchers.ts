@@ -31,6 +31,8 @@ interface Options {
   account_id: string;
   client;
   whenPay: WhenPay;
+  // if set and account_id is an admin, create vouchers on behalf of this user
+  created_by?: string;
   // how many voucher codes
   numVouchers: number;
   // value of each voucher code
@@ -54,6 +56,7 @@ export default async function createVouchers({
   account_id,
   client,
   whenPay, // createVouchers *does* check if they claim to be an admin that they actually are.
+  created_by,
   numVouchers: count,
   amount,
   active,
@@ -77,6 +80,7 @@ export default async function createVouchers({
     title,
     generate,
     credit_id,
+    created_by,
   });
   if (!count || count < 1 || !isFinite(count)) {
     // default to 1 -- this wasn't specified at all in some cases with
@@ -132,10 +136,11 @@ export default async function createVouchers({
 
     */
     const now = dayjs();
+    const createdBy = created_by ?? account_id;
     const { rows } = await client.query(
       "INSERT INTO vouchers(created, created_by, title, active, expire, cancel_by, count, when_pay, cost) VALUES(NOW(), $1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
       [
-        account_id,
+        createdBy,
         title,
         active ?? now.toDate(),
         expire,

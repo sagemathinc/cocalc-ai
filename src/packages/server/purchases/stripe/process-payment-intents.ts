@@ -16,6 +16,7 @@ import {
   SUBSCRIPTION_RENEWAL,
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
+  VOUCHER_PURCHASE,
 } from "@cocalc/util/db-schema/purchases";
 import {
   processSubscriptionRenewal,
@@ -29,8 +30,9 @@ import adminAlert from "@cocalc/server/messages/admin-alert";
 import { moneyRound2Down, moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
-import getPool from "@cocalc/database/pool";
+import getPool, { getTransactionClient } from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
+import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
 
@@ -252,6 +254,8 @@ customer.  So we don't know what to do with this.  Please manually investigate.
           });
         } else if (paymentIntent.metadata.purpose == MEMBERSHIP_CHANGE) {
           result = `the membership change to ${paymentIntent.metadata.membership_class} was not applied`;
+        } else if (paymentIntent.metadata.purpose == VOUCHER_PURCHASE) {
+          result = "the voucher purchase was not completed";
         } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
           const statement_id = parseInt(
             paymentIntent.metadata.purpose.split("-")[1],
@@ -384,6 +388,42 @@ ${await support()}`;
           allowDowngrade: paymentIntent.metadata.allow_downgrade === "true",
           storeVisibleOnly: true,
         });
+      } else if (paymentIntent.metadata.purpose == VOUCHER_PURCHASE) {
+        const numVouchers = parseInt(
+          paymentIntent.metadata.voucher_count ?? "",
+        );
+        const amount = parseFloat(
+          paymentIntent.metadata.voucher_amount ?? "",
+        );
+        const title = paymentIntent.metadata.voucher_title ?? "CoCalc voucher";
+        if (!Number.isFinite(numVouchers) || numVouchers <= 0) {
+          throw Error("invalid voucher count");
+        }
+        if (!Number.isFinite(amount) || amount <= 0) {
+          throw Error("invalid voucher amount");
+        }
+        reason = "purchase vouchers";
+        const client = await getTransactionClient();
+        try {
+          await createVouchers({
+            account_id,
+            client,
+            whenPay: "now",
+            numVouchers,
+            amount,
+            title,
+            active: null,
+            expire: null,
+            cancelBy: null,
+            credit_id,
+          });
+          await client.query("COMMIT");
+        } catch (err) {
+          await client.query("ROLLBACK");
+          throw err;
+        } finally {
+          client.release();
+        }
       } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
         const statement_id = parseInt(
           paymentIntent.metadata.purpose.split("-")[1],
