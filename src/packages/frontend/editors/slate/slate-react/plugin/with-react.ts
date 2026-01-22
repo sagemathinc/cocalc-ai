@@ -3,6 +3,7 @@ import {
   Editor,
   Element,
   Descendant,
+  Ancestor,
   Path,
   Operation,
   Transforms,
@@ -11,7 +12,11 @@ import {
 
 import { ReactEditor } from "./react-editor";
 import { Key } from "../utils/key";
-import { EDITOR_TO_ON_CHANGE, NODE_TO_KEY } from "../utils/weak-maps";
+import {
+  EDITOR_TO_ON_CHANGE,
+  NODE_CHILDREN_DIRTY,
+  NODE_TO_KEY,
+} from "../utils/weak-maps";
 import { findCurrentLineRange } from "../utils/lines";
 
 /**
@@ -57,6 +62,17 @@ export const withReact = <T extends Editor>(editor: T) => {
 
   e.apply = (op: Operation) => {
     const matches: [Path, Key][] = [];
+    const dirtyParents: Ancestor[] = [];
+
+    const markParentDirty = (path: Path) => {
+      try {
+        const parentPath = path.length === 0 ? [] : Path.parent(path);
+        const [parent] = Editor.node(e, parentPath);
+        dirtyParents.push(parent as Ancestor);
+      } catch (err) {
+        console.warn("SLATE: unable to mark parent dirty", err);
+      }
+    };
 
     switch (op.type) {
       case "insert_text":
@@ -80,6 +96,7 @@ export const withReact = <T extends Editor>(editor: T) => {
           const key = ReactEditor.findKey(e, node);
           matches.push([path, key]);
         }
+        markParentDirty(op.path);
 
         break;
       }
@@ -91,15 +108,24 @@ export const withReact = <T extends Editor>(editor: T) => {
           const key = ReactEditor.findKey(e, node);
           matches.push([path, key]);
         }
+        markParentDirty(op.path);
         break;
       }
     }
 
     apply(op);
 
+    if (op.type === "move_node") {
+      markParentDirty(op.newPath);
+    }
+
     for (const [path, key] of matches) {
       const [node] = Editor.node(e, path);
       NODE_TO_KEY.set(node, key);
+    }
+
+    for (const parent of dirtyParents) {
+      NODE_CHILDREN_DIRTY.set(parent, true);
     }
   };
 

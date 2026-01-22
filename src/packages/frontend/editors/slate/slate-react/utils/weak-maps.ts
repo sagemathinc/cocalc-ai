@@ -9,6 +9,7 @@ import { Key } from "./key";
 
 export const NODE_TO_INDEX: WeakMap<Node, number> = new WeakMap();
 export const NODE_TO_PARENT: WeakMap<Node, Ancestor> = new WeakMap();
+export const NODE_CHILDREN_DIRTY: WeakMap<Ancestor, boolean> = new WeakMap();
 
 /**
  * Weak maps that allow us to go between Slate nodes and DOM nodes. These

@@ -6,7 +6,11 @@ import TextComponent from "./text";
 import { ReactEditor } from "..";
 import { useSlateStatic } from "../hooks/use-slate-static";
 import { useDecorate } from "../hooks/use-decorate";
-import { NODE_TO_INDEX, NODE_TO_PARENT } from "../utils/weak-maps";
+import {
+  NODE_CHILDREN_DIRTY,
+  NODE_TO_INDEX,
+  NODE_TO_PARENT,
+} from "../utils/weak-maps";
 import { RenderElementProps, RenderLeafProps } from "./editable";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { shallowCompare } from "@cocalc/util/misc";
@@ -179,10 +183,13 @@ const Children: React.FC<Props> = React.memo(
       }
     };
 
-    for (let i = 0; i < node.children.length; i++) {
-      const n = node.children[i];
-      NODE_TO_INDEX.set(n, i);
-      NODE_TO_PARENT.set(n, node);
+    if (NODE_CHILDREN_DIRTY.get(node) !== false) {
+      for (let i = 0; i < node.children.length; i++) {
+        const n = node.children[i];
+        NODE_TO_INDEX.set(n, i);
+        NODE_TO_PARENT.set(n, node);
+      }
+      NODE_CHILDREN_DIRTY.set(node, false);
     }
 
     const virtuosoRef = useRef<VirtuosoHandle>(null);
