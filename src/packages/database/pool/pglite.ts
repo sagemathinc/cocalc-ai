@@ -156,16 +156,71 @@ function toPgResult(result: PgliteQueryResult): PgLikeResult {
 
 class PglitePoolClient extends EventEmitter {
   private readonly sessionId = makeSessionId("client");
+  private readonly subscriptions = new Map<string, () => Promise<void>>();
 
   constructor(private readonly pool: PglitePool) {
     super();
   }
 
-  async query(...args: QueryArgs): Promise<PgLikeResult> {
-    return await this.pool.queryForSession(this.sessionId, ...args);
+  async query(
+    textOrConfig: string | (QueryConfig & { query?: string }),
+    valuesOrCb?: any[] | ((err: Error | null, result?: PgLikeResult) => void),
+    cb?: (err: Error | null, result?: PgLikeResult) => void,
+  ): Promise<PgLikeResult | void> {
+    const { text, values, callback } = parseQueryConfig(
+      textOrConfig,
+      valuesOrCb,
+      cb,
+    );
+
+    const trimmed = text.trim();
+    const listenMatch = trimmed.match(listenRegex);
+    if (listenMatch) {
+      const channel = this.normalizeChannel(listenMatch[1]);
+      if (channel) {
+        await this.ensureListen(channel);
+      }
+      const emptyResult: PgLikeResult = { rows: [], rowCount: 0 };
+      if (callback) {
+        callback(null, emptyResult);
+        return;
+      }
+      return emptyResult;
+    }
+
+    const unlistenMatch = trimmed.match(unlistenRegex);
+    if (unlistenMatch) {
+      const channel = this.normalizeChannel(unlistenMatch[1]);
+      if (channel === "*") {
+        await this.cleanupListeners();
+      } else if (channel) {
+        await this.removeListen(channel);
+      }
+      const emptyResult: PgLikeResult = { rows: [], rowCount: 0 };
+      if (callback) {
+        callback(null, emptyResult);
+        return;
+      }
+      return emptyResult;
+    }
+
+    const promise =
+      values == null
+        ? this.pool.queryForSession(this.sessionId, text)
+        : this.pool.queryForSession(this.sessionId, text, values);
+    if (callback) {
+      promise.then(
+        (result) => callback(null, result),
+        (err) => callback(err as Error),
+      );
+      return;
+    }
+    return await promise;
   }
 
   release(): void {
+    this.removeAllListeners();
+    void this.cleanupListeners();
     releaseAllLocks(this.sessionId);
   }
 
@@ -174,7 +229,44 @@ class PglitePoolClient extends EventEmitter {
   }
 
   async end(): Promise<void> {
-    // no-op for client-level end
+    this.release();
+  }
+
+  private normalizeChannel(value: string): string | null {
+    const trimmed = value.trim().replace(/;$/, "");
+    if (!trimmed) {
+      return null;
+    }
+    if (trimmed === "*") {
+      return "*";
+    }
+    return trimmed.replace(/^"|"$/g, "");
+  }
+
+  private async ensureListen(channel: string): Promise<void> {
+    if (this.subscriptions.has(channel)) {
+      return;
+    }
+    const pg = await getPglite();
+    const unsubscribe = await pg.listen(channel, (payload) => {
+      this.emit("notification", { channel, payload });
+    });
+    this.subscriptions.set(channel, unsubscribe);
+  }
+
+  private async removeListen(channel: string): Promise<void> {
+    const unsubscribe = this.subscriptions.get(channel);
+    if (!unsubscribe) {
+      return;
+    }
+    await unsubscribe();
+    this.subscriptions.delete(channel);
+  }
+
+  private async cleanupListeners(): Promise<void> {
+    const entries = Array.from(this.subscriptions.entries());
+    this.subscriptions.clear();
+    await Promise.allSettled(entries.map(([, unsubscribe]) => unsubscribe()));
   }
 }
 
