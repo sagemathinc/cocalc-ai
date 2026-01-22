@@ -127,11 +127,6 @@ export class PurchasesClient {
     return await purchasesApi.getMinimumPayment();
   }
 
-  // this is only used in the nextjs store app right now...
-  async getShoppingCartCheckoutParams() {
-    return await purchasesApi.getShoppingCartCheckoutParams();
-  }
-
   async adminGetMinBalance(account_id: string): Promise<MoneyValue> {
     return await purchasesApi.adminGetMinBalance(account_id);
   }

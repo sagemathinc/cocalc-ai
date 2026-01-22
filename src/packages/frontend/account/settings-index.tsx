@@ -71,6 +71,10 @@ const MESSAGES = defineMessages({
     defaultMessage:
       "Manage memberships, subscriptions, and billing information.",
   },
+  store: {
+    id: "account.settings.overview.store",
+    defaultMessage: "Purchase memberships and credit vouchers.",
+  },
   subscriptions: {
     id: "account.settings.overview.subscriptions",
     defaultMessage: "View and manage your active subscriptions.",
@@ -267,6 +271,16 @@ export function SettingsOverview() {
             <Icon name="money-check" /> {intl.formatMessage(labels.billing)}
           </Divider>
           <Flex {...FLEX_PROPS}>
+            <Card
+              {...HIGHLIGHTED_CARD_PROPS}
+              onClick={() => handleNavigate("settings/store")}
+            >
+              <Card.Meta
+                avatar={<Icon name="shopping-cart" />}
+                title="Store"
+                description={intl.formatMessage(MESSAGES.store)}
+              />
+            </Card>
             <Card
               {...HIGHLIGHTED_CARD_PROPS}
               onClick={() => handleNavigate("settings/subscriptions")}

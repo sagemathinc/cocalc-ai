@@ -142,8 +142,7 @@ type PageKey =
   | "sign-in"
   | "try"
   | "support"
-  | "news"
-  | "store";
+  | "news";
 
 const PAGES: {
   [top in PageKey]:
@@ -164,7 +163,6 @@ const PAGES: {
   try: {},
   support,
   news: {},
-  store: {},
 } as const;
 
 export type Page = PageKey | "account";
