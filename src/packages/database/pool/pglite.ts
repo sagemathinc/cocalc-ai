@@ -92,7 +92,9 @@ function normalizeQueryArgs(args: QueryArgs): { text: string; values?: any[] } {
   if (!text) {
     throw new Error("pglite: query config missing text");
   }
-  const values = Array.isArray(cfg.values) ? normalizeValues(cfg.values) : undefined;
+  const values = Array.isArray(cfg.values)
+    ? normalizeValues(cfg.values)
+    : undefined;
   return { text, values };
 }
 
@@ -152,10 +154,12 @@ function toPgResult(result: PgliteQueryResult): PgLikeResult {
   };
 }
 
-class PglitePoolClient {
+class PglitePoolClient extends EventEmitter {
   private readonly sessionId = makeSessionId("client");
 
-  constructor(private readonly pool: PglitePool) {}
+  constructor(private readonly pool: PglitePool) {
+    super();
+  }
 
   async query(...args: QueryArgs): Promise<PgLikeResult> {
     return await this.pool.queryForSession(this.sessionId, ...args);
@@ -366,10 +370,7 @@ class PglitePgClient extends EventEmitter {
     releaseAllLocks(this.sessionId);
   }
 
-  private async runQuery(
-    text: string,
-    values?: any[],
-  ): Promise<PgLikeResult> {
+  private async runQuery(text: string, values?: any[]): Promise<PgLikeResult> {
     const advisory = await handleAdvisoryQuery(this.sessionId, text, values);
     if (advisory) {
       return advisory;
@@ -453,18 +454,25 @@ export class PglitePool {
     ...args: QueryArgs
   ): Promise<PgLikeResult> {
     const { text, values } = normalizeQueryArgs(args);
-    return await withLowlevelDebug(`pool:${sessionId}`, text, values, async () => {
-      const advisory = await handleAdvisoryQuery(sessionId, text, values);
-      if (advisory) {
-        return advisory;
-      }
-      return await this.enqueue(async () => {
-        const pg = await getPglite();
-        const result =
-          values == null ? await pg.query(text) : await pg.query(text, values);
-        return toPgResult(result as PgliteQueryResult);
-      });
-    });
+    return await withLowlevelDebug(
+      `pool:${sessionId}`,
+      text,
+      values,
+      async () => {
+        const advisory = await handleAdvisoryQuery(sessionId, text, values);
+        if (advisory) {
+          return advisory;
+        }
+        return await this.enqueue(async () => {
+          const pg = await getPglite();
+          const result =
+            values == null
+              ? await pg.query(text)
+              : await pg.query(text, values);
+          return toPgResult(result as PgliteQueryResult);
+        });
+      },
+    );
   }
 
   async connect(): Promise<PglitePoolClient> {
