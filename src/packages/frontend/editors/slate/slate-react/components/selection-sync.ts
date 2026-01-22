@@ -324,12 +324,47 @@ export const useDOMSelectionChange = ({
   // fire for any change to the selection inside the editor. (2019/11/04)
   // https://github.com/facebook/react/issues/5785
   useIsomorphicLayoutEffect(() => {
-    window.document.addEventListener("selectionchange", onDOMSelectionChange);
-    return () => {
+    const editorElement = EDITOR_TO_ELEMENT.get(editor);
+    if (!editorElement) {
+      return;
+    }
+
+    let attached = false;
+    const attach = () => {
+      if (attached) return;
+      attached = true;
+      window.document.addEventListener("selectionchange", onDOMSelectionChange);
+    };
+    const detach = () => {
+      if (!attached) return;
+      attached = false;
       window.document.removeEventListener(
         "selectionchange",
         onDOMSelectionChange,
       );
+    };
+
+    const handleFocusIn = () => {
+      attach();
+    };
+    const handleFocusOut = () => {
+      detach();
+    };
+
+    editorElement.addEventListener("focusin", handleFocusIn);
+    editorElement.addEventListener("focusout", handleFocusOut);
+
+    if (
+      ReactEditor.isFocused(editor) ||
+      editorElement.contains(window.document.activeElement)
+    ) {
+      attach();
+    }
+
+    return () => {
+      detach();
+      editorElement.removeEventListener("focusin", handleFocusIn);
+      editorElement.removeEventListener("focusout", handleFocusOut);
     };
   }, [onDOMSelectionChange]);
 
