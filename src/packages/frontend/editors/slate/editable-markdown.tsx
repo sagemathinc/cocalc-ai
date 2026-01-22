@@ -636,116 +636,121 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     // that assumption is definitely satisfied.
     const nextEditorValue = markdown_to_slate(value, false, editor.syncCache);
 
-    try {
-      //const t = new Date();
+    const shouldDirectSet =
+      previousEditorValue.length <= 1 &&
+      nextEditorValue.length >= 40 &&
+      !ReactEditor.isFocused(editor);
+    const operations = shouldDirectSet
+      ? null
+      : slateDiff(previousEditorValue, nextEditorValue);
 
-      if (
-        // length is basically changing from "Loading..."; in this case, just reset everything, rather than transforming via operations (which preserves selection, etc.)
-        previousEditorValue.length <= 1 &&
-        nextEditorValue.length >= 40 &&
-        !ReactEditor.isFocused(editor)
-      ) {
-        // This is a **MASSIVE** optimization.  E.g., for a few thousand
-        // lines markdown file with about 500 top level elements (and lots
-        // of nested lists), applying operations below starting with the
-        // empty document can take 5-10 seconds, whereas just setting the
-        // value is instant.  The drawback to directly setting the value
-        // is only that it messes up selection, and it's difficult
-        // to know where to move the selection to after changing.
-        // However, if the editor isn't focused, we don't have to worry
-        // about selection at all.  TODO: we might be able to avoid the
-        // slateDiff stuff entirely via some tricky stuff, e.g., managing
-        // the cursor on the plain text side before/after the change, since
-        // codemirror is much faster att "setValueNoJump".
-        // The main time we use this optimization here is when opening the
-        // document in the first place, in which case we're converting
-        // the document from "Loading..." to it's initial value.
-        // Also, the default config is source text focused on the left and
-        // editable text acting as a preview on the right not focused, and
-        // again this makes things fastest.
-        // DRAWBACK: this doesn't preserve scroll position and breaks selection.
-        editor.syncCausedUpdate = true;
-        NODE_CHILDREN_DIRTY.set(editor, true);
-        // we call "onChange" instead of setEditorValue, since
-        // we want all the change handler stuff to happen, e.g.,
-        // broadcasting cursors.
-        onChange(nextEditorValue);
-        // console.log("time to set directly ", new Date() - t);
-      } else {
-        const operations = slateDiff(previousEditorValue, nextEditorValue);
-        if (operations.length == 0) {
-          // no actual change needed.
-          return;
+    if (!shouldDirectSet && operations.length == 0) {
+      // no actual change needed.
+      return;
+    }
+
+    Editor.withoutNormalizing(editor, () => {
+      try {
+        //const t = new Date();
+
+        if (shouldDirectSet) {
+          // This is a **MASSIVE** optimization.  E.g., for a few thousand
+          // lines markdown file with about 500 top level elements (and lots
+          // of nested lists), applying operations below starting with the
+          // empty document can take 5-10 seconds, whereas just setting the
+          // value is instant.  The drawback to directly setting the value
+          // is only that it messes up selection, and it's difficult
+          // to know where to move the selection to after changing.
+          // However, if the editor isn't focused, we don't have to worry
+          // about selection at all.  TODO: we might be able to avoid the
+          // slateDiff stuff entirely via some tricky stuff, e.g., managing
+          // the cursor on the plain text side before/after the change, since
+          // codemirror is much faster att "setValueNoJump".
+          // The main time we use this optimization here is when opening the
+          // document in the first place, in which case we're converting
+          // the document from "Loading..." to it's initial value.
+          // Also, the default config is source text focused on the left and
+          // editable text acting as a preview on the right not focused, and
+          // again this makes things fastest.
+          // DRAWBACK: this doesn't preserve scroll position and breaks selection.
+          editor.syncCausedUpdate = true;
+          NODE_CHILDREN_DIRTY.set(editor, true);
+          // we call "onChange" instead of setEditorValue, since
+          // we want all the change handler stuff to happen, e.g.,
+          // broadcasting cursors.
+          onChange(nextEditorValue);
+          // console.log("time to set directly ", new Date() - t);
+        } else {
+          // Applying this operation below will trigger
+          // an onChange, which it is best to ignore to save time and
+          // also so we don't update the source editor (and other browsers)
+          // with a view with things like loan $'s escaped.'
+          editor.syncCausedUpdate = true;
+          // console.log("setEditorToValue: applying operations...", { operations });
+          preserveScrollPosition(editor, operations);
+          applyOperations(editor, operations);
+          // console.log("time to set via diff", new Date() - t);
         }
-        // Applying this operation below will trigger
-        // an onChange, which it is best to ignore to save time and
-        // also so we don't update the source editor (and other browsers)
-        // with a view with things like loan $'s escaped.'
-        editor.syncCausedUpdate = true;
-        // console.log("setEditorToValue: applying operations...", { operations });
-        preserveScrollPosition(editor, operations);
-        applyOperations(editor, operations);
-        // console.log("time to set via diff", new Date() - t);
+      } finally {
+        // In all cases, now that we have transformed editor into the new value
+        // let's save the fact that we haven't changed anything yet and we
+        // know the markdown state with zero changes.  This is important, so
+        // we don't save out a change if we don't explicitly make one.
+        editor.resetHasUnsavedChanges();
+        editor.markdownValue = value;
       }
-    } finally {
-      // In all cases, now that we have transformed editor into the new value
-      // let's save the fact that we haven't changed anything yet and we
-      // know the markdown state with zero changes.  This is important, so
-      // we don't save out a change if we don't explicitly make one.
-      editor.resetHasUnsavedChanges();
-      editor.markdownValue = value;
-    }
 
-    try {
-      if (editor.selection != null) {
-        // console.log("setEditorToValue: restore selection", editor.selection);
-        const { anchor, focus } = editor.selection;
-        Editor.node(editor, anchor);
-        Editor.node(editor, focus);
-      }
-    } catch (err) {
-      // TODO!
-      console.warn(
-        "slate - invalid selection after upstream patch. Resetting selection.",
-        err,
-      );
-      // set to beginning of document -- better than crashing.
-      resetSelection(editor);
-    }
-
-    //       if ((window as any).cc?.slate != null) {
-    //         (window as any).cc.slate.eval = (s) => console.log(eval(s));
-    //       }
-
-    if (EXPENSIVE_DEBUG) {
-      const stringify = require("json-stable-stringify");
-      // We use JSON rather than isEqual here, since {foo:undefined}
-      // is not equal to {}, but they JSON the same, and this is
-      // fine for our purposes.
-      if (stringify(editor.children) != stringify(nextEditorValue)) {
-        // NOTE -- this does not 100% mean things are wrong.  One case where
-        // this is expected behavior is if you put the cursor at the end of the
-        // document, say right after a horizontal rule,  and then edit at the
-        // beginning of the document in another browser.  The discrepancy
-        // is because a "fake paragraph" is placed at the end of the browser
-        // so your cursor has somewhere to go while you wait and type; however,
-        // that space is not really part of the markdown document, and it goes
-        // away when you move your cursor out of that space.
+      try {
+        if (editor.selection != null) {
+          // console.log("setEditorToValue: restore selection", editor.selection);
+          const { anchor, focus } = editor.selection;
+          Editor.node(editor, anchor);
+          Editor.node(editor, focus);
+        }
+      } catch (err) {
+        // TODO!
         console.warn(
-          "**WARNING:  slateDiff might not have properly transformed editor, though this may be fine. See window.diffBug **",
+          "slate - invalid selection after upstream patch. Resetting selection.",
+          err,
         );
-        (window as any).diffBug = {
-          previousEditorValue,
-          nextEditorValue,
-          editorValue: editor.children,
-          stringify,
-          slateDiff,
-          applyOperations,
-          markdown_to_slate,
-          value,
-        };
+        // set to beginning of document -- better than crashing.
+        resetSelection(editor);
       }
-    }
+
+      //       if ((window as any).cc?.slate != null) {
+      //         (window as any).cc.slate.eval = (s) => console.log(eval(s));
+      //       }
+
+      if (EXPENSIVE_DEBUG) {
+        const stringify = require("json-stable-stringify");
+        // We use JSON rather than isEqual here, since {foo:undefined}
+        // is not equal to {}, but they JSON the same, and this is
+        // fine for our purposes.
+        if (stringify(editor.children) != stringify(nextEditorValue)) {
+          // NOTE -- this does not 100% mean things are wrong.  One case where
+          // this is expected behavior is if you put the cursor at the end of the
+          // document, say right after a horizontal rule,  and then edit at the
+          // beginning of the document in another browser.  The discrepancy
+          // is because a "fake paragraph" is placed at the end of the browser
+          // so your cursor has somewhere to go while you wait and type; however,
+          // that space is not really part of the markdown document, and it goes
+          // away when you move your cursor out of that space.
+          console.warn(
+            "**WARNING:  slateDiff might not have properly transformed editor, though this may be fine. See window.diffBug **",
+          );
+          (window as any).diffBug = {
+            previousEditorValue,
+            nextEditorValue,
+            editorValue: editor.children,
+            stringify,
+            slateDiff,
+            applyOperations,
+            markdown_to_slate,
+            value,
+          };
+        }
+      }
+    });
   };
 
   if ((window as any).cc != null) {
