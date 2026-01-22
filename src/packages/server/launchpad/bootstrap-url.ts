@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import basePath from "@cocalc/backend/base-path";
 import getLogger from "@cocalc/backend/logger";
+import { resolveOnPremHost, isLocalHost } from "@cocalc/server/onprem";
 import { getLaunchpadMode } from "./mode";
 import siteURL from "@cocalc/database/settings/site-url";
 
@@ -10,44 +11,6 @@ type BootstrapBase = {
   baseUrl: string;
   caCert?: string;
 };
-
-function normalizeHost(raw?: string | null): string {
-  const value = String(raw ?? "").trim();
-  if (!value) return "localhost";
-  if (value.startsWith("http://") || value.startsWith("https://")) {
-    try {
-      return new URL(value).hostname || "localhost";
-    } catch {
-      return "localhost";
-    }
-  }
-  return value;
-}
-
-function resolveLaunchpadHost(fallbackHost?: string | null): string {
-  const raw =
-    process.env.COCALC_LAUNCHPAD_HOST ??
-    process.env.HOST ??
-    process.env.COCALC_HUB_HOSTNAME ??
-    fallbackHost ??
-    "localhost";
-  const normalized = normalizeHost(raw);
-  if (normalized === "0.0.0.0" || normalized === "::") {
-    logger.warn("launchpad host is a bind address; use a reachable hostname", {
-      host: normalized,
-    });
-  }
-  return normalized;
-}
-
-function isLocalHost(host: string): boolean {
-  const value = host.trim().toLowerCase();
-  return (
-    value === "localhost" ||
-    value === "127.0.0.1" ||
-    value === "::1"
-  );
-}
 
 function resolveLaunchpadPort(): number {
   const raw =
@@ -75,10 +38,11 @@ export async function resolveLaunchpadBootstrapUrl(opts?: {
   fallbackProtocol?: string | null;
 }): Promise<BootstrapBase> {
   const mode = await getLaunchpadMode();
-  if (process.env.COCALC_MODE !== "launchpad" || mode !== "onprem") {
+  const onprem = process.env.COCALC_ONPREM === "1" || mode === "onprem";
+  if (!onprem) {
     return { baseUrl: await siteURL() };
   }
-  const host = resolveLaunchpadHost(opts?.fallbackHost);
+  const host = resolveOnPremHost(opts?.fallbackHost);
   const port = resolveLaunchpadPort();
   const local = isLocalHost(host);
   const caCert = resolveLaunchpadCert();
@@ -105,5 +69,13 @@ export async function resolveLaunchpadBootstrapUrl(opts?: {
     path = path.slice(0, -1);
   }
   const base = `${protocol}://${host}:${port}${path}`;
+  logger.info("launchpad bootstrap url resolved", {
+    mode,
+    host,
+    port,
+    protocol,
+    local,
+    has_cert: Boolean(caCert),
+  });
   return { baseUrl: base, caCert: protocol === "https" ? caCert : undefined };
 }

@@ -1094,6 +1094,12 @@ BOOTSTRAP_URL="${bootstrapUrl}"
 STATUS_URL="${statusUrl}"
 BOOTSTRAP_DIR="/root/bootstrap"
 BOOTSTRAP_HOST="$(echo "$BOOTSTRAP_URL" | awk -F/ '{print $3}')"
+if [[ "$BOOTSTRAP_HOST" == \\[*\\]* ]]; then
+  BOOTSTRAP_HOST="\${BOOTSTRAP_HOST#\\[}"
+  BOOTSTRAP_HOST="\${BOOTSTRAP_HOST%%\\]*}"
+else
+  BOOTSTRAP_HOST="\${BOOTSTRAP_HOST%%:*}"
+fi
 ${caCertBlock}
 
 if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /btrfs/data/.bootstrap_done ]; then

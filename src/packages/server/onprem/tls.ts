@@ -1,6 +1,7 @@
 import { X509Certificate } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import selfsigned from "selfsigned";
 import { secrets } from "@cocalc/backend/data";
@@ -19,9 +20,10 @@ export type OnPremTlsInfo = {
 };
 
 export function resolveOnPremHost(fallbackHost?: string | null): string {
+  const explicit =
+    process.env.COCALC_LAUNCHPAD_HOST ?? process.env.COCALC_ONPREM_HOST;
   const raw =
-    process.env.COCALC_LAUNCHPAD_HOST ??
-    process.env.COCALC_ONPREM_HOST ??
+    explicit ??
     process.env.HOST ??
     process.env.COCALC_HUB_HOSTNAME ??
     fallbackHost ??
@@ -40,12 +42,47 @@ export function resolveOnPremHost(fallbackHost?: string | null): string {
       host: value,
     });
   }
+  if (!explicit && isLocalHost(value)) {
+    const detected = detectLanIp();
+    if (detected) {
+      logger.warn("onprem host resolves to localhost; using LAN IP", {
+        host: detected,
+      });
+      return detected;
+    }
+    logger.warn("onprem host resolves to localhost; no LAN IP detected", {
+      host: value,
+    });
+  }
   return value;
 }
 
 export function isLocalHost(host: string): boolean {
   const value = host.trim().toLowerCase();
   return value === "localhost" || value === "127.0.0.1" || value === "::1";
+}
+
+function isPrivateIpv4(address: string): boolean {
+  if (address.startsWith("10.")) return true;
+  if (address.startsWith("192.168.")) return true;
+  if (address.startsWith("172.")) {
+    const octet = Number.parseInt(address.split(".")[1] ?? "", 10);
+    return octet >= 16 && octet <= 31;
+  }
+  return false;
+}
+
+function detectLanIp(): string | undefined {
+  const nets = networkInterfaces();
+  const candidates: string[] = [];
+  for (const addrs of Object.values(nets)) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.family !== "IPv4" || addr.internal) continue;
+      candidates.push(addr.address);
+    }
+  }
+  return candidates.find(isPrivateIpv4) ?? candidates[0];
 }
 
 function parseRotateDays(): number {

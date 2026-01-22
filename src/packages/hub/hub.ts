@@ -19,6 +19,7 @@ import {
   pgConcurrentWarn as DEFAULT_DB_CONCURRENT_WARN,
   hubHostname as DEFAULT_HUB_HOSTNAME,
   agentPort as DEFAULT_AGENT_PORT,
+  setConatServer,
 } from "@cocalc/backend/data";
 import { trimLogFileSize } from "@cocalc/backend/logger";
 import port from "@cocalc/backend/port";
@@ -36,6 +37,7 @@ import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
+import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import { getLaunchpadMode } from "@cocalc/server/launchpad/mode";
 import {
   ensureOnPremTls,
@@ -121,7 +123,6 @@ async function maybeInitOnPremTls(): Promise<void> {
     return;
   }
   const tls = ensureOnPremTls({
-    host: program.hostname,
     existingKey: program.httpsKey,
     existingCert: program.httpsCert,
     allowLocalHttp: true,
@@ -131,11 +132,25 @@ async function maybeInitOnPremTls(): Promise<void> {
     program.httpsCert = tls.certPath;
   }
   scheduleOnPremCertRotation({
-    host: program.hostname,
     allowLocalHttp: true,
     existingKey: program.httpsKey,
     existingCert: program.httpsCert,
   });
+  if (!process.env.CONAT_SERVER) {
+    try {
+      const { baseUrl } = await resolveLaunchpadBootstrapUrl({
+        fallbackProtocol: program.httpsKey ? "https" : "http",
+      });
+      setConatServer(baseUrl);
+      logger.info("onprem conat server resolved", { address: baseUrl });
+    } catch (err) {
+      logger.warn("onprem conat server resolution failed", { err });
+    }
+  } else {
+    logger.info("onprem conat server using explicit CONAT_SERVER", {
+      address: process.env.CONAT_SERVER,
+    });
+  }
 }
 
 async function startServer(): Promise<void> {
