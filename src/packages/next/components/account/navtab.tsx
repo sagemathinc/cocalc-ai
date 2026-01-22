@@ -56,7 +56,7 @@ const WIDTH = "125px";
 
 export default function AccountNavTab({ style }: Props) {
   const router = useRouter();
-  const { isCommercial, shareServer, siteName, sshGateway } = useCustomize();
+  const { isCommercial, shareServer, siteName } = useCustomize();
   const profile = useProfile();
   if (!profile) {
     return (
@@ -220,17 +220,13 @@ export default function AccountNavTab({ style }: Props) {
       ),
     );
 
-    if (sshGateway) {
-      yours.push(
-        menuItem(
-          "ssh",
-          <A href={createSettingsLink("/settings/preferences/keys")}>
-            SSH Keys
-          </A>,
-          "key",
-        ),
-      );
-    }
+    yours.push(
+      menuItem(
+        "ssh",
+        <A href={createSettingsLink("/settings/preferences/keys")}>SSH Keys</A>,
+        "key",
+      ),
+    );
 
     if (shareServer) {
       yours.push(

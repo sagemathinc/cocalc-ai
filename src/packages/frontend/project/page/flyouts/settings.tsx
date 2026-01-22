@@ -35,6 +35,7 @@ import { RestartProject } from "@cocalc/frontend/project/settings/restart-projec
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { SSHPanel } from "@cocalc/frontend/project/settings/ssh";
 import { StopProject } from "@cocalc/frontend/project/settings/stop-project";
+import { lite } from "@cocalc/frontend/lite";
 import { COMPUTE_STATES } from "@cocalc/util/compute-states";
 import {
   DATASTORE_TITLE,
@@ -65,10 +66,8 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
   );
   const kucalc = useTypedRedux("customize", "kucalc");
   const datastore = useTypedRedux("customize", "datastore");
-  const ssh_gateway = useTypedRedux("customize", "ssh_gateway");
   const student = getStudentProjectFunctionality(project_id);
-  const showSSH =
-    !student.disableSSH && (ssh_gateway || kucalc === KUCALC_COCALC_COM);
+  const showSSH = !lite && !student.disableSSH;
   const showDatastore =
     kucalc === KUCALC_COCALC_COM ||
     (kucalc === KUCALC_ON_PREMISES && datastore);

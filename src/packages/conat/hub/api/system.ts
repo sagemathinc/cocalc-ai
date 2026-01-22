@@ -21,6 +21,9 @@ export const system = {
   adminResetPasswordLink: authFirst,
   sendEmailVerification: authFirst,
   deletePassport: authFirst,
+  getAdminAssignedMembership: authFirst,
+  setAdminAssignedMembership: authFirst,
+  clearAdminAssignedMembership: authFirst,
 
   adminSalesloftSync: authFirst,
   userSalesloftSync: authFirst,
@@ -115,5 +118,33 @@ export interface System {
     account_id?: string;
     strategy: string;
     id: string;
+  }) => Promise<void>;
+
+  getAdminAssignedMembership: (opts: {
+    account_id?: string;
+    user_account_id: string;
+  }) => Promise<
+    | {
+        account_id: string;
+        membership_class: string;
+        assigned_by: string;
+        assigned_at: Date;
+        expires_at?: Date | null;
+        notes?: string | null;
+      }
+    | undefined
+  >;
+
+  setAdminAssignedMembership: (opts: {
+    account_id?: string;
+    user_account_id: string;
+    membership_class: string;
+    expires_at?: Date | null;
+    notes?: string | null;
+  }) => Promise<void>;
+
+  clearAdminAssignedMembership: (opts: {
+    account_id?: string;
+    user_account_id: string;
   }) => Promise<void>;
 }

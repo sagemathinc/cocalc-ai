@@ -44,6 +44,7 @@ import "./listings";
 import "./llm";
 import "./lti";
 import "./mentions";
+import "./admin-assigned-memberships";
 import "./membership-tiers";
 import "./messages";
 import "./news";

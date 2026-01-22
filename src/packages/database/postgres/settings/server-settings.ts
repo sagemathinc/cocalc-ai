@@ -11,6 +11,10 @@ import {
   getServerSettings,
   resetServerSettingsCache,
 } from "@cocalc/database/settings/server-settings";
+import {
+  decryptSettingValue,
+  encryptSettingValue,
+} from "@cocalc/database/settings/secret-settings";
 import { site_settings_conf } from "@cocalc/util/schema";
 import { keys } from "@cocalc/util/misc";
 
@@ -33,10 +37,12 @@ export async function set_server_setting(
   db: PostgreSQL,
   opts: SetServerSettingOptions,
 ): Promise<void> {
+  const encryptedValue = await encryptSettingValue(opts.name, opts.value);
+
   // Insert the setting
   const values: any = {
     "name::TEXT": opts.name,
-    "value::TEXT": opts.value,
+    "value::TEXT": encryptedValue,
   };
   if (opts.readonly != null) {
     values.readonly = !!opts.readonly;
@@ -86,7 +92,12 @@ export async function get_server_setting(
   }
 
   const value = rows[0]?.value;
-  return value ?? undefined;
+  if (value == null) {
+    return undefined;
+  }
+
+  const { value: decrypted } = await decryptSettingValue(opts.name, value);
+  return decrypted ?? undefined;
 }
 
 /**

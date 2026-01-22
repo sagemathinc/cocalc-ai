@@ -948,9 +948,6 @@ importers:
       '@types/node':
         specifier: ^22.10.10
         version: 22.19.1
-      coffeescript:
-        specifier: ^2.5.1
-        version: 2.7.0
 
   jupyter:
     dependencies:

@@ -10,10 +10,8 @@ module.exports = {
     customExportConditions: ["node", "node-addons"],
   },
   testMatch: ["**/?(*.)+(spec|test).ts?(x)"],
-  globals: {
-    "ts-jest": {
-      tsconfig: "tsconfig-dist.json",
-    },
+  transform: {
+    "^.+\\.tsx?$": ["ts-jest", { tsconfig: "tsconfig-dist.json" }],
   },
   setupFilesAfterEnv: ["./test/setup.js"],
 };

@@ -54,7 +54,6 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
   const projectLabel = intl.formatMessage(labels.project);
   const kucalc = useTypedRedux("customize", "kucalc");
   const runQuota = useRunQuota(project_id, null);
-  const ssh_gateway = useTypedRedux("customize", "ssh_gateway");
   const datastore = useTypedRedux("customize", "datastore");
   const commercial = useTypedRedux("customize", "commercial");
 
@@ -121,14 +120,13 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
         {!lite && (
           <Col sm={6}>
             <ProjectControl key="control" project={project} />
-            {!student.disableSSH &&
-              (ssh_gateway || kucalc === KUCALC_COCALC_COM) && (
-                <SSHPanel
-                  key="ssh-keys"
-                  project={project}
-                  account_id={account_id}
-                />
-              )}
+            {!lite && !student.disableSSH && (
+              <SSHPanel
+                key="ssh-keys"
+                project={project}
+                account_id={account_id}
+              />
+            )}
             <ApiKeys project_id={project_id} />
           </Col>
         )}

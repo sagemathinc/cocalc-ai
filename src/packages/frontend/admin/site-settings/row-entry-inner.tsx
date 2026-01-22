@@ -40,6 +40,8 @@ export function RowEntryInner({
   value,
   valid,
   password,
+  isSet,
+  isClearing,
   multiline,
   onChangeEntry,
   isReadonly,
@@ -130,6 +132,12 @@ export function RowEntryInner({
     );
   } else {
     if (password) {
+      const placeholder =
+        isClearing && !value
+          ? "Will clear on save"
+          : isSet && !value
+          ? "Stored (enter to replace)"
+          : undefined;
       if (multiline != null) {
         return (
           <PasswordTextArea
@@ -137,6 +145,7 @@ export function RowEntryInner({
             autoComplete="off"
             style={rowEntryStyle(value, valid)}
             defaultValue={value}
+            placeholder={placeholder}
             visibilityToggle={true}
             disabled={disabled}
             onChange={(e) => onChangeEntry(name, e.target.value)}
@@ -148,6 +157,7 @@ export function RowEntryInner({
             autoComplete="off"
             style={rowEntryStyle(value, valid)}
             defaultValue={value}
+            placeholder={placeholder}
             visibilityToggle={true}
             disabled={disabled}
             onChange={(e) => onChangeEntry(name, e.target.value)}

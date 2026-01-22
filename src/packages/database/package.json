@@ -48,9 +48,9 @@
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "test": "pnpm test:pglite",
     "test:both": "pnpm test:psql && pnpm test:pglite",
-    "test:psql": "NODE_OPTIONS='--trace-deprecation' pnpm exec jest --forceExit --runInBand --detectOpenHandles --maxWorkers=1",
-    "test:pglite": "COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' pnpm exec jest --forceExit --runInBand --detectOpenHandles",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\"",
+    "test:psql": "NODE_NO_WARNINGS=1 pnpm exec jest --forceExit --detectOpenHandles --maxWorkers=1",
+    "test:pglite": "NODE_NO_WARNINGS=1 COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' pnpm exec jest  --forceExit",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" | grep -Ev '\\.coffee|coffee$'",
     "coverage": "pnpm exec jest --coverage --forceExit --runInBand",
     "prepublishOnly": "pnpm test"
   },
