@@ -44,8 +44,23 @@ export async function createProjectHostProxyHandlers() {
     logger.debug("proxy error", { err: `${err}`, url: req?.url });
   });
 
-  async function targetFor(req): Promise<string> {
-    const { project_id } = parseReq(req.url ?? "/");
+  function rewriteConatPath(req, project_id: string) {
+    const raw = req.url ?? "/";
+    const u = new URL(raw, "http://dummy");
+    const prefix = `/${project_id}/conat`;
+    if (!u.pathname.startsWith(prefix)) {
+      return;
+    }
+    let rest = u.pathname.slice(prefix.length);
+    if (!rest) {
+      rest = "/";
+    } else if (!rest.startsWith("/")) {
+      rest = `/${rest}`;
+    }
+    req.url = `/conat${rest}${u.search}`;
+  }
+
+  async function targetForProject(project_id: string): Promise<string> {
     const host = await getHost(project_id);
     if (process.env.COCALC_MODE === "launchpad") {
       const mode = await getLaunchpadMode();
@@ -65,12 +80,20 @@ export async function createProjectHostProxyHandlers() {
   }
 
   const handleRequest = async (req, res) => {
-    const target = await targetFor(req);
+    const parsed = parseReq(req.url ?? "/");
+    if (parsed.type === "conat") {
+      rewriteConatPath(req, parsed.project_id);
+    }
+    const target = await targetForProject(parsed.project_id);
     proxy.web(req, res, { target, prependPath: false });
   };
 
   const handleUpgrade = async (req, socket, head) => {
-    const target = await targetFor(req);
+    const parsed = parseReq(req.url ?? "/");
+    if (parsed.type === "conat") {
+      rewriteConatPath(req, parsed.project_id);
+    }
+    const target = await targetForProject(parsed.project_id);
     proxy.ws(req, socket, head, { target, prependPath: false });
   };
 

@@ -38,8 +38,8 @@ import Cookies from "js-cookie";
 import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
 import { info as refCacheInfo } from "@cocalc/util/refcache";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
-import type { ConnectionStats } from "@cocalc/conat/core/types";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import type { ConnectionStats } from "@cocalc/conat/core/types";
 import { until } from "@cocalc/util/async-utils";
 import { delay } from "awaiting";
 import {
@@ -191,6 +191,12 @@ export class ConatClient extends EventEmitter {
     if (!host) {
       // Fallback: no host yet, so stay on the default connection.
       return "";
+    }
+    const customize = redux.getStore("customize");
+    const launchpadMode = customize?.get?.("launchpad_mode");
+    if (launchpadMode === "onprem" && typeof window !== "undefined") {
+      const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
+      return `${window.location.origin}${basePath}/${project_id}`;
     }
     const public_url = host.get ? host.get("public_url") : host.public_url;
     const internal_url = host.get
