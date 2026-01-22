@@ -129,10 +129,7 @@ export const useHostsPageViewModel = () => {
   const [form] = Form.useForm();
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const launchpadMode = useTypedRedux("customize", "launchpad_mode");
-  const launchpadSelfSigned = useTypedRedux(
-    "customize",
-    "launchpad_self_signed",
-  );
+  const launchpadSelfSigned = useTypedRedux("customize", "launchpad_self_signed");
   const onpremMode = launchpadMode === "onprem";
   const connectorInsecure = onpremMode && !!launchpadSelfSigned;
   const flags = useHostFeatureFlags();
