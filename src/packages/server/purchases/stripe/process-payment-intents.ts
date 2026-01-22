@@ -4,14 +4,9 @@ import getLogger from "@cocalc/backend/logger";
 import createCredit from "@cocalc/server/purchases/create-credit";
 import { LineItem } from "@cocalc/util/stripe/types";
 import { stripeToDecimal } from "@cocalc/util/stripe/calc";
-import {
-  shoppingCartCheckout,
-  shoppingCartPutItemsBack,
-} from "@cocalc/server/purchases/shopping-cart-checkout";
 import studentPay from "@cocalc/server/purchases/student-pay";
 import {
   AUTO_CREDIT,
-  SHOPPING_CART_CHECKOUT,
   STUDENT_PAY,
   SUBSCRIPTION_RENEWAL,
   RESUME_SUBSCRIPTION,
@@ -224,19 +219,7 @@ customer.  So we don't know what to do with this.  Please manually investigate.
 
       let result = "we did NOT add credit to your account";
       try {
-        if (paymentIntent.metadata.purpose == SHOPPING_CART_CHECKOUT) {
-          result = "the items you were buying were put back in your cart";
-          // free up the items so they can be purchased again.
-          // The purpose of this payment was to buy certain items from the store.  We use the credit we just got above
-          // to provision each of those items.
-          const cart_ids =
-            paymentIntent.metadata.cart_ids != null
-              ? JSON.parse(paymentIntent.metadata.cart_ids)
-              : undefined;
-          if (cart_ids != null) {
-            await shoppingCartPutItemsBack({ cart_ids });
-          }
-        } else if (paymentIntent.metadata.purpose == STUDENT_PAY) {
+        if (paymentIntent.metadata.purpose == STUDENT_PAY) {
           // Student pay for a course
           result = `the course (project_id=${paymentIntent.metadata.project_id}) was not paid for`;
           // nothing further to do if it fails, since when student tries again,
@@ -349,21 +332,7 @@ ${await support()}`;
 
     let reason = "add credit to your account";
     try {
-      if (paymentIntent.metadata.purpose == SHOPPING_CART_CHECKOUT) {
-        reason = "purchase items in your shopping cart";
-        // The purpose of this payment was to buy certain items from the store.
-        // We use the credit we just got above to provision each of those items.
-        await shoppingCartCheckout({
-          account_id,
-          payment_intent: paymentIntent.id,
-          amount,
-          credit_id,
-          cart_ids:
-            paymentIntent.metadata.cart_ids != null
-              ? JSON.parse(paymentIntent.metadata.cart_ids)
-              : undefined,
-        });
-      } else if (paymentIntent.metadata.purpose == STUDENT_PAY) {
+      if (paymentIntent.metadata.purpose == STUDENT_PAY) {
         reason = `pay for a course (project_id=${paymentIntent.metadata.project_id})`;
         // Student pay for a course
         await studentPay({

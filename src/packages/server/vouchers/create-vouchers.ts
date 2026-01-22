@@ -83,8 +83,7 @@ export default async function createVouchers({
     created_by,
   });
   if (!count || count < 1 || !isFinite(count)) {
-    // default to 1 -- this wasn't specified at all in some cases with
-    // older vouchers that might be in user shopping carts still
+    // default to 1 if count isn't specified
     count = 1;
   }
   if (amountValue.eq(0) || amountValue.lte(0) || amountValue.gt(MAX_VOUCHER_VALUE)) {

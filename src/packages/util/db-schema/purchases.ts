@@ -22,9 +22,6 @@ import type { MoneyValue } from "@cocalc/util/money";
 
 // various specific payment purposes
 
-// buying items in the shopping cart
-export const SHOPPING_CART_CHECKOUT = "shopping-cart-checkout";
-
 // automatic balance top up
 export const AUTO_CREDIT = "auto-credit";
 

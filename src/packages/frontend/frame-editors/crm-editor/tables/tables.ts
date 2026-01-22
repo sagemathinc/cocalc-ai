@@ -26,7 +26,6 @@ import "./project-log";
 import "./public-paths";
 import "./purchases";
 import "./purchase-quotas";
-import "./shopping-cart-items";
 import "./statements";
 import "./subscriptions";
 import "./syncstrings";

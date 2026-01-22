@@ -55,4 +55,4 @@ Also add admin-only purchase controls (target user + discount/custom price + fun
 
 ### 6) Cleanup
 
-- [ ] Delete all backup code and api routes related to shopping carts, buy it again, etc.
+- [x] Delete shopping-cart backend code, API routes, and CRM table UI.
