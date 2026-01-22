@@ -78,9 +78,7 @@ function normalizeQueryArgs(args: QueryArgs): { text: string; values?: any[] } {
   if (typeof args[0] === "string") {
     return {
       text: args[0],
-      values: Array.isArray(args[1])
-        ? normalizePgliteValues(normalizeValues(args[1]) ?? args[1])
-        : undefined,
+      values: Array.isArray(args[1]) ? normalizeValues(args[1]) : undefined,
     };
   }
 
@@ -94,24 +92,8 @@ function normalizeQueryArgs(args: QueryArgs): { text: string; values?: any[] } {
   if (!text) {
     throw new Error("pglite: query config missing text");
   }
-  const values = Array.isArray(cfg.values)
-    ? normalizePgliteValues(normalizeValues(cfg.values) ?? cfg.values)
-    : undefined;
+  const values = Array.isArray(cfg.values) ? normalizeValues(cfg.values) : undefined;
   return { text, values };
-}
-
-function normalizePgliteValue(value: any): any {
-  if (Buffer.isBuffer(value)) {
-    return new Uint8Array(value);
-  }
-  if (Array.isArray(value)) {
-    return value.map(normalizePgliteValue);
-  }
-  return value;
-}
-
-function normalizePgliteValues(values?: any[]): any[] | undefined {
-  return Array.isArray(values) ? values.map(normalizePgliteValue) : values;
 }
 
 function parseQueryConfig(
@@ -135,7 +117,7 @@ function parseQueryConfig(
   if (typeof textOrConfig === "string") {
     return {
       text: textOrConfig,
-      values: normalizePgliteValues(normalizeValues(values) ?? values),
+      values,
       callback,
     };
   }
@@ -150,9 +132,7 @@ function parseQueryConfig(
   if (!text) {
     throw new Error("pglite: query config missing text");
   }
-  const cfgValues = Array.isArray(cfg.values)
-    ? normalizePgliteValues(normalizeValues(cfg.values) ?? cfg.values)
-    : undefined;
+  const cfgValues = Array.isArray(cfg.values) ? cfg.values : undefined;
   return {
     text,
     values: cfgValues ?? values,
@@ -172,73 +152,16 @@ function toPgResult(result: PgliteQueryResult): PgLikeResult {
   };
 }
 
-class PglitePoolClient extends EventEmitter {
+class PglitePoolClient {
   private readonly sessionId = makeSessionId("client");
-  private readonly subscriptions = new Map<string, () => Promise<void>>();
 
-  constructor(private readonly pool: PglitePool) {
-    super();
-  }
+  constructor(private readonly pool: PglitePool) {}
 
-  async query(
-    textOrConfig: string | (QueryConfig & { query?: string }),
-    valuesOrCb?: any[] | ((err: Error | null, result?: PgLikeResult) => void),
-    cb?: (err: Error | null, result?: PgLikeResult) => void,
-  ): Promise<PgLikeResult | void> {
-    const { text, values, callback } = parseQueryConfig(
-      textOrConfig,
-      valuesOrCb,
-      cb,
-    );
-
-    const trimmed = text.trim();
-    const listenMatch = trimmed.match(listenRegex);
-    if (listenMatch) {
-      const channel = this.normalizeChannel(listenMatch[1]);
-      if (channel) {
-        await this.ensureListen(channel);
-      }
-      const emptyResult: PgLikeResult = { rows: [], rowCount: 0 };
-      if (callback) {
-        callback(null, emptyResult);
-        return;
-      }
-      return emptyResult;
-    }
-
-    const unlistenMatch = trimmed.match(unlistenRegex);
-    if (unlistenMatch) {
-      const channel = this.normalizeChannel(unlistenMatch[1]);
-      if (channel === "*") {
-        await this.cleanupListeners();
-      } else if (channel) {
-        await this.removeListen(channel);
-      }
-      const emptyResult: PgLikeResult = { rows: [], rowCount: 0 };
-      if (callback) {
-        callback(null, emptyResult);
-        return;
-      }
-      return emptyResult;
-    }
-
-    const promise =
-      values == null
-        ? this.pool.queryForSession(this.sessionId, text)
-        : this.pool.queryForSession(this.sessionId, text, values);
-    if (callback) {
-      promise.then(
-        (result) => callback(null, result),
-        (err) => callback(err as Error),
-      );
-      return;
-    }
-    return await promise;
+  async query(...args: QueryArgs): Promise<PgLikeResult> {
+    return await this.pool.queryForSession(this.sessionId, ...args);
   }
 
   release(): void {
-    this.removeAllListeners();
-    void this.cleanupListeners();
     releaseAllLocks(this.sessionId);
   }
 
@@ -247,44 +170,7 @@ class PglitePoolClient extends EventEmitter {
   }
 
   async end(): Promise<void> {
-    this.release();
-  }
-
-  private normalizeChannel(value: string): string | null {
-    const trimmed = value.trim().replace(/;$/, "");
-    if (!trimmed) {
-      return null;
-    }
-    if (trimmed === "*") {
-      return "*";
-    }
-    return trimmed.replace(/^"|"$/g, "");
-  }
-
-  private async ensureListen(channel: string): Promise<void> {
-    if (this.subscriptions.has(channel)) {
-      return;
-    }
-    const pg = await getPglite();
-    const unsubscribe = await pg.listen(channel, (payload) => {
-      this.emit("notification", { channel, payload });
-    });
-    this.subscriptions.set(channel, unsubscribe);
-  }
-
-  private async removeListen(channel: string): Promise<void> {
-    const unsubscribe = this.subscriptions.get(channel);
-    if (!unsubscribe) {
-      return;
-    }
-    await unsubscribe();
-    this.subscriptions.delete(channel);
-  }
-
-  private async cleanupListeners(): Promise<void> {
-    const entries = Array.from(this.subscriptions.entries());
-    this.subscriptions.clear();
-    await Promise.allSettled(entries.map(([, unsubscribe]) => unsubscribe()));
+    // no-op for client-level end
   }
 }
 
@@ -480,7 +366,10 @@ class PglitePgClient extends EventEmitter {
     releaseAllLocks(this.sessionId);
   }
 
-  private async runQuery(text: string, values?: any[]): Promise<PgLikeResult> {
+  private async runQuery(
+    text: string,
+    values?: any[],
+  ): Promise<PgLikeResult> {
     const advisory = await handleAdvisoryQuery(this.sessionId, text, values);
     if (advisory) {
       return advisory;
@@ -509,8 +398,7 @@ class PglitePgClient extends EventEmitter {
     if (values == null) {
       return await this.pool.query(text);
     }
-    const normalized =
-      normalizePgliteValues(normalizeValues(values) ?? values) ?? values;
+    const normalized = normalizeValues(values) ?? values;
     return await this.pool.query(text, normalized);
   }
 
@@ -565,25 +453,18 @@ export class PglitePool {
     ...args: QueryArgs
   ): Promise<PgLikeResult> {
     const { text, values } = normalizeQueryArgs(args);
-    return await withLowlevelDebug(
-      `pool:${sessionId}`,
-      text,
-      values,
-      async () => {
-        const advisory = await handleAdvisoryQuery(sessionId, text, values);
-        if (advisory) {
-          return advisory;
-        }
-        return await this.enqueue(async () => {
-          const pg = await getPglite();
-          const result =
-            values == null
-              ? await pg.query(text)
-              : await pg.query(text, values);
-          return toPgResult(result as PgliteQueryResult);
-        });
-      },
-    );
+    return await withLowlevelDebug(`pool:${sessionId}`, text, values, async () => {
+      const advisory = await handleAdvisoryQuery(sessionId, text, values);
+      if (advisory) {
+        return advisory;
+      }
+      return await this.enqueue(async () => {
+        const pg = await getPglite();
+        const result =
+          values == null ? await pg.query(text) : await pg.query(text, values);
+        return toPgResult(result as PgliteQueryResult);
+      });
+    });
   }
 
   async connect(): Promise<PglitePoolClient> {

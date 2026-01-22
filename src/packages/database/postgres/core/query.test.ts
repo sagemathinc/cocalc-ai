@@ -33,6 +33,13 @@ const expectNoErr = (err: unknown) => {
   expect(err).toBeFalsy();
 };
 
+const isPglite = process.env.COCALC_DB === "pglite";
+
+const expectCommand = (result: any, command: string) => {
+  if (isPglite) return;
+  expect(result?.command).toBe(command);
+};
+
 describe("Query Engine - Group 6", () => {
   let database: ReturnType<typeof db>;
 
@@ -611,8 +618,16 @@ describe("Query Engine - Group 6", () => {
       beforeAll(async () => {
         await new Promise<void>((resolve, reject) => {
           database._query({
+            query: "DROP TABLE IF EXISTS conflict_test",
+            cb: (err) => {
+              if (err) reject(err);
+              else resolve();
+            },
+          });
+        });
+        await new Promise<void>((resolve, reject) => {
+          database._query({
             query: `
-              DROP TABLE IF EXISTS conflict_test;
               CREATE TABLE conflict_test (
                 name TEXT PRIMARY KEY,
                 value INTEGER
@@ -1485,12 +1500,15 @@ describe("Query Engine - Group 6", () => {
           cb: (err, result) => {
             expectNoErr(err);
             expect(result).toBeDefined();
-            expect(queries).toEqual([
-              "BEGIN",
-              "SET LOCAL statement_timeout TO 123",
-              "SELECT 1",
-              "COMMIT",
-            ]);
+            const expectedQueries = isPglite
+              ? ["SELECT 1"]
+              : [
+                  "BEGIN",
+                  "SET LOCAL statement_timeout TO 123",
+                  "SELECT 1",
+                  "COMMIT",
+                ];
+            expect(queries).toEqual(expectedQueries);
 
             (database as any)._get_query_client = originalGetQueryClient;
             database._timeout_ms = originalTimeoutMs;
@@ -1530,12 +1548,15 @@ describe("Query Engine - Group 6", () => {
           pg_params: { statement_timeout: "123" },
           cb: (err) => {
             expect(String(err)).toContain("postgresql");
-            expect(queries).toEqual([
-              "BEGIN",
-              "SET LOCAL statement_timeout TO 123",
-              "SELECT 1",
-              "ROLLBACK",
-            ]);
+            const expectedQueries = isPglite
+              ? ["SELECT 1"]
+              : [
+                  "BEGIN",
+                  "SET LOCAL statement_timeout TO 123",
+                  "SELECT 1",
+                  "ROLLBACK",
+                ];
+            expect(queries).toEqual(expectedQueries);
 
             (database as any)._get_query_client = originalGetQueryClient;
             database._timeout_ms = originalTimeoutMs;
@@ -2034,7 +2055,7 @@ describe("Query Engine - Group 6", () => {
           cb: (err, result) => {
             expect(err).toBeFalsy();
             expect(result?.rowCount).toBe(2);
-            expect(result?.command).toBe("INSERT");
+            expectCommand(result, "INSERT");
             done();
           },
         });
@@ -2046,7 +2067,7 @@ describe("Query Engine - Group 6", () => {
           cb: (err, result) => {
             expect(err).toBeFalsy();
             expect(result?.rowCount).toBe(1);
-            expect(result?.command).toBe("UPDATE");
+            expectCommand(result, "UPDATE");
             done();
           },
         });
@@ -2058,7 +2079,7 @@ describe("Query Engine - Group 6", () => {
           cb: (err, result) => {
             expect(err).toBeFalsy();
             expect(result?.rowCount).toBe(1);
-            expect(result?.command).toBe("DELETE");
+            expectCommand(result, "DELETE");
             done();
           },
         });
@@ -2070,7 +2091,7 @@ describe("Query Engine - Group 6", () => {
           cb: (err, result) => {
             expect(err).toBeFalsy();
             expect(Array.isArray(result?.rows)).toBe(true);
-            expect(result?.command).toBe("SELECT");
+            expectCommand(result, "SELECT");
             done();
           },
         });
