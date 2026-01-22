@@ -16,12 +16,12 @@ const renderElement = ({ attributes, children, element }: RenderElementProps) =>
 
 test("slate selection mapping handles zero-width and void nodes", () => {
   const editor = withReact(createEditor());
-  editor.isVoid = (element) => element.type === "void";
+  editor.isVoid = (element) => element.type === "hr";
 
   const value: Descendant[] = [
     { type: "paragraph", children: [{ text: "hello" }] },
     { type: "paragraph", children: [{ text: "" }] },
-    { type: "void", children: [{ text: "" }] },
+    { type: "hr", children: [{ text: "" }] },
   ];
 
   const { unmount } = render(
