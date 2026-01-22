@@ -990,15 +990,24 @@ export async function buildBootstrapScriptWithStatus(
   row: ProjectHostRow,
   token: string,
   baseUrl: string,
+  caCert?: string,
 ): Promise<string> {
   const statusUrl = `${baseUrl}/project-host/bootstrap/status`;
   const conatUrl = `${baseUrl}/project-host/bootstrap/conat`;
+  const caCertBlock = caCert
+    ? `BOOTSTRAP_CACERT_PATH="/tmp/cocalc-bootstrap-ca.pem"
+cat <<'EOF_COCALC_BOOTSTRAP_CA' > "$BOOTSTRAP_CACERT_PATH"
+${caCert}
+EOF_COCALC_BOOTSTRAP_CA
+CURL_CACERT_ARG="--cacert $BOOTSTRAP_CACERT_PATH"
+`
+    : `CURL_CACERT_ARG=""`;
   const conatPasswordCommand = `
 if [ -f /btrfs/data/secrets/conat-password ]; then
   echo "bootstrap: conat password already present"
 else
   echo "bootstrap: fetching conat password"
-  curl -fsSL -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$CONAT_URL" | sudo tee /btrfs/data/secrets/conat-password >/dev/null
+  curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$CONAT_URL" | sudo tee /btrfs/data/secrets/conat-password >/dev/null
   sudo chmod 600 /btrfs/data/secrets/conat-password
 fi
 `;
@@ -1016,6 +1025,7 @@ set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
 STATUS_URL="${statusUrl}"
 CONAT_URL="${conatUrl}"
+${caCertBlock}
 
 report_status() {
   local status="$1"
@@ -1037,7 +1047,7 @@ report_status() {
   else
     printf -v payload '{"status":"%s"}' "$status"
   fi
-  curl -fsSL -X POST -H "Authorization: Bearer $BOOTSTRAP_TOKEN" -H "Content-Type: application/json" \
+  curl -fsSL $CURL_CACERT_ARG -X POST -H "Authorization: Bearer $BOOTSTRAP_TOKEN" -H "Content-Type: application/json" \
     --data "$payload" \
     "$STATUS_URL" >/dev/null || true
 }
@@ -1065,9 +1075,18 @@ export async function buildCloudInitStartupScript(
   _row: ProjectHostRow,
   token: string,
   baseUrl: string,
+  caCert?: string,
 ): Promise<string> {
   const bootstrapUrl = `${baseUrl}/project-host/bootstrap`;
   const statusUrl = `${baseUrl}/project-host/bootstrap/status`;
+  const caCertBlock = caCert
+    ? `BOOTSTRAP_CACERT_PATH="/tmp/cocalc-bootstrap-ca.pem"
+cat <<'EOF_COCALC_BOOTSTRAP_CA' > "$BOOTSTRAP_CACERT_PATH"
+${caCert}
+EOF_COCALC_BOOTSTRAP_CA
+CURL_CACERT_ARG="--cacert $BOOTSTRAP_CACERT_PATH"
+`
+    : `CURL_CACERT_ARG=""`;
   return `#!/bin/bash
 set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
@@ -1075,6 +1094,7 @@ BOOTSTRAP_URL="${bootstrapUrl}"
 STATUS_URL="${statusUrl}"
 BOOTSTRAP_DIR="/root/bootstrap"
 BOOTSTRAP_HOST="$(echo "$BOOTSTRAP_URL" | awk -F/ '{print $3}')"
+${caCertBlock}
 
 if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /btrfs/data/.bootstrap_done ]; then
   echo "bootstrap: already complete; exiting"
@@ -1107,7 +1127,7 @@ report_status() {
   else
     printf -v payload '{"status":"%s"}' "$status"
   fi
-  curl -fsSL -X POST -H "Authorization: Bearer $BOOTSTRAP_TOKEN" -H "Content-Type: application/json" \
+  curl -fsSL $CURL_CACERT_ARG -X POST -H "Authorization: Bearer $BOOTSTRAP_TOKEN" -H "Content-Type: application/json" \
     --data "$payload" \
     "$STATUS_URL" >/dev/null || true
 }
@@ -1118,7 +1138,7 @@ download_bootstrap() {
   local i=1
   while [ "$i" -le "$attempts" ]; do
     local http_code
-    http_code="$(curl -sS -w "%{http_code}" -o "$BOOTSTRAP_DIR/bootstrap.sh" -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$BOOTSTRAP_URL" || true)"
+    http_code="$(curl -sS $CURL_CACERT_ARG -w "%{http_code}" -o "$BOOTSTRAP_DIR/bootstrap.sh" -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$BOOTSTRAP_URL" || true)"
     if [ "$http_code" = "200" ]; then
       return 0
     fi

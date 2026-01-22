@@ -5,7 +5,7 @@ import basePath from "@cocalc/backend/base-path";
 import { conatPassword } from "@cocalc/backend/data";
 import { buildBootstrapScriptWithStatus } from "@cocalc/server/cloud/bootstrap-host";
 import { verifyBootstrapToken } from "@cocalc/server/project-host/bootstrap-token";
-import siteURL from "@cocalc/database/settings/site-url";
+import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 
 const logger = getLogger("hub:servers:app:project-host-bootstrap");
 
@@ -73,8 +73,14 @@ export default function init(router: Router) {
       }
       const hostRow = await loadHostRow(tokenInfo.host_id);
       let baseUrl: string;
+      let caCert: string | undefined;
       try {
-        baseUrl = await siteURL();
+        const resolved = await resolveLaunchpadBootstrapUrl({
+          fallbackHost: req.get("host"),
+          fallbackProtocol: req.protocol,
+        });
+        baseUrl = resolved.baseUrl;
+        caCert = resolved.caCert;
       } catch {
         const hostHeader = req.get("host") ?? "";
         const proto = req.protocol;
@@ -85,6 +91,7 @@ export default function init(router: Router) {
         hostRow,
         token,
         baseUrl,
+        caCert,
       );
       res.type("text/x-shellscript").send(script);
     } catch (err) {

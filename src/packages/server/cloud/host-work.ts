@@ -11,10 +11,10 @@ import { provisionIfNeeded } from "./host-util";
 import type { CloudVmWorkHandlers } from "./worker";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import { buildCloudInitStartupScript, handleBootstrap } from "./bootstrap-host";
+import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import { bumpReconcile, DEFAULT_INTERVALS } from "./reconcile";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "./provider-context";
-import siteURL from "@cocalc/database/settings/site-url";
 import {
   createBootstrapToken,
   revokeBootstrapTokensForHost,
@@ -354,7 +354,7 @@ async function handleProvision(row: any) {
   let startupScript: string | undefined;
   if (providerId) {
     try {
-      const baseUrl = await siteURL();
+      const { baseUrl, caCert } = await resolveLaunchpadBootstrapUrl();
       const token = await createBootstrapToken(row.id, {
         purpose: "bootstrap",
       });
@@ -362,6 +362,7 @@ async function handleProvision(row: any) {
         row,
         token.token,
         baseUrl,
+        caCert,
       );
       const nextMetadata = {
         ...(row.metadata ?? {}),

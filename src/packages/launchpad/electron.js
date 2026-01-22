@@ -1,16 +1,22 @@
 // Electron entrypoint for CoCalc Launchpad (desktop). Spins up the Hub
 // control plane and opens a browser window pointed at the local server.
 const { app, BrowserWindow, Menu } = require("electron");
-const { applyLaunchpadDefaults, logLaunchpadConfig } = require("./lib/onprem-config");
+const {
+  applyLaunchpadDefaults,
+  ensureLaunchpadTls,
+  logLaunchpadConfig,
+  scheduleLaunchpadCertRotation,
+} = require("./lib/onprem-config");
 
 let port; // set after Launchpad starts
 
 function createWindow() {
+  const protocol = process.env.COCALC_LAUNCHPAD_HTTPS_CERT ? "https" : "http";
   const win = new BrowserWindow({
     width: 1000,
     height: 700,
   });
-  win.loadURL(`http://localhost:${port}`);
+  win.loadURL(`${protocol}://localhost:${port}`);
 }
 
 function buildMenu() {
@@ -92,7 +98,17 @@ function buildMenu() {
 async function main() {
   // Spin up CoCalc Launchpad and Electron
   applyLaunchpadDefaults();
+  const tls = ensureLaunchpadTls();
+  if (tls?.keyPath && tls?.certPath) {
+    if (!process.argv.includes("--https-key")) {
+      process.argv.push("--https-key", tls.keyPath);
+    }
+    if (!process.argv.includes("--https-cert")) {
+      process.argv.push("--https-cert", tls.certPath);
+    }
+  }
   logLaunchpadConfig();
+  scheduleLaunchpadCertRotation();
 
   await app.whenReady();
   require("@cocalc/hub/hub");

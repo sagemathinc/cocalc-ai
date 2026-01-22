@@ -36,6 +36,11 @@ import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
+import { getLaunchpadMode } from "@cocalc/server/launchpad/mode";
+import {
+  ensureOnPremTls,
+  scheduleOnPremCertRotation,
+} from "@cocalc/server/onprem";
 import {
   cloudHostHandlers,
   startCloudCatalogWorker,
@@ -106,6 +111,33 @@ async function initMetrics() {
   };
 }
 
+async function maybeInitOnPremTls(): Promise<void> {
+  const isLaunchpad = process.env.COCALC_MODE === "launchpad";
+  const launchpadMode = await getLaunchpadMode();
+  const onprem =
+    process.env.COCALC_ONPREM === "1" ||
+    (isLaunchpad && launchpadMode === "onprem");
+  if (!onprem) {
+    return;
+  }
+  const tls = ensureOnPremTls({
+    host: program.hostname,
+    existingKey: program.httpsKey,
+    existingCert: program.httpsCert,
+    allowLocalHttp: true,
+  });
+  if (tls) {
+    program.httpsKey = tls.keyPath;
+    program.httpsCert = tls.certPath;
+  }
+  scheduleOnPremCertRotation({
+    host: program.hostname,
+    allowLocalHttp: true,
+    existingKey: program.httpsKey,
+    existingCert: program.httpsCert,
+  });
+}
+
 async function startServer(): Promise<void> {
   logger.info("start_server");
 
@@ -149,6 +181,7 @@ async function startServer(): Promise<void> {
 
   // set server settings based on environment variables
   await load_server_settings_from_env(database);
+  await maybeInitOnPremTls();
   await maybeStartLaunchpadOnPremServices();
 
   if (program.agentPort) {

@@ -41,6 +41,7 @@ Set one base port and everything else is derived:
 - COCALC_HTTP_PORT=COCALC_BASE_PORT-1 (optional redirect only)
 - COCALC_SSHD_PORT=COCALC_BASE_PORT+1 (host reverse tunnel + SFTP)
 - COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
+- COCALC_LAUNCHPAD_HOST=localhost (hub host used in bootstrap URLs)
 
 Explicit port overrides are supported, but not expected in the simplest setup.
 
@@ -53,7 +54,10 @@ needed if you want to override defaults.
 # Optional overrides (defaults work if you omit all of this)
 export COCALC_BASE_PORT=8443
 export COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
+export COCALC_LAUNCHPAD_HOST=localhost
 export COCALC_DISABLE_HTTP=true
+# Optional: rotate self-signed certs this many days before expiry (default 30)
+export COCALC_LAUNCHPAD_CERT_ROTATE_DAYS=30
 ```
 
 ## Quick Start
@@ -64,8 +68,11 @@ export COCALC_DISABLE_HTTP=true
    - COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
 
 2. Start the Launchpad hub.
-   - Provide TLS cert and key.
-   - Disable HTTP \(or keep it as redirect only\).
+   - If the host is **localhost**, Launchpad uses HTTP on the hub port.
+   - If the host is **non-local**, Launchpad auto-generates a self-signed
+     cert and uses HTTPS on the hub port.
+   - The hub performs the same on-prem TLS setup even when run outside
+     Launchpad (using the same env defaults).
 
 3. In Admin Settings, select **On‑prem** mode.
    - Hub starts a locked down sshd as a child process.
@@ -93,6 +100,10 @@ Users -> Hub:
 
 - HTTPS/WSS to hub port
 - SSH to the per-host port shown by the hub
+
+If hosts run on a different machine, set `COCALC_LAUNCHPAD_HOST` to the hub’s
+LAN IP/hostname and ensure the hub listens on the LAN (e.g.
+`COCALC_HUB_HOSTNAME=0.0.0.0`).
 
 ## Backups (Rustic + SFTP)
 
