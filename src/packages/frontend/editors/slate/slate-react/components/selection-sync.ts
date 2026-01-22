@@ -15,7 +15,7 @@ asynchronous code or locks at all!  Also, there are no platform
 specific hacks at all.
 */
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useIsomorphicLayoutEffect } from "../hooks/use-isomorphic-layout-effect";
 import { ReactEditor } from "..";
 import { EDITOR_TO_ELEMENT } from "../utils/weak-maps";
@@ -53,6 +53,9 @@ export const useUpdateDOMSelection = ({
   editor: ReactEditor;
   state: SelectionState;
 }) => {
+  const lastSelectionRef = useRef<Selection | null | undefined>(undefined);
+  const lastDomSelectionRef = useRef<DomSelectionSnapshot | null>(null);
+
   // Ensure that the DOM selection state is set to the editor selection.
   // Note that whenever the DOM gets updated (e.g., with every keystroke when editing)
   // the DOM selection gets completely reset (because react replaces the selected text
@@ -97,10 +100,24 @@ export const useUpdateDOMSelection = ({
     //       "\neditor.selection   =",
     //       JSON.stringify(editor.selection)
     //     );
+    const domSnapshot = getDomSelectionSnapshot(domSelection);
+    if (
+      isEqual(lastSelectionRef.current, selection) &&
+      domSelectionMatchesSnapshot(domSnapshot, lastDomSelectionRef.current)
+    ) {
+      return;
+    }
+
     const hasDomSelection = domSelection.type !== "None";
 
     // If the DOM selection is properly unset, we're done.
     if (!selection && !hasDomSelection) {
+      recordSelectionState(
+        selection,
+        domSelection,
+        lastSelectionRef,
+        lastDomSelectionRef,
+      );
       return;
     }
 
@@ -120,6 +137,12 @@ export const useUpdateDOMSelection = ({
           state.windowedSelection = true;
         }
       }
+      recordSelectionState(
+        selection,
+        domSelection,
+        lastSelectionRef,
+        lastDomSelectionRef,
+      );
       return;
     }
     let newDomRange;
@@ -161,6 +184,12 @@ export const useUpdateDOMSelection = ({
     ) {
       // It's correct already -- we're done.
       // console.log("useUpdateDOMSelection: selection already correct");
+      recordSelectionState(
+        selection,
+        domSelection,
+        lastSelectionRef,
+        lastDomSelectionRef,
+      );
       return;
     }
 
@@ -178,6 +207,12 @@ export const useUpdateDOMSelection = ({
         newDomRange.endOffset,
       );
     } finally {
+      recordSelectionState(
+        selection,
+        domSelection,
+        lastSelectionRef,
+        lastDomSelectionRef,
+      );
       scheduleSelectionReset(state);
     }
   };
@@ -414,6 +449,47 @@ function clipPoint(
 
 function isSelectable(editor, node): boolean {
   return hasEditableTarget(editor, node) || isTargetInsideVoid(editor, node);
+}
+
+type DomSelectionSnapshot = {
+  anchorNode: Node | null;
+  anchorOffset: number;
+  focusNode: Node | null;
+  focusOffset: number;
+};
+
+function getDomSelectionSnapshot(
+  domSelection: DOMSelection,
+): DomSelectionSnapshot {
+  return {
+    anchorNode: domSelection.anchorNode,
+    anchorOffset: domSelection.anchorOffset,
+    focusNode: domSelection.focusNode,
+    focusOffset: domSelection.focusOffset,
+  };
+}
+
+function domSelectionMatchesSnapshot(
+  current: DomSelectionSnapshot,
+  last: DomSelectionSnapshot | null,
+): boolean {
+  if (!last) return false;
+  return (
+    current.anchorNode === last.anchorNode &&
+    current.anchorOffset === last.anchorOffset &&
+    current.focusNode === last.focusNode &&
+    current.focusOffset === last.focusOffset
+  );
+}
+
+function recordSelectionState(
+  selection: Selection | null | undefined,
+  domSelection: DOMSelection,
+  lastSelectionRef: { current: Selection | null | undefined },
+  lastDomSelectionRef: { current: DomSelectionSnapshot | null },
+): void {
+  lastSelectionRef.current = selection ?? null;
+  lastDomSelectionRef.current = getDomSelectionSnapshot(domSelection);
 }
 
 const SELECTION_MISMATCH_LOG_INTERVAL_MS = 2000;
