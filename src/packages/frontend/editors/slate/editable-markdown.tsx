@@ -640,7 +640,7 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       nextEditorValue.length >= 40 &&
       !ReactEditor.isFocused(editor);
     const operations = shouldDirectSet
-      ? null
+      ? []
       : slateDiff(previousEditorValue, nextEditorValue);
 
     if (!shouldDirectSet && operations.length == 0) {
