@@ -12,12 +12,9 @@ const MAP = {
   "+": "\\+",
   "-": "\\-",
   "#": "\\#",
-  "(": "\\(",
-  ")": "\\)",
   "[": "\\[",
   "]": "\\]",
   "|": "\\|",
-  _: "\\_",
   "\\": "\\\\",
   "`": "\\`",
   "<": "&lt;",
@@ -32,16 +29,13 @@ export function markdownEscape(
   isFirstChild: boolean = false
 ): string {
   // The 1-character replacements we make in any text.
-  s = s.replace(/[\*\(\)\[\]\$\+\-\\_`#<>]/g, (m) => MAP[m]);
+  s = s.replace(/[\*\[\]\$\+\-\\`#<>]/g, (m) => MAP[m]);
   // Version of the above, but with some keys from the map purposely missing here,
-  // since overescaping makes the generated markdown ugly.  However, sadly we HAVE
-  // to escape everything (as above), since otherwise collaborative editing gets
-  // broken, and tons of trouble with slate.  E.g., User a types a single - at the
-  // beginning of the line, and user
-  // B types something somewhere else in the document.  The dash then automatically
-  // turns into a list without user A doing anything.  NOT good.
-  // Fortunately, caching makes this less painful.
-  // s = s.replace(/[\\_`<>$&\xa0|]/g, (m) => MAP[m]);
+  // since overescaping makes the generated markdown ugly. We still escape
+  // many characters to avoid accidental auto-formatting during collab, but
+  // we skip some inline-safe ones (like parentheses and underscores) to keep
+  // the output readable. Caching makes the remaining escapes less painful.
+  // s = s.replace(/[\\`<>$&\xa0|]/g, (m) => MAP[m]);
 
   // Links - we do this to avoid escaping [ and ] when not necessary.
   s = s.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, (link) =>
