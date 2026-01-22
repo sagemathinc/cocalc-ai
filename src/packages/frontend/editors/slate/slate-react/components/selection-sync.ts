@@ -46,6 +46,10 @@ interface SelectionState {
   pendingSelectionReset: boolean;
 }
 
+const LOG_SELECTION_MISMATCHES =
+  typeof process !== "undefined" &&
+  process.env?.COCALC_SLATE_LOG_SELECTION === "1";
+
 export const useUpdateDOMSelection = ({
   editor,
   state,
@@ -500,6 +504,9 @@ function shouldLogSelectionMismatch(
   range: Range,
   state: SelectionState,
 ): boolean {
+  if (!LOG_SELECTION_MISMATCHES) {
+    return false;
+  }
   if (
     state.shiftKey ||
     state.isComposing ||
