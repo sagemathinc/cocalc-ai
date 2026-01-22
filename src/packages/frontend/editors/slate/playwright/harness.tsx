@@ -16,6 +16,7 @@ import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate
 import { Editable, Slate, withReact } from "../slate-react";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-react/utils/environment";
 import { withDeleteBackward } from "../format/delete-backward";
+import { autoformatBlockquoteAtStart } from "../format/auto-format-quote";
 
 declare global {
   interface Window {
@@ -24,6 +25,7 @@ declare global {
       getSelection: () => Range | null;
       getValue: () => Descendant[];
       getEnv: () => { hasBeforeInput: boolean };
+      insertText: (text: string, autoFormat?: boolean) => void;
       insertBreak: () => void;
       setSelection: (range: Range) => void;
       setValue: (value: Descendant[]) => void;
@@ -57,6 +59,19 @@ function Harness(): React.JSX.Element {
       },
       setValue: (nextValue) => {
         setValue(nextValue);
+      },
+      insertText: (text, autoFormat) => {
+        if (autoFormat == null) {
+          Editor.insertText(editor, text);
+          return;
+        }
+        if (text === " ") {
+          if (!autoformatBlockquoteAtStart(editor)) {
+            Editor.insertText(editor, text);
+          }
+          return;
+        }
+        Editor.insertText(editor, text);
       },
       insertBreak: () => {
         Editor.insertBreak(editor);

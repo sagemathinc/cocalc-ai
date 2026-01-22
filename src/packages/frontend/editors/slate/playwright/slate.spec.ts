@@ -138,3 +138,42 @@ test("backspace pulls text into an empty quote block", async ({ page }) => {
     expect(selection.anchor.path[0]).toBe(0);
   }
 });
+
+test("autoformat quotes the current paragraph when typing > at start", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setValue([
+      { type: "paragraph", children: [{ text: "quote me" }] },
+    ]);
+  });
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText() === "quote me";
+  });
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [0, 0], offset: 0 },
+      focus: { path: [0, 0], offset: 0 },
+    });
+  });
+
+  await page.evaluate(() => {
+    window.__slateTest?.insertText?.(">");
+    window.__slateTest?.insertText?.(" ", true);
+  });
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+
+  expect(value?.length).toBe(1);
+  if (value) {
+    expect(value[0]?.type).toBe("blockquote");
+    expect(nodeText(value[0])).toBe("quote me");
+  }
+});

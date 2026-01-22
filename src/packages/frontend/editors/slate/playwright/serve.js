@@ -8,18 +8,11 @@ const rootDir = __dirname;
 const distDir = path.join(rootDir, "dist");
 const bundlePath = path.join(distDir, "bundle.js");
 const indexPath = path.join(rootDir, "index.html");
-const autoFormatShim = path.join(rootDir, "auto-format-shim.ts");
 const environmentShim = path.join(rootDir, "environment-shim.ts");
 
 const shimPlugin = {
   name: "slate-shims",
   setup(build) {
-    build.onResolve({ filter: /auto-format$/ }, (args) => {
-      if (args.path.endsWith("format/auto-format")) {
-        return { path: autoFormatShim };
-      }
-      return null;
-    });
     build.onResolve({ filter: new RegExp("utils[/\\\\]environment$") }, () => {
       return { path: environmentShim };
     });

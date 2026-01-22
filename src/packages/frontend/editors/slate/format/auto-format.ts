@@ -5,7 +5,7 @@
 
 import { withInsertText } from "./insert-text";
 import { withDeleteBackward } from "./delete-backward";
-import { SlateEditor } from "../editable-markdown";
+import type { SlateEditor } from "../editable-markdown";
 import { Editor, Operation, Transforms, Path, Point, Text } from "slate";
 import { len } from "@cocalc/util/misc";
 import { markdown_to_slate } from "../markdown-to-slate";
@@ -14,10 +14,18 @@ import { slateDiff } from "../slate-diff";
 import { getRules } from "../elements";
 import { ReactEditor } from "../slate-react";
 import { formatHeading, setSelectionAndFocus } from "./commands";
+import { autoformatBlockquoteAtStart } from "./auto-format-quote";
 
 export const withAutoFormat = (editor) => {
   withInsertText(editor);
   withDeleteBackward(editor);
+  const { insertData } = editor;
+  if (typeof insertData === "function") {
+    editor.insertData = (data) => {
+      insertData(data);
+      markdownAutoformat(editor as SlateEditor);
+    };
+  }
 
   return editor;
 };
@@ -39,6 +47,10 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
 
   // Must be a text node
   if (!Text.isText(node)) return false;
+
+  if (autoformatBlockquoteAtStart(editor)) {
+    return true;
+  }
 
   // If we wanted the format to always be undo-able.
   // editor.saveValue(true);
