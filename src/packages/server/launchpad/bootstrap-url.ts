@@ -45,7 +45,7 @@ function isLocalHost(host: string): boolean {
   return (
     value === "localhost" ||
     value === "127.0.0.1" ||
-    value === "::1" ||
+    value === "::1"
   );
 }
 

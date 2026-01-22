@@ -192,6 +192,9 @@ export function ensureOnPremTls(opts: {
     });
     key = pems.private;
     cert = pems.cert;
+    if (!key || !cert) {
+      throw new Error("failed to generate self-signed TLS cert");
+    }
     writeFileSync(keyPath, key, { mode: 0o600 });
     writeFileSync(certPath, cert, { mode: 0o644 });
     process.env.COCALC_LAUNCHPAD_SELF_SIGNED = "1";

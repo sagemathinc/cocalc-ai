@@ -3,7 +3,6 @@ import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
-import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getPool from "@cocalc/database/pool";
 import {
   getLaunchpadMode,

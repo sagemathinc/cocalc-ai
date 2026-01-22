@@ -1,6 +1,16 @@
-// On-prem launchpad only: keep an SSH reverse tunnel from the host back to the
+// On-prem launchpad only: keep a reverse SSH tunnel from the host back to the
 // hub so the hub can proxy project HTTP/WS traffic and users can SSH via a
 // host-specific port, without requiring inbound access to the host.
+//
+// Behavior/assumptions:
+// - The host registers a tunnel config with the hub and then establishes
+//   reverse port forwards to the hub's sshd for HTTP+SSH proxying.
+// - If registration fails (hub down at boot), we retry with backoff until it
+//   succeeds; this avoids requiring a host restart.
+// - If the SSH connection drops, the ssh client exits (via server alive
+//   settings) and we restart the tunnel automatically.
+// - If the host and hub are on the same machine, the tunnel is still allowed but
+//   can be skipped by higher-level logic.
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -35,6 +45,8 @@ type StoredTunnelConfig = {
 type TunnelState = {
   stopped: boolean;
   child?: ChildProcessWithoutNullStreams;
+  retryTimer?: NodeJS.Timeout;
+  retryAttempt?: number;
 };
 
 async function fileExists(path: string): Promise<boolean> {
@@ -286,23 +298,10 @@ export async function startOnPremTunnel(opts: {
   await install("ssh");
   await ensureKeyPair(keyPath, hostId);
 
-  const config =
-    (await registerTunnelConfig({
-      keyPath,
-      configPath,
-      fallback: storedConfig,
-    })) ?? fallbackConfig;
-  if (!config) {
-    logger.debug("onprem tunnel disabled (missing config)");
-    return () => {};
-  }
-  if (fallbackConfig && config === fallbackConfig) {
-    logger.info("onprem tunnel using fallback config");
-  }
   const localSshPort = sshServer.port;
   const state: TunnelState = { stopped: false };
 
-  const start = () => {
+  const start = (config: TunnelConfig) => {
     if (state.stopped) {
       return;
     }
@@ -326,14 +325,67 @@ export async function startOnPremTunnel(opts: {
         return;
       }
       logger.warn("onprem tunnel exited", { code, signal });
-      setTimeout(start, 5000);
+      setTimeout(() => start(config), 5000);
     });
   };
 
-  start();
+  const scheduleRetry = () => {
+    if (state.stopped) {
+      return;
+    }
+    const attempt = (state.retryAttempt ?? 0) + 1;
+    state.retryAttempt = attempt;
+    const baseDelay = Math.min(60000, 2000 * Math.pow(2, attempt - 1));
+    const jitter = Math.floor(baseDelay * (0.2 * Math.random()));
+    const delay = baseDelay + jitter;
+    logger.debug("onprem tunnel config missing; retrying registration", {
+      attempt,
+      delay_ms: delay,
+    });
+    state.retryTimer = setTimeout(async () => {
+      if (state.stopped) return;
+      const config = await registerTunnelConfig({
+        keyPath,
+        configPath,
+        fallback: storedConfig,
+      });
+      if (config) {
+        state.retryTimer = undefined;
+        state.retryAttempt = 0;
+        logger.info("onprem tunnel config recovered; starting tunnel");
+        start(config);
+      } else {
+        scheduleRetry();
+      }
+    }, delay);
+  };
+
+  const config =
+    (await registerTunnelConfig({
+      keyPath,
+      configPath,
+      fallback: storedConfig,
+    })) ?? fallbackConfig;
+  if (!config) {
+    scheduleRetry();
+    return () => {
+      state.stopped = true;
+      if (state.retryTimer) {
+        clearTimeout(state.retryTimer);
+      }
+    };
+  }
+  if (fallbackConfig && config === fallbackConfig) {
+    logger.info("onprem tunnel using fallback config");
+  }
+
+  start(config);
 
   return () => {
     state.stopped = true;
+    if (state.retryTimer) {
+      clearTimeout(state.retryTimer);
+    }
     if (state.child && state.child.exitCode == null) {
       state.child.kill("SIGTERM");
     }

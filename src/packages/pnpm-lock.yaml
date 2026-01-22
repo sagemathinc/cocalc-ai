@@ -1027,6 +1027,9 @@ importers:
       '@cocalc/hub':
         specifier: workspace:*
         version: link:../hub
+      '@cocalc/server':
+        specifier: workspace:*
+        version: link:../server
     devDependencies:
       '@electron/rebuild':
         specifier: ^4.0.1
@@ -1659,6 +1662,9 @@ importers:
       sanitize-html:
         specifier: ^2.17.0
         version: 2.17.0
+      selfsigned:
+        specifier: ^3.0.1
+        version: 3.0.1
       stripe:
         specifier: ^17.5.0
         version: 17.7.0
