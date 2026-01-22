@@ -71,10 +71,12 @@ const cachedQuery = reuseInFlight(
 
     const pool = getPool({ ensureExists });
     try {
-      const queryPromise = pool.query as (
-        ...queryArgs: Parameters<Pool["query"]>
-      ) => Promise<QueryResult>;
-      const result = await queryPromise(...args);
+      const result = (await pool.query(
+        ...(args as Parameters<Pool["query"]>),
+      )) as QueryResult | void;
+      if (!result) {
+        throw new Error("cachedQuery requires promise-based query");
+      }
       if (result.rows.length > 0) {
         // We only cache query if it returned something.
         cache.set(key, result);

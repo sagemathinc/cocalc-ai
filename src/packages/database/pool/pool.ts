@@ -165,6 +165,9 @@ export default function getPool(options?: PoolOptionInput): Pool {
     if (pglitePool == null) {
       //console.log("creating pglite pool");
       pglitePool = getPglitePool();
+      pglitePool.query = pglitePool.query.bind(pglitePool);
+      pglitePool.connect = pglitePool.connect.bind(pglitePool);
+      pglitePool.end = pglitePool.end.bind(pglitePool);
     }
     return pglitePool as unknown as Pool;
   }
