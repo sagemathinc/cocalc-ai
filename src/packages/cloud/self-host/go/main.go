@@ -297,9 +297,7 @@ func runPairSSH(args []string) {
 	_ = stdin.Close()
 	outBytes, _ := io.ReadAll(stdout)
 	errBytes, _ := io.ReadAll(stderr)
-	if err := session.Wait(); err != nil {
-		fail(fmt.Sprintf("ssh pair failed: %v (%s)", err, strings.TrimSpace(string(errBytes))))
-	}
+	waitErr := session.Wait()
 	var resp struct {
 		ConnectorID         string `json:"connector_id"`
 		ConnectorToken      string `json:"connector_token"`
@@ -309,6 +307,16 @@ func runPairSSH(args []string) {
 			HttpsPort int `json:"https_port"`
 		} `json:"launchpad"`
 		Error               string `json:"error"`
+	}
+	if waitErr != nil {
+		if err := json.Unmarshal(outBytes, &resp); err == nil && resp.Error != "" {
+			fail(fmt.Sprintf("pair failed: %s", resp.Error))
+		}
+		msg := strings.TrimSpace(string(errBytes))
+		if msg == "" {
+			msg = strings.TrimSpace(string(outBytes))
+		}
+		fail(fmt.Sprintf("ssh pair failed: %v (%s)", waitErr, msg))
 	}
 	if err := json.Unmarshal(outBytes, &resp); err != nil {
 		fail(fmt.Sprintf("pair response decode: %v", err))
