@@ -5,7 +5,7 @@
 
 // What happens when you hit the enter key.
 
-import { Editor, Element, Transforms } from "slate";
+import { Editor, Element, Path, Transforms } from "slate";
 import { isElementOfType } from "../elements";
 import { emptyParagraph, isWhitespaceParagraph } from "../padding";
 import { register } from "./register";
@@ -35,13 +35,16 @@ register({ key: "Enter" }, ({ editor }) => {
     // another empty paragraph.  We do a bunch of special cases so that
     // our document corresponds much more closely to what markdown
     // actually supports.
-
-    if (isWhitespaceParagraph(containingBlock(editor)?.[0])) {
-      return true;
-    }
-    const prev = Editor.previous(editor);
-    if (prev == null) return false;
-    if (isWhitespaceParagraph(prev[0])) {
+    const blockEntry = containingBlock(editor);
+    const block = blockEntry?.[0];
+    const blockPath = blockEntry?.[1] as Path | undefined;
+    if (block != null && isWhitespaceParagraph(block) && blockPath != null) {
+      if ((block as { blank?: boolean }).blank !== true) {
+        Transforms.setNodes(editor, { blank: true }, { at: blockPath });
+      }
+      const nextPath = Path.next(blockPath);
+      Transforms.insertNodes(editor, emptyParagraph(), { at: nextPath });
+      Transforms.select(editor, Editor.start(editor, nextPath));
       return true;
     }
     return false;

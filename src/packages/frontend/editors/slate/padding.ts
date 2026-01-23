@@ -25,6 +25,13 @@ export function isWhitespaceParagraph(node: Node | undefined): boolean {
   );
 }
 
+export function isPlaceholderParagraph(node: Node | undefined): boolean {
+  if (!isWhitespaceParagraph(node)) {
+    return false;
+  }
+  return (node as { blank?: boolean }).blank !== true;
+}
+
 export function isWhitespaceText(node: Node | undefined): boolean {
   return node?.["text"]?.trim() === "";
 }

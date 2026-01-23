@@ -32,16 +32,23 @@ export function autoformatBlockquoteAtStart(editor: Editor): boolean {
     return false;
   }
 
-  if (selection.anchor.offset !== 1 || selection.focus.offset !== 1) {
+  const offset = selection.focus.offset;
+  const text = node.text;
+  const canAutoformat =
+    (offset === 1 && text.startsWith(">")) ||
+    (offset === 2 && text.startsWith("> ")) ||
+    (offset === 0 && text.startsWith(">"));
+  if (!canAutoformat) {
     return false;
   }
 
   const blockPath = path.slice(0, path.length - 1);
+  const deleteCount = text.startsWith("> ") ? 2 : 1;
 
   Editor.withoutNormalizing(editor, () => {
     Transforms.delete(editor, {
       at: { path, offset: 0 },
-      distance: 1,
+      distance: deleteCount,
     });
     Transforms.wrapNodes(editor, { type: "blockquote" } as Element, {
       at: blockPath,

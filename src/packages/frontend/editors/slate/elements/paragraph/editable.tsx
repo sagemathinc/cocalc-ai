@@ -23,7 +23,8 @@ register({
     const collapsed = useCollapsed();
     const isEmpty =
       element.children.length == 1 && element.children[0]["text"] == "";
-    if (isEmpty && !(collapsed && focused && selected)) {
+    const isBlank = element.blank === true;
+    if (isEmpty && !isBlank && !(collapsed && focused && selected)) {
       // Only show empty paragraph if selection is collapsed, editor is
       // focused, and para is selected.
       return (
@@ -72,14 +73,11 @@ register({
     */
   },
 
-  fromSlate: ({ children, info }) => {
+  fromSlate: ({ node, children, info }) => {
     if (children.trim() == "") {
-      // We discard empty paragraphs entirely, since that's
-      // what markdown does. Also, to make void blocks easier to
-      // work with, we sometimes automatically add blank paragraphs
-      // above or below them, and it is silly if those result in
-      // lots of meaningless blank lines in the md file.
-      return "";
+      // We discard empty paragraphs entirely, unless they were explicitly
+      // encoded as blank lines in markdown.
+      return node["blank"] ? "\n" : "";
     }
 
     // trimLeft is because prettier (say) strips whitespace from beginning of paragraphs.

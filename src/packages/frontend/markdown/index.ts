@@ -21,6 +21,7 @@ import { checkboxPlugin } from "./checkbox-plugin";
 import { hashtagPlugin } from "./hashtag-plugin";
 import { mentionPlugin } from "./mentions-plugin";
 import mathPlugin from "./math-plugin";
+import { blankLinesPlugin } from "./blank-lines-plugin";
 export { parseHeader } from "./header";
 import Markdown from "./component";
 export { Markdown };
@@ -65,8 +66,24 @@ function usePlugins(m, plugins) {
   }
 }
 
+function addBlankLineRenderer(m: MarkdownIt): void {
+  m.renderer.rules.blank_line = (tokens, idx) => {
+    const token = tokens[idx];
+    const line = token.map?.[0];
+    const lineAttr = line != null ? ` data-source-line="${line}"` : "";
+    return `<p class="cocalc-blank-line"${lineAttr}><br /></p>`;
+  };
+}
+
 export const markdown_it = new MarkdownIt(OPTIONS);
 usePlugins(markdown_it, PLUGINS);
+markdown_it.use(blankLinesPlugin);
+addBlankLineRenderer(markdown_it);
+
+// Parser used for Slate roundtrips; includes extra tokens for blank lines.
+export const markdown_it_slate = new MarkdownIt(OPTIONS);
+usePlugins(markdown_it_slate, PLUGINS);
+markdown_it_slate.use(blankLinesPlugin);
 
 /*
 export function markdownParser() {
@@ -100,6 +117,8 @@ function inject_linenumbers_plugin(md) {
 const markdown_it_line_numbers = new MarkdownIt(OPTIONS);
 markdown_it_line_numbers.use(inject_linenumbers_plugin);
 usePlugins(markdown_it_line_numbers, PLUGINS);
+markdown_it_line_numbers.use(blankLinesPlugin);
+addBlankLineRenderer(markdown_it_line_numbers);
 
 /*
 Turn the given markdown *string* into an HTML *string*.
