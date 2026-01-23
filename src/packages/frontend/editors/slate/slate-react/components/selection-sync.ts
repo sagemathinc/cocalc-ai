@@ -35,6 +35,8 @@ interface SelectionState {
   shiftKey: boolean;
   latestElement: DOMElement | null;
   lastUserInputAt: number;
+  lastPointerDownAt: number;
+  lastSelectionKeyAt: number;
 
   // If part of the selection gets scrolled out of the DOM, we set windowedSelection
   // to true. The next time the selection in the DOM is read, we then set
@@ -57,7 +59,9 @@ const LOG_SELECTION_MISMATCHES =
   typeof process !== "undefined" &&
   process.env?.COCALC_SLATE_LOG_SELECTION === "1";
 // Avoid stale DOM selection overwriting Slate selection during rapid typing.
-const TYPING_SELECTION_SUPPRESS_MS = 250;
+const TYPING_SELECTION_SUPPRESS_MS = 500;
+const POINTER_SELECTION_GRACE_MS = 500;
+const SELECTION_KEY_GRACE_MS = 500;
 const SELECTION_SYNC_SUPPRESS_MS = 250;
 
 export const useUpdateDOMSelection = ({
@@ -326,8 +330,19 @@ export const useDOMSelectionChange = ({
 
     const domSelection = window.getSelection();
     if (!domSelection) {
+      const editorSelection = editor.selection ?? null;
+      const editorFocused = ReactEditor.isFocused(editor);
+      if (editorFocused && editorSelection != null) {
+        logSlateDebug("dom-selection-change:skip", {
+          reason: "dom-selection-null",
+          selection: editorSelection,
+          activeElement: describeDomNode(window.document.activeElement),
+          state: debugState(state, editor),
+        });
+        return;
+      }
       logSlateDebug("dom-selection-change:deselect", {
-        selection: editor.selection ?? null,
+        selection: editorSelection,
         state: debugState(state, editor),
       });
       withSelectionReason(editor, "dom-selection-change:deselect", () => {
@@ -357,6 +372,17 @@ export const useDOMSelectionChange = ({
     ) {
       logSlateDebug("dom-selection-change:skip", {
         reason: "root-node",
+        selection: editor.selection ?? null,
+        domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
+        state: debugState(state, editor),
+      });
+      return;
+    }
+
+    if (isInCodeMirror(anchorNode) || isInCodeMirror(focusNode)) {
+      logSlateDebug("dom-selection-change:skip", {
+        reason: "codemirror",
         selection: editor.selection ?? null,
         domSelection: describeDomSelection(domSelection),
         activeElement: describeDomNode(window.document.activeElement),
@@ -561,10 +587,20 @@ function shouldIgnoreSelectionWhileTyping(
   if (!domSelection.isCollapsed) {
     return false;
   }
+  const now = Date.now();
+  if (state.lastPointerDownAt && now - state.lastPointerDownAt < POINTER_SELECTION_GRACE_MS) {
+    return false;
+  }
+  if (
+    state.lastSelectionKeyAt &&
+    now - state.lastSelectionKeyAt < SELECTION_KEY_GRACE_MS
+  ) {
+    return false;
+  }
   if (!state.lastUserInputAt) {
     return false;
   }
-  return Date.now() - state.lastUserInputAt < TYPING_SELECTION_SUPPRESS_MS;
+  return now - state.lastUserInputAt < TYPING_SELECTION_SUPPRESS_MS;
 }
 
 function debugState(state: SelectionState, editor?: ReactEditor) {
@@ -579,6 +615,14 @@ function debugState(state: SelectionState, editor?: ReactEditor) {
     lastUserInputAt: state.lastUserInputAt,
     msSinceInput: state.lastUserInputAt
       ? Date.now() - state.lastUserInputAt
+      : null,
+    lastPointerDownAt: state.lastPointerDownAt,
+    msSincePointerDown: state.lastPointerDownAt
+      ? Date.now() - state.lastPointerDownAt
+      : null,
+    lastSelectionKeyAt: state.lastSelectionKeyAt,
+    msSinceSelectionKey: state.lastSelectionKeyAt
+      ? Date.now() - state.lastSelectionKeyAt
       : null,
     lastSelectionChangeAt,
     msSinceSelectionChange: lastSelectionChangeAt
@@ -630,6 +674,16 @@ function clipPoint(
 
 function isSelectable(editor, node): boolean {
   return hasEditableTarget(editor, node) || isTargetInsideVoid(editor, node);
+}
+
+function isInCodeMirror(node: Node | null): boolean {
+  if (!node) return false;
+  const element =
+    node.nodeType === 1 ? (node as Element) : (node as Node).parentElement;
+  if (!element || typeof element.closest !== "function") {
+    return false;
+  }
+  return element.closest(".CodeMirror") != null;
 }
 
 type DomSelectionSnapshot = {

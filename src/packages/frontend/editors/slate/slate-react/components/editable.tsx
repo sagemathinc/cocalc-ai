@@ -159,6 +159,8 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
     updatingSelection: boolean;
     pendingSelectionReset: boolean;
     lastUserInputAt: number;
+    lastPointerDownAt: number;
+    lastSelectionKeyAt: number;
   } = useMemo(
     () => ({
       isComposing: false,
@@ -168,6 +170,8 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
       updatingSelection: false,
       pendingSelectionReset: false,
       lastUserInputAt: 0,
+      lastPointerDownAt: 0,
+      lastSelectionKeyAt: 0,
     }),
     [],
   );
@@ -672,6 +676,15 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
           },
           [readOnly, attributes.onBlur],
         )}
+        onMouseDown={useCallback(
+          (event: React.MouseEvent<HTMLDivElement>) => {
+            if (hasTarget(editor, event.target)) {
+              state.lastPointerDownAt = Date.now();
+            }
+            attributes.onMouseDown?.(event);
+          },
+          [editor, attributes.onMouseDown],
+        )}
         onClick={useCallback(
           (event: React.MouseEvent<HTMLDivElement>) => {
             if (
@@ -922,6 +935,18 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
         onKeyDown={useCallback(
           (event: React.KeyboardEvent<HTMLDivElement>) => {
             state.shiftKey = event.shiftKey;
+            if (
+              event.key === "ArrowLeft" ||
+              event.key === "ArrowRight" ||
+              event.key === "ArrowUp" ||
+              event.key === "ArrowDown" ||
+              event.key === "Home" ||
+              event.key === "End" ||
+              event.key === "PageUp" ||
+              event.key === "PageDown"
+            ) {
+              state.lastSelectionKeyAt = Date.now();
+            }
             if (
               state.isComposing ||
               !shouldHandle({ event, name: "onKeyDown", notReadOnly: true })
