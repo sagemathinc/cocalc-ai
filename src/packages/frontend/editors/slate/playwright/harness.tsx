@@ -66,9 +66,11 @@ function Harness(): React.JSX.Element {
           return;
         }
         if (text === " ") {
-          if (!autoformatBlockquoteAtStart(editor)) {
-            Editor.insertText(editor, text);
+          if (autoformatBlockquoteAtStart(editor)) {
+            return;
           }
+          Editor.insertText(editor, text);
+          autoformatBlockquoteAtStart(editor);
           return;
         }
         Editor.insertText(editor, text);
