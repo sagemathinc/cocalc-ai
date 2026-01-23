@@ -42,6 +42,7 @@ import { debounce } from "lodash";
 import getDirection from "direction";
 import { useDOMSelectionChange, useUpdateDOMSelection } from "./selection-sync";
 import { hasEditableTarget, hasTarget } from "./dom-utils";
+import { describeDomSelection, logSlateDebug } from "../utils/slate-debug";
 
 /**
  * `RenderElementProps` are passed to the `renderElement` handler.
@@ -326,6 +327,28 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
         }
 
         event.preventDefault();
+
+        const domSelection =
+          typeof window !== "undefined" ? window.getSelection() : null;
+        logSlateDebug("beforeinput", {
+          inputType: type,
+          data:
+            data instanceof DataTransfer
+              ? "[data-transfer]"
+              : typeof data === "string"
+                ? data
+                : null,
+          isComposing: event.isComposing,
+          selection: editor.selection ?? null,
+          domSelection: domSelection
+            ? describeDomSelection(domSelection)
+            : null,
+          state: {
+            isComposing: state.isComposing,
+            ignoreSelection: state.ignoreSelection,
+            lastUserInputAt: state.lastUserInputAt,
+          },
+        });
 
         if (type.startsWith("insert") || type.startsWith("delete")) {
           state.lastUserInputAt = Date.now();
@@ -694,6 +717,15 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
               // type that we need. So instead, insert whenever a composition
               // ends since it will already have been committed to the DOM.
               if (!IS_SAFARI && !IS_FIREFOX && event.data) {
+                logSlateDebug("composition-end-insert", {
+                  data: event.data,
+                  selection: editor.selection ?? null,
+                  state: {
+                    isComposing: state.isComposing,
+                    ignoreSelection: state.ignoreSelection,
+                    lastUserInputAt: state.lastUserInputAt,
+                  },
+                });
                 state.lastUserInputAt = Date.now();
                 Editor.insertText(editor, event.data);
               }

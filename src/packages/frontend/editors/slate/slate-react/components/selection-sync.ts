@@ -23,6 +23,7 @@ import { Editor, Path, Point, Range, Selection, Transforms } from "slate";
 import { hasEditableTarget, isTargetInsideVoid } from "./dom-utils";
 import { DOMElement, DOMSelection } from "../utils/dom";
 import { isEqual } from "lodash";
+import { describeDomSelection, logSlateDebug } from "../utils/slate-debug";
 
 interface SelectionState {
   isComposing: boolean;
@@ -74,11 +75,21 @@ export const useUpdateDOMSelection = ({
       !ReactEditor.isFocused(editor) ||
       state.ignoreSelection
     ) {
+      logSlateDebug("update-dom-selection:skip", {
+        reason: "state",
+        selection: editor.selection ?? null,
+        state: debugState(state),
+      });
       return;
     }
 
     const domSelection = window.getSelection();
     if (!domSelection) {
+      logSlateDebug("update-dom-selection:skip", {
+        reason: "no-dom-selection",
+        selection: editor.selection ?? null,
+        state: debugState(state),
+      });
       delete state.windowedSelection;
       return;
     }
@@ -93,6 +104,11 @@ export const useUpdateDOMSelection = ({
       console.warn(
         `getWindowedSelection warning - ${err} - leaving selection unchanged`,
       );
+      logSlateDebug("update-dom-selection:skip", {
+        reason: "get-windowed-selection-error",
+        selection: editor.selection ?? null,
+        state: debugState(state),
+      });
       return;
     }
     const isCropped = !isEqual(editor.selection, selection);
@@ -117,6 +133,11 @@ export const useUpdateDOMSelection = ({
 
     // If the DOM selection is properly unset, we're done.
     if (!selection && !hasDomSelection) {
+      logSlateDebug("update-dom-selection:noop", {
+        selection: selection ?? null,
+        domSelection: describeDomSelection(domSelection),
+        state: debugState(state),
+      });
       recordSelectionState(
         selection,
         domSelection,
@@ -142,6 +163,12 @@ export const useUpdateDOMSelection = ({
           state.windowedSelection = true;
         }
       }
+      logSlateDebug("update-dom-selection:clear", {
+        selection: selection ?? null,
+        domSelection: describeDomSelection(domSelection),
+        state: debugState(state),
+        isCropped,
+      });
       recordSelectionState(
         selection,
         domSelection,
@@ -203,6 +230,12 @@ export const useUpdateDOMSelection = ({
       // record that we're making a change that diverges from true selection.
       state.windowedSelection = true;
     }
+    logSlateDebug("update-dom-selection:set", {
+      selection: selection ?? null,
+      domSelection: describeDomSelection(domSelection),
+      state: debugState(state),
+      isCropped,
+    });
     state.updatingSelection = true;
     try {
       domSelection.setBaseAndExtent(
@@ -256,12 +289,30 @@ export const useDOMSelectionChange = ({
       state.ignoreSelection ||
       state.updatingSelection
     ) {
+      logSlateDebug("dom-selection-change:skip", {
+        reason: "state",
+        selection: editor.selection ?? null,
+        state: debugState(state),
+      });
       return;
     }
 
     const domSelection = window.getSelection();
     if (!domSelection) {
+      logSlateDebug("dom-selection-change:deselect", {
+        selection: editor.selection ?? null,
+        state: debugState(state),
+      });
       Transforms.deselect(editor);
+      return;
+    }
+    if (shouldIgnoreSelectionWhileTyping(state, domSelection)) {
+      logSlateDebug("dom-selection-change:skip", {
+        reason: "typing-window",
+        selection: editor.selection ?? null,
+        domSelection: describeDomSelection(domSelection),
+        state: debugState(state),
+      });
       return;
     }
     if (shouldIgnoreSelectionWhileTyping(state, domSelection)) {
@@ -270,6 +321,12 @@ export const useDOMSelectionChange = ({
     const { anchorNode, focusNode } = domSelection;
 
     if (!isSelectable(editor, anchorNode) || !isSelectable(editor, focusNode)) {
+      logSlateDebug("dom-selection-change:skip", {
+        reason: "not-selectable",
+        selection: editor.selection ?? null,
+        domSelection: describeDomSelection(domSelection),
+        state: debugState(state),
+      });
       return;
     }
 
@@ -281,6 +338,12 @@ export const useDOMSelectionChange = ({
       // error, but in practice it doesn't.  Just ignore selection change when this
       // happens.
       console.warn(`slate selection sync issue - ${err}`);
+      logSlateDebug("dom-selection-change:skip", {
+        reason: "to-slate-range-error",
+        selection: editor.selection ?? null,
+        domSelection: describeDomSelection(domSelection),
+        state: debugState(state),
+      });
       return;
     }
 
@@ -357,6 +420,12 @@ export const useDOMSelectionChange = ({
     }
 
     if (selection == null || !Range.equals(selection, range)) {
+      logSlateDebug("dom-selection-change:apply", {
+        selection: selection ?? null,
+        range,
+        domSelection: describeDomSelection(domSelection),
+        state: debugState(state),
+      });
       Transforms.select(editor, range);
     }
   }, [readOnly]);
@@ -425,6 +494,20 @@ function shouldIgnoreSelectionWhileTyping(
     return false;
   }
   return Date.now() - state.lastUserInputAt < TYPING_SELECTION_SUPPRESS_MS;
+}
+
+function debugState(state: SelectionState) {
+  return {
+    isComposing: state.isComposing,
+    shiftKey: state.shiftKey,
+    ignoreSelection: state.ignoreSelection,
+    updatingSelection: state.updatingSelection,
+    windowedSelection: state.windowedSelection != null,
+    lastUserInputAt: state.lastUserInputAt,
+    msSinceInput: state.lastUserInputAt
+      ? Date.now() - state.lastUserInputAt
+      : null,
+  };
 }
 
 function getWindowedSelection(editor: ReactEditor): Selection | null {
@@ -583,39 +666,6 @@ function logSelectionMismatch(
     },
     suppressed,
   });
-}
-
-function describeDomSelection(domSelection: DOMSelection) {
-  return {
-    type: domSelection.type,
-    isCollapsed: domSelection.isCollapsed,
-    anchorNode: describeDomNode(domSelection.anchorNode),
-    anchorOffset: domSelection.anchorOffset,
-    focusNode: describeDomNode(domSelection.focusNode),
-    focusOffset: domSelection.focusOffset,
-  };
-}
-
-function describeDomNode(node: Node | null): string | null {
-  if (!node) return null;
-  if (node.nodeType === 3) {
-    const text = node.textContent ?? "";
-    const preview = text.length > 30 ? `${text.slice(0, 30)}...` : text;
-    return `#text("${preview}")`;
-  }
-  if (node.nodeType === 1) {
-    const el = node as Element;
-    const tag = el.tagName.toLowerCase();
-    const attrs: string[] = [];
-    const slateNode = el.getAttribute("data-slate-node");
-    const slateLeaf = el.getAttribute("data-slate-leaf");
-    const slateZero = el.getAttribute("data-slate-zero-width");
-    if (slateNode) attrs.push(`data-slate-node=${slateNode}`);
-    if (slateLeaf != null) attrs.push("data-slate-leaf");
-    if (slateZero) attrs.push(`data-slate-zero-width=${slateZero}`);
-    return attrs.length ? `${tag}[${attrs.join(" ")}]` : tag;
-  }
-  return `nodeType=${node.nodeType}`;
 }
 
 function scheduleSelectionReset(state: SelectionState): void {
