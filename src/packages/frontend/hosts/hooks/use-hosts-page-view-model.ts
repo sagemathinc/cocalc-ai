@@ -349,6 +349,16 @@ export const useHostsPageViewModel = () => {
   const [setupHost, setSetupHost] = React.useState<Host | undefined>();
   const [setupToken, setSetupToken] = React.useState<string | undefined>();
   const [setupExpires, setSetupExpires] = React.useState<string | undefined>();
+  const [setupLaunchpad, setSetupLaunchpad] = React.useState<
+    | {
+        http_port?: number;
+        https_port?: number;
+        sshd_port?: number;
+        ssh_user?: string;
+        ssh_host?: string;
+      }
+    | undefined
+  >();
   const [setupError, setSetupError] = React.useState<string | undefined>();
   const [setupLoading, setSetupLoading] = React.useState(false);
   const setupRequestRef = React.useRef(0);
@@ -374,6 +384,13 @@ export const useHostsPageViewModel = () => {
         pairing_token: string;
         expires?: string;
         connector_id?: string;
+        launchpad?: {
+          http_port?: number;
+          https_port?: number;
+          sshd_port?: number;
+          ssh_user?: string;
+          ssh_host?: string;
+        };
       };
     },
     [baseUrl],
@@ -388,6 +405,7 @@ export const useHostsPageViewModel = () => {
         if (setupRequestRef.current !== requestId) return;
         setSetupToken(data.pairing_token);
         setSetupExpires(data.expires);
+        setSetupLaunchpad(data.launchpad);
       } catch (err) {
         if (setupRequestRef.current !== requestId) return;
         console.error(err);
@@ -410,6 +428,7 @@ export const useHostsPageViewModel = () => {
       setSetupOpen(true);
       setSetupToken(undefined);
       setSetupExpires(undefined);
+      setSetupLaunchpad(undefined);
       setSetupError(undefined);
       void loadSetupToken(host);
     },
@@ -420,6 +439,7 @@ export const useHostsPageViewModel = () => {
     setSetupHost(undefined);
     setSetupToken(undefined);
     setSetupExpires(undefined);
+    setSetupLaunchpad(undefined);
     setSetupError(undefined);
   }, []);
   const openRemove = React.useCallback((host: Host) => {
@@ -750,6 +770,7 @@ export const useHostsPageViewModel = () => {
     error: setupError,
     token: setupToken,
     expires: setupExpires,
+    launchpad: setupLaunchpad,
     baseUrl,
     insecure: connectorInsecure,
     connector:

@@ -5,6 +5,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   install-connector.sh --base-url <url> --token <pairing_token> [options]
+  install-connector.sh --ssh-host <host> --token <pairing_token> [options]
 
 Options:
   --name <name>                Optional connector name.
@@ -12,6 +13,10 @@ Options:
   --no-daemon                  Run in foreground (default is daemon).
   --no-service                 Skip installing an auto-start service.
   --insecure                   Skip TLS verification (self-signed on-prem).
+  --ssh-host <host>            Hub SSH host (for local network mode).
+  --ssh-port <port>            Hub SSH port (optional).
+  --ssh-user <user>            Hub SSH username (optional).
+  --ssh-no-strict-host-key-checking  Disable strict host key checking.
   --software-base-url <url>    Defaults to https://software.cocalc.ai/software
   --install-dir <path>         Linux install dir (default /usr/local/bin).
   -h, --help                   Show this help.
@@ -19,10 +24,16 @@ Options:
 Example:
   curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \
     bash -s -- --base-url https://dev.cocalc.ai --token <token> --name my-mac
+  curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \
+    bash -s -- --ssh-host 192.168.1.10 --token <token> --name lab-host
 USAGE
 }
 
 BASE_URL=""
+SSH_HOST=""
+SSH_PORT=""
+SSH_USER=""
+SSH_NO_STRICT="0"
 TOKEN=""
 NAME_ARG=""
 REPLACE="0"
@@ -41,6 +52,22 @@ while [[ $# -gt 0 ]]; do
     --token)
       TOKEN="${2:-}"
       shift 2
+      ;;
+    --ssh-host)
+      SSH_HOST="${2:-}"
+      shift 2
+      ;;
+    --ssh-port)
+      SSH_PORT="${2:-}"
+      shift 2
+      ;;
+    --ssh-user)
+      SSH_USER="${2:-}"
+      shift 2
+      ;;
+    --ssh-no-strict-host-key-checking)
+      SSH_NO_STRICT="1"
+      shift
       ;;
     --name)
       NAME_ARG="${2:-}"
@@ -82,8 +109,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$BASE_URL" || -z "$TOKEN" ]]; then
-  echo "Missing --base-url or --token" >&2
+if [[ -z "$TOKEN" ]]; then
+  echo "Missing --token" >&2
+  usage
+  exit 2
+fi
+
+if [[ -z "$BASE_URL" && -z "$SSH_HOST" ]]; then
+  echo "Missing --base-url or --ssh-host" >&2
   usage
   exit 2
 fi
@@ -210,7 +243,9 @@ if [[ "$OS" == "darwin" ]]; then
     exit 2
   fi
   echo "This step uses sudo to install the connector into /usr/local/bin."
-  echo "The connector will run as your user and store config in $CONFIG_PATH."
+  echo "You may be prompted for your sudo password; this is only for installation."
+  echo "The connector runs as your user and stores config in $CONFIG_PATH."
+  echo "SSH pairing happens after install and does not use sudo."
   if ! command -v sudo >/dev/null 2>&1; then
     echo "sudo is required to install the pkg on macOS." >&2
     exit 2
@@ -219,7 +254,9 @@ if [[ "$OS" == "darwin" ]]; then
   BIN_PATH="/usr/local/bin/${BIN_NAME}"
 else
   echo "This step uses sudo to install the connector into ${INSTALL_DIR}."
-  echo "The connector will run as your user and store config in $CONFIG_PATH."
+  echo "You may be prompted for your sudo password; this is only for installation."
+  echo "The connector runs as your user and stores config in $CONFIG_PATH."
+  echo "SSH pairing happens after install and does not use sudo."
   if [[ "$(id -u)" == "0" ]]; then
     SUDO=""
   elif command -v sudo >/dev/null 2>&1; then
@@ -315,14 +352,28 @@ EOF
   return 0
 }
 
-pair_args=("$BIN_PATH" "pair" "--base-url" "$BASE_URL" "--token" "$TOKEN")
+pair_args=("$BIN_PATH")
+if [[ -n "$SSH_HOST" ]]; then
+  pair_args+=("pair-ssh" "--ssh-host" "$SSH_HOST" "--token" "$TOKEN")
+  if [[ -n "$SSH_PORT" ]]; then
+    pair_args+=("--ssh-port" "$SSH_PORT")
+  fi
+  if [[ -n "$SSH_USER" ]]; then
+    pair_args+=("--ssh-user" "$SSH_USER")
+  fi
+  if [[ "$SSH_NO_STRICT" == "1" ]]; then
+    pair_args+=("--ssh-no-strict-host-key-checking")
+  fi
+else
+  pair_args+=("pair" "--base-url" "$BASE_URL" "--token" "$TOKEN")
+fi
 if [[ -n "$NAME_ARG" ]]; then
   pair_args+=("--name" "$NAME_ARG")
 fi
 if [[ "$REPLACE" == "1" ]]; then
   pair_args+=("--replace")
 fi
-if [[ "$INSECURE" == "1" ]]; then
+if [[ "$INSECURE" == "1" && -z "$SSH_HOST" ]]; then
   pair_args+=("--insecure")
 fi
 "${pair_args[@]}"

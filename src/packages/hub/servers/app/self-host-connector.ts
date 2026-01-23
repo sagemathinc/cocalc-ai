@@ -14,6 +14,8 @@ import { pairSelfHostConnector } from "@cocalc/server/self-host/pair";
 import getAccount from "@cocalc/server/auth/get-account";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { enqueueCloudVmWorkOnce } from "@cocalc/server/cloud/db";
+import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
+import { resolveOnPremHost } from "@cocalc/server/onprem";
 
 const logger = getLogger("hub:servers:app:self-host-connector");
 
@@ -201,10 +203,22 @@ export default function init(router: Router) {
         connector_id: connectorId,
         host_id: hostId,
       });
+      const launchpad = getLaunchpadLocalConfig("local");
+      const sshHost =
+        process.env.COCALC_SSHD_HOST ??
+        process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
+        resolveOnPremHost();
       res.json({
         pairing_token: tokenInfo.token,
         expires: tokenInfo.expires,
         connector_id: connectorId,
+        launchpad: {
+          http_port: launchpad.http_port,
+          https_port: launchpad.https_port,
+          sshd_port: launchpad.sshd_port,
+          ssh_user: launchpad.ssh_user,
+          ssh_host: sshHost,
+        },
       });
     } catch (err) {
       logger.warn("pairing token creation failed", err);

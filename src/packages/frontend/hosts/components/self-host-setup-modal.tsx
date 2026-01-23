@@ -15,6 +15,13 @@ type SelfHostSetupModalProps = {
   baseUrl: string;
   token?: string;
   expires?: string;
+  launchpad?: {
+    http_port?: number;
+    https_port?: number;
+    sshd_port?: number;
+    ssh_user?: string;
+    ssh_host?: string;
+  };
   loading: boolean;
   error?: string;
   insecure?: boolean;
@@ -29,6 +36,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
   baseUrl,
   token,
   expires,
+  launchpad,
   loading,
   error,
   insecure,
@@ -46,9 +54,31 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
     host?.name?.trim() ||
     `connector-${connectorId}`;
   const quoteShell = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+  const selfHostMode =
+    (host?.machine?.metadata?.self_host_mode as string | undefined) ??
+    (host?.machine?.cloud === "self-host" ? "local" : undefined);
+  const useSshPairing = selfHostMode === "local";
   const insecureFlag = insecure ? " --insecure" : "";
+  const parsedBase = (() => {
+    try {
+      return new URL(base);
+    } catch {
+      return undefined;
+    }
+  })();
+  const sshHost =
+    launchpad?.ssh_host ?? parsedBase?.hostname ?? "<ssh-host>";
+  const sshPort =
+    launchpad?.sshd_port != null
+      ? ` --ssh-port ${launchpad.sshd_port}`
+      : "";
+  const sshUser =
+    launchpad?.ssh_user != null ? ` --ssh-user ${launchpad.ssh_user}` : "";
+  const sshNoStrict = " --ssh-no-strict-host-key-checking";
   const installCommand = token
-    ? `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --base-url ${base} --token ${token} --name ${quoteShell(safeName)}${insecureFlag}`
+    ? useSshPairing
+      ? `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --ssh-host ${sshHost}${sshPort}${sshUser} --token ${token} --name ${quoteShell(safeName)}${sshNoStrict}`
+      : `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --base-url ${base} --token ${token} --name ${quoteShell(safeName)}${insecureFlag}`
     : undefined;
 
   React.useEffect(() => {
