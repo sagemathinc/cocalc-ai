@@ -15,19 +15,20 @@ asynchronous code or locks at all!  Also, there are no platform
 specific hacks at all.
 */
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useIsomorphicLayoutEffect } from "../hooks/use-isomorphic-layout-effect";
 import { ReactEditor } from "..";
 import { EDITOR_TO_ELEMENT } from "../utils/weak-maps";
-import { Editor, Point, Range, Selection, Transforms } from "slate";
+import { Editor, Path, Point, Range, Selection, Transforms } from "slate";
 import { hasEditableTarget, isTargetInsideVoid } from "./dom-utils";
-import { DOMElement } from "../utils/dom";
+import { DOMElement, DOMSelection } from "../utils/dom";
 import { isEqual } from "lodash";
 
 interface SelectionState {
   isComposing: boolean;
   shiftKey: boolean;
   latestElement: DOMElement | null;
+  lastUserInputAt: number;
 
   // If part of the selection gets scrolled out of the DOM, we set windowedSelection
   // to true. The next time the selection in the DOM is read, we then set
@@ -40,7 +41,17 @@ interface SelectionState {
 
   // if true, the selection sync hooks are temporarily disabled.
   ignoreSelection: boolean;
+
+  // true when we are programmatically updating the DOM selection.
+  updatingSelection: boolean;
+  pendingSelectionReset: boolean;
 }
+
+const LOG_SELECTION_MISMATCHES =
+  typeof process !== "undefined" &&
+  process.env?.COCALC_SLATE_LOG_SELECTION === "1";
+// Avoid stale DOM selection overwriting Slate selection during rapid typing.
+const TYPING_SELECTION_SUPPRESS_MS = 250;
 
 export const useUpdateDOMSelection = ({
   editor,
@@ -49,6 +60,9 @@ export const useUpdateDOMSelection = ({
   editor: ReactEditor;
   state: SelectionState;
 }) => {
+  const lastSelectionRef = useRef<Selection | null | undefined>(undefined);
+  const lastDomSelectionRef = useRef<DomSelectionSnapshot | null>(null);
+
   // Ensure that the DOM selection state is set to the editor selection.
   // Note that whenever the DOM gets updated (e.g., with every keystroke when editing)
   // the DOM selection gets completely reset (because react replaces the selected text
@@ -75,13 +89,11 @@ export const useUpdateDOMSelection = ({
     } catch (err) {
       // in rare cases when document / selection seriously "messed up", this
       // can happen because Editor.before throws below.  In such cases we
-      // give up by setting the selection to empty, so it will get cleared in
-      // the DOM.  I saw this once in development.
+      // leave selection unchanged to avoid a spurious jump.
       console.warn(
-        `getWindowedSelection warning - ${err} - so clearing selection`,
+        `getWindowedSelection warning - ${err} - leaving selection unchanged`,
       );
-      Transforms.deselect(editor); // just clear selection
-      selection = undefined;
+      return;
     }
     const isCropped = !isEqual(editor.selection, selection);
     if (!isCropped) {
@@ -93,10 +105,24 @@ export const useUpdateDOMSelection = ({
     //       "\neditor.selection   =",
     //       JSON.stringify(editor.selection)
     //     );
+    const domSnapshot = getDomSelectionSnapshot(domSelection);
+    if (
+      isEqual(lastSelectionRef.current, selection) &&
+      domSelectionMatchesSnapshot(domSnapshot, lastDomSelectionRef.current)
+    ) {
+      return;
+    }
+
     const hasDomSelection = domSelection.type !== "None";
 
     // If the DOM selection is properly unset, we're done.
     if (!selection && !hasDomSelection) {
+      recordSelectionState(
+        selection,
+        domSelection,
+        lastSelectionRef,
+        lastDomSelectionRef,
+      );
       return;
     }
 
@@ -116,6 +142,12 @@ export const useUpdateDOMSelection = ({
           state.windowedSelection = true;
         }
       }
+      recordSelectionState(
+        selection,
+        domSelection,
+        lastSelectionRef,
+        lastDomSelectionRef,
+      );
       return;
     }
     let newDomRange;
@@ -157,6 +189,12 @@ export const useUpdateDOMSelection = ({
     ) {
       // It's correct already -- we're done.
       // console.log("useUpdateDOMSelection: selection already correct");
+      recordSelectionState(
+        selection,
+        domSelection,
+        lastSelectionRef,
+        lastDomSelectionRef,
+      );
       return;
     }
 
@@ -165,12 +203,23 @@ export const useUpdateDOMSelection = ({
       // record that we're making a change that diverges from true selection.
       state.windowedSelection = true;
     }
-    domSelection.setBaseAndExtent(
-      newDomRange.startContainer,
-      newDomRange.startOffset,
-      newDomRange.endContainer,
-      newDomRange.endOffset,
-    );
+    state.updatingSelection = true;
+    try {
+      domSelection.setBaseAndExtent(
+        newDomRange.startContainer,
+        newDomRange.startOffset,
+        newDomRange.endContainer,
+        newDomRange.endOffset,
+      );
+    } finally {
+      recordSelectionState(
+        selection,
+        domSelection,
+        lastSelectionRef,
+        lastDomSelectionRef,
+      );
+      scheduleSelectionReset(state);
+    }
   };
 
   // Always ensure DOM selection gets set to slate selection
@@ -201,13 +250,21 @@ export const useDOMSelectionChange = ({
   // while a selection is being dragged.
 
   const onDOMSelectionChange = useCallback(() => {
-    if (readOnly || state.isComposing || state.ignoreSelection) {
+    if (
+      readOnly ||
+      state.isComposing ||
+      state.ignoreSelection ||
+      state.updatingSelection
+    ) {
       return;
     }
 
     const domSelection = window.getSelection();
     if (!domSelection) {
       Transforms.deselect(editor);
+      return;
+    }
+    if (shouldIgnoreSelectionWhileTyping(state, domSelection)) {
       return;
     }
     const { anchorNode, focusNode } = domSelection;
@@ -290,6 +347,15 @@ export const useDOMSelectionChange = ({
       }
     }
 
+    if (
+      selection != null &&
+      range != null &&
+      !Range.equals(selection, range) &&
+      shouldLogSelectionMismatch(editor, selection, range, state)
+    ) {
+      logSelectionMismatch(editor, selection, range, domSelection, state);
+    }
+
     if (selection == null || !Range.equals(selection, range)) {
       Transforms.select(editor, range);
     }
@@ -301,17 +367,65 @@ export const useDOMSelectionChange = ({
   // fire for any change to the selection inside the editor. (2019/11/04)
   // https://github.com/facebook/react/issues/5785
   useIsomorphicLayoutEffect(() => {
-    window.document.addEventListener("selectionchange", onDOMSelectionChange);
-    return () => {
+    const editorElement = EDITOR_TO_ELEMENT.get(editor);
+    if (!editorElement) {
+      return;
+    }
+
+    let attached = false;
+    const attach = () => {
+      if (attached) return;
+      attached = true;
+      window.document.addEventListener("selectionchange", onDOMSelectionChange);
+    };
+    const detach = () => {
+      if (!attached) return;
+      attached = false;
       window.document.removeEventListener(
         "selectionchange",
         onDOMSelectionChange,
       );
     };
+
+    const handleFocusIn = () => {
+      attach();
+    };
+    const handleFocusOut = () => {
+      detach();
+    };
+
+    editorElement.addEventListener("focusin", handleFocusIn);
+    editorElement.addEventListener("focusout", handleFocusOut);
+
+    if (
+      ReactEditor.isFocused(editor) ||
+      editorElement.contains(window.document.activeElement)
+    ) {
+      attach();
+    }
+
+    return () => {
+      detach();
+      editorElement.removeEventListener("focusin", handleFocusIn);
+      editorElement.removeEventListener("focusout", handleFocusOut);
+    };
   }, [onDOMSelectionChange]);
 
   return onDOMSelectionChange;
 };
+
+function shouldIgnoreSelectionWhileTyping(
+  state: SelectionState,
+  domSelection: DOMSelection,
+): boolean {
+  if (!domSelection.isCollapsed) {
+    return false;
+  }
+  if (!state.lastUserInputAt) {
+    return false;
+  }
+  return Date.now() - state.lastUserInputAt < TYPING_SELECTION_SUPPRESS_MS;
+}
 
 function getWindowedSelection(editor: ReactEditor): Selection | null {
   const { selection } = editor;
@@ -356,4 +470,164 @@ function clipPoint(
 
 function isSelectable(editor, node): boolean {
   return hasEditableTarget(editor, node) || isTargetInsideVoid(editor, node);
+}
+
+type DomSelectionSnapshot = {
+  anchorNode: Node | null;
+  anchorOffset: number;
+  focusNode: Node | null;
+  focusOffset: number;
+};
+
+function getDomSelectionSnapshot(
+  domSelection: DOMSelection,
+): DomSelectionSnapshot {
+  return {
+    anchorNode: domSelection.anchorNode,
+    anchorOffset: domSelection.anchorOffset,
+    focusNode: domSelection.focusNode,
+    focusOffset: domSelection.focusOffset,
+  };
+}
+
+function domSelectionMatchesSnapshot(
+  current: DomSelectionSnapshot,
+  last: DomSelectionSnapshot | null,
+): boolean {
+  if (!last) return false;
+  return (
+    current.anchorNode === last.anchorNode &&
+    current.anchorOffset === last.anchorOffset &&
+    current.focusNode === last.focusNode &&
+    current.focusOffset === last.focusOffset
+  );
+}
+
+function recordSelectionState(
+  selection: Selection | null | undefined,
+  domSelection: DOMSelection,
+  lastSelectionRef: { current: Selection | null | undefined },
+  lastDomSelectionRef: { current: DomSelectionSnapshot | null },
+): void {
+  lastSelectionRef.current = selection ?? null;
+  lastDomSelectionRef.current = getDomSelectionSnapshot(domSelection);
+}
+
+const SELECTION_MISMATCH_LOG_INTERVAL_MS = 2000;
+let lastSelectionMismatchLog = 0;
+let suppressedSelectionMismatchLogs = 0;
+
+function shouldLogSelectionMismatch(
+  editor: ReactEditor,
+  selection: Range,
+  range: Range,
+  state: SelectionState,
+): boolean {
+  if (!LOG_SELECTION_MISMATCHES) {
+    return false;
+  }
+  if (
+    state.shiftKey ||
+    state.isComposing ||
+    state.ignoreSelection ||
+    state.updatingSelection ||
+    state.windowedSelection != null
+  ) {
+    return false;
+  }
+  if (!ReactEditor.isFocused(editor)) {
+    return false;
+  }
+  if (!Range.isCollapsed(selection) || !Range.isCollapsed(range)) {
+    return false;
+  }
+  const samePath = Path.equals(selection.anchor.path, range.anchor.path);
+  const offsetDiff = Math.abs(selection.anchor.offset - range.anchor.offset);
+  if (samePath && offsetDiff <= 1) {
+    // Likely normal caret movement while typing.
+    return false;
+  }
+  return true;
+}
+
+function logSelectionMismatch(
+  editor: ReactEditor,
+  selection: Range,
+  range: Range,
+  domSelection: DOMSelection,
+  state: SelectionState,
+): void {
+  const now = Date.now();
+  if (now - lastSelectionMismatchLog < SELECTION_MISMATCH_LOG_INTERVAL_MS) {
+    suppressedSelectionMismatchLogs += 1;
+    return;
+  }
+  const suppressed = suppressedSelectionMismatchLogs;
+  suppressedSelectionMismatchLogs = 0;
+  lastSelectionMismatchLog = now;
+
+  const visibleRange = editor.windowedListRef?.current?.visibleRange;
+  console.warn("SLATE selection mismatch (DOM vs Slate)", {
+    selection,
+    range,
+    domSelection: describeDomSelection(domSelection),
+    editorFocused: ReactEditor.isFocused(editor),
+    windowed: editor.windowedListRef?.current != null,
+    visibleRange,
+    state: {
+      shiftKey: state.shiftKey,
+      isComposing: state.isComposing,
+      ignoreSelection: state.ignoreSelection,
+      updatingSelection: state.updatingSelection,
+      windowedSelection: state.windowedSelection,
+    },
+    suppressed,
+  });
+}
+
+function describeDomSelection(domSelection: DOMSelection) {
+  return {
+    type: domSelection.type,
+    isCollapsed: domSelection.isCollapsed,
+    anchorNode: describeDomNode(domSelection.anchorNode),
+    anchorOffset: domSelection.anchorOffset,
+    focusNode: describeDomNode(domSelection.focusNode),
+    focusOffset: domSelection.focusOffset,
+  };
+}
+
+function describeDomNode(node: Node | null): string | null {
+  if (!node) return null;
+  if (node.nodeType === 3) {
+    const text = node.textContent ?? "";
+    const preview = text.length > 30 ? `${text.slice(0, 30)}...` : text;
+    return `#text("${preview}")`;
+  }
+  if (node.nodeType === 1) {
+    const el = node as Element;
+    const tag = el.tagName.toLowerCase();
+    const attrs: string[] = [];
+    const slateNode = el.getAttribute("data-slate-node");
+    const slateLeaf = el.getAttribute("data-slate-leaf");
+    const slateZero = el.getAttribute("data-slate-zero-width");
+    if (slateNode) attrs.push(`data-slate-node=${slateNode}`);
+    if (slateLeaf != null) attrs.push("data-slate-leaf");
+    if (slateZero) attrs.push(`data-slate-zero-width=${slateZero}`);
+    return attrs.length ? `${tag}[${attrs.join(" ")}]` : tag;
+  }
+  return `nodeType=${node.nodeType}`;
+}
+
+function scheduleSelectionReset(state: SelectionState): void {
+  if (state.pendingSelectionReset) return;
+  state.pendingSelectionReset = true;
+  const reset = () => {
+    state.updatingSelection = false;
+    state.pendingSelectionReset = false;
+  };
+  if (typeof window !== "undefined" && window.requestAnimationFrame) {
+    window.requestAnimationFrame(reset);
+  } else {
+    setTimeout(reset, 0);
+  }
 }

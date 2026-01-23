@@ -17,7 +17,7 @@ stream to an AST."  That AST is what slate is.
 https://github.com/markdown-it/markdown-it/blob/master/docs/architecture.md
 */
 
-import { markdown_it, parseHeader } from "@cocalc/frontend/markdown";
+import { markdown_it_slate, parseHeader } from "@cocalc/frontend/markdown";
 
 // Use this instead of the above to test with no plugins, which
 // can be useful for isolating performance issues.
@@ -94,7 +94,7 @@ export function parse_markdown(
   const lines = markdown.split("\n");
   markdown = replaceSingleTrailingWhitespace(markdown);
   const state: any = {};
-  const tokens: Token[] = markdown_it.parse(markdown, state);
+  const tokens: Token[] = markdown_it_slate.parse(markdown, state);
   restoreSingleTrailingWhitespace(tokens);
 
   // window.parse_markdown = { tokens, meta };

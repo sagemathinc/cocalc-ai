@@ -19,6 +19,7 @@
     "components/__tests__",
     "test-mocha",
     "test",
+    "editors/slate/playwright/dist",
     "*__tests__*",
     "*__test__*"
   ],

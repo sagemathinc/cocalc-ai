@@ -8,7 +8,7 @@ import { Descendant, Editor, Point } from "slate";
 import { ReactEditor } from "./slate-react";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { markdown_to_slate } from "./markdown-to-slate";
-import { isWhitespaceParagraph } from "./padding";
+import { isPlaceholderParagraph } from "./padding";
 const SENTINEL = "\uFE30";
 import { SlateEditor } from "./editable-markdown";
 
@@ -204,8 +204,8 @@ function normalizePoint(
       j = 0;
     while (i <= point.path[0]) {
       if (
-        isWhitespaceParagraph(editor.children[j]) &&
-        !isWhitespaceParagraph(doc[i])
+        isPlaceholderParagraph(editor.children[j]) &&
+        !isPlaceholderParagraph(doc[i])
       ) {
         point.path[0] += 1;
         j += 1;

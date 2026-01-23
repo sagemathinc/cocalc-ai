@@ -12,8 +12,6 @@ const MAP = {
   "+": "\\+",
   "-": "\\-",
   "#": "\\#",
-  "(": "\\(",
-  ")": "\\)",
   "[": "\\[",
   "]": "\\]",
   "|": "\\|",
@@ -27,26 +25,136 @@ const MAP = {
   $: "\\$",
 } as const;
 
+const WORD_CHAR = /[A-Za-z0-9]/;
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+
+function isWordChar(ch: string): boolean {
+  return WORD_CHAR.test(ch);
+}
+
+function isWhitespace(ch: string): boolean {
+  return ch === "" || /\s/.test(ch);
+}
+
+function escapeEmphasisRuns(
+  s: string,
+  delim: "*" | "_",
+  avoidInWord: boolean
+): string {
+  const runs: {
+    index: number;
+    len: number;
+    kind: 1 | 2;
+    canOpen: boolean;
+    canClose: boolean;
+  }[] = [];
+
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== delim) continue;
+    if (i > 0 && s[i - 1] === "\\") continue;
+
+    let j = i;
+    while (j < s.length && s[j] === delim) j++;
+
+    const prev = i > 0 ? s[i - 1] : "";
+    const next = j < s.length ? s[j] : "";
+    const prevWhitespace = isWhitespace(prev);
+    const nextWhitespace = isWhitespace(next);
+    const prevWord = prev !== "" && isWordChar(prev);
+    const nextWord = next !== "" && isWordChar(next);
+    const prevPunct = prev !== "" && !prevWhitespace && !prevWord;
+    const nextPunct = next !== "" && !nextWhitespace && !nextWord;
+    let canOpen =
+      !nextWhitespace && !(nextPunct && !prevWhitespace && !prevPunct);
+    let canClose =
+      !prevWhitespace && !(prevPunct && !nextWhitespace && !nextPunct);
+
+    if (avoidInWord && prevWord && nextWord) {
+      canOpen = false;
+      canClose = false;
+    }
+
+    const len = j - i;
+    runs.push({
+      index: i,
+      len,
+      kind: len >= 2 ? 2 : 1,
+      canOpen,
+      canClose,
+    });
+    i = j - 1;
+  }
+
+  if (runs.length === 0) return s;
+
+  const escape = new Set<number>();
+  const stack: { 1: number[]; 2: number[] } = { 1: [], 2: [] };
+
+  for (let r = 0; r < runs.length; r++) {
+    const run = runs[r];
+    if (run.canClose && stack[run.kind].length > 0) {
+      const openIndex = stack[run.kind].pop()!;
+      const openRun = runs[openIndex];
+      for (let k = 0; k < openRun.len; k++) {
+        escape.add(openRun.index + k);
+      }
+      for (let k = 0; k < run.len; k++) {
+        escape.add(run.index + k);
+      }
+      continue;
+    }
+    if (run.canOpen) {
+      stack[run.kind].push(r);
+    }
+  }
+
+  if (escape.size === 0) return s;
+
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    if (escape.has(i)) {
+      out += `\\${s[i]}`;
+    } else {
+      out += s[i];
+    }
+  }
+  return out;
+}
+
+function escapeReferenceDefinitions(s: string): string {
+  return s.replace(
+    /(^|\n)(\s*)\[(\^?[^\]\n]+)\]:/g,
+    (_match, start, ws, label) => `${start}${ws}\\[${label}]:`
+  );
+}
+
+function escapeTableSeparatorPipes(s: string): string {
+  const lines = s.split("\n");
+  let changed = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.includes("|") && TABLE_SEPARATOR.test(line)) {
+      lines[i] = line.replace(/\|/g, "\\|");
+      changed = true;
+    }
+  }
+  return changed ? lines.join("\n") : s;
+}
+
 export function markdownEscape(
   s: string,
   isFirstChild: boolean = false
 ): string {
   // The 1-character replacements we make in any text.
-  s = s.replace(/[\*\(\)\[\]\$\+\-\\_`#<>]/g, (m) => MAP[m]);
+  s = s.replace(/[\\`<>$]/g, (m) => MAP[m]);
   // Version of the above, but with some keys from the map purposely missing here,
-  // since overescaping makes the generated markdown ugly.  However, sadly we HAVE
-  // to escape everything (as above), since otherwise collaborative editing gets
-  // broken, and tons of trouble with slate.  E.g., User a types a single - at the
-  // beginning of the line, and user
-  // B types something somewhere else in the document.  The dash then automatically
-  // turns into a list without user A doing anything.  NOT good.
-  // Fortunately, caching makes this less painful.
-  // s = s.replace(/[\\_`<>$&\xa0|]/g, (m) => MAP[m]);
+  // since overescaping makes the generated markdown ugly. We still escape
+  // enough characters to avoid accidental auto-formatting during collab.
+  // s = s.replace(/[\\`<>$&\xa0|]/g, (m) => MAP[m]);
 
-  // Links - we do this to avoid escaping [ and ] when not necessary.
-  s = s.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, (link) =>
-    link.replace(/[\[\]]/g, (m) => MAP[m])
-  );
+  // Avoid auto-emphasis when the Slate text doesn't carry marks.
+  s = escapeEmphasisRuns(s, "*", false);
+  s = escapeEmphasisRuns(s, "_", true);
 
   if (isFirstChild) {
     // Escape three dashes at start of line mod whitespace (which is hr).
@@ -54,7 +162,21 @@ export function markdownEscape(
 
     // Escape # signs at start of line (headers).
     s = s.replace(/^\s*#+/, (m) => replace_all(m, "#", "\\#"));
+
+    // Escape list markers at the start of a line.
+    s = s.replace(
+      /^(\s*)([*+-])(\s+)/,
+      (_, ws, marker, rest) => `${ws}\\${marker}${rest}`
+    );
+    s = s.replace(
+      /^(\s*)(\d+)([.)])(\s+)/,
+      (_, ws, digits, marker, rest) => `${ws}${digits}\\${marker}${rest}`
+    );
   }
+
+  // Avoid accidental reference definitions and table separators in plain text.
+  s = escapeReferenceDefinitions(s);
+  s = escapeTableSeparatorPipes(s);
 
   return s;
 }

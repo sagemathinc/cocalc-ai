@@ -23,8 +23,6 @@ import {
   normalizeDOMPoint,
 } from "../utils/dom";
 
-import { markdownAutoformat } from "../../format/auto-format";
-import { SlateEditor } from "../../editable-markdown";
 
 /**
  * A React and DOM-specific version of the `Editor` interface.
@@ -45,6 +43,8 @@ export interface ReactEditor extends Editor {
   // if true, temporary ignore selection. This is used to make it possible to select and copy inside of void elements.
   setIgnoreSelection: (value: boolean) => void;
   getIgnoreSelection: () => boolean;
+  // set by Editable composition handlers so external code can defer merges.
+  isComposing?: boolean;
 }
 
 export const ReactEditor = {
@@ -241,12 +241,6 @@ export const ReactEditor = {
 
   insertData(editor: ReactEditor, data: DataTransfer): void {
     editor.insertData(data);
-    // We also autoformat the last part of what was pasted in.
-    // This works around some confusing issues, e.g., pasting
-    // in a URL immediately formats it.
-    // This requires SlateEditor, but that's all
-    // we are supporting, so this is fine.
-    markdownAutoformat(editor as SlateEditor);
   },
 
   /**

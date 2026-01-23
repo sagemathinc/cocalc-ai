@@ -151,12 +151,18 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
     latestElement: DOMElement | null;
     shiftKey: boolean;
     ignoreSelection: boolean;
+    updatingSelection: boolean;
+    pendingSelectionReset: boolean;
+    lastUserInputAt: number;
   } = useMemo(
     () => ({
       isComposing: false,
       latestElement: null as DOMElement | null,
       shiftKey: false,
       ignoreSelection: false,
+      updatingSelection: false,
+      pendingSelectionReset: false,
+      lastUserInputAt: 0,
     }),
     [],
   );
@@ -243,23 +249,46 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
     }
   }, [autoFocus]);
 
+  const scrollRafRef = useRef<number | null>(null);
+
   useIsomorphicLayoutEffect(() => {
     // Whenever the selection changes and is collapsed, make
-    // sure the cursor is visible.  Also, have a facility to
-    // ignore a single iteration of this, which we use when
-    // the selection change is being caused by realtime
-    // collaboration.
+    // sure the cursor is visible. Debounce to one per frame
+    // and skip programmatic updates.
 
     // @ts-ignore
-    const skip = editor.syncCausedUpdate;
+    const skip = editor.syncCausedUpdate || state.updatingSelection;
     if (
       editor.selection != null &&
       Range.isCollapsed(editor.selection) &&
       !skip
     ) {
-      editor.scrollCaretIntoView();
+      if (scrollRafRef.current != null) {
+        return;
+      }
+      scrollRafRef.current = window.requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        // @ts-ignore
+        const skipNow = editor.syncCausedUpdate || state.updatingSelection;
+        if (
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection) &&
+          !skipNow
+        ) {
+          editor.scrollCaretIntoView();
+        }
+      });
     }
   }, [editor.selection]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current != null) {
+        window.cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
+  }, []);
 
   // Listen on the native `beforeinput` event to get real "Level 2" events. This
   // is required because React's `beforeinput` is fake and never really attaches
@@ -298,6 +327,10 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
 
         event.preventDefault();
 
+        if (type.startsWith("insert") || type.startsWith("delete")) {
+          state.lastUserInputAt = Date.now();
+        }
+
         if (
           type == "insertText" &&
           !event.isComposing &&
@@ -315,7 +348,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
           const [targetRange] = event.getTargetRanges();
 
           if (targetRange) {
-            let range;
+            let range = selection;
             try {
               range = ReactEditor.toSlateRange(editor, targetRange);
             } catch (err) {
@@ -324,10 +357,10 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
                 targetRange,
                 err,
               );
-              return;
+              // Fall back to the current editor selection instead of dropping input.
             }
 
-            if (!selection || !Range.equals(selection, range)) {
+            if (range && (!selection || !Range.equals(selection, range))) {
               Transforms.select(editor, range);
             }
           }
@@ -653,6 +686,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
               })
             ) {
               state.isComposing = false;
+              editor.isComposing = false;
               // console.log(`onCompositionEnd :'${event.data}'`);
 
               // COMPAT: In Chrome, `beforeinput` events for compositions
@@ -660,6 +694,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
               // type that we need. So instead, insert whenever a composition
               // ends since it will already have been committed to the DOM.
               if (!IS_SAFARI && !IS_FIREFOX && event.data) {
+                state.lastUserInputAt = Date.now();
                 Editor.insertText(editor, event.data);
               }
             }
@@ -676,6 +711,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
               })
             ) {
               state.isComposing = true;
+              editor.isComposing = true;
               // console.log("onCompositionStart");
             }
           },
