@@ -153,6 +153,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
     ignoreSelection: boolean;
     updatingSelection: boolean;
     pendingSelectionReset: boolean;
+    lastUserInputAt: number;
   } = useMemo(
     () => ({
       isComposing: false,
@@ -161,6 +162,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
       ignoreSelection: false,
       updatingSelection: false,
       pendingSelectionReset: false,
+      lastUserInputAt: 0,
     }),
     [],
   );
@@ -324,6 +326,10 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
         }
 
         event.preventDefault();
+
+        if (type.startsWith("insert") || type.startsWith("delete")) {
+          state.lastUserInputAt = Date.now();
+        }
 
         if (
           type == "insertText" &&
@@ -688,6 +694,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
               // type that we need. So instead, insert whenever a composition
               // ends since it will already have been committed to the DOM.
               if (!IS_SAFARI && !IS_FIREFOX && event.data) {
+                state.lastUserInputAt = Date.now();
                 Editor.insertText(editor, event.data);
               }
             }

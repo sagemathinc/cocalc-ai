@@ -28,6 +28,7 @@ interface SelectionState {
   isComposing: boolean;
   shiftKey: boolean;
   latestElement: DOMElement | null;
+  lastUserInputAt: number;
 
   // If part of the selection gets scrolled out of the DOM, we set windowedSelection
   // to true. The next time the selection in the DOM is read, we then set
@@ -49,6 +50,8 @@ interface SelectionState {
 const LOG_SELECTION_MISMATCHES =
   typeof process !== "undefined" &&
   process.env?.COCALC_SLATE_LOG_SELECTION === "1";
+// Avoid stale DOM selection overwriting Slate selection during rapid typing.
+const TYPING_SELECTION_SUPPRESS_MS = 250;
 
 export const useUpdateDOMSelection = ({
   editor,
@@ -261,6 +264,9 @@ export const useDOMSelectionChange = ({
       Transforms.deselect(editor);
       return;
     }
+    if (shouldIgnoreSelectionWhileTyping(state, domSelection)) {
+      return;
+    }
     const { anchorNode, focusNode } = domSelection;
 
     if (!isSelectable(editor, anchorNode) || !isSelectable(editor, focusNode)) {
@@ -407,6 +413,19 @@ export const useDOMSelectionChange = ({
 
   return onDOMSelectionChange;
 };
+
+function shouldIgnoreSelectionWhileTyping(
+  state: SelectionState,
+  domSelection: DOMSelection,
+): boolean {
+  if (!domSelection.isCollapsed) {
+    return false;
+  }
+  if (!state.lastUserInputAt) {
+    return false;
+  }
+  return Date.now() - state.lastUserInputAt < TYPING_SELECTION_SUPPRESS_MS;
+}
 
 function getWindowedSelection(editor: ReactEditor): Selection | null {
   const { selection } = editor;
