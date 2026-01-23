@@ -28,7 +28,18 @@ register({
       // Only show empty paragraph if selection is collapsed, editor is
       // focused, and para is selected.
       return (
-        <span {...attributes} style={{ position: "absolute" }}>
+        <span
+          {...attributes}
+          style={{
+            // Hide placeholder paragraphs without stealing clicks that
+            // should target visible blank lines.
+            position: "absolute",
+            width: 0,
+            height: 0,
+            overflow: "hidden",
+            pointerEvents: "none",
+          }}
+        >
           {children}
         </span>
       );
