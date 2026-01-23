@@ -129,6 +129,7 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
         extraKeys: {
           ...cmOptions?.extraKeys,
           "Shift-Enter": () => {
+            editor.setIgnoreSelection(false);
             Transforms.move(editor, { distance: 1, unit: "line" });
             ReactEditor.focus(editor, false, true);
             onShiftEnter?.();
@@ -353,6 +354,7 @@ function cursorHandlers(editor, isInline: boolean | undefined) {
     const line = cm.getLine(n);
     const line_length = line?.length;
     if (cur_line === n && cur_ch === line_length) {
+      editor.setIgnoreSelection(false);
       //Transforms.move(editor, { distance: 1, unit: "line" });
       moveCursorDown(editor, true);
       ReactEditor.focus(editor, false, true);
@@ -366,6 +368,7 @@ function cursorHandlers(editor, isInline: boolean | undefined) {
     Up: (cm) => {
       const cur = cm.getCursor();
       if (cur?.line === cm.firstLine() && cur?.ch == 0) {
+        editor.setIgnoreSelection(false);
         // Transforms.move(editor, { distance: 1, unit: "line", reverse: true });
         moveCursorUp(editor, true);
         if (!isInline) {
@@ -379,6 +382,7 @@ function cursorHandlers(editor, isInline: boolean | undefined) {
     Left: (cm) => {
       const cur = cm.getCursor();
       if (cur?.line === cm.firstLine() && cur?.ch == 0) {
+        editor.setIgnoreSelection(false);
         Transforms.move(editor, { distance: 1, unit: "line", reverse: true });
         ReactEditor.focus(editor, false, true);
       } else {
