@@ -13,6 +13,10 @@ describe("markdownEscape", () => {
     expect(markdownEscape("this is *em*")).toBe("this is \\*em\\*");
     expect(markdownEscape("**bold** text")).toBe("\\*\\*bold\\*\\* text");
     expect(markdownEscape("2 * 3")).toBe("2 * 3");
+    expect(markdownEscape("mix **bold** and *em*")).toBe(
+      "mix \\*\\*bold\\*\\* and \\*em\\*",
+    );
+    expect(markdownEscape("a*b*c")).toBe("a\\*b\\*c");
   });
 
   it("escapes structural line starts when first child", () => {
@@ -32,6 +36,8 @@ describe("markdownEscape", () => {
     );
     expect(markdownEscape("| --- | --- |")).toBe("\\| --- \\| --- \\|");
     expect(markdownEscape("a | b | c")).toBe("a | b | c");
+    expect(markdownEscape("[x](http://y)")).toBe("[x](http://y)");
+    expect(markdownEscape("brackets [like] this")).toBe("brackets [like] this");
   });
 
   it("escapes backticks, backslashes, dollars, and angle brackets", () => {
