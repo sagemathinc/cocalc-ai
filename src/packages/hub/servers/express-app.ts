@@ -36,6 +36,7 @@ import createApiV2Router from "@cocalc/next/lib/api-v2-router";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
 import {
   getLicenseStatus,
+  isLicenseRequired,
   isLaunchpadMode,
   isSoftwareLicenseActivated,
 } from "@cocalc/server/software-licenses/activation";
@@ -147,7 +148,7 @@ export default async function init(opts: Options): Promise<{
   if (!opts.nextServer) {
     initLanding(router);
   }
-  if (!opts.nextServer && isLaunchpadMode()) {
+  if (!opts.nextServer && isLaunchpadMode() && isLicenseRequired()) {
     initLaunchpadActivationGate(router);
   }
   initAppRedirect(router, { includeAuth: !opts.nextServer });
@@ -321,7 +322,7 @@ function initLanding(router: express.Router) {
   router.get("/", (req, res) => {
     void (async () => {
       const base = basePath === "/" ? "" : basePath;
-      if (isLaunchpadMode()) {
+      if (isLaunchpadMode() && isLicenseRequired()) {
         const status = await getLicenseStatus();
         if (!status.activated) {
           const baseUrl = `${req.protocol}://${req.get("host")}${base}/`;

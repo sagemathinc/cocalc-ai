@@ -26,6 +26,10 @@ export function isLaunchpadMode(): boolean {
   return isLaunchpadProduct();
 }
 
+export function isLicenseRequired(): boolean {
+  return process.env.COCALC_LICENSE_REQUIRED === "1";
+}
+
 async function setServerSetting(name: string, value: string): Promise<void> {
   await callback2(db().set_server_setting, { name, value });
   resetServerSettingsCache();
@@ -37,7 +41,7 @@ export async function getLicenseToken(): Promise<string> {
 }
 
 export async function isSoftwareLicenseActivated(): Promise<boolean> {
-  if (!isLaunchpadMode()) {
+  if (!isLaunchpadMode() || !isLicenseRequired()) {
     return true;
   }
   return (await getLicenseToken()) !== "";
