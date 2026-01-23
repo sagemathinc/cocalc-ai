@@ -69,6 +69,8 @@ export const withReact = <T extends Editor>(editor: T) => {
         selection: e.selection ?? null,
         stack: stackLines,
       });
+      (e as any).lastSelectionChangeAt = Date.now();
+      (e as any).lastSelectionChangeOp = op;
     }
 
     switch (op.type) {

@@ -57,6 +57,7 @@ const LOG_SELECTION_MISMATCHES =
   process.env?.COCALC_SLATE_LOG_SELECTION === "1";
 // Avoid stale DOM selection overwriting Slate selection during rapid typing.
 const TYPING_SELECTION_SUPPRESS_MS = 250;
+const SELECTION_SYNC_SUPPRESS_MS = 250;
 
 export const useUpdateDOMSelection = ({
   editor,
@@ -83,7 +84,7 @@ export const useUpdateDOMSelection = ({
         reason: "state",
         selection: editor.selection ?? null,
         editorSelection: editor.selection ?? null,
-        state: debugState(state),
+        state: debugState(state, editor),
       });
       return;
     }
@@ -95,7 +96,7 @@ export const useUpdateDOMSelection = ({
         selection: editor.selection ?? null,
         editorSelection: editor.selection ?? null,
         activeElement: describeDomNode(window.document.activeElement),
-        state: debugState(state),
+        state: debugState(state, editor),
       });
       delete state.windowedSelection;
       return;
@@ -116,7 +117,7 @@ export const useUpdateDOMSelection = ({
         reason: "get-windowed-selection-error",
         selection: editor.selection ?? null,
         editorSelection,
-        state: debugState(state),
+        state: debugState(state, editor),
       });
       return;
     }
@@ -128,7 +129,7 @@ export const useUpdateDOMSelection = ({
         activeElement: describeDomNode(window.document.activeElement),
         visibleRange: editor.windowedListRef?.current?.visibleRange ?? null,
         windowed: editor.windowedListRef?.current != null,
-        state: debugState(state),
+        state: debugState(state, editor),
       });
     }
     if (!isCropped) {
@@ -157,7 +158,7 @@ export const useUpdateDOMSelection = ({
         editorSelection,
         domSelection: describeDomSelection(domSelection),
         activeElement: describeDomNode(window.document.activeElement),
-        state: debugState(state),
+        state: debugState(state, editor),
       });
       recordSelectionState(
         selection,
@@ -189,7 +190,7 @@ export const useUpdateDOMSelection = ({
         editorSelection,
         domSelection: describeDomSelection(domSelection),
         activeElement: describeDomNode(window.document.activeElement),
-        state: debugState(state),
+        state: debugState(state, editor),
         isCropped,
       });
       recordSelectionState(
@@ -258,7 +259,7 @@ export const useUpdateDOMSelection = ({
       editorSelection,
       domSelection: describeDomSelection(domSelection),
       activeElement: describeDomNode(window.document.activeElement),
-      state: debugState(state),
+      state: debugState(state, editor),
       isCropped,
     });
     state.updatingSelection = true;
@@ -337,7 +338,7 @@ export const useDOMSelectionChange = ({
         selection: editor.selection ?? null,
         domSelection: describeDomSelection(domSelection),
         activeElement: describeDomNode(window.document.activeElement),
-        state: debugState(state),
+        state: debugState(state, editor),
       });
       return;
     }
@@ -352,7 +353,7 @@ export const useDOMSelectionChange = ({
         selection: editor.selection ?? null,
         domSelection: describeDomSelection(domSelection),
         activeElement: describeDomNode(window.document.activeElement),
-        state: debugState(state),
+        state: debugState(state, editor),
       });
       return;
     }
@@ -370,7 +371,28 @@ export const useDOMSelectionChange = ({
         selection: editor.selection ?? null,
         domSelection: describeDomSelection(domSelection),
         activeElement: describeDomNode(window.document.activeElement),
-        state: debugState(state),
+        state: debugState(state, editor),
+      });
+      return;
+    }
+
+    const lastSelectionChangeAt =
+      (editor as any).lastSelectionChangeAt as number | undefined;
+    if (
+      domSelection.isCollapsed &&
+      lastSelectionChangeAt != null &&
+      Date.now() - lastSelectionChangeAt < SELECTION_SYNC_SUPPRESS_MS &&
+      selection != null &&
+      range != null &&
+      !Range.equals(selection, range)
+    ) {
+      logSlateDebug("dom-selection-change:skip", {
+        reason: "recent-slate-selection",
+        selection,
+        range,
+        domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
+        state: debugState(state, editor),
       });
       return;
     }
@@ -453,7 +475,7 @@ export const useDOMSelectionChange = ({
         range,
         domSelection: describeDomSelection(domSelection),
         activeElement: describeDomNode(window.document.activeElement),
-        state: debugState(state),
+        state: debugState(state, editor),
       });
       Transforms.select(editor, range);
     }
@@ -525,7 +547,9 @@ function shouldIgnoreSelectionWhileTyping(
   return Date.now() - state.lastUserInputAt < TYPING_SELECTION_SUPPRESS_MS;
 }
 
-function debugState(state: SelectionState) {
+function debugState(state: SelectionState, editor?: ReactEditor) {
+  const lastSelectionChangeAt =
+    editor ? ((editor as any).lastSelectionChangeAt as number | undefined) : undefined;
   return {
     isComposing: state.isComposing,
     shiftKey: state.shiftKey,
@@ -535,6 +559,10 @@ function debugState(state: SelectionState) {
     lastUserInputAt: state.lastUserInputAt,
     msSinceInput: state.lastUserInputAt
       ? Date.now() - state.lastUserInputAt
+      : null,
+    lastSelectionChangeAt,
+    msSinceSelectionChange: lastSelectionChangeAt
+      ? Date.now() - lastSelectionChangeAt
       : null,
   };
 }
