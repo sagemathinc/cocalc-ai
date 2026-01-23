@@ -96,6 +96,7 @@ export async function requireLaunchpadModeSelected(): Promise<LaunchpadMode> {
 
 export type LaunchpadLocalConfig = {
   mode: LaunchpadMode;
+  http_port?: number;
   https_port?: number;
   sshd_port?: number;
   ssh_user?: string;
@@ -105,6 +106,7 @@ export type LaunchpadLocalConfig = {
 export function getLaunchpadLocalConfig(
   modeOverride?: LaunchpadMode,
 ): LaunchpadLocalConfig {
+  const mode = modeOverride ?? normalizeMode(process.env.COCALC_DEPLOYMENT_MODE);
   const basePortRaw =
     process.env.COCALC_BASE_PORT ??
     process.env.COCALC_HTTPS_PORT ??
@@ -117,6 +119,13 @@ export function getLaunchpadLocalConfig(
   const httpsPort = Number.isFinite(httpsPortParsed)
     ? httpsPortParsed
     : basePort;
+  const httpPortRaw = process.env.COCALC_HTTP_PORT ?? "";
+  const httpPortParsed = Number.parseInt(httpPortRaw, 10);
+  const httpPort = Number.isFinite(httpPortParsed)
+    ? httpPortParsed
+    : mode === "local"
+      ? basePort
+      : Math.max(basePort - 1, 1);
   const sshdPortRaw = process.env.COCALC_SSHD_PORT ?? "";
   const sshdPortParsed = Number.parseInt(sshdPortRaw, 10);
   const sshdPort = Number.isFinite(sshdPortParsed)
@@ -133,7 +142,8 @@ export function getLaunchpadLocalConfig(
     undefined;
 
   return {
-    mode: modeOverride ?? normalizeMode(process.env.COCALC_DEPLOYMENT_MODE),
+    mode,
+    http_port: Number.isFinite(httpPort) ? httpPort : undefined,
     https_port: Number.isFinite(httpsPort) ? httpsPort : undefined,
     sshd_port: Number.isFinite(sshdPort) ? sshdPort : undefined,
     ssh_user: sshUser,

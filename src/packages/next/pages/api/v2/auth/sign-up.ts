@@ -236,7 +236,7 @@ export async function signUp(req, res) {
       } catch (err) {
         // Expected to fail, e.g., when sendgrid or smtp not configured yet.
         // TODO: should log using debug instead of console?
-        console.log(`WARNING: failed to send welcome email to ${email}`, err);
+        console.log(`WARNING: cannot send welcome email to ${email} -- ${err}`);
       }
     }
     if (!owner_id) {

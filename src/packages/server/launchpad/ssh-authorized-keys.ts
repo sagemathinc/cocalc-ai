@@ -77,7 +77,7 @@ async function main() {
   }
 
   const localConfig = getLaunchpadLocalConfig("local");
-  const httpsPort = localConfig.https_port ?? 443;
+  const httpPort = localConfig.http_port ?? localConfig.https_port ?? 443;
   const connectorRows = await getPool().query<{
     ssh_key_seed: string | null;
   }>(
@@ -94,7 +94,29 @@ async function main() {
     const expected = derivePublicKeyFromSeed(row.ssh_key_seed);
     if (!expected) continue;
     if (expected === presented) {
-      process.stdout.write(`${formatForwardKey(expected, httpsPort)}\n`);
+      process.stdout.write(`${formatForwardKey(expected, httpPort)}\n`);
+      process.exit(0);
+    }
+  }
+
+  const bootstrapRows = await getPool().query<{
+    ssh_key_seed: string | null;
+  }>(
+    `
+    SELECT ssh_key_seed
+      FROM project_host_bootstrap_tokens
+     WHERE purpose='bootstrap'
+       AND revoked IS NOT TRUE
+       AND expires > NOW()
+       AND ssh_key_seed IS NOT NULL
+    `,
+  );
+  for (const row of bootstrapRows.rows) {
+    if (!row.ssh_key_seed) continue;
+    const expected = derivePublicKeyFromSeed(row.ssh_key_seed);
+    if (!expected) continue;
+    if (expected === presented) {
+      process.stdout.write(`${formatForwardKey(expected, httpPort)}\n`);
       process.exit(0);
     }
   }

@@ -6,6 +6,7 @@ import getPool from "@cocalc/database/pool";
 import getPort from "@cocalc/backend/get-port";
 import { secrets } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
+import ssh from "micro-key-producer/ssh.js";
 import {
   getLaunchpadMode,
   getLaunchpadLocalConfig,
@@ -13,11 +14,13 @@ import {
 } from "./mode";
 
 const logger = getLogger("launchpad:local:sshd");
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 type SshdState = {
   sshdDir: string;
   authorizedKeysPath: string;
   child: ChildProcessWithoutNullStreams;
+  refreshTimer?: NodeJS.Timeout;
 };
 
 let sshdState: SshdState | null = null;
@@ -109,8 +112,6 @@ async function writeSshdConfig(opts: {
   configPath: string;
   hostKeyPath: string;
   authorizedKeysPath: string;
-  authorizedKeysCommand?: string;
-  authorizedKeysCommandUser?: string;
   pidPath: string;
   sshUser: string;
   sshdPort: number;
@@ -138,14 +139,6 @@ async function writeSshdConfig(opts: {
     `Subsystem sftp ${opts.sftpServerPath}`,
     "StrictModes no",
   ];
-  if (opts.authorizedKeysCommand) {
-    lines.push(
-      `AuthorizedKeysCommand ${opts.authorizedKeysCommand} %u %k`,
-    );
-    if (opts.authorizedKeysCommandUser) {
-      lines.push(`AuthorizedKeysCommandUser ${opts.authorizedKeysCommandUser}`);
-    }
-  }
   const configText = lines.join("\n") + "\n";
   await writeFile(opts.configPath, configText, { mode: 0o600 });
 }
@@ -183,10 +176,6 @@ async function startSshd(): Promise<SshdState | null> {
     sftp: sshBins.sftpServerPath,
   });
   const sshUser = resolveSshUser();
-  const authorizedKeysCommand = await resolveAuthorizedKeysCommand();
-  if (!authorizedKeysCommand) {
-    logger.warn("authorized keys command missing; SSH pairing disabled");
-  }
   const sshdDir = join(secrets, "launchpad-sshd");
   const configPath = join(sshdDir, "sshd_config");
   const hostKeyPath = join(sshdDir, "ssh_host_ed25519_key");
@@ -199,8 +188,6 @@ async function startSshd(): Promise<SshdState | null> {
     configPath,
     hostKeyPath,
     authorizedKeysPath,
-    authorizedKeysCommand: authorizedKeysCommand ?? undefined,
-    authorizedKeysCommandUser: authorizedKeysCommand ? sshUser : undefined,
     pidPath,
     sshUser,
     sshdPort: config.sshd_port,
@@ -227,7 +214,12 @@ async function startSshd(): Promise<SshdState | null> {
   child.on("exit", (code, signal) => {
     logger.error("local sshd exited", { code, signal });
   });
-  sshdState = { sshdDir, authorizedKeysPath, child };
+  const refreshTimer = setInterval(() => {
+    refreshLaunchpadOnPremAuthorizedKeys().catch((err) => {
+      logger.warn("failed to refresh authorized keys", { err });
+    });
+  }, REFRESH_INTERVAL_MS);
+  sshdState = { sshdDir, authorizedKeysPath, child, refreshTimer };
   return sshdState;
 }
 
@@ -283,12 +275,43 @@ function formatSftpAuthorizedKey(
   return `${options.join(",")} ${entry.sftp_public_key} host-${entry.host_id}-sftp`;
 }
 
-async function resolveAuthorizedKeysCommand(): Promise<string | null> {
-  const script = join(__dirname, "ssh-authorized-keys.js");
-  if (!(await fileExists(script))) {
+function normalizeSshKey(key?: string | null): string {
+  if (!key) return "";
+  const parts = key.trim().split(/\s+/);
+  if (parts.length < 2) return "";
+  return `${parts[0]} ${parts[1]}`;
+}
+
+function derivePublicKeyFromSeed(seedBase64: string): string | null {
+  try {
+    const seed = Buffer.from(seedBase64, "base64url");
+    if (seed.length !== 32) return null;
+    const keypair = ssh(seed, "cocalc-pair");
+    return normalizeSshKey(keypair.publicKey);
+  } catch {
     return null;
   }
-  return `${process.execPath} ${script}`;
+}
+
+function formatPairingKey(command: string, key: string): string {
+  const options = [
+    `command="${command.replace(/"/g, '\\"')}"`,
+    "no-agent-forwarding",
+    "no-X11-forwarding",
+    "no-pty",
+    "no-port-forwarding",
+  ];
+  return `${options.join(",")} ${key}`;
+}
+
+function formatForwardKey(key: string, httpPort: number): string {
+  const options = [
+    `permitopen="127.0.0.1:${httpPort}"`,
+    "no-agent-forwarding",
+    "no-X11-forwarding",
+    "no-pty",
+  ];
+  return `${options.join(",")} ${key}`;
 }
 
 export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
@@ -344,6 +367,63 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
     if (sftpLine) {
       lines.push(sftpLine);
     }
+  }
+  const commandPath = `${process.execPath} ${join(__dirname, "ssh-pair.js")}`;
+  const { rows: pairingRows } = await pool().query<{
+    pairing_key_seed: string | null;
+  }>(
+    `
+    SELECT pairing_key_seed
+      FROM self_host_connector_tokens
+     WHERE purpose='pairing'
+       AND revoked IS NOT TRUE
+       AND expires > NOW()
+       AND pairing_key_seed IS NOT NULL
+    `,
+  );
+  for (const row of pairingRows) {
+    if (!row.pairing_key_seed) continue;
+    const key = derivePublicKeyFromSeed(row.pairing_key_seed);
+    if (!key) continue;
+    lines.push(formatPairingKey(commandPath, key));
+  }
+
+  const httpPort = config.http_port ?? config.https_port ?? 443;
+  const { rows: connectorRows } = await pool().query<{
+    ssh_key_seed: string | null;
+  }>(
+    `
+    SELECT ssh_key_seed
+      FROM self_host_connectors
+     WHERE revoked IS NOT TRUE
+       AND ssh_key_seed IS NOT NULL
+       AND token_hash IS NOT NULL
+    `,
+  );
+  for (const row of connectorRows) {
+    if (!row.ssh_key_seed) continue;
+    const key = derivePublicKeyFromSeed(row.ssh_key_seed);
+    if (!key) continue;
+    lines.push(formatForwardKey(key, httpPort));
+  }
+
+  const { rows: bootstrapRows } = await pool().query<{
+    ssh_key_seed: string | null;
+  }>(
+    `
+    SELECT ssh_key_seed
+      FROM project_host_bootstrap_tokens
+     WHERE purpose='bootstrap'
+       AND revoked IS NOT TRUE
+       AND expires > NOW()
+       AND ssh_key_seed IS NOT NULL
+    `,
+  );
+  for (const row of bootstrapRows) {
+    if (!row.ssh_key_seed) continue;
+    const key = derivePublicKeyFromSeed(row.ssh_key_seed);
+    if (!key) continue;
+    lines.push(formatForwardKey(key, httpPort));
   }
   const content = lines.join("\n") + (lines.length ? "\n" : "");
   await writeFile(state.authorizedKeysPath, content, { mode: 0o600 });
@@ -453,7 +533,10 @@ export function stopLaunchpadOnPremServices(): void {
   if (!sshdState) {
     return;
   }
-  const { child } = sshdState;
+  const { child, refreshTimer } = sshdState;
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+  }
   if (child.exitCode == null) {
     child.kill("SIGTERM");
   }

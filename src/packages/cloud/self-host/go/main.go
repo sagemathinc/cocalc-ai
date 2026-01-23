@@ -198,6 +198,7 @@ func runPair(args []string) {
 	logLine("paired connector", map[string]interface{}{
 		"connector_id": resp.ConnectorID,
 		"config":       path,
+		"version":      version,
 	})
 }
 
@@ -304,6 +305,7 @@ func runPairSSH(args []string) {
 		ConnectorToken      string `json:"connector_token"`
 		PollIntervalSeconds int    `json:"poll_interval_seconds"`
 		Launchpad           struct {
+			HttpPort  int `json:"http_port"`
 			HttpsPort int `json:"https_port"`
 		} `json:"launchpad"`
 		Error               string `json:"error"`
@@ -314,21 +316,24 @@ func runPairSSH(args []string) {
 	if resp.Error != "" {
 		fail(fmt.Sprintf("pair failed: %s", resp.Error))
 	}
-	remotePort := resp.Launchpad.HttpsPort
+	remotePort := resp.Launchpad.HttpPort
 	if remotePort == 0 {
-		remotePort = 443
+		remotePort = resp.Launchpad.HttpsPort
+	}
+	if remotePort == 0 {
+		remotePort = 80
 	}
 	localPort, err := allocateLocalPort()
 	if err != nil {
 		fail(fmt.Sprintf("allocate local port: %v", err))
 	}
 	cfg := Config{
-		BaseURL:             fmt.Sprintf("https://127.0.0.1:%d", localPort),
+		BaseURL:             fmt.Sprintf("http://127.0.0.1:%d", localPort),
 		ConnectorID:         resp.ConnectorID,
 		ConnectorToken:      resp.ConnectorToken,
 		PollIntervalSeconds: resp.PollIntervalSeconds,
 		Name:                *name,
-		InsecureSkipVerify:  true,
+		InsecureSkipVerify:  false,
 		SshTunnel: &SshTunnelConfig{
 			Host:                    host,
 			Port:                    port,
@@ -342,6 +347,7 @@ func runPairSSH(args []string) {
 	logLine("paired connector", map[string]interface{}{
 		"connector_id": resp.ConnectorID,
 		"config":       path,
+		"version":      version,
 		"ssh_host":     host,
 		"ssh_port":     port,
 	})
@@ -861,6 +867,8 @@ func runLoop(cfg Config, cfgPath string) {
 	idlePolls := 0
 	lastNoCommandLog := time.Now()
 	logLine("connector started", map[string]interface{}{
+		"version":              version,
+		"mode":                 connectorMode(cfg),
 		"base_url":             cfg.BaseURL,
 		"poll_seconds":         baseInterval,
 		"fast_poll_seconds":    fastInterval,
@@ -892,6 +900,13 @@ func runLoop(cfg Config, cfgPath string) {
 		}
 		time.Sleep(time.Duration(interval) * time.Second)
 	}
+}
+
+func connectorMode(cfg Config) string {
+	if cfg.SshTunnel != nil {
+		return "ssh-tunnel"
+	}
+	return "http"
 }
 
 func executeCommand(cmd CommandEnvelope, state State, statePath string) (interface{}, error) {

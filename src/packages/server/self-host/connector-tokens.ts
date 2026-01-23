@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import passwordHash, { verifyPassword } from "@cocalc/backend/auth/password-hash";
 import { isValidUUID } from "@cocalc/util/misc";
+import { refreshLaunchpadOnPremAuthorizedKeys } from "../launchpad/onprem-sshd";
 
 const DEFAULT_PAIRING_TTL_MS = 1000 * 60 * 30; // 30 minutes
 
@@ -65,6 +66,7 @@ export async function createPairingToken(opts: {
       expires,
     ],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
   return { token, token_id, expires };
 }
 
@@ -118,6 +120,7 @@ export async function revokePairingToken(tokenId: string): Promise<void> {
      WHERE token_id=$1`,
     [tokenId],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
 }
 
 export async function createConnectorRecord(opts: {
@@ -217,6 +220,7 @@ export async function createConnector(opts: {
       created,
     ],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
   return { connector_id, token };
 }
 
@@ -239,6 +243,7 @@ export async function revokeConnector(opts: {
   if (!rows[0]?.connector_id) {
     throw new Error("connector not found");
   }
+  await refreshLaunchpadOnPremAuthorizedKeys();
 }
 
 export async function activateConnector(opts: {
@@ -271,6 +276,7 @@ export async function activateConnector(opts: {
   if (!rows[0]?.connector_id) {
     throw new Error("connector not found");
   }
+  await refreshLaunchpadOnPremAuthorizedKeys();
   return { connector_id: opts.connector_id, token };
 }
 
