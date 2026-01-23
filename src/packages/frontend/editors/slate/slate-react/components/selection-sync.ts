@@ -420,6 +420,33 @@ export const useDOMSelectionChange = ({
       return;
     }
 
+    const now = Date.now();
+    const recentPointer =
+      state.lastPointerDownAt != null &&
+      now - state.lastPointerDownAt < POINTER_SELECTION_GRACE_MS;
+    const recentSelectionKey =
+      state.lastSelectionKeyAt != null &&
+      now - state.lastSelectionKeyAt < SELECTION_KEY_GRACE_MS;
+    if (
+      domSelection.isCollapsed &&
+      selection != null &&
+      range != null &&
+      !Range.equals(selection, range) &&
+      !state.shiftKey &&
+      !recentPointer &&
+      !recentSelectionKey
+    ) {
+      logSlateDebug("dom-selection-change:skip", {
+        reason: "no-intent",
+        selection,
+        range,
+        domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
+        state: debugState(state, editor),
+      });
+      return;
+    }
+
     const lastSelectionChangeAt =
       (editor as any).lastSelectionChangeAt as number | undefined;
     if (
