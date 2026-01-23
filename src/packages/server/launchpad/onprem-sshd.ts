@@ -7,13 +7,6 @@ import getPort from "@cocalc/backend/get-port";
 import { secrets } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
 import {
-  install,
-  sftpServer as bundledSftpServer,
-  ssh as bundledSsh,
-  sshKeygen as bundledSshKeygen,
-  sshd as bundledSshd,
-} from "@cocalc/backend/sandbox/install";
-import {
   getLaunchpadMode,
   getLaunchpadLocalConfig,
   isLaunchpadProduct,
@@ -78,22 +71,17 @@ async function resolveSshBins(): Promise<SshBins> {
     (await fileExists(systemSshd)) &&
     (await fileExists(systemSshKeygen)) &&
     !!systemSftpServer;
-  if (systemReady) {
-    return {
-      sshdPath: systemSshd,
-      sshKeygenPath: systemSshKeygen,
-      sftpServerPath: systemSftpServer as string,
-      sshBinaryPath: (await fileExists(systemSsh)) ? systemSsh : systemSshd,
-      source: "system",
-    };
+  if (!systemReady) {
+    throw new Error(
+      "system OpenSSH binaries not found; install openssh-server",
+    );
   }
-  await install("ssh");
   return {
-    sshdPath: bundledSshd,
-    sshKeygenPath: bundledSshKeygen,
-    sftpServerPath: bundledSftpServer,
-    sshBinaryPath: bundledSsh,
-    source: "bundled",
+    sshdPath: systemSshd,
+    sshKeygenPath: systemSshKeygen,
+    sftpServerPath: systemSftpServer as string,
+    sshBinaryPath: (await fileExists(systemSsh)) ? systemSsh : systemSshd,
+    source: "system",
   };
 }
 
@@ -279,10 +267,57 @@ function formatSftpAuthorizedKey(
   return `${options.join(",")} ${entry.sftp_public_key} host-${entry.host_id}-sftp`;
 }
 
+function normalizePublicKeys(raw?: string | null): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+function escapeSshCommand(cmd: string): string {
+  return cmd.replace(/"/g, '\\"');
+}
+
+async function resolvePairCommand(): Promise<string | null> {
+  const pairScript = join(__dirname, "ssh-pair.js");
+  if (!(await fileExists(pairScript))) {
+    return null;
+  }
+  return `${process.execPath} ${pairScript}`;
+}
+
+function formatPairingAuthorizedKey(
+  publicKey: string,
+  command: string,
+): string | null {
+  if (!publicKey) {
+    return null;
+  }
+  const options = [
+    `command="${escapeSshCommand(command)}"`,
+    "no-agent-forwarding",
+    "no-X11-forwarding",
+    "no-pty",
+    "no-port-forwarding",
+  ];
+  return `${options.join(",")} ${publicKey} launchpad-pair`;
+}
+
 export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   const state = await startSshd();
   if (!state) {
     return;
+  }
+  const pairCommand = await resolvePairCommand();
+  const pairingKeys = [
+    ...normalizePublicKeys(process.env.COCALC_CONNECTOR_SSH_PUBLIC_KEY),
+    ...normalizePublicKeys(process.env.COCALC_CONNECTOR_SSH_PUBLIC_KEYS),
+  ];
+  if (pairingKeys.length && !pairCommand) {
+    logger.warn("pairing public key configured but ssh pair command missing", {
+      script: join(__dirname, "ssh-pair.js"),
+    });
   }
   const config = getLaunchpadLocalConfig("local");
   const sftpRoot = config.sftp_root;
@@ -312,6 +347,14 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
     `,
   );
   const lines: string[] = [];
+  if (pairCommand) {
+    for (const key of pairingKeys) {
+      const line = formatPairingAuthorizedKey(key, pairCommand);
+      if (line) {
+        lines.push(line);
+      }
+    }
+  }
   for (const row of rows) {
     const entry: TunnelEntry = {
       host_id: row.host_id,

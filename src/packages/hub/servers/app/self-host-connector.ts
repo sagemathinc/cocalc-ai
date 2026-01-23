@@ -7,20 +7,14 @@ import express, { Router, type Request } from "express";
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/hub/logger";
 import {
-  activateConnector,
-  createConnector,
   createPairingToken,
-  revokePairingToken,
   verifyConnectorToken,
-  verifyPairingToken,
 } from "@cocalc/server/self-host/connector-tokens";
+import { pairSelfHostConnector } from "@cocalc/server/self-host/pair";
 import getAccount from "@cocalc/server/auth/get-account";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { enqueueCloudVmWorkOnce } from "@cocalc/server/cloud/db";
-import {
-  getLaunchpadMode,
-  getLaunchpadLocalConfig,
-} from "@cocalc/server/launchpad/mode";
+import { getLaunchpadMode } from "@cocalc/server/launchpad/mode";
 
 const logger = getLogger("hub:servers:app:self-host-connector");
 
@@ -234,8 +228,7 @@ export default function init(router: Router) {
 
   router.post("/self-host/pair", jsonParser, async (req, res) => {
     try {
-      const mode = await ensureLocal(res);
-      if (!mode) {
+      if (!(await ensureLocal(res))) {
         return;
       }
       const pairingToken = String(req.body?.pairing_token ?? "");
@@ -243,45 +236,20 @@ export default function init(router: Router) {
         res.status(400).send("missing pairing token");
         return;
       }
-      const tokenInfo = await verifyPairingToken(pairingToken);
-      if (!tokenInfo) {
-        res.status(401).send("invalid pairing token");
-        return;
-      }
       const connectorInfo = (req.body?.connector_info ?? {}) as Record<
         string,
         any
       >;
-      const name = connectorInfo?.name ? String(connectorInfo.name) : undefined;
-      let connector_id: string;
-      let token: string;
-      if (tokenInfo.connector_id) {
-        const activated = await activateConnector({
-          connector_id: tokenInfo.connector_id,
-          account_id: tokenInfo.account_id,
-          name,
-          metadata: connectorInfo,
-        });
-        connector_id = activated.connector_id;
-        token = activated.token;
-      } else {
-        const created = await createConnector({
-          account_id: tokenInfo.account_id,
-          name,
-          metadata: connectorInfo,
-          host_id: tokenInfo.host_id ?? undefined,
-        });
-        connector_id = created.connector_id;
-        token = created.token;
-      }
-      await revokePairingToken(tokenInfo.token_id);
-      res.json({
-        connector_id,
-        connector_token: token,
-        poll_interval_seconds: 10,
-        launchpad: getLaunchpadLocalConfig(mode),
+      const response = await pairSelfHostConnector({
+        pairingToken,
+        connectorInfo,
       });
+      res.json(response);
     } catch (err) {
+      if (String(err).includes("invalid pairing token")) {
+        res.status(401).send("invalid pairing token");
+        return;
+      }
       logger.warn("pairing failed", err);
       res.status(500).send("pairing failed");
     }

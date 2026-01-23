@@ -11,8 +11,8 @@ e.g.,
   - security vulnerabilities: https://github.com/microsoft/ripgrep-prebuilt/issues/48
   - not updated to a major new release without a good reason: https://github.com/microsoft/ripgrep-prebuilt/issues/38
 
-NOTE: there is a linux program "upx", which can be run on any of these binaries
-(except ssh where it is already run), which makes them self-extracting executables.
+NOTE: there is a linux program "upx", which can be run on any of these binaries,
+which makes them self-extracting executables.
 The binaries become less than half their size, but startup time is typically
 increased to about 100ms to do the decompression every time.  We're not currently
 using this, but it could be useful in some contexts, maybe.   The main value in
@@ -215,54 +215,6 @@ export const SPEC = {
     script: () =>
       `curl -L https://github.com/sagemathinc/dropbear/releases/download/main/dropbear-$(uname -m)-linux-musl.tar.xz | tar -xJ -C ${binPath} --strip-components=1 dropbear-$(uname -m)-linux-musl/dropbear`,
   },
-  /*
-   Locate the latest binaries are here:
-     https://github.com/sagemathinc/static-openssh-binaries/releases
-   E.g., the files look like
-    https://github.com/sagemathinc/static-openssh-binaries/releases/download/OpenSSH_9.9p2/openssh-static-x86_64-small-2025-10-02b.tar.gz
-    https://github.com/sagemathinc/static-openssh-binaries/releases/download/OpenSSH_9.9p2/openssh-static-aarch64-small-2025-10-02b.tar.gz
-   and they extract like this:
-~# tar xvf openssh-static-x86_64-small-OpenSSH_9.9p2.tar.gz
-openssh/
-openssh/sbin/
-openssh/sbin/sshd
-openssh/etc/
-openssh/etc/sshd_config
-openssh/bin/
-openssh/bin/ssh-add
-openssh/bin/sftp
-openssh/bin/ssh-keyscan
-openssh/bin/ssh-keygen
-openssh/bin/ssh-agent
-openssh/bin/ssh
-openssh/bin/scp
-openssh/var/
-openssh/var/empty/
-openssh/libexec/
-openssh/libexec/ssh-keysign
-openssh/libexec/sshd-session
-openssh/libexec/sftp-server
-
-To build a new version figure out what version (say OpenSSH_9.9p2)
-happens to be being built, then do
-
-   git tag OpenSSH_9.9p2
-   git push --tags
-
-to make a binary with that version
-
----
-*/
-  ssh: {
-    desc: "statically linked compressed openssh binaries: ssh, ssh-keygen, sshd",
-    path: join(binPath, "ssh"),
-    platforms: ["linux"],
-    VERSION: "OpenSSH_9.9p2",
-    getVersion: "ssh -V 2>&1 | cut -f 1 -d ','",
-    script: () =>
-      `curl -L https://github.com/sagemathinc/static-openssh-binaries/releases/download/${SPEC.ssh.VERSION}/openssh-static-$(uname -m)-small-${SPEC.ssh.VERSION}.tar.gz | tar -xz -C ${binPath} --strip-components=2 openssh/bin/ssh openssh/bin/ssh-keygen openssh/sbin/sshd openssh/libexec/sftp-server openssh/libexec/sshd-session`,
-  },
-
   // See https://github.com/moparisthebest/static-curl/releases
   //
   // https://github.com/moparisthebest/static-curl/releases/download/v8.11.0/curl-amd64
@@ -309,11 +261,6 @@ export const ouch = SPEC.ouch.path;
 export const sshpiper = SPEC.sshpiper.path;
 export const btm = SPEC.btm.path;
 export const dropbear = SPEC.dropbear.path;
-export const ssh = SPEC.ssh.path;
-export const sshd = join(binPath, "sshd");
-export const sshKeygen = join(binPath, "ssh-keygen");
-export const sftpServer = join(binPath, "sftp-server");
-export const sshdSession = join(binPath, "sshd-session");
 export const curl = SPEC.curl.path;
 
 type App = keyof typeof SPEC;

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -43,6 +44,17 @@ type Config struct {
 	PollIntervalSeconds int    `json:"poll_interval_seconds,omitempty"`
 	Name                string `json:"name,omitempty"`
 	InsecureSkipVerify  bool   `json:"insecure_skip_verify,omitempty"`
+	SshTunnel           *SshTunnelConfig `json:"ssh_tunnel,omitempty"`
+}
+
+type SshTunnelConfig struct {
+	Host                   string `json:"host"`
+	Port                   int    `json:"port,omitempty"`
+	User                   string `json:"user,omitempty"`
+	KeyPath                string `json:"key_path,omitempty"`
+	LocalPort              int    `json:"local_port,omitempty"`
+	RemotePort             int    `json:"remote_port,omitempty"`
+	NoStrictHostKeyChecking bool   `json:"no_strict_host_key_checking,omitempty"`
 }
 
 type CommandEnvelope struct {
@@ -85,6 +97,9 @@ func main() {
 		return
 	case "pair":
 		runPair(os.Args[2:])
+		return
+	case "pair-ssh":
+		runPairSSH(os.Args[2:])
 		return
 	case "run":
 		runLoopCmd(os.Args[2:])
@@ -180,6 +195,141 @@ func runPair(args []string) {
 	})
 }
 
+func runPairSSH(args []string) {
+	fs := flag.NewFlagSet("pair-ssh", flag.ExitOnError)
+	sshHost := fs.String("ssh-host", "", "Hub SSH host (e.g. 192.168.1.10)")
+	sshPort := fs.Int("ssh-port", 0, "Hub SSH port (default 22)")
+	sshUser := fs.String("ssh-user", "", "Hub SSH username")
+	sshKey := fs.String("ssh-key", "", "SSH private key path")
+	noStrict := fs.Bool("ssh-no-strict-host-key-checking", false, "Disable strict host key checking")
+	token := fs.String("token", "", "Pairing token")
+	name := fs.String("name", "", "Connector name")
+	replace := fs.Bool("replace", false, "Replace existing config if present")
+	cfgPath := fs.String("config", "", "Config path")
+	fs.Parse(args)
+
+	if *sshHost == "" || *token == "" {
+		fail("pair-ssh requires --ssh-host and --token")
+	}
+	path := configPath(*cfgPath)
+	if fileExists(path) && !*replace {
+		fail(fmt.Sprintf(
+			"connector config already exists at %s\n\nTo replace it, run:\n  cocalc-self-host-connector pair-ssh --replace --ssh-host %s --token <pairing_token>\n",
+			path,
+			*sshHost,
+		))
+	}
+	host, port := parseHostPort(*sshHost, *sshPort)
+	user := *sshUser
+	if user == "" {
+		user = os.Getenv("COCALC_SSHD_USER")
+	}
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	if user == "" {
+		user = "cocalc"
+	}
+	info := map[string]interface{}{
+		"name":         *name,
+		"version":      version,
+		"os":           runtime.GOOS,
+		"arch":         runtime.GOARCH,
+		"capabilities": map[string]bool{"multipass": true},
+	}
+	payload := map[string]interface{}{
+		"pairing_token":  *token,
+		"connector_info": info,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fail(fmt.Sprintf("pair payload: %v", err))
+	}
+
+	argsSSH := []string{"-T", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR"}
+	if *noStrict {
+		argsSSH = append(argsSSH, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
+	}
+	if port > 0 {
+		argsSSH = append(argsSSH, "-p", fmt.Sprintf("%d", port))
+	}
+	if *sshKey != "" {
+		argsSSH = append(argsSSH, "-i", *sshKey)
+	}
+	argsSSH = append(argsSSH, fmt.Sprintf("%s@%s", user, host))
+
+	cmd := exec.Command("ssh", argsSSH...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		fail(fmt.Sprintf("ssh stdin: %v", err))
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		fail(fmt.Sprintf("ssh stdout: %v", err))
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		fail(fmt.Sprintf("ssh stderr: %v", err))
+	}
+	if err := cmd.Start(); err != nil {
+		fail(fmt.Sprintf("ssh start failed: %v", err))
+	}
+	_, _ = stdin.Write(body)
+	_ = stdin.Close()
+	outBytes, _ := io.ReadAll(stdout)
+	errBytes, _ := io.ReadAll(stderr)
+	if err := cmd.Wait(); err != nil {
+		fail(fmt.Sprintf("ssh pair failed: %v (%s)", err, strings.TrimSpace(string(errBytes))))
+	}
+	var resp struct {
+		ConnectorID         string `json:"connector_id"`
+		ConnectorToken      string `json:"connector_token"`
+		PollIntervalSeconds int    `json:"poll_interval_seconds"`
+		Launchpad           struct {
+			HttpsPort int `json:"https_port"`
+		} `json:"launchpad"`
+		Error               string `json:"error"`
+	}
+	if err := json.Unmarshal(outBytes, &resp); err != nil {
+		fail(fmt.Sprintf("pair response decode: %v", err))
+	}
+	if resp.Error != "" {
+		fail(fmt.Sprintf("pair failed: %s", resp.Error))
+	}
+	remotePort := resp.Launchpad.HttpsPort
+	if remotePort == 0 {
+		remotePort = 443
+	}
+	localPort, err := allocateLocalPort()
+	if err != nil {
+		fail(fmt.Sprintf("allocate local port: %v", err))
+	}
+	cfg := Config{
+		BaseURL:             fmt.Sprintf("https://127.0.0.1:%d", localPort),
+		ConnectorID:         resp.ConnectorID,
+		ConnectorToken:      resp.ConnectorToken,
+		PollIntervalSeconds: resp.PollIntervalSeconds,
+		Name:                *name,
+		InsecureSkipVerify:  true,
+		SshTunnel: &SshTunnelConfig{
+			Host:                    host,
+			Port:                    port,
+			User:                    user,
+			KeyPath:                 *sshKey,
+			LocalPort:               localPort,
+			RemotePort:              remotePort,
+			NoStrictHostKeyChecking: *noStrict,
+		},
+	}
+	saveJSON(path, cfg)
+	logLine("paired connector", map[string]interface{}{
+		"connector_id": resp.ConnectorID,
+		"config":       path,
+		"ssh_host":     host,
+		"ssh_port":     port,
+	})
+}
+
 func runLoopCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	cfgPath := fs.String("config", "", "Config path")
@@ -224,6 +374,7 @@ func stopDaemonCmd(args []string) {
 func printHelp() {
 	fmt.Println(`Usage:
   cocalc-self-host-connector pair --base-url <url> --token <pairing_token> [--name <name>] [--replace] [--insecure]
+  cocalc-self-host-connector pair-ssh --ssh-host <host> --token <pairing_token> [--ssh-user <user>] [--ssh-key <path>] [--replace]
   cocalc-self-host-connector run [--config <path>] [--daemon]
   cocalc-self-host-connector stop [--config <path>]
   cocalc-self-host-connector once [--config <path>]
@@ -373,6 +524,97 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+func parseHostPort(raw string, fallbackPort int) (string, int) {
+	host := strings.TrimSpace(raw)
+	if host == "" {
+		return "", fallbackPort
+	}
+	if strings.Contains(host, ":") {
+		parts := strings.Split(host, ":")
+		if len(parts) == 2 {
+			port, err := strconv.Atoi(parts[1])
+			if err == nil {
+				return parts[0], port
+			}
+		}
+	}
+	return host, fallbackPort
+}
+
+func allocateLocalPort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer ln.Close()
+	addr := ln.Addr().String()
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0, err
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0, err
+	}
+	return port, nil
+}
+
+func startSshTunnel(cfg SshTunnelConfig) (*exec.Cmd, error) {
+	if cfg.Host == "" {
+		return nil, errors.New("ssh tunnel host missing")
+	}
+	if cfg.LocalPort == 0 || cfg.RemotePort == 0 {
+		return nil, errors.New("ssh tunnel ports missing")
+	}
+	user := cfg.User
+	if user == "" {
+		user = os.Getenv("COCALC_SSHD_USER")
+	}
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	if user == "" {
+		user = "cocalc"
+	}
+	port := cfg.Port
+	if port == 0 {
+		port = 22
+	}
+	args := []string{
+		"-N",
+		"-o", "BatchMode=yes",
+		"-o", "ExitOnForwardFailure=yes",
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=3",
+		"-L", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", cfg.LocalPort, cfg.RemotePort),
+	}
+	if cfg.NoStrictHostKeyChecking {
+		args = append(args, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
+	}
+	if cfg.KeyPath != "" {
+		args = append(args, "-i", cfg.KeyPath)
+	}
+	args = append(args, "-p", fmt.Sprintf("%d", port))
+	args = append(args, fmt.Sprintf("%s@%s", user, cfg.Host))
+	cmd := exec.Command("ssh", args...)
+	var stderr bytes.Buffer
+	cmd.Stdout = io.Discard
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("ssh tunnel start: %w", err)
+	}
+	logLine("ssh tunnel started", map[string]interface{}{
+		"host":        cfg.Host,
+		"port":        port,
+		"local_port":  cfg.LocalPort,
+		"remote_port": cfg.RemotePort,
+	})
+	if stderr.Len() > 0 {
+		logLine("ssh tunnel stderr", map[string]interface{}{"stderr": strings.TrimSpace(stderr.String())})
+	}
+	return cmd, nil
+}
+
 func parsePID(raw string) (int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -447,6 +689,22 @@ func pollOnce(cfg Config, state State, statePath string) (bool, error) {
 func runLoop(cfg Config, cfgPath string) {
 	if cfg.BaseURL == "" || cfg.ConnectorToken == "" {
 		fail("connector config missing base_url or connector_token (run pair first)")
+	}
+	if cfg.SshTunnel != nil {
+		cmd, err := startSshTunnel(*cfg.SshTunnel)
+		if err != nil {
+			fail(fmt.Sprintf("ssh tunnel failed: %v", err))
+		}
+		if cmd != nil {
+			go func() {
+				if err := cmd.Wait(); err != nil {
+					logLine("ssh tunnel exited", map[string]interface{}{"error": err.Error()})
+				} else {
+					logLine("ssh tunnel exited", map[string]interface{}{"status": "ok"})
+				}
+				os.Exit(1)
+			}()
+		}
 	}
 	statePath := statePathFromConfig(cfgPath)
 	state := loadState(statePath)

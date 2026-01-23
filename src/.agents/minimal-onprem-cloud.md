@@ -225,13 +225,13 @@ Hub assigns two ports per host:
 
 ### 2) Embedded sshd Lifecycle (done)
 
-- Bundle sshd binaries in Launchpad release.
-  - we setup [https://github.com/sagemathinc/static\-openssh\-binaries](https://github.com/sagemathinc/static-openssh-binaries) for sshd static binaries
+- Require system OpenSSH (sshd + ssh-keygen + sftp-server); fail fast if missing.
 - On hub startup:
   - create data_dir/ssh/ for keys \+ configs
   - render sshd_config for:
     - reverse tunnel keys
     - SFTP keys
+    - pairing key (optional)
   - spawn sshd as a child process
   - supervise \+ restart on crash
 
@@ -267,6 +267,20 @@ Hub assigns two ports per host:
 - Use a single join token: host fetches all connection details from hub
   (minimizes admin input).
 - If changing ports is too complex, require explicit config at first bootstrap.
+
+### 6.1) SSH Pairing (done, manual key for now)
+
+- Add an ssh-only pairing path:
+  - `pair-ssh` runs `ssh` to hub sshd and streams JSON payload to a forced
+    command that returns JSON (no HTTP required).
+  - Connector writes an ssh tunnel config and forwards
+    `https://127.0.0.1:<local>` to `127.0.0.1:<hub_https_port>`.
+- Current auth:
+  - Hub reads pairing public keys from
+    `COCALC_CONNECTOR_SSH_PUBLIC_KEY(S)` and injects them into authorized_keys
+    with `command=<ssh-pair>` and no forwarding.
+- Future improvement:
+  - derive a temporary pairing key from the pairing token (avoid copy/paste).
 
 ### 7) Health & Diagnostics (pending)
 

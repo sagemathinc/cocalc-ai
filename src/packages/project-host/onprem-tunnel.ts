@@ -16,11 +16,12 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { sshServer } from "@cocalc/backend/data";
-import { install, ssh as sshBinary } from "@cocalc/backend/sandbox/install";
 import { createHostStatusClient } from "@cocalc/conat/project-host/api";
 import { randomBytes } from "micro-key-producer/utils.js";
 import ssh from "micro-key-producer/ssh.js";
 import { getMasterConatClient } from "./master-status";
+
+const SSH_BINARY = process.env.COCALC_SSH_BINARY ?? "ssh";
 
 const logger = getLogger("project-host:onprem-tunnel");
 
@@ -292,7 +293,6 @@ export async function startOnPremTunnel(opts: {
   }
   const hostId = process.env.PROJECT_HOST_ID ?? "host";
 
-  await install("ssh");
   await ensureKeyPair(keyPath, hostId);
 
   const localSshPort = sshServer.port;
@@ -313,8 +313,15 @@ export async function startOnPremTunnel(opts: {
       httpTunnelPort: config.httpTunnelPort,
       sshTunnelPort: config.sshTunnelPort,
     });
-    const child = spawn(sshBinary, args);
+    const child = spawn(SSH_BINARY, args);
     state.child = child;
+    child.on("error", (err) => {
+      if (state.stopped) {
+        return;
+      }
+      logger.warn("onprem tunnel spawn failed", { err: String(err) });
+      setTimeout(() => start(config), 5000);
+    });
     child.stdout.on("data", (chunk) => logger.debug(chunk.toString()));
     child.stderr.on("data", (chunk) => logger.debug(chunk.toString()));
     child.on("exit", (code, signal) => {
