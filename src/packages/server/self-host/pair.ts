@@ -5,7 +5,7 @@ import {
   revokePairingToken,
   verifyPairingToken,
 } from "./connector-tokens";
-import { getLaunchpadLocalConfig, getLaunchpadMode } from "../launchpad/mode";
+import { getLaunchpadLocalConfig } from "../launchpad/mode";
 
 const logger = getLogger("server:self-host:pair");
 
@@ -20,10 +20,6 @@ export async function pairSelfHostConnector(opts: {
   pairingToken: string;
   connectorInfo?: Record<string, any>;
 }): Promise<SelfHostPairResponse> {
-  const mode = await getLaunchpadMode();
-  if (mode !== "local") {
-    throw new Error(`launchpad mode is '${mode}'`);
-  }
   const tokenInfo = await verifyPairingToken(opts.pairingToken);
   if (!tokenInfo) {
     throw new Error("invalid pairing token");
@@ -61,6 +57,6 @@ export async function pairSelfHostConnector(opts: {
     connector_id,
     connector_token: token,
     poll_interval_seconds: 10,
-    launchpad: getLaunchpadLocalConfig(mode),
+    launchpad: getLaunchpadLocalConfig("local"),
   };
 }

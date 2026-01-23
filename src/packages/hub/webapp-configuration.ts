@@ -25,7 +25,6 @@ import { parseDomain, ParseResultType } from "parse-domain";
 import getServerSettings, {
   ServerSettingsDynamic,
 } from "./servers/server-settings";
-import { getLaunchpadMode } from "@cocalc/server/launchpad/mode";
 import { have_active_registration_tokens } from "./utils";
 
 const L = debug("hub:webapp-config");
@@ -156,7 +155,6 @@ export class WebappConfiguration {
       return {};
     }
     const vID = this.get_vanity_id(host);
-    const launchpadMode = await getLaunchpadMode();
     const config = this.data.pub;
     const vanity = await this.get_vanity(vID);
     return {
@@ -165,7 +163,6 @@ export class WebappConfiguration {
       ...{
         country,
         dns: host,
-        launchpad_mode: launchpadMode,
         launchpad_self_signed: process.env.COCALC_LAUNCHPAD_SELF_SIGNED === "1",
       },
     };

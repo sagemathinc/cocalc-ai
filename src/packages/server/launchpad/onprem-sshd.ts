@@ -7,11 +7,7 @@ import getPort from "@cocalc/backend/get-port";
 import { secrets } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
 import ssh from "micro-key-producer/ssh.js";
-import {
-  getLaunchpadMode,
-  getLaunchpadLocalConfig,
-  isLaunchpadProduct,
-} from "./mode";
+import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
 
 const logger = getLogger("launchpad:local:sshd");
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -36,6 +32,20 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function hasLocalSelfHostHosts(): Promise<boolean> {
+  const { rows } = await pool().query(
+    `
+      SELECT 1
+      FROM project_hosts
+      WHERE deleted IS NULL
+        AND (metadata->'machine'->>'cloud') = 'self-host'
+        AND COALESCE(metadata->'machine'->'metadata'->>'self_host_mode','local') = 'local'
+      LIMIT 1
+    `,
+  );
+  return rows.length > 0;
 }
 
 function resolveSshUser(): string {
@@ -151,9 +161,7 @@ async function ensureAuthorizedKeysPath(path: string): Promise<void> {
 }
 
 async function startSshd(): Promise<SshdState | null> {
-  const mode = await getLaunchpadMode();
-  const localMode = mode === "local";
-  if (!localMode) {
+  if (!(await hasLocalSelfHostHosts())) {
     return null;
   }
   if (!isLaunchpadProduct()) {

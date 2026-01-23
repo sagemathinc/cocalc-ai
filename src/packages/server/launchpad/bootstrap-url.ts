@@ -1,6 +1,5 @@
 import basePath from "@cocalc/backend/base-path";
 import getLogger from "@cocalc/backend/logger";
-import { getLaunchpadMode } from "./mode";
 import siteURL from "@cocalc/database/settings/site-url";
 
 const logger = getLogger("launchpad:bootstrap-url");
@@ -23,15 +22,13 @@ export async function resolveLaunchpadBootstrapUrl(opts?: {
   fallbackHost?: string | null;
   fallbackProtocol?: string | null;
 }): Promise<BootstrapBase> {
-  void opts;
-  const mode = await getLaunchpadMode();
-  const localMode = mode === "local";
-  if (!localMode) {
-    return { baseUrl: await siteURL() };
+  const site = await siteURL();
+  if (site) {
+    return { baseUrl: site };
   }
   const port = resolveLaunchpadPort();
-  const host = "localhost";
-  const protocol = "http";
+  const host = opts?.fallbackHost ?? "localhost";
+  const protocol = opts?.fallbackProtocol ?? "http";
   let path = basePath ?? "";
   if (path === "/") {
     path = "";
@@ -41,7 +38,6 @@ export async function resolveLaunchpadBootstrapUrl(opts?: {
   }
   const base = `${protocol}://${host}:${port}${path}`;
   logger.info("launchpad bootstrap url resolved", {
-    mode,
     host,
     port,
     protocol,

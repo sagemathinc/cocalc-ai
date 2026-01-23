@@ -47,10 +47,7 @@ import { normalizeProviderId } from "@cocalc/cloud";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import type { HostRuntime } from "@cocalc/cloud/types";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import {
-  getLaunchpadMode,
-  getLaunchpadLocalConfig,
-} from "@cocalc/server/launchpad/mode";
+import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
@@ -250,10 +247,13 @@ export async function buildBootstrapScripts(
   const hasGpu = machineHasGpu(machine);
   const sshUser = runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
   const providerId = normalizeProviderId(machine.cloud);
-  const launchpadMode = await getLaunchpadMode();
-  const isLocalMode = launchpadMode === "local";
   const isSelfHost = providerId === "self-host";
-  const useOnPremSettings = isLocalMode && isSelfHost;
+  const rawSelfHostMode = machine.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    isSelfHost && (!rawSelfHostMode || rawSelfHostMode === "local")
+      ? "local"
+      : rawSelfHostMode;
+  const useOnPremSettings = isSelfHost && effectiveSelfHostMode === "local";
   const publicIp = opts.publicIpOverride ?? runtime?.public_ip ?? "";
   if (!publicIp && !useOnPremSettings) {
     throw new Error("bootstrap requires public_ip");
@@ -323,7 +323,9 @@ export async function buildBootstrapScripts(
     throw new Error("project tools URL could not be resolved");
   }
 
-  const localConfig = isLocalMode ? getLaunchpadLocalConfig("local") : undefined;
+  const localConfig = useOnPremSettings
+    ? getLaunchpadLocalConfig("local")
+    : undefined;
   const localConat =
     localConfig?.http_port
       ? `http://127.0.0.1:${localConfig.http_port}`
@@ -338,12 +340,13 @@ export async function buildBootstrapScripts(
     throw new Error("MASTER_CONAT_SERVER is not configured");
   }
 
-  const tunnel =
-    opts.tunnel ??
-    (await ensureCloudflareTunnelForHost({
-      host_id: row.id,
-      existing: metadata.cloudflare_tunnel,
-    }));
+  const tunnel = useOnPremSettings
+    ? undefined
+    : opts.tunnel ??
+      (await ensureCloudflareTunnelForHost({
+        host_id: row.id,
+        existing: metadata.cloudflare_tunnel,
+      }));
   const tunnelEnabled = !!tunnel;
 
   const spec = await buildHostSpec(row);
@@ -421,6 +424,9 @@ export async function buildBootstrapScripts(
     `DEBUG_CONSOLE=yes`,
     `COCALC_SSH_SERVER=0.0.0.0:${sshPort}`,
   ];
+  if (isSelfHost) {
+    envLines.push(`COCALC_SELF_HOST_MODE=${effectiveSelfHostMode ?? "local"}`);
+  }
   if (tlsEnabled) {
     envLines.push(`COCALC_PROJECT_HOST_HTTPS_HOSTNAME=${tlsHostname}`);
   }
@@ -1123,16 +1129,19 @@ report_status "done"
 }
 
 export async function buildCloudInitStartupScript(
-  _row: ProjectHostRow,
+  row: ProjectHostRow,
   token: string,
   baseUrl: string,
   caCert?: string,
 ): Promise<string> {
-  const launchpadMode = await getLaunchpadMode();
-  const localMode = launchpadMode === "local";
   let bootstrapBase = baseUrl;
   let tunnelScript = "";
-  if (localMode) {
+  const machine: HostMachine = row.metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const isSelfHostLocal =
+    machine?.cloud === "self-host" &&
+    (!selfHostMode || selfHostMode === "local");
+  if (isSelfHostLocal) {
     const localConfig = getLaunchpadLocalConfig("local");
     const httpPort = localConfig.http_port ?? localConfig.https_port ?? 9200;
     const sshHost =

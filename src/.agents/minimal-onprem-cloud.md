@@ -2,37 +2,43 @@
 
 ## Goal
 
-Provide a clean, minimal set of modes with max simplicity:
+Provide a clean, minimal set of host types with max simplicity:
 
 - CoCalc Plus (single project, sqlite, local)
-- Launchpad Cloud Mode (Cloudflare + bucket)
-- Launchpad Local Network Mode (all data local, hub‑centric routing)
+- Launchpad host types (self‑hosted local, self‑hosted Cloudflare, cloud provider)
 
 Key requirement: no mixed modes and no confusing legacy options.
 
-## Target Modes (User-Facing)
+## Project Host Types (User-Facing)
 
 ### CoCalc Plus
 
 - Single project + frontend + sqlite
 - No cloud services or launchpad services
 
-### Launchpad Cloud Mode
+### Self hosted (Local Network)
 
-- Hub and all VM hosts only listen on localhost behind firewall
-- All routing/DNS/HTTPS via Cloudflare tunnels
-- All non-disk data stored in remote S3-style bucket
-- No public IPs exposed
-- All traffic flows through Cloudflare
+- Multipass or manual VM
+- Local SSH reverse tunnel to hub
+- Local rustic via SSH/SFTP repo
 
-### Launchpad Local Network Mode
+### Self hosted (Cloudflare Tunnel)
 
-- All data stays local
-- Hub acts as the sole entry point
-- VM hosts connect back to hub via SSH reverse tunnel
-- Hub proxies HTTP/WSS to hosts
-- Rustic uses SFTP to a local repo next to hub
-- Optional custom TLS cert; otherwise auto self-signed
+- Multipass or manual VM
+- Cloudflare tunnel for hub + host routing
+- Cloud S3-compatible bucket
+
+### Cloud providers (GCP/Nebius/Lambda/Hyperstack)
+
+- Cloudflare tunnel for hub + host routing
+- Cloud S3-compatible bucket
+
+### Capability unlocking
+
+- Cloudflare credentials unlock the Cloudflare host types.
+- Cloud provider credentials unlock provider-specific host types.
+- The hub starts Cloudflare tunnels whenever configured (even if no hosts use them),
+  since users may connect through the tunnel.
 
 ## Product + Mode Matrix (Rocket Alignment)
 
@@ -136,16 +142,17 @@ of truth.
 ### Required (minimal)
 
 - COCALC_PRODUCT=plus|launchpad|rocket (default: plus)
-- COCALC_DEPLOYMENT_MODE=cloud|local (launchpad + rocket)
 - COCALC_ROCKET_CONTROL_PLANE=single|multi (only when product=rocket)
 - COCALC_DATA_DIR (default: ~/.local/share/cocalc/launchpad)
 - COCALC_BASE_PORT (default: 9200)
 
+Note: Launchpad should not require a global deployment mode. Host type selection
+and configured capabilities (Cloudflare, providers) determine behavior. Rocket
+may still expose explicit deployment modes.
+
 ### Optional (local network)
 
 - COCALC_PUBLIC_HOST (bootstrap URL + connector)
-- COCALC_TLS_CERT / COCALC_TLS_KEY (if unset, auto self-signed)
-- COCALC_CONNECTOR_INSECURE=1 (only with self-signed)
 
 ### Optional (cloud)
 
@@ -191,6 +198,24 @@ sshd config highlights (user-mode safe):
 
 ## Host Tunnel Mapping
 
+- Host metadata includes `self_host_mode` for `machine.cloud="self-host"`.
+  - `local` => use SSH reverse tunnel + local rustic repo.
+  - `cloudflare` => use Cloudflare tunnel + S3 bucket.
+
+## Plan: Remove Global Modes (Host-Type Driven)
+
+- [x] Add `self_host_mode` to self-host creation UI (local vs cloudflare).
+- [x] Gate self-host “cloudflare” option on Cloudflare configuration.
+- [x] Persist `self_host_mode` in `machine.metadata` on host create.
+- [ ] Bootstrap host based on `self_host_mode` (local done; cloudflare pending):
+  - [x] local => emit SSH tunnel bootstrap vars + local rustic config.
+  - [ ] cloudflare => emit cloudflared setup + bucket config.
+- [x] Routing uses host metadata (no global “launchpad mode”):
+  - [x] project-host conat routes use local tunnel only for local self-host.
+  - [x] project-host HTTP proxy uses tunnel only for local self-host.
+- [x] Start sshd whenever at least one self-host `local` host exists.
+- [x] Remove launchpad mode gates in self-host pairing and tunnel registration.
+- [x] Update logs + docs to reflect host-type driven behavior.
 Hub assigns two ports per host:
 
 - one for HTTP/WS proxy traffic
@@ -210,6 +235,25 @@ Hub assigns two ports per host:
 - No per-project repo needed
 
 ## Implementation Plan
+
+### A) Eliminate hub modes → host-type driven behavior
+
+- [x] Introduce `self_host_mode` on self-hosted hosts (`local` | `cloudflare`).
+- [x] Update host creation UI:
+  - Self hosted (Local Network) sets `self_host_mode=local`.
+  - Self hosted (Cloudflare) sets `self_host_mode=cloudflare`.
+  - Only show Cloudflare option once Cloudflare is configured.
+- [x] Persist `self_host_mode` in `project_hosts.metadata.machine.metadata`.
+- [x] Remove Launchpad “mode” checks from self-host endpoints:
+  - `self-host` pairing/token endpoints should allow either local or cloudflare.
+  - Local-only SSH pairing should be gated by `self_host_mode=local`.
+- [ ] Bootstrap logic uses `self_host_mode` (local done; cloudflare pending):
+  - [x] `local` → SSH tunnel bootstrap URL + local rustic.
+  - [ ] `cloudflare` → Cloudflare URL + bucket.
+- [x] Project-host runtime uses `self_host_mode`:
+  - Start on-prem tunnel + SFTP only when `self_host_mode=local`.
+  - Skip on-prem tunnel/SFTP when `self_host_mode=cloudflare`.
+- [x] Update routing/proxy resolution to derive from host type (not hub mode).
 
 ### 0) Unify config surface (done)
 
@@ -271,10 +315,10 @@ Hub assigns two ports per host:
   - assigned reverse port
   - SFTP credentials
 - Use a single join token: host fetches all connection details from hub
-  (minimizes admin input).
+  (minimizes admin input). (local done; cloudflare pending)
 - If changing ports is too complex, require explicit config at first bootstrap.
 
-### 6.1) SSH Pairing (done, manual key for now)
+### 6.1) SSH Pairing (done)
 
 - Add an ssh-only pairing path:
   - `pair-ssh` runs `ssh` to hub sshd and streams JSON payload to a forced
@@ -282,8 +326,8 @@ Hub assigns two ports per host:
   - Connector writes an ssh tunnel config and forwards
     `https://127.0.0.1:<local>` to `127.0.0.1:<hub_https_port>`.
 - Auth:
-  - Hub uses `AuthorizedKeysCommand` to validate a key derived from the pairing
-    token (no preloaded key list).
+  - Hub writes authorized_keys entries for token-derived keys (no
+    AuthorizedKeysCommand or preloaded key list).
   - Connector derives the same key from the token and uses it for SSH pairing.
 
 ### 7) Health & Diagnostics (pending)

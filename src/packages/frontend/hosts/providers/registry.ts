@@ -20,6 +20,7 @@ export type HostFieldId =
   | "zone"
   | "machine_type"
   | "gpu_type"
+  | "self_host_mode"
   | "size"
   | "gpu";
 
@@ -28,6 +29,7 @@ export const HOST_FIELDS: HostFieldId[] = [
   "zone",
   "machine_type",
   "gpu_type",
+  "self_host_mode",
   "size",
   "gpu",
 ];
@@ -113,6 +115,7 @@ export type ProviderSelection = {
   zone?: string;
   machine_type?: string;
   gpu_type?: string;
+  self_host_mode?: string;
   size?: string;
   gpu?: string;
 };
@@ -253,6 +256,13 @@ type SelfHostConnector = {
   last_seen?: string;
 };
 
+type SelfHostMode = "local" | "cloudflare";
+
+const SELF_HOST_MODE_LABELS: Record<SelfHostMode, string> = {
+  local: "Local network (SSH tunnel)",
+  cloudflare: "Cloudflare tunnel",
+};
+
 const formatConnectorLabel = (connector: SelfHostConnector) =>
   connector.name || connector.id;
 
@@ -280,6 +290,21 @@ export const getSelfHostConnectors = (
     "connectors",
     "account",
   ) ?? [];
+
+export const getSelfHostModeOptions = (
+  catalog?: HostCatalog,
+): HostFieldOption[] => {
+  const modes =
+    getCatalogEntryPayload<SelfHostMode[]>(
+      catalog,
+      "self_host_modes",
+      "account",
+    ) ?? ["local"];
+  return modes.map((mode) => ({
+    value: mode,
+    label: SELF_HOST_MODE_LABELS[mode] ?? mode,
+  }));
+};
 
 const shouldIncludeField = (
   field: HostFieldId,
@@ -1653,15 +1678,21 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       genericGpu: false,
     },
     fields: {
-      primary: [],
+      primary: ["self_host_mode"],
       advanced: [],
       labels: {
         size: "Size",
+        self_host_mode: "Connectivity",
+      },
+      tooltips: {
+        self_host_mode:
+          "Local network uses SSH tunnels to the hub; Cloudflare uses cloudflared + S3.",
       },
     },
     storage: { supported: true, growable: false },
-    getOptions: () => ({
+    getOptions: (catalog) => ({
       ...emptyOptions(),
+      self_host_mode: getSelfHostModeOptions(catalog),
     }),
     buildCreatePayload: (vals, _ctx) => {
       const cpu = Number(vals.cpu);
@@ -1669,6 +1700,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       const metadata: Record<string, any> = {};
       if (Number.isFinite(cpu) && cpu > 0) metadata.cpu = cpu;
       if (Number.isFinite(ram_gb) && ram_gb > 0) metadata.ram_gb = ram_gb;
+      if (vals.self_host_mode) metadata.self_host_mode = vals.self_host_mode;
       const storage_mode = vals.storage_mode || "persistent";
       return {
         name: vals.name ?? "My Host",

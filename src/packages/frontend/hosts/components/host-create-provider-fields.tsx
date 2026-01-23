@@ -111,7 +111,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
     watchedZone,
   ]);
   const ensureFieldValue = React.useCallback(
-    (field: "region" | "zone" | "machine_type" | "size" | "gpu_type", current?: string) => {
+    (field: HostFieldId, current?: string) => {
       const fieldOptions = options[field] ?? [];
       if (!fieldOptions.length) return;
       if (!current || !fieldOptions.some((opt) => opt.value === current)) {
@@ -140,6 +140,10 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   React.useEffect(() => {
     ensureFieldValue("gpu_type", watchedGpuType);
   }, [ensureFieldValue, watchedGpuType]);
+
+  React.useEffect(() => {
+    ensureFieldValue("self_host_mode", form.getFieldValue("self_host_mode"));
+  }, [ensureFieldValue, form]);
   const renderField = (field: HostFieldId) => {
     const fieldOptions = options[field] ?? [];
     const label =

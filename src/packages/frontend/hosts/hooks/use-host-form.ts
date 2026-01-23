@@ -26,6 +26,7 @@ type UseHostFormArgs = {
   selectedZone?: string;
   selectedMachineType?: string;
   selectedGpuType?: string;
+  selectedSelfHostMode?: string;
   selectedSize?: string;
   selectedGpu?: string;
   selectedStorageMode?: string;
@@ -37,6 +38,7 @@ const FIELD_LABELS: Record<HostFieldId, string> = {
   zone: "Zone",
   machine_type: "Machine type",
   gpu_type: "GPU",
+  self_host_mode: "Connectivity",
   size: "Size",
   gpu: "GPU",
 };
@@ -55,6 +57,7 @@ export const useHostForm = ({
   selectedZone,
   selectedMachineType,
   selectedGpuType,
+  selectedSelfHostMode,
   selectedSize,
   selectedGpu,
   selectedStorageMode,
@@ -80,6 +83,7 @@ export const useHostForm = ({
       zone: selectedZone,
       machine_type: selectedMachineType,
       gpu_type: selectedGpuType,
+      self_host_mode: selectedSelfHostMode,
       size: selectedSize,
       gpu: selectedGpu,
     }),
@@ -88,6 +92,7 @@ export const useHostForm = ({
       selectedZone,
       selectedMachineType,
       selectedGpuType,
+      selectedSelfHostMode,
       selectedSize,
       selectedGpu,
     ],
@@ -181,6 +186,7 @@ export const useHostForm = ({
       zone: selectedZone,
       machine_type: selectedMachineType,
       gpu_type: selectedGpuType,
+      self_host_mode: selectedSelfHostMode,
       size: selectedSize,
       gpu: selectedGpu,
     };

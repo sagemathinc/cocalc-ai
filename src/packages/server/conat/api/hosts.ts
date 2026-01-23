@@ -63,7 +63,6 @@ import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
-import { requireLaunchpadModeSelected } from "@cocalc/server/launchpad/mode";
 function pool() {
   return getPool();
 }
@@ -731,6 +730,10 @@ export async function getCatalog({
       name: row.name ?? undefined,
       last_seen: row.last_seen ? row.last_seen.toISOString() : undefined,
     }));
+    const modes = ["local"];
+    if (await hasCloudflareTunnel()) {
+      modes.push("cloudflare");
+    }
     return {
       provider: cloud,
       entries: [
@@ -738,6 +741,11 @@ export async function getCatalog({
           kind: "connectors",
           scope: "account",
           payload: connectors,
+        },
+        {
+          kind: "self_host_modes",
+          scope: "account",
+          payload: modes,
         },
       ],
       provider_capabilities: Object.fromEntries(
@@ -838,7 +846,6 @@ export async function createHost({
   gpu?: boolean;
   machine?: Host["machine"];
 }): Promise<Host> {
-  await requireLaunchpadModeSelected();
   const owner = requireAccount(account_id);
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
@@ -847,6 +854,19 @@ export async function createHost({
   const machineCloud = normalizeProviderId(machine?.cloud);
   const isSelfHost = machineCloud === "self-host";
   const initialStatus = machineCloud && !isSelfHost ? "starting" : "off";
+  const rawSelfHostMode = machine?.metadata?.self_host_mode;
+  const selfHostMode =
+    rawSelfHostMode === "cloudflare" || rawSelfHostMode === "local"
+      ? rawSelfHostMode
+      : undefined;
+  if (isSelfHost && rawSelfHostMode && !selfHostMode) {
+    throw new Error(`invalid self_host_mode '${rawSelfHostMode}'`);
+  }
+  if (isSelfHost && selfHostMode === "cloudflare") {
+    if (!(await hasCloudflareTunnel())) {
+      throw new Error("cloudflare tunnel is not configured");
+    }
+  }
   let resolvedRegion = region;
   let connectorId: string | undefined;
   if (isSelfHost) {
@@ -867,6 +887,7 @@ export async function createHost({
           metadata: {
             ...(machine?.metadata ?? {}),
             connector_id: connectorId,
+            ...(selfHostMode ? { self_host_mode: selfHostMode } : {}),
           },
         }
       : {}),
@@ -925,7 +946,6 @@ async function createHostLro({
   input: any;
   dedupe_key?: string;
 }): Promise<HostLroResponse> {
-  await requireLaunchpadModeSelected();
   const op = await createLro({
     kind,
     scope_type: "host",

@@ -18,7 +18,7 @@ import {
   pgConcurrentWarn as DEFAULT_DB_CONCURRENT_WARN,
   hubHostname as DEFAULT_HUB_HOSTNAME,
   agentPort as DEFAULT_AGENT_PORT,
-  setConatServer,
+  conatServer,
 } from "@cocalc/backend/data";
 import { trimLogFileSize } from "@cocalc/backend/logger";
 import port from "@cocalc/backend/port";
@@ -36,10 +36,8 @@ import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
 import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
-import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import {
   getCocalcProduct,
-  getLaunchpadMode,
   isLaunchpadProduct,
   isRocketProduct,
 } from "@cocalc/server/launchpad/mode";
@@ -114,20 +112,13 @@ async function initMetrics() {
 }
 
 async function maybeInitOnPremTls(): Promise<void> {
-  const launchpadMode = await getLaunchpadMode();
-  const localMode =
-    (isLaunchpadProduct() || isRocketProduct()) && launchpadMode === "local";
-  if (!localMode) {
+  if (!isLaunchpadProduct() && !isRocketProduct()) {
     return;
   }
   if (!process.env.CONAT_SERVER) {
-    try {
-      const { baseUrl } = await resolveLaunchpadBootstrapUrl();
-      setConatServer(baseUrl);
-      logger.info("local network conat server resolved", { address: baseUrl });
-    } catch (err) {
-      logger.warn("local network conat server resolution failed", { err });
-    }
+    logger.info("local network conat server using default", {
+      address: conatServer,
+    });
   } else {
     logger.info("local network conat server using explicit CONAT_SERVER", {
       address: process.env.CONAT_SERVER,

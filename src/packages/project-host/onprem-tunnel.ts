@@ -63,6 +63,10 @@ function resolveDataDir(): string {
   return process.env.COCALC_DATA ?? process.env.DATA ?? "/btrfs/data";
 }
 
+function isLocalSelfHost(): boolean {
+  return (process.env.COCALC_SELF_HOST_MODE ?? "").toLowerCase() === "local";
+}
+
 function parsePort(raw?: string): number | undefined {
   if (!raw) return undefined;
   const parsed = Number.parseInt(raw, 10);
@@ -280,6 +284,10 @@ async function registerTunnelConfig(opts: {
 export async function startOnPremTunnel(opts: {
   localHttpPort: number;
 }): Promise<() => void> {
+  if (!isLocalSelfHost()) {
+    logger.debug("onprem tunnel disabled (self_host_mode != local)");
+    return () => {};
+  }
   const keyPath = resolveKeyPath();
   const configPath = resolveConfigPath();
   const envConfig = resolveTunnelConfigFromEnv();

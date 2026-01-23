@@ -14,7 +14,6 @@ import { pairSelfHostConnector } from "@cocalc/server/self-host/pair";
 import getAccount from "@cocalc/server/auth/get-account";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { enqueueCloudVmWorkOnce } from "@cocalc/server/cloud/db";
-import { getLaunchpadMode } from "@cocalc/server/launchpad/mode";
 
 const logger = getLogger("hub:servers:app:self-host-connector");
 
@@ -76,22 +75,9 @@ async function maybeAutoStartHost(connector: {
 
 export default function init(router: Router) {
   const jsonParser = express.json({ limit: "256kb" });
-  const ensureLocal = async (
-    res: express.Response,
-  ): Promise<"local" | null> => {
-    const mode = await getLaunchpadMode();
-    if (mode !== "local") {
-      res.status(409).send(`launchpad mode is '${mode}'`);
-      return null;
-    }
-    return mode;
-  };
 
   router.post("/self-host/pairing-token", jsonParser, async (req, res) => {
     try {
-      if (!(await ensureLocal(res))) {
-        return;
-      }
       const account_id = await getAccount(req);
       if (!account_id) {
         res.status(401).send("user must be signed in");
@@ -228,9 +214,6 @@ export default function init(router: Router) {
 
   router.post("/self-host/pair", jsonParser, async (req, res) => {
     try {
-      if (!(await ensureLocal(res))) {
-        return;
-      }
       const pairingToken = String(req.body?.pairing_token ?? "");
       if (!pairingToken) {
         res.status(400).send("missing pairing token");
@@ -257,9 +240,6 @@ export default function init(router: Router) {
 
   router.get("/self-host/next", async (req, res) => {
     try {
-      if (!(await ensureLocal(res))) {
-        return;
-      }
       const token = extractToken(req);
       if (!token) {
         res.status(401).send("missing connector token");
@@ -305,9 +285,6 @@ export default function init(router: Router) {
 
   router.post("/self-host/commands", jsonParser, async (req, res) => {
     try {
-      if (!(await ensureLocal(res))) {
-        return;
-      }
       const account_id = await getAccount(req);
       if (!account_id) {
         res.status(401).send("user must be signed in");
@@ -362,9 +339,6 @@ export default function init(router: Router) {
 
   router.post("/self-host/ack", jsonParser, async (req, res) => {
     try {
-      if (!(await ensureLocal(res))) {
-        return;
-      }
       const token = extractToken(req);
       if (!token) {
         res.status(401).send("missing connector token");

@@ -3,7 +3,6 @@ import getLogger from "../logger";
 import { parseReq } from "./parse";
 import getPool from "@cocalc/database/pool";
 import LRU from "lru-cache";
-import { getLaunchpadMode, isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
 
 const logger = getLogger("proxy:project-host");
 
@@ -62,15 +61,18 @@ export async function createProjectHostProxyHandlers() {
 
   async function targetForProject(project_id: string): Promise<string> {
     const host = await getHost(project_id);
-    if (isLaunchpadProduct()) {
-      const mode = await getLaunchpadMode();
-      if (mode === "local") {
-        const tunnelPort = host.metadata?.self_host?.http_tunnel_port;
-        if (!tunnelPort) {
-          throw new Error(`local tunnel port missing for project ${project_id}`);
-        }
-        return `http://127.0.0.1:${tunnelPort}`;
+    const machine = host.metadata?.machine ?? {};
+    const selfHostMode = machine?.metadata?.self_host_mode;
+    const effectiveSelfHostMode =
+      machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+    const isLocalSelfHost =
+      machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+    if (isLocalSelfHost) {
+      const tunnelPort = host.metadata?.self_host?.http_tunnel_port;
+      if (!tunnelPort) {
+        throw new Error(`local tunnel port missing for project ${project_id}`);
       }
+      return `http://127.0.0.1:${tunnelPort}`;
     }
     const base = host.internal_url || host.public_url;
     if (!base) {

@@ -57,6 +57,7 @@ import type {
   LroScopeType,
   LroSummary,
 } from "@cocalc/conat/hub/api/lro";
+import type { Map as ImmutableMap } from "immutable";
 
 export interface ConatConnectionStatus {
   state: "connected" | "disconnected";
@@ -184,24 +185,20 @@ export class ConatClient extends EventEmitter {
     // [ ] TODO: need a ttl cache, since otherwise this gets called
     // on literally every packet sent to the project!
     const project_map = redux.getStore("projects")?.get("project_map");
-    const project = project_map?.get(project_id);
-    const host =
-      (project?.get ? project.get("host") : (project as any)?.host) ??
-      undefined;
+    const host = project_map?.getIn([project_id, "host"]) as
+      | ImmutableMap<string, any>
+      | undefined;
     if (!host) {
       // Fallback: no host yet, so stay on the default connection.
       return "";
     }
-    const customize = redux.getStore("customize");
-    const launchpadMode = customize?.get?.("launchpad_mode");
-    if (launchpadMode === "local" && typeof window !== "undefined") {
+    const localProxy = host.get("local_proxy");
+    if (localProxy && typeof window !== "undefined") {
       const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
       return `${window.location.origin}${basePath}/${project_id}`;
     }
-    const public_url = host.get ? host.get("public_url") : host.public_url;
-    const internal_url = host.get
-      ? host.get("internal_url")
-      : host.internal_url;
+    const public_url = host.get("public_url");
+    const internal_url = host.get("internal_url");
     return public_url || internal_url || "";
   }
 

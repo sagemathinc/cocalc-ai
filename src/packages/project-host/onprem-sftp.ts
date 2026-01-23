@@ -32,6 +32,10 @@ function resolveDataDir(): string {
   return process.env.COCALC_DATA ?? process.env.DATA ?? "/btrfs/data";
 }
 
+function isLocalSelfHost(): boolean {
+  return (process.env.COCALC_SELF_HOST_MODE ?? "").toLowerCase() === "local";
+}
+
 function resolveKeyPath(): string {
   return (
     process.env.COCALC_LAUNCHPAD_SFTP_KEY_PATH ??
@@ -138,6 +142,10 @@ async function registerSftpKey(opts: {
 }
 
 export async function ensureOnPremSftpKey(): Promise<void> {
+  if (!isLocalSelfHost()) {
+    logger.debug("onprem sftp disabled (self_host_mode != local)");
+    return;
+  }
   if (ensurePromise) {
     return await ensurePromise;
   }
@@ -153,7 +161,10 @@ export async function ensureOnPremSftpKey(): Promise<void> {
       });
     } catch (err) {
       const message = String(err);
-      if (message.includes("launchpad mode is")) {
+      if (
+        message.includes("self-host mode is not local") ||
+        message.includes("host is not self-hosted")
+      ) {
         logger.debug("onprem sftp registration skipped", { err: message });
         return;
       }

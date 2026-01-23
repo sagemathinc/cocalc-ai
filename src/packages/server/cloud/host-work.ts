@@ -191,7 +191,18 @@ function setRuntimeObservedAt(metadata: any, at: Date): any {
   };
 }
 
+function shouldUseCloudflareTunnel(row: any): boolean {
+  const machine = row?.metadata?.machine ?? {};
+  if (machine?.cloud === "self-host") {
+    return machine?.metadata?.self_host_mode === "cloudflare";
+  }
+  return true;
+}
+
 async function ensureDnsForHost(row: any) {
+  if (!shouldUseCloudflareTunnel(row)) {
+    return;
+  }
   if (await hasCloudflareTunnel()) {
     try {
       const existing = row.metadata?.cloudflare_tunnel;
@@ -811,7 +822,7 @@ async function handleDelete(row: any) {
     const { entry, creds } = await getProviderContext(providerId);
     await entry.provider.deleteHost(runtime, creds);
   }
-  if (await hasCloudflareTunnel()) {
+  if (shouldUseCloudflareTunnel(row) && (await hasCloudflareTunnel())) {
     await deleteCloudflareTunnel({
       host_id: row.id,
       tunnel: row.metadata?.cloudflare_tunnel,

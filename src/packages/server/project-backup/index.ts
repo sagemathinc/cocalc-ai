@@ -4,10 +4,7 @@ import { join } from "path";
 import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import {
-  getLaunchpadMode,
-  getLaunchpadLocalConfig,
-} from "@cocalc/server/launchpad/mode";
+import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -17,6 +14,7 @@ import {
 } from "@cocalc/util/consts";
 import { createBucket, R2BucketInfo } from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
+import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 
 const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
@@ -379,7 +377,8 @@ export async function getBackupConfig({
   }
   const { rows } = await pool().query<{
     region: string | null;
-  }>("SELECT region FROM project_hosts WHERE id=$1 AND deleted IS NULL", [
+    metadata: any;
+  }>("SELECT region, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL", [
     host_id,
   ]);
   if (!rows[0]) {
@@ -388,9 +387,15 @@ export async function getBackupConfig({
 
   await assertHostProjectAccess(host_id, project_id);
 
-  const launchpadMode = await getLaunchpadMode();
-  if (launchpadMode === "local") {
-    const config = getLaunchpadLocalConfig(launchpadMode);
+  const rowMetadata = rows[0]?.metadata ?? {};
+  const machine: HostMachine = rowMetadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isSelfHostLocal =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  if (isSelfHostLocal) {
+    const config = getLaunchpadLocalConfig("local");
     if (!config.sshd_port || !config.sftp_root) {
       return { toml: "", ttl_seconds: 0 };
     }

@@ -5,11 +5,6 @@ import getPool, {
 } from "@cocalc/database/pool";
 import LRU from "lru-cache";
 import { isValidUUID } from "@cocalc/util/misc";
-import {
-  getLaunchpadMode,
-  isLaunchpadProduct,
-  type LaunchpadMode,
-} from "@cocalc/server/launchpad/mode";
 
 const log = getLogger("server:conat:route-project");
 
@@ -22,30 +17,6 @@ const cache = new LRU<string, string>({
 
 const inflight: Partial<Record<string, Promise<void>>> = {};
 let listenerStarted: boolean = false;
-const MODE_TTL_MS = 60_000;
-let cachedLaunchpadMode: { value: LaunchpadMode; at: number } | undefined;
-
-async function getLaunchpadModeCached(): Promise<LaunchpadMode | undefined> {
-  if (!isLaunchpadProduct()) {
-    return undefined;
-  }
-  const now = Date.now();
-  if (
-    cachedLaunchpadMode &&
-    now - cachedLaunchpadMode.at < MODE_TTL_MS
-  ) {
-    return cachedLaunchpadMode.value;
-  }
-  const value = await getLaunchpadMode();
-  cachedLaunchpadMode = { value, at: now };
-  return value;
-}
-
-async function isLocalMode(): Promise<boolean> {
-  const mode = await getLaunchpadModeCached();
-  return mode === "local";
-}
-
 function onPremTunnelAddress(metadata: any): string | undefined {
   const port = metadata?.self_host?.http_tunnel_port;
   if (!port) return undefined;
@@ -93,9 +64,10 @@ async function updateProjectHostSnapshot(
     public_url?: string | null;
     internal_url?: string | null;
     ssh_server?: string | null;
+    local_proxy?: boolean | null;
   },
 ) {
-  const params: Array<string | null | undefined> = [project_id];
+  const params: Array<string | boolean | null | undefined> = [project_id];
   let expr = "coalesce(host, '{}'::jsonb)";
   let idx = 2;
   const fields: Array<[string, string | null | undefined]> = [
@@ -103,9 +75,17 @@ async function updateProjectHostSnapshot(
     ["internal_url", host.internal_url],
     ["ssh_server", host.ssh_server],
   ];
+  const boolFields: Array<[string, boolean | null | undefined]> = [
+    ["local_proxy", host.local_proxy],
+  ];
   for (const [field, value] of fields) {
     if (value === undefined) continue;
     expr = `jsonb_set(${expr}, '{${field}}', to_jsonb($${idx++}::text), true)`;
+    params.push(value);
+  }
+  for (const [field, value] of boolFields) {
+    if (value === undefined) continue;
+    expr = `jsonb_set(${expr}, '{${field}}', to_jsonb($${idx++}::boolean), true)`;
     params.push(value);
   }
   if (idx === 2) return;
@@ -124,7 +104,6 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
   }
   inflight[project_id] = (async () => {
     try {
-      const isLocal = await isLocalMode();
       const { rows } = await getPool().query<{
         host_id: string | null;
         internal_url?: string | null;
@@ -140,10 +119,6 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
         [project_id],
       );
       const row = rows[0];
-      if (!isLocal && (row?.internal_url || row?.public_url)) {
-        cacheHost(project_id, row);
-        return;
-      }
       if (row?.host_id) {
         const { rows: hostRows } = await getPool().query<{
           public_url?: string | null;
@@ -159,7 +134,13 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
           [row.host_id],
         );
         const hostRow = hostRows[0];
-        if (isLocal) {
+        const machine = hostRow?.metadata?.machine ?? {};
+        const selfHostMode = machine?.metadata?.self_host_mode;
+        const effectiveSelfHostMode =
+          machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+        const isLocalSelfHost =
+          machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+        if (isLocalSelfHost) {
           const addr = onPremTunnelAddress(hostRow?.metadata);
           if (!addr) {
             log.debug("local tunnel port missing for project", {
@@ -169,12 +150,28 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
             return;
           }
           cache.set(project_id, addr);
+          await updateProjectHostSnapshot(project_id, {
+            public_url: hostRow?.public_url,
+            internal_url: hostRow?.internal_url,
+            ssh_server: hostRow?.ssh_server,
+            local_proxy: true,
+          });
           return;
         }
         if (hostRow?.public_url || hostRow?.internal_url) {
           cacheHost(project_id, hostRow);
-          await updateProjectHostSnapshot(project_id, hostRow);
+          await updateProjectHostSnapshot(project_id, {
+            public_url: hostRow?.public_url,
+            internal_url: hostRow?.internal_url,
+            ssh_server: hostRow?.ssh_server,
+            local_proxy: false,
+          });
         }
+        return;
+      }
+      if (row?.internal_url || row?.public_url) {
+        cacheHost(project_id, row);
+        return;
       }
     } catch (err) {
       log.debug("fetchHostAddress failed", { project_id, err });
@@ -213,14 +210,10 @@ async function handleNotification(msg: {
   if (msg.channel !== CHANNEL || !msg.payload) return;
   try {
     const payload = JSON.parse(msg.payload);
-    const { project_id, host } = payload;
+    const { project_id } = payload;
     if (!project_id || !isValidUUID(project_id)) return;
-    if (await isLocalMode()) {
-      cache.delete(project_id);
-      void fetchHostAddress(project_id);
-      return;
-    }
-    cacheHost(project_id, host);
+    cache.delete(project_id);
+    void fetchHostAddress(project_id);
   } catch (err) {
     log.debug("handleNotification parse failed", { err, payload: msg.payload });
   }
