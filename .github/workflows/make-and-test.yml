@@ -22,7 +22,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: runner
 
     strategy:
       matrix:
