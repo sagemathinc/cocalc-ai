@@ -60,9 +60,14 @@ export const withReact = <T extends Editor>(editor: T) => {
     const matches: [Path, Key][] = [];
 
     if (op.type === "set_selection") {
+      const stack = new Error().stack;
+      const stackLines = stack
+        ? stack.split("\n").slice(2, 10).map((line) => line.trim())
+        : undefined;
       logSlateDebug("apply:set-selection", {
         op,
         selection: e.selection ?? null,
+        stack: stackLines,
       });
     }
 
