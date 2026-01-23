@@ -46,9 +46,10 @@ function Harness(): React.JSX.Element {
   const [value, setValue] = useState<Descendant[]>(initialValue);
   const valueRef = useRef(value);
 
-  useEffect(() => {
-    valueRef.current = value;
-  }, [value]);
+  const handleChange = useCallback((nextValue: Descendant[]) => {
+    valueRef.current = nextValue;
+    setValue(nextValue);
+  }, []);
 
   useEffect(() => {
     window.__slateTest = {
@@ -59,7 +60,8 @@ function Harness(): React.JSX.Element {
         Transforms.select(editor, range);
       },
       setValue: (nextValue) => {
-        setValue(nextValue);
+        editor.children = nextValue;
+        editor.onChange();
       },
       insertText: (text, autoFormat) => {
         if (autoFormat == null) {
@@ -103,7 +105,7 @@ function Harness(): React.JSX.Element {
   );
 
   return (
-    <Slate editor={editor} value={value} onChange={setValue}>
+    <Slate editor={editor} value={value} onChange={handleChange}>
       <Editable placeholder="Type here..." onKeyDown={onKeyDown} />
     </Slate>
   );

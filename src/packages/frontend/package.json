@@ -152,7 +152,7 @@
     "react-timeago": "^8.2.0",
     "react-virtuoso": "^4.17.0",
     "sanitize-html": "^2.17.0",
-    "slate": "^0.103.0",
+    "slate": "^0.123.0",
     "superb": "^3.0.0",
     "tsd": "^0.22.0",
     "type-fest": "^3.3.0",

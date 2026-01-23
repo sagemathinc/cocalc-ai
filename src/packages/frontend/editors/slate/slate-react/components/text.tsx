@@ -32,7 +32,9 @@ const Text = (props: {
   const key = ReactEditor.findKey(editor, text);
 
   for (let i = 0; i < leaves.length; i++) {
-    const leaf = leaves[i];
+    const entry = leaves[i];
+    const leaf = "leaf" in entry ? entry.leaf : entry;
+    const isEntryLast = entry.position?.isLast ?? i === leaves.length - 1;
     // We need to use a key specifically for each leaf,
     // otherwise when doing incremental search it doesn't
     // properly update (which makes perfect sense).
@@ -40,7 +42,7 @@ const Text = (props: {
 
     children.push(
       <Leaf
-        isLast={isLast && i === leaves.length - 1}
+        isLast={isLast && isEntryLast}
         key={leaf_key.id}
         leaf={leaf}
         text={text}
