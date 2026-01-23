@@ -318,7 +318,7 @@ export const useDOMSelectionChange = ({
       logSlateDebug("dom-selection-change:skip", {
         reason: "state",
         selection: editor.selection ?? null,
-        state: debugState(state),
+        state: debugState(state, editor),
       });
       return;
     }
@@ -327,7 +327,7 @@ export const useDOMSelectionChange = ({
     if (!domSelection) {
       logSlateDebug("dom-selection-change:deselect", {
         selection: editor.selection ?? null,
-        state: debugState(state),
+        state: debugState(state, editor),
       });
       Transforms.deselect(editor);
       return;
@@ -342,10 +342,25 @@ export const useDOMSelectionChange = ({
       });
       return;
     }
-    if (shouldIgnoreSelectionWhileTyping(state, domSelection)) {
+    const { anchorNode, focusNode } = domSelection;
+    const editorElement = EDITOR_TO_ELEMENT.get(editor);
+    if (
+      (editorElement &&
+        (anchorNode === editorElement || focusNode === editorElement)) ||
+      (anchorNode?.nodeType === 1 &&
+        (anchorNode as Element).getAttribute("data-slate-node") === "value") ||
+      (focusNode?.nodeType === 1 &&
+        (focusNode as Element).getAttribute("data-slate-node") === "value")
+    ) {
+      logSlateDebug("dom-selection-change:skip", {
+        reason: "root-node",
+        selection: editor.selection ?? null,
+        domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
+        state: debugState(state, editor),
+      });
       return;
     }
-    const { anchorNode, focusNode } = domSelection;
 
     if (!isSelectable(editor, anchorNode) || !isSelectable(editor, focusNode)) {
       logSlateDebug("dom-selection-change:skip", {

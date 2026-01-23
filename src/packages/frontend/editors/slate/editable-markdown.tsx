@@ -639,6 +639,25 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      !e.altKey &&
+      !e.shiftKey &&
+      (e.key === "a" || e.key === "A")
+    ) {
+      logSlateDebug("key:select-all", {
+        key: e.key,
+        code: e.code,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        repeat: e.repeat,
+        isComposing: e.isComposing,
+        selection: editor.selection ?? null,
+      });
+    }
+
     const handler = getKeyboardHandler(e);
     if (handler != null) {
       const extra = { actions, id, search };
