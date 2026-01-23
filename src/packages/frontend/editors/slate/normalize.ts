@@ -117,6 +117,14 @@ NORMALIZERS.push(function ensureListContainsListItems({ editor, node, path }) {
   }
 });
 
+// Ensure block elements always have at least one text child.
+NORMALIZERS.push(function ensureBlockHasChild({ editor, node, path }) {
+  if (!Element.isElement(node)) return;
+  if (!Editor.isBlock(editor, node)) return;
+  if (node.children.length > 0) return;
+  Transforms.insertNodes(editor, { text: "" }, { at: path.concat(0) });
+});
+
 /*
 Trim *all* whitespace from the beginning of blocks whose first child is Text,
 since markdown doesn't allow for it. (You can use &nbsp; of course.)

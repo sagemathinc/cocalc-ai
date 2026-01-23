@@ -1,5 +1,5 @@
 import React, { useCallback, useRef } from "react";
-import { Editor, Range, Element, Ancestor, Descendant } from "slate";
+import { Editor, Range, Element, Ancestor, Descendant, Path } from "slate";
 
 import ElementComponent from "./element";
 import TextComponent from "./text";
@@ -10,7 +10,7 @@ import { NODE_TO_INDEX, NODE_TO_PARENT } from "../utils/weak-maps";
 import { RenderElementProps, RenderLeafProps } from "./editable";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { shallowCompare } from "@cocalc/util/misc";
-import { SlateEditor } from "../../editable-markdown";
+import type { SlateEditor } from "../../editable-markdown";
 
 export interface WindowingParams {
   rowStyle?: React.CSSProperties;
@@ -63,6 +63,8 @@ const Children: React.FC<Props> = React.memo(
       Element.isElement(node) &&
       !editor.isInline(node) &&
       Editor.hasInlines(editor, node);
+    const selectionInfo = getSelectionInfo(selection, path);
+    const hasDecorations = decorations.length > 0;
 
     const renderChild = ({ index }: { index: number }) => {
       //console.log("renderChild", index, JSON.stringify(selection));
@@ -83,6 +85,10 @@ const Children: React.FC<Props> = React.memo(
         }
       }
 
+      const n = node.children[index] as Descendant;
+      NODE_TO_INDEX.set(n, index);
+      NODE_TO_PARENT.set(n, node);
+
       if (hiddenChildren?.has(index)) {
         // TRICK: We use a small positive height since a height of 0 gets ignored, as it often
         // appears when scrolling and allowing that breaks everything (for now!).
@@ -93,30 +99,57 @@ const Children: React.FC<Props> = React.memo(
           />
         );
       }
-      const n = node.children[index] as Descendant;
       const key = ReactEditor.findKey(editor, n);
-      let ds, range;
-      if (path != null) {
-        const p = path.concat(index);
+      const p = path.concat(index);
+      let range: Range | null = null;
+      const needsRangeForSelection =
+        selection != null &&
+        (!selectionInfo ||
+          (!selectionInfo.isCollapsed &&
+            (index === selectionInfo.startIndex ||
+              index === selectionInfo.endIndex)));
+      if (hasDecorations || needsRangeForSelection) {
         try {
           // I had the following crash once when pasting, then undoing in production:
           range = Editor.range(editor, p);
         } catch (_) {
           range = null;
         }
-        if (range != null) {
-          ds = decorate([n, p]);
-          for (const dec of decorations) {
-            const d = Range.intersection(dec, range);
+      }
+      const ds = decorate([n, p]);
+      if (range != null && hasDecorations) {
+        for (const dec of decorations) {
+          const d = Range.intersection(dec, range);
 
-            if (d) {
-              ds.push(d);
-            }
+          if (d) {
+            ds.push(d);
           }
         }
-      } else {
-        ds = [];
-        range = null;
+      }
+
+      let selectionForChild: Range | null = null;
+      if (selection != null) {
+        if (selectionInfo) {
+          if (selectionInfo.isCollapsed) {
+            if (index === selectionInfo.anchorIndex) {
+              selectionForChild = selection;
+            }
+          } else if (
+            index >= selectionInfo.startIndex &&
+            index <= selectionInfo.endIndex
+          ) {
+            if (
+              index > selectionInfo.startIndex &&
+              index < selectionInfo.endIndex
+            ) {
+              selectionForChild = selection;
+            } else if (range != null) {
+              selectionForChild = Range.intersection(range, selection);
+            }
+          }
+        } else if (range != null) {
+          selectionForChild = Range.intersection(range, selection);
+        }
       }
 
       if (Element.isElement(n)) {
@@ -127,9 +160,7 @@ const Children: React.FC<Props> = React.memo(
             key={key.id}
             renderElement={renderElement}
             renderLeaf={renderLeaf}
-            selection={
-              selection && range && Range.intersection(range, selection)
-            }
+            selection={selectionForChild}
           />
         );
         if (marginTop || marginBottom) {
@@ -150,12 +181,6 @@ const Children: React.FC<Props> = React.memo(
         );
       }
     };
-
-    for (let i = 0; i < node.children.length; i++) {
-      const n = node.children[i];
-      NODE_TO_INDEX.set(n, i);
-      NODE_TO_PARENT.set(n, node);
-    }
 
     const virtuosoRef = useRef<VirtuosoHandle>(null);
     const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -235,6 +260,47 @@ const Children: React.FC<Props> = React.memo(
 );
 
 export default Children;
+
+type SelectionInfo = {
+  anchorIndex: number;
+  focusIndex: number;
+  startIndex: number;
+  endIndex: number;
+  isCollapsed: boolean;
+};
+
+function getSelectionInfo(
+  selection: Range | null,
+  path: Path | null,
+): SelectionInfo | null {
+  if (selection == null || path == null) return null;
+  if (
+    !isPathPrefix(path, selection.anchor.path) ||
+    !isPathPrefix(path, selection.focus.path)
+  ) {
+    return null;
+  }
+  const anchorIndex = selection.anchor.path[path.length];
+  const focusIndex = selection.focus.path[path.length];
+  if (anchorIndex == null || focusIndex == null) {
+    return null;
+  }
+  return {
+    anchorIndex,
+    focusIndex,
+    startIndex: Math.min(anchorIndex, focusIndex),
+    endIndex: Math.max(anchorIndex, focusIndex),
+    isCollapsed: Range.isCollapsed(selection),
+  };
+}
+
+function isPathPrefix(prefix: Path, target: Path): boolean {
+  if (prefix.length > target.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (prefix[i] !== target[i]) return false;
+  }
+  return true;
+}
 
 /*
 function getCursorY(): number | null {

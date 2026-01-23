@@ -39,10 +39,12 @@ export function handleNoChildren({ token, state, cache }) {
   } else {
     // everything else -- via our element plugin mechanism.
     const markdownToSlate = getMarkdownToSlate(token.type);
+    const children =
+      token.type === "blank_line" ? [{ text: "" }] : DEFAULT_CHILDREN;
     const node = markdownToSlate({
       type: token.type,
       token,
-      children: DEFAULT_CHILDREN,
+      children,
       state,
       isEmpty: false,
     });
