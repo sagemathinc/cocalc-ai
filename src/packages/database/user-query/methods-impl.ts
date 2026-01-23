@@ -1646,35 +1646,6 @@ export async function _user_set_query_project_change_before(
     });
     return;
   }
-
-  if (new_val.users == null) {
-    // not changing users
-    cb();
-    return;
-  }
-  old_val =
-    (old_val != null ? old_val.users : undefined) != null
-      ? old_val != null
-        ? old_val.users
-        : undefined
-      : {};
-  new_val =
-    (new_val != null ? new_val.users : undefined) != null
-      ? new_val != null
-        ? new_val.users
-        : undefined
-      : {};
-  for (var id of misc.keys(old_val).concat(new_val as any)) {
-    if (account_id !== id) {
-      // make sure user doesn't change anybody else's allocation
-      if (!lodash.isEqual(old_val?.[id]?.upgrades, new_val?.[id]?.upgrades)) {
-        err = `FATAL: user '${account_id}' tried to change user '${id}' allocation toward a project`;
-        dbg(err);
-        cb(err);
-        return;
-      }
-    }
-  }
   return cb();
 }
 
@@ -1695,33 +1666,7 @@ export async function _user_set_query_project_change_after(
     )} --> ${misc.to_json(new_val)}`,
   );
   dbg();
-  const old_upgrades = old_val.users?.[account_id]?.upgrades;
-  const new_upgrades = new_val.users?.[account_id]?.upgrades;
-  if (new_upgrades != null && !lodash.isEqual(old_upgrades, new_upgrades)) {
-    dbg(
-      `upgrades changed for ${account_id} from ${misc.to_json(
-        old_upgrades,
-      )} to ${misc.to_json(new_upgrades)}`,
-    );
-    let project: ProjectControl | undefined;
-    try {
-      if (this.projectControl != null) {
-        dbg("get project");
-        project = await this.projectControl(new_val.project_id);
-      }
-      if (project != null) {
-        dbg("determine total quotas and apply");
-        if (project.setAllQuotas != null) {
-          await project.setAllQuotas();
-        }
-      }
-      return cb();
-    } catch (err) {
-      return cb(err);
-    }
-  } else {
-    return cb();
-  }
+  return cb();
 }
 
 /*

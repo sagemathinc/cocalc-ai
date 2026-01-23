@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2025-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -249,21 +249,17 @@ describe("statistics methods", () => {
       await pool.query("DELETE FROM projects WHERE course IS NOT NULL");
 
       const projectId = uuid();
-      const accountId = uuid();
       const now = new Date();
 
-      // Insert project with course.pay = false but member_host upgrade
+      // Insert project with course.pay = false but member_host setting
       await pool.query(
-        "INSERT INTO projects (project_id, title, course, last_edited, users, settings) VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO projects (project_id, title, course, last_edited, settings) VALUES ($1, $2, $3, $4, $5)",
         [
           projectId,
           "Test Course Prof Pay",
           JSON.stringify({ pay: false }),
           now,
-          JSON.stringify({
-            [accountId]: { upgrades: { member_host: true } },
-          }),
-          JSON.stringify({}),
+          JSON.stringify({ member_host: true }),
         ],
       );
 
@@ -378,17 +374,14 @@ describe("statistics methods", () => {
       }
 
       // Add 1 prof pay project
-      const accountId = uuid();
       await pool.query(
-        "INSERT INTO projects (project_id, title, course, last_edited, users) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO projects (project_id, title, course, last_edited, settings) VALUES ($1, $2, $3, $4, $5)",
         [
           uuid(),
           "Prof Pay",
           JSON.stringify({ pay: false }),
           now,
-          JSON.stringify({
-            [accountId]: { upgrades: { member_host: true } },
-          }),
+          JSON.stringify({ member_host: true }),
         ],
       );
 

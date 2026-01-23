@@ -909,6 +909,23 @@ export interface PostgreSQLMethods extends EventEmitter {
     cb?: CB;
   });
 
+  membershipTiers(
+    options: { delete?: boolean }[],
+    query: {
+      id: string;
+      label?: string;
+      store_visible?: boolean;
+      priority?: number;
+      price_monthly?: number;
+      price_yearly?: number;
+      project_defaults?: unknown;
+      llm_limits?: unknown;
+      features?: unknown;
+      disabled?: boolean;
+      notes?: string;
+    },
+  ): Promise<unknown>;
+
   webapp_error(opts: Record<string, unknown> & { cb?: CB }): void;
 
   set_project_settings(opts: { project_id: string; settings: object; cb?: CB });

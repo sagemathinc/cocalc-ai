@@ -143,6 +143,7 @@ import { calc_stats } from "./postgres/stats/stats";
 import { default as registrationTokens } from "./postgres/account/registration-tokens";
 import { default as centralLog } from "./postgres/central-log";
 import { updateUnreadMessageCount } from "./postgres/changefeed/messages";
+import membershipTiers from "./postgres/membership-tiers";
 
 import {
   get_client_error_log,
@@ -1936,6 +1937,10 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   async registrationTokens(options, query) {
     return await registrationTokens(this, options, query);
+  }
+
+  async membershipTiers(options, query) {
+    return await membershipTiers(this, options, query);
   }
 
   async updateUnreadMessageCount(

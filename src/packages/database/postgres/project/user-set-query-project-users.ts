@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { PROJECT_UPGRADES } from "@cocalc/util/schema";
 import {
   assert_valid_account_id,
   is_object,
@@ -15,7 +14,6 @@ type UserGroup = "owner" | "collaborator";
 type AllowedUserFields = {
   group?: UserGroup;
   hide?: boolean;
-  upgrades?: Record<string, unknown>;
   ssh_keys?: Record<string, Record<string, unknown> | undefined>;
 };
 
@@ -23,7 +21,7 @@ function ensureAllowedKeys(
   user: Record<string, unknown>,
   allowGroupChanges: boolean,
 ): void {
-  const allowed = new Set(["hide", "upgrades", "ssh_keys"]);
+  const allowed = new Set(["hide", "ssh_keys"]);
   for (const key of Object.keys(user)) {
     if (key === "group") {
       if (!allowGroupChanges) {
@@ -37,19 +35,6 @@ function ensureAllowedKeys(
       throw Error(`unknown field '${key}'`);
     }
   }
-}
-
-function sanitizeUpgrades(upgrades: unknown): Record<string, unknown> {
-  if (!is_object(upgrades)) {
-    throw Error("invalid type for field 'upgrades'");
-  }
-  const allowedUpgrades = PROJECT_UPGRADES.params;
-  for (const key of Object.keys(upgrades)) {
-    if (!Object.prototype.hasOwnProperty.call(allowedUpgrades, key)) {
-      throw Error(`invalid upgrades field '${key}'`);
-    }
-  }
-  return upgrades as Record<string, unknown>;
 }
 
 function sanitizeSshKeys(
@@ -83,7 +68,7 @@ function sanitizeSshKeys(
 /**
  * Sanitize and security-check project user mutations submitted via user set query.
  *
- * Only permits modifying the requesting user's own entry (hide/upgrades/ssh_keys).
+ * Only permits modifying the requesting user's own entry (hide/ssh_keys).
  * Collaborator role changes must use dedicated APIs that enforce ownership rules.
  */
 export function sanitizeUserSetQueryProjectUsers(
@@ -135,14 +120,6 @@ export function sanitizeUserSetQueryProjectUsers(
         throw Error("invalid type for field 'hide'");
       }
       entry.hide = (user as any).hide;
-    }
-    if ("upgrades" in user) {
-      if (!isSelf) {
-        throw Error(
-          "users set queries may only change upgrades for the requesting account",
-        );
-      }
-      entry.upgrades = sanitizeUpgrades((user as any).upgrades);
     }
     if ("ssh_keys" in user) {
       if (!isSelf) {

@@ -67,9 +67,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
       (opts) => opts.cb && opts.cb(null, false),
     );
     db.has_public_path = jest.fn((opts) => opts.cb && opts.cb(null, false));
-    db.ensure_user_project_upgrades_are_valid = jest.fn(
-      (opts) => opts.cb && opts.cb(),
-    );
     db.projectControl = jest.fn();
     db.changefeed = jest.fn();
     db.project_and_user_tracker = jest.fn(
@@ -2540,21 +2537,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
         }).toThrow("invalid type for field 'hide'");
       });
 
-      test("should validate upgrades object", () => {
-        expect(() => {
-          db._user_set_query_project_users(
-            {
-              users: {
-                [accountId]: {
-                  upgrades: "not-object",
-                },
-              },
-            },
-            accountId,
-          );
-        }).toThrow("invalid type for field 'upgrades'");
-      });
-
       test("should validate ssh_keys structure", () => {
         expect(() => {
           db._user_set_query_project_users(
@@ -2712,88 +2694,6 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
       test("should exist", () => {
         expect(db._user_set_query_project_change_after).toBeDefined();
       });
-
-      test("should skip when upgrades unchanged", (done) => {
-        const account_id = "12345678-1234-1234-1234-123456789012";
-        const upgrades = { cores: 1, memory: 1000 };
-        const old_val = {
-          project_id: "project-1",
-          users: { [account_id]: { group: "owner", upgrades } },
-        };
-        const new_val = {
-          project_id: "project-1",
-          users: { [account_id]: { group: "owner", upgrades } },
-        };
-
-        db._user_set_query_project_change_after(
-          old_val,
-          new_val,
-          account_id,
-          (err) => {
-            expect(err).toBeUndefined();
-            expect(db.projectControl).not.toHaveBeenCalled();
-            done();
-          },
-        );
-      });
-
-      test("should validate and set quotas when upgrades changed", (done) => {
-        const account_id = "12345678-1234-1234-1234-123456789012";
-        const old_upgrades = { cores: 1, memory: 1000 };
-        const new_upgrades = { cores: 2, memory: 2000 };
-        const old_val = {
-          project_id: "project-1",
-          users: { [account_id]: { group: "owner", upgrades: old_upgrades } },
-        };
-        const new_val = {
-          project_id: "project-1",
-          users: { [account_id]: { group: "owner", upgrades: new_upgrades } },
-        };
-
-        const mockProject = {
-          setAllQuotas: jest.fn().mockResolvedValue(undefined),
-        };
-
-        db.projectControl = jest.fn().mockResolvedValue(mockProject);
-
-        db._user_set_query_project_change_after(
-          old_val,
-          new_val,
-          account_id,
-          (err) => {
-            expect(err).toBeFalsy();
-            expect(db.projectControl).toHaveBeenCalledWith("project-1");
-            expect(mockProject.setAllQuotas).toHaveBeenCalled();
-            done();
-          },
-        );
-      }, 1000);
-
-      test("should handle missing projectControl gracefully", (done) => {
-        const account_id = "12345678-1234-1234-1234-123456789012";
-        const old_upgrades = { cores: 1 };
-        const new_upgrades = { cores: 2 };
-        const old_val = {
-          project_id: "project-1",
-          users: { [account_id]: { upgrades: old_upgrades } },
-        };
-        const new_val = {
-          project_id: "project-1",
-          users: { [account_id]: { upgrades: new_upgrades } },
-        };
-
-        db.projectControl = undefined;
-
-        db._user_set_query_project_change_after(
-          old_val,
-          new_val,
-          account_id,
-          (err) => {
-            expect(err).toBeFalsy();
-            done();
-          },
-        );
-      }, 1000);
     });
 
     describe("_user_set_query_syncstring_change_after", () => {

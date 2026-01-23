@@ -1,10 +1,9 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2025-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
 import { account_exists } from "./basic";
-import syncCustomer from "../stripe/sync-customer";
 import type { PostgreSQL } from "../types";
 
 interface ChangeEmailAddressOptions {
@@ -17,7 +16,6 @@ interface ChangeEmailAddressOptions {
  * Change the email address for an account.
  *
  * Throws "email_already_taken" error (string) if the email is already in use.
- * Calls Stripe sync if account has stripe_customer_id.
  *
  * NOTE: Matches CoffeeScript behavior but fixes bug where undefined account
  * would crash when accessing stripe_customer_id.
@@ -48,22 +46,4 @@ export async function changeEmailAddress(
     set: { email_address: opts.email_address },
     where: { "account_id = $::UUID": opts.account_id },
   });
-
-  // Step 3: Sync with Stripe if customer exists
-  const result = await db.async_query({
-    query: "SELECT stripe_customer_id FROM accounts",
-    where: { "account_id = $::UUID": opts.account_id },
-  });
-
-  const row = result.rows?.[0];
-
-  // FIX: Check if row exists before accessing stripe_customer_id
-  // This fixes the CoffeeScript bug where undefined account would crash
-  if (row?.stripe_customer_id) {
-    await syncCustomer({
-      account_id: opts.account_id,
-      stripe: opts.stripe,
-      customer_id: row.stripe_customer_id,
-    });
-  }
 }

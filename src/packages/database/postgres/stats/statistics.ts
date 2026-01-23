@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2025-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -42,7 +42,6 @@ interface CourseProjectRow {
   course: { pay?: boolean };
   last_edited: Date;
   settings?: { member_host?: boolean };
-  users?: Record<string, { upgrades?: { member_host?: boolean } }>;
 }
 
 /**
@@ -80,7 +79,7 @@ export async function get_active_student_stats(
   // Query course projects from last 30 days
   const { rows } = await callback2(db._query.bind(db), {
     query:
-      "SELECT project_id, course, last_edited, settings, users FROM projects WHERE course IS NOT NULL AND last_edited >= $1",
+      "SELECT project_id, course, last_edited, settings FROM projects WHERE course IS NOT NULL AND last_edited >= $1",
     params: [days_ago(30)],
   });
 
@@ -95,7 +94,7 @@ export async function get_active_student_stats(
   const num_student_pay = projects.filter((x) => x.course?.pay === true).length;
 
   // Count prof pay projects (student isn't required to pay, but
-  // project is on members-only host via settings or user upgrades)
+  // project is on members-only host via settings)
   let num_prof_pay = 0;
   for (const x of projects) {
     if (x.course?.pay !== true) {
@@ -103,20 +102,6 @@ export async function get_active_student_stats(
       if (x.settings?.member_host) {
         num_prof_pay += 1;
         continue;
-      }
-
-      // Check if any user has member_host upgrade
-      if (x.users) {
-        let hasUserUpgrade = false;
-        for (const userId in x.users) {
-          if (x.users[userId]?.upgrades?.member_host) {
-            hasUserUpgrade = true;
-            break;
-          }
-        }
-        if (hasUserUpgrade) {
-          num_prof_pay += 1;
-        }
       }
     }
   }

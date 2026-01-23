@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2025 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2025-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -67,64 +67,13 @@ describe("change_email_address", () => {
     return result.rows?.[0]?.email_address;
   }
 
-  /**
-   * Helper to set stripe_customer_id for an account
-   */
-  async function setStripeCustomerId(
-    account_id: string,
-    customer_id: string,
-  ): Promise<void> {
-    await database.async_query({
-      query: "UPDATE accounts",
-      set: { stripe_customer_id: customer_id },
-      where: { "account_id = $::UUID": account_id },
-    });
-  }
-
-  /**
-   * Mock Stripe client
-   */
-  function createMockStripe(options?: {
-    shouldThrow?: boolean;
-    errorMessage?: string;
-  }) {
-    const calls: any[] = [];
-    return {
-      customers: {
-        retrieve: jest.fn(async (customer_id) => {
-          calls.push({ method: "retrieve", customer_id });
-          if (options?.shouldThrow) {
-            throw new Error(options.errorMessage ?? "Stripe API error");
-          }
-          return {
-            id: customer_id,
-            email: "old@example.com",
-            subscriptions: { data: [] },
-          };
-        }),
-        update: jest.fn(async (customer_id, update) => {
-          calls.push({ method: "update", customer_id, update });
-          if (options?.shouldThrow) {
-            throw new Error(options.errorMessage ?? "Stripe API error");
-          }
-          return {
-            id: customer_id,
-            email: update.email,
-            subscriptions: { data: [] },
-          };
-        }),
-      },
-      _calls: calls,
-    };
-  }
-
   describe("successful email change", () => {
     it("should change email address when new email is not taken", async () => {
       const unique_id = uuid().substring(0, 8);
       const account_id = await createTestAccount(
         `original-${unique_id}@example.com`,
       );
-      const stripe = createMockStripe();
+      const stripe = {} as any;
 
       await change_email_address_wrapper({
         account_id,
@@ -135,46 +84,6 @@ describe("change_email_address", () => {
       const email = await getAccountEmail(account_id);
       expect(email).toBe(`new-${unique_id}@example.com`);
     });
-
-    it("should not call Stripe when account has no stripe_customer_id", async () => {
-      const unique_id = uuid().substring(0, 8);
-      const account_id = await createTestAccount(
-        `test1-${unique_id}@example.com`,
-      );
-      const stripe = createMockStripe();
-
-      await change_email_address_wrapper({
-        account_id,
-        email_address: `test1-new-${unique_id}@example.com`,
-        stripe,
-      });
-
-      expect(stripe.customers.retrieve).not.toHaveBeenCalled();
-      expect(stripe.customers.update).not.toHaveBeenCalled();
-    });
-
-    it("should call Stripe sync when account has stripe_customer_id", async () => {
-      const unique_id = uuid().substring(0, 8);
-      const account_id = await createTestAccount(
-        `test2-${unique_id}@example.com`,
-      );
-      const customer_id = "cus_" + uuid().replace(/-/g, "");
-      await setStripeCustomerId(account_id, customer_id);
-
-      const stripe = createMockStripe();
-
-      await change_email_address_wrapper({
-        account_id,
-        email_address: `test2-new-${unique_id}@example.com`,
-        stripe,
-      });
-
-      const email = await getAccountEmail(account_id);
-      expect(email).toBe(`test2-new-${unique_id}@example.com`);
-      expect(stripe.customers.retrieve).toHaveBeenCalledWith(customer_id, {
-        expand: ["sources", "subscriptions"],
-      });
-    });
   });
 
   describe("email_already_taken error", () => {
@@ -184,7 +93,7 @@ describe("change_email_address", () => {
       const email2 = `user2-${unique_id}@example.com`;
       const account_id1 = await createTestAccount(email1);
       await createTestAccount(email2);
-      const stripe = createMockStripe();
+      const stripe = {} as any;
 
       // Try to change account_id1 to user2 email (already taken)
       await expect(
@@ -206,9 +115,7 @@ describe("change_email_address", () => {
       const email2 = `taken2-${unique_id}@example.com`;
       const account_id1 = await createTestAccount(email1);
       await createTestAccount(email2);
-      await setStripeCustomerId(account_id1, "cus_test" + unique_id);
-
-      const stripe = createMockStripe();
+      const stripe = {} as any;
 
       await expect(
         change_email_address_wrapper({
@@ -217,58 +124,6 @@ describe("change_email_address", () => {
           stripe,
         }),
       ).rejects.toMatch(/email_already_taken/);
-
-      expect(stripe.customers.retrieve).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("Stripe synchronization errors", () => {
-    it("should propagate Stripe errors when sync fails", async () => {
-      const unique_id = uuid().substring(0, 8);
-      const account_id = await createTestAccount(
-        `stripe-error-${unique_id}@example.com`,
-      );
-      const customer_id = "cus_" + uuid().replace(/-/g, "");
-      await setStripeCustomerId(account_id, customer_id);
-
-      const stripe = createMockStripe({
-        shouldThrow: true,
-        errorMessage: "Stripe service unavailable",
-      });
-
-      await expect(
-        change_email_address_wrapper({
-          account_id,
-          email_address: `stripe-error-new-${unique_id}@example.com`,
-          stripe,
-        }),
-      ).rejects.toThrow(/Stripe service unavailable/);
-    });
-
-    it("should still update email in database even if Stripe sync fails", async () => {
-      const unique_id = uuid().substring(0, 8);
-      const account_id = await createTestAccount(
-        `stripe-error2-${unique_id}@example.com`,
-      );
-      const customer_id = "cus_" + uuid().replace(/-/g, "");
-      await setStripeCustomerId(account_id, customer_id);
-
-      const stripe = createMockStripe({
-        shouldThrow: true,
-        errorMessage: "Network error",
-      });
-
-      await expect(
-        change_email_address_wrapper({
-          account_id,
-          email_address: `stripe-error2-new-${unique_id}@example.com`,
-          stripe,
-        }),
-      ).rejects.toThrow(/Network error/);
-
-      // Email should be updated despite Stripe error (happens in step 2, before Stripe sync in step 3)
-      const email = await getAccountEmail(account_id);
-      expect(email).toBe(`stripe-error2-new-${unique_id}@example.com`);
     });
   });
 
@@ -277,7 +132,7 @@ describe("change_email_address", () => {
       const unique_id = uuid().substring(0, 8);
       const email = `same-${unique_id}@example.com`;
       const account_id = await createTestAccount(email);
-      const stripe = createMockStripe();
+      const stripe = {} as any;
 
       // CoffeeScript checks account_exists which finds the same account's email
       await expect(
@@ -298,7 +153,7 @@ describe("change_email_address", () => {
       const account_id = await createTestAccount(
         `lower-${unique_id}@example.com`,
       );
-      const stripe = createMockStripe();
+      const stripe = {} as any;
 
       await change_email_address_wrapper({
         account_id,
@@ -316,7 +171,7 @@ describe("change_email_address", () => {
       const email2 = `other-${unique_id}@example.com`;
       await createTestAccount(email1);
       const account_id2 = await createTestAccount(email2);
-      const stripe = createMockStripe();
+      const stripe = {} as any;
 
       // CoffeeScript uses = which is case-sensitive, so lowercase version is allowed
       await change_email_address_wrapper({
@@ -336,7 +191,7 @@ describe("change_email_address", () => {
       const account_id = await createTestAccount(
         `concurrent-${unique_id}@example.com`,
       );
-      const stripe = createMockStripe();
+      const stripe = {} as any;
 
       await change_email_address_wrapper({
         account_id,
