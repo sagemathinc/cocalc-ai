@@ -374,3 +374,20 @@ Hub assigns two ports per host:
 - Cleanup pass to remove unused legacy cloud/local mix paths.
 - Security review: ensure projects can’t access each other’s host ports.
 - Admin UX: guided setup + health checks for local network mode.
+
+## Near-Term Execution Plan
+
+- [ ] Test local-network mode with a host VM on another machine (not localhost).
+- [ ] Test Cloudflare mode:
+  - add Cloudflare credentials
+  - run a remote cloud VM host
+  - use a manually created local Cloudflare tunnel
+- [ ] Automate Cloudflare tunnel provisioning next to the hub:
+  - user installs Launchpad
+  - user configures Cloudflare API support for tunnels + DNS
+  - hub creates/owns a local Cloudflare tunnel and exposes Launchpad
+- [ ] Fix remaining local-network gaps:
+  - [ ] provide clear SSH instructions for workspace access
+  - [ ] proxy apps (e.g., VSCode/Jupyter) running in a workspace
+  - [ ] fix rustic backups (stop silent failures)
+- [ ] Further polish onboarding for new admins/users.
