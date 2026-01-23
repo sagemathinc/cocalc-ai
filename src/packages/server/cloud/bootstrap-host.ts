@@ -356,7 +356,7 @@ export async function buildBootstrapScripts(
   const onPremPort = Number.isFinite(Number.parseInt(onPremPortRaw, 10))
     ? Number.parseInt(onPremPortRaw, 10)
     : 9002;
-  const onPremBindHost = process.env.COCALC_PROJECT_HOST_BIND ?? "127.0.0.1";
+  const onPremBindHost = process.env.COCALC_PROJECT_HOST_BIND ?? "0.0.0.0";
   const onPremUrlHost =
     onPremBindHost === "0.0.0.0" ? "127.0.0.1" : onPremBindHost;
   const port = useOnPremSettings ? onPremPort : tunnelEnabled ? 9002 : 443;

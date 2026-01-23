@@ -251,6 +251,12 @@ Hub assigns two ports per host:
 - Avoid URL conflicts by reserving the project-id path segment.
 - Rewrite /<project_id>/conat -> /conat when proxying to the host.
 
+### 4.1) Proxy user servers (pending)
+
+- Proxy /<project_id>/proxy/<port>/ routes to the correct host HTTP tunnel.
+- Ensure websocket upgrades and path rewriting behave the same as in cloud mode.
+- Verify JupyterLab, VSCode, and other proxied servers work in local mode.
+
 ### 5) Rustic SFTP Integration (pending)
 
 - Generate SFTP key and write to project-host config.
@@ -317,3 +323,10 @@ Hub assigns two ports per host:
     `PORT=9002` (except local dev); simplify inputs and
     `src/packages/server/cloud/bootstrap-host.ts` accordingly.
 
+## Remaining Local-Network Work (Short List)
+
+- Rustic backups in local mode (SFTP repo wiring).
+- HTTP proxy for user servers (jupyter/vscode).
+- Cleanup pass to remove unused legacy cloud/local mix paths.
+- Security review: ensure projects can’t access each other’s host ports.
+- Admin UX: guided setup + health checks for local network mode.
