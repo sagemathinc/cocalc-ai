@@ -125,7 +125,7 @@ export function describeDomSelection(domSelection: DOMSelection) {
   };
 }
 
-function describeDomNode(node: Node | null): string | null {
+export function describeDomNode(node: Node | null): string | null {
   if (!node) return null;
   if (node.nodeType === 3) {
     const text = node.textContent ?? "";

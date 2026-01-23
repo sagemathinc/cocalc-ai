@@ -42,7 +42,11 @@ import { debounce } from "lodash";
 import getDirection from "direction";
 import { useDOMSelectionChange, useUpdateDOMSelection } from "./selection-sync";
 import { hasEditableTarget, hasTarget } from "./dom-utils";
-import { describeDomSelection, logSlateDebug } from "../utils/slate-debug";
+import {
+  describeDomNode,
+  describeDomSelection,
+  logSlateDebug,
+} from "../utils/slate-debug";
 
 /**
  * `RenderElementProps` are passed to the `renderElement` handler.
@@ -166,6 +170,26 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
       lastUserInputAt: 0,
     }),
     [],
+  );
+
+  const logFocusState = useCallback(
+    (event: React.FocusEvent<HTMLDivElement>, type: string) => {
+      const activeElement =
+        typeof document !== "undefined" ? document.activeElement : null;
+      logSlateDebug(type, {
+        selection: editor.selection ?? null,
+        activeElement: activeElement ? describeDomNode(activeElement) : null,
+        target: event.target
+          ? describeDomNode(event.target as unknown as Node)
+          : null,
+        state: {
+          isComposing: state.isComposing,
+          ignoreSelection: state.ignoreSelection,
+          lastUserInputAt: state.lastUserInputAt,
+        },
+      });
+    },
+    [editor, state],
   );
 
   // start ignoring the selection sync
@@ -879,9 +903,18 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
               DOMSelectionChange();
               state.latestElement = window.document.activeElement;
               IS_FOCUSED.set(editor, true);
+              logFocusState(event, "focus");
             }
           },
           [readOnly, attributes.onFocus],
+        )}
+        onBlur={useCallback(
+          (event: React.FocusEvent<HTMLDivElement>) => {
+            if (shouldHandle({ event, name: "onBlur", notReadOnly: true })) {
+              logFocusState(event, "blur");
+            }
+          },
+          [readOnly, attributes.onBlur],
         )}
         onKeyUp={useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
           state.shiftKey = event.shiftKey;

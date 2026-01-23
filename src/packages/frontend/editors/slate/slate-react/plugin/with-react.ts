@@ -13,6 +13,7 @@ import { ReactEditor } from "./react-editor";
 import { Key } from "../utils/key";
 import { EDITOR_TO_ON_CHANGE, NODE_TO_KEY } from "../utils/weak-maps";
 import { findCurrentLineRange } from "../utils/lines";
+import { logSlateDebug } from "../utils/slate-debug";
 
 /**
  * `withReact` adds React and DOM specific behaviors to the editor.
@@ -57,6 +58,13 @@ export const withReact = <T extends Editor>(editor: T) => {
 
   e.apply = (op: Operation) => {
     const matches: [Path, Key][] = [];
+
+    if (op.type === "set_selection") {
+      logSlateDebug("apply:set-selection", {
+        op,
+        selection: e.selection ?? null,
+      });
+    }
 
     switch (op.type) {
       case "insert_text":

@@ -23,7 +23,11 @@ import { Editor, Path, Point, Range, Selection, Transforms } from "slate";
 import { hasEditableTarget, isTargetInsideVoid } from "./dom-utils";
 import { DOMElement, DOMSelection } from "../utils/dom";
 import { isEqual } from "lodash";
-import { describeDomSelection, logSlateDebug } from "../utils/slate-debug";
+import {
+  describeDomNode,
+  describeDomSelection,
+  logSlateDebug,
+} from "../utils/slate-debug";
 
 interface SelectionState {
   isComposing: boolean;
@@ -88,6 +92,7 @@ export const useUpdateDOMSelection = ({
       logSlateDebug("update-dom-selection:skip", {
         reason: "no-dom-selection",
         selection: editor.selection ?? null,
+        activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
       });
       delete state.windowedSelection;
@@ -136,6 +141,7 @@ export const useUpdateDOMSelection = ({
       logSlateDebug("update-dom-selection:noop", {
         selection: selection ?? null,
         domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
       });
       recordSelectionState(
@@ -166,6 +172,7 @@ export const useUpdateDOMSelection = ({
       logSlateDebug("update-dom-selection:clear", {
         selection: selection ?? null,
         domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
         isCropped,
       });
@@ -233,6 +240,7 @@ export const useUpdateDOMSelection = ({
     logSlateDebug("update-dom-selection:set", {
       selection: selection ?? null,
       domSelection: describeDomSelection(domSelection),
+      activeElement: describeDomNode(window.document.activeElement),
       state: debugState(state),
       isCropped,
     });
@@ -311,6 +319,7 @@ export const useDOMSelectionChange = ({
         reason: "typing-window",
         selection: editor.selection ?? null,
         domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
       });
       return;
@@ -325,6 +334,7 @@ export const useDOMSelectionChange = ({
         reason: "not-selectable",
         selection: editor.selection ?? null,
         domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
       });
       return;
@@ -342,6 +352,7 @@ export const useDOMSelectionChange = ({
         reason: "to-slate-range-error",
         selection: editor.selection ?? null,
         domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
       });
       return;
@@ -424,6 +435,7 @@ export const useDOMSelectionChange = ({
         selection: selection ?? null,
         range,
         domSelection: describeDomSelection(domSelection),
+        activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
       });
       Transforms.select(editor, range);
