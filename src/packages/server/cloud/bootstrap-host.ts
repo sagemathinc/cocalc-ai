@@ -323,10 +323,17 @@ export async function buildBootstrapScripts(
     throw new Error("project tools URL could not be resolved");
   }
 
+  const localConfig = isLocalMode ? getLaunchpadLocalConfig("local") : undefined;
+  const localConat =
+    localConfig?.http_port
+      ? `http://127.0.0.1:${localConfig.http_port}`
+      : localConfig?.https_port
+        ? `http://127.0.0.1:${localConfig.https_port}`
+        : "";
   const masterAddress =
     process.env.MASTER_CONAT_SERVER ??
     process.env.COCALC_MASTER_CONAT_SERVER ??
-    "";
+    (useOnPremSettings ? localConat : "");
   if (!masterAddress) {
     throw new Error("MASTER_CONAT_SERVER is not configured");
   }
