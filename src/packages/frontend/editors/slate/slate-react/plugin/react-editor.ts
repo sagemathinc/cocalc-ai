@@ -43,6 +43,8 @@ export interface ReactEditor extends Editor {
   // if true, temporary ignore selection. This is used to make it possible to select and copy inside of void elements.
   setIgnoreSelection: (value: boolean) => void;
   getIgnoreSelection: () => boolean;
+  // set by Editable composition handlers so external code can defer merges.
+  isComposing?: boolean;
 }
 
 export const ReactEditor = {

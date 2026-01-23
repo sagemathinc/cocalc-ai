@@ -178,6 +178,12 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const mergeHelperRef = useRef<SimpleInputMerge>(
     new SimpleInputMerge(value ?? ""),
   );
+  // Defer remote merges while typing/composing to avoid cursor jumps.
+  const lastLocalEditAtRef = useRef<number>(0);
+  const pendingRemoteRef = useRef<string | null>(null);
+  const pendingRemoteTimerRef = useRef<number | null>(null);
+  const mergeIdleMsRef = useRef<number>(saveDebounceMs ?? SAVE_DEBOUNCE_MS);
+  mergeIdleMsRef.current = saveDebounceMs ?? SAVE_DEBOUNCE_MS;
 
   const editor = useMemo(() => {
     const ed = withNonfatalRange(
@@ -270,11 +276,57 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     return ed as SlateEditor;
   }, []);
 
+  function shouldDeferRemoteMerge(): boolean {
+    if (!ReactEditor.isFocused(editor)) return false;
+    const idleMs = mergeIdleMsRef.current;
+    const recentlyTyped = Date.now() - lastLocalEditAtRef.current < idleMs;
+    return !!editor.isComposing || recentlyTyped;
+  }
+
+  function schedulePendingRemoteMerge() {
+    if (pendingRemoteTimerRef.current != null) {
+      window.clearTimeout(pendingRemoteTimerRef.current);
+    }
+    const idleMs = mergeIdleMsRef.current;
+    pendingRemoteTimerRef.current = window.setTimeout(() => {
+      pendingRemoteTimerRef.current = null;
+      flushPendingRemoteMerge();
+    }, idleMs);
+  }
+
+  function flushPendingRemoteMerge() {
+    const pending = pendingRemoteRef.current;
+    if (pending == null) return;
+    if (shouldDeferRemoteMerge()) {
+      schedulePendingRemoteMerge();
+      return;
+    }
+    pendingRemoteRef.current = null;
+    mergeHelperRef.current.handleRemote({
+      remote: pending,
+      getLocal: () => editor.getMarkdownValue(),
+      applyMerged: setEditorToValue,
+    });
+  }
+
+  useEffect(() => {
+    return () => {
+      if (pendingRemoteTimerRef.current != null) {
+        window.clearTimeout(pendingRemoteTimerRef.current);
+      }
+    };
+  }, []);
+
   // hook up to syncstring if available:
   useEffect(() => {
     if (actions._syncstring == null) return;
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
+      if (shouldDeferRemoteMerge()) {
+        pendingRemoteRef.current = remote;
+        schedulePendingRemoteMerge();
+        return;
+      }
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: () => editor.getMarkdownValue(),
@@ -895,6 +947,10 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (editorValue === newEditorValue) {
       // Editor didn't actually change value so nothing to do.
       return;
+    }
+
+    if (!editor.syncCausedUpdate) {
+      lastLocalEditAtRef.current = Date.now();
     }
 
     setEditorValue(newEditorValue);

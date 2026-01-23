@@ -680,6 +680,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
               })
             ) {
               state.isComposing = false;
+              editor.isComposing = false;
               // console.log(`onCompositionEnd :'${event.data}'`);
 
               // COMPAT: In Chrome, `beforeinput` events for compositions
@@ -703,6 +704,7 @@ export const Editable: React.FC<EditableProps> = (props: EditableProps) => {
               })
             ) {
               state.isComposing = true;
+              editor.isComposing = true;
               // console.log("onCompositionStart");
             }
           },
