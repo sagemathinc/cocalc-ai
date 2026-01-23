@@ -114,6 +114,25 @@ export function logSlateDebug(
   debug.push(type, data);
 }
 
+export function withSelectionReason<T>(
+  editor: unknown,
+  reason: string,
+  fn: () => T,
+): T {
+  const e = editor as { __selectionReason?: string };
+  const prev = e.__selectionReason;
+  e.__selectionReason = reason;
+  try {
+    return fn();
+  } finally {
+    if (prev == null) {
+      delete e.__selectionReason;
+    } else {
+      e.__selectionReason = prev;
+    }
+  }
+}
+
 export function describeDomSelection(domSelection: DOMSelection) {
   return {
     type: domSelection.type,

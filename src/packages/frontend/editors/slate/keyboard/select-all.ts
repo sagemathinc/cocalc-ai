@@ -6,11 +6,14 @@
 import { Editor, Transforms } from "slate";
 import { register, IS_MACOS } from "./register";
 import { rangeAll } from "../slate-util";
+import { withSelectionReason } from "../slate-react/utils/slate-debug";
 
 // We use this to support windowing.
 
 export function selectAll(editor: Editor) {
-  Transforms.setSelection(editor, rangeAll(editor));
+  withSelectionReason(editor, "select-all", () => {
+    Transforms.setSelection(editor, rangeAll(editor));
+  });
 }
 
 register({ key: "a", meta: IS_MACOS, ctrl: !IS_MACOS }, ({ editor }) => {

@@ -27,6 +27,7 @@ import {
   describeDomNode,
   describeDomSelection,
   logSlateDebug,
+  withSelectionReason,
 } from "../utils/slate-debug";
 
 interface SelectionState {
@@ -329,7 +330,9 @@ export const useDOMSelectionChange = ({
         selection: editor.selection ?? null,
         state: debugState(state, editor),
       });
-      Transforms.deselect(editor);
+      withSelectionReason(editor, "dom-selection-change:deselect", () => {
+        Transforms.deselect(editor);
+      });
       return;
     }
     if (shouldIgnoreSelectionWhileTyping(state, domSelection)) {
@@ -492,7 +495,9 @@ export const useDOMSelectionChange = ({
         activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state, editor),
       });
-      Transforms.select(editor, range);
+      withSelectionReason(editor, "dom-selection-change", () => {
+        Transforms.select(editor, range);
+      });
     }
   }, [readOnly]);
 

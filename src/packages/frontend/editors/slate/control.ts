@@ -9,7 +9,7 @@ import { isEqual } from "lodash";
 import { rangeAll } from "./slate-util";
 import { emptyParagraph } from "./padding";
 import { delay } from "awaiting";
-import { logSlateDebug } from "./slate-react/utils/slate-debug";
+import { logSlateDebug, withSelectionReason } from "./slate-react/utils/slate-debug";
 
 // Scroll to the n-th heading in the document
 export async function scrollToHeading(
@@ -81,9 +81,11 @@ export function resetSelection(editor: Editor) {
     selection: editor.selection ?? null,
     focus,
   });
-  Transforms.setSelection(editor, {
-    focus,
-    anchor: focus,
+  withSelectionReason(editor, "reset-selection", () => {
+    Transforms.setSelection(editor, {
+      focus,
+      anchor: focus,
+    });
   });
 }
 
