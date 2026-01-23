@@ -3,10 +3,6 @@ import type { BaseEditor, Descendant, Path, Range } from "slate";
 import {
   Editable as UpstreamEditable,
   Slate as UpstreamSlate,
-  RenderElementProps,
-  RenderLeafProps,
-  RenderChunkProps,
-  RenderPlaceholderProps,
   DefaultPlaceholder,
   defaultScrollSelectionIntoView,
   useEditor,
@@ -17,6 +13,12 @@ import {
   useSlate,
   ReactEditor as UpstreamReactEditor,
   withReact as upstreamWithReact,
+} from "slate-react";
+import type {
+  RenderElementProps,
+  RenderLeafProps,
+  RenderChunkProps,
+  RenderPlaceholderProps,
 } from "slate-react";
 
 type ExtraEditorFields = {
@@ -65,7 +67,7 @@ const ensureEditorExtras = (editor: UpstreamReactEditor): ReactEditor => {
     e.scrollIntoDOM = () => false;
   }
   if (e.scrollCaretIntoView == null) {
-    e.scrollCaretIntoView = (options?: { middle?: boolean }) => {
+    e.scrollCaretIntoView = (_options?: { middle?: boolean }) => {
       if (!e.selection) return;
       try {
         const domRange = UpstreamReactEditor.toDOMRange(
@@ -97,12 +99,16 @@ export const ReactEditor = Object.assign(UpstreamReactEditor, {
     editor: ReactEditor,
     domRange: Parameters<typeof UpstreamReactEditor.toSlateRange>[1],
     options?: Parameters<typeof UpstreamReactEditor.toSlateRange>[2],
-  ) {
-    return baseToSlateRange(editor, domRange, {
+  ): Range {
+    const range = baseToSlateRange(editor, domRange, {
       exactMatch: false,
       suppressThrow: false,
       ...options,
     });
+    if (!range) {
+      throw new Error("Unable to resolve Slate range from DOM selection.");
+    }
+    return range;
   },
   isUsingWindowing(editor: ReactEditor): boolean {
     return !!editor.windowedListRef?.current;
@@ -167,15 +173,12 @@ export const Slate = (props: SlateProps) => {
   };
   Object.assign(editorWithExtras, rest);
 
-  return React.createElement(
-    UpstreamSlate,
-    {
-      editor: editorWithExtras,
-      initialValue: value,
-      onChange: handleChange,
-    },
+  return React.createElement(UpstreamSlate, {
+    editor: editorWithExtras,
+    initialValue: value,
+    onChange: handleChange,
     children,
-  );
+  });
 };
 
 type EditableProps = React.ComponentProps<typeof UpstreamEditable> & {
@@ -191,11 +194,13 @@ export const Editable = React.forwardRef<HTMLDivElement, EditableProps>(
   },
 );
 
-export {
+export type {
   RenderElementProps,
   RenderLeafProps,
   RenderChunkProps,
   RenderPlaceholderProps,
+};
+export {
   DefaultPlaceholder,
   defaultScrollSelectionIntoView,
   useEditor,

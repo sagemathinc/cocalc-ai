@@ -131,7 +131,7 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
           "Shift-Enter": () => {
             editor.setIgnoreSelection(false);
             Transforms.move(editor, { distance: 1, unit: "line" });
-            ReactEditor.focus(editor, false, true);
+            ReactEditor.focus(editor);
             onShiftEnter?.();
           },
           // We make it so doing select all when not everything is
@@ -353,14 +353,14 @@ function cursorHandlers(editor, isInline: boolean | undefined) {
     const cur_ch = cur?.ch;
     const line = cm.getLine(n);
     const line_length = line?.length;
-    if (cur_line === n && cur_ch === line_length) {
-      editor.setIgnoreSelection(false);
-      //Transforms.move(editor, { distance: 1, unit: "line" });
-      moveCursorDown(editor, true);
-      ReactEditor.focus(editor, false, true);
-      return true;
-    } else {
-      return false;
+      if (cur_line === n && cur_ch === line_length) {
+        editor.setIgnoreSelection(false);
+        //Transforms.move(editor, { distance: 1, unit: "line" });
+        moveCursorDown(editor, true);
+        ReactEditor.focus(editor);
+        return true;
+      } else {
+        return false;
     }
   };
 
@@ -374,7 +374,7 @@ function cursorHandlers(editor, isInline: boolean | undefined) {
         if (!isInline) {
           moveCursorToBeginningOfBlock(editor);
         }
-        ReactEditor.focus(editor, false, true);
+        ReactEditor.focus(editor);
       } else {
         commands.goLineUp(cm);
       }
@@ -384,7 +384,7 @@ function cursorHandlers(editor, isInline: boolean | undefined) {
       if (cur?.line === cm.firstLine() && cur?.ch == 0) {
         editor.setIgnoreSelection(false);
         Transforms.move(editor, { distance: 1, unit: "line", reverse: true });
-        ReactEditor.focus(editor, false, true);
+        ReactEditor.focus(editor);
       } else {
         commands.goCharLeft(cm);
       }

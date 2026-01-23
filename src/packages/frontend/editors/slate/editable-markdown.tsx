@@ -58,6 +58,7 @@ import { slateDiff } from "./slate-diff";
 import { useEmojis } from "./slate-emojis";
 import { useMentions } from "./slate-mentions";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
+import type { RenderElementProps } from "./slate-react";
 import { logSlateDebug } from "./slate-react/utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
@@ -1019,6 +1020,11 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     );
   }
 
+  const renderElement = useCallback(
+    (props: RenderElementProps): React.JSX.Element => <Element {...props} />,
+    [],
+  );
+
   let slate = (
     <Slate editor={editor} value={editorValue} onChange={onChange}>
       <Editable
@@ -1028,7 +1034,7 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           !disableWindowing && height != "auto" ? "smc-vfill" : undefined
         }
         readOnly={read_only}
-        renderElement={Element}
+        renderElement={renderElement}
         renderLeaf={Leaf}
         onKeyDown={onKeyDown}
         onBlur={() => {

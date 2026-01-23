@@ -23,6 +23,7 @@ export interface SlateEditor extends ReactEditor {
   windowedListRef: any;
   onCursorBottom?: () => void;
   onCursorTop?: () => void;
+  isComposing?: boolean;
 }
 
 /*
