@@ -33,6 +33,7 @@ import infoToMode from "./code-block/info-to-mode";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { useRedux } from "@cocalc/frontend/app-framework";
 import { isEqual } from "lodash";
+import { logSlateDebug } from "../slate-react/utils/slate-debug";
 
 const STYLE = {
   width: "100%",
@@ -220,6 +221,12 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
           justBlurred.current = false;
         }, 1);
         setIsFocused(false);
+        setTimeout(() => {
+          editor.setIgnoreSelection(false);
+          logSlateDebug("codemirror:blur", {
+            selection: editor.selection ?? null,
+          });
+        }, 0);
       });
 
       cm.on("focus", () => {
@@ -228,6 +235,12 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
         if (!justBlurred.current) {
           setTimeout(() => focusEditor(true), 0);
         }
+        setTimeout(() => {
+          editor.setIgnoreSelection(true);
+          logSlateDebug("codemirror:focus", {
+            selection: editor.selection ?? null,
+          });
+        }, 0);
       });
 
       cm.on("copy", (_, event) => {
