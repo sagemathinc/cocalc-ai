@@ -9,7 +9,7 @@
  * flaky behavior is easy to spot.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate";
 
@@ -17,6 +17,7 @@ import { Editable, Slate, withReact } from "../slate-react";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-react/utils/environment";
 import { withDeleteBackward } from "../format/delete-backward";
 import { autoformatBlockquoteAtStart } from "../format/auto-format-quote";
+import { handleBlankLineEnter } from "../keyboard/blank-line-enter";
 
 declare global {
   interface Window {
@@ -84,9 +85,26 @@ function Harness(): React.JSX.Element {
     };
   }, [editor]);
 
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
+        if (handleBlankLineEnter(editor)) {
+          event.preventDefault();
+        }
+      }
+    },
+    [editor],
+  );
+
   return (
     <Slate editor={editor} value={value} onChange={setValue}>
-      <Editable placeholder="Type here..." />
+      <Editable placeholder="Type here..." onKeyDown={onKeyDown} />
     </Slate>
   );
 }

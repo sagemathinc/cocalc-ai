@@ -19,6 +19,7 @@ async function waitForHarness(page) {
 type SlateNode = {
   type?: string;
   text?: string;
+  blank?: boolean;
   children?: SlateNode[];
 };
 
@@ -84,6 +85,83 @@ test("enter creates a new block", async ({ page }) => {
   expect(selection).not.toBeNull();
   if (selection) {
     expect(selection.anchor.path[0]).toBe(1);
+  }
+});
+
+test("enter at start inserts blank lines above without moving cursor", async ({
+  page,
+}) => {
+  // We preserve extra blank lines as explicit paragraphs, which diverges from
+  // common markdown renderers that collapse consecutive blank lines.
+  await page.goto("/");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+
+  const initialValue = [
+    { type: "paragraph", children: [{ text: "abc" }] },
+    { type: "paragraph", children: [{ text: "xyz" }] },
+  ] as unknown as Descendant[];
+
+  await page.evaluate((value) => {
+    window.__slateTest?.setValue(value);
+  }, initialValue);
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getValue()?.length === 2;
+  });
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [1, 0], offset: 0 },
+      focus: { path: [1, 0], offset: 0 },
+    });
+  });
+
+  await page.keyboard.press("Enter");
+
+  let value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+
+  expect(value?.length).toBe(3);
+  if (value) {
+    expect(value[1]?.blank).toBe(true);
+    expect(nodeText(value[2])).toBe("xyz");
+  }
+
+  let selection = (await page.evaluate(
+    () => window.__slateTest?.getSelection(),
+  )) as SlateSelection;
+
+  expect(selection).not.toBeNull();
+  if (selection) {
+    expect(selection.anchor.path[0]).toBe(2);
+    expect(selection.anchor.offset).toBe(0);
+  }
+
+  await page.keyboard.press("Enter");
+
+  value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+
+  expect(value?.length).toBe(4);
+  if (value) {
+    expect(value[1]?.blank).toBe(true);
+    expect(value[2]?.blank).toBe(true);
+    expect(nodeText(value[3])).toBe("xyz");
+  }
+
+  selection = (await page.evaluate(
+    () => window.__slateTest?.getSelection(),
+  )) as SlateSelection;
+
+  expect(selection).not.toBeNull();
+  if (selection) {
+    expect(selection.anchor.path[0]).toBe(3);
+    expect(selection.anchor.offset).toBe(0);
   }
 });
 
