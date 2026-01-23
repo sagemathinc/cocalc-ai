@@ -275,12 +275,10 @@ Hub assigns two ports per host:
     command that returns JSON (no HTTP required).
   - Connector writes an ssh tunnel config and forwards
     `https://127.0.0.1:<local>` to `127.0.0.1:<hub_https_port>`.
-- Current auth:
-  - Hub reads pairing public keys from
-    `COCALC_CONNECTOR_SSH_PUBLIC_KEY(S)` and injects them into authorized_keys
-    with `command=<ssh-pair>` and no forwarding.
-- Future improvement:
-  - derive a temporary pairing key from the pairing token (avoid copy/paste).
+- Auth:
+  - Hub uses `AuthorizedKeysCommand` to validate a key derived from the pairing
+    token (no preloaded key list).
+  - Connector derives the same key from the token and uses it for SSH pairing.
 
 ### 7) Health & Diagnostics (pending)
 
@@ -318,3 +316,4 @@ Hub assigns two ports per host:
   - For local-network project-hosts we likely only need `HOST=127.0.0.1` and
     `PORT=9002` (except local dev); simplify inputs and
     `src/packages/server/cloud/bootstrap-host.ts` accordingly.
+

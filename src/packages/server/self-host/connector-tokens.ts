@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import passwordHash, { verifyPassword } from "@cocalc/backend/auth/password-hash";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -20,6 +20,20 @@ function splitToken(token: string): TokenParts | null {
   return { tokenId, secret };
 }
 
+function derivePairingKeySeed(secret: string): string {
+  return createHash("sha256")
+    .update("cocalc-ssh-pair:")
+    .update(secret)
+    .digest("base64url");
+}
+
+function deriveConnectorKeySeed(secret: string): string {
+  return createHash("sha256")
+    .update("cocalc-ssh-connector:")
+    .update(secret)
+    .digest("base64url");
+}
+
 export async function createPairingToken(opts: {
   account_id: string;
   ttlMs?: number;
@@ -31,19 +45,21 @@ export async function createPairingToken(opts: {
   const secret = randomBytes(32).toString("base64url");
   const token = `${token_id}.${secret}`;
   const token_hash = passwordHash(secret);
+  const pairing_key_seed = derivePairingKeySeed(secret);
   const purpose = opts.purpose ?? "pairing";
   const created = new Date();
   const expires = new Date(created.getTime() + (opts.ttlMs ?? DEFAULT_PAIRING_TTL_MS));
   await pool().query(
     `INSERT INTO self_host_connector_tokens
-       (token_id, account_id, connector_id, host_id, token_hash, purpose, created, expires, revoked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)`,
+       (token_id, account_id, connector_id, host_id, token_hash, pairing_key_seed, purpose, created, expires, revoked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,FALSE)`,
     [
       token_id,
       opts.account_id,
       opts.connector_id ?? null,
       opts.host_id ?? null,
       token_hash,
+      pairing_key_seed,
       purpose,
       created,
       expires,
@@ -184,16 +200,18 @@ export async function createConnector(opts: {
   const secret = randomBytes(32).toString("base64url");
   const token = `${connector_id}.${secret}`;
   const token_hash = passwordHash(secret);
+  const ssh_key_seed = deriveConnectorKeySeed(secret);
   const created = new Date();
   await pool().query(
     `INSERT INTO self_host_connectors
-       (connector_id, account_id, host_id, token_hash, name, metadata, created, last_seen, revoked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,FALSE)`,
+       (connector_id, account_id, host_id, token_hash, ssh_key_seed, name, metadata, created, last_seen, revoked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,FALSE)`,
     [
       connector_id,
       opts.account_id,
       opts.host_id ?? null,
       token_hash,
+      ssh_key_seed,
       opts.name ?? null,
       opts.metadata ?? {},
       created,
@@ -211,6 +229,7 @@ export async function revokeConnector(opts: {
     `UPDATE self_host_connectors
      SET revoked=TRUE,
          token_hash=NULL,
+         ssh_key_seed=NULL,
          host_id=NULL
      WHERE connector_id=$1
        ${account_id ? "AND account_id=$2" : "" }
@@ -231,17 +250,20 @@ export async function activateConnector(opts: {
   const secret = randomBytes(32).toString("base64url");
   const token = `${opts.connector_id}.${secret}`;
   const token_hash = passwordHash(secret);
+  const ssh_key_seed = deriveConnectorKeySeed(secret);
   const { rows } = await pool().query(
     `UPDATE self_host_connectors
      SET token_hash=$3,
-         name=COALESCE($4, name),
-         metadata=COALESCE($5, metadata)
+         ssh_key_seed=$4,
+         name=COALESCE($5, name),
+         metadata=COALESCE($6, metadata)
      WHERE connector_id=$1 AND account_id=$2 AND revoked IS NOT TRUE
      RETURNING connector_id`,
     [
       opts.connector_id,
       opts.account_id,
       token_hash,
+      ssh_key_seed,
       opts.name ?? null,
       opts.metadata ?? null,
     ],

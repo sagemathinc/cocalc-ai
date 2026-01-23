@@ -5,7 +5,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -22,8 +24,12 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 const (
@@ -200,7 +206,6 @@ func runPairSSH(args []string) {
 	sshHost := fs.String("ssh-host", "", "Hub SSH host (e.g. 192.168.1.10)")
 	sshPort := fs.Int("ssh-port", 0, "Hub SSH port (default 22)")
 	sshUser := fs.String("ssh-user", "", "Hub SSH username")
-	sshKey := fs.String("ssh-key", "", "SSH private key path")
 	noStrict := fs.Bool("ssh-no-strict-host-key-checking", false, "Disable strict host key checking")
 	token := fs.String("token", "", "Pairing token")
 	name := fs.String("name", "", "Connector name")
@@ -246,39 +251,52 @@ func runPairSSH(args []string) {
 		fail(fmt.Sprintf("pair payload: %v", err))
 	}
 
-	argsSSH := []string{"-T", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR"}
-	if *noStrict {
-		argsSSH = append(argsSSH, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
+	signer, err := signerFromToken(*token, "cocalc-ssh-pair:")
+	if err != nil {
+		fail(fmt.Sprintf("pair signer: %v", err))
 	}
-	if port > 0 {
-		argsSSH = append(argsSSH, "-p", fmt.Sprintf("%d", port))
+	hostKeyCallback, err := loadHostKeyCallback(*noStrict)
+	if err != nil {
+		fail(fmt.Sprintf("ssh host key: %v", err))
 	}
-	if *sshKey != "" {
-		argsSSH = append(argsSSH, "-i", *sshKey)
+	if port == 0 {
+		port = 22
 	}
-	argsSSH = append(argsSSH, fmt.Sprintf("%s@%s", user, host))
-
-	cmd := exec.Command("ssh", argsSSH...)
-	stdin, err := cmd.StdinPipe()
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         defaultTimeout,
+	})
+	if err != nil {
+		fail(fmt.Sprintf("ssh connect failed: %v", err))
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		fail(fmt.Sprintf("ssh session failed: %v", err))
+	}
+	defer session.Close()
+	stdin, err := session.StdinPipe()
 	if err != nil {
 		fail(fmt.Sprintf("ssh stdin: %v", err))
 	}
-	stdout, err := cmd.StdoutPipe()
+	stdout, err := session.StdoutPipe()
 	if err != nil {
 		fail(fmt.Sprintf("ssh stdout: %v", err))
 	}
-	stderr, err := cmd.StderrPipe()
+	stderr, err := session.StderrPipe()
 	if err != nil {
 		fail(fmt.Sprintf("ssh stderr: %v", err))
 	}
-	if err := cmd.Start(); err != nil {
+	if err := session.Start("pair"); err != nil {
 		fail(fmt.Sprintf("ssh start failed: %v", err))
 	}
 	_, _ = stdin.Write(body)
 	_ = stdin.Close()
 	outBytes, _ := io.ReadAll(stdout)
 	errBytes, _ := io.ReadAll(stderr)
-	if err := cmd.Wait(); err != nil {
+	if err := session.Wait(); err != nil {
 		fail(fmt.Sprintf("ssh pair failed: %v (%s)", err, strings.TrimSpace(string(errBytes))))
 	}
 	var resp struct {
@@ -315,7 +333,6 @@ func runPairSSH(args []string) {
 			Host:                    host,
 			Port:                    port,
 			User:                    user,
-			KeyPath:                 *sshKey,
 			LocalPort:               localPort,
 			RemotePort:              remotePort,
 			NoStrictHostKeyChecking: *noStrict,
@@ -374,7 +391,7 @@ func stopDaemonCmd(args []string) {
 func printHelp() {
 	fmt.Println(`Usage:
   cocalc-self-host-connector pair --base-url <url> --token <pairing_token> [--name <name>] [--replace] [--insecure]
-  cocalc-self-host-connector pair-ssh --ssh-host <host> --token <pairing_token> [--ssh-user <user>] [--ssh-key <path>] [--replace]
+  cocalc-self-host-connector pair-ssh --ssh-host <host> --token <pairing_token> [--ssh-user <user>] [--replace]
   cocalc-self-host-connector run [--config <path>] [--daemon]
   cocalc-self-host-connector stop [--config <path>]
   cocalc-self-host-connector once [--config <path>]
@@ -541,6 +558,70 @@ func parseHostPort(raw string, fallbackPort int) (string, int) {
 	return host, fallbackPort
 }
 
+func splitToken(token string) (string, string, error) {
+	parts := strings.SplitN(token, ".", 2)
+	if len(parts) != 2 {
+		return "", "", errors.New("invalid token format")
+	}
+	tokenID := strings.TrimSpace(parts[0])
+	secret := strings.TrimSpace(parts[1])
+	if tokenID == "" || secret == "" {
+		return "", "", errors.New("invalid token format")
+	}
+	return tokenID, secret, nil
+}
+
+func deriveSeed(prefix, secret string) ([]byte, error) {
+	if secret == "" {
+		return nil, errors.New("missing token secret")
+	}
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(prefix))
+	_, _ = hasher.Write([]byte(secret))
+	seed := hasher.Sum(nil)
+	if len(seed) != ed25519.SeedSize {
+		return nil, errors.New("invalid seed length")
+	}
+	return seed, nil
+}
+
+func signerFromToken(token string, prefix string) (ssh.Signer, error) {
+	// We deterministically derive an ed25519 key from the token secret so
+	// pairing and SSH tunnels don't require pre-provisioned key files,
+	// which avoids unnecessary copy paste thus keeping the UX clean.
+	_, secret, err := splitToken(token)
+	if err != nil {
+		return nil, err
+	}
+	seed, err := deriveSeed(prefix, secret)
+	if err != nil {
+		return nil, err
+	}
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	return ssh.NewSignerFromSigner(privateKey)
+}
+
+func loadHostKeyCallback(noStrict bool) (ssh.HostKeyCallback, error) {
+	if noStrict {
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+	knownHostsPath := os.Getenv("COCALC_SSH_KNOWN_HOSTS")
+	if knownHostsPath == "" {
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			knownHostsPath = filepath.Join(home, ".ssh", "known_hosts")
+		}
+	}
+	if knownHostsPath == "" {
+		return nil, errors.New("known_hosts path not found (use --ssh-no-strict-host-key-checking)")
+	}
+	callback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		return nil, fmt.Errorf("known_hosts error (%s): %w", knownHostsPath, err)
+	}
+	return callback, nil
+}
+
 func allocateLocalPort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -559,7 +640,26 @@ func allocateLocalPort() (int, error) {
 	return port, nil
 }
 
-func startSshTunnel(cfg SshTunnelConfig) (*exec.Cmd, error) {
+type SshTunnelHandle struct {
+	done  chan error
+	close func()
+}
+
+func (h *SshTunnelHandle) Close() {
+	if h == nil || h.close == nil {
+		return
+	}
+	h.close()
+}
+
+func (h *SshTunnelHandle) Wait() error {
+	if h == nil || h.done == nil {
+		return nil
+	}
+	return <-h.done
+}
+
+func startSshTunnel(cfg SshTunnelConfig, connectorToken string) (*SshTunnelHandle, error) {
 	if cfg.Host == "" {
 		return nil, errors.New("ssh tunnel host missing")
 	}
@@ -580,39 +680,78 @@ func startSshTunnel(cfg SshTunnelConfig) (*exec.Cmd, error) {
 	if port == 0 {
 		port = 22
 	}
-	args := []string{
-		"-N",
-		"-o", "BatchMode=yes",
-		"-o", "ExitOnForwardFailure=yes",
-		"-o", "ServerAliveInterval=30",
-		"-o", "ServerAliveCountMax=3",
-		"-L", fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", cfg.LocalPort, cfg.RemotePort),
+	signer, err := signerFromToken(connectorToken, "cocalc-ssh-connector:")
+	if err != nil {
+		return nil, fmt.Errorf("ssh tunnel signer: %w", err)
 	}
-	if cfg.NoStrictHostKeyChecking {
-		args = append(args, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
+	hostKeyCallback, err := loadHostKeyCallback(cfg.NoStrictHostKeyChecking)
+	if err != nil {
+		return nil, err
 	}
-	if cfg.KeyPath != "" {
-		args = append(args, "-i", cfg.KeyPath)
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", cfg.Host, port), &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         defaultTimeout,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ssh tunnel connect: %w", err)
 	}
-	args = append(args, "-p", fmt.Sprintf("%d", port))
-	args = append(args, fmt.Sprintf("%s@%s", user, cfg.Host))
-	cmd := exec.Command("ssh", args...)
-	var stderr bytes.Buffer
-	cmd.Stdout = io.Discard
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("ssh tunnel start: %w", err)
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", cfg.LocalPort))
+	if err != nil {
+		client.Close()
+		return nil, fmt.Errorf("ssh tunnel listen: %w", err)
 	}
+	done := make(chan error, 1)
+	var once sync.Once
+	signal := func(err error) {
+		once.Do(func() {
+			done <- err
+		})
+	}
+	closeFn := func() {
+		_ = listener.Close()
+		_ = client.Close()
+	}
+	remoteAddr := fmt.Sprintf("127.0.0.1:%d", cfg.RemotePort)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				signal(err)
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				remote, err := client.Dial("tcp", remoteAddr)
+				if err != nil {
+					return
+				}
+				defer remote.Close()
+				go io.Copy(remote, c)
+				_, _ = io.Copy(c, remote)
+			}(conn)
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
+			if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+				signal(err)
+				closeFn()
+				return
+			}
+		}
+	}()
 	logLine("ssh tunnel started", map[string]interface{}{
 		"host":        cfg.Host,
 		"port":        port,
 		"local_port":  cfg.LocalPort,
 		"remote_port": cfg.RemotePort,
 	})
-	if stderr.Len() > 0 {
-		logLine("ssh tunnel stderr", map[string]interface{}{"stderr": strings.TrimSpace(stderr.String())})
-	}
-	return cmd, nil
+	return &SshTunnelHandle{done: done, close: closeFn}, nil
 }
 
 func parsePID(raw string) (int, error) {
@@ -691,13 +830,13 @@ func runLoop(cfg Config, cfgPath string) {
 		fail("connector config missing base_url or connector_token (run pair first)")
 	}
 	if cfg.SshTunnel != nil {
-		cmd, err := startSshTunnel(*cfg.SshTunnel)
+		handle, err := startSshTunnel(*cfg.SshTunnel, cfg.ConnectorToken)
 		if err != nil {
 			fail(fmt.Sprintf("ssh tunnel failed: %v", err))
 		}
-		if cmd != nil {
+		if handle != nil {
 			go func() {
-				if err := cmd.Wait(); err != nil {
+				if err := handle.Wait(); err != nil {
 					logLine("ssh tunnel exited", map[string]interface{}{"error": err.Error()})
 				} else {
 					logLine("ssh tunnel exited", map[string]interface{}{"status": "ok"})

@@ -109,6 +109,8 @@ async function writeSshdConfig(opts: {
   configPath: string;
   hostKeyPath: string;
   authorizedKeysPath: string;
+  authorizedKeysCommand?: string;
+  authorizedKeysCommandUser?: string;
   pidPath: string;
   sshUser: string;
   sshdPort: number;
@@ -136,6 +138,14 @@ async function writeSshdConfig(opts: {
     `Subsystem sftp ${opts.sftpServerPath}`,
     "StrictModes no",
   ];
+  if (opts.authorizedKeysCommand) {
+    lines.push(
+      `AuthorizedKeysCommand ${opts.authorizedKeysCommand} %u %k`,
+    );
+    if (opts.authorizedKeysCommandUser) {
+      lines.push(`AuthorizedKeysCommandUser ${opts.authorizedKeysCommandUser}`);
+    }
+  }
   const configText = lines.join("\n") + "\n";
   await writeFile(opts.configPath, configText, { mode: 0o600 });
 }
@@ -173,6 +183,10 @@ async function startSshd(): Promise<SshdState | null> {
     sftp: sshBins.sftpServerPath,
   });
   const sshUser = resolveSshUser();
+  const authorizedKeysCommand = await resolveAuthorizedKeysCommand();
+  if (!authorizedKeysCommand) {
+    logger.warn("authorized keys command missing; SSH pairing disabled");
+  }
   const sshdDir = join(secrets, "launchpad-sshd");
   const configPath = join(sshdDir, "sshd_config");
   const hostKeyPath = join(sshdDir, "ssh_host_ed25519_key");
@@ -185,6 +199,8 @@ async function startSshd(): Promise<SshdState | null> {
     configPath,
     hostKeyPath,
     authorizedKeysPath,
+    authorizedKeysCommand: authorizedKeysCommand ?? undefined,
+    authorizedKeysCommandUser: authorizedKeysCommand ? sshUser : undefined,
     pidPath,
     sshUser,
     sshdPort: config.sshd_port,
@@ -267,57 +283,18 @@ function formatSftpAuthorizedKey(
   return `${options.join(",")} ${entry.sftp_public_key} host-${entry.host_id}-sftp`;
 }
 
-function normalizePublicKeys(raw?: string | null): string[] {
-  if (!raw) return [];
-  return raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
-
-function escapeSshCommand(cmd: string): string {
-  return cmd.replace(/"/g, '\\"');
-}
-
-async function resolvePairCommand(): Promise<string | null> {
-  const pairScript = join(__dirname, "ssh-pair.js");
-  if (!(await fileExists(pairScript))) {
+async function resolveAuthorizedKeysCommand(): Promise<string | null> {
+  const script = join(__dirname, "ssh-authorized-keys.js");
+  if (!(await fileExists(script))) {
     return null;
   }
-  return `${process.execPath} ${pairScript}`;
-}
-
-function formatPairingAuthorizedKey(
-  publicKey: string,
-  command: string,
-): string | null {
-  if (!publicKey) {
-    return null;
-  }
-  const options = [
-    `command="${escapeSshCommand(command)}"`,
-    "no-agent-forwarding",
-    "no-X11-forwarding",
-    "no-pty",
-    "no-port-forwarding",
-  ];
-  return `${options.join(",")} ${publicKey} launchpad-pair`;
+  return `${process.execPath} ${script}`;
 }
 
 export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   const state = await startSshd();
   if (!state) {
     return;
-  }
-  const pairCommand = await resolvePairCommand();
-  const pairingKeys = [
-    ...normalizePublicKeys(process.env.COCALC_CONNECTOR_SSH_PUBLIC_KEY),
-    ...normalizePublicKeys(process.env.COCALC_CONNECTOR_SSH_PUBLIC_KEYS),
-  ];
-  if (pairingKeys.length && !pairCommand) {
-    logger.warn("pairing public key configured but ssh pair command missing", {
-      script: join(__dirname, "ssh-pair.js"),
-    });
   }
   const config = getLaunchpadLocalConfig("local");
   const sftpRoot = config.sftp_root;
@@ -347,14 +324,6 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
     `,
   );
   const lines: string[] = [];
-  if (pairCommand) {
-    for (const key of pairingKeys) {
-      const line = formatPairingAuthorizedKey(key, pairCommand);
-      if (line) {
-        lines.push(line);
-      }
-    }
-  }
   for (const row of rows) {
     const entry: TunnelEntry = {
       host_id: row.host_id,
