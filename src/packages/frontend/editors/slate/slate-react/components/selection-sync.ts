@@ -82,6 +82,7 @@ export const useUpdateDOMSelection = ({
       logSlateDebug("update-dom-selection:skip", {
         reason: "state",
         selection: editor.selection ?? null,
+        editorSelection: editor.selection ?? null,
         state: debugState(state),
       });
       return;
@@ -92,6 +93,7 @@ export const useUpdateDOMSelection = ({
       logSlateDebug("update-dom-selection:skip", {
         reason: "no-dom-selection",
         selection: editor.selection ?? null,
+        editorSelection: editor.selection ?? null,
         activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
       });
@@ -100,6 +102,7 @@ export const useUpdateDOMSelection = ({
     }
 
     let selection;
+    const editorSelection = editor.selection ?? null;
     try {
       selection = getWindowedSelection(editor);
     } catch (err) {
@@ -112,11 +115,22 @@ export const useUpdateDOMSelection = ({
       logSlateDebug("update-dom-selection:skip", {
         reason: "get-windowed-selection-error",
         selection: editor.selection ?? null,
+        editorSelection,
         state: debugState(state),
       });
       return;
     }
     const isCropped = !isEqual(editor.selection, selection);
+    if (!isEqual(editorSelection, selection)) {
+      logSlateDebug("update-dom-selection:clipped", {
+        selection: selection ?? null,
+        editorSelection,
+        activeElement: describeDomNode(window.document.activeElement),
+        visibleRange: editor.windowedListRef?.current?.visibleRange ?? null,
+        windowed: editor.windowedListRef?.current != null,
+        state: debugState(state),
+      });
+    }
     if (!isCropped) {
       delete state.windowedSelection;
     }
@@ -140,6 +154,7 @@ export const useUpdateDOMSelection = ({
     if (!selection && !hasDomSelection) {
       logSlateDebug("update-dom-selection:noop", {
         selection: selection ?? null,
+        editorSelection,
         domSelection: describeDomSelection(domSelection),
         activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
@@ -171,6 +186,7 @@ export const useUpdateDOMSelection = ({
       }
       logSlateDebug("update-dom-selection:clear", {
         selection: selection ?? null,
+        editorSelection,
         domSelection: describeDomSelection(domSelection),
         activeElement: describeDomNode(window.document.activeElement),
         state: debugState(state),
@@ -239,6 +255,7 @@ export const useUpdateDOMSelection = ({
     }
     logSlateDebug("update-dom-selection:set", {
       selection: selection ?? null,
+      editorSelection,
       domSelection: describeDomSelection(domSelection),
       activeElement: describeDomNode(window.document.activeElement),
       state: debugState(state),

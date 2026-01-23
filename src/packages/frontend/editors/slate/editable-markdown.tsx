@@ -58,6 +58,7 @@ import { slateDiff } from "./slate-diff";
 import { useEmojis } from "./slate-emojis";
 import { useMentions } from "./slate-mentions";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
+import { logSlateDebug } from "./slate-react/utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
 import type { SlateEditor } from "./types";
@@ -256,6 +257,10 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           const { anchor, focus } = selection;
           Editor.node(editor, anchor);
           Editor.node(editor, focus);
+          logSlateDebug("selection-ref:set", {
+            selection,
+            editorSelection: ed.selection ?? null,
+          });
           ed.selection = selection;
         },
         getSelection: () => {

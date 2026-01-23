@@ -9,6 +9,7 @@ import { isEqual } from "lodash";
 import { rangeAll } from "./slate-util";
 import { emptyParagraph } from "./padding";
 import { delay } from "awaiting";
+import { logSlateDebug } from "./slate-react/utils/slate-debug";
 
 // Scroll to the n-th heading in the document
 export async function scrollToHeading(
@@ -64,6 +65,11 @@ function move(editor: Editor, options?): void {
     // I saw this once when moving the cursor, and don't think it is worth crashing
     // the editor completely.
     console.warn(`Slate: issue moving cursor -- ${err}`);
+    logSlateDebug("reset-selection:move-error", {
+      error: String(err),
+      selection: editor.selection ?? null,
+      options,
+    });
     resetSelection(editor);
   }
 }
@@ -71,6 +77,10 @@ function move(editor: Editor, options?): void {
 export function resetSelection(editor: Editor) {
   // set to beginning of document -- better than crashing.
   const focus = { path: [0, 0], offset: 0 };
+  logSlateDebug("reset-selection", {
+    selection: editor.selection ?? null,
+    focus,
+  });
   Transforms.setSelection(editor, {
     focus,
     anchor: focus,
