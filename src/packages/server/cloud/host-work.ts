@@ -354,7 +354,7 @@ async function handleProvision(row: any) {
   let startupScript: string | undefined;
   if (providerId) {
     try {
-      const { baseUrl, caCert } = await resolveLaunchpadBootstrapUrl();
+      const { baseUrl } = await resolveLaunchpadBootstrapUrl();
       const token = await createBootstrapToken(row.id, {
         purpose: "bootstrap",
       });
@@ -362,7 +362,7 @@ async function handleProvision(row: any) {
         row,
         token.token,
         baseUrl,
-        caCert,
+        undefined,
       );
       const nextMetadata = {
         ...(row.metadata ?? {}),

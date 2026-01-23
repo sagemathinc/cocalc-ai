@@ -44,10 +44,6 @@ import {
   isRocketProduct,
 } from "@cocalc/server/launchpad/mode";
 import {
-  ensureOnPremTls,
-  scheduleOnPremCertRotation,
-} from "@cocalc/server/onprem";
-import {
   cloudHostHandlers,
   startCloudCatalogWorker,
   startCloudVmReconciler,
@@ -124,25 +120,9 @@ async function maybeInitOnPremTls(): Promise<void> {
   if (!localMode) {
     return;
   }
-  const tls = ensureOnPremTls({
-    existingKey: program.httpsKey,
-    existingCert: program.httpsCert,
-    allowLocalHttp: true,
-  });
-  if (tls) {
-    program.httpsKey = tls.keyPath;
-    program.httpsCert = tls.certPath;
-  }
-  scheduleOnPremCertRotation({
-    allowLocalHttp: true,
-    existingKey: program.httpsKey,
-    existingCert: program.httpsCert,
-  });
   if (!process.env.CONAT_SERVER) {
     try {
-      const { baseUrl } = await resolveLaunchpadBootstrapUrl({
-        fallbackProtocol: program.httpsKey ? "https" : "http",
-      });
+      const { baseUrl } = await resolveLaunchpadBootstrapUrl();
       setConatServer(baseUrl);
       logger.info("local network conat server resolved", { address: baseUrl });
     } catch (err) {

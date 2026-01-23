@@ -46,6 +46,9 @@ function findArgValue(flag) {
 
 function ensureLaunchpadTls() {
   const mode = (process.env.COCALC_DEPLOYMENT_MODE ?? "").trim().toLowerCase();
+  if (!mode || mode === "local") {
+    return null;
+  }
   if (mode && mode !== "local" && mode !== "onprem") {
     return null;
   }
@@ -61,6 +64,9 @@ function ensureLaunchpadTls() {
 
 function scheduleLaunchpadCertRotation() {
   const mode = (process.env.COCALC_DEPLOYMENT_MODE ?? "").trim().toLowerCase();
+  if (!mode || mode === "local") {
+    return;
+  }
   if (mode && mode !== "local" && mode !== "onprem") {
     return;
   }

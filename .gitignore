@@ -14,7 +14,7 @@ codemirror.min.js
 .*.sage-backup
 .*.sage-history
 .*.smc-backup
-data/
+data*/
 .#*
 \#*
 node_modules

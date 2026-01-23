@@ -1,7 +1,5 @@
-import { readFileSync } from "node:fs";
 import basePath from "@cocalc/backend/base-path";
 import getLogger from "@cocalc/backend/logger";
-import { resolveOnPremHost, isLocalHost } from "@cocalc/server/onprem";
 import { getLaunchpadMode } from "./mode";
 import siteURL from "@cocalc/database/settings/site-url";
 
@@ -9,7 +7,6 @@ const logger = getLogger("launchpad:bootstrap-url");
 
 type BootstrapBase = {
   baseUrl: string;
-  caCert?: string;
 };
 
 function resolveLaunchpadPort(): number {
@@ -22,45 +19,19 @@ function resolveLaunchpadPort(): number {
   return Number.isFinite(parsed) ? parsed : 8443;
 }
 
-function resolveLaunchpadCert(): string | undefined {
-  const certPath = process.env.COCALC_LAUNCHPAD_HTTPS_CERT;
-  if (!certPath) return undefined;
-  try {
-    return readFileSync(certPath, "utf8");
-  } catch (err) {
-    logger.warn("launchpad: unable to read TLS cert", { certPath, err });
-    return undefined;
-  }
-}
-
 export async function resolveLaunchpadBootstrapUrl(opts?: {
   fallbackHost?: string | null;
   fallbackProtocol?: string | null;
 }): Promise<BootstrapBase> {
+  void opts;
   const mode = await getLaunchpadMode();
   const localMode = mode === "local";
   if (!localMode) {
     return { baseUrl: await siteURL() };
   }
-  const host = resolveOnPremHost(opts?.fallbackHost);
   const port = resolveLaunchpadPort();
-  const local = isLocalHost(host);
-  const caCert = resolveLaunchpadCert();
-  let protocol = "http";
-  if (local) {
-    protocol = caCert ? "https" : "http";
-  } else {
-    protocol = caCert ? "https" : "http";
-    if (!caCert) {
-      logger.warn("launchpad local bootstrap using http (no TLS cert found)", {
-        host,
-        port,
-      });
-    }
-  }
-  if (opts?.fallbackProtocol && !caCert) {
-    protocol = opts.fallbackProtocol;
-  }
+  const host = "localhost";
+  const protocol = "http";
   let path = basePath ?? "";
   if (path === "/") {
     path = "";
@@ -74,8 +45,8 @@ export async function resolveLaunchpadBootstrapUrl(opts?: {
     host,
     port,
     protocol,
-    local,
-    has_cert: Boolean(caCert),
+    local: true,
+    has_cert: false,
   });
-  return { baseUrl: base, caCert: protocol === "https" ? caCert : undefined };
+  return { baseUrl: base };
 }

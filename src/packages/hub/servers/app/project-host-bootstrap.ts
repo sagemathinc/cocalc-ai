@@ -73,14 +73,12 @@ export default function init(router: Router) {
       }
       const hostRow = await loadHostRow(tokenInfo.host_id);
       let baseUrl: string;
-      let caCert: string | undefined;
       try {
         const resolved = await resolveLaunchpadBootstrapUrl({
           fallbackHost: req.get("host"),
           fallbackProtocol: req.protocol,
         });
         baseUrl = resolved.baseUrl;
-        caCert = resolved.caCert;
       } catch {
         const hostHeader = req.get("host") ?? "";
         const proto = req.protocol;
@@ -91,7 +89,7 @@ export default function init(router: Router) {
         hostRow,
         token,
         baseUrl,
-        caCert,
+        undefined,
       );
       res.type("text/x-shellscript").send(script);
     } catch (err) {
