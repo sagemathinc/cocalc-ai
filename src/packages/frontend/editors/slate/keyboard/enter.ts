@@ -5,9 +5,10 @@
 
 // What happens when you hit the enter key.
 
-import { Editor, Element, Transforms } from "slate";
+import { Element, Transforms } from "slate";
 import { isElementOfType } from "../elements";
 import { register } from "./register";
+import { emptyParagraph } from "../padding";
 import {
   isAtBeginningOfBlock,
   isAtEndOfBlock,
