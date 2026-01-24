@@ -58,12 +58,10 @@ const ensureEditorExtras = (editor: UpstreamReactEditor): ReactEditor => {
     e.ticks = 0;
   }
   if (e.setIgnoreSelection == null) {
-    e.setIgnoreSelection = (value: boolean) => {
-      (e as any).__ignoreSelection = value;
-    };
+    e.setIgnoreSelection = () => undefined;
   }
   if (e.getIgnoreSelection == null) {
-    e.getIgnoreSelection = () => Boolean((e as any).__ignoreSelection);
+    e.getIgnoreSelection = () => false;
   }
   if (e.scrollIntoDOM == null) {
     e.scrollIntoDOM = () => false;
@@ -102,9 +100,6 @@ export const ReactEditor = Object.assign(UpstreamReactEditor, {
     domRange: Parameters<typeof UpstreamReactEditor.toSlateRange>[1],
     options?: Parameters<typeof UpstreamReactEditor.toSlateRange>[2],
   ): Range | null {
-    if (editor.getIgnoreSelection?.()) {
-      return editor.selection ?? null;
-    }
     return baseToSlateRange(editor, domRange, {
       exactMatch: false,
       suppressThrow: true,

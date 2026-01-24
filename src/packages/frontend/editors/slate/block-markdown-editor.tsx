@@ -251,18 +251,6 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           event.preventDefault();
           return;
         }
-        if (
-          !event.metaKey &&
-          !event.ctrlKey &&
-          !event.altKey &&
-          (event.key.length === 1 ||
-            event.key === "Enter" ||
-            event.key === "Backspace" ||
-            event.key === "Delete" ||
-            event.key === "Tab")
-        ) {
-          editor.setIgnoreSelection(true);
-        }
         if (event.defaultPrevented) return;
         if (!ReactEditor.isFocused(editor)) return;
         if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -353,28 +341,6 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       ],
     );
 
-    const handleKeyUp = useCallback(
-      (event: React.KeyboardEvent<HTMLDivElement>) => {
-        if (
-          !event.metaKey &&
-          !event.ctrlKey &&
-          !event.altKey &&
-          (event.key.length === 1 ||
-            event.key === "Enter" ||
-            event.key === "Backspace" ||
-            event.key === "Delete" ||
-            event.key === "Tab")
-        ) {
-          editor.setIgnoreSelection(false);
-        }
-      },
-      [editor],
-    );
-
-    const handleMouseDown = useCallback(() => {
-      editor.setIgnoreSelection(false);
-    }, [editor]);
-
     const showGapBefore = gapCursor?.index === index && gapCursor.side === "before";
     const showGapAfter = gapCursor?.index === index && gapCursor.side === "after";
 
@@ -408,13 +374,8 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               renderElement={renderElement}
               renderLeaf={Leaf}
               onFocus={onFocus}
-              onBlur={() => {
-                editor.setIgnoreSelection(false);
-                onBlur?.();
-              }}
+              onBlur={onBlur}
               onKeyDown={handleKeyDown}
-              onKeyUp={handleKeyUp}
-              onMouseDown={handleMouseDown}
               style={{
                 position: "relative",
                 width: "100%",
