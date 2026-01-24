@@ -21,7 +21,7 @@ import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { Descendant, createEditor } from "slate";
 import { Virtuoso } from "react-virtuoso";
-import { Editable, Slate, withReact } from "./slate-react";
+import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
 import type { RenderElementProps } from "./slate-react";
 import { markdown_to_slate } from "./markdown-to-slate";
 import { slate_to_markdown } from "./slate-to-markdown";
@@ -35,8 +35,18 @@ import Leaf from "./leaf-with-cursor";
 import { Actions } from "./types";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
 import { ChangeContext } from "./use-change";
+import { getHandler as getKeyboardHandler } from "./keyboard";
+import type { SearchHook } from "./search";
 
 const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
+const EMPTY_SEARCH: SearchHook = {
+  decorate: () => [],
+  Search: null as any,
+  search: "",
+  previous: () => undefined,
+  next: () => undefined,
+  focus: () => undefined,
+};
 
 function stripTrailingNewlines(markdown: string): string {
   return markdown.replace(/\n+$/g, "");
@@ -125,6 +135,8 @@ interface BlockRowEditorProps {
   autoFocus?: boolean;
   read_only?: boolean;
   highlight?: boolean;
+  actions?: Actions;
+  id?: string;
   rowStyle: React.CSSProperties;
 }
 
@@ -139,6 +151,8 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       autoFocus,
       read_only,
       highlight,
+      actions,
+      id,
       rowStyle,
     } = props;
 
@@ -206,6 +220,29 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       [index, onChangeMarkdown, read_only],
     );
 
+    const handleKeyDown = useCallback(
+      (event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (read_only) {
+          event.preventDefault();
+          return;
+        }
+        if (event.defaultPrevented) return;
+        if (!ReactEditor.isFocused(editor)) return;
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+        const handler = getKeyboardHandler(event);
+        if (!handler) return;
+        if (
+          handler({
+            editor,
+            extra: { actions: actions ?? {}, id: id ?? "", search: EMPTY_SEARCH },
+          })
+        ) {
+          event.preventDefault();
+        }
+      },
+      [actions, editor, id, read_only],
+    );
+
     return (
       <div
         style={{
@@ -223,6 +260,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               renderLeaf={Leaf}
               onFocus={onFocus}
               onBlur={onBlur}
+              onKeyDown={handleKeyDown}
               style={{
                 position: "relative",
                 width: "100%",
@@ -422,6 +460,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         autoFocus={autoFocus && index === 0}
         read_only={read_only}
         highlight={focusedIndex === index}
+        actions={actions}
+        id={props.id}
         rowStyle={rowStyle}
       />
     );
