@@ -6,7 +6,7 @@
 import { Editor, Element, Range, Transforms, Point } from "slate";
 import { ReactEditor } from "./slate-react";
 import { isEqual } from "lodash";
-import { rangeAll } from "./slate-util";
+import { ensurePoint, pointAtPath, rangeAll } from "./slate-util";
 import { emptyParagraph } from "./padding";
 import { delay } from "awaiting";
 import { logSlateDebug, withSelectionReason } from "./slate-react/utils/slate-debug";
@@ -55,7 +55,8 @@ export async function scrollToHeading(
 }
 
 export function setCursor(editor: ReactEditor, point: Point) {
-  Transforms.setSelection(editor, { anchor: point, focus: point });
+  const safePoint = ensurePoint(editor, point);
+  Transforms.setSelection(editor, { anchor: safePoint, focus: safePoint });
 }
 
 function move(editor: Editor, options?): void {
@@ -76,7 +77,7 @@ function move(editor: Editor, options?): void {
 
 export function resetSelection(editor: Editor) {
   // set to beginning of document -- better than crashing.
-  const focus = { path: [0, 0], offset: 0 };
+  const focus = pointAtPath(editor, []);
   logSlateDebug("reset-selection", {
     selection: editor.selection ?? null,
     focus,
@@ -215,7 +216,7 @@ export function findElement(
 export function moveCursorToElement(editor: Editor, element: Element): void {
   const path = findElement(editor, element);
   if (path == null) return;
-  const point = { path, offset: 0 };
+  const point = pointAtPath(editor, path);
   Transforms.setSelection(editor, { anchor: point, focus: point });
 }
 
@@ -259,7 +260,7 @@ export function moveCursorToBeginningOfBlock(
     path = [...path]; // make mutable copy
     path[path.length - 1] = 0;
   }
-  const focus = { path, offset: 0 };
+  const focus = pointAtPath(editor, path);
   Transforms.setSelection(editor, { focus, anchor: focus });
 }
 

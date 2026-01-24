@@ -4,6 +4,7 @@
  */
 
 import { Editor, Node } from "slate";
+import { pointAtPath } from "./slate-util";
 
 // The version of isNodeList in slate is **insanely** slow, and this hack
 // is likely to be sufficient for our use.
@@ -23,7 +24,7 @@ export const withNonfatalRange = (editor) => {
       return range(editor, at, to);
     } catch (err) {
       console.log(`WARNING: range error ${err}`);
-      const anchor = Editor.first(editor, []);
+      const anchor = pointAtPath(editor, []);
       return { anchor, focus: anchor };
     }
   };

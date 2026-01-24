@@ -62,6 +62,7 @@ import type { RenderElementProps } from "./slate-react";
 import { logSlateDebug } from "./slate-react/utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
+import { pointAtPath } from "./slate-util";
 import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
@@ -358,21 +359,21 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           // this as follows, since that's what is used by our Jupyter actions.
           //    y = 0: top of document
           //    y = -1: bottom of document
-          let path;
           if (y == 0) {
             // top of doc
-            path = [0, 0];
+            const focus = pointAtPath(editor, [], 0, "start");
+            Transforms.setSelection(editor, {
+              focus,
+              anchor: focus,
+            });
           } else if (y == -1) {
             // bottom of doc
-            path = [editor.children.length - 1, 0];
-          } else {
-            return;
+            const focus = pointAtPath(editor, [], undefined, "end");
+            Transforms.setSelection(editor, {
+              focus,
+              anchor: focus,
+            });
           }
-          const focus = { path, offset: 0 };
-          Transforms.setSelection(editor, {
-            focus,
-            anchor: focus,
-          });
         },
         get_cursor: () => {
           const point = editor.selection?.anchor;

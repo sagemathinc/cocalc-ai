@@ -6,6 +6,7 @@ import { Node, Path, Transforms } from "slate";
 import { findElement } from "../../control";
 import { toSlate } from "./index";
 import { ReactEditor } from "../../slate-react";
+import { pointAtPath } from "../../slate-util";
 import { toDisplayMath } from "../math/index";
 
 function InsertButton({ children, onClick }) {
@@ -36,11 +37,8 @@ export default function InsertBar({ editor, element, info, above }) {
     ReactEditor.focus(editor);
     if (path) {
       setTimeout(() => {
-        const sel = {
-          anchor: { path: path!, offset: 0 },
-          focus: { path: path!, offset },
-        };
-        Transforms.setSelection(editor, sel);
+        const focus = pointAtPath(editor, path!, offset);
+        Transforms.setSelection(editor, { anchor: focus, focus });
         ReactEditor.focus(editor);
       }, 50);
     }
