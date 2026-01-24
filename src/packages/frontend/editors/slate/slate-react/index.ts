@@ -99,16 +99,12 @@ export const ReactEditor = Object.assign(UpstreamReactEditor, {
     editor: ReactEditor,
     domRange: Parameters<typeof UpstreamReactEditor.toSlateRange>[1],
     options?: Parameters<typeof UpstreamReactEditor.toSlateRange>[2],
-  ): Range {
-    const range = baseToSlateRange(editor, domRange, {
+  ): Range | null {
+    return baseToSlateRange(editor, domRange, {
       exactMatch: false,
-      suppressThrow: false,
+      suppressThrow: true,
       ...options,
     });
-    if (!range) {
-      throw new Error("Unable to resolve Slate range from DOM selection.");
-    }
-    return range;
   },
   isUsingWindowing(editor: ReactEditor): boolean {
     return !!editor.windowedListRef?.current;
@@ -188,9 +184,16 @@ type EditableProps = React.ComponentProps<typeof UpstreamEditable> & {
 
 export const Editable = React.forwardRef<HTMLDivElement, EditableProps>(
   (props, forwardedRef) => {
-    const { windowing: _windowing, divref, ...rest } = props;
+    const { windowing: _windowing, divref, style, ...rest } = props;
     const ref = divref ?? forwardedRef;
-    return React.createElement(UpstreamEditable, { ref, ...rest });
+    return React.createElement(UpstreamEditable, {
+      ref,
+      ...rest,
+      style: {
+        ...style,
+        outline: "none",
+      },
+    });
   },
 );
 

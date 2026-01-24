@@ -80,6 +80,10 @@ test("slate selection mapping works with placeholders", () => {
   const range: Range = { anchor: point, focus: point };
   const domRange = ReactEditor.toDOMRange(editor, range);
   const roundTripRange = ReactEditor.toSlateRange(editor, domRange);
+  expect(roundTripRange).not.toBeNull();
+  if (!roundTripRange) {
+    throw new Error("Expected Slate range to round-trip.");
+  }
   expect(roundTripRange).toEqual(range);
 
   unmount();
@@ -253,6 +257,10 @@ test("slate selection mapping normalizes backward ranges", () => {
 
   const domRange = ReactEditor.toDOMRange(editor, backwardRange);
   const roundTripRange = ReactEditor.toSlateRange(editor, domRange);
+  expect(roundTripRange).not.toBeNull();
+  if (!roundTripRange) {
+    throw new Error("Expected Slate range to round-trip.");
+  }
 
   const normalizedRange: Range = {
     anchor: { path: [0, 0], offset: 1 },
