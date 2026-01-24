@@ -1,5 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
-import { pairSelfHostConnector } from "@cocalc/server/self-host/pair";
+import { getLaunchpadLocalConfig } from "./mode";
 
 const logger = getLogger("launchpad:local:ssh-pair");
 
@@ -34,11 +34,22 @@ async function main() {
   if (!pairingToken) {
     throw new Error("missing pairing token");
   }
-  const connectorInfo = (payload?.connector_info ?? {}) as Record<string, any>;
-  const response = await pairSelfHostConnector({
-    pairingToken,
-    connectorInfo,
+  const baseOverride = String(process.env.COCALC_SELF_HOST_PAIR_URL ?? "").trim();
+  const config = getLaunchpadLocalConfig("local");
+  const port = config.http_port ?? config.https_port ?? 443;
+  const baseUrl =
+    baseOverride ||
+    `http://127.0.0.1:${port}`;
+  const resp = await fetch(`${baseUrl}/self-host/pair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: raw,
   });
+  if (!resp.ok) {
+    const text = (await resp.text()).trim();
+    throw new Error(text || `pair failed (${resp.status})`);
+  }
+  const response = await resp.json();
   writeJson(response);
 }
 

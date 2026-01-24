@@ -151,8 +151,8 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
           }
           cache.set(project_id, addr);
           await updateProjectHostSnapshot(project_id, {
-            public_url: hostRow?.public_url,
-            internal_url: hostRow?.internal_url,
+            public_url: null,
+            internal_url: null,
             ssh_server: hostRow?.ssh_server,
             local_proxy: true,
           });

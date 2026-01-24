@@ -20,6 +20,7 @@ type HostPlacement = {
     public_url?: string;
     internal_url?: string;
     ssh_server?: string;
+    local_proxy?: boolean;
   };
 };
 
@@ -80,18 +81,33 @@ async function applyHostGpuToRunQuota(
 
 export async function loadHostFromRegistry(host_id: string) {
   const { rows } = await pool().query(
-    "SELECT name, region, public_url, internal_url, ssh_server, tier FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    "SELECT name, region, public_url, internal_url, ssh_server, tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
     [host_id],
   );
   if (!rows[0]) return undefined;
-  rows[0].tier = normalizeHostTier(rows[0].tier);
-  return rows[0];
+  const row = rows[0];
+  const machine = row?.metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  const tier = normalizeHostTier(row.tier);
+  return {
+    name: row.name,
+    region: row.region,
+    public_url: row.public_url,
+    internal_url: row.internal_url,
+    ssh_server: row.ssh_server,
+    tier,
+    local_proxy: isLocalSelfHost,
+  };
 }
 
 export async function selectActiveHost(exclude_host_id?: string) {
   const { rows } = await pool().query(
     `
-      SELECT id, name, region, public_url, internal_url, ssh_server, tier
+      SELECT id, name, region, public_url, internal_url, ssh_server, tier, metadata
       FROM project_hosts
       WHERE status='running'
         AND deleted IS NULL
@@ -103,8 +119,24 @@ export async function selectActiveHost(exclude_host_id?: string) {
     exclude_host_id ? [exclude_host_id] : [],
   );
   if (!rows[0]) return undefined;
-  rows[0].tier = normalizeHostTier(rows[0].tier);
-  return rows[0];
+  const row = rows[0];
+  const machine = row?.metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  const tier = normalizeHostTier(row.tier);
+  return {
+    id: row.id,
+    name: row.name,
+    region: row.region,
+    public_url: row.public_url,
+    internal_url: row.internal_url,
+    ssh_server: row.ssh_server,
+    tier,
+    local_proxy: isLocalSelfHost,
+  };
 }
 
 export async function savePlacement(
@@ -134,7 +166,10 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
         `project is assigned to host ${meta.host_id} but it is unavailable`,
       );
     }
-    if (!meta.host) {
+    const needsUpdate =
+      !meta.host ||
+      (meta.host.local_proxy === undefined && hostInfo.local_proxy !== undefined);
+    if (needsUpdate) {
       await savePlacement(project_id, {
         host_id: meta.host_id,
         host: hostInfo,

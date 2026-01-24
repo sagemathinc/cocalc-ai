@@ -1292,7 +1292,7 @@ func wrapCloudInitScript(script string) string {
 	return fmt.Sprintf(`#cloud-config
 write_files:
   - path: /root/cocalc-bootstrap.sh
-    permissions: "0700"
+    permissions: "u=rwx,go="
     owner: root:root
     content: |
 %s

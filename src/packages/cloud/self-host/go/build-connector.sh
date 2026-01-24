@@ -4,6 +4,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLOUD_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUT_DIR="$CLOUD_DIR/build/connector"
+HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
 VERSION="${CONNECTOR_VERSION:-$(node -p "require('${CLOUD_DIR}/package.json').version")}"
 NAME="cocalc-self-host-connector"
@@ -39,7 +40,11 @@ build_target() {
 
 build_target linux amd64
 build_target linux arm64
-build_target darwin arm64
+if [[ "$HOST_OS" == "darwin" ]]; then
+  build_target darwin arm64
+else
+  echo "Skipping darwin build on ${HOST_OS}; codesigning requires macOS." >&2
+fi
 
 ls -lh "$OUT_DIR"
 echo "Built connector binaries in $OUT_DIR"

@@ -301,6 +301,42 @@ function derivePublicKeyFromSeed(seedBase64: string): string | null {
   }
 }
 
+function shellEscape(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildPairCommand(): string {
+  const envKeys = [
+    "COCALC_DB",
+    "COCALC_PGLITE_DATA_DIR",
+    "COCALC_DATA_DIR",
+    "DATA",
+    "COCALC_BASE_PORT",
+    "COCALC_HTTP_PORT",
+    "COCALC_HTTPS_PORT",
+    "PORT",
+    "COCALC_SELF_HOST_PAIR_URL",
+    "PGHOST",
+    "PGUSER",
+    "PGDATABASE",
+    "PGPORT",
+    "PGSSLMODE",
+    "PGSSLROOTCERT",
+    "PGSSLCERT",
+    "PGSSLKEY",
+  ];
+  const envParts = envKeys
+    .map((key) => {
+      const value = process.env[key];
+      if (!value) return "";
+      return `${key}=${shellEscape(value)}`;
+    })
+    .filter(Boolean);
+  const base = `${process.execPath} ${join(__dirname, "ssh-pair.js")}`;
+  if (!envParts.length) return base;
+  return `env ${envParts.join(" ")} ${base}`;
+}
+
 function formatPairingKey(command: string, key: string): string {
   const options = [
     `command="${command.replace(/"/g, '\\"')}"`,
@@ -376,7 +412,7 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
       lines.push(sftpLine);
     }
   }
-  const commandPath = `${process.execPath} ${join(__dirname, "ssh-pair.js")}`;
+  const commandPath = buildPairCommand();
   const { rows: pairingRows } = await pool().query<{
     pairing_key_seed: string | null;
   }>(
