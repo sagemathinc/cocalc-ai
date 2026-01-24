@@ -62,7 +62,7 @@ import type { RenderElementProps } from "./slate-react";
 import { logSlateDebug } from "./slate-react/utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
-import { pointAtPath } from "./slate-util";
+import { ensureRange, pointAtPath } from "./slate-util";
 import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
@@ -955,19 +955,28 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     // since this is very useful to know, e.g., for
     // understanding cursor movement, format fallback, etc.
     // @ts-ignore
-    if (editor.lastSelection == null && editor.selection != null) {
-      // initialize
-      // @ts-ignore
-      editor.lastSelection = editor.curSelection = editor.selection;
-    }
-    // @ts-ignore
-    if (!isEqual(editor.selection, editor.curSelection)) {
-      // @ts-ignore
-      editor.lastSelection = editor.curSelection;
-      if (editor.selection != null) {
+    if (editor.selection != null) {
+      const safeSelection = ensureRange(editor, editor.selection);
+      if (editor.lastSelection == null) {
+        // initialize
         // @ts-ignore
-        editor.curSelection = editor.selection;
+        editor.lastSelection = editor.curSelection = safeSelection;
       }
+      // @ts-ignore
+      if (!isEqual(safeSelection, editor.curSelection)) {
+        // @ts-ignore
+        editor.lastSelection = editor.curSelection;
+        // @ts-ignore
+        editor.curSelection = safeSelection;
+      }
+    }
+    if (editor.curSelection != null) {
+      // @ts-ignore
+      editor.curSelection = ensureRange(editor, editor.curSelection);
+    }
+    if (editor.lastSelection != null) {
+      // @ts-ignore
+      editor.lastSelection = ensureRange(editor, editor.lastSelection);
     }
 
     if (editorValue === newEditorValue) {

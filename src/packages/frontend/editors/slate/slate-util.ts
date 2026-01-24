@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Node, Location, Editor, Element, Range, Path, Point, Text } from "slate";
+import {
+  Node,
+  Location,
+  Editor,
+  Element,
+  Range,
+  Path,
+  Point,
+  Text,
+} from "slate";
 
 export function containingBlock(editor: Editor): undefined | [Node, Location] {
   for (const x of Editor.nodes(editor, {
@@ -36,6 +45,9 @@ export function pointAtPath(
   edge: "start" | "end" = "start",
 ): Point {
   try {
+    if (!Node.has(editor, path)) {
+      return docStart(editor);
+    }
     const point =
       edge === "end" ? Editor.end(editor, path) : Editor.start(editor, path);
     if (offset == null) return point;
