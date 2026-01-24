@@ -4,46 +4,12 @@
  */
 
 import { register } from "../register";
-import { useFocused, useSelected, useCollapsed } from "../hooks";
 
 register({
   slateType: "paragraph",
 
   Element: ({ attributes, children, element }) => {
     if (element.type != "paragraph") throw Error("bug");
-
-    // All this complexity is because we only show empty paragraphs
-    // when the cursor is in them, since we create them dynamically in
-    // order to work around a fundamental shortcoming in the design
-    // of slatejs wrt cursor navigation (e.g., you can't move the cursor
-    // between block voids or before various elements at the beginning
-    // of a document such as bulleted lists).
-    const focused = useFocused();
-    const selected = useSelected();
-    const collapsed = useCollapsed();
-    const isEmpty =
-      element.children.length == 1 && element.children[0]["text"] == "";
-    const isBlank = element.blank === true;
-    if (isEmpty && !isBlank && !(collapsed && focused && selected)) {
-      // Only show empty paragraph if selection is collapsed, editor is
-      // focused, and para is selected.
-      return (
-        <span
-          {...attributes}
-          style={{
-            // Hide placeholder paragraphs without stealing clicks that
-            // should target visible blank lines.
-            position: "absolute",
-            width: 0,
-            height: 0,
-            overflow: "hidden",
-            pointerEvents: "none",
-          }}
-        >
-          {children}
-        </span>
-      );
-    }
 
     // Below the textIndent: 0 is needed due to task lists -- see slate/elements/list/list-item.tsx
 

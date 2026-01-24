@@ -7,7 +7,6 @@ import { Editor, Element, Range, Transforms, Point } from "slate";
 import { ReactEditor } from "./slate-react";
 import { isEqual } from "lodash";
 import { ensurePoint, pointAtPath, rangeAll } from "./slate-util";
-import { emptyParagraph } from "./padding";
 import { delay } from "awaiting";
 import { logSlateDebug, withSelectionReason } from "./slate-utils/slate-debug";
 
@@ -98,17 +97,9 @@ export function moveCursorDown(editor: Editor, force: boolean = false): void {
   const newFocus = editor.selection?.focus;
   if (newFocus == null) return;
   if (isEqual(focus, newFocus)) {
-    // didn't move down; at end of doc, so put a blank paragraph there
-    // and move to that.
-    editor.apply({
-      type: "insert_node",
-      path: [editor.children.length],
-      node: emptyParagraph(),
-    });
-    move(editor, { distance: 1, unit: "line" });
+    // didn't move down; at end of doc or blocked.
     return;
   }
-  ensureCursorNotBlocked(editor);
 }
 
 export function moveCursorUp(editor: Editor, force: boolean = false): void {
@@ -119,16 +110,9 @@ export function moveCursorUp(editor: Editor, force: boolean = false): void {
   const newFocus = editor.selection?.focus;
   if (newFocus == null) return;
   if (isEqual(focus, newFocus)) {
-    // didn't move -- put a blank paragraph there
-    // and move to that.
-    editor.apply({
-      type: "insert_node",
-      path: [0],
-      node: emptyParagraph(),
-    });
-    move(editor, { distance: 1, unit: "line", reverse: true });
+    // didn't move; at start of doc or blocked.
+    return;
   }
-  ensureCursorNotBlocked(editor, true);
 }
 
 export function blocksCursor(editor, up: boolean = false): boolean {
@@ -172,21 +156,7 @@ export function blocksCursor(editor, up: boolean = false): boolean {
 
 export function ensureCursorNotBlocked(editor: Editor, up: boolean = false) {
   if (!blocksCursor(editor, !up)) return;
-  // cursor in a void element, so insert a blank paragraph at
-  // cursor and put cursor in that blank paragraph.
-  const { selection } = editor;
-  if (selection == null) return;
-  const path = [selection.focus.path[0] + (up ? +1 : 0)];
-  editor.apply({
-    type: "insert_node",
-    path,
-    node: { type: "paragraph", children: [{ text: "" }] },
-  });
-  const focus = { path: path.concat([0]), offset: 0 };
-  Transforms.setSelection(editor, {
-    focus,
-    anchor: focus,
-  });
+  // No-op: avoid injecting placeholder paragraphs just to move the cursor.
 }
 
 // Find path to a given element.
