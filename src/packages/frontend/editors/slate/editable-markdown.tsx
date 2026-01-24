@@ -59,7 +59,7 @@ import { useEmojis } from "./slate-emojis";
 import { useMentions } from "./slate-mentions";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
 import type { RenderElementProps } from "./slate-react";
-import { logSlateDebug } from "./slate-react/utils/slate-debug";
+import { logSlateDebug } from "./slate-utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
 import { ensureRange, pointAtPath } from "./slate-util";

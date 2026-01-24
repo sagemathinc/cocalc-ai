@@ -33,7 +33,7 @@ import infoToMode from "./code-block/info-to-mode";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { useRedux } from "@cocalc/frontend/app-framework";
 import { isEqual } from "lodash";
-import { logSlateDebug } from "../slate-react/utils/slate-debug";
+import { logSlateDebug } from "../slate-utils/slate-debug";
 
 const STYLE = {
   width: "100%",

@@ -9,7 +9,7 @@ import { isEqual } from "lodash";
 import { ensurePoint, pointAtPath, rangeAll } from "./slate-util";
 import { emptyParagraph } from "./padding";
 import { delay } from "awaiting";
-import { logSlateDebug, withSelectionReason } from "./slate-react/utils/slate-debug";
+import { logSlateDebug, withSelectionReason } from "./slate-utils/slate-debug";
 
 // Scroll to the n-th heading in the document
 export async function scrollToHeading(

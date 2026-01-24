@@ -14,7 +14,7 @@ import ReactDOM from "react-dom/client";
 import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate";
 
 import { Editable, Slate, withReact } from "../slate-react";
-import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-react/utils/environment";
+import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
 import { withDeleteBackward } from "../format/delete-backward";
 import { autoformatBlockquoteAtStart } from "../format/auto-format-quote";
 import { handleBlankLineEnter } from "../keyboard/blank-line-enter";
