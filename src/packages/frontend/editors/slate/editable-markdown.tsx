@@ -1025,13 +1025,15 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [],
   );
 
+  const useWindowing = !disableWindowing && ReactEditor.isUsingWindowing(editor);
+
   let slate = (
     <Slate editor={editor} value={editorValue} onChange={onChange}>
       <Editable
         placeholder={placeholder}
         autoFocus={autoFocus}
         className={
-          !disableWindowing && height != "auto" ? "smc-vfill" : undefined
+          useWindowing && height != "auto" ? "smc-vfill" : undefined
         }
         readOnly={read_only}
         renderElement={renderElement}
@@ -1050,15 +1052,16 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         divref={scrollRef}
         onScroll={updateScrollState}
         style={
-          !disableWindowing
+          useWindowing
             ? undefined
             : {
                 height,
                 position: "relative", // CRITICAL!!! Without this, editor will sometimes scroll the entire frame off the screen.  Do NOT delete position:'relative'.  5+ hours of work to figure this out!  Note that this isn't needed when using windowing above.
                 minWidth: "80%",
-                padding: "70px",
+                padding: "15px",
                 background: "white",
-                overflow:
+                overflowX: "hidden",
+                overflowY:
                   height == "auto"
                     ? "hidden" /* for height='auto' we never want a scrollbar  */
                     : "auto" /* for this overflow, see https://github.com/ianstormtaylor/slate/issues/3706 */,
@@ -1066,7 +1069,7 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
               }
         }
         windowing={
-          !disableWindowing
+          useWindowing
             ? {
                 rowStyle: {
                   // WARNING: do *not* use margin in rowStyle.
