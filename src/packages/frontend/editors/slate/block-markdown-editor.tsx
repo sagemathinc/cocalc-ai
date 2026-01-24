@@ -101,6 +101,8 @@ interface BlockMarkdownEditorProps {
   onFocus?: () => void;
   autoFocus?: boolean;
   saveDebounceMs?: number;
+  remoteMergeIdleMs?: number;
+  ignoreRemoteMergesWhileFocused?: boolean;
   minimal?: boolean;
 }
 
@@ -433,6 +435,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     onBlur,
     onFocus,
     saveDebounceMs = SAVE_DEBOUNCE_MS,
+    remoteMergeIdleMs,
+    ignoreRemoteMergesWhileFocused = false,
     style,
     value,
     minimal,
@@ -473,8 +477,21 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     new SimpleInputMerge(initialValue),
   );
   const lastLocalEditAtRef = useRef<number>(0);
-  const mergeIdleMsRef = useRef<number>(saveDebounceMs ?? SAVE_DEBOUNCE_MS);
-  mergeIdleMsRef.current = saveDebounceMs ?? SAVE_DEBOUNCE_MS;
+  const remoteMergeConfig =
+    typeof window === "undefined"
+      ? {}
+      : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
+  const ignoreRemoteWhileFocused =
+    remoteMergeConfig.ignoreWhileFocused ?? ignoreRemoteMergesWhileFocused;
+  const mergeIdleMs =
+    remoteMergeConfig.idleMs ??
+    remoteMergeIdleMs ??
+    saveDebounceMs ??
+    SAVE_DEBOUNCE_MS;
+  const mergeIdleMsRef = useRef<number>(mergeIdleMs);
+  mergeIdleMsRef.current = mergeIdleMs;
+  const [pendingRemoteIndicator, setPendingRemoteIndicator] =
+    useState<boolean>(false);
 
   const setBlocksFromValue = useCallback((markdown: string) => {
     valueRef.current = markdown;
@@ -499,6 +516,23 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     return Date.now() - lastLocalEditAtRef.current < idleMs;
   }
 
+  const updatePendingRemoteIndicator = useCallback(
+    (remote: string, local: string) => {
+      const preview = mergeHelperRef.current.previewMerge({ remote, local });
+      if (!preview.changed) {
+        pendingRemoteRef.current = null;
+        mergeHelperRef.current.noteSaved(preview.merged);
+      } else {
+        pendingRemoteRef.current = remote;
+      }
+      setPendingRemoteIndicator((prev) =>
+        prev === preview.changed ? prev : preview.changed,
+      );
+      return preview.changed;
+    },
+    [],
+  );
+
   function schedulePendingRemoteMerge() {
     if (pendingRemoteTimerRef.current != null) {
       window.clearTimeout(pendingRemoteTimerRef.current);
@@ -510,14 +544,15 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     }, idleMs);
   }
 
-  function flushPendingRemoteMerge() {
+  function flushPendingRemoteMerge(force = false) {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
-    if (shouldDeferRemoteMerge()) {
+    if (!force && shouldDeferRemoteMerge()) {
       schedulePendingRemoteMerge();
       return;
     }
     pendingRemoteRef.current = null;
+    setPendingRemoteIndicator(false);
     mergeHelperRef.current.handleRemote({
       remote: pending,
       getLocal: () => joinBlocks(blocksRef.current),
@@ -537,6 +572,10 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     if (actions._syncstring == null) return;
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
+      if (ignoreRemoteWhileFocused && focusedIndex != null) {
+        updatePendingRemoteIndicator(remote, joinBlocks(blocksRef.current));
+        return;
+      }
       if (shouldDeferRemoteMerge()) {
         pendingRemoteRef.current = remote;
         schedulePendingRemoteMerge();
@@ -552,7 +591,14 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     return () => {
       actions._syncstring?.removeListener("change", change);
     };
-  }, [actions, setBlocksFromValue]);
+  }, [actions, focusedIndex, ignoreRemoteWhileFocused, setBlocksFromValue, updatePendingRemoteIndicator]);
+
+  useEffect(() => {
+    if (!ignoreRemoteWhileFocused) return;
+    if (focusedIndex == null) {
+      flushPendingRemoteMerge(true);
+    }
+  }, [focusedIndex, ignoreRemoteWhileFocused]);
 
   const saveBlocksNow = useCallback(() => {
     if (actions.set_value == null) return;
@@ -583,8 +629,25 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         return next;
       });
       if (is_current) saveBlocksDebounced();
+      if (
+        ignoreRemoteWhileFocused &&
+        focusedIndex != null &&
+        pendingRemoteRef.current != null
+      ) {
+        updatePendingRemoteIndicator(
+          pendingRemoteRef.current,
+          joinBlocks(blocksRef.current),
+        );
+      }
     },
-    [is_current, read_only, saveBlocksDebounced],
+    [
+      focusedIndex,
+      ignoreRemoteWhileFocused,
+      is_current,
+      read_only,
+      saveBlocksDebounced,
+      updatePendingRemoteIndicator,
+    ],
   );
 
   const focusBlock = useCallback(
@@ -657,6 +720,18 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     position: "relative",
   };
 
+  const showPendingRemoteIndicator =
+    ignoreRemoteWhileFocused && pendingRemoteIndicator;
+
+  const handleMergePending = useCallback(
+    (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      flushPendingRemoteMerge(true);
+    },
+    [flushPendingRemoteMerge],
+  );
+
   const renderBlock = (index: number) => {
     const markdown = blocks[index] ?? "";
     return (
@@ -700,10 +775,34 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         ...style,
         height,
         minHeight: height === "auto" ? "50px" : undefined,
+        position: "relative",
       }}
     >
       {!hidePath && (
         <Path is_current={is_current} path={path} project_id={project_id} />
+      )}
+      {showPendingRemoteIndicator && (
+        <div
+          role="button"
+          tabIndex={0}
+          onMouseDown={handleMergePending}
+          onClick={handleMergePending}
+          style={{
+            position: "absolute",
+            top: hidePath ? 6 : 30,
+            right: 8,
+            fontSize: 12,
+            padding: "2px 8px",
+            background: "rgba(255, 251, 230, 0.95)",
+            border: "1px solid rgba(255, 229, 143, 0.9)",
+            borderRadius: 4,
+            color: "#8c6d1f",
+            cursor: "pointer",
+            zIndex: 3,
+          }}
+        >
+          Remote changes pending
+        </div>
       )}
       <div
         className={noVfill || height === "auto" ? undefined : "smc-vfill"}

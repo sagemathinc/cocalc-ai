@@ -71,4 +71,21 @@ export class SimpleInputMerge {
       opts.applyMerged(merged);
     }
   }
+
+  public previewMerge(opts: { remote: string; local: string }): {
+    merged: string;
+    changed: boolean;
+  } {
+    const remote = opts.remote ?? "";
+    const local = opts.local ?? "";
+
+    if (local === this.last) {
+      const merged = remote;
+      return { merged, changed: merged !== local };
+    }
+
+    const delta = makePatch(this.last, local);
+    const [merged] = applyPatch(delta, remote);
+    return { merged, changed: merged !== local };
+  }
 }

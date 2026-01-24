@@ -209,6 +209,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const pendingRemoteTimerRef = useRef<number | null>(null);
   const mergeIdleMsRef = useRef<number>(mergeIdleMs);
   mergeIdleMsRef.current = mergeIdleMs;
+  const [pendingRemoteIndicator, setPendingRemoteIndicator] =
+    useState<boolean>(false);
 
   const editor = useMemo(() => {
     const ed = withNonfatalRange(
@@ -313,6 +315,23 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     return !!editor.isComposing || recentlyTyped;
   }
 
+  const updatePendingRemoteIndicator = useCallback(
+    (remote: string, local: string) => {
+      const preview = mergeHelperRef.current.previewMerge({ remote, local });
+      if (!preview.changed) {
+        pendingRemoteRef.current = null;
+        mergeHelperRef.current.noteSaved(preview.merged);
+      } else {
+        pendingRemoteRef.current = remote;
+      }
+      setPendingRemoteIndicator((prev) =>
+        prev === preview.changed ? prev : preview.changed,
+      );
+      return preview.changed;
+    },
+    [],
+  );
+
   function schedulePendingRemoteMerge() {
     if (pendingRemoteTimerRef.current != null) {
       window.clearTimeout(pendingRemoteTimerRef.current);
@@ -324,14 +343,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }, idleMs);
   }
 
-  function flushPendingRemoteMerge() {
+  function flushPendingRemoteMerge(force = false) {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
-    if (shouldDeferRemoteMerge()) {
+    if (!force && shouldDeferRemoteMerge()) {
       schedulePendingRemoteMerge();
       return;
     }
     pendingRemoteRef.current = null;
+    setPendingRemoteIndicator(false);
     mergeHelperRef.current.handleRemote({
       remote: pending,
       getLocal: () => editor.getMarkdownValue(),
@@ -353,7 +373,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
       if (ignoreRemoteWhileFocused && ReactEditor.isFocused(editor)) {
-        pendingRemoteRef.current = remote;
+        updatePendingRemoteIndicator(remote, editor.getMarkdownValue());
         return;
       }
       if (shouldDeferRemoteMerge()) {
@@ -1053,6 +1073,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     setEditorValue(newEditorValue);
     setChange(change + 1);
 
+    if (
+      ignoreRemoteWhileFocused &&
+      pendingRemoteRef.current != null &&
+      ReactEditor.isFocused(editor)
+    ) {
+      updatePendingRemoteIndicator(
+        pendingRemoteRef.current,
+        editor.getMarkdownValue(),
+      );
+    }
+
     // Update mentions state whenever editor actually changes.
     // This may pop up the mentions selector.
     mentions.onChange();
@@ -1151,10 +1182,44 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   }, [updateGapCursorOverlay, gapCursorVersion, editorValue]);
 
   const useWindowing = !disableWindowing && ReactEditor.isUsingWindowing(editor);
+  const showPendingRemoteIndicator =
+    ignoreRemoteWhileFocused && pendingRemoteIndicator;
+
+  const handleMergePending = useCallback(
+    (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      flushPendingRemoteMerge(true);
+    },
+    [flushPendingRemoteMerge],
+  );
 
   let slate = (
     <Slate editor={editor} value={editorValue} onChange={onChange}>
       <div style={{ position: "relative" }}>
+        {showPendingRemoteIndicator && (
+          <div
+            role="button"
+            tabIndex={0}
+            onMouseDown={handleMergePending}
+            onClick={handleMergePending}
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 8,
+              fontSize: 12,
+              padding: "2px 8px",
+              background: "rgba(255, 251, 230, 0.95)",
+              border: "1px solid rgba(255, 229, 143, 0.9)",
+              borderRadius: 4,
+              color: "#8c6d1f",
+              cursor: "pointer",
+              zIndex: 2,
+            }}
+          >
+            Remote changes pending
+          </div>
+        )}
         {gapCursorOverlay && (
           <div
             data-slate-gap-cursor="overlay"
