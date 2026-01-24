@@ -139,7 +139,6 @@ interface BlockRowEditorProps {
   onBlur?: () => void;
   autoFocus?: boolean;
   read_only?: boolean;
-  highlight?: boolean;
   actions?: Actions;
   id?: string;
   rowStyle: React.CSSProperties;
@@ -164,7 +163,6 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       onBlur,
       autoFocus,
       read_only,
-      highlight,
       actions,
       id,
       rowStyle,
@@ -415,7 +413,6 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       next.gapCursor?.index === next.index ? next.gapCursor.side : null;
     return (
       prev.markdown === next.markdown &&
-      prev.highlight === next.highlight &&
       prev.read_only === next.read_only &&
       prevGap === nextGap
     );
@@ -751,7 +748,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         }}
         autoFocus={autoFocus && index === 0}
         read_only={read_only}
-        highlight={focusedIndex === index}
         actions={actions}
         id={props.id}
         rowStyle={rowStyle}

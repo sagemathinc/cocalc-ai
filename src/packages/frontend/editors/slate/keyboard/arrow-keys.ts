@@ -16,8 +16,6 @@ import {
   moveCursorUp,
   moveCursorDown,
   moveCursorToBeginningOfBlock,
-  moveCursorToBeginningOfLine,
-  moveCursorToEndOfLine,
   isAtBeginningOfBlock,
   isAtEndOfBlock,
 } from "../control";
@@ -67,7 +65,6 @@ function shouldUseGapCursor(
 }
 
 const down = ({ editor }: { editor: SlateEditor }) => {
-  const { selection } = editor;
   const gapCursor = getGapCursor(editor);
   if (gapCursor) {
     clearGapCursor(editor);
@@ -136,7 +133,6 @@ const down = ({ editor }: { editor: SlateEditor }) => {
 register({ key: "ArrowDown" }, down);
 
 const up = ({ editor }: { editor: SlateEditor }) => {
-  const { selection } = editor;
   const gapCursor = getGapCursor(editor);
   if (gapCursor) {
     clearGapCursor(editor);
@@ -201,11 +197,10 @@ google docs and codemirror all move the cursor when you page up/down,
 so maybe that should be implemented...?
 */
 
-function pageWindowed(sign) {
+function pageWindowed(_sign) {
   return ({ editor }) => {
     const scroller = editor.windowedListRef.current?.getScrollerRef();
     if (scroller == null) return false;
-    const { scrollTop } = scroller;
 
     return false;
   };
@@ -234,11 +229,11 @@ register({ key: "Home", ctrl: true }, beginningOfDoc); // windows
 register({ key: "ArrowDown", meta: true }, endOfDoc); // mac
 register({ key: "End", ctrl: true }, endOfDoc); // windows
 
-function endOfLine({ editor }) {
+function endOfLine() {
   return false;
 }
 
-function beginningOfLine({ editor }) {
+function beginningOfLine() {
   return false;
 }
 
