@@ -119,6 +119,8 @@ interface Props {
   autoFocus?: boolean;
   hideSearch?: boolean;
   saveDebounceMs?: number;
+  remoteMergeIdleMs?: number;
+  ignoreRemoteMergesWhileFocused?: boolean;
   noVfill?: boolean;
   divRef?: RefObject<HTMLDivElement>;
   selectionRef?: MutableRefObject<{
@@ -173,6 +175,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     read_only,
     registerEditor,
     saveDebounceMs = SAVE_DEBOUNCE_MS,
+    remoteMergeIdleMs,
+    ignoreRemoteMergesWhileFocused = false,
     selectionRef,
     style,
     submitMentionsRef,
@@ -190,12 +194,21 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const mergeHelperRef = useRef<SimpleInputMerge>(
     new SimpleInputMerge(value ?? ""),
   );
+  const remoteMergeConfig =
+    typeof window === "undefined"
+      ? {}
+      : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
+  const ignoreRemoteWhileFocused =
+    remoteMergeConfig.ignoreWhileFocused ?? ignoreRemoteMergesWhileFocused;
+  const mergeIdleMs =
+    remoteMergeConfig.idleMs ?? remoteMergeIdleMs ?? saveDebounceMs ?? SAVE_DEBOUNCE_MS;
+
   // Defer remote merges while typing/composing to avoid cursor jumps.
   const lastLocalEditAtRef = useRef<number>(0);
   const pendingRemoteRef = useRef<string | null>(null);
   const pendingRemoteTimerRef = useRef<number | null>(null);
-  const mergeIdleMsRef = useRef<number>(saveDebounceMs ?? SAVE_DEBOUNCE_MS);
-  mergeIdleMsRef.current = saveDebounceMs ?? SAVE_DEBOUNCE_MS;
+  const mergeIdleMsRef = useRef<number>(mergeIdleMs);
+  mergeIdleMsRef.current = mergeIdleMs;
 
   const editor = useMemo(() => {
     const ed = withNonfatalRange(
@@ -294,6 +307,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   function shouldDeferRemoteMerge(): boolean {
     if (!ReactEditor.isFocused(editor)) return false;
+    if (ignoreRemoteWhileFocused) return true;
     const idleMs = mergeIdleMsRef.current;
     const recentlyTyped = Date.now() - lastLocalEditAtRef.current < idleMs;
     return !!editor.isComposing || recentlyTyped;
@@ -338,6 +352,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (actions._syncstring == null) return;
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
+      if (ignoreRemoteWhileFocused && ReactEditor.isFocused(editor)) {
+        pendingRemoteRef.current = remote;
+        return;
+      }
       if (shouldDeferRemoteMerge()) {
         pendingRemoteRef.current = remote;
         schedulePendingRemoteMerge();
@@ -1166,6 +1184,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           onBlur={() => {
             editor.saveValue();
             updateMarks();
+            if (ignoreRemoteWhileFocused) {
+              flushPendingRemoteMerge();
+            }
             onBlur?.();
           }}
           onFocus={() => {
