@@ -218,30 +218,21 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
 
       cm.on("blur", () => {
         justBlurred.current = true;
-        setTimeout(() => {
-          justBlurred.current = false;
-        }, 1);
         setIsFocused(false);
-        setTimeout(() => {
-          editor.setIgnoreSelection(false);
-          logSlateDebug("codemirror:blur", {
-            selection: editor.selection ?? null,
-          });
-        }, 0);
+        editor.setIgnoreSelection(false);
+        logSlateDebug("codemirror:blur", {
+          selection: editor.selection ?? null,
+        });
       });
 
       cm.on("focus", () => {
         setIsFocused(true);
         focusEditor(true);
-        if (!justBlurred.current) {
-          setTimeout(() => focusEditor(true), 0);
-        }
-        setTimeout(() => {
-          editor.setIgnoreSelection(true);
-          logSlateDebug("codemirror:focus", {
-            selection: editor.selection ?? null,
-          });
-        }, 0);
+        editor.setIgnoreSelection(true);
+        logSlateDebug("codemirror:focus", {
+          selection: editor.selection ?? null,
+        });
+        justBlurred.current = false;
       });
 
       cm.on("copy", (_, event) => {

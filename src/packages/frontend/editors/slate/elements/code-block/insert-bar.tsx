@@ -36,11 +36,9 @@ export default function InsertBar({ editor, element, info, above }) {
     Transforms.insertNodes(editor, node, { at: path });
     ReactEditor.focus(editor);
     if (path) {
-      setTimeout(() => {
-        const focus = pointAtPath(editor, path!, offset);
-        Transforms.setSelection(editor, { anchor: focus, focus });
-        ReactEditor.focus(editor);
-      }, 50);
+      const focus = pointAtPath(editor, path, offset);
+      Transforms.setSelection(editor, { anchor: focus, focus });
+      ReactEditor.focus(editor);
     }
   };
 

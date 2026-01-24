@@ -261,9 +261,7 @@ function markdownAutoformatAt(
         focus: { path, offset: 0 },
         anchor: { path, offset: 0 },
       });
-      setTimeout(() => {
-        Transforms.move(editor, { distance: 1, unit: "line" });
-      }, 0);
+      Transforms.move(editor, { distance: 1, unit: "line" });
     }
   }
   return true;

@@ -277,9 +277,7 @@ function Element({ attributes, children, element }: RenderElementProps) {
                       }}
                       onMouseUp={() => {
                         // Re-enable slate listing for selection changes again in next render loop.
-                        setTimeout(() => {
-                          editor.setIgnoreSelection(false);
-                        }, 0);
+                        editor.setIgnoreSelection(false);
                       }}
                       style={{
                         borderTop: "1px dashed #ccc",

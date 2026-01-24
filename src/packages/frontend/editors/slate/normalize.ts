@@ -150,9 +150,7 @@ NORMALIZERS.push(function trimLeadingWhitespace({ editor, node, path }) {
         ) {
           const offset = Math.max(0, selection.focus.offset - i);
           const focus = { path: p, offset };
-          setTimeout(() =>
-            Transforms.setSelection(editor, { focus, anchor: focus })
-          );
+          Transforms.setSelection(editor, { focus, anchor: focus });
         }
       }
     }
