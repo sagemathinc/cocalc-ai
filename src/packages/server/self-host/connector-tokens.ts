@@ -70,6 +70,95 @@ export async function createPairingToken(opts: {
   return { token, token_id, expires };
 }
 
+export async function createPairingTokenForHost(opts: {
+  account_id: string;
+  host_id: string;
+  name?: string;
+  ttlMs?: number;
+}): Promise<{
+  token: string;
+  expires: Date;
+  connector_id: string;
+}> {
+  const { rows } = await pool().query<{
+    id: string;
+    name: string | null;
+    region: string | null;
+    metadata: any;
+  }>(
+    `SELECT id, name, region, metadata
+       FROM project_hosts
+      WHERE id=$1 AND deleted IS NULL`,
+    [opts.host_id],
+  );
+  const host = rows[0];
+  if (!host) {
+    throw new Error("host not found");
+  }
+  const owner = host.metadata?.owner ?? "";
+  if (owner && owner !== opts.account_id) {
+    throw new Error("host not found");
+  }
+  const machineCloud = host.metadata?.machine?.cloud;
+  if (machineCloud !== "self-host") {
+    throw new Error("host is not self-hosted");
+  }
+  let connectorId = host.region;
+  const attachConnector = async (id: string) => {
+    const machine = host.metadata?.machine ?? {};
+    const machineMetadata = {
+      ...(machine.metadata ?? {}),
+      connector_id: id,
+    };
+    const selfHostMetadata = {
+      ...(host.metadata?.self_host ?? {}),
+      auto_start_pending: true,
+      auto_start_requested_at: new Date().toISOString(),
+    };
+    const nextMetadata = {
+      ...(host.metadata ?? {}),
+      machine: { ...machine, metadata: machineMetadata },
+      self_host: selfHostMetadata,
+    };
+    await pool().query(
+      `UPDATE project_hosts
+       SET region=$2, metadata=$3, updated=NOW()
+       WHERE id=$1 AND deleted IS NULL`,
+      [host.id, id, nextMetadata],
+    );
+  };
+  if (!connectorId) {
+    const created = await createConnectorRecord({
+      account_id: opts.account_id,
+      host_id: host.id,
+      name: opts.name ?? host.name ?? undefined,
+      metadata: host.metadata ?? {},
+    });
+    connectorId = created.connector_id;
+    await attachConnector(connectorId);
+  } else {
+    await ensureConnectorRecord({
+      connector_id: connectorId,
+      account_id: opts.account_id,
+      host_id: host.id,
+      name: opts.name ?? host.name ?? undefined,
+      metadata: host.metadata ?? {},
+    });
+    await attachConnector(connectorId);
+  }
+  const tokenInfo = await createPairingToken({
+    account_id: opts.account_id,
+    ttlMs: opts.ttlMs,
+    connector_id: connectorId,
+    host_id: host.id,
+  });
+  return {
+    token: tokenInfo.token,
+    expires: tokenInfo.expires,
+    connector_id: connectorId,
+  };
+}
+
 export async function verifyPairingToken(token: string, purpose = "pairing"): Promise<{
   token_id: string;
   account_id: string;

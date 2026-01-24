@@ -7,7 +7,7 @@ import express, { Router, type Request } from "express";
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/hub/logger";
 import {
-  createPairingToken,
+  createPairingTokenForHost,
   verifyConnectorToken,
 } from "@cocalc/server/self-host/connector-tokens";
 import { pairSelfHostConnector } from "@cocalc/server/self-host/pair";
@@ -90,119 +90,32 @@ export default function init(router: Router) {
         res.status(400).send("missing host_id");
         return;
       }
-      const { rows } = await pool().query<{
-        id: string;
-        name: string | null;
-        region: string | null;
-        metadata: any;
-      }>(
-        `SELECT id, name, region, metadata
-         FROM project_hosts
-         WHERE id=$1 AND deleted IS NULL`,
-        [hostId],
-      );
-      const host = rows[0];
-      const owner = host?.metadata?.owner ?? "";
-      if (!host || owner !== account_id) {
-        res.status(404).send("host not found");
-        return;
-      }
-      const machineCloud = host.metadata?.machine?.cloud;
-      if (machineCloud !== "self-host") {
-        res.status(400).send("host is not self-hosted");
-        return;
-      }
-      let connectorId = host.region;
-      const attachConnector = async (id: string) => {
-        const machine = host.metadata?.machine ?? {};
-        const machineMetadata = {
-          ...(machine.metadata ?? {}),
-          connector_id: id,
-        };
-        const selfHostMetadata = {
-          ...(host.metadata?.self_host ?? {}),
-          auto_start_pending: true,
-          auto_start_requested_at: new Date().toISOString(),
-        };
-        const nextMetadata = {
-          ...(host.metadata ?? {}),
-          machine: { ...machine, metadata: machineMetadata },
-          self_host: selfHostMetadata,
-        };
-        await pool().query(
-          `UPDATE project_hosts
-           SET region=$2, metadata=$3, updated=NOW()
-           WHERE id=$1 AND deleted IS NULL`,
-          [hostId, id, nextMetadata],
-        );
-      };
-      if (!connectorId) {
-        const { rows: created } = await pool().query<{
-          connector_id: string;
-        }>(
-          `INSERT INTO self_host_connectors
-             (connector_id, account_id, host_id, token_hash, name, metadata, created, last_seen, revoked)
-           VALUES (gen_random_uuid(), $1, $2, NULL, $3, $4, NOW(), NULL, FALSE)
-           RETURNING connector_id`,
-          [account_id, hostId, host.name ?? null, host.metadata ?? {}],
-        );
-        connectorId = created[0]?.connector_id;
-        if (!connectorId) {
-          res.status(500).send("failed to allocate connector");
-          return;
-        }
-        await attachConnector(connectorId);
-      } else {
-        const { rows: connectors } = await pool().query<{
-          connector_id: string;
-          host_id: string | null;
-        }>(
-          `SELECT connector_id, host_id
-             FROM self_host_connectors
-            WHERE connector_id=$1 AND revoked IS NOT TRUE`,
-          [connectorId],
-        );
-        const connector = connectors[0];
-        if (!connector) {
-          const { rows: created } = await pool().query<{
-            connector_id: string;
-          }>(
-            `INSERT INTO self_host_connectors
-               (connector_id, account_id, host_id, token_hash, name, metadata, created, last_seen, revoked)
-             VALUES (gen_random_uuid(), $1, $2, NULL, $3, $4, NOW(), NULL, FALSE)
-             RETURNING connector_id`,
-            [account_id, hostId, host.name ?? null, host.metadata ?? {}],
-          );
-          connectorId = created[0]?.connector_id;
-          if (!connectorId) {
-            res.status(500).send("failed to allocate connector");
-            return;
-          }
-          await attachConnector(connectorId);
-        } else if (connector.host_id && connector.host_id !== hostId) {
-          res.status(409).send("connector already assigned to another host");
-          return;
-        } else if (!connector.host_id) {
-          await pool().query(
-            `UPDATE self_host_connectors
-             SET host_id=$2
-             WHERE connector_id=$1`,
-            [connector.connector_id, hostId],
-          );
-          await attachConnector(connector.connector_id);
-        }
-      }
       const ttlSecondsRaw = req.body?.ttl_seconds;
       const ttlSeconds =
         typeof ttlSecondsRaw === "number" && ttlSecondsRaw > 0
           ? ttlSecondsRaw
           : undefined;
-      const tokenInfo = await createPairingToken({
-        account_id,
-        ttlMs: ttlSeconds ? ttlSeconds * 1000 : undefined,
-        connector_id: connectorId,
-        host_id: hostId,
-      });
+      let tokenInfo;
+      try {
+        tokenInfo = await createPairingTokenForHost({
+          account_id,
+          host_id: hostId,
+          ttlMs: ttlSeconds ? ttlSeconds * 1000 : undefined,
+        });
+      } catch (err) {
+        const message = String(err ?? "");
+        if (message.includes("host not found")) {
+          res.status(404).send("host not found");
+          return;
+        }
+        if (message.includes("host is not self-hosted")) {
+          res.status(400).send("host is not self-hosted");
+          return;
+        }
+        logger.warn("pairing token creation failed", err);
+        res.status(500).send("pairing token creation failed");
+        return;
+      }
       const launchpad = getLaunchpadLocalConfig("local");
       const sshHost =
         process.env.COCALC_SSHD_HOST ??
@@ -211,7 +124,7 @@ export default function init(router: Router) {
       res.json({
         pairing_token: tokenInfo.token,
         expires: tokenInfo.expires,
-        connector_id: connectorId,
+        connector_id: tokenInfo.connector_id,
         launchpad: {
           http_port: launchpad.http_port,
           https_port: launchpad.https_port,

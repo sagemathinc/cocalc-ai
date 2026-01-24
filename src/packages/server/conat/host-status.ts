@@ -73,20 +73,25 @@ export async function initHostStatusService() {
           host_id,
           public_key,
         });
+        const reversePort = Number(
+          rows[0]?.metadata?.self_host?.ssh_reverse_port ?? 0,
+        );
         const sshdHost =
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
           resolveOnPremHost();
+        const resolvedSshdHost = reversePort ? "localhost" : sshdHost;
+        const resolvedSshdPort = reversePort || config.sshd_port;
         logger.info("local tunnel registered", {
           host_id,
-          sshd_host: sshdHost,
-          sshd_port: config.sshd_port,
+          sshd_host: resolvedSshdHost,
+          sshd_port: resolvedSshdPort,
           http_tunnel_port: info.http_tunnel_port,
           ssh_tunnel_port: info.ssh_tunnel_port,
         });
         return {
-          sshd_host: sshdHost,
-          sshd_port: config.sshd_port,
+          sshd_host: resolvedSshdHost,
+          sshd_port: resolvedSshdPort,
           ssh_user: config.ssh_user ?? "user",
           http_tunnel_port: info.http_tunnel_port,
           ssh_tunnel_port: info.ssh_tunnel_port,
@@ -151,19 +156,24 @@ export async function initHostStatusService() {
           host_id,
           public_key,
         });
+        const reversePort = Number(
+          rows[0]?.metadata?.self_host?.ssh_reverse_port ?? 0,
+        );
         const sshdHost =
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
           resolveOnPremHost();
+        const resolvedSshdHost = reversePort ? "localhost" : sshdHost;
+        const resolvedSshdPort = reversePort || config.sshd_port;
         logger.info("local sftp key registered", {
           host_id,
-          sshd_host: sshdHost,
-          sshd_port: config.sshd_port,
+          sshd_host: resolvedSshdHost,
+          sshd_port: resolvedSshdPort,
           sftp_root: config.sftp_root,
         });
         return {
-          sshd_host: sshdHost,
-          sshd_port: config.sshd_port,
+          sshd_host: resolvedSshdHost,
+          sshd_port: resolvedSshdPort,
           ssh_user: config.ssh_user ?? "user",
           sftp_root: config.sftp_root,
         };

@@ -203,13 +203,21 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     !isSelfHost ||
     !selfHost?.isConnectorOnline ||
     selfHost.isConnectorOnline(host?.region);
+  const hasSshTarget = !!String(
+    host?.machine?.metadata?.self_host_ssh_target ?? "",
+  ).trim();
+  const autoSetup = isSelfHost && hasSshTarget;
   const handleSetupClick = React.useCallback(() => {
     if (!host || !selfHost) return;
     onClose();
     selfHost.onSetup(host);
   }, [host, onClose, selfHost]);
   const showConnectorWarning =
-    isSelfHost && !!host && !connectorOnline && host.status === "off";
+    isSelfHost &&
+    !!host &&
+    !connectorOnline &&
+    host.status === "off" &&
+    !autoSetup;
   const connectorLabel = isSelfHost
     ? `Connector: ${host?.region ?? "n/a"}`
     : host?.region;
@@ -379,6 +387,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 {selfHostDisk ?? "?"} GB disk
               </Typography.Text>
             )}
+            {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (
+              <Typography.Text>
+                SSH target: {host.machine.metadata.self_host_ssh_target}
+              </Typography.Text>
+            )}
           </Space>
           <Space direction="vertical" size="small">
             <HostWorkspaceStatus host={host} fontSize={14} />
@@ -420,13 +433,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <Space direction="vertical" size="small">
               <Typography.Text strong>Connector actions</Typography.Text>
               <Space wrap>
-                <Button
-                  size="small"
-                  disabled={hostOpActive}
-                  onClick={handleSetupClick}
-                >
-                  Setup or reconnect
-                </Button>
+                {!autoSetup && (
+                  <Button
+                    size="small"
+                    disabled={hostOpActive}
+                    onClick={handleSetupClick}
+                  >
+                    Setup or reconnect
+                  </Button>
+                )}
                 <Button
                   size="small"
                   danger

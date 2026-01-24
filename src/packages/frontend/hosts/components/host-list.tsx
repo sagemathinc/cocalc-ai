@@ -638,18 +638,22 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const op = hostOps?.[host.id];
         const hostOpActive = isHostOpActive(op);
         const isSelfHost = host.machine?.cloud === "self-host";
+        const hasSshTarget = !!String(
+          host.machine?.metadata?.self_host_ssh_target ?? "",
+        ).trim();
+        const autoSetup = isSelfHost && hasSshTarget;
         const connectorOnline =
           !isSelfHost ||
           !selfHost?.isConnectorOnline ||
           selfHost.isConnectorOnline(host.region);
         const showConnectorSetup =
-          isSelfHost && !connectorOnline && host.status === "off";
+          isSelfHost && !connectorOnline && host.status === "off" && !autoSetup;
         const startDisabled =
           isDeleted ||
           host.status === "running" ||
           host.status === "starting" ||
           host.status === "restarting" ||
-          !connectorOnline ||
+          (!connectorOnline && !autoSetup) ||
           hostOpActive;
         const startLabel =
           host.status === "starting"

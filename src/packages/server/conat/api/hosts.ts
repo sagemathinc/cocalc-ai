@@ -59,7 +59,13 @@ import {
   createConnectorRecord,
   ensureConnectorRecord,
   revokeConnector,
+  createPairingTokenForHost,
 } from "@cocalc/server/self-host/connector-tokens";
+import {
+  ensureSelfHostReverseTunnel,
+  runConnectorInstallOverSsh,
+  stopSelfHostReverseTunnel,
+} from "@cocalc/server/self-host/ssh-target";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
@@ -1106,6 +1112,48 @@ export async function startHostInternal({
   }
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
+  if (machineCloud === "self-host" && sshTarget && owner) {
+    await ensureSelfHostReverseTunnel({ host_id: row.id, ssh_target: sshTarget });
+    const { rows: connectorRows } = await pool().query<{
+      connector_id: string;
+      last_seen: Date | null;
+    }>(
+      `SELECT connector_id, last_seen
+         FROM self_host_connectors
+        WHERE host_id=$1 AND revoked IS NOT TRUE
+        ORDER BY last_seen DESC NULLS LAST
+        LIMIT 1`,
+      [row.id],
+    );
+    const connectorRow = connectorRows[0];
+    const lastSeen = connectorRow?.last_seen;
+    const connectorOnline =
+      !!lastSeen && Date.now() - lastSeen.getTime() < 2 * 60 * 1000;
+    if (!connectorOnline) {
+      const tokenInfo = await createPairingTokenForHost({
+        account_id: owner,
+        host_id: row.id,
+        ttlMs: 30 * 60 * 1000,
+      });
+      const { rows: metaRows } = await pool().query<{ metadata: any }>(
+        `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+        [row.id],
+      );
+      const updatedMetadata = metaRows[0]?.metadata ?? metadata;
+      const reversePort = Number(updatedMetadata?.self_host?.ssh_reverse_port ?? 0);
+      if (!reversePort) {
+        throw new Error("self-host ssh reverse port missing");
+      }
+      await runConnectorInstallOverSsh({
+        host_id: row.id,
+        ssh_target: sshTarget,
+        pairing_token: tokenInfo.token,
+        name: row.name ?? undefined,
+        ssh_port: reversePort,
+      });
+    }
+  }
   if (machineCloud === "self-host" && row.region && owner) {
     await ensureConnectorRecord({
       connector_id: row.region,
@@ -1171,6 +1219,10 @@ export async function stopHostInternal({
   const metadata = row.metadata ?? {};
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
+  if (machineCloud === "self-host" && sshTarget) {
+    stopSelfHostReverseTunnel(id);
+  }
   logStatusUpdate(id, "stopping", "api");
   await pool().query(
     `UPDATE project_hosts SET status=$2, last_seen=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
@@ -1313,6 +1365,12 @@ export async function forceDeprovisionHostInternal({
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
+  const sshTarget = String(
+    row.metadata?.machine?.metadata?.self_host_ssh_target ?? "",
+  ).trim();
+  if (machineCloud === "self-host" && sshTarget) {
+    stopSelfHostReverseTunnel(id);
+  }
   if (machineCloud !== "self-host") {
     throw new Error("force deprovision is only supported for self-hosted VMs");
   }
@@ -1349,6 +1407,12 @@ export async function removeSelfHostConnectorInternal({
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
+  const sshTarget = String(
+    row.metadata?.machine?.metadata?.self_host_ssh_target ?? "",
+  ).trim();
+  if (machineCloud === "self-host" && sshTarget) {
+    stopSelfHostReverseTunnel(id);
+  }
   if (machineCloud !== "self-host") {
     throw new Error("host is not self-hosted");
   }
@@ -1874,6 +1938,13 @@ export async function deleteHostInternal({
   id: string;
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
+  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
+  const sshTarget = String(
+    row.metadata?.machine?.metadata?.self_host_ssh_target ?? "",
+  ).trim();
+  if (machineCloud === "self-host" && sshTarget) {
+    stopSelfHostReverseTunnel(id);
+  }
   if (row.status === "deprovisioned") {
     await pool().query(
       `UPDATE project_hosts SET deleted=NOW(), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
@@ -1881,9 +1952,6 @@ export async function deleteHostInternal({
     );
     return;
   }
-  const metadata = row.metadata ?? {};
-  const machine: HostMachine = metadata.machine ?? {};
-  const machineCloud = normalizeProviderId(machine.cloud);
   if (machineCloud) {
     await enqueueCloudVmWork({
       vm_id: id,

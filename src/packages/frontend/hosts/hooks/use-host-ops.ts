@@ -14,6 +14,7 @@ import {
   toTime,
 } from "@cocalc/frontend/lro/utils";
 import { lite } from "@cocalc/frontend/lite";
+import { message } from "antd";
 
 const HOST_LRO_REFRESH_MS = 60_000;
 const HOST_LRO_FULL_REFRESH_MS = 5 * 60_000;
@@ -23,6 +24,23 @@ const TRANSITION_STATUSES = new Set([
   "restarting",
   "deprovisioning",
 ]);
+
+const KIND_LABELS: Record<string, string> = {
+  "host-start": "Start",
+  "host-stop": "Stop",
+  "host-restart": "Restart",
+  "host-upgrade-software": "Upgrade",
+  "host-deprovision": "Deprovision",
+  "host-delete": "Delete",
+  "host-force-deprovision": "Force deprovision",
+  "host-remove-connector": "Remove connector",
+};
+
+function formatHostOpKind(kind?: string): string {
+  if (!kind) return "Host op";
+  if (KIND_LABELS[kind]) return KIND_LABELS[kind];
+  return kind.replace(/^host-/, "").replace(/-/g, " ");
+}
 
 export function isHostOpActive(op?: HostLroState): boolean {
   if (!op) return false;
@@ -71,6 +89,7 @@ export function useHostOps({
   const refreshInFlight = useRef<Promise<void> | null>(null);
   const closedRef = useRef(false);
   const completedRef = useRef(new Set<string>());
+  const failedRef = useRef(new Set<string>());
   const lastFullRefreshRef = useRef(0);
 
   const closeStream = useCallback((op_id: string) => {
@@ -110,6 +129,11 @@ export function useHostOps({
           !completedRef.current.has(summary.op_id)
         ) {
           completedRef.current.add(summary.op_id);
+          if (summary.status === "failed" && !failedRef.current.has(summary.op_id)) {
+            failedRef.current.add(summary.op_id);
+            const details = summary.error ?? "Host operation failed.";
+            message.error(`${formatHostOpKind(summary.kind)} failed: ${details}`);
+          }
           if (
             summary.kind === "host-upgrade-software" &&
             summary.status === "succeeded"
@@ -221,10 +245,13 @@ export function useHostOps({
             const ops = await listLro({
               scope_type: "host",
               scope_id: id,
-              include_completed: false,
+              include_completed: true,
             });
             const hostOps = ops.filter(
-              (op) => op.kind?.startsWith("host-") && !isDismissed(op),
+              (op) =>
+                op.kind?.startsWith("host-") &&
+                !isDismissed(op) &&
+                op.status !== "succeeded",
             );
             if (!hostOps.length) {
               return;
@@ -236,6 +263,14 @@ export function useHostOps({
               summary: latest,
               kind: latest.kind,
             };
+            if (
+              latest.status === "failed" &&
+              !failedRef.current.has(latest.op_id)
+            ) {
+              failedRef.current.add(latest.op_id);
+              const details = latest.error ?? "Host operation failed.";
+              message.error(`${formatHostOpKind(latest.kind)} failed: ${details}`);
+            }
             activeOpIds.add(latest.op_id);
             await ensureStream(id, latest.op_id, latest.scope_id);
           } catch (err) {
