@@ -1,4 +1,4 @@
-import { Alert, Col, Form, InputNumber, Row, Select, Slider, Tag } from "antd";
+import { Alert, Col, Form, Input, InputNumber, Row, Select, Slider, Tag } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { mapCloudRegionToR2Region, R2_REGION_LABELS } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
@@ -36,6 +36,8 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   const watchedDisk = Form.useWatch("disk", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
   const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
+  const watchedSelfHostMode = Form.useWatch("self_host_mode", form);
+  const watchedSelfHostTarget = Form.useWatch("self_host_ssh_target", form);
   const defaultDiskType =
     selectedProvider === "nebius" ? "ssd_io_m3" : undefined;
   React.useEffect(() => {
@@ -149,6 +151,10 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   React.useEffect(() => {
     ensureFieldValue("self_host_mode", form.getFieldValue("self_host_mode"));
   }, [ensureFieldValue, form]);
+  const showSelfHostSshWarning =
+    selectedProvider === "self-host" &&
+    watchedSelfHostMode === "local" &&
+    !String(watchedSelfHostTarget ?? "").trim();
   const renderField = (field: HostFieldId) => {
     const fieldOptions = options[field] ?? [];
     const label =
@@ -259,6 +265,24 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
         />
       )}
       {schema.primary.map(renderField)}
+      {selectedProvider === "self-host" && (
+        <Form.Item
+          name="self_host_ssh_target"
+          label="SSH target (optional)"
+          tooltip="Set this to user@host[:port] (or an ssh-config name) so that CoCalc can install the connector on the remote machine. It must be possible to ssh to that machine without having to type a password."
+        >
+          <Input placeholder="user@host[:port] or ssh-config name" />
+        </Form.Item>
+      )}
+      {showSelfHostSshWarning && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="No SSH target provided"
+          description="Without an SSH target, the host must be able to reach the hub’s SSH port directly."
+        />
+      )}
       {showDiskFields && (
         <Form.Item
           label="Disk size (GB)"
@@ -307,7 +331,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
           </Row>
         </Form.Item>
       )}
-      {selectedProvider === "self-host" && watchedSelfHostKind !== "bare-metal" && (
+      {selectedProvider === "self-host" && watchedSelfHostKind !== "direct" && (
         <>
           <Form.Item
             name="cpu"

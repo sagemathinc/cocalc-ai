@@ -802,7 +802,7 @@ export async function getCatalog({
     if (await hasCloudflareTunnel()) {
       modes.push("cloudflare");
     }
-    const kinds = ["vm", "bare-metal"];
+    const kinds = ["direct", "multipass"];
     return {
       provider: cloud,
       entries: [
@@ -938,13 +938,15 @@ export async function createHost({
   }
   const rawSelfHostKind = machine?.metadata?.self_host_kind;
   const selfHostKind =
-    rawSelfHostKind === "bare-metal" || rawSelfHostKind === "vm"
+    rawSelfHostKind === "direct" || rawSelfHostKind === "multipass"
       ? rawSelfHostKind
       : undefined;
   if (isSelfHost && rawSelfHostKind && !selfHostKind) {
     throw new Error(`invalid self_host_kind '${rawSelfHostKind}'`);
   }
-  const effectiveSelfHostKind = isSelfHost ? (selfHostKind ?? "vm") : undefined;
+  const effectiveSelfHostKind = isSelfHost
+    ? (selfHostKind ?? "direct")
+    : undefined;
   if (isSelfHost && selfHostMode === "cloudflare") {
     if (!(await hasCloudflareTunnel())) {
       throw new Error("cloudflare tunnel is not configured");
@@ -1410,6 +1412,7 @@ export async function updateHostMachine({
   storage_mode,
   region,
   zone,
+  self_host_ssh_target,
 }: {
   account_id?: string;
   id: string;
@@ -1424,6 +1427,7 @@ export async function updateHostMachine({
   storage_mode?: HostMachine["storage_mode"];
   region?: string;
   zone?: string;
+  self_host_ssh_target?: string;
 }): Promise<Host> {
   const row = await loadOwnedHost(id, account_id);
   const metadata = row.metadata ?? {};
@@ -1504,6 +1508,18 @@ export async function updateHostMachine({
     nextMachine.metadata = { ...(nextMachine.metadata ?? {}), ram_gb: nextRam };
     changed = true;
     nonDiskChange = true;
+  }
+  if (isSelfHost && typeof self_host_ssh_target === "string") {
+    const nextTarget = self_host_ssh_target.trim();
+    const currentTarget = String(machine.metadata?.self_host_ssh_target ?? "");
+    if (nextTarget !== currentTarget) {
+      nextMachine.metadata = {
+        ...(nextMachine.metadata ?? {}),
+        self_host_ssh_target: nextTarget || undefined,
+      };
+      changed = true;
+      nonDiskChange = true;
+    }
   }
   if (nextDisk != null) {
     const currentDisk = Number(machine.disk_gb);

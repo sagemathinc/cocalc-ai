@@ -100,8 +100,8 @@ export class SelfHostProvider implements CloudProvider {
       disk_gb: spec.disk_gb,
       cloud_init: spec.metadata?.startup_script,
       ssh_user: spec.metadata?.ssh_user ?? DEFAULT_SSH_USER,
-      ...(spec.metadata?.self_host_kind === "bare-metal"
-        ? { bare_metal: true }
+      ...(spec.metadata?.self_host_kind
+        ? { self_host_kind: spec.metadata.self_host_kind }
         : {}),
     };
     logger.debug("self-host.createHost", { connector_id: connectorId, name: spec.name });

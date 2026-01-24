@@ -78,10 +78,10 @@ function getSelfHostDetail(host: Host): string | undefined {
   const kind = host.machine?.metadata?.self_host_kind as string | undefined;
   const mode = host.machine?.metadata?.self_host_mode as string | undefined;
   const kindLabel =
-    kind === "bare-metal"
-      ? "Bare metal (no VM)"
-      : kind === "vm"
-        ? "VM"
+    kind === "direct"
+      ? "Direct"
+      : kind === "multipass"
+        ? "Multipass"
         : undefined;
   const modeLabel =
     mode === "cloudflare"

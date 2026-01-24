@@ -355,6 +355,7 @@ export interface Hosts {
     gpu_count?: number;
     storage_mode?: HostMachine["storage_mode"];
     boot_disk_gb?: number;
+    self_host_ssh_target?: string;
     region?: string;
     zone?: string;
   }) => Promise<Host>;

@@ -81,7 +81,7 @@ type InstanceState struct {
 	CreatedAt string   `json:"created_at,omitempty"`
 	LastState string   `json:"last_state,omitempty"`
 	LastIPv4  []string `json:"last_ipv4,omitempty"`
-	BareMetal bool     `json:"bare_metal,omitempty"`
+	SelfHostKind string `json:"self_host_kind,omitempty"`
 	SshUser   string   `json:"ssh_user,omitempty"`
 }
 
@@ -988,21 +988,27 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 	if cloudInit == nil {
 		cloudInit = payload["cloud_init_yaml"]
 	}
-	bareMetal := toBool(payload["bare_metal"])
+	rawKind := strings.ToLower(toString(payload["self_host_kind"]))
+	if rawKind == "" {
+		rawKind = "multipass"
+	}
+	if rawKind != "multipass" && rawKind != "direct" {
+		return nil, errors.New("invalid self_host_kind")
+	}
 	sshUser := toString(payload["ssh_user"])
 	if sshUser == "" {
 		sshUser = defaultSshUser
 	}
 
-	if bareMetal {
-		if existing, ok := state.Instances[hostID]; ok && existing.BareMetal {
+	if rawKind == "direct" {
+		if existing, ok := state.Instances[hostID]; ok && existing.SelfHostKind == "direct" {
 			return map[string]interface{}{
 				"name":  existing.Name,
 				"state": "running",
 			}, nil
 		}
 		if cloudInit == nil {
-			return nil, errors.New("bare-metal create requires cloud_init")
+			return nil, errors.New("direct create requires cloud_init")
 		}
 		paths := createCloudInitPaths(hostID)
 		if err := os.MkdirAll(paths.InitDir, 0o700); err != nil {
@@ -1014,7 +1020,7 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 		}
 		trimmed := strings.TrimLeft(raw, " \t\r\n")
 		if strings.HasPrefix(trimmed, "#cloud-config") {
-			return nil, errors.New("bare-metal requires a shell bootstrap script")
+			return nil, errors.New("direct requires a shell bootstrap script")
 		}
 		if err := os.WriteFile(paths.InitPath, []byte(raw), 0o700); err != nil {
 			return nil, fmt.Errorf("bootstrap write: %v", err)
@@ -1035,7 +1041,7 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 			Name:      name,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339),
 			LastState: "running",
-			BareMetal: true,
+			SelfHostKind: "direct",
 			SshUser:   sshUser,
 		}
 		saveState(statePath, state)
@@ -1049,6 +1055,7 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 			Image:     image,
 			LastState: info.State,
 			LastIPv4:  info.IPv4,
+			SelfHostKind: "multipass",
 		}
 		saveState(statePath, state)
 		return map[string]interface{}{"name": name, "state": info.State, "ipv4": info.IPv4}, nil
@@ -1115,18 +1122,19 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		LastState: info.State,
 		LastIPv4:  info.IPv4,
+		SelfHostKind: "multipass",
 	}
 	saveState(statePath, state)
 	return map[string]interface{}{"name": name, "state": info.State, "ipv4": info.IPv4}, nil
 }
 
-func loadBareMetalInstance(payload map[string]interface{}, state State) (InstanceState, bool) {
+func loadDirectInstance(payload map[string]interface{}, state State) (InstanceState, bool) {
 	hostID := toString(payload["host_id"])
 	if hostID == "" {
 		return InstanceState{}, false
 	}
 	instance, ok := state.Instances[hostID]
-	if !ok || !instance.BareMetal {
+	if !ok || instance.SelfHostKind != "direct" {
 		return InstanceState{}, false
 	}
 	return instance, true
@@ -1170,7 +1178,7 @@ func readProjectHostPid() int {
 	return pid
 }
 
-func bareMetalStatus() string {
+func directStatus() string {
 	pid := readProjectHostPid()
 	if pid <= 0 {
 		return "stopped"
@@ -1195,14 +1203,14 @@ func runProjectHostDaemon(action, sshUser string) error {
 }
 
 func handleRestart(payload map[string]interface{}, state State) (interface{}, error) {
-	if instance, ok := loadBareMetalInstance(payload, state); ok {
+	if instance, ok := loadDirectInstance(payload, state); ok {
 		if err := runProjectHostDaemon("stop", instance.SshUser); err != nil {
 			return nil, err
 		}
 		if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{"name": instance.Name, "state": bareMetalStatus()}, nil
+		return map[string]interface{}{"name": instance.Name, "state": directStatus()}, nil
 	}
 	name := toString(payload["name"])
 	if name == "" {
@@ -1221,11 +1229,11 @@ func handleHardRestart(payload map[string]interface{}, state State) (interface{}
 }
 
 func handleStart(payload map[string]interface{}, state State) (interface{}, error) {
-	if instance, ok := loadBareMetalInstance(payload, state); ok {
+	if instance, ok := loadDirectInstance(payload, state); ok {
 		if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{"name": instance.Name, "state": bareMetalStatus()}, nil
+		return map[string]interface{}{"name": instance.Name, "state": directStatus()}, nil
 	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
@@ -1248,11 +1256,11 @@ func handleStart(payload map[string]interface{}, state State) (interface{}, erro
 }
 
 func handleStop(payload map[string]interface{}, state State) (interface{}, error) {
-	if instance, ok := loadBareMetalInstance(payload, state); ok {
+	if instance, ok := loadDirectInstance(payload, state); ok {
 		if err := runProjectHostDaemon("stop", instance.SshUser); err != nil {
 			return nil, err
 		}
-		return map[string]interface{}{"name": instance.Name, "state": bareMetalStatus()}, nil
+		return map[string]interface{}{"name": instance.Name, "state": directStatus()}, nil
 	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
@@ -1275,7 +1283,7 @@ func handleStop(payload map[string]interface{}, state State) (interface{}, error
 }
 
 func handleDelete(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
-	if instance, ok := loadBareMetalInstance(payload, state); ok {
+	if instance, ok := loadDirectInstance(payload, state); ok {
 		_ = runProjectHostDaemon("stop", instance.SshUser)
 		delete(state.Instances, toString(payload["host_id"]))
 		saveState(statePath, state)
@@ -1299,8 +1307,8 @@ func handleDelete(payload map[string]interface{}, state State, statePath string)
 }
 
 func handleStatus(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
-	if instance, ok := loadBareMetalInstance(payload, state); ok {
-		status := bareMetalStatus()
+	if instance, ok := loadDirectInstance(payload, state); ok {
+		status := directStatus()
 		return map[string]interface{}{"name": instance.Name, "state": status}, nil
 	}
 	hostID := toString(payload["host_id"])
@@ -1327,8 +1335,8 @@ func handleStatus(payload map[string]interface{}, state State, statePath string)
 }
 
 func handleResize(payload map[string]interface{}, state State) (interface{}, error) {
-	if _, ok := loadBareMetalInstance(payload, state); ok {
-		return nil, errors.New("resize is not supported for bare-metal hosts")
+	if _, ok := loadDirectInstance(payload, state); ok {
+		return nil, errors.New("resize is not supported for direct hosts")
 	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])

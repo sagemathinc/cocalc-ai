@@ -38,6 +38,7 @@ type HostEditModalProps = {
       storage_mode?: string;
       region?: string;
       zone?: string;
+      self_host_ssh_target?: string;
     },
   ) => Promise<void> | void;
   onProviderChange?: (provider: HostProvider) => void;
@@ -82,9 +83,11 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedSize,
     selectedStorageMode,
   } = useHostFormValues(form);
-  const isBareMetal =
-    (selectedSelfHostKind ?? host?.machine?.metadata?.self_host_kind) ===
-    "bare-metal";
+  const selfHostKind =
+    (selectedSelfHostKind ??
+      host?.machine?.metadata?.self_host_kind ??
+      "direct") as string;
+  const isDirect = selfHostKind === "direct";
   const {
     fieldSchema: createFieldSchema,
     fieldOptions: createFieldOptions,
@@ -295,6 +298,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       size: host.machine?.machine_type ?? host.size ?? undefined,
       storage_mode: storageMode,
       disk_type: host.machine?.disk_type,
+      self_host_ssh_target: host.machine?.metadata?.self_host_ssh_target,
     });
   }, [
     currentCpu,
@@ -498,7 +502,16 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             }
           />
         )}
-        {!isDeprovisioned && isSelfHost && !isBareMetal && (
+        {isSelfHost && (
+          <Form.Item
+            label="SSH target (optional)"
+            name="self_host_ssh_target"
+            tooltip="Set this to user@host[:port] (or an ssh-config name) so that CoCalc can install the connector on the remote machine. It must be possible to ssh to that machine without having to type a password."
+          >
+            <Input placeholder="user@host[:port] or ssh-config name" />
+          </Form.Item>
+        )}
+        {!isDeprovisioned && isSelfHost && !isDirect && (
           <>
             <Form.Item
               label="vCPU"

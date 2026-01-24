@@ -261,7 +261,7 @@ type SelfHostConnector = {
 
 type SelfHostMode = "local" | "cloudflare";
 
-type SelfHostKind = "vm" | "bare-metal";
+type SelfHostKind = "multipass" | "direct";
 
 const SELF_HOST_MODE_LABELS: Record<SelfHostMode, string> = {
   local: "Local network (SSH tunnel)",
@@ -269,8 +269,8 @@ const SELF_HOST_MODE_LABELS: Record<SelfHostMode, string> = {
 };
 
 const SELF_HOST_KIND_LABELS: Record<SelfHostKind, string> = {
-  vm: "VM (Multipass)",
-  "bare-metal": "Bare metal (no VM)",
+  multipass: "Multipass VM",
+  direct: "Direct",
 };
 
 const formatConnectorLabel = (connector: SelfHostConnector) =>
@@ -324,7 +324,7 @@ export const getSelfHostKindOptions = (
       catalog,
       "self_host_kinds",
       "account",
-    ) ?? ["vm"];
+    ) ?? ["direct"];
   return kinds.map((kind) => ({
     value: kind,
     label: SELF_HOST_KIND_LABELS[kind] ?? kind,
@@ -1712,7 +1712,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       },
       tooltips: {
         self_host_kind:
-          "Run inside a dedicated Multipass VM or directly on this machine.",
+          "Run inside a managed Multipass VM or run directly on this machine.",
         self_host_mode:
           "Local network uses SSH tunnels to the hub; Cloudflare uses cloudflared + S3.",
       },
@@ -1731,6 +1731,9 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       if (Number.isFinite(ram_gb) && ram_gb > 0) metadata.ram_gb = ram_gb;
       if (vals.self_host_kind) metadata.self_host_kind = vals.self_host_kind;
       if (vals.self_host_mode) metadata.self_host_mode = vals.self_host_mode;
+      if (vals.self_host_ssh_target) {
+        metadata.self_host_ssh_target = String(vals.self_host_ssh_target).trim();
+      }
       const storage_mode = vals.storage_mode || "persistent";
       return {
         name: vals.name ?? "My Host",

@@ -58,8 +58,9 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
     (host?.machine?.metadata?.self_host_mode as string | undefined) ??
     (host?.machine?.cloud === "self-host" ? "local" : undefined);
   const selfHostKind =
-    (host?.machine?.metadata?.self_host_kind as string | undefined) ?? "vm";
-  const isBareMetal = selfHostKind === "bare-metal";
+    (host?.machine?.metadata?.self_host_kind as string | undefined) ??
+    "direct";
+  const isDirect = selfHostKind === "direct";
   const useSshPairing = selfHostMode === "local";
   const insecureFlag = insecure ? " --insecure" : "";
   const parsedBase = (() => {
@@ -69,14 +70,45 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
       return undefined;
     }
   })();
-  const sshHost =
-    launchpad?.ssh_host ?? parsedBase?.hostname ?? "<ssh-host>";
-  const sshPort =
-    launchpad?.sshd_port != null
-      ? ` --ssh-port ${launchpad.sshd_port}`
+  const rawSshTarget =
+    typeof host?.machine?.metadata?.self_host_ssh_target === "string"
+      ? host.machine.metadata.self_host_ssh_target
       : "";
-  const sshUser =
-    launchpad?.ssh_user != null ? ` --ssh-user ${launchpad.ssh_user}` : "";
+  const parseSshTarget = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    let user: string | undefined;
+    let hostPort = trimmed;
+    const atIndex = trimmed.lastIndexOf("@");
+    if (atIndex > 0) {
+      user = trimmed.slice(0, atIndex);
+      hostPort = trimmed.slice(atIndex + 1);
+    }
+    let host = hostPort;
+    let port: number | undefined;
+    const match = hostPort.match(/^(.*):(\d+)$/);
+    if (match) {
+      host = match[1];
+      port = Number(match[2]);
+    }
+    return { user, host, port };
+  };
+  const sshTarget = parseSshTarget(rawSshTarget);
+  const hasSshTarget = !!rawSshTarget.trim();
+  const sshHost =
+    sshTarget?.host ??
+    launchpad?.ssh_host ??
+    parsedBase?.hostname ??
+    "<ssh-host>";
+  const sshPortValue =
+    sshTarget?.port ??
+    (hasSshTarget ? undefined : launchpad?.sshd_port ?? undefined);
+  const sshUserValue =
+    sshTarget?.user ??
+    (hasSshTarget ? undefined : launchpad?.ssh_user ?? undefined);
+  const sshPort =
+    sshPortValue != null ? ` --ssh-port ${sshPortValue}` : "";
+  const sshUser = sshUserValue ? ` --ssh-user ${sshUserValue}` : "";
   const sshNoStrict = " --ssh-no-strict-host-key-checking";
   const installCommand = token
     ? useSshPairing
@@ -107,7 +139,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
       ]}
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        {isBareMetal ? (
+        {isDirect ? (
           <Typography.Paragraph>
             This connector installs the project host directly on this machine
             (no VM required).
@@ -130,7 +162,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
           </Typography.Paragraph>
         )}
         <Divider style={{ margin: "8px 0" }} />
-        {!isBareMetal && (
+        {!isDirect && (
           <Typography.Paragraph>
             1) Install Multipass:{" "}
             <Typography.Link
@@ -143,8 +175,16 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
           </Typography.Paragraph>
         )}
         <Typography.Paragraph>
-          {isBareMetal ? "1" : "2"}) Copy/paste this command:
+          {isDirect ? "1" : "2"}) Copy/paste this command:
         </Typography.Paragraph>
+        {useSshPairing && !hasSshTarget && (
+          <Alert
+            type="warning"
+            showIcon
+            message="No SSH target provided"
+            description="Without an SSH target, the host must be able to reach the hub’s SSH port directly."
+          />
+        )}
         {loading && (
           <Typography.Text type="secondary">
             Creating pairing token…

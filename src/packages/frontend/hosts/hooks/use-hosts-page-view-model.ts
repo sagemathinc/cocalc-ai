@@ -635,6 +635,7 @@ export const useHostsPageViewModel = () => {
         storage_mode?: string;
         region?: string;
         zone?: string;
+        self_host_ssh_target?: string;
       },
     ) => {
       setSavingEdit(true);
@@ -683,6 +684,9 @@ export const useHostsPageViewModel = () => {
           if (machine.disk_type) update.disk_type = machine.disk_type;
           if (typeof metadata.cpu === "number") update.cpu = metadata.cpu;
           if (typeof metadata.ram_gb === "number") update.ram_gb = metadata.ram_gb;
+          if (typeof metadata.self_host_ssh_target === "string") {
+            update.self_host_ssh_target = metadata.self_host_ssh_target;
+          }
           if (Object.keys(update).length > 0) {
             await updateHostMachine(id, update);
           }
@@ -706,6 +710,14 @@ export const useHostsPageViewModel = () => {
           if (nextRam && nextRam !== currentRam) update.ram_gb = nextRam;
         }
         if (nextDisk && nextDisk !== currentDisk) update.disk_gb = nextDisk;
+        if (isSelfHost) {
+          const currentTarget =
+            editingHost.machine?.metadata?.self_host_ssh_target ?? "";
+          const nextTarget = values.self_host_ssh_target ?? "";
+          if (String(currentTarget) !== String(nextTarget)) {
+            update.self_host_ssh_target = nextTarget.trim() || undefined;
+          }
+        }
 
         if (canEditMachine) {
           const nextMachineType = values.machine_type || values.size;
