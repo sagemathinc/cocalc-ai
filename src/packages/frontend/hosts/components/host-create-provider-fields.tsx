@@ -35,6 +35,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedDisk = Form.useWatch("disk", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
+  const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
   const defaultDiskType =
     selectedProvider === "nebius" ? "ssd_io_m3" : undefined;
   React.useEffect(() => {
@@ -140,6 +141,10 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   React.useEffect(() => {
     ensureFieldValue("gpu_type", watchedGpuType);
   }, [ensureFieldValue, watchedGpuType]);
+
+  React.useEffect(() => {
+    ensureFieldValue("self_host_kind", form.getFieldValue("self_host_kind"));
+  }, [ensureFieldValue, form]);
 
   React.useEffect(() => {
     ensureFieldValue("self_host_mode", form.getFieldValue("self_host_mode"));
@@ -302,7 +307,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
           </Row>
         </Form.Item>
       )}
-      {selectedProvider === "self-host" && (
+      {selectedProvider === "self-host" && watchedSelfHostKind !== "bare-metal" && (
         <>
           <Form.Item
             name="cpu"

@@ -99,6 +99,10 @@ export class SelfHostProvider implements CloudProvider {
       mem_gb: spec.ram_gb,
       disk_gb: spec.disk_gb,
       cloud_init: spec.metadata?.startup_script,
+      ssh_user: spec.metadata?.ssh_user ?? DEFAULT_SSH_USER,
+      ...(spec.metadata?.self_host_kind === "bare-metal"
+        ? { bare_metal: true }
+        : {}),
     };
     logger.debug("self-host.createHost", { connector_id: connectorId, name: spec.name });
     const result = await this.send(

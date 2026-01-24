@@ -57,6 +57,9 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
   const selfHostMode =
     (host?.machine?.metadata?.self_host_mode as string | undefined) ??
     (host?.machine?.cloud === "self-host" ? "local" : undefined);
+  const selfHostKind =
+    (host?.machine?.metadata?.self_host_kind as string | undefined) ?? "vm";
+  const isBareMetal = selfHostKind === "bare-metal";
   const useSshPairing = selfHostMode === "local";
   const insecureFlag = insecure ? " --insecure" : "";
   const parsedBase = (() => {
@@ -104,10 +107,17 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
       ]}
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        <Typography.Paragraph>
-          This connector manages a dedicated VM on your machine using Multipass
-          (free, open-source, and easy to install).
-        </Typography.Paragraph>
+        {isBareMetal ? (
+          <Typography.Paragraph>
+            This connector installs the project host directly on this machine
+            (no VM required).
+          </Typography.Paragraph>
+        ) : (
+          <Typography.Paragraph>
+            This connector manages a dedicated VM on your machine using
+            Multipass (free, open-source, and easy to install).
+          </Typography.Paragraph>
+        )}
         <Typography.Paragraph type="secondary">
           Supported on macOS and Linux only (Windows support is planned).
         </Typography.Paragraph>
@@ -120,18 +130,20 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
           </Typography.Paragraph>
         )}
         <Divider style={{ margin: "8px 0" }} />
+        {!isBareMetal && (
+          <Typography.Paragraph>
+            1) Install Multipass:{" "}
+            <Typography.Link
+              href="https://canonical.com/multipass"
+              target="_blank"
+              rel="noreferrer"
+            >
+              https://canonical.com/multipass
+            </Typography.Link>
+          </Typography.Paragraph>
+        )}
         <Typography.Paragraph>
-          1) Install Multipass:{" "}
-          <Typography.Link
-            href="https://canonical.com/multipass"
-            target="_blank"
-            rel="noreferrer"
-          >
-            https://canonical.com/multipass
-          </Typography.Link>
-        </Typography.Paragraph>
-        <Typography.Paragraph>
-          2) Copy/paste this command:
+          {isBareMetal ? "1" : "2"}) Copy/paste this command:
         </Typography.Paragraph>
         {loading && (
           <Typography.Text type="secondary">

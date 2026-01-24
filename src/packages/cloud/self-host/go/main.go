@@ -39,6 +39,7 @@ const (
 	defaultStartupFastSeconds = 120
 	defaultTimeout            = 20 * time.Second
 	defaultImage              = "24.04"
+	defaultSshUser            = "ubuntu"
 )
 
 var version = "0.0.0"
@@ -80,6 +81,8 @@ type InstanceState struct {
 	CreatedAt string   `json:"created_at,omitempty"`
 	LastState string   `json:"last_state,omitempty"`
 	LastIPv4  []string `json:"last_ipv4,omitempty"`
+	BareMetal bool     `json:"bare_metal,omitempty"`
+	SshUser   string   `json:"ssh_user,omitempty"`
 }
 
 type multipassResult struct {
@@ -374,10 +377,6 @@ func runLoopCmd(args []string) {
 		return
 	}
 	cfg := loadConfig(path)
-
-	if err := ensureMultipassAvailable(); err != nil {
-		fail(err.Error())
-	}
 	runLoop(cfg, path)
 }
 
@@ -534,6 +533,32 @@ func readJSON(path string, dest interface{}) bool {
 		return false
 	}
 	return true
+}
+
+func readEnvFile(path string) map[string]string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]string{}
+	}
+	lines := strings.Split(string(data), "\n")
+	out := map[string]string{}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		value = strings.Trim(value, "\"'")
+		if key != "" {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func saveJSON(path string, data interface{}) {
@@ -963,6 +988,59 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 	if cloudInit == nil {
 		cloudInit = payload["cloud_init_yaml"]
 	}
+	bareMetal := toBool(payload["bare_metal"])
+	sshUser := toString(payload["ssh_user"])
+	if sshUser == "" {
+		sshUser = defaultSshUser
+	}
+
+	if bareMetal {
+		if existing, ok := state.Instances[hostID]; ok && existing.BareMetal {
+			return map[string]interface{}{
+				"name":  existing.Name,
+				"state": "running",
+			}, nil
+		}
+		if cloudInit == nil {
+			return nil, errors.New("bare-metal create requires cloud_init")
+		}
+		paths := createCloudInitPaths(hostID)
+		if err := os.MkdirAll(paths.InitDir, 0o700); err != nil {
+			return nil, fmt.Errorf("bootstrap mkdir: %v", err)
+		}
+		raw := toString(cloudInit)
+		if raw == "" {
+			return nil, errors.New("cloud_init is empty")
+		}
+		trimmed := strings.TrimLeft(raw, " \t\r\n")
+		if strings.HasPrefix(trimmed, "#cloud-config") {
+			return nil, errors.New("bare-metal requires a shell bootstrap script")
+		}
+		if err := os.WriteFile(paths.InitPath, []byte(raw), 0o700); err != nil {
+			return nil, fmt.Errorf("bootstrap write: %v", err)
+		}
+		stat, _ := os.Stat(paths.InitPath)
+		logLine("bootstrap script written", map[string]interface{}{
+			"path": paths.InitPath,
+			"size": stat.Size(),
+			"mode": fmt.Sprintf("%o", stat.Mode().Perm()),
+		})
+		result := runCommand("sudo", []string{"-n", "bash", paths.InitPath})
+		if result.Code != 0 {
+			cleanupCloudInit(paths)
+			return nil, errors.New(strings.TrimSpace(result.Stderr))
+		}
+		cleanupCloudInit(paths)
+		state.Instances[hostID] = InstanceState{
+			Name:      name,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+			LastState: "running",
+			BareMetal: true,
+			SshUser:   sshUser,
+		}
+		saveState(statePath, state)
+		return map[string]interface{}{"name": name, "state": "running"}, nil
+	}
 
 	info := multipassInfo(name)
 	if info.Exists {
@@ -1042,7 +1120,90 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 	return map[string]interface{}{"name": name, "state": info.State, "ipv4": info.IPv4}, nil
 }
 
+func loadBareMetalInstance(payload map[string]interface{}, state State) (InstanceState, bool) {
+	hostID := toString(payload["host_id"])
+	if hostID == "" {
+		return InstanceState{}, false
+	}
+	instance, ok := state.Instances[hostID]
+	if !ok || !instance.BareMetal {
+		return InstanceState{}, false
+	}
+	return instance, true
+}
+
+func projectHostBinary() string {
+	if value := os.Getenv("COCALC_PROJECT_HOST_BIN"); value != "" {
+		return value
+	}
+	return "/opt/cocalc/project-host/current/cocalc-project-host"
+}
+
+func resolveProjectHostDataDir() string {
+	if value := os.Getenv("COCALC_DATA"); value != "" {
+		return value
+	}
+	if value := os.Getenv("DATA"); value != "" {
+		return value
+	}
+	env := readEnvFile("/etc/cocalc/project-host.env")
+	if value := env["COCALC_DATA"]; value != "" {
+		return value
+	}
+	if value := env["DATA"]; value != "" {
+		return value
+	}
+	return "/btrfs/data"
+}
+
+func projectHostPidPath() string {
+	return filepath.Join(resolveProjectHostDataDir(), "daemon.pid")
+}
+
+func readProjectHostPid() int {
+	pidPath := projectHostPidPath()
+	contents, err := os.ReadFile(pidPath)
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(contents)))
+	return pid
+}
+
+func bareMetalStatus() string {
+	pid := readProjectHostPid()
+	if pid <= 0 {
+		return "stopped"
+	}
+	if processAlive(pid) {
+		return "running"
+	}
+	return "stopped"
+}
+
+func runProjectHostDaemon(action, sshUser string) error {
+	if sshUser == "" {
+		sshUser = defaultSshUser
+	}
+	cmd := projectHostBinary()
+	args := []string{"-n", "-u", sshUser, "-H", cmd, "daemon", action}
+	result := runCommand("sudo", args)
+	if result.Code != 0 {
+		return errors.New(strings.TrimSpace(result.Stderr))
+	}
+	return nil
+}
+
 func handleRestart(payload map[string]interface{}, state State) (interface{}, error) {
+	if instance, ok := loadBareMetalInstance(payload, state); ok {
+		if err := runProjectHostDaemon("stop", instance.SshUser); err != nil {
+			return nil, err
+		}
+		if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"name": instance.Name, "state": bareMetalStatus()}, nil
+	}
 	name := toString(payload["name"])
 	if name == "" {
 		return nil, errors.New("restart requires name")
@@ -1060,6 +1221,12 @@ func handleHardRestart(payload map[string]interface{}, state State) (interface{}
 }
 
 func handleStart(payload map[string]interface{}, state State) (interface{}, error) {
+	if instance, ok := loadBareMetalInstance(payload, state); ok {
+		if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"name": instance.Name, "state": bareMetalStatus()}, nil
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -1081,6 +1248,12 @@ func handleStart(payload map[string]interface{}, state State) (interface{}, erro
 }
 
 func handleStop(payload map[string]interface{}, state State) (interface{}, error) {
+	if instance, ok := loadBareMetalInstance(payload, state); ok {
+		if err := runProjectHostDaemon("stop", instance.SshUser); err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"name": instance.Name, "state": bareMetalStatus()}, nil
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -1102,6 +1275,12 @@ func handleStop(payload map[string]interface{}, state State) (interface{}, error
 }
 
 func handleDelete(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
+	if instance, ok := loadBareMetalInstance(payload, state); ok {
+		_ = runProjectHostDaemon("stop", instance.SshUser)
+		delete(state.Instances, toString(payload["host_id"]))
+		saveState(statePath, state)
+		return map[string]interface{}{"name": instance.Name, "state": "deleted"}, nil
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -1120,6 +1299,10 @@ func handleDelete(payload map[string]interface{}, state State, statePath string)
 }
 
 func handleStatus(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
+	if instance, ok := loadBareMetalInstance(payload, state); ok {
+		status := bareMetalStatus()
+		return map[string]interface{}{"name": instance.Name, "state": status}, nil
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -1144,6 +1327,9 @@ func handleStatus(payload map[string]interface{}, state State, statePath string)
 }
 
 func handleResize(payload map[string]interface{}, state State) (interface{}, error) {
+	if _, ok := loadBareMetalInstance(payload, state); ok {
+		return nil, errors.New("resize is not supported for bare-metal hosts")
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -1214,8 +1400,34 @@ func handleResize(payload map[string]interface{}, state State) (interface{}, err
 }
 
 func runMultipass(args []string) multipassResult {
+	if err := ensureMultipassAvailable(); err != nil {
+		return multipassResult{Stdout: "", Stderr: err.Error(), Code: 1}
+	}
 	logLine("multipass exec", map[string]interface{}{"command": formatCommand("multipass", args)})
 	cmd := exec.Command("multipass", args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		if exitErr := new(exec.ExitError); errors.As(err, &exitErr) {
+			code = exitErr.ExitCode()
+		} else {
+			code = 1
+		}
+	}
+	return multipassResult{
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
+		Code:   code,
+	}
+}
+
+func runCommand(exe string, args []string) multipassResult {
+	logLine("exec", map[string]interface{}{"command": formatCommand(exe, args)})
+	cmd := exec.Command(exe, args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -1279,8 +1491,8 @@ func multipassInfo(name string) multipassInfoResult {
 }
 
 func ensureMultipassAvailable() error {
-	res := runMultipass([]string{"version"})
-	if res.Code != 0 {
+	cmd := exec.Command("multipass", "version")
+	if err := cmd.Run(); err != nil {
 		return errors.New("Ubuntu Multipass not found or not working; install multipass first:\n\n    https://canonical.com/multipass\n")
 	}
 	return nil
@@ -1447,6 +1659,25 @@ func toInt(val interface{}) (int, bool) {
 		return int(math.Floor(f)), true
 	}
 	return 0, false
+}
+
+func toBool(val interface{}) bool {
+	switch v := val.(type) {
+	case bool:
+		return v
+	case string:
+		s := strings.TrimSpace(strings.ToLower(v))
+		return s == "true" || s == "1" || s == "yes"
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case float64:
+		return v != 0
+	case float32:
+		return v != 0
+	}
+	return false
 }
 
 func toString(val interface{}) string {

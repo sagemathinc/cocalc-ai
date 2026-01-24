@@ -20,6 +20,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   onProviderChange,
   wrapForm = true,
 }) => {
+  const hideAdvanced = provider.selectedProvider === "self-host";
   const content = (
     <>
       <Form.Item name="name" label="Name" initialValue="My host">
@@ -29,11 +30,13 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
         provider={provider}
         onProviderChange={onProviderChange}
       />
-      <Collapse ghost style={{ marginBottom: 8 }}>
-        <Collapse.Panel header="Advanced options" key="adv">
-          <HostCreateAdvancedFields provider={provider} />
-        </Collapse.Panel>
-      </Collapse>
+      {!hideAdvanced && (
+        <Collapse ghost style={{ marginBottom: 8 }}>
+          <Collapse.Panel header="Advanced options" key="adv">
+            <HostCreateAdvancedFields provider={provider} />
+          </Collapse.Panel>
+        </Collapse>
+      )}
     </>
   );
   if (!wrapForm) return content;

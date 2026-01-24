@@ -178,16 +178,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const {
     open,
     host,
-  hostOps,
-  onClose,
-  onEdit,
-  onUpgrade,
-  canUpgrade,
-  onCancelOp,
-  hostLog,
-  loadingLog,
-  selfHost,
-} = vm;
+    hostOps,
+    onClose,
+    onEdit,
+    onUpgrade,
+    canUpgrade,
+    onCancelOp,
+    hostLog,
+    loadingLog,
+    selfHost,
+  } = vm;
   const isSelfHost = host?.machine?.cloud === "self-host";
   const readPositive = (value: unknown) => {
     const parsed = Number(value);
@@ -203,6 +203,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     !isSelfHost ||
     !selfHost?.isConnectorOnline ||
     selfHost.isConnectorOnline(host?.region);
+  const handleSetupClick = React.useCallback(() => {
+    if (!host || !selfHost) return;
+    onClose();
+    selfHost.onSetup(host);
+  }, [host, onClose, selfHost]);
   const showConnectorWarning =
     isSelfHost && !!host && !connectorOnline && host.status === "off";
   const connectorLabel = isSelfHost
@@ -405,7 +410,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               showIcon
               message="Connector offline"
               description={
-                <Button size="small" onClick={() => selfHost.onSetup(host)}>
+                <Button size="small" onClick={handleSetupClick}>
                   Set up connector
                 </Button>
               }
@@ -418,7 +423,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 <Button
                   size="small"
                   disabled={hostOpActive}
-                  onClick={() => selfHost.onSetup(host)}
+                  onClick={handleSetupClick}
                 >
                   Setup or reconnect
                 </Button>

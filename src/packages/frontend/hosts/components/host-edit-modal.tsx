@@ -76,11 +76,15 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedZone,
     selectedMachineType,
     selectedGpuType,
+    selectedSelfHostKind,
     selectedSelfHostMode,
     selectedGpu,
     selectedSize,
     selectedStorageMode,
   } = useHostFormValues(form);
+  const isBareMetal =
+    (selectedSelfHostKind ?? host?.machine?.metadata?.self_host_kind) ===
+    "bare-metal";
   const {
     fieldSchema: createFieldSchema,
     fieldOptions: createFieldOptions,
@@ -98,6 +102,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedZone,
     selectedMachineType,
     selectedGpuType,
+    selectedSelfHostKind,
     selectedSelfHostMode,
     selectedSize,
     selectedGpu,
@@ -153,6 +158,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedMachineType = Form.useWatch("machine_type", form);
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedSize = Form.useWatch("size", form);
+  const hideAdvanced = providerId === "self-host";
   const selection: ProviderSelection = {
     region: watchedRegion ?? host?.region ?? undefined,
     zone: watchedZone ?? host?.machine?.zone ?? undefined,
@@ -492,7 +498,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             }
           />
         )}
-        {!isDeprovisioned && isSelfHost && (
+        {!isDeprovisioned && isSelfHost && !isBareMetal && (
           <>
             <Form.Item
               label="vCPU"
@@ -549,7 +555,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             />
           </Form.Item>
         )}
-        {!isDeprovisioned && showAdvancedSection && (
+        {!isDeprovisioned && showAdvancedSection && !hideAdvanced && (
           <Collapse ghost style={{ marginBottom: 8 }}>
             <Collapse.Panel header="Advanced options" key="advanced">
               {providerDescriptor &&

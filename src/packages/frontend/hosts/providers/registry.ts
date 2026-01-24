@@ -20,6 +20,7 @@ export type HostFieldId =
   | "zone"
   | "machine_type"
   | "gpu_type"
+  | "self_host_kind"
   | "self_host_mode"
   | "size"
   | "gpu";
@@ -29,6 +30,7 @@ export const HOST_FIELDS: HostFieldId[] = [
   "zone",
   "machine_type",
   "gpu_type",
+  "self_host_kind",
   "self_host_mode",
   "size",
   "gpu",
@@ -115,6 +117,7 @@ export type ProviderSelection = {
   zone?: string;
   machine_type?: string;
   gpu_type?: string;
+  self_host_kind?: string;
   self_host_mode?: string;
   size?: string;
   gpu?: string;
@@ -258,9 +261,16 @@ type SelfHostConnector = {
 
 type SelfHostMode = "local" | "cloudflare";
 
+type SelfHostKind = "vm" | "bare-metal";
+
 const SELF_HOST_MODE_LABELS: Record<SelfHostMode, string> = {
   local: "Local network (SSH tunnel)",
   cloudflare: "Cloudflare tunnel",
+};
+
+const SELF_HOST_KIND_LABELS: Record<SelfHostKind, string> = {
+  vm: "VM (Multipass)",
+  "bare-metal": "Bare metal (no VM)",
 };
 
 const formatConnectorLabel = (connector: SelfHostConnector) =>
@@ -303,6 +313,21 @@ export const getSelfHostModeOptions = (
   return modes.map((mode) => ({
     value: mode,
     label: SELF_HOST_MODE_LABELS[mode] ?? mode,
+  }));
+};
+
+export const getSelfHostKindOptions = (
+  catalog?: HostCatalog,
+): HostFieldOption[] => {
+  const kinds =
+    getCatalogEntryPayload<SelfHostKind[]>(
+      catalog,
+      "self_host_kinds",
+      "account",
+    ) ?? ["vm"];
+  return kinds.map((kind) => ({
+    value: kind,
+    label: SELF_HOST_KIND_LABELS[kind] ?? kind,
   }));
 };
 
@@ -1666,7 +1691,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
   },
   "self-host": {
     id: "self-host",
-    label: "Self-hosted VM",
+    label: "Self-hosted",
     supports: {
       region: false,
       zone: false,
@@ -1678,13 +1703,16 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       genericGpu: false,
     },
     fields: {
-      primary: ["self_host_mode"],
+      primary: ["self_host_kind", "self_host_mode"],
       advanced: [],
       labels: {
         size: "Size",
+        self_host_kind: "Host type",
         self_host_mode: "Connectivity",
       },
       tooltips: {
+        self_host_kind:
+          "Run inside a dedicated Multipass VM or directly on this machine.",
         self_host_mode:
           "Local network uses SSH tunnels to the hub; Cloudflare uses cloudflared + S3.",
       },
@@ -1692,6 +1720,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
     storage: { supported: true, growable: false },
     getOptions: (catalog) => ({
       ...emptyOptions(),
+      self_host_kind: getSelfHostKindOptions(catalog),
       self_host_mode: getSelfHostModeOptions(catalog),
     }),
     buildCreatePayload: (vals, _ctx) => {
@@ -1700,6 +1729,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       const metadata: Record<string, any> = {};
       if (Number.isFinite(cpu) && cpu > 0) metadata.cpu = cpu;
       if (Number.isFinite(ram_gb) && ram_gb > 0) metadata.ram_gb = ram_gb;
+      if (vals.self_host_kind) metadata.self_host_kind = vals.self_host_kind;
       if (vals.self_host_mode) metadata.self_host_mode = vals.self_host_mode;
       const storage_mode = vals.storage_mode || "persistent";
       return {

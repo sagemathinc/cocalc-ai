@@ -802,6 +802,7 @@ export async function getCatalog({
     if (await hasCloudflareTunnel()) {
       modes.push("cloudflare");
     }
+    const kinds = ["vm", "bare-metal"];
     return {
       provider: cloud,
       entries: [
@@ -814,6 +815,11 @@ export async function getCatalog({
           kind: "self_host_modes",
           scope: "account",
           payload: modes,
+        },
+        {
+          kind: "self_host_kinds",
+          scope: "account",
+          payload: kinds,
         },
       ],
       provider_capabilities: Object.fromEntries(
@@ -930,6 +936,15 @@ export async function createHost({
   if (isSelfHost && rawSelfHostMode && !selfHostMode) {
     throw new Error(`invalid self_host_mode '${rawSelfHostMode}'`);
   }
+  const rawSelfHostKind = machine?.metadata?.self_host_kind;
+  const selfHostKind =
+    rawSelfHostKind === "bare-metal" || rawSelfHostKind === "vm"
+      ? rawSelfHostKind
+      : undefined;
+  if (isSelfHost && rawSelfHostKind && !selfHostKind) {
+    throw new Error(`invalid self_host_kind '${rawSelfHostKind}'`);
+  }
+  const effectiveSelfHostKind = isSelfHost ? (selfHostKind ?? "vm") : undefined;
   if (isSelfHost && selfHostMode === "cloudflare") {
     if (!(await hasCloudflareTunnel())) {
       throw new Error("cloudflare tunnel is not configured");
@@ -956,6 +971,9 @@ export async function createHost({
             ...(machine?.metadata ?? {}),
             connector_id: connectorId,
             ...(selfHostMode ? { self_host_mode: selfHostMode } : {}),
+            ...(effectiveSelfHostKind
+              ? { self_host_kind: effectiveSelfHostKind }
+              : {}),
           },
         }
       : {}),
