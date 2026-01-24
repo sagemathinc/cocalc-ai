@@ -67,6 +67,9 @@ import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
 import { ChangeContext } from "./use-change";
+import BlockMarkdownEditor, {
+  shouldUseBlockEditor,
+} from "./block-markdown-editor";
 
 export type { SlateEditor };
 
@@ -133,7 +136,7 @@ interface Props {
   showEditBar?: boolean;
 }
 
-export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
+const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const {
     actions: actions0,
     autoFocus,
@@ -1141,4 +1144,16 @@ export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     </ChangeContext.Provider>
   );
   return useUpload(editor, body);
+});
+
+export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
+  if (
+    shouldUseBlockEditor({
+      value: props.value,
+      height: props.height,
+    })
+  ) {
+    return <BlockMarkdownEditor {...props} />;
+  }
+  return <FullEditableMarkdown {...props} />;
 });

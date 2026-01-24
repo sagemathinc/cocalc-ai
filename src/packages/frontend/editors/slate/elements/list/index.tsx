@@ -5,7 +5,7 @@
 
 import React from "react";
 import { register, SlateElement } from "../register";
-import { DEFAULT_CHILDREN } from "../../util";
+import { defaultChildren } from "../../util";
 import { Element } from "slate";
 
 export interface BulletList extends SlateElement {
@@ -27,7 +27,7 @@ export function isListElement(element: SlateElement): boolean {
 }
 
 export function bullet_list(
-  children = DEFAULT_CHILDREN,
+  children = defaultChildren(),
   tight: boolean = true
 ): Element {
   if (!tight && children.length == 1) {
@@ -40,7 +40,7 @@ export function bullet_list(
 }
 
 export function ordered_list(
-  children = DEFAULT_CHILDREN,
+  children = defaultChildren(),
   start,
   tight: boolean = true
 ): Element {
