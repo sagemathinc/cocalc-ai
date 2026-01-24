@@ -676,6 +676,20 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
+    if (
+      ReactEditor.isFocused(editor) &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      (e.key.length === 1 ||
+        e.key === "Enter" ||
+        e.key === "Backspace" ||
+        e.key === "Delete" ||
+        e.key === "Tab")
+    ) {
+      editor.setIgnoreSelection(true);
+    }
+
     const gapCursor = getGapCursor(editor);
     if (gapCursor) {
       if (
@@ -743,6 +757,28 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       }
     }
   }
+
+  const onKeyUp = useCallback(
+    (e) => {
+      if (
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        (e.key.length === 1 ||
+          e.key === "Enter" ||
+          e.key === "Backspace" ||
+          e.key === "Delete" ||
+          e.key === "Tab")
+      ) {
+        editor.setIgnoreSelection(false);
+      }
+    },
+    [editor],
+  );
+
+  const onMouseDown = useCallback(() => {
+    editor.setIgnoreSelection(false);
+  }, [editor]);
 
   useEffect(() => {
     if (!is_current) {
@@ -1246,12 +1282,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           renderElement={renderElement}
           renderLeaf={Leaf}
           onKeyDown={onKeyDown}
+          onKeyUp={onKeyUp}
+          onMouseDown={onMouseDown}
           onBlur={() => {
             editor.saveValue();
             updateMarks();
             if (ignoreRemoteWhileFocused) {
               flushPendingRemoteMerge();
             }
+            editor.setIgnoreSelection(false);
             onBlur?.();
           }}
           onFocus={() => {
