@@ -255,12 +255,13 @@ export async function runConnectorInstallOverSsh(opts: {
     sshUser,
     "--token",
     opts.pairing_token,
+    "--ssh-no-strict-host-key-checking",
     "--replace",
   ];
   if (opts.name) {
-    installCmdParts.push("--name", `'${opts.name.replace(/'/g, "'\\''")}'`);
+    installCmdParts.push("--name", opts.name);
   }
-  const installCmd = installCmdParts.join(" ");
+  const installCmd = `set -euo pipefail; ${argsJoin(installCmdParts)}`;
   const args: string[] = [
     "-o",
     "BatchMode=yes",
@@ -304,6 +305,12 @@ export async function runConnectorInstallOverSsh(opts: {
     });
     child.on("exit", (code) => {
       clearTimeout(timeout);
+      if (stderr.trim()) {
+        logger.debug("connector install stderr", {
+          host_id: opts.host_id,
+          output: stderr.trim(),
+        });
+      }
       if (code === 0) {
         resolve();
         return;
