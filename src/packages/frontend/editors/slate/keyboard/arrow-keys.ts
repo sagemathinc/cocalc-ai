@@ -23,11 +23,70 @@ import {
 } from "../control";
 import { SlateEditor } from "../types";
 import { ReactEditor } from "../slate-react";
-import { Transforms } from "slate";
+import { Editor, Element, Transforms } from "slate";
+import { clearGapCursor, getGapCursor, setGapCursor } from "../gap-cursor";
+import { pointAtPath } from "../slate-util";
+
+function topLevelEntry(editor: SlateEditor): { element: Element; index: number } | null {
+  const focus = editor.selection?.focus;
+  if (!focus) return null;
+  const index = focus.path[0];
+  const [node] = Editor.node(editor, [index]);
+  if (!Element.isElement(node)) return null;
+  return { element: node, index };
+}
+
+function isParagraphElement(node: Element | null): boolean {
+  return !!node && node.type === "paragraph";
+}
+
+function shouldUseGapCursor(
+  editor: SlateEditor,
+  direction: "up" | "down",
+): boolean {
+  const entry = topLevelEntry(editor);
+  if (!entry) return false;
+  const { element, index } = entry;
+  const neighborIndex = direction === "up" ? index - 1 : index + 1;
+  const hasNeighbor = neighborIndex >= 0 && neighborIndex < editor.children.length;
+  const neighbor = hasNeighbor ? (Editor.node(editor, [neighborIndex])[0] as any) : null;
+  const currentIsVoid = Editor.isVoid(editor, element);
+  const neighborIsVoid =
+    Element.isElement(neighbor) && Editor.isVoid(editor, neighbor);
+  const currentIsParagraph = isParagraphElement(element);
+  const neighborIsParagraph = Element.isElement(neighbor)
+    ? isParagraphElement(neighbor)
+    : false;
+  return (
+    !hasNeighbor ||
+    currentIsVoid ||
+    neighborIsVoid ||
+    !currentIsParagraph ||
+    !neighborIsParagraph
+  );
+}
 
 const down = ({ editor }: { editor: SlateEditor }) => {
   const { selection } = editor;
+  const gapCursor = getGapCursor(editor);
+  if (gapCursor) {
+    clearGapCursor(editor);
+    const index =
+      gapCursor.side === "before"
+        ? gapCursor.path[0]
+        : gapCursor.path[0] + 1;
+    const targetIndex = Math.min(
+      Math.max(0, index),
+      Math.max(0, editor.children.length - 1),
+    );
+    const focus = pointAtPath(editor, [targetIndex], undefined, "start");
+    Transforms.setSelection(editor, { focus, anchor: focus });
+    return true;
+  }
   setTimeout(() => {
+    if (getGapCursor(editor)) {
+      return;
+    }
     // We have to do this via a timeout, because we don't control the cursor.
     // Instead the selection in contenteditable changes via the browser and
     // we react to that. Thus this is the only way with our current "sync with
@@ -68,8 +127,16 @@ const down = ({ editor }: { editor: SlateEditor }) => {
     }
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
+    if (cur != null && isAtEndOfBlock(editor, { mode: "highest" })) {
+      if (shouldUseGapCursor(editor, "down")) {
+        setGapCursor(editor, { path: [cur.path[0]], side: "after" });
+        ReactEditor.forceUpdate(editor);
+        return true;
+      }
+    }
     // just work in the usual way
     if (!blocksCursor(editor, false)) {
+      clearGapCursor(editor);
       // built in cursor movement works fine
       return false;
     }
@@ -93,7 +160,25 @@ register({ key: "ArrowDown" }, down);
 
 const up = ({ editor }: { editor: SlateEditor }) => {
   const { selection } = editor;
+  const gapCursor = getGapCursor(editor);
+  if (gapCursor) {
+    clearGapCursor(editor);
+    const index =
+      gapCursor.side === "after"
+        ? gapCursor.path[0]
+        : gapCursor.path[0] - 1;
+    const targetIndex = Math.min(
+      Math.max(0, index),
+      Math.max(0, editor.children.length - 1),
+    );
+    const focus = pointAtPath(editor, [targetIndex], undefined, "end");
+    Transforms.setSelection(editor, { focus, anchor: focus });
+    return true;
+  }
   setTimeout(() => {
+    if (getGapCursor(editor)) {
+      return;
+    }
     // We have to do this via a timeout, because we don't control the cursor.
     // Instead the selection in contenteditable changes via the browser and
     // we react to that. Thus this is the only way with our current "sync with
@@ -124,7 +209,15 @@ const up = ({ editor }: { editor: SlateEditor }) => {
     }
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
+    if (cur != null && isAtBeginningOfBlock(editor, { mode: "highest" })) {
+      if (shouldUseGapCursor(editor, "up")) {
+        setGapCursor(editor, { path: [cur.path[0]], side: "before" });
+        ReactEditor.forceUpdate(editor);
+        return true;
+      }
+    }
     if (!blocksCursor(editor, true)) {
+      clearGapCursor(editor);
       // built in cursor movement works fine
       return false;
     }

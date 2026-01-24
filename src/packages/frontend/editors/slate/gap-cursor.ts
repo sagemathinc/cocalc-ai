@@ -1,5 +1,7 @@
-import { Path } from "slate";
+import { Path, Transforms } from "slate";
 import type { SlateEditor } from "./types";
+import { emptyParagraph } from "./padding";
+import { pointAtPath } from "./slate-util";
 
 /**
  * Gap cursor support: represent a caret between block nodes without
@@ -19,20 +21,26 @@ export function setGapCursor(
   editor: SlateEditor,
   gapCursor: GapCursor | null,
 ): void {
+  (editor as any).gapCursorSetAt = gapCursor ? Date.now() : null;
   (editor as any).gapCursor = gapCursor;
+  const bump = (editor as any).bumpGapCursor;
+  if (typeof bump === "function") {
+    bump();
+  }
 }
 
 export function clearGapCursor(editor: SlateEditor): void {
   setGapCursor(editor, null);
 }
 
-export function gapCursorMatches(
+export function insertParagraphAtGap(
   editor: SlateEditor,
-  path: Path,
-  side: GapCursor["side"],
-): boolean {
-  const gap = getGapCursor(editor);
-  if (!gap) return false;
-  if (gap.side !== side) return false;
-  return Path.equals(gap.path, path);
+  gapCursor: GapCursor,
+): void {
+  const index = gapCursor.side === "before" ? gapCursor.path[0] : gapCursor.path[0] + 1;
+  const path: Path = [Math.max(0, index)];
+  Transforms.insertNodes(editor, emptyParagraph(), { at: path });
+  const focus = pointAtPath(editor, path, undefined, "start");
+  Transforms.setSelection(editor, { anchor: focus, focus });
+  clearGapCursor(editor);
 }
