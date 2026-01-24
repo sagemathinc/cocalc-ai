@@ -2,6 +2,7 @@ import { Range } from "slate";
 
 import type { SyncString } from "@cocalc/sync/editor/string/sync";
 import { ReactEditor } from "./slate-react";
+import type { GapCursor } from "./gap-cursor";
 
 export interface SlateEditor extends ReactEditor {
   ignoreNextOnChange?: boolean;
@@ -10,6 +11,7 @@ export interface SlateEditor extends ReactEditor {
   applyingOperations?: boolean;
   lastSelection?: Range;
   curSelection?: Range;
+  gapCursor?: GapCursor | null;
   selectionIsCollapsed: () => boolean;
   inverseSearch: (boolean?) => Promise<void>;
   hasUnsavedChanges: () => boolean;
