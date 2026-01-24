@@ -19,8 +19,8 @@ import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame
 import { Path } from "@cocalc/frontend/frame-editors/frame-tree/path";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
-import { Descendant, createEditor } from "slate";
-import { Virtuoso } from "react-virtuoso";
+import { Descendant, Range, Transforms, createEditor } from "slate";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
 import type { RenderElementProps } from "./slate-react";
 import { markdown_to_slate } from "./markdown-to-slate";
@@ -37,6 +37,9 @@ import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge
 import { ChangeContext } from "./use-change";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import type { SearchHook } from "./search";
+import { isAtBeginningOfBlock, isAtEndOfBlock } from "./control";
+import { pointAtPath } from "./slate-util";
+import type { SlateEditor } from "./types";
 
 const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
 const EMPTY_SEARCH: SearchHook = {
@@ -138,6 +141,15 @@ interface BlockRowEditorProps {
   actions?: Actions;
   id?: string;
   rowStyle: React.CSSProperties;
+  gapCursor?: { index: number; side: "before" | "after" } | null;
+  setGapCursor: (gap: { index: number; side: "before" | "after" } | null) => void;
+  onNavigate: (index: number, position: "start" | "end") => void;
+  onInsertGap: (
+    gap: { index: number; side: "before" | "after" },
+    initialText?: string,
+  ) => void;
+  registerEditor: (index: number, editor: SlateEditor) => void;
+  unregisterEditor: (index: number, editor: SlateEditor) => void;
 }
 
 const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
@@ -154,6 +166,12 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       actions,
       id,
       rowStyle,
+      gapCursor,
+      setGapCursor,
+      onNavigate,
+      onInsertGap,
+      registerEditor,
+      unregisterEditor,
     } = props;
 
     const syncCacheRef = useRef<any>({});
@@ -168,6 +186,13 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       ed.syncCache = syncCacheRef.current;
       return ed;
     }, []);
+
+    useEffect(() => {
+      registerEditor(index, editor as SlateEditor);
+      return () => {
+        unregisterEditor(index, editor as SlateEditor);
+      };
+    }, [index, editor, registerEditor, unregisterEditor]);
 
     const [value, setValue] = useState<Descendant[]>(() =>
       stripTrailingBlankParagraphs(
@@ -229,6 +254,69 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         if (event.defaultPrevented) return;
         if (!ReactEditor.isFocused(editor)) return;
         if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+        const activeGap =
+          gapCursor && gapCursor.index === index ? gapCursor : null;
+
+        const isPlainChar =
+          event.key.length === 1 &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey;
+
+        if (activeGap) {
+          if (event.key === "Escape") {
+            setGapCursor(null);
+            event.preventDefault();
+            return;
+          }
+          if (event.key === "Enter" || isPlainChar) {
+            onInsertGap(activeGap, isPlainChar ? event.key : undefined);
+            event.preventDefault();
+            return;
+          }
+          if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+            if (event.key === "ArrowUp" && activeGap.side === "before") {
+              setGapCursor(null);
+              onNavigate(index - 1, "end");
+              event.preventDefault();
+              return;
+            }
+            if (event.key === "ArrowDown" && activeGap.side === "after") {
+              setGapCursor(null);
+              onNavigate(index + 1, "start");
+              event.preventDefault();
+              return;
+            }
+            setGapCursor(null);
+          }
+          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+            setGapCursor(null);
+          }
+        }
+
+        if (
+          event.key === "ArrowUp" &&
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection) &&
+          isAtBeginningOfBlock(editor, { mode: "highest" })
+        ) {
+          setGapCursor({ index, side: "before" });
+          event.preventDefault();
+          return;
+        }
+
+        if (
+          event.key === "ArrowDown" &&
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection) &&
+          isAtEndOfBlock(editor, { mode: "highest" })
+        ) {
+          setGapCursor({ index, side: "after" });
+          event.preventDefault();
+          return;
+        }
+
         const handler = getKeyboardHandler(event);
         if (!handler) return;
         if (
@@ -240,8 +328,21 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           event.preventDefault();
         }
       },
-      [actions, editor, id, read_only],
+      [
+        actions,
+        editor,
+        gapCursor,
+        id,
+        index,
+        onInsertGap,
+        onNavigate,
+        read_only,
+        setGapCursor,
+      ],
     );
+
+    const showGapBefore = gapCursor?.index === index && gapCursor.side === "before";
+    const showGapAfter = gapCursor?.index === index && gapCursor.side === "after";
 
     return (
       <div
@@ -251,6 +352,17 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           borderRadius: highlight ? "6px" : undefined,
         }}
       >
+        {showGapBefore && (
+          <div
+            data-slate-gap-cursor="block-before"
+            style={{
+              height: 8,
+              background: "rgba(24, 144, 255, 0.25)",
+              borderRadius: 4,
+              margin: "6px 0",
+            }}
+          />
+        )}
         <ChangeContext.Provider value={{ change, editor: editor as any }}>
           <Slate editor={editor} value={value} onChange={handleChange}>
             <Editable
@@ -272,13 +384,32 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             />
           </Slate>
         </ChangeContext.Provider>
+        {showGapAfter && (
+          <div
+            data-slate-gap-cursor="block-after"
+            style={{
+              height: 8,
+              background: "rgba(24, 144, 255, 0.25)",
+              borderRadius: 4,
+              margin: "6px 0",
+            }}
+          />
+        )}
       </div>
     );
   },
-  (prev, next) =>
-    prev.markdown === next.markdown &&
-    prev.highlight === next.highlight &&
-    prev.read_only === next.read_only,
+  (prev, next) => {
+    const prevGap =
+      prev.gapCursor?.index === prev.index ? prev.gapCursor.side : null;
+    const nextGap =
+      next.gapCursor?.index === next.index ? next.gapCursor.side : null;
+    return (
+      prev.markdown === next.markdown &&
+      prev.highlight === next.highlight &&
+      prev.read_only === next.read_only &&
+      prevGap === nextGap
+    );
+  },
 );
 
 export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
@@ -315,6 +446,17 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   }, [blocks]);
 
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const [gapCursor, setGapCursor] = useState<{
+    index: number;
+    side: "before" | "after";
+  } | null>(null);
+
+  const editorMapRef = useRef<Map<number, SlateEditor>>(new Map());
+  const pendingFocusRef = useRef<{
+    index: number;
+    position: "start" | "end";
+  } | null>(null);
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
   const lastSetValueRef = useRef<string | null>(null);
   const pendingRemoteRef = useRef<string | null>(null);
@@ -437,6 +579,70 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [is_current, read_only, saveBlocksDebounced],
   );
 
+  const focusBlock = useCallback(
+    (targetIndex: number, position: "start" | "end") => {
+      if (targetIndex < 0 || targetIndex >= blocksRef.current.length) {
+        return;
+      }
+      const editor = editorMapRef.current.get(targetIndex);
+      if (!editor) {
+        pendingFocusRef.current = { index: targetIndex, position };
+        virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "center" });
+        return;
+      }
+      const lastIndex = Math.max(0, editor.children.length - 1);
+      const basePath = position === "start" ? [0] : [lastIndex];
+      const point = pointAtPath(editor, basePath, undefined, position);
+      Transforms.setSelection(editor, { anchor: point, focus: point });
+      ReactEditor.focus(editor);
+      setFocusedIndex(targetIndex);
+    },
+    [],
+  );
+
+  const registerEditor = useCallback(
+    (index: number, editor: SlateEditor) => {
+      editorMapRef.current.set(index, editor);
+      const pending = pendingFocusRef.current;
+      if (pending?.index === index) {
+        pendingFocusRef.current = null;
+        focusBlock(index, pending.position);
+      }
+    },
+    [focusBlock],
+  );
+
+  const unregisterEditor = useCallback((index: number, editor: SlateEditor) => {
+    const current = editorMapRef.current.get(index);
+    if (current === editor) {
+      editorMapRef.current.delete(index);
+    }
+  }, []);
+
+  const insertBlockAtGap = useCallback(
+    (
+      gap: { index: number; side: "before" | "after" },
+      initialText?: string,
+    ) => {
+      const insertIndex = gap.side === "before" ? gap.index : gap.index + 1;
+      lastLocalEditAtRef.current = Date.now();
+      setGapCursor(null);
+      setBlocks((prev) => {
+        const next = [...prev];
+        next.splice(insertIndex, 0, initialText ?? "");
+        blocksRef.current = next;
+        return next;
+      });
+      if (is_current) saveBlocksDebounced();
+      pendingFocusRef.current = {
+        index: insertIndex,
+        position: initialText ? "end" : "start",
+      };
+      virtuosoRef.current?.scrollToIndex({ index: insertIndex, align: "center" });
+    },
+    [is_current, saveBlocksDebounced],
+  );
+
   const rowStyle: React.CSSProperties = {
     padding: minimal ? 0 : "0 70px",
     minHeight: "1px",
@@ -451,10 +657,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         onChangeMarkdown={handleBlockChange}
         onFocus={() => {
           setFocusedIndex(index);
+          setGapCursor(null);
           onFocus?.();
         }}
         onBlur={() => {
           setFocusedIndex((prev) => (prev === index ? null : prev));
+          setGapCursor(null);
           onBlur?.();
         }}
         autoFocus={autoFocus && index === 0}
@@ -463,6 +671,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         actions={actions}
         id={props.id}
         rowStyle={rowStyle}
+        gapCursor={gapCursor}
+        setGapCursor={setGapCursor}
+        onNavigate={focusBlock}
+        onInsertGap={insertBlockAtGap}
+        registerEditor={registerEditor}
+        unregisterEditor={unregisterEditor}
       />
     );
   };
@@ -494,6 +708,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
           className="smc-vfill"
           totalCount={blocks.length}
           itemContent={(index) => renderBlock(index)}
+          ref={virtuosoRef}
         />
       </div>
     </div>
