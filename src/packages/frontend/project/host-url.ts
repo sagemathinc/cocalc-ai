@@ -1,19 +1,24 @@
 import { redux } from "@cocalc/frontend/app-framework";
-
-function getHostValue(host: any, key: string): string | undefined {
-  if (!host) return;
-  return host.get ? host.get(key) : host[key];
-}
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { getHostInfo } from "@cocalc/frontend/projects/host-info";
 
 export function getProjectHostBase(project_id: string): string {
   const project_map = redux.getStore("projects")?.get("project_map");
-  const project = project_map?.get(project_id);
-  const projectAny = project as any;
-  const host = projectAny?.get ? projectAny.get("host") : projectAny?.host;
-  if (!host) return "";
-  const public_url = getHostValue(host, "public_url");
-  const internal_url = getHostValue(host, "internal_url");
-  return public_url || internal_url || "";
+  const host_id = project_map?.getIn([project_id, "host_id"]) as
+    | string
+    | undefined;
+  if (!host_id) return "";
+  const info = getHostInfo(host_id);
+  if (!info) {
+    redux.getActions("projects")?.ensure_host_info(host_id);
+    return "";
+  }
+  if (info.get("ready") === false) return "";
+  if (info.get("local_proxy") && typeof window !== "undefined") {
+    const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
+    return `${window.location.origin}${basePath}/${project_id}`;
+  }
+  return info.get("connect_url") || "";
 }
 
 export function withProjectHostBase(

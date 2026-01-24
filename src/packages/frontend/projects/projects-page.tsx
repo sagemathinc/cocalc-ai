@@ -4,7 +4,7 @@
  */
 
 import { Button, Card, Col, Grid, Layout, Row, Space } from "antd";
-import { Map, Set } from "immutable";
+import { Map, Set as ImmutableSet } from "immutable";
 import { useLayoutEffect, useRef } from "react";
 import { useIntl } from "react-intl";
 
@@ -107,6 +107,7 @@ export const ProjectsPage: React.FC = () => {
   const { bookmarkedProjects } = useBookmarkedProjects();
 
   const project_map = useTypedRedux("projects", "project_map");
+  const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
 
   const all_projects: string[] = useMemo(
@@ -175,7 +176,7 @@ export const ProjectsPage: React.FC = () => {
   }, [hidden, deleted]);
   const search: string = useTypedRedux("projects", "search");
 
-  const selected_hashtags: Map<string, Set<string>> = useTypedRedux(
+  const selected_hashtags: Map<string, ImmutableSet<string>> = useTypedRedux(
     "projects",
     "selected_hashtags",
   );
@@ -183,6 +184,7 @@ export const ProjectsPage: React.FC = () => {
   const visible_projects: string[] = useMemo(() => {
     return getVisibleProjects(
       project_map,
+      host_info,
       user_map,
       selected_hashtags?.get(filter),
       search,
@@ -192,6 +194,7 @@ export const ProjectsPage: React.FC = () => {
     );
   }, [
     project_map,
+    host_info,
     user_map,
     deleted,
     hidden,
@@ -199,6 +202,20 @@ export const ProjectsPage: React.FC = () => {
     selected_hashtags,
     search,
   ]);
+
+  useEffect(() => {
+    if (!project_map) return;
+    const actions = redux.getActions("projects");
+    if (!actions) return;
+    const hostIds = new Set<string>();
+    project_map.forEach((project) => {
+      const hostId = project.get("host_id");
+      if (hostId) hostIds.add(hostId);
+    });
+    hostIds.forEach((hostId) => {
+      actions.ensure_host_info(hostId);
+    });
+  }, [project_map]);
 
   // Calculate dynamic table height following these steps:
   // 1. Get container's offset from viewport top

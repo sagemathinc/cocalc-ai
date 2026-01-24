@@ -31,6 +31,31 @@ export async function initHostRegistryService() {
     );
     return rows[0]?.status;
   };
+  const resolveLocalSelfHost = async (
+    info: HostRegistration,
+  ): Promise<boolean> => {
+    const machineFromInfo = info?.metadata?.machine ?? {};
+    if (machineFromInfo?.cloud) {
+      const selfHostMode = machineFromInfo?.metadata?.self_host_mode;
+      const effectiveSelfHostMode =
+        machineFromInfo?.cloud === "self-host" && !selfHostMode
+          ? "local"
+          : selfHostMode;
+      return (
+        machineFromInfo?.cloud === "self-host" &&
+        effectiveSelfHostMode === "local"
+      );
+    }
+    const { rows } = await pool().query(
+      "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+      [info.id],
+    );
+    const machine = rows[0]?.metadata?.machine ?? {};
+    const selfHostMode = machine?.metadata?.self_host_mode;
+    const effectiveSelfHostMode =
+      machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+    return machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  };
   const publishKey = async (info: HostRegistration) => {
     if (!info?.id) return;
     try {
@@ -67,8 +92,18 @@ export async function initHostRegistryService() {
           });
           return;
         }
+        const isLocalSelfHost = await resolveLocalSelfHost(info);
+        const sanitized = isLocalSelfHost
+          ? { ...info, public_url: undefined, internal_url: undefined }
+          : info;
+        logger.debug("register host urls", {
+          id: info.id,
+          isLocalSelfHost,
+          public_url: sanitized.public_url,
+          internal_url: sanitized.internal_url,
+        });
         await upsertProjectHost({
-          ...info,
+          ...sanitized,
           status: "running",
           last_seen: new Date(),
         });
@@ -90,8 +125,12 @@ export async function initHostRegistryService() {
           });
           return;
         }
+        const isLocalSelfHost = await resolveLocalSelfHost(info);
+        const sanitized = isLocalSelfHost
+          ? { ...info, public_url: undefined, internal_url: undefined }
+          : info;
         await upsertProjectHost({
-          ...info,
+          ...sanitized,
           status: "running",
           last_seen: new Date(),
         });

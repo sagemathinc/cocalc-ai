@@ -152,34 +152,6 @@ async function updateHostRow(id: string, updates: Record<string, any>) {
   );
 }
 
-async function updateProjectsHostUrls(opts: {
-  host_id: string;
-  public_url?: string | null;
-  internal_url?: string | null;
-  ssh_server?: string | null;
-}) {
-  const updates: Array<[string, string | null | undefined]> = [
-    ["public_url", opts.public_url],
-    ["internal_url", opts.internal_url],
-    ["ssh_server", opts.ssh_server],
-  ];
-  const params: Array<string | null | undefined> = [opts.host_id];
-  let expr = "coalesce(host, '{}'::jsonb)";
-  let idx = 2;
-  for (const [field, value] of updates) {
-    if (value === undefined) continue;
-    expr = `jsonb_set(${expr}, '{${field}}', to_jsonb($${idx++}::text), true)`;
-    params.push(value);
-  }
-  if (idx === 2) return;
-  await pool().query(
-    `UPDATE projects
-     SET host=${expr}
-     WHERE host_id=$1`,
-    params,
-  );
-}
-
 function setRuntimeObservedAt(metadata: any, at: Date): any {
   if (!metadata?.runtime) return metadata;
   return {
@@ -239,12 +211,6 @@ async function ensureDnsForHost(row: any) {
         public_url: nextUrls.public_url,
         internal_url: nextUrls.internal_url,
       });
-      await updateProjectsHostUrls({
-        host_id: row.id,
-        public_url: nextUrls.public_url,
-        internal_url: nextUrls.internal_url,
-        ssh_server: row.ssh_server,
-      });
     } catch (err) {
       logger.warn("cloudflare tunnel ensure failed", {
         host_id: row.id,
@@ -270,12 +236,6 @@ async function ensureDnsForHost(row: any) {
       metadata: row.metadata,
       public_url: nextUrls.public_url,
       internal_url: nextUrls.internal_url,
-    });
-    await updateProjectsHostUrls({
-      host_id: row.id,
-      public_url: nextUrls.public_url,
-      internal_url: nextUrls.internal_url,
-      ssh_server: row.ssh_server,
     });
   } catch (err) {
     logger.warn("dns update failed", { host_id: row.id, err });
@@ -353,6 +313,11 @@ async function scheduleRuntimeRefresh(row: any) {
 
 async function handleProvision(row: any) {
   const machine: HostMachine = row.metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   const providerId = normalizeProviderId(machine.cloud);
   if (!providerId) {
     await updateHostRow(row.id, { status: "running" });
@@ -440,12 +405,14 @@ async function handleProvision(row: any) {
     nextMetadata = setRuntimeObservedAt(nextMetadata, observedAtDone);
     nextStatus = waitedStatus ?? "starting";
   }
-  const publicUrl =
-    provisioned.public_url ??
-    (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined);
-  const internalUrl =
-    provisioned.internal_url ??
-    (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined);
+  const publicUrl = isLocalSelfHost
+    ? null
+    : provisioned.public_url ??
+      (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined);
+  const internalUrl = isLocalSelfHost
+    ? null
+    : provisioned.internal_url ??
+      (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined);
   await updateHostRow(provisioned.id, {
     metadata: nextMetadata,
     status: nextStatus,
@@ -859,6 +826,13 @@ async function handleRefreshRuntime(row: any) {
   const host = row;
   const runtime = host.metadata?.runtime;
   if (!runtime?.instance_id) return;
+  const machine: HostMachine = host.metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  if (isLocalSelfHost) return;
   if (runtime.public_ip) return;
   const providerId = normalizeProviderId(host.metadata?.machine?.cloud);
   logger.debug("handleRefreshRuntime", {

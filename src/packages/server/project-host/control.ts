@@ -13,15 +13,6 @@ const START_PROJECT_TIMEOUT_MS = 60 * 60 * 1000;
 
 type HostPlacement = {
   host_id: string;
-  host: {
-    name?: string;
-    region?: string;
-    tier?: number;
-    public_url?: string;
-    internal_url?: string;
-    ssh_server?: string;
-    local_proxy?: boolean;
-  };
 };
 
 export type ProjectMeta = {
@@ -29,7 +20,6 @@ export type ProjectMeta = {
   users?: any;
   image?: string;
   host_id?: string;
-  host?: any;
   authorized_keys?: string;
   run_quota?: any;
 };
@@ -40,7 +30,7 @@ export async function loadProject(project_id: string): Promise<ProjectMeta> {
   const { rows } = await pool().query(
     // Prefer an explicit rootfs_image, but fall back to compute_image so legacy
     // rows created before rootfs_image existed still work.
-    "SELECT title, users, COALESCE(rootfs_image, compute_image) as image, host_id, host, run_quota FROM projects WHERE project_id=$1",
+    "SELECT title, users, COALESCE(rootfs_image, compute_image) as image, host_id, run_quota FROM projects WHERE project_id=$1",
     [project_id],
   );
   if (!rows[0]) throw Error(`project ${project_id} not found`);
@@ -143,22 +133,20 @@ export async function savePlacement(
   project_id: string,
   placement: HostPlacement,
 ) {
-  await pool().query(
-    "UPDATE projects SET host_id=$1, host=$2::jsonb WHERE project_id=$3",
-    [placement.host_id, JSON.stringify(placement.host), project_id],
-  );
+  await pool().query("UPDATE projects SET host_id=$1 WHERE project_id=$2", [
+    placement.host_id,
+    project_id,
+  ]);
   await notifyProjectHostUpdate({
     project_id,
     host_id: placement.host_id,
-    host: placement.host,
   });
 }
 
 async function ensurePlacement(project_id: string): Promise<HostPlacement> {
   const meta = await loadProject(project_id);
   if (meta.host_id) {
-    const hostInfo =
-      meta.host ?? (await loadHostFromRegistry(meta.host_id)) ?? undefined;
+    const hostInfo = await loadHostFromRegistry(meta.host_id);
     if (!hostInfo) {
       // Project is already placed, but the host is missing/unregistered.
       // Never auto-reassign here to avoid split-brain/data loss; require an explicit move.
@@ -166,16 +154,7 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
         `project is assigned to host ${meta.host_id} but it is unavailable`,
       );
     }
-    const needsUpdate =
-      !meta.host ||
-      (meta.host.local_proxy === undefined && hostInfo.local_proxy !== undefined);
-    if (needsUpdate) {
-      await savePlacement(project_id, {
-        host_id: meta.host_id,
-        host: hostInfo,
-      });
-    }
-    return { host_id: meta.host_id, host: hostInfo };
+    return { host_id: meta.host_id };
   }
 
   const chosen = await selectActiveHost();
@@ -206,17 +185,7 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
     run_quota,
   });
 
-  const placement: HostPlacement = {
-    host_id: chosen.id,
-    host: {
-      name: chosen.name,
-      region: chosen.region,
-      public_url: chosen.public_url,
-      internal_url: chosen.internal_url,
-      ssh_server: chosen.ssh_server,
-      tier: normalizeHostTier(chosen.tier),
-    },
-  };
+  const placement: HostPlacement = { host_id: chosen.id };
 
   await savePlacement(project_id, placement);
   return placement;

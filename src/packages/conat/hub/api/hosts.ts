@@ -176,6 +176,15 @@ export interface Host {
   backup_status?: HostBackupStatus;
 }
 
+export interface HostConnectionInfo {
+  host_id: string;
+  name?: string | null;
+  ssh_server?: string | null;
+  connect_url?: string | null;
+  local_proxy?: boolean;
+  ready?: boolean;
+}
+
 export interface HostLogEntry {
   id: string;
   vm_id: string;
@@ -218,6 +227,7 @@ export interface HostSoftwareUpgradeResponse {
 export const hosts = {
   listHosts: authFirstRequireAccount,
   listHostProjects: authFirstRequireAccount,
+  resolveHostConnection: authFirstRequireAccount,
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
@@ -252,6 +262,10 @@ export interface Hosts {
     cursor?: string;
     risk_only?: boolean;
   }) => Promise<HostProjectsResponse>;
+  resolveHostConnection: (opts: {
+    account_id?: string;
+    host_id: string;
+  }) => Promise<HostConnectionInfo>;
   getCatalog: (opts: {
     account_id?: string;
     provider?: string;

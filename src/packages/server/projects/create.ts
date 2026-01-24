@@ -20,7 +20,6 @@ import { conatWithProjectRouting } from "../conat/route-client";
 import {
   computePlacementPermission,
   getUserHostTier,
-  normalizeHostTier,
 } from "@cocalc/server/project-host/placement";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
@@ -63,7 +62,6 @@ export default async function createProject(opts: CreateProjectOptions) {
 
   const pool = getPool();
   let host_id: string | undefined = requested_host_id;
-  let host: any | undefined;
   let requested_region_raw: string | undefined = requested_region_raw_input;
 
   async function resolveHostPlacement(host_id: string) {
@@ -94,18 +92,17 @@ export default async function createProject(opts: CreateProjectOptions) {
       throw Error("not allowed to place a project on that host");
     }
     const hostRegion = mapCloudRegionToR2Region(row.region ?? "");
-    return {
+    const machine = metadata?.machine ?? {};
+    const selfHostMode = machine?.metadata?.self_host_mode;
+    const effectiveSelfHostMode =
+      machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+    const isLocalSelfHost =
+      machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+    log.debug("resolveHostPlacement", {
       host_id,
-      host: {
-        public_url: row.public_url,
-        internal_url: row.internal_url,
-        ssh_server: row.ssh_server,
-        name: row.name,
-        region: row.region,
-        tier: normalizeHostTier(row.tier),
-      },
-      hostRegion,
-    };
+      isLocalSelfHost,
+    });
+    return { host_id, hostRegion };
   }
 
   if (src_project_id) {
@@ -117,12 +114,11 @@ export default async function createProject(opts: CreateProjectOptions) {
     }
     // keep the clone on the same project-host as the source unless explicitly overridden
     const { rows } = await pool.query(
-      "SELECT host_id, host, region FROM projects WHERE project_id=$1",
+      "SELECT host_id, region FROM projects WHERE project_id=$1",
       [src_project_id],
     );
     if (!host_id && rows[0]?.host_id) {
       host_id = rows[0].host_id;
-      host = rows[0]?.host;
     }
     if (!opts.region && rows[0]?.region) {
       opts.region = rows[0].region;
@@ -142,8 +138,8 @@ export default async function createProject(opts: CreateProjectOptions) {
   }
 
   let hostRegion: string | undefined;
-  if (host_id && !host) {
-    ({ host_id, host, hostRegion } = await resolveHostPlacement(host_id));
+  if (host_id) {
+    ({ host_id, hostRegion } = await resolveHostPlacement(host_id));
   }
 
   const projectRegion = requestedRegion ?? hostRegion ?? DEFAULT_R2_REGION;
@@ -156,7 +152,7 @@ export default async function createProject(opts: CreateProjectOptions) {
   const envs = await getSoftwareEnvironments("server");
 
   await pool.query(
-    "INSERT INTO projects (project_id, title, description, users, compute_image, created, last_edited, rootfs_image, ephemeral, host_id, host, region) VALUES($1, $2, $3, $4, $5, NOW(), NOW(), $6, $7::BIGINT, $8, $9, $10)",
+    "INSERT INTO projects (project_id, title, description, users, compute_image, created, last_edited, rootfs_image, ephemeral, host_id, region) VALUES($1, $2, $3, $4, $5, NOW(), NOW(), $6, $7::BIGINT, $8, $9)",
     [
       project_id,
       title ?? "No Title",
@@ -166,7 +162,6 @@ export default async function createProject(opts: CreateProjectOptions) {
       rootfs_image,
       ephemeral ?? null,
       host_id ?? null,
-      host != null ? JSON.stringify(host) : null,
       projectRegion,
     ],
   );

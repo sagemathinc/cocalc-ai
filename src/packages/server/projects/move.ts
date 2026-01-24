@@ -84,7 +84,6 @@ async function revertPlacementIfPossible(
   });
   await savePlacement(context.project_id, {
     host_id: context.project_host_id,
-    host: sourceHost,
   });
   progress({
     step: "revert-placement",
@@ -414,10 +413,9 @@ export async function moveProjectToHost(
     detail: { dest_host_id: context.dest_host_id },
   });
   try {
-    await savePlacement(context.project_id, {
-      host_id: context.dest_host_id,
-      host: destHost,
-    });
+  await savePlacement(context.project_id, {
+    host_id: context.dest_host_id,
+  });
     placementUpdated = true;
     log.info("moveProjectToHost placement updated", {
       project_id: context.project_id,

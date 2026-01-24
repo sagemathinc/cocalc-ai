@@ -181,25 +181,46 @@ export class ConatClient extends EventEmitter {
     return undefined;
   }
 
+  private getHostInfo(host_id: string): ImmutableMap<string, any> | undefined {
+    const hostInfo = redux.getStore("projects")?.get("host_info")?.get(host_id);
+    if (!hostInfo) {
+      redux.getActions("projects")?.ensure_host_info(host_id);
+      return;
+    }
+    const updatedAt = hostInfo.get("updated_at");
+    if (typeof updatedAt === "number") {
+      if (Date.now() - updatedAt > 60_000) {
+        redux.getActions("projects")?.ensure_host_info(host_id);
+      }
+    }
+    return hostInfo;
+  }
+
   private getProjectHostAddress(project_id: string): string {
     // [ ] TODO: need a ttl cache, since otherwise this gets called
     // on literally every packet sent to the project!
     const project_map = redux.getStore("projects")?.get("project_map");
-    const host = project_map?.getIn([project_id, "host"]) as
-      | ImmutableMap<string, any>
+    const host_id = project_map?.getIn([project_id, "host_id"]) as
+      | string
       | undefined;
-    if (!host) {
+    if (!host_id) {
       // Fallback: no host yet, so stay on the default connection.
       return "";
     }
-    const localProxy = host.get("local_proxy");
+    const hostInfo = this.getHostInfo(host_id);
+    if (!hostInfo) {
+      return "";
+    }
+    if (hostInfo.get("ready") === false) {
+      return "";
+    }
+    const localProxy = hostInfo.get("local_proxy");
     if (localProxy && typeof window !== "undefined") {
       const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
       return `${window.location.origin}${basePath}/${project_id}`;
     }
-    const public_url = host.get("public_url");
-    const internal_url = host.get("internal_url");
-    return public_url || internal_url || "";
+    const connectUrl = hostInfo.get("connect_url");
+    return connectUrl || "";
   }
 
   private permanentlyDisconnected = false;

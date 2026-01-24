@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type {
   Host,
   HostBackupStatus,
+  HostConnectionInfo,
   HostMachine,
   HostStatus,
   HostCatalog,
@@ -575,6 +576,73 @@ export async function listHosts({
     );
   }
   return result;
+}
+
+export async function resolveHostConnection({
+  account_id,
+  host_id,
+}: {
+  account_id?: string;
+  host_id: string;
+}): Promise<HostConnectionInfo> {
+  const owner = requireAccount(account_id);
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  const { rows } = await pool().query(
+    `SELECT id, name, public_url, internal_url, ssh_server, metadata, tier
+     FROM project_hosts
+     WHERE id=$1 AND deleted IS NULL`,
+    [host_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("host not found");
+  }
+  const metadata = row.metadata ?? {};
+  const rowOwner = metadata.owner ?? "";
+  const collaborators = (metadata.collaborators ?? []) as string[];
+  const isOwner = rowOwner === owner;
+  const isCollab = collaborators.includes(owner);
+  const isShared = row.tier != null;
+  if (!isOwner && !isCollab && !isShared) {
+    const { rows: projectRows } = await pool().query(
+      `SELECT 1
+       FROM projects
+       WHERE host_id=$1 AND users ? $2
+       LIMIT 1`,
+      [host_id, owner],
+    );
+    if (!projectRows.length) {
+      throw new Error("not authorized");
+    }
+  }
+  const machine = metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+
+  let connect_url: string | null = null;
+  let local_proxy = false;
+  let ready = false;
+  if (isLocalSelfHost) {
+    local_proxy = true;
+    ready = !!metadata?.self_host?.http_tunnel_port;
+  } else {
+    connect_url = row.public_url ?? row.internal_url ?? null;
+    ready = !!connect_url;
+  }
+
+  return {
+    host_id: row.id,
+    name: row.name ?? null,
+    ssh_server: row.ssh_server ?? null,
+    connect_url,
+    local_proxy,
+    ready,
+  };
 }
 
 export async function listHostProjects({
