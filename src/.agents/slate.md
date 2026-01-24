@@ -4,10 +4,11 @@
 
 - [x] attempt to copy any text using control+c in a fenced code block and it copies the entire block, not the text
 
+- [ ] codemirror STEALS the cursor, even with no weird warnings in the console.  
+
 - [ ] performance - for a 4000 line document every keystroke takes 1 second and it's completely unusable.
 
 - [ ] find (and replace) search in doc
-
 
 ## Ideas for Quality Improvements and Optimizations of Core Implementations
 
