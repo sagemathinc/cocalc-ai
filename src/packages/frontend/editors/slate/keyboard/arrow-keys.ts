@@ -101,16 +101,7 @@ const down = ({ editor }: { editor: SlateEditor }) => {
     cur.path[1] == editor.children[cur.path[0]]["children"]?.length - 1
   ) {
     // moving to the next block:
-    if (editor.scrollIntoDOM(index + 1)) {
-      // we did actually have to scroll the block below current one into the dom.
-      setTimeout(() => {
-        // did cursor move? -- if not, we manually move it.
-        if (cur == editor.selection?.focus) {
-          moveCursorDown(editor, true);
-          moveCursorToBeginningOfBlock(editor);
-        }
-      }, 0);
-    }
+    editor.scrollIntoDOM(index + 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
     if (cur != null && isAtEndOfBlock(editor, { mode: "highest" })) {
@@ -172,14 +163,7 @@ const up = ({ editor }: { editor: SlateEditor }) => {
   }
   const index = cur?.path[0];
   if (editor.windowedListRef.current != null && index && cur.path[1] == 0) {
-    if (editor.scrollIntoDOM(index - 1)) {
-      setTimeout(() => {
-        if (cur == editor.selection?.focus) {
-          moveCursorUp(editor, true);
-          moveCursorToBeginningOfBlock(editor);
-        }
-      }, 0);
-    }
+    editor.scrollIntoDOM(index - 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
     if (cur != null && isAtBeginningOfBlock(editor, { mode: "highest" })) {
@@ -223,12 +207,6 @@ function pageWindowed(sign) {
     if (scroller == null) return false;
     const { scrollTop } = scroller;
 
-    setTimeout(() => {
-      if (scrollTop == scroller.scrollTop) {
-        scroller.scrollTop += sign * scroller.getBoundingClientRect().height;
-      }
-    }, 0);
-
     return false;
   };
 }
@@ -249,10 +227,6 @@ function endOfDoc({ editor }) {
   const scroller = editor.windowedListRef.current?.getScrollerRef();
   if (scroller == null) return false;
   scroller.scrollTop = 1e20; // basically infinity
-  // might have to do it again do to measuring size of rows...
-  setTimeout(() => {
-    scroller.scrollTop = 1e20;
-  }, 1);
   return true;
 }
 register({ key: "ArrowUp", meta: true }, beginningOfDoc); // mac
