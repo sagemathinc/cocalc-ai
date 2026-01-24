@@ -348,18 +348,21 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       <div
         style={{
           ...rowStyle,
-          boxShadow: highlight ? "0 0 0 2px rgba(24, 144, 255, 0.25)" : undefined,
-          borderRadius: highlight ? "6px" : undefined,
         }}
       >
         {showGapBefore && (
           <div
             data-slate-gap-cursor="block-before"
             style={{
-              height: 8,
+              position: "absolute",
+              top: -2,
+              left: 0,
+              right: 0,
+              height: 4,
               background: "rgba(24, 144, 255, 0.25)",
-              borderRadius: 4,
-              margin: "6px 0",
+              borderRadius: 2,
+              pointerEvents: "none",
+              zIndex: 2,
             }}
           />
         )}
@@ -388,10 +391,15 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           <div
             data-slate-gap-cursor="block-after"
             style={{
-              height: 8,
+              position: "absolute",
+              bottom: -2,
+              left: 0,
+              right: 0,
+              height: 4,
               background: "rgba(24, 144, 255, 0.25)",
-              borderRadius: 4,
-              margin: "6px 0",
+              borderRadius: 2,
+              pointerEvents: "none",
+              zIndex: 2,
             }}
           />
         )}
@@ -646,6 +654,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const rowStyle: React.CSSProperties = {
     padding: minimal ? 0 : "0 70px",
     minHeight: "1px",
+    position: "relative",
   };
 
   const renderBlock = (index: number) => {

@@ -1163,9 +1163,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
               top: gapCursorOverlay.top,
               left: gapCursorOverlay.left,
               width: gapCursorOverlay.width,
-              height: 8,
+              height: 4,
               background: "rgba(24, 144, 255, 0.25)",
-              borderRadius: 4,
+              borderRadius: 2,
               pointerEvents: "none",
               zIndex: 1,
             }}
