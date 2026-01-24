@@ -184,11 +184,60 @@ type EditableProps = React.ComponentProps<typeof UpstreamEditable> & {
 
 export const Editable = React.forwardRef<HTMLDivElement, EditableProps>(
   (props, forwardedRef) => {
-    const { windowing: _windowing, divref, style, ...rest } = props;
+    const {
+      windowing: _windowing,
+      divref,
+      style,
+      onCopy,
+      onCut,
+      ...rest
+    } = props;
     const ref = divref ?? forwardedRef;
+
+    const shouldIgnoreSlateClipboard = useCallback(
+      (event: React.ClipboardEvent<HTMLDivElement>): boolean => {
+        const nativeEvent = event.nativeEvent as ClipboardEvent & {
+          slateIgnore?: boolean;
+          target?: EventTarget | null;
+        };
+        if ((event as any).slateIgnore || nativeEvent?.slateIgnore) {
+          return true;
+        }
+        const target =
+          (event.target as EventTarget | null) ?? nativeEvent?.target ?? null;
+        if (target && target instanceof Element) {
+          return !!target.closest(".CodeMirror, .cm-editor");
+        }
+        return false;
+      },
+      [],
+    );
+
+    const handleCopy = useCallback(
+      (event: React.ClipboardEvent<HTMLDivElement>) => {
+        if (shouldIgnoreSlateClipboard(event)) {
+          return true;
+        }
+        return onCopy?.(event);
+      },
+      [onCopy, shouldIgnoreSlateClipboard],
+    );
+
+    const handleCut = useCallback(
+      (event: React.ClipboardEvent<HTMLDivElement>) => {
+        if (shouldIgnoreSlateClipboard(event)) {
+          return true;
+        }
+        return onCut?.(event);
+      },
+      [onCut, shouldIgnoreSlateClipboard],
+    );
+
     return React.createElement(UpstreamEditable, {
       ref,
       ...rest,
+      onCopy: handleCopy,
+      onCut: handleCut,
       style: {
         ...style,
         outline: "none",

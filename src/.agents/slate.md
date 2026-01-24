@@ -1,5 +1,14 @@
 # Slate
 
+## TODO
+
+- [x] attempt to copy any text using control+c in a fenced code block and it copies the entire block, not the text
+
+- [ ] performance - for a 4000 line document every keystroke takes 1 second and it's completely unusable.
+
+- [ ] find (and replace) search in doc
+
+
 ## Ideas for Quality Improvements and Optimizations of Core Implementations
 
 - [x] Scope the `selectionchange` listener to focus/blur instead of always\-on. Right now it’s attached globally in [src/packages/frontend/editors/slate/slate\-react/components/selection\-sync.ts](./src/packages/frontend/editors/slate/slate-react/components/selection-sync.ts); only listening while the editor is focused reduces noise and cross\-editor interference.
@@ -11,3 +20,4 @@
 - [x] Use `Editor.withoutNormalizing` around bulk changes in markdown sync to reduce redundant normalization passes. The hot path is in [src/packages/frontend/editors/slate/editable\-markdown.tsx](./src/packages/frontend/editors/slate/editable-markdown.tsx).
 - [x] Add a targeted regression test harness for selection mapping with zero\-width spans, placeholders, and voids. Those are the risk zones in [src/packages/frontend/editors/slate/slate\-react/components/string.tsx](./src/packages/frontend/editors/slate/slate-react/components/string.tsx) and [src/packages/frontend/editors/slate/slate\-react/plugin/react\-editor.ts](./src/packages/frontend/editors/slate/slate-react/plugin/react-editor.ts); a Playwright test or a small jsdom harness would be enough to catch drift.
 - [x] Make selection/mismatch logging configurable via an env flag. That keeps production logs clean but gives you a switch when you need deep diagnostics, still centered in [src/packages/frontend/editors/slate/slate\-react/components/selection\-sync.ts](./src/packages/frontend/editors/slate/slate-react/components/selection-sync.ts).
+
