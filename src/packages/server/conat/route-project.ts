@@ -84,10 +84,17 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
           [row.host_id],
         );
         const hostRow = hostRows[0];
+        const directTunnel = onPremTunnelAddress(hostRow?.metadata);
+        if (directTunnel) {
+          cache.set(project_id, directTunnel);
+          return;
+        }
         const machine = hostRow?.metadata?.machine ?? {};
         const selfHostMode = machine?.metadata?.self_host_mode;
         const effectiveSelfHostMode =
-          machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+          machine?.cloud === "self-host" && !selfHostMode
+            ? "local"
+            : selfHostMode;
         const isLocalSelfHost =
           machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
         if (isLocalSelfHost) {

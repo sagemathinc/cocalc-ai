@@ -61,6 +61,10 @@ export async function createProjectHostProxyHandlers() {
 
   async function targetForProject(project_id: string): Promise<string> {
     const host = await getHost(project_id);
+    const directTunnelPort = host.metadata?.self_host?.http_tunnel_port;
+    if (directTunnelPort) {
+      return `http://127.0.0.1:${directTunnelPort}`;
+    }
     const machine = host.metadata?.machine ?? {};
     const selfHostMode = machine?.metadata?.self_host_mode;
     const effectiveSelfHostMode =
