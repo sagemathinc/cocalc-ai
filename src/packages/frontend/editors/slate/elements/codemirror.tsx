@@ -7,6 +7,7 @@ import React, {
   CSSProperties,
   ReactNode,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -212,6 +213,25 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
       collapsed,
     ]);
 
+    useLayoutEffect(() => {
+      const pending = (editor as any).pendingCodeBlockFocusPath;
+      if (!pending || !elementPath) return;
+      if (!Path.equals(pending, elementPath)) return;
+      if (!cmRef.current) return;
+      const selection = editor.selection;
+      if (selection) {
+        const inElement =
+          Path.isAncestor(elementPath, selection.anchor.path) &&
+          Path.isAncestor(elementPath, selection.focus.path);
+        if (!inElement) {
+          (editor as any).pendingCodeBlockFocusPath = null;
+          return;
+        }
+      }
+      (editor as any).pendingCodeBlockFocusPath = null;
+      focusEditor(true);
+    }, [editor, elementPath, focusEditor]);
+
     useEffect(() => {
       if (!isFocused) return;
       const handlePointerDown = (event: MouseEvent) => {
@@ -308,6 +328,15 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
       };
       setCSS(css);
       cm.refresh();
+
+      const pending = (editor as any).pendingCodeBlockFocusPath;
+      if (pending && elementPath && Path.equals(pending, elementPath)) {
+        (editor as any).pendingCodeBlockFocusPath = null;
+        focusEditor(true);
+        if (cm.hasFocus?.()) {
+          setIsFocused(true);
+        }
+      }
 
       return () => {
         if (cmRef.current == null) return;

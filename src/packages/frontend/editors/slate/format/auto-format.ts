@@ -255,15 +255,20 @@ function markdownAutoformatAt(
     // focus it.
     const type = doc[0].type;
     const rules = getRules(type);
+    if (type === "code_block") {
+      const focus = Editor.start(editor, blockPath);
+      setSelectionAndFocus(editor, { focus, anchor: focus });
+      (editor as any).pendingCodeBlockFocusPath = blockPath;
+    }
     if (type === "bullet_list" || type === "ordered_list") {
       const focus = Editor.start(editor, blockPath);
       setSelectionAndFocus(editor, { focus, anchor: focus });
     }
-    if (!rules?.autoFocus) {
+    if (!rules?.autoFocus && type !== "code_block") {
       // move cursor out of the newly created block element.
       Transforms.move(editor, { distance: 1 });
     }
-    if (rules?.autoAdvance) {
+    if (rules?.autoAdvance && type !== "code_block") {
       setSelectionAndFocus(editor, {
         focus: { path, offset: 0 },
         anchor: { path, offset: 0 },
