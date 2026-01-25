@@ -284,6 +284,7 @@ export default function ChatInput({
         saveChat(input);
       }}
       onShiftEnter={(input) => {
+        controlRef.current?.allowNextValueUpdateWhileFocused?.();
         setInput("");
         currentInputRef.current = "";
         lastSavedRef.current = "";

@@ -7,6 +7,7 @@
 
 import { debounce } from "lodash";
 import {
+  MutableRefObject,
   RefObject,
   useCallback,
   useEffect,
@@ -104,6 +105,7 @@ interface BlockMarkdownEditorProps {
   remoteMergeIdleMs?: number;
   ignoreRemoteMergesWhileFocused?: boolean;
   minimal?: boolean;
+  controlRef?: MutableRefObject<any>;
 }
 
 export function shouldUseBlockEditor({
@@ -449,11 +451,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     onFocus,
     saveDebounceMs = SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
-    ignoreRemoteMergesWhileFocused = false,
+    ignoreRemoteMergesWhileFocused = true,
     style,
     value,
     minimal,
     divRef,
+    controlRef,
   } = props;
   const { project_id, path, desc } = useFrameContext();
   const actions = actions0 ?? {};
@@ -505,29 +508,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   mergeIdleMsRef.current = mergeIdleMs;
   const [pendingRemoteIndicator, setPendingRemoteIndicator] =
     useState<boolean>(false);
-
-  const setBlocksFromValue = useCallback((markdown: string) => {
-    valueRef.current = markdown;
-    const nextBlocks = splitMarkdownToBlocks(markdown);
-    blocksRef.current = nextBlocks;
-    setBlocks(nextBlocks);
-  }, []);
-
-  useEffect(() => {
-    const nextValue = value ?? "";
-    if (nextValue === lastSetValueRef.current) {
-      lastSetValueRef.current = null;
-      return;
-    }
-    if (nextValue === valueRef.current) return;
-    if (pendingRemoteRef.current != null) return;
-    setBlocksFromValue(nextValue);
-  }, [value, setBlocksFromValue]);
-
-  function shouldDeferRemoteMerge(): boolean {
-    const idleMs = mergeIdleMsRef.current;
-    return Date.now() - lastLocalEditAtRef.current < idleMs;
-  }
+  const allowFocusedValueUpdateRef = useRef<boolean>(false);
 
   const updatePendingRemoteIndicator = useCallback(
     (remote: string, local: string) => {
@@ -545,6 +526,55 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     },
     [],
   );
+
+  const setBlocksFromValue = useCallback((markdown: string) => {
+    valueRef.current = markdown;
+    const nextBlocks = splitMarkdownToBlocks(markdown);
+    blocksRef.current = nextBlocks;
+    setBlocks(nextBlocks);
+  }, []);
+
+  useEffect(() => {
+    const nextValue = value ?? "";
+    if (nextValue === lastSetValueRef.current) {
+      lastSetValueRef.current = null;
+      return;
+    }
+    if (nextValue === valueRef.current) return;
+    const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
+    if (
+      ignoreRemoteWhileFocused &&
+      focusedIndex != null &&
+      !allowFocusedValueUpdate
+    ) {
+      updatePendingRemoteIndicator(nextValue, joinBlocks(blocksRef.current));
+      return;
+    }
+    allowFocusedValueUpdateRef.current = false;
+    if (pendingRemoteRef.current != null) return;
+    setBlocksFromValue(nextValue);
+  }, [
+    value,
+    focusedIndex,
+    ignoreRemoteWhileFocused,
+    setBlocksFromValue,
+    updatePendingRemoteIndicator,
+  ]);
+
+  useEffect(() => {
+    if (controlRef == null) return;
+    controlRef.current = {
+      ...(controlRef.current ?? {}),
+      allowNextValueUpdateWhileFocused: () => {
+        allowFocusedValueUpdateRef.current = true;
+      },
+    };
+  }, [controlRef]);
+
+  function shouldDeferRemoteMerge(): boolean {
+    const idleMs = mergeIdleMsRef.current;
+    return Date.now() - lastLocalEditAtRef.current < idleMs;
+  }
 
   function schedulePendingRemoteMerge() {
     if (pendingRemoteTimerRef.current != null) {

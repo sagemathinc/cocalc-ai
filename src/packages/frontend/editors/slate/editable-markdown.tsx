@@ -140,6 +140,7 @@ interface Props {
   minimal?: boolean;
   controlRef?: MutableRefObject<{
     moveCursorToEndOfLine: () => void;
+    allowNextValueUpdateWhileFocused?: () => void;
   } | null>;
   showEditBar?: boolean;
 }
@@ -176,7 +177,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     registerEditor,
     saveDebounceMs = SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
-    ignoreRemoteMergesWhileFocused = false,
+    ignoreRemoteMergesWhileFocused = true,
     selectionRef,
     style,
     submitMentionsRef,
@@ -211,6 +212,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   mergeIdleMsRef.current = mergeIdleMs;
   const [pendingRemoteIndicator, setPendingRemoteIndicator] =
     useState<boolean>(false);
+  const allowFocusedValueUpdateRef = useRef<boolean>(false);
 
   const editor = useMemo(() => {
     const ed = withNonfatalRange(
@@ -297,7 +299,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
     if (controlRef != null) {
       controlRef.current = {
+        ...(controlRef.current ?? {}),
         moveCursorToEndOfLine: () => control.moveCursorToEndOfLine(ed),
+        allowNextValueUpdateWhileFocused: () => {
+          allowFocusedValueUpdateRef.current = true;
+        },
       };
     }
 
@@ -615,12 +621,24 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   useEffect(() => {
     if (actions._syncstring == null) {
+      const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
+      if (
+        ignoreRemoteWhileFocused &&
+        ReactEditor.isFocused(editor) &&
+        value != null &&
+        value !== editor.getMarkdownValue() &&
+        !allowFocusedValueUpdate
+      ) {
+        updatePendingRemoteIndicator(value, editor.getMarkdownValue());
+        return;
+      }
+      allowFocusedValueUpdateRef.current = false;
       setEditorToValue(value);
     }
     if (value != "Loading...") {
       restoreScroll();
     }
-  }, [value]);
+  }, [value, ignoreRemoteWhileFocused, updatePendingRemoteIndicator]);
 
   const lastSetValueRef = useRef<string | null>(null);
 
