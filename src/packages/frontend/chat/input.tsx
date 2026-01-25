@@ -239,23 +239,6 @@ export default function ChatInput({
     };
   }, [syncdb, sender_id, date]);
 
-  function getPlaceholder(): string {
-    if (placeholder != null) return placeholder;
-    const have_llm = redux
-      .getStore("projects")
-      .hasLanguageModelEnabled(project_id);
-    return intl.formatMessage(
-      {
-        id: "chat.input.placeholder",
-        defaultMessage: "Message (@mention)...",
-      },
-      {
-        have_llm,
-      },
-    );
-  }
-  height;
-
   const hasInput = (input ?? "").trim().length > 0;
 
   return (
@@ -308,7 +291,7 @@ export default function ChatInput({
         on_send(input);
       }}
       height={height}
-      placeholder={getPlaceholder()}
+      placeholder={""}
       fontSize={fontSize}
       hideHelp={hideHelp}
       style={style}
