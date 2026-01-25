@@ -1177,6 +1177,14 @@ export async function startHostInternal({
     [row.id],
   );
   const nextMetadata = metaRowsFinal[0]?.metadata ?? metadata;
+  if (nextMetadata?.self_host?.auto_start_pending) {
+    const nextSelfHost = {
+      ...(nextMetadata.self_host ?? {}),
+      auto_start_pending: false,
+      auto_start_cleared_at: new Date().toISOString(),
+    };
+    nextMetadata.self_host = nextSelfHost;
+  }
   if (nextMetadata?.bootstrap) {
     // bootstrap should be idempotent and we bootstrap on EVERY start
     delete nextMetadata.bootstrap;
