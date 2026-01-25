@@ -15,9 +15,10 @@ Self-hosted hosts can run in two flavors:
 - **Multipass**: run the project-host inside a managed VM.
 
 In both cases, the hub drives everything through a connector running on the
-target machine. The connector talks to the hub through an SSH tunnel, and the
-bootstrap script opens its own SSH tunnel so it can access the hub’s bootstrap
-endpoints without the hub being publicly reachable.
+target machine. The connector talks to the hub through an SSH tunnel and
+maintains a stable local port for hub access (by default the hub’s HTTP port),
+so bootstrap can talk to the hub over `127.0.0.1` without exposing the hub
+publicly.
 
 ## Sequence (Local/SSH-Tunnel Mode)
 
@@ -34,8 +35,7 @@ sequenceDiagram
   Connector->>Hub: ssh tunnel to 127.0.0.1:<rev_port> (polls /self-host/next)
   Hub->>Connector: create command (bootstrap payload)
   Connector->>RemoteHost: run bootstrap (direct or multipass)
-  RemoteHost->>Hub: ssh -L 127.0.0.1:<hub_http>:127.0.0.1:<hub_http> via <rev_port>
-  RemoteHost->>Hub: GET /project-host/bootstrap (over localhost tunnel)
+  RemoteHost->>Hub: GET /project-host/bootstrap over 127.0.0.1:<hub_http>
   RemoteHost->>ProjectHost: install + start project-host service
 ```
 
@@ -64,16 +64,10 @@ ssh <ssh-target> bash -lc "curl ... | bash -s -- --ssh-host localhost --ssh-port
 This makes the connector poll via `http://127.0.0.1:<local_port>`, where that
 port is locally forwarded to the hub through the reverse tunnel.
 
-### 3) Bootstrap uses the reverse tunnel
+### 3) Bootstrap uses the connector tunnel
 
-The bootstrap script uses:
-
-```
-BOOTSTRAP_SSH_HOST=127.0.0.1
-BOOTSTRAP_SSH_PORT=<rev_port>
-```
-
-so it can forward `127.0.0.1:<hub_http_port>` to itself and access:
+The connector maintains a local forward from `127.0.0.1:<hub_http_port>` to the
+hub via SSH, so bootstrap can simply access:
 
 ```
 http://127.0.0.1:<hub_http_port>/project-host/bootstrap
@@ -93,6 +87,8 @@ This works even if the remote host cannot reach the hub directly.
 - The hub HTTP server is local-only and reached via SSH tunnels.
 - The reverse tunnel port is dynamic; always use the stored
   `metadata.self_host.ssh_reverse_port`.
+- The connector uses a stable local port for the hub (defaults to the hub HTTP
+  port). Use a non-privileged port (>=1024) to avoid permission errors.
 - The connector install uses `--replace` and should be non-interactive. If
   passwordless `sudo` is not available on the remote host, the install will
   fail (with a timeout).

@@ -41,14 +41,12 @@
 import http from "node:http";
 import https from "node:https";
 import { URL } from "node:url";
-import { createHash } from "node:crypto";
 import { buildHostSpec } from "./host-util";
 import { normalizeProviderId } from "@cocalc/cloud";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import type { HostRuntime } from "@cocalc/cloud/types";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
-import { resolveOnPremHost } from "@cocalc/server/onprem";
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { getServerProvider } from "./providers";
@@ -57,7 +55,6 @@ import {
   type CloudflareTunnel,
 } from "./cloudflare-tunnel";
 import { machineHasGpu } from "./host-gpu";
-import ssh from "micro-key-producer/ssh.js";
 
 const logger = getLogger("server:cloud:bootstrap-host");
 const pool = () => getPool("medium");
@@ -94,28 +91,6 @@ function normalizeSoftwareBaseUrl(raw: string): string {
   const trimmed = (raw || "").trim();
   const base = trimmed || DEFAULT_SOFTWARE_BASE_URL;
   return base.replace(/\/+$/, "");
-}
-
-function splitTokenSecret(token: string): string | null {
-  const parts = token.split(".", 2);
-  if (parts.length !== 2) return null;
-  const secret = parts[1]?.trim();
-  if (!secret) return null;
-  return secret;
-}
-
-function deriveBootstrapKeyPair(token: string): {
-  publicKey: string;
-  privateKey: string;
-} | null {
-  const secret = splitTokenSecret(token);
-  if (!secret) return null;
-  const seed = createHash("sha256")
-    .update("cocalc-ssh-bootstrap:")
-    .update(secret)
-    .digest();
-  const keypair = ssh(seed, "cocalc-bootstrap");
-  return { publicKey: keypair.publicKey, privateKey: keypair.privateKey };
 }
 
 type SoftwareArch = "amd64" | "arm64";
@@ -1149,43 +1124,7 @@ export async function buildCloudInitStartupScript(
   if (isSelfHostLocal) {
     const localConfig = getLaunchpadLocalConfig("local");
     const httpPort = localConfig.http_port ?? localConfig.https_port ?? 9200;
-    const selfHostMeta = row.metadata?.self_host ?? {};
-    const reversePort = Number(selfHostMeta?.ssh_reverse_port ?? 0);
-    const hasReverse = reversePort > 0;
-    const sshHost = hasReverse
-      ? "127.0.0.1"
-      : process.env.COCALC_SSHD_HOST ??
-        process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
-        resolveOnPremHost();
-    const sshPort = hasReverse ? reversePort : localConfig.sshd_port ?? 22;
-    const sshUser = localConfig.ssh_user ?? "user";
-    const keypair = deriveBootstrapKeyPair(token);
-    if (!keypair) {
-      throw new Error("invalid bootstrap token");
-    }
     bootstrapBase = `http://127.0.0.1:${httpPort}`;
-    tunnelScript = `
-BOOTSTRAP_SSH_HOST="${sshHost}"
-BOOTSTRAP_SSH_PORT="${sshPort}"
-BOOTSTRAP_SSH_USER="${sshUser}"
-BOOTSTRAP_LOCAL_PORT="${httpPort}"
-BOOTSTRAP_REMOTE_PORT="${httpPort}"
-BOOTSTRAP_SSH_KEY_PATH="$BOOTSTRAP_DIR/bootstrap_ssh_key"
-if ! command -v ssh >/dev/null 2>&1; then
-  apt-get update -y
-  apt-get install -y openssh-client
-fi
-cat <<'EOF_COCALC_BOOTSTRAP_KEY' > "$BOOTSTRAP_SSH_KEY_PATH"
-${keypair.privateKey}
-EOF_COCALC_BOOTSTRAP_KEY
-chmod 600 "$BOOTSTRAP_SSH_KEY_PATH"
-echo "bootstrap: starting ssh tunnel to $BOOTSTRAP_SSH_HOST:$BOOTSTRAP_SSH_PORT"
-ssh -N -f -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \\
-  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \\
-  -L 127.0.0.1:${httpPort}:127.0.0.1:${httpPort} \\
-  -p "$BOOTSTRAP_SSH_PORT" -i "$BOOTSTRAP_SSH_KEY_PATH" \\
-  "$BOOTSTRAP_SSH_USER@$BOOTSTRAP_SSH_HOST"
-`;
   }
   const bootstrapUrl = `${bootstrapBase}/project-host/bootstrap`;
   const statusUrl = `${bootstrapBase}/project-host/bootstrap/status`;

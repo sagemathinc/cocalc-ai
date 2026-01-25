@@ -3,11 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Typography } from "antd";
+import { Button, Tooltip, Typography } from "antd";
+import { useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import SSHKeyList from "@cocalc/frontend/account/ssh-keys/ssh-key-list";
 import { redux } from "@cocalc/frontend/app-framework";
 import { A, Icon } from "@cocalc/frontend/components";
+import CopyButton from "@cocalc/frontend/components/copy-button";
+import { CopyToClipboard } from "react-copy-to-clipboard";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
@@ -28,8 +31,9 @@ export function SSHPanel({ project, mode = "project" }: Props) {
   const hostInfo = useHostInfo(project.get("host_id"));
   const projectId = project.get("project_id") as string;
   const sshServer = hostInfo?.get?.("ssh_server");
-  const hostName = hostInfo?.get?.("name");
   const localProxy = !!hostInfo?.get?.("local_proxy");
+  const [sshCopied, setSshCopied] = useState(false);
+  const copyTimeoutRef = useRef<number | null>(null);
 
   if (lite) {
     return null;
@@ -64,6 +68,25 @@ export function SSHPanel({ project, mode = "project" }: Props) {
         : `ssh ${projectId}@${sshInfo.host}`
       : null;
 
+  useEffect(() => {
+    setSshCopied(false);
+    if (copyTimeoutRef.current != null) {
+      window.clearTimeout(copyTimeoutRef.current);
+      copyTimeoutRef.current = null;
+    }
+  }, [sshCommand]);
+
+  const handleCopy = () => {
+    setSshCopied(true);
+    if (copyTimeoutRef.current != null) {
+      window.clearTimeout(copyTimeoutRef.current);
+    }
+    copyTimeoutRef.current = window.setTimeout(() => {
+      setSshCopied(false);
+      copyTimeoutRef.current = null;
+    }, 1200);
+  };
+
   return (
     <SSHKeyList
       ssh_keys={ssh_keys}
@@ -91,17 +114,38 @@ export function SSHPanel({ project, mode = "project" }: Props) {
         </p>
         {sshCommand && (
           <>
-            <p>
-              {localProxy
-                ? `SSH target (via hub${hostName ? ` · ${hostName}` : ""}):`
-                : `SSH target${hostName ? ` (${hostName})` : ""}:`}
-            </p>
-            <Paragraph>
-              <Text code>{sshCommand}</Text>
-            </Paragraph>
+            <p>{localProxy ? "SSH target (via hub):" : "SSH target:"}</p>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginTop: 6,
+                marginBottom: 4,
+              }}
+            >
+              <CopyButton value={sshCommand} size="small" />
+              <CopyToClipboard text={sshCommand} onCopy={handleCopy}>
+                <Tooltip title="Copied!" open={sshCopied}>
+                  <Text
+                    code
+                    style={{
+                      fontSize: "13pt",
+                      padding: "6px 8px",
+                      flex: 1,
+                      wordBreak: "break-all",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {sshCommand}
+                  </Text>
+                </Tooltip>
+              </CopyToClipboard>
+            </div>
             {localProxy && (
-              <Paragraph type="secondary">
-                This SSH target routes through the hub’s reverse tunnel.
+              <Paragraph type="secondary" style={{ marginTop: 0 }}>
+                This SSH target routes through the hub’s reverse tunnel. Ensure
+                you can reach the hub host and port from your machine.
               </Paragraph>
             )}
           </>

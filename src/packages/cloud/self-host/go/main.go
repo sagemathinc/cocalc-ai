@@ -335,10 +335,10 @@ func runPairSSH(args []string) {
 	if remotePort == 0 {
 		remotePort = 80
 	}
-	localPort, err := allocateLocalPort()
-	if err != nil {
-		fail(fmt.Sprintf("allocate local port: %v", err))
+	if remotePort < 1024 {
+		fail("ssh tunnel port must be >= 1024; set the hub port to a non-privileged value (e.g. 9200)")
 	}
+	localPort := remotePort
 	cfg := Config{
 		BaseURL:             fmt.Sprintf("http://127.0.0.1:%d", localPort),
 		ConnectorID:         resp.ConnectorID,
@@ -660,24 +660,6 @@ func loadHostKeyCallback(noStrict bool) (ssh.HostKeyCallback, error) {
 		return nil, fmt.Errorf("known_hosts error (%s): %w", knownHostsPath, err)
 	}
 	return callback, nil
-}
-
-func allocateLocalPort() (int, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer ln.Close()
-	addr := ln.Addr().String()
-	_, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		return 0, err
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return 0, err
-	}
-	return port, nil
 }
 
 type SshTunnelHandle struct {
