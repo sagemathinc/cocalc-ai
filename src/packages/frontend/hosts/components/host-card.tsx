@@ -1,6 +1,6 @@
 import { Button, Card, Popconfirm, Space, Tag, Tooltip, Typography } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
-import { React } from "@cocalc/frontend/app-framework";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { HostDeleteOptions, HostStopOptions } from "../types";
 import {
@@ -52,6 +52,10 @@ export const HostCard: React.FC<HostCardProps> = ({
 }) => {
   const isDeleted = !!host.deleted;
   const isSelfHost = host.machine?.cloud === "self-host";
+  const selfHostAlphaEnabled = !!useTypedRedux(
+    "customize",
+    "project_hosts_self_host_alpha_enabled",
+  );
   const hasSshTarget = !!String(
     host.machine?.metadata?.self_host_ssh_target ?? "",
   ).trim();
@@ -121,14 +125,14 @@ export const HostCard: React.FC<HostCardProps> = ({
     >
       {startLabel}
     </Button>,
-    showConnectorSetup && selfHost ? (
+    showConnectorSetup && selfHost && selfHostAlphaEnabled ? (
       <Button
         key="setup"
         type="link"
         disabled={hostOpActive}
         onClick={() => selfHost.onSetup(host)}
       >
-        Setup
+        Setup (alpha)
       </Button>
     ) : null,
     allowStop ? (

@@ -111,6 +111,7 @@ export type SiteSettingsKeys =
   | "project_hosts_hyperstack_enabled"
   | "project_hosts_lambda_enabled"
   | "project_hosts_local_enabled"
+  | "project_hosts_self_host_alpha_enabled"
   | "project_hosts_nebius_enabled"
   | "project_hosts_dns"
   | "launchpad_mode"
@@ -811,6 +812,14 @@ export const site_settings_conf: SiteSettings = {
   project_hosts_local_enabled: {
     name: "Enable Project Hosts - Local (manual setup)",
     desc: "Whether or not to include the local/manual project-host option (for development use).",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Project Hosts", "On-Prem"],
+  },
+  project_hosts_self_host_alpha_enabled: {
+    name: "Enable Project Hosts - Self-Host (alpha options)",
+    desc: "Enable alpha self-host options (e.g., Multipass VM and manual setup).",
     default: "no",
     valid: only_booleans,
     to_val: to_bool,

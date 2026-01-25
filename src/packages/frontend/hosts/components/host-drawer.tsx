@@ -12,7 +12,7 @@ import {
   Typography,
 } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
-import { React } from "@cocalc/frontend/app-framework";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostLogEntry } from "../hooks/use-host-log";
@@ -203,6 +203,10 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     !isSelfHost ||
     !selfHost?.isConnectorOnline ||
     selfHost.isConnectorOnline(host?.region);
+  const selfHostAlphaEnabled = !!useTypedRedux(
+    "customize",
+    "project_hosts_self_host_alpha_enabled",
+  );
   const hasSshTarget = !!String(
     host?.machine?.metadata?.self_host_ssh_target ?? "",
   ).trim();
@@ -214,6 +218,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   }, [host, onClose, selfHost]);
   const showConnectorWarning =
     isSelfHost &&
+    selfHostAlphaEnabled &&
     !!host &&
     !connectorOnline &&
     host.status === "off" &&
@@ -433,13 +438,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <Space direction="vertical" size="small">
               <Typography.Text strong>Connector actions</Typography.Text>
               <Space wrap>
-                {!autoSetup && (
+                {selfHostAlphaEnabled && !autoSetup && (
                   <Button
                     size="small"
                     disabled={hostOpActive}
                     onClick={handleSetupClick}
                   >
-                    Setup or reconnect
+                    Setup or reconnect (alpha)
                   </Button>
                 )}
                 <Button

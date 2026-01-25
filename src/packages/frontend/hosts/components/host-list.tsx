@@ -1,6 +1,6 @@
 import { Alert, Button, Card, Col, Input, Modal, Popconfirm, Popover, Radio, Row, Select, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
-import { React } from "@cocalc/frontend/app-framework";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import { HostCard } from "./host-card";
@@ -225,6 +225,10 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     setAutoResort,
     providerCapabilities,
   } = vm;
+  const selfHostAlphaEnabled = !!useTypedRedux(
+    "customize",
+    "project_hosts_self_host_alpha_enabled",
+  );
 
   const [selectedRowKeys, setSelectedRowKeys] = React.useState<string[]>([]);
   const [restartTarget, setRestartTarget] = React.useState<Host | null>(null);
@@ -647,7 +651,11 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           !selfHost?.isConnectorOnline ||
           selfHost.isConnectorOnline(host.region);
         const showConnectorSetup =
-          isSelfHost && !connectorOnline && host.status === "off" && !autoSetup;
+          isSelfHost &&
+          selfHostAlphaEnabled &&
+          !connectorOnline &&
+          host.status === "off" &&
+          !autoSetup;
         const startDisabled =
           isDeleted ||
           host.status === "running" ||
@@ -713,7 +721,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               disabled={hostOpActive}
               onClick={() => selfHost.onSetup(host)}
             >
-              Setup
+              Setup (alpha)
             </Button>
           ) : null,
           allowStop ? (

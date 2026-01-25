@@ -1,5 +1,6 @@
 import { Alert, Col, Form, Input, InputNumber, Row, Select, Slider, Tag } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { mapCloudRegionToR2Region, R2_REGION_LABELS } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import type { HostFieldId } from "../providers/registry";
@@ -38,6 +39,10 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
   const watchedSelfHostMode = Form.useWatch("self_host_mode", form);
   const watchedSelfHostTarget = Form.useWatch("self_host_ssh_target", form);
+  const selfHostAlphaEnabled = !!useTypedRedux(
+    "customize",
+    "project_hosts_self_host_alpha_enabled",
+  );
   const defaultDiskType =
     selectedProvider === "nebius" ? "ssd_io_m3" : undefined;
   React.useEffect(() => {
@@ -151,11 +156,20 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   React.useEffect(() => {
     ensureFieldValue("self_host_mode", form.getFieldValue("self_host_mode"));
   }, [ensureFieldValue, form]);
+  const requireSshTarget = selectedProvider === "self-host" && !selfHostAlphaEnabled;
   const showSelfHostSshWarning =
     selectedProvider === "self-host" &&
     watchedSelfHostMode === "local" &&
-    !String(watchedSelfHostTarget ?? "").trim();
+    !String(watchedSelfHostTarget ?? "").trim() &&
+    selfHostAlphaEnabled;
   const renderField = (field: HostFieldId) => {
+    if (
+      selectedProvider === "self-host" &&
+      !selfHostAlphaEnabled &&
+      (field === "self_host_kind" || field === "self_host_mode")
+    ) {
+      return null;
+    }
     const fieldOptions = options[field] ?? [];
     const label =
       labels[field] ??
@@ -268,8 +282,18 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
       {selectedProvider === "self-host" && (
         <Form.Item
           name="self_host_ssh_target"
-          label="SSH target (optional)"
+          label="SSH target"
           tooltip="Set this to user@host[:port] (or an ssh-config name) so that CoCalc can install the connector on the remote machine. It must be possible to ssh to that machine without having to type a password."
+          rules={
+            requireSshTarget
+              ? [
+                  {
+                    required: true,
+                    message: "Please enter an SSH target for this host.",
+                  },
+                ]
+              : undefined
+          }
         >
           <Input placeholder="user@host[:port] or ssh-config name" />
         </Form.Item>

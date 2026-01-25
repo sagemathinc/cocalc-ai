@@ -814,11 +814,15 @@ export async function getCatalog({
       name: row.name ?? undefined,
       last_seen: row.last_seen ? row.last_seen.toISOString() : undefined,
     }));
-    const modes = ["local"];
-    if (await hasCloudflareTunnel()) {
-      modes.push("cloudflare");
+    const { project_hosts_self_host_alpha_enabled } =
+      await getServerSettings();
+    const modes = await hasCloudflareTunnel()
+      ? ["cloudflare", "local"]
+      : ["local"];
+    const kinds = ["direct"];
+    if (project_hosts_self_host_alpha_enabled) {
+      kinds.push("multipass");
     }
-    const kinds = ["direct", "multipass"];
     return {
       provider: cloud,
       entries: [

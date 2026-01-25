@@ -1,5 +1,5 @@
 import { Alert, Collapse, Form, Input, InputNumber, Modal, Select } from "antd";
-import { React } from "@cocalc/frontend/app-framework";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { HostProvider } from "../types";
 import { getDiskTypeOptions } from "../constants";
@@ -88,6 +88,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       host?.machine?.metadata?.self_host_kind ??
       "direct") as string;
   const isDirect = selfHostKind === "direct";
+  const selfHostAlphaEnabled = !!useTypedRedux(
+    "customize",
+    "project_hosts_self_host_alpha_enabled",
+  );
   const {
     fieldSchema: createFieldSchema,
     fieldOptions: createFieldOptions,
@@ -382,6 +386,13 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   }, [ensureFieldValue, isDeprovisioned, watchedGpuType]);
 
   const renderField = (field: HostFieldId) => {
+    if (
+      providerId === "self-host" &&
+      !selfHostAlphaEnabled &&
+      (field === "self_host_kind" || field === "self_host_mode")
+    ) {
+      return null;
+    }
     const fieldOpts = fieldOptions[field] ?? [];
     const label =
       fieldSchema.labels?.[field] ??

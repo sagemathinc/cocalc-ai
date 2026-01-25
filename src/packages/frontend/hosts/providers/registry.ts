@@ -269,7 +269,7 @@ const SELF_HOST_MODE_LABELS: Record<SelfHostMode, string> = {
 };
 
 const SELF_HOST_KIND_LABELS: Record<SelfHostKind, string> = {
-  multipass: "Multipass VM",
+  multipass: "Multipass VM (alpha)",
   direct: "Direct",
 };
 

@@ -155,6 +155,7 @@ export interface CustomizeState {
   software: SoftwareEnvironments;
   _is_configured: boolean;
   project_hosts_nebius_enabled?: boolean;
+  project_hosts_self_host_alpha_enabled?: boolean;
   project_hosts_dns?: string;
   "project_hosts_google-cloud_enabled"?: boolean;
   "project_hosts_hyperstack_enabled"?: boolean;
