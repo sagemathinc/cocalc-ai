@@ -1,5 +1,4 @@
 import { useState } from "@cocalc/frontend/app-framework";
-import { message } from "antd";
 import {
   buildCreateHostPayload,
   type FieldOptionsMap,
@@ -34,10 +33,8 @@ export const useHostCreate = ({
       const payload = buildCreateHostPayload(vals, { fieldOptions, catalog });
       await hub.hosts.createHost(payload);
       await refresh();
-      message.success("Host created");
     } catch (err) {
       console.error(err);
-      message.error("Failed to create host");
     } finally {
       setCreating(false);
     }

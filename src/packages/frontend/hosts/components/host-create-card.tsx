@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Divider, Form, Popconfirm, Select, Space, Typography, message } from "antd";
+import { Alert, Button, Card, Divider, Form, Popconfirm, Select, Space, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
@@ -25,10 +25,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     catalogRefreshing,
   } = catalogRefresh;
   const refreshCatalogAndNotify = async () => {
-    const ok = await refreshCatalog();
-    if (ok) {
-      message.success("Cloud catalog updated");
-    }
+    await refreshCatalog();
   };
   const confirmCreateHost = async () => {
     try {

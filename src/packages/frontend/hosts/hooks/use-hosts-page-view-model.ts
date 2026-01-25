@@ -1,4 +1,4 @@
-import { Form, message } from "antd";
+import { Form } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -137,7 +137,7 @@ export const useHostsPageViewModel = () => {
   const [fastPoll, setFastPoll] = React.useState(false);
   const [setupOpen, setSetupOpen] = React.useState(false);
   const { hosts, setHosts, refresh, canCreateHosts } = useHosts(hub, {
-    onError: () => message.error("Unable to load hosts"),
+    onError: () => console.warn("Unable to load hosts"),
     adminView: isAdmin && showAdmin,
     includeDeleted: showDeleted,
     pollMs: fastPoll ? 5000 : 30000,
@@ -176,7 +176,6 @@ export const useHostsPageViewModel = () => {
   const upgradeHostSoftware = React.useCallback(
     async (host: Host) => {
       if (!hub.hosts.upgradeHostSoftware) {
-        message.error("Host upgrades are not available");
         return;
       }
       if (host.status !== "running") {
@@ -195,7 +194,6 @@ export const useHostsPageViewModel = () => {
         await refresh();
       } catch (err) {
         console.error(err);
-        message.error("Failed to upgrade host software");
       }
     },
     [hub, refresh, trackHostOp],
@@ -206,7 +204,6 @@ export const useHostsPageViewModel = () => {
         await hub.lro.cancel({ op_id });
       } catch (err) {
         console.error(err);
-        message.error("Failed to cancel host operation");
       }
     },
     [hub],
@@ -283,7 +280,7 @@ export const useHostsPageViewModel = () => {
     useHostCatalog(hub, {
       provider: catalogProvider,
       refreshProvider,
-      onError: (text) => message.error(text),
+      onError: (text) => console.warn(text),
     });
   const hasSelfHostHosts = React.useMemo(
     () => hosts.some((host) => host.machine?.cloud === "self-host"),
