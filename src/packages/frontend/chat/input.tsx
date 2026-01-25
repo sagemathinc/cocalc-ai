@@ -80,6 +80,8 @@ export default function ChatInput({
   );
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>("");
+  const isFocusedRef = useRef<boolean>(false);
+  const pendingRemoteInputRef = useRef<string | null>(null);
 
   const getDraftInput = useCallback(() => {
     const rec = syncdb?.get_one({
@@ -202,6 +204,11 @@ export default function ChatInput({
         date,
       });
       const input = (x as any)?.input ?? "";
+      if (isFocusedRef.current && input !== currentInputRef.current) {
+        // Defer draft updates while focused to avoid overwriting local typing.
+        pendingRemoteInputRef.current = input;
+        return;
+      }
       if (input != lastSavedRef.current) {
         setInput(input);
         currentInputRef.current = input;
@@ -237,8 +244,23 @@ export default function ChatInput({
     <MarkdownInput
       autoFocus={autoFocus}
       saveDebounceMs={0}
-      onFocus={onFocus}
-      onBlur={onBlur}
+      onFocus={() => {
+        isFocusedRef.current = true;
+        onFocus?.();
+      }}
+      onBlur={() => {
+        isFocusedRef.current = false;
+        if (pendingRemoteInputRef.current != null) {
+          const pending = pendingRemoteInputRef.current;
+          pendingRemoteInputRef.current = null;
+          if (pending !== currentInputRef.current) {
+            setInput(pending);
+            currentInputRef.current = pending;
+            lastSavedRef.current = pending;
+          }
+        }
+        onBlur?.();
+      }}
       cacheId={cacheId}
       value={input}
       controlRef={controlRef}
@@ -257,6 +279,8 @@ export default function ChatInput({
       }}
       onShiftEnter={(input) => {
         setInput("");
+        currentInputRef.current = "";
+        lastSavedRef.current = "";
         saveChat("");
         on_send(input);
       }}
