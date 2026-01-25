@@ -27,6 +27,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"os/user"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -998,6 +999,11 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 	sshUser := toString(payload["ssh_user"])
 	if sshUser == "" {
 		sshUser = defaultSshUser
+	}
+	if rawKind == "direct" {
+		if current, err := user.Current(); err == nil && current.Username != "" {
+			sshUser = current.Username
+		}
 	}
 
 	if rawKind == "direct" {

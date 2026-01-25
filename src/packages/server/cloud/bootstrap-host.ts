@@ -244,10 +244,14 @@ export async function buildBootstrapScripts(
   const runtime = row.metadata?.runtime;
   const metadata = row.metadata ?? {};
   const machine: HostMachine = metadata.machine ?? {};
-  const hasGpu = machineHasGpu(machine);
-  const sshUser = runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
   const providerId = normalizeProviderId(machine.cloud);
   const isSelfHost = providerId === "self-host";
+  const hasGpu = machineHasGpu(machine);
+  const selfHostKind = machine.metadata?.self_host_kind;
+  const isSelfHostDirect = isSelfHost && selfHostKind === "direct";
+  const sshUser = isSelfHostDirect
+    ? "${SUDO_USER:-ubuntu}"
+    : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
     isSelfHost && (!rawSelfHostMode || rawSelfHostMode === "local")
@@ -792,6 +796,7 @@ echo 'sudo systemctl \${1-status} cocalc-cloudflared' > "$BOOTSTRAP_DIR/ctl-cf"
 chmod +x "$BOOTSTRAP_DIR/ctl-cf" "$BOOTSTRAP_DIR/logs-cf"
 
 echo "bootstrap: configuring project-host autostart"
+echo "bootstrap: using project-host user ${sshUser}"
 sudo tee /etc/cron.d/cocalc-project-host >/dev/null <<'EOF_COCALC_CRON'
 @reboot ${sshUser} ${bootstrapDir}/start-project-host
 EOF_COCALC_CRON
