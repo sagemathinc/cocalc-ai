@@ -14,8 +14,7 @@ import { useSetElement } from "../set-element";
 import infoToMode from "./info-to-mode";
 import ActionButtons, { RunFunction } from "./action-buttons";
 import { useChange } from "../../use-change";
-import { getHistory, isPreviousSiblingCodeBlock } from "./history";
-import InsertBar from "./insert-bar";
+import { getHistory } from "./history";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
@@ -170,14 +169,10 @@ function Element({ attributes, children, element }: RenderElementProps) {
   const [history, setHistory] = useState<string[]>(
     getHistory(editor, element) ?? [],
   );
-  const [codeSibling, setCodeSibling] = useState<boolean>(
-    isPreviousSiblingCodeBlock(editor, element),
-  );
   useEffect(() => {
     const newHistory = getHistory(editor, element);
     if (newHistory != null && !isEqual(history, newHistory)) {
       setHistory(newHistory);
-      setCodeSibling(isPreviousSiblingCodeBlock(editor, element));
     }
     if (!infoFocusedRef.current && element.info != info) {
       // upstream change
@@ -191,14 +186,6 @@ function Element({ attributes, children, element }: RenderElementProps) {
   return (
     <div {...attributes}>
       <div contentEditable={false} style={{ textIndent: 0 }}>
-        {!codeSibling && (
-          <InsertBar
-            editor={editor}
-            element={element}
-            info={info}
-            above={true}
-          />
-        )}
         <div style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ flex: 1 }}>
             <div style={{ position: "relative" }}>
@@ -296,12 +283,6 @@ function Element({ attributes, children, element }: RenderElementProps) {
             <Mermaid style={{ flex: 1 }} value={element.value} />
           )}
         </div>
-        <InsertBar
-          editor={editor}
-          element={element}
-          info={info}
-          above={false}
-        />
       </div>
       {children}
     </div>
