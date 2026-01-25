@@ -138,6 +138,9 @@ interface Props {
   // refresh codemirror if this changes
   refresh?: any;
 
+  // opt out of block editor even when it would normally be used
+  disableBlockEditor?: boolean;
+
   overflowEllipsis?: boolean; // if true (the default!), show "..." button popping up all menu entries
 
   dirtyRef?: MutableRefObject<boolean>; // a boolean react ref that gets set to true whenever document changes for any reason (client should explicitly set this back to false).
@@ -194,6 +197,7 @@ export default function MultiMarkdownInput({
   value,
   controlRef,
   preserveBlankLines = true,
+  disableBlockEditor,
 }: Props) {
   const {
     isFocused: isFocusedFrame,
@@ -556,6 +560,7 @@ export default function MultiMarkdownInput({
             isFocused={isFocused}
             registerEditor={registerEditor}
             unregisterEditor={unregisterEditor}
+            disableBlockEditor={disableBlockEditor}
             placeholder={placeholder ?? "Type text..."}
             submitMentionsRef={submitMentionsRef}
             editBar2={editBar2}

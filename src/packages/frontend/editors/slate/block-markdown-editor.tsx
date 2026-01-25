@@ -107,6 +107,8 @@ interface BlockMarkdownEditorProps {
   minimal?: boolean;
   controlRef?: MutableRefObject<any>;
   preserveBlankLines?: boolean;
+  getValueRef?: MutableRefObject<() => string>;
+  disableBlockEditor?: boolean;
 }
 
 export function shouldUseBlockEditor({
@@ -157,6 +159,7 @@ interface BlockRowEditorProps {
   preserveBlankLines: boolean;
   registerEditor: (index: number, editor: SlateEditor) => void;
   unregisterEditor: (index: number, editor: SlateEditor) => void;
+  getFullMarkdown: () => string;
 }
 
 const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
@@ -179,6 +182,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       preserveBlankLines,
       registerEditor,
       unregisterEditor,
+      getFullMarkdown,
     } = props;
 
     const syncCacheRef = useRef<any>({});
@@ -191,8 +195,10 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         ),
       );
       ed.syncCache = syncCacheRef.current;
+      (ed as SlateEditor).getMarkdownValue = getFullMarkdown;
+      (ed as SlateEditor).getSourceValue = getFullMarkdown;
       return ed;
-    }, []);
+    }, [getFullMarkdown]);
 
     useEffect(() => {
       (editor as SlateEditor).preserveBlankLines = preserveBlankLines;
@@ -271,6 +277,18 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return;
         }
         if (event.defaultPrevented) return;
+        if (event.key === "Enter") {
+          if (event.shiftKey && actions?.shiftEnter) {
+            actions.shiftEnter(getFullMarkdown());
+            event.preventDefault();
+            return;
+          }
+          if ((event.altKey || event.metaKey) && actions?.altEnter) {
+            actions.altEnter(getFullMarkdown());
+            event.preventDefault();
+            return;
+          }
+        }
         if (!ReactEditor.isFocused(editor)) return;
         if (event.ctrlKey || event.metaKey || event.altKey) return;
 
@@ -348,6 +366,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         actions,
         editor,
         gapCursor,
+        getFullMarkdown,
         id,
         index,
         onInsertGap,
@@ -467,6 +486,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     minimal,
     divRef,
     controlRef,
+    getValueRef,
   } = props;
   const { project_id, path, desc } = useFrameContext();
   const actions = actions0 ?? {};
@@ -546,6 +566,13 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     blocksRef.current = nextBlocks;
     setBlocks(nextBlocks);
   }, []);
+
+  const getFullMarkdown = useCallback(() => joinBlocks(blocksRef.current), []);
+
+  useEffect(() => {
+    if (getValueRef == null) return;
+    getValueRef.current = getFullMarkdown;
+  }, [getValueRef, getFullMarkdown]);
 
   useEffect(() => {
     const nextValue = value ?? "";
@@ -815,6 +842,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         preserveBlankLines={preserveBlankLines}
         registerEditor={registerEditor}
         unregisterEditor={unregisterEditor}
+        getFullMarkdown={getFullMarkdown}
       />
     );
   };

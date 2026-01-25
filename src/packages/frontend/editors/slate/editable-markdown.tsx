@@ -145,6 +145,7 @@ interface Props {
   } | null>;
   showEditBar?: boolean;
   preserveBlankLines?: boolean;
+  disableBlockEditor?: boolean;
 }
 
 const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
@@ -1427,6 +1428,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 });
 
 export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
+  if (props.disableBlockEditor) {
+    return <FullEditableMarkdown {...props} />;
+  }
   if (
     shouldUseBlockEditor({
       value: props.value,
