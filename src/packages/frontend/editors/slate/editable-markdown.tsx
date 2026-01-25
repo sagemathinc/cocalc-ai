@@ -213,6 +213,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const [pendingRemoteIndicator, setPendingRemoteIndicator] =
     useState<boolean>(false);
   const allowFocusedValueUpdateRef = useRef<boolean>(false);
+  const blurMergeTimerRef = useRef<number | null>(null);
 
   const editor = useMemo(() => {
     const ed = withNonfatalRange(
@@ -313,8 +314,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     return ed as SlateEditor;
   }, []);
 
+  const isMergeFocused = useCallback(() => {
+    return ReactEditor.isFocused(editor) || editor.getIgnoreSelection?.();
+  }, [editor]);
+
   function shouldDeferRemoteMerge(): boolean {
-    if (!ReactEditor.isFocused(editor)) return false;
+    if (!isMergeFocused()) return false;
     if (ignoreRemoteWhileFocused) return true;
     const idleMs = mergeIdleMsRef.current;
     const recentlyTyped = Date.now() - lastLocalEditAtRef.current < idleMs;
@@ -378,7 +383,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (actions._syncstring == null) return;
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
-      if (ignoreRemoteWhileFocused && ReactEditor.isFocused(editor)) {
+      if (ignoreRemoteWhileFocused && isMergeFocused()) {
         updatePendingRemoteIndicator(remote, editor.getMarkdownValue());
         return;
       }
@@ -624,7 +629,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
       if (
         ignoreRemoteWhileFocused &&
-        ReactEditor.isFocused(editor) &&
+        isMergeFocused() &&
         value != null &&
         value !== editor.getMarkdownValue() &&
         !allowFocusedValueUpdate
@@ -638,7 +643,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (value != "Loading...") {
       restoreScroll();
     }
-  }, [value, ignoreRemoteWhileFocused, updatePendingRemoteIndicator]);
+  }, [value, ignoreRemoteWhileFocused, updatePendingRemoteIndicator, isMergeFocused]);
 
   const lastSetValueRef = useRef<string | null>(null);
 
@@ -825,7 +830,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           logSlateDebug("external-set-editor", {
             strategy: shouldDirectSet ? "direct" : "diff",
             operations: operations.length,
-            focused: ReactEditor.isFocused(editor),
+            focused: isMergeFocused(),
             current: editor.getMarkdownValue(),
             next: value,
           });
@@ -1277,12 +1282,24 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             editor.saveValue();
             updateMarks();
             if (ignoreRemoteWhileFocused) {
-              flushPendingRemoteMerge();
+              if (blurMergeTimerRef.current != null) {
+                window.clearTimeout(blurMergeTimerRef.current);
+              }
+              blurMergeTimerRef.current = window.setTimeout(() => {
+                blurMergeTimerRef.current = null;
+                if (!isMergeFocused()) {
+                  flushPendingRemoteMerge();
+                }
+              }, 150);
             }
             onBlur?.();
           }}
           onFocus={() => {
             updateMarks();
+            if (blurMergeTimerRef.current != null) {
+              window.clearTimeout(blurMergeTimerRef.current);
+              blurMergeTimerRef.current = null;
+            }
             onFocus?.();
           }}
           decorate={cursorDecorate}
