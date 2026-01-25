@@ -2,23 +2,28 @@
 
 ## Todo
 
+- [ ] If you type "foo", then move to beginning of line and type "-[space bar]" before foo, then foo is just deleted.
+
+- [ ] codemirror6?
+
+- [ ] code block at bottom of doc - often cursor totally stuck, especially in chat autogrow mode.
+
 - [ ] indent/unindent semantics and keyboard shortcuts
 
 - [ ] in block mode, disable newlines are significant for each individual block, since otherwise they work, then disappear, which is confusing.
 
 - [ ] "control+s" to save-to-disk in block mode (full editor)
 
-- [ ] chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box.
+- [ ] chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens almost every single time. 
+  - consider just removing sync entirely and using localStorage? That could fix this and is much better.
 
 - [ ] add keyboard shortcut to move list item up/down.
-
 
 - [ ] copy/paste doesn't work at all anymore
 
 - [ ] add modal that documents keyboard shortcuts
 
 - [ ] find (and replace) search in doc; it's not visible at all right now.
-
 
 - [x] attempt to copy any text using control+c in a fenced code block and it copies the entire block, not the text
 

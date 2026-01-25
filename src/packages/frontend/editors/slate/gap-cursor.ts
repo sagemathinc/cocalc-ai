@@ -37,8 +37,13 @@ export function insertParagraphAtGap(
   editor: SlateEditor,
   gapCursor: GapCursor,
 ): void {
-  const index = gapCursor.side === "before" ? gapCursor.path[0] : gapCursor.path[0] + 1;
-  const path: Path = [Math.max(0, index)];
+  const index =
+    gapCursor.side === "before" ? gapCursor.path[0] : gapCursor.path[0] + 1;
+  const maxIndex = Array.isArray(editor.children)
+    ? editor.children.length
+    : 0;
+  const clamped = Math.min(Math.max(0, index), maxIndex);
+  const path: Path = [clamped];
   Transforms.insertNodes(editor, emptyParagraph(), { at: path });
   const focus = pointAtPath(editor, path, undefined, "start");
   Transforms.setSelection(editor, { anchor: focus, focus });
