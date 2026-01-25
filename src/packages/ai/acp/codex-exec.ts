@@ -325,6 +325,7 @@ export class CodexExecAgent implements AcpAgent {
       "exec",
       "--experimental-json",
       "--skip-git-repo-check",
+      "--search",
     ];
     if (cwd) {
       args.push("--cd", cwd);
