@@ -101,8 +101,13 @@ export default function ChatInput({
     // the db version is used when you refresh your browser while editing, or scroll up and down
     // thus unmounting and remounting the currently editing message (due to virtualization).
     // See https://github.com/sagemathinc/cocalc/issues/6415
-    const input = dbInput ?? propsInput;
+    const input = (dbInput ?? propsInput) ?? "";
+    if (input !== currentInputRef.current && isFocusedRef.current) {
+      controlRef.current?.allowNextValueUpdateWhileFocused?.();
+    }
     setInput(input);
+    currentInputRef.current = input;
+    lastSavedRef.current = input;
     if (input?.trim() && moveCursorToEndOfLine) {
       // have to wait until it's all rendered -- i hate code like this...
       for (const n of [1, 10, 50]) {
