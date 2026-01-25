@@ -803,6 +803,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
     Editor.withoutNormalizing(editor, () => {
       try {
+        if (!ReactEditor.isUsingWindowing(editor)) {
+          logSlateDebug("external-set-editor", {
+            strategy: shouldDirectSet ? "direct" : "diff",
+            operations: operations.length,
+            focused: ReactEditor.isFocused(editor),
+            current: editor.getMarkdownValue(),
+            next: value,
+          });
+        }
         //const t = new Date();
 
         if (shouldDirectSet) {
