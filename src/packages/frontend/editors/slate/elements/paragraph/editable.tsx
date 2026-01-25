@@ -51,15 +51,27 @@ register({
   },
 
   fromSlate: ({ node, children, info }) => {
+    const preserveBlankLines = info.preserveBlankLines ?? true;
     if (children.trim() == "") {
       // We discard empty paragraphs entirely, unless they were explicitly
-      // encoded as blank lines in markdown.
-      return node["blank"] ? "\n" : "";
+      // encoded as blank lines in markdown and blank lines are preserved.
+      return node["blank"] && preserveBlankLines ? "\n" : "";
     }
 
     // trimLeft is because prettier (say) strips whitespace from beginning of paragraphs.
     const s = children.trimLeft() + "\n";
     if (info.lastChild || info.parent?.type == "list_item") return s;
+    if (preserveBlankLines) {
+      const parent = info.parent as { children?: any[] } | undefined;
+      const nextIndex = info.index != null ? info.index + 1 : undefined;
+      const next =
+        nextIndex != null ? parent?.children?.[nextIndex] : undefined;
+      if (next?.type === "paragraph" && next?.blank === true) {
+        // Avoid adding an extra separator if the next node is already
+        // a blank paragraph.
+        return s;
+      }
+    }
     return s + "\n";
   },
 });

@@ -52,6 +52,7 @@ import { markdown_to_slate } from "./markdown-to-slate";
 import { withNormalize } from "./normalize";
 import { applyOperations, preserveScrollPosition } from "./operations";
 import { withNonfatalRange } from "./patches";
+import { ensureDocNonempty } from "./padding";
 import { withIsInline, withIsVoid } from "./plugins";
 import { getScrollState, setScrollState } from "./scroll";
 import { SearchHook, useSearch } from "./search";
@@ -96,6 +97,14 @@ const STYLE: CSS = {
   width: "100%",
   overflow: "auto",
 } as const;
+
+function stripBlankParagraphs(value: Descendant[]): Descendant[] {
+  const filtered = value.filter(
+    (node) => !(node?.["type"] === "paragraph" && node?.["blank"] === true),
+  );
+  ensureDocNonempty(filtered);
+  return filtered;
+}
 
 interface Props {
   value?: string;
@@ -143,6 +152,7 @@ interface Props {
     allowNextValueUpdateWhileFocused?: () => void;
   } | null>;
   showEditBar?: boolean;
+  preserveBlankLines?: boolean;
 }
 
 const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
@@ -185,12 +195,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     value,
     controlRef,
     showEditBar,
+    preserveBlankLines: preserveBlankLinesProp,
   } = props;
   const { project_id, path, desc, isVisible } = useFrameContext();
   const isMountedRef = useIsMountedRef();
   const id = id0 ?? "";
   const actions = actions0 ?? {};
   const font_size = font_size0 ?? desc?.get("font_size") ?? DEFAULT_FONT_SIZE; // so possible to use without specifying this.  TODO: should be from account settings
+  const preserveBlankLines = preserveBlankLinesProp ?? false;
   const [change, setChange] = useState<number>(0);
   const mergeHelperRef = useRef<SimpleInputMerge>(
     new SimpleInputMerge(value ?? ""),
@@ -226,7 +238,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     actions.registerSlateEditor?.(id, ed);
 
     ed.getSourceValue = (fragment?) => {
-      return fragment ? slate_to_markdown(fragment) : ed.getMarkdownValue();
+      return fragment
+        ? slate_to_markdown(fragment, {
+            preserveBlankLines: ed.preserveBlankLines,
+          })
+        : ed.getMarkdownValue();
     };
 
     // hasUnsavedChanges is true if the children changed
@@ -251,6 +267,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       }
       ed.markdownValue = slate_to_markdown(ed.children, {
         cache: ed.syncCache,
+        preserveBlankLines: ed.preserveBlankLines,
       });
       return ed.markdownValue;
     };
@@ -310,9 +327,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
     ed.onCursorBottom = onCursorBottom;
     ed.onCursorTop = onCursorTop;
+    ed.preserveBlankLines = preserveBlankLines;
 
     return ed as SlateEditor;
   }, []);
+
+  useEffect(() => {
+    editor.preserveBlankLines = preserveBlankLines;
+  }, [editor, preserveBlankLines]);
 
   const isMergeFocused = useCallback(() => {
     return ReactEditor.isFocused(editor) || editor.getIgnoreSelection?.();
@@ -460,9 +482,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
   }, [isFocused]);
 
-  const [editorValue, setEditorValue] = useState<Descendant[]>(() =>
-    markdown_to_slate(value ?? "", false, editor.syncCache),
-  );
+  const [editorValue, setEditorValue] = useState<Descendant[]>(() => {
+    const doc = markdown_to_slate(value ?? "", false, editor.syncCache);
+    return preserveBlankLines ? doc : stripBlankParagraphs(doc);
+  });
 
   const rowSizeEstimator = useCallback((node) => {
     return estimateSize({ node, fontSize: font_size });
@@ -526,7 +549,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             const [parent] = Editor.parent(editor, path);
             mentions.push({
               account_id: (node as Mention).account_id,
-              description: slate_to_markdown([parent]),
+              description: slate_to_markdown([parent], {
+                preserveBlankLines: editor.preserveBlankLines,
+              }),
               fragment_id,
             });
           }
@@ -789,13 +814,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
     if (value == null) return;
-    if (value == editor.getMarkdownValue()) {
-      // nothing to do, and in fact doing something
-      // could be really annoying, since we don't want to
-      // autoformat via markdown everything immediately,
-      // as ambiguity is resolved while typing...
-      return;
-    }
     const previousEditorValue = editor.children;
 
     // we only use the latest version of the document
@@ -807,7 +825,32 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     // to convert the document to equal nextEditorValue.  In the current
     // code we do nomalize the output of markdown_to_slate, so
     // that assumption is definitely satisfied.
-    const nextEditorValue = markdown_to_slate(value, false, editor.syncCache);
+    const nextEditorValueRaw = markdown_to_slate(
+      value,
+      false,
+      editor.syncCache,
+    );
+    const nextEditorValue = preserveBlankLines
+      ? nextEditorValueRaw
+      : stripBlankParagraphs(nextEditorValueRaw);
+    const normalizedValue = preserveBlankLines
+      ? value
+      : slate_to_markdown(nextEditorValue, {
+          cache: editor.syncCache,
+          preserveBlankLines,
+        });
+
+    if (lastSetValueRef.current == normalizedValue) {
+      lastSetValueRef.current = null;
+      return;
+    }
+    if (normalizedValue == editor.getMarkdownValue()) {
+      // nothing to do, and in fact doing something
+      // could be really annoying, since we don't want to
+      // autoformat via markdown everything immediately,
+      // as ambiguity is resolved while typing...
+      return;
+    }
 
     const shouldDirectSet =
       previousEditorValue.length <= 1 &&
@@ -832,7 +875,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             operations: operations.length,
             focused: isMergeFocused(),
             current: editor.getMarkdownValue(),
-            next: value,
+            next: normalizedValue,
           });
         }
         //const t = new Date();
@@ -880,7 +923,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         // know the markdown state with zero changes.  This is important, so
         // we don't save out a change if we don't explicitly make one.
         editor.resetHasUnsavedChanges();
-        editor.markdownValue = value;
+        editor.markdownValue = normalizedValue;
       }
 
       try {

@@ -26,6 +26,7 @@ export interface SlateEditor extends ReactEditor {
   onCursorBottom?: () => void;
   onCursorTop?: () => void;
   isComposing?: boolean;
+  preserveBlankLines?: boolean;
 }
 
 /*

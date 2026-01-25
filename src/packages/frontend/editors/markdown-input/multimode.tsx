@@ -143,6 +143,7 @@ interface Props {
   dirtyRef?: MutableRefObject<boolean>; // a boolean react ref that gets set to true whenever document changes for any reason (client should explicitly set this back to false).
 
   controlRef?: MutableRefObject<any>;
+  preserveBlankLines?: boolean;
 }
 
 export default function MultiMarkdownInput({
@@ -192,6 +193,7 @@ export default function MultiMarkdownInput({
   unregisterEditor,
   value,
   controlRef,
+  preserveBlankLines = true,
 }: Props) {
   const {
     isFocused: isFocusedFrame,
@@ -559,6 +561,7 @@ export default function MultiMarkdownInput({
             editBar2={editBar2}
             dirtyRef={dirtyRef}
             controlRef={controlRef}
+            preserveBlankLines={preserveBlankLines}
           />
         </div>
       ) : undefined}

@@ -106,6 +106,7 @@ interface BlockMarkdownEditorProps {
   ignoreRemoteMergesWhileFocused?: boolean;
   minimal?: boolean;
   controlRef?: MutableRefObject<any>;
+  preserveBlankLines?: boolean;
 }
 
 export function shouldUseBlockEditor({
@@ -129,7 +130,9 @@ function splitMarkdownToBlocks(markdown: string): string[] {
   );
   if (filtered.length === 0) return [""];
   return filtered.map((node) =>
-    normalizeBlockMarkdown(slate_to_markdown([node], { cache })),
+    normalizeBlockMarkdown(
+      slate_to_markdown([node], { cache, preserveBlankLines: false }),
+    ),
   );
 }
 
@@ -151,6 +154,7 @@ interface BlockRowEditorProps {
     gap: { index: number; side: "before" | "after" },
     initialText?: string,
   ) => void;
+  preserveBlankLines: boolean;
   registerEditor: (index: number, editor: SlateEditor) => void;
   unregisterEditor: (index: number, editor: SlateEditor) => void;
 }
@@ -172,6 +176,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       setGapCursor,
       onNavigate,
       onInsertGap,
+      preserveBlankLines,
       registerEditor,
       unregisterEditor,
     } = props;
@@ -188,6 +193,10 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       ed.syncCache = syncCacheRef.current;
       return ed;
     }, []);
+
+    useEffect(() => {
+      (editor as SlateEditor).preserveBlankLines = preserveBlankLines;
+    }, [editor, preserveBlankLines]);
 
     useEffect(() => {
       registerEditor(index, editor as SlateEditor);
@@ -239,12 +248,13 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         const nextMarkdown = normalizeBlockMarkdown(
           slate_to_markdown(newValue, {
             cache: syncCacheRef.current,
+            preserveBlankLines,
           }),
         );
         lastMarkdownRef.current = nextMarkdown;
         onChangeMarkdown(index, nextMarkdown);
       },
-      [index, onChangeMarkdown, read_only],
+      [index, onChangeMarkdown, preserveBlankLines, read_only],
     );
 
     const activeGap =
@@ -457,6 +467,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     minimal,
     divRef,
     controlRef,
+    preserveBlankLines: preserveBlankLinesProp,
   } = props;
   const { project_id, path, desc } = useFrameContext();
   const actions = actions0 ?? {};
@@ -464,6 +475,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const initialValue = value ?? "";
   const valueRef = useRef<string>(initialValue);
   valueRef.current = initialValue;
+  const preserveBlankLines = preserveBlankLinesProp ?? false;
 
   const [blocks, setBlocks] = useState<string[]>(() =>
     splitMarkdownToBlocks(initialValue),
@@ -799,6 +811,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         setGapCursor={setGapCursor}
         onNavigate={focusBlock}
         onInsertGap={insertBlockAtGap}
+        preserveBlankLines={preserveBlankLines}
         registerEditor={registerEditor}
         unregisterEditor={unregisterEditor}
       />

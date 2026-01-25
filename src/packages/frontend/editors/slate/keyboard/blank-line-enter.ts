@@ -9,6 +9,9 @@ import { containingBlock } from "../slate-util";
 import { isAtBeginningOfBlock } from "../control";
 
 export function handleBlankLineEnter(editor: Editor): boolean {
+  if ((editor as { preserveBlankLines?: boolean }).preserveBlankLines === false) {
+    return false;
+  }
   const blockEntry = containingBlock(editor);
   const block = blockEntry?.[0];
   const blockPath = blockEntry?.[1] as Path | undefined;
