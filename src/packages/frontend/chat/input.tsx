@@ -102,7 +102,17 @@ export default function ChatInput({
     // thus unmounting and remounting the currently editing message (due to virtualization).
     // See https://github.com/sagemathinc/cocalc/issues/6415
     const input = (dbInput ?? propsInput) ?? "";
-    if (input !== currentInputRef.current && isFocusedRef.current) {
+    const current = currentInputRef.current ?? "";
+    const focused = isFocusedRef.current;
+    const shouldPrefill =
+      current.trim().length === 0 && input.trim().length > 0;
+    const shouldClear = input === "" && current !== "";
+    if (focused && input !== current && !shouldPrefill && !shouldClear) {
+      pendingRemoteInputRef.current = input;
+      pendingRemoteAtRef.current = Date.now();
+      return;
+    }
+    if (focused && input !== current) {
       controlRef.current?.allowNextValueUpdateWhileFocused?.();
     }
     setInput(input);
