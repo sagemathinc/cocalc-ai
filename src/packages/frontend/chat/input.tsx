@@ -82,6 +82,8 @@ export default function ChatInput({
   const [input, setInput] = useState<string>("");
   const isFocusedRef = useRef<boolean>(false);
   const pendingRemoteInputRef = useRef<string | null>(null);
+  const pendingRemoteAtRef = useRef<number>(0);
+  const lastLocalEditAtRef = useRef<number>(0);
 
   const getDraftInput = useCallback(() => {
     const rec = syncdb?.get_one({
@@ -207,6 +209,7 @@ export default function ChatInput({
       if (isFocusedRef.current && input !== currentInputRef.current) {
         // Defer draft updates while focused to avoid overwriting local typing.
         pendingRemoteInputRef.current = input;
+        pendingRemoteAtRef.current = Date.now();
         return;
       }
       if (input != lastSavedRef.current) {
@@ -253,7 +256,9 @@ export default function ChatInput({
         if (pendingRemoteInputRef.current != null) {
           const pending = pendingRemoteInputRef.current;
           pendingRemoteInputRef.current = null;
-          if (pending !== currentInputRef.current) {
+          if (lastLocalEditAtRef.current > pendingRemoteAtRef.current) {
+            saveChat.flush?.();
+          } else if (pending !== currentInputRef.current) {
             setInput(pending);
             currentInputRef.current = pending;
             lastSavedRef.current = pending;
@@ -269,6 +274,7 @@ export default function ChatInput({
       submitMentionsRef={submitMentionsRef}
       onChange={(input) => {
         currentInputRef.current = input;
+        lastLocalEditAtRef.current = Date.now();
         /* BUG: in Markdown mode this stops getting
         called after you paste in an image.  It works
         fine in Slate/Text mode. See
@@ -281,6 +287,7 @@ export default function ChatInput({
         setInput("");
         currentInputRef.current = "";
         lastSavedRef.current = "";
+        lastLocalEditAtRef.current = Date.now();
         saveChat("");
         on_send(input);
       }}
