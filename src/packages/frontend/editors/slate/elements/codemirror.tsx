@@ -233,20 +233,39 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
     }, [editor, elementPath, focusEditor]);
 
     useEffect(() => {
-      if (!isFocused) return;
       const handlePointerDown = (event: MouseEvent) => {
-        const wrapper = cmRef.current?.getWrapperElement();
+        const cm = cmRef.current;
+        if (!cm) return;
+        const wrapper = cm.getWrapperElement?.();
         if (!wrapper) return;
+        const hasFocus = cm.hasFocus?.() ?? isFocused;
+        if (!hasFocus) return;
         if (event.target instanceof Node && wrapper.contains(event.target)) {
           return;
         }
         editor.setIgnoreSelection(false);
+        setIsFocused(false);
+        const input = cm.getInputField?.();
+        if (input?.blur) {
+          input.blur();
+        } else {
+          (wrapper as any)?.blur?.();
+        }
+        if (event.target instanceof Node && ReactEditor.hasTarget(editor, event.target)) {
+          queueMicrotask(() => {
+            try {
+              ReactEditor.focus(editor);
+            } catch {
+              // ignore focus failures
+            }
+          });
+        }
       };
       document.addEventListener("pointerdown", handlePointerDown, true);
       return () => {
         document.removeEventListener("pointerdown", handlePointerDown, true);
       };
-    }, [isFocused, editor]);
+    }, [editor, isFocused]);
 
     // If the info line changes update the mode.
     useEffect(() => {
