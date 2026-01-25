@@ -211,9 +211,6 @@ export class ConatClient extends EventEmitter {
     if (!hostInfo) {
       return "";
     }
-    if (hostInfo.get("ready") === false) {
-      return "";
-    }
     const localProxy = hostInfo.get("local_proxy");
     if (localProxy && typeof window !== "undefined") {
       const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";

@@ -16,6 +16,7 @@ import isAdmin from "@cocalc/server/accounts/is-admin";
 import { enqueueCloudVmWorkOnce } from "@cocalc/server/cloud/db";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
 const logger = getLogger("hub:servers:app:self-host-connector");
 
@@ -117,6 +118,8 @@ export default function init(router: Router) {
         return;
       }
       const launchpad = getLaunchpadLocalConfig("local");
+      const { project_hosts_self_host_connector_version } =
+        await getServerSettings();
       const sshHost =
         process.env.COCALC_SSHD_HOST ??
         process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
@@ -125,6 +128,8 @@ export default function init(router: Router) {
         pairing_token: tokenInfo.token,
         expires: tokenInfo.expires,
         connector_id: tokenInfo.connector_id,
+        connector_version:
+          project_hosts_self_host_connector_version?.trim() || undefined,
         launchpad: {
           http_port: launchpad.http_port,
           https_port: launchpad.https_port,

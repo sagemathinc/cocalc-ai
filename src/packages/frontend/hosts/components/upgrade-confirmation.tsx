@@ -8,9 +8,5 @@ export const UpgradeConfirmContent: React.FC = () => (
       <li>Workspace containers keep running uninterrupted.</li>
       <li>All users should see websocket reconnects.</li>
     </ul>
-    <div style={{ marginTop: 8 }}>
-      Currently interrupted: Codex agent turns, and project
-      start/backup/restore/move operations.
-    </div>
   </div>
 );

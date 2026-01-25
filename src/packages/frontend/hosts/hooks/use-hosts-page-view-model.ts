@@ -359,6 +359,18 @@ export const useHostsPageViewModel = () => {
   >();
   const [setupError, setSetupError] = React.useState<string | undefined>();
   const [setupLoading, setSetupLoading] = React.useState(false);
+  const [setupInstalling, setSetupInstalling] = React.useState(false);
+  const [setupConnectorVersion, setSetupConnectorVersion] = React.useState<
+    string | undefined
+  >();
+  const [setupNotice, setSetupNotice] = React.useState<string | undefined>();
+  const [setupUpgradePending, setSetupUpgradePending] = React.useState(false);
+  const [setupUpgradeFromVersion, setSetupUpgradeFromVersion] = React.useState<
+    string | undefined
+  >();
+  const [setupUpgradeRequestedAt, setSetupUpgradeRequestedAt] = React.useState<
+    number | undefined
+  >();
   const setupRequestRef = React.useRef(0);
   const [removeHostTarget, setRemoveHostTarget] = React.useState<
     Host | undefined
@@ -382,6 +394,7 @@ export const useHostsPageViewModel = () => {
         pairing_token: string;
         expires?: string;
         connector_id?: string;
+        connector_version?: string;
         launchpad?: {
           http_port?: number;
           https_port?: number;
@@ -404,6 +417,7 @@ export const useHostsPageViewModel = () => {
         setSetupToken(data.pairing_token);
         setSetupExpires(data.expires);
         setSetupLaunchpad(data.launchpad);
+        setSetupConnectorVersion(data.connector_version);
       } catch (err) {
         if (setupRequestRef.current !== requestId) return;
         console.error(err);
@@ -420,6 +434,38 @@ export const useHostsPageViewModel = () => {
     },
     [requestPairingToken],
   );
+
+  const installConnector = React.useCallback(
+    async (host: Host) => {
+      setSetupInstalling(true);
+      setSetupError(undefined);
+      const currentConnector = host.region
+        ? selfHostConnectorMap.get(host.region)
+        : undefined;
+      const currentVersion = currentConnector?.version;
+      setSetupUpgradeFromVersion(currentVersion);
+      setSetupUpgradePending(true);
+      setSetupUpgradeRequestedAt(Date.now());
+      try {
+        if (!hub.hosts.upgradeHostConnector) {
+          throw new Error("connector upgrade is not supported");
+        }
+        await hub.hosts.upgradeHostConnector({ id: host.id });
+        await loadSetupToken(host);
+        setSetupNotice("Connector upgrade started.");
+      } catch (err) {
+        setSetupError(
+          err instanceof Error && err.message
+            ? err.message
+            : "connector upgrade failed",
+        );
+        setSetupUpgradePending(false);
+      } finally {
+        setSetupInstalling(false);
+      }
+    },
+    [hub, loadSetupToken, selfHostConnectorMap],
+  );
   const openSetup = React.useCallback(
     (host: Host) => {
       setSetupHost(host);
@@ -427,7 +473,9 @@ export const useHostsPageViewModel = () => {
       setSetupToken(undefined);
       setSetupExpires(undefined);
       setSetupLaunchpad(undefined);
+      setSetupConnectorVersion(undefined);
       setSetupError(undefined);
+      setSetupNotice(undefined);
       void loadSetupToken(host);
     },
     [loadSetupToken],
@@ -438,8 +486,53 @@ export const useHostsPageViewModel = () => {
     setSetupToken(undefined);
     setSetupExpires(undefined);
     setSetupLaunchpad(undefined);
+    setSetupConnectorVersion(undefined);
     setSetupError(undefined);
+    setSetupNotice(undefined);
+    setSetupUpgradePending(false);
+    setSetupUpgradeFromVersion(undefined);
+    setSetupUpgradeRequestedAt(undefined);
+    setSetupInstalling(false);
   }, []);
+
+  React.useEffect(() => {
+    if (!setupUpgradePending || !setupHost) return;
+    const connector = setupHost.region
+      ? selfHostConnectorMap.get(setupHost.region)
+      : undefined;
+    const currentVersion = connector?.version;
+    if (!currentVersion) return;
+    if (!setupUpgradeFromVersion || currentVersion !== setupUpgradeFromVersion) {
+      setSetupNotice(`Connector upgraded to v${currentVersion}.`);
+      setSetupUpgradePending(false);
+      return;
+    }
+  }, [
+    setupHost,
+    setupUpgradePending,
+    setupUpgradeFromVersion,
+    selfHostConnectorMap,
+  ]);
+  React.useEffect(() => {
+    if (!setupUpgradePending || !setupUpgradeFromVersion || !setupHost) return;
+    const timer = setTimeout(() => {
+      const connector = setupHost.region
+        ? selfHostConnectorMap.get(setupHost.region)
+        : undefined;
+      const currentVersion = connector?.version;
+      if (currentVersion && currentVersion === setupUpgradeFromVersion) {
+        setSetupNotice(`Connector is already at v${currentVersion}.`);
+        setSetupUpgradePending(false);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [
+    setupHost,
+    setupUpgradePending,
+    setupUpgradeFromVersion,
+    setupUpgradeRequestedAt,
+    selfHostConnectorMap,
+  ]);
   const openRemove = React.useCallback((host: Host) => {
     setRemoveHostTarget(host);
     setRemoveOpen(true);
@@ -779,10 +872,13 @@ export const useHostsPageViewModel = () => {
     open: setupOpen,
     host: setupHost,
     loading: setupLoading,
+    installing: setupInstalling,
     error: setupError,
+    notice: setupNotice,
     token: setupToken,
     expires: setupExpires,
     launchpad: setupLaunchpad,
+    connectorVersion: setupConnectorVersion,
     baseUrl,
     insecure: connectorInsecure,
     connector:
@@ -791,6 +887,7 @@ export const useHostsPageViewModel = () => {
         : undefined,
     onCancel: closeSetup,
     onRefresh: refreshSetup,
+    onInstall: setupHost ? () => installConnector(setupHost) : undefined,
   };
 
   const removeVm = {

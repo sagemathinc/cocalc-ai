@@ -13,7 +13,6 @@ export function getProjectHostBase(project_id: string): string {
     redux.getActions("projects")?.ensure_host_info(host_id);
     return "";
   }
-  if (info.get("ready") === false) return "";
   if (info.get("local_proxy") && typeof window !== "undefined") {
     const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
     return `${window.location.origin}${basePath}/${project_id}`;
@@ -26,9 +25,34 @@ export function withProjectHostBase(
   url?: string,
 ): string | undefined {
   if (!url) return url;
-  if (/^https?:\/\//.test(url)) return url;
   const base = getProjectHostBase(project_id);
+  const isAbsolute = /^https?:\/\//.test(url);
+  const isBrowser = typeof window !== "undefined";
+  if (!base && isAbsolute && isBrowser) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") {
+        const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
+        const path = parsed.pathname + parsed.search + parsed.hash;
+        return `${window.location.origin}${basePath}/${project_id}${path}`;
+      }
+    } catch {
+      return url;
+    }
+  }
   if (!base) return url;
+  const isLocalProxy = isBrowser && base.startsWith(window.location.origin);
+  if (isAbsolute && isLocalProxy) {
+    try {
+      const parsed = new URL(url);
+      const baseTrimmed = base.endsWith("/") ? base.slice(0, -1) : base;
+      const path = parsed.pathname + parsed.search + parsed.hash;
+      return `${baseTrimmed}${path}`;
+    } catch {
+      return url;
+    }
+  }
+  if (isAbsolute) return url;
   const baseTrimmed = base.endsWith("/") ? base.slice(0, -1) : base;
   const path = url.startsWith("/") ? url : `/${url}`;
   return `${baseTrimmed}${path}`;

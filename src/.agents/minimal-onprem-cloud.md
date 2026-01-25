@@ -1,16 +1,40 @@
 # Support Minimal OnPrem Cloud
 
-Misc TODO -- blockers currently broken in local network mode:
+## TODO:
+
+- [ ] make btrfs disk image size a function of the available disk space.
+
+- [ ] harden bootstrap: Right now if I get this "Please contact your system administrator.
+  Add correct host key in /home/wstein/.ssh/known_hosts to get rid of this message.
+  Offending ECDSA key in /home/wstein/.ssh/known_hosts:41
+  Password authentication is disabled to avoid man-in-the-middle attacks." then the bootstrap properly fails, but there is NO indication whatever in the UI.  There should be a clear error. We did try to implement this, but there must bie a bug.
+
+- [ ] harden the connector:
+  - [ ] retry to keep ssh tunnels alive instead of just die
+  - [ ] keep intended state of project-host on disk and maintain it
+  - [ ] monitor project-host
+
+- [ ] implement ability to upgrade connector
+
+- [ ] switch from ws://[server]/{project_id} to ws://[server}/{host_id} because otherwise with 50 open projects on the same host, we would have 50 distinct websockets, which is not efficient.
+
+- [ ] app servers http server proxying of web servers running inside the project
+
+- [ ] backing up and restoring to rustic repo, so backup, file copy, etc. is all unlocked
+
+lifecycle questions:
+
+- provisioning of the sparse image file (size).
+- nail down "deprovisioning" and where data is stored.
+- how do we reuse an existing host? 
+- Should we move all config to be in ~/.local/share/cocalc... instead of system-wide, if possible?  
+- what happens on machine reboot
+
+---
 
 - [x] uploading/downloading files doesn't work -- wrong url "dropzone.js:9617  POST http://localhost:9200/upload?project_id=171411ac-45e1-4d80-982b-166e0cf1203d&path= 500 (Internal Server Error)"
 
-- [ ] backing up project to rustic repo
-
-- [ ] http server proxying of web servers running inside the project
-
 - [x] ssh to the project (need to provide the ip and port) in project settings
-
-
 
 ---
 

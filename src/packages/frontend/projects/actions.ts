@@ -500,6 +500,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
         await this.load_all_projects();
       }
     }
+    const host_id = store.getIn(["project_map", opts.project_id, "host_id"]);
+    if (typeof host_id === "string") {
+      // Ensure host routing info is ready before any conat project API calls.
+      await this.ensure_host_info(host_id);
+    }
     const project_actions = redux.getProjectActions(opts.project_id);
     let relation = store.get_my_group(opts.project_id);
     if (relation == null || ["public", "admin"].includes(relation)) {

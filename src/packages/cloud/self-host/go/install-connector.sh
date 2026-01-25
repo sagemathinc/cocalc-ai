@@ -9,6 +9,7 @@ Usage:
 
 Options:
   --name <name>                Optional connector name.
+  --version <version>          Install a specific connector version (falls back to latest if unavailable).
   --replace                    Allow replacing an existing connector config.
   --no-daemon                  Run in foreground (default is daemon).
   --no-service                 Skip installing an auto-start service.
@@ -42,6 +43,7 @@ INSTALL_SERVICE="1"
 INSECURE="0"
 SOFTWARE_BASE_URL="https://software.cocalc.ai/software"
 INSTALL_DIR=""
+VERSION=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -71,6 +73,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --name)
       NAME_ARG="${2:-}"
+      shift 2
+      ;;
+    --version)
+      VERSION="${2:-}"
       shift 2
       ;;
     --replace)
@@ -198,14 +204,39 @@ if [[ -f "$CONFIG_PATH" && "$REPLACE" != "1" ]]; then
   fi
 fi
 
-json="$(curl -fsSL "$LATEST_URL")"
-url="$(printf '%s' "$json" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-sha256="$(printf '%s' "$json" | sed -n 's/.*"sha256"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-
-if [[ -z "$url" || -z "$sha256" ]]; then
-  echo "Failed to parse latest manifest from $LATEST_URL" >&2
-  exit 2
+url=""
+sha256=""
+if [[ -n "$VERSION" ]]; then
+  if [[ "$OS" == "darwin" ]]; then
+    artifact_name="cocalc-self-host-connector-${VERSION}.pkg"
+  else
+    artifact_name="cocalc-self-host-connector-${VERSION}-${OS}-${ARCH}"
+  fi
+  url="${SOFTWARE_BASE_URL}/self-host/${VERSION}/${OS}-${ARCH}/${artifact_name}"
+  if ! sha256_raw="$(curl -fsSL "${url}.sha256" 2>/dev/null)"; then
+    echo "Connector version ${VERSION} not found; falling back to latest." >&2
+    VERSION=""
+  else
+    sha256="$(printf '%s' "$sha256_raw" | awk '{print $1}')"
+    if [[ -z "$sha256" ]]; then
+      echo "Connector version ${VERSION} is missing sha256; falling back to latest." >&2
+      VERSION=""
+    fi
+  fi
 fi
+
+if [[ -z "$VERSION" ]]; then
+  json="$(curl -fsSL "$LATEST_URL")"
+  url="$(printf '%s' "$json" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  sha256="$(printf '%s' "$json" | sed -n 's/.*"sha256"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+
+  if [[ -z "$url" || -z "$sha256" ]]; then
+    echo "Failed to parse latest manifest from $LATEST_URL" >&2
+    exit 2
+  fi
+fi
+
+echo "Installing connector ${VERSION:-latest} for ${OS}/${ARCH}."
 
 tmp_dir="$(mktemp -d)"
 cleanup() {

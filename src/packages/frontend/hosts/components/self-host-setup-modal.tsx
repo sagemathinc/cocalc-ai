@@ -6,6 +6,7 @@ type ConnectorInfo = {
   id: string;
   name?: string;
   last_seen?: string;
+  version?: string;
 };
 
 type SelfHostSetupModalProps = {
@@ -22,11 +23,15 @@ type SelfHostSetupModalProps = {
     ssh_user?: string;
     ssh_host?: string;
   };
+  connectorVersion?: string;
+  installing?: boolean;
   loading: boolean;
   error?: string;
+  notice?: string;
   insecure?: boolean;
   onCancel: () => void;
   onRefresh: () => void;
+  onInstall?: () => void;
 };
 
 export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
@@ -37,11 +42,15 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
   token,
   expires,
   launchpad,
+  connectorVersion,
+  installing,
   loading,
   error,
+  notice,
   insecure,
   onCancel,
   onRefresh,
+  onInstall,
 }) => {
   const connectorId = connector?.id ?? host?.region ?? "n/a";
   const connectorName = connector?.name ? `${connector.name} (${connectorId})` : connectorId;
@@ -110,11 +119,15 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
     sshPortValue != null ? ` --ssh-port ${sshPortValue}` : "";
   const sshUser = sshUserValue ? ` --ssh-user ${sshUserValue}` : "";
   const sshNoStrict = " --ssh-no-strict-host-key-checking";
+  const versionFlag = connectorVersion
+    ? ` --version ${connectorVersion}`
+    : "";
   const installCommand = token
     ? useSshPairing
-      ? `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --ssh-host ${sshHost}${sshPort}${sshUser} --token ${token} --name ${quoteShell(safeName)}${sshNoStrict}`
-      : `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --base-url ${base} --token ${token} --name ${quoteShell(safeName)}${insecureFlag}`
+      ? `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --ssh-host ${sshHost}${sshPort}${sshUser} --token ${token} --name ${quoteShell(safeName)}${sshNoStrict}${versionFlag}`
+      : `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --base-url ${base} --token ${token} --name ${quoteShell(safeName)}${insecureFlag}${versionFlag}`
     : undefined;
+  const [showCommand, setShowCommand] = React.useState(false);
 
   React.useEffect(() => {
     if (!open || !expires) return;
@@ -132,6 +145,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
       open={open}
       title="Set up your self-hosted connector"
       onCancel={onCancel}
+      width={650}
       footer={[
         <Button key="close" type="primary" onClick={onCancel}>
           Done
@@ -150,12 +164,26 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
             Multipass (free, open-source, and easy to install).
           </Typography.Paragraph>
         )}
-        <Typography.Paragraph type="secondary">
-          Supported on macOS and Linux only (Windows support is planned).
-        </Typography.Paragraph>
+        {isDirect ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Direct install requires Ubuntu 24.x or newer"
+            description="This host must be running Ubuntu Linux 24.x (or newer). Other Linux distributions are not supported yet."
+          />
+        ) : (
+          <Typography.Paragraph type="secondary">
+            Supported on macOS and Linux only (Windows support is planned).
+          </Typography.Paragraph>
+        )}
         <Typography.Paragraph>
           Connector ID: <Typography.Text code>{connectorName}</Typography.Text>
         </Typography.Paragraph>
+        {connector?.version && (
+          <Typography.Paragraph type="secondary">
+            Connector version: {connector.version}
+          </Typography.Paragraph>
+        )}
         {lastSeen && (
           <Typography.Paragraph type="secondary">
             Last seen: {lastSeen}
@@ -175,7 +203,10 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
           </Typography.Paragraph>
         )}
         <Typography.Paragraph>
-          {isDirect ? "1" : "2"}) Copy/paste this command:
+          {isDirect ? "1" : "2"}){" "}
+          {useSshPairing && onInstall && hasSshTarget
+            ? "Upgrade connector automatically:"
+            : "Copy/paste this command:"}
         </Typography.Paragraph>
         {useSshPairing && !hasSshTarget && (
           <Alert
@@ -202,51 +233,124 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
             }
           />
         )}
-        {installCommand && (
+        {notice && (
+          <Alert type="success" showIcon message={notice} />
+        )}
+        {installCommand && useSshPairing && onInstall && hasSshTarget ? (
           <>
-            <Typography.Paragraph copyable={{ text: installCommand }}>
-              <pre
-                style={{
-                  margin: 0,
-                  padding: "10px 12px",
-                  background: "#f5f5f5",
-                  border: "1px solid #e6e6e6",
-                  borderRadius: 6,
-                  fontSize: 12,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-                }}
-              >
-                {installCommand}
-              </pre>
-            </Typography.Paragraph>
-            {expires && (
-              <Typography.Paragraph type="secondary">
-                Token expires: {new Date(expires).toLocaleString()}
-              </Typography.Paragraph>
+            <Button
+              type="primary"
+              onClick={onInstall}
+              disabled={loading || installing}
+              loading={installing}
+            >
+              Upgrade connector
+            </Button>
+            <Button type="link" onClick={() => setShowCommand((v) => !v)}>
+              {showCommand ? "Hide install command" : "Show install command"}
+            </Button>
+            {showCommand && (
+              <>
+                <Typography.Paragraph copyable={{ text: installCommand }}>
+                  <pre
+                    style={{
+                      margin: 0,
+                      padding: "10px 12px",
+                      background: "#f5f5f5",
+                      border: "1px solid #e6e6e6",
+                      borderRadius: 6,
+                      fontSize: 12,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      fontFamily:
+                        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+                    }}
+                  >
+                    {installCommand}
+                  </pre>
+                </Typography.Paragraph>
+                {expires && (
+                  <Typography.Paragraph type="secondary">
+                    Token expires: {new Date(expires).toLocaleString()}
+                  </Typography.Paragraph>
+                )}
+                <Typography.Paragraph type="secondary">
+                  Logs:
+                  <br />
+                  Linux:{" "}
+                  <Typography.Text code>
+                    journalctl --user -u cocalc-self-host-connector.service -f
+                  </Typography.Text>
+                  <br />
+                  macOS:{" "}
+                  <Typography.Text code>
+                    ~/Library/Logs/cocalc-self-host-connector.log
+                  </Typography.Text>
+                </Typography.Paragraph>
+                <Typography.Paragraph type="secondary">
+                  Manual start/stop (if needed):{" "}
+                  <Typography.Text code>
+                    cocalc-self-host-connector run --daemon
+                  </Typography.Text>
+                  {" / "}
+                  <Typography.Text code>
+                    cocalc-self-host-connector stop
+                  </Typography.Text>
+                </Typography.Paragraph>
+              </>
             )}
-            <Typography.Paragraph type="secondary">
-              Logs:
-              <br />
-              Linux:{" "}
-              <Typography.Text code>
-                journalctl --user -u cocalc-self-host-connector.service -f
-              </Typography.Text>
-              <br />
-              macOS:{" "}
-              <Typography.Text code>
-                ~/Library/Logs/cocalc-self-host-connector.log
-              </Typography.Text>
-            </Typography.Paragraph>
-            <Typography.Paragraph type="secondary">
-              Manual start/stop (if needed):{" "}
-              <Typography.Text code>cocalc-self-host-connector run --daemon</Typography.Text>
-              {" / "}
-              <Typography.Text code>cocalc-self-host-connector stop</Typography.Text>
-            </Typography.Paragraph>
           </>
+        ) : (
+          installCommand && (
+            <>
+              <Typography.Paragraph copyable={{ text: installCommand }}>
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: "10px 12px",
+                    background: "#f5f5f5",
+                    border: "1px solid #e6e6e6",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontFamily:
+                      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+                  }}
+                >
+                  {installCommand}
+                </pre>
+              </Typography.Paragraph>
+              {expires && (
+                <Typography.Paragraph type="secondary">
+                  Token expires: {new Date(expires).toLocaleString()}
+                </Typography.Paragraph>
+              )}
+              <Typography.Paragraph type="secondary">
+                Logs:
+                <br />
+                Linux:{" "}
+                <Typography.Text code>
+                  journalctl --user -u cocalc-self-host-connector.service -f
+                </Typography.Text>
+                <br />
+                macOS:{" "}
+                <Typography.Text code>
+                  ~/Library/Logs/cocalc-self-host-connector.log
+                </Typography.Text>
+              </Typography.Paragraph>
+              <Typography.Paragraph type="secondary">
+                Manual start/stop (if needed):{" "}
+                <Typography.Text code>
+                  cocalc-self-host-connector run --daemon
+                </Typography.Text>
+                {" / "}
+                <Typography.Text code>
+                  cocalc-self-host-connector stop
+                </Typography.Text>
+              </Typography.Paragraph>
+            </>
+          )
         )}
         {!loading && !error && !installCommand && (
           <Button onClick={onRefresh}>Regenerate token</Button>

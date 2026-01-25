@@ -275,6 +275,7 @@ export async function runConnectorInstallOverSsh(opts: {
   pairing_token: string;
   name?: string;
   ssh_port: number;
+  version?: string;
 }): Promise<void> {
   const target = parseSshTarget(opts.ssh_target);
   if (!target) {
@@ -301,10 +302,17 @@ export async function runConnectorInstallOverSsh(opts: {
     "--ssh-no-strict-host-key-checking",
     "--replace",
   ];
+  if (opts.version) {
+    installCmdParts.push("--version", opts.version);
+  }
   if (opts.name) {
     installCmdParts.push("--name", opts.name);
   }
-  const installCmd = `set -euo pipefail; ${argsJoin(installCmdParts)}`;
+  const lingerCmd =
+    'command -v loginctl >/dev/null 2>&1 && sudo -n loginctl enable-linger "$USER"';
+  const installCmd = `set -euo pipefail; ${argsJoin(
+    installCmdParts,
+  )} && ${lingerCmd}`;
   const args: string[] = [
     "-o",
     "BatchMode=yes",

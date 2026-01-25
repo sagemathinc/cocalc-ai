@@ -84,6 +84,7 @@ type InstanceState struct {
 	LastIPv4  []string `json:"last_ipv4,omitempty"`
 	SelfHostKind string `json:"self_host_kind,omitempty"`
 	SshUser   string   `json:"ssh_user,omitempty"`
+	DesiredState string `json:"desired_state,omitempty"`
 }
 
 type multipassResult struct {
@@ -776,6 +777,35 @@ func startSshTunnel(cfg SshTunnelConfig, connectorToken string) (*SshTunnelHandl
 	return &SshTunnelHandle{done: done, close: closeFn}, nil
 }
 
+func maintainSshTunnel(cfg SshTunnelConfig, connectorToken string) {
+	go func() {
+		backoff := time.Second
+		maxBackoff := 30 * time.Second
+		for {
+			handle, err := startSshTunnel(cfg, connectorToken)
+			if err != nil {
+				logLine("ssh tunnel failed", map[string]interface{}{
+					"error": err.Error(),
+				})
+				time.Sleep(backoff)
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+			backoff = time.Second
+			if handle != nil {
+				if err := handle.Wait(); err != nil {
+					logLine("ssh tunnel exited", map[string]interface{}{"error": err.Error()})
+				} else {
+					logLine("ssh tunnel exited", map[string]interface{}{"status": "ok"})
+				}
+			}
+		}
+	}()
+}
+
 func parsePID(raw string) (int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -794,6 +824,20 @@ func processAlive(pid int) bool {
 		return false
 	}
 	return syscall.Kill(pid, 0) == nil
+}
+
+func normalizeState(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	state := strings.ToLower(raw)
+	if state == "running" {
+		return "running"
+	}
+	if state == "stopped" {
+		return "stopped"
+	}
+	return state
 }
 
 func normalizeBaseURL(raw string) string {
@@ -852,23 +896,11 @@ func runLoop(cfg Config, cfgPath string) {
 		fail("connector config missing base_url or connector_token (run pair first)")
 	}
 	if cfg.SshTunnel != nil {
-		handle, err := startSshTunnel(*cfg.SshTunnel, cfg.ConnectorToken)
-		if err != nil {
-			fail(fmt.Sprintf("ssh tunnel failed: %v", err))
-		}
-		if handle != nil {
-			go func() {
-				if err := handle.Wait(); err != nil {
-					logLine("ssh tunnel exited", map[string]interface{}{"error": err.Error()})
-				} else {
-					logLine("ssh tunnel exited", map[string]interface{}{"status": "ok"})
-				}
-				os.Exit(1)
-			}()
-		}
+		maintainSshTunnel(*cfg.SshTunnel, cfg.ConnectorToken)
 	}
 	statePath := statePathFromConfig(cfgPath)
 	state := loadState(statePath)
+	reconcileDesiredState(state, statePath)
 	baseInterval := cfg.PollIntervalSeconds
 	if baseInterval <= 0 {
 		baseInterval = defaultPollSeconds
@@ -918,6 +950,57 @@ func runLoop(cfg Config, cfgPath string) {
 	}
 }
 
+func reconcileDesiredState(state State, statePath string) {
+	updated := false
+	for hostID, instance := range state.Instances {
+		if normalizeState(instance.DesiredState) != "running" {
+			continue
+		}
+		switch instance.SelfHostKind {
+		case "direct":
+			if directStatus() == "running" {
+				continue
+			}
+			if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
+				logLine("auto-start direct host failed", map[string]interface{}{
+					"host_id": hostID,
+					"error":   err.Error(),
+				})
+				continue
+			}
+			instance.LastState = "running"
+			state.Instances[hostID] = instance
+			updated = true
+		case "multipass":
+			if instance.Name == "" {
+				continue
+			}
+			info := multipassInfo(instance.Name)
+			if !info.Exists {
+				continue
+			}
+			if normalizeState(info.State) != "running" {
+				result := runMultipass([]string{"start", instance.Name})
+				if result.Code != 0 {
+					logLine("auto-start multipass host failed", map[string]interface{}{
+						"host_id": hostID,
+						"error":   strings.TrimSpace(result.Stderr),
+					})
+					continue
+				}
+				info = multipassInfo(instance.Name)
+			}
+			instance.LastState = normalizeState(info.State)
+			instance.LastIPv4 = info.IPv4
+			state.Instances[hostID] = instance
+			updated = true
+		}
+	}
+	if updated {
+		saveState(statePath, state)
+	}
+}
+
 func connectorMode(cfg Config) string {
 	if cfg.SshTunnel != nil {
 		return "ssh-tunnel"
@@ -930,13 +1013,13 @@ func executeCommand(cmd CommandEnvelope, state State, statePath string) (interfa
 	case "create":
 		return handleCreate(cmd.Payload, state, statePath)
 	case "start":
-		return handleStart(cmd.Payload, state)
+		return handleStart(cmd.Payload, state, statePath)
 	case "stop":
-		return handleStop(cmd.Payload, state)
+		return handleStop(cmd.Payload, state, statePath)
 	case "restart":
-		return handleRestart(cmd.Payload, state)
+		return handleRestart(cmd.Payload, state, statePath)
 	case "hard_restart":
-		return handleHardRestart(cmd.Payload, state)
+		return handleHardRestart(cmd.Payload, state, statePath)
 	case "delete":
 		return handleDelete(cmd.Payload, state, statePath)
 	case "status":
@@ -990,6 +1073,9 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 
 	if rawKind == "direct" {
 		if existing, ok := state.Instances[hostID]; ok && existing.SelfHostKind == "direct" {
+			existing.DesiredState = "running"
+			state.Instances[hostID] = existing
+			saveState(statePath, state)
 			return map[string]interface{}{
 				"name":  existing.Name,
 				"state": "running",
@@ -1031,6 +1117,7 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 			LastState: "running",
 			SelfHostKind: "direct",
 			SshUser:   sshUser,
+			DesiredState: "running",
 		}
 		saveState(statePath, state)
 		return map[string]interface{}{"name": name, "state": "running"}, nil
@@ -1038,12 +1125,14 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 
 	info := multipassInfo(name)
 	if info.Exists {
+		normalizedState := normalizeState(info.State)
 		state.Instances[hostID] = InstanceState{
 			Name:      name,
 			Image:     image,
-			LastState: info.State,
+			LastState: normalizedState,
 			LastIPv4:  info.IPv4,
 			SelfHostKind: "multipass",
+			DesiredState: normalizedState,
 		}
 		saveState(statePath, state)
 		return map[string]interface{}{"name": name, "state": info.State, "ipv4": info.IPv4}, nil
@@ -1104,13 +1193,15 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 	}
 
 	info = multipassInfo(name)
+	normalizedState := normalizeState(info.State)
 	state.Instances[hostID] = InstanceState{
 		Name:      name,
 		Image:     image,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		LastState: info.State,
+		LastState: normalizedState,
 		LastIPv4:  info.IPv4,
 		SelfHostKind: "multipass",
+		DesiredState: normalizedState,
 	}
 	saveState(statePath, state)
 	return map[string]interface{}{"name": name, "state": info.State, "ipv4": info.IPv4}, nil
@@ -1190,13 +1281,20 @@ func runProjectHostDaemon(action, sshUser string) error {
 	return nil
 }
 
-func handleRestart(payload map[string]interface{}, state State) (interface{}, error) {
+func handleRestart(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
 	if instance, ok := loadDirectInstance(payload, state); ok {
+		hostID := toString(payload["host_id"])
 		if err := runProjectHostDaemon("stop", instance.SshUser); err != nil {
 			return nil, err
 		}
 		if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
 			return nil, err
+		}
+		instance.DesiredState = "running"
+		instance.LastState = "running"
+		if hostID != "" {
+			state.Instances[hostID] = instance
+			saveState(statePath, state)
 		}
 		return map[string]interface{}{"name": instance.Name, "state": directStatus()}, nil
 	}
@@ -1211,15 +1309,22 @@ func handleRestart(payload map[string]interface{}, state State) (interface{}, er
 	return map[string]interface{}{"name": name}, nil
 }
 
-func handleHardRestart(payload map[string]interface{}, state State) (interface{}, error) {
+func handleHardRestart(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
 	// Multipass does not differentiate between soft and hard restart; use restart.
-	return handleRestart(payload, state)
+	return handleRestart(payload, state, statePath)
 }
 
-func handleStart(payload map[string]interface{}, state State) (interface{}, error) {
+func handleStart(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
 	if instance, ok := loadDirectInstance(payload, state); ok {
+		hostID := toString(payload["host_id"])
 		if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
 			return nil, err
+		}
+		instance.DesiredState = "running"
+		instance.LastState = "running"
+		if hostID != "" {
+			state.Instances[hostID] = instance
+			saveState(statePath, state)
 		}
 		return map[string]interface{}{"name": instance.Name, "state": directStatus()}, nil
 	}
@@ -1240,13 +1345,30 @@ func handleStart(payload map[string]interface{}, state State) (interface{}, erro
 		return nil, errors.New(strings.TrimSpace(result.Stderr))
 	}
 	ref := multipassInfo(name)
+	if hostID != "" {
+		instance := state.Instances[hostID]
+		instance.Name = name
+		instance.LastState = normalizeState(ref.State)
+		instance.LastIPv4 = ref.IPv4
+		instance.SelfHostKind = "multipass"
+		instance.DesiredState = "running"
+		state.Instances[hostID] = instance
+		saveState(statePath, state)
+	}
 	return map[string]interface{}{"name": name, "state": ref.State, "ipv4": ref.IPv4}, nil
 }
 
-func handleStop(payload map[string]interface{}, state State) (interface{}, error) {
+func handleStop(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
 	if instance, ok := loadDirectInstance(payload, state); ok {
+		hostID := toString(payload["host_id"])
 		if err := runProjectHostDaemon("stop", instance.SshUser); err != nil {
 			return nil, err
+		}
+		instance.DesiredState = "stopped"
+		instance.LastState = "stopped"
+		if hostID != "" {
+			state.Instances[hostID] = instance
+			saveState(statePath, state)
 		}
 		return map[string]interface{}{"name": instance.Name, "state": directStatus()}, nil
 	}
@@ -1267,6 +1389,16 @@ func handleStop(payload map[string]interface{}, state State) (interface{}, error
 		return nil, errors.New(strings.TrimSpace(result.Stderr))
 	}
 	ref := multipassInfo(name)
+	if hostID != "" {
+		instance := state.Instances[hostID]
+		instance.Name = name
+		instance.LastState = normalizeState(ref.State)
+		instance.LastIPv4 = ref.IPv4
+		instance.SelfHostKind = "multipass"
+		instance.DesiredState = "stopped"
+		state.Instances[hostID] = instance
+		saveState(statePath, state)
+	}
 	return map[string]interface{}{"name": name, "state": ref.State, "ipv4": ref.IPv4}, nil
 }
 
@@ -1312,11 +1444,14 @@ func handleStatus(payload map[string]interface{}, state State, statePath string)
 		return map[string]interface{}{"name": name, "state": "not_found"}, nil
 	}
 	if hostID != "" {
-		state.Instances[hostID] = InstanceState{
-			Name:      name,
-			LastState: info.State,
-			LastIPv4:  info.IPv4,
+		instance := state.Instances[hostID]
+		instance.Name = name
+		instance.LastState = normalizeState(info.State)
+		instance.LastIPv4 = info.IPv4
+		if instance.SelfHostKind == "" {
+			instance.SelfHostKind = "multipass"
 		}
+		state.Instances[hostID] = instance
 		saveState(statePath, state)
 	}
 	return map[string]interface{}{"name": name, "state": info.State, "ipv4": info.IPv4}, nil

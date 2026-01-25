@@ -262,6 +262,7 @@ export type SiteSettingsExtrasKeys =
   | "google_cloud_bigquery_detailed_billing_table"
   | "project_hosts_google_prefix"
   | "project_hosts_software_base_url"
+  | "project_hosts_self_host_connector_version"
   | "project_hosts_cloudflare_tunnel_enabled"
   | "project_hosts_cloudflare_tunnel_account_id"
   | "project_hosts_cloudflare_tunnel_api_token"
@@ -934,6 +935,14 @@ export const EXTRAS: SettingsExtras = {
     default: "https://software.cocalc.ai/software",
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
+    valid: () => true,
+  },
+  project_hosts_self_host_connector_version: {
+    name: "Project Hosts: Self-Host Connector Version",
+    desc: "Optional version pin for the self-host connector (leave blank to use latest).",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "On-Prem"],
     valid: () => true,
   },
   project_hosts_cloudflare_tunnel_enabled: {

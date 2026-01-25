@@ -438,15 +438,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <Space direction="vertical" size="small">
               <Typography.Text strong>Connector actions</Typography.Text>
               <Space wrap>
-                {selfHostAlphaEnabled && !autoSetup && (
-                  <Button
-                    size="small"
-                    disabled={hostOpActive}
-                    onClick={handleSetupClick}
-                  >
-                    Setup or reconnect (alpha)
-                  </Button>
-                )}
+                <Button
+                  size="small"
+                  disabled={hostOpActive}
+                  onClick={handleSetupClick}
+                >
+                  Setup or reconnect
+                </Button>
                 <Button
                   size="small"
                   danger

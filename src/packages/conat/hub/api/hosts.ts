@@ -241,12 +241,18 @@ export const hosts = {
   updateHostMachine: authFirstRequireAccount,
   deleteHost: authFirstRequireAccount,
   upgradeHostSoftware: authFirstRequireAccount,
+  upgradeHostConnector: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   updateCopyStatus: authFirstRequireHost,
 };
+
+export interface HostConnectorUpgradeRequest {
+  id: string;
+  version?: string;
+}
 
 export interface Hosts {
   listHosts: (opts: {
@@ -365,6 +371,11 @@ export interface Hosts {
     targets: HostSoftwareUpgradeTarget[];
     base_url?: string;
   }) => Promise<HostLroResponse>;
+  upgradeHostConnector: (opts: {
+    account_id?: string;
+    id: string;
+    version?: string;
+  }) => Promise<void>;
   deleteHost: (opts: {
     account_id?: string;
     id: string;

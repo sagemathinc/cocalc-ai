@@ -257,6 +257,7 @@ type SelfHostConnector = {
   id: string;
   name?: string;
   last_seen?: string;
+  version?: string;
 };
 
 type SelfHostMode = "local" | "cloudflare";
@@ -273,8 +274,10 @@ const SELF_HOST_KIND_LABELS: Record<SelfHostKind, string> = {
   direct: "Direct",
 };
 
-const formatConnectorLabel = (connector: SelfHostConnector) =>
-  connector.name || connector.id;
+const formatConnectorLabel = (connector: SelfHostConnector) => {
+  const base = connector.name || connector.id;
+  return connector.version ? `${base} (v${connector.version})` : base;
+};
 
 export const getSelfHostConnectorOptions = (
   catalog?: HostCatalog,
