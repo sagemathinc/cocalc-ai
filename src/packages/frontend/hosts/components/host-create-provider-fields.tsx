@@ -4,6 +4,7 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { mapCloudRegionToR2Region, R2_REGION_LABELS } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import type { HostFieldId } from "../providers/registry";
+import { SshTargetLabel } from "./ssh-target-help";
 
 const MIN_DISK_SIZE = 50;
 const MAX_DISK_SIZE = 10_000;
@@ -282,8 +283,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
       {selectedProvider === "self-host" && (
         <Form.Item
           name="self_host_ssh_target"
-          label="SSH target"
-          tooltip="Set this to user@host[:port] (or an ssh-config name) so that CoCalc can install the connector on the remote machine. It must be possible to ssh to that machine without having to type a password."
+          label={<SshTargetLabel label="SSH target" />}
           rules={
             requireSshTarget
               ? [

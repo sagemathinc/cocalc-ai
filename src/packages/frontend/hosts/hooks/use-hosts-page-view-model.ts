@@ -503,6 +503,7 @@ export const useHostsPageViewModel = () => {
     refresh,
     fieldOptions,
     catalog,
+    onHostOp: trackHostOp,
   });
 
   const createVm = useHostCreateViewModel({

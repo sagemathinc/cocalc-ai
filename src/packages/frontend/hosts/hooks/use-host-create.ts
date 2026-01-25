@@ -3,11 +3,12 @@ import {
   buildCreateHostPayload,
   type FieldOptionsMap,
 } from "../providers/registry";
-import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import type { Host, HostCatalog, HostLroResponse } from "@cocalc/conat/hub/api/hosts";
 
 type HubClient = {
   hosts: {
-    createHost: (opts: any) => Promise<unknown>;
+    createHost: (opts: any) => Promise<Host>;
+    startHost?: (opts: { id: string }) => Promise<HostLroResponse>;
   };
 };
 
@@ -16,6 +17,7 @@ type UseHostCreateOptions = {
   refresh: () => Promise<unknown>;
   fieldOptions: FieldOptionsMap;
   catalog?: HostCatalog;
+  onHostOp?: (host_id: string, op: HostLroResponse) => void;
 };
 
 export const useHostCreate = ({
@@ -23,6 +25,7 @@ export const useHostCreate = ({
   refresh,
   fieldOptions,
   catalog,
+  onHostOp,
 }: UseHostCreateOptions) => {
   const [creating, setCreating] = useState(false);
 
@@ -31,7 +34,15 @@ export const useHostCreate = ({
     setCreating(true);
     try {
       const payload = buildCreateHostPayload(vals, { fieldOptions, catalog });
-      await hub.hosts.createHost(payload);
+      const created = await hub.hosts.createHost(payload);
+      const selfHostKind = payload?.machine?.metadata?.self_host_kind;
+      const shouldAutoStart =
+        payload?.machine?.cloud === "self-host" &&
+        (selfHostKind === "direct" || selfHostKind == null);
+      if (shouldAutoStart && created?.id && hub.hosts.startHost) {
+        const op = await hub.hosts.startHost({ id: created.id });
+        onHostOp?.(created.id, op);
+      }
       await refresh();
     } catch (err) {
       console.error(err);

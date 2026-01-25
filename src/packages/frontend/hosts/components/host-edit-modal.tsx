@@ -13,6 +13,7 @@ import {
   getProviderStorageSupport,
 } from "../providers/registry";
 import type { HostFieldId, ProviderSelection } from "../providers/registry";
+import { SshTargetLabel } from "./ssh-target-help";
 
 const NEBIUS_IO_M3_GB = 93;
 
@@ -515,9 +516,8 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
         )}
         {isSelfHost && (
           <Form.Item
-            label="SSH target (optional)"
+            label={<SshTargetLabel label="SSH target (optional)" />}
             name="self_host_ssh_target"
-            tooltip="Set this to user@host[:port] (or an ssh-config name) so that CoCalc can install the connector on the remote machine. It must be possible to ssh to that machine without having to type a password."
           >
             <Input placeholder="user@host[:port] or ssh-config name" />
           </Form.Item>
