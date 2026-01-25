@@ -20,6 +20,7 @@ import type {
   RenderChunkProps,
   RenderPlaceholderProps,
 } from "slate-react";
+import { ensurePoint, ensureRange } from "./slate-util";
 
 type ExtraEditorFields = {
   windowedListRef: { current: any };
@@ -58,10 +59,12 @@ const ensureEditorExtras = (editor: UpstreamReactEditor): ReactEditor => {
     e.ticks = 0;
   }
   if (e.setIgnoreSelection == null) {
-    e.setIgnoreSelection = () => undefined;
+    e.setIgnoreSelection = (value: boolean) => {
+      (e as any).__ignoreSelection = value;
+    };
   }
   if (e.getIgnoreSelection == null) {
-    e.getIgnoreSelection = () => false;
+    e.getIgnoreSelection = () => Boolean((e as any).__ignoreSelection);
   }
   if (e.scrollIntoDOM == null) {
     e.scrollIntoDOM = () => false;
@@ -89,22 +92,27 @@ export const ReactEditor = Object.assign(UpstreamReactEditor, {
     domPoint: Parameters<typeof UpstreamReactEditor.toSlatePoint>[1],
     options?: Parameters<typeof UpstreamReactEditor.toSlatePoint>[2],
   ) {
-    return baseToSlatePoint(editor, domPoint, {
+    const point = baseToSlatePoint(editor, domPoint, {
       exactMatch: false,
       suppressThrow: false,
       ...options,
     });
+    return ensurePoint(editor, point);
   },
   toSlateRange(
     editor: ReactEditor,
     domRange: Parameters<typeof UpstreamReactEditor.toSlateRange>[1],
     options?: Parameters<typeof UpstreamReactEditor.toSlateRange>[2],
   ): Range | null {
-    return baseToSlateRange(editor, domRange, {
+    if (editor.getIgnoreSelection?.()) {
+      return editor.selection ?? null;
+    }
+    const range = baseToSlateRange(editor, domRange, {
       exactMatch: false,
       suppressThrow: true,
       ...options,
     });
+    return range ? ensureRange(editor, range) : null;
   },
   isUsingWindowing(editor: ReactEditor): boolean {
     return !!editor.windowedListRef?.current;
