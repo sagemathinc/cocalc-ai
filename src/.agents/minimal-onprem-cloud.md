@@ -2,13 +2,13 @@
 
 TODO -- blockers currently broken in local network mode:
 
-- [ ] uploading/downloading files doesn't work -- wrong url "dropzone.js:9617  POST http://localhost:9200/upload?project_id=171411ac-45e1-4d80-982b-166e0cf1203d&path= 500 (Internal Server Error)"
+- [x] uploading/downloading files doesn't work -- wrong url "dropzone.js:9617  POST http://localhost:9200/upload?project_id=171411ac-45e1-4d80-982b-166e0cf1203d&path= 500 (Internal Server Error)"
 
 - [ ] backing up project to rustic repo
 
 - [ ] http server proxying of web servers running inside the project
 
-- [ ] ssh to the project (need to provide the ip and port) in project settings
+- [x] ssh to the project (need to provide the ip and port) in project settings
 
 ## Goal
 
@@ -401,4 +401,3 @@ Hub assigns two ports per host:
   - [ ] proxy apps (e.g., VSCode/Jupyter) running in a workspace
   - [ ] fix rustic backups (stop silent failures)
 - [ ] Further polish onboarding for new admins/users.
-

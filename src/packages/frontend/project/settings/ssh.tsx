@@ -10,6 +10,7 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { A, Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { Project } from "./types";
 import { lite } from "@cocalc/frontend/lite";
 
@@ -24,6 +25,11 @@ interface Props {
 export function SSHPanel({ project, mode = "project" }: Props) {
   const intl = useIntl();
   const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
+  const hostInfo = useHostInfo(project.get("host_id"));
+  const projectId = project.get("project_id") as string;
+  const sshServer = hostInfo?.get?.("ssh_server");
+  const hostName = hostInfo?.get?.("name");
+  const localProxy = !!hostInfo?.get?.("local_proxy");
 
   if (lite) {
     return null;
@@ -34,6 +40,29 @@ export function SSHPanel({ project, mode = "project" }: Props) {
     webapp_client.account_id as string,
     "ssh_keys",
   ]);
+  const sshInfo = (() => {
+    if (typeof sshServer !== "string") return null;
+    const trimmed = sshServer.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith("[")) {
+      const match = trimmed.match(/^\[(.*)\]:(\d+)$/);
+      if (match) {
+        return { host: match[1], port: match[2] };
+      }
+      return { host: trimmed };
+    }
+    const match = trimmed.match(/^(.*):(\d+)$/);
+    if (match) {
+      return { host: match[1], port: match[2] };
+    }
+    return { host: trimmed };
+  })();
+  const sshCommand =
+    sshInfo && sshInfo.host
+      ? sshInfo.port
+        ? `ssh -p ${sshInfo.port} ${projectId}@${sshInfo.host}`
+        : `ssh ${projectId}@${sshInfo.host}`
+      : null;
 
   return (
     <SSHKeyList
@@ -60,6 +89,23 @@ export function SSHPanel({ project, mode = "project" }: Props) {
           to connect via ssh. It is not necessary to restart the{" "}
           {projectLabelLower} after you add or remove a key.
         </p>
+        {sshCommand && (
+          <>
+            <p>
+              {localProxy
+                ? `SSH target (via hub${hostName ? ` · ${hostName}` : ""}):`
+                : `SSH target${hostName ? ` (${hostName})` : ""}:`}
+            </p>
+            <Paragraph>
+              <Text code>{sshCommand}</Text>
+            </Paragraph>
+            {localProxy && (
+              <Paragraph type="secondary">
+                This SSH target routes through the hub’s reverse tunnel.
+              </Paragraph>
+            )}
+          </>
+        )}
         <Paragraph>
           <A href="https://doc.cocalc.com/account/ssh.html">
             <Icon name="life-ring" /> Docs...
