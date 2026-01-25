@@ -67,7 +67,6 @@ import {
 import {
   ensureSelfHostReverseTunnel,
   runConnectorInstallOverSsh,
-  stopSelfHostReverseTunnel,
 } from "@cocalc/server/self-host/ssh-target";
 import {
   deleteCloudflareTunnel,
@@ -1239,10 +1238,6 @@ export async function stopHostInternal({
   const metadata = row.metadata ?? {};
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
-  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
-  if (machineCloud === "self-host" && sshTarget) {
-    stopSelfHostReverseTunnel(id);
-  }
   logStatusUpdate(id, "stopping", "api");
   await pool().query(
     `UPDATE project_hosts SET status=$2, last_seen=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
@@ -1390,12 +1385,6 @@ export async function forceDeprovisionHostInternal({
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  const sshTarget = String(
-    row.metadata?.machine?.metadata?.self_host_ssh_target ?? "",
-  ).trim();
-  if (machineCloud === "self-host" && sshTarget) {
-    stopSelfHostReverseTunnel(id);
-  }
   if (machineCloud !== "self-host") {
     throw new Error("force deprovision is only supported for self-hosted VMs");
   }
@@ -1432,12 +1421,6 @@ export async function removeSelfHostConnectorInternal({
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  const sshTarget = String(
-    row.metadata?.machine?.metadata?.self_host_ssh_target ?? "",
-  ).trim();
-  if (machineCloud === "self-host" && sshTarget) {
-    stopSelfHostReverseTunnel(id);
-  }
   if (machineCloud !== "self-host") {
     throw new Error("host is not self-hosted");
   }
@@ -1966,12 +1949,6 @@ export async function deleteHostInternal({
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
-  const sshTarget = String(
-    row.metadata?.machine?.metadata?.self_host_ssh_target ?? "",
-  ).trim();
-  if (machineCloud === "self-host" && sshTarget) {
-    stopSelfHostReverseTunnel(id);
-  }
   if (row.status === "deprovisioned") {
     await pool().query(
       `UPDATE project_hosts SET deleted=NOW(), updated=NOW() WHERE id=$1 AND deleted IS NULL`,

@@ -1,6 +1,6 @@
 # Support Minimal OnPrem Cloud
 
-TODO -- blockers currently broken in local network mode:
+Misc TODO -- blockers currently broken in local network mode:
 
 - [x] uploading/downloading files doesn't work -- wrong url "dropzone.js:9617  POST http://localhost:9200/upload?project_id=171411ac-45e1-4d80-982b-166e0cf1203d&path= 500 (Internal Server Error)"
 
@@ -9,6 +9,14 @@ TODO -- blockers currently broken in local network mode:
 - [ ] http server proxying of web servers running inside the project
 
 - [x] ssh to the project (need to provide the ip and port) in project settings
+
+
+
+---
+
+## Finish Direct Ssh Controlled Hosts
+
+---
 
 ## Goal
 
