@@ -67,6 +67,7 @@ import { setConatClient } from "@cocalc/conat/client";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { createProjectHostProxyHandlers } from "./proxy/project-host";
 import { maybeStartEmbeddedProjectHost } from "./servers/project-host";
+import { ensureSelfHostReverseTunnelsOnStartup } from "@cocalc/server/self-host/ssh-target";
 
 // Logger tagged with 'hub' for this file.
 const logger = getLogger("hub");
@@ -171,6 +172,7 @@ async function startServer(): Promise<void> {
   await load_server_settings_from_env(database);
   await maybeInitOnPremTls();
   await maybeStartLaunchpadOnPremServices();
+  await ensureSelfHostReverseTunnelsOnStartup();
 
   if (program.agentPort) {
     logger.info("Configure agent port");

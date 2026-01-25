@@ -226,6 +226,49 @@ export function stopSelfHostReverseTunnel(host_id: string): void {
   }
 }
 
+export async function ensureSelfHostReverseTunnelsOnStartup(): Promise<void> {
+  const config = getLaunchpadLocalConfig("local");
+  if (!config.sshd_port) {
+    logger.info("self-host reverse tunnels skipped (missing local sshd)", {
+      sshd_port: config.sshd_port,
+    });
+    return;
+  }
+  const { rows } = await getPool().query<{
+    id: string;
+    metadata: any;
+    status: string | null;
+  }>(
+    `SELECT id, metadata, status
+       FROM project_hosts
+      WHERE deleted IS NULL
+        AND (metadata->'machine'->>'cloud') = 'self-host'
+        AND COALESCE(metadata->'machine'->'metadata'->>'self_host_mode','local') = 'local'`,
+  );
+  if (!rows.length) {
+    return;
+  }
+  for (const row of rows) {
+    const sshTarget = String(
+      row.metadata?.machine?.metadata?.self_host_ssh_target ?? "",
+    ).trim();
+    if (!sshTarget) {
+      continue;
+    }
+    if (row.status && !["running", "active", "starting"].includes(row.status)) {
+      continue;
+    }
+    try {
+      await ensureSelfHostReverseTunnel({ host_id: row.id, ssh_target: sshTarget });
+    } catch (err) {
+      logger.warn("self-host reverse tunnel startup failed", {
+        host_id: row.id,
+        err,
+      });
+    }
+  }
+}
+
 export async function runConnectorInstallOverSsh(opts: {
   host_id: string;
   ssh_target: string;
