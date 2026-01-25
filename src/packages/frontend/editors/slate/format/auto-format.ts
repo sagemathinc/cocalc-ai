@@ -6,7 +6,7 @@
 import { withInsertText } from "./insert-text";
 import { withDeleteBackward } from "./delete-backward";
 import type { SlateEditor } from "../editable-markdown";
-import { Editor, Operation, Transforms, Path, Point, Text } from "slate";
+import { Editor, Operation, Transforms, Path, Point, Text, Element } from "slate";
 import { len } from "@cocalc/util/misc";
 import { markdown_to_slate } from "../markdown-to-slate";
 import { applyOperations } from "../operations";
@@ -240,18 +240,25 @@ function markdownAutoformatAt(
     focusEditorAt(editor, new_cursor);
   } else {
     // **NON-INLINE CASE**
-    // Remove the node with the text that we're autoformatting
-    // so the new doc replaces it.  NOTE that doing this works
-    // **much** better than selecting the corresponding text
-    // and letting insertNodes take care of it.
-    Transforms.removeNodes(editor, { at: path });
-    Transforms.insertNodes(editor, doc);
+    // Remove the containing paragraph (not just the text node) so the new
+    // block-level doc replaces it without leaving an empty paragraph.
+    const paragraphEntry = Editor.above(editor, {
+      at: path,
+      match: (node) => Element.isElement(node) && node.type === "paragraph",
+    });
+    const blockPath = paragraphEntry?.[1] ?? Path.parent(path);
+    Transforms.removeNodes(editor, { at: blockPath });
+    Transforms.insertNodes(editor, doc, { at: blockPath });
 
     // Normally just move the cursor beyond what was just
     // inserted, though sometimes it makes more sense to
     // focus it.
     const type = doc[0].type;
     const rules = getRules(type);
+    if (type === "bullet_list" || type === "ordered_list") {
+      const focus = Editor.start(editor, blockPath);
+      setSelectionAndFocus(editor, { focus, anchor: focus });
+    }
     if (!rules?.autoFocus) {
       // move cursor out of the newly created block element.
       Transforms.move(editor, { distance: 1 });
