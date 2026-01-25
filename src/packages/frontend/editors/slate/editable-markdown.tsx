@@ -52,7 +52,7 @@ import { markdown_to_slate } from "./markdown-to-slate";
 import { withNormalize } from "./normalize";
 import { applyOperations, preserveScrollPosition } from "./operations";
 import { withNonfatalRange } from "./patches";
-import { ensureDocNonempty } from "./padding";
+import { stripBlankParagraphs } from "./padding";
 import { withIsInline, withIsVoid } from "./plugins";
 import { getScrollState, setScrollState } from "./scroll";
 import { SearchHook, useSearch } from "./search";
@@ -97,14 +97,6 @@ const STYLE: CSS = {
   width: "100%",
   overflow: "auto",
 } as const;
-
-function stripBlankParagraphs(value: Descendant[]): Descendant[] {
-  const filtered = value.filter(
-    (node) => !(node?.["type"] === "paragraph" && node?.["blank"] === true),
-  );
-  ensureDocNonempty(filtered);
-  return filtered;
-}
 
 interface Props {
   value?: string;

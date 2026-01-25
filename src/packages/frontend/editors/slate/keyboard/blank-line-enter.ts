@@ -9,14 +9,24 @@ import { containingBlock } from "../slate-util";
 import { isAtBeginningOfBlock } from "../control";
 
 export function handleBlankLineEnter(editor: Editor): boolean {
-  if ((editor as { preserveBlankLines?: boolean }).preserveBlankLines === false) {
-    return false;
-  }
+  const preserveBlankLines =
+    (editor as { preserveBlankLines?: boolean }).preserveBlankLines !== false;
   const blockEntry = containingBlock(editor);
   const block = blockEntry?.[0];
   const blockPath = blockEntry?.[1] as Path | undefined;
 
   if (block == null || blockPath == null || block["type"] !== "paragraph") {
+    return false;
+  }
+
+  if (!preserveBlankLines) {
+    // Avoid creating extra blank paragraphs when blank lines are not preserved.
+    if (isWhitespaceParagraph(block)) {
+      if ((block as { blank?: boolean }).blank === true) {
+        Transforms.setNodes(editor, { blank: false }, { at: blockPath });
+      }
+      return true;
+    }
     return false;
   }
 

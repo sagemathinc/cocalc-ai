@@ -467,7 +467,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     minimal,
     divRef,
     controlRef,
-    preserveBlankLines: preserveBlankLinesProp,
   } = props;
   const { project_id, path, desc } = useFrameContext();
   const actions = actions0 ?? {};
@@ -475,7 +474,9 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const initialValue = value ?? "";
   const valueRef = useRef<string>(initialValue);
   valueRef.current = initialValue;
-  const preserveBlankLines = preserveBlankLinesProp ?? false;
+  // Block mode treats each block independently, so always disable significant
+  // blank lines to avoid confusing per-block newline behavior.
+  const preserveBlankLines = false;
 
   const [blocks, setBlocks] = useState<string[]>(() =>
     splitMarkdownToBlocks(initialValue),

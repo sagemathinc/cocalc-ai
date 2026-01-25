@@ -41,3 +41,11 @@ export function ensureDocNonempty(doc: Descendant[]): void {
     doc.push(emptyParagraph());
   }
 }
+
+export function stripBlankParagraphs(value: Descendant[]): Descendant[] {
+  const filtered = value.filter(
+    (node) => !(node?.["type"] === "paragraph" && node?.["blank"] === true),
+  );
+  ensureDocNonempty(filtered);
+  return filtered;
+}
