@@ -534,7 +534,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       const preview = mergeHelperRef.current.previewMerge({ remote, local });
       if (!preview.changed) {
         pendingRemoteRef.current = null;
-        mergeHelperRef.current.noteSaved(preview.merged);
+        mergeHelperRef.current.noteApplied(preview.merged);
       } else {
         pendingRemoteRef.current = remote;
       }

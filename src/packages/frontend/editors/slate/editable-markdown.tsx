@@ -317,13 +317,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   const updatePendingRemoteIndicator = useCallback(
     (remote: string, local: string) => {
-      const preview = mergeHelperRef.current.previewMerge({ remote, local });
-      if (!preview.changed) {
-        pendingRemoteRef.current = null;
-        mergeHelperRef.current.noteSaved(preview.merged);
-      } else {
-        pendingRemoteRef.current = remote;
-      }
+    const preview = mergeHelperRef.current.previewMerge({ remote, local });
+    if (!preview.changed) {
+      pendingRemoteRef.current = null;
+      mergeHelperRef.current.noteApplied(preview.merged);
+    } else {
+      pendingRemoteRef.current = remote;
+    }
       setPendingRemoteIndicator((prev) =>
         prev === preview.changed ? prev : preview.changed,
       );
