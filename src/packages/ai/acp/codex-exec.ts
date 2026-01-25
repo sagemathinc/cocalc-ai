@@ -322,10 +322,10 @@ export class CodexExecAgent implements AcpAgent {
     cwd: string,
   ): string[] {
     const args: string[] = [
+      "--search",
       "exec",
       "--experimental-json",
       "--skip-git-repo-check",
-      "--search",
     ];
     if (cwd) {
       args.push("--cd", cwd);
