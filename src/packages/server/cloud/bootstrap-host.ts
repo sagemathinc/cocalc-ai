@@ -1144,11 +1144,15 @@ export async function buildCloudInitStartupScript(
   if (isSelfHostLocal) {
     const localConfig = getLaunchpadLocalConfig("local");
     const httpPort = localConfig.http_port ?? localConfig.https_port ?? 9200;
-    const sshHost =
-      process.env.COCALC_SSHD_HOST ??
-      process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
-      resolveOnPremHost();
-    const sshPort = localConfig.sshd_port ?? 22;
+    const selfHostMeta = row.metadata?.self_host ?? {};
+    const reversePort = Number(selfHostMeta?.ssh_reverse_port ?? 0);
+    const hasReverse = reversePort > 0;
+    const sshHost = hasReverse
+      ? "127.0.0.1"
+      : process.env.COCALC_SSHD_HOST ??
+        process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
+        resolveOnPremHost();
+    const sshPort = hasReverse ? reversePort : localConfig.sshd_port ?? 22;
     const sshUser = localConfig.ssh_user ?? "user";
     const keypair = deriveBootstrapKeyPair(token);
     if (!keypair) {

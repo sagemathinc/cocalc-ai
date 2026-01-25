@@ -1105,11 +1105,6 @@ export async function startHostInternal({
   const row = await loadHostForStartStop(id, account_id);
   const metadata = row.metadata ?? {};
   const owner = metadata.owner ?? account_id;
-  const nextMetadata = { ...metadata };
-  if (nextMetadata.bootstrap) {
-    // bootstrap should be idempotent and we bootstrap on EVERY start
-    delete nextMetadata.bootstrap;
-  }
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
   const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
@@ -1161,6 +1156,15 @@ export async function startHostInternal({
       host_id: row.id,
       name: row.name ?? undefined,
     });
+  }
+  const { rows: metaRowsFinal } = await pool().query<{ metadata: any }>(
+    `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+    [row.id],
+  );
+  const nextMetadata = metaRowsFinal[0]?.metadata ?? metadata;
+  if (nextMetadata?.bootstrap) {
+    // bootstrap should be idempotent and we bootstrap on EVERY start
+    delete nextMetadata.bootstrap;
   }
   logStatusUpdate(id, "starting", "api");
   await pool().query(
