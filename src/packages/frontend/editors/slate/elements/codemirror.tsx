@@ -13,7 +13,7 @@ import React, {
   useCallback,
 } from "react";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { Transforms } from "slate";
+import { Path, Transforms } from "slate";
 import { ReactEditor } from "../slate-react";
 import { fromTextArea, Editor, commands } from "codemirror";
 import {
@@ -34,6 +34,7 @@ import { file_associations } from "@cocalc/frontend/file-associations";
 import { useRedux } from "@cocalc/frontend/app-framework";
 import { isEqual } from "lodash";
 import { logSlateDebug } from "../slate-utils/slate-debug";
+import { setGapCursor } from "../gap-cursor";
 
 const STYLE = {
   width: "100%",
@@ -54,6 +55,9 @@ interface Props {
   onFocus?: () => void;
   options?: { [option: string]: any };
   isInline?: boolean; // impacts how cursor moves out of codemirror.
+  focusOnSelect?: boolean;
+  elementPath?: Path;
+  onRequestGapCursor?: (side: "before" | "after") => void;
   style?: CSSProperties;
   addonBefore?: ReactNode;
   addonAfter?: ReactNode;
@@ -70,6 +74,9 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
     onFocus,
     options: cmOptions,
     isInline,
+    focusOnSelect,
+    elementPath,
+    onRequestGapCursor,
     style,
     addonBefore,
     addonAfter,
@@ -80,7 +87,6 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
     const collapsed = useCollapsed();
     const { actions } = useFrameContext();
     const { id } = useFrameContext();
-    const justBlurred = useRef<boolean>(false);
     const cmRef = useRef<Editor | undefined>(undefined);
     const [isFocused, setIsFocused] = useState<boolean>(!!cmOptions?.autofocus);
     const textareaRef = useRef<any>(null);
@@ -175,10 +181,52 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
     );
 
     useEffect(() => {
-      if (focused && selected && !justBlurred.current) {
-        focusEditor();
+      if (!focused || !selected || isFocused) return;
+      if (editor.selection == null || elementPath == null) return;
+      if (!collapsed && !focusOnSelect) return;
+      if ((editor as any).gapCursor) return;
+      if ((editor as any).blockGapCursor) return;
+
+      const { anchor, focus } = editor.selection;
+      const isPathPrefix = (path: Path, other: Path): boolean => {
+        if (other.length < path.length) return false;
+        for (let i = 0; i < path.length; i++) {
+          if (other[i] !== path[i]) return false;
+        }
+        return true;
+      };
+      if (
+        !isPathPrefix(elementPath, anchor.path) ||
+        !isPathPrefix(elementPath, focus.path)
+      ) {
+        return;
       }
-    }, [selected, focused, options.theme]);
+
+      focusEditor(focusOnSelect);
+    }, [
+      selected,
+      focused,
+      isFocused,
+      focusOnSelect,
+      elementPath,
+      collapsed,
+    ]);
+
+    useEffect(() => {
+      if (!isFocused) return;
+      const handlePointerDown = (event: MouseEvent) => {
+        const wrapper = cmRef.current?.getWrapperElement();
+        if (!wrapper) return;
+        if (event.target instanceof Node && wrapper.contains(event.target)) {
+          return;
+        }
+        editor.setIgnoreSelection(false);
+      };
+      document.addEventListener("pointerdown", handlePointerDown, true);
+      return () => {
+        document.removeEventListener("pointerdown", handlePointerDown, true);
+      };
+    }, [isFocused, editor]);
 
     // If the info line changes update the mode.
     useEffect(() => {
@@ -200,7 +248,9 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
       // addKeyMap, so that they have top precedence. Otherwise, somewhat
       // randomly, things will seem to "hang" and you get stuck, which
       // is super annoying.
-      cm.addKeyMap(cursorHandlers(editor, isInline));
+      cm.addKeyMap(
+        cursorHandlers(editor, isInline, elementPath, onRequestGapCursor),
+      );
 
       cm.on("change", (_, _changeObj) => {
         if (onChange != null) {
@@ -217,7 +267,6 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
       }
 
       cm.on("blur", () => {
-        justBlurred.current = true;
         setIsFocused(false);
         editor.setIgnoreSelection(false);
         logSlateDebug("codemirror:blur", {
@@ -232,7 +281,6 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
         logSlateDebug("codemirror:focus", {
           selection: editor.selection ?? null,
         });
-        justBlurred.current = false;
       });
 
       cm.on("copy", (_, event) => {
@@ -288,8 +336,8 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
     const borderColor = isFocused
       ? CODE_FOCUSED_COLOR
       : selected
-      ? SELECTED_COLOR
-      : DARK_GREY_BORDER;
+        ? SELECTED_COLOR
+        : DARK_GREY_BORDER;
     return (
       <div
         contentEditable={false}
@@ -336,7 +384,36 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
 
 // TODO: vim version of this...
 
-function cursorHandlers(editor, isInline: boolean | undefined) {
+function cursorHandlers(
+  editor,
+  isInline: boolean | undefined,
+  elementPath?: Path,
+  onRequestGapCursor?: (side: "before" | "after") => void,
+) {
+  const requestGapCursor = (side: "before" | "after"): boolean => {
+    editor.setIgnoreSelection(false);
+    if (onRequestGapCursor) {
+      onRequestGapCursor(side);
+      ReactEditor.focus(editor);
+      return true;
+    }
+    if (elementPath) {
+      setGapCursor(editor, { path: elementPath, side });
+      ReactEditor.focus(editor);
+      return true;
+    }
+    return false;
+  };
+
+  const blurCodeMirror = (cm) => {
+    const input = cm.getInputField?.();
+    if (input?.blur) {
+      input.blur();
+    } else {
+      (cm.getWrapperElement?.() as any)?.blur?.();
+    }
+  };
+
   const exitDown = (cm) => {
     const cur = cm.getCursor();
     const n = cm.lastLine();
@@ -344,15 +421,22 @@ function cursorHandlers(editor, isInline: boolean | undefined) {
     const cur_ch = cur?.ch;
     const line = cm.getLine(n);
     const line_length = line?.length;
-      if (cur_line === n && cur_ch === line_length) {
-        editor.setIgnoreSelection(false);
-        //Transforms.move(editor, { distance: 1, unit: "line" });
-        moveCursorDown(editor, true);
+    if (cur_line === n && cur_ch === line_length) {
+      editor.setIgnoreSelection(false);
+      const before = editor.selection?.focus;
+      moveCursorDown(editor, true);
+      const after = editor.selection?.focus;
+      if (before && after && !isEqual(before, after)) {
         ReactEditor.focus(editor);
         return true;
-      } else {
-        return false;
+      }
+      const moved = requestGapCursor("after");
+      if (moved) {
+        blurCodeMirror(cm);
+      }
+      return moved;
     }
+    return false;
   };
 
   return {
@@ -360,12 +444,20 @@ function cursorHandlers(editor, isInline: boolean | undefined) {
       const cur = cm.getCursor();
       if (cur?.line === cm.firstLine() && cur?.ch == 0) {
         editor.setIgnoreSelection(false);
-        // Transforms.move(editor, { distance: 1, unit: "line", reverse: true });
+        const before = editor.selection?.focus;
         moveCursorUp(editor, true);
-        if (!isInline) {
-          moveCursorToBeginningOfBlock(editor);
+        const after = editor.selection?.focus;
+        if (before && after && !isEqual(before, after)) {
+          if (!isInline) {
+            moveCursorToBeginningOfBlock(editor);
+          }
+          ReactEditor.focus(editor);
+          return;
         }
-        ReactEditor.focus(editor);
+        const moved = requestGapCursor("before");
+        if (moved) {
+          blurCodeMirror(cm);
+        }
       } else {
         commands.goLineUp(cm);
       }

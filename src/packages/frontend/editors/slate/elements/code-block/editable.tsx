@@ -20,6 +20,7 @@ import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
+import { ReactEditor } from "../../slate-react";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -165,10 +166,11 @@ function Element({ attributes, children, element }: RenderElementProps) {
   const runRef = useRef<RunFunction | null>(null);
   const setElement = useSetElement(editor, element);
   // textIndent: 0 is needed due to task lists -- see https://github.com/sagemathinc/cocalc/issues/6074
-  const { change } = useChange();
+  const { change, blockNavigation } = useChange();
   const [history, setHistory] = useState<string[]>(
     getHistory(editor, element) ?? [],
   );
+  const elementPath = ReactEditor.findPath(editor, element);
   useEffect(() => {
     const newHistory = getHistory(editor, element);
     if (newHistory != null && !isEqual(history, newHistory)) {
@@ -242,6 +244,9 @@ function Element({ attributes, children, element }: RenderElementProps) {
                 options={{ lineWrapping: true }}
                 value={element.value}
                 info={infoToMode(info, { value: element.value })}
+                focusOnSelect
+                elementPath={elementPath}
+                onRequestGapCursor={blockNavigation?.setGapCursor}
                 onChange={(value) => {
                   setElement({ value });
                 }}

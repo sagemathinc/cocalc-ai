@@ -245,6 +245,13 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       [index, onChangeMarkdown, read_only],
     );
 
+    const activeGap =
+      gapCursor && gapCursor.index === index ? gapCursor : null;
+
+    useEffect(() => {
+      (editor as any).blockGapCursor = activeGap;
+    }, [editor, activeGap]);
+
     const handleKeyDown = useCallback(
       (event: React.KeyboardEvent<HTMLDivElement>) => {
         if (read_only) {
@@ -254,9 +261,6 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         if (event.defaultPrevented) return;
         if (!ReactEditor.isFocused(editor)) return;
         if (event.ctrlKey || event.metaKey || event.altKey) return;
-
-        const activeGap =
-          gapCursor && gapCursor.index === index ? gapCursor : null;
 
         const isPlainChar =
           event.key.length === 1 &&
@@ -366,14 +370,26 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             }}
           />
         )}
-        <ChangeContext.Provider value={{ change, editor: editor as any }}>
+        <ChangeContext.Provider
+          value={{
+            change,
+            editor: editor as any,
+            blockNavigation: {
+              setGapCursor: (side) => {
+                setGapCursor({ index, side });
+              },
+            },
+          }}
+        >
           <Slate editor={editor} value={value} onChange={handleChange}>
             <Editable
               autoFocus={autoFocus}
               readOnly={read_only}
               renderElement={renderElement}
               renderLeaf={Leaf}
-              onFocus={onFocus}
+              onFocus={() => {
+                onFocus?.();
+              }}
               onBlur={onBlur}
               onKeyDown={handleKeyDown}
               style={{
@@ -738,12 +754,10 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         onChangeMarkdown={handleBlockChange}
         onFocus={() => {
           setFocusedIndex(index);
-          setGapCursor(null);
           onFocus?.();
         }}
         onBlur={() => {
           setFocusedIndex((prev) => (prev === index ? null : prev));
-          setGapCursor(null);
           onBlur?.();
         }}
         autoFocus={autoFocus && index === 0}
