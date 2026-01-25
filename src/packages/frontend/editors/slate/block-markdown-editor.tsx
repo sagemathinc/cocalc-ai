@@ -20,7 +20,7 @@ import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame
 import { Path } from "@cocalc/frontend/frame-editors/frame-tree/path";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
-import { Descendant, Range, Transforms, createEditor } from "slate";
+import { Descendant, Editor, Range, Transforms, createEditor } from "slate";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
 import type { RenderElementProps } from "./slate-react";
@@ -142,6 +142,7 @@ interface BlockRowEditorProps {
   index: number;
   markdown: string;
   onChangeMarkdown: (index: number, markdown: string) => void;
+  onDeleteBlock: (index: number) => void;
   onFocus?: () => void;
   onBlur?: () => void;
   autoFocus?: boolean;
@@ -168,6 +169,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       index,
       markdown,
       onChangeMarkdown,
+      onDeleteBlock,
       onFocus,
       onBlur,
       autoFocus,
@@ -292,6 +294,23 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         if (!ReactEditor.isFocused(editor)) return;
         if (event.ctrlKey || event.metaKey || event.altKey) return;
 
+        if (
+          event.key === "Backspace" &&
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection) &&
+          isAtBeginningOfBlock(editor, { mode: "highest" })
+        ) {
+          if (index > 0) {
+            const isEmpty = Editor.string(editor, []).length === 0;
+            if (isEmpty) {
+              onDeleteBlock(index);
+            }
+            onNavigate(index - 1, "end");
+            event.preventDefault();
+            return;
+          }
+        }
+
         const isPlainChar =
           event.key.length === 1 &&
           !event.ctrlKey &&
@@ -371,6 +390,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         index,
         onInsertGap,
         onNavigate,
+        onDeleteBlock,
         read_only,
         setGapCursor,
       ],
@@ -797,6 +817,26 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [is_current, saveBlocksDebounced],
   );
 
+  const deleteBlockAtIndex = useCallback(
+    (index: number) => {
+      if (index < 0 || index >= blocksRef.current.length) return;
+      if (blocksRef.current.length === 1) return;
+      lastLocalEditAtRef.current = Date.now();
+      setGapCursor(null);
+      setBlocks((prev) => {
+        const next = [...prev];
+        next.splice(index, 1);
+        blocksRef.current = next;
+        return next;
+      });
+      if (is_current) saveBlocksDebounced();
+      const targetIndex = Math.max(0, index - 1);
+      pendingFocusRef.current = { index: targetIndex, position: "end" };
+      virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "center" });
+    },
+    [is_current, saveBlocksDebounced, setGapCursor],
+  );
+
   const rowStyle: React.CSSProperties = {
     padding: minimal ? 0 : "0 70px",
     minHeight: "1px",
@@ -822,6 +862,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         index={index}
         markdown={markdown}
         onChangeMarkdown={handleBlockChange}
+        onDeleteBlock={deleteBlockAtIndex}
         onFocus={() => {
           setFocusedIndex(index);
           onFocus?.();

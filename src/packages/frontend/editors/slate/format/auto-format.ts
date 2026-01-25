@@ -57,6 +57,17 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
 
   let r: boolean | Function = false;
   try {
+    let paragraphTextOverride: string | undefined;
+    if (selection.focus.path.length >= 2 && selection.focus.path[selection.focus.path.length - 1] === 0) {
+      const paragraphEntry = Editor.above(editor, {
+        at: selection.focus.path,
+        match: (node) => Element.isElement(node) && node.type === "paragraph",
+      });
+      if (paragraphEntry) {
+        const [, paragraphPath] = paragraphEntry;
+        paragraphTextOverride = Editor.string(editor, paragraphPath).trimRight();
+      }
+    }
     Editor.withoutNormalizing(editor, () => {
       editor.apply({
         type: "split_node",
@@ -64,7 +75,7 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
         position: selection.focus.offset,
         properties: node, // important to preserve text properties on split (seems fine to leave text field)
       });
-      r = markdownAutoformatAt(editor, selection.focus.path);
+      r = markdownAutoformatAt(editor, selection.focus.path, paragraphTextOverride);
     });
   } catch (err) {
     console.warn(`SLATE -- issue in markdownAutoformat ${err}`);
@@ -83,7 +94,8 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
 // what is in the current text node.
 function markdownAutoformatAt(
   editor: SlateEditor,
-  path: Path
+  path: Path,
+  paragraphTextOverride?: string,
 ): boolean | Function {
   const [node] = Editor.node(editor, path);
   // Must be a text node
@@ -162,8 +174,72 @@ function markdownAutoformatAt(
   text = text.slice(start + 1).trim();
   if (text.length == 0) return false;
 
+  // If we're at the start of a paragraph and doing a block-level autoformat
+  // (e.g., list), include the rest of the paragraph text so it doesn't get
+  // dropped when we replace the paragraph with a block element.
+  if (path.length >= 2 && pos === 0 && start <= 0) {
+    const paragraphText =
+      paragraphTextOverride ??
+      (() => {
+        const paragraphEntry = Editor.above(editor, {
+          at: path,
+          match: (node) => Element.isElement(node) && node.type === "paragraph",
+        });
+        if (!paragraphEntry) return "";
+        const [, paragraphPath] = paragraphEntry;
+        return Editor.string(editor, paragraphPath).trimRight();
+      })();
+    if (paragraphText.length > 0) {
+      text = paragraphText;
+      // If a list marker was typed without a space (e.g., "-foo") and
+      // the autoformat is triggered by the space key, insert the missing
+      // space so markdown parsing recognizes the list.
+        const markerMatch = text.match(/^([-*+]|\d+[.)])(?=\S)/);
+      if (markerMatch) {
+        const marker = markerMatch[1];
+        text = marker + " " + text.slice(marker.length);
+      }
+    }
+  }
+
+
   // make a copy to avoid any caching issues (??).
-  const doc = [...(markdown_to_slate(text, true) as any)];
+  let doc = [...(markdown_to_slate(text, true) as any)];
+
+  const listMatch = text.match(/^([-*+]|\d+[.)])\s+(.*)$/);
+  if (
+    listMatch &&
+    doc.length === 1 &&
+    doc[0].type === "paragraph" &&
+    Text.isText(doc[0].children?.[0])
+  ) {
+    const marker = listMatch[1];
+    const remainder = listMatch[2] ?? "";
+    const remainderDoc = markdown_to_slate(remainder, true) as any;
+    const remainderChildren =
+      remainderDoc.length === 1 && remainderDoc[0].type === "paragraph"
+        ? remainderDoc[0].children
+        : [{ text: remainder }];
+    const listItem = {
+      type: "list_item",
+      children: [
+        {
+          type: "paragraph",
+          blank: remainder.trim().length === 0,
+          children: remainderChildren,
+        },
+      ],
+    };
+    const isOrdered = /^\d/.test(marker);
+    doc = [
+      {
+        type: isOrdered ? "ordered_list" : "bullet_list",
+        ...(isOrdered ? { start: parseInt(marker, 10) || 1 } : null),
+        tight: true,
+        children: [listItem],
+      },
+    ];
+  }
   // console.log(`autoformat '${text}' = \n`, JSON.stringify(doc, undefined, 2));
 
   if (
@@ -259,16 +335,18 @@ function markdownAutoformatAt(
       const focus = Editor.start(editor, blockPath);
       setSelectionAndFocus(editor, { focus, anchor: focus });
       (editor as any).pendingCodeBlockFocusPath = blockPath;
+      return true;
     }
     if (type === "bullet_list" || type === "ordered_list") {
       const focus = Editor.start(editor, blockPath);
       setSelectionAndFocus(editor, { focus, anchor: focus });
+      return true;
     }
-    if (!rules?.autoFocus && type !== "code_block") {
+    if (!rules?.autoFocus) {
       // move cursor out of the newly created block element.
       Transforms.move(editor, { distance: 1 });
     }
-    if (rules?.autoAdvance && type !== "code_block") {
+    if (rules?.autoAdvance) {
       setSelectionAndFocus(editor, {
         focus: { path, offset: 0 },
         anchor: { path, offset: 0 },

@@ -14,7 +14,7 @@ import React, {
   useCallback,
 } from "react";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { Path, Transforms } from "slate";
+import { Editor, Element, Path, Transforms } from "slate";
 import { ReactEditor } from "../slate-react";
 import { fromTextArea, Editor, commands } from "codemirror";
 import {
@@ -438,6 +438,21 @@ function cursorHandlers(
   elementPath?: Path,
   onRequestGapCursor?: (side: "before" | "after") => void,
 ) {
+  const hasVoidSibling = (side: "before" | "after"): boolean => {
+    if (!elementPath) return false;
+    const siblingIndex =
+      elementPath[0] + (side === "after" ? 1 : -1);
+    if (siblingIndex < 0 || siblingIndex >= editor.children.length) {
+      return false;
+    }
+    try {
+      const [node] = Editor.node(editor, [siblingIndex]);
+      return Element.isElement(node) && Editor.isVoid(editor, node);
+    } catch {
+      return false;
+    }
+  };
+
   const requestGapCursor = (side: "before" | "after"): boolean => {
     editor.setIgnoreSelection(false);
     if (onRequestGapCursor) {
@@ -470,6 +485,13 @@ function cursorHandlers(
     const line = cm.getLine(n);
     const line_length = line?.length;
     if (cur_line === n && cur_ch === line_length) {
+      if (hasVoidSibling("after")) {
+        const moved = requestGapCursor("after");
+        if (moved) {
+          blurCodeMirror(cm);
+        }
+        return moved;
+      }
       editor.setIgnoreSelection(false);
       const before = editor.selection?.focus;
       moveCursorDown(editor, true);
@@ -491,6 +513,13 @@ function cursorHandlers(
     Up: (cm) => {
       const cur = cm.getCursor();
       if (cur?.line === cm.firstLine() && cur?.ch == 0) {
+        if (hasVoidSibling("before")) {
+          const moved = requestGapCursor("before");
+          if (moved) {
+            blurCodeMirror(cm);
+          }
+          return;
+        }
         editor.setIgnoreSelection(false);
         const before = editor.selection?.focus;
         moveCursorUp(editor, true);
