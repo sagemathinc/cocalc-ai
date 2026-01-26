@@ -18,6 +18,10 @@ import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
 import { withDeleteBackward } from "../format/delete-backward";
 import { autoformatBlockquoteAtStart } from "../format/auto-format-quote";
 import { handleBlankLineEnter } from "../keyboard/blank-line-enter";
+import { getHandler } from "../keyboard/register";
+import { getGapCursor } from "../gap-cursor";
+import { withIsInline, withIsVoid } from "../plugins";
+import "../keyboard/arrow-keys";
 
 declare global {
   interface Window {
@@ -25,6 +29,7 @@ declare global {
       getText: () => string;
       getSelection: () => Range | null;
       getValue: () => Descendant[];
+      getGapCursor: () => any;
       getEnv: () => { hasBeforeInput: boolean };
       insertText: (text: string, autoFormat?: boolean) => void;
       insertBreak: () => void;
@@ -40,7 +45,10 @@ const initialValue: Descendant[] = [
 
 function Harness(): React.JSX.Element {
   const editor = useMemo(
-    () => withDeleteBackward(withReact(createEditor())),
+    () =>
+      withDeleteBackward(
+        withIsInline(withIsVoid(withReact(createEditor()))),
+      ),
     [],
   );
   const [value, setValue] = useState<Descendant[]>(initialValue);
@@ -56,6 +64,7 @@ function Harness(): React.JSX.Element {
       getText: () => Node.string(editor),
       getSelection: () => editor.selection,
       getValue: () => valueRef.current,
+      getGapCursor: () => getGapCursor(editor),
       setSelection: (range) => {
         Transforms.select(editor, range);
       },
@@ -100,13 +109,59 @@ function Harness(): React.JSX.Element {
           event.preventDefault();
         }
       }
+      const handler = getHandler(event);
+      if (handler) {
+        const handled = handler({ editor: editor as any, extra: { actions: {}, id: "", search: {} as any } });
+        if (handled) {
+          event.preventDefault();
+        }
+      }
     },
     [editor],
   );
 
   return (
     <Slate editor={editor} value={value} onChange={handleChange}>
-      <Editable placeholder="Type here..." onKeyDown={onKeyDown} />
+      <div
+        style={{
+          width: 400,
+          fontSize: 16,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          lineHeight: 1.3,
+          padding: 16,
+          border: "1px solid #ddd",
+        }}
+      >
+        <Editable
+          placeholder="Type here..."
+          onKeyDown={onKeyDown}
+          renderElement={({ attributes, children, element }) => {
+            if (element.type === "code_block") {
+              return (
+                <div
+                  {...attributes}
+                  data-testid="code-block"
+                  contentEditable={false}
+                  style={{
+                    border: "1px solid #999",
+                    padding: "8px",
+                    margin: "8px 0",
+                    minHeight: 24,
+                  }}
+                >
+                  <pre style={{ margin: 0, fontFamily: "inherit" }}>code</pre>
+                  {children}
+                </div>
+              );
+            }
+            return (
+              <p {...attributes} style={{ margin: "6px 0" }}>
+                {children}
+              </p>
+            );
+          }}
+        />
+      </div>
     </Slate>
   );
 }

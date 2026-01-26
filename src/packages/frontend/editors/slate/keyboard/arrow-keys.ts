@@ -19,7 +19,7 @@ import {
   isAtBeginningOfBlock,
   isAtEndOfBlock,
 } from "../control";
-import { SlateEditor } from "../types";
+import type { SlateEditor } from "../types";
 import { ReactEditor } from "../slate-react";
 import { Editor, Element, Transforms } from "slate";
 import { clearGapCursor, getGapCursor, setGapCursor } from "../gap-cursor";
@@ -64,6 +64,89 @@ function shouldUseGapCursor(
   );
 }
 
+function shouldOpenGapBeforeVoid(
+  editor: SlateEditor,
+  direction: "up" | "down",
+): boolean {
+  // Strategy: only open a gap cursor when the caret is on the visual edge
+  // of the current block (first line for up, last line for down) and the
+  // adjacent top-level block is void. We use DOM line boxes (client rects)
+  // to avoid confusing wrapped lines with true block boundaries.
+  const cur = editor.selection?.focus;
+  if (!cur) {
+    return false;
+  }
+  const neighborIndex = direction === "up" ? cur.path[0] - 1 : cur.path[0] + 1;
+  if (neighborIndex < 0 || neighborIndex >= editor.children.length) {
+    return false;
+  }
+  const [neighbor] = Editor.node(editor, [neighborIndex]);
+  const neighborIsVoid =
+    Element.isElement(neighbor) && Editor.isVoid(editor, neighbor);
+  if (!neighborIsVoid) {
+    return false;
+  }
+  const caretRect = getCaretRect(editor, direction);
+  const edgeRect = getBlockLineRect(editor, direction === "up" ? "start" : "end");
+  if (caretRect && edgeRect) {
+    const lineHeight = edgeRect.height || caretRect.height;
+    const tolerance = Math.max(2, lineHeight * 0.4);
+    const distance =
+      direction === "up"
+        ? Math.abs(edgeRect.top - caretRect.top)
+        : Math.abs(edgeRect.bottom - caretRect.bottom);
+    const atEdge = distance <= tolerance;
+    return atEdge;
+  }
+  return direction === "up"
+    ? isAtBeginningOfBlock(editor, { mode: "highest" })
+    : isAtEndOfBlock(editor, { mode: "highest" });
+}
+
+function getCaretRect(
+  editor: SlateEditor,
+  direction: "up" | "down",
+): DOMRect | null {
+  if (!ReactEditor.selectionIsInDOM(editor) || !editor.selection) {
+    return null;
+  }
+  try {
+    const domRange = ReactEditor.toDOMRange(editor, editor.selection);
+    const rects = domRange.getClientRects();
+    if (rects.length > 0) {
+      return direction === "down" ? rects[rects.length - 1] : rects[0];
+    }
+    return domRange.getBoundingClientRect();
+  } catch {
+    return null;
+  }
+}
+
+function getBlockLineRect(
+  editor: SlateEditor,
+  edge: "start" | "end",
+): DOMRect | null {
+  if (!ReactEditor.selectionIsInDOM(editor) || !editor.selection) {
+    return null;
+  }
+  try {
+    const blockPath = [editor.selection.focus.path[0]];
+    const blockNode = ReactEditor.toDOMNode(editor, Editor.node(editor, blockPath)[0]);
+    if (!blockNode) return null;
+    const range = document.createRange();
+    range.selectNodeContents(blockNode);
+    const rects = Array.from(range.getClientRects()).filter(
+      (rect) => rect.height > 0.5 && rect.width > 0.5,
+    );
+    if (rects.length === 0) {
+      return range.getBoundingClientRect();
+    }
+    return edge === "start" ? rects[0] : rects[rects.length - 1];
+  } catch {
+    return null;
+  }
+}
+
 const down = ({ editor }: { editor: SlateEditor }) => {
   const gapCursor = getGapCursor(editor);
   if (gapCursor) {
@@ -81,7 +164,6 @@ const down = ({ editor }: { editor: SlateEditor }) => {
     return true;
   }
   const cur = editor.selection?.focus;
-
   if (
     cur != null &&
     editor.onCursorBottom != null &&
@@ -101,16 +183,11 @@ const down = ({ editor }: { editor: SlateEditor }) => {
     editor.scrollIntoDOM(index + 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
-    if (cur != null && isAtBeginningOfBlock(editor, { mode: "highest" })) {
-      const nextIndex = cur.path[0] + 1;
-      if (nextIndex < editor.children.length) {
-        const [nextNode] = Editor.node(editor, [nextIndex]);
-        if (Element.isElement(nextNode) && Editor.isVoid(editor, nextNode)) {
-          const focus = pointAtPath(editor, [nextIndex], undefined, "start");
-          Transforms.setSelection(editor, { focus, anchor: focus });
-          return true;
-        }
-      }
+    if (cur != null && shouldOpenGapBeforeVoid(editor, "down")) {
+      const targetIndex = cur.path[0] + 1;
+      setGapCursor(editor, { path: [targetIndex], side: "before" });
+      ReactEditor.forceUpdate(editor);
+      return true;
     }
     if (cur != null && isAtEndOfBlock(editor, { mode: "highest" })) {
       if (shouldUseGapCursor(editor, "down")) {
@@ -173,16 +250,11 @@ const up = ({ editor }: { editor: SlateEditor }) => {
     editor.scrollIntoDOM(index - 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
-    if (cur != null && isAtEndOfBlock(editor, { mode: "highest" })) {
-      const prevIndex = cur.path[0] - 1;
-      if (prevIndex >= 0) {
-        const [prevNode] = Editor.node(editor, [prevIndex]);
-        if (Element.isElement(prevNode) && Editor.isVoid(editor, prevNode)) {
-          const focus = pointAtPath(editor, [prevIndex], undefined, "end");
-          Transforms.setSelection(editor, { focus, anchor: focus });
-          return true;
-        }
-      }
+    if (cur != null && shouldOpenGapBeforeVoid(editor, "up")) {
+      const targetIndex = Math.max(0, cur.path[0] - 1);
+      setGapCursor(editor, { path: [targetIndex], side: "after" });
+      ReactEditor.forceUpdate(editor);
+      return true;
     }
     if (cur != null && isAtBeginningOfBlock(editor, { mode: "highest" })) {
       if (shouldUseGapCursor(editor, "up")) {
