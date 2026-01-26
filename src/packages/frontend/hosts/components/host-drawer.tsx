@@ -422,6 +422,22 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               </Typography.Text>
             </Space>
           )}
+          {canUpgrade && host && !host.deleted && onUpgrade && (
+            <Popconfirm
+              title={upgradeConfirmContent}
+              okText="Upgrade"
+              cancelText="Cancel"
+              onConfirm={() => onUpgrade(host)}
+              disabled={hostOpActive || host.status !== "running"}
+            >
+              <Button
+                size="small"
+                disabled={hostOpActive || host.status !== "running"}
+              >
+                Upgrade software
+              </Button>
+            </Popconfirm>
+          )}
           {showConnectorWarning && selfHost && (
             <Alert
               type="warning"
@@ -468,22 +484,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 )}
               </Space>
             </Space>
-          )}
-          {canUpgrade && host && !host.deleted && onUpgrade && (
-            <Popconfirm
-              title={upgradeConfirmContent}
-              okText="Upgrade"
-              cancelText="Cancel"
-              onConfirm={() => onUpgrade(host)}
-              disabled={hostOpActive || host.status !== "running"}
-            >
-              <Button
-                size="small"
-                disabled={hostOpActive || host.status !== "running"}
-              >
-                Upgrade software
-              </Button>
-            </Popconfirm>
           )}
           {showUpgradeProgress && <HostOpProgress op={activeOp} />}
           <Typography.Text type="secondary">
