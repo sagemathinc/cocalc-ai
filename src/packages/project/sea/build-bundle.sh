@@ -59,11 +59,16 @@ NODE
 # Copy zeromq native manifest/build artifacts expected at runtime (via @cocalc/jupyter)
 ZEROMQ_BUILD=$(find packages -path "*node_modules/zeromq/build" -type d -print -quit || true)
 if [ -n "$ZEROMQ_BUILD" ]; then
-  echo "- Copy zeromq native build artefacts"
+echo "- Copy zeromq native build artefacts"
   mkdir -p "$OUT"/bundle/build
   cp -r "$ZEROMQ_BUILD/"* "$OUT"/bundle/build/
   # Keep only linux builds in the bundle to avoid shipping unused platforms.
   rm -rf "$OUT"/bundle/build/darwin "$OUT"/bundle/build/win32 || true
+  # Keep only glibc builds (we run on glibc-based Ubuntu).
+  rm -rf "$OUT"/bundle/build/linux/*/node/musl-* || true
+  # Ensure legacy path /opt/cocalc/project-bundle/build/... resolves correctly.
+  rm -f "$OUT/build"
+  ln -s "bundle/build" "$OUT/build"
 else
   echo "  (zeromq build directory not found; skipping copy)"
 fi
@@ -132,6 +137,32 @@ for pkg in bufferutil utf-8-validate; do
     find "$prebuilds" -mindepth 1 -maxdepth 1 -type d ! -name 'linux-*' -exec rm -rf {} + || true
   fi
 done
+
+echo "- Strip musl prebuilds"
+rm -f "$OUT"/bundle/node_modules/utf-8-validate/prebuilds/linux-*/utf-8-validate.musl.node || true
+
+echo "- Add bundle README"
+if [ -f "$ROOT/packages/project/sea/bundle-README.md" ]; then
+  cp "$ROOT/packages/project/sea/bundle-README.md" "$OUT"/bundle/README.md
+fi
+
+echo "- Verify native addons (linux glibc)"
+if ! compgen -G "$OUT/bundle/build/linux/x64/node/glibc-*/addon.node" >/dev/null; then
+  echo "ERROR: missing zeromq glibc addon for linux/x64" >&2
+  exit 1
+fi
+if ! compgen -G "$OUT/bundle/build/linux/arm64/node/glibc-*/addon.node" >/dev/null; then
+  echo "ERROR: missing zeromq glibc addon for linux/arm64" >&2
+  exit 1
+fi
+if [ ! -f "$OUT/bundle/node_modules/@lydell/node-pty-linux-x64/prebuilds/linux-x64/pty.node" ]; then
+  echo "ERROR: missing node-pty linux-x64 prebuild" >&2
+  exit 1
+fi
+if [ ! -f "$OUT/bundle/node_modules/@lydell/node-pty-linux-arm64/prebuilds/linux-arm64/pty.node" ]; then
+  echo "ERROR: missing node-pty linux-arm64 prebuild" >&2
+  exit 1
+fi
 
 # Trim native builds for other platforms to keep output lean
 case "${OSTYPE}" in

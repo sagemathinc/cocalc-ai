@@ -48,7 +48,7 @@ function hasBinary(dir: string | undefined, name: string): boolean {
 
 function resolveBinPath(): string {
   const envPath = process.env.COCALC_BIN_PATH;
-  if (envPath && hasBinary(envPath, "rg") && hasBinary(envPath, "fd")) {
+  if (envPath) {
     return envPath;
   }
   if (hasBinary(SYSTEM_BIN_PATH, "rg") && hasBinary(SYSTEM_BIN_PATH, "fd")) {
@@ -64,7 +64,41 @@ function resolveBinPath(): string {
 // Prefer explicit override so tests/bundled environments can point to the
 // correct toolchain even when package resolution lands elsewhere.
 const binPath = resolveBinPath();
-const systemBinPathInUse = binPath === SYSTEM_BIN_PATH;
+const systemBinPathInUse =
+  !process.env.COCALC_BIN_PATH && binPath === SYSTEM_BIN_PATH;
+
+const overridePlatform = process.env.COCALC_TOOL_PLATFORM;
+const overrideArch = process.env.COCALC_TOOL_ARCH;
+
+function effectivePlatform(): NodeJS.Platform {
+  return (overridePlatform as NodeJS.Platform) ?? platform();
+}
+
+function normalizeArch(value: string): string {
+  switch (value) {
+    case "amd64":
+    case "x86_64":
+      return "x64";
+    case "aarch64":
+      return "arm64";
+    default:
+      return value;
+  }
+}
+
+function isCrossBuild(): boolean {
+  if (overridePlatform && overridePlatform !== platform()) {
+    return true;
+  }
+  if (overrideArch && normalizeArch(overrideArch) !== arch()) {
+    return true;
+  }
+  return false;
+}
+
+function effectiveArch(): string {
+  return normalizeArch(overrideArch ?? arch());
+}
 
 interface Spec {
   nonFatal?: boolean; // true if failure to install is non-fatal
@@ -153,8 +187,8 @@ export const SPEC = {
     script: () => {
       // this is the actual version in our release page
       const VERSION = "v1.5.0";
-      const a = arch() == "x64" ? "amd64" : arch();
-      return `curl -L https://github.com/sagemathinc/sshpiper-binaries/releases/download/${VERSION}/sshpiper-${VERSION}-${platform()}-${a}.tar.xz | tar -xJ -C "${binPath}" --strip-components=1`;
+      const a = effectiveArch() == "x64" ? "amd64" : effectiveArch();
+      return `curl -L https://github.com/sagemathinc/sshpiper-binaries/releases/download/${VERSION}/sshpiper-${VERSION}-${effectivePlatform()}-${a}.tar.xz | tar -xJ -C "${binPath}" --strip-components=1`;
     },
     url: () => {
       const VERSION = SPEC.sshpiper.VERSION;
@@ -172,7 +206,7 @@ export const SPEC = {
     script: () => {
       // https://github.com/openai/codex/releases/download/rust-v0.80.0/codex-aarch64-apple-darwin.tar.gz
       let p;
-      switch (platform()) {
+      switch (effectivePlatform()) {
         case "darwin":
           p = "apple-darwin";
           break;
@@ -183,7 +217,7 @@ export const SPEC = {
           throw Error(`unsupported platform ${platform()}`);
       }
       const VERSION = SPEC.codex.VERSION;
-      const a = arch() == "x64" ? "x86_64" : "aarch64";
+      const a = effectiveArch() == "x64" ? "x86_64" : "aarch64";
       return `curl -L https://github.com/openai/codex/releases/download/rust-v${VERSION}/codex-${a}-${p}.tar.gz | tar -xz -C "${binPath}" && mv ${join(binPath, "codex-" + a + "-" + p)} ${join(binPath, "codex")}`;
     },
     BASE: "https://github.com/openai/codex/releases",
@@ -212,8 +246,10 @@ export const SPEC = {
     path: join(binPath, "dropbear"),
     // we grab just the dropbear binary out of the release; we don't
     // need any of the others:
-    script: () =>
-      `curl -L https://github.com/sagemathinc/dropbear/releases/download/main/dropbear-$(uname -m)-linux-musl.tar.xz | tar -xJ -C ${binPath} --strip-components=1 dropbear-$(uname -m)-linux-musl/dropbear`,
+    script: () => {
+      const archName = effectiveArch() === "x64" ? "x86_64" : "aarch64";
+      return `curl -L https://github.com/sagemathinc/dropbear/releases/download/main/dropbear-${archName}-linux-musl.tar.xz | tar -xJ -C ${binPath} --strip-components=1 dropbear-${archName}-linux-musl/dropbear`;
+    },
   },
   // See https://github.com/moparisthebest/static-curl/releases
   //
@@ -241,7 +277,7 @@ export const SPEC = {
     VERSION: "2024-10-04a",
     // https://github.com/sagemathinc/bees-binaries/releases/download/2024-10-04a/bees-2024-10-04a-x86_64-linux-glibc.tar.xz
     script: () => {
-      const a = arch() == "x64" ? "x86_64" : "aarch64";
+      const a = effectiveArch() === "x64" ? "x86_64" : "aarch64";
       const name = `bees-${SPEC.bees.VERSION}-${a}-linux-glibc`;
       return `curl -L https://github.com/sagemathinc/bees-binaries/releases/download/${SPEC.bees.VERSION}/${name}.tar.xz | tar -xJ -C ${binPath} --strip-components=2 ${name}/bin/bees`;
     },
@@ -316,6 +352,9 @@ export async function alreadyInstalled(app: App) {
   if (!(await exists(path))) {
     return false;
   }
+  if (isCrossBuild()) {
+    return true;
+  }
   const v = await installedVersion(app);
   if (v == null) {
     // no version info
@@ -350,7 +389,10 @@ export async function install(
 
   const spec = SPEC[app] as Spec;
 
-  if (spec.platforms != null && !spec.platforms?.includes(platform())) {
+  if (
+    spec.platforms != null &&
+    !spec.platforms?.includes(effectivePlatform())
+  ) {
     return;
   }
 
@@ -371,7 +413,11 @@ export async function install(
         }
         throw err;
       }
-      if (!(await alreadyInstalled(app))) {
+      if (isCrossBuild()) {
+        if (!(await exists(spec.path))) {
+          throw Error(`failed to install ${app}`);
+        }
+      } else if (!(await alreadyInstalled(app))) {
         throw Error(`failed to install ${app}`);
       }
       return;
@@ -493,26 +539,26 @@ function getUrl(app: App) {
 }
 
 function getOS() {
-  switch (platform()) {
+  switch (effectivePlatform()) {
     case "linux":
-      switch (arch()) {
+      switch (effectiveArch()) {
         case "x64":
           return "x86_64-unknown-linux-musl";
         case "arm64":
           return "aarch64-unknown-linux-gnu";
         default:
-          throw Error(`unsupported arch '${arch()}'`);
+          throw Error(`unsupported arch '${effectiveArch()}'`);
       }
     case "darwin":
-      switch (arch()) {
+      switch (effectiveArch()) {
         case "x64":
           return "x86_64-apple-darwin";
         case "arm64":
           return "aarch64-apple-darwin";
         default:
-          throw Error(`unsupported arch '${arch()}'`);
+          throw Error(`unsupported arch '${effectiveArch()}'`);
       }
     default:
-      throw Error(`unsupported platform '${platform()}'`);
+      throw Error(`unsupported platform '${effectivePlatform()}'`);
   }
 }
