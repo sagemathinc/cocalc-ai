@@ -352,3 +352,37 @@ test("gap cursor only appears on last visual line before a void block", async ({
     expect(gapBeforeAfter.side).toBe("after");
   }
 });
+
+test("autoformat code span keeps focus", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type("`a b` ");
+
+  await page.waitForTimeout(50);
+  const focused = await page.evaluate(
+    () => window.__slateTest?.isFocused?.() ?? false,
+  );
+  expect(focused).toBe(true);
+});
+
+test("autoformat bold keeps focus with prefix and delayed closer", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type("QUESTION which you didn't answer -- are **ALL");
+  await page.keyboard.type("**");
+  await page.keyboard.press(" ");
+
+  await page.waitForTimeout(50);
+  const focused = await page.evaluate(
+    () => window.__slateTest?.isFocused?.() ?? false,
+  );
+  expect(focused).toBe(true);
+});

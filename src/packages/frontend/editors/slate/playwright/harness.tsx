@@ -13,7 +13,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ReactDOM from "react-dom/client";
 import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate";
 
-import { Editable, Slate, withReact } from "../slate-react";
+import { Editable, Slate, withReact, ReactEditor } from "../slate-react";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
 import { withDeleteBackward } from "../format/delete-backward";
 import { autoformatBlockquoteAtStart } from "../format/auto-format-quote";
@@ -30,6 +30,7 @@ declare global {
       getSelection: () => Range | null;
       getValue: () => Descendant[];
       getGapCursor: () => any;
+      isFocused: () => boolean;
       getEnv: () => { hasBeforeInput: boolean };
       insertText: (text: string, autoFormat?: boolean) => void;
       insertBreak: () => void;
@@ -65,6 +66,7 @@ function Harness(): React.JSX.Element {
       getSelection: () => editor.selection,
       getValue: () => valueRef.current,
       getGapCursor: () => getGapCursor(editor),
+      isFocused: () => ReactEditor.isFocused(editor),
       setSelection: (range) => {
         Transforms.select(editor, range);
       },
