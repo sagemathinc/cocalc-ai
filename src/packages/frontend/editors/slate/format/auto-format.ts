@@ -22,7 +22,7 @@ import { applyOperations } from "../operations";
 import { slateDiff } from "../slate-diff";
 import { getRules } from "../elements";
 import { ReactEditor } from "../slate-react";
-import { formatHeading, setSelectionAndFocus } from "./commands";
+import { formatHeading, getFocus, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
 
 function autoformatCodeSpanAtCursor(editor: Editor): boolean {
@@ -442,6 +442,47 @@ export const withAutoFormat = (editor) => {
   const { insertData } = editor;
   if (typeof insertData === "function") {
     editor.insertData = (data) => {
+      const slateFragment = data?.getData?.("application/x-slate-fragment");
+      if (slateFragment) {
+        insertData(data);
+        return;
+      }
+      const text = data?.getData?.("text/plain");
+      if (!text) {
+        insertData(data);
+        return;
+      }
+      const normalized = text.replace(/\r\n?/g, "\n");
+      const lineCount = normalized.split("\n").length;
+      const MULTILINE_PASTE_THRESHOLD = 2;
+      if (lineCount >= MULTILINE_PASTE_THRESHOLD) {
+        const looksLikeMarkdown =
+          /(^|\n)\s*#{1,6}\s+/.test(normalized) ||
+          /(^|\n)\s*>\s+/.test(normalized) ||
+          /(^|\n)\s*[-*+]\s+/.test(normalized) ||
+          /(^|\n)\s*\d+\.\s+/.test(normalized) ||
+          /(^|\n)\s*-\s*\[[ xX]\]\s+/.test(normalized) ||
+          /`{3,}/.test(normalized) ||
+          /\[[^\]]+\]\([^)]+\)/.test(normalized) ||
+          /\*\*[^*]+\*\*/.test(normalized) ||
+          /__[^_]+__/.test(normalized) ||
+          /`[^`]+`/.test(normalized) ||
+          /\$[^$]+\$/.test(normalized);
+        Transforms.insertNodes(
+          editor,
+          {
+            type: "code_block",
+            isVoid: true,
+            fence: true,
+            info: "",
+            value: normalized,
+            ...(looksLikeMarkdown ? { markdownCandidate: true } : null),
+            children: [{ text: "" }],
+          } as any,
+          { at: getFocus(editor) },
+        );
+        return;
+      }
       insertData(data);
       markdownAutoformat(editor as SlateEditor);
     };

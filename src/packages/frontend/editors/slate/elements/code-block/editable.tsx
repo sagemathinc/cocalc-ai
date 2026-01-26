@@ -30,6 +30,8 @@ import CopyButton from "@cocalc/frontend/components/copy-button";
 import { ReactEditor } from "../../slate-react";
 import { useFocused, useSelected } from "../hooks";
 import { hash_string } from "@cocalc/util/misc";
+import { Editor, Transforms } from "slate";
+import { markdown_to_slate } from "../../markdown-to-slate";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -237,6 +239,7 @@ function Element({ attributes, children, element }: RenderElementProps) {
   const shouldCollapse = lineCount > COLLAPSE_THRESHOLD_LINES;
   const forceExpanded = codeFocused || (focused && selected);
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
+  const markdownCandidate = (element as any).markdownCandidate;
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -262,12 +265,67 @@ function Element({ attributes, children, element }: RenderElementProps) {
     setExpandedState(false, false);
   }, [setExpandedState]);
 
+  const dismissMarkdownCandidate = useCallback(() => {
+    setElement({ markdownCandidate: undefined } as any);
+  }, [setElement]);
+
+  const convertMarkdownCandidate = useCallback(() => {
+    const markdown = element.value ?? "";
+    const doc = markdown_to_slate(markdown, true);
+    Editor.withoutNormalizing(editor, () => {
+      Transforms.removeNodes(editor, { at: elementPath });
+      Transforms.insertNodes(editor, doc as any, { at: elementPath });
+    });
+  }, [editor, element.value, elementPath]);
+
   return (
     <div {...attributes}>
       <div contentEditable={false} style={{ textIndent: 0 }}>
         <div style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ flex: 1 }}>
             <div style={{ position: "relative" }}>
+              {markdownCandidate && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 6,
+                    left: 6,
+                    zIndex: 2,
+                    display: "flex",
+                    gap: "6px",
+                    background: "rgba(255, 255, 255, 0.9)",
+                    border: "1px solid #ddd",
+                    borderRadius: "6px",
+                    padding: "2px 6px",
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <Button
+                    size="small"
+                    type="text"
+                    style={{ color: "#666" }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      convertMarkdownCandidate();
+                    }}
+                  >
+                    Convert to rich text
+                  </Button>
+                  <Button
+                    size="small"
+                    type="text"
+                    style={{ color: "#666" }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      dismissMarkdownCandidate();
+                    }}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              )}
               {!disableMarkdownCodebar && (
                 <FloatingActionMenu
                   info={info}

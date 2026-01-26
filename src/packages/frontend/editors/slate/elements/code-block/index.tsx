@@ -24,6 +24,7 @@ export interface CodeBlock extends SlateElement {
   fence: boolean;
   value: string;
   info: string;
+  markdownCandidate?: boolean;
 }
 
 interface FloatingActionMenuProps {
