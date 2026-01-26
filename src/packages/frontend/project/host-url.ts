@@ -15,7 +15,7 @@ export function getProjectHostBase(project_id: string): string {
   }
   if (info.get("local_proxy") && typeof window !== "undefined") {
     const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
-    return `${window.location.origin}${basePath}/${project_id}`;
+    return `${window.location.origin}${basePath}`;
   }
   return info.get("connect_url") || "";
 }
