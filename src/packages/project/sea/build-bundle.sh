@@ -62,33 +62,53 @@ if [ -n "$ZEROMQ_BUILD" ]; then
   echo "- Copy zeromq native build artefacts"
   mkdir -p "$OUT"/bundle/build
   cp -r "$ZEROMQ_BUILD/"* "$OUT"/bundle/build/
-  mkdir -p "$OUT"/build
-  cp -r "$ZEROMQ_BUILD/"* "$OUT"/build/
+  # Keep only linux builds in the bundle to avoid shipping unused platforms.
+  rm -rf "$OUT"/bundle/build/darwin "$OUT"/bundle/build/win32 || true
 else
   echo "  (zeromq build directory not found; skipping copy)"
 fi
 
+fetch_native_pkg() {
+  local pkg="$1"
+  local dest="$2"
+  local tmp
+  tmp=$(mktemp -d)
+  echo "  (fetching ${pkg} from npm)"
+  (
+    cd "$tmp"
+    npm pack --silent "$pkg" >/dev/null
+    local tgz
+    tgz=$(ls *.tgz | head -n1)
+    if [ -z "$tgz" ]; then
+      echo "ERROR: failed to download ${pkg} via npm pack"
+      exit 1
+    fi
+    tar -xzf "$tgz"
+  )
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  cp -r "$tmp"/package/. "$dest"/
+  rm -rf "$tmp"
+}
+
 copy_native_pkg() {
   local pkg="$1"
   local dir
-  dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  dir=$(find src/packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  echo "- Copy native module ${pkg}"
   if [ -n "$dir" ]; then
-    echo "- Copy native module ${pkg}"
     mkdir -p "$OUT"/bundle/node_modules/"$pkg"
     cp -r "$dir"/. "$OUT"/bundle/node_modules/"$pkg"/
   else
-    echo "  (skipping ${pkg}; not found)"
+    fetch_native_pkg "$pkg" "$OUT"/bundle/node_modules/"$pkg"
   fi
 }
 
-echo "- Copy node-pty native addon for current platform"
+echo "- Copy node-pty native addon(s)"
 case "${OSTYPE}" in
   linux*)
-    case "$(uname -m)" in
-      x86_64) copy_native_pkg "@lydell/node-pty-linux-x64" ;;
-      aarch64|arm64) copy_native_pkg "@lydell/node-pty-linux-arm64" ;;
-      *) echo "  (unsupported linux arch for node-pty: $(uname -m))" ;;
-    esac
+    copy_native_pkg "@lydell/node-pty-linux-x64"
+    copy_native_pkg "@lydell/node-pty-linux-arm64"
     ;;
   darwin*)
     case "$(uname -m)" in
@@ -105,6 +125,14 @@ esac
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
 
+echo "- Prune non-linux prebuilds"
+for pkg in bufferutil utf-8-validate; do
+  prebuilds="$OUT/bundle/node_modules/$pkg/prebuilds"
+  if [ -d "$prebuilds" ]; then
+    find "$prebuilds" -mindepth 1 -maxdepth 1 -type d ! -name 'linux-*' -exec rm -rf {} + || true
+  fi
+done
+
 # Trim native builds for other platforms to keep output lean
 case "${OSTYPE}" in
   linux*)
@@ -114,17 +142,6 @@ case "${OSTYPE}" in
     rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-linux-* || true
     ;;
 esac
-
-if [ -d "$OUT"/build ]; then
-  case "${OSTYPE}" in
-    linux*)
-      rm -rf "$OUT"/build/darwin "$OUT"/build/win32
-      ;;
-    darwin*)
-      rm -rf "$OUT"/build/linux "$OUT"/build/win32
-      ;;
-  esac
-fi
 
 echo "- Copy project bin scripts"
 mkdir -p "$OUT"/src/packages/project

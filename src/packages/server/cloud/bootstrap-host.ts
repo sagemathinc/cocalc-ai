@@ -254,7 +254,7 @@ export async function buildBootstrapScripts(
     machine,
   });
   const projectHostManifestUrl = `${softwareBaseUrl}/project-host/latest-${targetPlatform.os}-${targetPlatform.arch}.json`;
-  const projectManifestUrl = `${softwareBaseUrl}/project/latest-${targetPlatform.os}-${targetPlatform.arch}.json`;
+  const projectManifestUrl = `${softwareBaseUrl}/project/latest-${targetPlatform.os}.json`;
   const toolsManifestUrl = `${softwareBaseUrl}/tools/latest-${targetPlatform.os}-${targetPlatform.arch}.json`;
   const resolvedHostSea = await resolveSoftwareArtifact(
     projectHostManifestUrl,
@@ -264,7 +264,7 @@ export async function buildBootstrapScripts(
   const seaSha256 = (resolvedHostSea.sha256 ?? "").replace(/[^a-f0-9]/gi, "");
   const resolvedProjectBundle = await resolveSoftwareArtifact(
     projectManifestUrl,
-    targetPlatform,
+    { os: targetPlatform.os },
   );
   const projectBundleUrl = resolvedProjectBundle.url;
   const projectBundleSha256 = (resolvedProjectBundle.sha256 ?? "").replace(

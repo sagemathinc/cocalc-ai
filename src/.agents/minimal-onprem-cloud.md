@@ -2,25 +2,27 @@
 
 ## TODO:
 
-- [ ] make btrfs disk image size a function of the available disk space.
-
-- [ ] switch from `ws://[server]/{project_id}` to `ws://[server}/{host_id}` because otherwise with 50 open projects on the same host, we would have 50 distinct websockets, which is not efficient.
+- [ ] project api isn't working, e.g., what is defined here build/cocalc-lite/src/packages/conat/project/api/index.ts
 
 - [ ] app servers http server proxying of web servers running inside the project
 
 - [ ] backing up and restoring to rustic repo, so backup, file copy, etc. is all unlocked
 
-lifecycle questions:
-
-- provisioning of the sparse image file (size).
-- nail down "deprovisioning" and where data is stored.
-- how do we reuse an existing host? 
-- Should we move all config to be in ~/.local/share/cocalc... instead of system-wide, if possible?  
-- what happens on machine reboot
-
 ---
 
 
+- [x] provisioning of the sparse image file (size).
+
+- [x] how do we reuse an existing host? 
+- [x] Should we move all config to be in ~/.local/share/cocalc... instead of system-wide, if possible?  
+- [x] what happens on machine reboot
+
+
+- [x] switch from `ws://[server]/{project_id}` to `ws://[server}/{host_id}` because otherwise with 50 open projects on the same host, we would have 50 distinct websockets, which is not efficient.
+
+- [x] make btrfs disk image size a function of the available disk space.
+
+- [x] nail down "deprovisioning" and where data is stored.
 
 - [x] harden bootstrap: Right now if I get this "Please contact your system administrator.
   Add correct host key in /home/wstein/.ssh/known_hosts to get rid of this message.
