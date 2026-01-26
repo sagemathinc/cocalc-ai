@@ -14,9 +14,9 @@ import React, {
   useCallback,
 } from "react";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import { Editor, Element, Path, Transforms } from "slate";
+import { Editor as SlateEditor, Element, Path, Transforms } from "slate";
 import { ReactEditor } from "../slate-react";
-import { fromTextArea, Editor, commands } from "codemirror";
+import { fromTextArea, Editor as CMEditor, commands } from "codemirror";
 import {
   DARK_GREY_BORDER,
   CODE_FOCUSED_COLOR,
@@ -88,7 +88,7 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
     const collapsed = useCollapsed();
     const { actions } = useFrameContext();
     const { id } = useFrameContext();
-    const cmRef = useRef<Editor | undefined>(undefined);
+    const cmRef = useRef<CMEditor | undefined>(undefined);
     const [isFocused, setIsFocused] = useState<boolean>(!!cmOptions?.autofocus);
     const textareaRef = useRef<any>(null);
 
@@ -446,8 +446,8 @@ function cursorHandlers(
       return false;
     }
     try {
-      const [node] = Editor.node(editor, [siblingIndex]);
-      return Element.isElement(node) && Editor.isVoid(editor, node);
+      const [node] = SlateEditor.node(editor, [siblingIndex]);
+      return Element.isElement(node) && SlateEditor.isVoid(editor, node);
     } catch {
       return false;
     }
