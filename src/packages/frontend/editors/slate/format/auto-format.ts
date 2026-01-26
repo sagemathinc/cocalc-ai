@@ -94,6 +94,76 @@ function autoformatCodeSpanAtCursor(editor: Editor): boolean {
   return true;
 }
 
+function autoformatMarkAtCursor(
+  editor: Editor,
+  marker: string,
+  mark: "bold" | "italic" | "strikethrough",
+): boolean {
+  const { selection } = editor;
+  if (selection == null || !Range.isCollapsed(selection)) {
+    return false;
+  }
+
+  let node;
+  try {
+    [node] = Editor.node(editor, selection.focus.path);
+  } catch {
+    return false;
+  }
+
+  if (!Text.isText(node)) {
+    return false;
+  }
+
+  const path = selection.focus.path;
+  const text = node.text;
+  const offset = selection.focus.offset;
+  if (offset !== text.length) {
+    return false;
+  }
+
+  if (!text.endsWith(marker)) {
+    return false;
+  }
+
+  const openIndex = text.lastIndexOf(marker, text.length - marker.length - 1);
+  if (openIndex === -1) {
+    return false;
+  }
+
+  const inner = text.slice(openIndex + marker.length, text.length - marker.length);
+  if (inner.length === 0) {
+    return false;
+  }
+
+  if (inner.includes(marker)) {
+    return false;
+  }
+
+  const beforeText = text.slice(0, openIndex);
+  const parentPath = Path.parent(path);
+  const index = path[path.length - 1];
+  const children: Text[] = [];
+
+  if (beforeText.length > 0) {
+    children.push({ ...node, text: beforeText });
+  }
+  children.push({ text: inner, [mark]: true } as Text);
+  children.push({ text: " " });
+
+  Editor.withoutNormalizing(editor, () => {
+    Transforms.removeNodes(editor, { at: path });
+    Transforms.insertNodes(editor, children, { at: parentPath.concat(index) });
+  });
+
+  const newPath = parentPath.concat(index + children.length - 1);
+  setSelectionAndFocus(editor as ReactEditor, {
+    focus: { path: newPath, offset: 1 },
+    anchor: { path: newPath, offset: 1 },
+  });
+  return true;
+}
+
 function autoformatListAtStart(editor: Editor): boolean {
   const { selection } = editor;
   if (selection == null || !Range.isCollapsed(selection)) {
@@ -220,6 +290,21 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
     return true;
   }
   if (autoformatCodeSpanAtCursor(editor)) {
+    return true;
+  }
+  if (autoformatMarkAtCursor(editor, "**", "bold")) {
+    return true;
+  }
+  if (autoformatMarkAtCursor(editor, "__", "bold")) {
+    return true;
+  }
+  if (autoformatMarkAtCursor(editor, "~~", "strikethrough")) {
+    return true;
+  }
+  if (autoformatMarkAtCursor(editor, "*", "italic")) {
+    return true;
+  }
+  if (autoformatMarkAtCursor(editor, "_", "italic")) {
     return true;
   }
 
