@@ -323,7 +323,6 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             return;
           }
         }
-        if (event.ctrlKey || event.metaKey || event.altKey) return;
 
         if (
           event.key === "Backspace" &&
@@ -379,6 +378,21 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           }
         }
 
+        const handler = getKeyboardHandler(event);
+        if (handler) {
+          if (
+            handler({
+              editor,
+              extra: { actions: actions ?? {}, id: id ?? "", search: EMPTY_SEARCH },
+            })
+          ) {
+            event.preventDefault();
+            return;
+          }
+        }
+
+        if (event.ctrlKey || event.metaKey || event.altKey) return;
+
         if (
           event.key === "ArrowUp" &&
           editor.selection != null &&
@@ -401,15 +415,15 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return;
         }
 
-        const handler = getKeyboardHandler(event);
-        if (!handler) return;
-        if (
-          handler({
-            editor,
-            extra: { actions: actions ?? {}, id: id ?? "", search: EMPTY_SEARCH },
-          })
-        ) {
-          event.preventDefault();
+        if (handler) {
+          if (
+            handler({
+              editor,
+              extra: { actions: actions ?? {}, id: id ?? "", search: EMPTY_SEARCH },
+            })
+          ) {
+            event.preventDefault();
+          }
         }
       },
       [
