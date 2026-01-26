@@ -34,7 +34,16 @@ function docStart(editor: Editor): Point {
   try {
     return Editor.start(editor, []);
   } catch (_) {
-    return { path: [0, 0], offset: 0 };
+    // Fall back to the first text node so selection always points to a leaf.
+    for (const [node, path] of Editor.nodes(editor, {
+      at: [],
+      match: (n) => Text.isText(n),
+    })) {
+      const text = node as Text;
+      const nextOffset = Math.max(0, Math.min(0, text.text.length));
+      return { path, offset: nextOffset };
+    }
+    return { path: [0], offset: 0 };
   }
 }
 
