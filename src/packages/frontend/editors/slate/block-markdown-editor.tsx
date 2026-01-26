@@ -164,6 +164,7 @@ interface BlockRowEditorProps {
   registerEditor: (index: number, editor: SlateEditor) => void;
   unregisterEditor: (index: number, editor: SlateEditor) => void;
   getFullMarkdown: () => string;
+  codeBlockExpandState: Map<string, boolean>;
 }
 
 const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
@@ -189,6 +190,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       registerEditor,
       unregisterEditor,
       getFullMarkdown,
+      codeBlockExpandState,
     } = props;
 
     const syncCacheRef = useRef<any>({});
@@ -201,10 +203,11 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         ),
       );
       ed.syncCache = syncCacheRef.current;
+      (ed as any).codeBlockExpandState = codeBlockExpandState;
       (ed as SlateEditor).getMarkdownValue = getFullMarkdown;
       (ed as SlateEditor).getSourceValue = getFullMarkdown;
       return ed;
-    }, [getFullMarkdown]);
+    }, [codeBlockExpandState, getFullMarkdown]);
 
     useEffect(() => {
       (editor as SlateEditor).preserveBlankLines = preserveBlankLines;
@@ -216,6 +219,10 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         unregisterEditor(index, editor as SlateEditor);
       };
     }, [index, editor, registerEditor, unregisterEditor]);
+
+    useEffect(() => {
+      (editor as any).blockIndex = index;
+    }, [editor, index]);
 
     const [value, setValue] = useState<Descendant[]>(() =>
       stripTrailingBlankParagraphs(
@@ -579,6 +586,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   } | null>(null);
 
   const editorMapRef = useRef<Map<number, SlateEditor>>(new Map());
+  const codeBlockExpandStateRef = useRef<Map<string, boolean>>(new Map());
   const pendingFocusRef = useRef<{
     index: number;
     position: "start" | "end";
@@ -931,6 +939,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         registerEditor={registerEditor}
         unregisterEditor={unregisterEditor}
         getFullMarkdown={getFullMarkdown}
+        codeBlockExpandState={codeBlockExpandStateRef.current}
       />
     );
   };

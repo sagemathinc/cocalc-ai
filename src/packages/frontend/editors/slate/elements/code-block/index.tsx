@@ -34,6 +34,7 @@ interface FloatingActionMenuProps {
   onSaveOrEdit: () => void;
   onDownload: () => void;
   renderActions: (size?: "small" | "middle" | "large") => ReactNode;
+  collapseToggle?: { label: string; onClick: () => void } | null;
 }
 
 function FloatingActionMenu({
@@ -44,6 +45,7 @@ function FloatingActionMenu({
   onSaveOrEdit,
   onDownload,
   renderActions,
+  collapseToggle,
 }: FloatingActionMenuProps) {
   const [open, setOpen] = useState(false);
 
@@ -118,6 +120,21 @@ function FloatingActionMenu({
         padding: "2px 4px",
       }}
     >
+      {collapseToggle && (
+        <Button
+          size="small"
+          type="text"
+          style={{ color: "#666", background: "transparent" }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            collapseToggle.onClick();
+          }}
+        >
+          {collapseToggle.label}
+        </Button>
+      )}
       <CopyButton
         size="small"
         value={content}
@@ -155,6 +172,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     throw Error("bug");
   }
 
+  const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar, project_id } = useFileContext();
 
   // we need both a ref and state, because editing is used both for the UI
@@ -187,6 +205,12 @@ export const StaticElement: React.FC<RenderElementProps> = ({
   useEffect(() => {
     setTemporaryInfo(null);
   }, [element.info]);
+
+  const lineCount = (newValue ?? element.value).split("\n").length;
+  const shouldCollapse = lineCount > COLLAPSE_THRESHOLD_LINES;
+  const [expanded, setExpanded] = useState<boolean>(false);
+  const forceExpanded = editing;
+  const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
 
   const save = (value: string | null, run: boolean) => {
     setEditing(false);
@@ -265,46 +289,87 @@ export const StaticElement: React.FC<RenderElementProps> = ({
               }}
             />
           )}
+          collapseToggle={
+            shouldCollapse
+              ? {
+                  label: isCollapsed ? "Show all" : "Collapse",
+                  onClick: () => {
+                    setExpanded((prev) => !prev);
+                  },
+                }
+              : null
+          }
         />
       )}
-      <CodeMirrorStatic
-        editable={editing}
-        onChange={(event) => {
-          if (!editingRef.current) return;
-          setNewValue(event.target.value);
-        }}
-        onKeyDown={(event) => {
-          if (event.shiftKey && event.keyCode === 13) {
-            save(newValue, true);
+      {isCollapsed ? (
+        <div
+          style={{
+            cursor: "default",
+            padding: "8px 12px 10px 12px",
+            background: "white",
+            border: "1px solid #dfdfdf",
+            borderRadius: "8px",
+          }}
+        >
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "break-word",
+              fontFamily: "monospace",
+              fontSize: "13px",
+              color: "#444",
+            }}
+          >
+            {(newValue ?? element.value)
+              .split("\n")
+              .slice(0, COLLAPSE_THRESHOLD_LINES)
+              .join("\n")}
+          </pre>
+          <div style={{ marginTop: "6px", fontSize: "12px", color: "#666" }}>
+            {lineCount} lines (collapsed)
+          </div>
+        </div>
+      ) : (
+        <CodeMirrorStatic
+          editable={editing}
+          onChange={(event) => {
+            if (!editingRef.current) return;
+            setNewValue(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            if (event.shiftKey && event.keyCode === 13) {
+              save(newValue, true);
+            }
+          }}
+          onDoubleClick={() => {
+            setEditing(true);
+          }}
+          value={newValue ?? element.value}
+          style={{
+            background: "white",
+            padding: "10px 15px 10px 20px",
+          }}
+          options={{
+            mode: infoToMode(temporaryInfo ?? element.info, {
+              value: element.value,
+            }),
+          }}
+          addonAfter={
+            disableMarkdownCodebar || output == null ? null : (
+              <div
+                style={{
+                  borderTop: "1px dashed #ccc",
+                  background: "white",
+                  padding: "5px 0 5px 30px",
+                }}
+              >
+                {output}
+              </div>
+            )
           }
-        }}
-        onDoubleClick={() => {
-          setEditing(true);
-        }}
-        value={newValue ?? element.value}
-        style={{
-          background: "white",
-          padding: "10px 15px 10px 20px",
-        }}
-        options={{
-          mode: infoToMode(temporaryInfo ?? element.info, {
-            value: element.value,
-          }),
-        }}
-        addonAfter={
-          disableMarkdownCodebar || output == null ? null : (
-            <div
-              style={{
-                borderTop: "1px dashed #ccc",
-                background: "white",
-                padding: "5px 0 5px 30px",
-              }}
-            >
-              {output}
-            </div>
-          )
-        }
-      />
+        />
+      )}
     </div>
   );
 };

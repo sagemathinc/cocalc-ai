@@ -287,6 +287,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     };
 
     ed.syncCache = {};
+    if ((ed as any).codeBlockExpandState == null) {
+      (ed as any).codeBlockExpandState = new (globalThis as any).Map();
+    }
     if (selectionRef != null) {
       selectionRef.current = {
         setSelection: (selection: any) => {

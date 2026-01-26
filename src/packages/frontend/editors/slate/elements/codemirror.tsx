@@ -62,6 +62,8 @@ interface Props {
   style?: CSSProperties;
   addonBefore?: ReactNode;
   addonAfter?: ReactNode;
+  collapsed?: boolean;
+  collapseLines?: number;
 }
 
 export const SlateCodeMirror: React.FC<Props> = React.memo(
@@ -81,16 +83,26 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
     style,
     addonBefore,
     addonAfter,
+    collapsed,
+    collapseLines,
   }) => {
     const focused = useFocused();
     const selected = useSelected();
     const editor = useSlate();
-    const collapsed = useCollapsed();
+    const selectionCollapsed = useCollapsed();
     const { actions } = useFrameContext();
     const { id } = useFrameContext();
     const cmRef = useRef<CMEditor | undefined>(undefined);
     const [isFocused, setIsFocused] = useState<boolean>(!!cmOptions?.autofocus);
     const textareaRef = useRef<any>(null);
+    const previewRef = useRef<HTMLPreElement | null>(null);
+    const isCollapsed = !!collapsed;
+    const previewLineCount = collapseLines ?? 6;
+    const previewText = useMemo(() => {
+      if (!isCollapsed) return "";
+      const lines = value.split("\n");
+      return lines.slice(0, previewLineCount).join("\n");
+    }, [isCollapsed, previewLineCount, value]);
 
     const editor_settings = useRedux(["account", "editor_settings"]);
     const options = useMemo(() => {
@@ -164,8 +176,8 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
         if (editor.getIgnoreSelection()) return;
         const cm = cmRef.current;
         if (cm == null) return;
-        if (forceCollapsed || collapsed) {
-          // collapsed = single cursor, rather than a selection range.
+        if (forceCollapsed || selectionCollapsed) {
+          // selectionCollapsed = single cursor, rather than a selection range.
           // focus the CodeMirror editor
           // It is critical to blur the Slate editor
           // itself after focusing codemirror, since otherwise we
@@ -178,13 +190,14 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
           ReactEditor.blur(editor);
         }
       },
-      [collapsed, options.theme],
+      [selectionCollapsed, options.theme],
     );
 
     useEffect(() => {
+      if (isCollapsed) return;
       if (!focused || !selected || isFocused) return;
       if (editor.selection == null || elementPath == null) return;
-      if (!collapsed && !focusOnSelect) return;
+      if (!selectionCollapsed && !focusOnSelect) return;
       if ((editor as any).gapCursor) return;
       if ((editor as any).blockGapCursor) return;
 
@@ -210,10 +223,11 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
       isFocused,
       focusOnSelect,
       elementPath,
-      collapsed,
+      selectionCollapsed,
     ]);
 
     useLayoutEffect(() => {
+      if (isCollapsed) return;
       const pending = (editor as any).pendingCodeBlockFocusPath;
       if (!pending || !elementPath) return;
       if (!Path.equals(pending, elementPath)) return;
@@ -269,14 +283,22 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
 
     // If the info line changes update the mode.
     useEffect(() => {
+      if (isCollapsed) return;
       const cm = cmRef.current;
       if (cm == null) return;
       cm.setOption("mode", infoToMode(info));
       const indentUnit = file_associations[info ?? ""]?.opts.indent_unit ?? 4;
       cm.setOption("indentUnit", indentUnit);
-    }, [info]);
+    }, [info, isCollapsed]);
 
     useEffect(() => {
+      if (isCollapsed) {
+        if (cmRef.current) {
+          $(cmRef.current.getWrapperElement()).remove();
+          cmRef.current = undefined;
+        }
+        return;
+      }
       const node: HTMLTextAreaElement = textareaRef.current;
       if (node == null) return;
 
@@ -362,9 +384,10 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
         $(cmRef.current.getWrapperElement()).remove();
         cmRef.current = undefined;
       };
-    }, []);
+    }, [isCollapsed]);
 
     useEffect(() => {
+      if (isCollapsed) return;
       const cm = cmRef.current;
       if (cm == null) return;
       for (const key in options) {
@@ -375,11 +398,12 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
           }
         }
       }
-    }, [editor_settings]);
+    }, [editor_settings, isCollapsed]);
 
     useEffect(() => {
+      if (isCollapsed) return;
       cmRef.current?.setValueNoJump(value);
-    }, [value]);
+    }, [isCollapsed, value]);
 
     const borderColor = isFocused
       ? CODE_FOCUSED_COLOR
@@ -400,7 +424,7 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
         }}
         className="smc-vfill"
       >
-        {!isFocused && selected && !collapsed && (
+        {!isFocused && selected && !selectionCollapsed && (
           <div
             style={{
               background: CODE_FOCUSED_BACKGROUND,
@@ -420,9 +444,43 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
             borderLeft: `3px solid ${
               isFocused ? CODE_FOCUSED_COLOR : borderColor
             }`,
+            position: "relative",
           }}
         >
-          <textarea ref={textareaRef} defaultValue={value}></textarea>
+          {isCollapsed ? (
+            <div
+              style={{
+                cursor: "default",
+                padding: "6px 12px",
+                background: "white",
+              }}
+            >
+              <pre
+                ref={previewRef}
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  overflowWrap: "break-word",
+                  fontFamily: "monospace",
+                  fontSize: "13px",
+                  color: "#444",
+                }}
+              >
+                {previewText}
+              </pre>
+              <div
+                style={{
+                  marginTop: "6px",
+                  fontSize: "12px",
+                  color: "#666",
+                }}
+              >
+                {value.split("\n").length} lines (collapsed)
+              </div>
+            </div>
+          ) : (
+            <textarea ref={textareaRef} defaultValue={value}></textarea>
+          )}
         </div>
         {addonAfter}
       </div>

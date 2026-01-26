@@ -4,7 +4,14 @@
  */
 
 import { Button, Input, Popover } from "antd";
-import { ReactNode, useEffect, useRef, useState } from "react";
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useIsMountedRef } from "@cocalc/frontend/app-framework";
 import { register, RenderElementProps } from "../register";
 import { useSlate } from "../hooks";
@@ -21,6 +28,8 @@ import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { ReactEditor } from "../../slate-react";
+import { useFocused, useSelected } from "../hooks";
+import { hash_string } from "@cocalc/util/misc";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -34,6 +43,7 @@ interface FloatingActionMenuProps {
   lineCount: number;
   modeLabel: string;
   onRun?: () => void;
+  collapseToggle?: { label: string; onClick: () => void } | null;
 }
 
 function FloatingActionMenu({
@@ -48,6 +58,7 @@ function FloatingActionMenu({
   lineCount,
   modeLabel,
   onRun,
+  collapseToggle,
 }: FloatingActionMenuProps) {
   const [open, setOpen] = useState(false);
 
@@ -126,6 +137,21 @@ function FloatingActionMenu({
         padding: "2px 4px",
       }}
     >
+      {collapseToggle && (
+        <Button
+          size="small"
+          type="text"
+          style={{ color: "#666", background: "transparent" }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            collapseToggle.onClick();
+          }}
+        >
+          {collapseToggle.label}
+        </Button>
+      )}
       <CopyButton
         size="small"
         value={code}
@@ -157,8 +183,11 @@ function Element({ attributes, children, element }: RenderElementProps) {
   if (element.type != "code_block") {
     throw Error("bug");
   }
+  const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar } = useFileContext();
   const editor = useSlate();
+  const focused = useFocused();
+  const selected = useSelected();
   const isMountedRef = useIsMountedRef();
   const [info, setInfo] = useState<string>(element.info ?? "");
   const infoFocusedRef = useRef<boolean>(false);
@@ -167,10 +196,31 @@ function Element({ attributes, children, element }: RenderElementProps) {
   const setElement = useSetElement(editor, element);
   // textIndent: 0 is needed due to task lists -- see https://github.com/sagemathinc/cocalc/issues/6074
   const { change, blockNavigation } = useChange();
+  const [codeFocused, setCodeFocused] = useState<boolean>(false);
   const [history, setHistory] = useState<string[]>(
     getHistory(editor, element) ?? [],
   );
   const elementPath = ReactEditor.findPath(editor, element);
+  const expandState =
+    (editor as any).codeBlockExpandState ??
+    ((editor as any).codeBlockExpandState = new Map<string, boolean>());
+  const blockIndex = (editor as any).blockIndex;
+  const collapseKey = useMemo(() => {
+    if (blockIndex != null) {
+      return `block:${blockIndex}`;
+    }
+    if (elementPath != null) {
+      return `path:${elementPath.join(".")}`;
+    }
+    const base = `${info ?? ""}\n${element.value}`;
+    return `code:${hash_string(base)}`;
+  }, [blockIndex, elementPath, info, element.value]);
+  const [expanded, setExpanded] = useState<boolean>(
+    () => expandState.get(collapseKey) ?? false,
+  );
+  useEffect(() => {
+    setExpanded(expandState.get(collapseKey) ?? false);
+  }, [collapseKey]);
   useEffect(() => {
     const newHistory = getHistory(editor, element);
     if (newHistory != null && !isEqual(history, newHistory)) {
@@ -184,6 +234,33 @@ function Element({ attributes, children, element }: RenderElementProps) {
 
   const lineCount = element.value.split("\n").length;
   const modeLabel = infoToMode(info, { value: element.value }) || "plain text";
+  const shouldCollapse = lineCount > COLLAPSE_THRESHOLD_LINES;
+  const forceExpanded = codeFocused || (focused && selected);
+  const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
+  const setExpandedState = useCallback(
+    (next: boolean, focus: boolean) => {
+      expandState.set(collapseKey, next);
+      setExpanded(next);
+      if (next && focus) {
+        (editor as any).pendingCodeBlockFocusPath = elementPath;
+        ReactEditor.focus(editor);
+      }
+    },
+    [collapseKey, expandState, editor, elementPath],
+  );
+
+  const toggleCollapse = useCallback(
+    (opts?: { focus?: boolean }) => {
+      const next = !expanded;
+      const focus = next && (opts?.focus ?? true);
+      setExpandedState(next, focus);
+    },
+    [expanded, setExpandedState],
+  );
+
+  const collapseNow = useCallback(() => {
+    setExpandedState(false, false);
+  }, [setExpandedState]);
 
   return (
     <div {...attributes}>
@@ -238,6 +315,16 @@ function Element({ attributes, children, element }: RenderElementProps) {
                   lineCount={lineCount}
                   modeLabel={modeLabel}
                   onRun={() => runRef.current?.()}
+                  collapseToggle={
+                    shouldCollapse
+                      ? {
+                          label: isCollapsed ? "Show all" : "Collapse",
+                          onClick: isCollapsed
+                            ? () => toggleCollapse({ focus: true })
+                            : collapseNow,
+                        }
+                      : null
+                  }
                 />
               )}
               <SlateCodeMirror
@@ -247,14 +334,18 @@ function Element({ attributes, children, element }: RenderElementProps) {
                 focusOnSelect
                 elementPath={elementPath}
                 onRequestGapCursor={blockNavigation?.setGapCursor}
+                collapsed={shouldCollapse ? isCollapsed : false}
+                collapseLines={shouldCollapse ? COLLAPSE_THRESHOLD_LINES : undefined}
                 onChange={(value) => {
                   setElement({ value });
                 }}
                 onFocus={async () => {
+                  setCodeFocused(true);
                   await delay(1); // must be a little longer than the onBlur below.
                   if (!isMountedRef.current) return;
                 }}
                 onBlur={async () => {
+                  setCodeFocused(false);
                   await delay(0);
                   if (!isMountedRef.current) return;
                 }}
