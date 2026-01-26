@@ -294,6 +294,61 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
   return true;
 }
 
+function autoformatCheckboxAtCursor(editor: Editor): boolean {
+  const { selection } = editor;
+  if (selection == null || !Range.isCollapsed(selection)) {
+    return false;
+  }
+
+  const paragraphEntry = Editor.above(editor, {
+    at: selection.focus,
+    match: (node) => Element.isElement(node) && node.type === "paragraph",
+  });
+  if (!paragraphEntry) {
+    return false;
+  }
+  const [paragraphNode, paragraphPath] = paragraphEntry as [Element, Path];
+  const paragraphText = Editor.string(editor, paragraphPath);
+  const match = paragraphText.match(/^\[( |x|X)\]\s*/);
+  if (!match) {
+    return false;
+  }
+
+  const markerLength = match[0].length;
+
+  const checked = match[1].toLowerCase() === "x";
+  const rest = paragraphText.slice(markerLength).replace(/^\s+/, "");
+  const trailingText = rest.length > 0 ? ` ${rest}` : " ";
+
+  const newParagraph: Element = {
+    ...paragraphNode,
+    children: [
+      { text: "" },
+      {
+        type: "checkbox",
+        isVoid: true,
+        isInline: true,
+        value: checked,
+        children: [{ text: "" }],
+      },
+      { text: trailingText },
+    ],
+  };
+
+  Editor.withoutNormalizing(editor, () => {
+    Transforms.removeNodes(editor, { at: paragraphPath });
+    Transforms.insertNodes(editor, newParagraph as any, { at: paragraphPath });
+  });
+
+  const textPath = paragraphPath.concat(2);
+  setSelectionAndFocus(editor as ReactEditor, {
+    focus: { path: textPath, offset: 1 },
+    anchor: { path: textPath, offset: 1 },
+  });
+
+  return true;
+}
+
 function autoformatListAtStart(editor: Editor): boolean {
   const { selection } = editor;
   if (selection == null || !Range.isCollapsed(selection)) {
@@ -417,6 +472,9 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
     return true;
   }
   if (autoformatListAtStart(editor)) {
+    return true;
+  }
+  if (autoformatCheckboxAtCursor(editor)) {
     return true;
   }
   if (autoformatCodeSpanAtCursor(editor)) {

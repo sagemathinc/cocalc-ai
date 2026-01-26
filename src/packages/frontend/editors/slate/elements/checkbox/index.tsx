@@ -9,6 +9,8 @@ import { Checkbox as AntdCheckbox } from "antd";
 export interface Checkbox extends SlateElement {
   type: "checkbox";
   value?: boolean; // important: using the field value results in more efficient diffs
+  isVoid?: boolean;
+  isInline?: boolean;
 }
 
 interface Props extends RenderElementProps {
