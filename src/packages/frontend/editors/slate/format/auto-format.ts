@@ -240,6 +240,60 @@ function autoformatInlineMathAtCursor(editor: Editor): boolean {
   return true;
 }
 
+function autoformatBlockMathAtStart(editor: Editor): boolean {
+  const { selection } = editor;
+  if (selection == null || !Range.isCollapsed(selection)) {
+    return false;
+  }
+
+  let node;
+  try {
+    [node] = Editor.node(editor, selection.focus.path);
+  } catch {
+    return false;
+  }
+
+  if (!Text.isText(node)) {
+    return false;
+  }
+
+  const path = selection.focus.path;
+  const pos = path[path.length - 1];
+  if (path.length !== 2 || pos !== 0) {
+    return false;
+  }
+
+  const text = node.text;
+  const offset = selection.focus.offset;
+  if (!text.startsWith("$$")) {
+    return false;
+  }
+  if (offset !== 2) {
+    return false;
+  }
+
+  const blockPath = path.slice(0, path.length - 1);
+  Editor.withoutNormalizing(editor, () => {
+    Transforms.delete(editor, {
+      at: { path, offset: 0 },
+      distance: 2,
+    });
+    Transforms.setNodes(
+      editor,
+      {
+        type: "math_block",
+        isVoid: true,
+        display: true,
+        value: "",
+        children: [{ text: "" }],
+      } as any,
+      { at: blockPath },
+    );
+  });
+
+  return true;
+}
+
 function autoformatListAtStart(editor: Editor): boolean {
   const { selection } = editor;
   if (selection == null || !Range.isCollapsed(selection)) {
@@ -366,6 +420,9 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
     return true;
   }
   if (autoformatCodeSpanAtCursor(editor)) {
+    return true;
+  }
+  if (autoformatBlockMathAtStart(editor)) {
     return true;
   }
   if (autoformatInlineMathAtCursor(editor)) {
