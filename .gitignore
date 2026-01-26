@@ -208,4 +208,4 @@ data-1
 publish.sh
 
 src/packages/next/lib/api-v2-manifest.ts
-src/create-gcp.sh
+src/create*.sh
