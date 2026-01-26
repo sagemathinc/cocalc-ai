@@ -169,10 +169,12 @@ esac
 SOFTWARE_BASE_URL="${SOFTWARE_BASE_URL%/}"
 LATEST_URL="${SOFTWARE_BASE_URL}/self-host/latest-${OS}-${ARCH}.json"
 
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cocalc-connector"
+BASE_DIR="${COCALC_CONNECTOR_BASE_DIR:-$HOME/cocalc-host}"
+CONFIG_DIR="${BASE_DIR}/config"
 CONFIG_PATH="${CONFIG_DIR}/config.json"
+LEGACY_CONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/cocalc-connector/config.json"
 
-if [[ -f "$CONFIG_PATH" && "$REPLACE" != "1" ]]; then
+if { [[ -f "$CONFIG_PATH" ]] || [[ -f "$LEGACY_CONFIG_PATH" ]]; } && [[ "$REPLACE" != "1" ]]; then
   if [[ -t 0 ]]; then
     echo "Connector config already exists at $CONFIG_PATH."
     read -r -p "Replace it? [y/N] " reply
@@ -202,6 +204,9 @@ if [[ -f "$CONFIG_PATH" && "$REPLACE" != "1" ]]; then
     echo "Re-run with --replace to overwrite it." >&2
     exit 2
   fi
+fi
+if [[ "$REPLACE" == "1" ]]; then
+  rm -f "$CONFIG_PATH" "$LEGACY_CONFIG_PATH" || true
 fi
 
 url=""

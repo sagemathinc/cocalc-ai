@@ -417,15 +417,36 @@ func configPath(override string) string {
 	if override != "" {
 		return override
 	}
+	newPath := filepath.Join(connectorBaseDir(), "config", "config.json")
+	if fileExists(newPath) {
+		return newPath
+	}
+	legacy := legacyConfigPath()
+	if legacy != "" && fileExists(legacy) {
+		_ = os.MkdirAll(filepath.Dir(newPath), 0o755)
+		_ = copyFile(legacy, newPath)
+		return newPath
+	}
+	return newPath
+}
+
+func statePathFromConfig(cfgPath string) string {
+	return filepath.Join(filepath.Dir(cfgPath), "state.json")
+}
+
+func connectorBaseDir() string {
+	if override := os.Getenv("COCALC_CONNECTOR_BASE_DIR"); override != "" {
+		return override
+	}
+	return filepath.Join(userHomeDir(), "cocalc-host")
+}
+
+func legacyConfigPath() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		base = filepath.Join(userHomeDir(), ".config")
 	}
 	return filepath.Join(base, "cocalc-connector", "config.json")
-}
-
-func statePathFromConfig(cfgPath string) string {
-	return filepath.Join(filepath.Dir(cfgPath), "state.json")
 }
 
 func startDaemon(cfgPath string) error {
@@ -580,6 +601,26 @@ func saveJSON(path string, data interface{}) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return nil
 }
 
 func parseHostPort(raw string, fallbackPort int) (string, int) {
@@ -885,6 +926,20 @@ func pollOnce(cfg Config, state State, statePath string) (bool, error) {
 	}
 	ackBody, _ := json.Marshal(ackPayload)
 	_, ackStatus, _ := httpRequest("POST", base+"/self-host/ack", cfg.ConnectorToken, "application/json", ackBody, cfg.InsecureSkipVerify)
+	if cmd.Action == "delete" {
+		go func() {
+			// Give the hub time to process the ack before uninstalling.
+			time.Sleep(2 * time.Second)
+			sshUser := defaultSshUser
+			if cfg.SshTunnel != nil && cfg.SshTunnel.User != "" {
+				sshUser = cfg.SshTunnel.User
+			}
+			if err := cleanupDirectHost(sshUser, true); err != nil {
+				logLine("post-delete cleanup failed", map[string]interface{}{"error": err.Error()})
+			}
+			os.Exit(0)
+		}()
+	}
 	if ackStatus < 200 || ackStatus >= 300 {
 		logLine("ack failed", map[string]interface{}{"id": cmd.ID, "status": ackStatus})
 	}
@@ -1020,8 +1075,8 @@ func executeCommand(cmd CommandEnvelope, state State, statePath string) (interfa
 		return handleRestart(cmd.Payload, state, statePath)
 	case "hard_restart":
 		return handleHardRestart(cmd.Payload, state, statePath)
-	case "delete":
-		return handleDelete(cmd.Payload, state, statePath)
+    case "delete":
+        return handleDelete(cmd.Payload, state, statePath)
 	case "status":
 		return handleStatus(cmd.Payload, state, statePath)
 	case "resize":
@@ -1269,11 +1324,37 @@ func directStatus() string {
 }
 
 func runProjectHostDaemon(action, sshUser string) error {
+  if sshUser == "" {
+    sshUser = defaultSshUser
+  }
+	cmd := projectHostBinary()
+	args := []string{"-n", "-u", sshUser, "-H", cmd, "daemon", action}
+	result := runCommand("sudo", args)
+	if result.Code != 0 {
+		return errors.New(strings.TrimSpace(result.Stderr))
+	}
+  return nil
+}
+
+func cleanupDirectHost(sshUser string, uninstallConnector bool) error {
 	if sshUser == "" {
 		sshUser = defaultSshUser
 	}
-	cmd := projectHostBinary()
-	args := []string{"-n", "-u", sshUser, "-H", cmd, "daemon", action}
+	args := []string{"-n", "-u", sshUser, "-H", "bash", "-lc"}
+	script := []string{
+		"set -euo pipefail",
+		`SCRIPT="$HOME/cocalc-host/bin/deprovision.sh"`,
+		`if [ ! -x "$SCRIPT" ]; then`,
+		`  echo "missing deprovision script at $SCRIPT" >&2`,
+		`  exit 1`,
+		`fi`,
+		`ARGS="--force"`,
+	}
+	if uninstallConnector {
+		script = append(script, `ARGS="$ARGS --uninstall-connector"`)
+	}
+	script = append(script, `exec "$SCRIPT" $ARGS`)
+	args = append(args, strings.Join(script, "\n"))
 	result := runCommand("sudo", args)
 	if result.Code != 0 {
 		return errors.New(strings.TrimSpace(result.Stderr))
@@ -1405,6 +1486,9 @@ func handleStop(payload map[string]interface{}, state State, statePath string) (
 func handleDelete(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
 	if instance, ok := loadDirectInstance(payload, state); ok {
 		_ = runProjectHostDaemon("stop", instance.SshUser)
+		if err := cleanupDirectHost(instance.SshUser, false); err != nil {
+			return nil, err
+		}
 		delete(state.Instances, toString(payload["host_id"]))
 		saveState(statePath, state)
 		return map[string]interface{}{"name": instance.Name, "state": "deleted"}, nil
@@ -1634,13 +1718,13 @@ func wrapCloudInitScript(script string) string {
 	indent := indentBlock(trimmed, 6)
 	return fmt.Sprintf(`#cloud-config
 write_files:
-  - path: /root/cocalc-bootstrap.sh
+  - path: /root/cocalc-host/bootstrap/bootstrap.sh
     permissions: "u=rwx,go="
     owner: root:root
     content: |
 %s
 runcmd:
-  - [ "/bin/bash", "/root/cocalc-bootstrap.sh" ]
+  - [ "/bin/bash", "/root/cocalc-host/bootstrap/bootstrap.sh" ]
 `, indent)
 }
 
@@ -1700,8 +1784,7 @@ func cloudInitBaseDir() string {
 	if override := os.Getenv("COCALC_CONNECTOR_CLOUD_INIT_DIR"); override != "" {
 		return override
 	}
-	home := userHomeDir()
-	return filepath.Join(home, "cocalc-connector", "cloud-init")
+	return filepath.Join(connectorBaseDir(), "cloud-init")
 }
 
 func httpRequest(method, url, token, contentType string, body []byte, insecure bool) ([]byte, int, error) {

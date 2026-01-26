@@ -28,7 +28,7 @@
  *   - project-host SEA
  *   - project bundle
  *   - tools bundle
- * - Writes helper scripts in ~/bootstrap (ctl/logs/logs-cf, etc.).
+ * - Writes helper scripts in ~/cocalc-host/bootstrap (ctl/logs/logs-cf, etc.).
  * - Installs /usr/local/sbin/cocalc-grow-btrfs and runs it on boot.
  * - Sets cron @reboot hook to start project-host without re-running bootstrap.
  * - Installs and enables cloudflared (if Cloudflare tunnel is enabled).
@@ -428,8 +428,9 @@ if [ -z "$PUBLIC_IP" ]; then
 fi
 `
     : "";
-  const bootstrapDir =
-    sshUser === "root" ? "/root/bootstrap" : `/home/${sshUser}/bootstrap`;
+  const bootstrapHome = sshUser === "root" ? "/root" : `/home/${sshUser}`;
+  const bootstrapRoot = `${bootstrapHome}/cocalc-host`;
+  const bootstrapDir = `${bootstrapRoot}/bootstrap`;
 
   let bootstrapScript = `
 set -euo pipefail
@@ -458,6 +459,7 @@ if [ "$BOOTSTRAP_ARCH" != "$EXPECTED_ARCH" ]; then
 fi
 ARCH="$BOOTSTRAP_ARCH"
 ENV_FILE="${envFile}"
+BOOTSTRAP_HOME="${bootstrapHome}"
 IMAGE_SIZE_GB_RAW="${imageSizeGb}"
 IMAGE_SIZE_GB="$IMAGE_SIZE_GB_RAW"
 if [ -z "$IMAGE_SIZE_GB_RAW" ] || [ "$IMAGE_SIZE_GB_RAW" = "auto" ]; then
@@ -543,11 +545,21 @@ echo "bootstrap: enabling unprivileged user namespaces"
 sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
 echo "bootstrap: ensuring subuid/subgid ranges for ${sshUser}"
 sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 ${sshUser} || true
+echo "bootstrap: enabling linger for ${sshUser}"
+if ! command -v loginctl >/dev/null 2>&1; then
+  echo "bootstrap: loginctl not available; cannot ensure /run/user for ${sshUser}" >&2
+  exit 1
+fi
+if ! sudo loginctl enable-linger ${sshUser}; then
+  echo "bootstrap: failed to enable linger for ${sshUser}" >&2
+  exit 1
+fi
 echo "bootstrap: preparing cocalc directories"
 sudo mkdir -p /opt/cocalc /var/lib/cocalc /etc/cocalc
 sudo chown -R ${sshUser}:${sshUser} /opt/cocalc /var/lib/cocalc
 sudo mkdir -p /btrfs
 echo "bootstrap: preparing bootstrap scripts"
+BOOTSTRAP_ROOT="${bootstrapRoot}"
 BOOTSTRAP_DIR="${bootstrapDir}"
 sudo mkdir -p "$BOOTSTRAP_DIR"
 sudo chown -R ${sshUser}:${sshUser} "$BOOTSTRAP_DIR" || true
@@ -724,6 +736,19 @@ EOF_COCALC_CONTAINER_STORAGE_USER
 fi
 echo "bootstrap: writing project-host env to ${envFile}"
 ${envBlock}
+sudo mkdir -p "$BOOTSTRAP_ROOT/bin"
+sudo chown -R ${sshUser}:${sshUser} "$BOOTSTRAP_ROOT/bin" || true
+SSH_UID="$(id -u ${sshUser} 2>/dev/null || echo "")"
+if [ -n "$SSH_UID" ]; then
+  RUNTIME_DIR="/btrfs/data/tmp/cocalc-podman-runtime-$SSH_UID"
+  sudo mkdir -p "$RUNTIME_DIR"
+  sudo chown ${sshUser}:${sshUser} "$RUNTIME_DIR" || true
+  if grep -q '^COCALC_PODMAN_RUNTIME_DIR=' "$ENV_FILE"; then
+    sudo sed -i.bak "s|^COCALC_PODMAN_RUNTIME_DIR=.*|COCALC_PODMAN_RUNTIME_DIR=$RUNTIME_DIR|" "$ENV_FILE"
+  else
+    echo "COCALC_PODMAN_RUNTIME_DIR=$RUNTIME_DIR" | sudo tee -a "$ENV_FILE" >/dev/null
+  fi
+fi
 if [ "$IMAGE_SIZE_GB_RAW" = "auto" ]; then
   if grep -q '^COCALC_BTRFS_IMAGE_GB=' "$ENV_FILE"; then
     sudo sed -i.bak "s/^COCALC_BTRFS_IMAGE_GB=.*/COCALC_BTRFS_IMAGE_GB=\${IMAGE_SIZE_GB}/" "$ENV_FILE"
@@ -738,7 +763,7 @@ fi
   }
 
   bootstrapScript += `
-cat <<'EOF_COCALC_CTL' > "$BOOTSTRAP_DIR/ctl"
+cat <<'EOF_COCALC_CTL' > "$BOOTSTRAP_ROOT/bin/ctl"
 #!/usr/bin/env bash
 set -euo pipefail
 cmd="\${1:-status}"
@@ -766,12 +791,12 @@ case "\${cmd}" in
     ;;
 esac
 EOF_COCALC_CTL
-chmod +x "$BOOTSTRAP_DIR/ctl"
-cat <<'EOF_COCALC_START' > "$BOOTSTRAP_DIR/start-project-host"
+chmod +x "$BOOTSTRAP_ROOT/bin/ctl"
+cat <<'EOF_COCALC_START' > "$BOOTSTRAP_ROOT/bin/start-project-host"
 #!/usr/bin/env bash
 set -euo pipefail
-BOOTSTRAP_DIR="${bootstrapDir}"
-CTL="$BOOTSTRAP_DIR/ctl"
+BOOTSTRAP_ROOT="${bootstrapRoot}"
+CTL="$BOOTSTRAP_ROOT/bin/ctl"
 for attempt in $(seq 1 60); do
   if mountpoint -q /btrfs; then
     if [ -x /usr/local/sbin/cocalc-grow-btrfs ]; then
@@ -786,18 +811,18 @@ done
 echo "timeout waiting for /btrfs mount"
 exit 1
 EOF_COCALC_START
-chmod +x "$BOOTSTRAP_DIR/start-project-host"
-echo 'tail -n 200 /btrfs/data/log -f' > "$BOOTSTRAP_DIR/logs"
-chmod +x "$BOOTSTRAP_DIR/logs"
+chmod +x "$BOOTSTRAP_ROOT/bin/start-project-host"
+echo 'tail -n 200 /btrfs/data/log -f' > "$BOOTSTRAP_ROOT/bin/logs"
+chmod +x "$BOOTSTRAP_ROOT/bin/logs"
 
-echo 'sudo journalctl -u cocalc-cloudflared.service -o cat -f -n 200' > "$BOOTSTRAP_DIR/logs-cf"
-echo 'sudo systemctl \${1-status} cocalc-cloudflared' > "$BOOTSTRAP_DIR/ctl-cf"
-chmod +x "$BOOTSTRAP_DIR/ctl-cf" "$BOOTSTRAP_DIR/logs-cf"
+echo 'sudo journalctl -u cocalc-cloudflared.service -o cat -f -n 200' > "$BOOTSTRAP_ROOT/bin/logs-cf"
+echo 'sudo systemctl \${1-status} cocalc-cloudflared' > "$BOOTSTRAP_ROOT/bin/ctl-cf"
+chmod +x "$BOOTSTRAP_ROOT/bin/ctl-cf" "$BOOTSTRAP_ROOT/bin/logs-cf"
 
 echo "bootstrap: configuring project-host autostart"
 echo "bootstrap: using project-host user ${sshUser}"
 sudo tee /etc/cron.d/cocalc-project-host >/dev/null <<'EOF_COCALC_CRON'
-@reboot ${sshUser} ${bootstrapDir}/start-project-host
+@reboot ${sshUser} ${bootstrapRoot}/bin/start-project-host
 EOF_COCALC_CRON
 sudo chmod 644 /etc/cron.d/cocalc-project-host
 if command -v systemctl >/dev/null 2>&1; then
@@ -1129,6 +1154,133 @@ ${scripts.installServiceScript}
 sudo touch /btrfs/data/.bootstrap_done
 sudo touch /var/lib/cocalc/.bootstrap_done
 report_status "done"
+cat <<'EOF_COCALC_DEPROVISION' > "$BOOTSTRAP_ROOT/bin/deprovision.sh"
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  if command -v sudo >/dev/null 2>&1; then
+    exec sudo bash "$0" "$@"
+  fi
+  echo "deprovision.sh must be run as root (sudo required)" >&2
+  exit 1
+fi
+force=0
+uninstall_connector=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --force) force=1 ;;
+    --uninstall-connector) uninstall_connector=1 ;;
+    --help)
+      echo "Usage: deprovision.sh [--force] [--uninstall-connector]"
+      exit 0
+      ;;
+  esac
+  shift
+done
+if [ "$force" -ne 1 ]; then
+  read -r -p "This will delete ALL CoCalc data on this host. Continue? [y/N] " ans
+  case "$ans" in
+    y|Y|yes|YES) ;;
+    *) echo "aborted"; exit 1 ;;
+  esac
+fi
+SSH_USER="${scripts.sshUser}"
+SSH_UID="$(id -u "$SSH_USER" 2>/dev/null || echo "")"
+TARGET_HOME="$(getent passwd "$SSH_USER" | cut -d: -f6 || true)"
+if [ -z "$TARGET_HOME" ]; then
+  TARGET_HOME="$HOME"
+fi
+if [ -n "$SSH_UID" ]; then
+  export XDG_RUNTIME_DIR="/run/user/$SSH_UID"
+fi
+ids="$(sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman ps -a --filter "label=role=project" -q 2>/dev/null || true)"
+if [ -n "$ids" ]; then
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 30s sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
+  else
+    sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
+  fi
+fi
+pkill -f /opt/cocalc/bin/node || true
+if [ -d /btrfs/data/cache/project-roots ]; then
+  for m in /btrfs/data/cache/project-roots/*; do
+    [ -d "$m" ] || continue
+    umount "$m" || umount -l "$m" || true
+  done
+fi
+if mountpoint -q /btrfs; then
+  umount /btrfs || umount -l /btrfs || true
+fi
+if [ -f /etc/fstab ]; then
+  sed -i.bak '/cocalc-btrfs/d' /etc/fstab || true
+fi
+rm -f /var/lib/cocalc/btrfs.img || true
+rm -rf /btrfs || true
+rm -rf /var/lib/cocalc /etc/cocalc /opt/cocalc || true
+rm -f /usr/local/sbin/cocalc-grow-btrfs /usr/local/sbin/cocalc-nvidia-cdi || true
+rm -f /etc/containers/storage.conf || true
+if [ "$uninstall_connector" -eq 1 ]; then
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+  fi
+  if command -v launchctl >/dev/null 2>&1; then
+    launchctl unload "$HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$TARGET_HOME/.config/cocalc-connector" || true
+  rm -f "$TARGET_HOME/.config/systemd/user/cocalc-self-host-connector.service" || true
+  rm -f "$TARGET_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" || true
+  if command -v sudo >/dev/null 2>&1; then
+    sudo rm -f /usr/local/bin/cocalc-self-host-connector || true
+  fi
+  rm -rf "$TARGET_HOME/cocalc-host" || true
+fi
+EOF_COCALC_DEPROVISION
+sudo chmod +x "$BOOTSTRAP_ROOT/bin/deprovision.sh"
+sudo chown ${scripts.sshUser}:${scripts.sshUser} "$BOOTSTRAP_ROOT/bin/deprovision.sh"
+if [ -n "$SSH_UID" ]; then
+  HOST_DIR="$BOOTSTRAP_HOME/cocalc-host"
+  sudo mkdir -p "$HOST_DIR"
+  cat <<EOF_COCALC_ENV > "$HOST_DIR/env.sh"
+#!/usr/bin/env bash
+export XDG_RUNTIME_DIR="$RUNTIME_DIR"
+export COCALC_PODMAN_RUNTIME_DIR="$RUNTIME_DIR"
+EOF_COCALC_ENV
+  sudo chmod +x "$HOST_DIR/env.sh"
+  sudo chown ${scripts.sshUser}:${scripts.sshUser} "$HOST_DIR/env.sh"
+fi
+cat <<'EOF_COCALC_README' > "$BOOTSTRAP_ROOT/README.md"
+CoCalc Project Host (Direct) Layout
+===================================
+
+This directory is managed by CoCalc. It contains helper scripts and state for
+this host. The most important paths:
+
+bootstrap/
+  bootstrap.sh       - main bootstrap script
+  bootstrap.log      - output from bootstrap.sh
+
+bin/
+  ctl                - start/stop/status helpers for project-host
+  logs               - tail /btrfs/data/log
+  logs-cf            - cloudflared logs (if enabled)
+  deprovision.sh     - full teardown (use --force)
+
+Logs and status:
+  - Project-host logs:  tail -n 200 /btrfs/data/log -f
+  - Connector logs:     journalctl --user -u cocalc-self-host-connector.service -f
+  - Cloudflared logs:   $HOME/cocalc-host/bin/logs-cf
+
+Podman debugging:
+  . $HOME/cocalc-host/env.sh
+
+Deprovision:
+  sudo $HOME/cocalc-host/bin/deprovision.sh --force
+
+Notes:
+  - /btrfs holds project data and snapshots.
+  - /etc/cocalc/project-host.env contains runtime settings.
+EOF_COCALC_README
+sudo chown ${scripts.sshUser}:${scripts.sshUser} "$BOOTSTRAP_ROOT/README.md"
 `;
 }
 
@@ -1165,7 +1317,14 @@ set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
 BOOTSTRAP_URL="${bootstrapUrl}"
 STATUS_URL="${statusUrl}"
-BOOTSTRAP_DIR="/root/bootstrap"
+BOOTSTRAP_HOME="$(getent passwd "\${SUDO_USER:-}" | cut -d: -f6 || true)"
+if [ -z "$BOOTSTRAP_HOME" ]; then
+  BOOTSTRAP_HOME="$(getent passwd 1000 | cut -d: -f6 || true)"
+fi
+if [ -z "$BOOTSTRAP_HOME" ]; then
+  BOOTSTRAP_HOME="/root"
+fi
+BOOTSTRAP_DIR="$BOOTSTRAP_HOME/cocalc-host/bootstrap"
 BOOTSTRAP_HOST="$(echo "$BOOTSTRAP_URL" | awk -F/ '{print $3}')"
 if [[ "$BOOTSTRAP_HOST" == \\[*\\]* ]]; then
   BOOTSTRAP_HOST="\${BOOTSTRAP_HOST#\\[}"
