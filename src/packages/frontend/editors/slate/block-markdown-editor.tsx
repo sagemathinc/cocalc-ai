@@ -41,6 +41,8 @@ import type { SearchHook } from "./search";
 import { isAtBeginningOfBlock, isAtEndOfBlock } from "./control";
 import { pointAtPath } from "./slate-util";
 import type { SlateEditor } from "./types";
+import { IS_MACOS } from "./keyboard/register";
+import { moveListItemDown, moveListItemUp } from "./format/list-move";
 
 const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
 const EMPTY_SEARCH: SearchHook = {
@@ -304,6 +306,23 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           }
         }
         if (!ReactEditor.isFocused(editor)) return;
+        const moveCombo = IS_MACOS
+          ? event.ctrlKey && event.metaKey && !event.altKey
+          : event.ctrlKey &&
+            event.shiftKey &&
+            !event.altKey &&
+            !event.metaKey;
+        const isMoveUp = moveCombo && event.key === "ArrowUp";
+        const isMoveDown = moveCombo && event.key === "ArrowDown";
+        if (isMoveUp || isMoveDown) {
+          const movedListItem = isMoveUp
+            ? moveListItemUp(editor)
+            : moveListItemDown(editor);
+          if (movedListItem) {
+            event.preventDefault();
+            return;
+          }
+        }
         if (event.ctrlKey || event.metaKey || event.altKey) return;
 
         if (
