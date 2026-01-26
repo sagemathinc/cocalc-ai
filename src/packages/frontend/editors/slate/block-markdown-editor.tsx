@@ -158,6 +158,7 @@ interface BlockRowEditorProps {
     initialText?: string,
   ) => void;
   preserveBlankLines: boolean;
+  saveNow?: () => void;
   registerEditor: (index: number, editor: SlateEditor) => void;
   unregisterEditor: (index: number, editor: SlateEditor) => void;
   getFullMarkdown: () => string;
@@ -182,6 +183,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       onNavigate,
       onInsertGap,
       preserveBlankLines,
+      saveNow,
       registerEditor,
       unregisterEditor,
       getFullMarkdown,
@@ -279,6 +281,16 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return;
         }
         if (event.defaultPrevented) return;
+        const isSaveKey =
+          (event.ctrlKey || event.metaKey) &&
+          !event.altKey &&
+          event.key.toLowerCase() === "s";
+        if (isSaveKey) {
+          saveNow?.();
+          actions?.save?.(true);
+          event.preventDefault();
+          return;
+        }
         if (event.key === "Enter") {
           if (event.shiftKey && actions?.shiftEnter) {
             actions.shiftEnter(getFullMarkdown());
@@ -392,6 +404,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         onNavigate,
         onDeleteBlock,
         read_only,
+        saveNow,
         setGapCursor,
       ],
     );
@@ -881,6 +894,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         onNavigate={focusBlock}
         onInsertGap={insertBlockAtGap}
         preserveBlankLines={preserveBlankLines}
+        saveNow={saveBlocksNow}
         registerEditor={registerEditor}
         unregisterEditor={unregisterEditor}
         getFullMarkdown={getFullMarkdown}
