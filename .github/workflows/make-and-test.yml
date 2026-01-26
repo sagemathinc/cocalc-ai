@@ -71,4 +71,5 @@ jobs:
         run: cd src && pnpm build-dev
 
       - name: test
+        timeout-minutes: 15
         run: source venv/bin/activate && cd src && pnpm test
