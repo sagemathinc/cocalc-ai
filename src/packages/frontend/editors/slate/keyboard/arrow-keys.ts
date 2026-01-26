@@ -101,6 +101,17 @@ const down = ({ editor }: { editor: SlateEditor }) => {
     editor.scrollIntoDOM(index + 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
+    if (cur != null && isAtBeginningOfBlock(editor, { mode: "highest" })) {
+      const nextIndex = cur.path[0] + 1;
+      if (nextIndex < editor.children.length) {
+        const [nextNode] = Editor.node(editor, [nextIndex]);
+        if (Element.isElement(nextNode) && Editor.isVoid(editor, nextNode)) {
+          const focus = pointAtPath(editor, [nextIndex], undefined, "start");
+          Transforms.setSelection(editor, { focus, anchor: focus });
+          return true;
+        }
+      }
+    }
     if (cur != null && isAtEndOfBlock(editor, { mode: "highest" })) {
       if (shouldUseGapCursor(editor, "down")) {
         setGapCursor(editor, { path: [cur.path[0]], side: "after" });
@@ -162,6 +173,17 @@ const up = ({ editor }: { editor: SlateEditor }) => {
     editor.scrollIntoDOM(index - 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
+    if (cur != null && isAtEndOfBlock(editor, { mode: "highest" })) {
+      const prevIndex = cur.path[0] - 1;
+      if (prevIndex >= 0) {
+        const [prevNode] = Editor.node(editor, [prevIndex]);
+        if (Element.isElement(prevNode) && Editor.isVoid(editor, prevNode)) {
+          const focus = pointAtPath(editor, [prevIndex], undefined, "end");
+          Transforms.setSelection(editor, { focus, anchor: focus });
+          return true;
+        }
+      }
+    }
     if (cur != null && isAtBeginningOfBlock(editor, { mode: "highest" })) {
       if (shouldUseGapCursor(editor, "up")) {
         setGapCursor(editor, { path: [cur.path[0]], side: "before" });
