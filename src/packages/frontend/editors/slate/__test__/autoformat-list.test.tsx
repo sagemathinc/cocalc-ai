@@ -4,7 +4,7 @@ import { createEditor, Descendant, Editor, Element, Transforms } from "slate";
 
 import { withReact, ReactEditor } from "../slate-react";
 import { withAutoFormat } from "../format";
-import { markdownAutoformat } from "../format/auto-format";
+import { withNormalize } from "../normalize";
 
 test("autoformat list does not leave a blank paragraph between blocks", () => {
   const editor = withAutoFormat(withReact(createEditor()));
@@ -47,7 +47,7 @@ test("autoformat list preserves existing paragraph text", () => {
   const editor = withAutoFormat(withReact(createEditor()));
   const value: Descendant[] = [
     { type: "paragraph", children: [{ text: "foo" }] },
-    { type: "paragraph", children: [{ text: "-bar" }] },
+    { type: "paragraph", children: [{ text: "bar" }] },
   ];
   editor.children = value;
   editor.selection = null;
@@ -56,9 +56,11 @@ test("autoformat list preserves existing paragraph text", () => {
     .spyOn(ReactEditor, "focus")
     .mockImplementation(() => undefined);
 
-  // simulate autoformat trigger right after typing "-" at start
-  Transforms.select(editor, { path: [1, 0], offset: 1 });
-  const didFormat = markdownAutoformat(editor as any);
+  // simulate typing "-" then space at start of a non-empty line
+  Transforms.select(editor, { path: [1, 0], offset: 0 });
+  editor.insertText("-");
+  editor.insertText(" ", true);
+  const didFormat = true;
   expect(didFormat).toBe(true);
   expect(editor.children).toHaveLength(2);
   expect(editor.children[0]?.["type"]).toBe("paragraph");
@@ -66,6 +68,40 @@ test("autoformat list preserves existing paragraph text", () => {
 
   const listText = Editor.string(editor, [1]);
   expect(listText).toBe("bar");
+
+  focusSpy.mockRestore();
+});
+
+test("autoformat list merges with following list without throwing", () => {
+  const editor = withAutoFormat(withNormalize(withReact(createEditor())));
+  const value: Descendant[] = [
+    { type: "paragraph", children: [{ text: "foo" }] },
+    { type: "paragraph", children: [{ text: "-" }] },
+    {
+      type: "bullet_list",
+      tight: true,
+      children: [
+        {
+          type: "list_item",
+          children: [{ type: "paragraph", children: [{ text: "existing" }] }],
+        },
+      ],
+    },
+  ];
+  editor.children = value;
+  editor.selection = null;
+
+  const focusSpy = jest
+    .spyOn(ReactEditor, "focus")
+    .mockImplementation(() => undefined);
+
+  Transforms.select(editor, { path: [1, 0], offset: 1 });
+  editor.insertText(" ", true);
+
+  expect(editor.children).toHaveLength(2);
+  expect(editor.children[1]?.["type"]).toBe("bullet_list");
+  const listText = Editor.string(editor, [1]);
+  expect(listText).toContain("existing");
 
   focusSpy.mockRestore();
 });

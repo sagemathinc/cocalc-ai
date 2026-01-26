@@ -44,7 +44,12 @@ export function ensureDocNonempty(doc: Descendant[]): void {
 
 export function stripBlankParagraphs(value: Descendant[]): Descendant[] {
   const filtered = value.filter(
-    (node) => !(node?.["type"] === "paragraph" && node?.["blank"] === true),
+    (node) =>
+      !(
+        node?.["type"] === "paragraph" &&
+        node?.["blank"] === true &&
+        isWhitespaceParagraph(node)
+      ),
   );
   ensureDocNonempty(filtered);
   return filtered;

@@ -6,7 +6,16 @@
 import { withInsertText } from "./insert-text";
 import { withDeleteBackward } from "./delete-backward";
 import type { SlateEditor } from "../editable-markdown";
-import { Editor, Operation, Transforms, Path, Point, Text, Element } from "slate";
+import {
+  Editor,
+  Operation,
+  Transforms,
+  Path,
+  Point,
+  Text,
+  Element,
+  Range,
+} from "slate";
 import { len } from "@cocalc/util/misc";
 import { markdown_to_slate } from "../markdown-to-slate";
 import { applyOperations } from "../operations";
@@ -15,6 +24,93 @@ import { getRules } from "../elements";
 import { ReactEditor } from "../slate-react";
 import { formatHeading, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
+
+function autoformatListAtStart(editor: Editor): boolean {
+  const { selection } = editor;
+  if (selection == null || !Range.isCollapsed(selection)) {
+    return false;
+  }
+
+  let node;
+  try {
+    [node] = Editor.node(editor, selection.focus.path);
+  } catch {
+    return false;
+  }
+
+  if (!Text.isText(node)) {
+    return false;
+  }
+
+  const path = selection.focus.path;
+  const pos = path[path.length - 1];
+  if (path.length !== 2 || pos !== 0) {
+    return false;
+  }
+
+  const text = node.text;
+  const markerMatch = text.match(/^([-*+]|\d+[.)])\s?/);
+  if (!markerMatch) {
+    return false;
+  }
+
+  const marker = markerMatch[1];
+  const markerLen = marker.length;
+  const offset = selection.focus.offset;
+  if (offset !== markerLen && offset !== markerLen + 1) {
+    return false;
+  }
+
+  const blockPath = path.slice(0, path.length - 1);
+  const hasSpace = text.slice(markerLen, markerLen + 1) === " ";
+  const deleteCount = hasSpace ? markerLen + 1 : markerLen;
+
+  Editor.withoutNormalizing(editor, () => {
+    Transforms.delete(editor, {
+      at: { path, offset: 0 },
+      distance: deleteCount,
+    });
+    Transforms.wrapNodes(editor, { type: "list_item" } as Element, {
+      at: blockPath,
+    });
+    const isOrdered = /^\d/.test(marker);
+    Transforms.wrapNodes(
+      editor,
+      {
+        type: isOrdered ? "ordered_list" : "bullet_list",
+        ...(isOrdered ? { start: parseInt(marker, 10) || 1 } : null),
+        tight: true,
+      } as Element,
+      { at: blockPath },
+    );
+  });
+
+  const listItemEntry = Editor.above(editor, {
+    at: blockPath,
+    match: (node) => Element.isElement(node) && node.type === "list_item",
+  });
+  const listItemPath = listItemEntry?.[1] ?? blockPath;
+  let focus: Point | undefined;
+  try {
+    focus = Editor.start(editor, listItemPath);
+  } catch {
+    const textEntry = Editor.nodes(editor, {
+      at: listItemPath,
+      match: (node) => Text.isText(node),
+    }).next().value as [Text, Path] | undefined;
+    if (textEntry) {
+      try {
+        focus = Editor.start(editor, textEntry[1]);
+      } catch {
+        // ignore
+      }
+    }
+  }
+  if (focus) {
+    setSelectionAndFocus(editor as ReactEditor, { focus, anchor: focus });
+  }
+  return true;
+}
 
 export const withAutoFormat = (editor) => {
   withInsertText(editor);
@@ -49,6 +145,9 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
   if (!Text.isText(node)) return false;
 
   if (autoformatBlockquoteAtStart(editor)) {
+    return true;
+  }
+  if (autoformatListAtStart(editor)) {
     return true;
   }
 
@@ -194,7 +293,7 @@ function markdownAutoformatAt(
       // If a list marker was typed without a space (e.g., "-foo") and
       // the autoformat is triggered by the space key, insert the missing
       // space so markdown parsing recognizes the list.
-        const markerMatch = text.match(/^([-*+]|\d+[.)])(?=\S)/);
+      const markerMatch = text.match(/^([-*+]|\d+[.)])(?=\S)/);
       if (markerMatch) {
         const marker = markerMatch[1];
         text = marker + " " + text.slice(marker.length);
@@ -338,7 +437,9 @@ function markdownAutoformatAt(
       return true;
     }
     if (type === "bullet_list" || type === "ordered_list") {
-      const focus = Editor.start(editor, blockPath);
+      const listItemPath = blockPath.concat(0);
+      const paragraphPathInList = listItemPath.concat(0);
+      const focus = Editor.start(editor, paragraphPathInList);
       setSelectionAndFocus(editor, { focus, anchor: focus });
       return true;
     }
