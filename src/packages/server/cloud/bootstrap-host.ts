@@ -333,7 +333,9 @@ export async function buildBootstrapScripts(
   const provider = providerId ? getServerProvider(providerId) : undefined;
   const dataDiskDevices =
     provider?.getBootstrapDataDiskDevices?.(spec, storageMode) ?? "";
-  const imageSizeGb = Math.max(20, Number(spec.disk_gb ?? 100));
+  const imageSizeGb = isSelfHost
+    ? "auto"
+    : String(Math.max(20, Number(spec.disk_gb ?? 100)));
   const onPremPortRaw = process.env.COCALC_PROJECT_HOST_PORT ?? "";
   const onPremPort = Number.isFinite(Number.parseInt(onPremPortRaw, 10))
     ? Number.parseInt(onPremPortRaw, 10)
@@ -455,6 +457,21 @@ if [ "$BOOTSTRAP_ARCH" != "$EXPECTED_ARCH" ]; then
   exit 1
 fi
 ARCH="$BOOTSTRAP_ARCH"
+ENV_FILE="${envFile}"
+IMAGE_SIZE_GB_RAW="${imageSizeGb}"
+IMAGE_SIZE_GB="$IMAGE_SIZE_GB_RAW"
+if [ -z "$IMAGE_SIZE_GB_RAW" ] || [ "$IMAGE_SIZE_GB_RAW" = "auto" ]; then
+  ROOT_TOTAL_GB="$(df -BG --output=size / | tail -n1 | tr -dc '0-9')"
+  if [ -z "$ROOT_TOTAL_GB" ]; then
+    ROOT_TOTAL_GB=0
+  fi
+  TARGET_GB=$((ROOT_TOTAL_GB - 15))
+  if [ "$TARGET_GB" -lt 5 ]; then
+    TARGET_GB=5
+  fi
+  IMAGE_SIZE_GB="$TARGET_GB"
+  echo "bootstrap: computed btrfs image size \${IMAGE_SIZE_GB}G (disk \${ROOT_TOTAL_GB}G)"
+fi
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 export APT_LISTCHANGES_FRONTEND=none
@@ -604,8 +621,8 @@ else
   echo "bootstrap: no data disk found; using loopback image"
   sudo mkdir -p /var/lib/cocalc
   if [ ! -f /var/lib/cocalc/btrfs.img ]; then
-    echo "bootstrap: creating /var/lib/cocalc/btrfs.img (${imageSizeGb}G)"
-    sudo truncate -s ${imageSizeGb}G /var/lib/cocalc/btrfs.img
+    echo "bootstrap: creating /var/lib/cocalc/btrfs.img (\${IMAGE_SIZE_GB}G)"
+    sudo truncate -s \${IMAGE_SIZE_GB}G /var/lib/cocalc/btrfs.img
     echo "bootstrap: formatting /var/lib/cocalc/btrfs.img as btrfs"
     sudo mkfs.btrfs -f /var/lib/cocalc/btrfs.img
   fi
@@ -707,6 +724,13 @@ EOF_COCALC_CONTAINER_STORAGE_USER
 fi
 echo "bootstrap: writing project-host env to ${envFile}"
 ${envBlock}
+if [ "$IMAGE_SIZE_GB_RAW" = "auto" ]; then
+  if grep -q '^COCALC_BTRFS_IMAGE_GB=' "$ENV_FILE"; then
+    sudo sed -i.bak "s/^COCALC_BTRFS_IMAGE_GB=.*/COCALC_BTRFS_IMAGE_GB=\${IMAGE_SIZE_GB}/" "$ENV_FILE"
+  else
+    echo "COCALC_BTRFS_IMAGE_GB=\${IMAGE_SIZE_GB}" | sudo tee -a "$ENV_FILE" >/dev/null
+  fi
+fi
 `;
 
   if (opts.conatPasswordCommand) {

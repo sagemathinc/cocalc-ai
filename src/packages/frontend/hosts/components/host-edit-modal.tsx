@@ -267,10 +267,9 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     [diskMinAdjusted, isNebiusIoM3],
   );
   const storageMode = host?.machine?.storage_mode ?? "persistent";
-  const showDiskFields =
-    isSelfHost ||
-    isDeprovisioned ||
-    (supportsDiskResize && storageMode !== "ephemeral");
+  const showDiskFields = isSelfHost
+    ? !isDirect
+    : isDeprovisioned || (supportsDiskResize && storageMode !== "ephemeral");
   const showAdvancedSection =
     isDeprovisioned &&
     ((providerDescriptor && fieldSchema.advanced.length > 0) ||
