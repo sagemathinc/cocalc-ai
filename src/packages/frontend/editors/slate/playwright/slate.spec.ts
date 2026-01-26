@@ -279,7 +279,7 @@ test("convert markdown candidate code block to rich text", async ({ page }) => {
   await button.click();
 
   await page.waitForFunction(() => {
-    const value = window.__slateTest?.getValue();
+    const value = window.__slateTest?.getValue() as SlateNode[] | undefined;
     return value?.[0]?.type === "bullet_list";
   });
 
