@@ -256,6 +256,39 @@ test("autoformat quotes the current paragraph when typing > at start", async ({
   }
 });
 
+test("convert markdown candidate code block to rich text", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setValue([
+      {
+        type: "code_block",
+        isVoid: true,
+        fence: true,
+        info: "",
+        value: "- a\n- b\n",
+        markdownCandidate: true,
+        children: [{ text: "" }],
+      },
+    ]);
+  });
+
+  const button = page.locator('[data-testid="convert-markdown"]');
+  await expect(button).toBeVisible();
+  await button.click();
+
+  await page.waitForFunction(() => {
+    const value = window.__slateTest?.getValue();
+    return value?.[0]?.type === "bullet_list";
+  });
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value?.[0]?.type).toBe("bullet_list");
+});
+
 test("gap cursor only appears on last visual line before a void block", async ({
   page,
 }) => {

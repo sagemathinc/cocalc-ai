@@ -22,6 +22,7 @@ import { getHandler } from "../keyboard/register";
 import { getGapCursor } from "../gap-cursor";
 import { withIsInline, withIsVoid } from "../plugins";
 import "../keyboard/arrow-keys";
+import { markdown_to_slate } from "../markdown-to-slate";
 
 declare global {
   interface Window {
@@ -139,6 +140,7 @@ function Harness(): React.JSX.Element {
           onKeyDown={onKeyDown}
           renderElement={({ attributes, children, element }) => {
             if (element.type === "code_block") {
+              const codeElement = element as any;
               return (
                 <div
                   {...attributes}
@@ -151,6 +153,24 @@ function Harness(): React.JSX.Element {
                     minHeight: 24,
                   }}
                 >
+                  {codeElement.markdownCandidate && (
+                    <button
+                      data-testid="convert-markdown"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const doc = markdown_to_slate(codeElement.value ?? "", true);
+                        Editor.withoutNormalizing(editor, () => {
+                          const path = ReactEditor.findPath(editor, codeElement);
+                          Transforms.removeNodes(editor, { at: path });
+                          Transforms.insertNodes(editor, doc as any, { at: path });
+                        });
+                      }}
+                    >
+                      Convert to rich text
+                    </button>
+                  )}
                   <pre style={{ margin: 0, fontFamily: "inherit" }}>code</pre>
                   {children}
                 </div>
