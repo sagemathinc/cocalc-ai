@@ -526,6 +526,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           position: "relative",
           background: undefined,
         }}
+        data-slate-block-index={index}
       >
         {selected && (
           <div
@@ -711,6 +712,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const { project_id, path, desc } = useFrameContext();
   const actions = actions0 ?? {};
   const font_size = font_size0 ?? desc?.get("font_size") ?? DEFAULT_FONT_SIZE;
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const initialValue = value ?? "";
   const valueRef = useRef<string>(initialValue);
   valueRef.current = initialValue;
@@ -728,6 +730,10 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
 
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const [blockSelection, setBlockSelection] = useState<{
+    anchor: number;
+    focus: number;
+  } | null>(null);
+  const blockSelectionRef = useRef<{
     anchor: number;
     focus: number;
   } | null>(null);
@@ -1049,21 +1055,119 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     return { start, end };
   }, [blockSelection]);
 
+  useEffect(() => {
+    blockSelectionRef.current = blockSelection;
+  }, [blockSelection]);
+
   const handleSelectBlock = useCallback(
     (index: number, opts: { shiftKey: boolean }) => {
       setGapCursor(null);
       setFocusedIndex(null);
+      containerRef.current?.focus();
       if (opts.shiftKey) {
         const anchor =
-          blockSelection?.anchor ??
+          blockSelectionRef.current?.anchor ??
           focusedIndex ??
           index;
-        setBlockSelection({ anchor, focus: index });
+        const next = { anchor, focus: index };
+        blockSelectionRef.current = next;
+        setBlockSelection(next);
       } else {
-        setBlockSelection({ anchor: index, focus: index });
+        const next = { anchor: index, focus: index };
+        blockSelectionRef.current = next;
+        setBlockSelection(next);
       }
     },
-    [blockSelection, focusedIndex],
+    [focusedIndex],
+  );
+
+  const setContainerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      containerRef.current = node;
+      if (typeof divRef === "function") {
+        divRef(node);
+      } else if (divRef) {
+        divRef.current = node;
+      }
+    },
+    [divRef],
+  );
+
+  const getSelectedBlocks = useCallback(() => {
+    if (!selectionRange) return [];
+    return blocksRef.current.slice(
+      selectionRange.start,
+      selectionRange.end + 1,
+    );
+  }, [selectionRange]);
+
+  const setSelectionToRange = useCallback(
+    (start: number, end: number) => {
+      setBlockSelection({ anchor: start, focus: end });
+    },
+    [],
+  );
+
+  const deleteSelectedBlocks = useCallback(() => {
+    if (!selectionRange) return;
+    const { start, end } = selectionRange;
+    setGapCursor(null);
+    setFocusedIndex(null);
+    setBlocks((prev) => {
+      const next = [...prev];
+      next.splice(start, end - start + 1);
+      if (next.length === 0) {
+        next.push("");
+      }
+      blocksRef.current = next;
+      return next;
+    });
+    if (is_current) saveBlocksDebounced();
+    const nextIndex = Math.min(start, blocksRef.current.length - 1);
+    setSelectionToRange(nextIndex, nextIndex);
+  }, [selectionRange, is_current, saveBlocksDebounced, setSelectionToRange]);
+
+  const moveSelectedBlocks = useCallback(
+    (direction: "up" | "down") => {
+      if (!selectionRange) return;
+      const { start, end } = selectionRange;
+      const delta = direction === "up" ? -1 : 1;
+      if (direction === "up" && start === 0) return;
+      if (direction === "down" && end === blocksRef.current.length - 1) return;
+      setBlocks((prev) => {
+        const next = [...prev];
+        const removed = next.splice(start, end - start + 1);
+        const insertAt = direction === "up" ? start - 1 : start + 1;
+        next.splice(insertAt, 0, ...removed);
+        blocksRef.current = next;
+        return next;
+      });
+      setSelectionToRange(start + delta, end + delta);
+      if (is_current) saveBlocksDebounced();
+    },
+    [selectionRange, is_current, saveBlocksDebounced, setSelectionToRange],
+  );
+
+  const insertBlocksAfterSelection = useCallback(
+    (markdown: string) => {
+      if (!selectionRange) return;
+      const newBlocks = splitMarkdownToBlocks(markdown);
+      const insertIndex = selectionRange.end + 1;
+      setGapCursor(null);
+      setFocusedIndex(null);
+      setBlocks((prev) => {
+        const next = [...prev];
+        next.splice(insertIndex, 0, ...newBlocks);
+        blocksRef.current = next;
+        return next;
+      });
+      if (is_current) saveBlocksDebounced();
+      setSelectionToRange(
+        insertIndex,
+        insertIndex + Math.max(0, newBlocks.length - 1),
+      );
+    },
+    [selectionRange, is_current, saveBlocksDebounced, setSelectionToRange],
   );
 
   const rowStyle: React.CSSProperties = {
@@ -1132,8 +1236,103 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
 
   return (
     <div
-      ref={divRef}
+      ref={setContainerRef}
       className={noVfill || height === "auto" ? undefined : "smc-vfill"}
+      tabIndex={-1}
+      onMouseDownCapture={(event) => {
+        if (!event.shiftKey) return;
+        if (!blockSelectionRef.current) return;
+        const target = event.target as HTMLElement | null;
+        if (!target) return;
+        if (target.closest("[data-slate-block-gutter]")) return;
+        const row = target.closest("[data-slate-block-index]");
+        if (!row) return;
+        const indexAttr = row.getAttribute("data-slate-block-index");
+        if (indexAttr == null) return;
+        const index = parseInt(indexAttr, 10);
+        if (!Number.isFinite(index)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handleSelectBlock(index, { shiftKey: true });
+      }}
+      onKeyDownCapture={(event) => {
+        if (!selectionRange) return;
+        if (event.defaultPrevented) return;
+        const key = event.key.toLowerCase();
+        const isMod = event.metaKey || event.ctrlKey;
+        const isMoveCombo = IS_MACOS
+          ? event.metaKey && event.shiftKey && !event.altKey
+          : event.ctrlKey && event.shiftKey && !event.altKey;
+        if (key === "escape") {
+          setBlockSelection(null);
+          event.preventDefault();
+          return;
+        }
+        if (isMoveCombo && key === "arrowup") {
+          moveSelectedBlocks("up");
+          event.preventDefault();
+          return;
+        }
+        if (isMoveCombo && key === "arrowdown") {
+          moveSelectedBlocks("down");
+          event.preventDefault();
+          return;
+        }
+        if (event.shiftKey && key === "arrowup") {
+          const focus = blockSelection?.focus ?? selectionRange.start;
+          const anchor = blockSelection?.anchor ?? selectionRange.start;
+          const next = Math.max(0, focus - 1);
+          setSelectionToRange(anchor, next);
+          event.preventDefault();
+          return;
+        }
+        if (event.shiftKey && key === "arrowdown") {
+          const focus = blockSelection?.focus ?? selectionRange.end;
+          const anchor = blockSelection?.anchor ?? selectionRange.start;
+          const next = Math.min(blocksRef.current.length - 1, focus + 1);
+          setSelectionToRange(anchor, next);
+          event.preventDefault();
+          return;
+        }
+        if ((key === "backspace" || key === "delete") && !event.altKey) {
+          deleteSelectedBlocks();
+          event.preventDefault();
+          return;
+        }
+        if (isMod && !event.shiftKey && !event.altKey && key === "a") {
+          setSelectionToRange(0, blocksRef.current.length - 1);
+          event.preventDefault();
+          return;
+        }
+      }}
+      onCopyCapture={(event) => {
+        if (!selectionRange) return;
+        const text = joinBlocks(getSelectedBlocks());
+        if (event.clipboardData) {
+          event.preventDefault();
+          event.clipboardData.setData("text/plain", text);
+          event.clipboardData.setData("text/markdown", text);
+        }
+      }}
+      onCutCapture={(event) => {
+        if (!selectionRange) return;
+        const text = joinBlocks(getSelectedBlocks());
+        if (event.clipboardData) {
+          event.preventDefault();
+          event.clipboardData.setData("text/plain", text);
+          event.clipboardData.setData("text/markdown", text);
+          deleteSelectedBlocks();
+        }
+      }}
+      onPasteCapture={(event) => {
+        if (!selectionRange) return;
+        const markdown =
+          event.clipboardData?.getData("text/markdown") ||
+          event.clipboardData?.getData("text/plain");
+        if (!markdown) return;
+        event.preventDefault();
+        insertBlocksAfterSelection(markdown);
+      }}
       style={{
         overflow: noVfill || height === "auto" ? undefined : "auto",
         backgroundColor: "white",
