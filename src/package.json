@@ -33,6 +33,7 @@
     "conat-watch": "cd packages/backend && pnpm conat-watch",
     "conat-inventory": "cd packages/backend && pnpm conat-inventory",
     "python-api": "cd python/cocalc-api && PATH=$HOME/.local/bin:$PATH make all",
+    "lint:py": "mypy packages/server/cloud/bootstrap/bootstrap.py",
     "tsc": "cd packages && pnpm tsc:build",
     "tsc:watch": "cd packages && pnpm tsc:watch"
   },

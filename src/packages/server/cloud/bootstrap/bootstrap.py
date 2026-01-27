@@ -3,6 +3,17 @@
 
 This script replaces the legacy monolithic shell bootstrap. It is stdlib-only
 and driven by a JSON config written by bootstrap-host.ts.
+
+High-level responsibilities:
+  1) Sanity checks (OS/arch, required tools) and logging bootstrap state.
+  2) APT setup: update + install base packages with retries/timeouts.
+  3) Storage: configure /btrfs (disk or loopback), helpers, and /btrfs/data.
+  4) Podman storage config (rootful + rootless) and runtime dir.
+  5) Project-host env file (including public IP substitution if needed).
+  6) Fetch + verify bundles/tools and unpack them into cocalc-host paths.
+  7) Install Node via nvm, write wrapper + helper scripts.
+  8) Optional cloudflared setup, GPU setup, and autostart cron.
+  9) Start project-host, re-enable unattended upgrades, mark bootstrap done.
 """
 
 from __future__ import annotations
