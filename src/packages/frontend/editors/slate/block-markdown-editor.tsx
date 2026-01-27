@@ -20,7 +20,17 @@ import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame
 import { Path } from "@cocalc/frontend/frame-editors/frame-tree/path";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
-import { Descendant, Editor, Range, Transforms, createEditor } from "slate";
+import {
+  Descendant,
+  DecoratedRange,
+  Editor,
+  Element as SlateElement,
+  Node,
+  Range,
+  Text,
+  Transforms,
+  createEditor,
+} from "slate";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
 import type { RenderElementProps } from "./slate-react";
@@ -43,6 +53,11 @@ import { pointAtPath } from "./slate-util";
 import type { SlateEditor } from "./types";
 import { IS_MACOS } from "./keyboard/register";
 import { moveListItemDown, moveListItemUp } from "./format/list-move";
+import {
+  buildCodeBlockDecorations,
+  getPrismGrammar,
+} from "./elements/code-block/prism";
+import type { CodeBlock } from "./elements/code-block/types";
 
 const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
 const EMPTY_SEARCH: SearchHook = {
@@ -259,6 +274,50 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const renderElement = useCallback(
       (props: RenderElementProps) => <Element {...props} />,
       [],
+    );
+
+    const codeBlockCacheRef = useRef<
+      WeakMap<
+        CodeBlock,
+        { text: string; info: string; decorations: DecoratedRange[][] }
+      >
+    >(new WeakMap());
+
+    const decorate = useCallback(
+      ([node, path]): DecoratedRange[] => {
+        if (!Text.isText(node)) return [];
+        const lineEntry = Editor.above(editor, {
+          at: path,
+          match: (n) =>
+            SlateElement.isElement(n) && n.type === "code_line",
+        });
+        if (!lineEntry) return [];
+        const blockEntry = Editor.above(editor, {
+          at: path,
+          match: (n) =>
+            SlateElement.isElement(n) && n.type === "code_block",
+        });
+        if (!blockEntry) return [];
+        const [block, blockPath] = blockEntry as [CodeBlock, number[]];
+        const lineIndex = lineEntry[1][lineEntry[1].length - 1];
+        const cache = codeBlockCacheRef.current;
+        const text = block.children.map((line) => Node.string(line)).join("\n");
+        const info = block.info ?? "";
+        const cached = cache.get(block);
+        if (!cached || cached.text !== text || cached.info !== info) {
+          if (getPrismGrammar(info)) {
+            cache.set(block, {
+              text,
+              info,
+              decorations: buildCodeBlockDecorations(block, blockPath),
+            });
+          } else {
+            cache.set(block, { text, info, decorations: [] });
+          }
+        }
+        return cache.get(block)?.decorations?.[lineIndex] ?? [];
+      },
+      [editor],
     );
 
     const handleChange = useCallback(
@@ -511,6 +570,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               readOnly={read_only}
               renderElement={renderElement}
               renderLeaf={Leaf}
+              decorate={decorate}
               onFocus={() => {
                 onFocus?.();
               }}
