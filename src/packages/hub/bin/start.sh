@@ -8,8 +8,6 @@ SRC_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 DATA_BASE_DEFAULT="$SRC_ROOT/data/app"
 
 unset DATA COCALC_ROOT
-# TODO -- eliminate COCALC_DEPLOYMENT_MODE
-export COCALC_DEPLOYMENT_MODE="local"
 export DEBUG="${DEBUG:='cocalc:*,-cocalc:silly:*'}"
 export NODE_ENV="${NODE_ENV:=development}"
 export NODE_NO_WARNINGS=1

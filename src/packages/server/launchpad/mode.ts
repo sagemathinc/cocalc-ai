@@ -1,13 +1,9 @@
 import getLogger from "@cocalc/backend/logger";
-import { getServerSettings } from "@cocalc/database/settings/server-settings";
-
 const logger = getLogger("server:launchpad:mode");
 
 export type CocalcProduct = "plus" | "launchpad" | "rocket";
-export type LaunchpadMode = "unset" | "local" | "cloud";
 
 const VALID_PRODUCTS: CocalcProduct[] = ["plus", "launchpad", "rocket"];
-const VALID_MODES: LaunchpadMode[] = ["unset", "local", "cloud"];
 
 function normalizeProduct(value?: string | null): CocalcProduct | undefined {
   const raw = (value ?? "").trim();
@@ -52,50 +48,7 @@ export function isRocketProduct(): boolean {
   return getCocalcProduct() === "rocket";
 }
 
-function normalizeMode(value?: string | null): LaunchpadMode {
-  const mode = (value ?? "").trim().toLowerCase();
-  if ((VALID_MODES as string[]).includes(mode)) {
-    return mode as LaunchpadMode;
-  }
-  return "unset";
-}
-
-let warnedLegacyDeployment = false;
-
-export async function getLaunchpadMode(): Promise<LaunchpadMode> {
-  const envMode = process.env.COCALC_DEPLOYMENT_MODE;
-  if (envMode) {
-    return normalizeMode(envMode);
-  }
-  const legacyEnv = process.env.COCALC_LAUNCHPAD_MODE;
-  if (legacyEnv) {
-    if (!warnedLegacyDeployment) {
-      warnedLegacyDeployment = true;
-      logger.warn("COCALC_LAUNCHPAD_MODE is deprecated; use COCALC_DEPLOYMENT_MODE", {
-        mode: legacyEnv,
-      });
-    }
-    return normalizeMode(legacyEnv);
-  }
-  const settings = await getServerSettings();
-  return normalizeMode(settings.launchpad_mode);
-}
-
-export async function requireLaunchpadModeSelected(): Promise<LaunchpadMode> {
-  if (!isLaunchpadProduct() && !isRocketProduct()) {
-    return "cloud";
-  }
-  const mode = await getLaunchpadMode();
-  if (mode === "unset") {
-    throw new Error(
-      "Launchpad mode not selected. Set Admin Settings → Launchpad Mode or COCALC_DEPLOYMENT_MODE.",
-    );
-  }
-  return mode;
-}
-
 export type LaunchpadLocalConfig = {
-  mode: LaunchpadMode;
   http_port?: number;
   https_port?: number;
   sshd_port?: number;
@@ -104,9 +57,8 @@ export type LaunchpadLocalConfig = {
 };
 
 export function getLaunchpadLocalConfig(
-  modeOverride?: LaunchpadMode,
+  _modeOverride?: string,
 ): LaunchpadLocalConfig {
-  const mode = modeOverride ?? normalizeMode(process.env.COCALC_DEPLOYMENT_MODE);
   const basePortRaw =
     process.env.COCALC_BASE_PORT ??
     process.env.COCALC_HTTPS_PORT ??
@@ -123,9 +75,7 @@ export function getLaunchpadLocalConfig(
   const httpPortParsed = Number.parseInt(httpPortRaw, 10);
   const httpPort = Number.isFinite(httpPortParsed)
     ? httpPortParsed
-    : mode === "local"
-      ? basePort
-      : Math.max(basePort - 1, 1);
+    : basePort;
   const sshdPortRaw = process.env.COCALC_SSHD_PORT ?? "";
   const sshdPortParsed = Number.parseInt(sshdPortRaw, 10);
   const sshdPort = Number.isFinite(sshdPortParsed)
@@ -142,7 +92,6 @@ export function getLaunchpadLocalConfig(
     undefined;
 
   return {
-    mode,
     http_port: Number.isFinite(httpPort) ? httpPort : undefined,
     https_port: Number.isFinite(httpsPort) ? httpsPort : undefined,
     sshd_port: Number.isFinite(sshdPort) ? sshdPort : undefined,

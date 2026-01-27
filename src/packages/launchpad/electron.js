@@ -3,9 +3,7 @@
 const { app, BrowserWindow, Menu } = require("electron");
 const {
   applyLaunchpadDefaults,
-  ensureLaunchpadTls,
   logLaunchpadConfig,
-  scheduleLaunchpadCertRotation,
 } = require("./lib/onprem-config");
 
 let port; // set after Launchpad starts
@@ -98,17 +96,7 @@ function buildMenu() {
 async function main() {
   // Spin up CoCalc Launchpad and Electron
   applyLaunchpadDefaults();
-  const tls = ensureLaunchpadTls();
-  if (tls?.keyPath && tls?.certPath) {
-    if (!process.argv.includes("--https-key")) {
-      process.argv.push("--https-key", tls.keyPath);
-    }
-    if (!process.argv.includes("--https-cert")) {
-      process.argv.push("--https-cert", tls.certPath);
-    }
-  }
-  logLaunchpadConfig();
-  scheduleLaunchpadCertRotation();
+    logLaunchpadConfig();
 
   await app.whenReady();
   require("@cocalc/hub/hub");

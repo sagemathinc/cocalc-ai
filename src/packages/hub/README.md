@@ -49,7 +49,6 @@ You can override any of these with `DATA` or `COCALC_DATA_DIR`.
 These scripts set:
 
 - `COCALC_PRODUCT=launchpad`
-- `COCALC_DEPLOYMENT_MODE=local` (or `cloud` for `app:*:cloud`)
 
 Local mode is self‑contained. Cloud mode expects Cloudflare tunnels and a
 remote rustic repo, and is not useful without that extra configuration.
@@ -62,4 +61,3 @@ remote rustic repo, and is not useful without that extra configuration.
 
 See [docs/launchpad.md](../../docs/launchpad.md) for the full Launchpad
 architecture and TLS behavior in local‑network mode.
-

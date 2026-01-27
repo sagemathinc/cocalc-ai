@@ -61,8 +61,6 @@ spec:
               value: "{{ .Values.data.path }}"
             - name: COCALC_PRODUCT
               value: "{{ .Values.product }}"
-            - name: COCALC_DEPLOYMENT_MODE
-              value: "{{ .Values.deploymentMode }}"
             - name: COCALC_ROCKET_CONTROL_PLANE
               value: "{{ .Values.controlPlane }}"
             - name: PGHOST

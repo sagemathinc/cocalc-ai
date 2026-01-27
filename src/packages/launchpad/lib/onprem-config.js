@@ -1,10 +1,6 @@
 const { existsSync } = require("fs");
 const { join } = require("path");
-const {
-  ensureOnPremTls,
-  resolveOnPremHost,
-  scheduleOnPremCertRotation,
-} = require("@cocalc/server/onprem");
+const { resolveOnPremHost } = require("@cocalc/server/onprem");
 
 function parsePort(value) {
   if (value == null || value === "") {
@@ -44,47 +40,10 @@ function findArgValue(flag) {
   return undefined;
 }
 
-function ensureLaunchpadTls() {
-  const mode = (process.env.COCALC_DEPLOYMENT_MODE ?? "").trim().toLowerCase();
-  if (!mode || mode === "local") {
-    return null;
-  }
-  if (mode && mode !== "local" && mode !== "onprem") {
-    return null;
-  }
-  const existingKey = findArgValue("--https-key");
-  const existingCert = findArgValue("--https-cert");
-  return ensureOnPremTls({
-    host: resolveOnPremHost(),
-    existingKey,
-    existingCert,
-    allowLocalHttp: true,
-  });
-}
-
-function scheduleLaunchpadCertRotation() {
-  const mode = (process.env.COCALC_DEPLOYMENT_MODE ?? "").trim().toLowerCase();
-  if (!mode || mode === "local") {
-    return;
-  }
-  if (mode && mode !== "local" && mode !== "onprem") {
-    return;
-  }
-  const existingKey = findArgValue("--https-key");
-  const existingCert = findArgValue("--https-cert");
-  scheduleOnPremCertRotation({
-    host: resolveOnPremHost(),
-    allowLocalHttp: true,
-    existingKey,
-    existingCert,
-  });
-}
-
 function applyLaunchpadDefaults() {
   process.env.COCALC_DB ??= "pglite";
   process.env.COCALC_DISABLE_NEXT ??= "1";
   process.env.COCALC_PRODUCT ??= "launchpad";
-  process.env.COCALC_DEPLOYMENT_MODE ??= "local";
 
   const dataDir = resolveDataDir();
   process.env.DATA ??= dataDir;
@@ -106,8 +65,6 @@ function applyLaunchpadDefaults() {
 
 module.exports = {
   applyLaunchpadDefaults,
-  ensureLaunchpadTls,
-  scheduleLaunchpadCertRotation,
   resolveLaunchpadHost: resolveOnPremHost,
   logLaunchpadConfig() {
     const summary = {
@@ -116,7 +73,6 @@ module.exports = {
       https_port: process.env.COCALC_HTTPS_PORT ?? process.env.PORT,
       http_port: process.env.COCALC_HTTP_PORT,
       sshd_port: process.env.COCALC_SSHD_PORT,
-      https_cert: process.env.COCALC_LAUNCHPAD_HTTPS_CERT,
     };
     console.log("launchpad config:", summary);
   },

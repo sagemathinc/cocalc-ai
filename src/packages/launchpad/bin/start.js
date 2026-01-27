@@ -5,9 +5,7 @@ const { dirname, join } = require("path");
 const { existsSync } = require("fs");
 const {
   applyLaunchpadDefaults,
-  ensureLaunchpadTls,
   logLaunchpadConfig,
-  scheduleLaunchpadCertRotation,
 } = require("../lib/onprem-config");
 
 function prependPath(dir) {
@@ -20,17 +18,7 @@ function prependPath(dir) {
 (async () => {
   try {
     applyLaunchpadDefaults();
-    const tls = ensureLaunchpadTls();
-    if (tls?.keyPath && tls?.certPath) {
-      if (!process.argv.includes("--https-key")) {
-        process.argv.push("--https-key", tls.keyPath);
-      }
-      if (!process.argv.includes("--https-cert")) {
-        process.argv.push("--https-cert", tls.certPath);
-      }
-    }
     logLaunchpadConfig();
-    scheduleLaunchpadCertRotation();
 
     const bundledRootCandidate = join(__dirname, "..", "..", "..");
     const bundleDir =
