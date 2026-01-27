@@ -41,6 +41,7 @@ import passwordStrength from "@cocalc/server/auth/password-strength";
 import reCaptcha from "@cocalc/server/auth/recaptcha";
 import redeemRegistrationToken from "@cocalc/server/auth/tokens/redeem";
 import sendWelcomeEmail from "@cocalc/server/email/welcome-email";
+import getLogger from "@cocalc/backend/logger";
 import {
   isLaunchpadMode,
   isSoftwareLicenseActivated,
@@ -65,6 +66,8 @@ import {
   MIN_PASSWORD_LENGTH,
   MIN_PASSWORD_STRENGTH,
 } from "@cocalc/util/auth";
+
+const logger = getLogger("auth:sign-up");
 
 export async function signUp(req, res) {
   let {
@@ -235,16 +238,21 @@ export async function signUp(req, res) {
         await sendWelcomeEmail(email, account_id);
       } catch (err) {
         // Expected to fail, e.g., when sendgrid or smtp not configured yet.
-        // TODO: should log using debug instead of console?
-        console.log(`WARNING: cannot send welcome email to ${email} -- ${err}`);
+        logger.debug("welcome email skipped (no email backend configured)", {
+          email,
+          err,
+        });
       }
     }
     if (!owner_id) {
-      await signUserIn(req, res, account_id); // sets a cookie
+      await signUserIn(req, res, account_id); // sets a cookie + response
+      return;
     }
     res.json({ account_id });
   } catch (err) {
-    res.json({ error: err.message });
+    if (!res.headersSent) {
+      res.json({ error: err.message });
+    }
   }
 }
 
