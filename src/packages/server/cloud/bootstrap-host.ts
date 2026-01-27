@@ -215,12 +215,21 @@ export type BootstrapScripts = {
   fetchProjectBundleScript: string;
   fetchToolsScript: string;
   installServiceScript: string;
+  expectedOs: string;
+  expectedArch: string;
   bootstrapPyUrl: string;
   bootstrapPyShaUrl: string;
   publicUrl: string;
   internalUrl: string;
   sshServer: string;
   sshUser: string;
+  hasGpu: boolean;
+  imageSizeGb: string;
+  dataDiskDevices: string;
+  dataDiskCandidates: string;
+  envFile: string;
+  envLines: string[];
+  nodeVersion: string;
   projectHostBundleUrl: string;
   projectHostBundleSha256: string;
   projectHostBundleRemote: string;
@@ -228,17 +237,28 @@ export type BootstrapScripts = {
   projectHostBundlesRoot: string;
   projectHostCurrent: string;
   projectHostBin: string;
+  projectHostVersion: string;
   projectBundleUrl: string;
   projectBundleSha256: string;
   projectBundlesRoot: string;
   projectBundleDir: string;
   projectBundleRemote: string;
+  projectBundleVersion: string;
   toolsUrl: string;
   toolsSha256: string;
   toolsRoot: string;
   toolsDir: string;
   toolsRemote: string;
+  toolsVersion: string;
   tunnel?: CloudflareTunnel;
+  cloudflaredConfig?: {
+    enabled: boolean;
+    hostname?: string;
+    port?: number;
+    token?: string;
+    tunnelId?: string;
+    credsJson?: string;
+  };
 };
 
 export async function buildBootstrapScripts(
@@ -346,6 +366,7 @@ export async function buildBootstrapScripts(
   const toolsRoot = "/opt/cocalc/tools";
   const toolsDir = `${toolsRoot}/${toolsVersion}`;
   const toolsRemote = `${bootstrapRoot}/tmp/tools.tar.xz`;
+  const nodeVersion = process.env.COCALC_PROJECT_HOST_NODE_VERSION || "24";
   if (!projectHostBundleUrl) {
     throw new Error("project host bundle URL could not be resolved");
   }
@@ -933,6 +954,7 @@ sudo chmod 644 /etc/cron.d/cocalc-nvidia-cdi
 
   let cloudflaredScript = "";
   let cloudflaredServiceUnit = "";
+  let cloudflaredConfig: BootstrapScripts["cloudflaredConfig"];
   if (tunnel && tunnelEnabled) {
     const useToken = Boolean(tunnel.token);
     if (!useToken) {
@@ -1000,6 +1022,16 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 `;
+    cloudflaredConfig = {
+      enabled: true,
+      hostname: tunnel.hostname,
+      port,
+      token: useToken ? tunnel.token : undefined,
+      tunnelId: tunnel.id,
+      credsJson: useToken ? undefined : creds,
+    };
+  } else {
+    cloudflaredConfig = { enabled: false };
   }
 
   if (cloudflaredScript) {
@@ -1118,7 +1150,6 @@ chmod +x "$BOOTSTRAP_DIR"/fetch-project-host.sh "$BOOTSTRAP_DIR"/fetch-project-b
 sudo chown ${sshUser}:${sshUser} "$BOOTSTRAP_DIR"/fetch-project-host.sh "$BOOTSTRAP_DIR"/fetch-project-bundle.sh "$BOOTSTRAP_DIR"/fetch-tools.sh || true
 `;
 
-  const nodeVersion = process.env.COCALC_PROJECT_HOST_NODE_VERSION || "24";
   const installServiceScript = `
 set -euo pipefail
 HOST_DIR="$BOOTSTRAP_ROOT"
@@ -1173,12 +1204,21 @@ sudo -u ${sshUser} -H "$PH_BIN" daemon start
     fetchProjectBundleScript,
     fetchToolsScript,
     installServiceScript,
+    expectedOs: targetPlatform.os,
+    expectedArch: targetPlatform.arch,
     bootstrapPyUrl,
     bootstrapPyShaUrl,
     publicUrl,
     internalUrl,
     sshServer,
     sshUser,
+    hasGpu,
+    imageSizeGb,
+    dataDiskDevices,
+    dataDiskCandidates,
+    envFile,
+    envLines,
+    nodeVersion,
     projectHostBundleUrl,
     projectHostBundleSha256,
     projectHostBundleRemote,
@@ -1186,17 +1226,21 @@ sudo -u ${sshUser} -H "$PH_BIN" daemon start
     projectHostBundlesRoot,
     projectHostCurrent,
     projectHostBin,
+    projectHostVersion,
     projectBundleUrl,
     projectBundleSha256,
     projectBundlesRoot,
     projectBundleDir,
     projectBundleRemote,
+    projectBundleVersion,
     toolsUrl,
     toolsSha256,
     toolsRoot,
     toolsDir,
     toolsRemote,
+    toolsVersion,
     tunnel,
+    cloudflaredConfig,
   };
 }
 
@@ -1215,7 +1259,8 @@ ${caCert}
 EOF_COCALC_BOOTSTRAP_CA
 CURL_CACERT_ARG="--cacert $BOOTSTRAP_CACERT_PATH"
 `
-    : `CURL_CACERT_ARG=""`;
+    : `BOOTSTRAP_CACERT_PATH=""
+CURL_CACERT_ARG=""`;
   const conatPasswordCommand = `
 if [ -f /btrfs/data/secrets/conat-password ]; then
   echo "bootstrap: conat password already present"
@@ -1234,6 +1279,22 @@ fi
   if (!scripts.projectHostBundleUrl) {
     throw new Error("project host bundle URL not configured");
   }
+  const aptPackagesJson = JSON.stringify([
+    "podman",
+    "btrfs-progs",
+    "uidmap",
+    "slirp4netns",
+    "fuse-overlayfs",
+    "curl",
+    "xz-utils",
+    "rsync",
+    "vim",
+    "crun",
+    "cron",
+    "chrony",
+  ]);
+  const envLinesJson = JSON.stringify(scripts.envLines);
+  const cloudflaredJson = JSON.stringify(scripts.cloudflaredConfig ?? { enabled: false });
   return `#!/bin/bash
 set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
@@ -1293,38 +1354,8 @@ trap 'on_error "$?" "$LINENO"' ERR
 
 BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
 BOOTSTRAP_TMP="$BOOTSTRAP_ROOT/tmp"
-BOOTSTRAP_LEGACY="$BOOTSTRAP_DIR/legacy-bootstrap.sh"
-BOOTSTRAP_FETCH_HOST="$BOOTSTRAP_DIR/fetch-project-host.sh"
-BOOTSTRAP_FETCH_BUNDLE="$BOOTSTRAP_DIR/fetch-project-bundle.sh"
-BOOTSTRAP_FETCH_TOOLS="$BOOTSTRAP_DIR/fetch-tools.sh"
-BOOTSTRAP_INSTALL="$BOOTSTRAP_DIR/install-service.sh"
 
 mkdir -p "$BOOTSTRAP_DIR"
-
-cat <<'EOF_COCALC_LEGACY' > "$BOOTSTRAP_LEGACY"
-${scripts.bootstrapScript}
-EOF_COCALC_LEGACY
-chmod 700 "$BOOTSTRAP_LEGACY"
-
-cat <<'EOF_COCALC_FETCH_HOST' > "$BOOTSTRAP_FETCH_HOST"
-${scripts.fetchProjectHostScript}
-EOF_COCALC_FETCH_HOST
-chmod 700 "$BOOTSTRAP_FETCH_HOST"
-
-cat <<'EOF_COCALC_FETCH_BUNDLE' > "$BOOTSTRAP_FETCH_BUNDLE"
-${scripts.fetchProjectBundleScript}
-EOF_COCALC_FETCH_BUNDLE
-chmod 700 "$BOOTSTRAP_FETCH_BUNDLE"
-
-cat <<'EOF_COCALC_FETCH_TOOLS' > "$BOOTSTRAP_FETCH_TOOLS"
-${scripts.fetchToolsScript}
-EOF_COCALC_FETCH_TOOLS
-chmod 700 "$BOOTSTRAP_FETCH_TOOLS"
-
-cat <<'EOF_COCALC_INSTALL' > "$BOOTSTRAP_INSTALL"
-${scripts.installServiceScript}
-EOF_COCALC_INSTALL
-chmod 700 "$BOOTSTRAP_INSTALL"
 
 cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
 {
@@ -1334,12 +1365,49 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   "bootstrap_dir": "$BOOTSTRAP_DIR",
   "bootstrap_tmp": "$BOOTSTRAP_TMP",
   "log_file": "$BOOTSTRAP_DIR/bootstrap.log",
+  "expected_os": "${scripts.expectedOs}",
+  "expected_arch": "${scripts.expectedArch}",
+  "image_size_gb_raw": "${scripts.imageSizeGb}",
+  "data_disk_devices": "${scripts.dataDiskDevices}",
+  "data_disk_candidates": "${scripts.dataDiskCandidates}",
+  "apt_packages": ${aptPackagesJson},
+  "has_gpu": ${scripts.hasGpu ? "true" : "false"},
+  "ssh_user": "${scripts.sshUser}",
+  "env_file": "${scripts.envFile}",
+  "env_lines": ${envLinesJson},
+  "node_version": "${scripts.nodeVersion}",
+  "project_host_bundle": {
+    "url": "${scripts.projectHostBundleUrl}",
+    "sha256": "${scripts.projectHostBundleSha256}",
+    "remote": "${scripts.projectHostBundleRemote}",
+    "root": "${scripts.projectHostBundlesRoot}",
+    "dir": "${scripts.projectHostBundleDir}",
+    "current": "${scripts.projectHostCurrent}",
+    "version": "${scripts.projectHostVersion}"
+  },
+  "project_bundle": {
+    "url": "${scripts.projectBundleUrl}",
+    "sha256": "${scripts.projectBundleSha256}",
+    "remote": "${scripts.projectBundleRemote}",
+    "root": "${scripts.projectBundlesRoot}",
+    "dir": "${scripts.projectBundleDir}",
+    "current": "${scripts.projectBundlesRoot}/current",
+    "version": "${scripts.projectBundleVersion}"
+  },
+  "tools_bundle": {
+    "url": "${scripts.toolsUrl}",
+    "sha256": "${scripts.toolsSha256}",
+    "remote": "${scripts.toolsRemote}",
+    "root": "${scripts.toolsRoot}",
+    "dir": "${scripts.toolsDir}",
+    "current": "${scripts.toolsRoot}/current",
+    "version": "${scripts.toolsVersion}"
+  },
+  "cloudflared": ${cloudflaredJson},
+  "conat_url": "$CONAT_URL",
+  "bootstrap_token": "$BOOTSTRAP_TOKEN",
+  "ca_cert_path": "$BOOTSTRAP_CACERT_PATH",
   "parallel": true,
-  "legacy_bootstrap_script": "$BOOTSTRAP_LEGACY",
-  "fetch_project_host_script": "$BOOTSTRAP_FETCH_HOST",
-  "fetch_project_bundle_script": "$BOOTSTRAP_FETCH_BUNDLE",
-  "fetch_tools_script": "$BOOTSTRAP_FETCH_TOOLS",
-  "install_service_script": "$BOOTSTRAP_INSTALL",
   "bootstrap_done_paths": ["/btrfs/data/.bootstrap_done", "/var/lib/cocalc/.bootstrap_done"]
 }
 EOF_COCALC_BOOTSTRAP_CONFIG
