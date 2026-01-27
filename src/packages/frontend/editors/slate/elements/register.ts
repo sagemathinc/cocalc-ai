@@ -13,6 +13,7 @@ import { ChildInfo } from "../element-to-markdown";
 
 export interface SlateElement {
   children: Descendant[];
+  type?: string;
 }
 
 export interface markdownToSlateOptions {

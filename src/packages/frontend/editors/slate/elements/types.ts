@@ -22,7 +22,7 @@ import type { Hardbreak, Softbreak } from "./break";
 import "./break/editable";
 import type { Checkbox } from "./checkbox";
 import "./checkbox/editable";
-import type { CodeBlock } from "./code-block";
+import type { CodeBlock, CodeLine } from "./code-block/types";
 import "./code-block/editable";
 import type { Details } from "./details";
 import "./details/editable";
@@ -73,6 +73,7 @@ declare module "slate" {
       | HR
       | Paragraph
       | CodeBlock
+      | CodeLine
       | Hardbreak
       | Softbreak
       | DisplayMath

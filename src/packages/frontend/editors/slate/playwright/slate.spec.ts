@@ -264,12 +264,14 @@ test("convert markdown candidate code block to rich text", async ({ page }) => {
     window.__slateTest?.setValue([
       {
         type: "code_block",
-        isVoid: true,
         fence: true,
         info: "",
-        value: "- a\n- b\n",
         markdownCandidate: true,
-        children: [{ text: "" }],
+        children: [
+          { type: "code_line", children: [{ text: "- a" }] },
+          { type: "code_line", children: [{ text: "- b" }] },
+          { type: "code_line", children: [{ text: "" }] },
+        ],
       },
     ]);
   });
@@ -302,14 +304,7 @@ test("gap cursor only appears on last visual line before a void block", async ({
   await page.evaluate((text) => {
     window.__slateTest?.setValue([
       { type: "paragraph", children: [{ text }] },
-      {
-        type: "code_block",
-        isVoid: true,
-        fence: true,
-        value: "",
-        info: "",
-        children: [{ text: "" }],
-      },
+      { type: "hr", isVoid: true, children: [{ text: "" }] },
       { type: "paragraph", children: [{ text: "after" }] },
     ]);
   }, longText);
@@ -393,11 +388,8 @@ test("arrow down from void block inserts paragraph after gap", async ({ page }) 
   await page.evaluate(() => {
     window.__slateTest?.setValue([
       {
-        type: "code_block",
+        type: "hr",
         isVoid: true,
-        fence: true,
-        info: "",
-        value: "x",
         children: [{ text: "" }],
       },
     ]);

@@ -12,11 +12,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { useIsMountedRef } from "@cocalc/frontend/app-framework";
 import { register, RenderElementProps } from "../register";
 import { useSlate } from "../hooks";
-import { SlateCodeMirror } from "../codemirror";
-import { delay } from "awaiting";
 import { useSetElement } from "../set-element";
 import infoToMode from "./info-to-mode";
 import ActionButtons, { RunFunction } from "./action-buttons";
@@ -28,10 +25,12 @@ import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { ReactEditor } from "../../slate-react";
-import { useFocused, useSelected } from "../hooks";
+import { useFocused } from "../hooks";
 import { hash_string } from "@cocalc/util/misc";
-import { Editor, Transforms } from "slate";
+import { Editor, Path, Transforms } from "slate";
 import { markdown_to_slate } from "../../markdown-to-slate";
+import type { CodeBlock } from "./types";
+import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -182,6 +181,17 @@ function FloatingActionMenu({
 }
 
 function Element({ attributes, children, element }: RenderElementProps) {
+  if (element.type === "code_line") {
+    return (
+      <div
+        {...attributes}
+        className="cocalc-slate-code-line"
+        style={{ position: "relative" }}
+      >
+        {children}
+      </div>
+    );
+  }
   if (element.type != "code_block") {
     throw Error("bug");
   }
@@ -189,20 +199,18 @@ function Element({ attributes, children, element }: RenderElementProps) {
   const { disableMarkdownCodebar } = useFileContext();
   const editor = useSlate();
   const focused = useFocused();
-  const selected = useSelected();
-  const isMountedRef = useIsMountedRef();
   const [info, setInfo] = useState<string>(element.info ?? "");
   const infoFocusedRef = useRef<boolean>(false);
   const [output, setOutput] = useState<null | ReactNode>(null);
   const runRef = useRef<RunFunction | null>(null);
   const setElement = useSetElement(editor, element);
   // textIndent: 0 is needed due to task lists -- see https://github.com/sagemathinc/cocalc/issues/6074
-  const { change, blockNavigation } = useChange();
-  const [codeFocused, setCodeFocused] = useState<boolean>(false);
+  const { change } = useChange();
   const [history, setHistory] = useState<string[]>(
     getHistory(editor, element) ?? [],
   );
   const elementPath = ReactEditor.findPath(editor, element);
+  const codeValue = getCodeBlockText(element as CodeBlock);
   const expandState =
     (editor as any).codeBlockExpandState ??
     ((editor as any).codeBlockExpandState = new Map<string, boolean>());
@@ -214,9 +222,9 @@ function Element({ attributes, children, element }: RenderElementProps) {
     if (elementPath != null) {
       return `path:${elementPath.join(".")}`;
     }
-    const base = `${info ?? ""}\n${element.value}`;
+    const base = `${info ?? ""}\n${codeValue}`;
     return `code:${hash_string(base)}`;
-  }, [blockIndex, elementPath, info, element.value]);
+  }, [blockIndex, elementPath, info, codeValue]);
   const [expanded, setExpanded] = useState<boolean>(
     () => expandState.get(collapseKey) ?? false,
   );
@@ -234,10 +242,16 @@ function Element({ attributes, children, element }: RenderElementProps) {
     }
   }, [change, element]);
 
-  const lineCount = element.value.split("\n").length;
-  const modeLabel = infoToMode(info, { value: element.value }) || "plain text";
+  const lineCount = getCodeBlockLineCount(element as CodeBlock);
+  const modeLabel = infoToMode(info, { value: codeValue }) || "plain text";
   const shouldCollapse = lineCount > COLLAPSE_THRESHOLD_LINES;
-  const forceExpanded = codeFocused || (focused && selected);
+  const selection = editor.selection;
+  const selectionInBlock =
+    !!focused &&
+    !!selection &&
+    Path.isAncestor(elementPath, selection.anchor.path) &&
+    Path.isAncestor(elementPath, selection.focus.path);
+  const forceExpanded = selectionInBlock;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
   const markdownCandidate = (element as any).markdownCandidate;
   const setExpandedState = useCallback(
@@ -245,7 +259,8 @@ function Element({ attributes, children, element }: RenderElementProps) {
       expandState.set(collapseKey, next);
       setExpanded(next);
       if (next && focus) {
-        (editor as any).pendingCodeBlockFocusPath = elementPath;
+        const point = Editor.start(editor, elementPath);
+        Transforms.select(editor, point);
         ReactEditor.focus(editor);
       }
     },
@@ -270,16 +285,16 @@ function Element({ attributes, children, element }: RenderElementProps) {
   }, [setElement]);
 
   const convertMarkdownCandidate = useCallback(() => {
-    const markdown = element.value ?? "";
+    const markdown = codeValue ?? "";
     const doc = markdown_to_slate(markdown, true);
     Editor.withoutNormalizing(editor, () => {
       Transforms.removeNodes(editor, { at: elementPath });
       Transforms.insertNodes(editor, doc as any, { at: elementPath });
     });
-  }, [editor, element.value, elementPath]);
+  }, [editor, codeValue, elementPath]);
 
   return (
-    <div {...attributes}>
+    <div {...attributes} spellCheck={false}>
       <div contentEditable={false} style={{ textIndent: 0 }}>
         <div style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ flex: 1 }}>
@@ -345,7 +360,7 @@ function Element({ attributes, children, element }: RenderElementProps) {
                   renderActions={() => (
                     <ActionButtons
                       size="small"
-                      input={element.value}
+                      input={codeValue}
                       history={history}
                       setOutput={setOutput}
                       output={output}
@@ -356,16 +371,16 @@ function Element({ attributes, children, element }: RenderElementProps) {
                       }}
                     />
                   )}
-                  code={element.value}
+                  code={codeValue}
                   download={() => {
-                    const blob = new Blob([element.value], {
+                    const blob = new Blob([codeValue], {
                       type: "text/plain;charset=utf-8",
                     });
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement("a");
                     link.href = url;
                     const ext =
-                      infoToMode(info, { value: element.value }) || "txt";
+                      infoToMode(info, { value: codeValue }) || "txt";
                     link.download = `code-block.${ext}`;
                     link.click();
                     URL.revokeObjectURL(url);
@@ -385,66 +400,51 @@ function Element({ attributes, children, element }: RenderElementProps) {
                   }
                 />
               )}
-              <SlateCodeMirror
-                options={{ lineWrapping: true }}
-                value={element.value}
-                info={infoToMode(info, { value: element.value })}
-                focusOnSelect
-                elementPath={elementPath}
-                onRequestGapCursor={blockNavigation?.setGapCursor}
-                collapsed={shouldCollapse ? isCollapsed : false}
-                collapseLines={shouldCollapse ? COLLAPSE_THRESHOLD_LINES : undefined}
-                onChange={(value) => {
-                  setElement({ value });
-                }}
-                onFocus={async () => {
-                  setCodeFocused(true);
-                  await delay(1); // must be a little longer than the onBlur below.
-                  if (!isMountedRef.current) return;
-                }}
-                onBlur={async () => {
-                  setCodeFocused(false);
-                  await delay(0);
-                  if (!isMountedRef.current) return;
-                }}
-                onShiftEnter={() => {
-                  runRef.current?.();
-                }}
-                addonAfter={
-                  disableMarkdownCodebar || output == null ? null : (
-                    <div
-                      onMouseDown={() => {
-                        editor.setIgnoreSelection(true);
-                      }}
-                      onMouseUp={() => {
-                        // Re-enable slate listing for selection changes again in next render loop.
-                        editor.setIgnoreSelection(false);
-                      }}
-                      style={{
-                        borderTop: "1px dashed #ccc",
-                        background: "white",
-                        padding: "5px 0 5px 30px",
-                      }}
-                    >
-                      {output}
-                    </div>
-                  )
-                }
-              />
+              {isCollapsed ? (
+                <pre
+                  className="cocalc-slate-code-block"
+                  contentEditable={false}
+                  style={{ margin: 0 }}
+                >
+                  {codeValue
+                    .split("\n")
+                    .slice(0, COLLAPSE_THRESHOLD_LINES)
+                    .join("\n")}
+                </pre>
+              ) : (
+                <div className="cocalc-slate-code-block">{children}</div>
+              )}
+              {!disableMarkdownCodebar && output != null && (
+                <div
+                  contentEditable={false}
+                  onMouseDown={() => {
+                    editor.setIgnoreSelection(true);
+                  }}
+                  onMouseUp={() => {
+                    editor.setIgnoreSelection(false);
+                  }}
+                  style={{
+                    borderTop: "1px dashed #ccc",
+                    background: "white",
+                    padding: "5px 0 5px 30px",
+                  }}
+                >
+                  {output}
+                </div>
+              )}
             </div>
           </div>
           {element.info == "mermaid" && (
-            <Mermaid style={{ flex: 1 }} value={element.value} />
+            <Mermaid style={{ flex: 1 }} value={codeValue} />
           )}
         </div>
       </div>
-      {children}
     </div>
   );
 }
 
 function fromSlate({ node }) {
-  const value = node.value as string;
+  const value = getCodeBlockText(node as CodeBlock);
 
   // We always convert them to fenced, because otherwise collaborative editing just
   // isn't possible, e.g., because you can't have blank lines at the end.  This isn't
@@ -477,4 +477,9 @@ register({
     autoFocus: true,
     autoAdvance: true,
   },
+});
+
+register({
+  slateType: "code_line",
+  Element,
 });

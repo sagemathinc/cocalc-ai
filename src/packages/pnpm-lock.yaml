@@ -587,6 +587,9 @@ importers:
       '@types/md5':
         specifier: ^2.2.0
         version: 2.3.6
+      '@types/prismjs':
+        specifier: ^1.26.2
+        version: 1.26.5
       '@types/react':
         specifier: ^19.2.7
         version: 19.2.7
@@ -764,6 +767,9 @@ importers:
       plotly.js:
         specifier: ^2.29.1
         version: 2.35.3(@rspack/core@1.6.6(@swc/helpers@0.5.15))(mapbox-gl@1.13.3)(webpack@5.102.1(esbuild@0.27.2))
+      prismjs:
+        specifier: ^1.30.0
+        version: 1.30.0
       project-name-generator:
         specifier: ^2.1.6
         version: 2.1.9
@@ -10843,6 +10849,10 @@ packages:
 
   printable-characters@1.0.42:
     resolution: {integrity: sha512-dKp+C4iXWK4vVYZmYSd0KBH5F/h1HoZRsbJ82AVKRO3PEo8L4lBS/vLwhVtpwwuYcoIsVY+1JYKR268yn480uQ==}
+
+  prismjs@1.30.0:
+    resolution: {integrity: sha512-DEvV2ZF2r2/63V+tK8hQvrR2ZGn10srHbXviTlcv7Kpzw8jWiNTqbVgjO3IY8RxrrOUF8VPMQQFysYYYv0YZxw==}
+    engines: {node: '>=6'}
 
   probe-image-size@7.2.3:
     resolution: {integrity: sha512-HubhG4Rb2UH8YtV4ba0Vp5bQ7L78RTONYu/ujmCu5nBI8wGv24s4E9xSKBi0N1MowRpxk76pFCpJtW0KPzOK0w==}
@@ -24072,6 +24082,8 @@ snapshots:
       ultron: 1.1.1
 
   printable-characters@1.0.42: {}
+
+  prismjs@1.30.0: {}
 
   probe-image-size@7.2.3:
     dependencies:

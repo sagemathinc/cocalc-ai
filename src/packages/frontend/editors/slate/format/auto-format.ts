@@ -24,6 +24,7 @@ import { getRules } from "../elements";
 import { ReactEditor } from "../slate-react";
 import { formatHeading, getFocus, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
+import { toCodeLines } from "../elements/code-block/utils";
 
 function autoformatCodeSpanAtCursor(editor: Editor): boolean {
   const { selection } = editor;
@@ -321,7 +322,8 @@ function autoformatCheckboxAtCursor(editor: Editor): boolean {
   const trailingText = rest.length > 0 ? ` ${rest}` : " ";
 
   const newParagraph: Element = {
-    ...paragraphNode,
+    ...(paragraphNode as any),
+    type: "paragraph",
     children: [
       { text: "" },
       {
@@ -472,12 +474,10 @@ export const withAutoFormat = (editor) => {
           editor,
           {
             type: "code_block",
-            isVoid: true,
             fence: true,
             info: "",
-            value: normalized,
             ...(looksLikeMarkdown ? { markdownCandidate: true } : null),
-            children: [{ text: "" }],
+            children: toCodeLines(normalized),
           } as any,
           { at: getFocus(editor) },
         );
@@ -825,7 +825,6 @@ function markdownAutoformatAt(
     if (type === "code_block") {
       const focus = Editor.start(editor, blockPath);
       setSelectionAndFocus(editor, { focus, anchor: focus });
-      (editor as any).pendingCodeBlockFocusPath = blockPath;
       return true;
     }
     if (type === "bullet_list" || type === "ordered_list") {

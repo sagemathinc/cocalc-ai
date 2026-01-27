@@ -3,6 +3,7 @@ import "../elements/types";
 import { createEditor, Descendant } from "slate";
 import { withReact } from "../slate-react";
 import { withAutoFormat } from "../format";
+import { getCodeBlockText } from "../elements/code-block/utils";
 
 test("multiline paste inserts a code block with markdown hint", () => {
   const editor = withAutoFormat(withReact(createEditor()));
@@ -23,6 +24,6 @@ test("multiline paste inserts a code block with markdown hint", () => {
     (node: any) => node.type === "code_block",
   ) as any;
   expect(code).toBeTruthy();
-  expect(code.value).toBe("- a\n- b\n");
+  expect(getCodeBlockText(code)).toBe("- a\n- b\n");
   expect(code.markdownCandidate).toBe(true);
 });

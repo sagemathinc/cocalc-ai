@@ -27,3 +27,76 @@ don't have to compensate for it using negative margins.
   margin-bottom: 1em;
 }
 
+/* Prism-style token colors for code blocks. */
+.cocalc-slate-code-block {
+  font-family: Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  background: #f8f8f8;
+  border-radius: 6px;
+  padding: 6px 12px;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.cocalc-slate-code-line {
+  display: block;
+}
+
+.cocalc-slate-code-block .token.comment,
+.cocalc-slate-code-block .token.prolog,
+.cocalc-slate-code-block .token.doctype,
+.cocalc-slate-code-block .token.cdata {
+  color: #6a737d;
+}
+
+.cocalc-slate-code-block .token.punctuation {
+  color: #999;
+}
+
+.cocalc-slate-code-block .token.property,
+.cocalc-slate-code-block .token.tag,
+.cocalc-slate-code-block .token.boolean,
+.cocalc-slate-code-block .token.number,
+.cocalc-slate-code-block .token.constant,
+.cocalc-slate-code-block .token.symbol,
+.cocalc-slate-code-block .token.deleted {
+  color: #905;
+}
+
+.cocalc-slate-code-block .token.selector,
+.cocalc-slate-code-block .token.attr-name,
+.cocalc-slate-code-block .token.string,
+.cocalc-slate-code-block .token.char,
+.cocalc-slate-code-block .token.builtin,
+.cocalc-slate-code-block .token.inserted {
+  color: #690;
+}
+
+.cocalc-slate-code-block .token.operator,
+.cocalc-slate-code-block .token.entity,
+.cocalc-slate-code-block .token.url,
+.cocalc-slate-code-block .token.atrule,
+.cocalc-slate-code-block .token.attr-value,
+.cocalc-slate-code-block .token.keyword {
+  color: #07a;
+}
+
+.cocalc-slate-code-block .token.function,
+.cocalc-slate-code-block .token.class-name {
+  color: #dd4a68;
+}
+
+.cocalc-slate-code-block .token.regex,
+.cocalc-slate-code-block .token.important,
+.cocalc-slate-code-block .token.variable {
+  color: #e90;
+}
+
+.cocalc-slate-code-block .token.bold {
+  font-weight: bold;
+}
+
+.cocalc-slate-code-block .token.italic {
+  font-style: italic;
+}

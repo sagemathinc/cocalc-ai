@@ -22,6 +22,7 @@ import { isEqual } from "lodash";
 import { getNodeAt } from "./slate-util";
 import { emptyParagraph } from "./padding";
 import { isListElement } from "./elements/list";
+import { getCodeBlockText, toCodeLines } from "./elements/code-block/utils";
 
 interface NormalizeInputs {
   editor?: Editor;
@@ -123,6 +124,25 @@ NORMALIZERS.push(function ensureBlockHasChild({ editor, node, path }) {
   if (!Editor.isBlock(editor, node)) return;
   if (node.children.length > 0) return;
   Transforms.insertNodes(editor, { text: "" }, { at: path.concat(0) });
+});
+
+// Normalize code blocks to use code_line children instead of legacy value.
+NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
+  if (!(Element.isElement(node) && node.type === "code_block")) return;
+  const children = node.children ?? [];
+  const hasOnlyCodeLines = children.every(
+    (child) => Element.isElement(child) && child.type === "code_line"
+  );
+  if (hasOnlyCodeLines && node.value == null) return;
+
+  const code = getCodeBlockText(node as any);
+  const nextLines = toCodeLines(code);
+  Transforms.removeNodes(editor, {
+    at: path,
+    match: (_n, p) => p.length === path.length + 1,
+  });
+  Transforms.insertNodes(editor, nextLines, { at: path.concat(0) });
+  Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
 });
 
 /*

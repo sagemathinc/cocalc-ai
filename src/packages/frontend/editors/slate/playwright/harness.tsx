@@ -23,6 +23,7 @@ import { getGapCursor } from "../gap-cursor";
 import { withIsInline, withIsVoid } from "../plugins";
 import "../keyboard/arrow-keys";
 import { markdown_to_slate } from "../markdown-to-slate";
+import { getCodeBlockText } from "../elements/code-block/utils";
 
 declare global {
   interface Window {
@@ -139,13 +140,36 @@ function Harness(): React.JSX.Element {
           placeholder="Type here..."
           onKeyDown={onKeyDown}
           renderElement={({ attributes, children, element }) => {
+            if ((element as any).isVoid) {
+              return (
+                <div
+                  {...attributes}
+                  data-testid="void-block"
+                  contentEditable={false}
+                  style={{ margin: "6px 0" }}
+                >
+                  {children}
+                </div>
+              );
+            }
+            if (element.type === "code_line") {
+              return (
+                <div
+                  {...attributes}
+                  className="cocalc-slate-code-line"
+                  style={{ position: "relative" }}
+                >
+                  {children}
+                </div>
+              );
+            }
             if (element.type === "code_block") {
               const codeElement = element as any;
+              const codeValue = getCodeBlockText(codeElement);
               return (
                 <div
                   {...attributes}
                   data-testid="code-block"
-                  contentEditable={false}
                   style={{
                     border: "1px solid #999",
                     padding: "8px",
@@ -160,7 +184,7 @@ function Harness(): React.JSX.Element {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        const doc = markdown_to_slate(codeElement.value ?? "", true);
+                        const doc = markdown_to_slate(codeValue ?? "", true);
                         Editor.withoutNormalizing(editor, () => {
                           const path = ReactEditor.findPath(editor, codeElement);
                           Transforms.removeNodes(editor, { at: path });
@@ -171,8 +195,7 @@ function Harness(): React.JSX.Element {
                       Convert to rich text
                     </button>
                   )}
-                  <pre style={{ margin: 0, fontFamily: "inherit" }}>code</pre>
-                  {children}
+                  <div className="cocalc-slate-code-block">{children}</div>
                 </div>
               );
             }

@@ -6,8 +6,7 @@
 import { Button, Popover, Tooltip } from "antd";
 import React, { ReactNode, useEffect, useRef, useState } from "react";
 import { Element } from "slate";
-import { register, SlateElement, RenderElementProps } from "../register";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
+import { register, RenderElementProps } from "../register";
 import infoToMode from "./info-to-mode";
 import ActionButtons from "./action-buttons";
 import { useChange } from "../../use-change";
@@ -17,15 +16,8 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
-
-export interface CodeBlock extends SlateElement {
-  type: "code_block";
-  isVoid: true;
-  fence: boolean;
-  value: string;
-  info: string;
-  markdownCandidate?: boolean;
-}
+import { highlightCodeHtml } from "./prism";
+import { getCodeBlockLineCount, getCodeBlockText, toCodeLines } from "./utils";
 
 interface FloatingActionMenuProps {
   editing: boolean;
@@ -168,7 +160,19 @@ function FloatingActionMenu({
 export const StaticElement: React.FC<RenderElementProps> = ({
   attributes,
   element,
+  children,
 }) => {
+  if (element.type === "code_line") {
+    return (
+      <div
+        {...attributes}
+        className="cocalc-slate-code-line"
+        style={{ position: "relative" }}
+      >
+        {children}
+      </div>
+    );
+  }
   if (element.type != "code_block") {
     throw Error("bug");
   }
@@ -207,7 +211,8 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     setTemporaryInfo(null);
   }, [element.info]);
 
-  const lineCount = (newValue ?? element.value).split("\n").length;
+  const codeValue = newValue ?? getCodeBlockText(element);
+  const lineCount = codeValue.split("\n").length;
   const shouldCollapse = lineCount > COLLAPSE_THRESHOLD_LINES;
   const [expanded, setExpanded] = useState<boolean>(false);
   const forceExpanded = editing;
@@ -222,7 +227,10 @@ export const StaticElement: React.FC<RenderElementProps> = ({
       const editor2 = { children: [...editor.children] };
       for (let i = 0; i < editor2.children.length; i++) {
         if (element === editor.children[i]) {
-          editor2.children[i] = { ...(element as any), value };
+          editor2.children[i] = {
+            ...(element as any),
+            children: toCodeLines(value),
+          };
           setEditor(editor2);
           break;
         }
@@ -239,13 +247,15 @@ export const StaticElement: React.FC<RenderElementProps> = ({
   if (isMermaid) {
     return (
       <div {...attributes} style={{ marginBottom: "1em", textIndent: 0 }}>
-        <Mermaid value={newValue ?? element.value} />
+        <Mermaid value={codeValue} />
       </div>
     );
   }
 
   // textIndent: 0 is needed due to task lists -- see https://github.com/sagemathinc/cocalc/issues/6074
   // editable since even CodeMirrorStatic is editable, but meant to be *ephemeral* editing.
+  const renderedValue = newValue ?? codeValue;
+
   return (
     <div
       {...attributes}
@@ -263,9 +273,9 @@ export const StaticElement: React.FC<RenderElementProps> = ({
             }
           }}
           canEdit={!!project_id}
-          content={newValue ?? element.value}
+          content={renderedValue}
           onDownload={() => {
-            const blob = new Blob([newValue ?? element.value], {
+            const blob = new Blob([renderedValue], {
               type: "text/plain;charset=utf-8",
             });
             const url = URL.createObjectURL(blob);
@@ -280,7 +290,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
             <ActionButtons
               size={size}
               runRef={runRef}
-              input={newValue ?? element.value}
+              input={renderedValue}
               history={history}
               setOutput={setOutput}
               output={output}
@@ -302,7 +312,31 @@ export const StaticElement: React.FC<RenderElementProps> = ({
           }
         />
       )}
-      {isCollapsed ? (
+      {editing ? (
+        <textarea
+          value={renderedValue}
+          spellCheck={false}
+          onChange={(event) => {
+            if (!editingRef.current) return;
+            setNewValue(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            if (event.shiftKey && event.keyCode === 13) {
+              save(newValue, true);
+            }
+          }}
+          style={{
+            width: "100%",
+            minHeight: "120px",
+            background: "white",
+            padding: "10px 15px 10px 20px",
+            border: "1px solid #dfdfdf",
+            borderRadius: "8px",
+            fontFamily: "monospace",
+            fontSize: "13px",
+          }}
+        />
+      ) : isCollapsed ? (
         <div
           style={{
             cursor: "default",
@@ -313,63 +347,41 @@ export const StaticElement: React.FC<RenderElementProps> = ({
           }}
         >
           <pre
-            style={{
-              margin: 0,
-              whiteSpace: "pre-wrap",
-              overflowWrap: "break-word",
-              fontFamily: "monospace",
-              fontSize: "13px",
-              color: "#444",
+            className="cocalc-slate-code-block"
+            style={{ margin: 0 }}
+            dangerouslySetInnerHTML={{
+              __html: highlightCodeHtml(
+                renderedValue
+                  .split("\n")
+                  .slice(0, COLLAPSE_THRESHOLD_LINES)
+                  .join("\n"),
+                temporaryInfo ?? element.info,
+              ),
             }}
-          >
-            {(newValue ?? element.value)
-              .split("\n")
-              .slice(0, COLLAPSE_THRESHOLD_LINES)
-              .join("\n")}
-          </pre>
+          />
           <div style={{ marginTop: "6px", fontSize: "12px", color: "#666" }}>
             {lineCount} lines (collapsed)
           </div>
         </div>
       ) : (
-        <CodeMirrorStatic
-          editable={editing}
-          onChange={(event) => {
-            if (!editingRef.current) return;
-            setNewValue(event.target.value);
+        <pre
+          className="cocalc-slate-code-block"
+          style={{ margin: 0 }}
+          dangerouslySetInnerHTML={{
+            __html: highlightCodeHtml(renderedValue, temporaryInfo ?? element.info),
           }}
-          onKeyDown={(event) => {
-            if (event.shiftKey && event.keyCode === 13) {
-              save(newValue, true);
-            }
-          }}
-          onDoubleClick={() => {
-            setEditing(true);
-          }}
-          value={newValue ?? element.value}
-          style={{
-            background: "white",
-            padding: "10px 15px 10px 20px",
-          }}
-          options={{
-            mode: infoToMode(temporaryInfo ?? element.info, {
-              value: element.value,
-            }),
-          }}
-          addonAfter={
-            disableMarkdownCodebar || output == null ? null : (
-              <div
-                style={{
-                  borderTop: "1px dashed #ccc",
-                  background: "white",
-                  padding: "5px 0 5px 30px",
-                }}
-              >
-                {output}
-              </div>
-            )
-          }
         />
+      )}
+      {!disableMarkdownCodebar && output != null && (
+        <div
+          style={{
+            borderTop: "1px dashed #ccc",
+            background: "white",
+            padding: "5px 0 5px 30px",
+          }}
+        >
+          {output}
+        </div>
       )}
     </div>
   );
@@ -390,16 +402,14 @@ export function toSlate({ token }) {
   }
   return {
     type: "code_block",
-    isVoid: true,
     fence: token.type == "fence",
-    value,
     info,
-    children: [{ text: "" }],
+    children: toCodeLines(value),
   } as Element;
 }
 
 function sizeEstimator({ node, fontSize }): number {
-  return node.value.split("\n").length * (fontSize + 2) + 10 + fontSize;
+  return getCodeBlockLineCount(node as any) * (fontSize + 2) + 10 + fontSize;
 }
 
 register({
@@ -408,4 +418,9 @@ register({
   StaticElement,
   toSlate,
   sizeEstimator,
+});
+
+register({
+  slateType: "code_line",
+  StaticElement,
 });
