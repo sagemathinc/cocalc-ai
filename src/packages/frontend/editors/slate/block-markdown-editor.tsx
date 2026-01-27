@@ -162,6 +162,7 @@ interface BlockRowEditorProps {
   onDeleteBlock: (index: number) => void;
   onFocus?: () => void;
   onBlur?: () => void;
+  onSelectBlock?: (index: number, opts: { shiftKey: boolean }) => void;
   autoFocus?: boolean;
   read_only?: boolean;
   actions?: Actions;
@@ -180,6 +181,8 @@ interface BlockRowEditorProps {
   unregisterEditor: (index: number, editor: SlateEditor) => void;
   getFullMarkdown: () => string;
   codeBlockExpandState: Map<string, boolean>;
+  selected?: boolean;
+  gutterWidth?: number;
 }
 
 const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
@@ -191,6 +194,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       onDeleteBlock,
       onFocus,
       onBlur,
+      onSelectBlock,
       autoFocus,
       read_only,
       actions,
@@ -206,6 +210,8 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       unregisterEditor,
       getFullMarkdown,
       codeBlockExpandState,
+      selected = false,
+      gutterWidth = 0,
     } = props;
 
     const syncCacheRef = useRef<any>({});
@@ -518,8 +524,51 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         style={{
           ...rowStyle,
           position: "relative",
+          background: undefined,
         }}
       >
+        {selected && (
+          <div
+            data-slate-block-selection="true"
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: 0,
+              right: 0,
+              background: "rgba(24, 144, 255, 0.08)",
+              pointerEvents: "none",
+              zIndex: 1,
+            }}
+          />
+        )}
+        {gutterWidth > 0 && (
+          <div
+            data-slate-block-gutter="true"
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              bottom: 0,
+              width: gutterWidth,
+              cursor: "pointer",
+              zIndex: 3,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderLeft: selected
+                ? "3px solid rgba(24, 144, 255, 0.8)"
+                : "3px solid transparent",
+              background: selected ? "rgba(24, 144, 255, 0.12)" : "transparent",
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onSelectBlock?.(index, { shiftKey: event.shiftKey });
+            }}
+          >
+          </div>
+        )}
         <div
           data-slate-gap-cursor="block-hit-before"
           style={{
@@ -631,7 +680,8 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     return (
       prev.markdown === next.markdown &&
       prev.read_only === next.read_only &&
-      prevGap === nextGap
+      prevGap === nextGap &&
+      prev.selected === next.selected
     );
   },
 );
@@ -677,6 +727,10 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   }, [blocks]);
 
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const [blockSelection, setBlockSelection] = useState<{
+    anchor: number;
+    focus: number;
+  } | null>(null);
   const [gapCursor, setGapCursor] = useState<{
     index: number;
     side: "before" | "after";
@@ -988,11 +1042,36 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [is_current, saveBlocksDebounced, setGapCursor],
   );
 
+  const selectionRange = useMemo(() => {
+    if (!blockSelection) return null;
+    const start = Math.min(blockSelection.anchor, blockSelection.focus);
+    const end = Math.max(blockSelection.anchor, blockSelection.focus);
+    return { start, end };
+  }, [blockSelection]);
+
+  const handleSelectBlock = useCallback(
+    (index: number, opts: { shiftKey: boolean }) => {
+      setGapCursor(null);
+      setFocusedIndex(null);
+      if (opts.shiftKey) {
+        const anchor =
+          blockSelection?.anchor ??
+          focusedIndex ??
+          index;
+        setBlockSelection({ anchor, focus: index });
+      } else {
+        setBlockSelection({ anchor: index, focus: index });
+      }
+    },
+    [blockSelection, focusedIndex],
+  );
+
   const rowStyle: React.CSSProperties = {
     padding: minimal ? 0 : "0 70px",
     minHeight: "1px",
     position: "relative",
   };
+  const gutterWidth = minimal ? 0 : 70;
 
   const showPendingRemoteIndicator =
     ignoreRemoteWhileFocused && pendingRemoteIndicator;
@@ -1008,6 +1087,10 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
 
   const renderBlock = (index: number) => {
     const markdown = blocks[index] ?? "";
+    const isSelected =
+      selectionRange != null &&
+      index >= selectionRange.start &&
+      index <= selectionRange.end;
     return (
       <BlockRowEditor
         index={index}
@@ -1016,12 +1099,16 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         onDeleteBlock={deleteBlockAtIndex}
         onFocus={() => {
           setFocusedIndex(index);
+          if (blockSelection) {
+            setBlockSelection(null);
+          }
           onFocus?.();
         }}
         onBlur={() => {
           setFocusedIndex((prev) => (prev === index ? null : prev));
           onBlur?.();
         }}
+        onSelectBlock={handleSelectBlock}
         autoFocus={autoFocus && index === 0}
         read_only={read_only}
         actions={actions}
@@ -1037,6 +1124,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         unregisterEditor={unregisterEditor}
         getFullMarkdown={getFullMarkdown}
         codeBlockExpandState={codeBlockExpandStateRef.current}
+        selected={isSelected}
+        gutterWidth={gutterWidth}
       />
     );
   };
