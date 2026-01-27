@@ -150,7 +150,12 @@ Trim *all* whitespace from the beginning of blocks whose first child is Text,
 since markdown doesn't allow for it. (You can use &nbsp; of course.)
 */
 NORMALIZERS.push(function trimLeadingWhitespace({ editor, node, path }) {
-  if (Element.isElement(node) && Text.isText(node.children[0])) {
+  if (
+    Element.isElement(node) &&
+    node.type !== "code_line" &&
+    node.type !== "code_block" &&
+    Text.isText(node.children[0])
+  ) {
     const firstText = node.children[0].text;
     if (firstText != null) {
       // We actually get rid of spaces and tabs, but not ALL whitespace.  For example,
