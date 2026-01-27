@@ -1291,7 +1291,58 @@ on_error() {
 }
 trap 'on_error "$?" "$LINENO"' ERR
 
+BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
+BOOTSTRAP_TMP="$BOOTSTRAP_ROOT/tmp"
+BOOTSTRAP_LEGACY="$BOOTSTRAP_DIR/legacy-bootstrap.sh"
+BOOTSTRAP_FETCH_HOST="$BOOTSTRAP_DIR/fetch-project-host.sh"
+BOOTSTRAP_FETCH_BUNDLE="$BOOTSTRAP_DIR/fetch-project-bundle.sh"
+BOOTSTRAP_FETCH_TOOLS="$BOOTSTRAP_DIR/fetch-tools.sh"
+BOOTSTRAP_INSTALL="$BOOTSTRAP_DIR/install-service.sh"
+
 mkdir -p "$BOOTSTRAP_DIR"
+
+cat <<'EOF_COCALC_LEGACY' > "$BOOTSTRAP_LEGACY"
+${scripts.bootstrapScript}
+EOF_COCALC_LEGACY
+chmod 700 "$BOOTSTRAP_LEGACY"
+
+cat <<'EOF_COCALC_FETCH_HOST' > "$BOOTSTRAP_FETCH_HOST"
+${scripts.fetchProjectHostScript}
+EOF_COCALC_FETCH_HOST
+chmod 700 "$BOOTSTRAP_FETCH_HOST"
+
+cat <<'EOF_COCALC_FETCH_BUNDLE' > "$BOOTSTRAP_FETCH_BUNDLE"
+${scripts.fetchProjectBundleScript}
+EOF_COCALC_FETCH_BUNDLE
+chmod 700 "$BOOTSTRAP_FETCH_BUNDLE"
+
+cat <<'EOF_COCALC_FETCH_TOOLS' > "$BOOTSTRAP_FETCH_TOOLS"
+${scripts.fetchToolsScript}
+EOF_COCALC_FETCH_TOOLS
+chmod 700 "$BOOTSTRAP_FETCH_TOOLS"
+
+cat <<'EOF_COCALC_INSTALL' > "$BOOTSTRAP_INSTALL"
+${scripts.installServiceScript}
+EOF_COCALC_INSTALL
+chmod 700 "$BOOTSTRAP_INSTALL"
+
+cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
+{
+  "bootstrap_user": "$BOOTSTRAP_USER",
+  "bootstrap_home": "$BOOTSTRAP_HOME",
+  "bootstrap_root": "$BOOTSTRAP_ROOT",
+  "bootstrap_dir": "$BOOTSTRAP_DIR",
+  "bootstrap_tmp": "$BOOTSTRAP_TMP",
+  "log_file": "$BOOTSTRAP_DIR/bootstrap.log",
+  "parallel": true,
+  "legacy_bootstrap_script": "$BOOTSTRAP_LEGACY",
+  "fetch_project_host_script": "$BOOTSTRAP_FETCH_HOST",
+  "fetch_project_bundle_script": "$BOOTSTRAP_FETCH_BUNDLE",
+  "fetch_tools_script": "$BOOTSTRAP_FETCH_TOOLS",
+  "install_service_script": "$BOOTSTRAP_INSTALL",
+  "bootstrap_done_paths": ["/btrfs/data/.bootstrap_done", "/var/lib/cocalc/.bootstrap_done"]
+}
+EOF_COCALC_BOOTSTRAP_CONFIG
 
 download_bootstrap_py() {
   local target="$BOOTSTRAP_DIR/bootstrap.py"
