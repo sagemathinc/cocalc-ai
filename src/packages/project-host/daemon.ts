@@ -244,7 +244,9 @@ export function startDaemon(index = 0): void {
 export function stopDaemon(index = 0): void {
   const { pidPath } = resolveEnv(index);
   if (!fs.existsSync(pidPath)) {
-    throw new Error(`No pid file found at ${pidPath}; nothing to stop.`);
+    // Nothing to stop; treat as success for idempotent callers.
+    console.warn(`No pid file found at ${pidPath}; nothing to stop.`);
+    return;
   }
   const pid = Number(fs.readFileSync(pidPath, "utf8"));
   if (!pid || !isRunning(pid)) {

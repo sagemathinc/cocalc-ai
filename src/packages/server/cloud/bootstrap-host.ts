@@ -229,7 +229,7 @@ export async function buildBootstrapScripts(
   const selfHostKind = machine.metadata?.self_host_kind;
   const isSelfHostDirect = isSelfHost && selfHostKind === "direct";
   const sshUser = isSelfHostDirect
-    ? "\${BOOTSTRAP_USER:-\${SUDO_USER:-ubuntu}}"
+    ? "\${BOOTSTRAP_USER}"
     : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
@@ -286,16 +286,22 @@ export async function buildBootstrapScripts(
   const toolsSha256 = (resolvedTools.sha256 ?? "").replace(/[^a-f0-9]/gi, "");
   const projectBundleVersion =
     extractArtifactVersion(projectBundleUrl, "project") || "latest";
+  const bootstrapHome = isSelfHostDirect
+    ? "${BOOTSTRAP_HOME}"
+    : sshUser === "root"
+      ? "/root"
+      : `/home/${sshUser}`;
+  const bootstrapRoot = `${bootstrapHome}/cocalc-host`;
   const projectBundlesRoot = "/opt/cocalc/project-bundles";
   const projectBundleDir = `${projectBundlesRoot}/${projectBundleVersion}`;
-  const projectBundleRemote = "/opt/cocalc/project-bundle.tar.xz";
+  const projectBundleRemote = `${bootstrapRoot}/tmp/project-bundle.tar.xz`;
   const projectHostVersion =
     extractArtifactVersion(projectHostBundleUrl, "project-host") || "latest";
-  const projectHostBundleRemote = "/var/tmp/cocalc-project-host-bundle.tar.xz";
+  const projectHostBundleRemote = `${bootstrapRoot}/tmp/project-host-bundle.tar.xz`;
   const toolsVersion = extractArtifactVersion(toolsUrl, "tools") || "latest";
   const toolsRoot = "/opt/cocalc/tools";
   const toolsDir = `${toolsRoot}/${toolsVersion}`;
-  const toolsRemote = "/opt/cocalc/tools.tar.xz";
+  const toolsRemote = `${bootstrapRoot}/tmp/tools.tar.xz`;
   if (!projectHostBundleUrl) {
     throw new Error("project host bundle URL could not be resolved");
   }
@@ -431,9 +437,6 @@ if [ -z "$PUBLIC_IP" ]; then
 fi
 `
     : "";
-  const bootstrapHome = sshUser === "root" ? "/root" : `/home/${sshUser}`;
-  const bootstrapRoot = `${bootstrapHome}/cocalc-host`;
-  const bootstrapDir = `${bootstrapRoot}/bootstrap`;
   const projectHostBundlesRoot = `${bootstrapRoot}/bundles`;
   const projectHostBundleDir = `${projectHostBundlesRoot}/${projectHostVersion}`;
   const projectHostCurrent = `${bootstrapRoot}/bundle`;
@@ -466,7 +469,27 @@ if [ "$BOOTSTRAP_ARCH" != "$EXPECTED_ARCH" ]; then
 fi
 ARCH="$BOOTSTRAP_ARCH"
 ENV_FILE="${envFile}"
- : "\${BOOTSTRAP_HOME:=${bootstrapHome}}"
+BOOTSTRAP_USER="${sshUser}"
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="$(id -un 2>/dev/null || true)"
+fi
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="root"
+fi
+BOOTSTRAP_HOME="${bootstrapHome}"
+if [ -z "$BOOTSTRAP_HOME" ] || [ "$BOOTSTRAP_HOME" = "\${BOOTSTRAP_HOME}" ]; then
+  BOOTSTRAP_HOME="$(getent passwd "$BOOTSTRAP_USER" | cut -d: -f6 || true)"
+fi
+if [ -z "$BOOTSTRAP_HOME" ] && [ -n "$HOME" ]; then
+  BOOTSTRAP_HOME="$HOME"
+fi
+if [ -z "$BOOTSTRAP_HOME" ]; then
+  BOOTSTRAP_HOME="/root"
+fi
+BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
+BOOTSTRAP_DIR="$BOOTSTRAP_ROOT/bootstrap"
+export BOOTSTRAP_USER BOOTSTRAP_HOME BOOTSTRAP_ROOT BOOTSTRAP_DIR
+echo "bootstrap: user=$BOOTSTRAP_USER home=$BOOTSTRAP_HOME root=$BOOTSTRAP_ROOT"
 IMAGE_SIZE_GB_RAW="${imageSizeGb}"
 IMAGE_SIZE_GB="$IMAGE_SIZE_GB_RAW"
 if [ -z "$IMAGE_SIZE_GB_RAW" ] || [ "$IMAGE_SIZE_GB_RAW" = "auto" ]; then
@@ -493,9 +516,23 @@ sudo pkill -9 apt-get || true
 sudo pkill -f -9 unattended-upgrade || true
 sudo apt-get remove -y unattended-upgrades || true
 echo "bootstrap: updating apt package lists"
-sudo apt-get update -y
+APT_OPTS="-y -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ftp::Timeout=20"
+for attempt in $(seq 1 3); do
+  if timeout 30 sudo apt-get $APT_OPTS update; then
+    break
+  fi
+  echo "bootstrap: apt-get update failed (attempt $attempt/3); retrying"
+  sleep 5
+done
 echo "bootstrap: installing base packages"
-sudo apt-get install -y podman btrfs-progs uidmap slirp4netns fuse-overlayfs curl xz-utils rsync vim crun cron chrony
+APT_INSTALL_OPTS="$APT_OPTS --no-install-recommends"
+for attempt in $(seq 1 3); do
+  if timeout 120 sudo apt-get $APT_INSTALL_OPTS install podman btrfs-progs uidmap slirp4netns fuse-overlayfs curl xz-utils rsync vim crun cron chrony; then
+    break
+  fi
+  echo "bootstrap: apt-get install failed (attempt $attempt/3); retrying"
+  sleep 10
+done
 ${
   hasGpu
     ? `
@@ -566,10 +603,11 @@ sudo mkdir -p /opt/cocalc /var/lib/cocalc /etc/cocalc
 sudo chown -R ${sshUser}:${sshUser} /opt/cocalc /var/lib/cocalc
 sudo mkdir -p /btrfs
 echo "bootstrap: preparing bootstrap scripts"
-BOOTSTRAP_ROOT="${bootstrapRoot}"
- : "\${BOOTSTRAP_DIR:=${bootstrapDir}}"
+BOOTSTRAP_ROOT="$BOOTSTRAP_ROOT"
 sudo mkdir -p "$BOOTSTRAP_DIR"
+sudo mkdir -p "$BOOTSTRAP_ROOT/tmp"
 sudo chown -R ${sshUser}:${sshUser} "$BOOTSTRAP_DIR" || true
+sudo chown -R ${sshUser}:${sshUser} "$BOOTSTRAP_ROOT/tmp" || true
 echo "bootstrap: data disk candidates: ${dataDiskCandidates}"
 if [ -f /btrfs/data/.bootstrap_done ]; then
   echo "bootstrap: already complete; exiting"
@@ -774,7 +812,9 @@ cat <<'EOF_COCALC_CTL' > "$BOOTSTRAP_ROOT/bin/ctl"
 #!/usr/bin/env bash
 set -euo pipefail
 cmd="\${1:-status}"
-bin="${projectHostBin}"
+BOOTSTRAP_HOME="\${BOOTSTRAP_HOME:-$HOME}"
+BOOTSTRAP_ROOT="\${BOOTSTRAP_HOME}/cocalc-host"
+bin="$BOOTSTRAP_ROOT/bin/project-host"
 pid_file="/btrfs/data/daemon.pid"
 case "\${cmd}" in
   start|stop)
@@ -802,7 +842,8 @@ chmod +x "$BOOTSTRAP_ROOT/bin/ctl"
 cat <<'EOF_COCALC_START' > "$BOOTSTRAP_ROOT/bin/start-project-host"
 #!/usr/bin/env bash
 set -euo pipefail
-BOOTSTRAP_ROOT="${bootstrapRoot}"
+BOOTSTRAP_HOME="\${BOOTSTRAP_HOME:-$HOME}"
+BOOTSTRAP_ROOT="\${BOOTSTRAP_HOME}/cocalc-host"
 CTL="$BOOTSTRAP_ROOT/bin/ctl"
 for attempt in $(seq 1 60); do
   if mountpoint -q /btrfs; then
@@ -828,8 +869,8 @@ chmod +x "$BOOTSTRAP_ROOT/bin/ctl-cf" "$BOOTSTRAP_ROOT/bin/logs-cf"
 
 echo "bootstrap: configuring project-host autostart"
 echo "bootstrap: using project-host user ${sshUser}"
-sudo tee /etc/cron.d/cocalc-project-host >/dev/null <<'EOF_COCALC_CRON'
-@reboot ${sshUser} ${bootstrapRoot}/bin/start-project-host
+sudo tee /etc/cron.d/cocalc-project-host >/dev/null <<EOF_COCALC_CRON
+@reboot ${sshUser} /bin/bash -lc '\$HOME/cocalc-host/bin/start-project-host'
 EOF_COCALC_CRON
 sudo chmod 644 /etc/cron.d/cocalc-project-host
 if command -v systemctl >/dev/null 2>&1; then
@@ -934,9 +975,9 @@ set -euo pipefail
   BUNDLE_URL="${projectHostBundleUrl.replace(/"/g, '\\"')}"
   BUNDLE_SHA256="${projectHostBundleSha256}"
   BUNDLE_REMOTE="${projectHostBundleRemote}"
-  BUNDLE_DIR="${projectHostBundleDir}"
-  BUNDLE_ROOT="${projectHostBundlesRoot}"
-  BUNDLE_CURRENT="${projectHostCurrent}"
+  BUNDLE_ROOT="$BOOTSTRAP_ROOT/bundles"
+  BUNDLE_DIR="$BUNDLE_ROOT/${projectHostVersion}"
+  BUNDLE_CURRENT="$BOOTSTRAP_ROOT/bundle"
   echo "bootstrap: downloading project-host bundle from ${projectHostBundleUrl.replace(/"/g, '\\"')}"
   curl -fL "$BUNDLE_URL" -o "$BUNDLE_REMOTE"
   if [ -n "$BUNDLE_SHA256" ]; then
@@ -1036,9 +1077,9 @@ sudo chown ${sshUser}:${sshUser} "$BOOTSTRAP_DIR"/fetch-project-host.sh "$BOOTST
   const nodeVersion = process.env.COCALC_PROJECT_HOST_NODE_VERSION || "24";
   const installServiceScript = `
 set -euo pipefail
-HOST_DIR="${bootstrapRoot}"
-PH_BIN="${projectHostBin}"
-NVM_DIR="${bootstrapHome}/.nvm"
+HOST_DIR="$BOOTSTRAP_ROOT"
+PH_BIN="$BOOTSTRAP_ROOT/bin/project-host"
+NVM_DIR="$BOOTSTRAP_HOME/.nvm"
 NODE_VERSION="${nodeVersion}"
 
 sudo -u ${sshUser} -H bash -lc "export NVM_DIR=\\"$NVM_DIR\\"; \
