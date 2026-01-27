@@ -386,6 +386,44 @@ test("gap cursor only appears on last visual line before a void block", async ({
   }
 });
 
+test("arrow down from void block inserts paragraph after gap", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setValue([
+      {
+        type: "code_block",
+        isVoid: true,
+        fence: true,
+        info: "",
+        value: "x",
+        children: [{ text: "" }],
+      },
+    ]);
+    window.__slateTest?.setSelection({
+      anchor: { path: [0, 0], offset: 0 },
+      focus: { path: [0, 0], offset: 0 },
+    });
+  });
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.press("ArrowDown");
+
+  const gapCursor = await page.evaluate(() => window.__slateTest?.getGapCursor());
+  expect(gapCursor?.side).toBe("after");
+
+  await page.keyboard.press("ArrowDown");
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value?.length).toBe(2);
+  if (value) {
+    expect(value[1]?.type).toBe("paragraph");
+  }
+});
+
 test("autoformat code span keeps focus", async ({ page }) => {
   await page.goto("/");
   await waitForHarness(page);

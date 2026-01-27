@@ -456,8 +456,26 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       <div
         style={{
           ...rowStyle,
+          position: "relative",
         }}
       >
+        <div
+          data-slate-gap-cursor="block-hit-before"
+          style={{
+            position: "absolute",
+            top: -6,
+            left: 0,
+            right: 0,
+            height: 12,
+            cursor: "text",
+            zIndex: 1,
+          }}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            setGapCursor({ index, side: "before" });
+            ReactEditor.focus(editor);
+          }}
+        />
         {showGapBefore && (
           <div
             data-slate-gap-cursor="block-before"
@@ -523,6 +541,23 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             }}
           />
         )}
+        <div
+          data-slate-gap-cursor="block-hit-after"
+          style={{
+            position: "absolute",
+            bottom: -6,
+            left: 0,
+            right: 0,
+            height: 12,
+            cursor: "text",
+            zIndex: 1,
+          }}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            setGapCursor({ index, side: "after" });
+            ReactEditor.focus(editor);
+          }}
+        />
       </div>
     );
   },

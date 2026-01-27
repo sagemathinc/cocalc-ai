@@ -22,7 +22,12 @@ import {
 import type { SlateEditor } from "../types";
 import { ReactEditor } from "../slate-react";
 import { Editor, Element, Transforms } from "slate";
-import { clearGapCursor, getGapCursor, setGapCursor } from "../gap-cursor";
+import {
+  clearGapCursor,
+  getGapCursor,
+  insertParagraphAtGap,
+  setGapCursor,
+} from "../gap-cursor";
 import { pointAtPath } from "../slate-util";
 
 function topLevelEntry(editor: SlateEditor): { element: Element; index: number } | null {
@@ -150,6 +155,28 @@ function getBlockLineRect(
 const down = ({ editor }: { editor: SlateEditor }) => {
   const gapCursor = getGapCursor(editor);
   if (gapCursor) {
+    if (gapCursor.side === "after") {
+      let isVoid = false;
+      try {
+        const [node] = Editor.node(editor, gapCursor.path);
+        isVoid = Editor.isVoid(editor, node as any);
+      } catch {
+        isVoid = false;
+      }
+      if (isVoid) {
+        insertParagraphAtGap(editor, gapCursor);
+        ReactEditor.focus(editor);
+        return true;
+      }
+      const lastIndex = Math.max(0, editor.children.length - 1);
+      if (gapCursor.path[0] >= lastIndex) {
+        clearGapCursor(editor);
+        const focus = pointAtPath(editor, [lastIndex], undefined, "end");
+        Transforms.setSelection(editor, { focus, anchor: focus });
+        ReactEditor.focus(editor);
+        return true;
+      }
+    }
     clearGapCursor(editor);
     const index =
       gapCursor.side === "before"
@@ -183,6 +210,23 @@ const down = ({ editor }: { editor: SlateEditor }) => {
     editor.scrollIntoDOM(index + 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
+    if (cur != null) {
+      try {
+        const voidEntry = Editor.above(editor, {
+          at: cur,
+          match: (node) =>
+            Element.isElement(node) && Editor.isVoid(editor, node as any),
+        });
+        if (voidEntry) {
+          const voidPath = voidEntry[1];
+          setGapCursor(editor, { path: [voidPath[0]], side: "after" });
+          ReactEditor.forceUpdate(editor);
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+    }
     if (cur != null && shouldOpenGapBeforeVoid(editor, "down")) {
       const targetIndex = cur.path[0] + 1;
       setGapCursor(editor, { path: [targetIndex], side: "before" });
@@ -223,6 +267,27 @@ register({ key: "ArrowDown" }, down);
 const up = ({ editor }: { editor: SlateEditor }) => {
   const gapCursor = getGapCursor(editor);
   if (gapCursor) {
+    if (gapCursor.side === "before") {
+      let isVoid = false;
+      try {
+        const [node] = Editor.node(editor, gapCursor.path);
+        isVoid = Editor.isVoid(editor, node as any);
+      } catch {
+        isVoid = false;
+      }
+      if (isVoid) {
+        insertParagraphAtGap(editor, gapCursor);
+        ReactEditor.focus(editor);
+        return true;
+      }
+      if (gapCursor.path[0] <= 0) {
+        clearGapCursor(editor);
+        const focus = pointAtPath(editor, [0], undefined, "start");
+        Transforms.setSelection(editor, { focus, anchor: focus });
+        ReactEditor.focus(editor);
+        return true;
+      }
+    }
     clearGapCursor(editor);
     const index =
       gapCursor.side === "after"
@@ -250,6 +315,23 @@ const up = ({ editor }: { editor: SlateEditor }) => {
     editor.scrollIntoDOM(index - 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
+    if (cur != null) {
+      try {
+        const voidEntry = Editor.above(editor, {
+          at: cur,
+          match: (node) =>
+            Element.isElement(node) && Editor.isVoid(editor, node as any),
+        });
+        if (voidEntry) {
+          const voidPath = voidEntry[1];
+          setGapCursor(editor, { path: [voidPath[0]], side: "before" });
+          ReactEditor.forceUpdate(editor);
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+    }
     if (cur != null && shouldOpenGapBeforeVoid(editor, "up")) {
       const targetIndex = Math.max(0, cur.path[0] - 1);
       setGapCursor(editor, { path: [targetIndex], side: "after" });

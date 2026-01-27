@@ -69,6 +69,7 @@ import {
   clearGapCursor,
   getGapCursor,
   insertParagraphAtGap,
+  setGapCursor,
 } from "./gap-cursor";
 import type { SlateEditor } from "./types";
 import { Actions } from "./types";
@@ -1379,6 +1380,16 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
                 }
               : undefined
           }
+        />
+        <div
+          data-slate-gap-cursor="bottom-hit"
+          style={{ height: 8, cursor: "text" }}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            const lastIndex = Math.max(0, editor.children.length - 1);
+            setGapCursor(editor, { path: [lastIndex], side: "after" });
+            ReactEditor.focus(editor);
+          }}
         />
       </div>
     </Slate>
