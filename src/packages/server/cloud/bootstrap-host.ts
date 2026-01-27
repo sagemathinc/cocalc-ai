@@ -210,11 +210,6 @@ function extractArtifactVersion(
 }
 
 export type BootstrapScripts = {
-  bootstrapScript: string;
-  fetchProjectHostScript: string;
-  fetchProjectBundleScript: string;
-  fetchToolsScript: string;
-  installServiceScript: string;
   expectedOs: string;
   expectedArch: string;
   bootstrapPyUrl: string;
@@ -267,7 +262,6 @@ export async function buildBootstrapScripts(
     tunnel?: CloudflareTunnel;
     conatPasswordCommand?: string;
     publicIpOverride?: string;
-    allowEnvVarExpansion?: boolean;
     launchpadBaseUrl?: string;
   } = {},
 ): Promise<BootstrapScripts> {
@@ -448,8 +442,6 @@ export async function buildBootstrapScripts(
     }
   }
 
-  const allowEnvVarExpansion =
-    opts.allowEnvVarExpansion ?? publicIp.includes("$");
   const envLines = [
     `MASTER_CONAT_SERVER=${masterAddress}`,
     `PROJECT_HOST_ID=${row.id}`,
@@ -485,725 +477,61 @@ export async function buildBootstrapScripts(
   if (tlsEnabled) {
     envLines.push(`COCALC_PROJECT_HOST_HTTPS_HOSTNAME=${tlsHostname}`);
   }
-  const envToken = "EOF_COCALC_ENV";
-  const envQuote = allowEnvVarExpansion ? "" : "'";
-  const envBlock = `cat <<${envQuote}${envToken}${envQuote} | sudo tee ${envFile} >/dev/null\n${envLines.join(
-    "\n",
-  )}\n${envToken}\n`;
-  const publicIpLookup = publicIp.includes("$")
-    ? `
-echo "bootstrap: detecting public IP"
-PUBLIC_IP="$(curl -fsSL https://api.ipify.org || true)"
-if [ -z "$PUBLIC_IP" ]; then
-  PUBLIC_IP="$(curl -fsSL https://ifconfig.me || true)"
-fi
-if [ -z "$PUBLIC_IP" ]; then
-  echo "bootstrap: could not determine public IP"
-fi
-`
-    : "";
   const projectHostBundlesRoot = `${bootstrapRoot}/bundles`;
   const projectHostBundleDir = `${projectHostBundlesRoot}/${projectHostVersion}`;
   const projectHostCurrent = `${bootstrapRoot}/bundle`;
   const projectHostBin = `${bootstrapRoot}/bin/project-host`;
 
-  let bootstrapScript = `
-set -euo pipefail
-EXPECTED_OS="${targetPlatform.os}"
-EXPECTED_ARCH="${targetPlatform.arch}"
-BOOTSTRAP_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-case "$BOOTSTRAP_OS" in
-  linux) ;;
-  *)
-    echo "bootstrap: unsupported OS $BOOTSTRAP_OS (expected $EXPECTED_OS)" >&2
-    exit 1
-    ;;
-esac
-ARCH_RAW="$(uname -m)"
-case "$ARCH_RAW" in
-  x86_64|amd64) BOOTSTRAP_ARCH="amd64" ;;
-  aarch64|arm64) BOOTSTRAP_ARCH="arm64" ;;
-  *)
-    echo "bootstrap: unsupported architecture $ARCH_RAW" >&2
-    exit 1
-    ;;
-esac
-if [ "$BOOTSTRAP_ARCH" != "$EXPECTED_ARCH" ]; then
-  echo "bootstrap: unsupported architecture $BOOTSTRAP_ARCH (expected $EXPECTED_ARCH)" >&2
-  exit 1
-fi
-ARCH="$BOOTSTRAP_ARCH"
-ENV_FILE="${envFile}"
-BOOTSTRAP_USER="${sshUser}"
-if [ -z "$BOOTSTRAP_USER" ]; then
-  BOOTSTRAP_USER="$(id -un 2>/dev/null || true)"
-fi
-if [ -z "$BOOTSTRAP_USER" ]; then
-  BOOTSTRAP_USER="root"
-fi
-BOOTSTRAP_HOME="${bootstrapHome}"
-if [ -z "$BOOTSTRAP_HOME" ] || [ "$BOOTSTRAP_HOME" = "\${BOOTSTRAP_HOME}" ]; then
-  BOOTSTRAP_HOME="$(getent passwd "$BOOTSTRAP_USER" | cut -d: -f6 || true)"
-fi
-if [ -z "$BOOTSTRAP_HOME" ] && [ -n "$HOME" ]; then
-  BOOTSTRAP_HOME="$HOME"
-fi
-if [ -z "$BOOTSTRAP_HOME" ]; then
-  BOOTSTRAP_HOME="/root"
-fi
-BOOTSTRAP_ROOT="$BOOTSTRAP_HOME/cocalc-host"
-BOOTSTRAP_DIR="$BOOTSTRAP_ROOT/bootstrap"
-export BOOTSTRAP_USER BOOTSTRAP_HOME BOOTSTRAP_ROOT BOOTSTRAP_DIR
-echo "bootstrap: user=$BOOTSTRAP_USER home=$BOOTSTRAP_HOME root=$BOOTSTRAP_ROOT"
-IMAGE_SIZE_GB_RAW="${imageSizeGb}"
-IMAGE_SIZE_GB="$IMAGE_SIZE_GB_RAW"
-if [ -z "$IMAGE_SIZE_GB_RAW" ] || [ "$IMAGE_SIZE_GB_RAW" = "auto" ]; then
-  ROOT_TOTAL_GB="$(df -BG --output=size / | tail -n1 | tr -dc '0-9')"
-  if [ -z "$ROOT_TOTAL_GB" ]; then
-    ROOT_TOTAL_GB=0
-  fi
-  TARGET_GB=$((ROOT_TOTAL_GB - 15))
-  if [ "$TARGET_GB" -lt 5 ]; then
-    TARGET_GB=5
-  fi
-  IMAGE_SIZE_GB="$TARGET_GB"
-  echo "bootstrap: computed btrfs image size \${IMAGE_SIZE_GB}G (disk \${ROOT_TOTAL_GB}G)"
-fi
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-export APT_LISTCHANGES_FRONTEND=none
-echo "bootstrap: disabling unattended upgrades"
-if command -v systemctl >/dev/null 2>&1; then
-  sudo systemctl stop apt-daily.service apt-daily-upgrade.service unattended-upgrades.service || true
-  sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer || true
-fi
-sudo pkill -9 apt-get || true
-sudo pkill -f -9 unattended-upgrade || true
-sudo apt-get remove -y unattended-upgrades || true
-echo "bootstrap: updating apt package lists"
-APT_OPTS="-y -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ftp::Timeout=20"
-for attempt in $(seq 1 3); do
-  if timeout 30 sudo apt-get $APT_OPTS update; then
-    break
-  fi
-  echo "bootstrap: apt-get update failed (attempt $attempt/3); retrying"
-  sleep 5
-done
-echo "bootstrap: installing base packages"
-APT_INSTALL_OPTS="$APT_OPTS --no-install-recommends"
-for attempt in $(seq 1 3); do
-  if timeout 120 sudo apt-get $APT_INSTALL_OPTS install podman btrfs-progs uidmap slirp4netns fuse-overlayfs curl xz-utils rsync vim crun cron chrony; then
-    break
-  fi
-  echo "bootstrap: apt-get install failed (attempt $attempt/3); retrying"
-  sleep 10
-done
-${
-  hasGpu
-    ? `
-echo "bootstrap: installing nvidia container toolkit"
-sudo apt-get install -y ca-certificates gnupg
-sudo rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-export GPG_TTY=/dev/null
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' | \
-  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt-get update -y
-sudo apt-get install -y nvidia-container-toolkit
-sudo ldconfig || true
-if command -v nvidia-smi >/dev/null 2>&1 || ldconfig -p 2>/dev/null | grep -q libnvidia-ml.so.1; then
-  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml || echo "bootstrap: nvidia-ctk failed; skipping CDI"
-else
-  echo "bootstrap: nvidia drivers not detected; skipping CDI"
-fi
-sudo usermod -aG video,render ${sshUser} || true
-sudo tee /usr/local/sbin/cocalc-nvidia-cdi >/dev/null <<'EOF_COCALC_CDI'
-#!/usr/bin/env bash
-set -euo pipefail
-if [ "$(id -u)" -ne 0 ]; then
-  exit 0
-fi
-if [ ! -x /usr/bin/nvidia-ctk ]; then
-  exit 0
-fi
-if [ -f /etc/cdi/nvidia.yaml ]; then
-  exit 0
-fi
-ldconfig || true
-if command -v nvidia-smi >/dev/null 2>&1 || ldconfig -p 2>/dev/null | grep -q libnvidia-ml.so.1; then
-  /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml || exit 0
-fi
-exit 0
-EOF_COCALC_CDI
-sudo chmod +x /usr/local/sbin/cocalc-nvidia-cdi
-`
-    : ""
-}
-echo "bootstrap: configuring time sync"
-sudo systemctl disable --now systemd-timesyncd || true
-sudo systemctl enable --now chrony || true
-sudo tee /etc/chrony/chrony.conf >/dev/null <<'EOF_COCALC_CHRONY'
-pool pool.ntp.org iburst maxsources 4
-makestep 1.0 -1
-rtcsync
-EOF_COCALC_CHRONY
-sudo systemctl restart chrony || true
-${publicIpLookup}
-echo "bootstrap: enabling unprivileged user namespaces"
-sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
-echo "bootstrap: ensuring subuid/subgid ranges for ${sshUser}"
-sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 ${sshUser} || true
-echo "bootstrap: enabling linger for ${sshUser}"
-if ! command -v loginctl >/dev/null 2>&1; then
-  echo "bootstrap: loginctl not available; cannot ensure /run/user for ${sshUser}" >&2
-  exit 1
-fi
-if ! sudo loginctl enable-linger ${sshUser}; then
-  echo "bootstrap: failed to enable linger for ${sshUser}" >&2
-  exit 1
-fi
-echo "bootstrap: preparing cocalc directories"
-sudo mkdir -p /opt/cocalc /var/lib/cocalc /etc/cocalc
-sudo chown -R ${sshUser}:${sshUser} /opt/cocalc /var/lib/cocalc
-sudo mkdir -p /btrfs
-echo "bootstrap: preparing bootstrap scripts"
-BOOTSTRAP_ROOT="$BOOTSTRAP_ROOT"
-sudo mkdir -p "$BOOTSTRAP_DIR"
-sudo mkdir -p "$BOOTSTRAP_ROOT/tmp"
-sudo chown -R ${sshUser}:${sshUser} "$BOOTSTRAP_DIR" || true
-sudo chown -R ${sshUser}:${sshUser} "$BOOTSTRAP_ROOT/tmp" || true
-echo "bootstrap: data disk candidates: ${dataDiskCandidates}"
-if [ -f /btrfs/data/.bootstrap_done ]; then
-  echo "bootstrap: already complete; exiting"
-  exit 0
-fi
-DATA_DISK_DEV=""
-if [ -n "${dataDiskDevices}" ]; then
-  pick_data_disk() {
-    for dev in ${dataDiskDevices}; do
-      if [ -b "$dev" ]; then
-        mountpoints="$(lsblk -nr -o MOUNTPOINT "$dev" 2>/dev/null | grep -v '^$' || true)"
-        if [ -n "$mountpoints" ]; then
-          if echo "$mountpoints" | grep -qx "/btrfs"; then
-            printf '%s\n' "$dev"
-            return 0
-          fi
-          echo "bootstrap: skipping $dev (mounted at $mountpoints)" >&2
-          continue
-        fi
-        size_bytes="$(lsblk -nb -o SIZE "$dev" 2>/dev/null | head -n1 | tr -d '[:space:]')"
-        if [ -n "$size_bytes" ] && [ "$size_bytes" -lt 10737418240 ]; then
-          echo "bootstrap: skipping $dev (size ${'${'}size_bytes}B too small)" >&2
-          continue
-        fi
-        printf '%s\n' "$dev"
-        return 0
-      fi
-    done
-    return 1
-  }
-  echo "bootstrap: waiting for data disk (up to 600s)"
-  for attempt in $(seq 1 60); do
-    DATA_DISK_DEV="$(pick_data_disk || true)"
-    if [ -n "$DATA_DISK_DEV" ]; then
-      break
-    fi
-    echo "bootstrap: data disk not ready (attempt $attempt/60)"
-    sleep 10
-  done
-fi
-if [ -n "$DATA_DISK_DEV" ]; then
-  echo "bootstrap: using data disk $DATA_DISK_DEV"
-  DATA_DISK_FSTYPE="$(lsblk -no FSTYPE "$DATA_DISK_DEV" 2>/dev/null | head -n1 | tr -d '[:space:]')"
-  if [ -z "$DATA_DISK_FSTYPE" ]; then
-    echo "bootstrap: formatting $DATA_DISK_DEV as btrfs"
-    sudo mkfs.btrfs -f "$DATA_DISK_DEV"
-  elif [ "$DATA_DISK_FSTYPE" = "btrfs" ]; then
-    echo "bootstrap: existing btrfs filesystem detected on $DATA_DISK_DEV"
-  else
-    echo "bootstrap: refusing to format $DATA_DISK_DEV (filesystem=$DATA_DISK_FSTYPE)" >&2
-    exit 1
-  fi
-  if ! mountpoint -q /btrfs; then
-    echo "bootstrap: mounting $DATA_DISK_DEV at /btrfs"
-    sudo mount "$DATA_DISK_DEV" /btrfs
-  fi
-  echo "bootstrap: ensuring /btrfs is mounted on reboot"
-  FSTAB_LINE=""
-  DATA_UUID="$(sudo blkid -s UUID -o value "$DATA_DISK_DEV" 2>/dev/null || true)"
-  if [ -n "$DATA_UUID" ]; then
-    FSTAB_LINE="UUID=$DATA_UUID /btrfs btrfs defaults,nofail 0 0"
-  else
-    FSTAB_LINE="$DATA_DISK_DEV /btrfs btrfs defaults,nofail 0 0"
-  fi
-  sudo sed -i.bak '/cocalc-btrfs/d' /etc/fstab
-  echo "$FSTAB_LINE # cocalc-btrfs" | sudo tee -a /etc/fstab >/dev/null
-else
-  echo "bootstrap: no data disk found; using loopback image"
-  sudo mkdir -p /var/lib/cocalc
-  if [ ! -f /var/lib/cocalc/btrfs.img ]; then
-    echo "bootstrap: creating /var/lib/cocalc/btrfs.img (\${IMAGE_SIZE_GB}G)"
-    sudo truncate -s \${IMAGE_SIZE_GB}G /var/lib/cocalc/btrfs.img
-    echo "bootstrap: formatting /var/lib/cocalc/btrfs.img as btrfs"
-    sudo mkfs.btrfs -f /var/lib/cocalc/btrfs.img
-  fi
-  if ! mountpoint -q /btrfs; then
-    echo "bootstrap: mounting loopback btrfs image at /btrfs"
-    sudo mount -o loop /var/lib/cocalc/btrfs.img /btrfs
-  fi
-  echo "bootstrap: ensuring /btrfs is mounted on reboot"
-  sudo sed -i.bak '/cocalc-btrfs/d' /etc/fstab
-  echo "/var/lib/cocalc/btrfs.img /btrfs btrfs loop,defaults,nofail 0 0 # cocalc-btrfs" | sudo tee -a /etc/fstab >/dev/null
-fi
-echo "bootstrap: installing btrfs resize helper"
-sudo tee /usr/local/sbin/cocalc-grow-btrfs >/dev/null <<'EOF_COCALC_GROW'
-#!/usr/bin/env bash
-set -euo pipefail
-if [ "$(id -u)" -ne 0 ]; then
-  echo "cocalc-grow-btrfs must run as root" >&2
-  exit 1
-fi
-TARGET_GB="\${1:-}"
-IMAGE="/var/lib/cocalc/btrfs.img"
-MOUNTPOINT="/btrfs"
-ENV_FILE="/etc/cocalc/project-host.env"
-if [ -n "$TARGET_GB" ]; then
-  TARGET_GB="\${TARGET_GB%%[!0-9]*}"
-fi
-if [ -n "$TARGET_GB" ] && [ -f "$ENV_FILE" ]; then
-  if grep -q '^COCALC_BTRFS_IMAGE_GB=' "$ENV_FILE"; then
-    sed -i.bak "s/^COCALC_BTRFS_IMAGE_GB=.*/COCALC_BTRFS_IMAGE_GB=\${TARGET_GB}/" "$ENV_FILE"
-  else
-    echo "COCALC_BTRFS_IMAGE_GB=\${TARGET_GB}" >> "$ENV_FILE"
-  fi
-fi
-if ! mountpoint -q "$MOUNTPOINT"; then
-  exit 0
-fi
-MOUNT_SOURCE="$(findmnt -n -o SOURCE "$MOUNTPOINT" 2>/dev/null || true)"
-if [ "$MOUNT_SOURCE" = "$IMAGE" ] || [ "\${MOUNT_SOURCE#/dev/loop}" != "$MOUNT_SOURCE" ]; then
-  if [ ! -f "$IMAGE" ]; then
-    exit 0
-  fi
-  if [ -z "$TARGET_GB" ] && [ -f "$ENV_FILE" ]; then
-    TARGET_GB="\$(grep -E '^COCALC_BTRFS_IMAGE_GB=' "$ENV_FILE" | tail -n1 | cut -d= -f2 || true)"
-  fi
-  if [ -z "$TARGET_GB" ] || ! echo "$TARGET_GB" | grep -Eq '^[0-9]+$'; then
-    exit 0
-  fi
-  CURRENT_BYTES="\$(stat -c %s "$IMAGE" 2>/dev/null || echo 0)"
-  TARGET_BYTES="\$((TARGET_GB * 1024 * 1024 * 1024))"
-  if [ "$CURRENT_BYTES" -lt "$TARGET_BYTES" ]; then
-    echo "bootstrap: growing btrfs image to \${TARGET_GB}G"
-    truncate -s "\${TARGET_GB}G" "$IMAGE"
-    LOOP_DEV="\$(losetup -j "$IMAGE" | head -n1 | cut -d: -f1 || true)"
-    if [ -n "$LOOP_DEV" ]; then
-      losetup -c "$LOOP_DEV" || true
-    fi
-  fi
-  btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
-  exit 0
-fi
-# Block device (non-loop): just expand to max.
-btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
-EOF_COCALC_GROW
-sudo chmod +x /usr/local/sbin/cocalc-grow-btrfs
-sudo chown ${sshUser}:${sshUser} /btrfs || true
-echo "bootstrap: ensuring /btrfs/data subvolume"
-if ! sudo btrfs subvolume show /btrfs/data >/dev/null 2>&1; then
-  if ! sudo btrfs subvolume create /btrfs/data >/dev/null 2>&1; then
-    echo "bootstrap: btrfs subvolume create failed; using directory"
-    sudo mkdir -p /btrfs/data
-  fi
-fi
-sudo mkdir -p /btrfs/data/secrets
-sudo chown -R ${sshUser}:${sshUser} /btrfs/data || true
-sudo mkdir -p /btrfs/data/tmp
-sudo chmod 1777 /btrfs/data/tmp
-echo "bootstrap: configuring podman storage"
-# Rootful storage (used by sudo podman) lives under /btrfs/data/containers/root
-sudo mkdir -p /btrfs/data/containers/root/storage /btrfs/data/containers/root/run
-sudo mkdir -p /etc/containers
-sudo tee /etc/containers/storage.conf >/dev/null <<'EOF_COCALC_CONTAINER_STORAGE'
-[storage]
-driver = "overlay"
-runroot = "/btrfs/data/containers/root/run"
-graphroot = "/btrfs/data/containers/root/storage"
-EOF_COCALC_CONTAINER_STORAGE
-# Rootless storage (used by the ssh user) lives under /btrfs/data/containers/rootless/<user>
-if [ "${sshUser}" != "root" ]; then
-  sudo -u ${sshUser} mkdir -p /home/${sshUser}/.config/containers
-  sudo mkdir -p /btrfs/data/containers/rootless/${sshUser}/storage /btrfs/data/containers/rootless/${sshUser}/run
-  sudo chown -R ${sshUser}:${sshUser} /btrfs/data/containers/rootless/${sshUser} || true
-  sudo tee /home/${sshUser}/.config/containers/storage.conf >/dev/null <<'EOF_COCALC_CONTAINER_STORAGE_USER'
-[storage]
-driver = "overlay"
-runroot = "/btrfs/data/containers/rootless/${sshUser}/run"
-graphroot = "/btrfs/data/containers/rootless/${sshUser}/storage"
-EOF_COCALC_CONTAINER_STORAGE_USER
-  sudo chown ${sshUser}:${sshUser} /home/${sshUser}/.config/containers/storage.conf || true
-fi
-echo "bootstrap: writing project-host env to ${envFile}"
-${envBlock}
-sudo mkdir -p "$BOOTSTRAP_ROOT/bin"
-sudo chown -R ${sshUser}:${sshUser} "$BOOTSTRAP_ROOT/bin" || true
-SSH_UID="$(id -u ${sshUser} 2>/dev/null || echo "")"
-if [ -n "$SSH_UID" ]; then
-  RUNTIME_DIR="/btrfs/data/tmp/cocalc-podman-runtime-$SSH_UID"
-  sudo mkdir -p "$RUNTIME_DIR"
-  sudo chown ${sshUser}:${sshUser} "$RUNTIME_DIR" || true
-  if grep -q '^COCALC_PODMAN_RUNTIME_DIR=' "$ENV_FILE"; then
-    sudo sed -i.bak "s|^COCALC_PODMAN_RUNTIME_DIR=.*|COCALC_PODMAN_RUNTIME_DIR=$RUNTIME_DIR|" "$ENV_FILE"
-  else
-    echo "COCALC_PODMAN_RUNTIME_DIR=$RUNTIME_DIR" | sudo tee -a "$ENV_FILE" >/dev/null
-  fi
-fi
-if [ "$IMAGE_SIZE_GB_RAW" = "auto" ]; then
-  if grep -q '^COCALC_BTRFS_IMAGE_GB=' "$ENV_FILE"; then
-    sudo sed -i.bak "s/^COCALC_BTRFS_IMAGE_GB=.*/COCALC_BTRFS_IMAGE_GB=\${IMAGE_SIZE_GB}/" "$ENV_FILE"
-  else
-    echo "COCALC_BTRFS_IMAGE_GB=\${IMAGE_SIZE_GB}" | sudo tee -a "$ENV_FILE" >/dev/null
-  fi
-fi
-`;
-
-  if (opts.conatPasswordCommand) {
-    bootstrapScript += `\n${opts.conatPasswordCommand}\n`;
-  }
-
-  bootstrapScript += `
-cat <<'EOF_COCALC_CTL' > "$BOOTSTRAP_ROOT/bin/ctl"
-#!/usr/bin/env bash
-set -euo pipefail
-cmd="\${1:-status}"
-BOOTSTRAP_HOME="\${BOOTSTRAP_HOME:-$HOME}"
-BOOTSTRAP_ROOT="\${BOOTSTRAP_HOME}/cocalc-host"
-bin="$BOOTSTRAP_ROOT/bin/project-host"
-pid_file="/btrfs/data/daemon.pid"
-case "\${cmd}" in
-  start|stop)
-    "\${bin}" daemon "\${cmd}"
-    ;;
-  restart)
-    "\${bin}" daemon stop || true
-    "\${bin}" daemon start
-    ;;
-  status)
-    if [ -f "\${pid_file}" ] && kill -0 "\$(cat "\${pid_file}")" 2>/dev/null; then
-      echo "project-host running (pid \$(cat "\${pid_file}"))"
-    else
-      echo "project-host not running"
-      exit 1
-    fi
-    ;;
-  *)
-    echo "usage: \${0} {start|stop|restart|status}" >&2
-    exit 2
-    ;;
-esac
-EOF_COCALC_CTL
-chmod +x "$BOOTSTRAP_ROOT/bin/ctl"
-cat <<'EOF_COCALC_START' > "$BOOTSTRAP_ROOT/bin/start-project-host"
-#!/usr/bin/env bash
-set -euo pipefail
-BOOTSTRAP_HOME="\${BOOTSTRAP_HOME:-$HOME}"
-BOOTSTRAP_ROOT="\${BOOTSTRAP_HOME}/cocalc-host"
-CTL="$BOOTSTRAP_ROOT/bin/ctl"
-for attempt in $(seq 1 60); do
-  if mountpoint -q /btrfs; then
-    if [ -x /usr/local/sbin/cocalc-grow-btrfs ]; then
-      sudo /usr/local/sbin/cocalc-grow-btrfs || true
-    fi
-    exec "$CTL" start
-  fi
-  echo "waiting for /btrfs mount (attempt $attempt/60)"
-  sudo mount /btrfs || true
-  sleep 5
-done
-echo "timeout waiting for /btrfs mount"
-exit 1
-EOF_COCALC_START
-chmod +x "$BOOTSTRAP_ROOT/bin/start-project-host"
-echo 'tail -n 200 /btrfs/data/log -f' > "$BOOTSTRAP_ROOT/bin/logs"
-chmod +x "$BOOTSTRAP_ROOT/bin/logs"
-
-echo 'sudo journalctl -u cocalc-cloudflared.service -o cat -f -n 200' > "$BOOTSTRAP_ROOT/bin/logs-cf"
-echo 'sudo systemctl \${1-status} cocalc-cloudflared' > "$BOOTSTRAP_ROOT/bin/ctl-cf"
-chmod +x "$BOOTSTRAP_ROOT/bin/ctl-cf" "$BOOTSTRAP_ROOT/bin/logs-cf"
-
-echo "bootstrap: configuring project-host autostart"
-echo "bootstrap: using project-host user ${sshUser}"
-sudo tee /etc/cron.d/cocalc-project-host >/dev/null <<EOF_COCALC_CRON
-@reboot ${sshUser} /bin/bash -lc '\$HOME/cocalc-host/bin/start-project-host'
-EOF_COCALC_CRON
-sudo chmod 644 /etc/cron.d/cocalc-project-host
-if command -v systemctl >/dev/null 2>&1; then
-  sudo systemctl enable --now cron || true
-fi
-${hasGpu ? `
-if [ -x /usr/local/sbin/cocalc-nvidia-cdi ]; then
-  sudo /usr/local/sbin/cocalc-nvidia-cdi || true
-fi
-sudo tee /etc/cron.d/cocalc-nvidia-cdi >/dev/null <<'EOF_COCALC_CDI_CRON'
-*/5 * * * * root /usr/local/sbin/cocalc-nvidia-cdi >/dev/null 2>&1
-EOF_COCALC_CDI_CRON
-sudo chmod 644 /etc/cron.d/cocalc-nvidia-cdi
-` : ""}
-`;
-
-  let cloudflaredScript = "";
-  let cloudflaredServiceUnit = "";
-  let cloudflaredConfig: BootstrapScripts["cloudflaredConfig"];
-  if (tunnel && tunnelEnabled) {
-    const useToken = Boolean(tunnel.token);
-    if (!useToken) {
-      logger.warn("cloudflare tunnel token missing; using credentials file", {
-        host_id: row.id,
-        tunnel_id: tunnel.id,
+  const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {
+    if (tunnel && tunnelEnabled) {
+      const useToken = Boolean(tunnel.token);
+      const creds = JSON.stringify({
+        AccountTag: tunnel.account_id,
+        TunnelID: tunnel.id,
+        TunnelName: tunnel.name,
+        TunnelSecret: tunnel.tunnel_secret,
       });
+      return {
+        enabled: true,
+        hostname: tunnel.hostname,
+        port,
+        token: useToken ? tunnel.token : undefined,
+        tunnelId: tunnel.id,
+        credsJson: useToken ? undefined : creds,
+      };
     }
-    const configToken = "EOF_CLOUDFLARE_CONFIG";
-    const tokenEnvToken = "EOF_CLOUDFLARE_TOKEN";
-    const credsToken = "EOF_CLOUDFLARE_CREDS";
-    const creds = JSON.stringify({
-      AccountTag: tunnel.account_id,
-      TunnelID: tunnel.id,
-      TunnelName: tunnel.name,
-      TunnelSecret: tunnel.tunnel_secret,
-    });
-    cloudflaredScript = `
-echo "bootstrap: installing cloudflared"
-if ! command -v cloudflared >/dev/null 2>&1; then
-  CLOUDFLARED_DEB="cloudflared-linux-\${ARCH}.deb"
-  curl -fsSL -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/\${CLOUDFLARED_DEB}
-  sudo dpkg -i /tmp/cloudflared.deb
-fi
-sudo mkdir -p /etc/cloudflared
-${
-  useToken
-    ? `cat <<'${tokenEnvToken}' | sudo tee /etc/cloudflared/token.env >/dev/null
-CLOUDFLARED_TOKEN=${tunnel.token}
-${tokenEnvToken}
-sudo chmod 600 /etc/cloudflared/token.env
-`
-    : `cat <<'${credsToken}' | sudo tee /etc/cloudflared/${tunnel.id}.json >/dev/null
-${creds}
-${credsToken}
-sudo chmod 600 /etc/cloudflared/${tunnel.id}.json
-`
-}
-cat <<'${configToken}' | sudo tee /etc/cloudflared/config.yml >/dev/null
-${
-  useToken
-    ? ""
-    : `tunnel: ${tunnel.id}
-credentials-file: /etc/cloudflared/${tunnel.id}.json`
-}
-ingress:
-  - hostname: ${tunnel.hostname}
-    service: http://localhost:${port}
-  - service: http_status:404
-${configToken}
-`;
-    cloudflaredServiceUnit = `
-[Unit]
-Description=Cloudflare Tunnel for CoCalc Project Host
-After=network-online.target
-Wants=network-online.target
+    return { enabled: false };
+  })();
 
-[Service]
-Type=simple
-${useToken ? "EnvironmentFile=/etc/cloudflared/token.env" : ""}
-ExecStart=/usr/bin/cloudflared --config /etc/cloudflared/config.yml tunnel run${useToken ? " --token $CLOUDFLARED_TOKEN" : ""}
-Restart=always
-RestartSec=5
 
-[Install]
-WantedBy=multi-user.target
-`;
-    cloudflaredConfig = {
-      enabled: true,
-      hostname: tunnel.hostname,
-      port,
-      token: useToken ? tunnel.token : undefined,
-      tunnelId: tunnel.id,
-      credsJson: useToken ? undefined : creds,
-    };
-  } else {
-    cloudflaredConfig = { enabled: false };
-  }
-
-  if (cloudflaredScript) {
-    bootstrapScript += cloudflaredScript;
-  }
-
-  bootstrapScript += `
-echo "bootstrap: re-enabling unattended upgrades"
-sudo apt-get install -y unattended-upgrades || true
-if command -v systemctl >/dev/null 2>&1; then
-  sudo systemctl enable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service || true
-fi
-`;
-
-  const fetchProjectHostScript = `#!/usr/bin/env bash
-set -euo pipefail
-  BUNDLE_URL="${projectHostBundleUrl.replace(/"/g, '\\"')}"
-  BUNDLE_SHA256="${projectHostBundleSha256}"
-  BUNDLE_REMOTE="${projectHostBundleRemote}"
-  BUNDLE_ROOT="$BOOTSTRAP_ROOT/bundles"
-  BUNDLE_DIR="$BUNDLE_ROOT/${projectHostVersion}"
-  BUNDLE_CURRENT="$BOOTSTRAP_ROOT/bundle"
-  echo "bootstrap: downloading project-host bundle from ${projectHostBundleUrl.replace(/"/g, '\\"')}"
-  curl -fL "$BUNDLE_URL" -o "$BUNDLE_REMOTE"
-  if [ -n "$BUNDLE_SHA256" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      echo "$BUNDLE_SHA256  $BUNDLE_REMOTE" | sha256sum -c -
-    else
-      echo "bootstrap: sha256sum not available; skipping project-host checksum"
-    fi
-  else
-    if command -v sha256sum >/dev/null 2>&1; then
-      if curl -fsSL "$BUNDLE_URL.sha256" -o "$BUNDLE_REMOTE.sha256"; then
-        sha256sum -c "$BUNDLE_REMOTE.sha256" || true
-      fi
-    fi
-  fi
-  mkdir -p "$BUNDLE_ROOT"
-  rm -rf "$BUNDLE_DIR"
-  mkdir -p "$BUNDLE_DIR"
-  tar -xJf "$BUNDLE_REMOTE" --strip-components=1 -C "$BUNDLE_DIR"
-  ln -sfn "$BUNDLE_DIR/bundle" "$BUNDLE_CURRENT"
-`;
-
-  const fetchProjectBundleScript = `#!/usr/bin/env bash
-set -euo pipefail
-  BUNDLE_URL="${projectBundleUrl.replace(/"/g, '\\"')}"
-  BUNDLE_SHA256="${projectBundleSha256}"
-  BUNDLE_REMOTE="${projectBundleRemote}"
-  BUNDLE_DIR="${projectBundleDir}"
-  BUNDLE_ROOT="${projectBundlesRoot}"
-  BUNDLE_CURRENT="${projectBundlesRoot}/current"
-  echo "bootstrap: downloading project bundle from ${projectBundleUrl.replace(/"/g, '\\"')}"
-  curl -fL "$BUNDLE_URL" -o "$BUNDLE_REMOTE"
-  if [ -n "$BUNDLE_SHA256" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      echo "$BUNDLE_SHA256  $BUNDLE_REMOTE" | sha256sum -c -
-    else
-      echo "bootstrap: sha256sum not available; skipping bundle checksum"
-    fi
-  else
-    if command -v sha256sum >/dev/null 2>&1; then
-      if curl -fsSL "$BUNDLE_URL.sha256" -o "$BUNDLE_REMOTE.sha256"; then
-        sha256sum -c "$BUNDLE_REMOTE.sha256" || true
-      fi
-    fi
-  fi
-  mkdir -p "$BUNDLE_ROOT"
-  rm -rf "$BUNDLE_DIR"
-  mkdir -p "$BUNDLE_DIR"
-  tar -xJf "$BUNDLE_REMOTE" --strip-components=1 -C "$BUNDLE_DIR"
-  ln -sfn "$BUNDLE_DIR" "$BUNDLE_CURRENT"
-`;
-  const fetchToolsScript = `#!/usr/bin/env bash
-set -euo pipefail
-  TOOLS_URL="${toolsUrl.replace(/"/g, '\\"')}"
-  TOOLS_SHA256="${toolsSha256}"
-  TOOLS_REMOTE="${toolsRemote}"
-  TOOLS_DIR="${toolsDir}"
-  TOOLS_ROOT="${toolsRoot}"
-  TOOLS_CURRENT="${toolsRoot}/current"
-  echo "bootstrap: downloading tools bundle from ${toolsUrl.replace(/"/g, '\\"')}"
-  curl -fL "$TOOLS_URL" -o "$TOOLS_REMOTE"
-  if [ -n "$TOOLS_SHA256" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      echo "$TOOLS_SHA256  $TOOLS_REMOTE" | sha256sum -c -
-    else
-      echo "bootstrap: sha256sum not available; skipping tools checksum"
-    fi
-  else
-    if command -v sha256sum >/dev/null 2>&1; then
-      if curl -fsSL "$TOOLS_URL.sha256" -o "$TOOLS_REMOTE.sha256"; then
-        sha256sum -c "$TOOLS_REMOTE.sha256" || true
-      fi
-    fi
-  fi
-  mkdir -p "$TOOLS_ROOT"
-  rm -rf "$TOOLS_DIR"
-  mkdir -p "$TOOLS_DIR"
-  tar -xJf "$TOOLS_REMOTE" --strip-components=1 -C "$TOOLS_DIR"
-  ln -sfn "$TOOLS_DIR" "$TOOLS_CURRENT"
-`;
-
-  bootstrapScript += `
-echo "bootstrap: writing fetch scripts"
-cat <<'EOF_COCALC_FETCH_HOST' > "$BOOTSTRAP_DIR/fetch-project-host.sh"
-${fetchProjectHostScript.trim()}
-EOF_COCALC_FETCH_HOST
-cat <<'EOF_COCALC_FETCH_BUNDLE' > "$BOOTSTRAP_DIR/fetch-project-bundle.sh"
-${fetchProjectBundleScript.trim()}
-EOF_COCALC_FETCH_BUNDLE
-cat <<'EOF_COCALC_FETCH_TOOLS' > "$BOOTSTRAP_DIR/fetch-tools.sh"
-${fetchToolsScript.trim()}
-EOF_COCALC_FETCH_TOOLS
-chmod +x "$BOOTSTRAP_DIR"/fetch-project-host.sh "$BOOTSTRAP_DIR"/fetch-project-bundle.sh "$BOOTSTRAP_DIR"/fetch-tools.sh
-sudo chown ${sshUser}:${sshUser} "$BOOTSTRAP_DIR"/fetch-project-host.sh "$BOOTSTRAP_DIR"/fetch-project-bundle.sh "$BOOTSTRAP_DIR"/fetch-tools.sh || true
-`;
-
-  const installServiceScript = `
-set -euo pipefail
-HOST_DIR="$BOOTSTRAP_ROOT"
-PH_BIN="$BOOTSTRAP_ROOT/bin/project-host"
-NVM_DIR="$BOOTSTRAP_HOME/.nvm"
-NODE_VERSION="${nodeVersion}"
-
-sudo -u ${sshUser} -H bash -lc "export NVM_DIR=\\"$NVM_DIR\\"; \
-  if [ ! -s \\"$NVM_DIR/nvm.sh\\" ]; then \
-    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash; \
-  fi; \
-  . \\"$NVM_DIR/nvm.sh\\"; \
-  nvm install $NODE_VERSION; \
-  nvm alias default $NODE_VERSION"
-
-sudo -u ${sshUser} -H mkdir -p "$HOST_DIR/bin"
-sudo -u ${sshUser} -H tee "$HOST_DIR/bin/project-host" >/dev/null <<'EOF_COCALC_HOST_WRAPPER'
-#!/usr/bin/env bash
-set -euo pipefail
-export NVM_DIR="$HOME/.nvm"
-if [ -s "$NVM_DIR/nvm.sh" ]; then
-  . "$NVM_DIR/nvm.sh"
-fi
-node "$HOME/cocalc-host/bundle/index.js" "$@"
-EOF_COCALC_HOST_WRAPPER
-sudo -u ${sshUser} -H chmod +x "$HOST_DIR/bin/project-host"
-
-if [ -x "$PH_BIN" ]; then
-  sudo -u ${sshUser} -H "$PH_BIN" daemon stop || true
-fi
-sudo systemctl disable --now cocalc-project-host >/dev/null 2>&1 || true
-sudo rm -f /etc/systemd/system/cocalc-project-host.service || true
-sudo chown -R ${sshUser}:${sshUser} "$HOST_DIR" || true
-sudo chown -R ${sshUser}:${sshUser} /btrfs/data || true
-cd "$HOST_DIR"
-${
-  cloudflaredServiceUnit
-    ? `cat <<'EOF_CLOUDFLARED_SERVICE' | sudo tee /etc/systemd/system/cocalc-cloudflared.service >/dev/null
-${cloudflaredServiceUnit}
-EOF_CLOUDFLARED_SERVICE
-sudo systemctl daemon-reload
-sudo systemctl enable --now cocalc-cloudflared
-`
-    : ""
-}
-sudo -u ${sshUser} -H "$PH_BIN" daemon start
-`;
+  const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {
+    if (tunnel && tunnelEnabled) {
+      const useToken = Boolean(tunnel.token);
+      if (!useToken) {
+        logger.warn("cloudflare tunnel token missing; using credentials file", {
+          host_id: row.id,
+          tunnel_id: tunnel.id,
+        });
+      }
+      const creds = JSON.stringify({
+        AccountTag: tunnel.account_id,
+        TunnelID: tunnel.id,
+        TunnelName: tunnel.name,
+        TunnelSecret: tunnel.tunnel_secret,
+      });
+      return {
+        enabled: true,
+        hostname: tunnel.hostname,
+        port,
+        token: useToken ? tunnel.token : undefined,
+        tunnelId: tunnel.id,
+        credsJson: useToken ? undefined : creds,
+      };
+    }
+    return { enabled: false };
+  })();
 
   return {
-    bootstrapScript,
-    fetchProjectHostScript,
-    fetchProjectBundleScript,
-    fetchToolsScript,
-    installServiceScript,
     expectedOs: targetPlatform.os,
     expectedArch: targetPlatform.arch,
     bootstrapPyUrl,
@@ -1273,7 +601,6 @@ fi
   const scripts = await buildBootstrapScripts(row, {
     conatPasswordCommand,
     publicIpOverride: "$PUBLIC_IP",
-    allowEnvVarExpansion: true,
     launchpadBaseUrl: baseUrl,
   });
   if (!scripts.projectHostBundleUrl) {
