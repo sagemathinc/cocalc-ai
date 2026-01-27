@@ -114,7 +114,6 @@ export type SiteSettingsKeys =
   | "project_hosts_self_host_alpha_enabled"
   | "project_hosts_nebius_enabled"
   | "project_hosts_dns"
-  | "launchpad_mode"
   | "samesite_remember_me"
   | "user_tracking";
 
@@ -824,14 +823,6 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "On-Prem"],
-  },
-  launchpad_mode: {
-    name: "Launchpad Mode",
-    desc: "Select how Launchpad routes traffic. 'local' starts local SSH services and uses local backups; 'cloud' expects Cloudflare + bucket settings. Default is 'unset' to require explicit selection.",
-    default: "unset",
-    valid: ["unset", "local", "cloud", "onprem"],
-    to_val: to_trimmed_str,
-    tags: ["On-Prem", "Cloud"],
   },
   project_hosts_dns: {
     name: "Project Hosts: Domain name",

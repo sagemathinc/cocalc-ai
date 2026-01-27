@@ -119,7 +119,6 @@ export interface Customize {
   githubProjectId?: string;
   support?: string;
   supportVideoCall?: string;
-  launchpad_mode?: string;
   launchpad_self_signed?: boolean;
   version?: {
     min_project?: number;
