@@ -474,25 +474,14 @@ export const withAutoFormat = (editor) => {
       const lineCount = normalized.split("\n").length;
       const MULTILINE_PASTE_THRESHOLD = 2;
       if (lineCount >= MULTILINE_PASTE_THRESHOLD) {
-        const looksLikeMarkdown =
-          /(^|\n)\s*#{1,6}\s+/.test(normalized) ||
-          /(^|\n)\s*>\s+/.test(normalized) ||
-          /(^|\n)\s*[-*+]\s+/.test(normalized) ||
-          /(^|\n)\s*\d+\.\s+/.test(normalized) ||
-          /(^|\n)\s*-\s*\[[ xX]\]\s+/.test(normalized) ||
-          /`{3,}/.test(normalized) ||
-          /\[[^\]]+\]\([^)]+\)/.test(normalized) ||
-          /\*\*[^*]+\*\*/.test(normalized) ||
-          /__[^_]+__/.test(normalized) ||
-          /`[^`]+`/.test(normalized) ||
-          /\$[^$]+\$/.test(normalized);
         Transforms.insertNodes(
           editor,
           {
             type: "code_block",
             fence: true,
             info: "",
-            ...(looksLikeMarkdown ? { markdownCandidate: true } : null),
+            // Always offer a convert-to-rich-text option for multiline pastes.
+            markdownCandidate: true,
             children: toCodeLines(normalized),
           } as any,
           { at: getFocus(editor) },
