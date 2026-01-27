@@ -166,6 +166,35 @@ async function resolveTargetPlatform({
   return { os: "linux", arch: "amd64", source: "default" };
 }
 
+function resolveBootstrapSelector({
+  metadata,
+  settings,
+}: {
+  metadata: HostMetadata;
+  settings: {
+    project_hosts_bootstrap_channel?: string;
+    project_hosts_bootstrap_version?: string;
+  };
+}): { selector: string; source: string } {
+  const metaChannel =
+    typeof metadata.bootstrap_channel === "string"
+      ? metadata.bootstrap_channel.trim()
+      : "";
+  const metaVersion =
+    typeof metadata.bootstrap_version === "string"
+      ? metadata.bootstrap_version.trim()
+      : "";
+  const settingsChannel = settings.project_hosts_bootstrap_channel?.trim() || "";
+  const settingsVersion = settings.project_hosts_bootstrap_version?.trim() || "";
+  if (metaVersion) return { selector: metaVersion, source: "host-version" };
+  if (metaChannel) return { selector: metaChannel, source: "host-channel" };
+  if (settingsVersion)
+    return { selector: settingsVersion, source: "site-version" };
+  if (settingsChannel)
+    return { selector: settingsChannel, source: "site-channel" };
+  return { selector: "latest", source: "default" };
+}
+
 function extractArtifactVersion(
   url: string,
   artifact: "project-host" | "project" | "tools",
@@ -186,6 +215,8 @@ export type BootstrapScripts = {
   fetchProjectBundleScript: string;
   fetchToolsScript: string;
   installServiceScript: string;
+  bootstrapPyUrl: string;
+  bootstrapPyShaUrl: string;
   publicUrl: string;
   internalUrl: string;
   sshServer: string;
@@ -242,7 +273,11 @@ export async function buildBootstrapScripts(
     throw new Error("bootstrap requires public_ip");
   }
 
-  const { project_hosts_software_base_url } = await getServerSettings();
+  const {
+    project_hosts_software_base_url,
+    project_hosts_bootstrap_channel,
+    project_hosts_bootstrap_version,
+  } = await getServerSettings();
   const softwareBaseUrl = normalizeSoftwareBaseUrl(
     project_hosts_software_base_url ||
       process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ||
@@ -284,6 +319,15 @@ export async function buildBootstrapScripts(
   );
   const toolsUrl = resolvedTools.url;
   const toolsSha256 = (resolvedTools.sha256 ?? "").replace(/[^a-f0-9]/gi, "");
+  const { selector: bootstrapSelector } = resolveBootstrapSelector({
+    metadata,
+    settings: {
+      project_hosts_bootstrap_channel,
+      project_hosts_bootstrap_version,
+    },
+  });
+  const bootstrapPyUrl = `${softwareBaseUrl}/bootstrap/${bootstrapSelector}/bootstrap.py`;
+  const bootstrapPyShaUrl = `${bootstrapPyUrl}.sha256`;
   const projectBundleVersion =
     extractArtifactVersion(projectBundleUrl, "project") || "latest";
   const bootstrapHome = isSelfHostDirect
@@ -1129,6 +1173,8 @@ sudo -u ${sshUser} -H "$PH_BIN" daemon start
     fetchProjectBundleScript,
     fetchToolsScript,
     installServiceScript,
+    bootstrapPyUrl,
+    bootstrapPyShaUrl,
     publicUrl,
     internalUrl,
     sshServer,
@@ -1208,6 +1254,9 @@ if [ -z "$BOOTSTRAP_HOME" ]; then
   BOOTSTRAP_HOME="/root"
 fi
 BOOTSTRAP_DIR="$BOOTSTRAP_HOME/cocalc-host/bootstrap"
+BOOTSTRAP_PY_URL="${scripts.bootstrapPyUrl}"
+BOOTSTRAP_PY_SHA_URL="${scripts.bootstrapPyShaUrl}"
+BOOTSTRAP_PY_FALLBACK_URL="${baseUrl}/project-host/bootstrap.py"
 ${caCertBlock}
 
 report_status() {
@@ -1241,6 +1290,39 @@ on_error() {
   report_status "error" "bootstrap failed (exit \${code}) at line \${line}"
 }
 trap 'on_error "$?" "$LINENO"' ERR
+
+mkdir -p "$BOOTSTRAP_DIR"
+
+download_bootstrap_py() {
+  local target="$BOOTSTRAP_DIR/bootstrap.py"
+  local sha_target="$BOOTSTRAP_DIR/bootstrap.py.sha256"
+  if [ -z "$BOOTSTRAP_PY_URL" ]; then
+    return 1
+  fi
+  if curl -fsSL "$BOOTSTRAP_PY_URL" -o "$target"; then
+    if [ -n "$BOOTSTRAP_PY_SHA_URL" ]; then
+      if curl -fsSL "$BOOTSTRAP_PY_SHA_URL" -o "$sha_target"; then
+        if command -v sha256sum >/dev/null 2>&1; then
+          sha256sum -c "$sha_target" || return 1
+        fi
+      fi
+    fi
+    chmod 700 "$target" || true
+    return 0
+  fi
+  if [ -n "$BOOTSTRAP_PY_FALLBACK_URL" ]; then
+    curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$BOOTSTRAP_PY_FALLBACK_URL" -o "$target" || return 1
+    chmod 700 "$target" || true
+    return 0
+  fi
+  return 1
+}
+
+if download_bootstrap_py; then
+  echo "bootstrap: downloaded bootstrap.py"
+else
+  echo "bootstrap: failed to download bootstrap.py; continuing with shell bootstrap"
+fi
 
 report_status "running"
 ${scripts.bootstrapScript}
