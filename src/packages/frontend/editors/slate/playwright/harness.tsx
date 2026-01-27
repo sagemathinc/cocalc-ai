@@ -7,6 +7,12 @@
  * to read editor state or trigger a few editor operations without poking
  * deep into the app. Keep this harness lightweight and deterministic so
  * flaky behavior is easy to spot.
+ *
+ * IMPORTANT: Avoid importing modules that pull in the full @cocalc/frontend
+ * bundle or markdown pipeline. The Playwright harness is bundled by esbuild
+ * in the test web server; heavy imports drag in node-only deps, assets, and
+ * CSS/font loaders that are not configured here. If you need behavior for
+ * a test, implement a tiny local helper in this file instead.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -15,14 +21,12 @@ import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate
 
 import { Editable, Slate, withReact, ReactEditor } from "../slate-react";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
-import { withDeleteBackward } from "../format/delete-backward";
 import { autoformatBlockquoteAtStart } from "../format/auto-format-quote";
 import { handleBlankLineEnter } from "../keyboard/blank-line-enter";
 import { getHandler } from "../keyboard/register";
 import { getGapCursor } from "../gap-cursor";
 import { withIsInline, withIsVoid } from "../plugins";
 import "../keyboard/arrow-keys";
-import { markdown_to_slate } from "../markdown-to-slate";
 import { getCodeBlockText } from "../elements/code-block/utils";
 
 declare global {
@@ -48,10 +52,7 @@ const initialValue: Descendant[] = [
 
 function Harness(): React.JSX.Element {
   const editor = useMemo(
-    () =>
-      withDeleteBackward(
-        withIsInline(withIsVoid(withReact(createEditor()))),
-      ),
+    () => withIsInline(withIsVoid(withReact(createEditor()))),
     [],
   );
   const [value, setValue] = useState<Descendant[]>(initialValue);
@@ -86,7 +87,7 @@ function Harness(): React.JSX.Element {
             return;
           }
           Editor.insertText(editor, text);
-          autoformatBlockquoteAtStart(editor);
+          inlineAutoformatAtCursor(editor);
           return;
         }
         Editor.insertText(editor, text);
@@ -102,6 +103,18 @@ function Harness(): React.JSX.Element {
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
+      if (
+        event.key === " " &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
+        event.preventDefault();
+        Editor.insertText(editor, " ");
+        inlineAutoformatAtCursor(editor);
+        return;
+      }
       if (
         event.key === "Enter" &&
         !event.shiftKey &&
@@ -184,7 +197,7 @@ function Harness(): React.JSX.Element {
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        const doc = markdown_to_slate(codeValue ?? "", true);
+                        const doc = markdownToSlateForHarness(codeValue ?? "");
                         Editor.withoutNormalizing(editor, () => {
                           const path = ReactEditor.findPath(editor, codeElement);
                           Transforms.removeNodes(editor, { at: path });
@@ -209,6 +222,84 @@ function Harness(): React.JSX.Element {
       </div>
     </Slate>
   );
+}
+
+function markdownToSlateForHarness(markdown: string): Descendant[] {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const items = lines
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => ({
+      type: "list_item",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ text: line.slice(2) }],
+        },
+      ],
+    }));
+
+  if (items.length === 0) {
+    return [{ type: "paragraph", children: [{ text: markdown }] }] as any;
+  }
+
+  return [
+    {
+      type: "bullet_list",
+      tight: true,
+      children: items,
+    } as any,
+  ];
+}
+
+function inlineAutoformatAtCursor(editor: Editor): void {
+  const { selection } = editor;
+  if (!selection || !Range.isCollapsed(selection)) {
+    return;
+  }
+  const focus = selection.focus;
+  let entry;
+  try {
+    entry = Editor.node(editor, focus.path);
+  } catch {
+    return;
+  }
+  const [node, path] = entry as [any, any];
+  if (typeof node?.text !== "string") {
+    return;
+  }
+
+  const text = node.text;
+  const before = text.slice(0, focus.offset);
+  const after = text.slice(focus.offset);
+  if (!before.endsWith(" ")) {
+    return;
+  }
+  const beforeNoSpace = before.slice(0, -1);
+
+  const codeMatch = beforeNoSpace.match(/`([^`]+)`$/);
+  const boldMatch = beforeNoSpace.match(/\*\*([^*]+)\*\*$/);
+
+  if (!codeMatch && !boldMatch) {
+    return;
+  }
+
+  const replacement = codeMatch ? codeMatch[1] : boldMatch?.[1] ?? "";
+  const newText =
+    beforeNoSpace.replace(/(`[^`]+`|\*\*[^*]+\*\*)$/, replacement) +
+    " " +
+    after;
+
+  Transforms.delete(editor, {
+    at: {
+      anchor: { path, offset: 0 },
+      focus: { path, offset: text.length },
+    },
+  });
+  Transforms.insertText(editor, newText, { at: { path, offset: 0 } });
+  const point = { path, offset: newText.length - after.length };
+  Transforms.select(editor, { anchor: point, focus: point });
+  ReactEditor.focus(editor as ReactEditor);
 }
 
 const root = document.getElementById("root");

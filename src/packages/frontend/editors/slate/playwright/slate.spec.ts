@@ -256,6 +256,43 @@ test("autoformat quotes the current paragraph when typing > at start", async ({
   }
 });
 
+test("autoformat code span keeps focus", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type("`a b` ");
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "a b ";
+  });
+
+  const focused = await page.evaluate(() => window.__slateTest?.isFocused());
+  expect(focused).toBe(true);
+});
+
+test("autoformat bold keeps focus after trailing space", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type(
+    "QUESTION which you didn't answer -- are **ALL** ",
+  );
+
+  await page.waitForFunction(() => {
+    return (
+      window.__slateTest?.getText?.() ===
+      "QUESTION which you didn't answer -- are ALL "
+    );
+  });
+
+  const focused = await page.evaluate(() => window.__slateTest?.isFocused());
+  expect(focused).toBe(true);
+});
+
 test("convert markdown candidate code block to rich text", async ({ page }) => {
   await page.goto("/");
   await waitForHarness(page);

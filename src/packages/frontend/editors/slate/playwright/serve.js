@@ -9,6 +9,10 @@ const distDir = path.join(rootDir, "dist");
 const bundlePath = path.join(distDir, "bundle.js");
 const indexPath = path.join(rootDir, "index.html");
 const environmentShim = path.join(rootDir, "environment-shim.ts");
+const markdownToSlateShim = path.join(rootDir, "markdown-to-slate-shim.ts");
+const appFrameworkShim = path.join(rootDir, "app-framework-shim.ts");
+const editorButtonBarShim = path.join(rootDir, "editor-button-bar-shim.ts");
+const i18nShim = path.join(rootDir, "i18n-shim.ts");
 
 const shimPlugin = {
   name: "slate-shims",
@@ -16,6 +20,21 @@ const shimPlugin = {
     build.onResolve({ filter: new RegExp("utils[/\\\\]environment$") }, () => {
       return { path: environmentShim };
     });
+    build.onResolve({ filter: /markdown-to-slate$/ }, () => {
+      return { path: markdownToSlateShim };
+    });
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/app-framework$/ },
+      () => ({ path: appFrameworkShim }),
+    );
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/editors\/editor-button-bar$/ },
+      () => ({ path: editorButtonBarShim }),
+    );
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/i18n$/ },
+      () => ({ path: i18nShim }),
+    );
   },
 };
 
