@@ -30,7 +30,7 @@ import { withNormalize } from "./normalize";
 import { withIsInline, withIsVoid } from "./plugins";
 import { withAutoFormat } from "./format";
 import { withInsertBreakHack } from "./elements/link/editable";
-import { withNonfatalRange } from "./patches";
+import { withNonfatalRange, withSelectionSafety } from "./patches";
 import { Element } from "./element";
 import Leaf from "./leaf-with-cursor";
 import { Actions } from "./types";
@@ -195,10 +195,12 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
 
     const syncCacheRef = useRef<any>({});
     const editor = useMemo(() => {
-      const ed = withNonfatalRange(
-        withInsertBreakHack(
-          withNormalize(
-            withAutoFormat(withIsInline(withIsVoid(withReact(createEditor())))),
+      const ed = withSelectionSafety(
+        withNonfatalRange(
+          withInsertBreakHack(
+            withNormalize(
+              withAutoFormat(withIsInline(withIsVoid(withReact(createEditor())))),
+            ),
           ),
         ),
       );

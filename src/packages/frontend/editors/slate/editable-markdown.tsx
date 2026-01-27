@@ -51,7 +51,7 @@ import Leaf from "./leaf-with-cursor";
 import { markdown_to_slate } from "./markdown-to-slate";
 import { withNormalize } from "./normalize";
 import { applyOperations, preserveScrollPosition } from "./operations";
-import { withNonfatalRange } from "./patches";
+import { withNonfatalRange, withSelectionSafety } from "./patches";
 import { stripBlankParagraphs } from "./padding";
 import { withIsInline, withIsVoid } from "./plugins";
 import { getScrollState, setScrollState } from "./scroll";
@@ -222,10 +222,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const blurMergeTimerRef = useRef<number | null>(null);
 
   const editor = useMemo(() => {
-    const ed = withNonfatalRange(
-      withInsertBreakHack(
-        withNormalize(
-          withAutoFormat(withIsInline(withIsVoid(withReact(createEditor())))),
+    const ed = withSelectionSafety(
+      withNonfatalRange(
+        withInsertBreakHack(
+          withNormalize(
+            withAutoFormat(withIsInline(withIsVoid(withReact(createEditor())))),
+          ),
         ),
       ),
     ) as SlateEditor;

@@ -444,6 +444,10 @@ export const withAutoFormat = (editor) => {
   const { insertData } = editor;
   if (typeof insertData === "function") {
     editor.insertData = (data) => {
+      if (isSelectionInCodeBlock(editor as SlateEditor)) {
+        insertData(data);
+        return;
+      }
       const slateFragment = data?.getData?.("application/x-slate-fragment");
       if (slateFragment) {
         insertData(data);
@@ -495,6 +499,7 @@ export const withAutoFormat = (editor) => {
 // what is right before the cursor in the current text node.
 // Returns true if autoformat actually happens.
 export function markdownAutoformat(editor: SlateEditor): boolean {
+  if (isSelectionInCodeBlock(editor)) return false;
   const { selection } = editor;
   if (!selection) return false;
   let node;
@@ -579,6 +584,16 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
     r = true;
   }
   return r;
+}
+
+function isSelectionInCodeBlock(editor: SlateEditor): boolean {
+  const selection = editor.selection ?? editor.lastSelection;
+  if (!selection) return false;
+  const entry = Editor.above(editor, {
+    at: selection.focus,
+    match: (node) => Element.isElement(node) && node.type === "code_block",
+  });
+  return !!entry;
 }
 
 // Use conversion back and forth to markdown to autoformat

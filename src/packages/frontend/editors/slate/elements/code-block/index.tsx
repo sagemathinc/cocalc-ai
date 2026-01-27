@@ -423,4 +423,5 @@ register({
 register({
   slateType: "code_line",
   StaticElement,
+  fromSlate: ({ children }) => `${children}\n`,
 });

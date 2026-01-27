@@ -294,54 +294,55 @@ function Element({ attributes, children, element }: RenderElementProps) {
   }, [editor, codeValue, elementPath]);
 
   return (
-    <div {...attributes} spellCheck={false}>
-      <div contentEditable={false} style={{ textIndent: 0 }}>
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ position: "relative" }}>
-              {markdownCandidate && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: 6,
-                    left: 6,
-                    zIndex: 2,
-                    display: "flex",
-                    gap: "6px",
-                    background: "rgba(255, 255, 255, 0.9)",
-                    border: "1px solid #ddd",
-                    borderRadius: "6px",
-                    padding: "2px 6px",
+    <div {...attributes} spellCheck={false} style={{ textIndent: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ position: "relative" }}>
+            {markdownCandidate && (
+              <div
+                contentEditable={false}
+                style={{
+                  position: "absolute",
+                  top: 6,
+                  left: 6,
+                  zIndex: 2,
+                  display: "flex",
+                  gap: "6px",
+                  background: "rgba(255, 255, 255, 0.9)",
+                  border: "1px solid #ddd",
+                  borderRadius: "6px",
+                  padding: "2px 6px",
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#666" }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    convertMarkdownCandidate();
                   }}
-                  onMouseDown={(e) => e.stopPropagation()}
                 >
-                  <Button
-                    size="small"
-                    type="text"
-                    style={{ color: "#666" }}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      convertMarkdownCandidate();
-                    }}
-                  >
-                    Convert to rich text
-                  </Button>
-                  <Button
-                    size="small"
-                    type="text"
-                    style={{ color: "#666" }}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      dismissMarkdownCandidate();
-                    }}
-                  >
-                    Dismiss
-                  </Button>
-                </div>
-              )}
-              {!disableMarkdownCodebar && (
+                  Convert to rich text
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#666" }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dismissMarkdownCandidate();
+                  }}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            )}
+            {!disableMarkdownCodebar && (
+              <div contentEditable={false}>
                 <FloatingActionMenu
                   info={info}
                   setInfo={(info) => {
@@ -399,45 +400,47 @@ function Element({ attributes, children, element }: RenderElementProps) {
                       : null
                   }
                 />
-              )}
-              {isCollapsed ? (
-                <pre
-                  className="cocalc-slate-code-block"
-                  contentEditable={false}
-                  style={{ margin: 0 }}
-                >
-                  {codeValue
-                    .split("\n")
-                    .slice(0, COLLAPSE_THRESHOLD_LINES)
-                    .join("\n")}
-                </pre>
-              ) : (
-                <div className="cocalc-slate-code-block">{children}</div>
-              )}
-              {!disableMarkdownCodebar && output != null && (
-                <div
-                  contentEditable={false}
-                  onMouseDown={() => {
-                    editor.setIgnoreSelection(true);
-                  }}
-                  onMouseUp={() => {
-                    editor.setIgnoreSelection(false);
-                  }}
-                  style={{
-                    borderTop: "1px dashed #ccc",
-                    background: "white",
-                    padding: "5px 0 5px 30px",
-                  }}
-                >
-                  {output}
-                </div>
-              )}
-            </div>
+              </div>
+            )}
+            {isCollapsed ? (
+              <pre
+                className="cocalc-slate-code-block"
+                contentEditable={false}
+                style={{ margin: 0 }}
+              >
+                {codeValue
+                  .split("\n")
+                  .slice(0, COLLAPSE_THRESHOLD_LINES)
+                  .join("\n")}
+              </pre>
+            ) : (
+              <div className="cocalc-slate-code-block">{children}</div>
+            )}
+            {!disableMarkdownCodebar && output != null && (
+              <div
+                contentEditable={false}
+                onMouseDown={() => {
+                  editor.setIgnoreSelection(true);
+                }}
+                onMouseUp={() => {
+                  editor.setIgnoreSelection(false);
+                }}
+                style={{
+                  borderTop: "1px dashed #ccc",
+                  background: "white",
+                  padding: "5px 0 5px 30px",
+                }}
+              >
+                {output}
+              </div>
+            )}
           </div>
-          {element.info == "mermaid" && (
-            <Mermaid style={{ flex: 1 }} value={codeValue} />
-          )}
         </div>
+        {element.info == "mermaid" && (
+          <div contentEditable={false}>
+            <Mermaid style={{ flex: 1 }} value={codeValue} />
+          </div>
+        )}
       </div>
     </div>
   );

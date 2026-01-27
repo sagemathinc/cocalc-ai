@@ -46,6 +46,30 @@ export const withNonfatalRange = (editor) => {
   return editor;
 };
 
+// Normalize selection updates so they always point at a leaf node.
+// This prevents Slate from crashing when a selection lands on a non-leaf
+// element (e.g., code_line), which can happen after DOM → Slate mapping.
+export const withSelectionSafety = (editor) => {
+  const { apply } = editor;
+
+  editor.apply = (op) => {
+    if (op.type === "set_selection" && op.newProperties != null) {
+      try {
+        const next = op.newProperties as Range;
+        const safe = ensureRange(editor, next);
+        if (!Range.equals(next, safe)) {
+          op = { ...op, newProperties: safe };
+        }
+      } catch {
+        // fall back to original op
+      }
+    }
+    return apply(op);
+  };
+
+  return editor;
+};
+
 function normalizeLocation(editor: Editor, location) {
   if (location == null) return location;
   const unwrapped = unwrapLocationRef(location);
