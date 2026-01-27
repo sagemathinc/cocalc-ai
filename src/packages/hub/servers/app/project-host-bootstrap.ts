@@ -1,4 +1,6 @@
 import express, { Router, type Request } from "express";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/hub/logger";
 import basePath from "@cocalc/backend/base-path";
@@ -20,6 +22,23 @@ function extractToken(req: Request): string | undefined {
   if (!header) return undefined;
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim();
+}
+
+function resolveBootstrapPyPath(): string | undefined {
+  const candidates: Array<string | undefined> = [
+    process.env.COCALC_BOOTSTRAP_PY,
+    process.env.COCALC_BUNDLE_DIR
+      ? join(process.env.COCALC_BUNDLE_DIR, "bundle", "bootstrap", "bootstrap.py")
+      : undefined,
+    join(process.cwd(), "packages/server/cloud/bootstrap/bootstrap.py"),
+    join(process.cwd(), "src/packages/server/cloud/bootstrap/bootstrap.py"),
+    join(__dirname, "../../../../server/cloud/bootstrap/bootstrap.py"),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 async function loadHostRow(hostId: string): Promise<any> {
@@ -58,6 +77,33 @@ async function updateBootstrapStatus(
 
 export default function init(router: Router) {
   const jsonParser = express.json({ limit: "256kb" });
+
+  router.get("/project-host/bootstrap.py", async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) {
+        res.status(401).send("missing bootstrap token");
+        return;
+      }
+      const tokenInfo = await verifyBootstrapToken(token, {
+        purpose: "bootstrap",
+      });
+      if (!tokenInfo) {
+        res.status(401).send("invalid bootstrap token");
+        return;
+      }
+      const path = resolveBootstrapPyPath();
+      if (!path) {
+        res.status(500).send("bootstrap.py not found");
+        return;
+      }
+      const contents = readFileSync(path, "utf8");
+      res.type("text/x-python").send(contents);
+    } catch (err) {
+      logger.warn("bootstrap.py fetch failed", err);
+      res.status(500).send("bootstrap.py fetch failed");
+    }
+  });
 
   router.get("/project-host/bootstrap", async (req, res) => {
     try {

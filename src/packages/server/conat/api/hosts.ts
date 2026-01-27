@@ -974,6 +974,26 @@ export async function createHost({
       throw new Error("cloudflare tunnel is not configured");
     }
   }
+  const {
+    project_hosts_bootstrap_channel,
+    project_hosts_bootstrap_version,
+  } = await getServerSettings();
+  const requestedBootstrapChannel =
+    typeof machine?.metadata?.bootstrap_channel === "string"
+      ? machine.metadata.bootstrap_channel.trim()
+      : "";
+  const requestedBootstrapVersion =
+    typeof machine?.metadata?.bootstrap_version === "string"
+      ? machine.metadata.bootstrap_version.trim()
+      : "";
+  const bootstrapChannel =
+    requestedBootstrapChannel ||
+    project_hosts_bootstrap_channel?.trim() ||
+    "latest";
+  const bootstrapVersion =
+    requestedBootstrapVersion ||
+    project_hosts_bootstrap_version?.trim() ||
+    "";
   let resolvedRegion = region;
   let connectorId: string | undefined;
   if (isSelfHost) {
@@ -1019,6 +1039,8 @@ export async function createHost({
         size,
         gpu: gpuEnabled,
         machine: normalizedMachine,
+        ...(bootstrapChannel ? { bootstrap_channel: bootstrapChannel } : {}),
+        ...(bootstrapVersion ? { bootstrap_version: bootstrapVersion } : {}),
       },
       now,
     ],

@@ -262,6 +262,8 @@ export type SiteSettingsExtrasKeys =
   | "google_cloud_bigquery_detailed_billing_table"
   | "project_hosts_google_prefix"
   | "project_hosts_software_base_url"
+  | "project_hosts_bootstrap_channel"
+  | "project_hosts_bootstrap_version"
   | "project_hosts_self_host_connector_version"
   | "project_hosts_cloudflare_tunnel_enabled"
   | "project_hosts_cloudflare_tunnel_account_id"
@@ -935,6 +937,22 @@ export const EXTRAS: SettingsExtras = {
     default: "https://software.cocalc.ai/software",
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
+    valid: () => true,
+  },
+  project_hosts_bootstrap_channel: {
+    name: "Project Hosts: Bootstrap Channel",
+    desc: "Default bootstrap channel for new hosts (e.g., latest or test). Leave blank to use latest.",
+    default: "latest",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts"],
+    valid: () => true,
+  },
+  project_hosts_bootstrap_version: {
+    name: "Project Hosts: Bootstrap Version Pin",
+    desc: "Optional explicit bootstrap version to use for new hosts (overrides channel). Leave blank to use the channel.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts"],
     valid: () => true,
   },
   project_hosts_self_host_connector_version: {
