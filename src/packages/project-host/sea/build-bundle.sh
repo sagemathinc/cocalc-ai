@@ -41,9 +41,13 @@ ZEROMQ_BUILD=$(find packages -path "*node_modules/zeromq/build" -type d -print -
 if [ -n "$ZEROMQ_BUILD" ]; then
   mkdir -p "$OUT"/bundle/build
   cp -r "$ZEROMQ_BUILD/"* "$OUT"/bundle/build/
+  # Keep only linux builds in the bundle to avoid shipping unused platforms.
+  rm -rf "$OUT"/bundle/build/darwin "$OUT"/bundle/build/win32 || true
+  # Keep only glibc builds (we run on glibc-based Ubuntu).
+  rm -rf "$OUT"/bundle/build/linux/*/node/musl-* || true
   # zeromq looks for ../build relative to the bundle root, so mirror it there too.
-  mkdir -p "$OUT"/build
-  cp -r "$ZEROMQ_BUILD/"* "$OUT"/build/
+  rm -f "$OUT/build"
+  ln -s "bundle/build" "$OUT/build"
 else
   echo "zeromq build directory not found; skipping copy"
 fi
@@ -61,44 +65,45 @@ copy_native_pkg() {
   fi
 }
 
-echo "- Copy node-pty native addon for current platform"
-case "${OSTYPE}" in
-  linux*)
-    case "$(uname -m)" in
-      x86_64) copy_native_pkg "@lydell/node-pty-linux-x64" ;;
-      aarch64|arm64) copy_native_pkg "@lydell/node-pty-linux-arm64" ;;
-      *) echo "  (unsupported linux arch for node-pty: $(uname -m))" ;;
-    esac
-    ;;
-  darwin*)
-    case "$(uname -m)" in
-      x86_64) copy_native_pkg "@lydell/node-pty-darwin-x64" ;;
-      arm64) copy_native_pkg "@lydell/node-pty-darwin-arm64" ;;
-      *) echo "  (unsupported darwin arch for node-pty: $(uname -m))" ;;
-    esac
-    ;;
-  *)
-    echo "  (unsupported platform for node-pty: ${OSTYPE})"
-    ;;
-esac
+echo "- Copy node-pty native addons (linux x64 + arm64)"
+copy_native_pkg "@lydell/node-pty-linux-x64"
+copy_native_pkg "@lydell/node-pty-linux-arm64"
+rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-darwin-* || true
+rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-win32-* || true
+
+echo "- Allow node-pty native subpath requires"
+for pkg in "$OUT"/bundle/node_modules/@lydell/node-pty-linux-*/package.json; do
+  [ -f "$pkg" ] || continue
+  node -e "const fs=require('fs');const p=process.argv[1];const data=JSON.parse(fs.readFileSync(p,'utf8'));delete data.exports;fs.writeFileSync(p, JSON.stringify(data,null,2));" "$pkg"
+done
+for pkgdir in "$OUT"/bundle/node_modules/@lydell/node-pty-linux-*; do
+  [ -d "$pkgdir" ] || continue
+  arch=$(basename "$pkgdir" | sed 's/^node-pty-linux-//')
+  prebuild="$pkgdir/prebuilds/linux-$arch/pty.node"
+  if [ -f "$prebuild" ]; then
+    cp "$prebuild" "$pkgdir/pty.node"
+  fi
+done
 
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
+
+echo "- Prune non-linux prebuilds"
+for pkg in bufferutil utf-8-validate; do
+  prebuilds="$OUT/bundle/node_modules/$pkg/prebuilds"
+  if [ -d "$prebuilds" ]; then
+    find "$prebuilds" -mindepth 1 -maxdepth 1 -type d ! -name 'linux-*' -exec rm -rf {} + || true
+  fi
+done
+
+echo "- Strip musl prebuilds"
+rm -f "$OUT"/bundle/node_modules/utf-8-validate/prebuilds/linux-*/utf-8-validate.musl.node || true
 
 echo "- Copy project-runner templates"
 mkdir -p "$OUT"/bundle/templates
 cp -r packages/project-runner/templates/. "$OUT"/bundle/templates/
 
 echo "- Remove other platform binaries"
-case "${OSTYPE}" in
-  linux*)
-    rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-darwin-* || true
-    rm -rf "$OUT"/build/win32 "$OUT"/build/darwin || true
-    ;;
-  darwin*)
-    rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-linux-* || true
-    rm -rf "$OUT"/build/win32 "$OUT"/build/linux || true
-    ;;
-esac
+rm -rf "$OUT"/build/win32 "$OUT"/build/darwin || true
 
 echo "- Bundle created at $OUT"

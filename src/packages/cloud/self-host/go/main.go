@@ -1278,6 +1278,9 @@ func projectHostBinary() string {
 	if value := os.Getenv("COCALC_PROJECT_HOST_BIN"); value != "" {
 		return value
 	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, "cocalc-host", "bin", "project-host")
+	}
 	return "/opt/cocalc/project-host/current/cocalc-project-host"
 }
 

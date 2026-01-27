@@ -25,7 +25,7 @@
  * - Configures podman storage to live on /btrfs (via storage.conf).
  * - Writes /etc/cocalc/project-host.env with runtime config.
  * - Fetches and installs:
- *   - project-host SEA
+ *   - project-host bundle
  *   - project bundle
  *   - tools bundle
  * - Writes helper scripts in ~/cocalc-host/bootstrap (ctl/logs/logs-cf, etc.).
@@ -182,7 +182,7 @@ function extractArtifactVersion(
 
 export type BootstrapScripts = {
   bootstrapScript: string;
-  fetchSeaScript: string;
+  fetchProjectHostScript: string;
   fetchProjectBundleScript: string;
   fetchToolsScript: string;
   installServiceScript: string;
@@ -190,9 +190,13 @@ export type BootstrapScripts = {
   internalUrl: string;
   sshServer: string;
   sshUser: string;
-  seaRemote: string;
-  resolvedSeaUrl: string;
-  seaSha256: string;
+  projectHostBundleUrl: string;
+  projectHostBundleSha256: string;
+  projectHostBundleRemote: string;
+  projectHostBundleDir: string;
+  projectHostBundlesRoot: string;
+  projectHostCurrent: string;
+  projectHostBin: string;
   projectBundleUrl: string;
   projectBundleSha256: string;
   projectBundlesRoot: string;
@@ -225,7 +229,7 @@ export async function buildBootstrapScripts(
   const selfHostKind = machine.metadata?.self_host_kind;
   const isSelfHostDirect = isSelfHost && selfHostKind === "direct";
   const sshUser = isSelfHostDirect
-    ? "${SUDO_USER:-ubuntu}"
+    ? "\${BOOTSTRAP_USER:-\${SUDO_USER:-ubuntu}}"
     : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
@@ -253,15 +257,18 @@ export async function buildBootstrapScripts(
     runtime,
     machine,
   });
-  const projectHostManifestUrl = `${softwareBaseUrl}/project-host/latest-${targetPlatform.os}-${targetPlatform.arch}.json`;
+  const projectHostManifestUrl = `${softwareBaseUrl}/project-host/latest-${targetPlatform.os}.json`;
   const projectManifestUrl = `${softwareBaseUrl}/project/latest-${targetPlatform.os}.json`;
   const toolsManifestUrl = `${softwareBaseUrl}/tools/latest-${targetPlatform.os}-${targetPlatform.arch}.json`;
-  const resolvedHostSea = await resolveSoftwareArtifact(
+  const resolvedHostBundle = await resolveSoftwareArtifact(
     projectHostManifestUrl,
-    targetPlatform,
+    { os: targetPlatform.os },
   );
-  const resolvedSeaUrl = resolvedHostSea.url;
-  const seaSha256 = (resolvedHostSea.sha256 ?? "").replace(/[^a-f0-9]/gi, "");
+  const projectHostBundleUrl = resolvedHostBundle.url;
+  const projectHostBundleSha256 = (resolvedHostBundle.sha256 ?? "").replace(
+    /[^a-f0-9]/gi,
+    "",
+  );
   const resolvedProjectBundle = await resolveSoftwareArtifact(
     projectManifestUrl,
     { os: targetPlatform.os },
@@ -283,17 +290,14 @@ export async function buildBootstrapScripts(
   const projectBundleDir = `${projectBundlesRoot}/${projectBundleVersion}`;
   const projectBundleRemote = "/opt/cocalc/project-bundle.tar.xz";
   const projectHostVersion =
-    extractArtifactVersion(resolvedSeaUrl, "project-host") || "latest";
-  const projectHostRoot = "/opt/cocalc/project-host";
-  const projectHostDir = `${projectHostRoot}/versions/${projectHostVersion}`;
-  const projectHostCurrent = `${projectHostRoot}/current`;
-  const projectHostBin = `${projectHostCurrent}/cocalc-project-host`;
+    extractArtifactVersion(projectHostBundleUrl, "project-host") || "latest";
+  const projectHostBundleRemote = "/var/tmp/cocalc-project-host-bundle.tar.xz";
   const toolsVersion = extractArtifactVersion(toolsUrl, "tools") || "latest";
   const toolsRoot = "/opt/cocalc/tools";
   const toolsDir = `${toolsRoot}/${toolsVersion}`;
   const toolsRemote = "/opt/cocalc/tools.tar.xz";
-  if (!resolvedSeaUrl) {
-    throw new Error("project host SEA URL could not be resolved");
+  if (!projectHostBundleUrl) {
+    throw new Error("project host bundle URL could not be resolved");
   }
   if (!projectBundleUrl) {
     throw new Error("project bundle URL could not be resolved");
@@ -362,7 +366,6 @@ export async function buildBootstrapScripts(
   const sshServer = row.ssh_server ?? `${publicIp || onPremUrlHost}:${sshPort}`;
   const dataDir = "/btrfs/data";
   const envFile = "/etc/cocalc/project-host.env";
-  const seaRemote = "/opt/cocalc/project-host.tar.xz";
   const dataDiskCandidates = dataDiskDevices || "none";
   let tlsHostname = publicIp || onPremUrlHost;
   const tlsEnabled = useOnPremSettings ? false : !tunnelEnabled;
@@ -431,6 +434,10 @@ fi
   const bootstrapHome = sshUser === "root" ? "/root" : `/home/${sshUser}`;
   const bootstrapRoot = `${bootstrapHome}/cocalc-host`;
   const bootstrapDir = `${bootstrapRoot}/bootstrap`;
+  const projectHostBundlesRoot = `${bootstrapRoot}/bundles`;
+  const projectHostBundleDir = `${projectHostBundlesRoot}/${projectHostVersion}`;
+  const projectHostCurrent = `${bootstrapRoot}/bundle`;
+  const projectHostBin = `${bootstrapRoot}/bin/project-host`;
 
   let bootstrapScript = `
 set -euo pipefail
@@ -459,7 +466,7 @@ if [ "$BOOTSTRAP_ARCH" != "$EXPECTED_ARCH" ]; then
 fi
 ARCH="$BOOTSTRAP_ARCH"
 ENV_FILE="${envFile}"
-BOOTSTRAP_HOME="${bootstrapHome}"
+ : "\${BOOTSTRAP_HOME:=${bootstrapHome}}"
 IMAGE_SIZE_GB_RAW="${imageSizeGb}"
 IMAGE_SIZE_GB="$IMAGE_SIZE_GB_RAW"
 if [ -z "$IMAGE_SIZE_GB_RAW" ] || [ "$IMAGE_SIZE_GB_RAW" = "auto" ]; then
@@ -560,7 +567,7 @@ sudo chown -R ${sshUser}:${sshUser} /opt/cocalc /var/lib/cocalc
 sudo mkdir -p /btrfs
 echo "bootstrap: preparing bootstrap scripts"
 BOOTSTRAP_ROOT="${bootstrapRoot}"
-BOOTSTRAP_DIR="${bootstrapDir}"
+ : "\${BOOTSTRAP_DIR:=${bootstrapDir}}"
 sudo mkdir -p "$BOOTSTRAP_DIR"
 sudo chown -R ${sshUser}:${sshUser} "$BOOTSTRAP_DIR" || true
 echo "bootstrap: data disk candidates: ${dataDiskCandidates}"
@@ -922,25 +929,34 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 `;
 
-  const fetchSeaScript = `#!/usr/bin/env bash
+  const fetchProjectHostScript = `#!/usr/bin/env bash
 set -euo pipefail
-  SEA_URL="${resolvedSeaUrl.replace(/"/g, '\\"')}"
-  SEA_SHA256="${seaSha256}"
-  echo "bootstrap: downloading SEA from ${resolvedSeaUrl.replace(/"/g, '\\"')}"
-  curl -fL "$SEA_URL" -o ${seaRemote}
-  if [ -n "$SEA_SHA256" ]; then
+  BUNDLE_URL="${projectHostBundleUrl.replace(/"/g, '\\"')}"
+  BUNDLE_SHA256="${projectHostBundleSha256}"
+  BUNDLE_REMOTE="${projectHostBundleRemote}"
+  BUNDLE_DIR="${projectHostBundleDir}"
+  BUNDLE_ROOT="${projectHostBundlesRoot}"
+  BUNDLE_CURRENT="${projectHostCurrent}"
+  echo "bootstrap: downloading project-host bundle from ${projectHostBundleUrl.replace(/"/g, '\\"')}"
+  curl -fL "$BUNDLE_URL" -o "$BUNDLE_REMOTE"
+  if [ -n "$BUNDLE_SHA256" ]; then
     if command -v sha256sum >/dev/null 2>&1; then
-      echo "$SEA_SHA256  ${seaRemote}" | sha256sum -c -
+      echo "$BUNDLE_SHA256  $BUNDLE_REMOTE" | sha256sum -c -
     else
-      echo "bootstrap: sha256sum not available; skipping checksum"
+      echo "bootstrap: sha256sum not available; skipping project-host checksum"
     fi
   else
     if command -v sha256sum >/dev/null 2>&1; then
-      if curl -fsSL "$SEA_URL.sha256" -o ${seaRemote}.sha256; then
-        sha256sum -c ${seaRemote}.sha256 || true
+      if curl -fsSL "$BUNDLE_URL.sha256" -o "$BUNDLE_REMOTE.sha256"; then
+        sha256sum -c "$BUNDLE_REMOTE.sha256" || true
       fi
     fi
   fi
+  mkdir -p "$BUNDLE_ROOT"
+  rm -rf "$BUNDLE_DIR"
+  mkdir -p "$BUNDLE_DIR"
+  tar -xJf "$BUNDLE_REMOTE" --strip-components=1 -C "$BUNDLE_DIR"
+  ln -sfn "$BUNDLE_DIR/bundle" "$BUNDLE_CURRENT"
 `;
 
   const fetchProjectBundleScript = `#!/usr/bin/env bash
@@ -1004,34 +1020,55 @@ set -euo pipefail
 
   bootstrapScript += `
 echo "bootstrap: writing fetch scripts"
-cat <<'EOF_COCALC_FETCH_SEA' > "$BOOTSTRAP_DIR/fetch-sea.sh"
-${fetchSeaScript.trim()}
-EOF_COCALC_FETCH_SEA
+cat <<'EOF_COCALC_FETCH_HOST' > "$BOOTSTRAP_DIR/fetch-project-host.sh"
+${fetchProjectHostScript.trim()}
+EOF_COCALC_FETCH_HOST
 cat <<'EOF_COCALC_FETCH_BUNDLE' > "$BOOTSTRAP_DIR/fetch-project-bundle.sh"
 ${fetchProjectBundleScript.trim()}
 EOF_COCALC_FETCH_BUNDLE
 cat <<'EOF_COCALC_FETCH_TOOLS' > "$BOOTSTRAP_DIR/fetch-tools.sh"
 ${fetchToolsScript.trim()}
 EOF_COCALC_FETCH_TOOLS
-chmod +x "$BOOTSTRAP_DIR"/fetch-sea.sh "$BOOTSTRAP_DIR"/fetch-project-bundle.sh "$BOOTSTRAP_DIR"/fetch-tools.sh
-sudo chown ${sshUser}:${sshUser} "$BOOTSTRAP_DIR"/fetch-sea.sh "$BOOTSTRAP_DIR"/fetch-project-bundle.sh "$BOOTSTRAP_DIR"/fetch-tools.sh || true
+chmod +x "$BOOTSTRAP_DIR"/fetch-project-host.sh "$BOOTSTRAP_DIR"/fetch-project-bundle.sh "$BOOTSTRAP_DIR"/fetch-tools.sh
+sudo chown ${sshUser}:${sshUser} "$BOOTSTRAP_DIR"/fetch-project-host.sh "$BOOTSTRAP_DIR"/fetch-project-bundle.sh "$BOOTSTRAP_DIR"/fetch-tools.sh || true
 `;
 
+  const nodeVersion = process.env.COCALC_PROJECT_HOST_NODE_VERSION || "24";
   const installServiceScript = `
 set -euo pipefail
-if [ -x ${projectHostBin} ]; then
-  ${projectHostBin} daemon stop || true
+HOST_DIR="${bootstrapRoot}"
+PH_BIN="${projectHostBin}"
+NVM_DIR="${bootstrapHome}/.nvm"
+NODE_VERSION="${nodeVersion}"
+
+sudo -u ${sshUser} -H bash -lc "export NVM_DIR=\\"$NVM_DIR\\"; \
+  if [ ! -s \\"$NVM_DIR/nvm.sh\\" ]; then \
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash; \
+  fi; \
+  . \\"$NVM_DIR/nvm.sh\\"; \
+  nvm install $NODE_VERSION; \
+  nvm alias default $NODE_VERSION"
+
+sudo -u ${sshUser} -H mkdir -p "$HOST_DIR/bin"
+sudo -u ${sshUser} -H tee "$HOST_DIR/bin/project-host" >/dev/null <<'EOF_COCALC_HOST_WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+export NVM_DIR="$HOME/.nvm"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+  . "$NVM_DIR/nvm.sh"
+fi
+node "$HOME/cocalc-host/bundle/index.js" "$@"
+EOF_COCALC_HOST_WRAPPER
+sudo -u ${sshUser} -H chmod +x "$HOST_DIR/bin/project-host"
+
+if [ -x "$PH_BIN" ]; then
+  sudo -u ${sshUser} -H "$PH_BIN" daemon stop || true
 fi
 sudo systemctl disable --now cocalc-project-host >/dev/null 2>&1 || true
 sudo rm -f /etc/systemd/system/cocalc-project-host.service || true
-sudo mkdir -p ${projectHostRoot}/versions
-sudo chown -R ${sshUser}:${sshUser} ${projectHostRoot}
-sudo -u ${sshUser} -H rm -rf ${projectHostDir}
-sudo -u ${sshUser} -H mkdir -p ${projectHostDir}
-sudo -u ${sshUser} -H tar -xJf ${seaRemote}  --strip-components=2 -C ${projectHostDir}
-sudo -u ${sshUser} -H ln -sfn ${projectHostDir} ${projectHostCurrent}
+sudo chown -R ${sshUser}:${sshUser} "$HOST_DIR" || true
 sudo chown -R ${sshUser}:${sshUser} /btrfs/data || true
-cd ${projectHostDir}
+cd "$HOST_DIR"
 ${
   cloudflaredServiceUnit
     ? `cat <<'EOF_CLOUDFLARED_SERVICE' | sudo tee /etc/systemd/system/cocalc-cloudflared.service >/dev/null
@@ -1042,12 +1079,12 @@ sudo systemctl enable --now cocalc-cloudflared
 `
     : ""
 }
-sudo -u ${sshUser} -H ${projectHostBin} daemon start
+sudo -u ${sshUser} -H "$PH_BIN" daemon start
 `;
 
   return {
     bootstrapScript,
-    fetchSeaScript,
+    fetchProjectHostScript,
     fetchProjectBundleScript,
     fetchToolsScript,
     installServiceScript,
@@ -1055,9 +1092,13 @@ sudo -u ${sshUser} -H ${projectHostBin} daemon start
     internalUrl,
     sshServer,
     sshUser,
-    seaRemote,
-    resolvedSeaUrl,
-    seaSha256,
+    projectHostBundleUrl,
+    projectHostBundleSha256,
+    projectHostBundleRemote,
+    projectHostBundleDir,
+    projectHostBundlesRoot,
+    projectHostCurrent,
+    projectHostBin,
     projectBundleUrl,
     projectBundleSha256,
     projectBundlesRoot,
@@ -1103,14 +1144,29 @@ fi
     allowEnvVarExpansion: true,
     launchpadBaseUrl: baseUrl,
   });
-  if (!scripts.resolvedSeaUrl) {
-    throw new Error("project host SEA URL not configured");
+  if (!scripts.projectHostBundleUrl) {
+    throw new Error("project host bundle URL not configured");
   }
   return `#!/bin/bash
 set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
 STATUS_URL="${statusUrl}"
 CONAT_URL="${conatUrl}"
+BOOTSTRAP_USER="\${SUDO_USER:-}"
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="$(id -un 2>/dev/null || true)"
+fi
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="root"
+fi
+BOOTSTRAP_HOME="$(getent passwd "$BOOTSTRAP_USER" | cut -d: -f6 || true)"
+if [ -z "$BOOTSTRAP_HOME" ] && [ -n "$HOME" ]; then
+  BOOTSTRAP_HOME="$HOME"
+fi
+if [ -z "$BOOTSTRAP_HOME" ]; then
+  BOOTSTRAP_HOME="/root"
+fi
+BOOTSTRAP_DIR="$BOOTSTRAP_HOME/cocalc-host/bootstrap"
 ${caCertBlock}
 
 report_status() {
@@ -1147,9 +1203,15 @@ trap 'on_error "$?" "$LINENO"' ERR
 
 report_status "running"
 ${scripts.bootstrapScript}
-sudo -u ${scripts.sshUser} -H "$BOOTSTRAP_DIR/fetch-sea.sh"
-sudo -u ${scripts.sshUser} -H "$BOOTSTRAP_DIR/fetch-project-bundle.sh"
-sudo -u ${scripts.sshUser} -H "$BOOTSTRAP_DIR/fetch-tools.sh"
+if [ "$(id -un)" = "$BOOTSTRAP_USER" ]; then
+  "$BOOTSTRAP_DIR/fetch-project-host.sh"
+  "$BOOTSTRAP_DIR/fetch-project-bundle.sh"
+  "$BOOTSTRAP_DIR/fetch-tools.sh"
+else
+  sudo -u "$BOOTSTRAP_USER" -H "$BOOTSTRAP_DIR/fetch-project-host.sh"
+  sudo -u "$BOOTSTRAP_USER" -H "$BOOTSTRAP_DIR/fetch-project-bundle.sh"
+  sudo -u "$BOOTSTRAP_USER" -H "$BOOTSTRAP_DIR/fetch-tools.sh"
+fi
 ${scripts.installServiceScript}
 sudo touch /btrfs/data/.bootstrap_done
 sudo touch /var/lib/cocalc/.bootstrap_done
@@ -1317,9 +1379,16 @@ set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
 BOOTSTRAP_URL="${bootstrapUrl}"
 STATUS_URL="${statusUrl}"
-BOOTSTRAP_HOME="$(getent passwd "\${SUDO_USER:-}" | cut -d: -f6 || true)"
-if [ -z "$BOOTSTRAP_HOME" ]; then
-  BOOTSTRAP_HOME="$(getent passwd 1000 | cut -d: -f6 || true)"
+BOOTSTRAP_USER="\${SUDO_USER:-}"
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="$(id -un 2>/dev/null || true)"
+fi
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="root"
+fi
+BOOTSTRAP_HOME="$(getent passwd "\${BOOTSTRAP_USER:-}" | cut -d: -f6 || true)"
+if [ -z "$BOOTSTRAP_HOME" ] && [ -n "$HOME" ]; then
+  BOOTSTRAP_HOME="$HOME"
 fi
 if [ -z "$BOOTSTRAP_HOME" ]; then
   BOOTSTRAP_HOME="/root"

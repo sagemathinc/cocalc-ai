@@ -931,7 +931,7 @@ export const EXTRAS: SettingsExtras = {
   },
   project_hosts_software_base_url: {
     name: "Project Hosts: Software Base URL",
-    desc: "Base URL for project-host software artifacts. This must contain manifests like `project-host/latest-linux-amd64.json`, `project/latest-linux.json`, and `tools/latest-linux-amd64.json` (e.g., https://software.cocalc.ai/software).",
+    desc: "Base URL for project-host software artifacts. This must contain manifests like `project-host/latest-linux.json`, `project/latest-linux.json`, and `tools/latest-linux-amd64.json` (e.g., https://software.cocalc.ai/software).",
     default: "https://software.cocalc.ai/software",
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
