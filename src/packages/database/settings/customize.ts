@@ -22,19 +22,6 @@ const fallback = (a?: string, b?: string): string =>
 
 const logger = getLogger("server:settings:customize");
 
-const normalizeLaunchpadMode = (
-  value?: string | null,
-  source?: string,
-): string | undefined => {
-  const raw = (value ?? "").trim();
-  if (!raw) return undefined;
-  const mode = raw.toLowerCase();
-  if (mode === "local" || mode === "cloud") return mode;
-  const message = `Invalid launchpad mode '${raw}'`;
-  logger.error(message, { source });
-  throw new Error(message);
-};
-
 const resolveLaunchpadSelfSigned = (): boolean => {
   const explicit = process.env.COCALC_LAUNCHPAD_SELF_SIGNED;
   if (explicit === "1") return true;
@@ -123,16 +110,6 @@ export default async function getCustomize(
       policies: settings.policies,
       support: settings.support,
       supportVideoCall: settings.support_video_call,
-      launchpad_mode:
-        normalizeLaunchpadMode(
-          process.env.COCALC_DEPLOYMENT_MODE,
-          "COCALC_DEPLOYMENT_MODE",
-        ) ??
-        normalizeLaunchpadMode(
-          process.env.COCALC_LAUNCHPAD_MODE,
-          "COCALC_LAUNCHPAD_MODE",
-        ) ??
-        normalizeLaunchpadMode(settings.launchpad_mode, "settings.launchpad_mode"),
       launchpad_self_signed: resolveLaunchpadSelfSigned(),
 
       // Is important for invite emails, password reset, etc. (e.g., so we can construct a url to our site).

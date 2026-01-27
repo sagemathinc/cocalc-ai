@@ -24,6 +24,7 @@ import { trimLogFileSize } from "@cocalc/backend/logger";
 import port from "@cocalc/backend/port";
 import { init_start_always_running_projects } from "@cocalc/database/postgres/always-running";
 import { load_server_settings_from_env } from "@cocalc/database/settings/server-settings";
+import { ensureLocalPostgres } from "@cocalc/database/postgres/dev";
 import { init_passport } from "@cocalc/server/hub/auth";
 import { initialOnPremSetup } from "@cocalc/server/initial-onprem-setup";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
@@ -450,6 +451,19 @@ async function main(): Promise<void> {
   //console.log("got opts", opts);
 
   try {
+    if (process.env.COCALC_LOCAL_POSTGRES === "1") {
+      const localPg = await ensureLocalPostgres({
+        enabled: true,
+        logExports: true,
+      });
+      if (localPg) {
+        program.databaseNodes = localPg.socketDir;
+        program.databaseUser = localPg.user;
+        process.env.PGHOST = localPg.socketDir;
+        process.env.PGUSER = localPg.user;
+        process.env.PGDATABASE ??= localPg.database;
+      }
+    }
     // Everything we do here requires the database to be initialized. Once
     // this is called, require('@cocalc/database/postgres/database').default() is a valid db
     // instance that can be used.

@@ -19,7 +19,7 @@
     "static": "cd packages/static && pnpm watch",
     "static-prod": "cd packages/static && pnpm build",
     "psql": "export PGHOST=${PGHOST:=$INIT_CWD/data/postgres/socket}; PGUSER='smc' psql",
-    "database": "cd dev/project && ./start_postgres.py",
+    "database": "node -e \"require('@cocalc/database/postgres/dev').runLocalPostgresStandalone().catch((err)=>{console.error(err); process.exit(1);})\"",
     "database-remove-locks": "./scripts/database-remove-locks",
     "c": "LOGS=/tmp/ DEBUG='cocalc:*' ./scripts/c",
     "version-check": "cd packages && pnpm check-deps",

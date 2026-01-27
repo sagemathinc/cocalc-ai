@@ -13,6 +13,7 @@ export NODE_ENV="${NODE_ENV:=development}"
 export NODE_NO_WARNINGS=1
 export NODE_OPTIONS='--openssl-legacy-provider --max_old_space_size=8000 --trace-warnings --enable-source-maps --inspect'
 export COCALC_PRODUCT=launchpad
+unset PGHOST PGUSER PGDATABASE PGDATA PGPASSWORD
 
 DATA_BASE="${DATA_BASE:=$DATA_BASE_DEFAULT}"
 
@@ -27,12 +28,12 @@ case "$MODE" in
     ;;
   postgres)
     DATA="${DATA:=$DATA_BASE/postgres}"
-    mkdir -p "$DATA/postgres/socket"
+    mkdir -p "$DATA"
     export DATA
     export DATA="$(realpath "$DATA")"
     export COCALC_DATA_DIR="${COCALC_DATA_DIR:=$DATA}"
-    export PGHOST="${PGHOST:=$DATA/postgres/socket}"
-    export PGUSER="${PGUSER:=smc}"
+    export COCALC_DB=postgres
+    export COCALC_LOCAL_POSTGRES=1
     ;;
   *)
     echo "usage: $0 [pglite|postgres]" >&2
