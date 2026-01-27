@@ -1321,23 +1321,13 @@ download_bootstrap_py() {
 if download_bootstrap_py; then
   echo "bootstrap: downloaded bootstrap.py"
 else
-  echo "bootstrap: failed to download bootstrap.py; continuing with shell bootstrap"
+  echo "bootstrap: failed to download bootstrap.py"
+  report_status "error" "bootstrap.py download failed"
+  exit 1
 fi
 
 report_status "running"
-${scripts.bootstrapScript}
-if [ "$(id -un)" = "$BOOTSTRAP_USER" ]; then
-  "$BOOTSTRAP_DIR/fetch-project-host.sh"
-  "$BOOTSTRAP_DIR/fetch-project-bundle.sh"
-  "$BOOTSTRAP_DIR/fetch-tools.sh"
-else
-  sudo -u "$BOOTSTRAP_USER" -H "$BOOTSTRAP_DIR/fetch-project-host.sh"
-  sudo -u "$BOOTSTRAP_USER" -H "$BOOTSTRAP_DIR/fetch-project-bundle.sh"
-  sudo -u "$BOOTSTRAP_USER" -H "$BOOTSTRAP_DIR/fetch-tools.sh"
-fi
-${scripts.installServiceScript}
-sudo touch /btrfs/data/.bootstrap_done
-sudo touch /var/lib/cocalc/.bootstrap_done
+python3 "$BOOTSTRAP_DIR/bootstrap.py" --config "$BOOTSTRAP_DIR/bootstrap-config.json"
 report_status "done"
 cat <<'EOF_COCALC_DEPROVISION' > "$BOOTSTRAP_ROOT/bin/deprovision.sh"
 #!/usr/bin/env bash
