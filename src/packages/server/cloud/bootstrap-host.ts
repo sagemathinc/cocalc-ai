@@ -485,28 +485,6 @@ export async function buildBootstrapScripts(
   const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {
     if (tunnel && tunnelEnabled) {
       const useToken = Boolean(tunnel.token);
-      const creds = JSON.stringify({
-        AccountTag: tunnel.account_id,
-        TunnelID: tunnel.id,
-        TunnelName: tunnel.name,
-        TunnelSecret: tunnel.tunnel_secret,
-      });
-      return {
-        enabled: true,
-        hostname: tunnel.hostname,
-        port,
-        token: useToken ? tunnel.token : undefined,
-        tunnelId: tunnel.id,
-        credsJson: useToken ? undefined : creds,
-      };
-    }
-    return { enabled: false };
-  })();
-
-
-  const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {
-    if (tunnel && tunnelEnabled) {
-      const useToken = Boolean(tunnel.token);
       if (!useToken) {
         logger.warn("cloudflare tunnel token missing; using credentials file", {
           host_id: row.id,

@@ -299,6 +299,29 @@ def configure_chrony(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["systemctl", "restart", "chrony"], "restart chrony")
 
 
+def detect_public_ip(cfg: BootstrapConfig) -> str | None:
+    for url in ("https://api.ipify.org", "https://ifconfig.me"):
+        try:
+            log_line(cfg, f"bootstrap: detecting public IP via {url}")
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                value = resp.read().decode("utf-8").strip()
+            if value:
+                return value
+        except Exception:
+            continue
+    log_line(cfg, "bootstrap: could not determine public IP")
+    return None
+
+
+def substitute_public_ip(cfg: BootstrapConfig) -> None:
+    if not any("$PUBLIC_IP" in line for line in cfg.env_lines):
+        return
+    public_ip = detect_public_ip(cfg)
+    if not public_ip:
+        return
+    cfg.env_lines[:] = [line.replace("$PUBLIC_IP", public_ip) for line in cfg.env_lines]
+
+
 def enable_userns(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: enabling unprivileged user namespaces")
     run_best_effort(cfg, ["sysctl", "-w", "kernel.unprivileged_userns_clone=1"], "sysctl userns")
@@ -502,6 +525,7 @@ def configure_podman(cfg: BootstrapConfig) -> None:
 
 def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
     log_line(cfg, f"bootstrap: writing project-host env to {cfg.env_file}")
+    substitute_public_ip(cfg)
     Path(cfg.env_file).parent.mkdir(parents=True, exist_ok=True)
     Path(cfg.env_file).write_text("\n".join(cfg.env_lines) + "\n", encoding="utf-8")
     uid = pwd.getpwnam(cfg.ssh_user).pw_uid if cfg.ssh_user else None
@@ -741,6 +765,70 @@ Type=simple
     run_cmd(cfg, ["systemctl", "enable", "--now", "cocalc-cloudflared"], "enable cloudflared")
 
 
+def install_gpu_support(cfg: BootstrapConfig) -> None:
+    if not cfg.has_gpu:
+        return
+    log_line(cfg, "bootstrap: installing nvidia container toolkit")
+    apt_run(cfg, ["apt-get", "-y", "install", "ca-certificates", "gnupg"], "install nvidia deps", retries=3, timeout=120)
+    run_best_effort(cfg, ["rm", "-f", "/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"], "remove old nvidia keyring")
+    run_cmd(
+        cfg,
+        [
+            "bash",
+            "-lc",
+            "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | "
+            "gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
+        ],
+        "import nvidia key",
+    )
+    run_cmd(
+        cfg,
+        [
+            "bash",
+            "-lc",
+            "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | "
+            "sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' | "
+            "tee /etc/apt/sources.list.d/nvidia-container-toolkit.list",
+        ],
+        "write nvidia repo",
+    )
+    apt_run(cfg, ["apt-get", "-y", "update"], "apt-get update (nvidia)", retries=3, timeout=60)
+    apt_run(
+        cfg,
+        ["apt-get", "-y", "install", "nvidia-container-toolkit"],
+        "install nvidia-container-toolkit",
+        retries=3,
+        timeout=180,
+    )
+    run_best_effort(cfg, ["ldconfig"], "ldconfig")
+    run_best_effort(cfg, ["nvidia-ctk", "cdi", "generate", "--output=/etc/cdi/nvidia.yaml"], "nvidia cdi generate")
+    run_best_effort(cfg, ["usermod", "-aG", "video,render", cfg.ssh_user], "usermod nvidia groups")
+    helper = """#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  exit 0
+fi
+if [ ! -x /usr/bin/nvidia-ctk ]; then
+  exit 0
+fi
+if [ -f /etc/cdi/nvidia.yaml ]; then
+  exit 0
+fi
+ldconfig || true
+if command -v nvidia-smi >/dev/null 2>&1 || ldconfig -p 2>/dev/null | grep -q libnvidia-ml.so.1; then
+  /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml || exit 0
+fi
+exit 0
+"""
+    Path("/usr/local/sbin/cocalc-nvidia-cdi").write_text(helper, encoding="utf-8")
+    os.chmod("/usr/local/sbin/cocalc-nvidia-cdi", 0o755)
+    Path("/etc/cron.d/cocalc-nvidia-cdi").write_text(
+        "*/5 * * * * root /usr/local/sbin/cocalc-nvidia-cdi >/dev/null 2>&1\n",
+        encoding="utf-8",
+    )
+    os.chmod("/etc/cron.d/cocalc-nvidia-cdi", 0o644)
+
+
 def start_project_host(cfg: BootstrapConfig) -> None:
     bin_path = f"{cfg.bootstrap_root}/bin/project-host"
     if Path(bin_path).exists():
@@ -774,8 +862,7 @@ def main(argv: list[str]) -> int:
         image_size_gb = compute_image_size(cfg)
         disable_unattended(cfg)
         apt_update_install(cfg)
-        if cfg.has_gpu:
-            log_line(cfg, "bootstrap: GPU support requested (not yet fully ported)")
+        install_gpu_support(cfg)
         configure_chrony(cfg)
         enable_userns(cfg)
         ensure_subuids(cfg)
