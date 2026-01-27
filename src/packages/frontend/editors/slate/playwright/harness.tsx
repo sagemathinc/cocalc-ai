@@ -20,6 +20,8 @@ import ReactDOM from "react-dom/client";
 import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate";
 
 import { Editable, Slate, withReact, ReactEditor } from "../slate-react";
+import BlockMarkdownEditor from "../block-markdown-editor-core";
+import "./elements-types-shim";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
 import { autoformatBlockquoteAtStart } from "../format/auto-format-quote";
 import { handleBlankLineEnter } from "../keyboard/blank-line-enter";
@@ -51,6 +53,13 @@ const initialValue: Descendant[] = [
 ];
 
 function Harness(): React.JSX.Element {
+  const params =
+    typeof window === "undefined"
+      ? new URLSearchParams()
+      : new URLSearchParams(window.location.search);
+  const blockMode = params.get("block") === "1";
+  const initialMarkdown = "a\n\n```\nfoo\n```\n";
+
   const editor = useMemo(
     () => withIsInline(withIsVoid(withReact(createEditor()))),
     [],
@@ -100,6 +109,22 @@ function Harness(): React.JSX.Element {
       }),
     };
   }, [editor]);
+
+  if (blockMode) {
+    return (
+      <div style={{ padding: 16, width: 520 }}>
+        <BlockMarkdownEditor
+          value={initialMarkdown}
+          read_only={false}
+          hidePath={true}
+          minimal={true}
+          height="auto"
+          noVfill={true}
+          actions={{}}
+        />
+      </div>
+    );
+  }
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {

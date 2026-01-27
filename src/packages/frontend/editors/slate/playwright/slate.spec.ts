@@ -125,10 +125,11 @@ test("enter at start inserts blank lines above without moving cursor", async ({
     () => window.__slateTest?.getValue(),
   )) as SlateNode[] | undefined;
 
-  expect(value?.length).toBe(3);
+  expect(value?.length).toBe(4);
   if (value) {
     expect(value[1]?.blank).toBe(true);
-    expect(nodeText(value[2])).toBe("xyz");
+    expect(value[2]?.blank).toBe(true);
+    expect(nodeText(value[3])).toBe("xyz");
   }
 
   let selection = (await page.evaluate(
@@ -137,7 +138,7 @@ test("enter at start inserts blank lines above without moving cursor", async ({
 
   expect(selection).not.toBeNull();
   if (selection) {
-    expect(selection.anchor.path[0]).toBe(2);
+    expect(selection.anchor.path[0]).toBe(3);
     expect(selection.anchor.offset).toBe(0);
   }
 
@@ -147,11 +148,13 @@ test("enter at start inserts blank lines above without moving cursor", async ({
     () => window.__slateTest?.getValue(),
   )) as SlateNode[] | undefined;
 
-  expect(value?.length).toBe(4);
+  expect(value?.length).toBe(6);
   if (value) {
     expect(value[1]?.blank).toBe(true);
     expect(value[2]?.blank).toBe(true);
-    expect(nodeText(value[3])).toBe("xyz");
+    expect(value[3]?.blank).toBe(true);
+    expect(value[4]?.blank).toBe(true);
+    expect(nodeText(value[5])).toBe("xyz");
   }
 
   selection = (await page.evaluate(
@@ -160,7 +163,7 @@ test("enter at start inserts blank lines above without moving cursor", async ({
 
   expect(selection).not.toBeNull();
   if (selection) {
-    expect(selection.anchor.path[0]).toBe(3);
+    expect(selection.anchor.path[0]).toBe(5);
     expect(selection.anchor.offset).toBe(0);
   }
 });
@@ -416,4 +419,27 @@ test("gap cursor only appears on last visual line before a void block", async ({
     expect(gapBeforeAfter.path[0]).toBe(1);
     expect(gapBeforeAfter.side).toBe("after");
   }
+});
+
+test("block editor: arrow keys can escape a code block", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4172/?block=1");
+
+  await page.waitForSelector("[data-slate-editor]");
+
+  const codeBlock = page.locator(".cocalc-slate-code-block").first();
+  await expect(codeBlock).toBeVisible();
+
+  await codeBlock.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowUp");
+  await expect(
+    page.locator('[data-slate-gap-cursor="block-before"]'),
+  ).toBeVisible();
+
+  await codeBlock.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.locator('[data-slate-gap-cursor="block-after"]'),
+  ).toBeVisible();
 });
