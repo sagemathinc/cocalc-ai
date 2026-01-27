@@ -88,10 +88,14 @@ function autoformatCodeSpanAtCursor(editor: Editor): boolean {
   });
 
   const newPath = parentPath.concat(index + children.length - 1);
-  setSelectionAndFocus(editor as ReactEditor, {
-    focus: { path: newPath, offset: 1 },
-    anchor: { path: newPath, offset: 1 },
-  });
+  setSelectionAndFocus(
+    editor as ReactEditor,
+    {
+      focus: { path: newPath, offset: 1 },
+      anchor: { path: newPath, offset: 1 },
+    },
+    { force: true },
+  );
   return true;
 }
 
@@ -158,10 +162,14 @@ function autoformatMarkAtCursor(
   });
 
   const newPath = parentPath.concat(index + children.length - 1);
-  setSelectionAndFocus(editor as ReactEditor, {
-    focus: { path: newPath, offset: 1 },
-    anchor: { path: newPath, offset: 1 },
-  });
+  setSelectionAndFocus(
+    editor as ReactEditor,
+    {
+      focus: { path: newPath, offset: 1 },
+      anchor: { path: newPath, offset: 1 },
+    },
+    { force: true },
+  );
   return true;
 }
 
@@ -234,10 +242,14 @@ function autoformatInlineMathAtCursor(editor: Editor): boolean {
   });
 
   const newPath = parentPath.concat(index + children.length - 1);
-  setSelectionAndFocus(editor as ReactEditor, {
-    focus: { path: newPath, offset: 1 },
-    anchor: { path: newPath, offset: 1 },
-  });
+  setSelectionAndFocus(
+    editor as ReactEditor,
+    {
+      focus: { path: newPath, offset: 1 },
+      anchor: { path: newPath, offset: 1 },
+    },
+    { force: true },
+  );
   return true;
 }
 
@@ -875,5 +887,5 @@ function shift_path(op: Operation, shift: number): void {
 // loses focus.
 // This is a SCARY function..
 export function focusEditorAt(editor: ReactEditor, point: Point): void {
-  setSelectionAndFocus(editor, { focus: point, anchor: point });
+  setSelectionAndFocus(editor, { focus: point, anchor: point }, { force: true });
 }

@@ -8,7 +8,6 @@
 import { debounce } from "lodash";
 import {
   MutableRefObject,
-  RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -114,7 +113,7 @@ interface BlockMarkdownEditorProps {
   style?: CSS;
   height?: string;
   noVfill?: boolean;
-  divRef?: RefObject<HTMLDivElement>;
+  divRef?: React.Ref<HTMLDivElement>;
   onBlur?: () => void;
   onFocus?: () => void;
   autoFocus?: boolean;
@@ -1086,8 +1085,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       containerRef.current = node;
       if (typeof divRef === "function") {
         divRef(node);
-      } else if (divRef) {
-        divRef.current = node;
+      } else if (divRef && "current" in divRef) {
+        (divRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
       }
     },
     [divRef],
