@@ -85,8 +85,8 @@ test("multiline paste inside code block preserves newlines", () => {
     },
   ] as Descendant[];
   editor.selection = {
-    anchor: { path: [0, 0, 0], offset: 7 },
-    focus: { path: [0, 0, 0], offset: 7 },
+    anchor: { path: [0, 0, 0], offset: "def f():".length },
+    focus: { path: [0, 0, 0], offset: "def f():".length },
   };
 
   const data = {
