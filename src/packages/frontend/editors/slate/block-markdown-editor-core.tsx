@@ -671,6 +671,30 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return;
         }
 
+        if (
+          event.key === "ArrowUp" &&
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection) &&
+          isAtBeginningOfBlock(editor, { mode: "highest" })
+        ) {
+          if (index > 0) {
+            onNavigate(index - 1, "end");
+            event.preventDefault();
+            return;
+          }
+        }
+
+        if (
+          event.key === "ArrowDown" &&
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection) &&
+          isAtEndOfBlock(editor, { mode: "highest" })
+        ) {
+          onNavigate(index + 1, "start");
+          event.preventDefault();
+          return;
+        }
+
         const moveCombo = IS_MACOS
           ? event.ctrlKey && event.metaKey && !event.altKey
           : event.ctrlKey &&
