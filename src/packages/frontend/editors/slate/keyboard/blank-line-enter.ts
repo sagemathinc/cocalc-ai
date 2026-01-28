@@ -19,6 +19,16 @@ export function handleBlankLineEnter(editor: Editor): boolean {
     return false;
   }
 
+  if (block["spacer"] === true && isWhitespaceParagraph(block)) {
+    // Convert spacer into a normal paragraph without creating extra blank lines.
+    Transforms.setNodes(
+      editor,
+      { spacer: false, blank: false },
+      { at: blockPath },
+    );
+    return true;
+  }
+
   if (!preserveBlankLines) {
     // Avoid creating extra blank paragraphs when blank lines are not preserved.
     if (isWhitespaceParagraph(block)) {
