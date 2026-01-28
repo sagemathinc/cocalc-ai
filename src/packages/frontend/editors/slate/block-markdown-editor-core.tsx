@@ -677,6 +677,10 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           Range.isCollapsed(editor.selection) &&
           isAtBeginningOfBlock(editor, { mode: "highest" })
         ) {
+          const topIndex = editor.selection.focus.path[0];
+          if (topIndex !== 0) {
+            return;
+          }
           if (index > 0) {
             onNavigate(index - 1, "end");
             event.preventDefault();
@@ -690,6 +694,11 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           Range.isCollapsed(editor.selection) &&
           isAtEndOfBlock(editor, { mode: "highest" })
         ) {
+          const topIndex = editor.selection.focus.path[0];
+          const lastIndex = Math.max(0, editor.children.length - 1);
+          if (topIndex !== lastIndex) {
+            return;
+          }
           onNavigate(index + 1, "start");
           event.preventDefault();
           return;
