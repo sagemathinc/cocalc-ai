@@ -450,6 +450,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               }
             />
           )}
+          {showUpgradeProgress && <HostOpProgress op={activeOp} />}
           {isSelfHost && selfHost && !host.deleted && (
             <Space direction="vertical" size="small">
               <Typography.Text strong>Connector actions</Typography.Text>
@@ -485,7 +486,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               </Space>
             </Space>
           )}
-          {showUpgradeProgress && <HostOpProgress op={activeOp} />}
           <Typography.Text type="secondary">
             Last seen:{" "}
             {host.last_seen ? new Date(host.last_seen).toLocaleString() : "n/a"}

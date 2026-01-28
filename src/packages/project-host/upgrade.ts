@@ -178,7 +178,10 @@ async function resolveArtifact(
     const channel: SoftwareChannel = target.channel ?? "latest";
     const os = normalizeOs();
     const arch = normalizeArch();
-    const manifestUrl = `${baseUrl}/${canonicalArtifact}/${channel}-${os}-${arch}.json`;
+    const manifestUrl =
+      canonicalArtifact === "tools"
+        ? `${baseUrl}/${canonicalArtifact}/${channel}-${os}-${arch}.json`
+        : `${baseUrl}/${canonicalArtifact}/${channel}-${os}.json`;
     const manifest = await fetchJson(manifestUrl);
     const manifestOs = normalizeOsValue(manifest?.os);
     const manifestArch = normalizeArchValue(manifest?.arch);
@@ -187,7 +190,7 @@ async function resolveArtifact(
         `manifest OS mismatch (${canonicalArtifact}): expected ${os}, got ${manifestOs}`,
       );
     }
-    if (manifestArch && manifestArch !== arch) {
+    if (canonicalArtifact === "tools" && manifestArch && manifestArch !== arch) {
       throw new Error(
         `manifest arch mismatch (${canonicalArtifact}): expected ${arch}, got ${manifestArch}`,
       );
@@ -196,13 +199,13 @@ async function resolveArtifact(
     sha256 = manifest?.sha256;
     version = extractVersionFromUrl(url, canonicalArtifact);
   } else {
-    const arch = normalizeArch();
     const os = normalizeOs();
     if (canonicalArtifact === "project-host") {
-      url = `${baseUrl}/project-host/${version}/cocalc-project-host-${version}-${arch}-${os}.tar.xz`;
+      url = `${baseUrl}/project-host/${version}/bundle-${os}.tar.xz`;
     } else if (canonicalArtifact === "project") {
-      url = `${baseUrl}/project/${version}/bundle-${os}-${arch}.tar.xz`;
+      url = `${baseUrl}/project/${version}/bundle-${os}.tar.xz`;
     } else {
+      const arch = normalizeArch();
       url = `${baseUrl}/tools/${version}/tools-${os}-${arch}.tar.xz`;
     }
   }

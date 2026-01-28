@@ -37,7 +37,6 @@ import { labels } from "@cocalc/frontend/i18n";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import {
   TIER_TEMPLATES,
-  TEMPLATE_PRIORITY,
 } from "@cocalc/util/membership-tier-templates";
 import { COLORS } from "@cocalc/util/theme";
 
