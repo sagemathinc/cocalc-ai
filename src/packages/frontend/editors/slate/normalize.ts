@@ -153,8 +153,12 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
 });
 
-function needsSpacerParagraph(editor: Editor, node: Element): boolean {
+function needsSpacerParagraph(editor: Editor, node: Element, path?: Path): boolean {
   if (node.type === "code_block") return true;
+  if (node.type === "blockquote") {
+    // Only force spacers for top-level blockquotes so we can exit the quote.
+    return path != null && path.length === 1;
+  }
   if (!Editor.isBlock(editor, node)) return false;
   return Editor.isVoid(editor, node);
 }
@@ -163,7 +167,7 @@ function needsSpacerParagraph(editor: Editor, node: Element): boolean {
 // paragraphs so navigation works like normal text paragraphs (no gap cursors).
 NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
   if (!Element.isElement(node)) return;
-  if (!needsSpacerParagraph(editor, node)) return;
+  if (!needsSpacerParagraph(editor, node, path)) return;
   if (path.length === 0) return;
   const index = path[path.length - 1];
   if (index > 0) {
@@ -197,8 +201,10 @@ NORMALIZERS.push(function normalizeSpacerParagraph({ editor, node, path }) {
   const prevNode = path[path.length - 1] > 0 ? getNodeAt(editor, Path.previous(path)) : null;
   const nextNode = getNodeAt(editor, Path.next(path));
   const hasSpacerNeighbor =
-    (Element.isElement(prevNode) && needsSpacerParagraph(editor, prevNode)) ||
-    (Element.isElement(nextNode) && needsSpacerParagraph(editor, nextNode));
+    (Element.isElement(prevNode) &&
+      needsSpacerParagraph(editor, prevNode, path && Path.previous(path))) ||
+    (Element.isElement(nextNode) &&
+      needsSpacerParagraph(editor, nextNode, path && Path.next(path)));
   if (!hasSpacerNeighbor) {
     Transforms.removeNodes(editor, { at: path });
   }
