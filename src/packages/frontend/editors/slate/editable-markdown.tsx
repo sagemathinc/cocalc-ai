@@ -290,16 +290,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       selectionRef.current = {
         setSelection: (selection: any) => {
           if (!selection) return;
+          const safe = ensureRange(editor, selection);
           // We confirm that the selection is valid.
           // If not, this will throw an error.
-          const { anchor, focus } = selection;
+          const { anchor, focus } = safe;
           Editor.node(editor, anchor);
           Editor.node(editor, focus);
           logSlateDebug("selection-ref:set", {
-            selection,
+            selection: safe,
             editorSelection: ed.selection ?? null,
           });
-          ed.selection = selection;
+          ed.selection = safe;
         },
         getSelection: () => {
           return ed.selection;
