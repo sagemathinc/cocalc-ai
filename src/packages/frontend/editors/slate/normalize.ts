@@ -153,9 +153,16 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
 });
 
+const SPACER_BLOCK_TYPES = new Set<string>([
+  "code_block",
+  "blockquote",
+  "math_block",
+  "html_block",
+  "meta",
+]);
+
 function needsSpacerParagraph(editor: Editor, node: Element, _path?: Path): boolean {
-  if (node.type === "code_block") return true;
-  if (node.type === "blockquote") return true;
+  if (SPACER_BLOCK_TYPES.has(node.type)) return true;
   if (!Editor.isBlock(editor, node)) return false;
   return Editor.isVoid(editor, node);
 }
