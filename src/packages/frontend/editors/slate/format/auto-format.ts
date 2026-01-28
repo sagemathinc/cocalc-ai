@@ -15,6 +15,7 @@ import {
   Text,
   Element,
   Range,
+  Node,
 } from "slate";
 import { len } from "@cocalc/util/misc";
 import { markdown_to_slate } from "../markdown-to-slate";
@@ -457,6 +458,13 @@ export const withAutoFormat = (editor) => {
   if (typeof insertData === "function") {
     editor.insertData = (data) => {
       if (isSelectionInCodeBlock(editor as SlateEditor)) {
+        const text = data?.getData?.("text/plain");
+        if (text && /[\r\n]/.test(text)) {
+          const normalized = text.replace(/\r\n?/g, "\n");
+          if (insertMultilineCodeText(editor as SlateEditor, normalized)) {
+            return;
+          }
+        }
         insertData(data);
         return;
       }
@@ -495,6 +503,73 @@ export const withAutoFormat = (editor) => {
 
   return editor;
 };
+
+function insertMultilineCodeText(editor: SlateEditor, text: string): boolean {
+  if (!editor.selection) return false;
+  if (!Range.isCollapsed(editor.selection)) {
+    Transforms.delete(editor);
+  }
+  const focus = editor.selection?.focus;
+  if (!focus) return false;
+  const lineEntry = Editor.above(editor, {
+    at: focus,
+    match: (n) => Element.isElement(n) && n.type === "code_line",
+  }) as [Element, Path] | undefined;
+  if (!lineEntry) return false;
+  const [lineNode, linePath] = lineEntry;
+  const textEntry = Editor.nodes(editor, {
+    at: linePath,
+    match: (n) => Text.isText(n),
+  }).next().value as [Text, Path] | undefined;
+  if (!textEntry) return false;
+  const [, textPath] = textEntry;
+
+  const lineText = Node.string(lineNode);
+  const offset = Math.max(0, Math.min(focus.offset ?? 0, lineText.length));
+  const prefix = lineText.slice(0, offset);
+  const suffix = lineText.slice(offset);
+  const parts = text.split("\n");
+  if (parts.length <= 1) {
+    return false;
+  }
+  const first = prefix + parts[0];
+  const tail = parts.slice(1);
+  tail[tail.length - 1] = tail[tail.length - 1] + suffix;
+
+  if (lineText.length > 0) {
+    Transforms.delete(editor, {
+      at: {
+        anchor: { path: textPath, offset: 0 },
+        focus: { path: textPath, offset: lineText.length },
+      },
+    });
+  }
+  if (first.length > 0) {
+    Transforms.insertText(editor, first, { at: { path: textPath, offset: 0 } });
+  }
+
+  if (tail.length > 0) {
+    const nodes = tail.map((line) => ({
+      type: "code_line",
+      children: [{ text: line }],
+    }));
+    Transforms.insertNodes(editor, nodes as any, { at: Path.next(linePath) });
+
+    const base = Path.next(linePath);
+    const lastPath = [
+      ...base.slice(0, -1),
+      base[base.length - 1] + (tail.length - 1),
+    ];
+    const lastLen = tail[tail.length - 1].length;
+    const point = { path: lastPath.concat(0), offset: lastLen };
+    Transforms.select(editor, point);
+  } else {
+    const point = { path: textPath, offset: first.length };
+    Transforms.select(editor, point);
+  }
+
+  return true;
+}
 
 // Use conversion back and forth to markdown to autoformat
 // what is right before the cursor in the current text node.

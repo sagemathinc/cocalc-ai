@@ -4,12 +4,16 @@
  */
 
 import { register } from "../register";
+import { useFocused, useSelected } from "../hooks";
 
 register({
   slateType: "paragraph",
 
   Element: ({ attributes, children, element }) => {
     if (element.type != "paragraph") throw Error("bug");
+
+    const selected = useSelected();
+    const focused = useFocused();
 
     // Below the textIndent: 0 is needed due to task lists -- see slate/elements/list/list-item.tsx
 
@@ -25,6 +29,7 @@ register({
     }
 
     if (element["spacer"] === true) {
+      const showFocus = selected && focused;
       return (
         <p
           {...attributes}
@@ -33,7 +38,7 @@ register({
             minHeight: 2,
             lineHeight: "2px",
             fontSize: 2,
-            background: "transparent",
+            background: showFocus ? "rgba(24, 144, 255, 0.45)" : "transparent",
           }}
         >
           <span style={{ textIndent: 0 }}>{children}</span>

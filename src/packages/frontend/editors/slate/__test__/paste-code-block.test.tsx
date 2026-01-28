@@ -73,3 +73,32 @@ test("multiline paste preserves indentation in code blocks", () => {
   expect(code).toBeTruthy();
   expect(getCodeBlockText(code)).toBe("  indented\n\t\tmore\n");
 });
+
+test("multiline paste inside code block preserves newlines", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [
+    {
+      type: "code_block",
+      fence: true,
+      info: "",
+      children: [{ type: "code_line", children: [{ text: "def f():" }] }],
+    },
+  ] as Descendant[];
+  editor.selection = {
+    anchor: { path: [0, 0, 0], offset: 7 },
+    focus: { path: [0, 0, 0], offset: 7 },
+  };
+
+  const data = {
+    getData: (type: string) =>
+      type === "text/plain" ? "\n    \"foo\"\n    print('hi')\n" : "",
+    items: [],
+  };
+
+  editor.insertData(data as any);
+
+  const code = editor.children[0] as any;
+  expect(getCodeBlockText(code)).toBe(
+    "def f():\n    \"foo\"\n    print('hi')\n",
+  );
+});
