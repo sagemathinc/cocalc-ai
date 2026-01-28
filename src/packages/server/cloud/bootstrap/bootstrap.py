@@ -572,6 +572,16 @@ def setup_conat_password(cfg: BootstrapConfig) -> None:
     path = Path("/btrfs/data/secrets/conat-password")
     if path.exists():
         log_line(cfg, "bootstrap: conat password already present")
+        if cfg.ssh_user and cfg.ssh_user != "root":
+            run_best_effort(
+                cfg,
+                ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(path)],
+                "chown conat password",
+            )
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
         return
     log_line(cfg, "bootstrap: fetching conat password")
     headers = {"Authorization": f"Bearer {cfg.bootstrap_token}"}
@@ -586,6 +596,12 @@ def setup_conat_password(cfg: BootstrapConfig) -> None:
         data = resp.read()
     path.write_bytes(data)
     os.chmod(path, 0o600)
+    if cfg.ssh_user and cfg.ssh_user != "root":
+        run_best_effort(
+            cfg,
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(path)],
+            "chown conat password",
+        )
 
 
 def download_file(cfg: BootstrapConfig, url: str, dest: str) -> None:
