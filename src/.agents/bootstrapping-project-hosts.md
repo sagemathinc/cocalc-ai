@@ -1,4 +1,4 @@
-# Project-Host Bootstrap Rewrite Plan (Python-First)
+# (done) Project-Host Bootstrap Rewrite Plan (Python-First)
 
 Goal: replace the brittle shell-heavy bootstrap in [src/packages/server/cloud/bootstrap-host.ts](./src/packages/server/cloud/bootstrap-host.ts) with a **Python-driven bootstrapper** (invoked by a tiny shell stub). Keep the Golang connector as the entrypoint. Emphasize clarity, observability, parallelism, robustness, and maintainability.
 

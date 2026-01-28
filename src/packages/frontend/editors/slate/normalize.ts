@@ -20,8 +20,9 @@ import { Editor, Element, Path, Range, Text, Transforms } from "slate";
 import { isEqual } from "lodash";
 
 import { getNodeAt } from "./slate-util";
-import { emptyParagraph } from "./padding";
+import { emptyParagraph, isWhitespaceParagraph } from "./padding";
 import { isListElement } from "./elements/list";
+import { getCodeBlockText, toCodeLines } from "./elements/code-block/utils";
 
 interface NormalizeInputs {
   editor?: Editor;
@@ -32,6 +33,14 @@ interface NormalizeInputs {
 type NormalizeFunction = (NormalizeInputs) => void;
 
 const NORMALIZERS: NormalizeFunction[] = [];
+
+function spacerParagraph(): Element {
+  return {
+    type: "paragraph",
+    spacer: true,
+    children: [{ text: "" }],
+  } as Element;
+}
 
 export const withNormalize = (editor) => {
   const { normalizeNode } = editor;
@@ -117,12 +126,105 @@ NORMALIZERS.push(function ensureListContainsListItems({ editor, node, path }) {
   }
 });
 
+// Ensure block elements always have at least one text child.
+NORMALIZERS.push(function ensureBlockHasChild({ editor, node, path }) {
+  if (!Element.isElement(node)) return;
+  if (!Editor.isBlock(editor, node)) return;
+  if (node.children.length > 0) return;
+  Transforms.insertNodes(editor, { text: "" }, { at: path.concat(0) });
+});
+
+// Normalize code blocks to use code_line children instead of legacy value.
+NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
+  if (!(Element.isElement(node) && node.type === "code_block")) return;
+  const children = node.children ?? [];
+  const hasOnlyCodeLines = children.every(
+    (child) => Element.isElement(child) && child.type === "code_line"
+  );
+  if (hasOnlyCodeLines && node.value == null) return;
+
+  const code = getCodeBlockText(node as any);
+  const nextLines = toCodeLines(code);
+  Transforms.removeNodes(editor, {
+    at: path,
+    match: (_n, p) => p.length === path.length + 1,
+  });
+  Transforms.insertNodes(editor, nextLines, { at: path.concat(0) });
+  Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
+});
+
+const SPACER_BLOCK_TYPES = new Set<string>([
+  "code_block",
+  "blockquote",
+  "math_block",
+  "html_block",
+  "meta",
+]);
+
+function needsSpacerParagraph(editor: Editor, node: Element, _path?: Path): boolean {
+  if (SPACER_BLOCK_TYPES.has(node.type)) return true;
+  if (!Editor.isBlock(editor, node)) return false;
+  return Editor.isVoid(editor, node);
+}
+
+// Ensure block void elements (and code blocks) are surrounded by spacer
+// paragraphs so navigation works like normal text paragraphs (no gap cursors).
+NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
+  if (!Element.isElement(node)) return;
+  if (!needsSpacerParagraph(editor, node, path)) return;
+  if (path.length === 0) return;
+  const index = path[path.length - 1];
+  if (index > 0) {
+    const prevPath = Path.previous(path);
+    const prevNode = getNodeAt(editor, prevPath);
+    if (!(Element.isElement(prevNode) && prevNode.type === "paragraph")) {
+      Transforms.insertNodes(editor, spacerParagraph(), { at: path });
+      return;
+    }
+  } else {
+    Transforms.insertNodes(editor, spacerParagraph(), { at: path });
+    return;
+  }
+  const nextPath = Path.next(path);
+  const nextNode = getNodeAt(editor, nextPath);
+  if (!(Element.isElement(nextNode) && nextNode.type === "paragraph")) {
+    Transforms.insertNodes(editor, spacerParagraph(), { at: nextPath });
+  }
+});
+
+// Remove spacer flag once user types, and drop stray spacer paragraphs
+// that no longer neighbor a code block.
+NORMALIZERS.push(function normalizeSpacerParagraph({ editor, node, path }) {
+  if (!(Element.isElement(node) && node.type === "paragraph")) return;
+  if (node["spacer"] !== true) return;
+  if (!isWhitespaceParagraph(node)) {
+    Transforms.setNodes(editor, { spacer: false } as any, { at: path });
+    return;
+  }
+  if (path.length === 0) return;
+  const prevNode = path[path.length - 1] > 0 ? getNodeAt(editor, Path.previous(path)) : null;
+  const nextNode = getNodeAt(editor, Path.next(path));
+  const hasSpacerNeighbor =
+    (Element.isElement(prevNode) &&
+      needsSpacerParagraph(editor, prevNode, path && Path.previous(path))) ||
+    (Element.isElement(nextNode) &&
+      needsSpacerParagraph(editor, nextNode, path && Path.next(path)));
+  if (!hasSpacerNeighbor) {
+    Transforms.removeNodes(editor, { at: path });
+  }
+});
+
 /*
 Trim *all* whitespace from the beginning of blocks whose first child is Text,
 since markdown doesn't allow for it. (You can use &nbsp; of course.)
 */
 NORMALIZERS.push(function trimLeadingWhitespace({ editor, node, path }) {
-  if (Element.isElement(node) && Text.isText(node.children[0])) {
+  if (
+    Element.isElement(node) &&
+    node.type !== "code_line" &&
+    node.type !== "code_block" &&
+    Text.isText(node.children[0])
+  ) {
     const firstText = node.children[0].text;
     if (firstText != null) {
       // We actually get rid of spaces and tabs, but not ALL whitespace.  For example,
@@ -142,9 +244,7 @@ NORMALIZERS.push(function trimLeadingWhitespace({ editor, node, path }) {
         ) {
           const offset = Math.max(0, selection.focus.offset - i);
           const focus = { path: p, offset };
-          setTimeout(() =>
-            Transforms.setSelection(editor, { focus, anchor: focus })
-          );
+          Transforms.setSelection(editor, { focus, anchor: focus });
         }
       }
     }

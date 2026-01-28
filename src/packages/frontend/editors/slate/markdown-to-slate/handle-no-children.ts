@@ -8,7 +8,7 @@ import { getMarkdownToSlate } from "../elements/register";
 import { replace_all } from "@cocalc/util/misc";
 import { Marks } from "./types";
 import { register } from "./register";
-import { DEFAULT_CHILDREN } from "../util";
+import { defaultChildren } from "../util";
 import getSource from "./source";
 import { setCache } from "./cache";
 
@@ -39,10 +39,12 @@ export function handleNoChildren({ token, state, cache }) {
   } else {
     // everything else -- via our element plugin mechanism.
     const markdownToSlate = getMarkdownToSlate(token.type);
+    const children =
+      token.type === "blank_line" ? [{ text: "" }] : defaultChildren();
     const node = markdownToSlate({
       type: token.type,
       token,
-      children: DEFAULT_CHILDREN,
+      children,
       state,
       isEmpty: false,
     });

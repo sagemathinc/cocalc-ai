@@ -43,6 +43,12 @@ export const SlateMath: React.FC<Props> = React.memo(
       }
     }, [selected, focused, collapsed]);
 
+    useEffect(() => {
+      if (!editMode) {
+        justBlurred.current = false;
+      }
+    }, [editMode]);
+
     function renderLaTeX() {
       const Element = isInline ? "span" : "div";
       return (
@@ -111,9 +117,6 @@ export const SlateMath: React.FC<Props> = React.memo(
               }}
               onBlur={() => {
                 justBlurred.current = true;
-                setTimeout(() => {
-                  justBlurred.current = false;
-                }, 1);
                 setEditMode(false);
               }}
               info="tex"

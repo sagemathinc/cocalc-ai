@@ -23,25 +23,89 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   const { selection } = editor;
   if (selection == null || !Range.isCollapsed(selection)) return;
 
+  const codeLineEntry = Editor.above(editor, {
+    match: (node) => Element.isElement(node) && node.type === "code_line",
+    mode: "lowest",
+  });
+  if (codeLineEntry != null) {
+    const [, linePath] = codeLineEntry;
+    const lineIndex = linePath[linePath.length - 1];
+    if (selection.anchor.offset === 0 && lineIndex === 0) {
+      const codeBlockEntry = Editor.above(editor, {
+        at: linePath,
+        match: (node) => Element.isElement(node) && node.type === "code_block",
+      });
+      if (codeBlockEntry != null) {
+        // Do nothing at the very start of a code block.
+        return true;
+      }
+    }
+  }
+
   const above = Editor.above(editor, {
-    match: (node) => Element.isElement(node) && Editor.isBlock(editor, node) && node.type != "paragraph",
+    match: (node) => Element.isElement(node) && Editor.isBlock(editor, node),
+    mode: "lowest",
   });
   if (above == null) return;
   const [block, path] = above;
-  if (Editor.isEditor(block) || !Element.isElement(block)) {
-    return;
-  }
+  if (Editor.isEditor(block) || !Element.isElement(block)) return;
   const start = Editor.start(editor, path);
   if (!Point.equals(selection.anchor, start)) return;
+
+  if (block.type === "paragraph") {
+    if (pullParagraphIntoEmptyBlockquote(editor, path)) {
+      return true;
+    }
+    return;
+  }
 
   // This is where we actually might do something special, finally.
   // Cursor is at the beginning of a non-paragraph block-level
   // element, so maybe do something special.
   switch (block.type) {
+    case "code_block":
+      // Do not delete entire code blocks when backspacing at start.
+      return true;
     case "heading":
       deleteBackwardsHeading(editor, block, path);
       return true;
   }
+}
+
+function pullParagraphIntoEmptyBlockquote(editor: Editor, path: Path): boolean {
+  if (path[path.length - 1] === 0) return false;
+  const prevPath = Path.previous(path);
+  let prevNode;
+  try {
+    [prevNode] = Editor.node(editor, prevPath);
+  } catch {
+    return false;
+  }
+  if (!Element.isElement(prevNode) || prevNode.type !== "blockquote") {
+    return false;
+  }
+  if (Editor.string(editor, prevPath) !== "") {
+    return false;
+  }
+
+  Editor.withoutNormalizing(editor, () => {
+    const quoteNode = Editor.node(editor, prevPath)[0] as Element;
+    if (quoteNode.children.length > 0) {
+      const lastIndex = quoteNode.children.length - 1;
+      const lastPath = prevPath.concat(lastIndex);
+      if (Editor.string(editor, lastPath) === "") {
+        Transforms.removeNodes(editor, { at: lastPath });
+      }
+    }
+    const updatedQuote = Editor.node(editor, prevPath)[0] as Element;
+    const insertIndex = updatedQuote.children.length;
+    const targetPath = prevPath.concat(insertIndex);
+    Transforms.moveNodes(editor, { at: path, to: targetPath });
+    const start = Editor.start(editor, targetPath);
+    Transforms.select(editor, start);
+  });
+
+  return true;
 }
 
 // Special handling at beginning of heading.

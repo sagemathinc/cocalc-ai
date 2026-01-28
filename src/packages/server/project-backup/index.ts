@@ -5,6 +5,7 @@ import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
+import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -399,17 +400,25 @@ export async function getBackupConfig({
     if (!config.sshd_port || !config.sftp_root) {
       return { toml: "", ttl_seconds: 0 };
     }
+    const sshTarget = String(
+      machine?.metadata?.self_host_ssh_target ?? "",
+    ).trim();
+    const reversePort = sshTarget
+      ? Number(rowMetadata?.self_host?.ssh_reverse_port ?? 0)
+      : 0;
     const sshdHost =
       process.env.COCALC_SSHD_HOST ??
       process.env.COCALC_LAUNCHPAD_SSHD_HOST;
-    if (!sshdHost) {
+    const resolvedSshdHost = reversePort ? "localhost" : sshdHost ?? resolveOnPremHost();
+    const resolvedSshdPort = reversePort || config.sshd_port;
+    if (!resolvedSshdHost) {
       return { toml: "", ttl_seconds: 0 };
     }
     const root = project_id
       ? `${config.sftp_root}/${DEFAULT_BACKUP_ROOT}/project-${project_id}`
       : `${config.sftp_root}/${DEFAULT_BACKUP_ROOT}/host-${host_id}`;
     const password = project_id ? await getProjectBackupSecret(project_id) : "";
-    const endpoint = `ssh://${sshdHost}:${config.sshd_port}`;
+    const endpoint = `ssh://${resolvedSshdHost}:${resolvedSshdPort}`;
     const toml = [
       "[repository]",
       'repository = "opendal:sftp"',

@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Node, Location, Editor, Element, Range, Path } from "slate";
+import {
+  Node,
+  Location,
+  Editor,
+  Element,
+  Range,
+  Path,
+  Point,
+  Text,
+} from "slate";
 
 export function containingBlock(editor: Editor): undefined | [Node, Location] {
   for (const x of Editor.nodes(editor, {
@@ -21,14 +30,86 @@ export function getNodeAt(editor: Editor, path: Path): undefined | Node {
   }
 }
 
+function docStart(editor: Editor): Point {
+  try {
+    return Editor.start(editor, []);
+  } catch (_) {
+    // Fall back to the first text node so selection always points to a leaf.
+    for (const [node, path] of Editor.nodes(editor, {
+      at: [],
+      match: (n) => Text.isText(n),
+    })) {
+      const text = node as Text;
+      const nextOffset = Math.max(0, Math.min(0, text.text.length));
+      return { path, offset: nextOffset };
+    }
+    return { path: [0], offset: 0 };
+  }
+}
+
+export function pointAtPath(
+  editor: Editor,
+  path: Path,
+  offset?: number,
+  edge: "start" | "end" = "start",
+): Point {
+  try {
+    if (!Node.has(editor, path)) {
+      return docStart(editor);
+    }
+    const point =
+      edge === "end" ? Editor.end(editor, path) : Editor.start(editor, path);
+    if (offset == null) return point;
+    const [node] = Editor.node(editor, point);
+    if (Text.isText(node)) {
+      const nextOffset = Math.max(0, Math.min(offset, node.text.length));
+      return { path: point.path, offset: nextOffset };
+    }
+    return point;
+  } catch (_) {
+    return docStart(editor);
+  }
+}
+
+export function ensurePoint(
+  editor: Editor,
+  point?: Point | null,
+): Point {
+  if (point == null) {
+    return docStart(editor);
+  }
+  try {
+    const [node] = Editor.node(editor, point);
+    if (Text.isText(node)) {
+      return point;
+    }
+  } catch (_) {
+    // fall through to coercion
+  }
+  return pointAtPath(editor, point.path, point.offset);
+}
+
+export function ensureRange(
+  editor: Editor,
+  range?: Range | null,
+): Range {
+  if (range == null) {
+    const point = docStart(editor);
+    return { anchor: point, focus: point };
+  }
+  const anchor = ensurePoint(editor, range.anchor);
+  const focus = ensurePoint(editor, range.focus);
+  return { anchor, focus };
+}
+
 // Range that contains the entire document.
 export function rangeAll(editor: Editor): Range {
-  const first = Editor.first(editor, []);
-  const last = Editor.last(editor, []);
-  const offset = last[0]["text"]?.length ?? 0; // TODO: not 100% that this is right
+  const first = pointAtPath(editor, [], 0, "start");
+  const last = pointAtPath(editor, [], undefined, "end");
+  const offset = last.offset;
   return {
-    anchor: { path: first[1], offset: 0 },
-    focus: { path: last[1], offset },
+    anchor: first,
+    focus: { path: last.path, offset },
   };
 }
 
@@ -36,19 +117,18 @@ export function rangeAll(editor: Editor): Range {
 // end of the document.
 export function rangeToEnd(editor: Editor): Range {
   if (editor.selection == null) return rangeAll(editor);
-  const last = Editor.last(editor, []);
-  const offset = last[0]["text"]?.length ?? 0;
+  const last = pointAtPath(editor, [], undefined, "end");
   return {
-    anchor: editor.selection.focus,
-    focus: { path: last[1], offset },
+    anchor: ensurePoint(editor, editor.selection.focus),
+    focus: last,
   };
 }
 
 export function rangeFromStart(editor: Editor): Range {
   if (editor.selection == null) return rangeAll(editor);
-  const first = Editor.first(editor, []);
+  const first = pointAtPath(editor, [], 0, "start");
   return {
-    anchor: { path: first[1], offset: 0 },
-    focus: editor.selection.focus,
+    anchor: first,
+    focus: ensurePoint(editor, editor.selection.focus),
   };
 }

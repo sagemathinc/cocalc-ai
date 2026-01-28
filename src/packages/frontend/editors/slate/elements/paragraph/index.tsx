@@ -3,14 +3,17 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { Text } from "slate";
 import { register, SlateElement } from "../register";
 
 export interface Paragraph extends SlateElement {
   type: "paragraph";
+  blank?: boolean;
 }
 
 register({
   slateType: "paragraph",
+  markdownType: ["paragraph", "blank_line"],
 
   toSlate: ({ token, children, state }) => {
     if (token.hidden) {
@@ -23,15 +26,28 @@ register({
       // precedence.
       state.tight = true;
     }
-    return { type: "paragraph", children } as Paragraph;
+    const blank = token.type === "blank_line";
+    return { type: "paragraph", blank, children } as Paragraph;
   },
 
   StaticElement: ({ attributes, children, element }) => {
     if (element.type != "paragraph") throw Error("bug");
+    const isBlank = element.blank === true;
+    const firstChild = element.children?.[0];
+    const isEmpty =
+      element.children?.length === 1 &&
+      Text.isText(firstChild) &&
+      firstChild.text === "";
+    const baseClassName = (attributes as { className?: string }).className;
+    const className = isBlank
+      ? [baseClassName, "cocalc-blank-line"].filter(Boolean).join(" ")
+      : baseClassName;
     // textIndent: 0 is needed due to task lists -- see slate/elements/list/list-item.tsx
     return (
-      <p {...attributes}>
-        <span style={{ textIndent: 0 }}>{children}</span>
+      <p {...attributes} className={className}>
+        <span style={{ textIndent: 0 }}>
+          {isBlank && isEmpty ? <br /> : children}
+        </span>
       </p>
     );
   },

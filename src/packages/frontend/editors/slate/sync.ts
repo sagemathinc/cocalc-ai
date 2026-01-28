@@ -8,7 +8,7 @@ import { Descendant, Editor, Point } from "slate";
 import { ReactEditor } from "./slate-react";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { markdown_to_slate } from "./markdown-to-slate";
-import { isWhitespaceParagraph } from "./padding";
+import { isPlaceholderParagraph } from "./padding";
 const SENTINEL = "\uFE30";
 import { SlateEditor } from "./editable-markdown";
 
@@ -47,6 +47,7 @@ export function slatePointToMarkdown(
   let markdown = slate_to_markdown(editor.children, {
     cache: editor.syncCache,
     noCache: new Set([point.path[0]]),
+    preserveBlankLines: editor.preserveBlankLines,
     hook: (elt) => {
       if (elt !== node) return;
       return (s) => s.slice(0, point.offset) + SENTINEL + s.slice(point.offset);
@@ -204,8 +205,8 @@ function normalizePoint(
       j = 0;
     while (i <= point.path[0]) {
       if (
-        isWhitespaceParagraph(editor.children[j]) &&
-        !isWhitespaceParagraph(doc[i])
+        isPlaceholderParagraph(editor.children[j]) &&
+        !isPlaceholderParagraph(doc[i])
       ) {
         point.path[0] += 1;
         j += 1;

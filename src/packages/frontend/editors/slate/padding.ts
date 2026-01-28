@@ -25,6 +25,13 @@ export function isWhitespaceParagraph(node: Node | undefined): boolean {
   );
 }
 
+export function isPlaceholderParagraph(node: Node | undefined): boolean {
+  if (!isWhitespaceParagraph(node)) {
+    return false;
+  }
+  return (node as { blank?: boolean }).blank !== true;
+}
+
 export function isWhitespaceText(node: Node | undefined): boolean {
   return node?.["text"]?.trim() === "";
 }
@@ -33,4 +40,17 @@ export function ensureDocNonempty(doc: Descendant[]): void {
   if (doc.length == 0) {
     doc.push(emptyParagraph());
   }
+}
+
+export function stripBlankParagraphs(value: Descendant[]): Descendant[] {
+  const filtered = value.filter(
+    (node) =>
+      !(
+        node?.["type"] === "paragraph" &&
+        node?.["blank"] === true &&
+        isWhitespaceParagraph(node)
+      ),
+  );
+  ensureDocNonempty(filtered);
+  return filtered;
 }

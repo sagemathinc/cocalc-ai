@@ -5,11 +5,11 @@
 
 // Plugin system for keyboarding handlers.
 
-export { IS_MACOS } from "@cocalc/frontend/feature";
+export { IS_MACOS } from "../../../feature";
 
-import { SlateEditor } from "../editable-markdown";
-import { Actions } from "../types";
-import { SearchHook } from "../search";
+import type { SlateEditor } from "../types";
+import type { Actions } from "../types";
+import type { SearchHook } from "../search";
 
 interface Key {
   key: string;

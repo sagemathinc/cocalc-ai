@@ -16,30 +16,14 @@ import {
   moveCursorUp,
   moveCursorDown,
   moveCursorToBeginningOfBlock,
-  moveCursorToBeginningOfLine,
-  moveCursorToEndOfLine,
   isAtBeginningOfBlock,
   isAtEndOfBlock,
 } from "../control";
-import { SlateEditor } from "../types";
+import type { SlateEditor } from "../types";
 import { ReactEditor } from "../slate-react";
-import { Transforms } from "slate";
 
 const down = ({ editor }: { editor: SlateEditor }) => {
-  const { selection } = editor;
-  setTimeout(() => {
-    // We have to do this via a timeout, because we don't control the cursor.
-    // Instead the selection in contenteditable changes via the browser and
-    // we react to that. Thus this is the only way with our current "sync with
-    // contenteditable approach".  Here we just ensure that a move happens, rather
-    // than having the cursor be totally stuck, which is super annoying..
-    if (editor.selection === selection) {
-      Transforms.move(editor, { unit: "line" });
-    }
-  }, 1);
-
   const cur = editor.selection?.focus;
-
   if (
     cur != null &&
     editor.onCursorBottom != null &&
@@ -56,16 +40,7 @@ const down = ({ editor }: { editor: SlateEditor }) => {
     cur.path[1] == editor.children[cur.path[0]]["children"]?.length - 1
   ) {
     // moving to the next block:
-    if (editor.scrollIntoDOM(index + 1)) {
-      // we did actually have to scroll the block below current one into the dom.
-      setTimeout(() => {
-        // did cursor move? -- if not, we manually move it.
-        if (cur == editor.selection?.focus) {
-          moveCursorDown(editor, true);
-          moveCursorToBeginningOfBlock(editor);
-        }
-      }, 0);
-    }
+    editor.scrollIntoDOM(index + 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
     // just work in the usual way
@@ -92,17 +67,6 @@ const down = ({ editor }: { editor: SlateEditor }) => {
 register({ key: "ArrowDown" }, down);
 
 const up = ({ editor }: { editor: SlateEditor }) => {
-  const { selection } = editor;
-  setTimeout(() => {
-    // We have to do this via a timeout, because we don't control the cursor.
-    // Instead the selection in contenteditable changes via the browser and
-    // we react to that. Thus this is the only way with our current "sync with
-    // contenteditable approach".
-    if (editor.selection === selection) {
-      Transforms.move(editor, { unit: "line", reverse: true });
-    }
-  }, 1);
-
   const cur = editor.selection?.focus;
   if (
     cur != null &&
@@ -114,14 +78,7 @@ const up = ({ editor }: { editor: SlateEditor }) => {
   }
   const index = cur?.path[0];
   if (editor.windowedListRef.current != null && index && cur.path[1] == 0) {
-    if (editor.scrollIntoDOM(index - 1)) {
-      setTimeout(() => {
-        if (cur == editor.selection?.focus) {
-          moveCursorUp(editor, true);
-          moveCursorToBeginningOfBlock(editor);
-        }
-      }, 0);
-    }
+    editor.scrollIntoDOM(index - 1);
   }
   if (ReactEditor.selectionIsInDOM(editor)) {
     if (!blocksCursor(editor, true)) {
@@ -151,17 +108,10 @@ google docs and codemirror all move the cursor when you page up/down,
 so maybe that should be implemented...?
 */
 
-function pageWindowed(sign) {
+function pageWindowed(_sign) {
   return ({ editor }) => {
     const scroller = editor.windowedListRef.current?.getScrollerRef();
     if (scroller == null) return false;
-    const { scrollTop } = scroller;
-
-    setTimeout(() => {
-      if (scrollTop == scroller.scrollTop) {
-        scroller.scrollTop += sign * scroller.getBoundingClientRect().height;
-      }
-    }, 0);
 
     return false;
   };
@@ -183,10 +133,6 @@ function endOfDoc({ editor }) {
   const scroller = editor.windowedListRef.current?.getScrollerRef();
   if (scroller == null) return false;
   scroller.scrollTop = 1e20; // basically infinity
-  // might have to do it again do to measuring size of rows...
-  setTimeout(() => {
-    scroller.scrollTop = 1e20;
-  }, 1);
   return true;
 }
 register({ key: "ArrowUp", meta: true }, beginningOfDoc); // mac
@@ -194,33 +140,11 @@ register({ key: "Home", ctrl: true }, beginningOfDoc); // windows
 register({ key: "ArrowDown", meta: true }, endOfDoc); // mac
 register({ key: "End", ctrl: true }, endOfDoc); // windows
 
-function endOfLine({ editor }) {
-  const { selection } = editor;
-  setTimeout(() => {
-    // We have to do this via a timeout, because we don't control the cursor.
-    // Instead the selection in contenteditable changes via the browser and
-    // we react to that. Thus this is the only way with our current "sync with
-    // contenteditable approach".
-    if (editor.selection === selection) {
-      // stuck!
-      moveCursorToEndOfLine(editor);
-    }
-  }, 1);
+function endOfLine() {
   return false;
 }
 
-function beginningOfLine({ editor }) {
-  const { selection } = editor;
-  setTimeout(() => {
-    // We have to do this via a timeout, because we don't control the cursor.
-    // Instead the selection in contenteditable changes via the browser and
-    // we react to that. Thus this is the only way with our current "sync with
-    // contenteditable approach".
-    if (editor.selection === selection) {
-      // stuck!
-      moveCursorToBeginningOfLine(editor);
-    }
-  }, 1);
+function beginningOfLine() {
   return false;
 }
 

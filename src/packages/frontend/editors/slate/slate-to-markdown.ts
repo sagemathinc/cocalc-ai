@@ -11,6 +11,7 @@ export interface Info {
   parent?: Node; // the parent of the node being serialized (if there is a parent)
   index?: number; // index of this node among its siblings
   no_escape: boolean; // if true, do not escape text in this node.
+  preserveBlankLines?: boolean;
   hook?: (Node) => undefined | ((string) => string);
   lastChild: boolean; // true if this is the last child among its siblings.
   cache?;
@@ -38,6 +39,7 @@ export function slate_to_markdown(
     hook?: (Node) => undefined | ((string) => string);
     cache?;
     noCache?: Set<number>;
+    preserveBlankLines?: boolean;
   }
 ): string {
   // const t = Date.now();
@@ -50,13 +52,25 @@ export function slate_to_markdown(
       break;
     }
   }
-  for (let i = 0; i < slate.length; i++) {
+  const preserveBlankLines = options?.preserveBlankLines ?? true;
+  let start = 0;
+  let end = slate.length - 1;
+  if (preserveBlankLines) {
+    while (start <= end && isBlankParagraph(slate[start])) {
+      start += 1;
+    }
+    while (end >= start && isBlankParagraph(slate[end])) {
+      end -= 1;
+    }
+  }
+  for (let i = start; i <= end; i++) {
     markdown += serialize(slate[i], {
       no_escape: !!options?.no_escape,
       hook: options?.hook,
+      preserveBlankLines,
       index: i,
       topLevel: i,
-      lastChild: i == slate.length - 1,
+      lastChild: i == end,
       cache: options?.cache,
       noCache: options?.noCache,
       references,
@@ -66,4 +80,15 @@ export function slate_to_markdown(
   //console.log("time: slate_to_markdown ", Date.now() - t, "ms");
   //console.log("slate_to_markdown", { slate, markdown });
   return markdown;
+}
+
+function isBlankParagraph(node?: Node): boolean {
+  return (
+    node != null &&
+    node["type"] === "paragraph" &&
+    node["blank"] === true &&
+    Array.isArray(node["children"]) &&
+    node["children"].length === 1 &&
+    node["children"][0]?.["text"] === ""
+  );
 }

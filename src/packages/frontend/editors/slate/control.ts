@@ -6,9 +6,9 @@
 import { Editor, Element, Range, Transforms, Point } from "slate";
 import { ReactEditor } from "./slate-react";
 import { isEqual } from "lodash";
-import { rangeAll } from "./slate-util";
-import { emptyParagraph } from "./padding";
+import { ensurePoint, pointAtPath, rangeAll } from "./slate-util";
 import { delay } from "awaiting";
+import { logSlateDebug, withSelectionReason } from "./slate-utils/slate-debug";
 
 // Scroll to the n-th heading in the document
 export async function scrollToHeading(
@@ -54,7 +54,8 @@ export async function scrollToHeading(
 }
 
 export function setCursor(editor: ReactEditor, point: Point) {
-  Transforms.setSelection(editor, { anchor: point, focus: point });
+  const safePoint = ensurePoint(editor, point);
+  Transforms.setSelection(editor, { anchor: safePoint, focus: safePoint });
 }
 
 function move(editor: Editor, options?): void {
@@ -64,16 +65,27 @@ function move(editor: Editor, options?): void {
     // I saw this once when moving the cursor, and don't think it is worth crashing
     // the editor completely.
     console.warn(`Slate: issue moving cursor -- ${err}`);
+    logSlateDebug("reset-selection:move-error", {
+      error: String(err),
+      selection: editor.selection ?? null,
+      options,
+    });
     resetSelection(editor);
   }
 }
 
 export function resetSelection(editor: Editor) {
   // set to beginning of document -- better than crashing.
-  const focus = { path: [0, 0], offset: 0 };
-  Transforms.setSelection(editor, {
+  const focus = pointAtPath(editor, []);
+  logSlateDebug("reset-selection", {
+    selection: editor.selection ?? null,
     focus,
-    anchor: focus,
+  });
+  withSelectionReason(editor, "reset-selection", () => {
+    Transforms.setSelection(editor, {
+      focus,
+      anchor: focus,
+    });
   });
 }
 
@@ -85,17 +97,9 @@ export function moveCursorDown(editor: Editor, force: boolean = false): void {
   const newFocus = editor.selection?.focus;
   if (newFocus == null) return;
   if (isEqual(focus, newFocus)) {
-    // didn't move down; at end of doc, so put a blank paragraph there
-    // and move to that.
-    editor.apply({
-      type: "insert_node",
-      path: [editor.children.length],
-      node: emptyParagraph(),
-    });
-    move(editor, { distance: 1, unit: "line" });
+    // didn't move down; at end of doc or blocked.
     return;
   }
-  ensureCursorNotBlocked(editor);
 }
 
 export function moveCursorUp(editor: Editor, force: boolean = false): void {
@@ -106,16 +110,9 @@ export function moveCursorUp(editor: Editor, force: boolean = false): void {
   const newFocus = editor.selection?.focus;
   if (newFocus == null) return;
   if (isEqual(focus, newFocus)) {
-    // didn't move -- put a blank paragraph there
-    // and move to that.
-    editor.apply({
-      type: "insert_node",
-      path: [0],
-      node: emptyParagraph(),
-    });
-    move(editor, { distance: 1, unit: "line", reverse: true });
+    // didn't move; at start of doc or blocked.
+    return;
   }
-  ensureCursorNotBlocked(editor, true);
 }
 
 export function blocksCursor(editor, up: boolean = false): boolean {
@@ -159,21 +156,7 @@ export function blocksCursor(editor, up: boolean = false): boolean {
 
 export function ensureCursorNotBlocked(editor: Editor, up: boolean = false) {
   if (!blocksCursor(editor, !up)) return;
-  // cursor in a void element, so insert a blank paragraph at
-  // cursor and put cursor in that blank paragraph.
-  const { selection } = editor;
-  if (selection == null) return;
-  const path = [selection.focus.path[0] + (up ? +1 : 0)];
-  editor.apply({
-    type: "insert_node",
-    path,
-    node: { type: "paragraph", children: [{ text: "" }] },
-  });
-  const focus = { path: path.concat([0]), offset: 0 };
-  Transforms.setSelection(editor, {
-    focus,
-    anchor: focus,
-  });
+  // No-op: avoid injecting placeholder paragraphs just to move the cursor.
 }
 
 // Find path to a given element.
@@ -203,7 +186,7 @@ export function findElement(
 export function moveCursorToElement(editor: Editor, element: Element): void {
   const path = findElement(editor, element);
   if (path == null) return;
-  const point = { path, offset: 0 };
+  const point = pointAtPath(editor, path);
   Transforms.setSelection(editor, { anchor: point, focus: point });
 }
 
@@ -247,7 +230,7 @@ export function moveCursorToBeginningOfBlock(
     path = [...path]; // make mutable copy
     path[path.length - 1] = 0;
   }
-  const focus = { path, offset: 0 };
+  const focus = pointAtPath(editor, path);
   Transforms.setSelection(editor, { focus, anchor: focus });
 }
 

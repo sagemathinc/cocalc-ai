@@ -38,6 +38,9 @@ export async function initHostStatusService() {
         }
         const machine = rows[0]?.metadata?.machine ?? {};
         const selfHostMode = machine?.metadata?.self_host_mode;
+        const sshTarget = String(
+          machine?.metadata?.self_host_ssh_target ?? "",
+        ).trim();
         const { rows: connectorRows } = await getPool().query<{
           connector_id: string;
         }>(
@@ -73,9 +76,8 @@ export async function initHostStatusService() {
           host_id,
           public_key,
         });
-        const reversePort = Number(
-          rows[0]?.metadata?.self_host?.ssh_reverse_port ?? 0,
-        );
+        const reversePort =
+          sshTarget && Number(rows[0]?.metadata?.self_host?.ssh_reverse_port ?? 0);
         const sshdHost =
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??
@@ -120,6 +122,9 @@ export async function initHostStatusService() {
         }
         const machine = rows[0]?.metadata?.machine ?? {};
         const selfHostMode = machine?.metadata?.self_host_mode;
+        const sshTarget = String(
+          machine?.metadata?.self_host_ssh_target ?? "",
+        ).trim();
         const { rows: connectorRows } = await getPool().query<{
           connector_id: string;
         }>(
@@ -156,9 +161,8 @@ export async function initHostStatusService() {
           host_id,
           public_key,
         });
-        const reversePort = Number(
-          rows[0]?.metadata?.self_host?.ssh_reverse_port ?? 0,
-        );
+        const reversePort =
+          sshTarget && Number(rows[0]?.metadata?.self_host?.ssh_reverse_port ?? 0);
         const sshdHost =
           process.env.COCALC_SSHD_HOST ??
           process.env.COCALC_LAUNCHPAD_SSHD_HOST ??

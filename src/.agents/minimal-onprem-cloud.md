@@ -1,15 +1,11 @@
 # Support Minimal OnPrem Cloud
 
 ## TODO:
-
-- [ ] project api isn't working, e.g., what is defined here build/cocalc-lite/src/packages/conat/project/api/index.ts
-
-- [ ] app servers http server proxying of web servers running inside the project
-
 - [ ] backing up and restoring to rustic repo, so backup, file copy, etc. is all unlocked
 
----
+- [x] project api isn't working, e.g., what is defined here build/cocalc-lite/src/packages/conat/project/api/index.ts
 
+- [x] app servers http server proxying of web servers running inside the project
 
 - [x] provisioning of the sparse image file (size).
 

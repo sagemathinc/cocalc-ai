@@ -4,23 +4,33 @@
  */
 
 import { Button, Input, Popover } from "antd";
-import { ReactNode, useEffect, useRef, useState } from "react";
-import { useIsMountedRef } from "@cocalc/frontend/app-framework";
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { register, RenderElementProps } from "../register";
 import { useSlate } from "../hooks";
-import { SlateCodeMirror } from "../codemirror";
-import { delay } from "awaiting";
 import { useSetElement } from "../set-element";
 import infoToMode from "./info-to-mode";
 import ActionButtons, { RunFunction } from "./action-buttons";
 import { useChange } from "../../use-change";
-import { getHistory, isPreviousSiblingCodeBlock } from "./history";
-import InsertBar from "./insert-bar";
+import { getHistory } from "./history";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
+import { ReactEditor } from "../../slate-react";
+import { useFocused } from "../hooks";
+import { hash_string } from "@cocalc/util/misc";
+import { Editor, Path, Transforms } from "slate";
+import { markdown_to_slate } from "../../markdown-to-slate";
+import type { CodeBlock } from "./types";
+import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -34,6 +44,7 @@ interface FloatingActionMenuProps {
   lineCount: number;
   modeLabel: string;
   onRun?: () => void;
+  collapseToggle?: { label: string; onClick: () => void } | null;
 }
 
 function FloatingActionMenu({
@@ -48,6 +59,7 @@ function FloatingActionMenu({
   lineCount,
   modeLabel,
   onRun,
+  collapseToggle,
 }: FloatingActionMenuProps) {
   const [open, setOpen] = useState(false);
 
@@ -126,6 +138,21 @@ function FloatingActionMenu({
         padding: "2px 4px",
       }}
     >
+      {collapseToggle && (
+        <Button
+          size="small"
+          type="text"
+          style={{ color: "#666", background: "transparent" }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            collapseToggle.onClick();
+          }}
+        >
+          {collapseToggle.label}
+        </Button>
+      )}
       <CopyButton
         size="small"
         value={code}
@@ -154,12 +181,24 @@ function FloatingActionMenu({
 }
 
 function Element({ attributes, children, element }: RenderElementProps) {
+  if (element.type === "code_line") {
+    return (
+      <div
+        {...attributes}
+        className="cocalc-slate-code-line"
+        style={{ position: "relative" }}
+      >
+        {children}
+      </div>
+    );
+  }
   if (element.type != "code_block") {
     throw Error("bug");
   }
+  const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar } = useFileContext();
   const editor = useSlate();
-  const isMountedRef = useIsMountedRef();
+  const focused = useFocused();
   const [info, setInfo] = useState<string>(element.info ?? "");
   const infoFocusedRef = useRef<boolean>(false);
   const [output, setOutput] = useState<null | ReactNode>(null);
@@ -170,14 +209,32 @@ function Element({ attributes, children, element }: RenderElementProps) {
   const [history, setHistory] = useState<string[]>(
     getHistory(editor, element) ?? [],
   );
-  const [codeSibling, setCodeSibling] = useState<boolean>(
-    isPreviousSiblingCodeBlock(editor, element),
+  const elementPath = ReactEditor.findPath(editor, element);
+  const codeValue = getCodeBlockText(element as CodeBlock);
+  const expandState =
+    (editor as any).codeBlockExpandState ??
+    ((editor as any).codeBlockExpandState = new Map<string, boolean>());
+  const blockIndex = (editor as any).blockIndex;
+  const collapseKey = useMemo(() => {
+    if (blockIndex != null) {
+      return `block:${blockIndex}`;
+    }
+    if (elementPath != null) {
+      return `path:${elementPath.join(".")}`;
+    }
+    const base = `${info ?? ""}\n${codeValue}`;
+    return `code:${hash_string(base)}`;
+  }, [blockIndex, elementPath, info, codeValue]);
+  const [expanded, setExpanded] = useState<boolean>(
+    () => expandState.get(collapseKey) ?? false,
   );
+  useEffect(() => {
+    setExpanded(expandState.get(collapseKey) ?? false);
+  }, [collapseKey]);
   useEffect(() => {
     const newHistory = getHistory(editor, element);
     if (newHistory != null && !isEqual(history, newHistory)) {
       setHistory(newHistory);
-      setCodeSibling(isPreviousSiblingCodeBlock(editor, element));
     }
     if (!infoFocusedRef.current && element.info != info) {
       // upstream change
@@ -185,24 +242,107 @@ function Element({ attributes, children, element }: RenderElementProps) {
     }
   }, [change, element]);
 
-  const lineCount = element.value.split("\n").length;
-  const modeLabel = infoToMode(info, { value: element.value }) || "plain text";
+  const lineCount = getCodeBlockLineCount(element as CodeBlock);
+  const modeLabel = infoToMode(info, { value: codeValue }) || "plain text";
+  const shouldCollapse = false;
+  const selection = editor.selection;
+  const selectionInBlock =
+    !!focused &&
+    !!selection &&
+    Path.isAncestor(elementPath, selection.anchor.path) &&
+    Path.isAncestor(elementPath, selection.focus.path);
+  const forceExpanded = selectionInBlock;
+  const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
+  const markdownCandidate = (element as any).markdownCandidate;
+  const setExpandedState = useCallback(
+    (next: boolean, focus: boolean) => {
+      expandState.set(collapseKey, next);
+      setExpanded(next);
+      if (next && focus) {
+        const point = Editor.start(editor, elementPath);
+        Transforms.select(editor, point);
+        ReactEditor.focus(editor);
+      }
+    },
+    [collapseKey, expandState, editor, elementPath],
+  );
+
+  const toggleCollapse = useCallback(
+    (opts?: { focus?: boolean }) => {
+      const next = !expanded;
+      const focus = next && (opts?.focus ?? true);
+      setExpandedState(next, focus);
+    },
+    [expanded, setExpandedState],
+  );
+
+  const collapseNow = useCallback(() => {
+    setExpandedState(false, false);
+  }, [setExpandedState]);
+
+  const dismissMarkdownCandidate = useCallback(() => {
+    setElement({ markdownCandidate: undefined } as any);
+  }, [setElement]);
+
+  const convertMarkdownCandidate = useCallback(() => {
+    const markdown = codeValue ?? "";
+    const doc = markdown_to_slate(markdown, true);
+    Editor.withoutNormalizing(editor, () => {
+      Transforms.removeNodes(editor, { at: elementPath });
+      Transforms.insertNodes(editor, doc as any, { at: elementPath });
+    });
+  }, [editor, codeValue, elementPath]);
 
   return (
-    <div {...attributes}>
-      <div contentEditable={false} style={{ textIndent: 0 }}>
-        {!codeSibling && (
-          <InsertBar
-            editor={editor}
-            element={element}
-            info={info}
-            above={true}
-          />
-        )}
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ position: "relative" }}>
-              {!disableMarkdownCodebar && (
+    <div {...attributes} spellCheck={false} style={{ textIndent: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ position: "relative" }}>
+            {markdownCandidate && (
+              <div
+                contentEditable={false}
+                style={{
+                  position: "absolute",
+                  top: 6,
+                  left: 6,
+                  zIndex: 2,
+                  display: "flex",
+                  gap: "6px",
+                  background: "rgba(255, 255, 255, 0.9)",
+                  border: "1px solid #ddd",
+                  borderRadius: "6px",
+                  padding: "2px 6px",
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#666" }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    convertMarkdownCandidate();
+                  }}
+                >
+                  Convert to rich text
+                </Button>
+                <Button
+                  size="small"
+                  type="text"
+                  style={{ color: "#666" }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dismissMarkdownCandidate();
+                  }}
+                >
+                  Dismiss
+                </Button>
+              </div>
+            )}
+            {!disableMarkdownCodebar && (
+              <div contentEditable={false}>
                 <FloatingActionMenu
                   info={info}
                   setInfo={(info) => {
@@ -221,7 +361,7 @@ function Element({ attributes, children, element }: RenderElementProps) {
                   renderActions={() => (
                     <ActionButtons
                       size="small"
-                      input={element.value}
+                      input={codeValue}
                       history={history}
                       setOutput={setOutput}
                       output={output}
@@ -232,16 +372,16 @@ function Element({ attributes, children, element }: RenderElementProps) {
                       }}
                     />
                   )}
-                  code={element.value}
+                  code={codeValue}
                   download={() => {
-                    const blob = new Blob([element.value], {
+                    const blob = new Blob([codeValue], {
                       type: "text/plain;charset=utf-8",
                     });
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement("a");
                     link.href = url;
                     const ext =
-                      infoToMode(info, { value: element.value }) || "txt";
+                      infoToMode(info, { value: codeValue }) || "txt";
                     link.download = `code-block.${ext}`;
                     link.click();
                     URL.revokeObjectURL(url);
@@ -249,69 +389,65 @@ function Element({ attributes, children, element }: RenderElementProps) {
                   lineCount={lineCount}
                   modeLabel={modeLabel}
                   onRun={() => runRef.current?.()}
+                  collapseToggle={
+                    shouldCollapse
+                      ? {
+                          label: isCollapsed ? "Show all" : "Collapse",
+                          onClick: isCollapsed
+                            ? () => toggleCollapse({ focus: true })
+                            : collapseNow,
+                        }
+                      : null
+                  }
                 />
-              )}
-              <SlateCodeMirror
-                options={{ lineWrapping: true }}
-                value={element.value}
-                info={infoToMode(info, { value: element.value })}
-                onChange={(value) => {
-                  setElement({ value });
+              </div>
+            )}
+            {isCollapsed ? (
+              <pre
+                className="cocalc-slate-code-block"
+                contentEditable={false}
+                style={{ margin: 0 }}
+              >
+                {codeValue
+                  .split("\n")
+                  .slice(0, COLLAPSE_THRESHOLD_LINES)
+                  .join("\n")}
+              </pre>
+            ) : (
+              <div className="cocalc-slate-code-block">{children}</div>
+            )}
+            {!disableMarkdownCodebar && output != null && (
+              <div
+                contentEditable={false}
+                onMouseDown={() => {
+                  editor.setIgnoreSelection(true);
                 }}
-                onFocus={async () => {
-                  await delay(1); // must be a little longer than the onBlur below.
-                  if (!isMountedRef.current) return;
+                onMouseUp={() => {
+                  editor.setIgnoreSelection(false);
                 }}
-                onBlur={async () => {
-                  await delay(0);
-                  if (!isMountedRef.current) return;
+                style={{
+                  borderTop: "1px dashed #ccc",
+                  background: "white",
+                  padding: "5px 0 5px 30px",
                 }}
-                onShiftEnter={() => {
-                  runRef.current?.();
-                }}
-                addonAfter={
-                  disableMarkdownCodebar || output == null ? null : (
-                    <div
-                      onMouseDown={() => {
-                        editor.setIgnoreSelection(true);
-                      }}
-                      onMouseUp={() => {
-                        // Re-enable slate listing for selection changes again in next render loop.
-                        setTimeout(() => {
-                          editor.setIgnoreSelection(false);
-                        }, 0);
-                      }}
-                      style={{
-                        borderTop: "1px dashed #ccc",
-                        background: "white",
-                        padding: "5px 0 5px 30px",
-                      }}
-                    >
-                      {output}
-                    </div>
-                  )
-                }
-              />
-            </div>
+              >
+                {output}
+              </div>
+            )}
           </div>
-          {element.info == "mermaid" && (
-            <Mermaid style={{ flex: 1 }} value={element.value} />
-          )}
         </div>
-        <InsertBar
-          editor={editor}
-          element={element}
-          info={info}
-          above={false}
-        />
+        {element.info == "mermaid" && (
+          <div contentEditable={false}>
+            <Mermaid style={{ flex: 1 }} value={codeValue} />
+          </div>
+        )}
       </div>
-      {children}
     </div>
   );
 }
 
 function fromSlate({ node }) {
-  const value = node.value as string;
+  const value = getCodeBlockText(node as CodeBlock);
 
   // We always convert them to fenced, because otherwise collaborative editing just
   // isn't possible, e.g., because you can't have blank lines at the end.  This isn't
@@ -344,4 +480,9 @@ register({
     autoFocus: true,
     autoAdvance: true,
   },
+});
+
+register({
+  slateType: "code_line",
+  Element,
 });

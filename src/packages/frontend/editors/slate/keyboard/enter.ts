@@ -5,17 +5,17 @@
 
 // What happens when you hit the enter key.
 
-import { Editor, Element, Transforms } from "slate";
+import { Element, Transforms } from "slate";
 import { isElementOfType } from "../elements";
-import { emptyParagraph, isWhitespaceParagraph } from "../padding";
 import { register } from "./register";
+import { emptyParagraph } from "../padding";
 import {
   isAtBeginningOfBlock,
   isAtEndOfBlock,
   moveCursorToBeginningOfBlock,
 } from "../control";
-import { containingBlock } from "../slate-util";
 import { markdownAutoformat } from "../format/auto-format";
+import { handleBlankLineEnter } from "./blank-line-enter";
 
 register({ key: "Enter" }, ({ editor }) => {
   markdownAutoformat(editor);
@@ -35,16 +35,7 @@ register({ key: "Enter" }, ({ editor }) => {
     // another empty paragraph.  We do a bunch of special cases so that
     // our document corresponds much more closely to what markdown
     // actually supports.
-
-    if (isWhitespaceParagraph(containingBlock(editor)?.[0])) {
-      return true;
-    }
-    const prev = Editor.previous(editor);
-    if (prev == null) return false;
-    if (isWhitespaceParagraph(prev[0])) {
-      return true;
-    }
-    return false;
+    return handleBlankLineEnter(editor);
   }
 
   if (isElementOfType(x, ["bullet_list", "ordered_list"])) {

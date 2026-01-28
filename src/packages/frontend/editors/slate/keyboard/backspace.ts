@@ -61,7 +61,8 @@ function deleteKey({ editor }) {
   return true;
 }
 
-register({ key: "Delete" }, deleteKey);
+// Add Ctrl+D as a forward-delete shortcut (helpful on keyboards without Delete).
+register([{ key: "Delete" }, { key: "d", ctrl: true }], deleteKey);
 
 function isAtStart(loc: Point): boolean {
   for (const n of loc.path) {
