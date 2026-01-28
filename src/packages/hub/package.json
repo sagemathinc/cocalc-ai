@@ -49,7 +49,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo",
-    "build": "tsc && coffee -m -c -o dist/ .",
+    "build": "tsc --build",
     "app": "pnpm app:pglite",
     "app:pglite": "./bin/start.sh pglite",
     "app:postgres": "./bin/start.sh postgres",
