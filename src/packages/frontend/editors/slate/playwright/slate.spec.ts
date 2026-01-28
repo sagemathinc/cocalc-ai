@@ -249,7 +249,12 @@ test("autoformat quotes the current paragraph when typing > at start", async ({
   });
 
   await page.waitForFunction(() => {
-    return window.__slateTest?.getValue()?.[0]?.type === "blockquote";
+    const value = window.__slateTest?.getValue();
+    return (
+      Array.isArray(value) &&
+      value.length > 0 &&
+      (value[0] as { type?: string }).type === "blockquote"
+    );
   });
 
   const value = (await page.evaluate(
