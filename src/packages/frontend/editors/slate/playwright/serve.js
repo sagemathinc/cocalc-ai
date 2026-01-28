@@ -9,6 +9,20 @@ const distDir = path.join(rootDir, "dist");
 const bundlePath = path.join(distDir, "bundle.js");
 const indexPath = path.join(rootDir, "index.html");
 const environmentShim = path.join(rootDir, "environment-shim.ts");
+const markdownToSlateShim = path.join(rootDir, "markdown-to-slate-shim.ts");
+const slateToMarkdownShim = path.join(rootDir, "slate-to-markdown-shim.ts");
+const elementsTypesShim = path.join(rootDir, "elements-types-shim.tsx");
+const elementsIndexShim = path.join(rootDir, "elements-index-shim.ts");
+const frontendShim = path.join(rootDir, "frontend-shim.ts");
+const assetsShim = path.join(rootDir, "assets-shim.ts");
+const nodeBuiltinsShim = path.join(rootDir, "node-builtins-shim.ts");
+const appFrameworkShim = path.join(rootDir, "app-framework-shim.ts");
+const editorButtonBarShim = path.join(rootDir, "editor-button-bar-shim.ts");
+const i18nShim = path.join(rootDir, "i18n-shim.ts");
+const pathShim = path.join(rootDir, "path-shim.ts");
+const frameContextShim = path.join(rootDir, "frame-context-shim.ts");
+const codeEditorConstShim = path.join(rootDir, "code-editor-const-shim.ts");
+const linkEditableShim = path.join(rootDir, "link-editable-shim.ts");
 
 const shimPlugin = {
   name: "slate-shims",
@@ -16,6 +30,57 @@ const shimPlugin = {
     build.onResolve({ filter: new RegExp("utils[/\\\\]environment$") }, () => {
       return { path: environmentShim };
     });
+    build.onResolve({ filter: /markdown-to-slate$/ }, () => {
+      return { path: markdownToSlateShim };
+    });
+    build.onResolve({ filter: /slate-to-markdown$/ }, () => {
+      return { path: slateToMarkdownShim };
+    });
+    build.onResolve({ filter: /elements[\\/]+types$/ }, () => {
+      return { path: elementsTypesShim };
+    });
+    build.onResolve({ filter: /[\\/]+elements$/ }, () => {
+      return { path: elementsIndexShim };
+    });
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/app-framework$/ },
+      () => ({ path: appFrameworkShim }),
+    );
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/editors\/editor-button-bar$/ },
+      () => ({ path: editorButtonBarShim }),
+    );
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/i18n$/ },
+      () => ({ path: i18nShim }),
+    );
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/frame-editors\/frame-tree\/path$/ },
+      () => ({ path: pathShim }),
+    );
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/frame-editors\/frame-tree\/frame-context$/ },
+      () => ({ path: frameContextShim }),
+    );
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/frame-editors\/code-editor\/const$/ },
+      () => ({ path: codeEditorConstShim }),
+    );
+    build.onResolve({ filter: /elements[\\/]+link[\\/]+editable$/ }, () => ({
+      path: linkEditableShim,
+    }));
+    build.onResolve({ filter: /^@cocalc\/frontend$/ }, () => ({
+      path: frontendShim,
+    }));
+    build.onResolve({ filter: /^@cocalc\/frontend\// }, () => ({
+      path: frontendShim,
+    }));
+    build.onResolve({ filter: /^@cocalc\/assets\// }, () => ({
+      path: assetsShim,
+    }));
+    build.onResolve({ filter: /^(path|stream)$/ }, () => ({
+      path: nodeBuiltinsShim,
+    }));
   },
 };
 

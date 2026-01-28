@@ -20,6 +20,12 @@
     "test-mocha",
     "test",
     "editors/slate/playwright/dist",
+    "editors/slate/slate-react/components",
+    "editors/slate/slate-react/components/**",
+    "editors/slate/slate-react/hooks",
+    "editors/slate/slate-react/hooks/**",
+    "editors/slate/slate-react/plugin",
+    "editors/slate/slate-react/plugin/**",
     "*__tests__*",
     "*__test__*"
   ],

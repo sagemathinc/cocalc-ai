@@ -79,11 +79,21 @@ export const markdown_it = new MarkdownIt(OPTIONS);
 usePlugins(markdown_it, PLUGINS);
 markdown_it.use(blankLinesPlugin);
 addBlankLineRenderer(markdown_it);
+markdown_it.linkify.set({
+  fuzzyLink: false,
+  fuzzyEmail: false,
+  fuzzyIP: false,
+});
 
 // Parser used for Slate roundtrips; includes extra tokens for blank lines.
 export const markdown_it_slate = new MarkdownIt(OPTIONS);
 usePlugins(markdown_it_slate, PLUGINS);
 markdown_it_slate.use(blankLinesPlugin);
+markdown_it_slate.linkify.set({
+  fuzzyLink: false,
+  fuzzyEmail: false,
+  fuzzyIP: false,
+});
 
 /*
 export function markdownParser() {
@@ -118,6 +128,11 @@ const markdown_it_line_numbers = new MarkdownIt(OPTIONS);
 markdown_it_line_numbers.use(inject_linenumbers_plugin);
 usePlugins(markdown_it_line_numbers, PLUGINS);
 markdown_it_line_numbers.use(blankLinesPlugin);
+markdown_it_line_numbers.linkify.set({
+  fuzzyLink: false,
+  fuzzyEmail: false,
+  fuzzyIP: false,
+});
 addBlankLineRenderer(markdown_it_line_numbers);
 
 /*

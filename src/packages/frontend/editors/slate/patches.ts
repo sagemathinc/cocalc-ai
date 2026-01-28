@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Editor, Node } from "slate";
+import { Editor, Node, Path, Point, Range } from "slate";
+import { ensurePoint, ensureRange, pointAtPath } from "./slate-util";
 
 // The version of isNodeList in slate is **insanely** slow, and this hack
 // is likely to be sufficient for our use.
@@ -18,18 +19,81 @@ Node.isNodeList = (value: any): value is Node[] => {
 export const withNonfatalRange = (editor) => {
   const { range } = editor;
 
-  editor.range = (editor, at, to?) => {
+  editor.range = (at, to?) => {
     try {
-      return range(editor, at, to);
+      const safeAt = normalizeLocation(editor, at);
+      if (safeAt == null) {
+        const selection =
+          editor.selection == null ? null : ensureRange(editor, editor.selection);
+        if (selection) {
+          return selection;
+        }
+        const anchor = pointAtPath(editor, []);
+        return { anchor, focus: anchor };
+      }
+      if (Range.isRange(safeAt)) {
+        return safeAt;
+      }
+      const safeTo = to == null ? safeAt : normalizeLocation(editor, to);
+      return range.call(editor, safeAt, safeTo);
     } catch (err) {
       console.log(`WARNING: range error ${err}`);
-      const anchor = Editor.first(editor, []);
+      const anchor = pointAtPath(editor, []);
       return { anchor, focus: anchor };
     }
   };
 
   return editor;
 };
+
+// Normalize selection updates so they always point at a leaf node.
+// This prevents Slate from crashing when a selection lands on a non-leaf
+// element (e.g., code_line), which can happen after DOM → Slate mapping.
+export const withSelectionSafety = (editor) => {
+  const { apply } = editor;
+
+  editor.apply = (op) => {
+    if (op.type === "set_selection" && op.newProperties != null) {
+      try {
+        const next = op.newProperties as Range;
+        const safe = ensureRange(editor, next);
+        if (!Range.equals(next, safe)) {
+          op = { ...op, newProperties: safe };
+        }
+      } catch {
+        // fall back to original op
+      }
+    }
+    return apply(op);
+  };
+
+  return editor;
+};
+
+function normalizeLocation(editor: Editor, location) {
+  if (location == null) return location;
+  const unwrapped = unwrapLocationRef(location);
+  if (unwrapped !== location) {
+    return normalizeLocation(editor, unwrapped);
+  }
+  if (Range.isRange(location)) {
+    return ensureRange(editor, location);
+  }
+  if (Point.isPoint(location)) {
+    return ensurePoint(editor, location);
+  }
+  if (Path.isPath(location)) {
+    return pointAtPath(editor, location);
+  }
+  return location;
+}
+
+function unwrapLocationRef(location: any) {
+  if (location == null) return location;
+  if (typeof location !== "object") return location;
+  if (!("current" in location)) return location;
+  return location.current ?? location;
+}
 
 // We patch the Editor.string command so that if the input
 // location is invalid, it returns "" instead of crashing.

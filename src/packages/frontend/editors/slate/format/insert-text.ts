@@ -29,8 +29,10 @@ is itself  deep, being based on diff-match-patch, and using numerous
 heuristics.
 */
 
-import { Transforms, Range } from "slate";
+import { Editor, Element, Path, Point, Range, Transforms } from "slate";
+import { ReactEditor } from "../slate-react";
 import { markdownAutoformat } from "./auto-format";
+import { ensureRange } from "../slate-util";
 
 export const withInsertText = (editor) => {
   const { insertText: insertText0 } = editor;
@@ -67,16 +69,151 @@ export const withInsertText = (editor) => {
 
   editor.insertText = (text, autoFormat?) => {
     if (!text) return;
+    if (
+      editor.selection == null &&
+      (editor as any).__autoformatSelection != null
+    ) {
+      const selection = (editor as any).__autoformatSelection;
+      (editor as any).__autoformatSelection = null;
+      try {
+        Transforms.setSelection(editor, selection);
+        if (!ReactEditor.isFocused(editor)) {
+          ReactEditor.focus(editor);
+        }
+        if ((editor as any).__autoformatIgnoreSelection) {
+          (editor as any).setIgnoreSelection?.(false);
+          (editor as any).__autoformatIgnoreSelection = false;
+        }
+      } catch {
+        // ignore invalid selection, we'll fall back to default behavior
+      }
+    }
     if (!autoFormat) {
       insertText(text);
       return;
     }
     const { selection } = editor;
+    const selectionBlockPath =
+      selection && selection.focus ? Path.parent(selection.focus.path) : null;
 
     if (selection && Range.isCollapsed(selection)) {
       if (text === " ") {
+        const isSingleParagraph =
+          editor.children.length === 1 &&
+          Element.isElement(editor.children[0]) &&
+          editor.children[0].type === "paragraph";
+        const canIgnore =
+          typeof (editor as any).setIgnoreSelection === "function";
+        if (canIgnore) {
+          (editor as any).setIgnoreSelection(true);
+          (editor as any).__autoformatIgnoreSelection = true;
+        }
         if (!markdownAutoformat(editor)) {
+          if (canIgnore) {
+            (editor as any).setIgnoreSelection(false);
+            (editor as any).__autoformatIgnoreSelection = false;
+          }
           insertText(text);
+        } else {
+          // Autoformat in a *fully empty* editor is surprisingly tricky:
+          // Slate often reuses the same value reference, so React skips a render,
+          // and the DOM selection/focus never updates. We must:
+          //   1) force a render (bumpChange),
+          //   2) compute a safe selection after the transform,
+          //   3) apply DOM selection + focus on the next frame.
+          // This avoids the “caret disappears / focus lost” bug.
+          const bump =
+            (editor as any).__bumpChangeOnAutoformat ?? editor.bumpChange;
+          if (typeof bump === "function") bump();
+          let pendingSelection =
+            (editor as any).__autoformatSelection ?? editor.selection;
+          if (pendingSelection) {
+            try {
+              const safe = ensureRange(editor, pendingSelection);
+              let isDocStart = false;
+              try {
+                const docStart = Editor.start(editor, []);
+                isDocStart =
+                  Range.isCollapsed(safe) &&
+                  Point.equals(safe.anchor, docStart) &&
+                  Point.equals(safe.focus, docStart);
+              } catch {
+                // ignore doc start check failures
+              }
+              if (isDocStart && selectionBlockPath) {
+                pendingSelection = null;
+              } else {
+                pendingSelection = safe;
+              }
+            } catch {
+              pendingSelection = null;
+            }
+          }
+          if (!pendingSelection && selectionBlockPath) {
+            try {
+              const end = Editor.end(editor, selectionBlockPath);
+              pendingSelection = { anchor: end, focus: end };
+            } catch {
+              // ignore fallback selection failure
+            }
+          }
+          if (!pendingSelection && isSingleParagraph) {
+            try {
+              const end = Editor.end(editor, [0]);
+              pendingSelection = { anchor: end, focus: end };
+            } catch {
+              // ignore fallback selection failure
+            }
+          }
+          (editor as any).__autoformatSelection = pendingSelection ?? null;
+          if (pendingSelection) {
+            editor.selection = pendingSelection;
+            try {
+              editor.onChange();
+            } catch {
+              // ignore onChange errors; we'll still attempt focus below
+            }
+          }
+          const applyDomSelection = (selection) => {
+            if (!selection) return;
+            try {
+              const domRange = ReactEditor.toDOMRange(editor, selection);
+              const domSelection = window.getSelection();
+              if (domSelection) {
+                domSelection.removeAllRanges();
+                domSelection.addRange(domRange);
+              }
+            } catch {
+              // ignore DOM selection failures
+            }
+          };
+          // Use rAF to apply selection/focus after Slate/React commit.
+          window.requestAnimationFrame(() => {
+            const selection = pendingSelection ?? editor.selection;
+            if (selection) {
+              try {
+                Transforms.setSelection(editor, selection);
+              } catch {
+                // ignore selection failures
+              }
+              applyDomSelection(selection);
+            }
+            try {
+              if (!ReactEditor.isFocused(editor)) {
+                ReactEditor.focus(editor);
+              }
+            } catch {
+              // ignore focus failures
+            }
+            (editor as any).__autoformatSelection = null;
+            if (
+              (editor as any).__autoformatIgnoreSelection &&
+              (editor as any).__autoformatSelection == null
+            ) {
+              (editor as any).setIgnoreSelection?.(false);
+              (editor as any).__autoformatIgnoreSelection = false;
+            }
+          });
         }
         return;
       }

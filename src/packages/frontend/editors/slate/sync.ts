@@ -47,6 +47,7 @@ export function slatePointToMarkdown(
   let markdown = slate_to_markdown(editor.children, {
     cache: editor.syncCache,
     noCache: new Set([point.path[0]]),
+    preserveBlankLines: editor.preserveBlankLines,
     hook: (elt) => {
       if (elt !== node) return;
       return (s) => s.slice(0, point.offset) + SENTINEL + s.slice(point.offset);

@@ -1,7 +1,7 @@
 import { file_associations } from "@cocalc/frontend/file-associations";
 import detectLanguage from "@cocalc/frontend/misc/detect-language";
 
-// Convert the info string for a fenced code block to a codemirror mode
+// Convert the info string for a fenced code block to a language label
 // when preferKernel is true return the actual kernel name or language.
 export default function infoToMode(
   info: string | undefined | null,

@@ -23,6 +23,25 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   const { selection } = editor;
   if (selection == null || !Range.isCollapsed(selection)) return;
 
+  const codeLineEntry = Editor.above(editor, {
+    match: (node) => Element.isElement(node) && node.type === "code_line",
+    mode: "lowest",
+  });
+  if (codeLineEntry != null) {
+    const [, linePath] = codeLineEntry;
+    const lineIndex = linePath[linePath.length - 1];
+    if (selection.anchor.offset === 0 && lineIndex === 0) {
+      const codeBlockEntry = Editor.above(editor, {
+        at: linePath,
+        match: (node) => Element.isElement(node) && node.type === "code_block",
+      });
+      if (codeBlockEntry != null) {
+        // Do nothing at the very start of a code block.
+        return true;
+      }
+    }
+  }
+
   const above = Editor.above(editor, {
     match: (node) => Element.isElement(node) && Editor.isBlock(editor, node),
     mode: "lowest",
@@ -44,6 +63,9 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   // Cursor is at the beginning of a non-paragraph block-level
   // element, so maybe do something special.
   switch (block.type) {
+    case "code_block":
+      // Do not delete entire code blocks when backspacing at start.
+      return true;
     case "heading":
       deleteBackwardsHeading(editor, block, path);
       return true;

@@ -125,10 +125,11 @@ test("enter at start inserts blank lines above without moving cursor", async ({
     () => window.__slateTest?.getValue(),
   )) as SlateNode[] | undefined;
 
-  expect(value?.length).toBe(3);
+  expect(value?.length).toBe(4);
   if (value) {
     expect(value[1]?.blank).toBe(true);
-    expect(nodeText(value[2])).toBe("xyz");
+    expect(value[2]?.blank).toBe(true);
+    expect(nodeText(value[3])).toBe("xyz");
   }
 
   let selection = (await page.evaluate(
@@ -137,7 +138,7 @@ test("enter at start inserts blank lines above without moving cursor", async ({
 
   expect(selection).not.toBeNull();
   if (selection) {
-    expect(selection.anchor.path[0]).toBe(2);
+    expect(selection.anchor.path[0]).toBe(3);
     expect(selection.anchor.offset).toBe(0);
   }
 
@@ -147,11 +148,13 @@ test("enter at start inserts blank lines above without moving cursor", async ({
     () => window.__slateTest?.getValue(),
   )) as SlateNode[] | undefined;
 
-  expect(value?.length).toBe(4);
+  expect(value?.length).toBe(6);
   if (value) {
     expect(value[1]?.blank).toBe(true);
     expect(value[2]?.blank).toBe(true);
-    expect(nodeText(value[3])).toBe("xyz");
+    expect(value[3]?.blank).toBe(true);
+    expect(value[4]?.blank).toBe(true);
+    expect(nodeText(value[5])).toBe("xyz");
   }
 
   selection = (await page.evaluate(
@@ -160,7 +163,7 @@ test("enter at start inserts blank lines above without moving cursor", async ({
 
   expect(selection).not.toBeNull();
   if (selection) {
-    expect(selection.anchor.path[0]).toBe(3);
+    expect(selection.anchor.path[0]).toBe(5);
     expect(selection.anchor.offset).toBe(0);
   }
 });
@@ -220,7 +223,7 @@ test("backspace pulls text into an empty quote block", async ({ page }) => {
 test("autoformat quotes the current paragraph when typing > at start", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/?autoformat=1");
   await waitForHarness(page);
 
   await page.evaluate(() => {
@@ -245,6 +248,15 @@ test("autoformat quotes the current paragraph when typing > at start", async ({
     window.__slateTest?.insertText?.(" ", true);
   });
 
+  await page.waitForFunction(() => {
+    const value = window.__slateTest?.getValue();
+    return (
+      Array.isArray(value) &&
+      value.length > 0 &&
+      (value[0] as { type?: string }).type === "blockquote"
+    );
+  });
+
   const value = (await page.evaluate(
     () => window.__slateTest?.getValue(),
   )) as SlateNode[] | undefined;
@@ -254,4 +266,187 @@ test("autoformat quotes the current paragraph when typing > at start", async ({
     expect(value[0]?.type).toBe("blockquote");
     expect(nodeText(value[0])).toBe("quote me");
   }
+});
+
+test("autoformat code span keeps focus", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type("`a b` ");
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "a b ";
+  });
+
+  const focused = await page.evaluate(() => window.__slateTest?.isFocused());
+  expect(focused).toBe(true);
+});
+
+test("autoformat code span keeps focus in empty editor (production autoformat)", async ({
+  page,
+}) => {
+  await page.goto("/?autoformat=1");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type("`foo` ");
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "foo ";
+  });
+
+  // Keep typing to verify focus stayed in the editor.
+  await page.keyboard.type("bar");
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "foo bar";
+  });
+
+  const focused = await page.evaluate(() => window.__slateTest?.isFocused());
+  expect(focused).toBe(true);
+});
+
+test("autoformat bold keeps focus after trailing space", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type(
+    "QUESTION which you didn't answer -- are **ALL** ",
+  );
+
+  await page.waitForFunction(() => {
+    return (
+      window.__slateTest?.getText?.() ===
+      "QUESTION which you didn't answer -- are ALL "
+    );
+  });
+
+  const focused = await page.evaluate(() => window.__slateTest?.isFocused());
+  expect(focused).toBe(true);
+});
+
+test("convert markdown candidate code block to rich text", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setValue([
+      {
+        type: "code_block",
+        fence: true,
+        info: "",
+        markdownCandidate: true,
+        children: [
+          { type: "code_line", children: [{ text: "- a" }] },
+          { type: "code_line", children: [{ text: "- b" }] },
+          { type: "code_line", children: [{ text: "" }] },
+        ],
+      },
+    ]);
+  });
+
+  const button = page.locator('[data-testid="convert-markdown"]');
+  await expect(button).toBeVisible();
+  await button.click();
+
+  await page.waitForFunction(() => {
+    const value = window.__slateTest?.getValue() as SlateNode[] | undefined;
+    return value?.[0]?.type === "bullet_list";
+  });
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  expect(value?.[0]?.type).toBe("bullet_list");
+});
+
+
+test("block editor: arrow keys can escape a code block", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4172/?block=1");
+
+  await page.waitForSelector('[data-slate-block-index="0"]');
+
+  const codeBlock = page.locator(".cocalc-slate-code-block").first();
+  await expect(codeBlock).toBeVisible();
+
+  await codeBlock.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("Y");
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("Y");
+});
+
+test("block editor: arrow inserts before/after code block", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4172/?block=1");
+
+  await page.waitForSelector('[data-slate-block-index="0"]');
+
+  const codeBlock = page.locator(".cocalc-slate-code-block").first();
+  await expect(codeBlock).toBeVisible();
+
+  // Insert before code block.
+  await codeBlock.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowUp");
+  await page.waitForTimeout(50);
+  await page.keyboard.type("xz");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("a\n\nxz\n\n```");
+
+  // Insert after code block.
+  await codeBlock.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowDown");
+  await page.waitForTimeout(50);
+  await page.keyboard.type("yz");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("```\nfoo\n```\n\nyz");
+});
+
+test("block editor: gap insert keeps caret", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4172/?block=1");
+
+  await page.waitForSelector('[data-slate-block-index="0"]');
+
+  const codeBlock = page.locator(".cocalc-slate-code-block").first();
+  await expect(codeBlock).toBeVisible();
+
+  await codeBlock.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowUp");
+  await page.waitForTimeout(50);
+  await page.keyboard.type("X");
+
+  const caretInfo = await page.evaluate(() => {
+    const sel = window.getSelection();
+    const hasRange = !!sel && sel.rangeCount > 0;
+    const active = document.activeElement;
+    const block = active?.closest?.("[data-slate-block-index]");
+    return {
+      hasRange,
+      blockIndex: block?.getAttribute("data-slate-block-index") ?? null,
+      blockText: block?.textContent ?? "",
+    };
+  });
+
+  expect(caretInfo.hasRange).toBe(true);
+  expect(caretInfo.blockText).toContain("X");
 });

@@ -19,6 +19,19 @@ register({ key: "Tab", shift: true }, ({editor}) => {
   return true;
 });
 
+register(
+  [
+    { key: "[", ctrl: true },
+    { key: "[", meta: true },
+  ],
+  ({editor}) => {
+    if (unindentListItem(editor)) {
+      return true;
+    }
+    return false;
+  },
+);
+
 register({ key: "Tab" }, ({editor}) => {
   if (indentListItem(editor)) {
     return true;
@@ -29,3 +42,16 @@ register({ key: "Tab" }, ({editor}) => {
   editor.insertText("    ");
   return true;
 });
+
+register(
+  [
+    { key: "]", ctrl: true },
+    { key: "]", meta: true },
+  ],
+  ({editor}) => {
+    if (indentListItem(editor)) {
+      return true;
+    }
+    return false;
+  },
+);

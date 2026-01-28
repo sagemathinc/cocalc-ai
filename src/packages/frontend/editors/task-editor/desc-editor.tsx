@@ -97,6 +97,7 @@ export default function DescriptionEditor({
           actions.redo();
         }}
         minimal
+        disableBlockEditor
         modeSwitchStyle={{
           float: "right",
           position: "relative",
