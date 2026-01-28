@@ -101,3 +101,8 @@ don't have to compensate for it using negative margins.
 .cocalc-slate-code-block .token.italic {
   font-style: italic;
 }
+
+/* Slate placeholder sits a bit above the caret; nudge it down slightly. */
+[data-slate-placeholder] {
+  transform: translateY(0.15em);
+}
