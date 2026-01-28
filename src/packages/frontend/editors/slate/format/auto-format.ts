@@ -26,6 +26,11 @@ import { ReactEditor } from "../slate-react";
 import { formatHeading, getFocus, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
 import { toCodeLines } from "../elements/code-block/utils";
+import { ensureRange } from "../slate-util";
+
+function rememberAutoformatSelection(editor: Editor, selection: Range): void {
+  (editor as any).__autoformatSelection = selection;
+}
 
 function autoformatCodeSpanAtCursor(editor: Editor): boolean {
   const { selection } = editor;
@@ -45,8 +50,12 @@ function autoformatCodeSpanAtCursor(editor: Editor): boolean {
   }
 
   const path = selection.focus.path;
-  const text = node.text;
-  const offset = selection.focus.offset;
+  let text = node.text;
+  let offset = selection.focus.offset;
+  if (offset === text.length && text.endsWith(" ")) {
+    text = text.slice(0, -1);
+    offset -= 1;
+  }
   if (offset !== text.length) {
     return false;
   }
@@ -97,6 +106,10 @@ function autoformatCodeSpanAtCursor(editor: Editor): boolean {
     },
     { force: true },
   );
+  rememberAutoformatSelection(editor, {
+    focus: { path: newPath, offset: 1 },
+    anchor: { path: newPath, offset: 1 },
+  });
   return true;
 }
 
@@ -122,8 +135,12 @@ function autoformatMarkAtCursor(
   }
 
   const path = selection.focus.path;
-  const text = node.text;
-  const offset = selection.focus.offset;
+  let text = node.text;
+  let offset = selection.focus.offset;
+  if (offset === text.length && text.endsWith(" ")) {
+    text = text.slice(0, -1);
+    offset -= 1;
+  }
   if (offset !== text.length) {
     return false;
   }
@@ -171,6 +188,10 @@ function autoformatMarkAtCursor(
     },
     { force: true },
   );
+  rememberAutoformatSelection(editor, {
+    focus: { path: newPath, offset: 1 },
+    anchor: { path: newPath, offset: 1 },
+  });
   return true;
 }
 
@@ -192,8 +213,12 @@ function autoformatInlineMathAtCursor(editor: Editor): boolean {
   }
 
   const path = selection.focus.path;
-  const text = node.text;
-  const offset = selection.focus.offset;
+  let text = node.text;
+  let offset = selection.focus.offset;
+  if (offset === text.length && text.endsWith(" ")) {
+    text = text.slice(0, -1);
+    offset -= 1;
+  }
   if (offset !== text.length) {
     return false;
   }
@@ -251,6 +276,10 @@ function autoformatInlineMathAtCursor(editor: Editor): boolean {
     },
     { force: true },
   );
+  rememberAutoformatSelection(editor, {
+    focus: { path: newPath, offset: 1 },
+    anchor: { path: newPath, offset: 1 },
+  });
   return true;
 }
 
@@ -357,6 +386,10 @@ function autoformatCheckboxAtCursor(editor: Editor): boolean {
 
   const textPath = paragraphPath.concat(2);
   setSelectionAndFocus(editor as ReactEditor, {
+    focus: { path: textPath, offset: 1 },
+    anchor: { path: textPath, offset: 1 },
+  });
+  rememberAutoformatSelection(editor, {
     focus: { path: textPath, offset: 1 },
     anchor: { path: textPath, offset: 1 },
   });
@@ -578,6 +611,14 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
   if (isSelectionInCodeBlock(editor)) return false;
   const { selection } = editor;
   if (!selection) return false;
+  const markAutoformat = (applied: boolean): boolean => {
+    if (applied) {
+      const pendingSelection =
+        (editor as any).__autoformatSelection ?? ensureRange(editor, editor.selection);
+      (editor as any).__autoformatSelection = pendingSelection;
+    }
+    return applied;
+  };
   let node;
   try {
     [node] = Editor.node(editor, selection.focus.path);
@@ -590,39 +631,18 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
   // Must be a text node
   if (!Text.isText(node)) return false;
 
-  if (autoformatBlockquoteAtStart(editor)) {
+  if (markAutoformat(autoformatBlockquoteAtStart(editor))) return true;
+  if (markAutoformat(autoformatListAtStart(editor))) return true;
+  if (markAutoformat(autoformatCheckboxAtCursor(editor))) return true;
+  if (markAutoformat(autoformatCodeSpanAtCursor(editor))) return true;
+  if (markAutoformat(autoformatBlockMathAtStart(editor))) return true;
+  if (markAutoformat(autoformatInlineMathAtCursor(editor))) return true;
+  if (markAutoformat(autoformatMarkAtCursor(editor, "**", "bold"))) return true;
+  if (markAutoformat(autoformatMarkAtCursor(editor, "__", "bold"))) return true;
+  if (markAutoformat(autoformatMarkAtCursor(editor, "~~", "strikethrough")))
     return true;
-  }
-  if (autoformatListAtStart(editor)) {
-    return true;
-  }
-  if (autoformatCheckboxAtCursor(editor)) {
-    return true;
-  }
-  if (autoformatCodeSpanAtCursor(editor)) {
-    return true;
-  }
-  if (autoformatBlockMathAtStart(editor)) {
-    return true;
-  }
-  if (autoformatInlineMathAtCursor(editor)) {
-    return true;
-  }
-  if (autoformatMarkAtCursor(editor, "**", "bold")) {
-    return true;
-  }
-  if (autoformatMarkAtCursor(editor, "__", "bold")) {
-    return true;
-  }
-  if (autoformatMarkAtCursor(editor, "~~", "strikethrough")) {
-    return true;
-  }
-  if (autoformatMarkAtCursor(editor, "*", "italic")) {
-    return true;
-  }
-  if (autoformatMarkAtCursor(editor, "_", "italic")) {
-    return true;
-  }
+  if (markAutoformat(autoformatMarkAtCursor(editor, "*", "italic"))) return true;
+  if (markAutoformat(autoformatMarkAtCursor(editor, "_", "italic"))) return true;
 
   // If we wanted the format to always be undo-able.
   // editor.saveValue(true);
@@ -658,6 +678,11 @@ export function markdownAutoformat(editor: SlateEditor): boolean {
     // @ts-ignore
     r();
     r = true;
+  }
+  if (r) {
+    const pendingSelection =
+      (editor as any).__autoformatSelection ?? ensureRange(editor, editor.selection);
+    (editor as any).__autoformatSelection = pendingSelection;
   }
   return r;
 }

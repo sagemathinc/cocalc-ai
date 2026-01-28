@@ -479,6 +479,19 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     const doc = markdown_to_slate(value ?? "", false, editor.syncCache);
     return preserveBlankLines ? doc : stripBlankParagraphs(doc);
   });
+  const bumpChangeRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    bumpChangeRef.current = () => {
+      setEditorValue([...editor.children]);
+      setChange((prev) => prev + 1);
+    };
+    (editor as any).__bumpChangeOnAutoformat = bumpChangeRef.current;
+    return () => {
+      if ((editor as any).__bumpChangeOnAutoformat === bumpChangeRef.current) {
+        (editor as any).__bumpChangeOnAutoformat = undefined;
+      }
+    };
+  }, [editor]);
 
   const rowSizeEstimator = useCallback((node) => {
     return estimateSize({ node, fontSize: font_size });
@@ -1134,6 +1147,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
     saveValueDebounce();
   };
+
+  // Autoformat focus/selection recovery is handled in the insertText hook.
 
   useEffect(() => {
     editor.syncCausedUpdate = false;
