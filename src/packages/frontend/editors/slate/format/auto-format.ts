@@ -32,6 +32,14 @@ function rememberAutoformatSelection(editor: Editor, selection: Range): void {
   (editor as any).__autoformatSelection = selection;
 }
 
+function spacerParagraph(): Element {
+  return {
+    type: "paragraph",
+    spacer: true,
+    children: [{ text: "" }],
+  } as Element;
+}
+
 function autoformatCodeSpanAtCursor(editor: Editor): boolean {
   const { selection } = editor;
   if (selection == null || !Range.isCollapsed(selection)) {
@@ -515,18 +523,46 @@ export const withAutoFormat = (editor) => {
       const lineCount = normalized.split("\n").length;
       const MULTILINE_PASTE_THRESHOLD = 2;
       if (lineCount >= MULTILINE_PASTE_THRESHOLD) {
+        const pasteId = `paste-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         Transforms.insertNodes(
           editor,
-          {
-            type: "code_block",
-            fence: true,
-            info: "",
-            // Always offer a convert-to-rich-text option for multiline pastes.
-            markdownCandidate: true,
-            children: toCodeLines(normalized),
-          } as any,
+          [
+            {
+              type: "code_block",
+              fence: true,
+              info: "",
+              // Always offer a convert-to-rich-text option for multiline pastes.
+              markdownCandidate: true,
+              pasteId,
+              children: toCodeLines(normalized),
+            } as any,
+            spacerParagraph(),
+          ],
           { at: getFocus(editor) },
         );
+        try {
+          const entry = Editor.nodes(editor, {
+            at: [],
+            match: (node) =>
+              Element.isElement(node) &&
+              node.type === "code_block" &&
+              node["pasteId"] === pasteId,
+          }).next().value as [Element, Path] | undefined;
+          if (entry) {
+            const [, codePath] = entry;
+            const spacerPath = Path.next(codePath);
+            const start = Editor.start(editor, spacerPath);
+            setSelectionAndFocus(editor as ReactEditor, {
+              anchor: start,
+              focus: start,
+            });
+            Transforms.setNodes(editor, { pasteId: undefined } as any, {
+              at: codePath,
+            });
+          }
+        } catch {
+          // Ignore selection failures; paste still succeeded.
+        }
         return;
       }
       insertData(data);
