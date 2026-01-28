@@ -112,7 +112,10 @@ export const ReactEditor = Object.assign(UpstreamReactEditor, {
       suppressThrow: true,
       ...options,
     });
-    return range ? ensureRange(editor, range) : null;
+    if (range) return ensureRange(editor, range);
+    const fallback = (editor as any).__autoformatSelection as Range | null;
+    if (fallback) return ensureRange(editor, fallback);
+    return null;
   },
   isUsingWindowing(editor: ReactEditor): boolean {
     return !!editor.windowedListRef?.current;

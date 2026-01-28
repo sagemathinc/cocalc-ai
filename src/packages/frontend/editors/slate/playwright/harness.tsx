@@ -15,7 +15,7 @@
  * a test, implement a tiny local helper in this file instead.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate";
 
@@ -23,7 +23,7 @@ import { Editable, Slate, withReact, ReactEditor } from "../slate-react";
 import BlockMarkdownEditor from "../block-markdown-editor-core";
 import "./elements-types-shim";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
-import { autoformatBlockquoteAtStart } from "../format/auto-format-quote";
+import { withInsertText } from "../format/insert-text";
 import { handleBlankLineEnter } from "../keyboard/blank-line-enter";
 import { getHandler } from "../keyboard/register";
 import { withIsInline, withIsVoid } from "../plugins";
@@ -83,12 +83,18 @@ function Harness(): React.JSX.Element {
       ? new URLSearchParams()
       : new URLSearchParams(window.location.search);
   const blockMode = params.get("block") === "1";
+  const autoformatMode = params.get("autoformat") === "1";
   const initialMarkdown = "a\n\n```\nfoo\n```\n";
 
-  const editor = useMemo(
-    () => withIsInline(withIsVoid(withReact(createEditor()))),
-    [],
-  );
+  const editor = useMemo(() => {
+    const base = withIsInline(withIsVoid(withReact(createEditor())));
+    if (autoformatMode) {
+      const withAutoformat = withInsertText(base);
+      (withAutoformat as any).__autoformatMode = true;
+      return withAutoformat;
+    }
+    return base;
+  }, [autoformatMode]);
   const [value, setValue] = useState<Descendant[]>(initialValue);
   const valueRef = useRef(value);
 
@@ -96,6 +102,21 @@ function Harness(): React.JSX.Element {
     valueRef.current = nextValue;
     setValue(nextValue);
   }, []);
+
+  useLayoutEffect(() => {
+    if ((editor as any).__autoformatMode) {
+      (editor as any).bumpChange = () => {
+        const snapshot = [...valueRef.current];
+        valueRef.current = snapshot;
+        setValue(snapshot);
+      };
+    }
+    return () => {
+      if ((editor as any).__autoformatMode) {
+        delete (editor as any).bumpChange;
+      }
+    };
+  }, [editor, autoformatMode]);
 
   useEffect(() => {
     window.__slateTest = {
@@ -111,19 +132,9 @@ function Harness(): React.JSX.Element {
         editor.onChange();
       },
       insertText: (text, autoFormat) => {
-        if (autoFormat == null) {
-          Editor.insertText(editor, text);
-          return;
-        }
-        if (text === " ") {
-          if (autoformatBlockquoteAtStart(editor)) {
-            return;
-          }
-          Editor.insertText(editor, text);
-          inlineAutoformatAtCursor(editor);
-          return;
-        }
-        Editor.insertText(editor, text);
+        // Use editor.insertText to exercise autoformat logic when enabled.
+        // @ts-ignore - insertText accepts a second autoformat flag in our editor.
+        editor.insertText(text, autoFormat);
       },
       insertBreak: () => {
         Editor.insertBreak(editor);
@@ -169,8 +180,13 @@ function Harness(): React.JSX.Element {
         !event.metaKey
       ) {
         event.preventDefault();
-        Editor.insertText(editor, " ");
-        inlineAutoformatAtCursor(editor);
+        if (autoformatMode) {
+          // @ts-ignore - insertText supports autoformat flag.
+          editor.insertText(" ", true);
+        } else {
+          Editor.insertText(editor, " ");
+          inlineAutoformatAtCursor(editor);
+        }
         return;
       }
       if (

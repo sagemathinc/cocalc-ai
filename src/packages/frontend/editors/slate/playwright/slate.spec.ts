@@ -223,7 +223,7 @@ test("backspace pulls text into an empty quote block", async ({ page }) => {
 test("autoformat quotes the current paragraph when typing > at start", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/?autoformat=1");
   await waitForHarness(page);
 
   await page.evaluate(() => {
@@ -248,6 +248,10 @@ test("autoformat quotes the current paragraph when typing > at start", async ({
     window.__slateTest?.insertText?.(" ", true);
   });
 
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getValue()?.[0]?.type === "blockquote";
+  });
+
   const value = (await page.evaluate(
     () => window.__slateTest?.getValue(),
   )) as SlateNode[] | undefined;
@@ -269,6 +273,31 @@ test("autoformat code span keeps focus", async ({ page }) => {
 
   await page.waitForFunction(() => {
     return window.__slateTest?.getText?.() === "a b ";
+  });
+
+  const focused = await page.evaluate(() => window.__slateTest?.isFocused());
+  expect(focused).toBe(true);
+});
+
+test("autoformat code span keeps focus in empty editor (production autoformat)", async ({
+  page,
+}) => {
+  await page.goto("/?autoformat=1");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type("`foo` ");
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "foo ";
+  });
+
+  // Keep typing to verify focus stayed in the editor.
+  await page.keyboard.type("bar");
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "foo bar";
   });
 
   const focused = await page.evaluate(() => window.__slateTest?.isFocused());

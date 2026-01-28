@@ -21,7 +21,6 @@ import {
 } from "../control";
 import type { SlateEditor } from "../types";
 import { ReactEditor } from "../slate-react";
-import { Editor, Element } from "slate";
 
 const down = ({ editor }: { editor: SlateEditor }) => {
   const cur = editor.selection?.focus;

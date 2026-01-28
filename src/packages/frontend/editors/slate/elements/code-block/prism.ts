@@ -4,6 +4,7 @@
  */
 
 import Prism from "prismjs";
+import infoToMode from "./info-to-mode";
 import { DecoratedRange, Node } from "slate";
 import type { CodeBlock } from "./types";
 import "prismjs/components/prism-bash";
@@ -152,8 +153,16 @@ export function normalizePrismLanguage(info: string | undefined): string {
   return LANGUAGE_ALIASES[raw] ?? raw;
 }
 
-export function getPrismGrammar(info: string | undefined): Prism.Grammar | null {
-  const lang = normalizePrismLanguage(info);
+function getPrismLanguage(info: string | undefined, text?: string): string {
+  const mode = infoToMode(info, { value: text });
+  return normalizePrismLanguage(mode);
+}
+
+export function getPrismGrammar(
+  info: string | undefined,
+  text?: string,
+): Prism.Grammar | null {
+  const lang = getPrismLanguage(info, text);
   if (lang === "plain") return null;
   return Prism.languages[lang] ?? null;
 }
@@ -168,8 +177,8 @@ function escapeHtml(text: string): string {
 }
 
 export function highlightCodeHtml(text: string, info?: string): string {
-  const lang = normalizePrismLanguage(info);
-  const grammar = getPrismGrammar(info);
+  const lang = getPrismLanguage(info, text);
+  const grammar = getPrismGrammar(info, text);
   if (!grammar) {
     return escapeHtml(text);
   }
@@ -180,11 +189,11 @@ export function buildCodeBlockDecorations(
   block: CodeBlock,
   blockPath: number[],
 ): DecoratedRange[][] {
-  const grammar = getPrismGrammar(block.info);
+  const text = block.children.map((line) => Node.string(line)).join("\n");
+  const grammar = getPrismGrammar(block.info, text);
   if (!grammar) {
     return [];
   }
-  const text = block.children.map((line) => Node.string(line)).join("\n");
   const tokens = Prism.tokenize(text, grammar);
   const normalizedTokens = normalizeTokens(tokens);
   const decorations: DecoratedRange[][] = [];
