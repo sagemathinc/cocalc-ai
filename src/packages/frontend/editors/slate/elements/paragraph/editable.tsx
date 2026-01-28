@@ -24,6 +24,23 @@ register({
       );
     }
 
+    if (element["spacer"] === true) {
+      return (
+        <p
+          {...attributes}
+          style={{
+            margin: 0,
+            minHeight: 4,
+            lineHeight: "4px",
+            fontSize: 4,
+            background: "rgba(255, 0, 0, 0.2)",
+          }}
+        >
+          <span style={{ textIndent: 0 }}>{children}</span>
+        </p>
+      );
+    }
+
     // Normal paragraph rendering.
     return (
       <p {...attributes}>
@@ -52,6 +69,9 @@ register({
 
   fromSlate: ({ node, children, info }) => {
     const preserveBlankLines = info.preserveBlankLines ?? true;
+    if (node["spacer"] === true && children.trim() === "") {
+      return "";
+    }
     if (children.trim() == "") {
       // We discard empty paragraphs entirely, unless they were explicitly
       // encoded as blank lines in markdown and blank lines are preserved.

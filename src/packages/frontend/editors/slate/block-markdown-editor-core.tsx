@@ -44,7 +44,7 @@ import { ChangeContext } from "./use-change";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import type { SearchHook } from "./search";
 import { isAtBeginningOfBlock, isAtEndOfBlock } from "./control";
-import { pointAtPath } from "./slate-util";
+import { getNodeAt, pointAtPath } from "./slate-util";
 import type { SlateEditor } from "./types";
 import { IS_MACOS } from "./keyboard/register";
 import { moveListItemDown, moveListItemUp } from "./format/list-move";
@@ -59,6 +59,7 @@ const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
 
 const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
+const USE_BLOCK_GAP_CURSOR = false;
 const EMPTY_SEARCH: SearchHook = {
   decorate: () => [],
   Search: null as any,
@@ -100,6 +101,39 @@ function stripTrailingBlankParagraphs(value: Descendant[]): Descendant[] {
   }
   if (end === value.length) return value;
   return value.slice(0, end);
+}
+
+function isParagraphNode(node: Descendant | undefined): boolean {
+  return node != null && node["type"] === "paragraph";
+}
+
+function spacerParagraph(): Descendant {
+  return {
+    type: "paragraph",
+    spacer: true,
+    children: [{ text: "" }],
+  } as Descendant;
+}
+
+function withCodeBlockSpacers(value: Descendant[]): Descendant[] {
+  const next: Descendant[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const node = value[i];
+    if (node?.["type"] === "code_block") {
+      const prev = next[next.length - 1];
+      if (!isParagraphNode(prev)) {
+        next.push(spacerParagraph());
+      }
+      next.push(node);
+      const nextNode = value[i + 1];
+      if (!isParagraphNode(nextNode)) {
+        next.push(spacerParagraph());
+      }
+      continue;
+    }
+    next.push(node);
+  }
+  return next.length === value.length ? value : next;
 }
 
 interface BlockMarkdownEditorProps {
@@ -272,11 +306,13 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     }, [editor, index]);
 
     const [value, setValue] = useState<Descendant[]>(() =>
-      stripTrailingBlankParagraphs(
-        markdown_to_slate(
-          normalizeBlockMarkdown(markdown),
-          false,
-          syncCacheRef.current,
+      withCodeBlockSpacers(
+        stripTrailingBlankParagraphs(
+          markdown_to_slate(
+            normalizeBlockMarkdown(markdown),
+            false,
+            syncCacheRef.current,
+          ),
         ),
       ),
     );
@@ -288,11 +324,13 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       lastMarkdownRef.current = markdown;
       syncCacheRef.current = {};
       editor.syncCache = syncCacheRef.current;
-      const nextValue = stripTrailingBlankParagraphs(
-        markdown_to_slate(
-          normalizeBlockMarkdown(markdown),
-          false,
-          syncCacheRef.current,
+      const nextValue = withCodeBlockSpacers(
+        stripTrailingBlankParagraphs(
+          markdown_to_slate(
+            normalizeBlockMarkdown(markdown),
+            false,
+            syncCacheRef.current,
+          ),
         ),
       );
       const skipReset = skipSelectionResetRef.current.has(index);
@@ -382,11 +420,14 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     );
 
     const activeGap =
-      (gapCursor && gapCursor.index === index ? gapCursor : null) ??
-      (gapCursorRef.current && gapCursorRef.current.index === index
-        ? gapCursorRef.current
-        : null);
+      USE_BLOCK_GAP_CURSOR
+        ? (gapCursor && gapCursor.index === index ? gapCursor : null) ??
+          (gapCursorRef.current && gapCursorRef.current.index === index
+            ? gapCursorRef.current
+            : null)
+        : null;
     const getActiveGap = () => {
+      if (!USE_BLOCK_GAP_CURSOR) return null;
       const refGap = gapCursorRef.current;
       if (refGap && refGap.index === index) return refGap;
       return gapCursor && gapCursor.index === index ? gapCursor : null;
@@ -437,6 +478,10 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     } | null>(null);
 
     useEffect(() => {
+      if (!USE_BLOCK_GAP_CURSOR) {
+        setGapCursorPos(null);
+        return;
+      }
       const active = getActiveGap();
       if (!active?.path) {
         setGapCursorPos(null);
@@ -459,7 +504,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     }, [editor, change, gapCursor, gapCursorRef, index]);
 
     useEffect(() => {
-      (editor as any).blockGapCursor = activeGap;
+      (editor as any).blockGapCursor = USE_BLOCK_GAP_CURSOR ? activeGap : null;
     }, [editor, activeGap]);
 
     const handleKeyDown = useCallback(
@@ -508,60 +553,26 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           }
         }
 
-        const isPlainChar =
-          event.key.length === 1 &&
-          !event.ctrlKey &&
-          !event.metaKey &&
-          !event.altKey;
+        if (USE_BLOCK_GAP_CURSOR) {
+          const isPlainChar =
+            event.key.length === 1 &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey;
 
-        const activeGapNow = getActiveGap();
-        const pendingGapNow = pendingGapInsertRef.current;
-        if (pendingGapNow?.insertIndex != null && isPlainChar) {
-          const buffer = `${pendingGapNow.buffer ?? ""}${event.key}`;
-          onSetBlockText(pendingGapNow.insertIndex, buffer);
-          pendingGapInsertRef.current = { ...pendingGapNow, buffer };
-          event.preventDefault();
-          return;
-        }
-        if (pendingGapNow && (event.key === "Enter" || isPlainChar)) {
-          if (
-            insertGapIntoBlock(
-              pendingGapNow,
-              isPlainChar ? event.key : undefined,
-            )
-          ) {
+          const activeGapNow = getActiveGap();
+          const pendingGapNow = pendingGapInsertRef.current;
+          if (pendingGapNow?.insertIndex != null && isPlainChar) {
+            const buffer = `${pendingGapNow.buffer ?? ""}${event.key}`;
+            onSetBlockText(pendingGapNow.insertIndex, buffer);
+            pendingGapInsertRef.current = { ...pendingGapNow, buffer };
             event.preventDefault();
             return;
           }
-          const insertIndex =
-            pendingGapNow.side === "before" ? index : index + 1;
-          if (isPlainChar) {
-            onInsertGap(pendingGapNow, "", "end");
-            const buffer = event.key;
-            onSetBlockText(insertIndex, buffer);
-            pendingGapInsertRef.current = {
-              ...pendingGapNow,
-              insertIndex,
-              buffer,
-            };
-          } else {
-            onInsertGap(pendingGapNow, undefined);
-            pendingGapInsertRef.current = null;
-          }
-          event.preventDefault();
-          return;
-        }
-        if (activeGapNow) {
-          if (event.key === "Escape") {
-            setGapCursor(null);
-            pendingGapInsertRef.current = null;
-            event.preventDefault();
-            return;
-          }
-          if (event.key === "Enter" || isPlainChar) {
+          if (pendingGapNow && (event.key === "Enter" || isPlainChar)) {
             if (
               insertGapIntoBlock(
-                activeGapNow,
+                pendingGapNow,
                 isPlainChar ? event.key : undefined,
               )
             ) {
@@ -569,44 +580,80 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               return;
             }
             const insertIndex =
-              activeGapNow.side === "before" ? index : index + 1;
+              pendingGapNow.side === "before" ? index : index + 1;
             if (isPlainChar) {
-              onInsertGap(activeGapNow, "", "end");
+              onInsertGap(pendingGapNow, "", "end");
               const buffer = event.key;
               onSetBlockText(insertIndex, buffer);
               pendingGapInsertRef.current = {
-                ...activeGapNow,
+                ...pendingGapNow,
                 insertIndex,
                 buffer,
               };
             } else {
-              onInsertGap(activeGapNow, undefined);
+              onInsertGap(pendingGapNow, undefined);
               pendingGapInsertRef.current = null;
             }
             event.preventDefault();
             return;
           }
-          if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-            if (event.key === "ArrowUp" && activeGapNow.side === "before") {
+          if (activeGapNow) {
+            if (event.key === "Escape") {
               setGapCursor(null);
               pendingGapInsertRef.current = null;
-              onNavigate(index - 1, "end");
               event.preventDefault();
               return;
             }
-            if (event.key === "ArrowDown" && activeGapNow.side === "after") {
-              setGapCursor(null);
-              pendingGapInsertRef.current = null;
-              onNavigate(index + 1, "start");
+            if (event.key === "Enter" || isPlainChar) {
+              if (
+                insertGapIntoBlock(
+                  activeGapNow,
+                  isPlainChar ? event.key : undefined,
+                )
+              ) {
+                event.preventDefault();
+                return;
+              }
+              const insertIndex =
+                activeGapNow.side === "before" ? index : index + 1;
+              if (isPlainChar) {
+                onInsertGap(activeGapNow, "", "end");
+                const buffer = event.key;
+                onSetBlockText(insertIndex, buffer);
+                pendingGapInsertRef.current = {
+                  ...activeGapNow,
+                  insertIndex,
+                  buffer,
+                };
+              } else {
+                onInsertGap(activeGapNow, undefined);
+                pendingGapInsertRef.current = null;
+              }
               event.preventDefault();
               return;
             }
-            setGapCursor(null);
-            pendingGapInsertRef.current = null;
-          }
-          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
-            setGapCursor(null);
-            pendingGapInsertRef.current = null;
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              if (event.key === "ArrowUp" && activeGapNow.side === "before") {
+                setGapCursor(null);
+                pendingGapInsertRef.current = null;
+                onNavigate(index - 1, "end");
+                event.preventDefault();
+                return;
+              }
+              if (event.key === "ArrowDown" && activeGapNow.side === "after") {
+                setGapCursor(null);
+                pendingGapInsertRef.current = null;
+                onNavigate(index + 1, "start");
+                event.preventDefault();
+                return;
+              }
+              setGapCursor(null);
+              pendingGapInsertRef.current = null;
+            }
+            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") {
+              setGapCursor(null);
+              pendingGapInsertRef.current = null;
+            }
           }
         }
 
@@ -662,6 +709,24 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               SlateElement.isElement(n) && n.type === "code_block",
           }) as [CodeBlock, number[]] | undefined;
           if (!codeEntry) return false;
+          const codePath = codeEntry[1];
+          const prevNode =
+            codePath[codePath.length - 1] > 0
+              ? getNodeAt(editor, Path.previous(codePath))
+              : null;
+          const nextNode = getNodeAt(editor, Path.next(codePath));
+          if (
+            (direction === "up" &&
+              prevNode &&
+              SlateElement.isElement(prevNode) &&
+              prevNode.type === "paragraph") ||
+            (direction === "down" &&
+              nextNode &&
+              SlateElement.isElement(nextNode) &&
+              nextNode.type === "paragraph")
+          ) {
+            return false;
+          }
           const lineEntry = Editor.above(editor, {
             at: selection.focus,
             match: (n) =>
@@ -675,63 +740,73 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return lineIndex === lastIndex;
         };
 
-        if (
-          event.key === "ArrowUp" &&
-          selection != null &&
-          Range.isCollapsed(selection) &&
-          isCodeBlockEdge("up")
-        ) {
-          const path = getCodeBlockPath();
-          setGapCursor({ index, side: "before", path: path ?? undefined });
-          pendingGapInsertRef.current = { index, side: "before", path: path ?? undefined };
-          event.preventDefault();
-          return;
-        }
-
-        if (
-          event.key === "ArrowDown" &&
-          selection != null &&
-          Range.isCollapsed(selection) &&
-          isCodeBlockEdge("down")
-        ) {
-          const path = getCodeBlockPath();
-          setGapCursor({ index, side: "after", path: path ?? undefined });
-          pendingGapInsertRef.current = { index, side: "after", path: path ?? undefined };
-          event.preventDefault();
-          return;
-        }
-
-        if (
-          event.key === "ArrowUp" &&
-          editor.selection != null &&
-          Range.isCollapsed(editor.selection) &&
-          isAtBeginningOfBlock(editor, { mode: "highest" })
-        ) {
-          const topLevelIndex = editor.selection.focus.path[0];
-          if (topLevelIndex !== 0) {
+        if (USE_BLOCK_GAP_CURSOR) {
+          if (
+            event.key === "ArrowUp" &&
+            selection != null &&
+            Range.isCollapsed(selection) &&
+            isCodeBlockEdge("up")
+          ) {
+            const path = getCodeBlockPath();
+            setGapCursor({ index, side: "before", path: path ?? undefined });
+            pendingGapInsertRef.current = {
+              index,
+              side: "before",
+              path: path ?? undefined,
+            };
+            event.preventDefault();
             return;
           }
-          setGapCursor({ index, side: "before" });
-          pendingGapInsertRef.current = { index, side: "before" };
-          event.preventDefault();
-          return;
-        }
 
-        if (
-          event.key === "ArrowDown" &&
-          editor.selection != null &&
-          Range.isCollapsed(editor.selection) &&
-          isAtEndOfBlock(editor, { mode: "highest" })
-        ) {
-          const topLevelIndex = editor.selection.focus.path[0];
-          const lastTopLevelIndex = Math.max(0, editor.children.length - 1);
-          if (topLevelIndex !== lastTopLevelIndex) {
+          if (
+            event.key === "ArrowDown" &&
+            selection != null &&
+            Range.isCollapsed(selection) &&
+            isCodeBlockEdge("down")
+          ) {
+            const path = getCodeBlockPath();
+            setGapCursor({ index, side: "after", path: path ?? undefined });
+            pendingGapInsertRef.current = {
+              index,
+              side: "after",
+              path: path ?? undefined,
+            };
+            event.preventDefault();
             return;
           }
-          setGapCursor({ index, side: "after" });
-          pendingGapInsertRef.current = { index, side: "after" };
-          event.preventDefault();
-          return;
+
+          if (
+            event.key === "ArrowUp" &&
+            editor.selection != null &&
+            Range.isCollapsed(editor.selection) &&
+            isAtBeginningOfBlock(editor, { mode: "highest" })
+          ) {
+            const topLevelIndex = editor.selection.focus.path[0];
+            if (topLevelIndex !== 0) {
+              return;
+            }
+            setGapCursor({ index, side: "before" });
+            pendingGapInsertRef.current = { index, side: "before" };
+            event.preventDefault();
+            return;
+          }
+
+          if (
+            event.key === "ArrowDown" &&
+            editor.selection != null &&
+            Range.isCollapsed(editor.selection) &&
+            isAtEndOfBlock(editor, { mode: "highest" })
+          ) {
+            const topLevelIndex = editor.selection.focus.path[0];
+            const lastTopLevelIndex = Math.max(0, editor.children.length - 1);
+            if (topLevelIndex !== lastTopLevelIndex) {
+              return;
+            }
+            setGapCursor({ index, side: "after" });
+            pendingGapInsertRef.current = { index, side: "after" };
+            event.preventDefault();
+            return;
+          }
         }
 
         const handler = getKeyboardHandler(event);
@@ -821,41 +896,45 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           >
           </div>
         )}
-        <div
-          data-slate-gap-cursor="block-hit-before"
-          style={{
-            position: "absolute",
-            top: -6,
-            left: 0,
-            right: 0,
-            height: 12,
-            cursor: "text",
-            zIndex: 1,
-          }}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            setGapCursor({ index, side: "before" });
-            ReactEditor.focus(editor);
-          }}
-        />
-        {showGapBefore && (
-          <div
-            data-slate-gap-cursor="block-before"
-            style={{
-              position: "absolute",
-              top:
-                activeGap?.path && gapCursorPos
-                  ? gapCursorPos.top - 2
-                  : -2,
-              left: 0,
-              right: 0,
-              height: 4,
-              background: "rgba(24, 144, 255, 0.25)",
-              borderRadius: 2,
-              pointerEvents: "none",
-              zIndex: 2,
-            }}
-          />
+        {USE_BLOCK_GAP_CURSOR && (
+          <>
+            <div
+              data-slate-gap-cursor="block-hit-before"
+              style={{
+                position: "absolute",
+                top: -6,
+                left: 0,
+                right: 0,
+                height: 12,
+                cursor: "text",
+                zIndex: 1,
+              }}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setGapCursor({ index, side: "before" });
+                ReactEditor.focus(editor);
+              }}
+            />
+            {showGapBefore && (
+              <div
+                data-slate-gap-cursor="block-before"
+                style={{
+                  position: "absolute",
+                  top:
+                    activeGap?.path && gapCursorPos
+                      ? gapCursorPos.top - 2
+                      : -2,
+                  left: 0,
+                  right: 0,
+                  height: 4,
+                  background: "rgba(24, 144, 255, 0.25)",
+                  borderRadius: 2,
+                  pointerEvents: "none",
+                  zIndex: 2,
+                }}
+              />
+            )}
+          </>
         )}
         <ChangeContext.Provider
           value={{
@@ -863,7 +942,9 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             editor: editor as any,
             blockNavigation: {
               setGapCursor: (side) => {
-                setGapCursor({ index, side });
+                if (USE_BLOCK_GAP_CURSOR) {
+                  setGapCursor({ index, side });
+                }
               },
             },
           }}
@@ -891,44 +972,48 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             />
           </Slate>
         </ChangeContext.Provider>
-        {showGapAfter && (
-          <div
-            data-slate-gap-cursor="block-after"
-            style={{
-              position: "absolute",
-              top:
-                activeGap?.path && gapCursorPos
-                  ? gapCursorPos.bottom - 2
-                  : undefined,
-              bottom:
-                activeGap?.path && gapCursorPos ? undefined : -2,
-              left: 0,
-              right: 0,
-              height: 4,
-              background: "rgba(24, 144, 255, 0.25)",
-              borderRadius: 2,
-              pointerEvents: "none",
-              zIndex: 2,
-            }}
-          />
+        {USE_BLOCK_GAP_CURSOR && (
+          <>
+            {showGapAfter && (
+              <div
+                data-slate-gap-cursor="block-after"
+                style={{
+                  position: "absolute",
+                  top:
+                    activeGap?.path && gapCursorPos
+                      ? gapCursorPos.bottom - 2
+                      : undefined,
+                  bottom:
+                    activeGap?.path && gapCursorPos ? undefined : -2,
+                  left: 0,
+                  right: 0,
+                  height: 4,
+                  background: "rgba(24, 144, 255, 0.25)",
+                  borderRadius: 2,
+                  pointerEvents: "none",
+                  zIndex: 2,
+                }}
+              />
+            )}
+            <div
+              data-slate-gap-cursor="block-hit-after"
+              style={{
+                position: "absolute",
+                bottom: -6,
+                left: 0,
+                right: 0,
+                height: 12,
+                cursor: "text",
+                zIndex: 1,
+              }}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setGapCursor({ index, side: "after" });
+                ReactEditor.focus(editor);
+              }}
+            />
+          </>
         )}
-        <div
-          data-slate-gap-cursor="block-hit-after"
-          style={{
-            position: "absolute",
-            bottom: -6,
-            left: 0,
-            right: 0,
-            height: 12,
-            cursor: "text",
-            zIndex: 1,
-          }}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            setGapCursor({ index, side: "after" });
-            ReactEditor.focus(editor);
-          }}
-        />
       </div>
     );
   },

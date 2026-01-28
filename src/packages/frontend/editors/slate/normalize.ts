@@ -20,7 +20,7 @@ import { Editor, Element, Path, Range, Text, Transforms } from "slate";
 import { isEqual } from "lodash";
 
 import { getNodeAt } from "./slate-util";
-import { emptyParagraph } from "./padding";
+import { emptyParagraph, isWhitespaceParagraph } from "./padding";
 import { isListElement } from "./elements/list";
 import { getCodeBlockText, toCodeLines } from "./elements/code-block/utils";
 
@@ -33,6 +33,14 @@ interface NormalizeInputs {
 type NormalizeFunction = (NormalizeInputs) => void;
 
 const NORMALIZERS: NormalizeFunction[] = [];
+
+function spacerParagraph(): Element {
+  return {
+    type: "paragraph",
+    spacer: true,
+    children: [{ text: "" }],
+  } as Element;
+}
 
 export const withNormalize = (editor) => {
   const { normalizeNode } = editor;
@@ -143,6 +151,50 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   });
   Transforms.insertNodes(editor, nextLines, { at: path.concat(0) });
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
+});
+
+// In block editor mode, ensure code blocks are surrounded by spacer paragraphs
+// so navigation works like normal text paragraphs (no gap cursors needed).
+NORMALIZERS.push(function ensureCodeBlockSpacers({ editor, node, path }) {
+  if (!(Element.isElement(node) && node.type === "code_block")) return;
+  if (path.length === 0) return;
+  const index = path[path.length - 1];
+  if (index > 0) {
+    const prevPath = Path.previous(path);
+    const prevNode = getNodeAt(editor, prevPath);
+    if (!(Element.isElement(prevNode) && prevNode.type === "paragraph")) {
+      Transforms.insertNodes(editor, spacerParagraph(), { at: path });
+      return;
+    }
+  } else {
+    Transforms.insertNodes(editor, spacerParagraph(), { at: path });
+    return;
+  }
+  const nextPath = Path.next(path);
+  const nextNode = getNodeAt(editor, nextPath);
+  if (!(Element.isElement(nextNode) && nextNode.type === "paragraph")) {
+    Transforms.insertNodes(editor, spacerParagraph(), { at: nextPath });
+  }
+});
+
+// Remove spacer flag once user types, and drop stray spacer paragraphs
+// that no longer neighbor a code block.
+NORMALIZERS.push(function normalizeSpacerParagraph({ editor, node, path }) {
+  if (!(Element.isElement(node) && node.type === "paragraph")) return;
+  if (node["spacer"] !== true) return;
+  if (!isWhitespaceParagraph(node)) {
+    Transforms.setNodes(editor, { spacer: false } as any, { at: path });
+    return;
+  }
+  if (path.length === 0) return;
+  const prevNode = path[path.length - 1] > 0 ? getNodeAt(editor, Path.previous(path)) : null;
+  const nextNode = getNodeAt(editor, Path.next(path));
+  const hasCodeNeighbor =
+    (Element.isElement(prevNode) && prevNode.type === "code_block") ||
+    (Element.isElement(nextNode) && nextNode.type === "code_block");
+  if (!hasCodeNeighbor) {
+    Transforms.removeNodes(editor, { at: path });
+  }
 });
 
 /*
