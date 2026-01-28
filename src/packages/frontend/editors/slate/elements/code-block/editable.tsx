@@ -244,7 +244,7 @@ function Element({ attributes, children, element }: RenderElementProps) {
 
   const lineCount = getCodeBlockLineCount(element as CodeBlock);
   const modeLabel = infoToMode(info, { value: codeValue }) || "plain text";
-  const shouldCollapse = lineCount > COLLAPSE_THRESHOLD_LINES;
+  const shouldCollapse = false;
   const selection = editor.selection;
   const selectionInBlock =
     !!focused &&
