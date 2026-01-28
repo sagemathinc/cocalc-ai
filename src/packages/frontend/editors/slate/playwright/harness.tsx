@@ -52,6 +52,30 @@ const initialValue: Descendant[] = [
   { type: "paragraph", children: [{ text: "" }] },
 ];
 
+// Provide lightweight polyfills so block-mode virtualization can mount in tests.
+if (typeof window !== "undefined") {
+  if (!("ResizeObserver" in window)) {
+    class ResizeObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    (window as any).ResizeObserver = ResizeObserver;
+  }
+  if (!("IntersectionObserver" in window)) {
+    class IntersectionObserver {
+      constructor() {}
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    }
+    (window as any).IntersectionObserver = IntersectionObserver;
+  }
+}
+
 function Harness(): React.JSX.Element {
   const params =
     typeof window === "undefined"
@@ -112,17 +136,19 @@ function Harness(): React.JSX.Element {
 
   if (blockMode) {
     return (
-      <div style={{ padding: 16, width: 520 }}>
-        <BlockMarkdownEditor
-          value={initialMarkdown}
-          read_only={false}
-          hidePath={true}
-          minimal={true}
-          height="auto"
-          noVfill={true}
-          actions={{}}
-        />
-      </div>
+      <HarnessErrorBoundary>
+        <div style={{ padding: 16, width: 520, height: 320 }}>
+          <BlockMarkdownEditor
+            value={initialMarkdown}
+            read_only={false}
+            hidePath={true}
+            minimal={true}
+            height="300px"
+            noVfill={true}
+            actions={{}}
+          />
+        </div>
+      </HarnessErrorBoundary>
     );
   }
 
@@ -247,6 +273,29 @@ function Harness(): React.JSX.Element {
       </div>
     </Slate>
   );
+}
+
+class HarnessErrorBoundary extends React.Component<
+  React.PropsWithChildren,
+  { error: Error | null }
+> {
+  state = { error: null };
+
+  componentDidCatch(error: Error): void {
+    console.error("Block harness error:", error);
+    this.setState({ error });
+  }
+
+  render(): React.ReactNode {
+    if (this.state.error) {
+      return (
+        <pre data-testid="harness-error">
+          {String(this.state.error.message || this.state.error)}
+        </pre>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function markdownToSlateForHarness(markdown: string): Descendant[] {

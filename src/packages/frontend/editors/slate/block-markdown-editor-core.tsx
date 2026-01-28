@@ -347,6 +347,11 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const activeGap =
       gapCursor && gapCursor.index === index ? gapCursor : null;
 
+    const renderLeaf = useCallback(
+      (props: any) => React.createElement(leafComponent ?? Leaf, props),
+      [leafComponent],
+    );
+
     useEffect(() => {
       (editor as any).blockGapCursor = activeGap;
     }, [editor, activeGap]);
@@ -475,11 +480,8 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           const lineIndex = linePath[linePath.length - 1];
           const isFirstLine = lineIndex === 0;
           const isLastLine = lineIndex === block.children.length - 1;
-          const lineText = Node.string(block.children[lineIndex]);
-          const atStart = selection.focus.offset === 0;
-          const atEnd = selection.focus.offset === lineText.length;
-          if (direction === "up") return isFirstLine && atStart;
-          return isLastLine && atEnd;
+          if (direction === "up") return isFirstLine;
+          return isLastLine;
         };
 
         if (
@@ -657,7 +659,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               autoFocus={autoFocus}
               readOnly={read_only}
               renderElement={renderElement}
-              renderLeaf={leafComponent ?? Leaf}
+              renderLeaf={renderLeaf}
               decorate={decorate}
               onFocus={() => {
                 onFocus?.();

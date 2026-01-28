@@ -12,5 +12,18 @@ export function slate_to_markdown(
   },
 ): string {
   if (!slate || slate.length === 0) return "";
-  return slate.map((node) => SlateNode.string(node)).join("\n\n");
+  return slate
+    .map((node) => {
+      const anyNode = node as any;
+      if (anyNode.type === "code_block") {
+        const info = anyNode.info ? String(anyNode.info).trim() : "";
+        const lines = Array.isArray(anyNode.children)
+          ? anyNode.children.map((child: Node) => SlateNode.string(child))
+          : [];
+        const fence = "```" + info;
+        return [fence, ...lines, "```"].join("\n");
+      }
+      return SlateNode.string(node);
+    })
+    .join("\n\n");
 }

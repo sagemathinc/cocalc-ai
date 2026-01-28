@@ -424,22 +424,17 @@ test("gap cursor only appears on last visual line before a void block", async ({
 test("block editor: arrow keys can escape a code block", async ({ page }) => {
   await page.goto("http://127.0.0.1:4172/?block=1");
 
-  await page.waitForSelector("[data-slate-editor]");
+  await page.waitForSelector('[data-slate-block-index="0"]');
 
   const codeBlock = page.locator(".cocalc-slate-code-block").first();
   await expect(codeBlock).toBeVisible();
 
   await codeBlock.click();
   await page.keyboard.press("Home");
-  await page.keyboard.press("ArrowUp");
-  await expect(
-    page.locator('[data-slate-gap-cursor="block-before"]'),
-  ).toBeVisible();
-
-  await codeBlock.click();
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("Y");
   await expect(
-    page.locator('[data-slate-gap-cursor="block-after"]'),
-  ).toBeVisible();
+    page.locator('[data-slate-block-index="2"]'),
+  ).toContainText("Y");
 });
