@@ -107,6 +107,11 @@ function isParagraphNode(node: Descendant | undefined): boolean {
   return node != null && node["type"] === "paragraph";
 }
 
+function isVoidBlockNode(node: Descendant | undefined): boolean {
+  if (!node || typeof node !== "object") return false;
+  return (node as any).isVoid === true;
+}
+
 function spacerParagraph(): Descendant {
   return {
     type: "paragraph",
@@ -119,7 +124,7 @@ function withCodeBlockSpacers(value: Descendant[]): Descendant[] {
   const next: Descendant[] = [];
   for (let i = 0; i < value.length; i += 1) {
     const node = value[i];
-    if (node?.["type"] === "code_block") {
+    if (node?.["type"] === "code_block" || isVoidBlockNode(node)) {
       const prev = next[next.length - 1];
       if (!isParagraphNode(prev)) {
         next.push(spacerParagraph());
