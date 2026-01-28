@@ -624,6 +624,9 @@ BOOTSTRAP_PY_URL="${scripts.bootstrapPyUrl}"
 BOOTSTRAP_PY_SHA_URL="${scripts.bootstrapPyShaUrl}"
 BOOTSTRAP_PY_FALLBACK_URL="${baseUrl}/project-host/bootstrap.py"
 ${caCertBlock}
+if [ -z "\${PUBLIC_IP+x}" ]; then
+  PUBLIC_IP='$PUBLIC_IP'
+fi
 
 report_status() {
   local status="$1"
@@ -836,7 +839,19 @@ fi
 EOF_COCALC_DEPROVISION
 sudo chmod +x "$BOOTSTRAP_ROOT/bin/deprovision.sh"
 sudo chown ${scripts.sshUser}:${scripts.sshUser} "$BOOTSTRAP_ROOT/bin/deprovision.sh"
-if [ -n "$SSH_UID" ]; then
+SSH_UID=""
+RUNTIME_DIR=""
+ENV_FILE="/etc/cocalc/project-host.env"
+if [ -f "$ENV_FILE" ]; then
+  RUNTIME_DIR="$(grep '^COCALC_PODMAN_RUNTIME_DIR=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)"
+fi
+if [ -z "$RUNTIME_DIR" ] && [ -n "$BOOTSTRAP_USER" ]; then
+  SSH_UID="$(id -u "$BOOTSTRAP_USER" 2>/dev/null || true)"
+  if [ -n "$SSH_UID" ]; then
+    RUNTIME_DIR="/btrfs/data/tmp/cocalc-podman-runtime-$SSH_UID"
+  fi
+fi
+if [ -n "$RUNTIME_DIR" ]; then
   HOST_DIR="$BOOTSTRAP_HOME/cocalc-host"
   sudo mkdir -p "$HOST_DIR"
   cat <<EOF_COCALC_ENV > "$HOST_DIR/env.sh"

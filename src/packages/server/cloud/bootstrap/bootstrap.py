@@ -590,10 +590,28 @@ def setup_conat_password(cfg: BootstrapConfig) -> None:
 
 def download_file(cfg: BootstrapConfig, url: str, dest: str) -> None:
     log_line(cfg, f"bootstrap: downloading {url}")
-    with urllib.request.urlopen(url) as resp:
-        data = resp.read()
     Path(dest).parent.mkdir(parents=True, exist_ok=True)
-    Path(dest).write_bytes(data)
+    headers = {
+        "User-Agent": "cocalc-bootstrap/1.0 (curl-compatible)",
+        "Accept": "*/*",
+    }
+    context = None
+    if cfg.ca_cert_path:
+        try:
+            context = ssl.create_default_context(cafile=cfg.ca_cert_path)
+        except Exception:
+            context = None
+    try:
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, context=context) as resp:
+            data = resp.read()
+        Path(dest).write_bytes(data)
+        return
+    except Exception as err:
+        log_line(cfg, f"bootstrap: download failed via urllib ({err}); trying curl")
+    if shutil.which("curl") is None:
+        raise RuntimeError("curl not available for download fallback")
+    run_cmd(cfg, ["curl", "-fsSL", "-o", dest, url], f"download {url} via curl")
 
 
 def verify_sha256(cfg: BootstrapConfig, path: str, expected: str | None) -> None:
@@ -635,13 +653,13 @@ def install_node(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: installing node via nvm")
     nvm_dir = f"{cfg.bootstrap_home}/.nvm"
     install_cmd = (
-        f"export NVM_DIR=\\\"{nvm_dir}\\\"; "
-        f"if [ ! -s \\\"$NVM_DIR/nvm.sh\\\" ]; then "
-        f"curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash; "
-        f"fi; "
-        f". \\\"$NVM_DIR/nvm.sh\\\"; "
-        f"nvm install {cfg.node_version}; "
-        f"nvm alias default {cfg.node_version}"
+        f'export NVM_DIR="{nvm_dir}"; '
+        f'if [ ! -s "$NVM_DIR/nvm.sh" ]; then '
+        f'curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash; '
+        f'fi; '
+        f'. "$NVM_DIR/nvm.sh"; '
+        f'nvm install {cfg.node_version}; '
+        f'nvm alias default {cfg.node_version}'
     )
     run_cmd(cfg, ["bash", "-lc", install_cmd], "install node", as_user=cfg.ssh_user)
 
@@ -650,13 +668,17 @@ def write_wrapper(cfg: BootstrapConfig) -> None:
     host_dir = Path(cfg.bootstrap_root)
     bin_dir = host_dir / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
+    bundle_root = cfg.project_host_bundle.current
+    if not bundle_root:
+        bundle_root = str(host_dir / "bundles" / "current")
+    bundle_entry = f"{bundle_root}/bundle/index.js"
     wrapper = f"""#!/usr/bin/env bash
 set -euo pipefail
 export NVM_DIR="$HOME/.nvm"
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   . "$NVM_DIR/nvm.sh"
 fi
-node "$HOME/cocalc-host/bundle/index.js" "$@"
+node "{bundle_entry}" "$@"
 """
     wrapper_path = bin_dir / "project-host"
     wrapper_path.write_text(wrapper, encoding="utf-8")
@@ -842,6 +864,23 @@ exit 0
 
 def start_project_host(cfg: BootstrapConfig) -> None:
     bin_path = f"{cfg.bootstrap_root}/bin/project-host"
+    # Sanity check: bundle must contain compiled entrypoint.
+    bundle_candidates = [
+        Path(cfg.project_host_bundle.current) if cfg.project_host_bundle.current else None,
+        Path(cfg.project_host_bundle.dir) if cfg.project_host_bundle.dir else None,
+    ]
+    bundle_candidates = [p for p in bundle_candidates if p]
+    main_js = None
+    for root in bundle_candidates:
+        candidate = root / "dist" / "main.js"
+        if candidate.exists():
+            main_js = candidate
+            break
+    if not main_js:
+        roots = ", ".join(str(p) for p in bundle_candidates if p) or "unknown"
+        log_line(cfg, f"bootstrap: missing project-host entrypoint dist/main.js (bundle roots: {roots})")
+        log_line(cfg, "bootstrap: project-host bundle appears incomplete; re-run bundle build/publish and re-bootstrap")
+        raise RuntimeError("project-host bundle missing dist/main.js")
     if Path(bin_path).exists():
         run_cmd(cfg, [bin_path, "daemon", "stop"], "project-host stop", check=False, as_user=cfg.ssh_user)
     run_cmd(cfg, [bin_path, "daemon", "start"], "project-host start", as_user=cfg.ssh_user)

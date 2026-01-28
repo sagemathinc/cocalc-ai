@@ -35,6 +35,14 @@ ncc build packages/project-host/bin/start.js \
   --external bufferutil \
   --external utf-8-validate
 
+echo "- Copy compiled project-host dist/"
+if [ -d "packages/project-host/dist" ]; then
+  mkdir -p "$OUT"/dist
+  cp -r packages/project-host/dist/. "$OUT"/dist/
+else
+  echo "  (skipping dist; not found)"
+fi
+
 # zeromq expects its build manifest next to the native addon; ncc copies the
 # compiled .node file but not the manifest.json, so copy it manually.
 ZEROMQ_BUILD=$(find packages -path "*node_modules/zeromq/build" -type d -print -quit || true)
