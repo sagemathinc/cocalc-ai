@@ -120,6 +120,13 @@ export interface Customize {
   support?: string;
   supportVideoCall?: string;
   launchpad_self_signed?: boolean;
+  project_hosts_nebius_enabled?: boolean;
+  "project_hosts_google-cloud_enabled"?: boolean;
+  project_hosts_hyperstack_enabled?: boolean;
+  project_hosts_lambda_enabled?: boolean;
+  project_hosts_local_enabled?: boolean;
+  project_hosts_self_host_alpha_enabled?: boolean;
+  project_hosts_cloudflare_tunnel_enabled?: boolean;
   version?: {
     min_project?: number;
     min_browser?: number;

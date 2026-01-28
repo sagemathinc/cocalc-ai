@@ -27,8 +27,13 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     "customize",
     "project_hosts_self_host_alpha_enabled",
   );
+  const onlySelfHostOption =
+    provider.providerOptions.length === 1 &&
+    provider.providerOptions[0]?.value === "self-host";
   const simpleSelfHost =
-    provider.selectedProvider === "self-host" && !selfHostAlphaEnabled;
+    provider.selectedProvider === "self-host" &&
+    !selfHostAlphaEnabled &&
+    onlySelfHostOption;
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", form);
   React.useEffect(() => {
     if (!simpleSelfHost) return;
@@ -107,11 +112,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   );
   if (!wrapForm) return content;
   return (
-    <Form
-      layout="vertical"
-      disabled={!canCreateHosts}
-      form={form}
-    >
+    <Form layout="vertical" disabled={!canCreateHosts} form={form}>
       {content}
     </Form>
   );
