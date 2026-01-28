@@ -440,3 +440,68 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
     });
   }).toContain("Y");
 });
+
+test("block editor: gap cursor inserts before/after code block", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4172/?block=1");
+
+  await page.waitForSelector('[data-slate-block-index="0"]');
+
+  const codeBlock = page.locator(".cocalc-slate-code-block").first();
+  await expect(codeBlock).toBeVisible();
+
+  // Insert before code block.
+  await codeBlock.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowUp");
+  await page.waitForTimeout(50);
+  await page.keyboard.type("xz");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("a\n\nxz\n\n```");
+
+  // Insert after code block.
+  await codeBlock.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowDown");
+  await page.waitForTimeout(50);
+  await page.keyboard.type("yz");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("```\nfoo\n```\n\nyz");
+});
+
+test("block editor: gap insert keeps caret", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4172/?block=1");
+
+  await page.waitForSelector('[data-slate-block-index="0"]');
+
+  const codeBlock = page.locator(".cocalc-slate-code-block").first();
+  await expect(codeBlock).toBeVisible();
+
+  await codeBlock.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowUp");
+  await page.waitForTimeout(50);
+  await page.keyboard.type("X");
+
+  const caretInfo = await page.evaluate(() => {
+    const sel = window.getSelection();
+    const hasRange = !!sel && sel.rangeCount > 0;
+    const active = document.activeElement;
+    const block = active?.closest?.("[data-slate-block-index]");
+    return {
+      hasRange,
+      blockIndex: block?.getAttribute("data-slate-block-index") ?? null,
+      blockText: block?.textContent ?? "",
+    };
+  });
+
+  expect(caretInfo.hasRange).toBe(true);
+  expect(caretInfo.blockText).toContain("X");
+});

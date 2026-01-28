@@ -9,6 +9,7 @@ module.exports = {
     customExportConditions: ["node", "node-addons"],
   },
   moduleNameMapper: {
+    "^@cocalc/frontend/(.*)$": "<rootDir>/$1",
     "^p-limit$": "<rootDir>/test/mocks/p-limit.js",
     "^dropzone$": "<rootDir>/test/mocks/dropzone.js",
     "^@cocalc/frontend/users$": "<rootDir>/test/mocks/frontend-users.js",
