@@ -42,6 +42,7 @@ import reCaptcha from "@cocalc/server/auth/recaptcha";
 import redeemRegistrationToken from "@cocalc/server/auth/tokens/redeem";
 import sendWelcomeEmail from "@cocalc/server/email/welcome-email";
 import getLogger from "@cocalc/backend/logger";
+import { getTierTemplate } from "@cocalc/util/membership-tier-templates";
 import {
   isLaunchpadMode,
   isSoftwareLicenseActivated,
@@ -222,6 +223,73 @@ export async function signUp(req, res) {
             END
           WHERE account_id=$1`,
         [account_id],
+      );
+    }
+
+    if (wantsAdmin && isBootstrap) {
+      const pool = getPool();
+      const { rows: proRows } = await pool.query(
+        `SELECT label, store_visible, priority, project_defaults, llm_limits, features
+         FROM membership_tiers
+         WHERE id='pro'
+         LIMIT 1`,
+      );
+      const pro = proRows[0];
+      const proTemplate = getTierTemplate("pro");
+      const proDefaults = pro ?? proTemplate;
+      const adminLabel = "Admin";
+      const adminPriority =
+        typeof proDefaults?.priority === "number"
+          ? proDefaults.priority + 1
+          : 1;
+      await pool.query(
+        `INSERT INTO membership_tiers (
+            id, label, store_visible, priority,
+            price_monthly, price_yearly, project_defaults, llm_limits, features,
+            disabled, notes, history, created, updated
+          )
+          VALUES ($1,$2,$3,$4,$5,$6,$7::JSONB,$8::JSONB,$9::JSONB,$10,$11,$12::JSONB,NOW(),NOW())
+          ON CONFLICT (id)
+          DO UPDATE SET
+            label=EXCLUDED.label,
+            store_visible=EXCLUDED.store_visible,
+            priority=EXCLUDED.priority,
+            price_monthly=EXCLUDED.price_monthly,
+            price_yearly=EXCLUDED.price_yearly,
+            project_defaults=EXCLUDED.project_defaults,
+            llm_limits=EXCLUDED.llm_limits,
+            features=EXCLUDED.features,
+            disabled=EXCLUDED.disabled,
+            notes=EXCLUDED.notes,
+            updated=NOW()`,
+        [
+          "admin",
+          adminLabel,
+          false,
+          adminPriority,
+          0,
+          0,
+          proDefaults?.project_defaults ?? null,
+          proDefaults?.llm_limits ?? null,
+          proDefaults?.features ?? null,
+          false,
+          "bootstrap admin tier",
+          [],
+        ],
+      );
+      await pool.query(
+        `INSERT INTO admin_assigned_memberships (
+            account_id, membership_class, assigned_by, assigned_at, expires_at, notes
+          )
+          VALUES ($1,$2,$3,NOW(),NULL,$4)
+          ON CONFLICT (account_id)
+          DO UPDATE SET
+            membership_class=EXCLUDED.membership_class,
+            assigned_by=EXCLUDED.assigned_by,
+            assigned_at=EXCLUDED.assigned_at,
+            expires_at=NULL,
+            notes=EXCLUDED.notes`,
+        [account_id, "admin", account_id, "bootstrap admin"],
       );
     }
 

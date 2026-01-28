@@ -589,6 +589,8 @@ fi
     "btrfs-progs",
     "uidmap",
     "slirp4netns",
+    "passt",
+    "catatonit",
     "fuse-overlayfs",
     "curl",
     "xz-utils",
@@ -737,12 +739,21 @@ download_bootstrap_py() {
         fi
       fi
     fi
-    chmod 700 "$target" || true
+    chmod 755 "$target" || true
+    if [ -n "$BOOTSTRAP_USER" ]; then
+      chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$target" || true
+      if [ -f "$sha_target" ]; then
+        chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$sha_target" || true
+      fi
+    fi
     return 0
   fi
   if [ -n "$BOOTSTRAP_PY_FALLBACK_URL" ]; then
     curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$BOOTSTRAP_PY_FALLBACK_URL" -o "$target" || return 1
-    chmod 700 "$target" || true
+    chmod 755 "$target" || true
+    if [ -n "$BOOTSTRAP_USER" ]; then
+      chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$target" || true
+    fi
     return 0
   fi
   return 1
@@ -861,6 +872,7 @@ if [ -n "$RUNTIME_DIR" ]; then
 #!/usr/bin/env bash
 export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 export COCALC_PODMAN_RUNTIME_DIR="$RUNTIME_DIR"
+export CONTAINERS_CGROUP_MANAGER="cgroupfs"
 EOF_COCALC_ENV
   sudo chmod +x "$HOST_DIR/env.sh"
   sudo chown ${scripts.sshUser}:${scripts.sshUser} "$HOST_DIR/env.sh"

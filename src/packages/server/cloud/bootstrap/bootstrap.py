@@ -180,6 +180,15 @@ def load_config(path: str) -> BootstrapConfig:
     )
 
 
+def parse_only(arg: str | None) -> set[str] | None:
+    if not arg:
+        return None
+    parts = [p.strip().lower() for p in arg.split(",") if p.strip()]
+    if not parts:
+        return None
+    return set(parts)
+
+
 def log_line(cfg: BootstrapConfig, message: str) -> None:
     ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     line = f"{ts} {message}\n"
@@ -187,8 +196,11 @@ def log_line(cfg: BootstrapConfig, message: str) -> None:
     sys.stdout.flush()
     if cfg.log_file:
         Path(cfg.log_file).parent.mkdir(parents=True, exist_ok=True)
-        with open(cfg.log_file, "a", encoding="utf-8") as handle:
-            handle.write(line)
+        try:
+            with open(cfg.log_file, "a", encoding="utf-8") as handle:
+                handle.write(line)
+        except PermissionError:
+            pass
 
 
 def run_cmd(
@@ -355,6 +367,37 @@ def prepare_dirs(cfg: BootstrapConfig) -> None:
     for path in ["/opt/cocalc", "/var/lib/cocalc", "/etc/cocalc", "/btrfs"]:
         Path(path).mkdir(parents=True, exist_ok=True)
     run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", "/opt/cocalc", "/var/lib/cocalc"], "chown cocalc dirs")
+
+
+def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
+    Path(cfg.bootstrap_root).mkdir(parents=True, exist_ok=True)
+    Path(cfg.bootstrap_dir).mkdir(parents=True, exist_ok=True)
+    Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
+    Path(cfg.log_file).parent.mkdir(parents=True, exist_ok=True)
+    if not cfg.ssh_user or cfg.ssh_user == "root":
+        return
+    # Ensure bootstrap directories are writable by the ssh user.
+    paths = [
+        cfg.bootstrap_root,
+        cfg.bootstrap_dir,
+        cfg.bootstrap_tmp,
+        str(Path(cfg.log_file).parent),
+        cfg.project_host_bundle.root,
+        cfg.project_bundle.root,
+        cfg.tools_bundle.root,
+    ]
+    if os.geteuid() == 0:
+        run_best_effort(
+            cfg,
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *paths],
+            "chown bootstrap dirs",
+        )
+    else:
+        run_best_effort(
+            cfg,
+            ["sudo", "chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *paths],
+            "sudo chown bootstrap dirs",
+        )
 
 
 def pick_data_disk(cfg: BootstrapConfig, devices: list[str]) -> str | None:
@@ -649,6 +692,13 @@ def verify_sha256(cfg: BootstrapConfig, path: str, expected: str | None) -> None
 
 
 def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> None:
+    Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
+    if cfg.bootstrap_user and cfg.bootstrap_user != "root":
+        run_best_effort(
+            cfg,
+            ["chown", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", cfg.bootstrap_tmp],
+            "chown bootstrap tmp",
+        )
     download_file(cfg, bundle.url, bundle.remote)
     verify_sha256(cfg, bundle.remote, bundle.sha256)
     Path(bundle.root).mkdir(parents=True, exist_ok=True)
@@ -758,6 +808,27 @@ exit 1
     (bin_dir / "logs-cf").write_text("sudo journalctl -u cocalc-cloudflared.service -o cat -f -n 200\n", encoding="utf-8")
     (bin_dir / "ctl-cf").write_text("sudo systemctl ${1-status} cocalc-cloudflared\n", encoding="utf-8")
     for name in ["ctl", "start-project-host", "logs", "logs-cf", "ctl-cf"]:
+        (bin_dir / name).chmod(0o755)
+
+    bootstrap_dir = Path(cfg.bootstrap_dir)
+    config_path = bootstrap_dir / "bootstrap-config.json"
+    bootstrap_py = bootstrap_dir / "bootstrap.py"
+    fetch_project_bundle = f"""#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "{bootstrap_py}" --config "{config_path}" --only project_bundle
+"""
+    fetch_project_host = f"""#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "{bootstrap_py}" --config "{config_path}" --only project_host_bundle
+"""
+    fetch_tools = f"""#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "{bootstrap_py}" --config "{config_path}" --only tools_bundle
+"""
+    (bin_dir / "fetch-project-bundle.sh").write_text(fetch_project_bundle, encoding="utf-8")
+    (bin_dir / "fetch-project-host.sh").write_text(fetch_project_host, encoding="utf-8")
+    (bin_dir / "fetch-tools.sh").write_text(fetch_tools, encoding="utf-8")
+    for name in ["fetch-project-bundle.sh", "fetch-project-host.sh", "fetch-tools.sh"]:
         (bin_dir / name).chmod(0o755)
 
 
@@ -919,11 +990,26 @@ def touch_paths(paths: list[str]) -> None:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
+    parser.add_argument(
+        "--only",
+        help="Comma-separated subset (project_bundle, project_host_bundle, tools_bundle)",
+    )
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
+    only = parse_only(args.only)
     log_line(cfg, "bootstrap: starting python bootstrap")
     log_line(cfg, f"bootstrap: user={cfg.bootstrap_user} home={cfg.bootstrap_home} root={cfg.bootstrap_root}")
     try:
+        ensure_bootstrap_paths(cfg)
+        if only:
+            log_line(cfg, f"bootstrap: running subset {sorted(only)}")
+            if "project_host_bundle" in only:
+                extract_bundle(cfg, cfg.project_host_bundle)
+            if "project_bundle" in only:
+                extract_bundle(cfg, cfg.project_bundle)
+            if "tools_bundle" in only:
+                extract_bundle(cfg, cfg.tools_bundle)
+            return 0
         ensure_platform(cfg)
         image_size_gb = compute_image_size(cfg)
         disable_unattended(cfg)

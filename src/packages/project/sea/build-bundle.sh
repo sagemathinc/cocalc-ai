@@ -109,6 +109,22 @@ copy_native_pkg() {
   fi
 }
 
+patch_node_pty_exports() {
+  local dest_root="$1"
+  for pkg in "${dest_root}"/bundle/node_modules/@lydell/node-pty-linux-*/package.json; do
+    [ -f "$pkg" ] || continue
+    node -e "const fs=require('fs');const p=process.argv[1];const data=JSON.parse(fs.readFileSync(p,'utf8'));delete data.exports;fs.writeFileSync(p, JSON.stringify(data,null,2));" "$pkg"
+  done
+  for pkgdir in "${dest_root}"/bundle/node_modules/@lydell/node-pty-linux-*; do
+    [ -d "$pkgdir" ] || continue
+    arch=$(basename "$pkgdir" | sed 's/^node-pty-linux-//')
+    prebuild="$pkgdir/prebuilds/linux-$arch/pty.node"
+    if [ -f "$prebuild" ]; then
+      cp "$prebuild" "$pkgdir/pty.node"
+    fi
+  done
+}
+
 echo "- Copy node-pty native addon(s)"
 case "${OSTYPE}" in
   linux*)
@@ -126,6 +142,9 @@ case "${OSTYPE}" in
     echo "  (unsupported platform for node-pty: ${OSTYPE})"
     ;;
 esac
+
+echo "- Allow node-pty native subpath requires"
+patch_node_pty_exports "$OUT"
 
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"

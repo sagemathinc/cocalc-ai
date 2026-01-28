@@ -133,27 +133,47 @@ export async function createProjectHostProxyHandlers() {
   }
 
   const handleRequest = async (req, res) => {
-    const parsed = parseReq(req.url ?? "/");
-    if (parsed.type === "conat") {
-      rewriteConatPath(req, parsed.project_id);
+    try {
+      const parsed = parseReq(req.url ?? "/");
+      if (parsed.type === "conat") {
+        rewriteConatPath(req, parsed.project_id);
+      }
+      const target =
+        parsed.type === "conat"
+          ? await targetForConatHost(parsed.project_id)
+          : await targetForProject(parsed.project_id);
+      proxy.web(req, res, { target, prependPath: false });
+    } catch (err) {
+      logger.debug("proxy request error", { err: `${err}`, url: req?.url });
+      if (!res.headersSent) {
+        res.statusCode = 404;
+        res.end("Host not available");
+      } else {
+        res.end();
+      }
     }
-    const target =
-      parsed.type === "conat"
-        ? await targetForConatHost(parsed.project_id)
-        : await targetForProject(parsed.project_id);
-    proxy.web(req, res, { target, prependPath: false });
   };
 
   const handleUpgrade = async (req, socket, head) => {
-    const parsed = parseReq(req.url ?? "/");
-    if (parsed.type === "conat") {
-      rewriteConatPath(req, parsed.project_id);
+    try {
+      const parsed = parseReq(req.url ?? "/");
+      if (parsed.type === "conat") {
+        rewriteConatPath(req, parsed.project_id);
+      }
+      const target =
+        parsed.type === "conat"
+          ? await targetForConatHost(parsed.project_id)
+          : await targetForProject(parsed.project_id);
+      proxy.ws(req, socket, head, { target, prependPath: false });
+    } catch (err) {
+      logger.debug("proxy upgrade error", { err: `${err}`, url: req?.url });
+      try {
+        socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      } catch {
+        // ignore
+      }
+      socket.destroy();
     }
-    const target =
-      parsed.type === "conat"
-        ? await targetForConatHost(parsed.project_id)
-        : await targetForProject(parsed.project_id);
-    proxy.ws(req, socket, head, { target, prependPath: false });
   };
 
   return { handleRequest, handleUpgrade };

@@ -297,13 +297,7 @@ async function startServer(): Promise<void> {
 
     const bootstrapUrl = await ensureBootstrapAdminToken({ baseUrl: target });
     const displayUrl = bootstrapUrl ?? target;
-    const msg = `Started HUB!\n\n-----------\n\n The following URL *might* work: ${displayUrl}\n\n\nPORT=${port}\nBASE_PATH=${basePath}\nPROTOCOL=${protocol}\n\n${
-      basePath.length <= 1
-        ? ""
-        : "If you are developing cocalc inside of cocalc, take the URL of the host cocalc\nand append " +
-          basePath +
-          " to it."
-    }\n\n-----------\n\n`;
+    const msg = `PORT=${port}\nBASE_PATH=${basePath}\nPROTOCOL=${protocol}\n\n\n\nStarted HUB!\n\n-----------\n\n\n\n    ${displayUrl}\n\n\n\n-----------\n\n`;
     logger.info(msg);
     console.log(msg);
   }
