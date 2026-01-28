@@ -4,7 +4,6 @@
  * app-only deps) while still allowing basic paragraph/list/code rendering.
  */
 
-import React from "react";
 import type { Descendant } from "slate";
 import { register } from "../elements/register";
 import "../elements/generic";

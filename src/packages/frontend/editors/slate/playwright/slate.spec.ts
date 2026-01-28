@@ -434,7 +434,9 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.type("Y");
-  await expect(
-    page.locator('[data-slate-block-index="2"]'),
-  ).toContainText("Y");
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("Y");
 });

@@ -45,6 +45,9 @@ declare global {
       setSelection: (range: Range) => void;
       setValue: (value: Descendant[]) => void;
     };
+    __slateBlockTest?: {
+      getMarkdown: () => string;
+    };
   }
 }
 
@@ -135,6 +138,12 @@ function Harness(): React.JSX.Element {
   }, [editor]);
 
   if (blockMode) {
+    const getValueRef = useRef<() => string>(() => "");
+    useEffect(() => {
+      window.__slateBlockTest = {
+        getMarkdown: () => getValueRef.current?.() ?? "",
+      };
+    }, []);
     return (
       <HarnessErrorBoundary>
         <div style={{ padding: 16, width: 520, height: 320 }}>
@@ -146,6 +155,7 @@ function Harness(): React.JSX.Element {
             height="300px"
             noVfill={true}
             actions={{}}
+            getValueRef={getValueRef}
           />
         </div>
       </HarnessErrorBoundary>
@@ -279,7 +289,7 @@ class HarnessErrorBoundary extends React.Component<
   React.PropsWithChildren,
   { error: Error | null }
 > {
-  state = { error: null };
+  state: { error: Error | null } = { error: null };
 
   componentDidCatch(error: Error): void {
     console.error("Block harness error:", error);
@@ -288,9 +298,11 @@ class HarnessErrorBoundary extends React.Component<
 
   render(): React.ReactNode {
     if (this.state.error) {
+      const message =
+        this.state.error?.message ?? String(this.state.error);
       return (
         <pre data-testid="harness-error">
-          {String(this.state.error.message || this.state.error)}
+          {message}
         </pre>
       );
     }

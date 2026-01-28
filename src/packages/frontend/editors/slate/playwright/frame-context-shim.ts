@@ -1,4 +1,4 @@
-import React, { createContext, useContext } from "react";
+import { createContext, useContext } from "react";
 
 export const defaultFrameContext = {
   id: "",
@@ -20,4 +20,3 @@ export function useFrameContext() {
 export function useFrameRedux() {
   return { get: () => null };
 }
-

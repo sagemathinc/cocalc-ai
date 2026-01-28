@@ -27,7 +27,7 @@ import {
 } from "slate";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
-import type { RenderElementProps } from "./slate-react";
+import type { RenderElementProps, RenderLeafProps } from "./slate-react";
 import { markdown_to_slate } from "./markdown-to-slate";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { withNormalize } from "./normalize";
@@ -968,7 +968,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   }, [actions]);
 
   const saveBlocksDebounced = useMemo(
-    () => debounce(saveBlocksNow, saveDebounceMs ?? SAVE_DEBOUNCE_MS),
+    () => debounce(saveBlocksNow, saveDebounceMs ?? DEFAULT_SAVE_DEBOUNCE_MS),
     [saveBlocksNow, saveDebounceMs],
   );
 
