@@ -153,12 +153,9 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
 });
 
-function needsSpacerParagraph(editor: Editor, node: Element, path?: Path): boolean {
+function needsSpacerParagraph(editor: Editor, node: Element, _path?: Path): boolean {
   if (node.type === "code_block") return true;
-  if (node.type === "blockquote") {
-    // Only force spacers for top-level blockquotes so we can exit the quote.
-    return path != null && path.length === 1;
-  }
+  if (node.type === "blockquote") return true;
   if (!Editor.isBlock(editor, node)) return false;
   return Editor.isVoid(editor, node);
 }
