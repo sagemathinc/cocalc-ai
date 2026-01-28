@@ -56,8 +56,23 @@ const Element: React.FC<RenderElementProps> = ({
 
   const Wrapper: any = element.type === "math_block" ? "div" : "span";
   const delim = element.type === "math_block" ? "$$" : "$";
+  const wrapperStyle =
+    element.type === "math_block"
+      ? { display: "block", position: "relative" as const }
+      : { display: "inline-block", position: "relative" as const };
+  const previewStyle: React.CSSProperties = {
+    position: "absolute",
+    right: element.type === "math_block" ? "4px" : "-4px",
+    top: element.type === "math_block" ? "2px" : "-0.6em",
+    background: "rgba(255,255,255,0.9)",
+    padding: "0 4px",
+    borderRadius: "4px",
+    pointerEvents: "none",
+    zIndex: 2,
+    maxWidth: element.type === "math_block" ? "95%" : "none",
+  };
   return (
-    <Wrapper {...attributes} style={element.type === "math_block" ? { display: "block" } : undefined}>
+    <Wrapper {...attributes} style={wrapperStyle}>
       {!isEditing && (
         <span
           contentEditable={false}
@@ -80,6 +95,15 @@ const Element: React.FC<RenderElementProps> = ({
             }
           }}
         >
+          <StaticElement
+            element={{ ...element, value } as any}
+            attributes={{} as any}
+            children={null as any}
+          />
+        </span>
+      )}
+      {isEditing && (
+        <span contentEditable={false} style={previewStyle}>
           <StaticElement
             element={{ ...element, value } as any}
             attributes={{} as any}
