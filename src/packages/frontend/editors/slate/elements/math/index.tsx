@@ -12,6 +12,7 @@ import DefaultMath from "@cocalc/frontend/components/math/ssr";
 export interface DisplayMath extends SlateElement {
   type: "math_block";
   value: string;
+  isVoid?: boolean;
 }
 
 export interface InlineMath extends SlateElement {
@@ -19,6 +20,7 @@ export interface InlineMath extends SlateElement {
   value: string;
   display?: boolean; // inline but acts as displayed math
   isInline: true;
+  isVoid?: boolean;
 }
 
 export const StaticElement: React.FC<RenderElementProps> = ({
@@ -36,7 +38,6 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     <span {...attributes}>
       <C
         data={wrap(value, element.type == "math_inline" && !element.display)}
-        inMarkdown
       />
     </span>
   );
@@ -52,7 +53,11 @@ function wrap(math, isInline) {
 
 function stripMathDelimiters(s: string): string {
   const trimmed = s.trim();
-  if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length >= 4) {
+  if (
+    trimmed.startsWith("$$") &&
+    trimmed.endsWith("$$") &&
+    trimmed.length >= 4
+  ) {
     return trimmed.slice(2, -2).trim();
   }
   if (trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length >= 2) {
@@ -76,6 +81,7 @@ register({
       type: "math_inline",
       value,
       isInline: true,
+      isVoid: true,
       children: [{ text: value }],
       display: token.type == "math_inline_double",
     } as Element;
@@ -83,10 +89,11 @@ register({
 });
 
 export function toDisplayMath({ token }) {
-  const value = stripMathDelimiters(stripMathEnvironment(token.content)).trim();
+  const value = stripMathEnvironment(token.content).trim();
   return {
     type: "math_block",
     value,
+    isVoid: true,
     children: [{ text: value }],
   } as Element;
 }
@@ -104,7 +111,7 @@ export function stripMathEnvironment(s: string): string {
     if (s.startsWith(`\\begin{${env}}`)) {
       return s.slice(
         `\\begin{${env}}`.length,
-        s.length - `\\end{${env}}`.length
+        s.length - `\\end{${env}}`.length,
       );
     }
   }

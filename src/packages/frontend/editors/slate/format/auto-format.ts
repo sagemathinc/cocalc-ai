@@ -264,6 +264,7 @@ function autoformatInlineMathAtCursor(editor: Editor): boolean {
     type: "math_inline",
     value: inner,
     isInline: true,
+    isVoid: true,
     display: false,
     children: [{ text: inner }],
   });
@@ -334,6 +335,7 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
         type: "math_block",
         display: true,
         value: "",
+        isVoid: true,
         children: [{ text: "" }],
       } as any,
       { at: blockPath },

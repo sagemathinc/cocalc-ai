@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { Editor, Node, Path, Transforms } from "slate";
+import { Editor, Node, Path, Range, Transforms } from "slate";
 import { register, RenderElementProps } from "../register";
 import { useFocused, useSelected, useSlate } from "../hooks";
 import { ReactEditor, useSlateSelection } from "../../slate-react";
@@ -24,8 +24,9 @@ const Element: React.FC<RenderElementProps> = ({
   const selected = useSelected();
   const selection = useSlateSelection();
   const [forceEdit, setForceEdit] = useState(false);
+  const isCollapsed = selection ? Range.isCollapsed(selection) : false;
   let editing = false;
-  if (selection) {
+  if (selection && isCollapsed) {
     try {
       const path = ReactEditor.findPath(editor as any, element as any);
       const { anchor, focus } = selection;
@@ -41,17 +42,33 @@ const Element: React.FC<RenderElementProps> = ({
       editing = false;
     }
   }
-  const isEditing = forceEdit || (focused && (selected || editing));
+  const isEditing =
+    isCollapsed && (forceEdit || (focused && (selected || editing)));
   useEffect(() => {
+    if (!isCollapsed && forceEdit) {
+      setForceEdit(false);
+      return;
+    }
     if (forceEdit && (!focused || !editing)) {
       setForceEdit(false);
     }
-  }, [forceEdit, focused, editing]);
+  }, [forceEdit, focused, editing, isCollapsed]);
   useEffect(() => {
-    if (focused && selected) {
+    if (focused && selected && isCollapsed) {
       setForceEdit(true);
     }
-  }, [focused, selected]);
+  }, [focused, selected, isCollapsed]);
+  useEffect(() => {
+    try {
+      const path = ReactEditor.findPath(editor as any, element as any);
+      const desired = !isEditing;
+      if ((element as any).isVoid !== desired) {
+        Transforms.setNodes(editor, { isVoid: desired } as any, { at: path });
+      }
+    } catch {
+      // ignore
+    }
+  }, [editor, element, isEditing]);
   const value = element.value ?? Node.string(element);
 
   const Wrapper: any = element.type === "math_block" ? "div" : "span";
@@ -63,21 +80,18 @@ const Element: React.FC<RenderElementProps> = ({
   const previewStyle: React.CSSProperties =
     element.type === "math_block"
       ? {
-          position: "absolute",
-          right: "4px",
-          top: "2px",
+          display: "block",
+          marginTop: "4px",
           background: "rgba(255,255,255,0.95)",
           padding: "0 4px",
           borderRadius: "4px",
           pointerEvents: "none",
           zIndex: 2,
-          maxWidth: "95%",
+          maxWidth: "100%",
         }
       : {
-          position: "absolute",
-          left: "0px",
-          bottom: "100%",
-          transform: "translateY(-2px)",
+          display: "inline-block",
+          marginLeft: "6px",
           background: "rgba(255,255,255,0.95)",
           padding: "0 4px",
           borderRadius: "4px",
@@ -116,6 +130,41 @@ const Element: React.FC<RenderElementProps> = ({
           />
         </span>
       )}
+      {!isEditing && (
+        <span
+          style={{
+            position: "absolute",
+            left: "-10000px",
+            height: 0,
+            overflow: "hidden",
+          }}
+        >
+          {children}
+        </span>
+      )}
+      {isEditing && (
+        <span
+          style={
+            element.type === "math_block"
+              ? { display: "block", marginTop: "4px" }
+              : { display: "inline-block", marginLeft: "6px" }
+          }
+        >
+          <span
+            contentEditable={false}
+            style={{ opacity: 0.6, userSelect: "none", marginRight: "4px" }}
+          >
+            {delim}
+          </span>
+          {children}
+          <span
+            contentEditable={false}
+            style={{ opacity: 0.6, userSelect: "none", marginLeft: "4px" }}
+          >
+            {delim}
+          </span>
+        </span>
+      )}
       {isEditing && (
         <span contentEditable={false} style={previewStyle}>
           <StaticElement
@@ -125,36 +174,6 @@ const Element: React.FC<RenderElementProps> = ({
           />
         </span>
       )}
-      <span
-        style={
-          isEditing
-            ? undefined
-            : {
-                position: "absolute",
-                left: "-10000px",
-                height: 0,
-                overflow: "hidden",
-              }
-        }
-      >
-        {isEditing && (
-          <span
-            contentEditable={false}
-            style={{ opacity: 0.6, userSelect: "none", marginRight: "4px" }}
-          >
-            {delim}
-          </span>
-        )}
-        {children}
-        {isEditing && (
-          <span
-            contentEditable={false}
-            style={{ opacity: 0.6, userSelect: "none", marginLeft: "4px" }}
-          >
-            {delim}
-          </span>
-        )}
-      </span>
     </Wrapper>
   );
 };

@@ -220,14 +220,40 @@ NORMALIZERS.push(function normalizeMathValue({ editor, node, path }) {
   if (!Element.isElement(node)) return;
   if (node.type !== "math_inline" && node.type !== "math_block") return;
   const text = Node.string(node);
-  if (node.value !== text) {
-    Transforms.setNodes(editor, { value: text } as any, { at: path });
+  const stripped = stripMathDelimiters(text);
+  if (stripped !== text) {
+    Editor.withoutNormalizing(editor, () => {
+      // Replace children with the stripped text so math renders once.
+      while (node.children.length > 0) {
+        Transforms.removeNodes(editor, { at: path.concat(0) });
+      }
+      Transforms.insertNodes(editor, { text: stripped }, { at: path.concat(0) });
+      Transforms.setNodes(editor, { value: stripped } as any, { at: path });
+    });
     return;
   }
-  if ((node as any).isVoid === true) {
-    Transforms.setNodes(editor, { isVoid: false } as any, { at: path });
+  if (node.value !== stripped) {
+    Transforms.setNodes(editor, { value: stripped } as any, { at: path });
+    return;
   }
 });
+
+function stripMathDelimiters(s: string): string {
+  const trimmed = s.trim();
+  if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length >= 4) {
+    return trimmed.slice(2, -2).trim();
+  }
+  if (trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length >= 2) {
+    return trimmed.slice(1, -1).trim();
+  }
+  if (trimmed.startsWith("\\[") && trimmed.endsWith("\\]")) {
+    return trimmed.slice(2, -2).trim();
+  }
+  if (trimmed.startsWith("\\(") && trimmed.endsWith("\\)")) {
+    return trimmed.slice(2, -2).trim();
+  }
+  return s;
+}
 
 /*
 Trim *all* whitespace from the beginning of blocks whose first child is Text,
