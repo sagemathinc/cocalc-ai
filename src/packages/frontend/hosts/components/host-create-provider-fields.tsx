@@ -14,11 +14,13 @@ const NEBIUS_IO_M3_GB = 93;
 type HostCreateProviderFieldsProps = {
   provider: HostCreateViewModel["provider"];
   onProviderChange?: (value: string) => void;
+  hideProviderSelect?: boolean;
 };
 
 export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> = ({
   provider,
   onProviderChange,
+  hideProviderSelect = false,
 }) => {
   const {
     providerOptions,
@@ -213,13 +215,15 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
 
   return (
     <>
-      <Form.Item
-        name="provider"
-        label="Provider"
-        initialValue={providerOptions[0]?.value ?? "none"}
-      >
-        <Select options={providerOptions} onChange={onProviderChange} />
-      </Form.Item>
+      {!hideProviderSelect && (
+        <Form.Item
+          name="provider"
+          label="Provider"
+          initialValue={providerOptions[0]?.value ?? "none"}
+        >
+          <Select options={providerOptions} onChange={onProviderChange} />
+        </Form.Item>
+      )}
       {gcpCompatibilityWarning?.type === "region" && (
         <Alert
           type="warning"

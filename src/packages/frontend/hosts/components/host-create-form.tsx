@@ -1,6 +1,5 @@
-import { Collapse, Form, Input } from "antd";
+import { Collapse, Form, Input, Select } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { HostCreateAdvancedFields } from "./host-create-advanced-fields";
@@ -22,18 +21,9 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   onProviderChange,
   wrapForm = true,
 }) => {
-  const hideAdvanced = provider.selectedProvider === "self-host";
-  const selfHostAlphaEnabled = !!useTypedRedux(
-    "customize",
-    "project_hosts_self_host_alpha_enabled",
-  );
-  const onlySelfHostOption =
-    provider.providerOptions.length === 1 &&
-    provider.providerOptions[0]?.value === "self-host";
-  const simpleSelfHost =
-    provider.selectedProvider === "self-host" &&
-    !selfHostAlphaEnabled &&
-    onlySelfHostOption;
+  const isSelfHost = provider.selectedProvider === "self-host";
+  const hideAdvanced = isSelfHost;
+  const simpleSelfHost = isSelfHost;
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", form);
   React.useEffect(() => {
     if (!simpleSelfHost) return;
@@ -60,11 +50,15 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   }, [form, simpleSelfHost, watchedSshTarget]);
   const content = (
     <>
+      <Form.Item
+        name="provider"
+        label="Provider"
+        initialValue={provider.providerOptions[0]?.value ?? "none"}
+      >
+        <Select options={provider.providerOptions} onChange={onProviderChange} />
+      </Form.Item>
       {simpleSelfHost ? (
         <>
-          <Form.Item name="provider" initialValue="self-host" hidden>
-            <Input />
-          </Form.Item>
           <Form.Item name="name" hidden>
             <Input />
           </Form.Item>
@@ -98,6 +92,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
           <HostCreateProviderFields
             provider={provider}
             onProviderChange={onProviderChange}
+            hideProviderSelect
           />
         </>
       )}
