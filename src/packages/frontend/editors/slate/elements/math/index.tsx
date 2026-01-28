@@ -30,7 +30,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     // type guard.
     throw Error("bug");
   }
-  const value = element.value ?? Node.string(element);
+  const value = stripMathDelimiters(element.value ?? Node.string(element));
   const C = MathComponent ?? DefaultMath;
   return (
     <span {...attributes}>
@@ -50,11 +50,28 @@ function wrap(math, isInline) {
   return math;
 }
 
+function stripMathDelimiters(s: string): string {
+  const trimmed = s.trim();
+  if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length >= 4) {
+    return trimmed.slice(2, -2).trim();
+  }
+  if (trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length >= 2) {
+    return trimmed.slice(1, -1).trim();
+  }
+  if (trimmed.startsWith("\\[") && trimmed.endsWith("\\]")) {
+    return trimmed.slice(2, -2).trim();
+  }
+  if (trimmed.startsWith("\\(") && trimmed.endsWith("\\)")) {
+    return trimmed.slice(2, -2).trim();
+  }
+  return s;
+}
+
 register({
   slateType: ["math_inline", "math_inline_double"],
   StaticElement,
   toSlate: ({ token }) => {
-    const value = stripMathEnvironment(token.content);
+    const value = stripMathDelimiters(stripMathEnvironment(token.content));
     return {
       type: "math_inline",
       value,
@@ -66,7 +83,7 @@ register({
 });
 
 export function toDisplayMath({ token }) {
-  const value = stripMathEnvironment(token.content).trim();
+  const value = stripMathDelimiters(stripMathEnvironment(token.content)).trim();
   return {
     type: "math_block",
     value,
