@@ -730,7 +730,10 @@ download_bootstrap_py() {
     if [ -n "$BOOTSTRAP_PY_SHA_URL" ]; then
       if curl -fsSL "$BOOTSTRAP_PY_SHA_URL" -o "$sha_target"; then
         if command -v sha256sum >/dev/null 2>&1; then
-          sha256sum -c "$sha_target" || return 1
+          (
+            cd "$BOOTSTRAP_DIR"
+            sha256sum -c "$(basename "$sha_target")"
+          ) || return 1
         fi
       fi
     fi

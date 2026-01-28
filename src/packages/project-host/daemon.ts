@@ -210,7 +210,12 @@ function resolveExec(root: string): { command: string; args: string[] } {
     process.env.COCALC_PROJECT_HOST_DAEMON_EXEC ?? process.execPath;
   const args: string[] = [];
   if (path.basename(command) === "node") {
-    args.push(path.join(root, "dist/main.js"));
+    const bundledMain = path.join(root, "main", "index.js");
+    if (fs.existsSync(bundledMain)) {
+      args.push(bundledMain);
+    } else {
+      args.push(path.join(root, "dist/main.js"));
+    }
   }
   return { command, args };
 }

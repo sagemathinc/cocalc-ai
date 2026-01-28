@@ -35,6 +35,13 @@ ncc build packages/project-host/bin/start.js \
   --external bufferutil \
   --external utf-8-validate
 
+echo "- Bundle main entrypoint (daemon target)"
+ncc build packages/project-host/dist/main.js \
+  -o "$OUT"/main \
+  --source-map \
+  --external bufferutil \
+  --external utf-8-validate
+
 echo "- Copy compiled project-host dist/"
 if [ -d "packages/project-host/dist" ]; then
   mkdir -p "$OUT"/dist
@@ -62,50 +69,61 @@ fi
 
 copy_native_pkg() {
   local pkg="$1"
+  local dest_root="$2"
   local dir
   dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
   if [ -n "$dir" ]; then
-    echo "- Copy native module ${pkg}"
-    mkdir -p "$OUT"/bundle/node_modules/"$pkg"
-    cp -r "$dir"/. "$OUT"/bundle/node_modules/"$pkg"/
+    echo "- Copy native module ${pkg} -> ${dest_root}/node_modules/${pkg}"
+    mkdir -p "${dest_root}/node_modules/${pkg}"
+    cp -r "$dir"/. "${dest_root}/node_modules/${pkg}"/
   else
     echo "  (skipping ${pkg}; not found)"
   fi
 }
 
+patch_node_pty_exports() {
+  local dest_root="$1"
+  for pkg in "${dest_root}"/node_modules/@lydell/node-pty-linux-*/package.json; do
+    [ -f "$pkg" ] || continue
+    node -e "const fs=require('fs');const p=process.argv[1];const data=JSON.parse(fs.readFileSync(p,'utf8'));delete data.exports;fs.writeFileSync(p, JSON.stringify(data,null,2));" "$pkg"
+  done
+  for pkgdir in "${dest_root}"/node_modules/@lydell/node-pty-linux-*; do
+    [ -d "$pkgdir" ] || continue
+    arch=$(basename "$pkgdir" | sed 's/^node-pty-linux-//')
+    prebuild="$pkgdir/prebuilds/linux-$arch/pty.node"
+    if [ -f "$prebuild" ]; then
+      cp "$prebuild" "$pkgdir/pty.node"
+    fi
+  done
+}
+
 echo "- Copy node-pty native addons (linux x64 + arm64)"
-copy_native_pkg "@lydell/node-pty-linux-x64"
-copy_native_pkg "@lydell/node-pty-linux-arm64"
-rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-darwin-* || true
-rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-win32-* || true
+copy_native_pkg "@lydell/node-pty-linux-x64" "$OUT/bundle"
+copy_native_pkg "@lydell/node-pty-linux-arm64" "$OUT/bundle"
+copy_native_pkg "@lydell/node-pty-linux-x64" "$OUT/main"
+copy_native_pkg "@lydell/node-pty-linux-arm64" "$OUT/main"
+rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-darwin-* "$OUT"/bundle/node_modules/@lydell/node-pty-win32-* || true
+rm -rf "$OUT"/main/node_modules/@lydell/node-pty-darwin-* "$OUT"/main/node_modules/@lydell/node-pty-win32-* || true
 
 echo "- Allow node-pty native subpath requires"
-for pkg in "$OUT"/bundle/node_modules/@lydell/node-pty-linux-*/package.json; do
-  [ -f "$pkg" ] || continue
-  node -e "const fs=require('fs');const p=process.argv[1];const data=JSON.parse(fs.readFileSync(p,'utf8'));delete data.exports;fs.writeFileSync(p, JSON.stringify(data,null,2));" "$pkg"
-done
-for pkgdir in "$OUT"/bundle/node_modules/@lydell/node-pty-linux-*; do
-  [ -d "$pkgdir" ] || continue
-  arch=$(basename "$pkgdir" | sed 's/^node-pty-linux-//')
-  prebuild="$pkgdir/prebuilds/linux-$arch/pty.node"
-  if [ -f "$prebuild" ]; then
-    cp "$prebuild" "$pkgdir/pty.node"
-  fi
-done
+patch_node_pty_exports "$OUT/bundle"
+patch_node_pty_exports "$OUT/main"
 
-copy_native_pkg "bufferutil"
-copy_native_pkg "utf-8-validate"
+copy_native_pkg "bufferutil" "$OUT/bundle"
+copy_native_pkg "utf-8-validate" "$OUT/bundle"
+copy_native_pkg "bufferutil" "$OUT/main"
+copy_native_pkg "utf-8-validate" "$OUT/main"
 
 echo "- Prune non-linux prebuilds"
-for pkg in bufferutil utf-8-validate; do
-  prebuilds="$OUT/bundle/node_modules/$pkg/prebuilds"
-  if [ -d "$prebuilds" ]; then
-    find "$prebuilds" -mindepth 1 -maxdepth 1 -type d ! -name 'linux-*' -exec rm -rf {} + || true
-  fi
+for dest_root in "$OUT/bundle" "$OUT/main"; do
+  for pkg in bufferutil utf-8-validate; do
+    prebuilds="$dest_root/node_modules/$pkg/prebuilds"
+    if [ -d "$prebuilds" ]; then
+      find "$prebuilds" -mindepth 1 -maxdepth 1 -type d ! -name 'linux-*' -exec rm -rf {} + || true
+    fi
+  done
+  rm -f "$dest_root"/node_modules/utf-8-validate/prebuilds/linux-*/utf-8-validate.musl.node || true
 done
-
-echo "- Strip musl prebuilds"
-rm -f "$OUT"/bundle/node_modules/utf-8-validate/prebuilds/linux-*/utf-8-validate.musl.node || true
 
 echo "- Copy project-runner templates"
 mkdir -p "$OUT"/bundle/templates
