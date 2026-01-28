@@ -60,17 +60,31 @@ const Element: React.FC<RenderElementProps> = ({
     element.type === "math_block"
       ? { display: "block", position: "relative" as const }
       : { display: "inline-block", position: "relative" as const };
-  const previewStyle: React.CSSProperties = {
-    position: "absolute",
-    right: element.type === "math_block" ? "4px" : "-4px",
-    top: element.type === "math_block" ? "2px" : "-0.6em",
-    background: "rgba(255,255,255,0.9)",
-    padding: "0 4px",
-    borderRadius: "4px",
-    pointerEvents: "none",
-    zIndex: 2,
-    maxWidth: element.type === "math_block" ? "95%" : "none",
-  };
+  const previewStyle: React.CSSProperties =
+    element.type === "math_block"
+      ? {
+          position: "absolute",
+          right: "4px",
+          top: "2px",
+          background: "rgba(255,255,255,0.95)",
+          padding: "0 4px",
+          borderRadius: "4px",
+          pointerEvents: "none",
+          zIndex: 2,
+          maxWidth: "95%",
+        }
+      : {
+          position: "absolute",
+          left: "0px",
+          bottom: "100%",
+          transform: "translateY(-2px)",
+          background: "rgba(255,255,255,0.95)",
+          padding: "0 4px",
+          borderRadius: "4px",
+          pointerEvents: "none",
+          zIndex: 2,
+          whiteSpace: "nowrap",
+        };
   return (
     <Wrapper {...attributes} style={wrapperStyle}>
       {!isEditing && (
