@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export { useFocused, useSelected } from "../slate-react";
+export { useFocused, useSelected, useSlateSelection } from "../slate-react";
 
 import {
   useEffect,
@@ -13,6 +13,7 @@ import {
 import { Range } from "slate";
 import { path_split } from "@cocalc/util/misc";
 import { useSlateStatic as useSlateStatic0 } from "../slate-react";
+import { useSlateSelection } from "../slate-react";
 import { SlateEditor } from "../editable-markdown";
 
 // Exactly like the normal useSlate hook, except return type is
@@ -32,8 +33,8 @@ export const useSlateStatic = () => {
 // Whether or not the current selection exists and is collapsed (i.e., not
 // a range).
 export const useCollapsed = () => {
-  const editor = useSlate();
-  return editor.selection != null && Range.isCollapsed(editor.selection);
+  const selection = useSlateSelection();
+  return selection != null && Range.isCollapsed(selection);
 };
 
 export const useProcessLinks = (

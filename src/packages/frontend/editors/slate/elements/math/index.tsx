@@ -4,7 +4,7 @@
  */
 
 import React from "react";
-import { Element } from "slate";
+import { Element, Node } from "slate";
 import { register, RenderElementProps, SlateElement } from "../register";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import DefaultMath from "@cocalc/frontend/components/math/ssr";
@@ -12,14 +12,12 @@ import DefaultMath from "@cocalc/frontend/components/math/ssr";
 export interface DisplayMath extends SlateElement {
   type: "math_block";
   value: string;
-  isVoid: true;
 }
 
 export interface InlineMath extends SlateElement {
   type: "math_inline";
   value: string;
   display?: boolean; // inline but acts as displayed math
-  isVoid: true;
   isInline: true;
 }
 
@@ -32,14 +30,12 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     // type guard.
     throw Error("bug");
   }
+  const value = element.value ?? Node.string(element);
   const C = MathComponent ?? DefaultMath;
   return (
     <span {...attributes}>
       <C
-        data={wrap(
-          element.value,
-          element.type == "math_inline" && !element.display
-        )}
+        data={wrap(value, element.type == "math_inline" && !element.display)}
         inMarkdown
       />
     </span>
@@ -58,23 +54,23 @@ register({
   slateType: ["math_inline", "math_inline_double"],
   StaticElement,
   toSlate: ({ token }) => {
+    const value = stripMathEnvironment(token.content);
     return {
       type: "math_inline",
-      value: stripMathEnvironment(token.content),
-      isVoid: true,
+      value,
       isInline: true,
-      children: [{ text: "" }],
+      children: [{ text: value }],
       display: token.type == "math_inline_double",
     } as Element;
   },
 });
 
 export function toDisplayMath({ token }) {
+  const value = stripMathEnvironment(token.content).trim();
   return {
     type: "math_block",
-    value: stripMathEnvironment(token.content).trim(),
-    isVoid: true,
-    children: [{ text: "" }],
+    value,
+    children: [{ text: value }],
   } as Element;
 }
 

@@ -3,11 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { Editor, Node, Path, Transforms } from "slate";
 import { register, RenderElementProps } from "../register";
-import { useSlate } from "../hooks";
-import { SlateMath } from "./math-widget";
-import { useSetElement } from "../set-element";
+import { useFocused, useSelected, useSlate } from "../hooks";
+import { ReactEditor, useSlateSelection } from "../../slate-react";
+import { StaticElement } from "./index";
 
 const Element: React.FC<RenderElementProps> = ({
   attributes,
@@ -19,19 +20,104 @@ const Element: React.FC<RenderElementProps> = ({
     throw Error("bug");
   }
   const editor = useSlate();
-  const setElement = useSetElement(editor, element);
+  const focused = useFocused();
+  const selected = useSelected();
+  const selection = useSlateSelection();
+  const [forceEdit, setForceEdit] = useState(false);
+  let editing = false;
+  if (selection) {
+    try {
+      const path = ReactEditor.findPath(editor as any, element as any);
+      const { anchor, focus } = selection;
+      const contains = (p: Path) =>
+        Path.isAncestor(path, p) || Path.equals(path, p);
+      editing = contains(anchor.path) && contains(focus.path);
+    } catch {
+      // DEBUG: log selection issues while we stabilize inline math editing.
+      console.warn("[slate-math] selection lookup failed", {
+        selection,
+        element,
+      });
+      editing = false;
+    }
+  }
+  const isEditing = forceEdit || (focused && (selected || editing));
+  useEffect(() => {
+    if (forceEdit && (!focused || !editing)) {
+      setForceEdit(false);
+    }
+  }, [forceEdit, focused, editing]);
+  useEffect(() => {
+    if (focused && selected) {
+      setForceEdit(true);
+    }
+  }, [focused, selected]);
+  const value = element.value ?? Node.string(element);
 
+  const Wrapper: any = element.type === "math_block" ? "div" : "span";
+  const delim = element.type === "math_block" ? "$$" : "$";
   return (
-    <span {...attributes}>
-      <SlateMath
-        value={element.value}
-        isInline={!!element["isInline"] && !element["display"]}
-        onChange={(value) => {
-          setElement({ value });
-        }}
-      />
-      {children}
-    </span>
+    <Wrapper {...attributes} style={element.type === "math_block" ? { display: "block" } : undefined}>
+      {!isEditing && (
+        <span
+          contentEditable={false}
+          onMouseDown={(e) => {
+            // Move selection into the math node so editing switches to raw LaTeX.
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+              const path = ReactEditor.findPath(editor as any, element as any);
+              const start = Editor.start(editor, path);
+              Transforms.select(editor, start);
+              ReactEditor.focus(editor as any);
+              setForceEdit(true);
+            } catch {
+              console.warn("[slate-math] click-to-edit failed", {
+                selection: editor.selection,
+                element,
+              });
+              // ignore
+            }
+          }}
+        >
+          <StaticElement
+            element={{ ...element, value } as any}
+            attributes={{} as any}
+            children={null as any}
+          />
+        </span>
+      )}
+      <span
+        style={
+          isEditing
+            ? undefined
+            : {
+                position: "absolute",
+                left: "-10000px",
+                height: 0,
+                overflow: "hidden",
+              }
+        }
+      >
+        {isEditing && (
+          <span
+            contentEditable={false}
+            style={{ opacity: 0.6, userSelect: "none", marginRight: "4px" }}
+          >
+            {delim}
+          </span>
+        )}
+        {children}
+        {isEditing && (
+          <span
+            contentEditable={false}
+            style={{ opacity: 0.6, userSelect: "none", marginLeft: "4px" }}
+          >
+            {delim}
+          </span>
+        )}
+      </span>
+    </Wrapper>
   );
 };
 
@@ -39,12 +125,9 @@ register({
   slateType: "math_inline",
   Element,
   fromSlate: ({ node }) => {
-    const delim = node.value.trim().startsWith("\\begin{")
-      ? ""
-      : node.display
-      ? "$$"
-      : "$";
-    return `${delim}${node.value}${delim}`;
+    const value = (node.value ?? Node.string(node)).trim();
+    const delim = value.startsWith("\\begin{") ? "" : node.display ? "$$" : "$";
+    return `${delim}${value}${delim}`;
   },
 });
 
@@ -52,7 +135,7 @@ register({
   slateType: "math_block",
   Element,
   fromSlate: ({ node }) => {
-    const value = node.value.trim();
+    const value = (node.value ?? Node.string(node)).trim();
     let start, end;
     if (value.startsWith("\\begin{")) {
       start = "";

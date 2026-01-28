@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 import { register, RenderElementProps } from "../register";
-import { useSlate } from "../hooks";
+import { useFocused, useSlate, useSlateSelection } from "../hooks";
 import { useSetElement } from "../set-element";
 import infoToMode from "./info-to-mode";
 import ActionButtons, { RunFunction } from "./action-buttons";
@@ -25,7 +25,6 @@ import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { ReactEditor } from "../../slate-react";
-import { useFocused } from "../hooks";
 import { hash_string } from "@cocalc/util/misc";
 import { Editor, Path, Transforms } from "slate";
 import { markdown_to_slate } from "../../markdown-to-slate";
@@ -245,7 +244,7 @@ function Element({ attributes, children, element }: RenderElementProps) {
   const lineCount = getCodeBlockLineCount(element as CodeBlock);
   const modeLabel = infoToMode(info, { value: codeValue }) || "plain text";
   const shouldCollapse = false;
-  const selection = editor.selection;
+  const selection = useSlateSelection();
   const selectionInBlock =
     !!focused &&
     !!selection &&

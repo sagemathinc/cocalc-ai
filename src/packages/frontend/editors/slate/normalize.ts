@@ -16,7 +16,7 @@ likely break this assumption and things will go to hell.  Be careful.""
 
 */
 
-import { Editor, Element, Path, Range, Text, Transforms } from "slate";
+import { Editor, Element, Node, Path, Range, Text, Transforms } from "slate";
 import { isEqual } from "lodash";
 
 import { getNodeAt } from "./slate-util";
@@ -156,9 +156,9 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
 const SPACER_BLOCK_TYPES = new Set<string>([
   "code_block",
   "blockquote",
-  "math_block",
   "html_block",
   "meta",
+  "math_block",
 ]);
 
 function needsSpacerParagraph(editor: Editor, node: Element, _path?: Path): boolean {
@@ -211,6 +211,21 @@ NORMALIZERS.push(function normalizeSpacerParagraph({ editor, node, path }) {
       needsSpacerParagraph(editor, nextNode, path && Path.next(path)));
   if (!hasSpacerNeighbor) {
     Transforms.removeNodes(editor, { at: path });
+  }
+});
+
+// Keep math node value in sync with its editable text and ensure math nodes
+// are not treated as void.
+NORMALIZERS.push(function normalizeMathValue({ editor, node, path }) {
+  if (!Element.isElement(node)) return;
+  if (node.type !== "math_inline" && node.type !== "math_block") return;
+  const text = Node.string(node);
+  if (node.value !== text) {
+    Transforms.setNodes(editor, { value: text } as any, { at: path });
+    return;
+  }
+  if ((node as any).isVoid === true) {
+    Transforms.setNodes(editor, { isVoid: false } as any, { at: path });
   }
 });
 

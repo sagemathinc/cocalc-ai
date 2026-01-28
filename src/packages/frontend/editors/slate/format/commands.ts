@@ -416,9 +416,8 @@ export async function formatAction(
       const node: Node = {
         type: "math_inline",
         value,
-        isVoid: true,
         isInline: true,
-        children: [{ text: "" }],
+        children: [{ text: value }],
       };
       Transforms.insertFragment(editor, [node]);
       return;
@@ -480,16 +479,14 @@ function transformToEquation(editor: Editor, display: boolean): void {
     node = {
       type: "math_block",
       value,
-      isVoid: true,
-      children: [{ text: "" }],
+      children: [{ text: value }],
     };
   } else {
     node = {
       type: "math_inline",
       value,
-      isVoid: true,
       isInline: true,
-      children: [{ text: "" }],
+      children: [{ text: value }],
     };
   }
   Transforms.insertFragment(editor, [node]);

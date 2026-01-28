@@ -264,9 +264,8 @@ function autoformatInlineMathAtCursor(editor: Editor): boolean {
     type: "math_inline",
     value: inner,
     isInline: true,
-    isVoid: true,
     display: false,
-    children: [{ text: "" }],
+    children: [{ text: inner }],
   });
   children.push({ text: " " });
 
@@ -333,7 +332,6 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
       editor,
       {
         type: "math_block",
-        isVoid: true,
         display: true,
         value: "",
         children: [{ text: "" }],
