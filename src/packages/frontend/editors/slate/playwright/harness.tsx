@@ -26,7 +26,6 @@ import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
 import { autoformatBlockquoteAtStart } from "../format/auto-format-quote";
 import { handleBlankLineEnter } from "../keyboard/blank-line-enter";
 import { getHandler } from "../keyboard/register";
-import { getGapCursor } from "../gap-cursor";
 import { withIsInline, withIsVoid } from "../plugins";
 import "../keyboard/arrow-keys";
 import { getCodeBlockText } from "../elements/code-block/utils";
@@ -37,7 +36,6 @@ declare global {
       getText: () => string;
       getSelection: () => Range | null;
       getValue: () => Descendant[];
-      getGapCursor: () => any;
       isFocused: () => boolean;
       getEnv: () => { hasBeforeInput: boolean };
       insertText: (text: string, autoFormat?: boolean) => void;
@@ -104,7 +102,6 @@ function Harness(): React.JSX.Element {
       getText: () => Node.string(editor),
       getSelection: () => editor.selection,
       getValue: () => valueRef.current,
-      getGapCursor: () => getGapCursor(editor),
       isFocused: () => ReactEditor.isFocused(editor),
       setSelection: (range) => {
         Transforms.select(editor, range);

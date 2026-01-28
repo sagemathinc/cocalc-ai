@@ -30,10 +30,10 @@ register({
           {...attributes}
           style={{
             margin: 0,
-            minHeight: 4,
-            lineHeight: "4px",
-            fontSize: 4,
-            background: "rgba(255, 0, 0, 0.2)",
+            minHeight: 2,
+            lineHeight: "2px",
+            fontSize: 2,
+            background: "transparent",
           }}
         >
           <span style={{ textIndent: 0 }}>{children}</span>

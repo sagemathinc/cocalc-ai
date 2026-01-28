@@ -16,7 +16,6 @@ import {
   RefObject,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -65,12 +64,6 @@ import { logSlateDebug } from "./slate-utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
 import { ensureRange, pointAtPath } from "./slate-util";
-import {
-  clearGapCursor,
-  getGapCursor,
-  insertParagraphAtGap,
-  setGapCursor,
-} from "./gap-cursor";
 import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
@@ -723,32 +716,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
-    const gapCursor = getGapCursor(editor);
-    if (gapCursor) {
-      if (
-        e.key.length === 1 &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey
-      ) {
-        insertParagraphAtGap(editor, gapCursor);
-        Transforms.insertText(editor, e.key);
-        e.preventDefault();
-        return;
-      }
-      if (e.key === "Enter") {
-        insertParagraphAtGap(editor, gapCursor);
-        e.preventDefault();
-        return;
-      }
-      if (e.key === "Escape") {
-        clearGapCursor(editor);
-        ReactEditor.forceUpdate(editor);
-        e.preventDefault();
-        return;
-      }
-    }
-
     mentions.onKeyDown(e);
     emojis.onKeyDown(e);
 
@@ -1085,15 +1052,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   // way for checking if the state of the editor has changed.  Instead
   // check editor.children itself explicitly.
   const onChange = (newEditorValue) => {
-    if (
-      editor.gapCursor != null &&
-      editor.operations?.some((op) => op.type === "set_selection")
-    ) {
-      const setAt = (editor as any).gapCursorSetAt;
-      if (setAt == null || Date.now() - setAt > 250) {
-        clearGapCursor(editor);
-      }
-    }
     if (dirtyRef != null) {
       // but see comment above
       dirtyRef.current = true;
@@ -1202,59 +1160,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [],
   );
 
-  const [gapCursorVersion, setGapCursorVersion] = useState(0);
-  const [gapCursorOverlay, setGapCursorOverlay] = useState<{
-    top: number;
-    left: number;
-    width: number;
-  } | null>(null);
-
-  useEffect(() => {
-    (editor as any).bumpGapCursor = () => {
-      setGapCursorVersion((prev) => prev + 1);
-    };
-    return () => {
-      if ((editor as any).bumpGapCursor) {
-        delete (editor as any).bumpGapCursor;
-      }
-    };
-  }, [editor]);
-
-  const updateGapCursorOverlay = useCallback(() => {
-    const gap = getGapCursor(editor);
-    const container = scrollRef.current;
-    if (!gap || !container) {
-      setGapCursorOverlay(null);
-      return;
-    }
-    const element = editor.children?.[gap.path[0]];
-    if (!element) {
-      setGapCursorOverlay(null);
-      return;
-    }
-    let domNode: HTMLElement | null = null;
-    try {
-      domNode = ReactEditor.toDOMNode(editor, element) as HTMLElement;
-    } catch {
-      setGapCursorOverlay(null);
-      return;
-    }
-    const containerRect = container.getBoundingClientRect();
-    const targetRect = domNode.getBoundingClientRect();
-    const anchorTop =
-      gap.side === "before" ? targetRect.top : targetRect.bottom;
-    const top = anchorTop - containerRect.top + container.scrollTop;
-    setGapCursorOverlay({
-      top,
-      left: 0,
-      width: container.clientWidth,
-    });
-  }, [editor, scrollRef]);
-
-  useLayoutEffect(() => {
-    updateGapCursorOverlay();
-  }, [updateGapCursorOverlay, gapCursorVersion, editorValue]);
-
   const useWindowing = !disableWindowing && ReactEditor.isUsingWindowing(editor);
   const showPendingRemoteIndicator =
     ignoreRemoteWhileFocused && pendingRemoteIndicator;
@@ -1294,22 +1199,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             Remote changes pending
           </div>
         )}
-        {gapCursorOverlay && (
-          <div
-            data-slate-gap-cursor="overlay"
-            style={{
-              position: "absolute",
-              top: gapCursorOverlay.top,
-              left: gapCursorOverlay.left,
-              width: gapCursorOverlay.width,
-              height: 4,
-              background: "rgba(24, 144, 255, 0.25)",
-              borderRadius: 2,
-              pointerEvents: "none",
-              zIndex: 1,
-            }}
-          />
-        )}
         <Editable
           placeholder={placeholder}
           autoFocus={autoFocus}
@@ -1348,7 +1237,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           divref={scrollRef}
           onScroll={() => {
             updateScrollState();
-            updateGapCursorOverlay();
           }}
           style={
             useWindowing
@@ -1382,16 +1270,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
                 }
               : undefined
           }
-        />
-        <div
-          data-slate-gap-cursor="bottom-hit"
-          style={{ height: 8, cursor: "text" }}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            const lastIndex = Math.max(0, editor.children.length - 1);
-            setGapCursor(editor, { path: [lastIndex], side: "after" });
-            ReactEditor.focus(editor);
-          }}
         />
       </div>
     </Slate>

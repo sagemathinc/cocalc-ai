@@ -331,95 +331,6 @@ test("convert markdown candidate code block to rich text", async ({ page }) => {
   expect(value?.[0]?.type).toBe("bullet_list");
 });
 
-test("gap cursor only appears on last visual line before a void block", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await waitForHarness(page);
-
-  const longText = Array.from({ length: 40 })
-    .map(() => "word")
-    .join(" ");
-
-  await page.evaluate((text) => {
-    window.__slateTest?.setValue([
-      { type: "paragraph", children: [{ text }] },
-      { type: "hr", isVoid: true, children: [{ text: "" }] },
-      { type: "paragraph", children: [{ text: "after" }] },
-    ]);
-  }, longText);
-
-  await page.waitForFunction(() => {
-    return window.__slateTest?.getValue()?.length === 3;
-  });
-
-  const editor = page.locator("[data-slate-editor]");
-  await editor.click();
-
-  await page.evaluate(() => {
-    window.__slateTest?.setSelection({
-      anchor: { path: [0, 0], offset: 0 },
-      focus: { path: [0, 0], offset: 0 },
-    });
-  });
-  await page.keyboard.press("ArrowDown");
-  await page.waitForTimeout(50);
-
-  const gapAfterStart = await page.evaluate(() =>
-    window.__slateTest?.getGapCursor(),
-  );
-  expect(gapAfterStart).toBeNull();
-
-  await page.evaluate(() => {
-    window.__slateTest?.setSelection({
-      anchor: { path: [0, 0], offset: 10 },
-      focus: { path: [0, 0], offset: 10 },
-    });
-  });
-  await page.keyboard.press("ArrowDown");
-  await page.waitForTimeout(50);
-  const gapAfterMiddle = await page.evaluate(() =>
-    window.__slateTest?.getGapCursor(),
-  );
-  expect(gapAfterMiddle).toBeNull();
-
-  await page.evaluate((text) => {
-    window.__slateTest?.setSelection({
-      anchor: { path: [0, 0], offset: text.length },
-      focus: { path: [0, 0], offset: text.length },
-    });
-  }, longText);
-  await page.keyboard.press("ArrowDown");
-  await page.waitForTimeout(50);
-
-  const gapAfterEnd = await page.evaluate(() =>
-    window.__slateTest?.getGapCursor(),
-  );
-  expect(gapAfterEnd).not.toBeNull();
-  if (gapAfterEnd) {
-    expect(gapAfterEnd.path[0]).toBe(1);
-    expect(gapAfterEnd.side).toBe("before");
-  }
-  await page.keyboard.press("ArrowDown");
-  await page.waitForTimeout(50);
-
-  await page.evaluate(() => {
-    window.__slateTest?.setSelection({
-      anchor: { path: [2, 0], offset: 0 },
-      focus: { path: [2, 0], offset: 0 },
-    });
-  });
-  await page.keyboard.press("ArrowUp");
-  await page.waitForTimeout(50);
-  const gapBeforeAfter = await page.evaluate(() =>
-    window.__slateTest?.getGapCursor(),
-  );
-  expect(gapBeforeAfter).not.toBeNull();
-  if (gapBeforeAfter) {
-    expect(gapBeforeAfter.path[0]).toBe(1);
-    expect(gapBeforeAfter.side).toBe("after");
-  }
-});
 
 test("block editor: arrow keys can escape a code block", async ({ page }) => {
   await page.goto("http://127.0.0.1:4172/?block=1");
@@ -441,7 +352,7 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
   }).toContain("Y");
 });
 
-test("block editor: gap cursor inserts before/after code block", async ({ page }) => {
+test("block editor: arrow inserts before/after code block", async ({ page }) => {
   await page.goto("http://127.0.0.1:4172/?block=1");
 
   await page.waitForSelector('[data-slate-block-index="0"]');

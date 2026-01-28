@@ -35,7 +35,6 @@ import { file_associations } from "@cocalc/frontend/file-associations";
 import { useRedux } from "@cocalc/frontend/app-framework";
 import { isEqual } from "lodash";
 import { logSlateDebug } from "../slate-utils/slate-debug";
-import { setGapCursor } from "../gap-cursor";
 
 const STYLE = {
   width: "100%",
@@ -198,7 +197,6 @@ export const SlateCodeMirror: React.FC<Props> = React.memo(
       if (!focused || !selected || isFocused) return;
       if (editor.selection == null || elementPath == null) return;
       if (!selectionCollapsed && !focusOnSelect) return;
-      if ((editor as any).gapCursor) return;
       if ((editor as any).blockGapCursor) return;
 
       const { anchor, focus } = editor.selection;
@@ -515,11 +513,6 @@ function cursorHandlers(
     editor.setIgnoreSelection(false);
     if (onRequestGapCursor) {
       onRequestGapCursor(side);
-      ReactEditor.focus(editor);
-      return true;
-    }
-    if (elementPath) {
-      setGapCursor(editor, { path: elementPath, side });
       ReactEditor.focus(editor);
       return true;
     }

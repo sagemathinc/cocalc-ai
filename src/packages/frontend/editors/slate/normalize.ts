@@ -153,10 +153,17 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
 });
 
-// In block editor mode, ensure code blocks are surrounded by spacer paragraphs
-// so navigation works like normal text paragraphs (no gap cursors needed).
-NORMALIZERS.push(function ensureCodeBlockSpacers({ editor, node, path }) {
-  if (!(Element.isElement(node) && node.type === "code_block")) return;
+function needsSpacerParagraph(editor: Editor, node: Element): boolean {
+  if (node.type === "code_block") return true;
+  if (!Editor.isBlock(editor, node)) return false;
+  return Editor.isVoid(editor, node);
+}
+
+// Ensure block void elements (and code blocks) are surrounded by spacer
+// paragraphs so navigation works like normal text paragraphs (no gap cursors).
+NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
+  if (!Element.isElement(node)) return;
+  if (!needsSpacerParagraph(editor, node)) return;
   if (path.length === 0) return;
   const index = path[path.length - 1];
   if (index > 0) {
@@ -189,10 +196,10 @@ NORMALIZERS.push(function normalizeSpacerParagraph({ editor, node, path }) {
   if (path.length === 0) return;
   const prevNode = path[path.length - 1] > 0 ? getNodeAt(editor, Path.previous(path)) : null;
   const nextNode = getNodeAt(editor, Path.next(path));
-  const hasCodeNeighbor =
-    (Element.isElement(prevNode) && prevNode.type === "code_block") ||
-    (Element.isElement(nextNode) && nextNode.type === "code_block");
-  if (!hasCodeNeighbor) {
+  const hasSpacerNeighbor =
+    (Element.isElement(prevNode) && needsSpacerParagraph(editor, prevNode)) ||
+    (Element.isElement(nextNode) && needsSpacerParagraph(editor, nextNode));
+  if (!hasSpacerNeighbor) {
     Transforms.removeNodes(editor, { at: path });
   }
 });
