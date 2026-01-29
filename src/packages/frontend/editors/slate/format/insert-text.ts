@@ -32,7 +32,7 @@ heuristics.
 import { Editor, Element, Path, Point, Range, Transforms } from "slate";
 import { ReactEditor } from "../slate-react";
 import { markdownAutoformat } from "./auto-format";
-import { ensureRange } from "../slate-util";
+import { ensureRange, slateDebug } from "../slate-util";
 
 export const withInsertText = (editor) => {
   const { insertText: insertText0 } = editor;
@@ -75,6 +75,11 @@ export const withInsertText = (editor) => {
     ) {
       const selection = (editor as any).__autoformatSelection;
       (editor as any).__autoformatSelection = null;
+      slateDebug("insert-text:restore-selection", {
+        selection,
+        lastSelection: editor.lastSelection ?? null,
+        currentSelection: editor.selection ?? null,
+      });
       try {
         Transforms.setSelection(editor, selection);
         if (!ReactEditor.isFocused(editor)) {
@@ -115,6 +120,11 @@ export const withInsertText = (editor) => {
           }
           insertText(text);
         } else {
+          slateDebug("insert-text:autoformat-space", {
+            selection: editor.selection ?? null,
+            autoformatSelection: (editor as any).__autoformatSelection ?? null,
+            autoformatDidBlock: (editor as any).__autoformatDidBlock ?? null,
+          });
           if ((editor as any).__autoformatDidBlock) {
             if (canIgnore) {
               (editor as any).setIgnoreSelection(false);
@@ -188,6 +198,11 @@ export const withInsertText = (editor) => {
               // ignore onChange errors; we'll still attempt focus below
             }
           }
+          slateDebug("insert-text:pending-selection", {
+            pendingSelection: pendingSelection ?? null,
+            editorSelection: editor.selection ?? null,
+            lastSelection: editor.lastSelection ?? null,
+          });
           const applyDomSelection = (selection) => {
             if (!selection) return;
             try {
@@ -219,6 +234,11 @@ export const withInsertText = (editor) => {
             } catch {
               // ignore focus failures
             }
+            slateDebug("insert-text:raf", {
+              selection: selection ?? null,
+              editorSelection: editor.selection ?? null,
+              isFocused: ReactEditor.isFocused(editor),
+            });
             (editor as any).__autoformatSelection = null;
             if (
               (editor as any).__autoformatIgnoreSelection &&

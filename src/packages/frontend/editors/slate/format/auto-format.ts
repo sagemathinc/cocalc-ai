@@ -27,7 +27,7 @@ import { ReactEditor } from "../slate-react";
 import { formatHeading, getFocus, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
 import { toCodeLines } from "../elements/code-block/utils";
-import { ensureRange } from "../slate-util";
+import { ensureRange, slateDebug } from "../slate-util";
 
 function rememberAutoformatSelection(editor: Editor, selection: Range): void {
   (editor as any).__autoformatSelection = selection;
@@ -978,6 +978,11 @@ function markdownAutoformatAt(
     const type = doc[0].type;
     const rules = getRules(type);
     if (type === "code_block") {
+      slateDebug("autoformat:code_block", {
+        blockPath,
+        selection: editor.selection ?? null,
+        childrenLen: editor.children?.length ?? null,
+      });
       // Due to spacer insertion, the code_block may have shifted forward.
       let codePath = blockPath;
       let node: Node | null = null;
@@ -999,6 +1004,13 @@ function markdownAutoformatAt(
       }
       const focus = Editor.start(editor, codePath);
       (editor as any).__autoformatSelection = { anchor: focus, focus };
+      slateDebug("autoformat:code_block:focus", {
+        blockPath,
+        codePath,
+        focus,
+        selection: editor.selection ?? null,
+        autoformatSelection: (editor as any).__autoformatSelection ?? null,
+      });
       setSelectionAndFocus(editor, { focus, anchor: focus });
       return true;
     }
