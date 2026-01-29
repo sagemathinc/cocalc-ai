@@ -217,50 +217,43 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
   if (!needsSpacerParagraph(editor, node, path)) return;
   if (path.length === 0) return;
   const index = path[path.length - 1];
+  let codePath = path;
   if (index > 0) {
     const prevPath = Path.previous(path);
     const prevNode = getNodeAt(editor, prevPath);
     if (!(Element.isElement(prevNode) && prevNode.type === "paragraph")) {
       const shifted = shiftSelectionForInsert(editor.selection, path, 1);
       Transforms.insertNodes(editor, spacerParagraph(), { at: path });
-      if ((editor as any).__autoformatDidBlock && shifted) {
-        const nextPath = Path.next(path);
-        const nextNode = getNodeAt(editor, nextPath);
+      codePath = Path.next(path);
+      if ((editor as any).__autoformatDidBlock) {
+        const nextNode = getNodeAt(editor, codePath);
         if (Element.isElement(nextNode) && nextNode.type === "code_block") {
-          const focus = Editor.start(editor, nextPath);
+          const focus = Editor.start(editor, codePath);
           Transforms.setSelection(editor, { anchor: focus, focus });
-        } else {
+        } else if (shifted) {
           Transforms.setSelection(editor, shifted);
         }
       } else if (shifted) {
         Transforms.setSelection(editor, shifted);
       }
-      if ((editor as any).__autoformatDidBlock && node.type === "code_block") {
-        (editor as any).__autoformatDidBlock = false;
-      }
-      return;
     }
   } else {
     const shifted = shiftSelectionForInsert(editor.selection, path, 1);
     Transforms.insertNodes(editor, spacerParagraph(), { at: path });
-    if ((editor as any).__autoformatDidBlock && shifted) {
-      const nextPath = Path.next(path);
-      const nextNode = getNodeAt(editor, nextPath);
+    codePath = Path.next(path);
+    if ((editor as any).__autoformatDidBlock) {
+      const nextNode = getNodeAt(editor, codePath);
       if (Element.isElement(nextNode) && nextNode.type === "code_block") {
-        const focus = Editor.start(editor, nextPath);
+        const focus = Editor.start(editor, codePath);
         Transforms.setSelection(editor, { anchor: focus, focus });
-      } else {
+      } else if (shifted) {
         Transforms.setSelection(editor, shifted);
       }
     } else if (shifted) {
       Transforms.setSelection(editor, shifted);
     }
-    if ((editor as any).__autoformatDidBlock && node.type === "code_block") {
-      (editor as any).__autoformatDidBlock = false;
-    }
-    return;
   }
-  const nextPath = Path.next(path);
+  const nextPath = Path.next(codePath);
   const nextNode = getNodeAt(editor, nextPath);
   if (!(Element.isElement(nextNode) && nextNode.type === "paragraph")) {
     Transforms.insertNodes(editor, spacerParagraph(), { at: nextPath });

@@ -66,7 +66,11 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
       const prevNode = Editor.node(editor, prevPath)[0] as any;
       if (Element.isElement(prevNode) && BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)) {
         Transforms.removeNodes(editor, { at: prevPath });
-        Transforms.setNodes(editor, { spacer: false } as any, { at: path });
+        // After removing the previous block, the spacer shifts to prevPath.
+        const targetPath = prevPath;
+        Transforms.setNodes(editor, { spacer: false } as any, { at: targetPath });
+        const start = Editor.start(editor, targetPath);
+        Transforms.select(editor, start);
         return true;
       }
     }
