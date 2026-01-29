@@ -488,6 +488,8 @@ function autoformatListAtStart(editor: Editor): boolean {
     }
   }
   if (focus) {
+    (editor as any).__autoformatDidBlock = true;
+    (editor as any).__autoformatSelection = { anchor: focus, focus };
     setSelectionAndFocus(editor as ReactEditor, { focus, anchor: focus });
   }
   return true;
