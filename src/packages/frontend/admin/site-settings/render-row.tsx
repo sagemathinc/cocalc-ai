@@ -28,6 +28,7 @@ interface RenderRowProps {
   isHeader: boolean;
   saveSingleSetting: (name: string) => void;
   onClearSecret: (name: string) => void;
+  showHidden: boolean;
 }
 
 export function RenderRow({
@@ -46,6 +47,7 @@ export function RenderRow({
   isHeader,
   saveSingleSetting,
   onClearSecret,
+  showHidden,
 }: RenderRowProps) {
   if (data == null) return null;
 
@@ -76,7 +78,8 @@ export function RenderRow({
     }
   }
   // don't show certain fields, i.e. where show evals to false
-  if (typeof conf.show == "function" && !conf.show(data)) {
+  const isHiddenByShow = typeof conf.show == "function" && !conf.show(data);
+  if (isHiddenByShow && !showHidden) {
     return null;
   }
 
@@ -98,7 +101,11 @@ export function RenderRow({
 
   const label = (
     <div style={{ paddingRight: "15px" }}>
-      <strong>{conf.name}</strong> <RowHelp help={conf.help} />
+      <strong>{conf.name}</strong>{" "}
+      {isHiddenByShow && (
+        <span style={{ color: COLORS.GRAY_M, fontSize: "85%" }}>(hidden)</span>
+      )}{" "}
+      <RowHelp help={conf.help} />
       <br />
       <StaticMarkdown style={{ color: COLORS.GRAY_M }} value={conf.desc} />
     </div>

@@ -12,6 +12,7 @@ import {
   InputRef,
   Modal,
   Row,
+  Switch,
 } from "antd";
 import { isEqual } from "lodash";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -44,6 +45,7 @@ export default function SiteSettings({ close }) {
   const [isSet, setIsSet] = useState<IsSet | null>(null);
   const [filterStr, setFilterStr] = useState<string>("");
   const [filterTag, setFilterTag] = useState<Tag | null>(null);
+  const [showHidden, setShowHidden] = useState<boolean>(false);
   const editedRef = useRef<Data | null>(null);
   const savedRef = useRef<Data | null>(null);
   const clearSecretsRef = useRef<IsClearing>({});
@@ -390,13 +392,14 @@ export default function SiteSettings({ close }) {
                 isHeader={isHeader(name)}
                 saveSingleSetting={saveSingleSetting}
                 onClearSecret={onClearSecret}
+                showHidden={showHidden}
               />
             );
           }),
         )}
       </>
     );
-  }, [state, data, isSet, filterStr, filterTag]);
+  }, [state, data, isSet, filterStr, filterTag, showHidden]);
 
   const activeFilter = !filterStr.trim() || filterTag;
 
@@ -456,6 +459,13 @@ export default function SiteSettings({ close }) {
                 {name}
               </CheckableTag>
             ))}
+            <div style={{ marginTop: "8px" }}>
+              <Switch
+                checked={showHidden}
+                onChange={(value) => setShowHidden(value)}
+              />{" "}
+              Show hidden
+            </div>
           </Col>
         </Row>
         {editRows}
