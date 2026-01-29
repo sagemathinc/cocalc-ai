@@ -260,6 +260,8 @@ export type SiteSettingsExtrasKeys =
   | "google_cloud_service_account_json"
   | "google_cloud_project_id"
   | "google_cloud_service_account_email"
+  | "google_cloud_oauth_client_id"
+  | "google_cloud_oauth_client_secret"
   | "google_cloud_oauth_refresh_token"
   | "google_cloud_oauth_connected_at"
   | "google_cloud_oauth_last_validated_at"
@@ -914,6 +916,7 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     show: () => false,
+    managed_by_wizard: true,
     tags: ["Project Hosts", "Google Cloud"],
     valid: () => true,
   },
@@ -923,6 +926,28 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     show: () => false,
+    managed_by_wizard: true,
+    tags: ["Project Hosts", "Google Cloud"],
+    valid: () => true,
+  },
+  google_cloud_oauth_client_id: {
+    name: "Project Hosts: Google Cloud - OAuth Client ID",
+    desc: "OAuth client ID used for the Google Cloud connect flow.",
+    default: "",
+    to_val: to_trimmed_str,
+    show: () => false,
+    managed_by_wizard: true,
+    tags: ["Project Hosts", "Google Cloud"],
+    valid: () => true,
+  },
+  google_cloud_oauth_client_secret: {
+    name: "Project Hosts: Google Cloud - OAuth Client Secret",
+    desc: "OAuth client secret used for the Google Cloud connect flow.",
+    default: "",
+    to_val: to_trimmed_str,
+    password: true,
+    show: () => false,
+    managed_by_wizard: true,
     tags: ["Project Hosts", "Google Cloud"],
     valid: () => true,
   },
@@ -933,6 +958,7 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     password: true,
     show: () => false,
+    managed_by_wizard: true,
     tags: ["Project Hosts", "Google Cloud"],
     valid: () => true,
   },
@@ -942,6 +968,7 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     show: () => false,
+    managed_by_wizard: true,
     tags: ["Project Hosts", "Google Cloud"],
     valid: () => true,
   },
@@ -951,6 +978,7 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     show: () => false,
+    managed_by_wizard: true,
     tags: ["Project Hosts", "Google Cloud"],
     valid: () => true,
   },
@@ -960,6 +988,7 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     show: () => false,
+    managed_by_wizard: true,
     tags: ["Project Hosts", "Google Cloud"],
     valid: () => true,
   },

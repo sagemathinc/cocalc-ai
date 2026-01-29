@@ -105,6 +105,11 @@ export function RenderRow({
       {isHiddenByShow && (
         <span style={{ color: COLORS.GRAY_M, fontSize: "85%" }}>(hidden)</span>
       )}{" "}
+      {conf.managed_by_wizard && (
+        <span style={{ color: COLORS.GRAY_M, fontSize: "85%" }}>
+          (wizard)
+        </span>
+      )}{" "}
       <RowHelp help={conf.help} />
       <br />
       <StaticMarkdown style={{ color: COLORS.GRAY_M }} value={conf.desc} />

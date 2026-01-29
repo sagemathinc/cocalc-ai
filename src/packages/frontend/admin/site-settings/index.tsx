@@ -27,6 +27,7 @@ import { deep_copy, keys } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
+import GoogleCloudOauthSetup from "./google-cloud-oauth";
 import {
   toCustomOpenAIModel,
   toOllamaModel,
@@ -431,6 +432,9 @@ export default function SiteSettings({ close }) {
           setError={setError}
           style={{ margin: "30px auto", maxWidth: "800px" }}
         />
+        {state === "edit" && data != null && (
+          <GoogleCloudOauthSetup data={data} reload={load} />
+        )}
         <Row key="filter">
           <Col span={12}>
             <Buttons />
