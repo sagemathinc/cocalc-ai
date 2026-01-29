@@ -65,6 +65,17 @@ export default function GcpServiceAccountWizard({
     return `\`\`\`sh\n${lines.join("\n")}\n\`\`\``;
   }, [trimmedProject, trimmedServiceAccount]);
 
+  const cleanupBlock = useMemo(() => {
+    if (!trimmedProject) return "";
+    const lines = [
+      `PROJECT_ID="${trimmedProject}"`,
+      `SA_EMAIL="${trimmedServiceAccount}@${trimmedProject}.iam.gserviceaccount.com"`,
+      "",
+      "gcloud iam service-accounts delete \"$SA_EMAIL\" --project \"$PROJECT_ID\"",
+    ];
+    return `\`\`\`sh\n${lines.join("\n")}\n\`\`\``;
+  }, [trimmedProject, trimmedServiceAccount]);
+
   const parsedJson = parseJson(jsonInput.trim());
   const jsonIsServiceAccount = parsedJson?.type === "service_account";
   const jsonProjectId = parsedJson?.project_id ?? "";
@@ -77,6 +88,17 @@ export default function GcpServiceAccountWizard({
       const raw = commandBlock.replace(/^```sh\n/, "").replace(/\n```$/, "");
       await navigator.clipboard.writeText(raw);
       setJsonNotice("Commands copied.");
+    } catch {
+      setJsonNotice("Copy failed; please copy manually.");
+    }
+  }
+
+  async function copyCleanup() {
+    if (!trimmedProject) return;
+    try {
+      const raw = cleanupBlock.replace(/^```sh\n/, "").replace(/\n```$/, "");
+      await navigator.clipboard.writeText(raw);
+      setJsonNotice("Cleanup command copied.");
     } catch {
       setJsonNotice("Copy failed; please copy manually.");
     }
@@ -193,6 +215,27 @@ export default function GcpServiceAccountWizard({
             disabled={!jsonValid}
           >
             Apply JSON to Setting
+          </Button>
+        </div>
+        <div>
+          <strong>Cleanup (optional)</strong>
+          <div style={{ marginTop: "6px", color: "#666" }}>
+            If you need to revoke access, delete the service account:
+          </div>
+          <div style={{ marginTop: "8px" }}>
+            <StaticMarkdown
+              value={
+                cleanupBlock ||
+                "```sh\n# enter a Project ID to generate cleanup command\n```"
+              }
+            />
+          </div>
+          <Button
+            icon={<Icon name="copy" />}
+            onClick={copyCleanup}
+            disabled={!trimmedProject}
+          >
+            Copy Cleanup Command
           </Button>
         </div>
         {jsonNotice ? (
