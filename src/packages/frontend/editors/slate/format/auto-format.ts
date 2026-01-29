@@ -998,6 +998,7 @@ function markdownAutoformatAt(
         }
       }
       const focus = Editor.start(editor, codePath);
+      (editor as any).__autoformatSelection = { anchor: focus, focus };
       setSelectionAndFocus(editor, { focus, anchor: focus });
       return true;
     }
