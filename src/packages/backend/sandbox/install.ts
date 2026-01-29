@@ -175,6 +175,21 @@ export const SPEC = {
     stripComponents: 0,
     pathInArchive: () => "rustic",
   },
+  restServer: {
+    // See https://github.com/restic/rest-server/releases
+    VERSION: "0.14.0",
+    getVersion: "rest-server --version | awk '{print $2}'",
+    BASE: "https://github.com/restic/rest-server/releases/download",
+    binary: "rest-server",
+    path: join(binPath, "rest-server"),
+    platforms: ["linux"],
+    stripComponents: 1,
+    url: () => {
+      const a = effectiveArch() === "x64" ? "amd64" : effectiveArch();
+      return `${SPEC.restServer.BASE}/v${SPEC.restServer.VERSION}/rest-server_${SPEC.restServer.VERSION}_linux_${a}.tar.gz`;
+    },
+    pathInArchive: () => `rest-server_${SPEC.restServer.VERSION}_linux_${effectiveArch() === "x64" ? "amd64" : effectiveArch()}/${SPEC.restServer.binary}`,
+  },
   // sshpiper -- used by the project-host
   // See https://github.com/sagemathinc/sshpiper-binaries/releases
   sshpiper: {
@@ -293,6 +308,7 @@ export const rg = SPEC.rg.path;
 export const fd = SPEC.fd.path;
 export const dust = SPEC.dust.path;
 export const rustic = SPEC.rustic.path;
+export const restServer = SPEC.restServer.path;
 export const ouch = SPEC.ouch.path;
 export const sshpiper = SPEC.sshpiper.path;
 export const btm = SPEC.btm.path;
