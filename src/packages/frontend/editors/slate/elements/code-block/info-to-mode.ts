@@ -1,5 +1,7 @@
 import { file_associations } from "@cocalc/frontend/file-associations";
-import detectLanguage from "@cocalc/frontend/misc/detect-language";
+import detectLanguage, {
+  guessPopularLanguage,
+} from "@cocalc/frontend/misc/detect-language";
 
 // Convert the info string for a fenced code block to a language label
 // when preferKernel is true return the actual kernel name or language.
@@ -11,7 +13,12 @@ export default function infoToMode(
   info = info?.trim().toLowerCase();
   if (!info) {
     if (!value) return ""; // no info
-    info = detectLanguage(value);
+    const popular = guessPopularLanguage(value);
+    if (popular && popular.score >= 2) {
+      info = popular.mode;
+    } else {
+      info = detectLanguage(value);
+    }
   }
 
   if (info == "mermaid") {

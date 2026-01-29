@@ -20,6 +20,74 @@ languages".
 import { file_associations } from "../file-associations";
 import api from "@cocalc/frontend/client/api";
 
+type PopularLangGuess = {
+  mode: "sh" | "py" | "js" | "tex";
+  label: "Shell" | "Python" | "JavaScript" | "LaTeX";
+  score: number;
+};
+
+const POPULAR_LANGS: Array<{
+  mode: PopularLangGuess["mode"];
+  label: PopularLangGuess["label"];
+  hints: Array<[RegExp, number]>;
+}> = [
+  {
+    mode: "sh",
+    label: "Shell",
+    hints: [
+      [/^#!.*\b(bash|sh|zsh)\b/m, 6],
+      [/^\s*[$#]\s+\S/m, 3],
+      [/\b(sudo|apt|brew|yum|dnf|pacman|ls|cd|pwd|grep|awk|sed|curl|wget|git|pip)\b/g, 1],
+    ],
+  },
+  {
+    mode: "py",
+    label: "Python",
+    hints: [
+      [/^#!.*\bpython\b/m, 6],
+      [/\b(def|class|import|from|self|None|True|False|elif|print)\b/g, 2],
+      [/^\s*@\w+/m, 2],
+    ],
+  },
+  {
+    mode: "js",
+    label: "JavaScript",
+    hints: [
+      [/\b(const|let|var|function|export|import|require|console\.log)\b/g, 2],
+      [/=>/g, 2],
+      [/^\s*\/\/|\/\*/m, 1],
+    ],
+  },
+  {
+    mode: "tex",
+    label: "LaTeX",
+    hints: [
+      [/\\(documentclass|usepackage|begin|end)\b/g, 3],
+      [/\\(frac|sum|alpha|beta|gamma|int)\b/g, 2],
+      [/(\$\$|\\\[|\\\])/g, 2],
+    ],
+  },
+];
+
+export function guessPopularLanguage(code: string): PopularLangGuess | null {
+  const text = code ?? "";
+  if (!text.trim()) return null;
+  let best: PopularLangGuess | null = null;
+  for (const lang of POPULAR_LANGS) {
+    let score = 0;
+    for (const [re, weight] of lang.hints) {
+      const count = [...text.matchAll(re)].length;
+      if (count) {
+        score += Math.min(count, 5) * weight;
+      }
+    }
+    if (score > 0 && (!best || score > best.score)) {
+      best = { mode: lang.mode, label: lang.label, score };
+    }
+  }
+  return best;
+}
+
 const LANGUAGES = [
   [
     "sh",

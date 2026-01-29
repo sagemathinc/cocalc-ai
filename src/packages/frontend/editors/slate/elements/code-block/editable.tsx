@@ -31,6 +31,7 @@ import { markdown_to_slate } from "../../markdown-to-slate";
 import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
 import { CodeBlockBody, CodeLineElement } from "./code-like";
+import { guessPopularLanguage } from "@cocalc/frontend/misc/detect-language";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -275,6 +276,11 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const markdownCandidate = (element as any).markdownCandidate;
   const preferRichText =
     !!markdownCandidate && shouldPreferRichText(codeValue ?? "");
+  const popularGuess = markdownCandidate
+    ? guessPopularLanguage(codeValue ?? "")
+    : null;
+  const showPopularGuess =
+    !!popularGuess && popularGuess.score >= 4;
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -428,6 +434,22 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                 >
                   Code Block
                 </Button>
+                {showPopularGuess && popularGuess && (
+                  <Button
+                    size="small"
+                    type="default"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const info = popularGuess.mode;
+                      setInfo(info);
+                      setElement({ info } as any);
+                      dismissMarkdownCandidate();
+                    }}
+                  >
+                    {popularGuess.label}
+                  </Button>
+                )}
               </div>
             )}
             {!disableMarkdownCodebar && output != null && (
