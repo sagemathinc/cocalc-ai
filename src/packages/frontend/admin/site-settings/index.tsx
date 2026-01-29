@@ -17,7 +17,7 @@ import {
 import { isEqual } from "lodash";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Well } from "@cocalc/frontend/antd-bootstrap";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux } from "@cocalc/frontend/app-framework";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import { Gap, Icon, Loading, Paragraph } from "@cocalc/frontend/components";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
@@ -27,7 +27,6 @@ import { deep_copy, keys } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
-import GoogleCloudOauthSetup from "./google-cloud-oauth";
 import GcpServiceAccountWizard from "./gcp-service-account-wizard";
 import {
   toCustomOpenAIModel,
@@ -39,8 +38,6 @@ const { CheckableTag } = AntdTag;
 
 export default function SiteSettings({ close }) {
   const { inc: change } = useCounter();
-  const isRocket = useTypedRedux("customize", "is_rocket");
-  const showGoogleCloudOauth = !!isRocket;
   const testEmailRef = useRef<InputRef>(null);
   const [_, setDisableTests] = useState<boolean>(false);
   const [state, setState] = useState<State>("load");
@@ -452,9 +449,6 @@ export default function SiteSettings({ close }) {
             onJsonEntryChange("google_cloud_service_account_json", json)
           }
         />
-        {state === "edit" && data != null && showGoogleCloudOauth && (
-          <GoogleCloudOauthSetup data={data} reload={load} />
-        )}
         <Row key="filter">
           <Col span={12}>
             <Buttons />

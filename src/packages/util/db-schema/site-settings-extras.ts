@@ -258,14 +258,6 @@ export type SiteSettingsExtrasKeys =
   | "control_plane_ssh_private_key_path"
   | "control_plane_ssh_private_key"
   | "google_cloud_service_account_json"
-  | "google_cloud_project_id"
-  | "google_cloud_service_account_email"
-  | "google_cloud_oauth_client_id"
-  | "google_cloud_oauth_client_secret"
-  | "google_cloud_oauth_refresh_token"
-  | "google_cloud_oauth_connected_at"
-  | "google_cloud_oauth_last_validated_at"
-  | "google_cloud_oauth_last_error"
   | "project_hosts_google_prefix"
   | "project_hosts_software_base_url"
   | "project_hosts_bootstrap_channel"
@@ -910,88 +902,6 @@ export const EXTRAS: SettingsExtras = {
     wizard: { name: "gcp-service-account-json", label: "Wizard..." },
     show: project_hosts_google_cloud_enabled,
     tags: ["Project Hosts", "Google Cloud"],
-  },
-  google_cloud_project_id: {
-    name: "Project Hosts: Google Cloud - OAuth Project ID",
-    desc: "Project ID selected during OAuth + service account impersonation flow.",
-    default: "",
-    to_val: to_trimmed_str,
-    show: () => false,
-    managed_by_wizard: true,
-    tags: ["Project Hosts", "Google Cloud"],
-    valid: () => true,
-  },
-  google_cloud_service_account_email: {
-    name: "Project Hosts: Google Cloud - OAuth Service Account Email",
-    desc: "Service account email used for OAuth impersonation (project-scoped).",
-    default: "",
-    to_val: to_trimmed_str,
-    show: () => false,
-    managed_by_wizard: true,
-    tags: ["Project Hosts", "Google Cloud"],
-    valid: () => true,
-  },
-  google_cloud_oauth_client_id: {
-    name: "Project Hosts: Google Cloud - OAuth Client ID",
-    desc: "OAuth client ID used for the Google Cloud connect flow.",
-    default: "",
-    to_val: to_trimmed_str,
-    show: () => false,
-    managed_by_wizard: true,
-    tags: ["Project Hosts", "Google Cloud"],
-    valid: () => true,
-  },
-  google_cloud_oauth_client_secret: {
-    name: "Project Hosts: Google Cloud - OAuth Client Secret",
-    desc: "OAuth client secret used for the Google Cloud connect flow.",
-    default: "",
-    to_val: to_trimmed_str,
-    password: true,
-    show: () => false,
-    managed_by_wizard: true,
-    tags: ["Project Hosts", "Google Cloud"],
-    valid: () => true,
-  },
-  google_cloud_oauth_refresh_token: {
-    name: "Project Hosts: Google Cloud - OAuth Refresh Token",
-    desc: "Refresh token used to mint access tokens for service account impersonation.",
-    default: "",
-    to_val: to_trimmed_str,
-    password: true,
-    show: () => false,
-    managed_by_wizard: true,
-    tags: ["Project Hosts", "Google Cloud"],
-    valid: () => true,
-  },
-  google_cloud_oauth_connected_at: {
-    name: "Project Hosts: Google Cloud - OAuth Connected At",
-    desc: "Timestamp when OAuth connection was established.",
-    default: "",
-    to_val: to_trimmed_str,
-    show: () => false,
-    managed_by_wizard: true,
-    tags: ["Project Hosts", "Google Cloud"],
-    valid: () => true,
-  },
-  google_cloud_oauth_last_validated_at: {
-    name: "Project Hosts: Google Cloud - OAuth Last Validated",
-    desc: "Timestamp of last successful OAuth/impersonation validation.",
-    default: "",
-    to_val: to_trimmed_str,
-    show: () => false,
-    managed_by_wizard: true,
-    tags: ["Project Hosts", "Google Cloud"],
-    valid: () => true,
-  },
-  google_cloud_oauth_last_error: {
-    name: "Project Hosts: Google Cloud - OAuth Last Error",
-    desc: "Most recent OAuth validation error (if any).",
-    default: "",
-    to_val: to_trimmed_str,
-    show: () => false,
-    managed_by_wizard: true,
-    tags: ["Project Hosts", "Google Cloud"],
-    valid: () => true,
   },
   project_hosts_google_prefix: {
     name: "Project Hosts: Google Cloud - Resource Prefix",
