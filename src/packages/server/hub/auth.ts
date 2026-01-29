@@ -285,7 +285,13 @@ export class PassportManager {
 
     // initialize use of middleware
     // @ts-ignore
-    this.router.use(express_session({ secret: v4() })); // secret is totally random and per-hub session
+    this.router.use(
+      express_session({
+        secret: v4(), // secret is totally random and per-hub session
+        resave: false,
+        saveUninitialized: false,
+      }),
+    );
     // @ts-ignore
     this.router.use(passport.initialize());
     this.router.use(passport.session());

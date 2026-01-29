@@ -141,6 +141,8 @@ export interface CustomizeState {
   terms_of_service_url: string;
   theming: boolean;
   verify_emails: false;
+  launchpad_mode?: string;
+  launchpad_self_signed?: boolean;
   version_min_browser: number;
   version_min_project: number;
   version_recommended_browser: number;
@@ -153,6 +155,7 @@ export interface CustomizeState {
   software: SoftwareEnvironments;
   _is_configured: boolean;
   project_hosts_nebius_enabled?: boolean;
+  project_hosts_self_host_alpha_enabled?: boolean;
   project_hosts_dns?: string;
   "project_hosts_google-cloud_enabled"?: boolean;
   "project_hosts_hyperstack_enabled"?: boolean;

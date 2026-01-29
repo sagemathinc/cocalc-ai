@@ -110,9 +110,10 @@ export type SiteSettingsKeys =
   | "project_hosts_google-cloud_enabled"
   | "project_hosts_hyperstack_enabled"
   | "project_hosts_lambda_enabled"
+  | "project_hosts_local_enabled"
+  | "project_hosts_self_host_alpha_enabled"
   | "project_hosts_nebius_enabled"
   | "project_hosts_dns"
-  | "launchpad_mode"
   | "samesite_remember_me"
   | "user_tracking";
 
@@ -363,7 +364,7 @@ export const site_settings_conf: SiteSettings = {
   site_name: {
     name: "Site name",
     desc: "The heading name of your CoCalc site.",
-    default: "Open CoCalc",
+    default: "CoCalc Launchpad",
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
@@ -807,13 +808,21 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_bool,
     tags: ["Project Hosts", "Cloud"],
   },
-  launchpad_mode: {
-    name: "Launchpad Mode",
-    desc: "Select how Launchpad routes traffic. 'onprem' starts local SSH services and uses local backups; 'cloud' expects Cloudflare + bucket settings. Default is 'unset' to require explicit selection.",
-    default: "unset",
-    valid: ["unset", "onprem", "cloud"],
-    to_val: to_trimmed_str,
-    tags: ["On-Prem", "Cloud"],
+  project_hosts_local_enabled: {
+    name: "Enable Project Hosts - Local (manual setup)",
+    desc: "Whether or not to include the local/manual project-host option (for development use).",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Project Hosts", "On-Prem"],
+  },
+  project_hosts_self_host_alpha_enabled: {
+    name: "Enable Project Hosts - Self-Host (alpha options)",
+    desc: "Enable alpha self-host options (e.g., Multipass VM and manual setup).",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Project Hosts", "On-Prem"],
   },
   project_hosts_dns: {
     name: "Project Hosts: Domain name",

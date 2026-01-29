@@ -73,6 +73,26 @@ function getProviderLabel(host: Host): string {
   return cloud;
 }
 
+function getSelfHostDetail(host: Host): string | undefined {
+  if (host.machine?.cloud !== "self-host") return undefined;
+  const kind = host.machine?.metadata?.self_host_kind as string | undefined;
+  const mode = host.machine?.metadata?.self_host_mode as string | undefined;
+  const kindLabel =
+    kind === "direct"
+      ? "Direct"
+      : kind === "multipass"
+        ? "Multipass"
+        : undefined;
+  const modeLabel =
+    mode === "cloudflare"
+      ? "Cloudflare tunnel"
+      : mode === "local"
+        ? "Local network"
+        : undefined;
+  if (kindLabel && modeLabel) return `${kindLabel} / ${modeLabel}`;
+  return kindLabel ?? modeLabel ?? undefined;
+}
+
 function compareText(a?: string, b?: string): number {
   return (a ?? "").localeCompare(b ?? "", undefined, { sensitivity: "base" });
 }
@@ -262,9 +282,11 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     if (!searchTerms.length) return hosts;
     return hosts.filter((host) => {
       const statusLabel = host.deleted ? "deleted" : host.status;
+      const selfHostDetail = getSelfHostDetail(host);
       const haystack = [
         host.name,
         getProviderLabel(host),
+        selfHostDetail,
         host.region,
         host.size,
         statusLabel,
@@ -501,12 +523,17 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             ? "ascend"
             : "descend"
           : undefined,
-      render: (_: string, host: Host) =>
-        host.machine?.cloud
-          ? isKnownProvider(host.machine.cloud)
-            ? getProviderDescriptor(host.machine.cloud).label
-            : host.machine.cloud
-          : "n/a",
+      render: (_: string, host: Host) => {
+        const baseLabel = getProviderLabel(host);
+        const detail = getSelfHostDetail(host);
+        if (!detail) return baseLabel;
+        return (
+          <Space direction="vertical" size={0}>
+            <span>{baseLabel}</span>
+            <Typography.Text type="secondary">{detail}</Typography.Text>
+          </Space>
+        );
+      },
     },
     {
       title: "Region",
@@ -611,18 +638,21 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const op = hostOps?.[host.id];
         const hostOpActive = isHostOpActive(op);
         const isSelfHost = host.machine?.cloud === "self-host";
+        const hasSshTarget = !!String(
+          host.machine?.metadata?.self_host_ssh_target ?? "",
+        ).trim();
+        const autoSetup = isSelfHost && hasSshTarget;
         const connectorOnline =
           !isSelfHost ||
           !selfHost?.isConnectorOnline ||
           selfHost.isConnectorOnline(host.region);
-        const showConnectorSetup =
-          isSelfHost && !connectorOnline && host.status === "off";
+        const showConnectorSetup = isSelfHost && selfHost && !isDeleted;
         const startDisabled =
           isDeleted ||
           host.status === "running" ||
           host.status === "starting" ||
           host.status === "restarting" ||
-          !connectorOnline ||
+          (!connectorOnline && !autoSetup) ||
           hostOpActive;
         const startLabel =
           host.status === "starting"
@@ -682,7 +712,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               disabled={hostOpActive}
               onClick={() => selfHost.onSetup(host)}
             >
-              Setup
+              Setup / reconnect
             </Button>
           ) : null,
           allowStop ? (

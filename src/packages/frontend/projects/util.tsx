@@ -56,8 +56,14 @@ let search_cache: {
 } = {};
 let last_project_map: ProjectMap | null | undefined = null;
 let last_user_map: any = null;
+let last_host_info: any = null;
 
-function get_search_info(project_id: string, project, user_map): string {
+function get_search_info(
+  project_id: string,
+  project,
+  user_map,
+  host_info,
+): string {
   let s: undefined | string = search_cache[project_id];
   if (s != null) {
     return s;
@@ -68,7 +74,7 @@ function get_search_info(project_id: string, project, user_map): string {
   if (desc != "No description") {
     s += " " + desc;
   }
-  const hostName = project.getIn(["host", "name"]);
+  const hostName = host_info?.get?.(project.get("host_id"))?.get?.("name");
   if (hostName != null) {
     s += " " + hostName;
   }
@@ -99,6 +105,7 @@ function get_search_info(project_id: string, project, user_map): string {
 
 export function getVisibleProjects(
   project_map: ProjectMap | undefined,
+  host_info,
   user_map,
   hashtags: immutableSet<string> | undefined,
   search: string,
@@ -108,17 +115,25 @@ export function getVisibleProjects(
 ): string[] {
   const visible_projects: string[] = [];
   if (project_map == null) return visible_projects;
-  if (project_map != last_project_map || user_map != last_user_map) {
+  if (
+    project_map != last_project_map ||
+    user_map != last_user_map ||
+    host_info != last_host_info
+  ) {
     search_cache = {};
   }
   last_project_map = project_map;
   last_user_map = user_map;
+  last_host_info = host_info;
   const words = search_split(
     search + " " + hashtags_to_string(hashtags?.toJS()),
   );
   project_map.forEach((project, project_id) => {
     if (
-      search_match(get_search_info(project_id, project, user_map), words) &&
+      search_match(
+        get_search_info(project_id, project, user_map, host_info),
+        words,
+      ) &&
       project_is_in_filter(project, deleted, hidden)
     ) {
       visible_projects.push(project_id);

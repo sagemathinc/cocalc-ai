@@ -1,4 +1,4 @@
-import { Checkbox, Input, Modal, Typography, message } from "antd";
+import { Checkbox, Input, Modal, Typography } from "antd";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostDeleteOptions, HostStopOptions } from "../types";
 import { HostProjectsTable } from "./host-projects-table";
@@ -162,7 +162,6 @@ export function confirmHostDeprovision({
     okButtonProps: { danger: true, disabled: true },
     onOk: async () => {
       if (state.name.trim() !== hostName) {
-        message.error("Host name does not match.");
         throw new Error("host name does not match");
       }
       await onConfirm({ skip_backups: hostRunning ? state.skip : true });

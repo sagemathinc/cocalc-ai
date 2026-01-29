@@ -52,12 +52,15 @@ export const HostCard: React.FC<HostCardProps> = ({
 }) => {
   const isDeleted = !!host.deleted;
   const isSelfHost = host.machine?.cloud === "self-host";
+  const hasSshTarget = !!String(
+    host.machine?.metadata?.self_host_ssh_target ?? "",
+  ).trim();
+  const autoSetup = isSelfHost && hasSshTarget;
   const connectorOnline =
     !isSelfHost ||
     !selfHost?.isConnectorOnline ||
     selfHost.isConnectorOnline(host.region);
-  const showConnectorSetup =
-    isSelfHost && !connectorOnline && host.status === "off";
+  const showConnectorSetup = isSelfHost && !isDeleted;
   const hostOnline = isHostOnline(host.last_seen);
   const showOnlineTag = host.status === "running" && hostOnline;
   const showStaleTag = host.status === "running" && !hostOnline;
@@ -69,7 +72,7 @@ export const HostCard: React.FC<HostCardProps> = ({
     host.status === "running" ||
     host.status === "starting" ||
     host.status === "restarting" ||
-    !connectorOnline ||
+    (!connectorOnline && !autoSetup) ||
     hostOpActive;
   const startLabel =
     host.status === "starting"
@@ -124,7 +127,7 @@ export const HostCard: React.FC<HostCardProps> = ({
         disabled={hostOpActive}
         onClick={() => selfHost.onSetup(host)}
       >
-        Setup
+        Setup / reconnect
       </Button>
     ) : null,
     allowStop ? (

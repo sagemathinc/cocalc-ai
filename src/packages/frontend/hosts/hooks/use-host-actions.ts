@@ -1,4 +1,3 @@
-import { message } from "antd";
 import type { Host, HostLroResponse } from "@cocalc/conat/hub/api/hosts";
 
 type HubClient = {
@@ -68,7 +67,6 @@ export const useHostActions = ({
       }
     } catch (err) {
       console.error(err);
-      message.error(`Failed to ${action} host`);
       return;
     }
     try {
@@ -80,7 +78,6 @@ export const useHostActions = ({
 
   const restartHost = async (id: string, mode: "reboot" | "hard") => {
     if (!hub.hosts.restartHost) {
-      message.error("Restart not available");
       return;
     }
     try {
@@ -93,7 +90,6 @@ export const useHostActions = ({
       onHostOp?.(id, op);
     } catch (err) {
       console.error(err);
-      message.error("Failed to restart host");
       return;
     }
     try {
@@ -113,19 +109,16 @@ export const useHostActions = ({
       await refresh();
     } catch (err) {
       console.error(err);
-      message.error("Failed to delete host");
     }
   };
 
   const renameHost = async (id: string, name: string) => {
     const cleaned = name?.trim();
     if (!cleaned) {
-      message.error("Host name cannot be empty");
       return;
     }
     try {
       if (!hub.hosts.renameHost) {
-        message.error("Host rename not available");
         return;
       }
       await hub.hosts.renameHost({ id, name: cleaned });
@@ -135,7 +128,6 @@ export const useHostActions = ({
       await refresh();
     } catch (err) {
       console.error(err);
-      message.error("Failed to rename host");
     }
   };
 
@@ -156,7 +148,6 @@ export const useHostActions = ({
     },
   ) => {
     if (!hub.hosts.updateHostMachine) {
-      message.error("Host update not available");
       return;
     }
     try {
@@ -164,13 +155,11 @@ export const useHostActions = ({
       await refresh();
     } catch (err) {
       console.error(err);
-      message.error("Failed to update host resources");
     }
   };
 
   const forceDeprovision = async (id: string) => {
     if (!hub.hosts.forceDeprovisionHost) {
-      message.error("Force deprovision not available");
       return;
     }
     try {
@@ -179,13 +168,11 @@ export const useHostActions = ({
       await refresh();
     } catch (err) {
       console.error(err);
-      message.error("Failed to force deprovision host");
     }
   };
 
   const removeSelfHostConnector = async (id: string) => {
     if (!hub.hosts.removeSelfHostConnector) {
-      message.error("Remove connector not available");
       return;
     }
     try {
@@ -194,7 +181,6 @@ export const useHostActions = ({
       await refresh();
     } catch (err) {
       console.error(err);
-      message.error("Failed to remove connector");
     }
   };
 

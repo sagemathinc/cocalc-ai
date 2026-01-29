@@ -1,4 +1,4 @@
-import { Progress, Space, Typography } from "antd";
+import { Button, Popover, Progress, Space, Typography } from "antd";
 import { TimeElapsed } from "@cocalc/frontend/components";
 import type { LroStatus } from "@cocalc/conat/hub/api/lro";
 import { capitalize } from "@cocalc/util/misc";
@@ -69,6 +69,34 @@ export function HostOpProgress({
   }
   const summary = op.summary;
   const status = summary?.status ?? "queued";
+  if (summary && summary.status === "failed") {
+    const details = summary.error ?? "Host operation failed.";
+    const errorText = compact ? "Error" : `${opLabel(op)} failed`;
+    return (
+      <Popover
+        title="Error"
+        content={
+          <div style={{ maxWidth: 360, whiteSpace: "pre-wrap" }}>
+            {details}
+          </div>
+        }
+      >
+        <Button
+          size="small"
+          type="link"
+          danger
+          style={{
+            padding: 0,
+            height: "auto",
+            fontSize: compact ? 11 : 12,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {errorText}
+        </Button>
+      </Popover>
+    );
+  }
   if (summary && !ACTIVE_STATUSES.has(summary.status)) {
     return null;
   }

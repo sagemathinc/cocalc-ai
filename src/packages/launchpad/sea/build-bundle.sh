@@ -111,6 +111,15 @@ else
   echo "pglite dist directory not found; skipping copy"
 fi
 
+echo "- Copy bootstrap.py"
+BOOTSTRAP_PY="$ROOT/packages/server/cloud/bootstrap/bootstrap.py"
+if [ -f "$BOOTSTRAP_PY" ]; then
+  mkdir -p "$OUT"/bundle/bootstrap
+  cp "$BOOTSTRAP_PY" "$OUT"/bundle/bootstrap/bootstrap.py
+else
+  echo "bootstrap.py not found at $BOOTSTRAP_PY"
+fi
+
 echo "- Remove other platform binaries"
 
 case "${OSTYPE}" in

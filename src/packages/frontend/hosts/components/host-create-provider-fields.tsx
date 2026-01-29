@@ -1,8 +1,10 @@
-import { Alert, Col, Form, InputNumber, Row, Select, Slider, Tag } from "antd";
+import { Alert, Col, Form, Input, InputNumber, Row, Select, Slider, Tag } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { mapCloudRegionToR2Region, R2_REGION_LABELS } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import type { HostFieldId } from "../providers/registry";
+import { SshTargetLabel } from "./ssh-target-help";
 
 const MIN_DISK_SIZE = 50;
 const MAX_DISK_SIZE = 10_000;
@@ -12,11 +14,13 @@ const NEBIUS_IO_M3_GB = 93;
 type HostCreateProviderFieldsProps = {
   provider: HostCreateViewModel["provider"];
   onProviderChange?: (value: string) => void;
+  hideProviderSelect?: boolean;
 };
 
 export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> = ({
   provider,
   onProviderChange,
+  hideProviderSelect = false,
 }) => {
   const {
     providerOptions,
@@ -35,6 +39,13 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedDisk = Form.useWatch("disk", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
+  const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
+  const watchedSelfHostMode = Form.useWatch("self_host_mode", form);
+  const watchedSelfHostTarget = Form.useWatch("self_host_ssh_target", form);
+  const selfHostAlphaEnabled = !!useTypedRedux(
+    "customize",
+    "project_hosts_self_host_alpha_enabled",
+  );
   const defaultDiskType =
     selectedProvider === "nebius" ? "ssd_io_m3" : undefined;
   React.useEffect(() => {
@@ -111,7 +122,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
     watchedZone,
   ]);
   const ensureFieldValue = React.useCallback(
-    (field: "region" | "zone" | "machine_type" | "size" | "gpu_type", current?: string) => {
+    (field: HostFieldId, current?: string) => {
       const fieldOptions = options[field] ?? [];
       if (!fieldOptions.length) return;
       if (!current || !fieldOptions.some((opt) => opt.value === current)) {
@@ -140,7 +151,28 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
   React.useEffect(() => {
     ensureFieldValue("gpu_type", watchedGpuType);
   }, [ensureFieldValue, watchedGpuType]);
+
+  React.useEffect(() => {
+    ensureFieldValue("self_host_kind", form.getFieldValue("self_host_kind"));
+  }, [ensureFieldValue, form]);
+
+  React.useEffect(() => {
+    ensureFieldValue("self_host_mode", form.getFieldValue("self_host_mode"));
+  }, [ensureFieldValue, form]);
+  const requireSshTarget = selectedProvider === "self-host" && !selfHostAlphaEnabled;
+  const showSelfHostSshWarning =
+    selectedProvider === "self-host" &&
+    watchedSelfHostMode === "local" &&
+    !String(watchedSelfHostTarget ?? "").trim() &&
+    selfHostAlphaEnabled;
   const renderField = (field: HostFieldId) => {
+    if (
+      selectedProvider === "self-host" &&
+      !selfHostAlphaEnabled &&
+      (field === "self_host_kind" || field === "self_host_mode")
+    ) {
+      return null;
+    }
     const fieldOptions = options[field] ?? [];
     const label =
       labels[field] ??
@@ -183,13 +215,15 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
 
   return (
     <>
-      <Form.Item
-        name="provider"
-        label="Provider"
-        initialValue={providerOptions[0]?.value ?? "none"}
-      >
-        <Select options={providerOptions} onChange={onProviderChange} />
-      </Form.Item>
+      {!hideProviderSelect && (
+        <Form.Item
+          name="provider"
+          label="Provider"
+          initialValue={providerOptions[0]?.value ?? "none"}
+        >
+          <Select options={providerOptions} onChange={onProviderChange} />
+        </Form.Item>
+      )}
       {gcpCompatibilityWarning?.type === "region" && (
         <Alert
           type="warning"
@@ -250,6 +284,33 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
         />
       )}
       {schema.primary.map(renderField)}
+      {selectedProvider === "self-host" && (
+        <Form.Item
+          name="self_host_ssh_target"
+          label={<SshTargetLabel label="SSH target" />}
+          rules={
+            requireSshTarget
+              ? [
+                  {
+                    required: true,
+                    message: "Please enter an SSH target for this host.",
+                  },
+                ]
+              : undefined
+          }
+        >
+          <Input placeholder="user@host[:port] or ssh-config name" />
+        </Form.Item>
+      )}
+      {showSelfHostSshWarning && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="No SSH target provided"
+          description="Without an SSH target, the host must be able to reach the hub’s SSH port directly."
+        />
+      )}
       {showDiskFields && (
         <Form.Item
           label="Disk size (GB)"
@@ -298,7 +359,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
           </Row>
         </Form.Item>
       )}
-      {selectedProvider === "self-host" && (
+      {selectedProvider === "self-host" && watchedSelfHostKind !== "direct" && (
         <>
           <Form.Item
             name="cpu"

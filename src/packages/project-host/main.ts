@@ -20,11 +20,7 @@ import { setConatClient } from "@cocalc/conat/client";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
-import {
-  initFileServer,
-  initFsServer,
-  listProvisionedProjects,
-} from "./file-server";
+import { initFileServer, initFsServer } from "./file-server";
 import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
 import { getProjectPorts } from "./sqlite/projects";
@@ -33,7 +29,6 @@ import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
 import { init as initHubApi } from "@cocalc/lite/hub/api";
 import { wireProjectsApi } from "./hub/projects";
 import { startMasterRegistration } from "./master";
-import { queueProvisionedInventory } from "./master-status";
 import { startReconciler } from "./reconcile";
 import { init as initAcp } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
@@ -43,6 +38,7 @@ import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
 import { handleDaemonCli } from "./daemon";
 import { startCopyWorker } from "./pending-copies";
+import { startOnPremTunnel } from "./onprem-tunnel";
 
 const logger = getLogger("project-host:main");
 
@@ -228,18 +224,13 @@ export async function main(
   // file server must be started AFTER master registration, since it connects
   // to master to get rustic backup config.
   logger.info("File-server (local btrfs + optional ssh proxy if enabled)");
+  let stopOnPremTunnel: (() => void) | undefined;
   try {
     await initFileServer({ client: conatClient });
+    stopOnPremTunnel = await startOnPremTunnel({ localHttpPort: port });
   } catch (err) {
     logger.error("FATAL: Failed to init file server", err);
     process.exit(1);
-  }
-
-  try {
-    const projectIds = await listProvisionedProjects();
-    queueProvisionedInventory(projectIds);
-  } catch (err) {
-    logger.warn("failed to report provisioned inventory", { err: `${err}` });
   }
 
   const stopCopyWorker = startCopyWorker();
@@ -252,6 +243,7 @@ export async function main(
     stopMasterRegistration?.();
     stopReconciler?.();
     stopCopyWorker?.();
+    stopOnPremTunnel?.();
   };
   process.once("exit", close);
   ["SIGINT", "SIGTERM", "SIGQUIT"].forEach((sig) => process.once(sig, close));

@@ -37,7 +37,8 @@
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {
-    "@cocalc/hub": "workspace:*"
+    "@cocalc/hub": "workspace:*",
+    "@cocalc/server": "workspace:*"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",

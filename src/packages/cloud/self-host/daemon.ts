@@ -73,8 +73,9 @@ function fail(message: string): never {
 
 function configDir(): string {
   const base =
-    process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config");
-  return path.join(base, "cocalc-connector");
+    process.env.COCALC_CONNECTOR_BASE_DIR ??
+    path.join(os.homedir(), "cocalc-host");
+  return path.join(base, "config");
 }
 
 function configPathFromArgs(args: Record<string, string>): string {
@@ -180,8 +181,10 @@ function formatSize(value?: unknown, fallbackGb?: number): string | undefined {
 function cloudInitBaseDir(): string {
   const override = process.env.COCALC_CONNECTOR_CLOUD_INIT_DIR;
   if (override) return override;
-  const home = os.homedir();
-  return path.join(home, "cocalc-connector", "cloud-init");
+  const base =
+    process.env.COCALC_CONNECTOR_BASE_DIR ??
+    path.join(os.homedir(), "cocalc-host");
+  return path.join(base, "cloud-init");
 }
 
 function createCloudInitPaths(hostId: string): {
@@ -254,13 +257,13 @@ function wrapCloudInitScript(script: string): string {
   const content = indentBlock(trimmed, 6);
   return `#cloud-config
 write_files:
-  - path: /root/cocalc-bootstrap.sh
-    permissions: "0700"
+  - path: /var/tmp/cocalc-bootstrap.sh
+    permissions: "u=rwx,go="
     owner: root:root
     content: |
 ${content}
 runcmd:
-  - [ "/bin/bash", "/root/cocalc-bootstrap.sh" ]
+  - [ "/bin/bash", "-lc", "set -euo pipefail; user_home=\\"$(getent passwd 1000 | cut -d: -f6)\\"; if [ -z \\"$user_home\\" ]; then user_home=\\"/home/ubuntu\\"; fi; base=\\"$user_home/cocalc-host/bootstrap\\"; mkdir -p \\"$base\\"; mv /var/tmp/cocalc-bootstrap.sh \\"$base/bootstrap.sh\\"; chmod 700 \\"$base/bootstrap.sh\\"; \\"$base/bootstrap.sh\\"" ]
 `;
 }
 

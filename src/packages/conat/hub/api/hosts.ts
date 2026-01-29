@@ -176,6 +176,15 @@ export interface Host {
   backup_status?: HostBackupStatus;
 }
 
+export interface HostConnectionInfo {
+  host_id: string;
+  name?: string | null;
+  ssh_server?: string | null;
+  connect_url?: string | null;
+  local_proxy?: boolean;
+  ready?: boolean;
+}
+
 export interface HostLogEntry {
   id: string;
   vm_id: string;
@@ -218,6 +227,7 @@ export interface HostSoftwareUpgradeResponse {
 export const hosts = {
   listHosts: authFirstRequireAccount,
   listHostProjects: authFirstRequireAccount,
+  resolveHostConnection: authFirstRequireAccount,
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
@@ -231,12 +241,18 @@ export const hosts = {
   updateHostMachine: authFirstRequireAccount,
   deleteHost: authFirstRequireAccount,
   upgradeHostSoftware: authFirstRequireAccount,
+  upgradeHostConnector: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   updateCopyStatus: authFirstRequireHost,
 };
+
+export interface HostConnectorUpgradeRequest {
+  id: string;
+  version?: string;
+}
 
 export interface Hosts {
   listHosts: (opts: {
@@ -252,6 +268,10 @@ export interface Hosts {
     cursor?: string;
     risk_only?: boolean;
   }) => Promise<HostProjectsResponse>;
+  resolveHostConnection: (opts: {
+    account_id?: string;
+    host_id: string;
+  }) => Promise<HostConnectionInfo>;
   getCatalog: (opts: {
     account_id?: string;
     provider?: string;
@@ -341,6 +361,7 @@ export interface Hosts {
     gpu_count?: number;
     storage_mode?: HostMachine["storage_mode"];
     boot_disk_gb?: number;
+    self_host_ssh_target?: string;
     region?: string;
     zone?: string;
   }) => Promise<Host>;
@@ -350,6 +371,11 @@ export interface Hosts {
     targets: HostSoftwareUpgradeTarget[];
     base_url?: string;
   }) => Promise<HostLroResponse>;
+  upgradeHostConnector: (opts: {
+    account_id?: string;
+    id: string;
+    version?: string;
+  }) => Promise<void>;
   deleteHost: (opts: {
     account_id?: string;
     id: string;

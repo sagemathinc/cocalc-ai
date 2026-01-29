@@ -1,9 +1,10 @@
-import { randomBytes, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
 import { isValidUUID } from "@cocalc/util/misc";
+import { refreshLaunchpadOnPremAuthorizedKeys } from "../launchpad/onprem-sshd";
 
 const DEFAULT_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 
@@ -28,6 +29,13 @@ function splitToken(token: string): { tokenId: string; secret: string } | null {
   return { tokenId, secret };
 }
 
+function deriveBootstrapKeySeed(secret: string): string {
+  return createHash("sha256")
+    .update("cocalc-ssh-bootstrap:")
+    .update(secret)
+    .digest("base64url");
+}
+
 export async function createBootstrapToken(
   hostId: string,
   opts: { ttlMs?: number; purpose?: string } = {},
@@ -36,6 +44,7 @@ export async function createBootstrapToken(
   const secret = randomBytes(32).toString("base64url");
   const token = `${token_id}.${secret}`;
   const token_hash = passwordHash(secret);
+  const ssh_key_seed = deriveBootstrapKeySeed(secret);
   const purpose = opts.purpose ?? "bootstrap";
   const created = new Date();
   const expires = new Date(created.getTime() + (opts.ttlMs ?? DEFAULT_TTL_MS));
@@ -49,10 +58,11 @@ export async function createBootstrapToken(
 
   await pool().query(
     `INSERT INTO project_host_bootstrap_tokens
-       (token_id, host_id, token_hash, purpose, created, expires, revoked)
-     VALUES ($1,$2,$3,$4,$5,$6,FALSE)`,
-    [token_id, hostId, token_hash, purpose, created, expires],
+       (token_id, host_id, token_hash, ssh_key_seed, purpose, created, expires, revoked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE)`,
+    [token_id, hostId, token_hash, ssh_key_seed, purpose, created, expires],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
 
   return { token, token_id, host_id: hostId, purpose, expires };
 }
@@ -115,4 +125,5 @@ export async function revokeBootstrapTokensForHost(
        ${purpose ? "AND purpose=$2" : ""}`,
     purpose ? [hostId, purpose] : [hostId],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
 }

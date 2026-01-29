@@ -13,6 +13,7 @@ import {
   decodeSoftwareLicenseToken,
   verifySoftwareLicense,
 } from "@cocalc/util/software-licenses/token";
+import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
 
 const logger = getLogger("server:software-licenses:activation");
 
@@ -22,7 +23,11 @@ const LICENSE_INSTANCE_ID_SETTING = "software_license_instance_id";
 const LICENSE_PRIVATE_KEY_SETTING = "software_license_private_key";
 
 export function isLaunchpadMode(): boolean {
-  return process.env.COCALC_MODE === "launchpad";
+  return isLaunchpadProduct();
+}
+
+export function isLicenseRequired(): boolean {
+  return process.env.COCALC_LICENSE_REQUIRED === "1";
 }
 
 async function setServerSetting(name: string, value: string): Promise<void> {
@@ -36,7 +41,7 @@ export async function getLicenseToken(): Promise<string> {
 }
 
 export async function isSoftwareLicenseActivated(): Promise<boolean> {
-  if (!isLaunchpadMode()) {
+  if (!isLaunchpadMode() || !isLicenseRequired()) {
     return true;
   }
   return (await getLicenseToken()) !== "";

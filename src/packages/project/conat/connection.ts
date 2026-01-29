@@ -18,11 +18,19 @@ import { inboxPrefix } from "@cocalc/conat/names";
 import { setConatClient } from "@cocalc/conat/client";
 import * as projectData from "@cocalc/project/data";
 import { getLogger } from "@cocalc/project/logger";
+import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { versionCheckLoop } from "./hub";
 
 const data = { ...backendData, ...projectData };
 
 const logger = getLogger("conat:connection");
+
+function normalizeProjectId(candidate?: string): string | undefined {
+  if (!candidate) return;
+  if (is_valid_uuid_string(candidate)) return candidate;
+  const base = candidate.split(".")[0];
+  return is_valid_uuid_string(base) ? base : undefined;
+}
 
 export function getIdentity({
   client = connectToConat(),
@@ -34,7 +42,13 @@ export function getIdentity({
   client: ConatClient;
   project_id: string;
 } {
-  project_id ??= client.info?.user?.project_id ?? data.project_id;
+  const normalized = normalizeProjectId(project_id);
+  if (!normalized) {
+    const infoProjectId = normalizeProjectId(client.info?.user?.project_id);
+    project_id = infoProjectId ?? data.project_id;
+  } else {
+    project_id = normalized;
+  }
   return { client, project_id: project_id! };
 }
 
@@ -47,7 +61,8 @@ export function connectToConat(
 ): ConatClient {
   logger.debug("connectToConat");
   const apiKey = options?.apiKey ?? data.apiKey;
-  const project_id = options?.project_id ?? data.project_id;
+  const project_id =
+    normalizeProjectId(options?.project_id) ?? data.project_id;
   const secretToken = options?.secretToken ?? data.secretToken;
   const address = options?.address ?? data.conatServer;
 

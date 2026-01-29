@@ -18,6 +18,7 @@ export const HostCreateAdvancedFields: React.FC<
     selectedProvider === "nebius"
       ? "ssd_io_m3"
       : diskTypeOptions[0]?.value;
+  const hideSelfHostAdvanced = selectedProvider === "self-host";
   const { schema, options, labels, tooltips } = fields;
   const {
     storageModeOptions,
@@ -59,6 +60,10 @@ export const HostCreateAdvancedFields: React.FC<
       </Col>
     );
   };
+
+  if (hideSelfHostAdvanced) {
+    return null;
+  }
 
   return (
     <Row gutter={[12, 12]}>

@@ -89,8 +89,14 @@ const project_hosts_hyperstack_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_hyperstack_enabled"]);
 const project_hosts_lambda_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_lambda_enabled"]);
+export const project_hosts_local_enabled = (conf: SiteSettings) =>
+  to_bool(conf["project_hosts_local_enabled"]);
 const metrics_enabled = (conf: SiteSettings) =>
-  to_bool((conf as SiteSettings & { prometheus_metrics?: string })["prometheus_metrics"]);
+  to_bool(
+    (conf as SiteSettings & { prometheus_metrics?: string })[
+      "prometheus_metrics"
+    ],
+  );
 
 // Ollama and Custom OpenAI have the same schema
 function custom_llm_valid(value: string): boolean {
@@ -256,6 +262,9 @@ export type SiteSettingsExtrasKeys =
   | "google_cloud_bigquery_detailed_billing_table"
   | "project_hosts_google_prefix"
   | "project_hosts_software_base_url"
+  | "project_hosts_bootstrap_channel"
+  | "project_hosts_bootstrap_version"
+  | "project_hosts_self_host_connector_version"
   | "project_hosts_cloudflare_tunnel_enabled"
   | "project_hosts_cloudflare_tunnel_account_id"
   | "project_hosts_cloudflare_tunnel_api_token"
@@ -924,10 +933,34 @@ export const EXTRAS: SettingsExtras = {
   },
   project_hosts_software_base_url: {
     name: "Project Hosts: Software Base URL",
-    desc: "Base URL for project-host software artifacts. This must contain arch-specific manifests like `project-host/latest-linux-amd64.json`, `project/latest-linux-amd64.json`, and `tools/latest-linux-amd64.json` (e.g., https://software.cocalc.ai/software).",
+    desc: "Base URL for project-host software artifacts. This must contain manifests like `project-host/latest-linux.json`, `project/latest-linux.json`, and `tools/latest-linux-amd64.json` (e.g., https://software.cocalc.ai/software).",
     default: "https://software.cocalc.ai/software",
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
+    valid: () => true,
+  },
+  project_hosts_bootstrap_channel: {
+    name: "Project Hosts: Bootstrap Channel",
+    desc: "Default bootstrap channel for new hosts (e.g., latest or test). Leave blank to use latest.",
+    default: "latest",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts"],
+    valid: () => true,
+  },
+  project_hosts_bootstrap_version: {
+    name: "Project Hosts: Bootstrap Version Pin",
+    desc: "Optional explicit bootstrap version to use for new hosts (overrides channel). Leave blank to use the channel.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts"],
+    valid: () => true,
+  },
+  project_hosts_self_host_connector_version: {
+    name: "Project Hosts: Self-Host Connector Version",
+    desc: "Optional version pin for the self-host connector (leave blank to use latest).",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "On-Prem"],
     valid: () => true,
   },
   project_hosts_cloudflare_tunnel_enabled: {

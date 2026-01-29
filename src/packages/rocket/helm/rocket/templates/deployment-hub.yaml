@@ -40,7 +40,6 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["cocalc-hub-server"]
           args:
-            - "--mode={{ .Values.mode }}"
             - "--conat-api"
             - "--hostname=0.0.0.0"
             {{- if .Values.hub.nextServer }}
@@ -60,8 +59,10 @@ spec:
               value: "{{ .Values.hub.service.port }}"
             - name: DATA
               value: "{{ .Values.data.path }}"
-            - name: COCALC_MODE
-              value: "{{ .Values.mode }}"
+            - name: COCALC_PRODUCT
+              value: "{{ .Values.product }}"
+            - name: COCALC_ROCKET_CONTROL_PLANE
+              value: "{{ .Values.controlPlane }}"
             - name: PGHOST
               value: "{{ ternary \"127.0.0.1\" .Values.postgres.host .Values.cloudsql.proxy.enabled }}"
             - name: PGPORT

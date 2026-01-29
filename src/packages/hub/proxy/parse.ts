@@ -1,6 +1,13 @@
-type ProxyType = "port" | "raw" | "server" | "files" | "proxy";
+type ProxyType = "port" | "raw" | "server" | "files" | "proxy" | "conat";
 
-const TYPE_SEGMENTS = new Set(["port", "raw", "server", "files", "proxy"]);
+const TYPE_SEGMENTS = new Set([
+  "port",
+  "raw",
+  "server",
+  "files",
+  "proxy",
+  "conat",
+]);
 
 export function parseReq(
   url: string, // with base_path removed (url does start with /)
@@ -26,7 +33,7 @@ export function parseReq(
   const type: ProxyType = v[1] as ProxyType;
   let internal_url: string | undefined = undefined;
   let port_desc: string;
-  if (type == "raw" || type == "files") {
+  if (type == "raw" || type == "files" || type == "conat") {
     port_desc = "";
   } else if (type === "port") {
     port_desc = v[2];

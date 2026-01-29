@@ -8,7 +8,9 @@ image:
 
 imagePullSecrets: []
 
-mode: kucalc
+product: rocket
+deploymentMode: cloud
+controlPlane: multi
 
 data:
   path: /data

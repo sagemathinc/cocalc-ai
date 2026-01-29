@@ -50,6 +50,16 @@ async function derivePublicKeyFromPath(path: string): Promise<string> {
 async function derivePublicKeyFromString(
   privateKey: string,
 ): Promise<string> {
+  const trimmed = privateKey.trim();
+  if (!trimmed) {
+    throw new Error("private key value is empty");
+  }
+  if (trimmed.startsWith("ssh-")) {
+    throw new Error("private key value looks like a public key");
+  }
+  if (!trimmed.includes("PRIVATE KEY")) {
+    throw new Error("private key value is missing PEM header");
+  }
   const dir = await mkdtemp(join(tmpdir(), "cocalc-ssh-key-"));
   const keyPath = join(dir, "id_ed25519");
   try {
@@ -104,9 +114,15 @@ export async function getControlPlaneSshKeypair(): Promise<ControlPlaneKeypair> 
   }
 
   if (stored) {
-    const publicKey = await derivePublicKeyFromString(stored);
-    cachedKeypair = { publicKey, privateKey: stored };
-    return cachedKeypair;
+    try {
+      const publicKey = await derivePublicKeyFromString(stored);
+      cachedKeypair = { publicKey, privateKey: stored };
+      return cachedKeypair;
+    } catch (err) {
+      logger.warn("invalid stored control-plane SSH key; regenerating", {
+        err: String(err),
+      });
+    }
   }
 
   const client = await pool().connect();
@@ -125,9 +141,15 @@ export async function getControlPlaneSshKeypair(): Promise<ControlPlaneKeypair> 
       return cachedKeypair;
     }
     if (lockedStored) {
-      const publicKey = await derivePublicKeyFromString(lockedStored);
-      cachedKeypair = { publicKey, privateKey: lockedStored };
-      return cachedKeypair;
+      try {
+        const publicKey = await derivePublicKeyFromString(lockedStored);
+        cachedKeypair = { publicKey, privateKey: lockedStored };
+        return cachedKeypair;
+      } catch (err) {
+        logger.warn("invalid stored control-plane SSH key; regenerating", {
+          err: String(err),
+        });
+      }
     }
 
     const generated = generateKeypair();

@@ -27,8 +27,14 @@ Notes:
     if (handleDaemonCli(args)) {
       return;
     }
-    // Prefer the compiled output to avoid requiring a TS runtime.
-    const { main } = require("../dist/main.js");
+    // Prefer the bundled main if present; otherwise use the compiled output.
+    let mainEntry;
+    try {
+      mainEntry = require("../main/index.js");
+    } catch {
+      mainEntry = require("../dist/main.js");
+    }
+    const { main } = mainEntry;
     await main();
   } catch (err) {
     console.error("project-host failed to start:", err);
