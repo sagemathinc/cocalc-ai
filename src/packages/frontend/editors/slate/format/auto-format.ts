@@ -479,19 +479,22 @@ function autoformatListAtStart(editor: Editor): boolean {
   });
   const listPath = listEntry?.[1] ?? blockPath;
   let focus: Point | undefined;
-  try {
-    focus = Editor.start(editor, listItemPath);
-  } catch {
-    const textEntry = Editor.nodes(editor, {
-      at: listPath,
-      match: (node) => Text.isText(node),
-    }).next().value as [Text, Path] | undefined;
-    if (textEntry) {
-      try {
-        focus = Editor.start(editor, textEntry[1]);
-      } catch {
-        // ignore
-      }
+  const textEntry = Editor.nodes(editor, {
+    at: listPath,
+    match: (node) => Text.isText(node),
+  }).next().value as [Text, Path] | undefined;
+  if (textEntry) {
+    try {
+      focus = Editor.start(editor, textEntry[1]);
+    } catch {
+      // ignore
+    }
+  }
+  if (!focus) {
+    try {
+      focus = Editor.start(editor, listItemPath);
+    } catch {
+      // ignore
     }
   }
   if (focus) {
