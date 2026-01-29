@@ -492,6 +492,7 @@ export async function getBackupConfig({
 }
 
 async function assertHostProjectAccess(host_id: string, project_id: string) {
+  await ensureProjectMovesSchema();
   const { rows } = await pool().query<{
     host_id: string | null;
   }>("SELECT host_id FROM projects WHERE project_id=$1", [project_id]);
@@ -532,4 +533,25 @@ async function assertHostProjectAccess(host_id: string, project_id: string) {
     return;
   }
   throw new Error("project not assigned to host");
+}
+
+let projectMovesSchemaReady: Promise<void> | null = null;
+
+async function ensureProjectMovesSchema() {
+  if (projectMovesSchemaReady) {
+    return projectMovesSchemaReady;
+  }
+  projectMovesSchemaReady = (async () => {
+    await pool().query(
+      `
+      CREATE TABLE IF NOT EXISTS project_moves (
+        project_id UUID PRIMARY KEY,
+        source_host_id UUID,
+        dest_host_id UUID,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `,
+    );
+  })();
+  return projectMovesSchemaReady;
 }
