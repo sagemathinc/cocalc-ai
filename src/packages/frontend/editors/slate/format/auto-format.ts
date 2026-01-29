@@ -979,6 +979,20 @@ function markdownAutoformatAt(
       setSelectionAndFocus(editor, { focus, anchor: focus });
       return true;
     }
+    if (type === "html_block" || type === "meta") {
+      // Move cursor after the block so typing continues in a paragraph.
+      const afterPath = Path.next(blockPath);
+      let nextNode: Node | null = null;
+      if (Node.has(editor, afterPath)) {
+        nextNode = Editor.node(editor, afterPath)[0] as Node;
+      }
+      if (!Element.isElement(nextNode) || nextNode.type !== "paragraph") {
+        Transforms.insertNodes(editor, { type: "paragraph", children: [{ text: "" }] }, { at: afterPath });
+      }
+      const focus = Editor.start(editor, afterPath);
+      setSelectionAndFocus(editor, { focus, anchor: focus });
+      return true;
+    }
     if (type === "bullet_list" || type === "ordered_list") {
       const listItemPath = blockPath.concat(0);
       const paragraphPathInList = listItemPath.concat(0);
