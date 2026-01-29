@@ -223,16 +223,40 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
     if (!(Element.isElement(prevNode) && prevNode.type === "paragraph")) {
       const shifted = shiftSelectionForInsert(editor.selection, path, 1);
       Transforms.insertNodes(editor, spacerParagraph(), { at: path });
-      if (shifted) {
+      if ((editor as any).__autoformatDidBlock && shifted) {
+        const nextPath = Path.next(path);
+        const nextNode = getNodeAt(editor, nextPath);
+        if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+          const focus = Editor.start(editor, nextPath);
+          Transforms.setSelection(editor, { anchor: focus, focus });
+        } else {
+          Transforms.setSelection(editor, shifted);
+        }
+      } else if (shifted) {
         Transforms.setSelection(editor, shifted);
+      }
+      if ((editor as any).__autoformatDidBlock && node.type === "code_block") {
+        (editor as any).__autoformatDidBlock = false;
       }
       return;
     }
   } else {
     const shifted = shiftSelectionForInsert(editor.selection, path, 1);
     Transforms.insertNodes(editor, spacerParagraph(), { at: path });
-    if (shifted) {
+    if ((editor as any).__autoformatDidBlock && shifted) {
+      const nextPath = Path.next(path);
+      const nextNode = getNodeAt(editor, nextPath);
+      if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+        const focus = Editor.start(editor, nextPath);
+        Transforms.setSelection(editor, { anchor: focus, focus });
+      } else {
+        Transforms.setSelection(editor, shifted);
+      }
+    } else if (shifted) {
       Transforms.setSelection(editor, shifted);
+    }
+    if ((editor as any).__autoformatDidBlock && node.type === "code_block") {
+      (editor as any).__autoformatDidBlock = false;
     }
     return;
   }
@@ -240,6 +264,9 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
   const nextNode = getNodeAt(editor, nextPath);
   if (!(Element.isElement(nextNode) && nextNode.type === "paragraph")) {
     Transforms.insertNodes(editor, spacerParagraph(), { at: nextPath });
+  }
+  if ((editor as any).__autoformatDidBlock && node.type === "code_block") {
+    (editor as any).__autoformatDidBlock = false;
   }
 });
 

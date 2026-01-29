@@ -115,6 +115,13 @@ export const withInsertText = (editor) => {
           }
           insertText(text);
         } else {
+          if ((editor as any).__autoformatDidBlock) {
+            if (canIgnore) {
+              (editor as any).setIgnoreSelection(false);
+              (editor as any).__autoformatIgnoreSelection = false;
+            }
+            return;
+          }
           // Autoformat in a *fully empty* editor is surprisingly tricky:
           // Slate often reuses the same value reference, so React skips a render,
           // and the DOM selection/focus never updates. We must:
@@ -140,7 +147,13 @@ export const withInsertText = (editor) => {
               } catch {
                 // ignore doc start check failures
               }
-              if (isDocStart && selectionBlockPath) {
+              let hasContent = false;
+              try {
+                hasContent = Editor.string(editor, []).length > 0;
+              } catch {
+                // ignore content check failures
+              }
+              if (isDocStart && selectionBlockPath && !hasContent) {
                 pendingSelection = null;
               } else {
                 pendingSelection = safe;

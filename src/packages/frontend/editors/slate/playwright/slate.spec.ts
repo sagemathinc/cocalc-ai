@@ -384,6 +384,7 @@ test("code blocks allow blank lines via Enter", async ({ page }) => {
     });
   });
 
+  await page.locator("[data-slate-editor]").click();
   await page.keyboard.press("Enter");
   await page.keyboard.press("Enter");
   await page.keyboard.type("b");

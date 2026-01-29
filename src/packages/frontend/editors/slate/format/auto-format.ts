@@ -961,6 +961,7 @@ function markdownAutoformatAt(
     focusEditorAt(editor, new_cursor);
   } else {
     // **NON-INLINE CASE**
+    (editor as any).__autoformatDidBlock = true;
     // Remove the containing paragraph (not just the text node) so the new
     // block-level doc replaces it without leaving an empty paragraph.
     const paragraphEntry = Editor.above(editor, {
