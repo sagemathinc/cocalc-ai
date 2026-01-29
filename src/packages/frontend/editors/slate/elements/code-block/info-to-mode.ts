@@ -14,10 +14,14 @@ export default function infoToMode(
   if (!info) {
     if (!value) return ""; // no info
     const popular = guessPopularLanguage(value);
-    if (popular && popular.score >= 2) {
+    if (popular) {
       info = popular.mode;
     } else {
       info = detectLanguage(value);
+      if (info === "txt") {
+        // Best-guess fallback for UI readability when nothing matches.
+        info = "md";
+      }
     }
   }
 
