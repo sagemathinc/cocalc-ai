@@ -17,7 +17,7 @@ import {
 import { isEqual } from "lodash";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Well } from "@cocalc/frontend/antd-bootstrap";
-import { redux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import { Gap, Icon, Loading, Paragraph } from "@cocalc/frontend/components";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
@@ -38,6 +38,8 @@ const { CheckableTag } = AntdTag;
 
 export default function SiteSettings({ close }) {
   const { inc: change } = useCounter();
+  const isRocket = useTypedRedux("customize", "is_rocket");
+  const showGoogleCloudOauth = !!isRocket;
   const testEmailRef = useRef<InputRef>(null);
   const [_, setDisableTests] = useState<boolean>(false);
   const [state, setState] = useState<State>("load");
@@ -432,7 +434,7 @@ export default function SiteSettings({ close }) {
           setError={setError}
           style={{ margin: "30px auto", maxWidth: "800px" }}
         />
-        {state === "edit" && data != null && (
+        {state === "edit" && data != null && showGoogleCloudOauth && (
           <GoogleCloudOauthSetup data={data} reload={load} />
         )}
         <Row key="filter">

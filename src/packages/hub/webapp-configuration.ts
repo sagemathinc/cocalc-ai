@@ -26,6 +26,11 @@ import getServerSettings, {
   ServerSettingsDynamic,
 } from "./servers/server-settings";
 import { have_active_registration_tokens } from "./utils";
+import {
+  getCocalcProduct,
+  isLaunchpadProduct,
+  isRocketProduct,
+} from "@cocalc/server/launchpad/mode";
 
 const L = debug("hub:webapp-config");
 
@@ -164,6 +169,9 @@ export class WebappConfiguration {
         country,
         dns: host,
         launchpad_self_signed: process.env.COCALC_LAUNCHPAD_SELF_SIGNED === "1",
+        cocalc_product: getCocalcProduct(),
+        is_launchpad: isLaunchpadProduct(),
+        is_rocket: isRocketProduct(),
       },
     };
   }

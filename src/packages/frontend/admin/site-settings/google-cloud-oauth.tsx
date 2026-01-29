@@ -41,10 +41,6 @@ export default function GoogleCloudOauthSetup({
     setServiceAccountEmail(data.google_cloud_service_account_email ?? "");
   }, [data?.google_cloud_project_id, data?.google_cloud_service_account_email]);
 
-  if (!enabled) {
-    return null;
-  }
-
   const connectedAt = data?.google_cloud_oauth_connected_at ?? "";
   const lastValidated = data?.google_cloud_oauth_last_validated_at ?? "";
   const lastError = data?.google_cloud_oauth_last_error ?? "";
@@ -109,19 +105,33 @@ export default function GoogleCloudOauthSetup({
   }
 
   const redirectUri = getRedirectUri();
+  const suggestedServiceAccountEmail = projectId
+    ? `cocalc-host@${projectId}.iam.gserviceaccount.com`
+    : "";
 
   return (
     <div style={{ marginBottom: "24px" }}>
       <Alert
         type="info"
         showIcon
-        message="Google Cloud OAuth + Service Account Impersonation"
+        message="Google Cloud OAuth + Service Account Access"
         description={
           <div>
+            <div style={{ marginBottom: "8px" }}>
+              <strong>Rocket-only:</strong> This flow is not yet tested in
+              production.
+            </div>
+            {!enabled && (
+              <div style={{ marginBottom: "8px" }}>
+                <strong>Note:</strong> Google Cloud project hosts are currently
+                disabled. Enable “Project Hosts: Google Cloud - Enable” to use
+                this flow.
+              </div>
+            )}
             <p style={{ marginBottom: "8px" }}>
-              Configure Google Cloud access without JSON keys. Provide the
-              project ID + service account email, then connect via OAuth to
-              mint short-lived impersonation tokens.
+              Configure Google Cloud access for one specified project. Provide
+              the project ID + service account email, then connect via OAuth to
+              mint short-lived access tokens.
             </p>
             <div style={{ marginBottom: "8px" }}>
               <strong>Authorized redirect URI:</strong>
@@ -192,6 +202,25 @@ export default function GoogleCloudOauthSetup({
               value={serviceAccountEmail}
               onChange={(e) => setServiceAccountEmail(e.target.value)}
             />
+            <div style={{ marginTop: "6px", color: "#666" }}>
+              This is the <em>service account</em> you created in Google Cloud
+              (it ends with <code>.iam.gserviceaccount.com</code>, not your
+              personal email).
+              {suggestedServiceAccountEmail ? (
+                <>
+                  {" "}
+                  <Button
+                    size="small"
+                    style={{ marginLeft: "6px" }}
+                    onClick={() =>
+                      setServiceAccountEmail(suggestedServiceAccountEmail)
+                    }
+                  >
+                    Use {suggestedServiceAccountEmail}
+                  </Button>
+                </>
+              ) : null}
+            </div>
           </div>
           <div>
             <strong>OAuth Client JSON</strong>
@@ -216,7 +245,7 @@ export default function GoogleCloudOauthSetup({
               type="primary"
               icon={<Icon name="link" />}
               onClick={connectOAuth}
-              disabled={busy}
+              disabled={busy || !enabled}
             >
               Connect Google Cloud (OAuth)
             </Button>
