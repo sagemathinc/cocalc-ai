@@ -76,7 +76,7 @@ export function guessPopularLanguage(code: string): PopularLangGuess | null {
   for (const lang of POPULAR_LANGS) {
     let score = 0;
     for (const [re, weight] of lang.hints) {
-      const count = [...text.matchAll(re)].length;
+      const count = countMatches(text, re);
       if (count) {
         score += Math.min(count, 5) * weight;
       }
@@ -86,6 +86,16 @@ export function guessPopularLanguage(code: string): PopularLangGuess | null {
     }
   }
   return best;
+}
+
+function countMatches(text: string, re: RegExp): number {
+  const flags = re.flags.includes("g") ? re.flags : `${re.flags}g`;
+  const global = new RegExp(re.source, flags);
+  let count = 0;
+  for (const _ of text.matchAll(global)) {
+    count += 1;
+  }
+  return count;
 }
 
 const LANGUAGES = [
