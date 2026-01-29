@@ -147,6 +147,10 @@ export interface Config {
   readonly help?: string; // markdown formatted help text
   readonly tags?: Readonly<Tag[]>; // tags for filtering
   readonly managed_by_wizard?: boolean; // shown as wizard-managed in admin UI
+  readonly wizard?: {
+    name: string;
+    label: string;
+  };
 }
 
 export type SiteSettings = Record<SiteSettingsKeys, Config>;

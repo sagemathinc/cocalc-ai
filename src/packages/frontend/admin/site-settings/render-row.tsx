@@ -29,6 +29,7 @@ interface RenderRowProps {
   saveSingleSetting: (name: string) => void;
   onClearSecret: (name: string) => void;
   showHidden: boolean;
+  onOpenWizard?: (name: string) => void;
 }
 
 export function RenderRow({
@@ -48,6 +49,7 @@ export function RenderRow({
   saveSingleSetting,
   onClearSecret,
   showHidden,
+  onOpenWizard,
 }: RenderRowProps) {
   if (data == null) return null;
 
@@ -151,6 +153,21 @@ export function RenderRow({
       label_cols={6}
       extra={renderRowExtra()}
     >
+      {(() => {
+        const wizard = conf.wizard;
+        if (!wizard || !onOpenWizard) return null;
+        return (
+        <div style={{ marginBottom: "8px" }}>
+          <Button
+            size="middle"
+            icon={<Icon name="magic" />}
+            onClick={() => onOpenWizard(wizard.name)}
+          >
+            {wizard.label}
+          </Button>
+        </div>
+        );
+      })()}
       <RowEntry
         name={name}
         value={rawValue}

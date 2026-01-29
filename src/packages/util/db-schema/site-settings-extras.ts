@@ -903,10 +903,11 @@ export const EXTRAS: SettingsExtras = {
   },
   google_cloud_service_account_json: {
     name: "Project Hosts: Google Cloud - Service Account Json",
-    desc: 'A Google Cloud [Service Account](https://console.cloud.google.com/iam-admin/serviceaccounts) with the following IAM Roles: "Editor". This supports managing project hosts on Google Cloud, and you must [enable the Compute Engine API](https://console.cloud.google.com/apis/library/compute.googleapis.com) for this Google Cloud project. This is a multiline json file that looks like\n\n```js\n{"type": "service_account",...,"universe_domain": "googleapis.com"}\n```',
+    desc: 'Use the **Wizard**, or paste the Service Account key JSON for a Google Cloud Service Account with the IAM Role: **Editor** (for compute servers). This supports managing compute servers on Google Cloud, and you must enable the Compute Engine API.\n\nExample format:\n```js\n{"type": "service_account",...,"universe_domain": "googleapis.com"}\n```',
     default: "",
     multiline: 5,
     password: true,
+    wizard: { name: "gcp-service-account-json", label: "Wizard..." },
     show: project_hosts_google_cloud_enabled,
     tags: ["Project Hosts", "Google Cloud"],
   },

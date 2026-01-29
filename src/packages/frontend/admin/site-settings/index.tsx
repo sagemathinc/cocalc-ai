@@ -28,6 +28,7 @@ import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
 import GoogleCloudOauthSetup from "./google-cloud-oauth";
+import GcpServiceAccountWizard from "./gcp-service-account-wizard";
 import {
   toCustomOpenAIModel,
   toOllamaModel,
@@ -49,6 +50,7 @@ export default function SiteSettings({ close }) {
   const [filterStr, setFilterStr] = useState<string>("");
   const [filterTag, setFilterTag] = useState<Tag | null>(null);
   const [showHidden, setShowHidden] = useState<boolean>(false);
+  const [activeWizard, setActiveWizard] = useState<string | null>(null);
   const editedRef = useRef<Data | null>(null);
   const savedRef = useRef<Data | null>(null);
   const clearSecretsRef = useRef<IsClearing>({});
@@ -305,6 +307,14 @@ export default function SiteSettings({ close }) {
     );
   }
 
+  function openWizard(name: string) {
+    setActiveWizard(name);
+  }
+
+  function closeWizard() {
+    setActiveWizard(null);
+  }
+
   function Tests() {
     return (
       <div style={{ marginBottom: "1rem" }}>
@@ -396,6 +406,7 @@ export default function SiteSettings({ close }) {
                 saveSingleSetting={saveSingleSetting}
                 onClearSecret={onClearSecret}
                 showHidden={showHidden}
+                onOpenWizard={openWizard}
               />
             );
           }),
@@ -433,6 +444,13 @@ export default function SiteSettings({ close }) {
           error={error}
           setError={setError}
           style={{ margin: "30px auto", maxWidth: "800px" }}
+        />
+        <GcpServiceAccountWizard
+          open={activeWizard === "gcp-service-account-json"}
+          onClose={closeWizard}
+          onApplyJson={(json) =>
+            onJsonEntryChange("google_cloud_service_account_json", json)
+          }
         />
         {state === "edit" && data != null && showGoogleCloudOauth && (
           <GoogleCloudOauthSetup data={data} reload={load} />
