@@ -230,6 +230,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
         if (Element.isElement(nextNode) && nextNode.type === "code_block") {
           const focus = Editor.start(editor, codePath);
           Transforms.setSelection(editor, { anchor: focus, focus });
+          (editor as any).__autoformatSelection = { anchor: focus, focus };
         } else if (shifted) {
           Transforms.setSelection(editor, shifted);
         }
@@ -246,6 +247,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
       if (Element.isElement(nextNode) && nextNode.type === "code_block") {
         const focus = Editor.start(editor, codePath);
         Transforms.setSelection(editor, { anchor: focus, focus });
+        (editor as any).__autoformatSelection = { anchor: focus, focus };
       } else if (shifted) {
         Transforms.setSelection(editor, shifted);
       }
