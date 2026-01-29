@@ -98,31 +98,42 @@ export const useCursorDecorate = ({
         if (lineEntry) {
           const blockEntry = Editor.above(editor, {
             at: path,
-            match: (n) => Element.isElement(n) && n.type === "code_block",
+            match: (n) =>
+              Element.isElement(n) &&
+              (n.type === "code_block" ||
+                n.type === "html_block" ||
+                n.type === "meta"),
           });
           if (blockEntry) {
-            const [block, blockPath] = blockEntry as [
-              CodeBlock,
-              number[],
-            ];
+            const [block, blockPath] = blockEntry as [Element, number[]];
             const lineIndex = lineEntry[1][lineEntry[1].length - 1];
             const cached = codeBlockCache.get(block);
             const text = block.children.map((line) => Node.string(line)).join("\n");
+            const info =
+              block.type === "code_block"
+                ? (block as CodeBlock).info ?? ""
+                : block.type === "html_block"
+                  ? "html"
+                  : "yaml";
             if (
               !cached ||
               cached.text !== text ||
-              cached.info !== (block.info ?? "")
+              cached.info !== info
             ) {
-              if (getPrismGrammar(block.info)) {
+              if (getPrismGrammar(info)) {
                 codeBlockCache.set(block, {
                   text,
-                  info: block.info ?? "",
-                  decorations: buildCodeBlockDecorations(block, blockPath),
+                  info,
+                  decorations: buildCodeBlockDecorations(
+                    block as CodeBlock,
+                    blockPath,
+                    info,
+                  ),
                 });
               } else {
                 codeBlockCache.set(block, {
                   text,
-                  info: block.info ?? "",
+                  info,
                   decorations: [],
                 });
               }

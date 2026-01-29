@@ -19,6 +19,8 @@ import "prismjs/components/prism-javascript";
 import "prismjs/components/prism-json";
 import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-markdown";
+import "prismjs/components/prism-markup";
+import "prismjs/components/prism-markup-templating";
 import "prismjs/components/prism-python";
 import "prismjs/components/prism-r";
 import "prismjs/components/prism-ruby";
@@ -131,6 +133,12 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   ts: "typescript",
   tsx: "tsx",
   py: "python",
+  html: "markup",
+  htm: "markup",
+  xhtml: "markup",
+  xml: "markup",
+  svg: "markup",
+  htmlmixed: "markup",
   sh: "bash",
   shell: "bash",
   bash: "bash",
@@ -188,9 +196,11 @@ export function highlightCodeHtml(text: string, info?: string): string {
 export function buildCodeBlockDecorations(
   block: CodeBlock,
   blockPath: number[],
+  infoOverride?: string,
 ): DecoratedRange[][] {
   const text = block.children.map((line) => Node.string(line)).join("\n");
-  const grammar = getPrismGrammar(block.info, text);
+  const info = infoOverride ?? block.info;
+  const grammar = getPrismGrammar(info, text);
   if (!grammar) {
     return [];
   }

@@ -501,7 +501,7 @@ function transformToComment(editor: Editor): void {
     {
       type: "html_block",
       html,
-      isVoid: true,
+      isVoid: false,
       isInline: false,
       children: [{ text: "" }],
     },

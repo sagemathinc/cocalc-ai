@@ -238,6 +238,59 @@ NORMALIZERS.push(function normalizeMathValue({ editor, node, path }) {
   }
 });
 
+// Keep html/meta node values in sync with their editable text.
+NORMALIZERS.push(function normalizeHtmlMetaValue({ editor, node, path }) {
+  if (!Element.isElement(node)) return;
+  if (
+    node.type !== "html_inline" &&
+    node.type !== "html_block" &&
+    node.type !== "meta"
+  ) {
+    return;
+  }
+  if ((node as any).isVoid) {
+    Transforms.setNodes(editor, { isVoid: false } as any, { at: path });
+  }
+  if ((node as any).isVoid !== false) return;
+  const text =
+    node.type === "meta"
+      ? ((node as any).value ?? "")
+      : ((node as any).html ?? "");
+  const hasOnlyCodeLines =
+    node.type !== "html_inline" &&
+    (node.children ?? []).every(
+      (child) => Element.isElement(child) && child.type === "code_line",
+    );
+  if (node.type !== "html_inline") {
+    if (!hasOnlyCodeLines) {
+      const desiredLines = toCodeLines(text);
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.removeNodes(editor, {
+          at: path,
+          match: (_n, p) => p.length === path.length + 1,
+        });
+        Transforms.insertNodes(editor, desiredLines, { at: path.concat(0) });
+      });
+      return;
+    }
+  }
+  const current =
+    node.type === "html_inline"
+      ? Node.string(node)
+      : getCodeBlockText(node as any);
+  if (node.type === "meta") {
+    const value = (node as any).value ?? "";
+    if (current !== value) {
+      Transforms.setNodes(editor, { value: current } as any, { at: path });
+    }
+    return;
+  }
+  const html = (node as any).html ?? "";
+  if (current !== html) {
+    Transforms.setNodes(editor, { html: current } as any, { at: path });
+  }
+});
+
 function stripMathDelimiters(s: string): string {
   const trimmed = s.trim();
   if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length >= 4) {

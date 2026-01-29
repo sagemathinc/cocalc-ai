@@ -30,6 +30,7 @@ import { Editor, Path, Transforms } from "slate";
 import { markdown_to_slate } from "../../markdown-to-slate";
 import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
+import { CodeBlockBody, CodeLineElement } from "./code-like";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -179,17 +180,9 @@ function FloatingActionMenu({
   );
 }
 
-function Element({ attributes, children, element }: RenderElementProps) {
+export function CodeLikeEditor({ attributes, children, element }: RenderElementProps) {
   if (element.type === "code_line") {
-    return (
-      <div
-        {...attributes}
-        className="cocalc-slate-code-line"
-        style={{ position: "relative" }}
-      >
-        {children}
-      </div>
-    );
+    return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
   }
   if (element.type != "code_block") {
     throw Error("bug");
@@ -413,7 +406,7 @@ function Element({ attributes, children, element }: RenderElementProps) {
                   .join("\n")}
               </pre>
             ) : (
-              <div className="cocalc-slate-code-block">{children}</div>
+              <CodeBlockBody>{children}</CodeBlockBody>
             )}
             {!disableMarkdownCodebar && output != null && (
               <div
@@ -474,7 +467,7 @@ function fromSlate({ node }) {
 register({
   slateType: "code_block",
   fromSlate,
-  Element,
+  Element: CodeLikeEditor,
   rules: {
     autoFocus: true,
     autoAdvance: true,
@@ -483,5 +476,5 @@ register({
 
 register({
   slateType: "code_line",
-  Element,
+  Element: CodeLikeEditor,
 });

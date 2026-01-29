@@ -5,7 +5,7 @@
 
 // What happens when you hit the enter key.
 
-import { Element, Transforms } from "slate";
+import { Editor, Element, Range, Transforms } from "slate";
 import { isElementOfType } from "../elements";
 import { register } from "./register";
 import { emptyParagraph } from "../padding";
@@ -18,6 +18,81 @@ import { markdownAutoformat } from "../format/auto-format";
 import { handleBlankLineEnter } from "./blank-line-enter";
 
 register({ key: "Enter" }, ({ editor }) => {
+  // If we're inside a code-like line (code/html/meta), let Slate's insertBreak
+  // handle splitting the line inside the block.
+  const selection = editor.selection;
+  if (selection) {
+    const lineEntry = Editor.above(editor, {
+      at: selection,
+      match: (n) => Element.isElement(n) && n.type === "code_line",
+    });
+    if (lineEntry) {
+      const htmlMetaEntry = Editor.above(editor, {
+        at: selection,
+        match: (n) =>
+          Element.isElement(n) &&
+          (n.type === "html_block" || n.type === "meta"),
+      });
+      if (Range.isExpanded(selection)) {
+        Transforms.delete(editor);
+      }
+      if (htmlMetaEntry) {
+        try {
+          const linePath = lineEntry[1];
+          const start = Editor.start(editor, linePath);
+          const end = Editor.end(editor, linePath);
+          const beforeText = Editor.string(editor, {
+            anchor: start,
+            focus: selection.focus,
+          });
+          const afterText = Editor.string(editor, {
+            anchor: selection.focus,
+            focus: end,
+          });
+          if (beforeText.trim() === "" || afterText.trim() === "") {
+            return true;
+          }
+        } catch {
+          // ignore and fall through to insertBreak
+        }
+      }
+      editor.insertBreak();
+      return true;
+    }
+    const mathEntry = Editor.above(editor, {
+      at: selection,
+      match: (n) =>
+        Element.isElement(n) && n.type === "math_block",
+    });
+    if (mathEntry) {
+      if (Range.isExpanded(selection)) {
+        Transforms.delete(editor);
+      }
+      // Disallow blank (whitespace-only) lines inside display math.
+      try {
+        const focus = selection.focus;
+        const start = Editor.start(editor, mathEntry[1]);
+        const end = Editor.end(editor, mathEntry[1]);
+        const beforeText = Editor.string(editor, {
+          anchor: start,
+          focus,
+        });
+        const afterText = Editor.string(editor, {
+          anchor: focus,
+          focus: end,
+        });
+        const beforeLine = beforeText.split("\n").pop() ?? "";
+        const afterLine = afterText.split("\n").shift() ?? "";
+        if (beforeLine.trim() === "" || afterLine.trim() === "") {
+          return true;
+        }
+      } catch {
+        // If we can't inspect neighbors, fall through and let Slate handle.
+      }
+      Transforms.insertText(editor, "\n");
+      return true;
+    }
+  }
   markdownAutoformat(editor);
   const fragment = editor.getFragment();
   const x = fragment?.[0];

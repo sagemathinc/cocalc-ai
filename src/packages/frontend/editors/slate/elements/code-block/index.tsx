@@ -17,6 +17,7 @@ import CopyButton from "@cocalc/frontend/components/copy-button";
 import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
 import { highlightCodeHtml } from "./prism";
+import { CodeLineElement } from "./code-like";
 import { getCodeBlockLineCount, getCodeBlockText, toCodeLines } from "./utils";
 
 interface FloatingActionMenuProps {
@@ -163,15 +164,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
   children,
 }) => {
   if (element.type === "code_line") {
-    return (
-      <div
-        {...attributes}
-        className="cocalc-slate-code-line"
-        style={{ position: "relative" }}
-      >
-        {children}
-      </div>
-    );
+    return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
   }
   if (element.type != "code_block") {
     throw Error("bug");

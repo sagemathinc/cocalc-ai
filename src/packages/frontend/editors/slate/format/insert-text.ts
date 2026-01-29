@@ -167,7 +167,9 @@ export const withInsertText = (editor) => {
           }
           (editor as any).__autoformatSelection = pendingSelection ?? null;
           if (pendingSelection) {
-            editor.selection = pendingSelection;
+            const safeSelection = ensureRange(editor, pendingSelection);
+            pendingSelection = safeSelection;
+            editor.selection = safeSelection;
             try {
               editor.onChange();
             } catch {

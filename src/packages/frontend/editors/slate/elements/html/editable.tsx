@@ -3,13 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Editor, Path, Transforms } from "slate";
 import { register } from "../register";
 import { useFocused, useSelected, useSlate } from "../hooks";
 import { ensure_ends_in_two_newline, FOCUSED_COLOR } from "../../util";
-import { SlateCodeMirror } from "../codemirror";
-import { useSetElement } from "../set-element";
 import HTML from "@cocalc/frontend/components/html-ssr";
+import { ReactEditor, useSlateSelection } from "../../slate-react";
+import { CodeBlockBody } from "../code-block/code-like";
 
 function isBR(s: string): boolean {
   const x = s.toLowerCase().replace(/\s/g, "");
@@ -19,6 +20,7 @@ function isBR(s: string): boolean {
 const Element = ({ attributes, children, element }) => {
   const focused = useFocused();
   const selected = useSelected();
+  const selection = useSlateSelection();
   const border =
     focused && selected
       ? `1px solid ${FOCUSED_COLOR}`
@@ -29,49 +31,98 @@ const Element = ({ attributes, children, element }) => {
   const is_comment = false;
   // const is_comment = html.startsWith("<!--") && html.endsWith("-->");
 
-  // mode for editing the raw html
-  const [editMode, setEditMode] = useState<boolean>(false);
+  const [forceEdit, setForceEdit] = useState(false);
   const editor = useSlate();
 
-  const setElement = useSetElement(editor, element);
+  let editing = false;
+  if (selection) {
+    try {
+      const path = ReactEditor.findPath(editor as any, element as any);
+      const { anchor, focus } = selection;
+      const contains = (p: Path) =>
+        Path.isAncestor(path, p) || Path.equals(path, p);
+      editing = contains(anchor.path) && contains(focus.path);
+    } catch {
+      editing = false;
+    }
+  }
+  const isEditing = forceEdit || (focused && (selected || editing));
 
-  function renderEditMode() {
-    if (!editMode) return;
+  useEffect(() => {
+    if (!focused) {
+      setForceEdit(false);
+      return;
+    }
+    if (selection && !editing && forceEdit) {
+      setForceEdit(false);
+    }
+  }, [forceEdit, focused, editing, selection]);
+  useEffect(() => {
+    if (focused && selected) {
+      setForceEdit(true);
+    }
+  }, [focused, selected]);
+
+  useEffect(() => {
+    if (!element.isVoid) return;
+    try {
+      const path = ReactEditor.findPath(editor as any, element as any);
+      Transforms.setNodes(editor, { isVoid: false } as any, { at: path });
+    } catch {
+      // ignore
+    }
+  }, [editor, element]);
+  // html elements are always non-void to allow multiline editing like code blocks
+
+  function renderRaw() {
+    if (!isEditing) return;
+    if (element.type === "html_block") {
+      return <CodeBlockBody>{children}</CodeBlockBody>;
+    }
     return (
-      <div style={{ boxShadow: "8px 8px 4px #888" }}>
-        <SlateCodeMirror
-          value={html}
-          onChange={(html) => {
-            setElement({ html });
-          }}
-          onBlur={() => setEditMode(false)}
-          info="html"
-          options={{
-            lineWrapping: true,
-            autofocus: true,
-            autoCloseTags: true,
-            smartIndent: true,
-          }}
-          isInline={element["type"] == "html_inline"}
-        />
-      </div>
+      <span style={{ display: "inline-block", marginLeft: "6px" }}>
+        {children}
+      </span>
     );
   }
 
   if (element.type == "html_inline") {
     return (
       <span {...attributes}>
-        {renderEditMode()}
-        <code
-          style={{ color: is_comment ? "#a50" : "#aaa", border }}
-          onClick={() => {
-            setEditMode(true);
-          }}
-        >
-          {html}
-        </code>
+        {!isEditing && (
+          <code
+            style={{ color: is_comment ? "#a50" : "#aaa", border }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              try {
+                const path = ReactEditor.findPath(editor as any, element as any);
+                const start = Editor.start(editor, path);
+                Transforms.select(editor, start);
+                ReactEditor.focus(editor as any);
+                setForceEdit(true);
+              } catch {
+                // ignore
+              }
+            }}
+          >
+            {html}
+          </code>
+        )}
         {isBR(html) && <br />}
-        {children}
+        {renderRaw()}
+        {!isEditing && (
+          <span
+            style={{
+              position: "absolute",
+              left: "-10000px",
+              height: 0,
+              overflow: "hidden",
+            }}
+          >
+            {children}
+          </span>
+        )}
       </span>
     );
   } else {
@@ -85,17 +136,40 @@ const Element = ({ attributes, children, element }) => {
     }
     return (
       <div {...attributes}>
-        <div
-          style={{ border }}
-          contentEditable={false}
-          onDoubleClick={() => {
-            setEditMode(true);
-          }}
-        >
-          <HTML value={html} />
-          {renderEditMode()}
-        </div>
-        {children}
+        {!isEditing && (
+          <div
+            style={{ border, whiteSpace: "normal" }}
+            contentEditable={false}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              try {
+                const path = ReactEditor.findPath(editor as any, element as any);
+                const start = Editor.start(editor, path);
+                Transforms.select(editor, start);
+                ReactEditor.focus(editor as any);
+                setForceEdit(true);
+              } catch {
+                // ignore
+              }
+            }}
+          >
+            <HTML value={html} />
+          </div>
+        )}
+        {renderRaw()}
+        {!isEditing && (
+          <div
+            style={{
+              position: "absolute",
+              left: "-10000px",
+              height: 0,
+              overflow: "hidden",
+            }}
+          >
+            {children}
+          </div>
+        )}
       </div>
     );
   }

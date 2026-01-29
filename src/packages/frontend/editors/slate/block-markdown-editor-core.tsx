@@ -34,6 +34,7 @@ import { slate_to_markdown } from "./slate-to-markdown";
 import { withNormalize } from "./normalize";
 import { withIsInline, withIsVoid } from "./plugins";
 import { withAutoFormat } from "./format/auto-format";
+import { withCodeLineInsertBreak } from "./elements/code-block/with-code-line-insert-break";
 import { withInsertBreakHack } from "./elements/link/editable";
 import { withNonfatalRange, withSelectionSafety } from "./patches";
 import { Element } from "./element";
@@ -283,7 +284,11 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         withNonfatalRange(
           withInsertBreakHack(
             withNormalize(
-              withAutoFormat(withIsInline(withIsVoid(withReact(createEditor())))),
+              withAutoFormat(
+                withIsInline(
+                  withIsVoid(withCodeLineInsertBreak(withReact(createEditor()))),
+                ),
+              ),
             ),
           ),
         ),
@@ -365,7 +370,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
 
     const codeBlockCacheRef = useRef<
       WeakMap<
-        CodeBlock,
+        SlateElement,
         { text: string; info: string; decorations: DecoratedRange[][] }
       >
     >(new WeakMap());
@@ -382,21 +387,29 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         const blockEntry = Editor.above(editor, {
           at: path,
           match: (n) =>
-            SlateElement.isElement(n) && n.type === "code_block",
+            SlateElement.isElement(n) &&
+            (n.type === "code_block" ||
+              n.type === "html_block" ||
+              n.type === "meta"),
         });
         if (!blockEntry) return [];
-        const [block, blockPath] = blockEntry as [CodeBlock, number[]];
+        const [block, blockPath] = blockEntry as [SlateElement, number[]];
         const lineIndex = lineEntry[1][lineEntry[1].length - 1];
         const cache = codeBlockCacheRef.current;
         const text = block.children.map((line) => Node.string(line)).join("\n");
-        const info = block.info ?? "";
+        const info =
+          block.type === "code_block"
+            ? (block as CodeBlock).info ?? ""
+            : block.type === "html_block"
+              ? "html"
+              : "yaml";
         const cached = cache.get(block);
         if (!cached || cached.text !== text || cached.info !== info) {
           if (getPrismGrammar(info)) {
             cache.set(block, {
               text,
               info,
-              decorations: buildCodeBlockDecorations(block, blockPath),
+              decorations: buildCodeBlockDecorations(block as CodeBlock, blockPath, info),
             });
           } else {
             cache.set(block, { text, info, decorations: [] });

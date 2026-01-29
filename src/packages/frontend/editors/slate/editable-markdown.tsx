@@ -32,7 +32,17 @@ import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { EditorState } from "@cocalc/frontend/frame-editors/frame-tree/types";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
-import { Descendant, Editor, Range, Transforms, createEditor } from "slate";
+import {
+  Descendant,
+  DecoratedRange,
+  Editor,
+  Element as SlateElement,
+  Node,
+  Range,
+  Text,
+  Transforms,
+  createEditor,
+} from "slate";
 import { resetSelection } from "./control";
 import * as control from "./control";
 import { SimpleInputMerge } from "@cocalc/sync/editor/generic/simple-input-merge";
@@ -44,6 +54,7 @@ import { createEmoji } from "./elements/emoji/index";
 import { withInsertBreakHack } from "./elements/link/editable";
 import { createMention } from "./elements/mention/editable";
 import { Mention } from "./elements/mention/index";
+import { withCodeLineInsertBreak } from "./elements/code-block/with-code-line-insert-break";
 import { withAutoFormat } from "./format";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import Leaf from "./leaf-with-cursor";
@@ -68,6 +79,8 @@ import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
 import { ChangeContext } from "./use-change";
+import { buildCodeBlockDecorations, getPrismGrammar } from "./elements/code-block/prism";
+import type { CodeBlock } from "./elements/code-block/types";
 import BlockMarkdownEditor, {
   shouldUseBlockEditor,
 } from "./block-markdown-editor";
@@ -219,7 +232,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       withNonfatalRange(
         withInsertBreakHack(
           withNormalize(
-            withAutoFormat(withIsInline(withIsVoid(withReact(createEditor())))),
+            withAutoFormat(
+              withIsInline(
+                withIsVoid(withCodeLineInsertBreak(withReact(createEditor()))),
+              ),
+            ),
           ),
         ),
       ),
@@ -612,6 +629,70 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     search,
   });
 
+  const codeBlockCacheRef = useRef<
+    WeakMap<
+      SlateElement,
+      { text: string; info: string; decorations: DecoratedRange[][] }
+    >
+  >(new WeakMap());
+
+  const codeDecorate = useCallback(
+    ([node, path]): DecoratedRange[] => {
+      if (!Text.isText(node)) return [];
+      const lineEntry = Editor.above(editor, {
+        at: path,
+        match: (n) => SlateElement.isElement(n) && n.type === "code_line",
+      });
+      if (!lineEntry) return [];
+      const blockEntry = Editor.above(editor, {
+        at: path,
+        match: (n) =>
+          SlateElement.isElement(n) &&
+          (n.type === "code_block" ||
+            n.type === "html_block" ||
+            n.type === "meta"),
+      });
+      if (!blockEntry) return [];
+      const [block, blockPath] = blockEntry as [SlateElement, number[]];
+      const lineIndex = lineEntry[1][lineEntry[1].length - 1];
+      const cache = codeBlockCacheRef.current;
+      const text = block.children.map((line) => Node.string(line)).join("\n");
+      const info =
+        block.type === "code_block"
+          ? (block as CodeBlock).info ?? ""
+          : block.type === "html_block"
+            ? "html"
+            : "yaml";
+      const cached = cache.get(block);
+      if (!cached || cached.text !== text || cached.info !== info) {
+        if (getPrismGrammar(info)) {
+          cache.set(block, {
+            text,
+            info,
+            decorations: buildCodeBlockDecorations(
+              block as CodeBlock,
+              blockPath,
+              info,
+            ),
+          });
+        } else {
+          cache.set(block, { text, info, decorations: [] });
+        }
+      }
+      return cache.get(block)?.decorations?.[lineIndex] ?? [];
+    },
+    [editor],
+  );
+
+  const decorate = useCallback(
+    (entry) => {
+      const ranges = cursorDecorate(entry);
+      const extra = codeDecorate(entry);
+      return extra.length ? ranges.concat(extra) : ranges;
+    },
+    [cursorDecorate, codeDecorate],
+  );
+
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const didRestoreScrollRef = useRef<boolean>(false);
   const restoreScroll = useMemo(() => {
@@ -908,6 +989,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
       try {
         if (editor.selection != null) {
+          editor.selection = ensureRange(editor, editor.selection);
           // console.log("setEditorToValue: restore selection", editor.selection);
           const { anchor, focus } = editor.selection;
           Editor.node(editor, anchor);
@@ -1249,7 +1331,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             }
             onFocus?.();
           }}
-          decorate={cursorDecorate}
+          decorate={decorate}
           divref={scrollRef}
           onScroll={() => {
             updateScrollState();
