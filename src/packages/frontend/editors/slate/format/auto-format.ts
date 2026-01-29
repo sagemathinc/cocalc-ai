@@ -471,12 +471,19 @@ function autoformatListAtStart(editor: Editor): boolean {
     match: (node) => Element.isElement(node) && node.type === "list_item",
   });
   const listItemPath = listItemEntry?.[1] ?? blockPath;
+  const listEntry = Editor.above(editor, {
+    at: blockPath,
+    match: (node) =>
+      Element.isElement(node) &&
+      (node.type === "bullet_list" || node.type === "ordered_list"),
+  });
+  const listPath = listEntry?.[1] ?? blockPath;
   let focus: Point | undefined;
   try {
     focus = Editor.start(editor, listItemPath);
   } catch {
     const textEntry = Editor.nodes(editor, {
-      at: listItemPath,
+      at: listPath,
       match: (node) => Text.isText(node),
     }).next().value as [Text, Path] | undefined;
     if (textEntry) {
@@ -490,6 +497,14 @@ function autoformatListAtStart(editor: Editor): boolean {
   if (focus) {
     (editor as any).__autoformatDidBlock = true;
     (editor as any).__autoformatSelection = { anchor: focus, focus };
+    slateDebug("autoformat:list:focus", {
+      blockPath,
+      listItemPath,
+      listPath,
+      focus,
+      selection: editor.selection ?? null,
+      autoformatSelection: (editor as any).__autoformatSelection ?? null,
+    });
     setSelectionAndFocus(editor as ReactEditor, { focus, anchor: focus });
   }
   return true;
