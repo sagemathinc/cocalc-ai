@@ -299,6 +299,12 @@ test("autoformat code span keeps focus in empty editor (production autoformat)",
   });
 
   // Keep typing to verify focus stayed in the editor.
+  const focusedAfterAutoformat = await page.evaluate(() =>
+    window.__slateTest?.isFocused(),
+  );
+  expect(focusedAfterAutoformat).toBe(true);
+  // Re-focus the editor to avoid flaky key delivery in some runs.
+  await editor.click();
   await page.keyboard.type("bar");
 
   await page.waitForFunction(() => {

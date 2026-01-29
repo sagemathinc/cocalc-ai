@@ -178,6 +178,8 @@ const SPACER_BLOCK_TYPES = new Set<string>([
   "html_block",
   "meta",
   "math_block",
+  "bullet_list",
+  "ordered_list",
 ]);
 
 function needsSpacerParagraph(editor: Editor, node: Element, _path?: Path): boolean {
