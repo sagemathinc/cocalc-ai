@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import * as CodeMirror from "codemirror";
 import { Descendant, Editor, Point } from "slate";
 import { ReactEditor } from "./slate-react";
 import { slate_to_markdown } from "./slate-to-markdown";
@@ -15,7 +14,7 @@ import { SlateEditor } from "./editable-markdown";
 export function slatePointToMarkdownPosition(
   editor: SlateEditor,
   point: Point | undefined
-): CodeMirror.Position | undefined {
+): { line: number; ch: number } | undefined {
   if (point == null) return undefined; // easy special case not handled below.
   const { index, markdown } = slatePointToMarkdown(editor, point);
   if (index == -1) return;
@@ -66,7 +65,7 @@ export function indexToPosition({
 }: {
   index: number;
   markdown: string;
-}): CodeMirror.Position | undefined {
+}): { line: number; ch: number } | undefined {
   let n = 0;
   const lines = markdown.split("\n");
   for (let line = 0; line < lines.length; line++) {
@@ -82,7 +81,10 @@ export function indexToPosition({
   return undefined; // just being explicit here.
 }
 
-function insertSentinel(pos: CodeMirror.Position, markdown: string): string {
+function insertSentinel(
+  pos: { line: number; ch: number },
+  markdown: string
+): string {
   const v = markdown.split("\n");
   const s = v[pos.line];
   if (s == null) {
@@ -126,7 +128,7 @@ export function markdownPositionToSlatePoint({
   editor,
 }: {
   markdown: string;
-  pos: CodeMirror.Position | undefined;
+  pos: { line: number; ch: number } | undefined;
   editor: SlateEditor;
 }): Point | undefined {
   if (pos == null) return undefined;
