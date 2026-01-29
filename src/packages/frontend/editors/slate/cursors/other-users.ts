@@ -120,7 +120,7 @@ export const useCursorDecorate = ({
               cached.text !== text ||
               cached.info !== info
             ) {
-              if (getPrismGrammar(info)) {
+              if (getPrismGrammar(info, text)) {
                 codeBlockCache.set(block, {
                   text,
                   info,

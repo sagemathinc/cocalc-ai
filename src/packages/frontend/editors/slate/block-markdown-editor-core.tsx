@@ -405,7 +405,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               : "yaml";
         const cached = cache.get(block);
         if (!cached || cached.text !== text || cached.info !== info) {
-          if (getPrismGrammar(info)) {
+          if (getPrismGrammar(info, text)) {
             cache.set(block, {
               text,
               info,

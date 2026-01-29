@@ -24,7 +24,6 @@ export default function infoToMode(
       }
     }
   }
-
   if (info == "mermaid") {
     return "md";
   }
