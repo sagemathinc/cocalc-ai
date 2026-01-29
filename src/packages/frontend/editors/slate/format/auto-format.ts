@@ -27,7 +27,7 @@ import { ReactEditor } from "../slate-react";
 import { formatHeading, getFocus, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
 import { toCodeLines } from "../elements/code-block/utils";
-import { ensureRange, slateDebug } from "../slate-util";
+import { ensureRange, getNodeAt, slateDebug } from "../slate-util";
 
 function rememberAutoformatSelection(editor: Editor, selection: Range): void {
   (editor as any).__autoformatSelection = selection;
@@ -466,18 +466,65 @@ function autoformatListAtStart(editor: Editor): boolean {
     );
   });
 
-  const listItemEntry = Editor.above(editor, {
-    at: blockPath,
-    match: (node) => Element.isElement(node) && node.type === "list_item",
-  });
-  const listItemPath = listItemEntry?.[1] ?? blockPath;
   const listEntry = Editor.above(editor, {
-    at: blockPath,
+    at: editor.selection ?? blockPath,
     match: (node) =>
       Element.isElement(node) &&
       (node.type === "bullet_list" || node.type === "ordered_list"),
-  });
-  const listPath = listEntry?.[1] ?? blockPath;
+  }) as [Element, Path] | undefined;
+  if ((window as any).__slateDebugLog) {
+    try {
+      const top = (editor.children || []).map((n: any, idx: number) => ({
+        idx,
+        type: Element.isElement(n) ? n.type : Text.isText(n) ? "text" : typeof n,
+        spacer: n.spacer ?? undefined,
+        children: Array.isArray(n.children)
+          ? n.children.map((c: any) =>
+              Element.isElement(c)
+                ? c.type
+                : Text.isText(c)
+                  ? "text"
+                  : typeof c,
+            )
+          : undefined,
+      }));
+      slateDebug("autoformat:list:tree", {
+        top,
+        listEntryPath: listEntry?.[1] ?? null,
+        selection: editor.selection ?? null,
+      });
+    } catch (err) {
+      slateDebug("autoformat:list:tree:error", { error: String(err) });
+    }
+  }
+  let listPath: Path | undefined = listEntry?.[1];
+  if (!listPath) {
+    const isList = (node: unknown) =>
+      Element.isElement(node) &&
+      (node.type === "bullet_list" || node.type === "ordered_list");
+    const tryPath = (path: Path) => {
+      if (listPath) return;
+      try {
+        const node = getNodeAt(editor, path);
+        if (isList(node)) listPath = path;
+      } catch {
+        // ignore invalid path
+      }
+    };
+    tryPath(blockPath);
+    tryPath(Path.next(blockPath));
+    if (blockPath[blockPath.length - 1] > 0) {
+      tryPath(Path.previous(blockPath));
+    }
+  }
+  if (!listPath) {
+    listPath = blockPath;
+  }
+  const listItemEntry = Editor.nodes(editor, {
+    at: listPath,
+    match: (node) => Element.isElement(node) && node.type === "list_item",
+  }).next().value as [Element, Path] | undefined;
+  const listItemPath = listItemEntry?.[1] ?? listPath;
   let focus: Point | undefined;
   const textEntry = Editor.nodes(editor, {
     at: listPath,
@@ -492,7 +539,7 @@ function autoformatListAtStart(editor: Editor): boolean {
   }
   if (!focus) {
     try {
-      focus = Editor.start(editor, listItemPath);
+      focus = Editor.start(editor, listPath);
     } catch {
       // ignore
     }

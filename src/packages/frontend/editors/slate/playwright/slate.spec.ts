@@ -315,6 +315,48 @@ test("autoformat code span keeps focus in empty editor (production autoformat)",
   expect(focused).toBe(true);
 });
 
+test("autoformat list focuses first item in empty editor", async ({ page }) => {
+  await page.goto("/?autoformat=1");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [0, 0], offset: 0 },
+      focus: { path: [0, 0], offset: 0 },
+    });
+  });
+
+  await page.evaluate(() => {
+    window.__slateTest?.insertText?.("-");
+    window.__slateTest?.insertText?.(" ", true);
+  });
+
+  await page.waitForFunction(() => {
+    const value = window.__slateTest?.getValue?.();
+    const selection = window.__slateTest?.getSelection?.();
+    if (!value || !selection) return false;
+    const path = selection.anchor.path || [];
+    let node: any = { children: value };
+    const ancestorTypes: string[] = [];
+    for (const idx of path) {
+      if (!node.children || !node.children[idx]) return false;
+      node = node.children[idx];
+      if (node.type) ancestorTypes.push(node.type);
+    }
+    if (!node || typeof node.text !== "string") return false;
+    return (
+      ancestorTypes.includes("list_item") &&
+      (ancestorTypes.includes("bullet_list") ||
+        ancestorTypes.includes("ordered_list"))
+    );
+  });
+
+  const selection = (await page.evaluate(
+    () => window.__slateTest?.getSelection(),
+  )) as SlateSelection;
+  expect(selection).not.toBeNull();
+});
+
 test("autoformat bold keeps focus after trailing space", async ({ page }) => {
   await page.goto("/");
   await waitForHarness(page);

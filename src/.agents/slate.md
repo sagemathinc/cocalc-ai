@@ -2,12 +2,67 @@
 
 ## Todo
 
-- [ ] loss of cursor focus after autoformat again.
+- [ ] #speed implement static markdown renderer with windowing/virtualization
+  - obviously this only makes sense when the html element to display the markdown is fixed height.  But that's everywhere in the cocalc frontend app, except for printing.
 
-- [ ] support more prism languages -- it supports over 250 languages, but we only explicitly import a handful.  E.g., latex is very important to use but we didn't import it. See build/cocalc-lite/src/packages/frontend/file-associations.ts to see what we support...
+- [ ] #feature #easy make the "paste text/code" buttons that appear much clearer -- they blend in since everything is the same grey.   Also, instead of "Dismiss", the other option should be "Code Block". 
+  - [ ] #feature add a new feature where you can select the language for those available (hence modeline), so it syntax highlights properly.
 
-- [ ] switch from codemirror to prism -- fully to fix all the weird cursor issues, etc.
-  - [ ] paste a block of code should put cursor in the pasted block or **after** it, not before it.  This works fine for pasting INSIDE a code cell, but not for pasting content that gets turned into a code cell. I think after is the typical UI expectation for pasting content 
+- [ ] #bug bring back the realtime sync integration.
+  - addresses HUGE problem: we depend on realtime sync for undo/redo and saving current state!  the "do nothing when focused" mode just horribly breaks this.
+  - addresses all the chat integration weirdness and a lot of other problems.
+  - it's a challenge but now I think it's solvable.
+  - [ ] in particular - the undo/redo integration (via control+z, etc.) is not implemented at all.
+
+- [ ] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
+  - [ ] this is also needed for jumping from table of contents entries to the document.
+
+- [ ] #bug chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens almost every single time. 
+  - consider just removing sync entirely and using localStorage? That could fix this and is much better.
+
+- [ ] #bug type one character into mode-line popover for code and focus goes back into editor corrupted it with later keystrokes.
+
+- [ ] #feature find (and replace) search in doc; it's not visible at all right now.
+
+- [ ] #feature the entire slate editor bar is just not displayed so can't use any feature.  maybe find is part of that?
+
+- [ ] #unclear block editor -- shift+click in one block when focus is in another should just select both blocks and all between.  If possible, this is "slightly buggy", but basically awesome and very discoverable.  Obviously it possibly slightly overselects.  I'm ok with that.
+
+- [ ] #doc add modal that documents:
+  - [ ] keyboard shortcuts
+  - [ ] what the editor supports, i.e., a list of features and intentional shortcomings (e.g., block mode selection)
+
+- [ ] #wishlist make the task editor just use a single big slate editor, but with the same filtering and sorting options.  Is this possible in block editor mode now, or a new mode.  It would be SO amazing!
+
+- [ ] #wishlist can we make a jupyter notebook mode?  i.e., a slate renderer for any jupyter notebook, i.e., a new "single document mode"...?
+
+- [ ] #wishlist latex editor.  this would just start as one big prism (+latex mode) code editor, but proportionally spaced! Then we make math formulas display nicely using katex. Then we make \\section{...} etc. display nicely.  Etc.  Just iteratively replace things until it is beautiful and useful... but still usable.
+
+- [x] #feature support more prism languages -- it supports over 250 languages, but we only explicitly import a handful.  E.g., latex is very important to use but we didn't import it. See build/cocalc-lite/src/packages/frontend/file-associations.ts to see what we support...
+
+- [x] #bug a bunch of stuff that was working fine with code block navigation/cursors is now broken -- similar to the breaks with html that was badly fixed by a hack of just tossing in a paragraph below it (that should be reverted):
+  - it is impossible to enter blank lines in code cells now
+  - impossible to get cursor below an empty code cell
+  - deleting a code cell using control+d doesn't delete the contents (just unformats it)
+  - \`\`\`[space] focus -- focuses the spacer
+  - And I can't move my cursor above or below this list I'm writing right now -- I'm trapped.
+
+- [x] #feature eliminate use of codemirror entirely in slate editor as a core editor component; it's way too heavy/awkward
+
+- [x] #bug rewrite math editing -- cursor gets stuck in displayed math: can navigate above it but not below it in block editor mode.  popup doesn't go away. 
+  - I think I would much prefer to edit the latex inline (not in a popup) and only maybe use a popup for a preview.  If possible.
+
+- [x] #bug paste a block of code should put cursor in the pasted block or **after** it, not before it.  This works fine for pasting INSIDE a code cell, but not for pasting content that gets turned into a code cell. I think after is the typical UI expectation for pasting content 
+
+- [x] #bug whatever url auto highlighter we use is very annoying because:
+  - lots of filenames, etc., `bootstrap.py` get turned into url's - and .py (and .ts) aren't even tld's!
+  - it's also NOT necessary to turn these into url format  `[wstein.org](http://wstein.org)`  unless there really is a need -- just leave as [wstein.org](http://wstein.org).
+
+- [x] #bug fix placeholder text when editor is focused - very ugly
+
+- [x] #feature add a "delete forward" keyboard shortcut. 
+
+- [x] switch from codemirror to prism -- fully to fix all the weird cursor issues, etc.
   - [x] Right now backspace at the beginning of a code cell deletes the entire code cell even if it is 1000 lines long. This is annoying -- it easy now to put the cursor after the cell to delete it, which is fine. But backspace at the beginning deleting makes no sense.
   - [x] word wrap - isn't happening 
     - probably easy since it works fine in the official demo
@@ -21,43 +76,7 @@
   - [x] pasting a block of code formats as a block, but loss of all indentation
   - [x] three backticks then space loses focus
 
-- [ ] whatever url auto highlighter we use is very annoying because:
-  - lots of filenames, etc., `bootstrap.py` get turned into url's - and .py (and .ts) aren't even tld's!
-  - it's also NOT necessary to turn these into url format  `[wstein.org](http://wstein.org)`  unless there really is a need -- just leave as [wstein.org](http://wstein.org).
-
-- [ ] add a "delete forward" keyboard shortcut. 
-
-- [ ] alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
-  - [ ] this is also needed for jumping from table of contents entries to the document.
-
-- [ ] #bug bring back the realtime sync integration.
-  - addresses HUGE problem: we depend on realtime sync for undo/redo and saving current state!  the "do nothing when focused" mode just horribly breaks this.
-  - addresses all the chat integration weirdness and a lot of other problems.
-  - it's a challenge but now I think it's solvable.
-
-- [ ] #bug do not show placeholder text when editor is focused
-
-- [ ] #bug chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens almost every single time. 
-  - consider just removing sync entirely and using localStorage? That could fix this and is much better.
-
-- [ ] #feature find (and replace) search in doc; it's not visible at all right now.
-
-- [ ] #doc add modal that documents:
-  - [ ] keyboard shortcuts
-  - [ ] what the editor supports, i.e., a list of features and intentional shortcomings (e.g., block mode selection)
-
-- [ ] #bug cursor gets stuck in displayed math: can navigate above it but not below it in block editor mode.  popup doesn't go away.
-
-- [ ] #bug type one character into mode-line popover for code and focus goes back into editor corrupted it with later keystrokes.
-
-- [ ] #wishlist make the task editor just use a single big slate editor, but with the same filtering and sorting options.  Is this possible in block editor mode now, or a new mode.  It would be SO amazing!
-
-- [ ] #wishlist can we make a jupyter notebook mode?  i.e., a slate renderer for any jupyter notebook, i.e., a new "single document mode"...?
-
-- [ ] #wishlist latex editor.  this would just start as one big prism (+latex mode) code editor, but proportionally spaced! Then we make math formulas display nicely using katex. Then we make \\section{...} etc. display nicely.  Etc.  Just iteratively replace things until it is beautiful and useful... but still usable.
-
-- [ ] #speed implement static markdown renderer with windowing/virtualization
-  - obviously this only makes sense when the html element to display the markdown is fixed height.  But that's everywhere in the cocalc frontend app, except for printing.
+- [x] loss of cursor focus after autoformat again.
 
 - [x] #wishlist try to design a way to do multi-block selection in block mode.  Obviously this is limited, but just being able to select cut/copy/paste a range of blocks would be very nice.... if feasible and not broken.
 
