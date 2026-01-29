@@ -258,8 +258,6 @@ export type SiteSettingsExtrasKeys =
   | "control_plane_ssh_private_key_path"
   | "control_plane_ssh_private_key"
   | "google_cloud_service_account_json"
-  | "google_cloud_bigquery_billing_service_account_json"
-  | "google_cloud_bigquery_detailed_billing_table"
   | "project_hosts_google_prefix"
   | "project_hosts_software_base_url"
   | "project_hosts_bootstrap_channel"
@@ -901,24 +899,6 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     multiline: 5,
     password: true,
-    show: project_hosts_google_cloud_enabled,
-    tags: ["Project Hosts", "Google Cloud"],
-  },
-  google_cloud_bigquery_billing_service_account_json: {
-    name: "Project Hosts: Google Cloud BigQuery Service Account Json",
-    desc: "Another Google Cloud Service Account that has read access to the regularly updated detailed billing data. You have to [enable *detailed* billing export to BigQuery](https://cloud.google.com/billing/docs/how-to/export-data-bigquery), then provide a service account here that provides: 'BigQuery Data Viewer' and 'BigQuery Job User'. NOTE: When I setup detailed billing export for cocalc.com it took about 3 days (!) before I started seeing any detailed billing data!",
-    default: "",
-    multiline: 5,
-    password: true,
-    show: project_hosts_google_cloud_enabled,
-    tags: ["Project Hosts", "Google Cloud"],
-  },
-  google_cloud_bigquery_detailed_billing_table: {
-    name: "Project Hosts: Google Cloud Detailed Billing BigQuery Table Name",
-    desc: "The name of your BigQuery detailed billing exports table. See remarks about BigQuery Service Account above. This might look like 'sage-math-inc.detailed_billing.gcp_billing_export_resource_v1_00D083_5513BD_B6E72F'",
-    default: "",
-    to_val: to_trimmed_str,
-    valid: (x) => !x || x.includes(".detailed_billing."),
     show: project_hosts_google_cloud_enabled,
     tags: ["Project Hosts", "Google Cloud"],
   },
