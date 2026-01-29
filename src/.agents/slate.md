@@ -2,12 +2,6 @@
 
 ## Todo
 
-- [ ] #speed implement static markdown renderer with windowing/virtualization
-  - obviously this only makes sense when the html element to display the markdown is fixed height.  But that's everywhere in the cocalc frontend app, except for printing.
-
-- [ ] #feature #easy make the "paste text/code" buttons that appear much clearer -- they blend in since everything is the same grey.   Also, instead of "Dismiss", the other option should be "Code Block". 
-  - [ ] #feature add a new feature where you can select the language for those available (hence modeline), so it syntax highlights properly.
-
 - [ ] #bug bring back the realtime sync integration.
   - addresses HUGE problem: we depend on realtime sync for undo/redo and saving current state!  the "do nothing when focused" mode just horribly breaks this.
   - addresses all the chat integration weirdness and a lot of other problems.
@@ -37,6 +31,12 @@
 - [ ] #wishlist can we make a jupyter notebook mode?  i.e., a slate renderer for any jupyter notebook, i.e., a new "single document mode"...?
 
 - [ ] #wishlist latex editor.  this would just start as one big prism (+latex mode) code editor, but proportionally spaced! Then we make math formulas display nicely using katex. Then we make \\section{...} etc. display nicely.  Etc.  Just iteratively replace things until it is beautiful and useful... but still usable.
+
+- [x] #feature #easy make the "paste text/code" buttons that appear much clearer -- they blend in since everything is the same grey.   Also, instead of "Dismiss", the other option should be "Code Block". 
+  - [ ] #feature add a new feature where you can select the language for those available (hence modeline), so it syntax highlights properly.
+
+- [x] #speed implement static markdown renderer with windowing/virtualization
+  - obviously this only makes sense when the html element to display the markdown is fixed height.  But that's everywhere in the cocalc frontend app, except for printing.
 
 - [x] #feature support more prism languages -- it supports over 250 languages, but we only explicitly import a handful.  E.g., latex is very important to use but we didn't import it. See build/cocalc-lite/src/packages/frontend/file-associations.ts to see what we support...
 
