@@ -220,11 +220,21 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
   if (path.length === 0) return;
   const index = path[path.length - 1];
   let codePath = path;
+  const shiftAutoformatSelection = () => {
+    if (!(editor as any).__autoformatDidBlock) return;
+    const pending = (editor as any).__autoformatSelection;
+    if (!pending) return;
+    const shifted = shiftSelectionForInsert(pending, path, 1);
+    if (shifted) {
+      (editor as any).__autoformatSelection = shifted;
+    }
+  };
   if (index > 0) {
     const prevPath = Path.previous(path);
     const prevNode = getNodeAt(editor, prevPath);
     if (!(Element.isElement(prevNode) && prevNode.type === "paragraph")) {
       const shifted = shiftSelectionForInsert(editor.selection, path, 1);
+      shiftAutoformatSelection();
       Transforms.insertNodes(editor, spacerParagraph(), { at: path });
       codePath = Path.next(path);
       if ((editor as any).__autoformatDidBlock) {
@@ -242,6 +252,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
     }
   } else {
     const shifted = shiftSelectionForInsert(editor.selection, path, 1);
+    shiftAutoformatSelection();
     Transforms.insertNodes(editor, spacerParagraph(), { at: path });
     codePath = Path.next(path);
     if ((editor as any).__autoformatDidBlock) {

@@ -1032,6 +1032,14 @@ function markdownAutoformatAt(
       const listItemPath = blockPath.concat(0);
       const paragraphPathInList = listItemPath.concat(0);
       const focus = Editor.start(editor, paragraphPathInList);
+      (editor as any).__autoformatSelection = { anchor: focus, focus };
+      slateDebug("autoformat:list:focus", {
+        blockPath,
+        listItemPath,
+        focus,
+        selection: editor.selection ?? null,
+        autoformatSelection: (editor as any).__autoformatSelection ?? null,
+      });
       setSelectionAndFocus(editor, { focus, anchor: focus });
       return true;
     }
