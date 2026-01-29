@@ -43,6 +43,7 @@ don't have to compensate for it using negative margins.
 
 .cocalc-slate-code-line {
   display: block;
+  min-height: 1.5em;
 }
 
 .cocalc-slate-code-block .token.comment,

@@ -5,6 +5,7 @@
 
 import { withInsertText } from "./insert-text";
 import { withDeleteBackward } from "./delete-backward";
+import { withDeleteForward } from "./delete-forward";
 import type { SlateEditor } from "../editable-markdown";
 import {
   Editor,
@@ -495,6 +496,7 @@ function autoformatListAtStart(editor: Editor): boolean {
 export const withAutoFormat = (editor) => {
   withInsertText(editor);
   withDeleteBackward(editor);
+  withDeleteForward(editor);
   const { insertData } = editor;
   if (typeof insertData === "function") {
     editor.insertData = (data) => {
@@ -975,7 +977,26 @@ function markdownAutoformatAt(
     const type = doc[0].type;
     const rules = getRules(type);
     if (type === "code_block") {
-      const focus = Editor.start(editor, blockPath);
+      // Due to spacer insertion, the code_block may have shifted forward.
+      let codePath = blockPath;
+      let node: Node | null = null;
+      try {
+        node = Editor.node(editor, codePath)[0] as Node;
+      } catch {
+        node = null;
+      }
+      if (!(Element.isElement(node) && node.type === "code_block")) {
+        const nextPath = Path.next(blockPath);
+        try {
+          const nextNode = Editor.node(editor, nextPath)[0] as Node;
+          if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+            codePath = nextPath;
+          }
+        } catch {
+          // fall through to original path
+        }
+      }
+      const focus = Editor.start(editor, codePath);
       setSelectionAndFocus(editor, { focus, anchor: focus });
       return true;
     }

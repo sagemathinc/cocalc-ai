@@ -314,6 +314,11 @@ export function buildCodeBlockDecorations(
     const ranges: DecoratedRange[] = [];
     for (const token of tokensForLine) {
       const length = token.content.length;
+      if (token.empty) {
+        // Empty lines have no text in the Slate node; don't emit decorations
+        // with offsets past the line length.
+        continue;
+      }
       if (!length) continue;
       const end = start + length;
       const path = [...blockPath, lineIndex, 0];

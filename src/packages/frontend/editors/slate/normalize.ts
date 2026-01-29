@@ -153,6 +153,25 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
 });
 
+// Ensure each code_line is a single plain text node so Prism decorations
+// align with offsets (and don't get split across multiple leaves).
+NORMALIZERS.push(function normalizeCodeLineChildren({ editor, node, path }) {
+  if (!(Element.isElement(node) && node.type === "code_line")) return;
+  const text = Node.string(node);
+  const children = node.children ?? [];
+  const onlyText =
+    children.length === 1 &&
+    Text.isText(children[0]) &&
+    children[0].text === text &&
+    Object.keys(children[0]).length === 1;
+  if (onlyText) return;
+  Transforms.removeNodes(editor, {
+    at: path,
+    match: (_n, p) => p.length === path.length + 1,
+  });
+  Transforms.insertNodes(editor, { text }, { at: path.concat(0) });
+});
+
 const SPACER_BLOCK_TYPES = new Set<string>([
   "code_block",
   "blockquote",
@@ -167,6 +186,30 @@ function needsSpacerParagraph(editor: Editor, node: Element, _path?: Path): bool
   return Editor.isVoid(editor, node);
 }
 
+function shiftSelectionForInsert(
+  selection: Range | null | undefined,
+  atPath: Path,
+  shift: number
+): Range | null {
+  if (!selection) return null;
+  const shiftPoint = (point: Range["anchor"]): Range["anchor"] => {
+    const { path, offset } = point;
+    if (path.length < atPath.length) return point;
+    for (let i = 0; i < atPath.length - 1; i += 1) {
+      if (path[i] !== atPath[i]) return point;
+    }
+    const idx = atPath.length - 1;
+    if (path[idx] < atPath[idx]) return point;
+    const nextPath = [...path];
+    nextPath[idx] += shift;
+    return { path: nextPath, offset };
+  };
+  return {
+    anchor: shiftPoint(selection.anchor),
+    focus: shiftPoint(selection.focus),
+  };
+}
+
 // Ensure block void elements (and code blocks) are surrounded by spacer
 // paragraphs so navigation works like normal text paragraphs (no gap cursors).
 NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
@@ -178,11 +221,19 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
     const prevPath = Path.previous(path);
     const prevNode = getNodeAt(editor, prevPath);
     if (!(Element.isElement(prevNode) && prevNode.type === "paragraph")) {
+      const shifted = shiftSelectionForInsert(editor.selection, path, 1);
       Transforms.insertNodes(editor, spacerParagraph(), { at: path });
+      if (shifted) {
+        Transforms.setSelection(editor, shifted);
+      }
       return;
     }
   } else {
+    const shifted = shiftSelectionForInsert(editor.selection, path, 1);
     Transforms.insertNodes(editor, spacerParagraph(), { at: path });
+    if (shifted) {
+      Transforms.setSelection(editor, shifted);
+    }
     return;
   }
   const nextPath = Path.next(path);

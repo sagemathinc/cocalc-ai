@@ -365,6 +365,37 @@ test("convert markdown candidate code block to rich text", async ({ page }) => {
   expect(value?.[0]?.type).toBe("bullet_list");
 });
 
+test("code blocks allow blank lines via Enter", async ({ page }) => {
+  await page.goto("/");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__slateTest?.setValue([
+      {
+        type: "code_block",
+        fence: true,
+        info: "",
+        children: [{ type: "code_line", children: [{ text: "a" }] }],
+      },
+    ]);
+    window.__slateTest?.setSelection({
+      anchor: { path: [0, 0, 0], offset: 1 },
+      focus: { path: [0, 0, 0], offset: 1 },
+    });
+  });
+
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("b");
+
+  const value = (await page.evaluate(
+    () => window.__slateTest?.getValue(),
+  )) as SlateNode[] | undefined;
+  const lines =
+    value?.[0]?.children?.map((line) => nodeText(line as SlateNode)) ?? [];
+  expect(lines).toEqual(["a", "", "b"]);
+});
+
 
 test("block editor: arrow keys can escape a code block", async ({ page }) => {
   await page.goto("http://127.0.0.1:4172/?block=1");

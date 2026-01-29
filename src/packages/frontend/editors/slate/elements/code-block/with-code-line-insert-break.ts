@@ -20,6 +20,8 @@ export function withCodeLineInsertBreak(editor) {
         Transforms.splitNodes(editor, {
           at: selection,
           match: (n) => Element.isElement(n) && n.type === "code_line",
+          // Always create a new line, even when splitting at end-of-line.
+          always: true,
         });
         return;
       }
