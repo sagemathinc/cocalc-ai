@@ -12,6 +12,29 @@ function clean(val?: string | null): string {
   return (val ?? "").trim();
 }
 
+export function parseGoogleOAuthClientJson(raw: string): GoogleCloudOAuthClient {
+  if (!raw?.trim()) {
+    throw new Error("OAuth client JSON is empty");
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error("OAuth client JSON is not valid JSON");
+  }
+  const payload =
+    parsed?.web ??
+    parsed?.installed ??
+    parsed ??
+    {};
+  const clientId = clean(payload?.client_id ?? payload?.clientId);
+  const clientSecret = clean(payload?.client_secret ?? payload?.clientSecret);
+  if (!clientId || !clientSecret) {
+    throw new Error("OAuth client JSON missing client_id or client_secret");
+  }
+  return { clientId, clientSecret };
+}
+
 export async function getGoogleCloudOAuthClient(): Promise<GoogleCloudOAuthClient> {
   const envClientId = clean(process.env.COCALC_GOOGLE_CLOUD_OAUTH_CLIENT_ID ?? "");
   const envClientSecret = clean(
