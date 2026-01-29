@@ -659,6 +659,12 @@ report_status() {
     "$STATUS_URL" >/dev/null || true
 }
 
+bootstrap_log_tail() {
+  if [ -f "$BOOTSTRAP_DIR/bootstrap.log" ]; then
+    tail -n 80 "$BOOTSTRAP_DIR/bootstrap.log" 2>/dev/null | tr -d '\r'
+  fi
+}
+
 on_error() {
   local code="$1"
   local line="$2"
@@ -1062,7 +1068,12 @@ if ! download_bootstrap; then
   exit 1
 fi
 if ! bash "$BOOTSTRAP_DIR/bootstrap.sh" 2>&1 | tee "$BOOTSTRAP_DIR/bootstrap.log"; then
-  report_status "error" "bootstrap execution failed"
+  tail_msg="$(bootstrap_log_tail)"
+  if [ -n "$tail_msg" ]; then
+    report_status "error" "bootstrap execution failed; tail: $tail_msg"
+  else
+    report_status "error" "bootstrap execution failed"
+  fi
   exit 1
 fi
 `;
