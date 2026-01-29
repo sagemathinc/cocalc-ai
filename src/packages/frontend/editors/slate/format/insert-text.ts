@@ -120,7 +120,6 @@ export const withInsertText = (editor) => {
               (editor as any).setIgnoreSelection(false);
               (editor as any).__autoformatIgnoreSelection = false;
             }
-            return;
           }
           // Autoformat in a *fully empty* editor is surprisingly tricky:
           // Slate often reuses the same value reference, so React skips a render,
