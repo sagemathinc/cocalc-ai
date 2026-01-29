@@ -180,6 +180,33 @@ function FloatingActionMenu({
   );
 }
 
+function shouldPreferRichText(text: string): boolean {
+  if (!text) return false;
+  const markdownHints = [
+    /^#{1,6}\s/m,
+    /^>\s/m,
+    /^(\s*[-*+]|\s*\d+\.)\s/m,
+    /```/,
+    /\[[^\]]+\]\([^)]+\)/,
+    /!\[[^\]]*\]\([^)]+\)/,
+    /(^|\s)`[^`]+`/m,
+    /\*\*[^*]+\*\*/,
+    /(^|\s)_[^_]+_/m,
+    /\|\s*[^|]+\s*\|/,
+  ];
+  const codeHints = [
+    /;\s*$/m,
+    /[{}]/,
+    /=>|::|->|<-|\+=|-=|\*=|\/=|==|!=|<=|>=/,
+    /^\s*(def|class|function|import|from|#include|using|public|private|static)\b/m,
+    /^\s*[A-Za-z_][\w]*\s*=\s*.+/m,
+    /^\s*(if|for|while|switch|case|return)\b/m,
+  ];
+  const hasMarkdown = markdownHints.some((re) => re.test(text));
+  const hasCode = codeHints.some((re) => re.test(text));
+  return hasMarkdown && !hasCode;
+}
+
 export function CodeLikeEditor({ attributes, children, element }: RenderElementProps) {
   if (element.type === "code_line") {
     return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
@@ -246,6 +273,8 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const forceExpanded = selectionInBlock;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
   const markdownCandidate = (element as any).markdownCandidate;
+  const preferRichText =
+    !!markdownCandidate && shouldPreferRichText(codeValue ?? "");
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -290,49 +319,6 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1 }}>
           <div style={{ position: "relative" }}>
-            {markdownCandidate && (
-              <div
-                contentEditable={false}
-                style={{
-                  position: "absolute",
-                  top: 6,
-                  left: 6,
-                  zIndex: 2,
-                  display: "flex",
-                  gap: "6px",
-                  background: "rgba(255, 255, 255, 0.9)",
-                  border: "1px solid #ddd",
-                  borderRadius: "6px",
-                  padding: "2px 6px",
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <Button
-                  size="small"
-                  type="text"
-                  style={{ color: "#666" }}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    convertMarkdownCandidate();
-                  }}
-                >
-                  Convert to rich text
-                </Button>
-                <Button
-                  size="small"
-                  type="text"
-                  style={{ color: "#666" }}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    dismissMarkdownCandidate();
-                  }}
-                >
-                  Dismiss
-                </Button>
-              </div>
-            )}
             {!disableMarkdownCodebar && (
               <div contentEditable={false}>
                 <FloatingActionMenu
@@ -407,6 +393,42 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
               </pre>
             ) : (
               <CodeBlockBody>{children}</CodeBlockBody>
+            )}
+            {markdownCandidate && (
+              <div
+                contentEditable={false}
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-start",
+                  gap: "8px",
+                  marginTop: 6,
+                  marginBottom: 6,
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <Button
+                  size="small"
+                  type={preferRichText ? "primary" : "default"}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    convertMarkdownCandidate();
+                  }}
+                >
+                  Markdown
+                </Button>
+                <Button
+                  size="small"
+                  type={preferRichText ? "default" : "primary"}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dismissMarkdownCandidate();
+                  }}
+                >
+                  Code Block
+                </Button>
+              </div>
             )}
             {!disableMarkdownCodebar && output != null && (
               <div

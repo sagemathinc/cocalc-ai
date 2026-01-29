@@ -279,7 +279,7 @@ function Harness(): React.JSX.Element {
                         });
                       }}
                     >
-                      Convert to rich text
+                      Markdown
                     </button>
                   )}
                   <div className="cocalc-slate-code-block">{children}</div>
