@@ -111,6 +111,30 @@ function resolveDownloadsRoot(): string {
   return path.join(os.tmpdir(), "cocalc-software-downloads");
 }
 
+function resolveProjectHostPaths() {
+  const bundleRoot = process.env.COCALC_PROJECT_HOST_BUNDLE_ROOT;
+  const currentLink = process.env.COCALC_PROJECT_HOST_CURRENT;
+  if (bundleRoot || currentLink) {
+    const root =
+      bundleRoot ??
+      (currentLink
+        ? path.join(path.dirname(currentLink), "bundles")
+        : PROJECT_HOST_ROOT);
+    return {
+      root,
+      currentLink: currentLink ?? path.join(root, "current"),
+      stripComponents: 1,
+      usesBundleLayout: true,
+    };
+  }
+  return {
+    root: PROJECT_HOST_ROOT,
+    currentLink: path.join(PROJECT_HOST_ROOT, "current"),
+    stripComponents: 1,
+    usesBundleLayout: false,
+  };
+}
+
 async function downloadToFile(url: string, dest: string) {
   const res = await fetch(url);
   if (!res.ok || !res.body) {
@@ -147,6 +171,48 @@ async function runTar(args: string[]): Promise<void> {
       }
     });
   });
+}
+
+async function runCommand(cmd: string, args: string[]): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn(cmd, args, { stdio: "pipe" });
+    let stderr = "";
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(stderr || `${cmd} failed with code ${code}`));
+      }
+    });
+  });
+}
+
+async function ensureWritableDir(dir: string): Promise<void> {
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+    return;
+  } catch (err: any) {
+    if (err?.code !== "EACCES") throw err;
+  }
+  const user = os.userInfo().username;
+  logger.warn("upgrade: fixing permissions with sudo", { dir, user });
+  await runCommand("sudo", ["-n", "mkdir", "-p", dir]);
+  await runCommand("sudo", ["-n", "chown", "-R", `${user}:${user}`, dir]);
+  await fs.promises.mkdir(dir, { recursive: true });
+}
+
+async function safeRemove(dir: string): Promise<void> {
+  try {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  } catch (err: any) {
+    if (err?.code !== "EACCES") throw err;
+    logger.warn("upgrade: removing with sudo", { dir });
+    await runCommand("sudo", ["-n", "rm", "-rf", dir]);
+  }
 }
 
 async function replaceSymlink(linkPath: string, target: string) {
@@ -218,20 +284,30 @@ async function resolveArtifact(
   if (!version) {
     version = extractVersionFromUrl(url, canonicalArtifact) ?? "unknown";
   }
+  const projectHostPaths =
+    canonicalArtifact === "project-host" ? resolveProjectHostPaths() : undefined;
   const root =
     canonicalArtifact === "project-host"
-      ? PROJECT_HOST_ROOT
+      ? projectHostPaths?.root ?? PROJECT_HOST_ROOT
       : canonicalArtifact === "project"
         ? process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_BUNDLE_ROOT
         : process.env.COCALC_PROJECT_TOOLS
           ? path.dirname(process.env.COCALC_PROJECT_TOOLS)
           : DEFAULT_TOOLS_ROOT;
-  const stripComponents = canonicalArtifact === "project-host" ? 2 : 1;
+  const stripComponents =
+    canonicalArtifact === "project-host"
+      ? projectHostPaths?.stripComponents ?? 2
+      : 1;
   const versionDir =
     canonicalArtifact === "project-host"
-      ? path.join(root, "versions", version)
+      ? projectHostPaths?.usesBundleLayout
+        ? path.join(root, version)
+        : path.join(root, "versions", version)
       : path.join(root, version);
-  const currentLink = path.join(root, "current");
+  const currentLink =
+    canonicalArtifact === "project-host"
+      ? projectHostPaths?.currentLink ?? path.join(root, "current")
+      : path.join(root, "current");
   return {
     artifact,
     canonicalArtifact,
@@ -267,7 +343,7 @@ async function downloadAndInstall(
       status: "noop",
     };
   }
-  await fs.promises.mkdir(resolved.root, { recursive: true });
+  await ensureWritableDir(resolved.root);
   const downloadsRoot = resolveDownloadsRoot();
   const archivePath = path.join(
     downloadsRoot,
@@ -279,6 +355,11 @@ async function downloadAndInstall(
     url: resolved.url,
   });
   await downloadToFile(resolved.url, archivePath);
+  logger.info("upgrade: downloaded artifact", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    archive: archivePath,
+  });
   if (resolved.sha256) {
     const actual = await sha256File(archivePath);
     if (actual !== resolved.sha256) {
@@ -286,9 +367,19 @@ async function downloadAndInstall(
         `sha256 mismatch for ${resolved.artifact} (${resolved.version})`,
       );
     }
+    logger.info("upgrade: checksum ok", {
+      artifact: resolved.artifact,
+      version: resolved.version,
+    });
   }
-  await fs.promises.rm(resolved.versionDir, { recursive: true, force: true });
-  await fs.promises.mkdir(resolved.versionDir, { recursive: true });
+  await safeRemove(resolved.versionDir);
+  await ensureWritableDir(resolved.versionDir);
+  logger.info("upgrade: extracting artifact", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    stripComponents: resolved.stripComponents,
+    dir: resolved.versionDir,
+  });
   await runTar([
     "-xJf",
     archivePath,
@@ -296,15 +387,28 @@ async function downloadAndInstall(
     "-C",
     resolved.versionDir,
   ]);
+  logger.info("upgrade: extracted artifact", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    dir: resolved.versionDir,
+  });
   await replaceSymlink(resolved.currentLink, resolved.versionDir);
+  logger.info("upgrade: updated current symlink", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    current: resolved.currentLink,
+  });
   return { artifact: resolved.artifact, version: resolved.version, status: "updated" };
 }
 
 async function scheduleHostRestart() {
+  const override = process.env.COCALC_PROJECT_HOST_BIN;
   const candidate = path.join(PROJECT_HOST_ROOT, "current", "cocalc-project-host");
-  const bin = fs.existsSync(candidate)
-    ? candidate
-    : path.join(PROJECT_HOST_ROOT, "cocalc-project-host");
+  const bin = override
+    ? override
+    : fs.existsSync(candidate)
+      ? candidate
+      : path.join(PROJECT_HOST_ROOT, "cocalc-project-host");
   const cmd = `sleep 3; ${bin} daemon stop || true; ${bin} daemon start`;
   const child = spawn("bash", ["-c", cmd], {
     detached: true,
@@ -329,23 +433,37 @@ function orderTargets(targets: SoftwareUpgradeTarget[]): SoftwareUpgradeTarget[]
 export async function upgradeSoftware(
   opts: UpgradeSoftwareRequest,
 ): Promise<UpgradeSoftwareResponse> {
-  const targets = orderTargets(opts.targets ?? []);
-  if (!targets.length) {
-    throw new Error("upgrade requires at least one target");
-  }
-  const baseUrl = normalizeBaseUrl(opts.base_url);
-  const results: UpgradeSoftwareResult[] = [];
-  let restartHost = false;
-  for (const target of targets) {
-    const resolved = await resolveArtifact(target, baseUrl);
-    const result = await downloadAndInstall(resolved);
-    results.push(result);
-    if (resolved.artifact === "project-host" && result.status === "updated") {
-      restartHost = true;
+  try {
+    const targets = orderTargets(opts.targets ?? []);
+    if (!targets.length) {
+      throw new Error("upgrade requires at least one target");
     }
+    const baseUrl = normalizeBaseUrl(opts.base_url);
+    const results: UpgradeSoftwareResult[] = [];
+    let restartHost = false;
+    for (const target of targets) {
+  const resolved = await resolveArtifact(target, baseUrl);
+  logger.info("upgrade: resolved artifact", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    url: resolved.url,
+    root: resolved.root,
+    versionDir: resolved.versionDir,
+    currentLink: resolved.currentLink,
+    stripComponents: resolved.stripComponents,
+  });
+  const result = await downloadAndInstall(resolved);
+      results.push(result);
+      if (resolved.artifact === "project-host" && result.status === "updated") {
+        restartHost = true;
+      }
+    }
+    if (restartHost) {
+      await scheduleHostRestart();
+    }
+    return { results };
+  } catch (err) {
+    logger.error("upgrade: failed", { err: String(err) });
+    throw err;
   }
-  if (restartHost) {
-    await scheduleHostRestart();
-  }
-  return { results };
 }

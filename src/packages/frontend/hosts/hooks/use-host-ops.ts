@@ -247,7 +247,8 @@ export function useHostOps({
               !TRANSITION_STATUSES.has(status) &&
               status !== "error" &&
               latest.status &&
-              isTerminal(latest.status)
+              isTerminal(latest.status) &&
+              latest.status !== "failed"
             ) {
               return;
             }

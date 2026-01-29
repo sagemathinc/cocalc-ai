@@ -107,18 +107,7 @@ export interface HostRegisterOnPremTunnelResponse {
   ssh_user: string;
   http_tunnel_port: number;
   ssh_tunnel_port: number;
-}
-
-export interface HostRegisterOnPremSftpRequest {
-  host_id: string;
-  public_key: string;
-}
-
-export interface HostRegisterOnPremSftpResponse {
-  sshd_host: string;
-  sshd_port: number;
-  ssh_user: string;
-  sftp_root: string;
+  rest_port: number;
 }
 
 export type SoftwareArtifact =
@@ -163,9 +152,6 @@ export interface HostStatusApi {
   registerOnPremTunnel: (
     opts: HostRegisterOnPremTunnelRequest,
   ) => Promise<HostRegisterOnPremTunnelResponse>;
-  registerOnPremSftpKey: (
-    opts: HostRegisterOnPremSftpRequest,
-  ) => Promise<HostRegisterOnPremSftpResponse>;
 }
 
 export function createHostStatusClient({

@@ -53,7 +53,8 @@ export type LaunchpadLocalConfig = {
   https_port?: number;
   sshd_port?: number;
   ssh_user?: string;
-  sftp_root?: string;
+  backup_root?: string;
+  rest_port?: number;
 };
 
 export function getLaunchpadLocalConfig(
@@ -81,9 +82,15 @@ export function getLaunchpadLocalConfig(
   const sshdPort = Number.isFinite(sshdPortParsed)
     ? sshdPortParsed
     : basePort + 1;
+  const restPortRaw =
+    process.env.COCALC_LAUNCHPAD_REST_PORT ??
+    process.env.COCALC_REST_PORT ??
+    "";
+  const restPortParsed = Number.parseInt(restPortRaw, 10);
+  const restPort = Number.isFinite(restPortParsed) ? restPortParsed : 9345;
   const dataDir = process.env.COCALC_DATA_DIR ?? process.env.DATA;
-  const sftpRoot =
-    process.env.COCALC_SFTP_ROOT ??
+  const backupRoot =
+    process.env.COCALC_BACKUP_ROOT ??
     (dataDir ? `${dataDir}/backup-repo` : undefined);
   const sshUser =
     process.env.COCALC_SSHD_USER ??
@@ -96,6 +103,7 @@ export function getLaunchpadLocalConfig(
     https_port: Number.isFinite(httpsPort) ? httpsPort : undefined,
     sshd_port: Number.isFinite(sshdPort) ? sshdPort : undefined,
     ssh_user: sshUser,
-    sftp_root: sftpRoot,
+    backup_root: backupRoot,
+    rest_port: Number.isFinite(restPort) ? restPort : undefined,
   };
 }

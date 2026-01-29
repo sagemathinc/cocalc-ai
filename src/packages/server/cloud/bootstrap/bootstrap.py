@@ -706,6 +706,12 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> None:
         shutil.rmtree(bundle.dir)
     Path(bundle.dir).mkdir(parents=True, exist_ok=True)
     run_cmd(cfg, ["tar", "-xJf", bundle.remote, "--strip-components=1", "-C", bundle.dir], f"extract {bundle.url}")
+    if cfg.ssh_user and cfg.ssh_user != "root":
+        run_best_effort(
+            cfg,
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", bundle.root],
+            f"chown {bundle.root}",
+        )
     current_path = Path(bundle.current)
     if current_path.is_symlink() or current_path.exists():
         if current_path.is_dir() and not current_path.is_symlink():
@@ -951,23 +957,31 @@ exit 0
 
 def start_project_host(cfg: BootstrapConfig) -> None:
     bin_path = f"{cfg.bootstrap_root}/bin/project-host"
-    # Sanity check: bundle must contain compiled entrypoint.
+    # Sanity check: bundle must contain a compiled entrypoint.
     bundle_candidates = [
         Path(cfg.project_host_bundle.current) if cfg.project_host_bundle.current else None,
         Path(cfg.project_host_bundle.dir) if cfg.project_host_bundle.dir else None,
     ]
     bundle_candidates = [p for p in bundle_candidates if p]
-    main_js = None
+    entry_candidates = [
+        Path("bundle") / "index.js",
+        Path("main") / "index.js",
+        Path("dist") / "main.js",
+    ]
+    entry_found = None
     for root in bundle_candidates:
-        candidate = root / "dist" / "main.js"
-        if candidate.exists():
-            main_js = candidate
+        for rel in entry_candidates:
+            candidate = root / rel
+            if candidate.exists():
+                entry_found = candidate
+                break
+        if entry_found:
             break
-    if not main_js:
+    if not entry_found:
         roots = ", ".join(str(p) for p in bundle_candidates if p) or "unknown"
-        log_line(cfg, f"bootstrap: missing project-host entrypoint dist/main.js (bundle roots: {roots})")
+        log_line(cfg, f"bootstrap: missing project-host entrypoint (searched: bundle/index.js, main/index.js, dist/main.js) in {roots}")
         log_line(cfg, "bootstrap: project-host bundle appears incomplete; re-run bundle build/publish and re-bootstrap")
-        raise RuntimeError("project-host bundle missing dist/main.js")
+        raise RuntimeError("project-host bundle missing entrypoint")
     if Path(bin_path).exists():
         run_cmd(cfg, [bin_path, "daemon", "stop"], "project-host stop", check=False, as_user=cfg.ssh_user)
     run_cmd(cfg, [bin_path, "daemon", "start"], "project-host start", as_user=cfg.ssh_user)
@@ -1005,6 +1019,8 @@ def main(argv: list[str]) -> int:
             log_line(cfg, f"bootstrap: running subset {sorted(only)}")
             if "project_host_bundle" in only:
                 extract_bundle(cfg, cfg.project_host_bundle)
+                write_wrapper(cfg)
+                write_helpers(cfg)
             if "project_bundle" in only:
                 extract_bundle(cfg, cfg.project_bundle)
             if "tools_bundle" in only:

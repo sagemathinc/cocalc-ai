@@ -1,11 +1,14 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
-import { readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
-import { resolveOnPremHost } from "@cocalc/server/onprem";
+import {
+  getLaunchpadRestAuth,
+  getLaunchpadRestPort,
+} from "@cocalc/server/launchpad/onprem-sshd";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -19,9 +22,6 @@ import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 
 const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
-const DEFAULT_ONPREM_SFTP_KEY_PATH =
-  process.env.COCALC_LAUNCHPAD_SFTP_KEY_PATH ??
-  "/btrfs/data/secrets/launchpad/sftp-key";
 const BUCKET_PROVIDER = "r2";
 const BUCKET_PURPOSE = "project-backups";
 
@@ -285,7 +285,9 @@ async function getProjectBackupSecret(project_id: string): Promise<string> {
 }
 
 const backupMasterKeyPath = join(secrets, "backup-master-key");
+const backupSharedSecretPath = join(secrets, "backup-shared-secret");
 let backupMasterKey: Buffer | undefined;
+let backupSharedSecret: string | undefined;
 
 async function getBackupMasterKey(): Promise<Buffer> {
   if (backupMasterKey) return backupMasterKey;
@@ -307,6 +309,24 @@ async function getBackupMasterKey(): Promise<Buffer> {
   }
   backupMasterKey = key;
   return key;
+}
+
+async function getSharedBackupSecret(): Promise<string> {
+  if (backupSharedSecret) return backupSharedSecret;
+  let encoded = "";
+  try {
+    encoded = (await readFile(backupSharedSecretPath, "utf8")).trim();
+  } catch {}
+  if (!encoded) {
+    encoded = randomBytes(32).toString("base64url");
+    try {
+      await writeFile(backupSharedSecretPath, encoded, { mode: 0o600 });
+    } catch (err) {
+      throw new Error(`failed to write backup shared secret: ${err}`);
+    }
+  }
+  backupSharedSecret = encoded;
+  return encoded;
 }
 
 function encryptBackupSecret(secret: string, key: Buffer): string {
@@ -397,38 +417,26 @@ export async function getBackupConfig({
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   if (isSelfHostLocal) {
     const config = getLaunchpadLocalConfig("local");
-    if (!config.sshd_port || !config.sftp_root) {
+    const restPort = getLaunchpadRestPort() ?? config.rest_port;
+    if (!restPort || !config.backup_root) {
       return { toml: "", ttl_seconds: 0 };
     }
-    const sshTarget = String(
-      machine?.metadata?.self_host_ssh_target ?? "",
-    ).trim();
-    const reversePort = sshTarget
-      ? Number(rowMetadata?.self_host?.ssh_reverse_port ?? 0)
-      : 0;
-    const sshdHost =
-      process.env.COCALC_SSHD_HOST ??
-      process.env.COCALC_LAUNCHPAD_SSHD_HOST;
-    const resolvedSshdHost = reversePort ? "localhost" : sshdHost ?? resolveOnPremHost();
-    const resolvedSshdPort = reversePort || config.sshd_port;
-    if (!resolvedSshdHost) {
-      return { toml: "", ttl_seconds: 0 };
+    const root = DEFAULT_BACKUP_ROOT;
+    try {
+      await mkdir(join(config.backup_root, root), { recursive: true });
+    } catch {
+      // Best-effort; rustic will surface a clearer error if repo is unusable.
     }
-    const root = project_id
-      ? `${config.sftp_root}/${DEFAULT_BACKUP_ROOT}/project-${project_id}`
-      : `${config.sftp_root}/${DEFAULT_BACKUP_ROOT}/host-${host_id}`;
-    const password = project_id ? await getProjectBackupSecret(project_id) : "";
-    const endpoint = `ssh://${resolvedSshdHost}:${resolvedSshdPort}`;
+    const password = await getSharedBackupSecret();
+    const auth = await getLaunchpadRestAuth();
+    const authPrefix = auth
+      ? `${encodeURIComponent(auth.user)}:${encodeURIComponent(auth.password)}@`
+      : "";
+    const endpoint = `http://${authPrefix}127.0.0.1:${restPort}/${root}`;
     const toml = [
       "[repository]",
-      'repository = "opendal:sftp"',
+      `repository = \"rest:${endpoint}\"`,
       `password = \"${password}\"`,
-      "",
-      "[repository.options]",
-      `endpoint = \"${endpoint}\"`,
-      `user = \"${config.ssh_user ?? "user"}\"`,
-      `root = \"${root}\"`,
-      `key = \"${DEFAULT_ONPREM_SFTP_KEY_PATH}\"`,
       "",
     ].join("\n");
     return { toml, ttl_seconds: DEFAULT_BACKUP_TTL_SECONDS };

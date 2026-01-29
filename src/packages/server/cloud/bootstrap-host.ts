@@ -442,6 +442,11 @@ export async function buildBootstrapScripts(
     }
   }
 
+  const projectHostBundlesRoot = `${bootstrapRoot}/bundles`;
+  const projectHostBundleDir = `${projectHostBundlesRoot}/${projectHostVersion}`;
+  const projectHostCurrent = `${bootstrapRoot}/bundle`;
+  const projectHostBin = `${bootstrapRoot}/bin/project-host`;
+
   const envLines = [
     `MASTER_CONAT_SERVER=${masterAddress}`,
     `PROJECT_HOST_ID=${row.id}`,
@@ -461,6 +466,9 @@ export async function buildBootstrapScripts(
     `COCALC_SYNC_PROJECTS=/btrfs/project-[project_id]/.local/share/cocalc/persist`,
     `COCALC_BTRFS_IMAGE_GB=${imageSizeGb}`,
     `COCALC_PROJECT_HOST_SOFTWARE_BASE_URL=${softwareBaseUrl}`,
+    `COCALC_PROJECT_HOST_BUNDLE_ROOT=${projectHostBundlesRoot}`,
+    `COCALC_PROJECT_HOST_CURRENT=${projectHostCurrent}`,
+    `COCALC_PROJECT_HOST_BIN=${projectHostBin}`,
     `TMPDIR=/btrfs/data/tmp`,
     `TMP=/btrfs/data/tmp`,
     `TEMP=/btrfs/data/tmp`,
@@ -477,10 +485,6 @@ export async function buildBootstrapScripts(
   if (tlsEnabled) {
     envLines.push(`COCALC_PROJECT_HOST_HTTPS_HOSTNAME=${tlsHostname}`);
   }
-  const projectHostBundlesRoot = `${bootstrapRoot}/bundles`;
-  const projectHostBundleDir = `${projectHostBundlesRoot}/${projectHostVersion}`;
-  const projectHostCurrent = `${bootstrapRoot}/bundle`;
-  const projectHostBin = `${bootstrapRoot}/bin/project-host`;
 
   const cloudflaredConfig: BootstrapScripts["cloudflaredConfig"] = (() => {
     if (tunnel && tunnelEnabled) {

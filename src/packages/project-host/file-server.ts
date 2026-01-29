@@ -79,7 +79,6 @@ import {
 } from "@cocalc/file-server/btrfs/rustic-progress";
 import { publishLroEvent } from "@cocalc/conat/lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
-import { ensureOnPremSftpKey } from "./onprem-sftp";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -294,7 +293,6 @@ async function reportBackupSuccess(
 
 async function ensureBackupConfig(project_id: string): Promise<string | null> {
   logger.debug("ensureBackupConfig", { project_id });
-  await ensureOnPremSftpKey();
   const profilePath = join(secrets, "rustic", `project-${project_id}.toml`);
   const profileDir = path.dirname(profilePath);
   const now = Date.now();

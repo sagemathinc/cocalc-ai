@@ -67,17 +67,40 @@ else
   echo "zeromq build directory not found; skipping copy"
 fi
 
+fetch_native_pkg() {
+  local pkg="$1"
+  local dest="$2"
+  local tmp
+  tmp=$(mktemp -d)
+  echo "  (fetching ${pkg} from npm)"
+  (
+    cd "$tmp"
+    npm pack --silent "$pkg" >/dev/null
+    local tgz
+    tgz=$(ls *.tgz | head -n1)
+    if [ -z "$tgz" ]; then
+      echo "ERROR: failed to download ${pkg} via npm pack"
+      exit 1
+    fi
+    tar -xzf "$tgz"
+  )
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  cp -r "$tmp"/package/. "$dest"/
+  rm -rf "$tmp"
+}
+
 copy_native_pkg() {
   local pkg="$1"
   local dest_root="$2"
   local dir
   dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  echo "- Copy native module ${pkg} -> ${dest_root}/node_modules/${pkg}"
   if [ -n "$dir" ]; then
-    echo "- Copy native module ${pkg} -> ${dest_root}/node_modules/${pkg}"
     mkdir -p "${dest_root}/node_modules/${pkg}"
     cp -r "$dir"/. "${dest_root}/node_modules/${pkg}"/
   else
-    echo "  (skipping ${pkg}; not found)"
+    fetch_native_pkg "$pkg" "${dest_root}/node_modules/${pkg}"
   fi
 }
 
@@ -108,6 +131,16 @@ rm -rf "$OUT"/main/node_modules/@lydell/node-pty-darwin-* "$OUT"/main/node_modul
 echo "- Allow node-pty native subpath requires"
 patch_node_pty_exports "$OUT/bundle"
 patch_node_pty_exports "$OUT/main"
+
+echo "- Verify node-pty prebuilds (linux x64 + arm64)"
+if [ ! -f "$OUT/bundle/node_modules/@lydell/node-pty-linux-x64/pty.node" ]; then
+  echo "ERROR: missing node-pty linux-x64 binary" >&2
+  exit 1
+fi
+if [ ! -f "$OUT/bundle/node_modules/@lydell/node-pty-linux-arm64/pty.node" ]; then
+  echo "ERROR: missing node-pty linux-arm64 binary" >&2
+  exit 1
+fi
 
 copy_native_pkg "bufferutil" "$OUT/bundle"
 copy_native_pkg "utf-8-validate" "$OUT/bundle"

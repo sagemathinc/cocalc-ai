@@ -1,11 +1,14 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { chmod, mkdir, stat, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { createServer } from "node:http";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import getPort from "@cocalc/backend/get-port";
 import { secrets } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
+import { restServer } from "@cocalc/backend/sandbox/install";
 import ssh from "micro-key-producer/ssh.js";
 import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
 
@@ -19,7 +22,15 @@ type SshdState = {
   refreshTimer?: NodeJS.Timeout;
 };
 
+type RestServerState = {
+  restPort: number;
+  repoRoot: string;
+  child: ChildProcessWithoutNullStreams;
+};
+
 let sshdState: SshdState | null = null;
+let restServerState: RestServerState | null = null;
+const REST_USER = "cocalc";
 
 function pool() {
   return getPool();
@@ -139,6 +150,9 @@ async function writeSshdConfig(opts: {
     "PasswordAuthentication no",
     "KbdInteractiveAuthentication no",
     "ChallengeResponseAuthentication no",
+    "GSSAPIAuthentication no",
+    "GSSAPIKeyExchange no",
+    "KerberosAuthentication no",
     `PermitRootLogin ${permitRootLogin}`,
     "PermitTTY no",
     "PermitUserEnvironment no",
@@ -148,6 +162,8 @@ async function writeSshdConfig(opts: {
     "GatewayPorts clientspecified",
     `Subsystem sftp ${opts.sftpServerPath}`,
     "StrictModes no",
+    "UseDNS no",
+    "UsePAM no",
   ];
   const configText = lines.join("\n") + "\n";
   await writeFile(opts.configPath, configText, { mode: 0o600 });
@@ -238,11 +254,6 @@ type TunnelEntry = {
   tunnel_public_key: string | null;
 };
 
-type SftpEntry = {
-  host_id: string;
-  sftp_public_key: string | null;
-};
-
 function formatAuthorizedKey(entry: TunnelEntry): string | null {
   if (!entry.tunnel_public_key) {
     return null;
@@ -266,22 +277,6 @@ function formatAuthorizedKey(entry: TunnelEntry): string | null {
   return `${options.join(",")} ${entry.tunnel_public_key} host-${entry.host_id}`;
 }
 
-function formatSftpAuthorizedKey(
-  entry: SftpEntry,
-  sftpRoot?: string,
-): string | null {
-  if (!entry.sftp_public_key || !sftpRoot) {
-    return null;
-  }
-  const options = [
-    `command="internal-sftp -d ${sftpRoot}"`,
-    "no-agent-forwarding",
-    "no-X11-forwarding",
-    "no-pty",
-    "no-port-forwarding",
-  ];
-  return `${options.join(",")} ${entry.sftp_public_key} host-${entry.host_id}-sftp`;
-}
 
 function normalizeSshKey(key?: string | null): string {
   if (!key) return "";
@@ -364,27 +359,18 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
     return;
   }
   const config = getLaunchpadLocalConfig("local");
-  const sftpRoot = config.sftp_root;
-  if (!sftpRoot) {
-    logger.warn("local sftp disabled (missing COCALC_SFTP_ROOT)");
-  }
-  if (sftpRoot) {
-    await mkdir(sftpRoot, { recursive: true });
-  }
   const { rows } = await pool().query<{
     host_id: string;
     http_tunnel_port: string | null;
     ssh_tunnel_port: string | null;
     tunnel_public_key: string | null;
-    sftp_public_key: string | null;
   }>(
     `
     SELECT id AS host_id,
            COALESCE(metadata->'self_host'->>'http_tunnel_port',
                     metadata->'self_host'->>'tunnel_port') AS http_tunnel_port,
            metadata->'self_host'->>'ssh_tunnel_port' AS ssh_tunnel_port,
-           metadata->'self_host'->>'tunnel_public_key' AS tunnel_public_key,
-           metadata->'self_host'->>'sftp_public_key' AS sftp_public_key
+           metadata->'self_host'->>'tunnel_public_key' AS tunnel_public_key
       FROM project_hosts
      WHERE deleted IS NULL
        AND metadata ? 'self_host'
@@ -403,13 +389,6 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
     const line = formatAuthorizedKey(entry);
     if (line) {
       lines.push(line);
-    }
-    const sftpLine = formatSftpAuthorizedKey(
-      { host_id: row.host_id, sftp_public_key: row.sftp_public_key },
-      sftpRoot,
-    );
-    if (sftpLine) {
-      lines.push(sftpLine);
     }
   }
   const commandPath = buildPairCommand();
@@ -473,44 +452,6 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
   await writeFile(state.authorizedKeysPath, content, { mode: 0o600 });
 }
 
-export async function registerSelfHostSftpKey(opts: {
-  host_id: string;
-  public_key: string;
-}): Promise<{ sftp_public_key: string }> {
-  const hostId = opts.host_id;
-  if (!opts.public_key) {
-    throw new Error("public_key is required");
-  }
-  const { rows } = await pool().query<{ metadata: any }>(
-    `SELECT metadata
-       FROM project_hosts
-      WHERE id=$1 AND deleted IS NULL`,
-    [hostId],
-  );
-  if (!rows.length) {
-    throw new Error("host not found");
-  }
-  const metadata = rows[0]?.metadata ?? {};
-  const selfHost = { ...(metadata.self_host ?? {}) };
-  let updated = false;
-  if (selfHost.sftp_public_key !== opts.public_key) {
-    selfHost.sftp_public_key = opts.public_key.trim();
-    selfHost.sftp_key_updated_at = new Date().toISOString();
-    updated = true;
-  }
-  if (updated) {
-    const nextMetadata = { ...metadata, self_host: selfHost };
-    await pool().query(
-      `UPDATE project_hosts
-         SET metadata=$2, updated=NOW()
-       WHERE id=$1 AND deleted IS NULL`,
-      [hostId, nextMetadata],
-    );
-  }
-  await refreshLaunchpadOnPremAuthorizedKeys();
-  return { sftp_public_key: selfHost.sftp_public_key };
-}
-
 export async function registerSelfHostTunnelKey(opts: {
   host_id: string;
   public_key: string;
@@ -566,8 +507,141 @@ export async function registerSelfHostTunnelKey(opts: {
   };
 }
 
+async function startRestServer(): Promise<RestServerState | null> {
+  if (!(await hasLocalSelfHostHosts())) {
+    return null;
+  }
+  if (restServerState) {
+    return restServerState;
+  }
+  const config = getLaunchpadLocalConfig("local");
+  if (!config.rest_port) {
+    logger.warn("rest-server disabled (missing COCALC_LAUNCHPAD_REST_PORT)");
+    return null;
+  }
+  if (!config.backup_root) {
+    logger.warn("rest-server disabled (missing backup root)");
+    return null;
+  }
+  const repoRoot = join(config.backup_root, "rustic");
+  await mkdir(repoRoot, { recursive: true });
+  if (!(await fileExists(restServer))) {
+    logger.warn("rest-server binary not found", { path: restServer });
+    return null;
+  }
+  const preferredPort = config.rest_port;
+  const restPort = (await isPortAvailable(preferredPort))
+    ? preferredPort
+    : await getPort();
+  const listen = `127.0.0.1:${restPort}`;
+  const auth = await ensureRestAuth();
+  if (!auth?.htpasswdPath) {
+    logger.warn("rest-server auth initialization failed; not starting server");
+    return null;
+  }
+  const args = [
+    "--path",
+    repoRoot,
+    "--listen",
+    listen,
+    "--htpasswd-file",
+    auth.htpasswdPath,
+  ];
+  logger.info("starting rest-server", { listen, repoRoot });
+  const child = spawn(restServer, args, { env: process.env });
+  child.stderr.on("data", (chunk) => {
+    logger.debug(chunk.toString());
+  });
+  child.stdout.on("data", (chunk) => {
+    logger.debug(chunk.toString());
+  });
+  child.on("exit", (code, signal) => {
+    logger.error("rest-server exited", { code, signal });
+    restServerState = null;
+  });
+  restServerState = {
+    restPort,
+    repoRoot,
+    child,
+  };
+  return restServerState;
+}
+
+export function getLaunchpadRestPort(): number | undefined {
+  if (restServerState?.restPort) return restServerState.restPort;
+  const config = getLaunchpadLocalConfig("local");
+  return config.rest_port;
+}
+
+export async function getLaunchpadRestAuth(): Promise<{
+  user: string;
+  password: string;
+} | null> {
+  const auth = await ensureRestAuth();
+  if (!auth) return null;
+  return { user: auth.user, password: auth.password };
+}
+
+async function isPortAvailable(port: number): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => {
+      resolve(false);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function ensureRestAuth(): Promise<{
+  user: string;
+  password: string;
+  htpasswdPath: string;
+} | null> {
+  try {
+    const authDir = join(secrets, "launchpad-rest");
+    await mkdir(authDir, { recursive: true });
+    const authPath = join(authDir, "auth.json");
+    const htpasswdPath = join(authDir, "htpasswd");
+    let auth: { user: string; password: string } | null = null;
+    if (await fileExists(authPath)) {
+      try {
+        const raw = await readFile(authPath, "utf8");
+        const parsed = JSON.parse(raw) as {
+          user?: string;
+          password?: string;
+        };
+        if (parsed.user && parsed.password) {
+          auth = { user: parsed.user, password: parsed.password };
+        }
+      } catch {
+        auth = null;
+      }
+    }
+    if (!auth) {
+      auth = {
+        user: REST_USER,
+        password: randomBytes(24).toString("base64url"),
+      };
+      await writeFile(authPath, JSON.stringify(auth, null, 2), { mode: 0o600 });
+      await chmod(authPath, 0o600);
+    }
+    const htpasswd = `${auth.user}:{SHA}${createHash("sha1")
+      .update(auth.password)
+      .digest("base64")}\n`;
+    await writeFile(htpasswdPath, htpasswd, { mode: 0o600 });
+    await chmod(htpasswdPath, 0o600);
+    return { ...auth, htpasswdPath };
+  } catch (err) {
+    logger.warn("failed to initialize rest-server auth", { err: String(err) });
+    return null;
+  }
+}
+
 export async function maybeStartLaunchpadOnPremServices(): Promise<void> {
   const state = await startSshd();
+  await startRestServer();
   if (state) {
     await refreshLaunchpadOnPremAuthorizedKeys();
   }
@@ -575,14 +649,24 @@ export async function maybeStartLaunchpadOnPremServices(): Promise<void> {
 
 export function stopLaunchpadOnPremServices(): void {
   if (!sshdState) {
-    return;
+    if (!restServerState) {
+      return;
+    }
   }
-  const { child, refreshTimer } = sshdState;
-  if (refreshTimer) {
-    clearInterval(refreshTimer);
+  if (sshdState) {
+    const { child, refreshTimer } = sshdState;
+    if (refreshTimer) {
+      clearInterval(refreshTimer);
+    }
+    if (child.exitCode == null) {
+      child.kill("SIGTERM");
+    }
+    sshdState = null;
   }
-  if (child.exitCode == null) {
-    child.kill("SIGTERM");
+  if (restServerState) {
+    if (restServerState.child.exitCode == null) {
+      restServerState.child.kill("SIGTERM");
+    }
+    restServerState = null;
   }
-  sshdState = null;
 }

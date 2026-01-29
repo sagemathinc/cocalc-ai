@@ -32,6 +32,7 @@ type TunnelConfig = {
   sshTunnelPort: number;
   sshUser: string;
   keyPath: string;
+  restPort: number;
 };
 
 type StoredTunnelConfig = {
@@ -41,6 +42,7 @@ type StoredTunnelConfig = {
   ssh_tunnel_port: number;
   ssh_user: string;
   public_key: string;
+  rest_port: number;
 };
 
 type TunnelState = {
@@ -105,9 +107,12 @@ function buildTunnelArgs(opts: {
   config: TunnelConfig;
   localHttpPort: number;
   localSshPort: number;
+  localRestPort?: number;
+  remoteRestPort?: number;
 }): string[] {
-  const { config, localHttpPort, localSshPort } = opts;
-  return [
+  const { config, localHttpPort, localSshPort, localRestPort, remoteRestPort } =
+    opts;
+  const args = [
     "-i",
     config.keyPath,
     "-N",
@@ -130,6 +135,13 @@ function buildTunnelArgs(opts: {
     "-R",
     `0.0.0.0:${config.sshTunnelPort}:127.0.0.1:${localSshPort}`,
   ];
+  if (localRestPort && remoteRestPort) {
+    args.push(
+      "-L",
+      `127.0.0.1:${localRestPort}:127.0.0.1:${remoteRestPort}`,
+    );
+  }
+  return args;
 }
 
 async function loadStoredConfig(
@@ -184,6 +196,7 @@ function resolveTunnelConfigFromEnv(): TunnelConfig | undefined {
     sshTunnelPort,
     sshUser,
     keyPath,
+    restPort: parsePort(process.env.COCALC_LAUNCHPAD_REST_PORT) ?? 9345,
   };
 }
 
@@ -209,6 +222,7 @@ function normalizeStoredConfig(
   if (!stored) return undefined;
   if (!stored.sshd_host || !stored.sshd_port) return undefined;
   if (!stored.http_tunnel_port || !stored.ssh_tunnel_port) return undefined;
+  if (!stored.rest_port) return undefined;
   return {
     sshdHost: stored.sshd_host,
     sshdPort: stored.sshd_port,
@@ -216,6 +230,7 @@ function normalizeStoredConfig(
     sshTunnelPort: stored.ssh_tunnel_port,
     sshUser: stored.ssh_user || "user",
     keyPath,
+    restPort: stored.rest_port,
   };
 }
 
@@ -259,6 +274,9 @@ async function registerTunnelConfig(opts: {
       logger.warn("onprem tunnel registration missing sshd host");
       return undefined;
     }
+    if (!res.rest_port) {
+      throw new Error("rest-server port is missing");
+    }
     const stored: StoredTunnelConfig = {
       sshd_host: sshdHost,
       sshd_port: res.sshd_port,
@@ -266,6 +284,7 @@ async function registerTunnelConfig(opts: {
       http_tunnel_port: res.http_tunnel_port,
       ssh_tunnel_port: res.ssh_tunnel_port,
       public_key: publicKey,
+      rest_port: res.rest_port,
     };
     await saveStoredConfig(opts.configPath, stored);
     logger.info("onprem tunnel registered", {
@@ -273,6 +292,7 @@ async function registerTunnelConfig(opts: {
       sshd_port: stored.sshd_port,
       http_tunnel_port: stored.http_tunnel_port,
       ssh_tunnel_port: stored.ssh_tunnel_port,
+      rest_port: stored.rest_port,
     });
     return normalizeStoredConfig(stored, opts.keyPath);
   } catch (err) {
@@ -304,16 +324,28 @@ export async function startOnPremTunnel(opts: {
   await ensureKeyPair(keyPath, hostId);
 
   const localSshPort = sshServer.port;
+  const localRestPort = 9345;
   const state: TunnelState = { stopped: false };
 
   const start = (config: TunnelConfig) => {
     if (state.stopped) {
       return;
     }
+    const remoteRestPort =
+      config.restPort ??
+      parsePort(process.env.COCALC_LAUNCHPAD_REST_PORT) ??
+      parsePort(process.env.COCALC_REST_PORT);
+    if (!remoteRestPort) {
+      logger.warn("onprem tunnel missing rest_port; waiting for registration");
+      scheduleRetry();
+      return;
+    }
     const args = buildTunnelArgs({
       config,
       localHttpPort: opts.localHttpPort,
       localSshPort,
+      localRestPort,
+      remoteRestPort,
     });
     logger.debug("starting onprem tunnel", {
       sshdHost: config.sshdHost,
