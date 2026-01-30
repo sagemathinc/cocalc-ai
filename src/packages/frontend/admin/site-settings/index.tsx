@@ -523,9 +523,26 @@ export default function SiteSettings({ close }) {
       subMap.set(subgroup, list);
       groupMap.set(group, subMap);
     }
+    const GROUP_ORDER = [
+      "Setup Overview",
+      "Networking",
+      "Cloudflare",
+      "Backups & Storage",
+      "Compute / Project Hosts",
+      "Access & Identity",
+      "Payments & Billing",
+      "Support / Integrations",
+      "System / Advanced",
+      "Other",
+    ];
     const groupEntries = [...groupMap.entries()].sort((a, b) => {
-      if (a[0] === "Other") return 1;
-      if (b[0] === "Other") return -1;
+      const ai = GROUP_ORDER.indexOf(a[0]);
+      const bi = GROUP_ORDER.indexOf(b[0]);
+      if (ai !== -1 || bi !== -1) {
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+      }
       return a[0].localeCompare(b[0]);
     });
 
@@ -541,11 +558,24 @@ export default function SiteSettings({ close }) {
               {groupStatus.has(groupName) && (
                 <span
                   style={{
-                    fontSize: "85%",
-                    color: groupStatus.get(groupName) ? "#2c7a2c" : "#a00",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "22px",
+                    height: "22px",
+                    borderRadius: "50%",
+                    background: groupStatus.get(groupName) ? "#d6f5d6" : "#ffe2e2",
+                    color: groupStatus.get(groupName) ? "#1f7a1f" : "#a00",
+                    fontWeight: 700,
+                    fontSize: "12px",
                   }}
+                  title={
+                    groupStatus.get(groupName)
+                      ? "All required settings present"
+                      : "Missing required settings"
+                  }
                 >
-                  {groupStatus.get(groupName) ? "✓" : "⚠"}
+                  {groupStatus.get(groupName) ? "✓" : "!"}
                 </span>
               )}
             </div>
