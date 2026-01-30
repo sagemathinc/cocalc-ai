@@ -128,8 +128,6 @@ export const useHostsPageViewModel = () => {
   const hub = webapp_client.conat_client.hub;
   const [form] = Form.useForm();
   const isAdmin = !!useTypedRedux("account", "is_admin");
-  const launchpadSelfSigned = useTypedRedux("customize", "launchpad_self_signed");
-  const connectorInsecure = !!launchpadSelfSigned;
   const flags = useHostFeatureFlags();
   const [showAdmin, setShowAdmin] = React.useState(false);
   const [showDeleted, setShowDeleted] = React.useState(false);
@@ -350,7 +348,6 @@ export const useHostsPageViewModel = () => {
   const [setupLaunchpad, setSetupLaunchpad] = React.useState<
     | {
         http_port?: number;
-        https_port?: number;
         sshd_port?: number;
         ssh_user?: string;
         ssh_host?: string;
@@ -397,7 +394,6 @@ export const useHostsPageViewModel = () => {
         connector_version?: string;
         launchpad?: {
           http_port?: number;
-          https_port?: number;
           sshd_port?: number;
           ssh_user?: string;
           ssh_host?: string;
@@ -880,7 +876,6 @@ export const useHostsPageViewModel = () => {
     launchpad: setupLaunchpad,
     connectorVersion: setupConnectorVersion,
     baseUrl,
-    insecure: connectorInsecure,
     connector:
       setupHost && setupHost.region
         ? selfHostConnectorMap.get(setupHost.region)

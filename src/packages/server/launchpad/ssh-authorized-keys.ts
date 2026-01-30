@@ -77,7 +77,7 @@ async function main() {
   }
 
   const localConfig = getLaunchpadLocalConfig("local");
-  const httpPort = localConfig.http_port ?? localConfig.https_port ?? 443;
+  const httpPort = localConfig.http_port ?? 9001;
   const connectorRows = await getPool().query<{
     ssh_key_seed: string | null;
   }>(

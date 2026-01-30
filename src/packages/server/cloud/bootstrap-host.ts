@@ -375,11 +375,7 @@ export async function buildBootstrapScripts(
     ? getLaunchpadLocalConfig("local")
     : undefined;
   const localConat =
-    localConfig?.http_port
-      ? `http://127.0.0.1:${localConfig.http_port}`
-      : localConfig?.https_port
-        ? `http://127.0.0.1:${localConfig.https_port}`
-        : "";
+    localConfig?.http_port ? `http://127.0.0.1:${localConfig.http_port}` : "";
   const masterAddress =
     process.env.MASTER_CONAT_SERVER ??
     process.env.COCALC_MASTER_CONAT_SERVER ??
@@ -938,7 +934,7 @@ export async function buildCloudInitStartupScript(
     (!selfHostMode || selfHostMode === "local");
   if (isSelfHostLocal) {
     const localConfig = getLaunchpadLocalConfig("local");
-    const httpPort = localConfig.http_port ?? localConfig.https_port ?? 9200;
+    const httpPort = localConfig.http_port ?? 9200;
     bootstrapBase = `http://127.0.0.1:${httpPort}`;
   }
   const bootstrapUrl = `${bootstrapBase}/project-host/bootstrap`;

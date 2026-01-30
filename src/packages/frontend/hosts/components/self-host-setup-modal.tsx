@@ -18,7 +18,6 @@ type SelfHostSetupModalProps = {
   expires?: string;
   launchpad?: {
     http_port?: number;
-    https_port?: number;
     sshd_port?: number;
     ssh_user?: string;
     ssh_host?: string;
@@ -28,7 +27,6 @@ type SelfHostSetupModalProps = {
   loading: boolean;
   error?: string;
   notice?: string;
-  insecure?: boolean;
   onCancel: () => void;
   onRefresh: () => void;
   onInstall?: () => void;
@@ -47,7 +45,6 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
   loading,
   error,
   notice,
-  insecure,
   onCancel,
   onRefresh,
   onInstall,
@@ -71,7 +68,6 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
     "direct";
   const isDirect = selfHostKind === "direct";
   const useSshPairing = selfHostMode === "local";
-  const insecureFlag = insecure ? " --insecure" : "";
   const parsedBase = (() => {
     try {
       return new URL(base);
@@ -125,7 +121,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
   const installCommand = token
     ? useSshPairing
       ? `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --ssh-host ${sshHost}${sshPort}${sshUser} --token ${token} --name ${quoteShell(safeName)}${sshNoStrict}${versionFlag}`
-      : `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --base-url ${base} --token ${token} --name ${quoteShell(safeName)}${insecureFlag}${versionFlag}`
+      : `curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \\\n  bash -s -- --base-url ${base} --token ${token} --name ${quoteShell(safeName)}${versionFlag}`
     : undefined;
   const [showCommand, setShowCommand] = React.useState(false);
 

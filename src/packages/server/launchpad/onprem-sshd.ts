@@ -339,7 +339,6 @@ function buildPairCommand(): string {
     "DATA",
     "COCALC_BASE_PORT",
     "COCALC_HTTP_PORT",
-    "COCALC_HTTPS_PORT",
     "PORT",
     "COCALC_SELF_HOST_PAIR_URL",
     "PGHOST",
@@ -442,7 +441,7 @@ export async function refreshLaunchpadOnPremAuthorizedKeys(): Promise<void> {
     lines.push(formatPairingKey(commandPath, key));
   }
 
-  const httpPort = config.http_port ?? config.https_port ?? 443;
+  const httpPort = config.http_port ?? 9001;
   const { rows: connectorRows } = await pool().query<{
     ssh_key_seed: string | null;
   }>(
@@ -677,13 +676,8 @@ async function resolveCloudflaredBinary(): Promise<string | null> {
 function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
   const config = getLaunchpadLocalConfig("local");
   const httpPort = config.http_port;
-  const httpsPort = config.https_port ?? httpPort;
-  const hasExplicitHttps = !!process.env.COCALC_HTTPS_PORT;
-  if (!hasExplicitHttps && httpPort) {
-    return { origin: `http://127.0.0.1:${httpPort}`, noTLSVerify: false };
-  }
-  const port = httpsPort ?? httpPort ?? 8443;
-  return { origin: `https://127.0.0.1:${port}`, noTLSVerify: true };
+  const port = httpPort ?? 9001;
+  return { origin: `http://127.0.0.1:${port}`, noTLSVerify: false };
 }
 
 async function writeCloudflaredCredentials(

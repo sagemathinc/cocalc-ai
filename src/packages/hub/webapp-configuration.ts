@@ -172,7 +172,6 @@ export class WebappConfiguration {
       ...{
         country,
         dns: host,
-        launchpad_self_signed: process.env.COCALC_LAUNCHPAD_SELF_SIGNED === "1",
         cocalc_product: getCocalcProduct(),
         is_launchpad: isLaunchpadProduct(),
         is_rocket: isRocketProduct(),

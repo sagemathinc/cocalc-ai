@@ -119,7 +119,6 @@ export interface Customize {
   githubProjectId?: string;
   support?: string;
   supportVideoCall?: string;
-  launchpad_self_signed?: boolean;
   project_hosts_nebius_enabled?: boolean;
   "project_hosts_google-cloud_enabled"?: boolean;
   project_hosts_hyperstack_enabled?: boolean;

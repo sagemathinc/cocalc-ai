@@ -132,7 +132,6 @@ export default function init(router: Router) {
           project_hosts_self_host_connector_version?.trim() || undefined,
         launchpad: {
           http_port: launchpad.http_port,
-          https_port: launchpad.https_port,
           sshd_port: launchpad.sshd_port,
           ssh_user: launchpad.ssh_user,
           ssh_host: sshHost,

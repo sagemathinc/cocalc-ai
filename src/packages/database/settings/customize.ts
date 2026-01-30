@@ -3,12 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { X509Certificate } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
-import getLogger from "@cocalc/backend/logger";
-import { secrets } from "@cocalc/backend/data";
 import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
 import type { Strategy } from "@cocalc/util/types/sso";
 import { ServerSettings, getServerSettings } from "./server-settings";
@@ -19,37 +14,6 @@ export type { Customize };
 
 const fallback = (a?: string, b?: string): string =>
   typeof a == "string" && a.length > 0 ? a : `${b}`;
-
-const logger = getLogger("server:settings:customize");
-
-const resolveLaunchpadSelfSigned = (): boolean => {
-  const explicit = process.env.COCALC_LAUNCHPAD_SELF_SIGNED;
-  if (explicit === "1") return true;
-  if (explicit === "0") return false;
-  const envCertPath = process.env.COCALC_LAUNCHPAD_HTTPS_CERT;
-  const fallbackPath = join(secrets, "launchpad-https", "cert.pem");
-  const certPath = envCertPath ?? (existsSync(fallbackPath) ? fallbackPath : undefined);
-  if (!certPath) return false;
-  try {
-    const certBytes = readFileSync(certPath);
-    const cert = new X509Certificate(certBytes);
-    return cert.issuer === cert.subject;
-  } catch (err) {
-    if (err && typeof err === "object" && "code" in err) {
-      const code = (err as { code?: string }).code;
-      if (code === "ENOENT") {
-        return false;
-      }
-    }
-    if (envCertPath || existsSync(certPath)) {
-      logger.debug("unable to detect self-signed launchpad cert", {
-        certPath,
-        err,
-      });
-    }
-    return false;
-  }
-};
 
 /*
 Create a Javascript object that describes properties of the server.
@@ -110,7 +74,6 @@ export default async function getCustomize(
       policies: settings.policies,
       support: settings.support,
       supportVideoCall: settings.support_video_call,
-      launchpad_self_signed: resolveLaunchpadSelfSigned(),
       project_hosts_nebius_enabled: settings.project_hosts_nebius_enabled,
       "project_hosts_google-cloud_enabled":
         (settings as any)["project_hosts_google-cloud_enabled"],
@@ -167,5 +130,5 @@ export default async function getCustomize(
       },
     };
   }
-  return fields ? copy_with(cachedCustomize, fields) : cachedCustomize;
+  return fields ? copy_with(cachedCustomize!, fields) : cachedCustomize!;
 }

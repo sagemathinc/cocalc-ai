@@ -136,7 +136,7 @@ flowchart LR
 ```mermaid
 flowchart TD
   subgraph HubA["Hub A (Launchpad)"]
-    HUB[Hub server<br/>HTTPS/WSS + proxy<br/>/project_id]
+    HUB[Hub server<br/>HTTP/WSS (TLS external) + proxy<br/>/project_id]
     SSHD[Embedded sshd<br/>reverse tunnels + SFTP]
     REPO[(Rustic repo<br/>local dir)]
     HUB --> SSHD
@@ -147,7 +147,7 @@ flowchart TD
     PH[project-host daemon]
   end
 
-  Users["User browsers"] -->|HTTPS/WSS| HUB
+  Users["User browsers"] -->|HTTPS/WSS via external TLS| HUB
   UsersSSH["User SSH clients"] -->|SSH to host-specific port| SSHD
   PH -->|WSS conat| HUB
   PH -->|ssh -R tunnel + SFTP| SSHD
@@ -155,7 +155,7 @@ flowchart TD
 ```
 
 - Single hub runs:
-  - Launchpad hub server (HTTPS + WebSocket)
+  - Launchpad hub server (HTTP + WebSocket; TLS terminated externally)
   - sshd (embedded, user-mode, for host reverse tunnels + SFTP)
   - http-proxy-3 (or equivalent) for host WebSocket/HTTP proxying
 - Project hosts run:
@@ -167,11 +167,12 @@ flowchart TD
   - single repo for all projects (use host tag per project)
 - No wildcard DNS required; use path-based routing:
   - /<project_id>/... proxied to a local tunnel port
+- Provide TLS externally (Cloudflare Tunnel, Caddy, nginx) or use SSH port forwarding for secure access.
 
 ## Networking Model (Hub A + Host B behind NAT)
 
 - Host B only needs outbound access to Hub A:
-  - HTTPS/WSS to hub port
+  - HTTP/WSS to hub port (TLS terminated externally)
   - SSH to sshd port (reverse tunnel; publishes two ports on hub)
 - Hub can reach Host B via the reverse tunnel for:
   - WebSocket proxy to project-host services
@@ -205,7 +206,7 @@ may still expose explicit deployment modes.
 
 ### Derived defaults (base port model)
 
-- HTTPS port = COCALC_BASE_PORT
+- HTTP port = COCALC_BASE_PORT / COCALC_HTTP_PORT
 - SSHD port = COCALC_BASE_PORT + 1
 - Project-host HTTP port = 9002 (internal only)
 - Proxy prefix uses /<project_id>/… (no host prefix)
@@ -368,7 +369,7 @@ Hub assigns two ports per host:
   - `pair-ssh` runs `ssh` to hub sshd and streams JSON payload to a forced
     command that returns JSON (no HTTP required).
   - Connector writes an ssh tunnel config and forwards
-    `https://127.0.0.1:<local>` to `127.0.0.1:<hub_https_port>`.
+    `http://127.0.0.1:<local>` to `127.0.0.1:<hub_http_port>`.
 - Auth:
   - Hub writes authorized_keys entries for token-derived keys (no
     AuthorizedKeysCommand or preloaded key list).

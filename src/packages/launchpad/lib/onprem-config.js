@@ -52,14 +52,12 @@ function applyLaunchpadDefaults() {
 
   const basePort =
     parsePort(process.env.COCALC_BASE_PORT) ??
-    parsePort(process.env.COCALC_HTTPS_PORT) ??
+    parsePort(process.env.COCALC_HTTP_PORT) ??
     parsePort(process.env.PORT) ??
-    8443;
-  const httpsPort = parsePort(process.env.COCALC_HTTPS_PORT) ?? basePort;
+    9001;
 
-  process.env.COCALC_HTTPS_PORT ??= String(httpsPort);
-  process.env.PORT ??= String(httpsPort);
-  process.env.COCALC_HTTP_PORT ??= String(Math.max(basePort - 1, 1));
+  process.env.COCALC_HTTP_PORT ??= String(basePort);
+  process.env.PORT ??= process.env.COCALC_HTTP_PORT;
   process.env.COCALC_SSHD_PORT ??= String(basePort + 1);
 }
 
@@ -70,7 +68,6 @@ module.exports = {
     const summary = {
       host: resolveLaunchpadHost(),
       data_dir: process.env.COCALC_DATA_DIR ?? process.env.DATA,
-      https_port: process.env.COCALC_HTTPS_PORT ?? process.env.PORT,
       http_port: process.env.COCALC_HTTP_PORT,
       sshd_port: process.env.COCALC_SSHD_PORT,
     };

@@ -128,7 +128,7 @@ export default function init(router: Router) {
         (!selfHostMode || selfHostMode === "local");
       if (isSelfHostLocal) {
         const localConfig = getLaunchpadLocalConfig("local");
-        const httpPort = localConfig.http_port ?? localConfig.https_port ?? 9200;
+        const httpPort = localConfig.http_port ?? 9200;
         baseUrl = `http://127.0.0.1:${httpPort}`;
       } else {
       try {

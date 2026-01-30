@@ -36,7 +36,7 @@ async function main() {
   }
   const baseOverride = String(process.env.COCALC_SELF_HOST_PAIR_URL ?? "").trim();
   const config = getLaunchpadLocalConfig("local");
-  const port = config.http_port ?? config.https_port ?? 443;
+  const port = config.http_port ?? 9001;
   const baseUrl =
     baseOverride ||
     `http://127.0.0.1:${port}`;

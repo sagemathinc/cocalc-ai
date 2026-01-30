@@ -9,7 +9,7 @@ const {
 let port; // set after Launchpad starts
 
 function createWindow() {
-  const protocol = process.env.COCALC_LAUNCHPAD_HTTPS_CERT ? "https" : "http";
+  const protocol = "http";
   const win = new BrowserWindow({
     width: 1000,
     height: 700,

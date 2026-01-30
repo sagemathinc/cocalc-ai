@@ -50,7 +50,6 @@ export function isRocketProduct(): boolean {
 
 export type LaunchpadLocalConfig = {
   http_port?: number;
-  https_port?: number;
   sshd_port?: number;
   ssh_user?: string;
   backup_root?: string;
@@ -62,17 +61,16 @@ export function getLaunchpadLocalConfig(
 ): LaunchpadLocalConfig {
   const basePortRaw =
     process.env.COCALC_BASE_PORT ??
-    process.env.COCALC_HTTPS_PORT ??
+    process.env.COCALC_HTTP_PORT ??
     process.env.PORT ??
     "";
   const basePortParsed = Number.parseInt(basePortRaw, 10);
-  const basePort = Number.isFinite(basePortParsed) ? basePortParsed : 8443;
-  const httpsPortRaw = process.env.COCALC_HTTPS_PORT ?? process.env.PORT ?? "";
-  const httpsPortParsed = Number.parseInt(httpsPortRaw, 10);
-  const httpsPort = Number.isFinite(httpsPortParsed)
-    ? httpsPortParsed
-    : basePort;
-  const httpPortRaw = process.env.COCALC_HTTP_PORT ?? "";
+  const basePort = Number.isFinite(basePortParsed) ? basePortParsed : 9001;
+  const httpPortRaw =
+    process.env.COCALC_HTTP_PORT ??
+    process.env.COCALC_BASE_PORT ??
+    process.env.PORT ??
+    "";
   const httpPortParsed = Number.parseInt(httpPortRaw, 10);
   const httpPort = Number.isFinite(httpPortParsed)
     ? httpPortParsed
@@ -100,7 +98,6 @@ export function getLaunchpadLocalConfig(
 
   return {
     http_port: Number.isFinite(httpPort) ? httpPort : undefined,
-    https_port: Number.isFinite(httpsPort) ? httpsPort : undefined,
     sshd_port: Number.isFinite(sshdPort) ? sshdPort : undefined,
     ssh_user: sshUser,
     backup_root: backupRoot,

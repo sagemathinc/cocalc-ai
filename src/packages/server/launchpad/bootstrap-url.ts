@@ -10,12 +10,12 @@ type BootstrapBase = {
 
 function resolveLaunchpadPort(): number {
   const raw =
-    process.env.PORT ??
-    process.env.COCALC_HTTPS_PORT ??
+    process.env.COCALC_HTTP_PORT ??
     process.env.COCALC_BASE_PORT ??
-    "8443";
+    process.env.PORT ??
+    "9001";
   const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) ? parsed : 8443;
+  return Number.isFinite(parsed) ? parsed : 9001;
 }
 
 export async function resolveLaunchpadBootstrapUrl(opts?: {

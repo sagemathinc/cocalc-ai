@@ -142,7 +142,6 @@ export interface CustomizeState {
   theming: boolean;
   verify_emails: false;
   launchpad_mode?: string;
-  launchpad_self_signed?: boolean;
   version_min_browser: number;
   version_min_project: number;
   version_recommended_browser: number;
