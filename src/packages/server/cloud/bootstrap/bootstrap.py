@@ -627,17 +627,43 @@ def setup_conat_password(cfg: BootstrapConfig) -> None:
             pass
         return
     log_line(cfg, "bootstrap: fetching conat password")
-    headers = {"Authorization": f"Bearer {cfg.bootstrap_token}"}
-    request = urllib.request.Request(cfg.conat_url, headers=headers)
+    headers = {
+        "Authorization": f"Bearer {cfg.bootstrap_token}",
+        "User-Agent": "cocalc-bootstrap/1.0 (conat)",
+        "Accept": "text/plain,*/*",
+    }
     context = None
     if cfg.ca_cert_path:
         try:
             context = ssl.create_default_context(cafile=cfg.ca_cert_path)
         except Exception:
             context = None
-    with urllib.request.urlopen(request, context=context) as resp:
-        data = resp.read()
-    path.write_bytes(data)
+    try:
+        request = urllib.request.Request(cfg.conat_url, headers=headers)
+        with urllib.request.urlopen(request, context=context) as resp:
+            data = resp.read()
+        path.write_bytes(data)
+    except Exception as err:
+        log_line(cfg, f"bootstrap: conat fetch failed via urllib ({err}); trying curl")
+        if shutil.which("curl") is None:
+            raise
+        run_cmd(
+            cfg,
+            [
+                "curl",
+                "-fsSL",
+                "-o",
+                str(path),
+                "-H",
+                f"Authorization: Bearer {cfg.bootstrap_token}",
+                "-H",
+                "User-Agent: cocalc-bootstrap/1.0 (conat)",
+                "-H",
+                "Accept: text/plain,*/*",
+                cfg.conat_url,
+            ],
+            "fetch conat password via curl",
+        )
     os.chmod(path, 0o600)
     if cfg.ssh_user and cfg.ssh_user != "root":
         run_best_effort(
