@@ -7,7 +7,12 @@ import { Button, Popover } from "antd";
 import { CSSProperties } from "react";
 import { Icon, LabeledRow, Markdown } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { Config, RowType, Tag, to_bool } from "@cocalc/util/db-schema/site-defaults";
+import {
+  Config,
+  RowType,
+  Tag,
+  to_bool,
+} from "@cocalc/util/db-schema/site-defaults";
 import { COLORS } from "@cocalc/util/theme";
 import { Data, IsReadonly, IsSet } from "./types";
 import { RowEntry } from "./row-entry";
@@ -127,8 +132,8 @@ export function RenderRow({
     typeof conf.to_display == "function"
       ? `${conf.to_display(rawValue)}`
       : typeof conf.to_val == "function"
-      ? `${conf.to_val(rawValue, data)}`
-      : undefined;
+        ? `${conf.to_val(rawValue, data)}`
+        : undefined;
 
   // not currently supported.
   // const clearable = conf.clearable ?? false;
@@ -143,9 +148,7 @@ export function RenderRow({
         <span style={{ color: "#a00", fontSize: "85%" }}>(required)</span>
       )}{" "}
       {conf.managed_by_wizard && (
-        <span style={{ color: COLORS.GRAY_M, fontSize: "85%" }}>
-          (wizard)
-        </span>
+        <span style={{ color: COLORS.GRAY_M, fontSize: "85%" }}>(wizard)</span>
       )}{" "}
       <RowHelp help={conf.help} />
       <br />
@@ -192,15 +195,15 @@ export function RenderRow({
         const wizard = conf.wizard;
         if (!wizard || !onOpenWizard) return null;
         return (
-        <div style={{ marginBottom: "8px" }}>
-          <Button
-            size="middle"
-            icon={<Icon name="magic" />}
-            onClick={() => onOpenWizard(wizard.name)}
-          >
-            {wizard.label}
-          </Button>
-        </div>
+          <div style={{ marginBottom: "8px" }}>
+            <Button
+              size="middle"
+              icon={<Icon name="magic" />}
+              onClick={() => onOpenWizard(wizard.name)}
+            >
+              {wizard.label}
+            </Button>
+          </div>
         );
       })()}
       <RowEntry
