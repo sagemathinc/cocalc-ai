@@ -1,8 +1,18 @@
 import "../elements/types";
 
-import { Descendant } from "slate";
+import { createEditor, Descendant, Editor } from "slate";
 
-import { diffBlockSignatures } from "../sync/block-diff";
+import { applyBlockDiffPatch, diffBlockSignatures } from "../sync/block-diff";
+
+function applyAndExpect(prev: Descendant[], next: Descendant[]) {
+  const editor = createEditor();
+  editor.children = prev;
+  Editor.withoutNormalizing(editor, () => {
+    const result = applyBlockDiffPatch(editor, prev, next);
+    expect(result.applied).toBe(true);
+  });
+  expect(editor.children).toEqual(next);
+}
 
 describe("block diff signatures", () => {
   test("detects simple replace", () => {
@@ -51,5 +61,131 @@ describe("block diff signatures", () => {
     expect(prevCount).toBe(prev.length);
     expect(nextCount).toBe(next.length);
     expect(deleteCount).toBe(1);
+  });
+
+  test("applyBlockDiffPatch mutates editor to next blocks", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "alpha" }] },
+      { type: "paragraph", children: [{ text: "beta" }] },
+      { type: "paragraph", children: [{ text: "gamma" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "alpha" }] },
+      { type: "paragraph", children: [{ text: "delta" }] },
+      { type: "paragraph", children: [{ text: "gamma" }] },
+      { type: "paragraph", children: [{ text: "epsilon" }] },
+    ];
+    applyAndExpect(prev, next);
+  });
+
+  test("applyBlockDiffPatch handles insert at start", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "b" }] },
+      { type: "paragraph", children: [{ text: "c" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "a" }] },
+      { type: "paragraph", children: [{ text: "b" }] },
+      { type: "paragraph", children: [{ text: "c" }] },
+    ];
+    applyAndExpect(prev, next);
+  });
+
+  test("applyBlockDiffPatch handles insert at end", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "a" }] },
+      { type: "paragraph", children: [{ text: "b" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "a" }] },
+      { type: "paragraph", children: [{ text: "b" }] },
+      { type: "paragraph", children: [{ text: "c" }] },
+    ];
+    applyAndExpect(prev, next);
+  });
+
+  test("applyBlockDiffPatch handles delete at start", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "a" }] },
+      { type: "paragraph", children: [{ text: "b" }] },
+      { type: "paragraph", children: [{ text: "c" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "b" }] },
+      { type: "paragraph", children: [{ text: "c" }] },
+    ];
+    applyAndExpect(prev, next);
+  });
+
+  test("applyBlockDiffPatch handles delete at end", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "a" }] },
+      { type: "paragraph", children: [{ text: "b" }] },
+      { type: "paragraph", children: [{ text: "c" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "a" }] },
+      { type: "paragraph", children: [{ text: "b" }] },
+    ];
+    applyAndExpect(prev, next);
+  });
+
+  test("applyBlockDiffPatch handles multiple inserts and deletes", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "a" }] },
+      { type: "paragraph", children: [{ text: "b" }] },
+      { type: "paragraph", children: [{ text: "c" }] },
+      { type: "paragraph", children: [{ text: "d" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "a" }] },
+      { type: "paragraph", children: [{ text: "x" }] },
+      { type: "paragraph", children: [{ text: "c" }] },
+      { type: "paragraph", children: [{ text: "y" }] },
+      { type: "paragraph", children: [{ text: "z" }] },
+    ];
+    applyAndExpect(prev, next);
+  });
+
+  test("applyBlockDiffPatch handles list/code block mix", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "intro" }] },
+      {
+        type: "code_block",
+        info: "js",
+        children: [{ type: "code_line", children: [{ text: "console.log(1);" }] }],
+      },
+      {
+        type: "bullet_list",
+        children: [
+          {
+            type: "list_item",
+            children: [{ type: "paragraph", children: [{ text: "item" }] }],
+          },
+        ],
+      },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "intro" }] },
+      {
+        type: "code_block",
+        info: "js",
+        children: [{ type: "code_line", children: [{ text: "console.log(2);" }] }],
+      },
+      {
+        type: "bullet_list",
+        children: [
+          {
+            type: "list_item",
+            children: [{ type: "paragraph", children: [{ text: "item" }] }],
+          },
+          {
+            type: "list_item",
+            children: [{ type: "paragraph", children: [{ text: "item2" }] }],
+          },
+        ],
+      },
+    ];
+    applyAndExpect(prev, next);
   });
 });
