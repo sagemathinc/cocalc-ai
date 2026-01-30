@@ -20,6 +20,7 @@ type TunnelConfig = {
   token: string;
   dns: string;
   prefix?: string;
+  hostSuffix?: string;
 };
 
 type HubTunnelConfig = {
@@ -96,6 +97,18 @@ function normalizePrefix(value: unknown): string | undefined {
   return prefix || undefined;
 }
 
+function normalizeHostSuffix(value: unknown): string | undefined {
+  const raw = clean(value);
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  const lead = trimmed[0];
+  const prefix = lead === "." || lead === "-" ? lead : "-";
+  const rest = prefix ? trimmed.slice(1) : trimmed;
+  const host = normalizeHostname(rest) ?? clean(rest);
+  if (!host) return undefined;
+  return `${prefix}${host}`;
+}
+
 async function getConfig(): Promise<TunnelConfig | undefined> {
   const settings = await getServerSettings();
   if (!isEnabled(settings.project_hosts_cloudflare_tunnel_enabled)) {
@@ -105,8 +118,13 @@ async function getConfig(): Promise<TunnelConfig | undefined> {
   const accountId = clean(settings.project_hosts_cloudflare_tunnel_account_id);
   const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
   const prefix = normalizePrefix(settings.project_hosts_cloudflare_tunnel_prefix);
+  const externalDomain = normalizeHostname(settings.dns);
+  const defaultSuffix = externalDomain ? `-${externalDomain}` : undefined;
+  const hostSuffix =
+    normalizeHostSuffix(settings.project_hosts_cloudflare_tunnel_host_suffix) ??
+    normalizeHostSuffix(defaultSuffix);
   if (!dns || !accountId || !token) return undefined;
-  return { dns, accountId, token, prefix };
+  return { dns, accountId, token, prefix, hostSuffix };
 }
 
 async function getHubConfig(): Promise<HubTunnelConfig | undefined> {
@@ -492,7 +510,8 @@ export async function ensureCloudflareTunnelForHost(opts: {
 }): Promise<CloudflareTunnel | undefined> {
   const config = await getConfig();
   if (!config) return undefined;
-  const hostname = `host-${opts.host_id}.${config.dns}`;
+  const suffix = config.hostSuffix ?? `.${config.dns}`;
+  const hostname = `host-${opts.host_id}${suffix}`;
   const prefix = config.prefix ? `${config.prefix}-` : "";
   return await ensureCloudflareTunnel({
     accountId: config.accountId,

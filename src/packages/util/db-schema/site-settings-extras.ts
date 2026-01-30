@@ -267,6 +267,7 @@ export type SiteSettingsExtrasKeys =
   | "project_hosts_cloudflare_tunnel_account_id"
   | "project_hosts_cloudflare_tunnel_api_token"
   | "project_hosts_cloudflare_tunnel_prefix"
+  | "project_hosts_cloudflare_tunnel_host_suffix"
   | "software_license_token"
   | "software_license_server_url"
   | "software_license_instance_id"
@@ -973,6 +974,14 @@ export const EXTRAS: SettingsExtras = {
     name: "Project Hosts: Cloudflare Tunnel - Name Prefix",
     desc: "Optional prefix for Cloudflare Tunnel names (hub and project-host tunnels). Useful to distinguish tunnels between multiple installations.",
     default: "cocalc",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
+    valid: () => true,
+  },
+  project_hosts_cloudflare_tunnel_host_suffix: {
+    name: "Project Hosts: Cloudflare Tunnel - Hostname Suffix",
+    desc: "Optional suffix for project-host tunnel hostnames. Defaults to -<External Domain Name> if blank. Examples: -hosts.cocalc.ai or .dev.cocalc.ai",
+    default: "",
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud", "Cloudflare"],
     valid: () => true,
