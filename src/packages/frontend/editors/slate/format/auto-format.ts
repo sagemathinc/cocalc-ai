@@ -372,11 +372,6 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
         (node as any).spacerId === spacerId,
     })) {
       const point = Editor.start(editor, path as number[]);
-      slateDebug("autoformat:math-block:spacer", {
-        spacerId,
-        path,
-        point,
-      });
       setSelectionAndFocus(editor as ReactEditor, {
         anchor: point,
         focus: point,
@@ -398,11 +393,6 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
     try {
       const afterPath = Path.next(blockPath);
       const afterPoint = Editor.start(editor, afterPath);
-      slateDebug("autoformat:math-block:fallback", {
-        spacerId,
-        afterPath,
-        afterPoint,
-      });
       setSelectionAndFocus(editor as ReactEditor, {
         anchor: afterPoint,
         focus: afterPoint,
