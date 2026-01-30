@@ -544,6 +544,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     type: "header",
     tags: ["captcha"],
+    group: "Access & Identity",
+    subgroup: "Signup Security",
   },
   re_captcha_v3_publishable_key: {
     name: "reCaptcha v3 Site Key",
@@ -552,6 +554,8 @@ export const EXTRAS: SettingsExtras = {
     password: false,
     show: only_commercial,
     tags: ["captcha"],
+    group: "Access & Identity",
+    subgroup: "Signup Security",
   },
   re_captcha_v3_secret_key: {
     name: "reCaptcha v3 Secret Key",
@@ -560,6 +564,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     password: true,
     tags: ["captcha"],
+    group: "Access & Identity",
+    subgroup: "Signup Security",
   },
   zendesk_heading: {
     name: "Zendesk API Configuration",
