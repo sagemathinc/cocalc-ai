@@ -1,6 +1,6 @@
 import "../elements/types";
 
-import { createEditor, Descendant, Editor } from "slate";
+import { createEditor, Descendant, Editor, Transforms } from "slate";
 
 import { applyBlockDiffPatch, diffBlockSignatures } from "../sync/block-diff";
 
@@ -12,6 +12,16 @@ function applyAndExpect(prev: Descendant[], next: Descendant[]) {
     expect(result.applied).toBe(true);
   });
   expect(editor.children).toEqual(next);
+}
+
+function getSelectedBlockText(editor: Editor): string | null {
+  if (!editor.selection) return null;
+  const entry = Editor.above(editor, {
+    at: editor.selection.anchor,
+    match: (node) => Editor.isBlock(editor, node),
+  });
+  if (!entry) return null;
+  return Editor.string(editor, entry[1]);
 }
 
 describe("block diff signatures", () => {
@@ -187,5 +197,121 @@ describe("block diff signatures", () => {
       },
     ];
     applyAndExpect(prev, next);
+  });
+
+  test("selection remains in unchanged block when inserts happen after", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+      { type: "paragraph", children: [{ text: "new" }] },
+    ];
+    const editor = createEditor();
+    editor.children = prev;
+    Transforms.select(editor, { path: [0, 0], offset: 2 });
+    Editor.withoutNormalizing(editor, () => {
+      applyBlockDiffPatch(editor, prev, next);
+    });
+    expect(getSelectedBlockText(editor)).toBe("keep");
+  });
+
+  test("selection remains in unchanged block when inserts happen before", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "new" }] },
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+    ];
+    const editor = createEditor();
+    editor.children = prev;
+    Transforms.select(editor, { path: [0, 0], offset: 1 });
+    Editor.withoutNormalizing(editor, () => {
+      applyBlockDiffPatch(editor, prev, next);
+    });
+    expect(getSelectedBlockText(editor)).toBe("keep");
+  });
+
+  test("selection remains in unchanged block when deletes happen before", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "drop" }] },
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+    ];
+    const editor = createEditor();
+    editor.children = prev;
+    Transforms.select(editor, { path: [1, 0], offset: 2 });
+    Editor.withoutNormalizing(editor, () => {
+      applyBlockDiffPatch(editor, prev, next);
+    });
+    expect(getSelectedBlockText(editor)).toBe("keep");
+  });
+
+  test("selection remains in unchanged block when other blocks are replaced", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "old" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "new" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+    ];
+    const editor = createEditor();
+    editor.children = prev;
+    Transforms.select(editor, { path: [0, 0], offset: 3 });
+    Editor.withoutNormalizing(editor, () => {
+      applyBlockDiffPatch(editor, prev, next);
+    });
+    expect(getSelectedBlockText(editor)).toBe("keep");
+  });
+
+  test("selection moves to next block when selected block is deleted", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "A" }] },
+      { type: "paragraph", children: [{ text: "B" }] },
+      { type: "paragraph", children: [{ text: "C" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "A" }] },
+      { type: "paragraph", children: [{ text: "C" }] },
+    ];
+    const editor = createEditor();
+    editor.children = prev;
+    Transforms.select(editor, { path: [1, 0], offset: 0 });
+    Editor.withoutNormalizing(editor, () => {
+      applyBlockDiffPatch(editor, prev, next);
+    });
+    expect(getSelectedBlockText(editor)).toBe("C");
+  });
+
+  test("selection sticks to index when blocks are swapped", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "A" }] },
+      { type: "paragraph", children: [{ text: "B" }] },
+      { type: "paragraph", children: [{ text: "C" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "C" }] },
+      { type: "paragraph", children: [{ text: "B" }] },
+      { type: "paragraph", children: [{ text: "A" }] },
+    ];
+    const editor = createEditor();
+    editor.children = prev;
+    Transforms.select(editor, { path: [0, 0], offset: 0 });
+    Editor.withoutNormalizing(editor, () => {
+      applyBlockDiffPatch(editor, prev, next);
+    });
+    expect(getSelectedBlockText(editor)).toBe("C");
   });
 });
