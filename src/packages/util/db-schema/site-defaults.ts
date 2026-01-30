@@ -818,6 +818,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "Cloud", "Nebius"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   "project_hosts_google-cloud_enabled": {
     name: "Enable Project Hosts - Google Cloud",
@@ -826,6 +828,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "Cloud", "Google Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   project_hosts_hyperstack_enabled: {
     name: "Enable Project Hosts - Hyperstack",
@@ -834,6 +838,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "Cloud", "Hyperstack"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   project_hosts_lambda_enabled: {
     name: "Enable Project Hosts - Lambda Cloud",
@@ -842,6 +848,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   project_hosts_local_enabled: {
     name: "Enable Project Hosts - Local (manual setup)",
@@ -850,6 +858,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "On-Prem"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   project_hosts_self_host_alpha_enabled: {
     name: "Enable Project Hosts - Self-Host (alpha options)",
@@ -858,6 +868,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "On-Prem"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   project_hosts_dns: {
     name: "Project Hosts: Domain name",
@@ -866,6 +878,8 @@ export const site_settings_conf: SiteSettings = {
     valid: valid_dns_name_or_empty,
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Domain",
   },
   samesite_remember_me: {
     name: "sameSite setting for remember_me authentication cookie",
@@ -874,6 +888,8 @@ export const site_settings_conf: SiteSettings = {
     valid: ["strict", "lax"],
     to_val: (x) => (x === "none" ? "lax" : `${x}`),
     tags: ["Security"],
+    group: "Access & Identity",
+    subgroup: "Security",
   },
   user_tracking: {
     name: "User Tracking",

@@ -916,6 +916,8 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: project_hosts_hyperstack_enabled,
     tags: ["Project Hosts", "Hyperstack"],
+    group: "Compute / Project Hosts",
+    subgroup: "Hyperstack",
   },
   project_hosts_hyperstack_prefix: {
     name: "Project Hosts: Hyperstack - Resource Prefix",
@@ -924,6 +926,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     show: project_hosts_hyperstack_enabled,
     tags: ["Project Hosts", "Hyperstack"],
+    group: "Compute / Project Hosts",
+    subgroup: "Hyperstack",
   },
   control_plane_ssh_private_key_path: {
     name: "Control Plane: SSH Private Key Path",
@@ -932,6 +936,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Security"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Security",
   },
   control_plane_ssh_private_key: {
     name: "Control Plane: SSH Private Key (DB fallback)",
@@ -941,6 +947,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Security"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Security",
   },
   hyperstack_balance_alert_thresh: {
     name: "Project Hosts: Hyperstack - Balance Alert Threshold",
@@ -949,6 +957,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_int,
     show: project_hosts_hyperstack_enabled,
     tags: ["Project Hosts", "Hyperstack"],
+    group: "Compute / Project Hosts",
+    subgroup: "Hyperstack",
   },
   hyperstack_balance_alert_emails: {
     name: "(DEPRECATED) Project Hosts: Hyperstack - Balance Email Addresses",
@@ -956,6 +966,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: project_hosts_hyperstack_enabled,
     tags: ["Project Hosts", "Hyperstack"],
+    group: "Compute / Project Hosts",
+    subgroup: "Hyperstack",
   },
 
   lambda_cloud_api_key: {
@@ -965,6 +977,8 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: project_hosts_lambda_enabled,
     tags: ["Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "Lambda Cloud",
   },
   project_hosts_lambda_prefix: {
     name: "Project Hosts: Lambda Cloud - Resource Prefix",
@@ -974,6 +988,8 @@ export const EXTRAS: SettingsExtras = {
     show: project_hosts_lambda_enabled,
     tags: ["Project Hosts"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Lambda Cloud",
   },
   nebius_credentials_json: {
     name: "Project Hosts: Nebius - Credentials JSON",
@@ -985,6 +1001,8 @@ export const EXTRAS: SettingsExtras = {
     show: project_hosts_nebius_enabled,
     tags: ["Project Hosts", "Cloud", "Nebius"],
     valid: (x) => !!x,
+    group: "Compute / Project Hosts",
+    subgroup: "Nebius",
   },
   nebius_parent_id: {
     name: "Project Hosts: Nebius - Parent ID",
@@ -994,6 +1012,8 @@ export const EXTRAS: SettingsExtras = {
     show: project_hosts_nebius_enabled,
     tags: ["Project Hosts", "Cloud", "Nebius"],
     valid: (x) => !!x,
+    group: "Compute / Project Hosts",
+    subgroup: "Nebius",
   },
   nebius_subnet_id: {
     name: "Project Hosts: Nebius - Subnet ID",
@@ -1003,6 +1023,8 @@ export const EXTRAS: SettingsExtras = {
     show: project_hosts_nebius_enabled,
     tags: ["Project Hosts", "Cloud", "Nebius"],
     valid: (x) => !!x,
+    group: "Compute / Project Hosts",
+    subgroup: "Nebius",
   },
   project_hosts_nebius_prefix: {
     name: "Project Hosts: Nebius - Resource Prefix",
@@ -1012,6 +1034,8 @@ export const EXTRAS: SettingsExtras = {
     show: project_hosts_nebius_enabled,
     tags: ["Project Hosts", "Cloud", "Nebius"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Nebius",
   },
   google_cloud_service_account_json: {
     name: "Project Hosts: Google Cloud - Service Account Json",
@@ -1022,6 +1046,8 @@ export const EXTRAS: SettingsExtras = {
     wizard: { name: "gcp-service-account-json", label: "Wizard..." },
     show: project_hosts_google_cloud_enabled,
     tags: ["Project Hosts", "Google Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Google Cloud",
   },
   project_hosts_google_prefix: {
     name: "Project Hosts: Google Cloud - Resource Prefix",
@@ -1031,6 +1057,8 @@ export const EXTRAS: SettingsExtras = {
     show: project_hosts_google_cloud_enabled,
     tags: ["Project Hosts", "Google Cloud"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Google Cloud",
   },
   project_hosts_software_base_url: {
     name: "Project Hosts: Software Base URL",
@@ -1039,6 +1067,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Bootstrap",
   },
   project_hosts_bootstrap_channel: {
     name: "Project Hosts: Bootstrap Channel",
@@ -1047,6 +1077,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Project Hosts"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Bootstrap",
   },
   project_hosts_bootstrap_version: {
     name: "Project Hosts: Bootstrap Version Pin",
@@ -1055,6 +1087,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Project Hosts"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Bootstrap",
   },
   project_hosts_self_host_connector_version: {
     name: "Project Hosts: Self-Host Connector Version",
@@ -1063,6 +1097,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "On-Prem"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "On-Prem",
   },
   project_hosts_cloudflare_tunnel_enabled: {
     name: "Project Hosts: Cloudflare Tunnel - Enable",
