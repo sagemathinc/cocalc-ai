@@ -562,7 +562,14 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         encoding="utf-8",
     )
     if cfg.ssh_user != "root":
-        user_config = Path(cfg.bootstrap_home) / ".config/containers"
+        user_config_root = Path(cfg.bootstrap_home) / ".config"
+        user_config = user_config_root / "containers"
+        user_config_root.mkdir(parents=True, exist_ok=True)
+        run_best_effort(
+            cfg,
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config_root)],
+            "chown user config",
+        )
         user_config.mkdir(parents=True, exist_ok=True)
         Path(f"/btrfs/data/containers/rootless/{cfg.ssh_user}/storage").mkdir(parents=True, exist_ok=True)
         Path(f"/btrfs/data/containers/rootless/{cfg.ssh_user}/run").mkdir(parents=True, exist_ok=True)
