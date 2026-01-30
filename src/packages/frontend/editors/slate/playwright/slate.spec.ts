@@ -16,6 +16,12 @@ async function waitForHarness(page) {
   });
 }
 
+async function waitForSyncHarness(page) {
+  await page.waitForFunction(() => {
+    return typeof window.__slateSyncTest?.getMarkdown === "function";
+  });
+}
+
 type SlateNode = {
   type?: string;
   text?: string;
@@ -529,4 +535,83 @@ test("block editor: gap insert keeps caret", async ({ page }) => {
 
   expect(caretInfo.hasRange).toBe(true);
   expect(caretInfo.blockText).toContain("X");
+});
+
+test("sync: remote change to other block applies without deferring", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 100,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?sync=1");
+  await waitForSyncHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+
+  await page.evaluate(() => {
+    window.__slateSyncTest?.setSelection({
+      anchor: { path: [1, 0], offset: 4 },
+      focus: { path: [1, 0], offset: 4 },
+    });
+  });
+
+  await page.evaluate(() => {
+    window.__slateSyncTest?.setMarkdown("alpha\n\nbeta\n\ncharlie remote\n");
+  });
+
+  await page.waitForFunction(() => {
+    return window.__slateSyncTest?.getMarkdown()?.includes("charlie remote");
+  });
+
+  const selection = (await page.evaluate(
+    () => window.__slateSyncTest?.getSelection(),
+  )) as SlateSelection;
+  expect(selection?.anchor.path[0]).toBe(1);
+});
+
+test("sync: defer remote change to active block while typing", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 120,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?sync=1");
+  await waitForSyncHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+
+  await page.evaluate(() => {
+    window.__slateSyncTest?.setSelection({
+      anchor: { path: [1, 0], offset: 4 },
+      focus: { path: [1, 0], offset: 4 },
+    });
+  });
+
+  await page.keyboard.type("123");
+
+  await page.evaluate(() => {
+    window.__slateSyncTest?.setMarkdown("alpha\n\nbeta remote\n\ncharlie\n");
+  });
+
+  await page.waitForTimeout(40);
+
+  const before = await page.evaluate(() => window.__slateSyncTest?.getMarkdown());
+  expect(before).toContain("beta123");
+  expect(before).not.toContain("beta remote");
+
+  await page.waitForTimeout(200);
+
+  const after = await page.evaluate(() => window.__slateSyncTest?.getMarkdown());
+  expect(after).toContain("123");
+  expect(after).toContain("remote");
 });

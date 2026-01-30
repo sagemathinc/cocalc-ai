@@ -21,6 +21,7 @@ import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate
 
 import { Editable, Slate, withReact, ReactEditor } from "../slate-react";
 import BlockMarkdownEditor from "../block-markdown-editor-core";
+import { EditableMarkdown } from "../editable-markdown";
 import "./elements-types-shim";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
 import { withInsertText } from "../format/insert-text";
@@ -46,6 +47,12 @@ declare global {
     __slateBlockTest?: {
       getMarkdown: () => string;
     };
+    __slateSyncTest?: {
+      getMarkdown: () => string;
+      setMarkdown: (value: string) => void;
+      setSelection: (range: Range) => void;
+      getSelection: () => Range | null;
+    };
   }
 }
 
@@ -54,7 +61,7 @@ const initialValue: Descendant[] = [
 ];
 
 // Provide lightweight polyfills so block-mode virtualization can mount in tests.
-if (typeof window !== "undefined") {
+  if (typeof window !== "undefined") {
   if (!("ResizeObserver" in window)) {
     class ResizeObserver {
       observe() {}
@@ -75,6 +82,12 @@ if (typeof window !== "undefined") {
     }
     (window as any).IntersectionObserver = IntersectionObserver;
   }
+  if (!("$$" in window)) {
+    (window as any).$ = (_arg?: any) => ({
+      scrollTop: (_value?: number) => undefined,
+      find: () => ({ on: () => undefined }),
+    });
+  }
 }
 
 function Harness(): React.JSX.Element {
@@ -83,6 +96,7 @@ function Harness(): React.JSX.Element {
       ? new URLSearchParams()
       : new URLSearchParams(window.location.search);
   const blockMode = params.get("block") === "1";
+  const syncMode = params.get("sync") === "1";
   const autoformatMode = params.get("autoformat") === "1";
   const initialMarkdown = "a\n\n```\nfoo\n```\n";
 
@@ -163,6 +177,43 @@ function Harness(): React.JSX.Element {
             height="300px"
             noVfill={true}
             actions={{}}
+            getValueRef={getValueRef}
+          />
+        </div>
+      </HarnessErrorBoundary>
+    );
+  }
+
+  if (syncMode) {
+    const [markdown, setMarkdown] = useState<string>("alpha\n\nbeta\n\ncharlie\n");
+    const getValueRef = useRef<() => string>(() => "");
+    const selectionRef = useRef<{
+      setSelection: (range: Range) => void;
+      getSelection: () => Range | null;
+    } | null>(null);
+
+    useEffect(() => {
+      window.__slateSyncTest = {
+        getMarkdown: () => getValueRef.current?.() ?? "",
+        setMarkdown: (value) => setMarkdown(value),
+        setSelection: (range) => selectionRef.current?.setSelection(range),
+        getSelection: () => selectionRef.current?.getSelection() ?? null,
+      };
+    }, []);
+
+    return (
+      <HarnessErrorBoundary>
+        <div style={{ padding: 16, width: 520, height: 320 }}>
+          <EditableMarkdown
+            value={markdown}
+            actions={{}}
+            minimal={true}
+            height="300px"
+            noVfill={true}
+            hidePath={true}
+            ignoreRemoteMergesWhileFocused={false}
+            remoteMergeIdleMs={150}
+            selectionRef={selectionRef}
             getValueRef={getValueRef}
           />
         </div>
