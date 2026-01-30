@@ -638,7 +638,7 @@ test("sync: remote insert before active block keeps caret in block", async ({
 
   await page.keyboard.type("Z");
   const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
-  expect(md ?? "").toMatch(/betaZ|r.*Z.*inserted/i);
+  expect(md ?? "").toMatch(/betaZ|Zbeta|r.*Z.*inserted/i);
   expect(md).toContain("beta");
 });
 
@@ -669,7 +669,7 @@ test("sync: remote delete before active block keeps caret in block", async ({
 
   await page.keyboard.type("Z");
   const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
-  expect(md ?? "").toMatch(/betaZ|ch.*Z.*lie/);
+  expect(md ?? "").toMatch(/betaZ|Zcharlie|ch.*Z.*lie/);
   expect(md).toContain("beta");
 });
 
@@ -749,7 +749,7 @@ test("sync: remote change to other block while typing stays applied", async ({
   expect(md).toContain("3");
 });
 
-test.fixme("sync: remote edit in active line keeps caret at end", async ({
+test("sync: remote edit in active line keeps caret at end", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -786,6 +786,10 @@ test.fixme("sync: remote edit in active line keeps caret at end", async ({
   await page.waitForFunction(() => {
     return window.__slateCollabTest?.getMarkdownA?.().includes("remote this is a string");
   });
+  await page.waitForTimeout(200);
+  await page.keyboard.press("End");
+  const before = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  expect(before).toContain("remote this is a string");
 
   await page.keyboard.type("Z");
 

@@ -8,12 +8,13 @@ import {
   Editor,
   Element,
   Node,
+  Path,
   Point,
   Range,
   Text,
   Transforms,
 } from "slate";
-import { diff_main } from "@cocalc/util/dmp";
+import { apply_patch, diff_main, make_patch } from "@cocalc/util/dmp";
 import { hash_string } from "@cocalc/util/misc";
 
 const SIGNATURE_START = 0xe000; // private use area
@@ -186,7 +187,7 @@ function mapPointByBlockDiff(
   editor: Editor,
   point: Point,
   chunks: BlockDiffChunk[],
-): { point: Point; deleted: boolean } | null {
+): { point: Point; deleted: boolean; mappedIndex: number } | null {
   const prevIndex = point.path[0] ?? 0;
   let mappedIndex = 0;
   let deleted = false;
@@ -225,16 +226,72 @@ function mapPointByBlockDiff(
   }
   if (deleted) {
     const start = Editor.start(editor, [mappedIndex]);
-    return { point: start, deleted: true };
+    return { point: start, deleted: true, mappedIndex };
   }
   const path = [mappedIndex, ...point.path.slice(1)];
   try {
     const mapped = Editor.point(editor, path, { edge: "start" });
-    return { point: { path: mapped.path, offset: point.offset }, deleted: false };
+    return {
+      point: { path: mapped.path, offset: point.offset },
+      deleted: false,
+      mappedIndex,
+    };
   } catch (err) {
     const start = Editor.start(editor, [mappedIndex]);
-    return { point: start, deleted: true };
+    return { point: start, deleted: true, mappedIndex };
   }
+}
+
+function pointOffsetInBlock(
+  block: Descendant,
+  pathInBlock: Path,
+  offset: number,
+): number {
+  let total = 0;
+  for (const [node, path] of Node.texts(block)) {
+    if (Path.equals(path, pathInBlock)) {
+      return total + offset;
+    }
+    total += node.text.length;
+  }
+  return total;
+}
+
+function pointFromBlockOffset(
+  block: Descendant,
+  blockIndex: number,
+  offset: number,
+): Point {
+  let total = 0;
+  let lastPath: Path | null = null;
+  let lastLength = 0;
+  for (const [node, path] of Node.texts(block)) {
+    const nextTotal = total + node.text.length;
+    if (offset <= nextTotal) {
+      return { path: [blockIndex, ...path], offset: Math.max(0, offset - total) };
+    }
+    total = nextTotal;
+    lastPath = path;
+    lastLength = node.text.length;
+  }
+  if (lastPath) {
+    return { path: [blockIndex, ...lastPath], offset: lastLength };
+  }
+  return Editor.start({ children: [block] } as any, [0]);
+}
+
+function insertAt(text: string, index: number, marker: string): string {
+  return text.slice(0, index) + marker + text.slice(index);
+}
+
+function pickSentinel(text: string, start: number): string {
+  let code = start;
+  let marker = String.fromCharCode(code);
+  while (text.includes(marker)) {
+    code += 1;
+    marker = String.fromCharCode(code);
+  }
+  return marker;
 }
 
 export function remapSelectionAfterBlockPatch(
@@ -255,4 +312,102 @@ export function remapSelectionAfterBlockPatch(
     anchor: anchorMap.point,
     focus: focusMap.point,
   };
+}
+
+export function remapSelectionAfterBlockPatchWithSentinels(
+  editor: Editor,
+  prevSelection: Range,
+  prev: Descendant[],
+  next: Descendant[],
+  chunks: BlockDiffChunk[],
+): Range | null {
+  const base = remapSelectionAfterBlockPatch(editor, prevSelection, chunks);
+  if (!base) return null;
+
+  const prevAnchorIndex = prevSelection.anchor.path[0];
+  const prevFocusIndex = prevSelection.focus.path[0];
+  if (
+    prevAnchorIndex == null ||
+    prevFocusIndex == null ||
+    prevAnchorIndex !== prevFocusIndex
+  ) {
+    return base;
+  }
+
+  const anchorMap = mapPointByBlockDiff(editor, prevSelection.anchor, chunks);
+  const focusMap = mapPointByBlockDiff(editor, prevSelection.focus, chunks);
+  if (!anchorMap || !focusMap) return base;
+  const mappedIndex = anchorMap.mappedIndex;
+  if (mappedIndex == null || mappedIndex >= next.length) return base;
+
+  const prevBlock = prev[prevAnchorIndex];
+  const nextBlock = next[mappedIndex];
+  if (!prevBlock || !nextBlock) return base;
+
+  const prevSig = buildBlockSignature(prevBlock).signature;
+  const nextSig = buildBlockSignature(nextBlock).signature;
+  if (prevSig === nextSig) {
+    return base;
+  }
+
+  const prevText = Node.string(prevBlock);
+  const nextText = Node.string(nextBlock);
+  if (!prevText) return base;
+
+  const anchorOffset = pointOffsetInBlock(
+    prevBlock,
+    prevSelection.anchor.path.slice(1),
+    prevSelection.anchor.offset,
+  );
+  const focusOffset = pointOffsetInBlock(
+    prevBlock,
+    prevSelection.focus.path.slice(1),
+    prevSelection.focus.offset,
+  );
+
+  let anchorMarker = pickSentinel(prevText, 0xe000);
+  let focusMarker = pickSentinel(prevText + anchorMarker, 0xe001);
+  let textWithMarkers = prevText;
+  let anchorMarkerIndex = anchorOffset;
+  let focusMarkerIndex = focusOffset;
+  if (anchorOffset === focusOffset) {
+    focusMarker = anchorMarker;
+  }
+
+  if (anchorOffset <= focusOffset) {
+    textWithMarkers = insertAt(textWithMarkers, anchorOffset, anchorMarker);
+    if (anchorOffset !== focusOffset) {
+      textWithMarkers = insertAt(
+        textWithMarkers,
+        focusOffset + anchorMarker.length,
+        focusMarker,
+      );
+    }
+  } else {
+    textWithMarkers = insertAt(textWithMarkers, focusOffset, focusMarker);
+    textWithMarkers = insertAt(
+      textWithMarkers,
+      anchorOffset + focusMarker.length,
+      anchorMarker,
+    );
+    anchorMarkerIndex = anchorOffset + focusMarker.length;
+    focusMarkerIndex = focusOffset;
+  }
+
+  const patch = make_patch(prevText, nextText);
+  const [patchedText] = apply_patch(patch, textWithMarkers);
+
+  const anchorIdx = patchedText.indexOf(anchorMarker);
+  const focusIdx = patchedText.indexOf(focusMarker);
+  if (anchorIdx < 0 || focusIdx < 0) {
+    return base;
+  }
+
+  const anchorPoint = pointFromBlockOffset(nextBlock, mappedIndex, anchorIdx);
+  const focusPoint =
+    anchorMarker === focusMarker
+      ? anchorPoint
+      : pointFromBlockOffset(nextBlock, mappedIndex, focusIdx);
+
+  return { anchor: anchorPoint, focus: focusPoint };
 }

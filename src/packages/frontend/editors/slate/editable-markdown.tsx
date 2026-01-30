@@ -78,7 +78,7 @@ import { ensureRange, pointAtPath } from "./slate-util";
 import {
   applyBlockDiffPatch,
   diffBlockSignatures,
-  remapSelectionAfterBlockPatch,
+  remapSelectionAfterBlockPatchWithSentinels,
   shouldDeferBlockPatch,
 } from "./sync/block-diff";
 import type { SlateEditor } from "./types";
@@ -1021,9 +1021,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           );
           blockPatchApplied = blockPatchResult.applied;
           if (blockPatchApplied && previousSelection) {
-            const remapped = remapSelectionAfterBlockPatch(
+            const remapped = remapSelectionAfterBlockPatchWithSentinels(
               editor,
               previousSelection,
+              previousEditorValue,
+              nextEditorValue,
               blockPatchResult.chunks,
             );
             if (remapped) {
