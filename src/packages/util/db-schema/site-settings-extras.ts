@@ -472,7 +472,7 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Backups", "Cloudflare"],
   },
   r2_account_id: {
-    name: "R2 Account ID",
+    name: "Cloudflare R2 Account ID",
     desc: "Cloudflare account ID used to build the R2 endpoint URL.",
     default: "",
     tags: ["Backups", "Cloudflare"],
@@ -485,13 +485,13 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Backups", "Cloudflare"],
   },
   r2_access_key_id: {
-    name: "R2 Access Key ID",
+    name: "Cloudflare R2 Access Key ID",
     desc: "Access key for the R2 S3-compatible API.",
     default: "",
     tags: ["Backups", "Cloudflare"],
   },
   r2_secret_access_key: {
-    name: "R2 Secret Access Key",
+    name: "Cloudflare R2 Secret Access Key",
     desc: "Secret key for the R2 S3-compatible API.",
     default: "",
     password: true,
