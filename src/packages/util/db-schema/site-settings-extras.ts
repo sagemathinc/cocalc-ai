@@ -946,6 +946,7 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Project Hosts", "Hyperstack"],
     group: "Compute / Project Hosts",
     subgroup: "Hyperstack",
+    required_when: [{ key: "project_hosts_hyperstack_enabled", equals: "yes" }],
   },
   project_hosts_hyperstack_prefix: {
     name: "Project Hosts: Hyperstack - Resource Prefix",
@@ -1007,6 +1008,7 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Project Hosts"],
     group: "Compute / Project Hosts",
     subgroup: "Lambda Cloud",
+    required_when: [{ key: "project_hosts_lambda_enabled", equals: "yes" }],
   },
   project_hosts_lambda_prefix: {
     name: "Project Hosts: Lambda Cloud - Resource Prefix",
@@ -1031,6 +1033,7 @@ export const EXTRAS: SettingsExtras = {
     valid: (x) => !!x,
     group: "Compute / Project Hosts",
     subgroup: "Nebius",
+    required_when: [{ key: "project_hosts_nebius_enabled", equals: "yes" }],
   },
   nebius_parent_id: {
     name: "Project Hosts: Nebius - Parent ID",
@@ -1042,6 +1045,7 @@ export const EXTRAS: SettingsExtras = {
     valid: (x) => !!x,
     group: "Compute / Project Hosts",
     subgroup: "Nebius",
+    required_when: [{ key: "project_hosts_nebius_enabled", equals: "yes" }],
   },
   nebius_subnet_id: {
     name: "Project Hosts: Nebius - Subnet ID",
@@ -1053,6 +1057,7 @@ export const EXTRAS: SettingsExtras = {
     valid: (x) => !!x,
     group: "Compute / Project Hosts",
     subgroup: "Nebius",
+    required_when: [{ key: "project_hosts_nebius_enabled", equals: "yes" }],
   },
   project_hosts_nebius_prefix: {
     name: "Project Hosts: Nebius - Resource Prefix",
@@ -1076,6 +1081,9 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Project Hosts", "Google Cloud"],
     group: "Compute / Project Hosts",
     subgroup: "Google Cloud",
+    required_when: [
+      { key: "project_hosts_google-cloud_enabled", equals: "yes" },
+    ],
   },
   project_hosts_google_prefix: {
     name: "Project Hosts: Google Cloud - Resource Prefix",
