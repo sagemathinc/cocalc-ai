@@ -19,6 +19,7 @@ import {
   createBootstrapToken,
   revokeBootstrapTokensForHost,
 } from "@cocalc/server/project-host/bootstrap-token";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
 const logger = getLogger("server:cloud:host-work");
 const pool = () => getPool();
@@ -322,6 +323,24 @@ async function handleProvision(row: any) {
   if (!providerId) {
     await updateHostRow(row.id, { status: "running" });
     return;
+  }
+  if (providerId !== "self-host" && providerId !== "local") {
+    const { dns } = await getServerSettings();
+    const host = (dns ?? "").trim().toLowerCase();
+    const invalid =
+      !host ||
+      host === "localhost" ||
+      host.startsWith("localhost:") ||
+      host.startsWith("http://localhost") ||
+      host.startsWith("https://localhost") ||
+      host.startsWith("http://127.0.0.1") ||
+      host.startsWith("https://127.0.0.1") ||
+      host.startsWith("127.0.0.1");
+    if (invalid) {
+      throw new Error(
+        "External Domain Name must be configured before provisioning cloud project hosts.",
+      );
+    }
   }
   logger.debug("handleProvision: begin", {
     host_id: row.id,
