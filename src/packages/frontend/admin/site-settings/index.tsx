@@ -553,6 +553,7 @@ export default function SiteSettings({ close }) {
       "Setup Overview",
       "Networking",
       "Cloudflare",
+      "Branding & UI",
       "Backups & Storage",
       "Compute / Project Hosts",
       "Access & Identity",

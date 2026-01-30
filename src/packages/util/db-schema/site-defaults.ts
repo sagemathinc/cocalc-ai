@@ -389,6 +389,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Overview",
   },
   site_name: {
     name: "Site name",
@@ -397,6 +399,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Branding",
   },
   site_description: {
     name: "Site description",
@@ -405,6 +409,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Branding",
   },
   help_email: {
     name: help_email_name,
@@ -414,6 +420,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme", "Email", "Support"],
+    group: "Branding & UI",
+    subgroup: "Contact",
   },
   terms_of_service_url: {
     name: "Terms of Service URL",
@@ -422,6 +430,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Legal",
   },
   terms_of_service: {
     name: "ToS information",
@@ -430,6 +440,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Legal",
   },
   account_creation_email_instructions: {
     name: "Account creation",
@@ -438,6 +450,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Signup",
   },
   organization_name: {
     name: "Organization name",
@@ -446,6 +460,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Contact",
   },
   organization_email: {
     name: "Contact email address",
@@ -455,6 +471,8 @@ export const site_settings_conf: SiteSettings = {
     valid: is_valid_email_address,
     show: show_theming_vars,
     tags: ["Theme", "Email"],
+    group: "Branding & UI",
+    subgroup: "Contact",
   },
   organization_url: {
     name: "Organization website",
@@ -463,6 +481,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Contact",
   },
   logo_square: {
     name: "Logo (square)",
@@ -471,6 +491,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Logo", "Theme"],
+    group: "Branding & UI",
+    subgroup: "Branding",
   },
   logo_rectangular: {
     name: "Logo (rectangular)",
@@ -479,6 +501,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Logo", "Theme"],
+    group: "Branding & UI",
+    subgroup: "Branding",
   },
   splash_image: {
     name: "Index page picture",
@@ -487,6 +511,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Landing",
   },
   index_info_html: {
     name: "Index page info",
@@ -496,6 +522,8 @@ export const site_settings_conf: SiteSettings = {
     show: show_theming_vars,
     multiline: 5,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Landing",
   },
   index_tagline: {
     name: "Index page tagline",
@@ -504,6 +532,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Landing",
   },
   imprint: {
     name: "Imprint page",
@@ -513,6 +543,8 @@ export const site_settings_conf: SiteSettings = {
     show: show_theming_vars,
     multiline: 5,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Legal",
   },
   policies: {
     name: "Policies page",
@@ -522,6 +554,8 @@ export const site_settings_conf: SiteSettings = {
     show: show_theming_vars,
     multiline: 5,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Legal",
   },
   support: {
     name: "Support page (on-prem only)",
@@ -531,6 +565,8 @@ export const site_settings_conf: SiteSettings = {
     show: (conf) => show_theming_vars(conf) && not_cocalc_com(conf),
     multiline: 5,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Support",
   },
   support_video_call: {
     name: "Video Call for Support",
@@ -539,6 +575,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: (conf) => show_theming_vars(conf) && only_cocalc_com(conf),
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Support",
   },
   // ============== END THEMING ============
 
@@ -716,6 +754,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_bool,
     show: only_cocalc_com,
     cocalc_only: true,
+    group: "Branding & UI",
+    subgroup: "Landing",
   },
   openai_enabled: {
     name: "OpenAI ChatGPT UI",
