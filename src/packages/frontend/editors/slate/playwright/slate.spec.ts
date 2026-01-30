@@ -16,9 +16,9 @@ async function waitForHarness(page) {
   });
 }
 
-async function waitForSyncHarness(page) {
+async function waitForCollabHarness(page) {
   await page.waitForFunction(() => {
-    return typeof window.__slateSyncTest?.getMarkdown === "function";
+    return typeof window.__slateCollabTest?.getMarkdownA === "function";
   });
 }
 
@@ -547,31 +547,25 @@ test("sync: remote change to other block applies without deferring", async ({
       idleMs: 100,
     };
   });
-  await page.goto("http://127.0.0.1:4172/?sync=1");
-  await waitForSyncHarness(page);
+  await page.goto("http://127.0.0.1:4172/?collab=1");
+  await waitForCollabHarness(page);
 
-  const editor = page.locator("[data-slate-editor]");
-  await editor.click();
-
-  await page.evaluate(() => {
-    window.__slateSyncTest?.setSelection({
-      anchor: { path: [1, 0], offset: 4 },
-      focus: { path: [1, 0], offset: 4 },
-    });
-  });
+  const editorA = page.locator('[data-testid="collab-editor-a"]');
+  await editorA.locator("text=beta").first().click();
+  await page.keyboard.press("End");
 
   await page.evaluate(() => {
-    window.__slateSyncTest?.setMarkdown("alpha\n\nbeta\n\ncharlie remote\n");
+    window.__slateCollabTest?.setRemote("alpha\n\nbeta\n\ncharlie remote\n");
   });
 
   await page.waitForFunction(() => {
-    return window.__slateSyncTest?.getMarkdown()?.includes("charlie remote");
+    return window.__slateCollabTest?.getMarkdownA?.().includes("charlie remote");
   });
 
-  const selection = (await page.evaluate(
-    () => window.__slateSyncTest?.getSelection(),
-  )) as SlateSelection;
-  expect(selection?.anchor.path[0]).toBe(1);
+  await page.keyboard.type("Z");
+
+  const selectionMarkdown = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  expect(selectionMarkdown).toContain("betaZ");
 });
 
 test("sync: defer remote change to active block while typing", async ({
@@ -584,34 +578,33 @@ test("sync: defer remote change to active block while typing", async ({
       idleMs: 120,
     };
   });
-  await page.goto("http://127.0.0.1:4172/?sync=1");
-  await waitForSyncHarness(page);
+  await page.goto("http://127.0.0.1:4172/?collab=1");
+  await waitForCollabHarness(page);
 
-  const editor = page.locator("[data-slate-editor]");
-  await editor.click();
-
-  await page.evaluate(() => {
-    window.__slateSyncTest?.setSelection({
-      anchor: { path: [1, 0], offset: 4 },
-      focus: { path: [1, 0], offset: 4 },
-    });
-  });
+  const editorA = page.locator('[data-testid="collab-editor-a"]');
+  await editorA.locator("text=beta").first().click();
+  await page.keyboard.press("End");
 
   await page.keyboard.type("123");
 
   await page.evaluate(() => {
-    window.__slateSyncTest?.setMarkdown("alpha\n\nbeta remote\n\ncharlie\n");
+    window.__slateCollabTest?.setRemote("alpha\n\nbeta remote\n\ncharlie\n");
   });
 
   await page.waitForTimeout(40);
 
-  const before = await page.evaluate(() => window.__slateSyncTest?.getMarkdown());
-  expect(before).toContain("beta123");
+  const before = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  expect(before).toContain("1");
+  expect(before).toContain("2");
+  expect(before).toContain("3");
+  expect(before?.replace(/[0-9]/g, "")).toContain("beta");
   expect(before).not.toContain("beta remote");
 
   await page.waitForTimeout(200);
 
-  const after = await page.evaluate(() => window.__slateSyncTest?.getMarkdown());
-  expect(after).toContain("123");
+  const after = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  expect(after).toContain("1");
+  expect(after).toContain("2");
+  expect(after).toContain("3");
   expect(after).toContain("remote");
 });

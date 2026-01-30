@@ -22,6 +22,7 @@ import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate
 import { Editable, Slate, withReact, ReactEditor } from "../slate-react";
 import BlockMarkdownEditor from "../block-markdown-editor-core";
 import { EditableMarkdown } from "../editable-markdown";
+import { FrameContext, defaultFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import "./elements-types-shim";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
 import { withInsertText } from "../format/insert-text";
@@ -47,11 +48,14 @@ declare global {
     __slateBlockTest?: {
       getMarkdown: () => string;
     };
-    __slateSyncTest?: {
-      getMarkdown: () => string;
-      setMarkdown: (value: string) => void;
-      setSelection: (range: Range) => void;
-      getSelection: () => Range | null;
+    __slateCollabTest?: {
+      getMarkdownA: () => string;
+      getMarkdownB: () => string;
+      setRemote: (value: string) => void;
+      setSelectionA: (range: Range) => void;
+      setSelectionB: (range: Range) => void;
+      getSelectionA: () => Range | null;
+      getSelectionB: () => Range | null;
     };
   }
 }
@@ -96,7 +100,7 @@ function Harness(): React.JSX.Element {
       ? new URLSearchParams()
       : new URLSearchParams(window.location.search);
   const blockMode = params.get("block") === "1";
-  const syncMode = params.get("sync") === "1";
+  const collabMode = params.get("collab") === "1";
   const autoformatMode = params.get("autoformat") === "1";
   const initialMarkdown = "a\n\n```\nfoo\n```\n";
 
@@ -184,39 +188,110 @@ function Harness(): React.JSX.Element {
     );
   }
 
-  if (syncMode) {
+  if (collabMode) {
+    class FakeSyncstring {
+      value: string;
+      listeners: Set<() => void>;
+      constructor(initial: string) {
+        this.value = initial;
+        this.listeners = new Set();
+      }
+      to_str() {
+        return this.value;
+      }
+      set(value: string) {
+        this.value = value;
+        this.emit();
+      }
+      on(event: string, cb: () => void) {
+        if (event === "change") {
+          this.listeners.add(cb);
+        }
+      }
+      removeListener(event: string, cb: () => void) {
+        if (event === "change") {
+          this.listeners.delete(cb);
+        }
+      }
+      emit() {
+        for (const cb of this.listeners) {
+          cb();
+        }
+      }
+    }
+
     const [markdown, setMarkdown] = useState<string>("alpha\n\nbeta\n\ncharlie\n");
-    const getValueRef = useRef<() => string>(() => "");
-    const selectionRef = useRef<{
+    const syncRef = useRef(new FakeSyncstring(markdown));
+    const getValueRefA = useRef<() => string>(() => "");
+    const getValueRefB = useRef<() => string>(() => "");
+    const selectionRefA = useRef<{
+      setSelection: (range: Range) => void;
+      getSelection: () => Range | null;
+    } | null>(null);
+    const selectionRefB = useRef<{
       setSelection: (range: Range) => void;
       getSelection: () => Range | null;
     } | null>(null);
 
     useEffect(() => {
-      window.__slateSyncTest = {
-        getMarkdown: () => getValueRef.current?.() ?? "",
-        setMarkdown: (value) => setMarkdown(value),
-        setSelection: (range) => selectionRef.current?.setSelection(range),
-        getSelection: () => selectionRef.current?.getSelection() ?? null,
+      window.__slateCollabTest = {
+        getMarkdownA: () => getValueRefA.current?.() ?? "",
+        getMarkdownB: () => getValueRefB.current?.() ?? "",
+        setRemote: (value) => {
+          syncRef.current.set(value);
+        },
+        setSelectionA: (range) => selectionRefA.current?.setSelection(range),
+        setSelectionB: (range) => selectionRefB.current?.setSelection(range),
+        getSelectionA: () => selectionRefA.current?.getSelection() ?? null,
+        getSelectionB: () => selectionRefB.current?.getSelection() ?? null,
       };
     }, []);
 
+    const actions = {
+      _syncstring: syncRef.current,
+      set_value: (value: string) => {
+        syncRef.current.set(value);
+        setMarkdown(value);
+      },
+      syncstring_commit: () => undefined,
+    };
+
     return (
       <HarnessErrorBoundary>
-        <div style={{ padding: 16, width: 520, height: 320 }}>
-          <EditableMarkdown
-            value={markdown}
-            actions={{}}
-            minimal={true}
-            height="300px"
-            noVfill={true}
-            hidePath={true}
-            ignoreRemoteMergesWhileFocused={false}
-            remoteMergeIdleMs={150}
-            selectionRef={selectionRef}
-            getValueRef={getValueRef}
-          />
-        </div>
+        <FrameContext.Provider value={defaultFrameContext}>
+          <div style={{ padding: 16, width: 640, height: 320, display: "flex", gap: 16 }}>
+            <div style={{ width: 300 }} data-testid="collab-editor-a">
+              <EditableMarkdown
+                value={markdown}
+                actions={actions}
+                minimal={true}
+                height="300px"
+                noVfill={true}
+                hidePath={true}
+                disableWindowing={true}
+                ignoreRemoteMergesWhileFocused={false}
+                remoteMergeIdleMs={150}
+                selectionRef={selectionRefA}
+                getValueRef={getValueRefA}
+              />
+            </div>
+            <div style={{ width: 300 }} data-testid="collab-editor-b">
+              <EditableMarkdown
+                value={markdown}
+                actions={actions}
+                minimal={true}
+                height="300px"
+                noVfill={true}
+                hidePath={true}
+                disableWindowing={true}
+                ignoreRemoteMergesWhileFocused={false}
+                remoteMergeIdleMs={150}
+                selectionRef={selectionRefB}
+                getValueRef={getValueRefB}
+              />
+            </div>
+          </div>
+        </FrameContext.Provider>
       </HarnessErrorBoundary>
     );
   }
