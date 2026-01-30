@@ -6,6 +6,7 @@ import {
   applyBlockDiffPatch,
   diffBlockSignatures,
   remapSelectionAfterBlockPatch,
+  shouldDeferBlockPatch,
 } from "../sync/block-diff";
 
 function applyAndExpect(prev: Descendant[], next: Descendant[]) {
@@ -376,5 +377,21 @@ describe("block diff signatures", () => {
       offset: 0,
     });
     expect(getSelectedBlockText(editor)).toBe("C");
+  });
+
+  test("shouldDeferBlockPatch returns true when active block is deleted", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "A" }] },
+      { type: "paragraph", children: [{ text: "B" }] },
+      { type: "paragraph", children: [{ text: "C" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "A" }] },
+      { type: "paragraph", children: [{ text: "C" }] },
+    ];
+    const chunks = diffBlockSignatures(prev, next);
+    expect(shouldDeferBlockPatch(chunks, 1, true)).toBe(true);
+    expect(shouldDeferBlockPatch(chunks, 0, true)).toBe(false);
+    expect(shouldDeferBlockPatch(chunks, 1, false)).toBe(false);
   });
 });

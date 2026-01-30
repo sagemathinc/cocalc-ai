@@ -33,6 +33,20 @@ export interface BlockDiffChunk {
   count: number;
 }
 
+export function shouldDeferBlockPatch(
+  chunks: BlockDiffChunk[],
+  activeBlockIndex: number | undefined,
+  recentlyTyped: boolean,
+): boolean {
+  if (!recentlyTyped || activeBlockIndex == null) return false;
+  return chunks.some(
+    (chunk) =>
+      chunk.op === "delete" &&
+      activeBlockIndex >= chunk.prevIndex &&
+      activeBlockIndex < chunk.prevIndex + chunk.count,
+  );
+}
+
 function normalizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }

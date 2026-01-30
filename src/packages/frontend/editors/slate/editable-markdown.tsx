@@ -79,6 +79,7 @@ import {
   applyBlockDiffPatch,
   diffBlockSignatures,
   remapSelectionAfterBlockPatch,
+  shouldDeferBlockPatch,
 } from "./sync/block-diff";
 import type { SlateEditor } from "./types";
 import { Actions } from "./types";
@@ -946,6 +947,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
 
     const blockPatchEnabled = isBlockPatchEnabled() && isMergeFocused();
+    const activeBlockIndex = editor.selection?.anchor?.path?.[0];
+    const recentlyTyped =
+      Date.now() - lastLocalEditAtRef.current < mergeIdleMsRef.current;
     const shouldDirectSet =
       previousEditorValue.length <= 1 &&
       nextEditorValue.length >= 40 &&
@@ -955,6 +959,22 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       operations = shouldDirectSet
         ? []
         : slateDiff(previousEditorValue, nextEditorValue);
+    }
+
+    if (blockPatchEnabled) {
+      const chunks = diffBlockSignatures(previousEditorValue, nextEditorValue);
+      const defer = shouldDeferBlockPatch(chunks, activeBlockIndex, recentlyTyped);
+      if (defer) {
+        pendingRemoteRef.current = value;
+        schedulePendingRemoteMerge();
+        if (isBlockPatchDebugEnabled()) {
+          logSlateDebug("block-patch:defer-active", {
+            activeBlockIndex,
+            chunks,
+          });
+        }
+        return;
+      }
     }
 
     if (
