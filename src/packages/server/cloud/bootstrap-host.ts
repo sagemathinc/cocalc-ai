@@ -376,10 +376,13 @@ export async function buildBootstrapScripts(
     : undefined;
   const localConat =
     localConfig?.http_port ? `http://127.0.0.1:${localConfig.http_port}` : "";
+  const launchpadConat = useOnPremSettings
+    ? localConat
+    : opts.launchpadBaseUrl ?? "";
   const masterAddress =
     process.env.MASTER_CONAT_SERVER ??
     process.env.COCALC_MASTER_CONAT_SERVER ??
-    (useOnPremSettings ? localConat : "");
+    launchpadConat;
   if (!masterAddress) {
     throw new Error("MASTER_CONAT_SERVER is not configured");
   }
