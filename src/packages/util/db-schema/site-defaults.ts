@@ -708,6 +708,8 @@ export const site_settings_conf: SiteSettings = {
     default: "",
     to_val: split_iframe_comm_hosts,
     to_display: num_dns_hosts,
+    group: "Access & Identity",
+    subgroup: "Embedding",
   },
   email_enabled: {
     name: "Email sending enabled",
@@ -745,6 +747,8 @@ export const site_settings_conf: SiteSettings = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
+    group: "Access & Identity",
+    subgroup: "Sharing",
   },
   landing_pages: {
     name: "Landing pages",
