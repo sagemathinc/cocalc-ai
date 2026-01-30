@@ -597,7 +597,7 @@ export default function SiteSettings({ close }) {
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([subgroupName, items]) => (
                 <details
-                  key={`${groupName}-${subgroupName}`}
+                  key={`${groupName}-${subgroupName}-${expandAll ? "open" : "closed"}`}
                   open={expandAll}
                 >
                   <summary
@@ -765,26 +765,36 @@ export default function SiteSettings({ close }) {
                 {name}
               </CheckableTag>
             ))}
-            <div style={{ marginTop: "8px" }}>
-              <Switch
-                checked={showHidden}
-                onChange={(value) => setShowHidden(value)}
-              />{" "}
-              Show hidden
-              <div style={{ marginTop: "6px" }}>
+            <div
+              style={{
+                marginTop: "8px",
+                display: "flex",
+                gap: "16px",
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
+              <span>
+                <Switch
+                  checked={showHidden}
+                  onChange={(value) => setShowHidden(value)}
+                />{" "}
+                Show hidden
+              </span>
+              <span>
                 <Switch
                   checked={showAdvanced}
                   onChange={(value) => setShowAdvanced(value)}
                 />{" "}
                 Show advanced
-              </div>
-              <div style={{ marginTop: "6px" }}>
+              </span>
+              <span>
                 <Switch
                   checked={expandAll}
                   onChange={(value) => setExpandAll(value)}
                 />{" "}
                 Expand all
-              </div>
+              </span>
             </div>
           </Col>
         </Row>
