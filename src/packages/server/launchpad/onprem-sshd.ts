@@ -678,8 +678,8 @@ function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
   const config = getLaunchpadLocalConfig("local");
   const httpPort = config.http_port;
   const httpsPort = config.https_port ?? httpPort;
-  const hasExplicitHttp = !!process.env.COCALC_HTTP_PORT;
-  if (hasExplicitHttp && httpPort) {
+  const hasExplicitHttps = !!process.env.COCALC_HTTPS_PORT;
+  if (!hasExplicitHttps && httpPort) {
     return { origin: `http://127.0.0.1:${httpPort}`, noTLSVerify: false };
   }
   const port = httpsPort ?? httpPort ?? 8443;
