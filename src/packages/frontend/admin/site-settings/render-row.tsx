@@ -7,7 +7,7 @@ import { Button, Popover } from "antd";
 import { CSSProperties } from "react";
 import { Icon, LabeledRow, Markdown } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { Config, RowType, Tag } from "@cocalc/util/db-schema/site-defaults";
+import { Config, RowType, Tag, to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { COLORS } from "@cocalc/util/theme";
 import { Data, IsReadonly, IsSet } from "./types";
 import { RowEntry } from "./row-entry";
@@ -55,6 +55,28 @@ export function RenderRow({
 }: RenderRowProps) {
   if (data == null) return null;
 
+  const requiredWhen = conf.required_when;
+  const requiredActive =
+    requiredWhen &&
+    requiredWhen.every((req) => {
+      const raw = data[req.key];
+      if (req.equals !== undefined) {
+        if (
+          req.equals === "yes" ||
+          req.equals === "no" ||
+          req.equals === "true" ||
+          req.equals === "false"
+        ) {
+          return to_bool(raw) === to_bool(req.equals);
+        }
+        return raw === req.equals;
+      }
+      if (req.present !== undefined) {
+        return req.present ? !!raw : !raw;
+      }
+      return !!raw;
+    });
+
   if (conf.hidden && !showHidden) return null;
   if (conf.advanced && !showAdvanced && !filterStr && !filterTag) {
     return null;
@@ -95,6 +117,10 @@ export function RenderRow({
   const hasSecret = isSet?.[name] ?? false;
   const isCleared = isClearing?.[name] ?? false;
   const rowType: RowType = conf.type ?? "setting";
+  const missingValue = conf.password
+    ? !(hasSecret || rawValue)
+    : `${rawValue ?? ""}`.trim() === "";
+  const requiredMissing = requiredActive && missingValue;
 
   // fallbacks: to_display? → to_val? → undefined
   const parsed_value: string | undefined =
@@ -112,6 +138,9 @@ export function RenderRow({
       <strong>{conf.name}</strong>{" "}
       {isHiddenByShow && (
         <span style={{ color: COLORS.GRAY_M, fontSize: "85%" }}>(hidden)</span>
+      )}{" "}
+      {requiredMissing && (
+        <span style={{ color: "#a00", fontSize: "85%" }}>(required)</span>
       )}{" "}
       {conf.managed_by_wizard && (
         <span style={{ color: COLORS.GRAY_M, fontSize: "85%" }}>
