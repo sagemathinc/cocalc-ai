@@ -678,6 +678,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "General",
   },
   verify_emails: {
     name: "Verify email addresses",
@@ -687,6 +689,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "General",
   },
   email_signup: {
     name: "Allow email signup",
@@ -694,6 +698,8 @@ export const site_settings_conf: SiteSettings = {
     default: "yes",
     valid: only_booleans,
     to_val: to_bool,
+    group: "Access & Identity",
+    subgroup: "Signup",
   },
   share_server: {
     name: "Allow public file sharing",

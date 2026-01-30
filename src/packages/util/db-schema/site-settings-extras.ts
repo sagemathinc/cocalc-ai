@@ -631,6 +631,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Overview",
   },
   email_backend: {
     name: "Email backend type",
@@ -639,6 +641,9 @@ export const EXTRAS: SettingsExtras = {
     valid: ["none", "sendgrid", "smtp"],
     show: () => true,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Backend",
+    required_when: [{ key: "email_enabled", equals: "yes" }],
   },
   sendgrid_key: {
     name: "Sendgrid API key (for email)",
@@ -647,6 +652,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_sendgrid,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SendGrid",
+    required_when: [{ key: "email_backend", equals: "sendgrid" }],
   },
   email_smtp_server: {
     name: "SMTP server (for email)",
@@ -654,6 +662,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_from: {
     name: "SMTP server FROM (for email)",
@@ -662,6 +673,9 @@ export const EXTRAS: SettingsExtras = {
     valid: is_valid_email_address,
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_login: {
     name: "SMTP username (for email)",
@@ -669,6 +683,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_password: {
     name: "SMTP password (for email)",
@@ -677,6 +694,9 @@ export const EXTRAS: SettingsExtras = {
     show: only_for_smtp,
     password: true,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_port: {
     name: "SMTP port (for email)",
@@ -686,6 +706,9 @@ export const EXTRAS: SettingsExtras = {
     valid: only_nonneg_int,
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_secure: {
     name: "SMTP secure (for email)",
@@ -695,6 +718,9 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_bool,
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   // bad name, historic baggage, used in packages/hub/email.ts
   password_reset_override: {
@@ -704,6 +730,8 @@ export const EXTRAS: SettingsExtras = {
     valid: ["default", "smtp"],
     show: is_email_enabled,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
   },
   password_reset_smtp_server: {
     name: "Secondary SMTP server (for email)",
@@ -711,6 +739,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_from: {
     name: "Secondary SMTP FROM (for email)",
@@ -719,6 +750,9 @@ export const EXTRAS: SettingsExtras = {
     valid: is_valid_email_address,
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_login: {
     name: "Secondary SMTP username (for email)",
@@ -726,6 +760,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_password: {
     name: "Secondary SMTP password (for email)",
@@ -734,6 +771,9 @@ export const EXTRAS: SettingsExtras = {
     show: only_for_password_reset_smtp,
     password: true,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_port: {
     name: "Secondary SMTP port (for email)",
@@ -743,6 +783,9 @@ export const EXTRAS: SettingsExtras = {
     valid: only_nonneg_int,
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_secure: {
     name: "Secondary SMTP secure (for email)",
@@ -752,6 +795,9 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_bool,
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   prometheus_metrics: {
     name: "Prometheus Metrics",
