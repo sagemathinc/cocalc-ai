@@ -444,6 +444,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     type: "header",
     tags: ["Stripe"],
+    group: "Payments & Billing",
+    subgroup: "Stripe",
   },
   stripe_publishable_key: {
     name: "Stripe Publishable",
@@ -452,6 +454,8 @@ export const EXTRAS: SettingsExtras = {
     password: false,
     show: only_commercial,
     tags: ["Stripe"],
+    group: "Payments & Billing",
+    subgroup: "Stripe",
   },
   stripe_secret_key: {
     name: "Stripe Secret",
@@ -460,6 +464,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     password: true,
     tags: ["Stripe"],
+    group: "Payments & Billing",
+    subgroup: "Stripe",
   },
   stripe_webhook_secret: {
     name: "Stripe Webhook Secret",
@@ -468,6 +474,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     password: true,
     tags: ["Stripe"],
+    group: "Payments & Billing",
+    subgroup: "Stripe",
   },
   r2_heading: {
     name: "Cloudflare R2 Backups",
@@ -595,6 +603,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   github_project_id: {
     name: "GitHub Project ID",
@@ -602,6 +612,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     valid: isValidUUID,
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   github_username: {
     name: "GitHub Username",
@@ -609,6 +621,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: () => true,
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   github_token: {
     name: "GitHub Token",
@@ -617,6 +631,8 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: () => true,
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   github_block: {
     name: "GitHub Abuse Block",
@@ -624,6 +640,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: () => true,
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   email_section: {
     name: "Email Configuration",
@@ -820,6 +838,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     type: "header",
     tags: ["Pay as you Go"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   pay_as_you_go_min_payment: {
     name: "Pay As You Go - Minimum Payment",
@@ -829,6 +849,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: toFloat,
     valid: onlyPosFloat,
     tags: ["Pay as you Go"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   pay_as_you_go_max_project_upgrades: {
     name: "Pay As You Go - Max Project Upgrade Quotas",
@@ -840,6 +862,8 @@ export const EXTRAS: SettingsExtras = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["Pay as you Go"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   pay_as_you_go_price_project_upgrades: {
     name: "Pay As You Go - Price for Project Upgrades",
@@ -850,6 +874,8 @@ export const EXTRAS: SettingsExtras = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["Pay as you Go"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   subscription_maintenance: {
     name: "Pay As You Go - Subscription Maintenance Parameters",
@@ -860,6 +886,8 @@ export const EXTRAS: SettingsExtras = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["Pay as you Go"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   hyperstack_api_key: {
     name: "Project Hosts: Hyperstack - API Key",
