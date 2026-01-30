@@ -319,4 +319,3 @@ Goal: make backups usable without full restore by adding search + read-only file
    - Filter input should remain visible even when filtered results are empty.
    - Improve spacing/typography and result card hierarchy.
    - Add source badges and quick actions: open, reveal, restore \(where applicable\).
-

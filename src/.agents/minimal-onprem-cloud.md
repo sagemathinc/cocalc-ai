@@ -1,7 +1,8 @@
-# Support Minimal OnPrem Cloud
+# (done) Support Minimal OnPrem Cloud
 
 ## TODO:
-- [ ] backing up and restoring to rustic repo, so backup, file copy, etc. is all unlocked
+
+- [x] backing up and restoring to rustic repo, so backup, file copy, etc. is all unlocked
 
 - [x] project api isn't working, e.g., what is defined here build/cocalc-lite/src/packages/conat/project/api/index.ts
 
@@ -10,9 +11,10 @@
 - [x] provisioning of the sparse image file (size).
 
 - [x] how do we reuse an existing host? 
-- [x] Should we move all config to be in ~/.local/share/cocalc... instead of system-wide, if possible?  
-- [x] what happens on machine reboot
 
+- [x] Should we move all config to be in ~/.local/share/cocalc... instead of system-wide, if possible?
+
+- [x] what happens on machine reboot
 
 - [x] switch from `ws://[server]/{project_id}` to `ws://[server}/{host_id}` because otherwise with 50 open projects on the same host, we would have 50 distinct websockets, which is not efficient.
 
@@ -31,6 +33,7 @@
   - [x] monitor project-host
 
 - [x] implement ability to upgrade connector
+
 - [x] uploading/downloading files doesn't work -- wrong url "dropzone.js:9617  POST http://localhost:9200/upload?project_id=171411ac-45e1-4d80-982b-166e0cf1203d&path= 500 (Internal Server Error)"
 
 - [x] ssh to the project (need to provide the ip and port) in project settings

@@ -19,6 +19,7 @@ type TunnelConfig = {
   accountId: string;
   token: string;
   dns: string;
+  prefix?: string;
 };
 
 type HubTunnelConfig = {
@@ -26,6 +27,7 @@ type HubTunnelConfig = {
   token: string;
   zone: string;
   hostname: string;
+  prefix?: string;
 };
 
 type CloudflareResponse<T> = {
@@ -86,6 +88,14 @@ function isEnabled(value: unknown): boolean {
   return !["0", "false", "no", "off"].includes(lowered);
 }
 
+function normalizePrefix(value: unknown): string | undefined {
+  const raw = clean(value);
+  if (!raw) return undefined;
+  let prefix = raw.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+  prefix = prefix.replace(/^-+/, "").replace(/-+$/, "");
+  return prefix || undefined;
+}
+
 async function getConfig(): Promise<TunnelConfig | undefined> {
   const settings = await getServerSettings();
   if (!isEnabled(settings.project_hosts_cloudflare_tunnel_enabled)) {
@@ -94,8 +104,9 @@ async function getConfig(): Promise<TunnelConfig | undefined> {
   const dns = clean(settings.project_hosts_dns);
   const accountId = clean(settings.project_hosts_cloudflare_tunnel_account_id);
   const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
+  const prefix = normalizePrefix(settings.project_hosts_cloudflare_tunnel_prefix);
   if (!dns || !accountId || !token) return undefined;
-  return { dns, accountId, token };
+  return { dns, accountId, token, prefix };
 }
 
 async function getHubConfig(): Promise<HubTunnelConfig | undefined> {
@@ -107,8 +118,9 @@ async function getHubConfig(): Promise<HubTunnelConfig | undefined> {
   const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
   const zone = clean(settings.project_hosts_dns);
   const hostname = normalizeHostname(settings.dns);
+  const prefix = normalizePrefix(settings.project_hosts_cloudflare_tunnel_prefix);
   if (!accountId || !token || !zone || !hostname) return undefined;
-  return { accountId, token, zone, hostname };
+  return { accountId, token, zone, hostname, prefix };
 }
 
 export async function hasCloudflareTunnel(): Promise<boolean> {
@@ -466,12 +478,13 @@ export async function ensureCloudflareTunnelForHost(opts: {
   const config = await getConfig();
   if (!config) return undefined;
   const hostname = `host-${opts.host_id}.${config.dns}`;
+  const prefix = config.prefix ? `${config.prefix}-` : "";
   return await ensureCloudflareTunnel({
     accountId: config.accountId,
     token: config.token,
     zone: config.dns,
     hostname,
-    name: `host-${opts.host_id}`,
+    name: `${prefix}host-${opts.host_id}`,
     existing: opts.existing,
     logContext: { host_id: opts.host_id },
   });
@@ -602,7 +615,8 @@ export async function ensureCloudflareTunnelForHub(opts?: {
       `External Domain Name must be within '${config.zone}' for Cloudflare tunnel automation.`,
     );
   }
-  const name = `hub-${config.hostname.replace(/[^a-z0-9-]/g, "-")}`;
+  const prefix = config.prefix ? `${config.prefix}-` : "";
+  const name = `${prefix}hub-${config.hostname.replace(/[^a-z0-9-]/g, "-")}`;
   return await ensureCloudflareTunnel({
     accountId: config.accountId,
     token: config.token,

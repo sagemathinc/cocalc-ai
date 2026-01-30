@@ -266,6 +266,7 @@ export type SiteSettingsExtrasKeys =
   | "project_hosts_cloudflare_tunnel_enabled"
   | "project_hosts_cloudflare_tunnel_account_id"
   | "project_hosts_cloudflare_tunnel_api_token"
+  | "project_hosts_cloudflare_tunnel_prefix"
   | "software_license_token"
   | "software_license_server_url"
   | "software_license_instance_id"
@@ -967,5 +968,13 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
+  },
+  project_hosts_cloudflare_tunnel_prefix: {
+    name: "Project Hosts: Cloudflare Tunnel - Name Prefix",
+    desc: "Optional prefix for Cloudflare Tunnel names (hub and project-host tunnels). Useful to distinguish tunnels between multiple installations.",
+    default: "cocalc",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "Cloud"],
+    valid: () => true,
   },
 } as const;
