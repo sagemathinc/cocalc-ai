@@ -344,6 +344,8 @@ export const EXTRAS: SettingsExtras = {
     show: any_llm_enabled,
     type: "header",
     tags: ["AI LLM", "OpenAI"],
+    group: "AI & LLM",
+    subgroup: "Overview",
   },
   openai_api_key: {
     name: "OpenAI API Key",
@@ -353,6 +355,8 @@ export const EXTRAS: SettingsExtras = {
     show: openai_enabled,
     tags: ["AI LLM", "OpenAI"],
     required_when: [{ key: "openai_enabled", equals: "yes" }],
+    group: "AI & LLM",
+    subgroup: "OpenAI",
   },
   google_vertexai_key: {
     name: "Google Generative AI API Key",
@@ -362,6 +366,8 @@ export const EXTRAS: SettingsExtras = {
     show: vertexai_enabled,
     tags: ["AI LLM", "OpenAI"],
     required_when: [{ key: "google_vertexai_enabled", equals: "yes" }],
+    group: "AI & LLM",
+    subgroup: "Google AI",
   },
   mistral_api_key: {
     name: "Mistral AI API Key",
@@ -371,6 +377,8 @@ export const EXTRAS: SettingsExtras = {
     show: mistral_enabled,
     tags: ["AI LLM"],
     required_when: [{ key: "mistral_enabled", equals: "yes" }],
+    group: "AI & LLM",
+    subgroup: "Mistral",
   },
   anthropic_api_key: {
     name: "Anthropic API Key",
@@ -380,6 +388,8 @@ export const EXTRAS: SettingsExtras = {
     show: anthropic_enabled,
     tags: ["AI LLM"],
     required_when: [{ key: "anthropic_enabled", equals: "yes" }],
+    group: "AI & LLM",
+    subgroup: "Anthropic",
   },
   ollama_configuration: {
     name: "Ollama Configuration",
@@ -391,6 +401,8 @@ export const EXTRAS: SettingsExtras = {
     valid: custom_llm_valid,
     to_display: custom_llm_display,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Ollama",
   },
   // This is very similar to the ollama config, but there are small differences in the details.
   custom_openai_configuration: {
@@ -403,6 +415,8 @@ export const EXTRAS: SettingsExtras = {
     valid: custom_llm_valid,
     to_display: custom_llm_display,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Custom OpenAI",
   },
   salesloft_section: {
     name: "Salesloft Configuration",

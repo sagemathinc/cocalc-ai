@@ -724,6 +724,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["OpenAI", "AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   agent_openai_control_agent_enabled: {
     name: "OpenAI Control Agent UI",
@@ -732,6 +734,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["OpenAI", "AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   agent_openai_codex_enabled: {
     name: "OpenAI Codex Agent UI",
@@ -740,6 +744,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["OpenAI", "AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   google_vertexai_enabled: {
     name: "Google Generative AI UI",
@@ -748,6 +754,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   mistral_enabled: {
     name: "Mistral AI UI",
@@ -756,6 +764,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   anthropic_enabled: {
     name: "Anthropic AI UI",
@@ -764,6 +774,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   ollama_enabled: {
     name: "Ollama LLM UI",
@@ -772,6 +784,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   custom_openai_enabled: {
     name: "Custom OpenAI LLM UI",
@@ -780,6 +794,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   selectable_llms: {
     name: "User Selectable LLMs",
@@ -794,6 +810,8 @@ export const site_settings_conf: SiteSettings = {
         : list.join(", ");
     },
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "User Experience",
   },
   default_llm: {
     name: "Default LLM",
@@ -802,6 +820,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_default_llm,
     valid: USER_SELECTABLE_LANGUAGE_MODELS, // ATTN: This is not true. It's actually the list selectable_llms (which has this list as a constant) + all ollama + custom_llm. This is a special case in the Admin UI.
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "User Experience",
   },
   user_defined_llm: {
     name: "User Defined LLM",
@@ -810,6 +830,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_bool,
     valid: only_booleans,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "User Experience",
   },
   project_hosts_nebius_enabled: {
     name: "Enable Project Hosts - Nebius Cloud",

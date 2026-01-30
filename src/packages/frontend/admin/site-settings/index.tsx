@@ -557,6 +557,7 @@ export default function SiteSettings({ close }) {
       "Compute / Project Hosts",
       "Access & Identity",
       "Messaging & Email",
+      "AI & LLM",
       "Payments & Billing",
       "Support / Integrations",
       "System / Advanced",
