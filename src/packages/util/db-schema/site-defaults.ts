@@ -586,6 +586,8 @@ export const site_settings_conf: SiteSettings = {
     default: "",
     type: "header",
     tags: ["Version"],
+    group: "System / Advanced",
+    subgroup: "Versions",
   },
   version_min_project: {
     name: "Required project version",
@@ -594,6 +596,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_nonneg_int,
     show: () => true,
     tags: ["Version"],
+    group: "System / Advanced",
+    subgroup: "Versions",
   },
   version_min_browser: {
     name: "Required browser version",
@@ -602,6 +606,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_nonneg_int,
     show: () => true,
     tags: ["Version"],
+    group: "System / Advanced",
+    subgroup: "Versions",
   },
   version_recommended_browser: {
     name: "Recommended version",
@@ -610,6 +616,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_nonneg_int,
     show: () => true,
     tags: ["Version"],
+    group: "System / Advanced",
+    subgroup: "Versions",
   },
   kucalc: {
     name: "KuCalc UI",
@@ -617,6 +625,8 @@ export const site_settings_conf: SiteSettings = {
     default: KUCALC_DISABLED,
     valid: KUCALC_VALID_VALS,
     tags: ["On-Prem"],
+    group: "System / Advanced",
+    subgroup: "Platform",
   },
   i18n: {
     name: "Internationalization",

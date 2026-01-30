@@ -300,6 +300,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["Licensing"],
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   software_license_private_key: {
     name: "Software Licensing: Private Signing Key (PEM)",
@@ -310,6 +312,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Licensing", "Security"],
     valid: () => true,
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   software_license_token: {
     name: "Software Licensing: License Token",
@@ -320,6 +324,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Licensing"],
     valid: () => true,
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   software_license_server_url: {
     name: "Software Licensing: Server URL",
@@ -328,6 +334,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Licensing"],
     valid: () => true,
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   software_license_instance_id: {
     name: "Software Licensing: Instance Id",
@@ -336,6 +344,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Licensing"],
     valid: () => true,
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   openai_section: {
     name: "Language Model Configuration",
