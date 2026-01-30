@@ -29,10 +29,86 @@ is itself  deep, being based on diff-match-patch, and using numerous
 heuristics.
 */
 
-import { Editor, Element, Path, Point, Range, Transforms } from "slate";
+import { Editor, Element, Node, Path, Point, Range, Text, Transforms } from "slate";
 import { ReactEditor } from "../slate-react";
 import { markdownAutoformat } from "./auto-format";
 import { ensureRange, slateDebug } from "../slate-util";
+
+function moveSelectionAfterInlineMath(editor, selection): Range | null {
+  if (!selection) return selection;
+  try {
+    const focusPath = selection.focus?.path;
+    if (!Array.isArray(focusPath) || focusPath.length < 2) return selection;
+    const mathPath = Path.parent(focusPath);
+    const [mathNode] = Editor.node(editor, mathPath);
+    if (Element.isElement(mathNode) && mathNode.type === "math_inline") {
+      const nextPath = Path.next(mathPath);
+      let nextNode: any = null;
+      try {
+        [nextNode] = Editor.node(editor, nextPath);
+      } catch {
+        nextNode = null;
+      }
+      if (!Text.isText(nextNode)) {
+        Transforms.insertNodes(editor, { text: " " }, { at: nextPath });
+        [nextNode] = Editor.node(editor, nextPath);
+      }
+      if (Text.isText(nextNode)) {
+        const point = { path: nextPath, offset: nextNode.text.length };
+        return { anchor: point, focus: point };
+      }
+    }
+  } catch {
+    // ignore adjustment failures
+  }
+  return selection;
+}
+
+function ensureTrailingTextAfterInlineMath(
+  editor,
+  selectionBlockPath,
+): Range | null {
+  if (!selectionBlockPath) return null;
+  try {
+    const [paragraphNode] = Editor.node(editor, selectionBlockPath);
+    if (!Element.isElement(paragraphNode) || paragraphNode.type !== "paragraph") {
+      return null;
+    }
+    const children = paragraphNode.children ?? [];
+    if (children.length === 0) return null;
+    const lastIndex = children.length - 1;
+    const lastChild = children[lastIndex];
+    const prevChild = lastIndex > 0 ? children[lastIndex - 1] : null;
+
+    if (
+      Text.isText(lastChild) &&
+      Element.isElement(prevChild) &&
+      prevChild.type === "math_inline"
+    ) {
+      const point = {
+        path: selectionBlockPath.concat(lastIndex),
+        offset: lastChild.text.length,
+      };
+      return { anchor: point, focus: point };
+    }
+
+    if (Element.isElement(lastChild) && lastChild.type === "math_inline") {
+      const nextPath = selectionBlockPath.concat(lastIndex + 1);
+      let nextNode: any = null;
+      if (Node.has(editor, nextPath)) {
+        [nextNode] = Editor.node(editor, nextPath);
+      }
+      if (!Text.isText(nextNode)) {
+        Transforms.insertNodes(editor, { text: " " }, { at: nextPath });
+      }
+      const point = Editor.start(editor, nextPath);
+      return { anchor: point, focus: point };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 export const withInsertText = (editor) => {
   const { insertText: insertText0 } = editor;
@@ -156,6 +232,7 @@ export const withInsertText = (editor) => {
               } catch {
                 // ignore doc start check failures
               }
+              const adjusted = moveSelectionAfterInlineMath(editor, safe);
               let hasContent = false;
               try {
                 hasContent = Editor.string(editor, []).length > 0;
@@ -165,7 +242,7 @@ export const withInsertText = (editor) => {
               if (isDocStart && selectionBlockPath && !hasContent) {
                 pendingSelection = null;
               } else {
-                pendingSelection = safe;
+                pendingSelection = adjusted;
               }
             } catch {
               pendingSelection = null;
@@ -179,6 +256,9 @@ export const withInsertText = (editor) => {
               // ignore fallback selection failure
             }
           }
+          if (pendingSelection) {
+            pendingSelection = moveSelectionAfterInlineMath(editor, pendingSelection);
+          }
           if (!pendingSelection && isSingleParagraph) {
             try {
               const end = Editor.end(editor, [0]);
@@ -186,6 +266,16 @@ export const withInsertText = (editor) => {
             } catch {
               // ignore fallback selection failure
             }
+          }
+          if (pendingSelection) {
+            pendingSelection = moveSelectionAfterInlineMath(editor, pendingSelection);
+          }
+          const inlineMathSelection = ensureTrailingTextAfterInlineMath(
+            editor,
+            selectionBlockPath,
+          );
+          if (inlineMathSelection) {
+            pendingSelection = inlineMathSelection;
           }
           (editor as any).__autoformatSelection = pendingSelection ?? null;
           if (pendingSelection) {

@@ -5,8 +5,9 @@
 - [ ] #bug bring back the realtime sync integration.
   - addresses HUGE problem: we depend on realtime sync for undo/redo and saving current state!  the "do nothing when focused" mode just horribly breaks this.
   - addresses all the chat integration weirdness and a lot of other problems.
-  - it's a challenge but now I think it's solvable.
-  - [ ] in particular - the undo/redo integration (via control+z, etc.) is not implemented at all.
+  - it's a challenge but now I feel more optimisitic that it's solvable.
+  - [ ] in particular - the _user aware_ undo/redo integration (via control+z, etc.) fundamentally relies on realtime collaboration integration.
+  - using debouncing I think this can be done in a way that feels very responsive, and never "jumps the cursor".  Which just have to be very careful.
 
 - [ ] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
   - [ ] this is also needed for jumping from table of contents entries to the document.

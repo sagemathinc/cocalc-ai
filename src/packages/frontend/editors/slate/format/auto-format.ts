@@ -41,6 +41,15 @@ function spacerParagraph(): Element {
   } as Element;
 }
 
+function spacerParagraphWithId(spacerId: string): Element {
+  return {
+    type: "paragraph",
+    spacer: true,
+    spacerId,
+    children: [{ text: "" }],
+  } as Element;
+}
+
 function autoformatCodeSpanAtCursor(editor: Editor): boolean {
   const { selection } = editor;
   if (selection == null || !Range.isCollapsed(selection)) {
@@ -115,10 +124,13 @@ function autoformatCodeSpanAtCursor(editor: Editor): boolean {
     },
     { force: true },
   );
-  rememberAutoformatSelection(editor, {
+  const inlineSelection = {
     focus: { path: newPath, offset: 1 },
     anchor: { path: newPath, offset: 1 },
-  });
+  };
+  editor.selection = inlineSelection;
+  (editor as any).lastSelection = inlineSelection;
+  rememberAutoformatSelection(editor, inlineSelection);
   return true;
 }
 
@@ -325,6 +337,9 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
   }
 
   const blockPath = path.slice(0, path.length - 1);
+  const spacerId = `math-spacer-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
   Editor.withoutNormalizing(editor, () => {
     Transforms.delete(editor, {
       at: { path, offset: 0 },
@@ -341,7 +356,66 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
       } as any,
       { at: blockPath },
     );
+    const afterPath = Path.next(blockPath);
+    Transforms.insertNodes(editor, spacerParagraphWithId(spacerId), {
+      at: afterPath,
+    });
   });
+
+  let focused = false;
+  try {
+    for (const [, path] of Editor.nodes(editor, {
+      at: [],
+      match: (node) =>
+        Element.isElement(node) &&
+        node.type === "paragraph" &&
+        (node as any).spacerId === spacerId,
+    })) {
+      const point = Editor.start(editor, path as number[]);
+      slateDebug("autoformat:math-block:spacer", {
+        spacerId,
+        path,
+        point,
+      });
+      setSelectionAndFocus(editor as ReactEditor, {
+        anchor: point,
+        focus: point,
+      });
+      editor.selection = { anchor: point, focus: point };
+      (editor as any).lastSelection = { anchor: point, focus: point };
+      rememberAutoformatSelection(editor, { anchor: point, focus: point });
+      Transforms.setNodes(editor, { spacerId: undefined } as any, {
+        at: path,
+      });
+      focused = true;
+      break;
+    }
+  } catch {
+    // ignore lookup failures
+  }
+
+  if (!focused) {
+    try {
+      const afterPath = Path.next(blockPath);
+      const afterPoint = Editor.start(editor, afterPath);
+      slateDebug("autoformat:math-block:fallback", {
+        spacerId,
+        afterPath,
+        afterPoint,
+      });
+      setSelectionAndFocus(editor as ReactEditor, {
+        anchor: afterPoint,
+        focus: afterPoint,
+      });
+      editor.selection = { anchor: afterPoint, focus: afterPoint };
+      (editor as any).lastSelection = { anchor: afterPoint, focus: afterPoint };
+      rememberAutoformatSelection(editor, { anchor: afterPoint, focus: afterPoint });
+    } catch {
+      // ignore selection failures
+    }
+  }
+
+  (editor as any).__autoformatDidBlock = true;
 
   return true;
 }
@@ -1078,6 +1152,26 @@ function markdownAutoformatAt(
         selection: editor.selection ?? null,
         autoformatSelection: (editor as any).__autoformatSelection ?? null,
       });
+      setSelectionAndFocus(editor, { focus, anchor: focus });
+      return true;
+    }
+    if (type === "math_block") {
+      // Place the caret after the displayed formula (in a spacer paragraph)
+      // so typing continues below the math block.
+      const afterPath = Path.next(blockPath);
+      let afterNode: Node | null = null;
+      if (Node.has(editor, afterPath)) {
+        afterNode = Editor.node(editor, afterPath)[0] as Node;
+      }
+      const isSpacer =
+        Element.isElement(afterNode) &&
+        afterNode.type === "paragraph" &&
+        (afterNode as any).spacer;
+      if (!isSpacer) {
+        Transforms.insertNodes(editor, spacerParagraph(), { at: afterPath });
+      }
+      const focus = Editor.start(editor, afterPath);
+      (editor as any).__autoformatSelection = { anchor: focus, focus };
       setSelectionAndFocus(editor, { focus, anchor: focus });
       return true;
     }
