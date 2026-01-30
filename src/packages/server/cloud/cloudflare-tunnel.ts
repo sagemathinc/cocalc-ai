@@ -227,6 +227,21 @@ async function getZoneId(token: string, dns: string) {
   throw new Error(`cloudflare zone not found for ${dns}`);
 }
 
+async function getZoneIdForHostname(token: string, hostname: string): Promise<string> {
+  const parts = hostname.split(".").filter(Boolean);
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const candidate = parts.slice(i).join(".");
+    try {
+      return await getZoneId(token, candidate);
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        throw err;
+      }
+    }
+  }
+  throw new Error(`cloudflare zone not found for ${hostname}`);
+}
+
 async function listDnsRecords(
   token: string,
   zoneIdValue: string,
@@ -573,7 +588,15 @@ async function ensureCloudflareTunnel(opts: {
     });
   }
 
-  const zoneIdValue = await getZoneId(opts.token, opts.zone);
+  let zoneIdValue: string;
+  try {
+    zoneIdValue = await getZoneId(opts.token, opts.zone);
+  } catch (err) {
+    if (!isNotFoundError(err)) {
+      throw err;
+    }
+    zoneIdValue = await getZoneIdForHostname(opts.token, opts.hostname);
+  }
   const record_id = await ensureTunnelDns({
     token: opts.token,
     zoneId: zoneIdValue,
