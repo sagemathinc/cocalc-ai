@@ -1,6 +1,8 @@
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 import { db } from "@cocalc/database";
 
+let database: ReturnType<typeof db>;
+
 async function waitForNotification(
   database: ReturnType<typeof db>,
   channel: string,
@@ -23,14 +25,15 @@ async function waitForNotification(
 
 beforeAll(async () => {
   await initEphemeralDatabase({ reset: true });
+  database = db();
 }, 30000);
 
 afterAll(async () => {
+  database.disconnect();
   await getPool().end();
 });
 
 test("LISTEN/NOTIFY delivers JSON payloads", async () => {
-  const database = db();
   const channel = `pglite_notify_${Date.now()}`;
   const payload = { ok: true, id: channel };
 
