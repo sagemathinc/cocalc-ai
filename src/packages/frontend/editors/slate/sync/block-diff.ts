@@ -368,8 +368,6 @@ export function remapSelectionAfterBlockPatchWithSentinels(
   let anchorMarker = pickSentinel(prevText, 0xe000);
   let focusMarker = pickSentinel(prevText + anchorMarker, 0xe001);
   let textWithMarkers = prevText;
-  let anchorMarkerIndex = anchorOffset;
-  let focusMarkerIndex = focusOffset;
   if (anchorOffset === focusOffset) {
     focusMarker = anchorMarker;
   }
@@ -390,8 +388,6 @@ export function remapSelectionAfterBlockPatchWithSentinels(
       anchorOffset + focusMarker.length,
       anchorMarker,
     );
-    anchorMarkerIndex = anchorOffset + focusMarker.length;
-    focusMarkerIndex = focusOffset;
   }
 
   const patch = make_patch(prevText, nextText);

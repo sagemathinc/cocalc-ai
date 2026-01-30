@@ -6,6 +6,7 @@ import {
   applyBlockDiffPatch,
   diffBlockSignatures,
   remapSelectionAfterBlockPatch,
+  remapSelectionAfterBlockPatchWithSentinels,
   shouldDeferBlockPatch,
 } from "../sync/block-diff";
 
@@ -44,6 +45,31 @@ function applyPatchAndRemapSelection(
   const remapped = remapSelectionAfterBlockPatch(
     editor,
     { anchor: selection, focus: selection },
+    chunks,
+  );
+  if (remapped) {
+    editor.selection = remapped;
+  }
+  return editor;
+}
+
+function applyPatchAndRemapSelectionWithSentinels(
+  prev: Descendant[],
+  next: Descendant[],
+  selection: { anchor: { path: number[]; offset: number }; focus: { path: number[]; offset: number } },
+) {
+  const editor = createEditor();
+  editor.children = prev;
+  Transforms.select(editor, selection);
+  const chunks = diffBlockSignatures(prev, next);
+  Editor.withoutNormalizing(editor, () => {
+    applyBlockDiffPatch(editor, prev, next, chunks);
+  });
+  const remapped = remapSelectionAfterBlockPatchWithSentinels(
+    editor,
+    selection,
+    prev,
+    next,
     chunks,
   );
   if (remapped) {
@@ -393,5 +419,53 @@ describe("block diff signatures", () => {
     expect(shouldDeferBlockPatch(chunks, 1, true)).toBe(true);
     expect(shouldDeferBlockPatch(chunks, 0, true)).toBe(false);
     expect(shouldDeferBlockPatch(chunks, 1, false)).toBe(false);
+  });
+
+  test("sentinel remap keeps caret at end after remote prefix insert", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "this is a string" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "remote this is a string" }] },
+    ];
+    const editor = applyPatchAndRemapSelectionWithSentinels(prev, next, {
+      anchor: { path: [0, 0], offset: "this is a string".length },
+      focus: { path: [0, 0], offset: "this is a string".length },
+    });
+    const selection = editor.selection!;
+    expect(selection.anchor.path).toEqual([0, 0]);
+    expect(selection.anchor.offset).toBe("remote this is a string".length);
+  });
+
+  test("sentinel remap shifts selection for mid-line insert", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "hello world" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "hello brave world" }] },
+    ];
+    const editor = applyPatchAndRemapSelectionWithSentinels(prev, next, {
+      anchor: { path: [0, 0], offset: 5 },
+      focus: { path: [0, 0], offset: 5 },
+    });
+    const selection = editor.selection!;
+    expect(selection.anchor.path).toEqual([0, 0]);
+    expect(selection.anchor.offset).toBe(5);
+  });
+
+  test("sentinel remap keeps non-collapsed range anchored after prefix insert", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "abcdef" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "XYabcdef" }] },
+    ];
+    const editor = applyPatchAndRemapSelectionWithSentinels(prev, next, {
+      anchor: { path: [0, 0], offset: 1 },
+      focus: { path: [0, 0], offset: 3 },
+    });
+    const selection = editor.selection!;
+    expect(selection.anchor.offset).toBe(3);
+    expect(selection.focus.offset).toBe(6);
   });
 });
