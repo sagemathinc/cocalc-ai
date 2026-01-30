@@ -605,17 +605,23 @@ fi
   ]);
   const envLinesJson = JSON.stringify(scripts.envLines);
   const cloudflaredJson = JSON.stringify(scripts.cloudflaredConfig ?? { enabled: false });
+  const preferredBootstrapUser =
+    scripts.sshUser && scripts.sshUser !== "root" ? scripts.sshUser : "";
   return `#!/bin/bash
 set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
 STATUS_URL="${statusUrl}"
 CONAT_URL="${conatUrl}"
 BOOTSTRAP_USER="\${SUDO_USER:-}"
+PREFERRED_BOOTSTRAP_USER="${preferredBootstrapUser}"
 if [ -z "$BOOTSTRAP_USER" ]; then
   BOOTSTRAP_USER="$(id -un 2>/dev/null || true)"
 fi
 if [ -z "$BOOTSTRAP_USER" ]; then
   BOOTSTRAP_USER="root"
+fi
+if [ -n "$PREFERRED_BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" = "root" ]; then
+  BOOTSTRAP_USER="$PREFERRED_BOOTSTRAP_USER"
 fi
 BOOTSTRAP_HOME="$(getent passwd "$BOOTSTRAP_USER" | cut -d: -f6 || true)"
 if [ -z "$BOOTSTRAP_HOME" ] && [ -n "$HOME" ]; then
@@ -931,6 +937,8 @@ export async function buildCloudInitStartupScript(
   let bootstrapBase = baseUrl;
   let tunnelScript = "";
   const machine: HostMachine = row.metadata?.machine ?? {};
+  const sshUser =
+    row.metadata?.runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
   const selfHostMode = machine?.metadata?.self_host_mode;
   const isSelfHostLocal =
     machine?.cloud === "self-host" &&
@@ -956,11 +964,15 @@ BOOTSTRAP_TOKEN="${token}"
 BOOTSTRAP_URL="${bootstrapUrl}"
 STATUS_URL="${statusUrl}"
 BOOTSTRAP_USER="\${SUDO_USER:-}"
+PREFERRED_BOOTSTRAP_USER="${sshUser !== "root" ? sshUser : ""}"
 if [ -z "$BOOTSTRAP_USER" ]; then
   BOOTSTRAP_USER="$(id -un 2>/dev/null || true)"
 fi
 if [ -z "$BOOTSTRAP_USER" ]; then
   BOOTSTRAP_USER="root"
+fi
+if [ -n "$PREFERRED_BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" = "root" ]; then
+  BOOTSTRAP_USER="$PREFERRED_BOOTSTRAP_USER"
 fi
 BOOTSTRAP_HOME="$(getent passwd "\${BOOTSTRAP_USER:-}" | cut -d: -f6 || true)"
 if [ -z "$BOOTSTRAP_HOME" ] && [ -n "$HOME" ]; then
