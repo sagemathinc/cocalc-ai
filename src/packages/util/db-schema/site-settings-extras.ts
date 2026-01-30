@@ -502,6 +502,7 @@ export const EXTRAS: SettingsExtras = {
     group: "Backups & Storage",
     subgroup: "Cloudflare R2",
     order: 40,
+    required_when: [{ key: "r2_account_id", present: true }],
   },
   r2_secret_access_key: {
     name: "Cloudflare R2 Secret Access Key",
@@ -512,6 +513,7 @@ export const EXTRAS: SettingsExtras = {
     group: "Backups & Storage",
     subgroup: "Cloudflare R2",
     order: 50,
+    required_when: [{ key: "r2_account_id", present: true }],
   },
   r2_bucket_prefix: {
     name: "Cloudflare R2 Bucket Prefix",
@@ -985,6 +987,9 @@ export const EXTRAS: SettingsExtras = {
     group: "Networking",
     subgroup: "Cloudflare Tunnel",
     order: 20,
+    required_when: [
+      { key: "project_hosts_cloudflare_tunnel_enabled", equals: "yes" },
+    ],
   },
   project_hosts_cloudflare_tunnel_api_token: {
     name: "Project Hosts: Cloudflare Tunnel - API Token",
@@ -996,6 +1001,9 @@ export const EXTRAS: SettingsExtras = {
     group: "Networking",
     subgroup: "Cloudflare Tunnel",
     order: 30,
+    required_when: [
+      { key: "project_hosts_cloudflare_tunnel_enabled", equals: "yes" },
+    ],
   },
   project_hosts_cloudflare_tunnel_prefix: {
     name: "Project Hosts: Cloudflare Tunnel - Name Prefix",

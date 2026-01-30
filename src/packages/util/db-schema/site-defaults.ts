@@ -375,6 +375,12 @@ export const site_settings_conf: SiteSettings = {
     default: "",
     to_val: to_trimmed_str,
     //valid: valid_dns_name,
+    group: "Networking",
+    subgroup: "Domain",
+    order: 10,
+    required_when: [
+      { key: "project_hosts_cloudflare_tunnel_enabled", equals: "yes" },
+    ],
   },
   theming: {
     name: "Show Theming",
