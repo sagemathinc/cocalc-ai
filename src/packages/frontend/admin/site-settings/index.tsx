@@ -453,21 +453,48 @@ export default function SiteSettings({ close }) {
 
   const setupOverview = useMemo(() => {
     if (data == null) return [];
-    const groupMap = new Map<string, { count: number; names: string[] }>();
+    const groupMap = new Map<
+      string,
+      { count: number; names: string[]; key: string }
+    >();
     for (const configData of [site_settings_conf, EXTRAS]) {
       for (const name of keys(configData)) {
         const conf = configData[name];
         if (!conf.required_when) continue;
         if (!isRequiredWhen(conf)) continue;
         if (!isMissingValue(name, conf)) continue;
-        const group = conf.group ?? "Other";
-        const entry = groupMap.get(group) ?? { count: 0, names: [] };
+        const group = conf.group ?? inferGroup(conf);
+        const entry =
+          groupMap.get(group) ??
+          ({
+            count: 0,
+            names: [] as string[],
+            key: group,
+          });
         entry.count += 1;
-        entry.names.push(conf.name ?? name);
+        entry.names.push(conf?.name ?? name);
         groupMap.set(group, entry);
       }
     }
     return [...groupMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [data, isSet, showHidden, showAdvanced]);
+
+  const groupStatus = useMemo(() => {
+    if (data == null) return new Map<string, boolean>();
+    const status = new Map<string, boolean>();
+    for (const configData of [site_settings_conf, EXTRAS]) {
+      for (const name of keys(configData)) {
+        const conf = configData[name];
+        const group = conf.group ?? inferGroup(conf);
+        if (!status.has(group)) status.set(group, true);
+        if (!conf.required_when) continue;
+        if (!isRequiredWhen(conf)) continue;
+        if (isMissingValue(name, conf)) {
+          status.set(group, false);
+        }
+      }
+    }
+    return status;
   }, [data, isSet, showHidden, showAdvanced]);
 
   const editRows = useMemo(() => {
@@ -506,14 +533,35 @@ export default function SiteSettings({ close }) {
       <>
         {groupEntries.map(([groupName, subgroups]) => (
           <div key={groupName} style={{ marginTop: "16px" }}>
-            <h3 style={{ marginBottom: "6px" }}>{groupName}</h3>
+            <div
+              id={`admin-settings-group-${groupName}`}
+              style={{ display: "flex", alignItems: "center", gap: "8px" }}
+            >
+              <h3 style={{ marginBottom: "6px" }}>{groupName}</h3>
+              {groupStatus.has(groupName) && (
+                <span
+                  style={{
+                    fontSize: "85%",
+                    color: groupStatus.get(groupName) ? "#2c7a2c" : "#a00",
+                  }}
+                >
+                  {groupStatus.get(groupName) ? "✓" : "⚠"}
+                </span>
+              )}
+            </div>
             {[...subgroups.entries()]
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([subgroupName, items]) => (
-                <div key={`${groupName}-${subgroupName}`}>
-                  <h4 style={{ margin: "10px 0 4px 0", color: "#666" }}>
+                <details key={`${groupName}-${subgroupName}`} open>
+                  <summary
+                    style={{
+                      margin: "10px 0 4px 0",
+                      color: "#666",
+                      cursor: "pointer",
+                    }}
+                  >
                     {subgroupName}
-                  </h4>
+                  </summary>
                   {items
                     .sort((a, b) => {
                       const orderA = a.conf.order ?? 1000;
@@ -565,7 +613,7 @@ export default function SiteSettings({ close }) {
                         />
                       );
                     })}
-                </div>
+                </details>
               ))}
           </div>
         ))}
@@ -613,8 +661,22 @@ export default function SiteSettings({ close }) {
               <ul style={{ marginBottom: 0 }}>
                 {setupOverview.map(([group, info]) => (
                   <li key={group}>
-                    <strong>{group}</strong>: {info.count} missing required
-                    setting{info.count === 1 ? "" : "s"}
+                    <Button
+                      type="link"
+                      style={{ padding: 0 }}
+                      onClick={() => {
+                        const el = document.getElementById(
+                          `admin-settings-group-${group}`,
+                        );
+                        if (el) {
+                          el.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
+                      }}
+                    >
+                      {group}
+                    </Button>
+                    : {info.count} missing required setting
+                    {info.count === 1 ? "" : "s"}
                   </li>
                 ))}
               </ul>
