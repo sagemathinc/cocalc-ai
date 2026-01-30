@@ -42,6 +42,7 @@ export const TAGS = [
   "Project Hosts",
   "Hyperstack",
   "Nebius",
+  "Cloudflare",
   "Backups",
   "R2",
   "AI LLM",

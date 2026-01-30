@@ -951,14 +951,14 @@ export const EXTRAS: SettingsExtras = {
     default: "no",
     to_val: to_bool,
     valid: only_booleans,
-    tags: ["Project Hosts", "Cloud"],
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
   },
   project_hosts_cloudflare_tunnel_account_id: {
     name: "Project Hosts: Cloudflare Tunnel - Account ID",
     desc: "Cloudflare account ID that owns the tunnel.",
     default: "",
     to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Cloud"],
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
     valid: () => true,
   },
   project_hosts_cloudflare_tunnel_api_token: {
@@ -967,14 +967,14 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     password: true,
     to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Cloud"],
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
   },
   project_hosts_cloudflare_tunnel_prefix: {
     name: "Project Hosts: Cloudflare Tunnel - Name Prefix",
     desc: "Optional prefix for Cloudflare Tunnel names (hub and project-host tunnels). Useful to distinguish tunnels between multiple installations.",
     default: "cocalc",
     to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Cloud"],
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
     valid: () => true,
   },
 } as const;
