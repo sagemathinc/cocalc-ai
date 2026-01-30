@@ -567,6 +567,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["Zendesk", "Support"],
+    group: "Support / Integrations",
+    subgroup: "Zendesk",
   },
   zendesk_token: {
     name: "Zendesk Token",
@@ -575,6 +577,8 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: () => true,
     tags: ["Zendesk", "Support"],
+    group: "Support / Integrations",
+    subgroup: "Zendesk",
   },
   zendesk_username: {
     name: "Zendesk Username",
@@ -582,6 +586,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: () => true,
     tags: ["Zendesk", "Support"],
+    group: "Support / Integrations",
+    subgroup: "Zendesk",
   },
   zendesk_uri: {
     name: "Zendesk Subdomain",
@@ -589,6 +595,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: () => true,
     tags: ["Zendesk", "Support"],
+    group: "Support / Integrations",
+    subgroup: "Zendesk",
   },
   support_account_id: {
     name: "Support CoCalc Account ID",
@@ -596,6 +604,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     valid: isValidUUID,
     tags: ["Support"],
+    group: "Support / Integrations",
+    subgroup: "Support Messaging",
   },
   github_heading: {
     name: "GitHub API Configuration",
@@ -823,6 +833,8 @@ export const EXTRAS: SettingsExtras = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
+    group: "System / Advanced",
+    subgroup: "Metrics",
   },
   prometheus_metrics_allowlist: {
     name: "Prometheus Metrics Allowlist",
@@ -830,6 +842,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     show: metrics_enabled,
+    group: "System / Advanced",
+    subgroup: "Metrics",
   },
   pay_as_you_go_section: {
     name: "Pay as you Go",
