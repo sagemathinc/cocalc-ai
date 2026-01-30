@@ -44,7 +44,6 @@ export const TAGS = [
   "Nebius",
   "Cloudflare",
   "Backups",
-  "R2",
   "AI LLM",
   "Theme",
   "On-Prem",
