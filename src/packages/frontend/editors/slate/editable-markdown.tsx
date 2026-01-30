@@ -75,6 +75,7 @@ import { logSlateDebug } from "./slate-utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
 import { ensureRange, pointAtPath } from "./slate-util";
+import { diffBlockSignatures } from "./sync/block-diff";
 import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
@@ -104,6 +105,42 @@ const STYLE: CSS = {
   width: "100%",
   overflow: "auto",
 } as const;
+
+function isBlockPatchEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  const anyWindow = window as any;
+  if (anyWindow.__slateSyncFlags?.blockPatch) return true;
+  return Boolean(anyWindow.__slateBlockPatch);
+}
+
+function applyBlockDiffPatch(
+  editor: SlateEditor,
+  prev: Descendant[],
+  next: Descendant[],
+): boolean {
+  const chunks = diffBlockSignatures(prev, next);
+  const hasChanges = chunks.some((chunk) => chunk.op !== "equal");
+  if (!hasChanges) return true;
+  logSlateDebug("block-patch", { chunks });
+  for (let i = chunks.length - 1; i >= 0; i -= 1) {
+    const chunk = chunks[i];
+    if (chunk.op === "equal") continue;
+    if (chunk.op === "delete") {
+      for (let idx = chunk.prevIndex + chunk.count - 1; idx >= chunk.prevIndex; idx -= 1) {
+        if (idx < 0 || idx >= editor.children.length) continue;
+        Transforms.removeNodes(editor, { at: [idx] });
+      }
+      continue;
+    }
+    if (chunk.op === "insert") {
+      const nodes = next.slice(chunk.nextIndex, chunk.nextIndex + chunk.count);
+      if (nodes.length === 0) continue;
+      const atIndex = Math.min(chunk.nextIndex, editor.children.length);
+      Transforms.insertNodes(editor, nodes, { at: [atIndex] });
+    }
+  }
+  return true;
+}
 
 interface Props {
   value?: string;
@@ -913,15 +950,19 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
+    const blockPatchEnabled = isBlockPatchEnabled() && isMergeFocused();
     const shouldDirectSet =
       previousEditorValue.length <= 1 &&
       nextEditorValue.length >= 40 &&
       !ReactEditor.isFocused(editor);
-    const operations = shouldDirectSet
-      ? []
-      : slateDiff(previousEditorValue, nextEditorValue);
+    let operations: ReturnType<typeof slateDiff> | null = null;
+    if (!blockPatchEnabled) {
+      operations = shouldDirectSet
+        ? []
+        : slateDiff(previousEditorValue, nextEditorValue);
+    }
 
-    if (!shouldDirectSet && operations.length == 0) {
+    if (!shouldDirectSet && !blockPatchEnabled && operations.length == 0) {
       // No ops needed, but still update markdown bookkeeping.
       editor.resetHasUnsavedChanges();
       editor.markdownValue = value;
@@ -941,6 +982,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         }
         //const t = new Date();
 
+        let blockPatchApplied = false;
+        if (blockPatchEnabled && !shouldDirectSet) {
+          editor.syncCausedUpdate = true;
+          blockPatchApplied = applyBlockDiffPatch(
+            editor,
+            previousEditorValue,
+            nextEditorValue,
+          );
+        }
         if (shouldDirectSet) {
           // This is a **MASSIVE** optimization.  E.g., for a few thousand
           // lines markdown file with about 500 top level elements (and lots
@@ -967,13 +1017,16 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           // broadcasting cursors.
           onChange(nextEditorValue);
           // console.log("time to set directly ", new Date() - t);
-        } else {
+        } else if (!blockPatchApplied) {
           // Applying this operation below will trigger
           // an onChange, which it is best to ignore to save time and
           // also so we don't update the source editor (and other browsers)
           // with a view with things like loan $'s escaped.'
           editor.syncCausedUpdate = true;
           // console.log("setEditorToValue: applying operations...", { operations });
+          if (operations == null) {
+            operations = slateDiff(previousEditorValue, nextEditorValue);
+          }
           preserveScrollPosition(editor, operations);
           applyOperations(editor, operations);
           // console.log("time to set via diff", new Date() - t);
