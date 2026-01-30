@@ -126,6 +126,12 @@ type ToValFunc<T> = (
   config?: { [key in SiteSettingsKeys]?: string },
 ) => T;
 
+export type RequiredWhen = {
+  key: string;
+  equals?: string;
+  present?: boolean;
+};
+
 export interface Config {
   readonly name: string;
   readonly desc: string;
@@ -151,6 +157,18 @@ export interface Config {
     name: string;
     label: string;
   };
+  // optional metadata for organizing admin settings UI
+  readonly group?: string;
+  readonly subgroup?: string;
+  readonly order?: number;
+  readonly advanced?: boolean;
+  readonly hidden?: boolean;
+  readonly depends_on?: Readonly<string[]>;
+  readonly required_when?: Readonly<RequiredWhen[]>;
+  readonly wizard_id?: string;
+  readonly action_label?: string;
+  readonly launchpad_only?: boolean;
+  readonly rocket_only?: boolean;
 }
 
 export type SiteSettings = Record<SiteSettingsKeys, Config>;
