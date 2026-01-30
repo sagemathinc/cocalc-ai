@@ -641,12 +641,16 @@ export const site_settings_conf: SiteSettings = {
         : list.join(", ");
     },
     tags: ["I18N"],
+    group: "Branding & UI",
+    subgroup: "Localization",
   },
   google_analytics: {
     name: "Google Analytics",
     desc: `A Google Analytics GA4 tag for tracking usage of your site ("G-...").`,
     default: "",
     show: only_cocalc_com,
+    group: "System / Advanced",
+    subgroup: "Analytics",
   },
   commercial: {
     name: "Commercial",
@@ -656,6 +660,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: commercial_to_val,
     show: only_cocalc_com,
     tags: ["Commercialization"],
+    group: "Payments & Billing",
+    subgroup: "Commercialization",
   },
   max_trial_projects: {
     name: "Maximum Trial Projects",
@@ -665,6 +671,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_nonneg_int,
     show: only_cocalc_com,
     tags: ["Commercialization"],
+    group: "Payments & Billing",
+    subgroup: "Commercialization",
   },
   nonfree_countries: {
     name: "Nonfree Countries",
@@ -673,6 +681,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: split_strings,
     show: only_cocalc_com,
     tags: ["Commercialization"],
+    group: "Payments & Billing",
+    subgroup: "Commercialization",
   },
   datastore: {
     name: "Datastore",
