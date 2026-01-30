@@ -673,7 +673,9 @@ test("sync: remote delete before active block keeps caret in block", async ({
   expect(md).toContain("beta");
 });
 
-test("sync: remote swap keeps caret by index", async ({ page }) => {
+test("sync: remote swap of other blocks keeps caret in active block", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     (window as any).COCALC_SLATE_REMOTE_MERGE = {
       blockPatch: true,
@@ -684,22 +686,32 @@ test("sync: remote swap keeps caret by index", async ({ page }) => {
   await page.goto("http://127.0.0.1:4172/?collab=1");
   await waitForCollabHarness(page);
 
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setRemote(
+      "alpha\n\nbeta\n\ncharlie\n\ndelta\n",
+    );
+  });
+
+  await page.waitForFunction(() => {
+    return window.__slateCollabTest?.getMarkdownA?.().includes("delta");
+  });
+
   const editorA = page.locator('[data-testid="collab-editor-a"]');
   await editorA.locator("text=beta").first().click();
   await page.keyboard.press("End");
 
   await page.evaluate(() => {
-    window.__slateCollabTest?.setRemote("alpha\n\ncharlie\n\nbeta\n");
+    window.__slateCollabTest?.setRemote("alpha\n\nbeta\n\ndelta\n\ncharlie\n");
   });
 
   await page.waitForFunction(() => {
     const md = window.__slateCollabTest?.getMarkdownA?.() ?? "";
-    return md.includes("charlie") && md.trimEnd().endsWith("beta");
+    return md.includes("delta") && md.trimEnd().endsWith("charlie");
   });
 
   await page.keyboard.type("Z");
   const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
-  expect(md ?? "").toMatch(/ch.*Z.*lie|Zcharlie/);
+  expect(md ?? "").toMatch(/betaZ/);
   expect(md).toContain("beta");
 });
 
