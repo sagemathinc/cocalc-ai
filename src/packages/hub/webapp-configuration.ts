@@ -31,6 +31,7 @@ import {
   isLaunchpadProduct,
   isRocketProduct,
 } from "@cocalc/server/launchpad/mode";
+import { getLaunchpadCloudflaredStatus } from "@cocalc/server/launchpad/onprem-sshd";
 
 const L = debug("hub:webapp-config");
 
@@ -162,6 +163,9 @@ export class WebappConfiguration {
     const vID = this.get_vanity_id(host);
     const config = this.data.pub;
     const vanity = await this.get_vanity(vID);
+    const cloudflareStatus = isLaunchpadProduct()
+      ? await getLaunchpadCloudflaredStatus()
+      : undefined;
     return {
       ...config,
       ...vanity,
@@ -172,6 +176,7 @@ export class WebappConfiguration {
         cocalc_product: getCocalcProduct(),
         is_launchpad: isLaunchpadProduct(),
         is_rocket: isRocketProduct(),
+        launchpad_cloudflare_tunnel_status: cloudflareStatus,
       },
     };
   }

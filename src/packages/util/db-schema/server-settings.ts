@@ -127,6 +127,12 @@ export interface Customize {
   project_hosts_local_enabled?: boolean;
   project_hosts_self_host_alpha_enabled?: boolean;
   project_hosts_cloudflare_tunnel_enabled?: boolean;
+  launchpad_cloudflare_tunnel_status?: {
+    enabled: boolean;
+    running: boolean;
+    hostname?: string;
+    error?: string | null;
+  };
   version?: {
     min_project?: number;
     min_browser?: number;

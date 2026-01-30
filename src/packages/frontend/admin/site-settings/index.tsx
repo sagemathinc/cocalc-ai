@@ -17,7 +17,7 @@ import {
 import { isEqual } from "lodash";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Well } from "@cocalc/frontend/antd-bootstrap";
-import { redux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import { Gap, Icon, Loading, Paragraph } from "@cocalc/frontend/components";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
@@ -38,6 +38,10 @@ const { CheckableTag } = AntdTag;
 
 export default function SiteSettings({ close }) {
   const { inc: change } = useCounter();
+  const cloudflareStatus = useTypedRedux(
+    "customize",
+    "launchpad_cloudflare_tunnel_status",
+  );
   const testEmailRef = useRef<InputRef>(null);
   const [_, setDisableTests] = useState<boolean>(false);
   const [state, setState] = useState<State>("load");
@@ -329,8 +333,29 @@ export default function SiteSettings({ close }) {
   }
 
   function Warning() {
+    const showCloudflareWarning =
+      cloudflareStatus?.enabled &&
+      (!cloudflareStatus.running || cloudflareStatus.error);
     return (
       <div>
+        {showCloudflareWarning && (
+          <Alert
+            type="warning"
+            style={{
+              maxWidth: "800px",
+              margin: "0 auto 20px auto",
+              border: "1px solid lightgrey",
+            }}
+            message={
+              <div>
+                <b>Cloudflare tunnel is not healthy.</b>{" "}
+                {cloudflareStatus?.error
+                  ? `Details: ${cloudflareStatus.error}`
+                  : "Project hosts will not work until the tunnel is running."}
+              </div>
+            }
+          />
+        )}
         <Alert
           type="warning"
           style={{

@@ -178,3 +178,40 @@ This is when we also support uses spinning up resources on clouds we integrate, 
 - Decide on a single default R2 region (simplify).
 - Decide if `hub_id` should be stable across re‑installs.
 - Choose a deletion policy for buckets on disable.
+
+---
+
+## Design Notes: Hub Cloudflared Automation (Launchpad)
+
+Goal: when Launchpad runs with Cloudflare tunnel settings enabled, the hub
+should automatically provision and run **one** Cloudflare tunnel that proxies
+**all HTTP traffic** to the hub (admin UI + user UI + project‑host bootstrap).
+
+### Preconditions
+
+- Launchpad mode.
+- `Project Hosts: Cloudflare Tunnel - Enable` is true.
+- `Project Hosts: Cloudflare Tunnel - Account ID` and `API Token` set.
+- `Project Hosts: Domain name` set (zone base, e.g. `cocalc.ai`).
+- `External Domain Name` set (subdomain that will be proxied, e.g. `lp-123.cocalc.ai`).
+- `cloudflared` installed on the hub host.
+
+If any of the above are missing, we **do not** start the tunnel. We log a
+clear error and surface a UI warning for admins.
+
+### Tunnel Provisioning
+
+- Ensure a tunnel exists (create if needed) using Cloudflare API.
+- Create/update DNS for the **external domain** to point at the tunnel.
+- Store tunnel metadata + credentials locally in the hub secrets directory.
+
+### cloudflared Runtime
+
+- Use `cloudflared tunnel run --credentials-file <path>` with a local config file.
+- Config ingress proxies all HTTP traffic to the hub port.
+- If only HTTPS is available locally, set `originRequest.noTLSVerify: true`.
+
+### Admin Visibility
+
+- Console logs clearly indicate missing config or process failures.
+- Admin UI shows a banner when tunnel is enabled but not healthy.

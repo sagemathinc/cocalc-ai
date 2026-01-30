@@ -150,6 +150,12 @@ export interface CustomizeState {
   cocalc_product?: string;
   is_launchpad?: boolean;
   is_rocket?: boolean;
+  launchpad_cloudflare_tunnel_status?: {
+    enabled: boolean;
+    running: boolean;
+    hostname?: string;
+    error?: string | null;
+  };
   // extra setting, injected by the hub, not the DB
   // we expect this to follow "ISO 3166-1 Alpha 2" + K1 (Tor network) + XX (unknown)
   // use a lib like https://github.com/michaelwittig/node-i18n-iso-countries

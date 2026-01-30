@@ -9,8 +9,15 @@ import getPort from "@cocalc/backend/get-port";
 import { secrets } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { restServer } from "@cocalc/backend/sandbox/install";
+import { which } from "@cocalc/backend/which";
 import ssh from "micro-key-producer/ssh.js";
 import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
+import {
+  ensureCloudflareTunnelForHub,
+  hasHubCloudflareTunnel,
+  type CloudflareTunnel,
+} from "@cocalc/server/cloud/cloudflare-tunnel";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
 const logger = getLogger("launchpad:local:sshd");
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -30,6 +37,16 @@ type RestServerState = {
 
 let sshdState: SshdState | null = null;
 let restServerState: RestServerState | null = null;
+type CloudflaredState = {
+  tunnel: CloudflareTunnel;
+  configPath: string;
+  credentialsPath: string;
+  child: ChildProcessWithoutNullStreams;
+  origin: string;
+  error?: string;
+};
+let cloudflaredState: CloudflaredState | null = null;
+let cloudflaredLastError: string | null = null;
 const REST_USER = "cocalc";
 
 function pool() {
@@ -43,6 +60,20 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function clean(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function isEnabled(value: unknown): boolean {
+  if (value === true) return true;
+  if (value == null) return false;
+  const lowered = String(value).trim().toLowerCase();
+  if (!lowered) return false;
+  return !["0", "false", "no", "off"].includes(lowered);
 }
 
 async function hasLocalSelfHostHosts(): Promise<boolean> {
@@ -639,9 +670,207 @@ async function ensureRestAuth(): Promise<{
   }
 }
 
+async function resolveCloudflaredBinary(): Promise<string | null> {
+  return await which("cloudflared");
+}
+
+function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
+  const config = getLaunchpadLocalConfig("local");
+  const httpPort = config.http_port;
+  const httpsPort = config.https_port ?? httpPort;
+  const hasExplicitHttp = !!process.env.COCALC_HTTP_PORT;
+  if (hasExplicitHttp && httpPort) {
+    return { origin: `http://127.0.0.1:${httpPort}`, noTLSVerify: false };
+  }
+  const port = httpsPort ?? httpPort ?? 8443;
+  return { origin: `https://127.0.0.1:${port}`, noTLSVerify: true };
+}
+
+async function writeCloudflaredCredentials(
+  path: string,
+  tunnel: CloudflareTunnel,
+): Promise<void> {
+  const payload = {
+    AccountTag: tunnel.account_id,
+    TunnelID: tunnel.id,
+    TunnelSecret: tunnel.tunnel_secret,
+  };
+  await writeFile(path, JSON.stringify(payload, null, 2), { mode: 0o600 });
+  await chmod(path, 0o600);
+}
+
+async function writeCloudflaredConfig(opts: {
+  path: string;
+  credentialsPath: string;
+  tunnel: CloudflareTunnel;
+  origin: string;
+  noTLSVerify: boolean;
+}): Promise<void> {
+  const ingress: string[] = [
+    "ingress:",
+    `  - hostname: ${opts.tunnel.hostname}`,
+    `    service: ${opts.origin}`,
+  ];
+  if (opts.noTLSVerify) {
+    ingress.push("    originRequest:");
+    ingress.push("      noTLSVerify: true");
+  }
+  ingress.push("  - service: http_status:404");
+  const lines = [
+    `tunnel: ${opts.tunnel.id}`,
+    `credentials-file: ${opts.credentialsPath}`,
+    ...ingress,
+    "",
+  ];
+  await writeFile(opts.path, lines.join("\n"), { mode: 0o600 });
+  await chmod(opts.path, 0o600);
+}
+
+async function loadCloudflaredStateFile(
+  path: string,
+): Promise<CloudflareTunnel | undefined> {
+  if (!(await fileExists(path))) return undefined;
+  try {
+    const raw = await readFile(path, "utf8");
+    const parsed = JSON.parse(raw) as CloudflareTunnel;
+    if (parsed?.id && parsed?.tunnel_secret) {
+      return parsed;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+async function startCloudflared(): Promise<CloudflaredState | null> {
+  cloudflaredLastError = null;
+  if (!isLaunchpadProduct()) {
+    return null;
+  }
+  const settings = await getServerSettings();
+  if (!isEnabled(settings.project_hosts_cloudflare_tunnel_enabled)) {
+    return null;
+  }
+  const missing: string[] = [];
+  if (!clean(settings.project_hosts_cloudflare_tunnel_account_id)) {
+    missing.push("Project Hosts: Cloudflare Tunnel - Account ID");
+  }
+  if (!clean(settings.project_hosts_cloudflare_tunnel_api_token)) {
+    missing.push("Project Hosts: Cloudflare Tunnel - API Token");
+  }
+  if (!clean(settings.project_hosts_dns)) {
+    missing.push("Project Hosts: Domain name");
+  }
+  if (!clean(settings.dns)) {
+    missing.push("External Domain Name");
+  }
+  if (missing.length) {
+    cloudflaredLastError = `Cloudflare tunnel enabled but missing settings: ${missing.join(
+      ", ",
+    )}`;
+    logger.warn(cloudflaredLastError);
+    return null;
+  }
+
+  if (!(await hasHubCloudflareTunnel())) {
+    cloudflaredLastError =
+      "Cloudflare tunnel enabled but configuration is incomplete.";
+    logger.warn(cloudflaredLastError);
+    return null;
+  }
+  if (cloudflaredState) {
+    return cloudflaredState;
+  }
+  const cloudflaredBin = await resolveCloudflaredBinary();
+  if (!cloudflaredBin) {
+    cloudflaredLastError =
+      "cloudflared binary not found; install from https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/";
+    logger.warn(cloudflaredLastError);
+    return null;
+  }
+
+  const cfDir = join(secrets, "launchpad-cloudflare");
+  await mkdir(cfDir, { recursive: true });
+  const tunnelPath = join(cfDir, "tunnel.json");
+  const credentialsPath = join(cfDir, "credentials.json");
+  const configPath = join(cfDir, "config.yml");
+
+  let tunnel: CloudflareTunnel | undefined;
+  try {
+    const existing = await loadCloudflaredStateFile(tunnelPath);
+    tunnel = await ensureCloudflareTunnelForHub({ existing });
+    if (!tunnel) {
+      cloudflaredLastError =
+        "Cloudflare tunnel configuration missing or incomplete.";
+      logger.warn(cloudflaredLastError);
+      return null;
+    }
+    await writeFile(tunnelPath, JSON.stringify(tunnel, null, 2), {
+      mode: 0o600,
+    });
+    await chmod(tunnelPath, 0o600);
+  } catch (err) {
+    cloudflaredLastError = String(err);
+    logger.warn("cloudflare tunnel ensure failed", { err });
+    return null;
+  }
+
+  const { origin, noTLSVerify } = resolveCloudflaredOrigin();
+  await writeCloudflaredCredentials(credentialsPath, tunnel);
+  await writeCloudflaredConfig({
+    path: configPath,
+    credentialsPath,
+    tunnel,
+    origin,
+    noTLSVerify,
+  });
+
+  const args = ["tunnel", "--no-autoupdate", "--config", configPath, "run"];
+  logger.info("starting cloudflared", { hostname: tunnel.hostname, origin });
+  const child = spawn(cloudflaredBin, args, { env: process.env });
+  child.stderr.on("data", (chunk) => {
+    logger.debug(chunk.toString());
+  });
+  child.stdout.on("data", (chunk) => {
+    logger.debug(chunk.toString());
+  });
+  child.on("exit", (code, signal) => {
+    cloudflaredLastError = `cloudflared exited (code=${code}, signal=${signal})`;
+    logger.error("cloudflared exited", { code, signal });
+    cloudflaredState = null;
+  });
+  cloudflaredState = {
+    tunnel,
+    configPath,
+    credentialsPath,
+    child,
+    origin,
+  };
+  return cloudflaredState;
+}
+
+export async function getLaunchpadCloudflaredStatus(): Promise<{
+  enabled: boolean;
+  running: boolean;
+  hostname?: string;
+  error?: string | null;
+}> {
+  const settings = await getServerSettings();
+  const enabled = isEnabled(settings.project_hosts_cloudflare_tunnel_enabled);
+  const running =
+    cloudflaredState?.child?.exitCode == null && cloudflaredState != null;
+  const hostname = cloudflaredState?.tunnel?.hostname;
+  const error =
+    cloudflaredLastError ?? (enabled && !running
+      ? "Cloudflare tunnel is not running."
+      : null);
+  return { enabled, running, hostname, error };
+}
+
 export async function maybeStartLaunchpadOnPremServices(): Promise<void> {
   const state = await startSshd();
   await startRestServer();
+  await startCloudflared();
   if (state) {
     await refreshLaunchpadOnPremAuthorizedKeys();
   }
@@ -668,5 +897,11 @@ export function stopLaunchpadOnPremServices(): void {
       restServerState.child.kill("SIGTERM");
     }
     restServerState = null;
+  }
+  if (cloudflaredState) {
+    if (cloudflaredState.child.exitCode == null) {
+      cloudflaredState.child.kill("SIGTERM");
+    }
+    cloudflaredState = null;
   }
 }
