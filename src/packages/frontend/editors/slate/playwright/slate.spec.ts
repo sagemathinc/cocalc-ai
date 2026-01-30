@@ -608,3 +608,131 @@ test("sync: defer remote change to active block while typing", async ({
   expect(after).toContain("3");
   expect(after).toContain("remote");
 });
+
+test("sync: remote insert before active block keeps caret in block", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 120,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?collab=1");
+  await waitForCollabHarness(page);
+
+  const editorA = page.locator('[data-testid="collab-editor-a"]');
+  await editorA.locator("text=beta").first().click();
+  await page.keyboard.press("End");
+
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setRemote(
+      "alpha\n\nremote inserted\n\nbeta\n\ncharlie\n",
+    );
+  });
+
+  await page.waitForFunction(() => {
+    return window.__slateCollabTest?.getMarkdownA?.().includes("remote inserted");
+  });
+
+  await page.keyboard.type("Z");
+  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  expect(md ?? "").toMatch(/betaZ|Zremote inserted|remoZte inserted/);
+  expect(md).toContain("beta");
+});
+
+test("sync: remote delete before active block keeps caret in block", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 120,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?collab=1");
+  await waitForCollabHarness(page);
+
+  const editorA = page.locator('[data-testid="collab-editor-a"]');
+  await editorA.locator("text=beta").first().click();
+  await page.keyboard.press("End");
+
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setRemote("beta\n\ncharlie\n");
+  });
+
+  await page.waitForFunction(() => {
+    return window.__slateCollabTest?.getMarkdownA?.().startsWith("beta");
+  });
+
+  await page.keyboard.type("Z");
+  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  expect(md ?? "").toMatch(/ch.*Z.*lie/);
+  expect(md).toContain("beta");
+});
+
+test("sync: remote swap keeps caret by index", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 120,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?collab=1");
+  await waitForCollabHarness(page);
+
+  const editorA = page.locator('[data-testid="collab-editor-a"]');
+  await editorA.locator("text=beta").first().click();
+  await page.keyboard.press("End");
+
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setRemote("alpha\n\ncharlie\n\nbeta\n");
+  });
+
+  await page.waitForFunction(() => {
+    const md = window.__slateCollabTest?.getMarkdownA?.() ?? "";
+    return md.includes("charlie") && md.trimEnd().endsWith("beta");
+  });
+
+  await page.keyboard.type("Z");
+  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  expect(md).toContain("charZlie");
+  expect(md).toContain("beta");
+});
+
+test("sync: remote change to other block while typing stays applied", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 120,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?collab=1");
+  await waitForCollabHarness(page);
+
+  const editorA = page.locator('[data-testid="collab-editor-a"]');
+  await editorA.locator("text=beta").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("123");
+
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setRemote("alpha remote\n\nbeta\n\ncharlie\n");
+  });
+
+  await page.waitForFunction(() => {
+    return window.__slateCollabTest?.getMarkdownA?.().includes("alpha remote");
+  });
+
+  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  expect(md).toContain("alpha remote");
+  expect(md?.replace(/[0-9]/g, "")).toContain("beta");
+  expect(md).toContain("1");
+  expect(md).toContain("2");
+  expect(md).toContain("3");
+});
