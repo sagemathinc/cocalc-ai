@@ -71,7 +71,7 @@ import { useEmojis } from "./slate-emojis";
 import { useMentions } from "./slate-mentions";
 import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
 import type { RenderElementProps } from "./slate-react";
-import { logSlateDebug } from "./slate-utils/slate-debug";
+import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
 import { ensureRange, pointAtPath } from "./slate-util";
@@ -112,11 +112,7 @@ const STYLE: CSS = {
 } as const;
 
 function isBlockPatchEnabled(): boolean {
-  if (typeof window === "undefined") return false;
-  const anyWindow = window as any;
-  if (anyWindow.COCALC_SLATE_REMOTE_MERGE?.blockPatch) return true;
-  if (anyWindow.__slateSyncFlags?.blockPatch) return true;
-  return Boolean(anyWindow.__slateBlockPatch);
+  return true;
 }
 
 function isBlockPatchDebugEnabled(): boolean {
@@ -138,6 +134,15 @@ function applyBlockDiffPatchWithDebug(
     logSlateDebug("block-patch", { chunks });
   }
   return { applied, chunks };
+}
+
+function debugSyncLog(type: string, data?: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  if (!(window as any).__slateDebugLog) return;
+  ensureSlateDebug();
+  logSlateDebug(`sync:${type}`, data);
+  // eslint-disable-next-line no-console
+  console.log(`[slate-sync] ${type}`, data ?? {});
 }
 
 interface Props {
@@ -222,7 +227,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     registerEditor,
     saveDebounceMs = SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
-    ignoreRemoteMergesWhileFocused = true,
     selectionRef,
     style,
     submitMentionsRef,
@@ -246,8 +250,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     typeof window === "undefined"
       ? {}
       : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
-  const ignoreRemoteWhileFocused =
-    remoteMergeConfig.ignoreWhileFocused ?? ignoreRemoteMergesWhileFocused;
+  const ignoreRemoteWhileFocused = false;
   const mergeIdleMs =
     remoteMergeConfig.idleMs ?? remoteMergeIdleMs ?? saveDebounceMs ?? SAVE_DEBOUNCE_MS;
 
@@ -425,9 +428,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
     if (!force && shouldDeferRemoteMerge()) {
+      debugSyncLog("pending-remote:defer", {
+        focused: isMergeFocused(),
+        idleMs: mergeIdleMsRef.current,
+      });
       schedulePendingRemoteMerge();
       return;
     }
+    debugSyncLog("pending-remote:flush", {
+      focused: isMergeFocused(),
+      force,
+    });
     pendingRemoteRef.current = null;
     setPendingRemoteIndicator(false);
     mergeHelperRef.current.handleRemote({
@@ -937,10 +948,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         });
 
     if (lastSetValueRef.current == normalizedValue) {
+      debugSyncLog("value-skip:last-set");
       lastSetValueRef.current = null;
       return;
     }
     if (normalizedValue == editor.getMarkdownValue()) {
+      debugSyncLog("value-skip:same-as-editor");
       // nothing to do, and in fact doing something
       // could be really annoying, since we don't want to
       // autoformat via markdown everything immediately,
@@ -948,10 +961,21 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
-    const blockPatchEnabled = isBlockPatchEnabled() && isMergeFocused();
-    const activeBlockIndex = editor.selection?.anchor?.path?.[0];
-    const recentlyTyped =
-      Date.now() - lastLocalEditAtRef.current < mergeIdleMsRef.current;
+  const blockPatchEnabled = isBlockPatchEnabled() && isMergeFocused();
+  const debugLogEnabled =
+    typeof window !== "undefined" && Boolean((window as any).__slateDebugLog);
+  const blockPatchDebugEnabled = isBlockPatchDebugEnabled() || debugLogEnabled;
+  debugSyncLog("value-normalized", {
+    focused: isMergeFocused(),
+    blockPatchEnabled,
+    blockPatchDebugEnabled,
+    sameAsLastSet: lastSetValueRef.current == normalizedValue,
+    sameAsEditor: normalizedValue == editor.getMarkdownValue(),
+    valueLength: normalizedValue.length,
+  });
+  const activeBlockIndex = editor.selection?.anchor?.path?.[0];
+  const recentlyTyped =
+    Date.now() - lastLocalEditAtRef.current < mergeIdleMsRef.current;
     const shouldDirectSet =
       previousEditorValue.length <= 1 &&
       nextEditorValue.length >= 40 &&
@@ -963,13 +987,21 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         : slateDiff(previousEditorValue, nextEditorValue);
     }
 
+    if (blockPatchDebugEnabled) {
+      ensureSlateDebug();
+    }
     if (blockPatchEnabled) {
       const chunks = diffBlockSignatures(previousEditorValue, nextEditorValue);
       const defer = shouldDeferBlockPatch(chunks, activeBlockIndex, recentlyTyped);
       if (defer) {
+        debugSyncLog("block-patch:defer-active", {
+          activeBlockIndex,
+          recentlyTyped,
+          chunks,
+        });
         pendingRemoteRef.current = value;
         schedulePendingRemoteMerge();
-        if (isBlockPatchDebugEnabled()) {
+        if (blockPatchDebugEnabled) {
           logSlateDebug("block-patch:defer-active", {
             activeBlockIndex,
             chunks,
@@ -1020,6 +1052,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             nextEditorValue,
           );
           blockPatchApplied = blockPatchResult.applied;
+          debugSyncLog("block-patch:apply", {
+            applied: blockPatchApplied,
+            chunks: blockPatchResult.chunks,
+          });
           if (blockPatchApplied && previousSelection) {
             const remapped = remapSelectionAfterBlockPatchWithSentinels(
               editor,
@@ -1030,6 +1066,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             );
             if (remapped) {
               editor.selection = remapped;
+              debugSyncLog("block-patch:remap-selection", {
+                selection: remapped,
+              });
             }
           }
         }

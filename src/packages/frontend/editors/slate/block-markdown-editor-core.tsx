@@ -50,6 +50,8 @@ import type { SlateEditor } from "./types";
 import { IS_MACOS } from "./keyboard/register";
 import { moveListItemDown, moveListItemUp } from "./format/list-move";
 import { emptyParagraph, isWhitespaceParagraph } from "./padding";
+import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
+import { remapSelectionInDocWithSentinels } from "./sync/block-diff";
 import {
   buildCodeBlockDecorations,
   getPrismGrammar,
@@ -58,6 +60,15 @@ import type { CodeBlock, CodeLine } from "./elements/code-block/types";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
+
+function debugSyncLog(type: string, data?: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  if (!(window as any).__slateDebugLog) return;
+  ensureSlateDebug();
+  logSlateDebug(`block-sync:${type}`, data);
+  // eslint-disable-next-line no-console
+  console.log(`[slate-sync:block] ${type}`, data ?? {});
+}
 
 const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
 const USE_BLOCK_GAP_CURSOR = false;
@@ -199,6 +210,9 @@ function splitMarkdownToBlocks(markdown: string): string[] {
 interface BlockRowEditorProps {
   index: number;
   markdown: string;
+  isFocused?: boolean;
+  lastLocalEditAtRef: React.MutableRefObject<number>;
+  lastRemoteMergeAtRef: React.MutableRefObject<number>;
   onChangeMarkdown: (index: number, markdown: string) => void;
   onDeleteBlock: (index: number) => void;
   onFocus?: () => void;
@@ -249,6 +263,9 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const {
       index,
       markdown,
+      isFocused = false,
+      lastLocalEditAtRef,
+      lastRemoteMergeAtRef,
       onChangeMarkdown,
       onDeleteBlock,
       onFocus,
@@ -343,7 +360,40 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           ),
         ),
       );
-      const skipReset = skipSelectionResetRef.current.has(index);
+      const prevSelection = editor.selection;
+      const now = Date.now();
+      const localAgeMs = now - lastLocalEditAtRef.current;
+      const remoteAgeMs = now - lastRemoteMergeAtRef.current;
+      const shouldRemap =
+        isFocused && prevSelection && remoteAgeMs < 1000 && localAgeMs > 200;
+      debugSyncLog("remap-check", {
+        index,
+        isFocused,
+        localAgeMs,
+        remoteAgeMs,
+        shouldRemap,
+      });
+      if (shouldRemap) {
+        const remapped = remapSelectionInDocWithSentinels(
+          value,
+          nextValue,
+          prevSelection,
+        );
+        if (remapped) {
+          debugSyncLog("remap-apply", { selection: remapped });
+          skipSelectionResetRef.current.add(index);
+          editor.selection = remapped;
+        }
+      }
+      const skipReset =
+        skipSelectionResetRef.current.has(index) ||
+        (isFocused && localAgeMs < 200);
+      debugSyncLog("selection-reset-check", {
+        index,
+        skipReset,
+        isFocused,
+        localAgeMs,
+      });
       if (skipReset) {
         skipSelectionResetRef.current.delete(index);
         const selection = editor.selection;
@@ -351,17 +401,31 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           const root = { children: nextValue } as Node;
           const anchorOk = Node.has(root, selection.anchor.path);
           const focusOk = Node.has(root, selection.focus.path);
+          debugSyncLog("selection-validate", {
+            index,
+            anchorOk,
+            focusOk,
+          });
           if (!anchorOk || !focusOk) {
             editor.selection = null;
             editor.marks = null;
           }
         }
       } else {
+        debugSyncLog("selection-reset:clear", { index });
         editor.selection = null;
         editor.marks = null;
       }
       setValue(nextValue);
-    }, [markdown, editor]);
+    }, [
+      markdown,
+      editor,
+      index,
+      isFocused,
+      value,
+      lastLocalEditAtRef,
+      lastRemoteMergeAtRef,
+    ]);
 
     const renderElement = useCallback(
       (props: RenderElementProps) => <Element {...props} />,
@@ -1096,7 +1160,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     onFocus,
     saveDebounceMs = DEFAULT_SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
-    ignoreRemoteMergesWhileFocused = true,
     style,
     value,
     minimal,
@@ -1179,12 +1242,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     new SimpleInputMerge(initialValue),
   );
   const lastLocalEditAtRef = useRef<number>(0);
+  const lastRemoteMergeAtRef = useRef<number>(0);
   const remoteMergeConfig =
     typeof window === "undefined"
       ? {}
       : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
-  const ignoreRemoteWhileFocused =
-    remoteMergeConfig.ignoreWhileFocused ?? ignoreRemoteMergesWhileFocused;
+  const ignoreRemoteWhileFocused = false;
   const mergeIdleMs =
     remoteMergeConfig.idleMs ??
     remoteMergeIdleMs ??
@@ -1199,6 +1262,11 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const updatePendingRemoteIndicator = useCallback(
     (remote: string, local: string) => {
       const preview = mergeHelperRef.current.previewMerge({ remote, local });
+      debugSyncLog("pending-indicator:preview", {
+        changed: preview.changed,
+        remoteLength: remote.length,
+        localLength: local.length,
+      });
       if (!preview.changed) {
         pendingRemoteRef.current = null;
         mergeHelperRef.current.noteApplied(preview.merged);
@@ -1229,6 +1297,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
 
   useEffect(() => {
     const nextValue = value ?? "";
+    debugSyncLog("value-prop", {
+      focusedIndex,
+      sameAsLastSet: nextValue === lastSetValueRef.current,
+      sameAsValueRef: nextValue === valueRef.current,
+      pendingRemote: pendingRemoteRef.current != null,
+    });
     if (nextValue === lastSetValueRef.current) {
       lastSetValueRef.current = null;
       return;
@@ -1240,6 +1314,9 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       focusedIndex != null &&
       !allowFocusedValueUpdate
     ) {
+      debugSyncLog("value-prop:defer-focused", {
+        focusedIndex,
+      });
       updatePendingRemoteIndicator(nextValue, joinBlocks(blocksRef.current));
       return;
     }
@@ -1274,6 +1351,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       window.clearTimeout(pendingRemoteTimerRef.current);
     }
     const idleMs = mergeIdleMsRef.current;
+    debugSyncLog("pending-remote:schedule", { idleMs });
     pendingRemoteTimerRef.current = window.setTimeout(() => {
       pendingRemoteTimerRef.current = null;
       flushPendingRemoteMerge();
@@ -1284,11 +1362,16 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
     if (!force && shouldDeferRemoteMerge()) {
+      debugSyncLog("pending-remote:defer", {
+        idleMs: mergeIdleMsRef.current,
+      });
       schedulePendingRemoteMerge();
       return;
     }
+    debugSyncLog("pending-remote:flush", { force });
     pendingRemoteRef.current = null;
     setPendingRemoteIndicator(false);
+    lastRemoteMergeAtRef.current = Date.now();
     mergeHelperRef.current.handleRemote({
       remote: pending,
       getLocal: () => joinBlocks(blocksRef.current),
@@ -1308,6 +1391,11 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     if (actions._syncstring == null) return;
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
+      debugSyncLog("syncstring:change", {
+        focusedIndex,
+        remoteLength: remote.length,
+        shouldDefer: shouldDeferRemoteMerge(),
+      });
       if (ignoreRemoteWhileFocused && focusedIndex != null) {
         updatePendingRemoteIndicator(remote, joinBlocks(blocksRef.current));
         return;
@@ -1317,6 +1405,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         schedulePendingRemoteMerge();
         return;
       }
+      debugSyncLog("syncstring:apply", { remoteLength: remote.length });
+      lastRemoteMergeAtRef.current = Date.now();
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: () => joinBlocks(blocksRef.current),
@@ -1659,6 +1749,9 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       <BlockRowEditor
         index={index}
         markdown={markdown}
+        isFocused={focusedIndex === index}
+        lastLocalEditAtRef={lastLocalEditAtRef}
+        lastRemoteMergeAtRef={lastRemoteMergeAtRef}
         onChangeMarkdown={handleBlockChange}
         onDeleteBlock={deleteBlockAtIndex}
         onFocus={() => {

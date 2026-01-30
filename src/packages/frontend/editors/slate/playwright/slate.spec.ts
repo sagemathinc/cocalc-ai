@@ -796,3 +796,48 @@ test("sync: remote edit in active line keeps caret at end", async ({
   const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
   expect(md).toContain("remote this is a stringZ");
 });
+
+test("sync:block editor remote edit in active line keeps caret at end", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    (window as any).COCALC_SLATE_REMOTE_MERGE = {
+      blockPatch: true,
+      ignoreWhileFocused: false,
+      idleMs: 120,
+    };
+  });
+  await page.goto("http://127.0.0.1:4172/?collabBlock=1");
+  await waitForCollabHarness(page);
+
+  const editorA = page.locator('[data-testid="collab-editor-a"]');
+
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setRemote(
+      "block A\n\nthis is a string\n\nblock C\n",
+    );
+  });
+
+  await page.waitForFunction(() => {
+    return window.__slateCollabTest?.getMarkdownA?.().includes("this is a string");
+  });
+
+  await editorA.locator("text=this is a string").first().click();
+  await page.keyboard.press("End");
+
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setRemote(
+      "block A\n\nremote this is a string\n\nblock C\n",
+    );
+  });
+
+  await page.waitForFunction(() => {
+    return window.__slateCollabTest?.getMarkdownA?.().includes("remote this is a string");
+  });
+  await page.waitForTimeout(200);
+
+  await page.keyboard.type("Z");
+
+  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
+  expect(md).toContain("remote this is a stringZ");
+});

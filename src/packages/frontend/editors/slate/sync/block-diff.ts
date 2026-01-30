@@ -280,6 +280,42 @@ function pointFromBlockOffset(
   return Editor.start({ children: [block] } as any, [0]);
 }
 
+function pointOffsetInDoc(
+  doc: Descendant[],
+  pathInDoc: Path,
+  offset: number,
+): number {
+  let total = 0;
+  const root = { children: doc } as Descendant;
+  for (const [node, path] of Node.texts(root)) {
+    if (Path.equals(path, pathInDoc)) {
+      return total + offset;
+    }
+    total += node.text.length;
+  }
+  return total;
+}
+
+function pointFromDocOffset(doc: Descendant[], offset: number): Point {
+  let total = 0;
+  let lastPath: Path | null = null;
+  let lastLength = 0;
+  const root = { children: doc } as Descendant;
+  for (const [node, path] of Node.texts(root)) {
+    const nextTotal = total + node.text.length;
+    if (offset <= nextTotal) {
+      return { path, offset: Math.max(0, offset - total) };
+    }
+    total = nextTotal;
+    lastPath = path;
+    lastLength = node.text.length;
+  }
+  if (lastPath) {
+    return { path: lastPath, offset: lastLength };
+  }
+  return Editor.start({ children: doc } as any, [0]);
+}
+
 function insertAt(text: string, index: number, marker: string): string {
   return text.slice(0, index) + marker + text.slice(index);
 }
@@ -399,11 +435,90 @@ export function remapSelectionAfterBlockPatchWithSentinels(
     return base;
   }
 
-  const anchorPoint = pointFromBlockOffset(nextBlock, mappedIndex, anchorIdx);
+  const markerIndices =
+    anchorMarker === focusMarker
+      ? [anchorIdx]
+      : [anchorIdx, focusIdx];
+  const adjustIndex = (idx: number) =>
+    idx - markerIndices.filter((marker) => marker < idx).length;
+
+  const anchorPoint = pointFromBlockOffset(
+    nextBlock,
+    mappedIndex,
+    adjustIndex(anchorIdx),
+  );
   const focusPoint =
     anchorMarker === focusMarker
       ? anchorPoint
-      : pointFromBlockOffset(nextBlock, mappedIndex, focusIdx);
+      : pointFromBlockOffset(nextBlock, mappedIndex, adjustIndex(focusIdx));
+
+  return { anchor: anchorPoint, focus: focusPoint };
+}
+
+export function remapSelectionInDocWithSentinels(
+  prevDoc: Descendant[],
+  nextDoc: Descendant[],
+  prevSelection: Range,
+): Range | null {
+  const prevText = Node.string({ children: prevDoc } as any);
+  const nextText = Node.string({ children: nextDoc } as any);
+  if (!prevText) return null;
+
+  const anchorOffset = pointOffsetInDoc(
+    prevDoc,
+    prevSelection.anchor.path,
+    prevSelection.anchor.offset,
+  );
+  const focusOffset = pointOffsetInDoc(
+    prevDoc,
+    prevSelection.focus.path,
+    prevSelection.focus.offset,
+  );
+
+  let anchorMarker = pickSentinel(prevText, 0xe000);
+  let focusMarker = pickSentinel(prevText + anchorMarker, 0xe001);
+  let textWithMarkers = prevText;
+  if (anchorOffset === focusOffset) {
+    focusMarker = anchorMarker;
+  }
+
+  if (anchorOffset <= focusOffset) {
+    textWithMarkers = insertAt(textWithMarkers, anchorOffset, anchorMarker);
+    if (anchorOffset !== focusOffset) {
+      textWithMarkers = insertAt(
+        textWithMarkers,
+        focusOffset + anchorMarker.length,
+        focusMarker,
+      );
+    }
+  } else {
+    textWithMarkers = insertAt(textWithMarkers, focusOffset, focusMarker);
+    textWithMarkers = insertAt(
+      textWithMarkers,
+      anchorOffset + focusMarker.length,
+      anchorMarker,
+    );
+  }
+
+  const patch = make_patch(prevText, nextText);
+  const [patchedText] = apply_patch(patch, textWithMarkers);
+
+  const anchorIdx = patchedText.indexOf(anchorMarker);
+  const focusIdx = patchedText.indexOf(focusMarker);
+  if (anchorIdx < 0 || focusIdx < 0) return null;
+
+  const markerIndices =
+    anchorMarker === focusMarker
+      ? [anchorIdx]
+      : [anchorIdx, focusIdx];
+  const adjustIndex = (idx: number) =>
+    idx - markerIndices.filter((marker) => marker < idx).length;
+
+  const anchorPoint = pointFromDocOffset(nextDoc, adjustIndex(anchorIdx));
+  const focusPoint =
+    anchorMarker === focusMarker
+      ? anchorPoint
+      : pointFromDocOffset(nextDoc, adjustIndex(focusIdx));
 
   return { anchor: anchorPoint, focus: focusPoint };
 }

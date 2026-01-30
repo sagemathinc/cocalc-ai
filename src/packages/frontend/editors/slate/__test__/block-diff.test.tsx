@@ -7,6 +7,7 @@ import {
   diffBlockSignatures,
   remapSelectionAfterBlockPatch,
   remapSelectionAfterBlockPatchWithSentinels,
+  remapSelectionInDocWithSentinels,
   shouldDeferBlockPatch,
 } from "../sync/block-diff";
 
@@ -76,6 +77,14 @@ function applyPatchAndRemapSelectionWithSentinels(
     editor.selection = remapped;
   }
   return editor;
+}
+
+function remapDocWithSentinels(
+  prev: Descendant[],
+  next: Descendant[],
+  selection: { anchor: { path: number[]; offset: number }; focus: { path: number[]; offset: number } },
+) {
+  return remapSelectionInDocWithSentinels(prev, next, selection);
 }
 
 describe("block diff signatures", () => {
@@ -466,6 +475,56 @@ describe("block diff signatures", () => {
     });
     const selection = editor.selection!;
     expect(selection.anchor.offset).toBe(3);
-    expect(selection.focus.offset).toBe(6);
+    expect(selection.focus.offset).toBe(5);
+  });
+
+  test("doc sentinel remap keeps caret at end after prefix insert", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "this is a string" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "remote this is a string" }] },
+    ];
+    const selection = {
+      anchor: { path: [0, 0], offset: "this is a string".length },
+      focus: { path: [0, 0], offset: "this is a string".length },
+    };
+    const remapped = remapDocWithSentinels(prev, next, selection);
+    expect(remapped?.anchor.path).toEqual([0, 0]);
+    expect(remapped?.anchor.offset).toBe("remote this is a string".length);
+  });
+
+  test("doc sentinel remap shifts range across prefix insert", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "abcdef" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "ZZabcdef" }] },
+    ];
+    const selection = {
+      anchor: { path: [0, 0], offset: 1 },
+      focus: { path: [0, 0], offset: 4 },
+    };
+    const remapped = remapDocWithSentinels(prev, next, selection);
+    expect(remapped?.anchor.offset).toBe(3);
+    expect(remapped?.focus.offset).toBe(6);
+  });
+
+  test("doc sentinel remap handles multi-block selection path", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "alpha" }] },
+      { type: "paragraph", children: [{ text: "bravo" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "alpha" }] },
+      { type: "paragraph", children: [{ text: "ZZbravo" }] },
+    ];
+    const selection = {
+      anchor: { path: [1, 0], offset: 5 },
+      focus: { path: [1, 0], offset: 5 },
+    };
+    const remapped = remapDocWithSentinels(prev, next, selection);
+    expect(remapped?.anchor.path).toEqual([1, 0]);
+    expect(remapped?.anchor.offset).toBe(7);
   });
 });

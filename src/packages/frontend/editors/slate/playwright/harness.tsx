@@ -100,6 +100,7 @@ function Harness(): React.JSX.Element {
       ? new URLSearchParams()
       : new URLSearchParams(window.location.search);
   const blockMode = params.get("block") === "1";
+  const collabBlockMode = params.get("collabBlock") === "1";
   const collabMode = params.get("collab") === "1";
   const autoformatMode = params.get("autoformat") === "1";
   const initialMarkdown = "a\n\n```\nfoo\n```\n";
@@ -184,6 +185,102 @@ function Harness(): React.JSX.Element {
             getValueRef={getValueRef}
           />
         </div>
+      </HarnessErrorBoundary>
+    );
+  }
+
+  if (collabBlockMode) {
+    class FakeSyncstring {
+      value: string;
+      listeners: Set<() => void>;
+      constructor(initial: string) {
+        this.value = initial;
+        this.listeners = new Set();
+      }
+      to_str() {
+        return this.value;
+      }
+      set(value: string) {
+        this.value = value;
+        this.emit();
+      }
+      on(event: string, cb: () => void) {
+        if (event === "change") {
+          this.listeners.add(cb);
+        }
+      }
+      removeListener(event: string, cb: () => void) {
+        if (event === "change") {
+          this.listeners.delete(cb);
+        }
+      }
+      emit() {
+        for (const cb of this.listeners) {
+          cb();
+        }
+      }
+    }
+
+    const [markdown, setMarkdown] = useState<string>("alpha\n\nbeta\n\ncharlie\n");
+    const syncRef = useRef(new FakeSyncstring(markdown));
+    const getValueRefA = useRef<() => string>(() => "");
+    const getValueRefB = useRef<() => string>(() => "");
+
+    useEffect(() => {
+      window.__slateCollabTest = {
+        getMarkdownA: () => getValueRefA.current?.() ?? "",
+        getMarkdownB: () => getValueRefB.current?.() ?? "",
+        setRemote: (value) => {
+          syncRef.current.set(value);
+        },
+        setSelectionA: () => undefined,
+        setSelectionB: () => undefined,
+        getSelectionA: () => null,
+        getSelectionB: () => null,
+      };
+    }, []);
+
+    const actions = {
+      _syncstring: syncRef.current,
+      set_value: (value: string) => {
+        syncRef.current.set(value);
+        setMarkdown(value);
+      },
+      syncstring_commit: () => undefined,
+    };
+
+    return (
+      <HarnessErrorBoundary>
+        <FrameContext.Provider value={defaultFrameContext}>
+          <div style={{ padding: 16, width: 640, height: 360, display: "flex", gap: 16 }}>
+            <div style={{ width: 300 }} data-testid="collab-editor-a">
+              <BlockMarkdownEditor
+                value={markdown}
+                actions={actions}
+                minimal={true}
+                height="320px"
+                noVfill={true}
+                hidePath={true}
+                ignoreRemoteMergesWhileFocused={false}
+                remoteMergeIdleMs={150}
+                getValueRef={getValueRefA}
+              />
+            </div>
+            <div style={{ width: 300 }} data-testid="collab-editor-b">
+              <BlockMarkdownEditor
+                value={markdown}
+                actions={actions}
+                minimal={true}
+                height="320px"
+                noVfill={true}
+                hidePath={true}
+                ignoreRemoteMergesWhileFocused={false}
+                remoteMergeIdleMs={150}
+                getValueRef={getValueRefB}
+              />
+            </div>
+          </div>
+        </FrameContext.Provider>
       </HarnessErrorBoundary>
     );
   }
