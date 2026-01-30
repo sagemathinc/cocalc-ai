@@ -114,6 +114,7 @@ const STYLE: CSS = {
 function isBlockPatchEnabled(): boolean {
   if (typeof window === "undefined") return false;
   const anyWindow = window as any;
+  if (anyWindow.COCALC_SLATE_REMOTE_MERGE?.blockPatch) return true;
   if (anyWindow.__slateSyncFlags?.blockPatch) return true;
   return Boolean(anyWindow.__slateBlockPatch);
 }
@@ -121,6 +122,7 @@ function isBlockPatchEnabled(): boolean {
 function isBlockPatchDebugEnabled(): boolean {
   if (typeof window === "undefined") return false;
   const anyWindow = window as any;
+  if (anyWindow.COCALC_SLATE_REMOTE_MERGE?.blockPatchDebug) return true;
   if (anyWindow.__slateSyncFlags?.blockPatchDebug) return true;
   return Boolean(anyWindow.__slateBlockPatchDebug);
 }
