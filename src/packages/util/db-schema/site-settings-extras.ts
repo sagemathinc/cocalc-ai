@@ -286,6 +286,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat",
   },
   conat_password: {
     name: "Conat Password",
@@ -293,6 +295,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     password: true,
     tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat",
   },
   software_licenses_heading: {
     name: "Software Licensing",
