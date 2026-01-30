@@ -980,7 +980,7 @@ export const EXTRAS: SettingsExtras = {
   },
   project_hosts_cloudflare_tunnel_host_suffix: {
     name: "Project Hosts: Cloudflare Tunnel - Hostname Suffix",
-    desc: "Optional suffix for project-host tunnel hostnames. Defaults to `-<External Domain Name>` if blank. Examples: -hosts.cocalc.ai or .dev.cocalc.ai",
+    desc: "Optional suffix for project-host tunnel hostnames. Defaults to `-<External Domain Name>` if blank. Examples: -hosts.cocalc.ai or .dev.cocalc.ai. Note: nested subdomains like .dev.cocalc.ai require a certificate that covers that wildcard (e.g., Cloudflare Advanced Certificate Manager).",
     default: "",
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud", "Cloudflare"],
