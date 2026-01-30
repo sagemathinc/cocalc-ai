@@ -671,6 +671,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     show: only_onprem,
     to_val: to_bool,
+    group: "System / Advanced",
+    subgroup: "On-Prem",
   },
   onprem_quota_heading: {
     name: "On-prem Quotas",
@@ -679,6 +681,8 @@ export const site_settings_conf: SiteSettings = {
     show: only_onprem,
     type: "header",
     tags: ["On-Prem"],
+    group: "System / Advanced",
+    subgroup: "On-Prem Quotas",
   },
   default_quotas: {
     name: "Default Quotas",
@@ -690,6 +694,8 @@ export const site_settings_conf: SiteSettings = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["On-Prem"],
+    group: "System / Advanced",
+    subgroup: "On-Prem Quotas",
   },
   max_upgrades: {
     name: "Maximum Quota Upgrades",
@@ -701,6 +707,8 @@ export const site_settings_conf: SiteSettings = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["On-Prem"],
+    group: "System / Advanced",
+    subgroup: "On-Prem Quotas",
   },
   iframe_comm_hosts: {
     name: "IFrame embedding",
@@ -962,5 +970,7 @@ export const site_settings_conf: SiteSettings = {
     desc: "If enabled, then information about what users do in the frontend browser gets temporarily recorded in the user_tracking table of the database.",
     default: "no",
     valid: only_booleans,
+    group: "System / Advanced",
+    subgroup: "Analytics",
   },
 } as const;
