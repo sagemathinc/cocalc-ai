@@ -51,6 +51,7 @@ export default function SiteSettings({ close }) {
   const [filterStr, setFilterStr] = useState<string>("");
   const [filterTag, setFilterTag] = useState<Tag | null>(null);
   const [showHidden, setShowHidden] = useState<boolean>(false);
+  const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
   const [activeWizard, setActiveWizard] = useState<string | null>(null);
   const editedRef = useRef<Data | null>(null);
   const savedRef = useRef<Data | null>(null);
@@ -114,6 +115,66 @@ export default function SiteSettings({ close }) {
     const saved = savedRef.current[name];
     if (clearSecretsRef.current?.[name]) return true;
     return !isEqual(edited, saved);
+  }
+
+  function shouldShowSetting(name: string, conf): boolean {
+    if (data == null) return false;
+    if (conf.hidden && !showHidden) return false;
+    if (conf.cocalc_only) {
+      if (!document.location.host.endsWith("cocalc.com")) {
+        return false;
+      }
+    }
+    const isHiddenByShow = typeof conf.show == "function" && !conf.show(data);
+    if (isHiddenByShow && !showHidden) {
+      return false;
+    }
+    if (conf.advanced && !showAdvanced && !filterStr && !filterTag) {
+      return false;
+    }
+    if (filterTag) {
+      if (!conf.tags) return false;
+      if (!conf.tags.includes(filterTag)) {
+        return false;
+      }
+    }
+    if (filterStr) {
+      const { tags, name: title, desc } = conf;
+      const f = filterStr.toLowerCase();
+      const match_any_tag = tags && tags.includes(f as any);
+      const x = [name, title, desc]
+        .join(" ")
+        .toLowerCase()
+        .replace(/-/g, " ")
+        .replace(/_/g, " ");
+      if (!x.includes(f) && !match_any_tag) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function isRequiredWhen(conf): boolean {
+    const reqs = conf.required_when;
+    if (!reqs || !data) return false;
+    return reqs.every((req) => {
+      const raw = data[req.key];
+      if (req.equals !== undefined) {
+        return raw === req.equals;
+      }
+      if (req.present !== undefined) {
+        return req.present ? !!raw : !raw;
+      }
+      return !!raw;
+    });
+  }
+
+  function isMissingValue(name: string, conf): boolean {
+    const rawValue = data?.[name] ?? conf.default ?? "";
+    if (conf.password) {
+      return !(isSet?.[name] ?? rawValue);
+    }
+    return `${rawValue}`.trim() === "";
   }
 
   function getModifiedSettings() {
@@ -384,58 +445,127 @@ export default function SiteSettings({ close }) {
     );
   }
 
+  const setupOverview = useMemo(() => {
+    if (data == null) return [];
+    const groupMap = new Map<string, { count: number; names: string[] }>();
+    for (const configData of [site_settings_conf, EXTRAS]) {
+      for (const name of keys(configData)) {
+        const conf = configData[name];
+        if (!conf.required_when) continue;
+        if (!isRequiredWhen(conf)) continue;
+        if (!isMissingValue(name, conf)) continue;
+        const group = conf.group ?? "Other";
+        const entry = groupMap.get(group) ?? { count: 0, names: [] };
+        entry.count += 1;
+        entry.names.push(conf.name ?? name);
+        groupMap.set(group, entry);
+      }
+    }
+    return [...groupMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [data, isSet, showHidden, showAdvanced]);
+
   const editRows = useMemo(() => {
+    const allItems: { name: string; conf: any }[] = [];
+    for (const configData of [site_settings_conf, EXTRAS]) {
+      for (const name of keys(configData)) {
+        const conf = configData[name];
+        allItems.push({ name, conf });
+      }
+    }
+    const visibleItems = allItems.filter(({ name, conf }) =>
+      shouldShowSetting(name, conf),
+    );
+    const groupMap = new Map<
+      string,
+      Map<string, { name: string; conf: any }[]>
+    >();
+    for (const item of visibleItems) {
+      const group = item.conf.group ?? "Other";
+      const subgroup = item.conf.subgroup ?? "General";
+      const subMap =
+        groupMap.get(group) ??
+        new Map<string, { name: string; conf: any }[]>();
+      const list = subMap.get(subgroup) ?? [];
+      list.push(item);
+      subMap.set(subgroup, list);
+      groupMap.set(group, subMap);
+    }
+    const groupEntries = [...groupMap.entries()].sort((a, b) => {
+      if (a[0] === "Other") return 1;
+      if (b[0] === "Other") return -1;
+      return a[0].localeCompare(b[0]);
+    });
+
     return (
       <>
-        {[site_settings_conf, EXTRAS].map((configData) =>
-          keys(configData).map((name) => {
-            const conf = configData[name];
+        {groupEntries.map(([groupName, subgroups]) => (
+          <div key={groupName} style={{ marginTop: "16px" }}>
+            <h3 style={{ marginBottom: "6px" }}>{groupName}</h3>
+            {[...subgroups.entries()]
+              .sort((a, b) => a[0].localeCompare(b[0]))
+              .map(([subgroupName, items]) => (
+                <div key={`${groupName}-${subgroupName}`}>
+                  <h4 style={{ margin: "10px 0 4px 0", color: "#666" }}>
+                    {subgroupName}
+                  </h4>
+                  {items
+                    .sort((a, b) => {
+                      const orderA = a.conf.order ?? 1000;
+                      const orderB = b.conf.order ?? 1000;
+                      if (orderA !== orderB) return orderA - orderB;
+                      return a.conf.name.localeCompare(b.conf.name);
+                    })
+                    .map(({ name, conf }) => {
+                      // This is a weird special case, where the valid value depends on other values
+                      if (name === "default_llm") {
+                        const c = site_settings_conf.selectable_llms;
+                        const llms =
+                          c.to_val?.(data?.selectable_llms ?? c.default) ?? [];
+                        const o = EXTRAS.ollama_configuration;
+                        const oll = Object.keys(
+                          o.to_val?.(data?.ollama_configuration) ?? {},
+                        ).map(toOllamaModel);
+                        const a = EXTRAS.ollama_configuration;
+                        const oaic = data?.custom_openai_configuration;
+                        const oai = (
+                          oaic != null ? Object.keys(a.to_val?.(oaic) ?? {}) : []
+                        ).map(toCustomOpenAIModel);
+                        if (Array.isArray(llms)) {
+                          conf.valid = [...llms, ...oll, ...oai];
+                        }
+                      }
 
-            // This is a weird special case, where the valid value depends on other values
-            if (name === "default_llm") {
-              const c = site_settings_conf.selectable_llms;
-              const llms = c.to_val?.(data?.selectable_llms ?? c.default) ?? [];
-              const o = EXTRAS.ollama_configuration;
-              const oll = Object.keys(
-                o.to_val?.(data?.ollama_configuration) ?? {},
-              ).map(toOllamaModel);
-              const a = EXTRAS.ollama_configuration;
-              const oaic = data?.custom_openai_configuration;
-              const oai = (
-                oaic != null ? Object.keys(a.to_val?.(oaic) ?? {}) : []
-              ).map(toCustomOpenAIModel);
-              if (Array.isArray(llms)) {
-                conf.valid = [...llms, ...oll, ...oai];
-              }
-            }
-
-            return (
-              <RenderRow
-                filterStr={filterStr}
-                filterTag={filterTag}
-                key={name}
-                name={name}
-                conf={conf}
-                data={data}
-                isSet={isSet}
-                isClearing={clearSecretsRef.current}
-                update={update}
-                isReadonly={isReadonly}
-                onChangeEntry={onChangeEntry}
-                onJsonEntryChange={onJsonEntryChange}
-                isModified={isModified}
-                isHeader={isHeader(name)}
-                saveSingleSetting={saveSingleSetting}
-                onClearSecret={onClearSecret}
-                showHidden={showHidden}
-                onOpenWizard={openWizard}
-              />
-            );
-          }),
-        )}
+                      return (
+                        <RenderRow
+                          filterStr={filterStr}
+                          filterTag={filterTag}
+                          key={name}
+                          name={name}
+                          conf={conf}
+                          data={data}
+                          isSet={isSet}
+                          isClearing={clearSecretsRef.current}
+                          update={update}
+                          isReadonly={isReadonly}
+                          onChangeEntry={onChangeEntry}
+                          onJsonEntryChange={onJsonEntryChange}
+                          isModified={isModified}
+                          isHeader={isHeader(name)}
+                          saveSingleSetting={saveSingleSetting}
+                          onClearSecret={onClearSecret}
+                          showHidden={showHidden}
+                          showAdvanced={showAdvanced}
+                          onOpenWizard={openWizard}
+                        />
+                      );
+                    })}
+                </div>
+              ))}
+          </div>
+        ))}
       </>
     );
-  }, [state, data, isSet, filterStr, filterTag, showHidden]);
+  }, [state, data, isSet, filterStr, filterTag, showHidden, showAdvanced]);
 
   const activeFilter = !filterStr.trim() || filterTag;
 
@@ -467,6 +597,24 @@ export default function SiteSettings({ close }) {
           setError={setError}
           style={{ margin: "30px auto", maxWidth: "800px" }}
         />
+        {setupOverview.length > 0 && (
+          <Alert
+            showIcon
+            type="warning"
+            style={{ maxWidth: "900px", margin: "20px auto" }}
+            message="Setup overview"
+            description={
+              <ul style={{ marginBottom: 0 }}>
+                {setupOverview.map(([group, info]) => (
+                  <li key={group}>
+                    <strong>{group}</strong>: {info.count} missing required
+                    setting{info.count === 1 ? "" : "s"}
+                  </li>
+                ))}
+              </ul>
+            }
+          />
+        )}
         <GcpServiceAccountWizard
           open={activeWizard === "gcp-service-account-json"}
           onClose={closeWizard}
@@ -508,6 +656,13 @@ export default function SiteSettings({ close }) {
                 onChange={(value) => setShowHidden(value)}
               />{" "}
               Show hidden
+              <div style={{ marginTop: "6px" }}>
+                <Switch
+                  checked={showAdvanced}
+                  onChange={(value) => setShowAdvanced(value)}
+                />{" "}
+                Show advanced
+              </div>
             </div>
           </Col>
         </Row>

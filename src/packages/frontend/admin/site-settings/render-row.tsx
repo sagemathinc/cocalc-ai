@@ -29,6 +29,7 @@ interface RenderRowProps {
   saveSingleSetting: (name: string) => void;
   onClearSecret: (name: string) => void;
   showHidden: boolean;
+  showAdvanced: boolean;
   onOpenWizard?: (name: string) => void;
 }
 
@@ -49,10 +50,15 @@ export function RenderRow({
   saveSingleSetting,
   onClearSecret,
   showHidden,
+  showAdvanced,
   onOpenWizard,
 }: RenderRowProps) {
   if (data == null) return null;
 
+  if (conf.hidden && !showHidden) return null;
+  if (conf.advanced && !showAdvanced && !filterStr && !filterTag) {
+    return null;
+  }
   // if tags are used, we're strictly filtering by them
   if (filterTag) {
     if (!conf.tags) return null;
