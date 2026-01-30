@@ -660,9 +660,17 @@ export async function deleteCloudflareTunnel(opts: {
   const hostname =
     opts.tunnel?.hostname ??
     (opts.host_id ? `host-${opts.host_id}.${config.dns}` : undefined);
-  const zoneIdValue = await getZoneId(config.token, config.dns);
+  let zoneIdValue: string | undefined;
+  try {
+    zoneIdValue = await getZoneId(config.token, config.dns);
+  } catch (err) {
+    logger.warn("cloudflare tunnel zone lookup failed; skipping dns cleanup", {
+      err,
+      dns: config.dns,
+    });
+  }
 
-  if (opts.tunnel?.record_id) {
+  if (zoneIdValue && opts.tunnel?.record_id) {
     try {
       await cloudflareRequest(
         config.token,
@@ -674,7 +682,7 @@ export async function deleteCloudflareTunnel(opts: {
         logger.warn("cloudflare tunnel dns delete failed", { err });
       }
     }
-  } else if (hostname) {
+  } else if (zoneIdValue && hostname) {
     try {
       const records = await listDnsRecords(config.token, zoneIdValue, hostname);
       for (const record of records) {
