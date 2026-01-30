@@ -352,6 +352,7 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: openai_enabled,
     tags: ["AI LLM", "OpenAI"],
+    required_when: [{ key: "openai_enabled", equals: "yes" }],
   },
   google_vertexai_key: {
     name: "Google Generative AI API Key",
@@ -360,6 +361,7 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: vertexai_enabled,
     tags: ["AI LLM", "OpenAI"],
+    required_when: [{ key: "google_vertexai_enabled", equals: "yes" }],
   },
   mistral_api_key: {
     name: "Mistral AI API Key",
@@ -368,6 +370,7 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: mistral_enabled,
     tags: ["AI LLM"],
+    required_when: [{ key: "mistral_enabled", equals: "yes" }],
   },
   anthropic_api_key: {
     name: "Anthropic API Key",
@@ -376,6 +379,7 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: anthropic_enabled,
     tags: ["AI LLM"],
+    required_when: [{ key: "anthropic_enabled", equals: "yes" }],
   },
   ollama_configuration: {
     name: "Ollama Configuration",
