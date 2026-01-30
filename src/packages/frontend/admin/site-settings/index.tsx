@@ -154,6 +154,12 @@ export default function SiteSettings({ close }) {
     return true;
   }
 
+  function inferGroup(conf): string {
+    const tags = conf.tags ?? [];
+    if (tags.includes("Cloudflare")) return "Cloudflare";
+    return tags[0] ?? "Other";
+  }
+
   function isRequiredWhen(conf): boolean {
     const reqs = conf.required_when;
     if (!reqs || !data) return false;
@@ -480,7 +486,7 @@ export default function SiteSettings({ close }) {
       Map<string, { name: string; conf: any }[]>
     >();
     for (const item of visibleItems) {
-      const group = item.conf.group ?? "Other";
+      const group = item.conf.group ?? inferGroup(item.conf);
       const subgroup = item.conf.subgroup ?? "General";
       const subMap =
         groupMap.get(group) ??
