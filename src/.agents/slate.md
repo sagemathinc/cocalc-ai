@@ -12,8 +12,9 @@
 - [ ] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
   - [ ] this is also needed for jumping from table of contents entries to the document.
 
-- [ ] #bug chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens almost every single time. 
-  - consider just removing sync entirely and using localStorage? That could fix this and is much better.
+- [ ] #ux paste: just ALWAYS show the code block, even if only one line; it's just more predictable.
+
+- [ ] #bug chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens every single time even with sync now enabled. 
 
 - [ ] #bug type one character into mode-line popover for code and focus goes back into editor corrupted it with later keystrokes.
 

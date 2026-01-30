@@ -70,6 +70,18 @@ function debugSyncLog(type: string, data?: Record<string, unknown>): void {
   console.log(`[slate-sync:block] ${type}`, data ?? {});
 }
 
+function normalizePointForDoc(root: Node, point: { path: number[]; offset: number }, edge: "start" | "end") {
+  try {
+    const node = Node.get(root, point.path);
+    if (Text.isText(node)) {
+      return point;
+    }
+    return Editor[edge](root as any, point.path);
+  } catch {
+    return null;
+  }
+}
+
 const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
 const USE_BLOCK_GAP_CURSOR = false;
 const EMPTY_SEARCH: SearchHook = {
@@ -210,6 +222,7 @@ function splitMarkdownToBlocks(markdown: string): string[] {
 interface BlockRowEditorProps {
   index: number;
   markdown: string;
+  remoteVersion?: number;
   isFocused?: boolean;
   lastLocalEditAtRef: React.MutableRefObject<number>;
   lastRemoteMergeAtRef: React.MutableRefObject<number>;
@@ -263,6 +276,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const {
       index,
       markdown,
+      remoteVersion = 0,
       isFocused = false,
       lastLocalEditAtRef,
       lastRemoteMergeAtRef,
@@ -346,8 +360,10 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const [change, setChange] = useState<number>(0);
     const lastMarkdownRef = useRef<string>(markdown);
 
+    const lastRemoteVersionRef = useRef<number>(remoteVersion);
     useEffect(() => {
-      if (markdown === lastMarkdownRef.current) return;
+      if (remoteVersion === lastRemoteVersionRef.current) return;
+      lastRemoteVersionRef.current = remoteVersion;
       lastMarkdownRef.current = markdown;
       syncCacheRef.current = {};
       editor.syncCache = syncCacheRef.current;
@@ -372,6 +388,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         localAgeMs,
         remoteAgeMs,
         shouldRemap,
+        remoteVersion,
       });
       if (shouldRemap) {
         const remapped = remapSelectionInDocWithSentinels(
@@ -380,14 +397,20 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           prevSelection,
         );
         if (remapped) {
+          const root = { children: nextValue } as Node;
+          const anchor = normalizePointForDoc(root, remapped.anchor, "start");
+          const focus = normalizePointForDoc(root, remapped.focus, "end");
+          if (anchor && focus) {
+            remapped.anchor = anchor;
+            remapped.focus = focus;
+          }
           debugSyncLog("remap-apply", { selection: remapped });
           skipSelectionResetRef.current.add(index);
           editor.selection = remapped;
         }
       }
       const skipReset =
-        skipSelectionResetRef.current.has(index) ||
-        (isFocused && localAgeMs < 200);
+        skipSelectionResetRef.current.has(index) || localAgeMs < 200;
       debugSyncLog("selection-reset-check", {
         index,
         skipReset,
@@ -399,8 +422,10 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         const selection = editor.selection;
         if (selection) {
           const root = { children: nextValue } as Node;
-          const anchorOk = Node.has(root, selection.anchor.path);
-          const focusOk = Node.has(root, selection.focus.path);
+          const anchor = normalizePointForDoc(root, selection.anchor, "start");
+          const focus = normalizePointForDoc(root, selection.focus, "end");
+          const anchorOk = anchor != null;
+          const focusOk = focus != null;
           debugSyncLog("selection-validate", {
             index,
             anchorOk,
@@ -409,6 +434,8 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           if (!anchorOk || !focusOk) {
             editor.selection = null;
             editor.marks = null;
+          } else {
+            editor.selection = { anchor, focus };
           }
         }
       } else {
@@ -418,6 +445,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       }
       setValue(nextValue);
     }, [
+      remoteVersion,
       markdown,
       editor,
       index,
@@ -1184,6 +1212,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     splitMarkdownToBlocks(initialValue),
   );
   const blocksRef = useRef<string[]>(blocks);
+  const remoteVersionRef = useRef<number[]>(blocks.map(() => 0));
+  const syncRemoteVersionLength = useCallback((nextBlocks: string[]) => {
+    const prevVersions = remoteVersionRef.current;
+    if (prevVersions.length === nextBlocks.length) return;
+    remoteVersionRef.current = nextBlocks.map((_, idx) => prevVersions[idx] ?? 0);
+  }, []);
   useEffect(() => {
     blocksRef.current = blocks;
   }, [blocks]);
@@ -1281,12 +1315,29 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [],
   );
 
+  const bumpRemoteVersions = useCallback((nextBlocks: string[]) => {
+    const prevBlocks = blocksRef.current;
+    const prevVersions = remoteVersionRef.current;
+    if (nextBlocks.length !== prevBlocks.length) {
+      remoteVersionRef.current = nextBlocks.map(
+        (_, idx) => (prevVersions[idx] ?? 0) + 1,
+      );
+      return;
+    }
+    const nextVersions = nextBlocks.map((block, idx) => {
+      if (block !== prevBlocks[idx]) return (prevVersions[idx] ?? 0) + 1;
+      return prevVersions[idx] ?? 0;
+    });
+    remoteVersionRef.current = nextVersions;
+  }, []);
+
   const setBlocksFromValue = useCallback((markdown: string) => {
     valueRef.current = markdown;
     const nextBlocks = splitMarkdownToBlocks(markdown);
+    bumpRemoteVersions(nextBlocks);
     blocksRef.current = nextBlocks;
     setBlocks(nextBlocks);
-  }, []);
+  }, [bumpRemoteVersions]);
 
   const getFullMarkdown = useCallback(() => joinBlocks(blocksRef.current), []);
 
@@ -1455,6 +1506,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         blocksRef.current = next;
         return next;
       });
+      syncRemoteVersionLength(blocksRef.current);
       if (is_current) saveBlocksDebounced();
       if (
         ignoreRemoteWhileFocused &&
@@ -1473,6 +1525,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       is_current,
       read_only,
       saveBlocksDebounced,
+      syncRemoteVersionLength,
       updatePendingRemoteIndicator,
     ],
   );
@@ -1532,6 +1585,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         blocksRef.current = next;
         return next;
       });
+      syncRemoteVersionLength(blocksRef.current);
       if (is_current) saveBlocksDebounced();
       const position: "start" | "end" =
         focusPosition ?? (initialText ? "end" : "start");
@@ -1544,7 +1598,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         align: "center",
       });
     },
-    [is_current, saveBlocksDebounced],
+    [is_current, saveBlocksDebounced, syncRemoteVersionLength],
   );
 
   const setBlockText = useCallback(
@@ -1561,9 +1615,10 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         blocksRef.current = next;
         return next;
       });
+      syncRemoteVersionLength(blocksRef.current);
       if (is_current) saveBlocksDebounced();
     },
-    [is_current, saveBlocksDebounced],
+    [is_current, saveBlocksDebounced, syncRemoteVersionLength],
   );
 
   const deleteBlockAtIndex = useCallback(
@@ -1578,12 +1633,13 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         blocksRef.current = next;
         return next;
       });
+      syncRemoteVersionLength(blocksRef.current);
       if (is_current) saveBlocksDebounced();
       const targetIndex = Math.max(0, index - 1);
       pendingFocusRef.current = { index: targetIndex, position: "end" };
       virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "center" });
     },
-    [is_current, saveBlocksDebounced, setGapCursorState],
+    [is_current, saveBlocksDebounced, setGapCursorState, syncRemoteVersionLength],
   );
 
   const selectionRange = useMemo(() => {
@@ -1741,6 +1797,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
 
   const renderBlock = (index: number) => {
     const markdown = blocks[index] ?? "";
+    const remoteVersion = remoteVersionRef.current[index] ?? 0;
     const isSelected =
       selectionRange != null &&
       index >= selectionRange.start &&
@@ -1749,6 +1806,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       <BlockRowEditor
         index={index}
         markdown={markdown}
+        remoteVersion={remoteVersion}
         isFocused={focusedIndex === index}
         lastLocalEditAtRef={lastLocalEditAtRef}
         lastRemoteMergeAtRef={lastRemoteMergeAtRef}
