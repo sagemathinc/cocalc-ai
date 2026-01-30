@@ -75,7 +75,11 @@ import { logSlateDebug } from "./slate-utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { slatePointToMarkdownPosition } from "./sync";
 import { ensureRange, pointAtPath } from "./slate-util";
-import { diffBlockSignatures } from "./sync/block-diff";
+import {
+  applyBlockDiffPatch,
+  diffBlockSignatures,
+  remapSelectionAfterBlockPatch,
+} from "./sync/block-diff";
 import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
@@ -113,33 +117,24 @@ function isBlockPatchEnabled(): boolean {
   return Boolean(anyWindow.__slateBlockPatch);
 }
 
-function applyBlockDiffPatch(
+function isBlockPatchDebugEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  const anyWindow = window as any;
+  if (anyWindow.__slateSyncFlags?.blockPatchDebug) return true;
+  return Boolean(anyWindow.__slateBlockPatchDebug);
+}
+
+function applyBlockDiffPatchWithDebug(
   editor: SlateEditor,
   prev: Descendant[],
   next: Descendant[],
-): boolean {
+): { applied: boolean; chunks: ReturnType<typeof diffBlockSignatures> } {
   const chunks = diffBlockSignatures(prev, next);
-  const hasChanges = chunks.some((chunk) => chunk.op !== "equal");
-  if (!hasChanges) return true;
-  logSlateDebug("block-patch", { chunks });
-  for (let i = chunks.length - 1; i >= 0; i -= 1) {
-    const chunk = chunks[i];
-    if (chunk.op === "equal") continue;
-    if (chunk.op === "delete") {
-      for (let idx = chunk.prevIndex + chunk.count - 1; idx >= chunk.prevIndex; idx -= 1) {
-        if (idx < 0 || idx >= editor.children.length) continue;
-        Transforms.removeNodes(editor, { at: [idx] });
-      }
-      continue;
-    }
-    if (chunk.op === "insert") {
-      const nodes = next.slice(chunk.nextIndex, chunk.nextIndex + chunk.count);
-      if (nodes.length === 0) continue;
-      const atIndex = Math.min(chunk.nextIndex, editor.children.length);
-      Transforms.insertNodes(editor, nodes, { at: [atIndex] });
-    }
+  const { applied } = applyBlockDiffPatch(editor, prev, next, chunks);
+  if (isBlockPatchDebugEnabled()) {
+    logSlateDebug("block-patch", { chunks });
   }
-  return true;
+  return { applied, chunks };
 }
 
 interface Props {
@@ -962,7 +957,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         : slateDiff(previousEditorValue, nextEditorValue);
     }
 
-    if (!shouldDirectSet && !blockPatchEnabled && operations.length == 0) {
+    if (
+      !shouldDirectSet &&
+      !blockPatchEnabled &&
+      operations != null &&
+      operations.length == 0
+    ) {
       // No ops needed, but still update markdown bookkeeping.
       editor.resetHasUnsavedChanges();
       editor.markdownValue = value;
@@ -972,9 +972,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     Editor.withoutNormalizing(editor, () => {
       try {
         if (!ReactEditor.isUsingWindowing(editor)) {
+          const operationsLength = operations?.length ?? 0;
           logSlateDebug("external-set-editor", {
             strategy: shouldDirectSet ? "direct" : "diff",
-            operations: operations.length,
+            operations: operationsLength,
             focused: isMergeFocused(),
             current: editor.getMarkdownValue(),
             next: normalizedValue,
@@ -983,13 +984,30 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         //const t = new Date();
 
         let blockPatchApplied = false;
+        const previousSelection = editor.selection
+          ? {
+              anchor: { ...editor.selection.anchor },
+              focus: { ...editor.selection.focus },
+            }
+          : null;
         if (blockPatchEnabled && !shouldDirectSet) {
           editor.syncCausedUpdate = true;
-          blockPatchApplied = applyBlockDiffPatch(
+          const blockPatchResult = applyBlockDiffPatchWithDebug(
             editor,
             previousEditorValue,
             nextEditorValue,
           );
+          blockPatchApplied = blockPatchResult.applied;
+          if (blockPatchApplied && previousSelection) {
+            const remapped = remapSelectionAfterBlockPatch(
+              editor,
+              previousSelection,
+              blockPatchResult.chunks,
+            );
+            if (remapped) {
+              editor.selection = remapped;
+            }
+          }
         }
         if (shouldDirectSet) {
           // This is a **MASSIVE** optimization.  E.g., for a few thousand

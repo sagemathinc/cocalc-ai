@@ -2,7 +2,11 @@ import "../elements/types";
 
 import { createEditor, Descendant, Editor, Transforms } from "slate";
 
-import { applyBlockDiffPatch, diffBlockSignatures } from "../sync/block-diff";
+import {
+  applyBlockDiffPatch,
+  diffBlockSignatures,
+  remapSelectionAfterBlockPatch,
+} from "../sync/block-diff";
 
 function applyAndExpect(prev: Descendant[], next: Descendant[]) {
   const editor = createEditor();
@@ -18,10 +22,33 @@ function getSelectedBlockText(editor: Editor): string | null {
   if (!editor.selection) return null;
   const entry = Editor.above(editor, {
     at: editor.selection.anchor,
-    match: (node) => Editor.isBlock(editor, node),
+    match: (node) => Editor.isBlock(editor, node as any),
   });
   if (!entry) return null;
   return Editor.string(editor, entry[1]);
+}
+
+function applyPatchAndRemapSelection(
+  prev: Descendant[],
+  next: Descendant[],
+  selection: { path: number[]; offset: number },
+) {
+  const editor = createEditor();
+  editor.children = prev;
+  Transforms.select(editor, selection);
+  const chunks = diffBlockSignatures(prev, next);
+  Editor.withoutNormalizing(editor, () => {
+    applyBlockDiffPatch(editor, prev, next, chunks);
+  });
+  const remapped = remapSelectionAfterBlockPatch(
+    editor,
+    { anchor: selection, focus: selection },
+    chunks,
+  );
+  if (remapped) {
+    editor.selection = remapped;
+  }
+  return editor;
 }
 
 describe("block diff signatures", () => {
@@ -163,6 +190,7 @@ describe("block diff signatures", () => {
       {
         type: "code_block",
         info: "js",
+        fence: true,
         children: [{ type: "code_line", children: [{ text: "console.log(1);" }] }],
       },
       {
@@ -180,6 +208,7 @@ describe("block diff signatures", () => {
       {
         type: "code_block",
         info: "js",
+        fence: true,
         children: [{ type: "code_line", children: [{ text: "console.log(2);" }] }],
       },
       {
@@ -311,6 +340,40 @@ describe("block diff signatures", () => {
     Transforms.select(editor, { path: [0, 0], offset: 0 });
     Editor.withoutNormalizing(editor, () => {
       applyBlockDiffPatch(editor, prev, next);
+    });
+    expect(getSelectedBlockText(editor)).toBe("C");
+  });
+
+  test("remapSelectionAfterBlockPatch keeps selection in unchanged block", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "keep" }] },
+      { type: "paragraph", children: [{ text: "tail" }] },
+      { type: "paragraph", children: [{ text: "new" }] },
+    ];
+    const editor = applyPatchAndRemapSelection(prev, next, {
+      path: [0, 0],
+      offset: 2,
+    });
+    expect(getSelectedBlockText(editor)).toBe("keep");
+  });
+
+  test("remapSelectionAfterBlockPatch moves selection to next block on delete", () => {
+    const prev: Descendant[] = [
+      { type: "paragraph", children: [{ text: "A" }] },
+      { type: "paragraph", children: [{ text: "B" }] },
+      { type: "paragraph", children: [{ text: "C" }] },
+    ];
+    const next: Descendant[] = [
+      { type: "paragraph", children: [{ text: "A" }] },
+      { type: "paragraph", children: [{ text: "C" }] },
+    ];
+    const editor = applyPatchAndRemapSelection(prev, next, {
+      path: [1, 0],
+      offset: 0,
     });
     expect(getSelectedBlockText(editor)).toBe("C");
   });

@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Descendant, Element, Node, Text } from "slate";
+import {
+  Descendant,
+  Editor,
+  Element,
+  Node,
+  Point,
+  Range,
+  Text,
+  Transforms,
+} from "slate";
 import { diff_main } from "@cocalc/util/dmp";
 import { hash_string } from "@cocalc/util/misc";
 
@@ -124,3 +133,112 @@ export function diffBlockSignatures(
   return chunks;
 }
 
+export function applyBlockDiffPatch(
+  editor: Editor,
+  prev: Descendant[],
+  next: Descendant[],
+  chunks: BlockDiffChunk[] = diffBlockSignatures(prev, next),
+): { chunks: BlockDiffChunk[]; applied: boolean } {
+  const hasChanges = chunks.some((chunk) => chunk.op !== "equal");
+  if (!hasChanges) {
+    return { chunks, applied: true };
+  }
+  // First apply deletes in reverse order to avoid index shifting.
+  for (let i = chunks.length - 1; i >= 0; i -= 1) {
+    const chunk = chunks[i];
+    if (chunk.op !== "delete") continue;
+    for (
+      let idx = chunk.prevIndex + chunk.count - 1;
+      idx >= chunk.prevIndex;
+      idx -= 1
+    ) {
+      if (idx < 0 || idx >= editor.children.length) continue;
+      Transforms.removeNodes(editor, { at: [idx] });
+    }
+  }
+  // Then apply inserts in forward order.
+  for (let i = 0; i < chunks.length; i += 1) {
+    const chunk = chunks[i];
+    if (chunk.op !== "insert") continue;
+    const nodes = next.slice(chunk.nextIndex, chunk.nextIndex + chunk.count);
+    if (nodes.length === 0) continue;
+    const atIndex = Math.min(chunk.nextIndex, editor.children.length);
+    Transforms.insertNodes(editor, nodes, { at: [atIndex] });
+  }
+  return { chunks, applied: true };
+}
+
+function mapPointByBlockDiff(
+  editor: Editor,
+  point: Point,
+  chunks: BlockDiffChunk[],
+): { point: Point; deleted: boolean } | null {
+  const prevIndex = point.path[0] ?? 0;
+  let mappedIndex = 0;
+  let deleted = false;
+  let found = false;
+  for (const chunk of chunks) {
+    if (chunk.op === "equal") {
+      if (
+        prevIndex >= chunk.prevIndex &&
+        prevIndex < chunk.prevIndex + chunk.count
+      ) {
+        mappedIndex = chunk.nextIndex + (prevIndex - chunk.prevIndex);
+        deleted = false;
+        found = true;
+        break;
+      }
+      continue;
+    }
+    if (chunk.op === "delete") {
+      if (
+        prevIndex >= chunk.prevIndex &&
+        prevIndex < chunk.prevIndex + chunk.count
+      ) {
+        mappedIndex = chunk.nextIndex;
+        deleted = true;
+        found = true;
+        break;
+      }
+    }
+  }
+  if (!found) {
+    mappedIndex = Math.min(prevIndex, editor.children.length - 1);
+    deleted = mappedIndex !== prevIndex;
+  }
+  if (mappedIndex < 0 || mappedIndex >= editor.children.length) {
+    return null;
+  }
+  if (deleted) {
+    const start = Editor.start(editor, [mappedIndex]);
+    return { point: start, deleted: true };
+  }
+  const path = [mappedIndex, ...point.path.slice(1)];
+  try {
+    const mapped = Editor.point(editor, path, { edge: "start" });
+    return { point: { path: mapped.path, offset: point.offset }, deleted: false };
+  } catch (err) {
+    const start = Editor.start(editor, [mappedIndex]);
+    return { point: start, deleted: true };
+  }
+}
+
+export function remapSelectionAfterBlockPatch(
+  editor: Editor,
+  prevSelection: Range,
+  chunks: BlockDiffChunk[],
+): Range | null {
+  const anchorMap = mapPointByBlockDiff(editor, prevSelection.anchor, chunks);
+  const focusMap = mapPointByBlockDiff(editor, prevSelection.focus, chunks);
+  if (!anchorMap || !focusMap) return null;
+  if (anchorMap.deleted || focusMap.deleted) {
+    return {
+      anchor: anchorMap.point,
+      focus: anchorMap.point,
+    };
+  }
+  return {
+    anchor: anchorMap.point,
+    focus: focusMap.point,
+  };
+}
