@@ -21,7 +21,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import { Gap, Icon, Loading, Paragraph } from "@cocalc/frontend/components";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
-import { TAGS, Tag } from "@cocalc/util/db-schema/site-defaults";
+import { TAGS, Tag, to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { deep_copy, keys } from "@cocalc/util/misc";
 import { site_settings_conf } from "@cocalc/util/schema";
@@ -65,6 +65,15 @@ export default function SiteSettings({ close }) {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    const details = document.querySelectorAll(
+      "details[data-admin-subgroup]",
+    ) as NodeListOf<HTMLDetailsElement>;
+    details.forEach((el) => {
+      el.open = expandAll;
+    });
+  }, [expandAll, filterStr, filterTag, showAdvanced, showHidden, data]);
 
   async function load(): Promise<void> {
     setState("load");
@@ -167,6 +176,14 @@ export default function SiteSettings({ close }) {
     return reqs.every((req) => {
       const raw = data[req.key];
       if (req.equals !== undefined) {
+        if (
+          req.equals === "yes" ||
+          req.equals === "no" ||
+          req.equals === "true" ||
+          req.equals === "false"
+        ) {
+          return to_bool(raw) === to_bool(req.equals);
+        }
         return raw === req.equals;
       }
       if (req.present !== undefined) {
@@ -597,6 +614,7 @@ export default function SiteSettings({ close }) {
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([subgroupName, items]) => (
                 <details
+                  data-admin-subgroup
                   key={`${groupName}-${subgroupName}-${expandAll ? "open" : "closed"}`}
                   open={expandAll}
                 >
