@@ -52,6 +52,7 @@ export default function SiteSettings({ close }) {
   const [filterTag, setFilterTag] = useState<Tag | null>(null);
   const [showHidden, setShowHidden] = useState<boolean>(false);
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
+  const [expandAll, setExpandAll] = useState<boolean>(true);
   const [activeWizard, setActiveWizard] = useState<string | null>(null);
   const editedRef = useRef<Data | null>(null);
   const savedRef = useRef<Data | null>(null);
@@ -497,6 +498,14 @@ export default function SiteSettings({ close }) {
     return status;
   }, [data, isSet, showHidden, showAdvanced]);
 
+  const groupMissingCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const [group, info] of setupOverview) {
+      counts.set(group, info.count);
+    }
+    return counts;
+  }, [setupOverview]);
+
   const editRows = useMemo(() => {
     const allItems: { name: string; conf: any }[] = [];
     for (const configData of [site_settings_conf, EXTRAS]) {
@@ -578,11 +587,19 @@ export default function SiteSettings({ close }) {
                   {groupStatus.get(groupName) ? "✓" : "!"}
                 </span>
               )}
+              {groupMissingCounts.get(groupName) != null && (
+                <span style={{ color: "#a00", fontSize: "85%" }}>
+                  {groupMissingCounts.get(groupName)} missing
+                </span>
+              )}
             </div>
             {[...subgroups.entries()]
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([subgroupName, items]) => (
-                <details key={`${groupName}-${subgroupName}`} open>
+                <details
+                  key={`${groupName}-${subgroupName}`}
+                  open={expandAll}
+                >
                   <summary
                     style={{
                       margin: "10px 0 4px 0",
@@ -760,6 +777,13 @@ export default function SiteSettings({ close }) {
                   onChange={(value) => setShowAdvanced(value)}
                 />{" "}
                 Show advanced
+              </div>
+              <div style={{ marginTop: "6px" }}>
+                <Switch
+                  checked={expandAll}
+                  onChange={(value) => setExpandAll(value)}
+                />{" "}
+                Expand all
               </div>
             </div>
           </Col>
