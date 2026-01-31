@@ -5,7 +5,7 @@
 
 import React, { CSSProperties } from "react";
 import type { RenderLeafProps } from "./slate-react";
-import { startswith } from "../../../util/misc";
+import { startswith } from "@cocalc/util/misc";
 
 // CODE_STYLE -- copied from GitHub
 const CODE_STYLE = {
