@@ -61,8 +61,27 @@
       "jws@<3.2.3": ">=3.2.3"
     },
     "onlyBuiltDependencies": [
+      "@cocalc/gcloud-pricing-calculator",
+      "@cocalc/primus-multiplex",
+      "@cocalc/widgets",
+      "@nestjs/core",
+      "@openapitools/openapi-generator-cli",
+      "@parcel/watcher",
+      "bufferutil",
+      "core-js",
+      "diskusage",
+      "dtrace-provider",
+      "electron",
+      "es5-ext",
+      "esbuild",
       "fs-ext",
-      "node-pty"
+      "node-pty",
+      "protobufjs",
+      "sharp",
+      "storage-engine",
+      "unrs-resolver",
+      "utf-8-validate",
+      "zeromq"
     ]
   }
 }
