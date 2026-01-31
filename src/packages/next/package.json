@@ -24,7 +24,7 @@
     "next.config.js"
   ],
   "scripts": {
-    "preinstall": "pnpm only-allow pnpm",
+    "preinstall": "npx only-allow pnpm",
     "build": "NEXT_TELEMETRY_DISABLED=1 pnpm patch-openapi && rm -rf .next && pnpm build-dev && NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS='--max_old_space_size=8000' next build && pnpm generate-openapi",
     "build-dev": "pnpm patch-openapi && pnpm next telemetry disable >/dev/null && rm -rf dist && pnpm software && pnpm generate-api-v2-manifest && ../node_modules/.bin/tsc --build tsconfig-dist.json && pnpm generate-openapi",
     "ts-build": "pnpm generate-api-v2-manifest && ../node_modules/.bin/tsc --build tsconfig-dist.json",
