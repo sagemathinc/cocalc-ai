@@ -1020,11 +1020,12 @@ export const EXTRAS: SettingsExtras = {
   },
   nebius_credentials_json: {
     name: "Project Hosts: Nebius - Credentials JSON",
-    desc: "Nebius credentials.json content (subject-credentials). See https://chatgpt.com/s/t_6954b3d283648191aee1aa850c1c4634 or src/packages/cloud/nebius/credentials.md for the exact generation steps.",
+    desc: "Nebius credentials.json content (subject-credentials). Use the **Wizard** for the exact generation steps.",
     default: "",
     to_val: to_trimmed_str,
     multiline: 6,
     password: true,
+    wizard: { name: "nebius-cli", label: "Wizard..." },
     show: project_hosts_nebius_enabled,
     tags: ["Project Hosts", "Cloud", "Nebius"],
     valid: (x) => !!x,
