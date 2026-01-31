@@ -125,9 +125,10 @@ export function RowEntry({
                   style={{
                     marginTop: "4px",
                     color: "#666",
-                    display: "flex",
+                    display: "inline-flex",
                     alignItems: "center",
                     gap: "8px",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   <span>Stored (not shown).</span>

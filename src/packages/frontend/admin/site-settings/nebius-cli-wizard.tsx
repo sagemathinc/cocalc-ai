@@ -7,6 +7,7 @@ import { Alert, Button, Input, Modal, Space } from "antd";
 import { useMemo, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 
 interface WizardProps {
   open: boolean;
@@ -14,18 +15,83 @@ interface WizardProps {
   onApply: (values: Record<string, string>) => Promise<void> | void;
 }
 
-type ParsedValues = {
+type RegionConfigEntry = {
   nebius_credentials_json: string;
   nebius_parent_id: string;
   nebius_subnet_id: string;
-  project_hosts_nebius_prefix?: string;
 };
+
+type ParsedValues =
+  | {
+      kind: "region";
+      regionConfig: Record<string, RegionConfigEntry>;
+      project_hosts_nebius_prefix?: string;
+    }
+  | {
+      kind: "single";
+      nebius_credentials_json: string;
+      nebius_parent_id: string;
+      nebius_subnet_id: string;
+      project_hosts_nebius_prefix?: string;
+    };
 
 const START_MARKER = "=== COCALC NEBIUS CONFIG START ===";
 const END_MARKER = "=== COCALC NEBIUS CONFIG END ===";
 
+function normalizeRegionEntry(entry: any): RegionConfigEntry | null {
+  if (!entry || typeof entry !== "object") return null;
+  const credsRaw =
+    entry.nebius_credentials_json ??
+    entry.credentials_json ??
+    entry.credentials ??
+    entry.nebius_credentials;
+  const parent =
+    entry.nebius_parent_id ??
+    entry.parent_id ??
+    entry.project_id ??
+    entry.project;
+  const subnet = entry.nebius_subnet_id ?? entry.subnet_id ?? entry.subnet;
+  if (!credsRaw || !parent || !subnet) return null;
+  const creds =
+    typeof credsRaw === "string" ? credsRaw : JSON.stringify(credsRaw, null, 2);
+  return {
+    nebius_credentials_json: creds,
+    nebius_parent_id: `${parent}`.trim(),
+    nebius_subnet_id: `${subnet}`.trim(),
+  };
+}
+
 function normalizeParsed(obj: any): ParsedValues | null {
   if (!obj || typeof obj !== "object") return null;
+  const prefix = obj.project_hosts_nebius_prefix ?? obj.nebius_prefix;
+  const regionRaw = obj.nebius_region_config_json ?? obj.nebius_region_config;
+  if (regionRaw) {
+    let regionConfig: any = regionRaw;
+    if (typeof regionRaw === "string") {
+      try {
+        regionConfig = JSON.parse(regionRaw);
+      } catch {
+        regionConfig = null;
+      }
+    }
+    if (regionConfig && typeof regionConfig === "object") {
+      const normalized: Record<string, RegionConfigEntry> = {};
+      for (const [region, entry] of Object.entries(regionConfig)) {
+        const normalizedEntry = normalizeRegionEntry(entry);
+        if (normalizedEntry) {
+          normalized[region] = normalizedEntry;
+        }
+      }
+      if (Object.keys(normalized).length) {
+        return {
+          kind: "region",
+          regionConfig: normalized,
+          project_hosts_nebius_prefix:
+            prefix == null ? undefined : `${prefix}`.trim(),
+        };
+      }
+    }
+  }
   const credsRaw =
     obj.nebius_credentials_json ??
     obj.credentials_json ??
@@ -34,11 +100,11 @@ function normalizeParsed(obj: any): ParsedValues | null {
   const parent =
     obj.nebius_parent_id ?? obj.parent_id ?? obj.project_id ?? obj.project;
   const subnet = obj.nebius_subnet_id ?? obj.subnet_id ?? obj.subnet;
-  const prefix = obj.project_hosts_nebius_prefix ?? obj.nebius_prefix;
   if (!credsRaw || !parent || !subnet) return null;
   const creds =
     typeof credsRaw === "string" ? credsRaw : JSON.stringify(credsRaw, null, 2);
   return {
+    kind: "single",
     nebius_credentials_json: creds,
     nebius_parent_id: `${parent}`.trim(),
     nebius_subnet_id: `${subnet}`.trim(),
@@ -90,207 +156,34 @@ export default function NebiusCliWizard({
   const [parseError, setParseError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
 
+  const scriptUrl = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const base = appBasePath === "/" ? "" : appBasePath;
+    return `${window.location.origin}${base}/project-host/nebius-setup.sh`;
+  }, []);
+
+  const scriptCommand = useMemo(
+    () =>
+      scriptUrl
+        ? `curl -fsSL "${scriptUrl}" | bash`
+        : "curl -fsSL <your-cocalc-url>/project-host/nebius-setup.sh | bash",
+    [scriptUrl],
+  );
+
   const scriptMarkdown = useMemo(
     () => `Run this once in your terminal (after installing and authenticating \`nebius\`):
 
 \`\`\`sh
-set -euo pipefail
-
-NEBIUS_SA_NAME="\${NEBIUS_SA_NAME:-cocalc-launchpad}"
-NEBIUS_PREFIX="\${NEBIUS_PREFIX:-cocalc-host}"
-
-log() {
-  echo ""
-  echo "==> $*"
-}
-
-find_sa_id() {
-  local parent="$1"
-  local sa_id
-  sa_id=$(nebius iam service-account get-by-name \
-    --parent-id "$parent" \
-    --name "$NEBIUS_SA_NAME" \
-    --format jsonpath='{.metadata.id}' 2>/dev/null || true)
-  if [ -n "$sa_id" ]; then
-    echo "$sa_id"
-    return
-  fi
-  local sa_list
-  sa_list=$(nebius iam service-account list \
-    --parent-id "$parent" \
-    --page-size 200 \
-    --format json 2>/dev/null || true)
-  if [ -n "$sa_list" ]; then
-    python3 - <<'PY'
-import json, sys
-raw = sys.stdin.read().strip()
-if not raw:
-    sys.exit(0)
-data = json.loads(raw)
-def find(obj):
-  if isinstance(obj, dict):
-    meta = obj.get("metadata")
-    if isinstance(meta, dict) and meta.get("name") == "\${NEBIUS_SA_NAME}":
-      print(meta.get("id") or "")
-      return True
-    for v in obj.values():
-      if find(v):
-        return True
-  elif isinstance(obj, list):
-    for v in obj:
-      if find(v):
-        return True
-  return False
-find(data)
-PY
-    <<<"$sa_list" || true
-  fi
-}
-
-pick_id() {
-  local label="$1"
-  local json="$2"
-  local tmp
-  tmp=$(mktemp)
-  printf "%s" "$json" > "$tmp"
-  local list
-  list=$(python3 - "$label" "$tmp" <<'PY'
-import json, sys
-label = sys.argv[1]
-path = sys.argv[2]
-data = json.load(open(path))
-items = []
-def visit(obj):
-  if isinstance(obj, dict):
-    meta = obj.get("metadata")
-    if isinstance(meta, dict):
-      mid = meta.get("id")
-      name = meta.get("name") or ""
-      if mid:
-        items.append((mid, name))
-    for v in obj.values():
-      visit(v)
-  elif isinstance(obj, list):
-    for v in obj:
-      visit(v)
-visit(data)
-seen = set()
-for mid, name in items:
-  if mid in seen:
-    continue
-  seen.add(mid)
-  print(f"{mid}\\t{name}")
-PY
-  )
-  rm -f "$tmp"
-  if [ -z "$list" ]; then
-    echo "No $label found. Please create one in the Nebius console." >&2
-    exit 1
-  fi
-  local count
-  count=$(echo "$list" | grep -c . || true)
-  if [ "$count" -eq 1 ]; then
-    echo "$list" | cut -f1
-    return
-  fi
-  echo "Select $label:" >&2
-  nl -w2 -s") " <(echo "$list" | sed $'s/\\t/  /') >&2
-  read -r -p "Enter number: " idx
-  echo "$list" | sed -n "\${idx}p" | cut -f1
-}
-
-TENANT_JSON=$(nebius iam tenant list --format json --page-size 100)
-TENANT_ID=$(pick_id "tenant" "$TENANT_JSON")
-
-log "Selected tenant: $TENANT_ID"
-
-PROJECT_JSON=$(nebius iam project list --format json --page-size 100 --parent-id "$TENANT_ID")
-PROJECT_ID=$(pick_id "project" "$PROJECT_JSON")
-
-log "Selected project: $PROJECT_ID"
-
-log "Ensuring service account '$NEBIUS_SA_NAME' exists..."
-CREATE_ERR=$(mktemp)
-nebius iam service-account create \
-  --parent-id "$PROJECT_ID" \
-  --name "$NEBIUS_SA_NAME" \
-  --async true \
-  --format json >/dev/null 2>"$CREATE_ERR" || true
-
-if [ -s "$CREATE_ERR" ]; then
-  echo "Warning: service-account create returned a message (often means it already exists):" >&2
-  sed -n '1,120p' "$CREATE_ERR" >&2
-fi
-rm -f "$CREATE_ERR"
-
-SA_ID=""
-for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-  if [ "$attempt" -eq 1 ]; then
-    log "Waiting for service account lookup..."
-  fi
-  SA_ID=$(find_sa_id "$PROJECT_ID")
-  if [ -z "$SA_ID" ]; then
-    SA_ID=$(find_sa_id "$TENANT_ID")
-  fi
-  if [ -n "$SA_ID" ]; then
-    break
-  fi
-  sleep 3
-done
-
-if [ -z "$SA_ID" ]; then
-  echo "Failed to create or lookup service account '$NEBIUS_SA_NAME'." >&2
-  echo "Tip: verify you can create service accounts in the selected project and that the name is correct." >&2
-  exit 1
-fi
-
-log "Service account: $SA_ID"
-
-EDITORS_GROUP_ID=$(nebius iam group get-by-name \
-  --name editors \
-  --parent-id "$TENANT_ID" \
-  --format jsonpath='{.metadata.id}' 2>/dev/null || true)
-
-if [ -z "$EDITORS_GROUP_ID" ]; then
-  echo "Failed to lookup editors group for tenant $TENANT_ID." >&2
-  exit 1
-fi
-
-nebius iam group-membership create \
-  --parent-id "$EDITORS_GROUP_ID" \
-  --member-id "$SA_ID" >/dev/null || true
-
-CREDS_PATH=$(mktemp)
-log "Generating service account credentials..."
-nebius iam auth-public-key generate \
-  --parent-id "$PROJECT_ID" \
-  --service-account-id "$SA_ID" \
-  --output "$CREDS_PATH"
-
-SUBNET_JSON=$(nebius vpc subnet list --format json --page-size 100 --parent-id "$PROJECT_ID")
-SUBNET_ID=$(pick_id "subnet" "$SUBNET_JSON")
-
-log "Selected subnet: $SUBNET_ID"
-
-export CREDS_PATH PROJECT_ID SUBNET_ID NEBIUS_PREFIX
-
-python3 - <<'PY'
-import json, os
-creds_path = os.environ["CREDS_PATH"]
-creds = open(creds_path, "r", encoding="utf-8").read()
-out = {
-  "nebius_credentials_json": creds,
-  "nebius_parent_id": os.environ["PROJECT_ID"],
-  "nebius_subnet_id": os.environ["SUBNET_ID"],
-  "project_hosts_nebius_prefix": os.environ["NEBIUS_PREFIX"],
-}
-print("${START_MARKER}")
-print(json.dumps(out, indent=2))
-print("${END_MARKER}")
-PY
+${scriptCommand}
 \`\`\`
+
+You can review the script here: ${
+      scriptUrl
+        ? `[${scriptUrl}](${scriptUrl})`
+        : "<your-cocalc-url>/project-host/nebius-setup.sh"
+    }
 `,
-    [],
+    [scriptCommand, scriptUrl],
   );
 
   function parseOutput(text: string) {
@@ -313,11 +206,18 @@ PY
 
   async function applySettings() {
     if (!parsed) return;
-    const updates: Record<string, string> = {
-      nebius_credentials_json: parsed.nebius_credentials_json,
-      nebius_parent_id: parsed.nebius_parent_id,
-      nebius_subnet_id: parsed.nebius_subnet_id,
-    };
+    const updates: Record<string, string> = {};
+    if (parsed.kind === "region") {
+      updates.nebius_region_config_json = JSON.stringify(
+        parsed.regionConfig,
+        null,
+        2,
+      );
+    } else {
+      updates.nebius_credentials_json = parsed.nebius_credentials_json;
+      updates.nebius_parent_id = parsed.nebius_parent_id;
+      updates.nebius_subnet_id = parsed.nebius_subnet_id;
+    }
     if (parsed.project_hosts_nebius_prefix) {
       updates.project_hosts_nebius_prefix = parsed.project_hosts_nebius_prefix;
     }
@@ -377,21 +277,43 @@ PY
               style={{ marginTop: "8px" }}
               message="Parsed Nebius configuration."
               description={
-                <div>
+                parsed.kind === "region" ? (
                   <div>
-                    <b>Project (parent) ID:</b> {parsed.nebius_parent_id}
+                    <div>
+                      <b>Regions:</b>{" "}
+                      {Object.keys(parsed.regionConfig)
+                        .sort()
+                        .join(", ")}
+                    </div>
+                    <div>
+                      <b>Projects:</b>{" "}
+                      {Object.keys(parsed.regionConfig).length}
+                    </div>
+                    <div>
+                      <b>Prefix:</b>{" "}
+                      {parsed.project_hosts_nebius_prefix ?? "cocalc-host"}
+                    </div>
+                    <div>
+                      <b>Credentials:</b> detected
+                    </div>
                   </div>
+                ) : (
                   <div>
-                    <b>Subnet ID:</b> {parsed.nebius_subnet_id}
+                    <div>
+                      <b>Project (parent) ID:</b> {parsed.nebius_parent_id}
+                    </div>
+                    <div>
+                      <b>Subnet ID:</b> {parsed.nebius_subnet_id}
+                    </div>
+                    <div>
+                      <b>Prefix:</b>{" "}
+                      {parsed.project_hosts_nebius_prefix ?? "cocalc-host"}
+                    </div>
+                    <div>
+                      <b>Credentials:</b> detected
+                    </div>
                   </div>
-                  <div>
-                    <b>Prefix:</b>{" "}
-                    {parsed.project_hosts_nebius_prefix ?? "cocalc-host"}
-                  </div>
-                  <div>
-                    <b>Credentials:</b> detected
-                  </div>
-                </div>
+                )
               }
             />
           ) : null}

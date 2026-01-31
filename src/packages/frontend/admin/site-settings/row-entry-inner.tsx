@@ -142,12 +142,15 @@ export function RowEntryInner({
       const style = isStored ? {} : rowEntryStyle(value, valid);
       const visibilityToggle = !isStored;
       if (multiline != null) {
-        const rows = isStored ? Math.min(multiline, 2) : multiline;
+        const rows = isStored ? 1 : multiline;
         return (
           <PasswordTextArea
             rows={rows}
             autoComplete="off"
-            style={style}
+            style={{
+              ...style,
+              ...(isStored ? { resize: "vertical" } : {}),
+            }}
             value={value}
             placeholder={placeholder}
             visibilityToggle={visibilityToggle}

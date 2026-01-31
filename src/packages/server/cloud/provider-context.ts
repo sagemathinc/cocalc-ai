@@ -12,6 +12,7 @@ export type ProviderContext = {
 
 export async function getProviderContext(
   providerId: ProviderId,
+  opts: { region?: string } = {},
 ): Promise<ProviderContext> {
   const provider = getServerProvider(providerId);
   if (!provider) {
@@ -25,6 +26,7 @@ export async function getProviderContext(
     settings,
     controlPlanePublicKey,
     prefix,
+    region: opts.region,
   });
   return { id: providerId, entry: provider.entry, creds, prefix };
 }

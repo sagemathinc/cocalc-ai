@@ -15,6 +15,8 @@ import { DisksClient } from "@google-cloud/compute";
 import { NebiusClient } from "@cocalc/cloud/nebius/client";
 import { getVolumes } from "@cocalc/cloud/hyperstack/client";
 import { listServerProviders } from "./providers";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getNebiusRegionKeys } from "./nebius-credentials";
 
 const logger = getLogger("server:cloud:reconcile");
 const pool = () => getPool();
@@ -182,6 +184,38 @@ async function listProviderInstances(
   provider: Provider,
   prefix: string | undefined,
 ): Promise<RemoteInstance[] | undefined> {
+  if (provider === "nebius") {
+    const settings = await getServerSettings();
+    const regions = getNebiusRegionKeys(settings);
+    if (regions.length) {
+      const entries: RemoteInstance[] = [];
+      for (const region of regions) {
+        try {
+          const { entry, creds } = await getProviderContext(provider, {
+            region,
+          });
+          if (!entry.provider.listInstances) {
+            logger.warn("cloud reconcile: listInstances not implemented", {
+              provider,
+            });
+            return undefined;
+          }
+          const instances = await entry.provider.listInstances(
+            creds,
+            prefix ? { namePrefix: prefix } : undefined,
+          );
+          entries.push(...instances);
+        } catch (err) {
+          logger.warn("cloud reconcile: nebius listInstances failed", {
+            provider,
+            region,
+            err,
+          });
+        }
+      }
+      return entries;
+    }
+  }
   const { entry, creds } = await getProviderContext(provider);
   if (!entry.provider.listInstances) {
     logger.warn("cloud reconcile: listInstances not implemented", { provider });

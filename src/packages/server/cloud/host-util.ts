@@ -443,7 +443,9 @@ export async function provisionIfNeeded(
       startup_script: opts.startupScript,
     };
   }
-  const { entry, creds } = await getProviderContext(providerId);
+  const { entry, creds } = await getProviderContext(providerId, {
+    region: row.region,
+  });
   const runtimeCreated = await entry.provider.createHost(spec, creds);
   return {
     ...row,

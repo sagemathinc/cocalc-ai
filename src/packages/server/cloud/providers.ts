@@ -9,7 +9,11 @@ import {
 } from "@cocalc/cloud";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { getNebiusCredentialsFromSettings } from "./nebius-credentials";
+import {
+  getNebiusCredentialsFromSettings,
+  getNebiusRegionConfigEntry,
+  getNebiusRegionConfigFromSettings,
+} from "./nebius-credentials";
 import { getData as getGcpPricingData } from "@cocalc/gcloud-pricing-calculator";
 import type {
   FlavorRegionData,
@@ -21,6 +25,7 @@ export type ProviderCredsContext = {
   settings: Awaited<ReturnType<typeof getServerSettings>>;
   controlPlanePublicKey: string;
   prefix: string;
+  region?: string;
 };
 
 export type ServerProviderEntry = {
@@ -191,6 +196,21 @@ const NEBIUS_DEFAULT_REGIONS = [
 function getNebiusCatalogFetchOptions(
   settings: ProviderCredsContext["settings"],
 ) {
+  const regionConfig = getNebiusRegionConfigFromSettings(settings);
+  const regions = regionConfig
+    ? Object.keys(regionConfig).sort()
+    : NEBIUS_DEFAULT_REGIONS;
+  if (regionConfig && regions.length) {
+    const entry = regionConfig[regions[0]];
+    const creds = getNebiusCredentialsFromSettings(settings, {
+      region: regions[0],
+    });
+    return {
+      ...creds,
+      parentId: entry?.nebius_parent_id || undefined,
+      regions,
+    };
+  }
   const { nebius_parent_id } = settings;
   if (!settings.nebius_credentials_json) {
     return undefined;
@@ -199,7 +219,7 @@ function getNebiusCatalogFetchOptions(
   return {
     ...creds,
     parentId: nebius_parent_id || undefined,
-    regions: NEBIUS_DEFAULT_REGIONS,
+    regions,
   };
 }
 
@@ -269,9 +289,24 @@ const SERVER_PROVIDER_OVERRIDES: Record<ProviderId, ServerProviderOverrides> = {
     getCatalogFetchOptions: getLambdaCatalogFetchOptions,
   },
   nebius: {
-    getCreds: ({ settings, controlPlanePublicKey, prefix }) => {
+    getCreds: ({ settings, controlPlanePublicKey, prefix, region }) => {
+      const regionConfig = getNebiusRegionConfigFromSettings(settings);
+      const regionEntry = getNebiusRegionConfigEntry(settings, region);
+      if (regionConfig && region && !regionEntry) {
+        throw new Error(`Nebius region ${region} is not configured`);
+      }
+      if (regionEntry) {
+        const creds = getNebiusCredentialsFromSettings(settings, { region });
+        return {
+          ...creds,
+          parentId: regionEntry.nebius_parent_id || undefined,
+          subnetId: regionEntry.nebius_subnet_id,
+          sshPublicKey: controlPlanePublicKey,
+          prefix,
+        };
+      }
       const { nebius_parent_id, nebius_subnet_id } = settings;
-      const creds = getNebiusCredentialsFromSettings(settings);
+      const creds = getNebiusCredentialsFromSettings(settings, { region });
       return {
         ...creds,
         parentId: nebius_parent_id || undefined,

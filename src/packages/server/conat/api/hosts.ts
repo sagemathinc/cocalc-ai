@@ -1815,7 +1815,9 @@ export async function updateHostMachine({
     if (!runtime.instance_id) {
       throw new Error("host is not provisioned");
     }
-    const { entry, creds } = await getProviderContext(machineCloud);
+    const { entry, creds } = await getProviderContext(machineCloud, {
+      region: row.region,
+    });
     await entry.provider.resizeDisk(runtime, nextDisk, creds);
     if (row.status !== "off") {
       const client = createHostControlClient({
