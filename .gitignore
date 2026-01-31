@@ -130,6 +130,7 @@ src/go-landing
 **/dist-prod/
 **/dist-prod-measure/
 **/dist-ts/
+src/packages/next/dist-types/
 
 src/packages/landing
 tsconfig.tsbuildinfo
