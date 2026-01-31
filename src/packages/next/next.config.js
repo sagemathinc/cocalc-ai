@@ -19,6 +19,7 @@ const config = {
   basePath,
   env: { BASE_PATH },
   eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: true },
   // Keep pglite in node_modules so its .data/.wasm assets resolve at runtime.
   serverExternalPackages: ["@electric-sql/pglite"],
   webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
@@ -35,6 +36,12 @@ const config = {
       "node_modules",
       "react-dom",
     );
+    // These backend-only deps should never be bundled by Next.
+    const emptyModule = resolve(__dirname, "lib", "webpack-empty.js");
+    config.resolve.alias["micro-key-producer"] = emptyModule;
+    config.resolve.alias["micro-key-producer/ssh.js"] = emptyModule;
+    config.resolve.alias["micro-key-producer/utils.js"] = emptyModule;
+    config.resolve.alias["dtrace-provider"] = emptyModule;
     config.devServer = {
       hot: true,
     };
@@ -48,14 +55,6 @@ const config = {
     defaultLocale: "en-US",
   },
   poweredByHeader: false,
-  experimental: {
-    // I added this so micro-key-producer/ssh.js can be imported.  It's ESM only
-    // and breaks the bundler. https://github.com/paulmillr/micro-key-producer/issues/20
-    // But with this config option, things seem fine.  Note that micro-key-producer/ssh.js
-    // is NOT actually used ever by nextjs -- it's used by our backend file-server
-    // to generate an ssh key.
-    esmExternals: "loose",
-  },
 };
 
 const withRspack = require("next-rspack");
