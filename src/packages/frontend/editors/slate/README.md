@@ -30,6 +30,21 @@ High-level Architecture
 - Virtualized list (react-virtuoso)
 - Tradeoff: no multi-block selection; use Markdown mode when needed
 
+Block Editor: Architecture, Design, Motivation
+- Motivation: keep editing fast and stable for very large Markdown files by
+  avoiding a single huge Slate tree and minimizing render/selection churn.
+- Core idea: split Markdown into blocks, give each block its own Slate editor,
+  and virtualize the list so only visible blocks are mounted.
+- State flow: block editors emit per-block changes; we merge back to Markdown
+  and sync/save at the document level.
+- Editing constraints: cross-block selection is intentionally unsupported to
+  keep the model simple and performance predictable.
+- Merge behavior: block-to-block operations (e.g., backspace at block start)
+  are handled by explicit merge logic rather than relying on Slate's normal
+  multi-node transforms across the entire document.
+- Design goal: a block editor is a collection of small, stable editors, not a
+  transient view of one giant editor.
+
 3) Slate wrapper
 - `slate-react.ts` wraps upstream `slate-react`
 - Adds windowing helpers, `forceUpdate`, and selection utilities

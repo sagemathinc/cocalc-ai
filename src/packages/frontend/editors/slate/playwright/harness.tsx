@@ -47,6 +47,11 @@ declare global {
     };
     __slateBlockTest?: {
       getMarkdown: () => string;
+      setSelection?: (index: number, position?: "start" | "end") => boolean;
+      getSelection?: () => { index: number; selection: Range } | null;
+      getSelectionForBlock?: (index: number) => { index: number; selection: Range } | null;
+      getSelectionOffsetForBlock?: (index: number) => { offset: number; text: string } | null;
+      getFocusedIndex?: () => number | null;
     };
     __slateCollabTest?: {
       getMarkdownA: () => string;
@@ -103,7 +108,14 @@ function Harness(): React.JSX.Element {
   const collabBlockMode = params.get("collabBlock") === "1";
   const collabMode = params.get("collab") === "1";
   const autoformatMode = params.get("autoformat") === "1";
-  const initialMarkdown = "a\n\n```\nfoo\n```\n";
+  const searchParams =
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search);
+  const initialMarkdown =
+    searchParams?.get("md") != null
+      ? decodeURIComponent(searchParams.get("md") || "")
+      : "a\n\n```\nfoo\n```\n";
 
   const editor = useMemo(() => {
     const base = withIsInline(withIsVoid(withReact(createEditor())));
@@ -166,10 +178,27 @@ function Harness(): React.JSX.Element {
 
   if (blockMode) {
     const getValueRef = useRef<() => string>(() => "");
+    const controlRef = useRef<any>(null);
     useEffect(() => {
-      window.__slateBlockTest = {
+      const api: Window["__slateBlockTest"] = {
         getMarkdown: () => getValueRef.current?.() ?? "",
+        setSelection: (index: number, position: "start" | "end" = "start") => {
+          return controlRef.current?.setSelectionInBlock?.(index, position);
+        },
+        getSelection: () => {
+          return controlRef.current?.getSelectionInBlock?.();
+        },
+        getSelectionForBlock: (index: number) => {
+          return controlRef.current?.getSelectionForBlock?.(index);
+        },
+        getSelectionOffsetForBlock: (index: number) => {
+          return controlRef.current?.getSelectionOffsetForBlock?.(index) ?? null;
+        },
+        getFocusedIndex: () => {
+          return controlRef.current?.getFocusedIndex?.() ?? null;
+        },
       };
+      window.__slateBlockTest = api;
     }, []);
     return (
       <HarnessErrorBoundary>
@@ -183,6 +212,7 @@ function Harness(): React.JSX.Element {
             noVfill={true}
             actions={{}}
             getValueRef={getValueRef}
+            controlRef={controlRef}
           />
         </div>
       </HarnessErrorBoundary>

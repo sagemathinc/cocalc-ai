@@ -537,6 +537,40 @@ test("block editor: gap insert keeps caret", async ({ page }) => {
   expect(caretInfo.blockText).toContain("X");
 });
 
+test("block editor: backspace at block start merges and keeps focus", async ({
+  page,
+}) => {
+  const markdown = "abc\n\n123\n\n456";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.getMarkdown === "function";
+  });
+  await page.waitForSelector('[data-slate-block-index="1"]');
+
+  await page.evaluate(() => {
+    window.__slateBlockTest?.setSelection?.(1, "start");
+  });
+  await page.waitForTimeout(50);
+  await page.keyboard.press("Backspace");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toBe("abc123\n\n456");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => window.__slateBlockTest?.getFocusedIndex?.());
+  }).toBe(0);
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      const info = window.__slateBlockTest?.getSelectionOffsetForBlock?.(0);
+      return info ? `${info.offset}:${info.text}` : null;
+    });
+  }).toBe("3:abc123");
+});
+
 test("sync: remote change to other block applies without deferring", async ({
   page,
 }) => {

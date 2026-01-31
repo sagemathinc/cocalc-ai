@@ -4,10 +4,6 @@ Goal: restore realtime sync integration for Slate while preserving a stable curs
 and responsiveness. The authoritative state remains **markdown** in syncstring,
 but we apply **block-aware, minimal patches** to Slate to avoid cursor jumps.
 
-## 0) Audit of current pipeline (where we are today)
-
-**Entry points**
-
 - Syncstring change listener in editable-markdown:
   - file: [src/packages/frontend/editors/slate/editable-markdown.tsx](./src/packages/frontend/editors/slate/editable-markdown.tsx)
   - uses `SimpleInputMerge` to merge remote+local markdown and then calls `setEditorToValue`.
@@ -44,6 +40,7 @@ but we apply **block-aware, minimal patches** to Slate to avoid cursor jumps.
 ## Status update (as of now)
 
 ✅ Implemented
+
 - Block signature diffing + patch application.
 - Block-patch path in non-block editor.
 - Sentinel remap on remote edits (doc + block).
@@ -53,6 +50,7 @@ but we apply **block-aware, minimal patches** to Slate to avoid cursor jumps.
 - Jest tests for block diff + sentinel remap.
 
 ⚠️ Known issues
+
 - Some Playwright sync tests are still flaky or failing.
 - Block editor remap uses timing heuristics (remote/local age).
 

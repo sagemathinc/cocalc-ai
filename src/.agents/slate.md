@@ -2,17 +2,14 @@
 
 ## Todo
 
-- [ ] #bug bring back the realtime sync integration.
-  - addresses HUGE problem: we depend on realtime sync for undo/redo and saving current state!  the "do nothing when focused" mode just horribly breaks this.
-  - addresses all the chat integration weirdness and a lot of other problems.
-  - it's a challenge but now I feel more optimisitic that it's solvable.
-  - [ ] in particular - the _user aware_ undo/redo integration (via control+z, etc.) fundamentally relies on realtime collaboration integration.
-  - using debouncing I think this can be done in a way that feels very responsive, and never "jumps the cursor".  Which just have to be very careful.
+- [ ] #ux plain text paste: just ALWAYS show the text / code block option, even if only one line; it's just more predictable.
+
+- [ ] #bug keyboard navigation between blocks (left arrow at start, right arrow at end)
+
+- [ ] #bug undo/redo via keyboard (e.g., control+z) doesn't work
 
 - [ ] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
   - [ ] this is also needed for jumping from table of contents entries to the document.
-
-- [ ] #ux paste: just ALWAYS show the code block, even if only one line; it's just more predictable.
 
 - [ ] #bug chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens every single time even with sync now enabled. 
 
@@ -33,6 +30,13 @@
 - [ ] #wishlist can we make a jupyter notebook mode?  i.e., a slate renderer for any jupyter notebook, i.e., a new "single document mode"...?
 
 - [ ] #wishlist latex editor.  this would just start as one big prism (+latex mode) code editor, but proportionally spaced! Then we make math formulas display nicely using katex. Then we make \\section{...} etc. display nicely.  Etc.  Just iteratively replace things until it is beautiful and useful... but still usable.
+
+- [x] #bug bring back the realtime sync integration.
+  - addresses HUGE problem: we depend on realtime sync for undo/redo and saving current state!  the "do nothing when focused" mode just horribly breaks this.
+  - addresses all the chat integration weirdness and a lot of other problems.
+  - it's a challenge but now I feel more optimisitic that it's solvable.
+  - [ ] in particular - the _user aware_ undo/redo integration (via control+z, etc.) fundamentally relies on realtime collaboration integration.
+  - using debouncing I think this can be done in a way that feels very responsive, and never "jumps the cursor".  Which just have to be very careful.
 
 - [x] #feature #easy make the "paste text/code" buttons that appear much clearer -- they blend in since everything is the same grey.   Also, instead of "Dismiss", the other option should be "Code Block". 
   - [ ] #feature add a new feature where you can select the language for those available (hence modeline), so it syntax highlights properly.
