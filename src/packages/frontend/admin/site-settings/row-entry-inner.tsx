@@ -50,6 +50,7 @@ export function RowEntryInner({
 }: RowEntryInnerProps) {
   if (isReadonly == null) return null; // typescript
   const disabled = isReadonly[name] == true;
+  const isStored = password && isSet && !value && !isClearing;
 
   if (name === "selectable_llms") {
     return (
@@ -138,15 +139,18 @@ export function RowEntryInner({
           : isSet && !value
           ? "Stored (enter to replace)"
           : undefined;
+      const style = isStored ? {} : rowEntryStyle(value, valid);
+      const visibilityToggle = !isStored;
       if (multiline != null) {
+        const rows = isStored ? Math.min(multiline, 2) : multiline;
         return (
           <PasswordTextArea
-            rows={multiline}
+            rows={rows}
             autoComplete="off"
-            style={rowEntryStyle(value, valid)}
+            style={style}
             value={value}
             placeholder={placeholder}
-            visibilityToggle={true}
+            visibilityToggle={visibilityToggle}
             disabled={disabled}
             onChange={(e) => onChangeEntry(name, e.target.value)}
           />
@@ -155,10 +159,10 @@ export function RowEntryInner({
         return (
           <Password
             autoComplete="off"
-            style={rowEntryStyle(value, valid)}
+            style={style}
             value={value}
             placeholder={placeholder}
-            visibilityToggle={true}
+            visibilityToggle={visibilityToggle}
             disabled={disabled}
             onChange={(e) => onChangeEntry(name, e.target.value)}
           />
@@ -176,7 +180,7 @@ export function RowEntryInner({
             autoComplete="off"
             rows={multiline}
             style={style}
-            defaultValue={value}
+            value={value ?? ""}
             disabled={disabled}
             onChange={(e) => onChangeEntry(name, e.target.value)}
           />
@@ -186,7 +190,7 @@ export function RowEntryInner({
           <Input
             autoComplete="off"
             style={rowEntryStyle(value, valid)}
-            defaultValue={value}
+            value={value ?? ""}
             disabled={disabled}
             onChange={(e) => onChangeEntry(name, e.target.value)}
             allowClear={clearable}

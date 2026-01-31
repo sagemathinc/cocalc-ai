@@ -120,28 +120,39 @@ export function RowEntry({
               name === "version_recommended_browser" ? (
                 <VersionHint value={value} />
               ) : undefined}
-              {hint}
-              <ReadOnly readonly={isReadonly[name]} />
               {password && isSet && !value && !isClearing && (
-                <span> Stored (not shown).</span>
+                <div
+                  style={{
+                    marginTop: "4px",
+                    color: "#666",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <span>Stored (not shown).</span>
+                  {password &&
+                    isSet &&
+                    !isReadonly[name] &&
+                    onClearSecret &&
+                    !isClearing && (
+                      <Button
+                        size="small"
+                        danger
+                        onClick={() => onClearSecret(name)}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                </div>
               )}
               {password && isClearing && (
-                <span> Will clear on save.</span>
+                <div style={{ marginTop: "4px", color: "#666" }}>
+                  Will clear on save.
+                </div>
               )}
-              {password &&
-                isSet &&
-                !isReadonly[name] &&
-                onClearSecret &&
-                !isClearing && (
-                  <Button
-                    size="small"
-                    danger
-                    style={{ marginLeft: "8px", marginTop: "5px" }}
-                    onClick={() => onClearSecret(name)}
-                  >
-                    Clear
-                  </Button>
-                )}
+              {hint}
+              <ReadOnly readonly={isReadonly[name]} />
               {displayed_val != null && !password && (
                 <span>
                   {" "}
