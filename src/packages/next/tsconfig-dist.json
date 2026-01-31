@@ -3,7 +3,9 @@
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "dist",
-    "lib": ["dom", "dom.iterable", "ESNext"]
+    "lib": ["dom", "dom.iterable", "ESNext"],
+    "declaration": false,
+    "declarationMap": false
   },
   "include": [
     "next-env.d.ts",
