@@ -60,21 +60,28 @@ export function RenderRow({
 }: RenderRowProps) {
   if (data == null) return null;
 
+  function matchesRequiredEquals(raw: any, equals: string | string[]) {
+    if (Array.isArray(equals)) {
+      return equals.some((value) => matchesRequiredEquals(raw, value));
+    }
+    if (
+      equals === "yes" ||
+      equals === "no" ||
+      equals === "true" ||
+      equals === "false"
+    ) {
+      return to_bool(raw) === to_bool(equals);
+    }
+    return raw === equals;
+  }
+
   const requiredWhen = conf.required_when;
   const requiredActive =
     requiredWhen &&
     requiredWhen.every((req) => {
       const raw = data[req.key];
       if (req.equals !== undefined) {
-        if (
-          req.equals === "yes" ||
-          req.equals === "no" ||
-          req.equals === "true" ||
-          req.equals === "false"
-        ) {
-          return to_bool(raw) === to_bool(req.equals);
-        }
-        return raw === req.equals;
+        return matchesRequiredEquals(raw, req.equals);
       }
       if (req.present !== undefined) {
         return req.present ? !!raw : !raw;

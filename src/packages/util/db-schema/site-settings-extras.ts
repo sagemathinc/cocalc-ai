@@ -81,6 +81,11 @@ const any_llm_enabled = (conf: SiteSettings) =>
   ollama_enabled(conf) ||
   mistral_enabled(conf);
 
+const cloudflare_mode = (conf: SiteSettings): string =>
+  `${conf.cloudflare_mode ?? "none"}`.trim().toLowerCase();
+const cloudflare_self_mode = (conf: SiteSettings): boolean =>
+  cloudflare_mode(conf) === "self";
+
 const project_hosts_nebius_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_nebius_enabled"]);
 const project_hosts_google_cloud_enabled = (conf: SiteSettings) =>
@@ -253,8 +258,6 @@ export type SiteSettingsExtrasKeys =
   | "project_hosts_nebius_prefix"
   | "hyperstack_api_key"
   | "project_hosts_hyperstack_prefix"
-  | "hyperstack_balance_alert_thresh"
-  | "hyperstack_balance_alert_emails"
   | "control_plane_ssh_private_key_path"
   | "control_plane_ssh_private_key"
   | "google_cloud_service_account_json"
@@ -514,6 +517,7 @@ export const EXTRAS: SettingsExtras = {
     group: "Backups & Storage",
     subgroup: "Cloudflare R2",
     order: 10,
+    show: cloudflare_self_mode,
   },
   r2_account_id: {
     name: "Cloudflare R2 Account ID",
@@ -523,6 +527,9 @@ export const EXTRAS: SettingsExtras = {
     group: "Backups & Storage",
     subgroup: "Cloudflare R2",
     order: 20,
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   r2_api_token: {
     name: "Cloudflare R2 API Token",
@@ -533,6 +540,9 @@ export const EXTRAS: SettingsExtras = {
     group: "Backups & Storage",
     subgroup: "Cloudflare R2",
     order: 30,
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   r2_access_key_id: {
     name: "Cloudflare R2 Access Key ID",
@@ -542,7 +552,9 @@ export const EXTRAS: SettingsExtras = {
     group: "Backups & Storage",
     subgroup: "Cloudflare R2",
     order: 40,
-    required_when: [{ key: "r2_account_id", present: true }],
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   r2_secret_access_key: {
     name: "Cloudflare R2 Secret Access Key",
@@ -553,7 +565,9 @@ export const EXTRAS: SettingsExtras = {
     group: "Backups & Storage",
     subgroup: "Cloudflare R2",
     order: 50,
-    required_when: [{ key: "r2_account_id", present: true }],
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   r2_bucket_prefix: {
     name: "Cloudflare R2 Bucket Prefix",
@@ -563,6 +577,8 @@ export const EXTRAS: SettingsExtras = {
     group: "Backups & Storage",
     subgroup: "Cloudflare R2",
     order: 60,
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   re_captcha_v3_heading: {
     // this is cosmetic, otherwise it looks weird.
@@ -943,7 +959,7 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     password: true,
     show: project_hosts_hyperstack_enabled,
-    tags: ["Project Hosts", "Hyperstack"],
+    tags: ["Project Hosts", "Cloud", "Hyperstack"],
     group: "Compute / Project Hosts",
     subgroup: "Hyperstack",
     required_when: [{ key: "project_hosts_hyperstack_enabled", equals: "yes" }],
@@ -954,7 +970,7 @@ export const EXTRAS: SettingsExtras = {
     default: "cocalc",
     to_val: to_trimmed_str,
     show: project_hosts_hyperstack_enabled,
-    tags: ["Project Hosts", "Hyperstack"],
+    tags: ["Project Hosts", "Cloud", "Hyperstack"],
     group: "Compute / Project Hosts",
     subgroup: "Hyperstack",
   },
@@ -979,25 +995,6 @@ export const EXTRAS: SettingsExtras = {
     group: "Compute / Project Hosts",
     subgroup: "Security",
   },
-  hyperstack_balance_alert_thresh: {
-    name: "Project Hosts: Hyperstack - Balance Alert Threshold",
-    desc: "If your credit balance goes below this amount on the Hyperstack site, then you will be emailed (assuming email is configured).",
-    default: "25",
-    to_val: to_int,
-    show: project_hosts_hyperstack_enabled,
-    tags: ["Project Hosts", "Hyperstack"],
-    group: "Compute / Project Hosts",
-    subgroup: "Hyperstack",
-  },
-  hyperstack_balance_alert_emails: {
-    name: "(DEPRECATED) Project Hosts: Hyperstack - Balance Email Addresses",
-    desc: "If your credit balance goes below your configured threshold, then these email addresses will get an alert message.  Separate addresses by commas.",
-    default: "",
-    show: project_hosts_hyperstack_enabled,
-    tags: ["Project Hosts", "Hyperstack"],
-    group: "Compute / Project Hosts",
-    subgroup: "Hyperstack",
-  },
 
   lambda_cloud_api_key: {
     name: "Project Hosts: Lambda Cloud API Key",
@@ -1005,7 +1002,7 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     password: true,
     show: project_hosts_lambda_enabled,
-    tags: ["Project Hosts"],
+    tags: ["Project Hosts", "Cloud"],
     group: "Compute / Project Hosts",
     subgroup: "Lambda Cloud",
     required_when: [{ key: "project_hosts_lambda_enabled", equals: "yes" }],
@@ -1016,7 +1013,7 @@ export const EXTRAS: SettingsExtras = {
     default: "cocalc-host",
     to_val: to_trimmed_str,
     show: project_hosts_lambda_enabled,
-    tags: ["Project Hosts"],
+    tags: ["Project Hosts", "Cloud"],
     valid: () => true,
     group: "Compute / Project Hosts",
     subgroup: "Lambda Cloud",
@@ -1078,7 +1075,7 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     wizard: { name: "gcp-service-account-json", label: "Wizard..." },
     show: project_hosts_google_cloud_enabled,
-    tags: ["Project Hosts", "Google Cloud"],
+    tags: ["Project Hosts", "Cloud"],
     group: "Compute / Project Hosts",
     subgroup: "Google Cloud",
     required_when: [
@@ -1091,7 +1088,7 @@ export const EXTRAS: SettingsExtras = {
     default: "cocalc-host",
     to_val: to_trimmed_str,
     show: project_hosts_google_cloud_enabled,
-    tags: ["Project Hosts", "Google Cloud"],
+    tags: ["Project Hosts", "Cloud"],
     valid: () => true,
     group: "Compute / Project Hosts",
     subgroup: "Google Cloud",
@@ -1142,10 +1139,12 @@ export const EXTRAS: SettingsExtras = {
     default: "no",
     to_val: to_bool,
     valid: only_booleans,
+    wizard: { name: "cloudflare-config", label: "Wizard..." },
     tags: ["Project Hosts", "Cloud", "Cloudflare"],
     group: "Networking",
     subgroup: "Cloudflare Tunnel",
     order: 10,
+    hidden: true,
   },
   project_hosts_cloudflare_tunnel_account_id: {
     name: "Project Hosts: Cloudflare Tunnel - Account ID",
@@ -1158,8 +1157,10 @@ export const EXTRAS: SettingsExtras = {
     subgroup: "Cloudflare Tunnel",
     order: 20,
     required_when: [
-      { key: "project_hosts_cloudflare_tunnel_enabled", equals: "yes" },
+      { key: "cloudflare_mode", equals: "self" },
     ],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   project_hosts_cloudflare_tunnel_api_token: {
     name: "Project Hosts: Cloudflare Tunnel - API Token",
@@ -1172,8 +1173,10 @@ export const EXTRAS: SettingsExtras = {
     subgroup: "Cloudflare Tunnel",
     order: 30,
     required_when: [
-      { key: "project_hosts_cloudflare_tunnel_enabled", equals: "yes" },
+      { key: "cloudflare_mode", equals: "self" },
     ],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   project_hosts_cloudflare_tunnel_prefix: {
     name: "Project Hosts: Cloudflare Tunnel - Name Prefix",
@@ -1185,6 +1188,8 @@ export const EXTRAS: SettingsExtras = {
     group: "Networking",
     subgroup: "Cloudflare Tunnel",
     order: 40,
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   project_hosts_cloudflare_tunnel_host_suffix: {
     name: "Project Hosts: Cloudflare Tunnel - Hostname Suffix",
@@ -1196,5 +1201,7 @@ export const EXTRAS: SettingsExtras = {
     group: "Networking",
     subgroup: "Cloudflare Tunnel",
     order: 50,
+    show: cloudflare_self_mode,
+    hidden: true,
   },
 } as const;

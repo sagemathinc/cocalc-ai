@@ -76,6 +76,24 @@ function isEnabled(value: unknown): boolean {
   return !["0", "false", "no", "off"].includes(lowered);
 }
 
+function normalizeCloudflareMode(
+  value: unknown,
+): "none" | "self" | "managed" | undefined {
+  const raw = clean(value)?.toLowerCase();
+  if (raw === "none" || raw === "self" || raw === "managed") {
+    return raw;
+  }
+  return undefined;
+}
+
+function cloudflareSelfMode(settings: any): boolean {
+  const mode = normalizeCloudflareMode(settings.cloudflare_mode);
+  if (mode) {
+    return mode === "self";
+  }
+  return isEnabled(settings.project_hosts_cloudflare_tunnel_enabled);
+}
+
 async function hasLocalSelfHostHosts(): Promise<boolean> {
   const { rows } = await pool().query(
     `
@@ -742,7 +760,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     return null;
   }
   const settings = await getServerSettings();
-  if (!isEnabled(settings.project_hosts_cloudflare_tunnel_enabled)) {
+  if (!cloudflareSelfMode(settings)) {
     return null;
   }
   const missing: string[] = [];
@@ -850,7 +868,7 @@ export async function getLaunchpadCloudflaredStatus(): Promise<{
   error?: string | null;
 }> {
   const settings = await getServerSettings();
-  const enabled = isEnabled(settings.project_hosts_cloudflare_tunnel_enabled);
+  const enabled = cloudflareSelfMode(settings);
   const running =
     cloudflaredState?.child?.exitCode == null && cloudflaredState != null;
   const hostname = cloudflaredState?.tunnel?.hostname;

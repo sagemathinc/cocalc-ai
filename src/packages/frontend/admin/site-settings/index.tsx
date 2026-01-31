@@ -28,6 +28,7 @@ import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
 import GcpServiceAccountWizard from "./gcp-service-account-wizard";
+import CloudflareConfigWizard from "./cloudflare-config-wizard";
 import {
   toCustomOpenAIModel,
   toOllamaModel,
@@ -52,7 +53,7 @@ export default function SiteSettings({ close }) {
   const [filterTag, setFilterTag] = useState<Tag | null>(null);
   const [showHidden, setShowHidden] = useState<boolean>(false);
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
-  const [expandAll, setExpandAll] = useState<boolean>(true);
+  const [expandAll, setExpandAll] = useState<boolean>(false);
   const [activeWizard, setActiveWizard] = useState<string | null>(null);
   const editedRef = useRef<Data | null>(null);
   const savedRef = useRef<Data | null>(null);
@@ -98,6 +99,13 @@ export default function SiteSettings({ close }) {
       data[x.name] = x.value;
       isReadonly[x.name] = !!x.readonly;
       isSet[x.name] = !!x.is_set;
+    }
+    if (!data.cloudflare_mode || `${data.cloudflare_mode}`.trim() === "") {
+      data.cloudflare_mode = to_bool(
+        data.project_hosts_cloudflare_tunnel_enabled,
+      )
+        ? "self"
+        : "none";
     }
     setState("edit");
     setData(data);
@@ -170,21 +178,28 @@ export default function SiteSettings({ close }) {
     return tags[0] ?? "Other";
   }
 
+  function matchesRequiredEquals(raw: any, equals: string | string[]) {
+    if (Array.isArray(equals)) {
+      return equals.some((value) => matchesRequiredEquals(raw, value));
+    }
+    if (
+      equals === "yes" ||
+      equals === "no" ||
+      equals === "true" ||
+      equals === "false"
+    ) {
+      return to_bool(raw) === to_bool(equals);
+    }
+    return raw === equals;
+  }
+
   function isRequiredWhen(conf): boolean {
     const reqs = conf.required_when;
     if (!reqs || !data) return false;
     return reqs.every((req) => {
       const raw = data[req.key];
       if (req.equals !== undefined) {
-        if (
-          req.equals === "yes" ||
-          req.equals === "no" ||
-          req.equals === "true" ||
-          req.equals === "false"
-        ) {
-          return to_bool(raw) === to_bool(req.equals);
-        }
-        return raw === req.equals;
+        return matchesRequiredEquals(raw, req.equals);
       }
       if (req.present !== undefined) {
         return req.present ? !!raw : !raw;
@@ -357,6 +372,10 @@ export default function SiteSettings({ close }) {
     if (editedRef.current == null) return;
     clearSecretsRef.current[name] = false;
     editedRef.current[name] = val;
+    if (name === "cloudflare_mode") {
+      editedRef.current.project_hosts_cloudflare_tunnel_enabled =
+        val === "self" ? "yes" : "no";
+    }
     change();
     update();
   }
@@ -399,6 +418,22 @@ export default function SiteSettings({ close }) {
 
   function closeWizard() {
     setActiveWizard(null);
+  }
+
+  async function applyWizardSettings(values: Record<string, string>) {
+    for (const [name, value] of Object.entries(values)) {
+      onChangeEntry(name, value);
+    }
+    if (editedRef.current == null || savedRef.current == null) return;
+    setState("save");
+    try {
+      await store();
+      setState("edit");
+      await load();
+    } catch (err) {
+      setState("error");
+      setError(err);
+    }
   }
 
   function Tests() {
@@ -523,6 +558,26 @@ export default function SiteSettings({ close }) {
     return counts;
   }, [setupOverview]);
 
+  const subgroupMissingCounts = useMemo(() => {
+    if (data == null) return new Map<string, Map<string, number>>();
+    const counts = new Map<string, Map<string, number>>();
+    for (const configData of [site_settings_conf, EXTRAS]) {
+      for (const name of keys(configData)) {
+        const conf = configData[name];
+        if (!conf.required_when) continue;
+        if (!isRequiredWhen(conf)) continue;
+        if (!isMissingValue(name, conf)) continue;
+        const group = conf.group ?? inferGroup(conf);
+        const subgroup = conf.subgroup ?? "General";
+        const groupCounts =
+          counts.get(group) ?? new Map<string, number>();
+        groupCounts.set(subgroup, (groupCounts.get(subgroup) ?? 0) + 1);
+        counts.set(group, groupCounts);
+      }
+    }
+    return counts;
+  }, [data, isSet, showHidden, showAdvanced]);
+
   const editRows = useMemo(() => {
     const allItems: { name: string; conf: any }[] = [];
     for (const configData of [site_settings_conf, EXTRAS]) {
@@ -626,9 +681,30 @@ export default function SiteSettings({ close }) {
                       margin: "10px 0 4px 0",
                       color: "#666",
                       cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
                     }}
                   >
                     {subgroupName}
+                    {subgroupMissingCounts
+                      .get(groupName)
+                      ?.get(subgroupName) ? (
+                      <span
+                        style={{
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          color: "#a8071a",
+                          background: "#fff1f0",
+                          border: "1px solid #ffccc7",
+                          borderRadius: "10px",
+                          padding: "1px 8px",
+                        }}
+                      >
+                        {subgroupMissingCounts.get(groupName)?.get(subgroupName)}{" "}
+                        missing
+                      </span>
+                    ) : null}
                   </summary>
                   {items
                     .sort((a, b) => {
@@ -751,6 +827,13 @@ export default function SiteSettings({ close }) {
             }
           />
         )}
+        <CloudflareConfigWizard
+          open={activeWizard === "cloudflare-config"}
+          onClose={closeWizard}
+          data={data ?? {}}
+          isSet={isSet ?? {}}
+          onApply={applyWizardSettings}
+        />
         <GcpServiceAccountWizard
           open={activeWizard === "gcp-service-account-json"}
           onClose={closeWizard}

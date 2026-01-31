@@ -37,7 +37,6 @@ export const TAGS = [
   "Licensing",
   "GitHub",
   "Pay as you Go",
-  "Google Cloud",
   "Cloud",
   "Project Hosts",
   "Hyperstack",
@@ -113,6 +112,7 @@ export type SiteSettingsKeys =
   | "project_hosts_local_enabled"
   | "project_hosts_self_host_alpha_enabled"
   | "project_hosts_nebius_enabled"
+  | "cloudflare_mode"
   | "project_hosts_dns"
   | "samesite_remember_me"
   | "user_tracking";
@@ -128,7 +128,7 @@ type ToValFunc<T> = (
 
 export type RequiredWhen = {
   key: string;
-  equals?: string;
+  equals?: string | string[];
   present?: boolean;
 };
 
@@ -379,8 +379,20 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Domain",
     order: 10,
     required_when: [
-      { key: "project_hosts_cloudflare_tunnel_enabled", equals: "yes" },
+      { key: "cloudflare_mode", equals: ["self", "managed"] },
     ],
+  },
+  cloudflare_mode: {
+    name: "Cloudflare Integration Mode",
+    desc: "Choose how Cloudflare is used for this hub. Use **none** for fully self-hosted setups, **self** to use your own Cloudflare account, or **managed** to use CoCalc-managed Cloudflare.",
+    default: "none",
+    valid: ["none", "self", "managed"],
+    to_val: to_trimmed_str,
+    wizard: { name: "cloudflare-config", label: "Wizard..." },
+    tags: ["Cloudflare", "Cloud"],
+    group: "Cloudflare",
+    subgroup: "Mode",
+    order: 5,
   },
   theming: {
     name: "Show Theming",
@@ -921,7 +933,7 @@ export const site_settings_conf: SiteSettings = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
-    tags: ["Project Hosts", "Cloud", "Google Cloud"],
+    tags: ["Project Hosts", "Cloud"],
     group: "Compute / Project Hosts",
     subgroup: "Enable Providers",
   },
@@ -974,6 +986,8 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Project Hosts", "Cloud"],
     group: "Compute / Project Hosts",
     subgroup: "Domain",
+    show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
   },
   samesite_remember_me: {
     name: "sameSite setting for remember_me authentication cookie",

@@ -89,6 +89,24 @@ function isEnabled(value: unknown): boolean {
   return !["0", "false", "no", "off"].includes(lowered);
 }
 
+function normalizeCloudflareMode(
+  value: unknown,
+): "none" | "self" | "managed" | undefined {
+  const raw = clean(value)?.toLowerCase();
+  if (raw === "none" || raw === "self" || raw === "managed") {
+    return raw;
+  }
+  return undefined;
+}
+
+function cloudflareSelfMode(settings: any): boolean {
+  const mode = normalizeCloudflareMode(settings.cloudflare_mode);
+  if (mode) {
+    return mode === "self";
+  }
+  return isEnabled(settings.project_hosts_cloudflare_tunnel_enabled);
+}
+
 function normalizePrefix(value: unknown): string | undefined {
   const raw = clean(value);
   if (!raw) return undefined;
@@ -111,7 +129,7 @@ function normalizeHostSuffix(value: unknown): string | undefined {
 
 async function getConfig(): Promise<TunnelConfig | undefined> {
   const settings = await getServerSettings();
-  if (!isEnabled(settings.project_hosts_cloudflare_tunnel_enabled)) {
+  if (!cloudflareSelfMode(settings)) {
     return undefined;
   }
   const dns = clean(settings.project_hosts_dns);
@@ -129,7 +147,7 @@ async function getConfig(): Promise<TunnelConfig | undefined> {
 
 async function getHubConfig(): Promise<HubTunnelConfig | undefined> {
   const settings = await getServerSettings();
-  if (!isEnabled(settings.project_hosts_cloudflare_tunnel_enabled)) {
+  if (!cloudflareSelfMode(settings)) {
     return undefined;
   }
   const accountId = clean(settings.project_hosts_cloudflare_tunnel_account_id);
