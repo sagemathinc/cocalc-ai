@@ -1,9 +1,4 @@
 import type { Ollama } from "@langchain/ollama";
-import {
-  ChatPromptTemplate,
-  MessagesPlaceholder,
-} from "@langchain/core/prompts";
-import { RunnableWithMessageHistory } from "@langchain/core/runnables";
 
 import getLogger from "@cocalc/backend/logger";
 import { fromOllamaModel, isOllamaLLM } from "@cocalc/util/db-schema/llm-utils";
@@ -52,6 +47,13 @@ export async function evaluateOllama(
   }
 
   const historyMessagesKey = "history";
+
+  const { ChatPromptTemplate, MessagesPlaceholder } = await import(
+    "@langchain/core/prompts"
+  );
+  const { RunnableWithMessageHistory } = await import(
+    "@langchain/core/runnables"
+  );
 
   const prompt = ChatPromptTemplate.fromMessages([
     ["system", system ?? ""],

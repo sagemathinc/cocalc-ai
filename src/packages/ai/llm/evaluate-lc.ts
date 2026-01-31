@@ -19,17 +19,8 @@ import {
   isOpenAIModel,
 } from "@cocalc/util/db-schema/llm-utils";
 import type { ChatOutput, History, Stream } from "@cocalc/util/types/llm";
-import { ChatAnthropic } from "@langchain/anthropic";
-import { AIMessageChunk } from "@langchain/core/messages";
-import {
-  ChatPromptTemplate,
-  MessagesPlaceholder,
-} from "@langchain/core/prompts";
-import { RunnableWithMessageHistory } from "@langchain/core/runnables";
-import { concat } from "@langchain/core/utils/stream";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { ChatMistralAI } from "@langchain/mistralai";
-import { ChatOpenAI } from "@langchain/openai";
+import type { AIMessageChunk } from "@langchain/core/messages";
+import type { ChatOpenAI } from "@langchain/openai";
 import { transformHistoryToMessages } from "./chat-history";
 import { heuristicNumTokens, type TokenCounter } from "./chatgpt-numtokens";
 import { normalizeOpenAIModel } from "./normalize-openai";
@@ -100,6 +91,7 @@ export const PROVIDER_CONFIGS = {
   openai: {
     name: "OpenAI",
     createClient: async (options, ctx) => {
+      const { ChatOpenAI } = await import("@langchain/openai");
       const { openai_api_key: apiKey } = ctx.settings ?? {};
       const normalizedModel = normalizeOpenAIModel(options.model);
 
@@ -140,6 +132,7 @@ export const PROVIDER_CONFIGS = {
   google: {
     name: "Google GenAI",
     createClient: async (options, ctx) => {
+      const { ChatGoogleGenerativeAI } = await import("@langchain/google-genai");
       const mode = ctx.mode ?? "cocalc";
       const apiKey =
         mode === "cocalc" ? ctx.settings?.google_vertexai_key : options.apiKey;
@@ -183,6 +176,7 @@ export const PROVIDER_CONFIGS = {
   anthropic: {
     name: "Anthropic",
     createClient: async (options, ctx) => {
+      const { ChatAnthropic } = await import("@langchain/anthropic");
       const mode = ctx.mode ?? "cocalc";
       const apiKey =
         mode === "cocalc" ? ctx.settings?.anthropic_api_key : options.apiKey;
@@ -232,6 +226,7 @@ export const PROVIDER_CONFIGS = {
   mistral: {
     name: "Mistral",
     createClient: async (options, ctx) => {
+      const { ChatMistralAI } = await import("@langchain/mistralai");
       const mode = ctx.mode ?? "cocalc";
       const apiKey =
         mode === "cocalc" ? ctx.settings?.mistral_api_key : options.apiKey;
@@ -261,6 +256,7 @@ export const PROVIDER_CONFIGS = {
   "custom-openai": {
     name: "Custom OpenAI",
     createClient: async (options, ctx) => {
+      const { ChatOpenAI } = await import("@langchain/openai");
       const transformedModel = fromCustomOpenAIModel(options.model);
       log.debug(
         `Custom OpenAI createClient: original=${options.model}, transformed=${transformedModel}`,
@@ -349,6 +345,14 @@ export async function evaluateWithLangChain(
     stream: stream != null,
     maxTokens,
   });
+
+  const { ChatPromptTemplate, MessagesPlaceholder } = await import(
+    "@langchain/core/prompts"
+  );
+  const { RunnableWithMessageHistory } = await import(
+    "@langchain/core/runnables"
+  );
+  const { concat } = await import("@langchain/core/utils/stream");
 
   // Get provider configuration
   const config = getProviderConfig(model);

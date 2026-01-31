@@ -1,5 +1,4 @@
-import { InMemoryChatMessageHistory } from "@langchain/core/chat_history";
-import { AIMessage, HumanMessage } from "@langchain/core/messages";
+import type { InMemoryChatMessageHistory } from "@langchain/core/chat_history";
 
 import { History } from "@cocalc/util/types/llm";
 import { numTokens } from "./chatgpt-numtokens";
@@ -10,6 +9,11 @@ export async function transformHistoryToMessages(
   history?: History,
 ): Promise<{ messageHistory: InMemoryChatMessageHistory; tokens: number }> {
   let tokens = 0;
+
+  const { InMemoryChatMessageHistory } = await import(
+    "@langchain/core/chat_history"
+  );
+  const { AIMessage, HumanMessage } = await import("@langchain/core/messages");
 
   const messageHistory = new InMemoryChatMessageHistory();
   if (history) {
