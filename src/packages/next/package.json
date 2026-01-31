@@ -39,9 +39,9 @@
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores @openapitools/openapi-generator-cli,eslint-config-next,locales,components,lib,public,pages,software-inventory,pg,bufferutil",
     "prepublishOnly": "pnpm test",
     "patch-openapi": "sed '/^interface NrfOasData {/s/^interface/export interface/' node_modules/next-rest-framework/dist/index.d.ts > node_modules/next-rest-framework/dist/index.d.ts.temp && mv node_modules/next-rest-framework/dist/index.d.ts.temp node_modules/next-rest-framework/dist/index.d.ts",
-    "generate-openapi": "cd dist && rm -f public && ln -sf ../public public && NODE_ENV='dev' NODE_PATH=`pwd` pnpm exec next-rest-framework generate",
+    "generate-openapi": "cd dist && rm -f public && ln -sf ../public public && NODE_ENV='dev' NODE_PATH=$(pwd) node ../node_modules/next-rest-framework/dist/cli/index.js generate --configPath /api/v2",
     "generate-api-v2-manifest": "node ./scripts/generate-api-v2-manifest.js",
-    "validate-openapi": "cd dist && rm -f public && ln -sf ../public public && NODE_ENV='dev' NODE_PATH=`pwd` pnpm exec next-rest-framework validate",
+    "validate-openapi": "cd dist && rm -f public && ln -sf ../public public && NODE_ENV='dev' NODE_PATH=$(pwd) node ../node_modules/next-rest-framework/dist/cli/index.js validate --configPath /api/v2",
     "i18n:upload": "bash ./locales/upload.sh",
     "i18n:download": "bash ./locales/download.sh"
   },
