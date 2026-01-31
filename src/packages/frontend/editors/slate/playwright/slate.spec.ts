@@ -490,6 +490,70 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
   }).toContain("Yb");
 });
 
+test("block editor: ArrowLeft at block start moves to previous block end", async ({
+  page,
+}) => {
+  const markdown = "abc\n\n123\n\n456";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.getMarkdown === "function";
+  });
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.setSelection === "function";
+  });
+  await page.waitForFunction(() => {
+    return window.__slateBlockTest?.setSelection?.(1, "start") === true;
+  });
+  await page.waitForFunction(() => {
+    const focused = window.__slateBlockTest?.getFocusedIndex?.();
+    if (focused !== 1) return false;
+    const data = window.__slateBlockTest?.getSelectionOffsetForBlock?.(1);
+    return data != null && data.offset === 0;
+  });
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.type("X");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("abcX\n\n123");
+});
+
+test("block editor: ArrowRight at block end moves to next block start", async ({
+  page,
+}) => {
+  const markdown = "abc\n\n123\n\n456";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.getMarkdown === "function";
+  });
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.setSelection === "function";
+  });
+  await page.waitForFunction(() => {
+    return window.__slateBlockTest?.setSelection?.(0, "end") === true;
+  });
+  await page.waitForFunction(() => {
+    const focused = window.__slateBlockTest?.getFocusedIndex?.();
+    if (focused !== 0) return false;
+    const data = window.__slateBlockTest?.getSelectionOffsetForBlock?.(0);
+    return data != null && data.offset === data.text.length;
+  });
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.type("Y");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("abc\n\nY123");
+});
+
 test("block editor: arrow inserts before/after code block", async ({ page }) => {
   const markdown = "```\nfoo\n```";
   await page.goto(

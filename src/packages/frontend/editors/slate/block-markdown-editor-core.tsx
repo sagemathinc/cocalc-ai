@@ -61,6 +61,17 @@ import type { CodeBlock } from "./elements/code-block/types";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
+const BLOCK_CHUNK_TARGET_CHARS = 4000;
+const SHOW_BLOCK_BOUNDARIES = true;
+
+function getBlockChunkTargetChars(): number {
+  if (typeof globalThis === "undefined") return BLOCK_CHUNK_TARGET_CHARS;
+  const value = (globalThis as any).COCALC_SLATE_BLOCK_CHUNK_CHARS;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return BLOCK_CHUNK_TARGET_CHARS;
+}
 
 function debugSyncLog(type: string, data?: Record<string, unknown>): void {
   if (typeof window === "undefined") return;
@@ -103,20 +114,32 @@ function pointFromOffsetInDoc(doc: Descendant[], offset: number): { path: number
   return Editor.start({ children: doc } as any, [0]);
 }
 
+function offsetFromPointInDoc(doc: Descendant[], point: Point): number {
+  let total = 0;
+  const root = { children: doc } as Descendant;
+  for (const [node, path] of Node.texts(root)) {
+    if (Path.equals(path, point.path)) {
+      return total + point.offset;
+    }
+    total += node.text.length;
+  }
+  return total;
+}
+
 function blockSelectionPoint(
   editor: SlateEditor,
   position: "start" | "end",
 ): Point {
   try {
-    const text = Node.string({ children: editor.children } as any);
-    const offset = position === "end" ? text.length : 0;
-    return pointFromOffsetInDoc(editor.children as Descendant[], offset);
+    const children = editor.children as Descendant[];
+    const text = Node.string({ children } as any);
+    const offset = position === "start" ? 0 : text.length;
+    return pointFromOffsetInDoc(children, offset);
   } catch {
     // fall through to default point
   }
-  const lastIndex = Math.max(0, editor.children.length - 1);
-  const basePath = position === "start" ? [0] : [lastIndex];
-  return pointAtPath(editor, basePath, undefined, position);
+  const fallbackPath = position === "start" ? [0] : [0];
+  return pointAtPath(editor, fallbackPath, undefined, position);
 }
 
 const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
@@ -251,7 +274,7 @@ function splitMarkdownToBlocks(markdown: string): string[] {
     (node) => !(node?.["type"] === "paragraph" && node?.["blank"] === true),
   );
   if (filtered.length === 0) return [""];
-  return filtered.map((node) => {
+  const nodeMarkdown = filtered.map((node) => {
     if (SlateElement.isElement(node) && node.type === "code_block") {
       const info = (node as any).info ? String((node as any).info).trim() : "";
       const lines = Array.isArray(node.children)
@@ -264,6 +287,32 @@ function splitMarkdownToBlocks(markdown: string): string[] {
       slate_to_markdown([node], { cache, preserveBlankLines: false }),
     );
   });
+  const chunks: string[] = [];
+  let current: string[] = [];
+  let currentLength = 0;
+  const targetChars = getBlockChunkTargetChars();
+  const flush = () => {
+    if (current.length === 0) return;
+    chunks.push(current.join("\n\n"));
+    current = [];
+    currentLength = 0;
+  };
+  for (const block of nodeMarkdown) {
+    const blockLength = block.length;
+    const nextLength =
+      currentLength === 0 ? blockLength : currentLength + 2 + blockLength;
+    if (
+      current.length > 0 &&
+      nextLength > targetChars
+    ) {
+      flush();
+    }
+    current.push(block);
+    currentLength =
+      currentLength === 0 ? blockLength : currentLength + 2 + blockLength;
+  }
+  flush();
+  return chunks.length > 0 ? chunks : [""];
 }
 
 interface BlockRowEditorProps {
@@ -850,7 +899,9 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         if (
           !isFocused &&
           event.key !== "ArrowUp" &&
-          event.key !== "ArrowDown"
+          event.key !== "ArrowDown" &&
+          event.key !== "ArrowLeft" &&
+          event.key !== "ArrowRight"
         ) {
           return;
         }
@@ -881,6 +932,36 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           const topIndex = editor.selection.focus.path[0];
           const lastIndex = Math.max(0, editor.children.length - 1);
           if (topIndex !== lastIndex) {
+            return;
+          }
+          onNavigate(index + 1, "start");
+          event.preventDefault();
+          return;
+        }
+
+        if (
+          event.key === "ArrowLeft" &&
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection)
+        ) {
+          const topIndex = 0;
+          if (!Editor.isStart(editor, editor.selection.anchor, [topIndex])) {
+            return;
+          }
+          if (index > 0) {
+            onNavigate(index - 1, "end");
+            event.preventDefault();
+            return;
+          }
+        }
+
+        if (
+          event.key === "ArrowRight" &&
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection)
+        ) {
+          const lastIndex = Math.max(0, editor.children.length - 1);
+          if (!Editor.isEnd(editor, editor.selection.anchor, [lastIndex])) {
             return;
           }
           onNavigate(index + 1, "start");
@@ -1124,6 +1205,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       gapCursor?.index === index && gapCursor.side === "before";
     const showGapAfter =
       gapCursor?.index === index && gapCursor.side === "after";
+    const showBoundary = SHOW_BLOCK_BOUNDARIES && index > 0;
 
     return (
       <div
@@ -1132,9 +1214,31 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           ...rowStyle,
           position: "relative",
           background: undefined,
+          borderTop: showBoundary
+            ? "1px dashed rgba(0, 0, 0, 0.12)"
+            : undefined,
+          paddingTop: showBoundary ? 12 : undefined,
+          marginTop: showBoundary ? 12 : undefined,
         }}
         data-slate-block-index={index}
       >
+        {showBoundary && (
+          <div
+            data-slate-block-boundary="true"
+            style={{
+              position: "absolute",
+              top: -15,
+              left: 10,
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "rgba(0, 0, 0, 0.35)",
+              pointerEvents: "none",
+            }}
+          >
+            {`Page ${index + 1}`}
+          </div>
+        )}
         {selected && (
           <div
             data-slate-block-selection="true"
@@ -1721,8 +1825,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         return;
       }
       const point = blockSelectionPoint(editor, position);
-      Transforms.setSelection(editor, { anchor: point, focus: point });
       ReactEditor.focus(editor);
+      Transforms.setSelection(editor, { anchor: point, focus: point });
       setFocusedIndex(targetIndex);
     },
     [],
@@ -1734,8 +1838,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       const editor = editorMapRef.current.get(index);
       if (!editor) return false;
       const point = pointFromOffsetInDoc(editor.children as Descendant[], offset);
-      Transforms.setSelection(editor, { anchor: point, focus: point });
       ReactEditor.focus(editor);
+      Transforms.setSelection(editor, { anchor: point, focus: point });
       setFocusedIndex(index);
       return true;
     },
@@ -1782,8 +1886,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
           return false;
         }
         const point = blockSelectionPoint(editor, position);
-        Transforms.setSelection(editor, { anchor: point, focus: point });
         ReactEditor.focus(editor);
+        Transforms.setSelection(editor, { anchor: point, focus: point });
         setFocusedIndex(index);
         return true;
       },
@@ -1825,8 +1929,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
           editor.children as Descendant[],
           pendingSelection.offset,
         );
-        Transforms.setSelection(editor, { anchor: point, focus: point });
         ReactEditor.focus(editor);
+        Transforms.setSelection(editor, { anchor: point, focus: point });
         setFocusedIndex(index);
         return;
       }
@@ -2252,6 +2356,37 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         handleSelectBlock(index, { shiftKey: true });
       }}
       onKeyDownCapture={(event) => {
+        if (focusedIndex != null) {
+          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+            const editor = editorMapRef.current.get(focusedIndex);
+            if (editor && editor.selection && Range.isCollapsed(editor.selection)) {
+              const root = { children: editor.children } as Node;
+              const normalized = normalizePointForDoc(
+                root,
+                editor.selection.anchor,
+                event.key === "ArrowLeft" ? "start" : "end",
+              );
+              if (!normalized) return;
+              const atEdge =
+                event.key === "ArrowLeft"
+                  ? Editor.isStart(editor, normalized, [])
+                  : Editor.isEnd(editor, normalized, []);
+              if (event.key === "ArrowLeft") {
+                if (atEdge && focusedIndex > 0) {
+                  focusBlock(focusedIndex - 1, "end");
+                  event.preventDefault();
+                  event.stopPropagation();
+                  return;
+                }
+              } else if (atEdge && focusedIndex < blocksRef.current.length - 1) {
+                focusBlock(focusedIndex + 1, "start");
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+              }
+            }
+          }
+        }
         if (!selectionRange) return;
         if (event.defaultPrevented) return;
         if (focusedIndex != null) return;
