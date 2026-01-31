@@ -4,7 +4,7 @@ const BASE_PATH = process.env.BASE_PATH ?? "/";
 // next.js definition:
 const basePath = BASE_PATH == "/" ? "" : BASE_PATH;
 
-const { join, resolve } = require("path");
+const { join, resolve, sep } = require("path");
 
 // Important!  We include resolve('.') and basePath to avoid
 // any possibility of multiple cocalc installs or different base
@@ -35,6 +35,17 @@ const config = {
       __dirname,
       "node_modules",
       "react-dom",
+    );
+    // Silence findDOMNode export warning from @ant-design/compatible.
+    const antDesignCompatPath = `${sep}@ant-design${sep}compatible${sep}`;
+    const reactDomShim = resolve(__dirname, "lib", "react-dom-shim.js");
+    config.plugins = config.plugins || [];
+    config.plugins.push(
+      new webpack.NormalModuleReplacementPlugin(/^react-dom$/, (resource) => {
+        if (resource.context?.includes(antDesignCompatPath)) {
+          resource.request = reactDomShim;
+        }
+      }),
     );
     // These backend-only deps should never be bundled by Next.
     const emptyModule = resolve(__dirname, "lib", "webpack-empty.js");
