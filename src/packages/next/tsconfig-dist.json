@@ -15,7 +15,7 @@
     "locales/*/*.json",
     "locales/en/common.ts"
   ],
-  "exclude": ["node_modules", "public", "styles", "dist"],
+  "exclude": ["node_modules", "public", "styles", "dist", "dist-types"],
   "references": [
     { "path": "../backend" },
     { "path": "../database" },
