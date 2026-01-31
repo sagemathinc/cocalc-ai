@@ -2,18 +2,25 @@
 
 ## Todo
 
-- [ ] #ux plain text paste: just ALWAYS show the text / code block option, even if only one line; it's just more predictable.
+- [ ] #bug chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens every single time even with sync now enabled. 
+
+- [ ] #ux plain text paste: just ALWAYS show the text / code block option, even if only one line; it's just more predictable.   
+  - [ ] make "shift+control+v" (and similar for macos) always paste without showing the code block at all.
 
 - [ ] #bug keyboard navigation between blocks (left arrow at start, right arrow at end)
 
 - [ ] #bug undo/redo via keyboard (e.g., control+z) doesn't work
 
+- [ ] #unclear #bug block editor on text side:  
+  1. type "x\\n\\n" --&gt; see x in the rendered slate editor  
+  2. type "# foo" --&gt; see x#foo in the rendered editor, i.e., blocks are merged in the editor.  
+  This doesn't happen every time; I can't reliably reproduce it. yet.  
+  I noticed also sometimes I type in the text side and the changes don't get flushed out (or maybe don't get merged in) on the slate side until I type some more.
+
+- [ ] #bug type one character into mode-line popover for code and focus goes back into editor corrupted it with later keystrokes.  maybe there is a better approach to editing the mode line entirely?
+
 - [ ] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
   - [ ] this is also needed for jumping from table of contents entries to the document.
-
-- [ ] #bug chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens every single time even with sync now enabled. 
-
-- [ ] #bug type one character into mode-line popover for code and focus goes back into editor corrupted it with later keystrokes.
 
 - [ ] #feature find (and replace) search in doc; it's not visible at all right now.
 

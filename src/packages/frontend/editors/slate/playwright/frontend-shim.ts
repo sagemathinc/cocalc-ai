@@ -38,7 +38,7 @@ export const get_insert_link_opts_from_user = async () => null;
 export const get_insert_special_char_from_user = async () => null;
 export const commands: Record<string, () => void> = {};
 export const file_associations = {};
-export const detectLanguage = () => null;
+export const detectLanguage = () => "txt";
 export const guessPopularLanguage = () => null;
 export const open_new_tab = () => undefined;
 export const TITLE_BAR_BORDER = "1px solid #ddd";

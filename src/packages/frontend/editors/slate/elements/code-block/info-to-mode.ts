@@ -10,7 +10,7 @@ export default function infoToMode(
   options: { value?: string; preferKernel?: boolean } = {},
 ): string {
   const { value, preferKernel } = options;
-  info = info?.trim().toLowerCase();
+  info = typeof info === "string" ? info.trim().toLowerCase() : "";
   if (!info) {
     if (!value) return ""; // no info
     const popular = guessPopularLanguage(value);
@@ -48,7 +48,7 @@ export default function infoToMode(
   // Also "python-markdown" uses these braces, though differently.
   //   https://python-markdown.github.io/extensions/fenced_code_blocks
   //   ``` { .html .foo .bar }
-  if (info[0] == "{") {
+  if (info?.[0] == "{") {
     info = info.slice(1, -1).trim();
     if (preferKernel) {
       const i = info.indexOf("kernel=");
@@ -67,7 +67,7 @@ export default function infoToMode(
   let mode = firstWord(info);
   // mode can have a leading dot which we ignore, e.g., see
   //   https://python-markdown.github.io/extensions/fenced_code_blocks/
-  if (mode[0] == ".") {
+  if (mode?.[0] == ".") {
     mode = mode.slice(1);
   }
 

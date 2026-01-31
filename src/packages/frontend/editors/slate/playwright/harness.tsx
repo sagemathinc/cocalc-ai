@@ -47,18 +47,28 @@ declare global {
     };
     __slateBlockTest?: {
       getMarkdown: () => string;
+      setMarkdown?: (value: string) => void;
       setSelection?: (index: number, position?: "start" | "end") => boolean;
       getSelection?: () => { index: number; selection: Range } | null;
       getSelectionForBlock?: (index: number) => { index: number; selection: Range } | null;
       getSelectionOffsetForBlock?: (index: number) => { offset: number; text: string } | null;
+      getBlocks?: () => string[];
       getFocusedIndex?: () => number | null;
     };
     __slateCollabTest?: {
       getMarkdownA: () => string;
       getMarkdownB: () => string;
       setRemote: (value: string) => void;
-      setSelectionA: (range: Range) => void;
-      setSelectionB: (range: Range) => void;
+      setSelectionA: (
+        range: Range | number,
+        position?: "start" | "end",
+      ) => boolean | void;
+      setSelectionB: (
+        range: Range | number,
+        position?: "start" | "end",
+      ) => boolean | void;
+      getBlocksA?: () => string[];
+      getBlocksB?: () => string[];
       getSelectionA: () => Range | null;
       getSelectionB: () => Range | null;
     };
@@ -115,7 +125,7 @@ function Harness(): React.JSX.Element {
   const initialMarkdown =
     searchParams?.get("md") != null
       ? decodeURIComponent(searchParams.get("md") || "")
-      : "a\n\n```\nfoo\n```\n";
+      : "a";
 
   const editor = useMemo(() => {
     const base = withIsInline(withIsVoid(withReact(createEditor())));
@@ -128,6 +138,17 @@ function Harness(): React.JSX.Element {
   }, [autoformatMode]);
   const [value, setValue] = useState<Descendant[]>(initialValue);
   const valueRef = useRef(value);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (event: ErrorEvent) => {
+      (window as any).__slateHarnessError = {
+        message: event?.message ?? "unknown error",
+        stack: event?.error?.stack ?? "",
+      };
+    };
+    window.addEventListener("error", handler);
+    return () => window.removeEventListener("error", handler);
+  }, []);
 
   const handleChange = useCallback((nextValue: Descendant[]) => {
     valueRef.current = nextValue;
@@ -182,6 +203,9 @@ function Harness(): React.JSX.Element {
     useEffect(() => {
       const api: Window["__slateBlockTest"] = {
         getMarkdown: () => getValueRef.current?.() ?? "",
+        setMarkdown: (value: string) => {
+          controlRef.current?.setMarkdown?.(value);
+        },
         setSelection: (index: number, position: "start" | "end" = "start") => {
           return controlRef.current?.setSelectionInBlock?.(index, position);
         },
@@ -193,6 +217,9 @@ function Harness(): React.JSX.Element {
         },
         getSelectionOffsetForBlock: (index: number) => {
           return controlRef.current?.getSelectionOffsetForBlock?.(index) ?? null;
+        },
+        getBlocks: () => {
+          return controlRef.current?.getBlocks?.() ?? [];
         },
         getFocusedIndex: () => {
           return controlRef.current?.getFocusedIndex?.() ?? null;
@@ -213,6 +240,7 @@ function Harness(): React.JSX.Element {
             actions={{}}
             getValueRef={getValueRef}
             controlRef={controlRef}
+            disableVirtualization={true}
           />
         </div>
       </HarnessErrorBoundary>
@@ -255,6 +283,8 @@ function Harness(): React.JSX.Element {
     const syncRef = useRef(new FakeSyncstring(markdown));
     const getValueRefA = useRef<() => string>(() => "");
     const getValueRefB = useRef<() => string>(() => "");
+    const controlRefA = useRef<any>(null);
+    const controlRefB = useRef<any>(null);
 
     useEffect(() => {
       window.__slateCollabTest = {
@@ -263,10 +293,16 @@ function Harness(): React.JSX.Element {
         setRemote: (value) => {
           syncRef.current.set(value);
         },
-        setSelectionA: () => undefined,
-        setSelectionB: () => undefined,
-        getSelectionA: () => null,
-        getSelectionB: () => null,
+        setSelectionA: (index, position = "start") => {
+          return controlRefA.current?.setSelectionInBlock?.(index, position) ?? false;
+        },
+        setSelectionB: (index, position = "start") => {
+          return controlRefB.current?.setSelectionInBlock?.(index, position) ?? false;
+        },
+        getBlocksA: () => controlRefA.current?.getBlocks?.() ?? [],
+        getBlocksB: () => controlRefB.current?.getBlocks?.() ?? [],
+        getSelectionA: () => controlRefA.current?.getSelectionInBlock?.()?.selection ?? null,
+        getSelectionB: () => controlRefB.current?.getSelectionInBlock?.()?.selection ?? null,
       };
     }, []);
 
@@ -294,6 +330,7 @@ function Harness(): React.JSX.Element {
                 ignoreRemoteMergesWhileFocused={false}
                 remoteMergeIdleMs={150}
                 getValueRef={getValueRefA}
+                controlRef={controlRefA}
               />
             </div>
             <div style={{ width: 300 }} data-testid="collab-editor-b">
@@ -307,6 +344,7 @@ function Harness(): React.JSX.Element {
                 ignoreRemoteMergesWhileFocused={false}
                 remoteMergeIdleMs={150}
                 getValueRef={getValueRefB}
+                controlRef={controlRefB}
               />
             </div>
           </div>
@@ -367,8 +405,16 @@ function Harness(): React.JSX.Element {
         setRemote: (value) => {
           syncRef.current.set(value);
         },
-        setSelectionA: (range) => selectionRefA.current?.setSelection(range),
-        setSelectionB: (range) => selectionRefB.current?.setSelection(range),
+        setSelectionA: (range) => {
+          if (typeof range === "number") return false;
+          selectionRefA.current?.setSelection(range);
+          return true;
+        },
+        setSelectionB: (range) => {
+          if (typeof range === "number") return false;
+          selectionRefB.current?.setSelection(range);
+          return true;
+        },
         getSelectionA: () => selectionRefA.current?.getSelection() ?? null,
         getSelectionB: () => selectionRefB.current?.getSelection() ?? null,
       };
@@ -559,6 +605,12 @@ class HarnessErrorBoundary extends React.Component<
 
   componentDidCatch(error: Error): void {
     console.error("Block harness error:", error);
+    if (typeof window !== "undefined") {
+      (window as any).__slateHarnessError = {
+        message: error?.message ?? String(error),
+        stack: error?.stack ?? "",
+      };
+    }
     this.setState({ error });
   }
 

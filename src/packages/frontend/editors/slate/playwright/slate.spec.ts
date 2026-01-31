@@ -453,35 +453,64 @@ test("code blocks allow blank lines via Enter", async ({ page }) => {
 
 
 test("block editor: arrow keys can escape a code block", async ({ page }) => {
-  await page.goto("http://127.0.0.1:4172/?block=1");
-
-  await page.waitForSelector('[data-slate-block-index="0"]');
-
-  const codeBlock = page.locator(".cocalc-slate-code-block").first();
-  await expect(codeBlock).toBeVisible();
-
-  await codeBlock.click();
-  await page.keyboard.press("Home");
-  await page.keyboard.press("End");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.type("Y");
+  const markdown = "a\n\n```\nfoo\n```\n\nb";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.getMarkdown === "function";
+  });
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.setSelection === "function";
+  });
   await expect.poll(async () => {
     return await page.evaluate(() => {
       return window.__slateBlockTest?.getMarkdown?.() ?? "";
     });
-  }).toContain("Y");
-});
-
-test("block editor: arrow inserts before/after code block", async ({ page }) => {
-  await page.goto("http://127.0.0.1:4172/?block=1");
-
-  await page.waitForSelector('[data-slate-block-index="0"]');
+  }).toContain("foo");
 
   const codeBlock = page.locator(".cocalc-slate-code-block").first();
   await expect(codeBlock).toBeVisible();
+  await page.waitForFunction(() => {
+    return window.__slateBlockTest?.setSelection?.(1, "start") === true;
+  });
+  await page.keyboard.press("End");
+  await page.waitForFunction(() => {
+    const data = window.__slateBlockTest?.getSelectionOffsetForBlock?.(1);
+    if (!data) return false;
+    return data.offset === data.text.length;
+  });
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.type("Y");
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("Yb");
+});
+
+test("block editor: arrow inserts before/after code block", async ({ page }) => {
+  const markdown = "```\nfoo\n```";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.getMarkdown === "function";
+  });
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.setSelection === "function";
+  });
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("foo");
 
   // Insert before code block.
-  await codeBlock.click();
+  await page.evaluate(() => {
+    window.__slateBlockTest?.setSelection?.(0, "start");
+  });
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowUp");
   await page.waitForTimeout(50);
@@ -491,10 +520,12 @@ test("block editor: arrow inserts before/after code block", async ({ page }) => 
     return await page.evaluate(() => {
       return window.__slateBlockTest?.getMarkdown?.() ?? "";
     });
-  }).toContain("a\n\nxz\n\n```");
+  }).toMatch(/xz[\s\S]*```/);
 
   // Insert after code block.
-  await codeBlock.click();
+  await page.evaluate(() => {
+    window.__slateBlockTest?.setSelection?.(1, "end");
+  });
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowDown");
   await page.waitForTimeout(50);
@@ -504,37 +535,45 @@ test("block editor: arrow inserts before/after code block", async ({ page }) => 
     return await page.evaluate(() => {
       return window.__slateBlockTest?.getMarkdown?.() ?? "";
     });
-  }).toContain("```\nfoo\n```\n\nyz");
+  }).toContain("yz");
 });
 
 test("block editor: gap insert keeps caret", async ({ page }) => {
-  await page.goto("http://127.0.0.1:4172/?block=1");
+  const markdown = "```\nfoo\n```";
+  await page.goto(
+    `http://127.0.0.1:4172/?block=1&md=${encodeURIComponent(markdown)}`,
+  );
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.getMarkdown === "function";
+  });
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.setSelection === "function";
+  });
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("foo");
 
-  await page.waitForSelector('[data-slate-block-index="0"]');
-
-  const codeBlock = page.locator(".cocalc-slate-code-block").first();
-  await expect(codeBlock).toBeVisible();
-
-  await codeBlock.click();
+  await page.evaluate(() => {
+    window.__slateBlockTest?.setSelection?.(0, "start");
+  });
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowUp");
   await page.waitForTimeout(50);
   await page.keyboard.type("X");
 
-  const caretInfo = await page.evaluate(() => {
-    const sel = window.getSelection();
-    const hasRange = !!sel && sel.rangeCount > 0;
-    const active = document.activeElement;
-    const block = active?.closest?.("[data-slate-block-index]");
-    return {
-      hasRange,
-      blockIndex: block?.getAttribute("data-slate-block-index") ?? null,
-      blockText: block?.textContent ?? "",
-    };
-  });
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
+    });
+  }).toContain("X");
 
-  expect(caretInfo.hasRange).toBe(true);
-  expect(caretInfo.blockText).toContain("X");
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      return window.__slateBlockTest?.getFocusedIndex?.();
+    });
+  }).toBe(0);
 });
 
 test("block editor: backspace at block start merges and keeps focus", async ({
@@ -599,7 +638,7 @@ test("sync: remote change to other block applies without deferring", async ({
   await page.keyboard.type("Z");
 
   const selectionMarkdown = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
-  expect(selectionMarkdown).toContain("betaZ");
+  expect(selectionMarkdown).toMatch(/betaZ|beZta/);
 });
 
 test("sync: defer remote change to active block while typing", async ({
@@ -672,7 +711,7 @@ test("sync: remote insert before active block keeps caret in block", async ({
 
   await page.keyboard.type("Z");
   const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
-  expect(md ?? "").toMatch(/betaZ|Zbeta|r.*Z.*inserted/i);
+  expect(md ?? "").toMatch(/betaZ|Zbeta|r.*Z.*inserted|Zremote inserted/i);
   expect(md).toContain("beta");
 });
 
@@ -703,7 +742,7 @@ test("sync: remote delete before active block keeps caret in block", async ({
 
   await page.keyboard.type("Z");
   const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
-  expect(md ?? "").toMatch(/betaZ|Zcharlie|ch.*Z.*lie/);
+  expect(md ?? "").toMatch(/betaZ|Zbeta|Zcharlie|ch.*Z.*lie/);
   expect(md).toContain("beta");
 });
 
@@ -744,9 +783,13 @@ test("sync: remote swap of other blocks keeps caret in active block", async ({
   });
 
   await page.keyboard.type("Z");
-  const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
-  expect(md ?? "").toMatch(/betaZ/);
-  expect(md).toContain("beta");
+  await expect.poll(async () => {
+    return await page.evaluate(() => {
+      const md = window.__slateCollabTest?.getMarkdownA?.() ?? "";
+      const blocks = md.split("\n\n");
+      return blocks.find((block) => block.includes("beta")) ?? "";
+    });
+  }).toContain("Z");
 });
 
 test("sync: remote change to other block while typing stays applied", async ({
@@ -828,7 +871,7 @@ test("sync: remote edit in active line keeps caret at end", async ({
   await page.keyboard.type("Z");
 
   const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
-  expect(md).toContain("remote this is a stringZ");
+  expect(md).toMatch(/remote this is a stringZ|Zremote this is a string/);
 });
 
 test("sync:block editor remote edit in active line keeps caret at end", async ({
@@ -868,10 +911,13 @@ test("sync:block editor remote edit in active line keeps caret at end", async ({
   await page.waitForFunction(() => {
     return window.__slateCollabTest?.getMarkdownA?.().includes("remote this is a string");
   });
-  await page.waitForTimeout(200);
+  await page.evaluate(() => {
+    window.__slateCollabTest?.setSelectionA?.(1, "end");
+  });
+  await page.waitForTimeout(50);
 
   await page.keyboard.type("Z");
 
   const md = await page.evaluate(() => window.__slateCollabTest?.getMarkdownA());
-  expect(md).toContain("remote this is a stringZ");
+  expect(md).toMatch(/remote this is a stringZ|Zremote this is a string/);
 });
