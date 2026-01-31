@@ -23,6 +23,7 @@ import type { AIMessageChunk } from "@langchain/core/messages";
 import type { ChatOpenAI } from "@langchain/openai";
 import { transformHistoryToMessages } from "./chat-history";
 import { heuristicNumTokens, type TokenCounter } from "./chatgpt-numtokens";
+import { importLangchain } from "./langchain-import";
 import { normalizeOpenAIModel } from "./normalize-openai";
 
 const log = getLogger("llm:evaluate-lc");
@@ -91,7 +92,9 @@ export const PROVIDER_CONFIGS = {
   openai: {
     name: "OpenAI",
     createClient: async (options, ctx) => {
-      const { ChatOpenAI } = await import("@langchain/openai");
+      const { ChatOpenAI } = await importLangchain<
+        typeof import("@langchain/openai")
+      >("@langchain/openai");
       const { openai_api_key: apiKey } = ctx.settings ?? {};
       const normalizedModel = normalizeOpenAIModel(options.model);
 
@@ -132,7 +135,9 @@ export const PROVIDER_CONFIGS = {
   google: {
     name: "Google GenAI",
     createClient: async (options, ctx) => {
-      const { ChatGoogleGenerativeAI } = await import("@langchain/google-genai");
+      const { ChatGoogleGenerativeAI } = await importLangchain<
+        typeof import("@langchain/google-genai")
+      >("@langchain/google-genai");
       const mode = ctx.mode ?? "cocalc";
       const apiKey =
         mode === "cocalc" ? ctx.settings?.google_vertexai_key : options.apiKey;
@@ -176,7 +181,9 @@ export const PROVIDER_CONFIGS = {
   anthropic: {
     name: "Anthropic",
     createClient: async (options, ctx) => {
-      const { ChatAnthropic } = await import("@langchain/anthropic");
+      const { ChatAnthropic } = await importLangchain<
+        typeof import("@langchain/anthropic")
+      >("@langchain/anthropic");
       const mode = ctx.mode ?? "cocalc";
       const apiKey =
         mode === "cocalc" ? ctx.settings?.anthropic_api_key : options.apiKey;
@@ -226,7 +233,9 @@ export const PROVIDER_CONFIGS = {
   mistral: {
     name: "Mistral",
     createClient: async (options, ctx) => {
-      const { ChatMistralAI } = await import("@langchain/mistralai");
+      const { ChatMistralAI } = await importLangchain<
+        typeof import("@langchain/mistralai")
+      >("@langchain/mistralai");
       const mode = ctx.mode ?? "cocalc";
       const apiKey =
         mode === "cocalc" ? ctx.settings?.mistral_api_key : options.apiKey;
@@ -256,7 +265,9 @@ export const PROVIDER_CONFIGS = {
   "custom-openai": {
     name: "Custom OpenAI",
     createClient: async (options, ctx) => {
-      const { ChatOpenAI } = await import("@langchain/openai");
+      const { ChatOpenAI } = await importLangchain<
+        typeof import("@langchain/openai")
+      >("@langchain/openai");
       const transformedModel = fromCustomOpenAIModel(options.model);
       log.debug(
         `Custom OpenAI createClient: original=${options.model}, transformed=${transformedModel}`,
@@ -346,13 +357,15 @@ export async function evaluateWithLangChain(
     maxTokens,
   });
 
-  const { ChatPromptTemplate, MessagesPlaceholder } = await import(
-    "@langchain/core/prompts"
-  );
-  const { RunnableWithMessageHistory } = await import(
-    "@langchain/core/runnables"
-  );
-  const { concat } = await import("@langchain/core/utils/stream");
+  const { ChatPromptTemplate, MessagesPlaceholder } = await importLangchain<
+    typeof import("@langchain/core/prompts")
+  >("@langchain/core/prompts");
+  const { RunnableWithMessageHistory } = await importLangchain<
+    typeof import("@langchain/core/runnables")
+  >("@langchain/core/runnables");
+  const { concat } = await importLangchain<
+    typeof import("@langchain/core/utils/stream")
+  >("@langchain/core/utils/stream");
 
   // Get provider configuration
   const config = getProviderConfig(model);
