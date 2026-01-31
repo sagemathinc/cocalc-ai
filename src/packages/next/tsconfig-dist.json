@@ -4,8 +4,7 @@
     "baseUrl": ".",
     "outDir": "dist",
     "lib": ["dom", "dom.iterable", "ESNext"],
-    "declaration": false,
-    "declarationMap": false
+    "declarationDir": "dist-types"
   },
   "include": [
     "next-env.d.ts",
