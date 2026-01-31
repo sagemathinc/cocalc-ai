@@ -4,7 +4,7 @@
  */
 
 import { Alert, Button, Input, Modal, Radio, Space } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import cloudflareApiTokenImg from "./assets/cloudflare-api-token.png";
@@ -58,7 +58,9 @@ export default function CloudflareConfigWizard({
     setAccountId(trimOrEmpty(data.project_hosts_cloudflare_tunnel_account_id));
     setApiToken(trimOrEmpty(data.project_hosts_cloudflare_tunnel_api_token));
     setExternalDomain(trimOrEmpty(data.dns));
-    setHostSuffix(trimOrEmpty(data.project_hosts_cloudflare_tunnel_host_suffix));
+    setHostSuffix(
+      trimOrEmpty(data.project_hosts_cloudflare_tunnel_host_suffix),
+    );
     setTunnelPrefix(
       trimOrEmpty(data.project_hosts_cloudflare_tunnel_prefix) || "cocalc",
     );
@@ -67,22 +69,14 @@ export default function CloudflareConfigWizard({
       rawMode === "self" || rawMode === "managed" || rawMode === "none"
         ? rawMode
         : trimOrEmpty(data.project_hosts_cloudflare_tunnel_enabled) !== "no"
-        ? "self"
-        : "none";
+          ? "self"
+          : "none";
     setMode(inferredMode);
     setR2ApiToken(trimOrEmpty(data.r2_api_token));
     setR2AccessKey(trimOrEmpty(data.r2_access_key_id));
     setR2SecretKey(trimOrEmpty(data.r2_secret_access_key));
     setR2BucketPrefix(trimOrEmpty(data.r2_bucket_prefix));
   }, [open, data]);
-
-  const setupLinksMarkdown = useMemo(
-    () => `Useful Cloudflare pages:
-
-- **Account ID**: https://dash.cloudflare.com/ -> use the left sidebar **Quick search** and type "account id"
-- **API Tokens**: https://dash.cloudflare.com/profile/api-tokens`,
-    [],
-  );
 
   const showSelfConfig = mode === "self";
   const r2TokenUrl = accountId
@@ -92,7 +86,7 @@ export default function CloudflareConfigWizard({
   const invalidAccountId =
     accountIdTrimmed.length > 0 && !/^[a-f0-9]{32}$/.test(accountIdTrimmed);
 
-  function renderSecretNote(settingName: string): JSX.Element | null {
+  function renderSecretNote(settingName: string) {
     if (!isSet?.[settingName]) return null;
     return (
       <div
@@ -131,11 +125,13 @@ export default function CloudflareConfigWizard({
   async function applySettings() {
     const updates: Record<string, string> = {};
     updates.cloudflare_mode = mode;
-    updates.project_hosts_cloudflare_tunnel_enabled = mode === "self" ? "yes" : "no";
+    updates.project_hosts_cloudflare_tunnel_enabled =
+      mode === "self" ? "yes" : "no";
     if (mode === "self") {
       if (accountId)
         updates.project_hosts_cloudflare_tunnel_account_id = accountId;
-      if (apiToken) updates.project_hosts_cloudflare_tunnel_api_token = apiToken;
+      if (apiToken)
+        updates.project_hosts_cloudflare_tunnel_api_token = apiToken;
       if (tunnelPrefix)
         updates.project_hosts_cloudflare_tunnel_prefix = tunnelPrefix;
       if (hostSuffix)
@@ -226,7 +222,9 @@ export default function CloudflareConfigWizard({
               >
                 <div>
                   <b>Cloudflare Account ID</b>
-                  <div style={{ color: "#666" }}>Paste the Account ID here.</div>
+                  <div style={{ color: "#666" }}>
+                    Paste the Account ID here.
+                  </div>
                 </div>
                 <Input
                   placeholder="Cloudflare Account ID"
@@ -408,9 +406,7 @@ Required R2 token permissions:
                 <div>
                   <b>Project-host hostname suffix</b>
                   <div style={{ color: "#666" }}>
-                    Leave blank for the default
-                    {" "}
-                    "-&lt;External Domain Name&gt;".
+                    Leave blank for the default "-&lt;External Domain Name&gt;".
                   </div>
                 </div>
                 <Input
