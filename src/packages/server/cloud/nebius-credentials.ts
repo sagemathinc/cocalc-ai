@@ -114,10 +114,15 @@ export function getNebiusRegionConfigEntry(
 ): NebiusRegionConfigEntry | undefined {
   const config = getNebiusRegionConfigFromSettings(settings);
   if (!config) return undefined;
-  if (region) return config[region];
   const keys = Object.keys(config).sort();
   if (!keys.length) return undefined;
-  return config[keys[0]];
+  if (region) return config[region];
+  if (keys.length === 1) return config[keys[0]];
+  throw new Error(
+    `Nebius region config has multiple regions (${keys.join(
+      ", ",
+    )}); specify a region for this host.`,
+  );
 }
 
 export function getNebiusCredentialsFromSettings(
