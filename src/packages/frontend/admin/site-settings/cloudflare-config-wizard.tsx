@@ -142,6 +142,8 @@ export default function CloudflareConfigWizard({
       if (r2AccessKey) updates.r2_access_key_id = r2AccessKey;
       if (r2SecretKey) updates.r2_secret_access_key = r2SecretKey;
       if (r2BucketPrefix) updates.r2_bucket_prefix = r2BucketPrefix;
+    } else {
+      updates.project_hosts_cloudflare_tunnel_api_token = "";
     }
     await onApply(updates);
     setNotice("Settings applied and saved.");
