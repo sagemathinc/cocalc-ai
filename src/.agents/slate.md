@@ -2,35 +2,30 @@
 
 ## Todo
 
-- [ ] #bug chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens every single time even with sync now enabled. 
+- [ ] #easy keyboard shortcuts like "control+b" to bold the current selection/word don't work in block editor mode.
 
-- [ ] #ux plain text paste: just ALWAYS show the text / code block option, even if only one line; it's just more predictable.   
-  - [ ] make "shift+control+v" (and similar for macos) always paste without showing the code block at all.
-
-- [ ] #bug keyboard navigation between blocks (left arrow at start, right arrow at end)
-
-- [ ] #bug undo/redo via keyboard (e.g., control+z) doesn't work
-
-- [ ] #unclear #bug block editor on text side:  
-  1. type "x\\n\\n" --&gt; see x in the rendered slate editor  
-  2. type "# foo" --&gt; see x#foo in the rendered editor, i.e., blocks are merged in the editor.  
-  This doesn't happen every time; I can't reliably reproduce it. yet.  
-  I noticed also sometimes I type in the text side and the changes don't get flushed out (or maybe don't get merged in) on the slate side until I type some more.
-
-- [ ] #bug type one character into mode-line popover for code and focus goes back into editor corrupted it with later keystrokes.  maybe there is a better approach to editing the mode line entirely?
+- [ ] #chat #bug -- STILL when I hit shift+enter to send a message, the composer chat input will sometimes not be cleared.  It has the message I just sent in it after I send it. The cursor also still randomly jumps.   It usually works fine -- failures are rare. Maybe increase a timing threshold. 
 
 - [ ] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
-  - [ ] this is also needed for jumping from table of contents entries to the document.
+  - [ ] back and forth in multimode editor
+  - [ ] jumping from table of contents entries to the document (file editor)
+  - [ ] codemirror &lt;--&gt; block editor (side by side)
+  - [ ] edge cases/robustness
+
+- [ ] #ux plain text paste: just ALWAYS show the text / code block option, even if only one line; it's just more predictable.
+  - [ ] make "shift+control+v" (and similar for macos) always paste without showing the code block at all.
+
+- [ ] #bug type one character into mode-line popover for code and focus goes back into editor corrupted it with later keystrokes.  maybe there is a better approach to editing the mode line entirely?  requires some discussion and design work.
 
 - [ ] #feature find (and replace) search in doc; it's not visible at all right now.
 
-- [ ] #feature the entire slate editor bar is just not displayed so can't use any feature.  maybe find is part of that?
-
-- [ ] #unclear block editor -- shift+click in one block when focus is in another should just select both blocks and all between.  If possible, this is "slightly buggy", but basically awesome and very discoverable.  Obviously it possibly slightly overselects.  I'm ok with that.
+- [ ] #feature the entire slate editor button bar is just not displayed so can't use any feature.  maybe find is part of that?
 
 - [ ] #doc add modal that documents:
   - [ ] keyboard shortcuts
   - [ ] what the editor supports, i.e., a list of features and intentional shortcomings (e.g., block mode selection)
+  - Button to display this in the button bar that isn't displayed
+  - Also a dropdown menu option for frame tree editors.
 
 - [ ] #wishlist make the task editor just use a single big slate editor, but with the same filtering and sorting options.  Is this possible in block editor mode now, or a new mode.  It would be SO amazing!
 
@@ -38,11 +33,23 @@
 
 - [ ] #wishlist latex editor.  this would just start as one big prism (+latex mode) code editor, but proportionally spaced! Then we make math formulas display nicely using katex. Then we make \\section{...} etc. display nicely.  Etc.  Just iteratively replace things until it is beautiful and useful... but still usable.
 
+- [x] #unclear #bug block editor on text side:
+  1. type "x\\n\\n" --&gt; see x in the rendered slate editor
+  2. type "# foo" --&gt; see x#foo in the rendered editor, i.e., blocks are merged in the editor.  
+     This doesn't happen every time; I can't reliably reproduce it. yet.  
+     I noticed also sometimes I type in the text side and the changes don't get flushed out (or maybe don't get merged in) on the slate side until I type some more.
+
+- [x] #bug undo/redo via keyboard (e.g., control+z) doesn't work
+
+- [x] #bug keyboard navigation between blocks (left arrow at start, right arrow at end)
+
+- [x] #bug chat integration: I send a message, input goes blank, then the message I sent re-appears a few seconds later in the input box. This happens every single time even with sync now enabled. 
+
 - [x] #bug bring back the realtime sync integration.
   - addresses HUGE problem: we depend on realtime sync for undo/redo and saving current state!  the "do nothing when focused" mode just horribly breaks this.
   - addresses all the chat integration weirdness and a lot of other problems.
   - it's a challenge but now I feel more optimisitic that it's solvable.
-  - [ ] in particular - the _user aware_ undo/redo integration (via control+z, etc.) fundamentally relies on realtime collaboration integration.
+  - [x] in particular - the _user aware_ undo/redo integration (via control+z, etc.) fundamentally relies on realtime collaboration integration.
   - using debouncing I think this can be done in a way that feels very responsive, and never "jumps the cursor".  Which just have to be very careful.
 
 - [x] #feature #easy make the "paste text/code" buttons that appear much clearer -- they blend in since everything is the same grey.   Also, instead of "Dismiss", the other option should be "Code Block". 
@@ -146,12 +153,14 @@ then put `**` and space.  No focus!
 
 step 1: this input with cursor on aaa
 
-````md
+```md
 aaa
 
 ```
+
 ```
-````
+
+```
 
 step 2: put cursor on aaa, then down into the code block, then back up on aaa.  Now down is stuck and won't go in the code block.
 

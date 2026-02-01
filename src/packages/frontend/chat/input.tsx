@@ -85,6 +85,8 @@ export default function ChatInput({
   const pendingRemoteAtRef = useRef<number>(0);
   const lastLocalEditAtRef = useRef<number>(0);
   const allowFocusedUpdateRef = useRef<boolean>(false);
+  const clearPendingAtRef = useRef<number>(0);
+  const CLEAR_PENDING_MS = 5000;
 
   const getDraftRecord = useCallback(() => {
     const rec = syncdb?.get_one({
@@ -151,6 +153,15 @@ export default function ChatInput({
     // See https://github.com/sagemathinc/cocalc/issues/6415
     const input = (dbInput ?? propsInput) ?? "";
     const current = currentInputRef.current ?? "";
+    if (clearPendingAtRef.current) {
+      if (input === "") {
+        clearPendingAtRef.current = 0;
+      } else if (Date.now() - clearPendingAtRef.current < CLEAR_PENDING_MS) {
+        return;
+      } else {
+        clearPendingAtRef.current = 0;
+      }
+    }
     const isClearing = input === "" && current !== "";
     if (isClearing) {
       saveChat.cancel();
@@ -239,6 +250,15 @@ export default function ChatInput({
       });
       const input = (x as any)?.input ?? "";
       const remoteActive = Number((x as any)?.active ?? 0);
+      if (clearPendingAtRef.current) {
+        if (input === "") {
+          clearPendingAtRef.current = 0;
+        } else if (Date.now() - clearPendingAtRef.current < CLEAR_PENDING_MS) {
+          return;
+        } else {
+          clearPendingAtRef.current = 0;
+        }
+      }
       if (isFocusedRef.current && input !== currentInputRef.current) {
         if (allowFocusedUpdateRef.current) {
           allowFocusedUpdateRef.current = false;
@@ -295,8 +315,11 @@ export default function ChatInput({
         isFocusedRef.current = false;
         if (pendingRemoteInputRef.current != null) {
           const pending = pendingRemoteInputRef.current;
+          const pendingAt = pendingRemoteAtRef.current;
           pendingRemoteInputRef.current = null;
-          if (lastLocalEditAtRef.current > pendingRemoteAtRef.current) {
+          pendingRemoteAtRef.current = 0;
+          clearPendingAtRef.current = 0;
+          if (lastLocalEditAtRef.current > pendingAt) {
             saveChat.flush?.();
           } else if (pending !== currentInputRef.current) {
             setInput(pending);
@@ -330,7 +353,11 @@ export default function ChatInput({
         currentInputRef.current = "";
         lastSavedRef.current = "";
         lastLocalEditAtRef.current = Date.now();
+        pendingRemoteInputRef.current = null;
+        pendingRemoteAtRef.current = 0;
+        clearPendingAtRef.current = Date.now();
         saveChat("");
+        saveChat.flush?.();
         on_send(input);
       }}
       height={height}

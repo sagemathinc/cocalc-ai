@@ -22,6 +22,7 @@ async function waitForCollabHarness(page) {
   });
 }
 
+
 type SlateNode = {
   type?: string;
   text?: string;
@@ -93,6 +94,7 @@ test("enter creates a new block", async ({ page }) => {
     expect(selection.anchor.path[0]).toBe(1);
   }
 });
+
 
 test("enter at start inserts blank lines above without moving cursor", async ({
   page,
