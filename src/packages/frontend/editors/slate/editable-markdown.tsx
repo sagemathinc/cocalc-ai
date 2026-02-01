@@ -888,6 +888,28 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       });
     }
 
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      !e.altKey &&
+      (e.key === "z" || e.key === "Z")
+    ) {
+      if (e.shiftKey) {
+        if (actions?.redo != null) {
+          editor.saveValue(true);
+          actions.redo(id);
+          editor.resetHasUnsavedChanges();
+          e.preventDefault();
+          return;
+        }
+      } else if (actions?.undo != null) {
+        editor.saveValue(true);
+        actions.undo(id);
+        editor.resetHasUnsavedChanges();
+        e.preventDefault();
+        return;
+      }
+    }
+
     const handler = getKeyboardHandler(e);
     if (handler != null) {
       const extra = { actions, id, search };

@@ -84,6 +84,7 @@ export default function ChatInput({
   const pendingRemoteInputRef = useRef<string | null>(null);
   const pendingRemoteAtRef = useRef<number>(0);
   const lastLocalEditAtRef = useRef<number>(0);
+  const allowFocusedUpdateRef = useRef<boolean>(false);
 
   const getDraftInput = useCallback(() => {
     const rec = syncdb?.get_one({
@@ -159,9 +160,14 @@ export default function ChatInput({
       current.trim().length === 0 && input.trim().length > 0;
     const shouldClear = input === "" && current !== "";
     if (focused && input !== current && !shouldPrefill && !shouldClear) {
-      pendingRemoteInputRef.current = input;
-      pendingRemoteAtRef.current = Date.now();
-      return;
+      if (allowFocusedUpdateRef.current) {
+        allowFocusedUpdateRef.current = false;
+        controlRef.current?.allowNextValueUpdateWhileFocused?.();
+      } else {
+        pendingRemoteInputRef.current = input;
+        pendingRemoteAtRef.current = Date.now();
+        return;
+      }
     }
     if (focused && input !== current) {
       controlRef.current?.allowNextValueUpdateWhileFocused?.();
@@ -228,10 +234,15 @@ export default function ChatInput({
       });
       const input = (x as any)?.input ?? "";
       if (isFocusedRef.current && input !== currentInputRef.current) {
-        // Defer draft updates while focused to avoid overwriting local typing.
-        pendingRemoteInputRef.current = input;
-        pendingRemoteAtRef.current = Date.now();
-        return;
+        if (allowFocusedUpdateRef.current) {
+          allowFocusedUpdateRef.current = false;
+          controlRef.current?.allowNextValueUpdateWhileFocused?.();
+        } else {
+          // Defer draft updates while focused to avoid overwriting local typing.
+          pendingRemoteInputRef.current = input;
+          pendingRemoteAtRef.current = Date.now();
+          return;
+        }
       }
       if (input != lastSavedRef.current) {
         setInput(input);
@@ -320,10 +331,12 @@ export default function ChatInput({
       style={style}
       onUndo={() => {
         saveChat.cancel();
+        allowFocusedUpdateRef.current = true;
         syncdb?.undo();
       }}
       onRedo={() => {
         saveChat.cancel();
+        allowFocusedUpdateRef.current = true;
         syncdb?.redo();
       }}
       editBarStyle={editBarStyle}

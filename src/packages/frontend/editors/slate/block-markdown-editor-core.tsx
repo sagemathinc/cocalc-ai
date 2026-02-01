@@ -134,18 +134,6 @@ function pointFromOffsetInDoc(doc: Descendant[], offset: number): { path: number
   return Editor.start({ children: doc } as any, [0]);
 }
 
-function offsetFromPointInDoc(doc: Descendant[], point: Point): number {
-  let total = 0;
-  const root = { children: doc } as Descendant;
-  for (const [node, path] of Node.texts(root)) {
-    if (Path.equals(path, point.path)) {
-      return total + point.offset;
-    }
-    total += node.text.length;
-  }
-  return total;
-}
-
 function blockSelectionPoint(
   editor: SlateEditor,
   position: "start" | "end",
@@ -891,6 +879,25 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return;
         }
         if (event.defaultPrevented) return;
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          !event.altKey &&
+          (event.key === "z" || event.key === "Z")
+        ) {
+          if (event.shiftKey) {
+            if (actions?.redo != null) {
+              saveNow?.();
+              actions.redo(props.id);
+              event.preventDefault();
+              return;
+            }
+          } else if (actions?.undo != null) {
+            saveNow?.();
+            actions.undo(props.id);
+            event.preventDefault();
+            return;
+          }
+        }
         clearBlockSelection?.();
         const isSaveKey =
           (event.ctrlKey || event.metaKey) &&
