@@ -25,6 +25,7 @@ export interface RowEntryInnerProps {
   name: string;
   value: string; // value is the rawValue (a string)
   valid?: ConfigValid;
+  valid_labels?: Readonly<Record<string, string>>;
   password: boolean;
   isSet?: boolean;
   isClearing?: boolean;
@@ -52,6 +53,7 @@ export function RowEntry({
   isClearing,
   displayed_val,
   valid,
+  valid_labels,
   hint,
   rowType,
   multiline,
@@ -106,6 +108,7 @@ export function RowEntry({
               name={name}
               value={value}
               valid={valid}
+              valid_labels={valid_labels}
               password={password}
               isSet={isSet}
               isClearing={isClearing}
@@ -120,28 +123,40 @@ export function RowEntry({
               name === "version_recommended_browser" ? (
                 <VersionHint value={value} />
               ) : undefined}
-              {hint}
-              <ReadOnly readonly={isReadonly[name]} />
               {password && isSet && !value && !isClearing && (
-                <span> Stored (not shown).</span>
+                <div
+                  style={{
+                    marginTop: "4px",
+                    color: "#666",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <span>Stored (not shown).</span>
+                  {password &&
+                    isSet &&
+                    !isReadonly[name] &&
+                    onClearSecret &&
+                    !isClearing && (
+                      <Button
+                        size="small"
+                        danger
+                        onClick={() => onClearSecret(name)}
+                      >
+                        Clear
+                      </Button>
+                    )}
+                </div>
               )}
               {password && isClearing && (
-                <span> Will clear on save.</span>
+                <div style={{ marginTop: "4px", color: "#666" }}>
+                  Will clear on save.
+                </div>
               )}
-              {password &&
-                isSet &&
-                !isReadonly[name] &&
-                onClearSecret &&
-                !isClearing && (
-                  <Button
-                    size="small"
-                    danger
-                    style={{ marginLeft: "8px", marginTop: "5px" }}
-                    onClick={() => onClearSecret(name)}
-                  >
-                    Clear
-                  </Button>
-                )}
+              {hint}
+              <ReadOnly readonly={isReadonly[name]} />
               {displayed_val != null && !password && (
                 <span>
                   {" "}

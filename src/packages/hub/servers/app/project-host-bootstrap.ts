@@ -41,6 +41,45 @@ function resolveBootstrapPyPath(): string | undefined {
   return undefined;
 }
 
+function resolveNebiusSetupPath(): string | undefined {
+  const candidates: Array<string | undefined> = [
+    process.env.COCALC_NEBIUS_SETUP_SH,
+    process.env.COCALC_BUNDLE_DIR
+      ? join(
+          process.env.COCALC_BUNDLE_DIR,
+          "bundle",
+          "nebius",
+          "nebius-setup.sh",
+        )
+      : undefined,
+    join(process.cwd(), "packages/server/cloud/nebius/nebius-setup.sh"),
+    join(process.cwd(), "src/packages/server/cloud/nebius/nebius-setup.sh"),
+    join(__dirname, "../../../../server/cloud/nebius/nebius-setup.sh"),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function resolveGcpSetupPath(): string | undefined {
+  const candidates: Array<string | undefined> = [
+    process.env.COCALC_GCP_SETUP_SH,
+    process.env.COCALC_BUNDLE_DIR
+      ? join(process.env.COCALC_BUNDLE_DIR, "bundle", "gcp", "gcp-setup.sh")
+      : undefined,
+    join(process.cwd(), "packages/server/cloud/gcp/gcp-setup.sh"),
+    join(process.cwd(), "src/packages/server/cloud/gcp/gcp-setup.sh"),
+    join(__dirname, "../../../../server/cloud/gcp/gcp-setup.sh"),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
 async function loadHostRow(hostId: string): Promise<any> {
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
@@ -102,6 +141,36 @@ export default function init(router: Router) {
     } catch (err) {
       logger.warn("bootstrap.py fetch failed", err);
       res.status(500).send("bootstrap.py fetch failed");
+    }
+  });
+
+  router.get("/project-host/nebius-setup.sh", async (_req, res) => {
+    try {
+      const path = resolveNebiusSetupPath();
+      if (!path) {
+        res.status(500).send("nebius-setup.sh not found");
+        return;
+      }
+      const contents = readFileSync(path, "utf8");
+      res.type("text/x-sh").send(contents);
+    } catch (err) {
+      logger.warn("nebius-setup.sh fetch failed", err);
+      res.status(500).send("nebius-setup.sh fetch failed");
+    }
+  });
+
+  router.get("/project-host/gcp-setup.sh", async (_req, res) => {
+    try {
+      const path = resolveGcpSetupPath();
+      if (!path) {
+        res.status(500).send("gcp-setup.sh not found");
+        return;
+      }
+      const contents = readFileSync(path, "utf8");
+      res.type("text/x-sh").send(contents);
+    } catch (err) {
+      logger.warn("gcp-setup.sh fetch failed", err);
+      res.status(500).send("gcp-setup.sh fetch failed");
     }
   });
 

@@ -139,6 +139,8 @@ export interface Config {
   readonly default: string;
   // list of allowed strings or a validator function
   readonly valid?: ConfigValid;
+  // optional display labels for valid values
+  readonly valid_labels?: Readonly<Record<string, string>>;
   readonly password?: boolean;
   readonly show?: (conf: any) => boolean;
   // this optional function derives the actual value of this setting from current value or from a global (unprocessed) setting.
@@ -387,6 +389,11 @@ export const site_settings_conf: SiteSettings = {
     desc: "Choose how Cloudflare is used for this hub. Use **none** for fully self-hosted setups, **self** to use your own Cloudflare account, or **managed** to use CoCalc-managed Cloudflare.",
     default: "none",
     valid: ["none", "self", "managed"],
+    valid_labels: {
+      none: "Do not use Cloudflare at all",
+      self: "Use your own Cloudflare account (pay for DNS and bucket storage)",
+      managed: "CoCalc managed (included with your membership)",
+    },
     to_val: to_trimmed_str,
     wizard: { name: "cloudflare-config", label: "Wizard..." },
     tags: ["Cloudflare", "Cloud"],

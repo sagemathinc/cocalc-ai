@@ -88,10 +88,15 @@ function normalizeCloudflareMode(
 
 function cloudflareSelfMode(settings: any): boolean {
   const mode = normalizeCloudflareMode(settings.cloudflare_mode);
-  if (mode) {
-    return mode === "self";
+  const tunnelEnabled = isEnabled(
+    settings.project_hosts_cloudflare_tunnel_enabled,
+  );
+  if (mode === "self") return true;
+  if (mode === "managed") return false;
+  if (mode === "none") {
+    return tunnelEnabled;
   }
-  return isEnabled(settings.project_hosts_cloudflare_tunnel_enabled);
+  return tunnelEnabled;
 }
 
 async function hasLocalSelfHostHosts(): Promise<boolean> {
@@ -757,11 +762,30 @@ async function loadCloudflaredStateFile(
 async function startCloudflared(): Promise<CloudflaredState | null> {
   cloudflaredLastError = null;
   if (!isLaunchpadProduct()) {
+    logger.info("cloudflare tunnel not started (product is not launchpad)");
     return null;
   }
   const settings = await getServerSettings();
+  const rawMode = clean(settings.cloudflare_mode);
+  const normalizedMode = normalizeCloudflareMode(settings.cloudflare_mode);
+  const tunnelEnabled = isEnabled(
+    settings.project_hosts_cloudflare_tunnel_enabled,
+  );
   if (!cloudflareSelfMode(settings)) {
+    logger.info("cloudflare tunnel not started (mode is not self)", {
+      cloudflare_mode: rawMode ?? null,
+      normalized_mode: normalizedMode ?? null,
+      tunnel_enabled: tunnelEnabled,
+    });
     return null;
+  }
+  if (normalizedMode === "none" && tunnelEnabled) {
+    logger.warn(
+      "cloudflare_mode is none but tunnel is enabled; treating as self for backward compatibility",
+      {
+        cloudflare_mode: rawMode ?? null,
+      },
+    );
   }
   const missing: string[] = [];
   if (!clean(settings.project_hosts_cloudflare_tunnel_account_id)) {
@@ -781,6 +805,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
       ", ",
     )}`;
     logger.warn(cloudflaredLastError);
+    logger.info("cloudflare tunnel not started (missing settings)");
     return null;
   }
 
@@ -788,9 +813,13 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     cloudflaredLastError =
       "Cloudflare tunnel enabled but configuration is incomplete.";
     logger.warn(cloudflaredLastError);
+    logger.info("cloudflare tunnel not started (configuration incomplete)");
     return null;
   }
   if (cloudflaredState) {
+    logger.info("cloudflare tunnel already running", {
+      hostname: cloudflaredState.tunnel.hostname,
+    });
     return cloudflaredState;
   }
   const cloudflaredBin = await resolveCloudflaredBinary();
@@ -798,6 +827,7 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     cloudflaredLastError =
       "cloudflared binary not found; install from https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/";
     logger.warn(cloudflaredLastError);
+    logger.info("cloudflare tunnel not started (cloudflared missing)");
     return null;
   }
 
@@ -858,6 +888,10 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
     child,
     origin,
   };
+  logger.info("cloudflare tunnel started", { hostname: tunnel.hostname });
+  console.log(
+    `Cloudflare tunnel is live: https://${tunnel.hostname} (public access enabled)`,
+  );
   return cloudflaredState;
 }
 
@@ -882,7 +916,17 @@ export async function getLaunchpadCloudflaredStatus(): Promise<{
 export async function maybeStartLaunchpadOnPremServices(): Promise<void> {
   const state = await startSshd();
   await startRestServer();
-  await startCloudflared();
+  const tunnel = await startCloudflared();
+  if (!tunnel) {
+    const status = await getLaunchpadCloudflaredStatus();
+    if (status.enabled) {
+      logger.warn("cloudflare tunnel not running", {
+        error: status.error ?? undefined,
+      });
+    } else {
+      logger.info("cloudflare tunnel disabled");
+    }
+  }
   if (state) {
     await refreshLaunchpadOnPremAuthorizedKeys();
   }

@@ -101,10 +101,15 @@ function normalizeCloudflareMode(
 
 function cloudflareSelfMode(settings: any): boolean {
   const mode = normalizeCloudflareMode(settings.cloudflare_mode);
-  if (mode) {
-    return mode === "self";
+  const tunnelEnabled = isEnabled(
+    settings.project_hosts_cloudflare_tunnel_enabled,
+  );
+  if (mode === "self") return true;
+  if (mode === "managed") return false;
+  if (mode === "none") {
+    return tunnelEnabled;
   }
-  return isEnabled(settings.project_hosts_cloudflare_tunnel_enabled);
+  return tunnelEnabled;
 }
 
 function normalizePrefix(value: unknown): string | undefined {

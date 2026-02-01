@@ -253,7 +253,9 @@ async function refreshRuntimePublicIp(row: any) {
     provider: providerId,
     instance_id: runtime.instance_id,
   });
-  const { entry, creds } = await getProviderContext(providerId);
+  const { entry, creds } = await getProviderContext(providerId, {
+    region: row.region,
+  });
   if (!entry.provider.getInstance) return undefined;
   const instance = await entry.provider.getInstance(runtime, creds);
   const ip = instance?.public_ip ?? undefined;
@@ -394,7 +396,9 @@ async function handleProvision(row: any) {
       last_seen: null,
       metadata: nextMetadata,
     });
-    const { entry, creds } = await getProviderContext(providerId);
+    const { entry, creds } = await getProviderContext(providerId, {
+      region: row.region,
+    });
     const waitedStatus = await waitForLambdaStatus({
       entry,
       creds,
@@ -413,7 +417,9 @@ async function handleProvision(row: any) {
       last_seen: null,
       metadata: nextMetadata,
     });
-    const { entry, creds } = await getProviderContext(providerId);
+    const { entry, creds } = await getProviderContext(providerId, {
+      region: row.region,
+    });
     const waitedStatus = await waitForProviderStatus({
       entry,
       creds,
@@ -471,7 +477,9 @@ async function handleStart(row: any) {
     if (!runtime?.instance_id || reprovisionRequired) {
       // If the VM was deprovisioned, treat "start" as "create" and provision now.
       if (reprovisionRequired && runtime?.instance_id) {
-        const { entry, creds } = await getProviderContext(providerId);
+        const { entry, creds } = await getProviderContext(providerId, {
+          region: row.region,
+        });
         logger.info("handleStart: reprovision delete", {
           host_id: row.id,
           provider: providerId,
@@ -555,7 +563,9 @@ async function handleStart(row: any) {
       last_seen: null,
       metadata: nextMetadata,
     });
-    const { entry, creds } = await getProviderContext(providerId);
+    const { entry, creds } = await getProviderContext(providerId, {
+      region: row.region,
+    });
     await entry.provider.startHost(runtime, creds);
     let statusAfterStart:
       | "running"
@@ -625,7 +635,9 @@ async function handleStop(row: any) {
       last_seen: null,
       metadata: nextMetadata,
     });
-    const { entry, creds } = await getProviderContext(providerId);
+    const { entry, creds } = await getProviderContext(providerId, {
+      region: row.region,
+    });
     supportsStop = entry.capabilities.supportsStop;
     await entry.provider.stopHost(runtime, creds);
     if (providerId === "nebius" || providerId === "hyperstack") {
@@ -670,7 +682,9 @@ async function handleStop(row: any) {
       last_seen: null,
     });
   } else if (providerId === "lambda") {
-    const { entry, creds } = await getProviderContext(providerId);
+    const { entry, creds } = await getProviderContext(providerId, {
+      region: row.region,
+    });
     const gone = await waitForLambdaInstanceGone({ entry, creds, runtime });
     if (!gone) {
       await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
@@ -746,7 +760,9 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
   if (!runtime?.instance_id) {
     throw new Error("host is not provisioned");
   }
-  const { entry, creds } = await getProviderContext(providerId);
+  const { entry, creds } = await getProviderContext(providerId, {
+    region: row.region,
+  });
   const provider = entry.provider;
   const observedAt = new Date();
   const nextMetadata = setRuntimeObservedAt(row.metadata ?? {}, observedAt);
@@ -805,7 +821,9 @@ async function handleDelete(row: any) {
   const providerId = normalizeProviderId(machine.cloud);
   await revokeBootstrapTokensForHost(row.id, { purpose: "bootstrap" });
   if (providerId && runtime?.instance_id) {
-    const { entry, creds } = await getProviderContext(providerId);
+    const { entry, creds } = await getProviderContext(providerId, {
+      region: row.region,
+    });
     await entry.provider.deleteHost(runtime, creds);
   }
   if (shouldUseCloudflareTunnel(row) && (await hasCloudflareTunnel())) {

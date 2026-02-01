@@ -167,6 +167,7 @@ export interface Host {
   can_start?: boolean;
   can_place?: boolean;
   reason_unavailable?: string;
+  starred?: boolean;
   last_action?: string;
   last_action_at?: string;
   last_action_status?: string;
@@ -242,6 +243,7 @@ export const hosts = {
   deleteHost: authFirstRequireAccount,
   upgradeHostSoftware: authFirstRequireAccount,
   upgradeHostConnector: authFirstRequireAccount,
+  setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
   touchProject: authFirstRequireHost,
@@ -348,6 +350,11 @@ export interface Hosts {
     id: string;
     name: string;
   }) => Promise<Host>;
+  setHostStar: (opts: {
+    account_id?: string;
+    id: string;
+    starred: boolean;
+  }) => Promise<void>;
   updateHostMachine: (opts: {
     account_id?: string;
     id: string;

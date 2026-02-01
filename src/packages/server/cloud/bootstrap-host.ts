@@ -55,6 +55,7 @@ import {
   type CloudflareTunnel,
 } from "./cloudflare-tunnel";
 import { machineHasGpu } from "./host-gpu";
+import { getHostSshPublicKeys } from "./ssh-key";
 
 const logger = getLogger("server:cloud:bootstrap-host");
 const pool = () => getPool("medium");
@@ -950,6 +951,27 @@ export async function buildCloudInitStartupScript(
   }
   const bootstrapUrl = `${bootstrapBase}/project-host/bootstrap`;
   const statusUrl = `${bootstrapBase}/project-host/bootstrap/status`;
+  const sshKeys = await getHostSshPublicKeys();
+  const sshKeysBlock = sshKeys.length
+    ? `SSH_KEYS="$(cat <<'EOF_COCALC_SSH_KEYS'
+${sshKeys.join("\n")}
+EOF_COCALC_SSH_KEYS
+)"
+if [ -n "$SSH_KEYS" ]; then
+  install -d -m 700 "$BOOTSTRAP_HOME/.ssh"
+  AUTH_KEYS="$BOOTSTRAP_HOME/.ssh/authorized_keys"
+  touch "$AUTH_KEYS"
+  chmod 600 "$AUTH_KEYS"
+  while IFS= read -r key; do
+    [ -z "$key" ] && continue
+    if ! grep -qxF "$key" "$AUTH_KEYS"; then
+      echo "$key" >> "$AUTH_KEYS"
+    fi
+  done <<< "$SSH_KEYS"
+  chown -R "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_HOME/.ssh"
+fi
+`
+    : "";
   const caCertBlock = caCert
     ? `BOOTSTRAP_CACERT_PATH="/tmp/cocalc-bootstrap-ca.pem"
 cat <<'EOF_COCALC_BOOTSTRAP_CA' > "$BOOTSTRAP_CACERT_PATH"
@@ -981,6 +1003,7 @@ fi
 if [ -z "$BOOTSTRAP_HOME" ]; then
   BOOTSTRAP_HOME="/root"
 fi
+${sshKeysBlock}
 BOOTSTRAP_DIR="$BOOTSTRAP_HOME/cocalc-host/bootstrap"
 BOOTSTRAP_HOST="$(echo "$BOOTSTRAP_URL" | awk -F/ '{print $3}')"
 if [[ "$BOOTSTRAP_HOST" == \\[*\\]* ]]; then

@@ -6,6 +6,7 @@ import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import { HostCard } from "./host-card";
 import { STATUS_COLOR, getHostOnlineTooltip, getHostStatusTooltip, isHostOnline, isHostTransitioning } from "../constants";
 import type { ColumnsType } from "antd/es/table";
+import { COLORS } from "@cocalc/util/theme";
 import {
   getProviderDescriptor,
   isKnownProvider,
@@ -118,6 +119,12 @@ function sortHosts(
   return [...hosts].sort((a, b) => {
     let result = 0;
     switch (field) {
+      case "starred":
+        result = compareNumber(
+          Number(b.starred ?? false),
+          Number(a.starred ?? false),
+        );
+        break;
       case "name":
         result = compareText(a.name, b.name);
         break;
@@ -173,6 +180,7 @@ type HostListViewModel = {
   onUpgrade?: (host: Host) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
+  onToggleStar: (host: Host) => void;
   selfHost?: {
     connectorMap: Map<string, { id: string; name?: string; last_seen?: string }>;
     isConnectorOnline: (connectorId?: string) => boolean;
@@ -209,6 +217,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     onUpgrade,
     onDetails,
     onEdit,
+    onToggleStar,
     selfHost,
     viewMode,
     setViewMode,
@@ -473,6 +482,48 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   );
 
   const columns: ColumnsType<Host> = [
+    {
+      title: (
+        <Icon
+          name="star-filled"
+          style={{ fontSize: 16, color: COLORS.YELL_LL }}
+        />
+      ),
+      dataIndex: "starred",
+      key: "starred",
+      width: 48,
+      align: "center",
+      sorter: true,
+      sortDirections: ["ascend", "descend"],
+      sortOrder:
+        sortField === "starred"
+          ? sortDirection === "asc"
+            ? "ascend"
+            : "descend"
+          : undefined,
+      onCell: () => ({
+        onClick: (event: React.MouseEvent) => {
+          event.stopPropagation();
+        },
+        style: { cursor: "pointer" },
+      }),
+      render: (starred: boolean, host: Host) => (
+        <span
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleStar(host);
+          }}
+          style={{ cursor: "pointer", fontSize: 18 }}
+        >
+          <Icon
+            name={starred ? "star-filled" : "star"}
+            style={{
+              color: starred ? COLORS.STAR : COLORS.GRAY_L,
+            }}
+          />
+        </span>
+      ),
+    },
     {
       title: "Name",
       dataIndex: "name",
@@ -818,6 +869,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   ];
 
   const sortOptions = [
+    { value: "starred", label: "Starred" },
     { value: "name", label: "Name" },
     { value: "provider", label: "Provider" },
     { value: "region", label: "Region" },
@@ -1076,6 +1128,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 onCancelOp={onCancelOp}
                 onDetails={onDetails}
                 onEdit={onEdit}
+                onToggleStar={onToggleStar}
                 selfHost={selfHost}
                 providerCapabilities={providerCapabilities}
               />

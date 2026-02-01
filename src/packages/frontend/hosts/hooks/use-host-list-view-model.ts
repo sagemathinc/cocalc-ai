@@ -21,6 +21,7 @@ type UseHostListViewModelArgs = {
   onUpgrade?: (host: Host) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
+  onToggleStar: (host: Host) => void;
   selfHost?: {
     connectorMap: Map<string, { id: string; name?: string; last_seen?: string }>;
     isConnectorOnline: (connectorId?: string) => boolean;
@@ -54,6 +55,7 @@ export const useHostListViewModel = ({
   onUpgrade,
   onDetails,
   onEdit,
+  onToggleStar,
   selfHost,
   viewMode,
   setViewMode,
@@ -82,6 +84,7 @@ export const useHostListViewModel = ({
     onUpgrade,
     onDetails,
     onEdit,
+    onToggleStar,
     selfHost,
     viewMode,
     setViewMode,

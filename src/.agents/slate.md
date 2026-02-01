@@ -6,12 +6,6 @@
 
 - [ ] #chat #bug -- STILL when I hit shift+enter to send a message, the composer chat input will sometimes not be cleared.  It has the message I just sent in it after I send it. The cursor also still randomly jumps.   It usually works fine -- failures are rare. Maybe increase a timing threshold. 
 
-- [ ] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
-  - [ ] back and forth in multimode editor
-  - [ ] jumping from table of contents entries to the document (file editor)
-  - [ ] codemirror &lt;--&gt; block editor (side by side)
-  - [ ] edge cases/robustness
-
 - [ ] #ux plain text paste: just ALWAYS show the text / code block option, even if only one line; it's just more predictable.
   - [ ] make "shift+control+v" (and similar for macos) always paste without showing the code block at all.
 
@@ -32,6 +26,12 @@
 - [ ] #wishlist can we make a jupyter notebook mode?  i.e., a slate renderer for any jupyter notebook, i.e., a new "single document mode"...?
 
 - [ ] #wishlist latex editor.  this would just start as one big prism (+latex mode) code editor, but proportionally spaced! Then we make math formulas display nicely using katex. Then we make \\section{...} etc. display nicely.  Etc.  Just iteratively replace things until it is beautiful and useful... but still usable.
+
+- [x] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
+  - [ ] back and forth in multimode editor
+  - [ ] jumping from table of contents entries to the document (file editor)
+  - [ ] codemirror &lt;--&gt; block editor (side by side)
+  - [ ] edge cases/robustness
 
 - [x] #unclear #bug block editor on text side:
   1. type "x\\n\\n" --&gt; see x in the rendered slate editor

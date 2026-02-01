@@ -56,6 +56,11 @@ Table({
       type: "map",
       desc: "Additional metadata/config for this host.",
     },
+    starred_by: {
+      type: "array",
+      pg_type: "UUID[]",
+      desc: "Account ids who have starred this host.",
+    },
     tier: {
       type: "number",
       desc: "Access tier for shared/pool hosts; empty means only owner/collabs can place projects.",

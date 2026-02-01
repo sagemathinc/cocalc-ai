@@ -28,6 +28,7 @@ import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
 import GcpServiceAccountWizard from "./gcp-service-account-wizard";
+import NebiusCliWizard from "./nebius-cli-wizard";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
 import {
   toCustomOpenAIModel,
@@ -67,13 +68,22 @@ export default function SiteSettings({ close }) {
     load();
   }, []);
 
+  const prevExpandAllRef = useRef<boolean>(expandAll);
+
   useEffect(() => {
     const details = document.querySelectorAll(
       "details[data-admin-subgroup]",
     ) as NodeListOf<HTMLDetailsElement>;
-    details.forEach((el) => {
-      el.open = expandAll;
-    });
+    if (expandAll) {
+      details.forEach((el) => {
+        el.open = true;
+      });
+    } else if (prevExpandAllRef.current) {
+      details.forEach((el) => {
+        el.open = false;
+      });
+    }
+    prevExpandAllRef.current = expandAll;
   }, [expandAll, filterStr, filterTag, showAdvanced, showHidden, data]);
 
   async function load(): Promise<void> {
@@ -671,11 +681,7 @@ export default function SiteSettings({ close }) {
             {[...subgroups.entries()]
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([subgroupName, items]) => (
-                <details
-                  data-admin-subgroup
-                  key={`${groupName}-${subgroupName}-${expandAll ? "open" : "closed"}`}
-                  open={expandAll}
-                >
+                <details data-admin-subgroup key={`${groupName}-${subgroupName}`}>
                   <summary
                     style={{
                       margin: "10px 0 4px 0",
@@ -840,6 +846,14 @@ export default function SiteSettings({ close }) {
           onApplyJson={(json) =>
             onJsonEntryChange("google_cloud_service_account_json", json)
           }
+          currentJson={data?.google_cloud_service_account_json}
+          domainName={data?.dns}
+        />
+        <NebiusCliWizard
+          open={activeWizard === "nebius-cli"}
+          onClose={closeWizard}
+          onApply={applyWizardSettings}
+          softwareBaseUrl={data?.project_hosts_software_base_url}
         />
         <Row key="filter">
           <Col span={12}>

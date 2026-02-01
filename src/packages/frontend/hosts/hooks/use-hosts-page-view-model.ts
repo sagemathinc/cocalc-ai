@@ -65,6 +65,7 @@ function readHostSortField(): HostSortField {
   }
   const raw = window.localStorage.getItem(HOSTS_SORT_FIELD_STORAGE_KEY);
   if (
+    raw === "starred" ||
     raw === "name" ||
     raw === "provider" ||
     raw === "region" ||
@@ -643,6 +644,36 @@ export const useHostsPageViewModel = () => {
     await refreshHostOps({ force: true });
   }, [refresh, refreshHostOps]);
 
+  const toggleHostStar = React.useCallback(
+    async (host: Host) => {
+      if (!hub.hosts.setHostStar) {
+        console.warn("host star updates are not supported");
+        return;
+      }
+      const prevStarred = !!host.starred;
+      const nextStarred = !prevStarred;
+      setHosts((prev) =>
+        prev.map((item) =>
+          item.id === host.id ? { ...item, starred: nextStarred } : item,
+        ),
+      );
+      try {
+        await hub.hosts.setHostStar({
+          id: host.id,
+          starred: nextStarred,
+        });
+      } catch (err) {
+        console.error("failed to update host star", err);
+        setHosts((prev) =>
+          prev.map((item) =>
+            item.id === host.id ? { ...item, starred: prevStarred } : item,
+          ),
+        );
+      }
+    },
+    [hub, setHosts],
+  );
+
   const hostListVm = useHostListViewModel({
     hosts,
     hostOps,
@@ -655,6 +686,7 @@ export const useHostsPageViewModel = () => {
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
     onDetails: openDetails,
     onEdit: openEdit,
+    onToggleStar: toggleHostStar,
     selfHost: {
       connectorMap: selfHostConnectorMap,
       isConnectorOnline: isSelfHostConnectorOnline,
