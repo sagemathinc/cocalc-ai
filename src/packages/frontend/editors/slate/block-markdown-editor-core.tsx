@@ -34,7 +34,8 @@ import { markdown_to_slate } from "./markdown-to-slate";
 import { slate_to_markdown } from "./slate-to-markdown";
 import { withNormalize } from "./normalize";
 import { withIsInline, withIsVoid } from "./plugins";
-import { withAutoFormat } from "./format/auto-format";
+import { withAutoFormat } from "./format";
+import { formatSelectedText } from "./format/commands";
 import { withCodeLineInsertBreak } from "./elements/code-block/with-code-line-insert-break";
 import { withInsertBreakHack } from "./elements/link/editable";
 import { withNonfatalRange, withSelectionSafety } from "./patches";
@@ -2779,6 +2780,41 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
           event.preventDefault();
           event.stopPropagation();
           return;
+        }
+        const activeEditor =
+          focusedIndex != null ? editorMapRef.current.get(focusedIndex) : null;
+        if ((event.ctrlKey || event.metaKey) && !event.altKey && activeEditor) {
+          const key = event.key.toLowerCase();
+          if (!event.shiftKey && key === "b") {
+            formatSelectedText(activeEditor as SlateEditor, "bold");
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          if (!event.shiftKey && key === "i") {
+            formatSelectedText(activeEditor as SlateEditor, "italic");
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          if (!event.shiftKey && key === "u") {
+            formatSelectedText(activeEditor as SlateEditor, "underline");
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          if (event.shiftKey && key === "x") {
+            formatSelectedText(activeEditor as SlateEditor, "strikethrough");
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          if (event.shiftKey && key === "c") {
+            formatSelectedText(activeEditor as SlateEditor, "code");
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
         }
         if (focusedIndex != null) {
           if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
