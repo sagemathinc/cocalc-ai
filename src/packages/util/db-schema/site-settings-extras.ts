@@ -977,7 +977,7 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     multiline: 4,
-    tags: ["Project Hosts", "Security"],
+    tags: ["Project Hosts", "Security", "Cloud", "SSH"],
     valid: () => true,
     group: "Compute / Project Hosts",
     subgroup: "Access",
