@@ -821,14 +821,6 @@ export class ChatActions extends Actions<ChatState> {
     return model ? model.includes("codex") : false;
   };
 
-  runCodexCompact = async (threadKey: string): Promise<void> => {
-    if (!threadKey) {
-      throw Error("runCodexCompact -- threadKey must be defined");
-    }
-    const reply_to = new Date(parseFloat(threadKey));
-    this.sendChat({ input: "/compact", reply_to });
-  };
-
   private processLLM = async ({
     message,
     reply_to,
