@@ -162,13 +162,13 @@ export default function ChatInput({
       current.trim().length === 0 && input.trim().length > 0;
     const shouldClear = input === "" && current !== "";
     if (focused && input !== current && !shouldPrefill && !shouldClear) {
-      if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
-        return;
-      }
       if (allowFocusedUpdateRef.current) {
         allowFocusedUpdateRef.current = false;
         controlRef.current?.allowNextValueUpdateWhileFocused?.();
       } else {
+        if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
+          return;
+        }
         pendingRemoteInputRef.current = input;
         pendingRemoteAtRef.current = remoteActive || Date.now();
         return;
@@ -240,13 +240,13 @@ export default function ChatInput({
       const input = (x as any)?.input ?? "";
       const remoteActive = Number((x as any)?.active ?? 0);
       if (isFocusedRef.current && input !== currentInputRef.current) {
-        if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
-          return;
-        }
         if (allowFocusedUpdateRef.current) {
           allowFocusedUpdateRef.current = false;
           controlRef.current?.allowNextValueUpdateWhileFocused?.();
         } else {
+          if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
+            return;
+          }
           // Defer draft updates while focused to avoid overwriting local typing.
           pendingRemoteInputRef.current = input;
           pendingRemoteAtRef.current = remoteActive || Date.now();
