@@ -851,6 +851,7 @@ export default function SiteSettings({ close }) {
           open={activeWizard === "nebius-cli"}
           onClose={closeWizard}
           onApply={applyWizardSettings}
+          softwareBaseUrl={data?.project_hosts_software_base_url}
         />
         <Row key="filter">
           <Col span={12}>

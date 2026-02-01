@@ -13,6 +13,7 @@ interface WizardProps {
   open: boolean;
   onClose: () => void;
   onApply: (values: Record<string, string>) => Promise<void> | void;
+  softwareBaseUrl?: string;
 }
 
 type RegionConfigEntry = {
@@ -150,6 +151,7 @@ export default function NebiusCliWizard({
   open,
   onClose,
   onApply,
+  softwareBaseUrl,
 }: WizardProps) {
   const [output, setOutput] = useState("");
   const [parsed, setParsed] = useState<ParsedValues | null>(null);
@@ -158,15 +160,19 @@ export default function NebiusCliWizard({
 
   const scriptUrl = useMemo(() => {
     if (typeof window === "undefined") return "";
+    const trimmedBase = (softwareBaseUrl ?? "").trim().replace(/\/+$/, "");
+    if (trimmedBase) {
+      return `${trimmedBase}/nebius/nebius-setup.sh`;
+    }
     const base = appBasePath === "/" ? "" : appBasePath;
     return `${window.location.origin}${base}/project-host/nebius-setup.sh`;
-  }, []);
+  }, [softwareBaseUrl]);
 
   const scriptCommand = useMemo(
     () =>
       scriptUrl
         ? `curl -fsSL "${scriptUrl}" | bash`
-        : "curl -fsSL <your-cocalc-url>/project-host/nebius-setup.sh | bash",
+        : "curl -fsSL <software-base-url>/nebius/nebius-setup.sh | bash",
     [scriptUrl],
   );
 
@@ -180,7 +186,7 @@ ${scriptCommand}
 You can review the script here: ${
       scriptUrl
         ? `[${scriptUrl}](${scriptUrl})`
-        : "<your-cocalc-url>/project-host/nebius-setup.sh"
+        : "<software-base-url>/nebius/nebius-setup.sh"
     }
 `,
     [scriptCommand, scriptUrl],
