@@ -322,8 +322,18 @@ export function ProjectsNav(props: ProjectsNavProps) {
     ids.sort((a, b) => {
       const aTime = projectMap.getIn([a, "last_edited"]);
       const bTime = projectMap.getIn([b, "last_edited"]);
-      const aMs = aTime ? new Date(aTime).getTime() : 0;
-      const bMs = bTime ? new Date(bTime).getTime() : 0;
+      const aMs =
+        typeof aTime === "string" ||
+        typeof aTime === "number" ||
+        aTime instanceof Date
+          ? new Date(aTime).getTime()
+          : 0;
+      const bMs =
+        typeof bTime === "string" ||
+        typeof bTime === "number" ||
+        bTime instanceof Date
+          ? new Date(bTime).getTime()
+          : 0;
       return bMs - aMs;
     });
     return ids.filter((id) => !openSet.has(id)).slice(0, 10);
