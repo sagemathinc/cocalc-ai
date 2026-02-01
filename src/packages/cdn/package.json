@@ -13,7 +13,7 @@
   },
   "scripts": {
     "clean": "rm -rf build node_modules dist tsconfig.tsbuildinfo",
-    "build": "rm -rf build dist && mkdir build && cp -rv *.json *.py *.js build/ && cp -rv cm-custom-theme build/ && cd build && pnpm install --ignore-workspace --no-frozen-lockfile && mkdir dist && ./setup.py && mv dist .. && cd .. && rm -rf build ",
+    "build": "rm -rf build dist && mkdir build && cp -rv *.json *.py *.js build/ && cp -rv cm-custom-theme build/ && cd build && pnpm install --ignore-workspace --no-frozen-lockfile --store-dir .pnpm-store --package-import-method=copy && mkdir dist && ./setup.py && mv dist .. && cd .. && rm -rf build ",
     "postinstall": "./postinstall.js",
     "test": "../node_modules/.bin/jest",
     "prepublishOnly": "npm test"
