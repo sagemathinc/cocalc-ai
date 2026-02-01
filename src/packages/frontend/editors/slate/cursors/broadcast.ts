@@ -14,7 +14,7 @@ import { debounce } from "lodash";
 import { useCallback, useRef } from "react";
 import { Point } from "slate";
 import { ReactEditor } from "../slate-react";
-import { slatePointToMarkdownPosition } from "../sync";
+import { nearestMarkdownPositionForSlatePoint } from "../sync";
 
 // Cursor broadcast can be expensive since we convert the cursor
 // from slate coordinates to markdown coordinates each time,
@@ -38,7 +38,7 @@ export const useBroadcastCursors: (Options) => () => void = ({
 
   const update = useCallback(
     debounce(() => {
-      markdownPositionRef.current = slatePointToMarkdownPosition(
+      markdownPositionRef.current = nearestMarkdownPositionForSlatePoint(
         editor,
         focusPointRef.current
       );

@@ -73,7 +73,11 @@ import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
 import type { RenderElementProps } from "./slate-react";
 import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
-import { slatePointToMarkdownPosition } from "./sync";
+import {
+  findSlatePointNearMarkdownPosition,
+  markdownPositionToSlatePoint,
+  nearestMarkdownPositionForSlatePoint,
+} from "./sync";
 import { ensureRange, pointAtPath } from "./slate-util";
 import {
   applyBlockDiffPatch,
@@ -189,6 +193,12 @@ interface Props {
   controlRef?: MutableRefObject<{
     moveCursorToEndOfLine: () => void;
     allowNextValueUpdateWhileFocused?: () => void;
+    setSelectionFromMarkdownPosition?: (
+      pos: { line: number; ch: number } | undefined,
+    ) => boolean;
+    getMarkdownPositionForSelection?: () =>
+      | { line: number; ch: number }
+      | null;
   } | null>;
   showEditBar?: boolean;
   preserveBlankLines?: boolean;
@@ -370,6 +380,35 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         allowNextValueUpdateWhileFocused: () => {
           allowFocusedValueUpdateRef.current = true;
         },
+        setSelectionFromMarkdownPosition: (
+          pos: { line: number; ch: number } | undefined,
+        ) => {
+          if (!pos) return false;
+          const markdown = ed.getMarkdownValue();
+          let point =
+            markdownPositionToSlatePoint({
+              markdown,
+              pos,
+              editor: ed,
+            }) ??
+            findSlatePointNearMarkdownPosition({
+              markdown,
+              pos,
+              editor: ed,
+            });
+          if (!point) {
+            point = Editor.start(ed, [0]);
+          }
+          if (!point) return false;
+          ReactEditor.focus(ed);
+          Transforms.setSelection(ed, { anchor: point, focus: point });
+          return true;
+        },
+        getMarkdownPositionForSelection: () => {
+          const point = ed.selection?.focus;
+          if (!point) return null;
+          return nearestMarkdownPositionForSlatePoint(ed, point) ?? null;
+        },
       };
     }
 
@@ -516,7 +555,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           if (point == null) {
             return { x: 0, y: 0 };
           }
-          const pos = slatePointToMarkdownPosition(editor, point);
+          const pos = nearestMarkdownPositionForSlatePoint(editor, point);
           if (pos == null) return { x: 0, y: 0 };
           const { line, ch } = pos;
           return { y: line, x: ch };
@@ -1287,7 +1326,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (point == null) {
       return;
     }
-    const pos = slatePointToMarkdownPosition(editor, point);
+    const pos = nearestMarkdownPositionForSlatePoint(editor, point);
     if (pos == null) return;
     actions.programmatical_goto_line?.(
       pos.line + 1, // 1 based (TODO: could use codemirror option)

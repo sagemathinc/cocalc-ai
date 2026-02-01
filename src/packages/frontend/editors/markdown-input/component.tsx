@@ -74,6 +74,7 @@ interface Props {
   submitMentionsRef?: SubmitMentionsRef;
   style?: CSSProperties;
   onShiftEnter?: (value: string) => void; // also ctrl/alt/cmd-enter call this; see https://github.com/sagemathinc/cocalc/issues/1914
+  onAltEnter?: (value: string, pos: { line: number; ch: number }) => void;
   onEscape?: () => void;
   onBlur?: (value: string) => void;
   onFocus?: () => void;
@@ -135,6 +136,7 @@ export function MarkdownInput(props: Props) {
     onCursorTop,
     onEscape,
     onFocus,
+    onAltEnter,
     onRedo,
     onSave,
     onShiftEnter,
@@ -305,12 +307,26 @@ export function MarkdownInput(props: Props) {
       return;
     }
     const extraKeys: CodeMirror.KeyMap = {};
-    if (onShiftEnter != null) {
-      const f = (cm) => onShiftEnter(cm.getValue());
-      extraKeys["Shift-Enter"] = f;
-      extraKeys["Ctrl-Enter"] = f;
-      extraKeys["Alt-Enter"] = f;
-      extraKeys["Cmd-Enter"] = f;
+    const shiftEnterHandler =
+      onShiftEnter != null ? (cm) => onShiftEnter(cm.getValue()) : undefined;
+    const altEnterHandler =
+      onAltEnter != null
+        ? (cm) => {
+            const pos = cm.getCursor();
+            onAltEnter(cm.getValue(), pos);
+          }
+        : undefined;
+    if (shiftEnterHandler != null) {
+      extraKeys["Shift-Enter"] = shiftEnterHandler;
+      extraKeys["Ctrl-Enter"] = shiftEnterHandler;
+      if (altEnterHandler == null) {
+        extraKeys["Alt-Enter"] = shiftEnterHandler;
+        extraKeys["Cmd-Enter"] = shiftEnterHandler;
+      }
+    }
+    if (altEnterHandler != null) {
+      extraKeys["Alt-Enter"] = altEnterHandler;
+      extraKeys["Cmd-Enter"] = altEnterHandler;
     }
     if (onEscape != null) {
       extraKeys["Esc"] = () => {

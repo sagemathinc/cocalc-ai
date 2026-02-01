@@ -221,6 +221,12 @@ export default function MultiMarkdownInput({
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
 
   const isAutoGrow = autoGrow ?? height === "auto";
+  const internalControlRef = useRef<any>(null);
+  const slateControlRef = controlRef ?? internalControlRef;
+  const pendingModeSelectionRef = useRef<{
+    to: Mode;
+    pos: { line: number; ch: number };
+  } | null>(null);
 
   const getKey = () => `${project_id}${path}:${cacheId}`;
 
@@ -264,6 +270,51 @@ export default function MultiMarkdownInput({
     getSelection: Function;
     setSelection: Function;
   } | null>(null);
+
+  const applyMarkdownSelection = (pos: { line: number; ch: number }) => {
+    const selection = selectionRef.current;
+    if (selection?.setSelection == null) return false;
+    selection.setSelection([{ anchor: pos, head: pos }]);
+    return true;
+  };
+
+  useEffect(() => {
+    const pending = pendingModeSelectionRef.current;
+    if (!pending || pending.to !== mode) return;
+    if (mode === "editor") {
+      let attempts = 0;
+      const tryApply = () => {
+        attempts += 1;
+        const applied =
+          slateControlRef.current?.setSelectionFromMarkdownPosition?.(
+            pending.pos,
+          ) ?? false;
+        if (applied) {
+          pendingModeSelectionRef.current = null;
+          return;
+        }
+        if (attempts < 5) {
+          setTimeout(tryApply, 30);
+        }
+      };
+      tryApply();
+      return;
+    }
+    if (mode === "markdown") {
+      let attempts = 0;
+      const tryApply = () => {
+        attempts += 1;
+        if (applyMarkdownSelection(pending.pos)) {
+          pendingModeSelectionRef.current = null;
+          return;
+        }
+        if (attempts < 5) {
+          setTimeout(tryApply, 30);
+        }
+      };
+      tryApply();
+    }
+  }, [mode, slateControlRef]);
 
   useEffect(() => {
     if (cacheId == null) {
@@ -438,6 +489,13 @@ export default function MultiMarkdownInput({
           onShiftEnter={(value) => {
             onShiftEnterRef.current?.(value);
           }}
+          onAltEnter={(value, pos) => {
+            onChangeRef.current?.(value);
+            if (pos) {
+              pendingModeSelectionRef.current = { to: "editor", pos };
+            }
+            setMode("editor");
+          }}
           placeholder={placeholder ?? "Type markdown..."}
           fontSize={fontSize}
           cmOptions={cmOptions}
@@ -533,6 +591,11 @@ export default function MultiMarkdownInput({
               },
               altEnter: (value) => {
                 onChangeRef.current?.(value);
+                const pos =
+                  slateControlRef.current?.getMarkdownPositionForSelection?.();
+                if (pos) {
+                  pendingModeSelectionRef.current = { to: "markdown", pos };
+                }
                 setMode("markdown");
               },
               set_cursor_locs: onCursors,
@@ -564,7 +627,7 @@ export default function MultiMarkdownInput({
             submitMentionsRef={submitMentionsRef}
             editBar2={editBar2}
             dirtyRef={dirtyRef}
-            controlRef={controlRef}
+            controlRef={slateControlRef}
             preserveBlankLines={preserveBlankLines}
           />
         </div>

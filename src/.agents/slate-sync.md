@@ -1,4 +1,4 @@
-# Slate Realtime Sync Plan
+# (done) Slate Realtime Sync Plan
 
 ---
 

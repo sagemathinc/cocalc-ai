@@ -21,6 +21,57 @@ export function slatePointToMarkdownPosition(
   return indexToPosition({ index, markdown });
 }
 
+export function nearestMarkdownIndexForSlatePoint(
+  editor: SlateEditor,
+  point: Point | undefined
+): { index: number; markdown: string } {
+  if (!point) {
+    return { index: -1, markdown: "" };
+  }
+  const direct = slatePointToMarkdown(editor, point);
+  if (direct.index >= 0) {
+    return direct;
+  }
+  try {
+    const blockStart = Editor.start(editor, [point.path[0]]);
+    const fallback = slatePointToMarkdown(editor, blockStart);
+    if (fallback.index >= 0) {
+      return fallback;
+    }
+  } catch (_err) {
+    // ignore invalid path
+  }
+  const markdown = direct.markdown ?? "";
+  if (markdown.length > 0) {
+    const starts = [0];
+    for (let i = 0; i < markdown.length - 1; i++) {
+      if (markdown[i] === "\n" && markdown[i + 1] === "\n") {
+        let j = i + 2;
+        while (j < markdown.length && markdown[j] === "\n") {
+          j += 1;
+        }
+        starts.push(j);
+        i = j - 1;
+      }
+    }
+    const blockIndex = Math.max(
+      0,
+      Math.min(point.path[0] ?? 0, starts.length - 1),
+    );
+    return { index: starts[blockIndex] ?? 0, markdown };
+  }
+  return direct;
+}
+
+export function nearestMarkdownPositionForSlatePoint(
+  editor: SlateEditor,
+  point: Point | undefined
+): { line: number; ch: number } | undefined {
+  const { index, markdown } = nearestMarkdownIndexForSlatePoint(editor, point);
+  if (index < 0) return undefined;
+  return indexToPosition({ index, markdown });
+}
+
 // Given a location in a slatejs document, return the
 // corresponding index into the corresponding markdown document,
 // along with the version of the markdown file that was used for
@@ -81,6 +132,30 @@ export function indexToPosition({
   return undefined; // just being explicit here.
 }
 
+export function positionToIndex({
+  markdown,
+  pos,
+}: {
+  markdown: string;
+  pos: { line: number; ch: number } | undefined;
+}): number | undefined {
+  if (pos == null) return undefined;
+  const { line, ch } = pos;
+  if (!Number.isFinite(line) || !Number.isFinite(ch)) return undefined;
+  if (line < 0) return 0;
+  const lines = markdown.split("\n");
+  if (lines.length === 0) return 0;
+  const clampedLine = Math.min(line, lines.length - 1);
+  let index = 0;
+  for (let i = 0; i < clampedLine; i++) {
+    index += lines[i].length + 1; // include newline
+  }
+  const lineText = lines[clampedLine] ?? "";
+  const clampedCh = Math.max(0, Math.min(ch, lineText.length));
+  index += clampedCh;
+  return index;
+}
+
 function insertSentinel(
   pos: { line: number; ch: number },
   markdown: string
@@ -111,6 +186,60 @@ function findSentinel(doc: any[]): Point | undefined {
     }
     j += 1;
   }
+}
+
+export function findSlatePointNearMarkdownPosition({
+  markdown,
+  pos,
+  editor,
+  maxLineDelta = 3,
+}: {
+  markdown: string;
+  pos: { line: number; ch: number } | undefined;
+  editor: SlateEditor;
+  maxLineDelta?: number;
+}): Point | undefined {
+  if (!pos) return undefined;
+  const lines = markdown.split("\n");
+  if (lines.length === 0) return undefined;
+  const baseLine = Math.max(0, Math.min(pos.line, lines.length - 1));
+  const maxDelta = Math.max(0, maxLineDelta);
+  for (let delta = 0; delta <= maxDelta; delta++) {
+    const candidates: number[] =
+      delta === 0 ? [baseLine] : [baseLine - delta, baseLine + delta];
+    for (const line of candidates) {
+      if (line < 0 || line >= lines.length) continue;
+      const lineText = lines[line] ?? "";
+      const chs = new Set<number>();
+      const baseCh = Math.max(0, Math.min(pos.ch, lineText.length));
+      chs.add(baseCh);
+      chs.add(0);
+      chs.add(lineText.length);
+      for (const ch of chs) {
+        const point = markdownPositionToSlatePoint({
+          markdown,
+          pos: { line, ch },
+          editor,
+        });
+        if (point) return point;
+      }
+    }
+  }
+  const index = positionToIndex({ markdown, pos });
+  if (index != null) {
+    const before = markdown.lastIndexOf("\n\n", index);
+    const startIndex = before === -1 ? 0 : before + 2;
+    const startPos = indexToPosition({ index: startIndex, markdown });
+    if (startPos) {
+      const point = markdownPositionToSlatePoint({
+        markdown,
+        pos: startPos,
+        editor,
+      });
+      if (point) return point;
+    }
+  }
+  return undefined;
 }
 
 // Convert a markdown string and point in it (in codemirror {line,ch})

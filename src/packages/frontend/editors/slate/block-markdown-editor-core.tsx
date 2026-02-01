@@ -54,6 +54,13 @@ import { emptyParagraph, isWhitespaceParagraph } from "./padding";
 import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
 import { remapSelectionInDocWithSentinels } from "./sync/block-diff";
 import {
+  findSlatePointNearMarkdownPosition,
+  indexToPosition,
+  markdownPositionToSlatePoint,
+  nearestMarkdownIndexForSlatePoint,
+  positionToIndex,
+} from "./sync";
+import {
   buildCodeBlockDecorations,
   getPrismGrammar,
 } from "./elements/code-block/prism";
@@ -173,6 +180,58 @@ function normalizeBlockMarkdown(markdown: string): string {
 function joinBlocks(blocks: string[]): string {
   const cleaned = blocks.map((block) => normalizeBlockMarkdown(block));
   return cleaned.join("\n\n");
+}
+
+function globalIndexForBlockOffset(
+  blocks: string[],
+  blockIndex: number,
+  offset: number,
+): number {
+  let index = 0;
+  const last = blocks.length - 1;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = normalizeBlockMarkdown(blocks[i] ?? "");
+    const blockLen = block.length;
+    if (i === blockIndex) {
+      const clamped = Math.max(0, Math.min(offset, blockLen));
+      return index + clamped;
+    }
+    index += blockLen;
+    if (i < last) {
+      index += 2; // separator \n\n
+    }
+  }
+  return index;
+}
+
+function blockOffsetForGlobalIndex(
+  blocks: string[],
+  globalIndex: number,
+): { index: number; offset: number } {
+  const safeIndex = Math.max(0, globalIndex);
+  let cursor = 0;
+  const last = blocks.length - 1;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = normalizeBlockMarkdown(blocks[i] ?? "");
+    const blockLen = block.length;
+    const blockEnd = cursor + blockLen;
+    if (safeIndex <= blockEnd) {
+      return { index: i, offset: Math.max(0, safeIndex - cursor) };
+    }
+    cursor = blockEnd;
+    if (i < last) {
+      const separatorEnd = cursor + 2;
+      if (safeIndex <= separatorEnd) {
+        return { index: i + 1, offset: 0 };
+      }
+      cursor = separatorEnd;
+    }
+  }
+  if (blocks.length === 0) {
+    return { index: 0, offset: 0 };
+  }
+  const lastBlock = normalizeBlockMarkdown(blocks[last] ?? "");
+  return { index: last, offset: lastBlock.length };
 }
 
 function isBlankParagraph(node: Descendant | undefined): boolean {
@@ -477,9 +536,7 @@ interface BlockRowEditorProps {
     insertIndex?: number;
     buffer?: string;
   } | null>;
-  pendingSelectionRef: React.MutableRefObject<
-    { index: number; offset: number } | null
-  >;
+  pendingSelectionRef: React.MutableRefObject<PendingSelection | null>;
   skipSelectionResetRef: React.MutableRefObject<Set<number>>;
   onNavigate: (index: number, position: "start" | "end") => void;
   onInsertGap: (
@@ -499,6 +556,10 @@ interface BlockRowEditorProps {
   gutterWidth?: number;
   leafComponent?: React.ComponentType<RenderLeafProps>;
 }
+
+type PendingSelection =
+  | { index: number; offset: number; mode: "text" }
+  | { index: number; pos: { line: number; ch: number }; mode: "markdown" };
 
 const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
   (props: BlockRowEditorProps) => {
@@ -626,15 +687,31 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       });
       const pendingSelection = pendingSelectionRef.current;
       if (pendingSelection?.index === index) {
-        const point = pointFromOffsetInDoc(
-          nextValue,
-          pendingSelection.offset,
-        );
-        editor.selection = { anchor: point, focus: point };
-        ReactEditor.focus(editor);
-        onFocus?.();
-        pendingSelectionRef.current = null;
-        skipSelectionResetRef.current.add(index);
+        let point: Point | undefined;
+        if (pendingSelection.mode === "markdown") {
+          point =
+            markdownPositionToSlatePoint({
+              markdown,
+              pos: pendingSelection.pos,
+              editor,
+            }) ??
+            findSlatePointNearMarkdownPosition({
+              markdown,
+              pos: pendingSelection.pos,
+              editor,
+            }) ??
+            blockSelectionPoint(editor, "start") ??
+            undefined;
+        } else {
+          point = pointFromOffsetInDoc(nextValue, pendingSelection.offset);
+        }
+        if (point) {
+          editor.selection = { anchor: point, focus: point };
+          ReactEditor.focus(editor);
+          onFocus?.();
+          pendingSelectionRef.current = null;
+          skipSelectionResetRef.current.add(index);
+        }
       }
       if (shouldRemap) {
         const remapped = remapSelectionInDocWithSentinels(
@@ -1658,9 +1735,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     insertIndex?: number;
     buffer?: string;
   } | null>(null);
-  const pendingSelectionRef = useRef<{ index: number; offset: number } | null>(
-    null,
-  );
+  const pendingSelectionRef = useRef<PendingSelection | null>(null);
   const skipSelectionResetRef = useRef<Set<number>>(new Set());
   const setGapCursorState = useCallback(
     (
@@ -2055,7 +2130,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const setSelectionAtOffset = useCallback(
     (index: number, offset: number) => {
       if (index < 0 || index >= blocksRef.current.length) return false;
-      pendingSelectionRef.current = { index, offset };
+      pendingSelectionRef.current = { index, offset, mode: "text" };
       const applied = tryApplySelectionAtOffset(index, offset);
       if (!applied) {
         virtuosoRef.current?.scrollToIndex({ index, align: "center" });
@@ -2065,6 +2140,70 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     },
     [tryApplySelectionAtOffset],
   );
+
+  const setSelectionFromMarkdownPosition = useCallback(
+    (pos: { line: number; ch: number } | undefined) => {
+      if (pos == null) return false;
+      const blocks = blocksRef.current;
+      const fullMarkdown = joinBlocks(blocks);
+      const globalIndex = positionToIndex({ markdown: fullMarkdown, pos });
+      if (globalIndex == null) return false;
+      const target = blockOffsetForGlobalIndex(blocks, globalIndex);
+      const blockMarkdown = normalizeBlockMarkdown(blocks[target.index] ?? "");
+      const blockPos =
+        indexToPosition({ index: target.offset, markdown: blockMarkdown }) ??
+        { line: 0, ch: 0 };
+      const editor = editorMapRef.current.get(target.index);
+      if (!editor) {
+        pendingSelectionRef.current = {
+          index: target.index,
+          pos: blockPos,
+          mode: "markdown",
+        };
+        virtuosoRef.current?.scrollToIndex({
+          index: target.index,
+          align: "center",
+        });
+        return false;
+      }
+      const point =
+        markdownPositionToSlatePoint({
+          markdown: blockMarkdown,
+          pos: blockPos,
+          editor,
+        }) ??
+        findSlatePointNearMarkdownPosition({
+          markdown: blockMarkdown,
+          pos: blockPos,
+          editor,
+        }) ??
+        blockSelectionPoint(editor, "start");
+      if (!point) return false;
+      ReactEditor.focus(editor);
+      Transforms.setSelection(editor, { anchor: point, focus: point });
+      setFocusedIndex(target.index);
+      return true;
+    },
+    [],
+  );
+
+  const getMarkdownPositionForSelection = useCallback(() => {
+    const index = focusedIndex;
+    if (index == null) return null;
+    const editor = editorMapRef.current.get(index);
+    if (!editor || !editor.selection) return null;
+    const { index: localIndex } = nearestMarkdownIndexForSlatePoint(
+      editor,
+      editor.selection.focus,
+    );
+    if (localIndex < 0) return null;
+    const blocks = blocksRef.current;
+    const globalIndex = globalIndexForBlockOffset(blocks, index, localIndex);
+    const fullMarkdown = joinBlocks(blocks);
+    return (
+      indexToPosition({ index: globalIndex, markdown: fullMarkdown }) ?? null
+    );
+  }, [focusedIndex]);
 
 
   useEffect(() => {
@@ -2122,8 +2261,17 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         setBlocksFromValue(markdown);
       },
       getFocusedIndex: () => focusedIndex,
+      setSelectionFromMarkdownPosition,
+      getMarkdownPositionForSelection,
     };
-  }, [controlRef, focusBlock, focusedIndex, setBlocksFromValue]);
+  }, [
+    controlRef,
+    focusBlock,
+    focusedIndex,
+    getMarkdownPositionForSelection,
+    setBlocksFromValue,
+    setSelectionFromMarkdownPosition,
+  ]);
 
   const registerEditor = useCallback(
     (index: number, editor: SlateEditor) => {
@@ -2131,14 +2279,42 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       const pendingSelection = pendingSelectionRef.current;
       if (pendingSelection?.index === index) {
         pendingSelectionRef.current = null;
-        const point = pointFromOffsetInDoc(
-          editor.children as Descendant[],
-          pendingSelection.offset,
-        );
-        ReactEditor.focus(editor);
-        Transforms.setSelection(editor, { anchor: point, focus: point });
-        setFocusedIndex(index);
-        return;
+        if (pendingSelection.mode === "markdown") {
+          const blockMarkdown = normalizeBlockMarkdown(
+            blocksRef.current[index] ?? "",
+          );
+          const pos =
+            pendingSelection.pos ??
+            indexToPosition({ index: 0, markdown: blockMarkdown });
+          const point =
+            (pos &&
+              markdownPositionToSlatePoint({
+                markdown: blockMarkdown,
+                pos,
+                editor,
+              })) ??
+            findSlatePointNearMarkdownPosition({
+              markdown: blockMarkdown,
+              pos,
+              editor,
+            }) ??
+            blockSelectionPoint(editor, "start");
+          if (point) {
+            ReactEditor.focus(editor);
+            Transforms.setSelection(editor, { anchor: point, focus: point });
+            setFocusedIndex(index);
+            return;
+          }
+        } else {
+          const point = pointFromOffsetInDoc(
+            editor.children as Descendant[],
+            pendingSelection.offset,
+          );
+          ReactEditor.focus(editor);
+          Transforms.setSelection(editor, { anchor: point, focus: point });
+          setFocusedIndex(index);
+          return;
+        }
       }
       const pending = pendingFocusRef.current;
       if (pending?.index === index) {
@@ -2288,7 +2464,11 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       const boundaryRef = Editor.pointRef(prevEditor, boundaryPoint, {
         affinity: "backward",
       });
-      pendingSelectionRef.current = { index: index - 1, offset: mergeOffset };
+      pendingSelectionRef.current = {
+        index: index - 1,
+        offset: mergeOffset,
+        mode: "text",
+      };
       const inserted = currEditor.children.map((node) =>
         JSON.parse(JSON.stringify(node)),
       );
