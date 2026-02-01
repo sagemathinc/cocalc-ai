@@ -95,39 +95,6 @@ export default function ChatInput({
     return (rec as any).input;
   }, [syncdb, sender_id, date]);
 
-  useEffect(() => {
-    const dbInput = getDraftInput();
-    // take version from syncdb if it is there; otherwise, version from input prop.
-    // the db version is used when you refresh your browser while editing, or scroll up and down
-    // thus unmounting and remounting the currently editing message (due to virtualization).
-    // See https://github.com/sagemathinc/cocalc/issues/6415
-    const input = (dbInput ?? propsInput) ?? "";
-    const current = currentInputRef.current ?? "";
-    const focused = isFocusedRef.current;
-    const shouldPrefill =
-      current.trim().length === 0 && input.trim().length > 0;
-    const shouldClear = input === "" && current !== "";
-    if (focused && input !== current && !shouldPrefill && !shouldClear) {
-      pendingRemoteInputRef.current = input;
-      pendingRemoteAtRef.current = Date.now();
-      return;
-    }
-    if (focused && input !== current) {
-      controlRef.current?.allowNextValueUpdateWhileFocused?.();
-    }
-    setInput(input);
-    currentInputRef.current = input;
-    lastSavedRef.current = input;
-    if (input?.trim() && moveCursorToEndOfLine) {
-      // have to wait until it's all rendered -- i hate code like this...
-      for (const n of [1, 10, 50]) {
-        setTimeout(() => {
-          controlRef.current?.moveCursorToEndOfLine();
-        }, n);
-      }
-    }
-  }, [date, sender_id, propsInput, getDraftInput]);
-
   const currentInputRef = useRef<string>(input);
   const saveOnUnmountRef = useRef<boolean>(true);
   const isMountedRef = useIsMountedRef();
@@ -172,6 +139,45 @@ export default function ChatInput({
       trailing: true,
     },
   );
+
+  useEffect(() => {
+    const dbInput = getDraftInput();
+    // take version from syncdb if it is there; otherwise, version from input prop.
+    // the db version is used when you refresh your browser while editing, or scroll up and down
+    // thus unmounting and remounting the currently editing message (due to virtualization).
+    // See https://github.com/sagemathinc/cocalc/issues/6415
+    const input = (dbInput ?? propsInput) ?? "";
+    const current = currentInputRef.current ?? "";
+    const isClearing = input === "" && current !== "";
+    if (isClearing) {
+      saveChat.cancel();
+      pendingRemoteInputRef.current = null;
+      pendingRemoteAtRef.current = 0;
+    }
+    const focused = isFocusedRef.current;
+    const shouldPrefill =
+      current.trim().length === 0 && input.trim().length > 0;
+    const shouldClear = input === "" && current !== "";
+    if (focused && input !== current && !shouldPrefill && !shouldClear) {
+      pendingRemoteInputRef.current = input;
+      pendingRemoteAtRef.current = Date.now();
+      return;
+    }
+    if (focused && input !== current) {
+      controlRef.current?.allowNextValueUpdateWhileFocused?.();
+    }
+    setInput(input);
+    currentInputRef.current = input;
+    lastSavedRef.current = input;
+    if (input?.trim() && moveCursorToEndOfLine) {
+      // have to wait until it's all rendered -- i hate code like this...
+      for (const n of [1, 10, 50]) {
+        setTimeout(() => {
+          controlRef.current?.moveCursorToEndOfLine();
+        }, n);
+      }
+    }
+  }, [date, sender_id, propsInput, getDraftInput, saveChat]);
 
   useEffect(() => {
     return () => {
@@ -298,6 +304,7 @@ export default function ChatInput({
         saveChat(input);
       }}
       onShiftEnter={(input) => {
+        saveChat.cancel();
         controlRef.current?.allowNextValueUpdateWhileFocused?.();
         setInput("");
         currentInputRef.current = "";
