@@ -980,6 +980,14 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             return;
           }
         }
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          event.shiftKey &&
+          !event.altKey &&
+          (event.key === "v" || event.key === "V")
+        ) {
+          (editor as any).__forcePlainTextPaste = true;
+        }
         clearBlockSelection?.();
         const isSaveKey =
           (event.ctrlKey || event.metaKey) &&

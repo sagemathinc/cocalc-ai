@@ -949,6 +949,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       }
     }
 
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      e.shiftKey &&
+      !e.altKey &&
+      (e.key === "v" || e.key === "V")
+    ) {
+      (editor as any).__forcePlainTextPaste = true;
+    }
+
     const handler = getKeyboardHandler(e);
     if (handler != null) {
       const extra = { actions, id, search };

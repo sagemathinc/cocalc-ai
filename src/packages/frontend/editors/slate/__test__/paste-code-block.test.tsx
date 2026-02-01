@@ -51,6 +51,30 @@ test("multiline paste always offers convert-to-rich-text option", () => {
   expect(code.markdownCandidate).toBe(true);
 });
 
+test("single-line plain text paste offers convert-to-rich-text option", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.selection = {
+    anchor: { path: [0, 0], offset: 0 },
+    focus: { path: [0, 0], offset: 0 },
+  };
+
+  const data = {
+    getData: (type: string) => (type === "text/plain" ? "solo" : ""),
+    types: ["text/plain"],
+    items: [],
+  };
+
+  editor.insertData(data as any);
+
+  const code = editor.children.find(
+    (node: any) => node.type === "code_block",
+  ) as any;
+  expect(code).toBeTruthy();
+  expect(getCodeBlockText(code)).toBe("solo");
+  expect(code.markdownCandidate).toBe(true);
+});
+
 test("multiline paste preserves indentation in code blocks", () => {
   const editor = withAutoFormat(withReact(createEditor()));
   editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];

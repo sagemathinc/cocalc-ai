@@ -631,6 +631,12 @@ export const withAutoFormat = (editor) => {
   const { insertData } = editor;
   if (typeof insertData === "function") {
     editor.insertData = (data) => {
+      if ((editor as any).__forcePlainTextPaste) {
+        (editor as any).__forcePlainTextPaste = false;
+        insertData(data);
+        markdownAutoformat(editor as SlateEditor);
+        return;
+      }
       if (isSelectionInCodeBlock(editor as SlateEditor)) {
         const text = data?.getData?.("text/plain");
         if (text && /[\r\n]/.test(text)) {
@@ -655,7 +661,12 @@ export const withAutoFormat = (editor) => {
       const normalized = text.replace(/\r\n?/g, "\n");
       const lineCount = normalized.split("\n").length;
       const MULTILINE_PASTE_THRESHOLD = 2;
-      if (lineCount >= MULTILINE_PASTE_THRESHOLD) {
+      const types = data?.types;
+      const hasTypes = Array.isArray(types) && types.length > 0;
+      const isPlainTextOnly =
+        !hasTypes ||
+        (types.length === 1 && types[0] === "text/plain" && text !== "");
+      if (isPlainTextOnly || lineCount >= MULTILINE_PASTE_THRESHOLD) {
         const pasteId = `paste-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         Transforms.insertNodes(
           editor,
