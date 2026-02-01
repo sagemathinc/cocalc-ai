@@ -997,7 +997,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             return;
           }
           if ((event.altKey || event.metaKey) && actions?.altEnter) {
-            actions.altEnter(getFullMarkdown());
+            actions.altEnter(getFullMarkdown(), id);
             event.preventDefault();
             return;
           }
@@ -1648,6 +1648,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     font_size: font_size0,
     height,
     hidePath,
+    id,
     is_current,
     noVfill,
     onBlur,
@@ -1664,6 +1665,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     leafComponent,
     disableVirtualization = false,
   } = props;
+  const internalControlRef = useRef<any>(null);
+  const blockControlRef = controlRef ?? internalControlRef;
   const actions = actions0 ?? {};
   const font_size = font_size0 ?? DEFAULT_FONT_SIZE;
   const leafComponentResolved = leafComponent ?? Leaf;
@@ -2188,7 +2191,24 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   );
 
   const getMarkdownPositionForSelection = useCallback(() => {
-    const index = focusedIndex;
+    let index = focusedIndex;
+    if (index == null || !editorMapRef.current.get(index)?.selection) {
+      let fallbackIndex: number | null = null;
+      for (const [idx, editor] of editorMapRef.current.entries()) {
+        if (!editor?.selection) continue;
+        if (ReactEditor.isFocused(editor)) {
+          index = idx;
+          fallbackIndex = null;
+          break;
+        }
+        if (fallbackIndex == null) {
+          fallbackIndex = idx;
+        }
+      }
+      if (index == null && fallbackIndex != null) {
+        index = fallbackIndex;
+      }
+    }
     if (index == null) return null;
     const editor = editorMapRef.current.get(index);
     if (!editor || !editor.selection) return null;
@@ -2207,9 +2227,9 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
 
 
   useEffect(() => {
-    if (controlRef == null) return;
-    controlRef.current = {
-      ...(controlRef.current ?? {}),
+    if (blockControlRef == null) return;
+    blockControlRef.current = {
+      ...(blockControlRef.current ?? {}),
       allowNextValueUpdateWhileFocused: () => {
         allowFocusedValueUpdateRef.current = true;
       },
@@ -2264,11 +2284,19 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       setSelectionFromMarkdownPosition,
       getMarkdownPositionForSelection,
     };
+    if (actions?.registerBlockEditorControl && id != null) {
+      actions.registerBlockEditorControl(id, blockControlRef.current);
+      return () => {
+        actions.unregisterBlockEditorControl?.(id);
+      };
+    }
   }, [
-    controlRef,
+    actions,
+    blockControlRef,
     focusBlock,
     focusedIndex,
     getMarkdownPositionForSelection,
+    id,
     setBlocksFromValue,
     setSelectionFromMarkdownPosition,
   ]);
@@ -2742,6 +2770,16 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         handleSelectBlock(index, { shiftKey: true });
       }}
       onKeyDownCapture={(event) => {
+        if (
+          event.key === "Enter" &&
+          (event.altKey || event.metaKey) &&
+          actions?.altEnter
+        ) {
+          actions.altEnter(getFullMarkdown(), id);
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         if (focusedIndex != null) {
           if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
             const editor = editorMapRef.current.get(focusedIndex);
