@@ -88,8 +88,6 @@ const cloudflare_self_mode = (conf: SiteSettings): boolean =>
 
 const project_hosts_nebius_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_nebius_enabled"]);
-const nebius_legacy_visible = (conf: SiteSettings) =>
-  project_hosts_nebius_enabled(conf) && !conf["nebius_region_config_json"];
 const project_hosts_google_cloud_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_google-cloud_enabled"]);
 const project_hosts_hyperstack_enabled = (conf: SiteSettings) =>
@@ -255,9 +253,6 @@ export type SiteSettingsExtrasKeys =
   | "lambda_cloud_api_key"
   | "project_hosts_lambda_prefix"
   | "nebius_region_config_json"
-  | "nebius_credentials_json"
-  | "nebius_parent_id"
-  | "nebius_subnet_id"
   | "project_hosts_nebius_prefix"
   | "hyperstack_api_key"
   | "project_hosts_hyperstack_prefix"
@@ -1036,53 +1031,6 @@ export const EXTRAS: SettingsExtras = {
     group: "Compute / Project Hosts",
     subgroup: "Nebius",
     required_when: [{ key: "project_hosts_nebius_enabled", equals: "yes" }],
-  },
-  nebius_credentials_json: {
-    name: "Project Hosts: Nebius - Credentials JSON",
-    desc: "Nebius credentials.json content (subject-credentials). Use the **Wizard** for the exact generation steps.",
-    default: "",
-    to_val: to_trimmed_str,
-    multiline: 6,
-    password: true,
-    show: nebius_legacy_visible,
-    tags: ["Project Hosts", "Cloud", "Nebius"],
-    valid: (x) => !!x,
-    group: "Compute / Project Hosts",
-    subgroup: "Nebius",
-    required_when: [
-      { key: "project_hosts_nebius_enabled", equals: "yes" },
-      { key: "nebius_region_config_json", present: false },
-    ],
-  },
-  nebius_parent_id: {
-    name: "Project Hosts: Nebius - Parent ID",
-    desc: "Required Nebius parent id (project/tenant) used for resource creation. To figure this out go to the nebius web console and look at the URL in your browser, which will be of the form https://console.nebius.com/project-e00fnh2xxxx; the string 'project-e00fnh2xxxx' is what to put here.",
-    default: "",
-    to_val: to_trimmed_str,
-    show: nebius_legacy_visible,
-    tags: ["Project Hosts", "Cloud", "Nebius"],
-    valid: (x) => !!x,
-    group: "Compute / Project Hosts",
-    subgroup: "Nebius",
-    required_when: [
-      { key: "project_hosts_nebius_enabled", equals: "yes" },
-      { key: "nebius_region_config_json", present: false },
-    ],
-  },
-  nebius_subnet_id: {
-    name: "Project Hosts: Nebius - Subnet ID",
-    desc: "Required Nebius subnet id to attach instances to.  It looks something like vpcsubnet-xxxx and you can find it in the network tab on the console.",
-    default: "",
-    to_val: to_trimmed_str,
-    show: nebius_legacy_visible,
-    tags: ["Project Hosts", "Cloud", "Nebius"],
-    valid: (x) => !!x,
-    group: "Compute / Project Hosts",
-    subgroup: "Nebius",
-    required_when: [
-      { key: "project_hosts_nebius_enabled", equals: "yes" },
-      { key: "nebius_region_config_json", present: false },
-    ],
   },
   project_hosts_nebius_prefix: {
     name: "Project Hosts: Nebius - Resource Prefix",

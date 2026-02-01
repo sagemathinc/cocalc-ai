@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# This script auto-configures Nebius credentials for CoCalc by selecting one
+# project per region, creating/reusing a service account, generating a key,
+# and picking a subnet; it then prints a JSON block the wizard can parse.
+#
+# You can review/inspect this file before running it; it does not modify
+# anything outside of the selected Nebius tenant/projects.
+
+# Service account name and resource prefix used by CoCalc.
 NEBIUS_SA_NAME="${NEBIUS_SA_NAME:-cocalc-launchpad}"
 NEBIUS_PREFIX="${NEBIUS_PREFIX:-cocalc-host}"
+# Default regions we support right now (one project per region).
 REGIONS=("eu-north1" "eu-west1" "me-west1" "us-central1")
 
 START_MARKER="=== COCALC NEBIUS CONFIG START ==="
@@ -18,6 +27,7 @@ warn() {
 }
 
 pick_id() {
+  # Parse a Nebius list JSON payload and let the user choose a single ID.
   local label="$1"
   local json="$2"
   local tmp
@@ -70,6 +80,7 @@ PY
 }
 
 find_sa_id() {
+  # Look up a service account by name in the project and return its ID.
   local parent="$1"
   local sa_id
   sa_id=$(nebius iam service-account get-by-name \
@@ -86,9 +97,13 @@ find_sa_id() {
     --page-size 200 \
     --format json 2>/dev/null || true)
   if [ -n "$sa_list" ]; then
-    NEBIUS_SA_NAME="$NEBIUS_SA_NAME" python3 - <<'PY'
+    local tmp
+    tmp=$(mktemp)
+    printf "%s" "$sa_list" > "$tmp"
+    NEBIUS_SA_NAME="$NEBIUS_SA_NAME" python3 - "$tmp" <<'PY'
 import json, os, sys
-raw = sys.stdin.read().strip()
+path = sys.argv[1]
+raw = open(path, "r", encoding="utf-8").read().strip()
 if not raw:
     sys.exit(0)
 data = json.loads(raw)
@@ -109,16 +124,22 @@ def find(obj):
   return False
 find(data)
 PY
-    <<<"$sa_list" || true
+    rm -f "$tmp"
   fi
 }
 
 select_projects_by_region() {
+  # From a project list, pick exactly one project per known region.
+  # Prefers "default-project-<region>" if present.
   local json="$1"
-  REGION_LIST="${REGIONS[*]}" python3 - <<'PY' <<<"$json"
+  local tmp
+  tmp=$(mktemp)
+  printf "%s" "$json" > "$tmp"
+  REGION_LIST="${REGIONS[*]}" python3 - "$tmp" <<'PY'
 import json, os, sys
+path = sys.argv[1]
 regions = os.environ.get("REGION_LIST", "").split()
-raw = sys.stdin.read().strip()
+raw = open(path, "r", encoding="utf-8").read().strip()
 if not raw:
     sys.exit(1)
 data = json.loads(raw)
@@ -167,14 +188,20 @@ for region in regions:
   if pid:
     print(f"{region}\t{pid}\t{pname}")
 PY
+  rm -f "$tmp"
 }
 
 first_id_from_list() {
+  # Return the first resource ID from a list response, plus total count and name.
   local label="$1"
-  python3 - "$label" <<'PY'
+  local tmp
+  tmp=$(mktemp)
+  cat > "$tmp"
+  python3 - "$label" "$tmp" <<'PY'
 import json, sys
 label = sys.argv[1]
-raw = sys.stdin.read().strip()
+path = sys.argv[2]
+raw = open(path, "r", encoding="utf-8").read().strip()
 if not raw:
   sys.exit(1)
 data = json.loads(raw)
@@ -198,13 +225,16 @@ if not items:
 mid, name = items[0]
 print(f"{mid}\t{len(items)}\t{name}")
 PY
+  rm -f "$tmp"
 }
 
+# 1) Pick the tenant to operate under.
 TENANT_JSON=$(nebius iam tenant list --format json --page-size 100)
 TENANT_ID=$(pick_id "tenant" "$TENANT_JSON")
 
 log "Selected tenant: $TENANT_ID"
 
+# 2) Pick one project per region (so we can support multi-region usage).
 PROJECT_JSON=$(nebius iam project list --format json --page-size 200 --parent-id "$TENANT_ID")
 PROJECT_LIST=$(select_projects_by_region "$PROJECT_JSON")
 
@@ -213,6 +243,7 @@ if [ -z "$PROJECT_LIST" ]; then
   exit 1
 fi
 
+# We'll collect one credentials JSON + subnet per region, then emit one blob.
 CONFIG_TMP=$(mktemp)
 CREDS_FILES=()
 
@@ -222,6 +253,7 @@ while IFS=$'\t' read -r REGION PROJECT_ID PROJECT_NAME; do
   fi
   log "Selected project for ${REGION}: ${PROJECT_NAME:-$PROJECT_ID}"
 
+  # 3) Ensure service account exists (create if missing, otherwise reuse).
   log "Ensuring service account '$NEBIUS_SA_NAME' exists..."
   CREATE_ERR=$(mktemp)
   nebius iam service-account create \
@@ -236,6 +268,7 @@ while IFS=$'\t' read -r REGION PROJECT_ID PROJECT_NAME; do
   fi
   rm -f "$CREATE_ERR"
 
+  # Wait briefly for eventual consistency after creation.
   SA_ID=""
   for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if [ "$attempt" -eq 1 ]; then
@@ -255,6 +288,7 @@ while IFS=$'\t' read -r REGION PROJECT_ID PROJECT_NAME; do
 
   log "Service account: $SA_ID"
 
+  # 4) Attach service account to editors group (needed for compute ops).
   EDITORS_GROUP_ID=$(nebius iam group get-by-name \
     --name editors \
     --parent-id "$TENANT_ID" \
@@ -269,6 +303,7 @@ while IFS=$'\t' read -r REGION PROJECT_ID PROJECT_NAME; do
     --parent-id "$EDITORS_GROUP_ID" \
     --member-id "$SA_ID" >/dev/null || true
 
+  # 5) Generate credentials JSON for the service account.
   CREDS_PATH=$(mktemp)
   CREDS_FILES+=("$CREDS_PATH")
   log "Generating service account credentials..."
@@ -277,6 +312,7 @@ while IFS=$'\t' read -r REGION PROJECT_ID PROJECT_NAME; do
     --service-account-id "$SA_ID" \
     --output "$CREDS_PATH"
 
+  # 6) Pick a subnet for the project (auto-select the first subnet).
   SUBNET_JSON=$(nebius vpc subnet list --format json --page-size 100 --parent-id "$PROJECT_ID")
   SUBNET_INFO=$(first_id_from_list "subnet" <<<"$SUBNET_JSON" || true)
   if [ -z "$SUBNET_INFO" ]; then
@@ -300,6 +336,7 @@ if [ ! -s "$CONFIG_TMP" ]; then
   exit 1
 fi
 
+# 7) Emit a JSON blob that the wizard can parse and apply.
 export CONFIG_TMP NEBIUS_PREFIX START_MARKER END_MARKER
 
 python3 - <<'PY'
@@ -328,6 +365,7 @@ print(json.dumps(out, indent=2))
 print(os.environ.get("END_MARKER"))
 PY
 
+# 8) Cleanup temp files with credentials.
 rm -f "$CONFIG_TMP"
 for f in "${CREDS_FILES[@]}"; do
   rm -f "$f"

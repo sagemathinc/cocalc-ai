@@ -128,9 +128,5 @@ export function getNebiusCredentialsFromSettings(
   if (regionEntry?.nebius_credentials_json) {
     return parseNebiusCredentialsJson(regionEntry.nebius_credentials_json);
   }
-  const raw = settings.nebius_credentials_json;
-  if (!raw) {
-    throw new Error("nebius_credentials_json is not configured");
-  }
-  return parseNebiusCredentialsJson(raw);
+  throw new Error("nebius_region_config_json is not configured");
 }

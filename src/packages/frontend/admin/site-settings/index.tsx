@@ -846,6 +846,8 @@ export default function SiteSettings({ close }) {
           onApplyJson={(json) =>
             onJsonEntryChange("google_cloud_service_account_json", json)
           }
+          currentJson={data?.google_cloud_service_account_json}
+          domainName={data?.dns}
         />
         <NebiusCliWizard
           open={activeWizard === "nebius-cli"}

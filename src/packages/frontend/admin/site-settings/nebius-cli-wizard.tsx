@@ -22,19 +22,11 @@ type RegionConfigEntry = {
   nebius_subnet_id: string;
 };
 
-type ParsedValues =
-  | {
-      kind: "region";
-      regionConfig: Record<string, RegionConfigEntry>;
-      project_hosts_nebius_prefix?: string;
-    }
-  | {
-      kind: "single";
-      nebius_credentials_json: string;
-      nebius_parent_id: string;
-      nebius_subnet_id: string;
-      project_hosts_nebius_prefix?: string;
-    };
+type ParsedValues = {
+  kind: "region";
+  regionConfig: Record<string, RegionConfigEntry>;
+  project_hosts_nebius_prefix?: string;
+};
 
 const START_MARKER = "=== COCALC NEBIUS CONFIG START ===";
 const END_MARKER = "=== COCALC NEBIUS CONFIG END ===";
@@ -93,25 +85,7 @@ function normalizeParsed(obj: any): ParsedValues | null {
       }
     }
   }
-  const credsRaw =
-    obj.nebius_credentials_json ??
-    obj.credentials_json ??
-    obj.credentials ??
-    obj.nebius_credentials;
-  const parent =
-    obj.nebius_parent_id ?? obj.parent_id ?? obj.project_id ?? obj.project;
-  const subnet = obj.nebius_subnet_id ?? obj.subnet_id ?? obj.subnet;
-  if (!credsRaw || !parent || !subnet) return null;
-  const creds =
-    typeof credsRaw === "string" ? credsRaw : JSON.stringify(credsRaw, null, 2);
-  return {
-    kind: "single",
-    nebius_credentials_json: creds,
-    nebius_parent_id: `${parent}`.trim(),
-    nebius_subnet_id: `${subnet}`.trim(),
-    project_hosts_nebius_prefix:
-      prefix == null ? undefined : `${prefix}`.trim(),
-  };
+  return null;
 }
 
 function extractJsonBlock(text: string): any | null {
@@ -213,17 +187,11 @@ You can review the script here: ${
   async function applySettings() {
     if (!parsed) return;
     const updates: Record<string, string> = {};
-    if (parsed.kind === "region") {
-      updates.nebius_region_config_json = JSON.stringify(
-        parsed.regionConfig,
-        null,
-        2,
-      );
-    } else {
-      updates.nebius_credentials_json = parsed.nebius_credentials_json;
-      updates.nebius_parent_id = parsed.nebius_parent_id;
-      updates.nebius_subnet_id = parsed.nebius_subnet_id;
-    }
+    updates.nebius_region_config_json = JSON.stringify(
+      parsed.regionConfig,
+      null,
+      2,
+    );
     if (parsed.project_hosts_nebius_prefix) {
       updates.project_hosts_nebius_prefix = parsed.project_hosts_nebius_prefix;
     }
@@ -283,43 +251,22 @@ You can review the script here: ${
               style={{ marginTop: "8px" }}
               message="Parsed Nebius configuration."
               description={
-                parsed.kind === "region" ? (
+                <div>
                   <div>
-                    <div>
-                      <b>Regions:</b>{" "}
-                      {Object.keys(parsed.regionConfig)
-                        .sort()
-                        .join(", ")}
-                    </div>
-                    <div>
-                      <b>Projects:</b>{" "}
-                      {Object.keys(parsed.regionConfig).length}
-                    </div>
-                    <div>
-                      <b>Prefix:</b>{" "}
-                      {parsed.project_hosts_nebius_prefix ?? "cocalc-host"}
-                    </div>
-                    <div>
-                      <b>Credentials:</b> detected
-                    </div>
+                    <b>Regions:</b>{" "}
+                    {Object.keys(parsed.regionConfig).sort().join(", ")}
                   </div>
-                ) : (
                   <div>
-                    <div>
-                      <b>Project (parent) ID:</b> {parsed.nebius_parent_id}
-                    </div>
-                    <div>
-                      <b>Subnet ID:</b> {parsed.nebius_subnet_id}
-                    </div>
-                    <div>
-                      <b>Prefix:</b>{" "}
-                      {parsed.project_hosts_nebius_prefix ?? "cocalc-host"}
-                    </div>
-                    <div>
-                      <b>Credentials:</b> detected
-                    </div>
+                    <b>Projects:</b> {Object.keys(parsed.regionConfig).length}
                   </div>
-                )
+                  <div>
+                    <b>Prefix:</b>{" "}
+                    {parsed.project_hosts_nebius_prefix ?? "cocalc-host"}
+                  </div>
+                  <div>
+                    <b>Credentials:</b> detected
+                  </div>
+                </div>
               }
             />
           ) : null}

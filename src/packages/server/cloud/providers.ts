@@ -186,21 +186,15 @@ function getLambdaCatalogFetchOptions(
   return { apiKey: lambda_cloud_api_key };
 }
 
-const NEBIUS_DEFAULT_REGIONS = [
-  "eu-north1",
-  "eu-west1",
-  "me-west1",
-  "us-central1",
-];
-
 function getNebiusCatalogFetchOptions(
   settings: ProviderCredsContext["settings"],
 ) {
   const regionConfig = getNebiusRegionConfigFromSettings(settings);
-  const regions = regionConfig
-    ? Object.keys(regionConfig).sort()
-    : NEBIUS_DEFAULT_REGIONS;
-  if (regionConfig && regions.length) {
+  if (!regionConfig) {
+    return undefined;
+  }
+  const regions = Object.keys(regionConfig).sort();
+  if (regions.length) {
     const entry = regionConfig[regions[0]];
     const creds = getNebiusCredentialsFromSettings(settings, {
       region: regions[0],
@@ -211,16 +205,7 @@ function getNebiusCatalogFetchOptions(
       regions,
     };
   }
-  const { nebius_parent_id } = settings;
-  if (!settings.nebius_credentials_json) {
-    return undefined;
-  }
-  const creds = getNebiusCredentialsFromSettings(settings);
-  return {
-    ...creds,
-    parentId: nebius_parent_id || undefined,
-    regions,
-  };
+  return undefined;
 }
 
 async function postProcessGcpCatalog(catalog: any) {
@@ -295,22 +280,14 @@ const SERVER_PROVIDER_OVERRIDES: Record<ProviderId, ServerProviderOverrides> = {
       if (regionConfig && region && !regionEntry) {
         throw new Error(`Nebius region ${region} is not configured`);
       }
-      if (regionEntry) {
-        const creds = getNebiusCredentialsFromSettings(settings, { region });
-        return {
-          ...creds,
-          parentId: regionEntry.nebius_parent_id || undefined,
-          subnetId: regionEntry.nebius_subnet_id,
-          sshPublicKey: controlPlanePublicKey,
-          prefix,
-        };
+      if (!regionEntry) {
+        throw new Error("Nebius region config is not configured");
       }
-      const { nebius_parent_id, nebius_subnet_id } = settings;
       const creds = getNebiusCredentialsFromSettings(settings, { region });
       return {
         ...creds,
-        parentId: nebius_parent_id || undefined,
-        subnetId: nebius_subnet_id,
+        parentId: regionEntry.nebius_parent_id || undefined,
+        subnetId: regionEntry.nebius_subnet_id,
         sshPublicKey: controlPlanePublicKey,
         prefix,
       };
