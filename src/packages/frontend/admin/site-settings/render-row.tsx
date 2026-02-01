@@ -221,6 +221,7 @@ export function RenderRow({
         isClearing={isCleared}
         displayed_val={parsed_value}
         valid={conf.valid}
+        valid_labels={conf.valid_labels}
         hint={hint}
         rowType={rowType}
         multiline={conf.multiline}

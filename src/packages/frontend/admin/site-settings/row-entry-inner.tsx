@@ -39,6 +39,7 @@ export function RowEntryInner({
   name,
   value,
   valid,
+  valid_labels,
   password,
   isSet,
   isClearing,
@@ -126,7 +127,9 @@ export function RowEntryInner({
         }}
         style={{ width: "100%" }}
         options={valid.map((value) => {
-          const label = name === "default_llm" ? modelToName(value) : value;
+          const label =
+            valid_labels?.[value] ??
+            (name === "default_llm" ? modelToName(value) : value);
           return { value, label };
         })}
       />

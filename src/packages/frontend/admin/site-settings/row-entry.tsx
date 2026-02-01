@@ -25,6 +25,7 @@ export interface RowEntryInnerProps {
   name: string;
   value: string; // value is the rawValue (a string)
   valid?: ConfigValid;
+  valid_labels?: Readonly<Record<string, string>>;
   password: boolean;
   isSet?: boolean;
   isClearing?: boolean;
@@ -52,6 +53,7 @@ export function RowEntry({
   isClearing,
   displayed_val,
   valid,
+  valid_labels,
   hint,
   rowType,
   multiline,
@@ -106,6 +108,7 @@ export function RowEntry({
               name={name}
               value={value}
               valid={valid}
+              valid_labels={valid_labels}
               password={password}
               isSet={isSet}
               isClearing={isClearing}
