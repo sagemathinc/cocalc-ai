@@ -21,6 +21,9 @@ case "$MODE" in
   pglite)
     DATA="${DATA:=$DATA_BASE/pglite}"
     mkdir -p "$DATA"
+    # pglite + nextjs doesn't work together at all; not needed either, since pglite is only
+    # for launchpad, which doesn't use nextjs at all.
+    export COCALC_DISABLE_NEXT=1
     export DATA="$(realpath "$DATA")"
     export COCALC_DATA_DIR="${COCALC_DATA_DIR:=$DATA}"
     export COCALC_DB=pglite

@@ -613,9 +613,7 @@ def clean(args) -> None:
         banner("Running 'pnpm run clean' if it exists...")
 
         def g(path):
-            # can only use --if-present with npm, but should be fine since clean is
-            # usually just "rm".
-            cmd("npm run clean --if-present", path)
+            cmd("pnpm run --if-present clean", path)
 
         thread_map(g, [os.path.abspath(path) for path in v],
                    nb_threads=3 if args.parallel else 1)

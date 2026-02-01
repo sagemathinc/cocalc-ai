@@ -84,7 +84,6 @@
     "cocalc-hub-delete-projects": "./run/delete-projects.js",
     "cocalc-hub-maintenance-expired": "./run/maintenance-expired.js",
     "cocalc-hub-maintenance-syncstrings": "./run/maintenance-syncstrings.js",
-    "cocalc-hub-maintenance-blobs": "./run/maintenance-blobs.js",
-    "cocalc-hub-stripe-sync": "./run/stripe-sync.js"
+    "cocalc-hub-maintenance-blobs": "./run/maintenance-blobs.js"
   }
 }

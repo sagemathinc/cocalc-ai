@@ -3,7 +3,8 @@
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "dist",
-    "lib": ["dom", "dom.iterable", "ESNext"]
+    "lib": ["dom", "dom.iterable", "ESNext"],
+    "declarationDir": "dist-types"
   },
   "include": [
     "next-env.d.ts",
@@ -14,7 +15,7 @@
     "locales/*/*.json",
     "locales/en/common.ts"
   ],
-  "exclude": ["node_modules", "public", "styles", "dist"],
+  "exclude": ["node_modules", "public", "styles", "dist", "dist-types"],
   "references": [
     { "path": "../backend" },
     { "path": "../database" },
