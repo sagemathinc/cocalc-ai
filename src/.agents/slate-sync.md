@@ -1,5 +1,13 @@
 # Slate Realtime Sync Plan
 
+---
+
+Fix chat input.
+
+We re-enabled sync for chat input and immediately I got "cursor jumping". I think this is because it writes out foo, i type x, and foo gets echoed back, deleting my x and resetting my cursor.   We still haven't properly addressed this.  Can you think hard about what is going on and try to fix this so we only try to merge genuine upstream changes, or actions like undo/redo or clearing the editor (due to sending messages)?  
+
+---
+
 Goal: restore realtime sync integration for Slate while preserving a stable cursor
 and responsiveness. The authoritative state remains **markdown** in syncstring,
 but we apply **block-aware, minimal patches** to Slate to avoid cursor jumps.

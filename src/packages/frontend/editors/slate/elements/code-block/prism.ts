@@ -245,6 +245,33 @@ const MODE_ALIASES: Record<string, string> = {
   "yaml-frontmatter": "markdown",
 };
 
+const CODE_BLOCK_TOKEN_CACHE_LIMIT = 500;
+const codeBlockTokenCache = new Map<string, NormalizedToken[][]>();
+
+function getCachedNormalizedTokens(key: string): NormalizedToken[][] | null {
+  const cached = codeBlockTokenCache.get(key);
+  if (!cached) return null;
+  codeBlockTokenCache.delete(key);
+  codeBlockTokenCache.set(key, cached);
+  return cached;
+}
+
+function setCachedNormalizedTokens(
+  key: string,
+  tokens: NormalizedToken[][],
+): void {
+  if (codeBlockTokenCache.has(key)) {
+    codeBlockTokenCache.delete(key);
+  }
+  codeBlockTokenCache.set(key, tokens);
+  if (codeBlockTokenCache.size > CODE_BLOCK_TOKEN_CACHE_LIMIT) {
+    const oldestKey = codeBlockTokenCache.keys().next().value as string | undefined;
+    if (oldestKey != null) {
+      codeBlockTokenCache.delete(oldestKey);
+    }
+  }
+}
+
 export function normalizePrismLanguage(info: string | undefined): string {
   const raw = (info ?? "").trim().split(/\s+/)[0].toLowerCase();
   if (!raw) return "plain";
@@ -298,14 +325,29 @@ export function buildCodeBlockDecorations(
   blockPath: number[],
   infoOverride?: string,
 ): DecoratedRange[][] {
-  const text = block.children.map((line) => Node.string(line)).join("\n");
-  const info = infoOverride ?? block.info;
-  const grammar = getPrismGrammar(info, text);
-  if (!grammar) {
+  if (typeof window !== "undefined" && (window as any).COCALC_SLATE_DISABLE_PRISM) {
     return [];
   }
-  const tokens = Prism.tokenize(text, grammar);
-  const normalizedTokens = normalizeTokens(tokens);
+  const text = block.children.map((line) => Node.string(line)).join("\n");
+  const info = infoOverride ?? block.info;
+  const lang = getPrismLanguage(info, text);
+  if (lang === "plain") return [];
+  const grammar = Prism.languages[lang] ?? null;
+  if (!grammar) return [];
+  const cacheKey = `${lang}\u0000${text}`;
+  const cached = getCachedNormalizedTokens(cacheKey);
+  if (!cached && typeof window !== "undefined" && (window as any).__slateDebugLog) {
+    // eslint-disable-next-line no-console
+    console.log("[slate-code] cache miss", { lang, chars: text.length });
+  }
+  const normalizedTokens =
+    cached ??
+    (() => {
+      const tokens = Prism.tokenize(text, grammar);
+      const normalized = normalizeTokens(tokens);
+      setCachedNormalizedTokens(cacheKey, normalized);
+      return normalized;
+    })();
   const decorations: DecoratedRange[][] = [];
 
   for (let lineIndex = 0; lineIndex < normalizedTokens.length; lineIndex++) {

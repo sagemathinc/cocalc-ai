@@ -13,11 +13,10 @@ import {
   useState,
 } from "react";
 import { register, RenderElementProps } from "../register";
-import { useFocused, useSlate, useSlateSelection } from "../hooks";
+import { useFocused, useSelected, useSlate } from "../hooks";
 import { useSetElement } from "../set-element";
 import infoToMode from "./info-to-mode";
 import ActionButtons, { RunFunction } from "./action-buttons";
-import { useChange } from "../../use-change";
 import { getHistory } from "./history";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { isEqual } from "lodash";
@@ -26,7 +25,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { ReactEditor } from "../../slate-react";
 import { hash_string } from "@cocalc/util/misc";
-import { Editor, Path, Transforms } from "slate";
+import { Editor, Transforms } from "slate";
 import { markdown_to_slate } from "../../markdown-to-slate";
 import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
@@ -225,7 +224,6 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const runRef = useRef<RunFunction | null>(null);
   const setElement = useSetElement(editor, element);
   // textIndent: 0 is needed due to task lists -- see https://github.com/sagemathinc/cocalc/issues/6074
-  const { change } = useChange();
   const [history, setHistory] = useState<string[]>(
     getHistory(editor, element) ?? [],
   );
@@ -260,17 +258,13 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       // upstream change
       setInfo(element.info);
     }
-  }, [change, element]);
+  }, [editor, element, history, info]);
 
   const lineCount = getCodeBlockLineCount(element as CodeBlock);
   const modeLabel = infoToMode(info, { value: codeValue }) || "plain text";
   const shouldCollapse = false;
-  const selection = useSlateSelection();
-  const selectionInBlock =
-    !!focused &&
-    !!selection &&
-    Path.isAncestor(elementPath, selection.anchor.path) &&
-    Path.isAncestor(elementPath, selection.focus.path);
+  const selected = useSelected();
+  const selectionInBlock = !!focused && !!selected;
   const forceExpanded = selectionInBlock;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
   const markdownCandidate = (element as any).markdownCandidate;

@@ -33,6 +33,18 @@ interface NormalizeInputs {
 type NormalizeFunction = (NormalizeInputs) => void;
 
 const NORMALIZERS: NormalizeFunction[] = [];
+const SKIP_ON_SELECTION = new WeakSet<NormalizeFunction>();
+
+const normalizeDebugEnabled = () =>
+  typeof window !== "undefined" && (window as any).__slateDebugLog;
+
+const normalizeDisabled = () =>
+  typeof window !== "undefined" && (window as any).__slateDisableNormalize;
+
+const normalizeNow = () =>
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
 
 function spacerParagraph(): Element {
   return {
@@ -46,12 +58,31 @@ export const withNormalize = (editor) => {
   const { normalizeNode } = editor;
 
   editor.normalizeNode = (entry) => {
+    if (normalizeDisabled()) {
+      return;
+    }
     const [node, path] = entry;
+    const ops = editor.operations;
+    const selectionOnly =
+      ops.length > 0 && ops.every((op) => op.type === "set_selection");
+    const debugNormalize = normalizeDebugEnabled();
 
     for (const f of NORMALIZERS) {
       //const before = JSON.stringify(editor.children);
       const before = editor.children;
+      if (selectionOnly && SKIP_ON_SELECTION.has(f)) continue;
+      const startedAt = debugNormalize ? normalizeNow() : 0;
       f({ editor, node, path });
+      if (debugNormalize) {
+        const duration = normalizeNow() - startedAt;
+        if (duration > 1) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[slate-normalize] ${f.name || "anon"} ${duration.toFixed(2)}ms`,
+            { path },
+          );
+        }
+      }
       if (before !== editor.children) {
         // changed so return; normalize will get called again by
         // slate until no changes.
@@ -152,25 +183,28 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   Transforms.insertNodes(editor, nextLines, { at: path.concat(0) });
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
 });
+SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 
 // Ensure each code_line is a single plain text node so Prism decorations
 // align with offsets (and don't get split across multiple leaves).
 NORMALIZERS.push(function normalizeCodeLineChildren({ editor, node, path }) {
   if (!(Element.isElement(node) && node.type === "code_line")) return;
-  const text = Node.string(node);
   const children = node.children ?? [];
-  const onlyText =
+  if (
     children.length === 1 &&
     Text.isText(children[0]) &&
-    children[0].text === text &&
-    Object.keys(children[0]).length === 1;
-  if (onlyText) return;
+    Object.keys(children[0]).length === 1
+  ) {
+    return;
+  }
+  const text = Node.string(node);
   Transforms.removeNodes(editor, {
     at: path,
     match: (_n, p) => p.length === path.length + 1,
   });
   Transforms.insertNodes(editor, { text }, { at: path.concat(0) });
 });
+SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 
 const SPACER_BLOCK_TYPES = new Set<string>([
   "code_block",
