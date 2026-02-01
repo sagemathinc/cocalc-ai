@@ -13,6 +13,8 @@ module.exports = {
       "<rootDir>/test/mocks/codemirror-static.js",
     "^@cocalc/frontend/codemirror/init$":
       "<rootDir>/test/mocks/codemirror-init.js",
+    "^@cocalc/frontend/frame-editors/latex-editor/actions$":
+      "<rootDir>/test/mocks/latex-actions.js",
     "^@cocalc/frontend/users$": "<rootDir>/test/mocks/frontend-users.js",
     "^@cocalc/frontend/frame-editors/generic/chat$":
       "<rootDir>/test/mocks/generic-chat.js",
