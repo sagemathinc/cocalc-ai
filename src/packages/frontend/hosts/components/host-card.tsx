@@ -1,6 +1,7 @@
 import { Button, Card, Popconfirm, Space, Tag, Tooltip, Typography } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { HostDeleteOptions, HostStopOptions } from "../types";
 import {
@@ -19,6 +20,7 @@ import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostWorkspaceStatus } from "./host-workspace-status";
 import { confirmHostDeprovision, confirmHostStop } from "./host-confirm";
+import { COLORS } from "@cocalc/util/theme";
 
 type HostCardProps = {
   host: Host;
@@ -30,6 +32,7 @@ type HostCardProps = {
   onCancelOp?: (op_id: string) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
+  onToggleStar?: (host: Host) => void;
   providerCapabilities?: HostCatalog["provider_capabilities"];
   selfHost?: {
     isConnectorOnline: (connectorId?: string) => boolean;
@@ -47,6 +50,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   onCancelOp,
   onDetails,
   onEdit,
+  onToggleStar,
   providerCapabilities,
   selfHost,
 }) => {
@@ -220,6 +224,21 @@ export const HostCard: React.FC<HostCardProps> = ({
       title={host.name}
       extra={
         <Space size="small">
+          <Tooltip title={host.starred ? "Starred" : "Star host"}>
+            <span
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleStar?.(host);
+              }}
+              style={{
+                cursor: onToggleStar ? "pointer" : "default",
+                fontSize: 18,
+                color: host.starred ? COLORS.STAR : COLORS.GRAY_L,
+              }}
+            >
+              <Icon name={host.starred ? "star-filled" : "star"} />
+            </span>
+          </Tooltip>
           <Tooltip
             title={getHostStatusTooltip(
               host.status,

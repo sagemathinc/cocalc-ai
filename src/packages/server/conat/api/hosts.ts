@@ -116,6 +116,7 @@ function parseRow(
     can_place?: boolean;
     reason_unavailable?: string;
     backup_status?: HostBackupStatus;
+    starred?: boolean;
   } = {},
 ): Host {
   const metadata = row.metadata ?? {};
@@ -149,6 +150,7 @@ function parseRow(
     can_start: opts.can_start,
     can_place: opts.can_place,
     reason_unavailable: opts.reason_unavailable,
+    starred: opts.starred,
     last_action: metadata.last_action,
     last_action_at: metadata.last_action_at,
     last_action_status: metadata.last_action_status,
@@ -552,6 +554,8 @@ export async function listHosts({
     const isCollab = collaborators.includes(owner);
     const tier = normalizeHostTier(row.tier);
     const shared = tier != null;
+    const starredBy = (row.starred_by ?? []) as string[];
+    const starred = starredBy.includes(owner);
 
     const scope: Host["scope"] = isOwner
       ? "owned"
@@ -583,6 +587,7 @@ export async function listHosts({
         can_start,
         reason_unavailable,
         backup_status: backupStatus.get(row.id),
+        starred,
       }),
     );
   }
@@ -1509,6 +1514,51 @@ export async function renameHost({
     spec: { before: { name: row?.name ?? null }, after: { name: cleaned } },
   });
   return parseRow(rows[0]);
+}
+
+export async function setHostStar({
+  account_id,
+  id,
+  starred,
+}: {
+  account_id?: string;
+  id: string;
+  starred: boolean;
+}): Promise<void> {
+  const owner = requireAccount(account_id);
+  const { rows } = await pool().query(
+    `SELECT id, metadata, tier, deleted, starred_by
+     FROM project_hosts
+     WHERE id=$1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row || row.deleted) {
+    throw new Error("host not found");
+  }
+  const metadata = row.metadata ?? {};
+  const rowOwner = metadata.owner ?? "";
+  const collaborators = (metadata.collaborators ?? []) as string[];
+  const isOwner = rowOwner === owner;
+  const isCollab = collaborators.includes(owner);
+  const shared = row.tier != null;
+  const isAdminUser = await isAdmin(owner);
+  if (!isOwner && !isCollab && !shared && !isAdminUser) {
+    throw new Error("not authorized");
+  }
+  const current = (row.starred_by ?? []) as string[];
+  const next = new Set(current);
+  if (starred) {
+    next.add(owner);
+  } else {
+    next.delete(owner);
+  }
+  await pool().query(
+    `UPDATE project_hosts
+     SET starred_by=$2, updated=NOW()
+     WHERE id=$1`,
+    [id, [...next]],
+  );
 }
 
 export async function updateHostMachine({

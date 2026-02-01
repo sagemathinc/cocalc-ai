@@ -438,7 +438,7 @@ export function FilesHeader({
                     items={[
                       {
                         key: "snapshots-open",
-                        label: "Open Snapshots",
+                        label: "Browse Snapshots",
                         onClick: () => {
                           actions?.open_directory(SNAPSHOTS);
                           track("snapshots", {
@@ -466,7 +466,7 @@ export function FilesHeader({
                       { type: "divider" },
                       {
                         key: "backups-open",
-                        label: "Open Backups",
+                        label: "Browse Backups",
                         onClick: () => {
                           actions?.open_directory(BACKUPS);
                           track("backups", {
