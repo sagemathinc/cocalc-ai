@@ -20,11 +20,11 @@ output:
 
 */
 
-import { Node, Path, Transforms } from "slate";
+import { Node, Transforms } from "slate";
 import { register } from "../register";
 import { useFocused, useSelected, useSlate } from "../hooks";
 import { A } from "@cocalc/frontend/components";
-import { ReactEditor, useSlateSelection } from "../../slate-react";
+import { ReactEditor } from "../../slate-react";
 import { CodeBlockBody } from "../code-block/code-like";
 import { useEffect } from "react";
 
@@ -36,20 +36,7 @@ register({
     const editor = useSlate();
     const focused = useFocused();
     const selected = useSelected();
-    const selection = useSlateSelection();
-    let editing = false;
-    if (selection) {
-      try {
-        const path = ReactEditor.findPath(editor as any, element as any);
-        const { anchor, focus } = selection;
-        const contains = (p: Path) =>
-          Path.isAncestor(path, p) || Path.equals(path, p);
-        editing = contains(anchor.path) && contains(focus.path);
-      } catch {
-        editing = false;
-      }
-    }
-    const isEditing = focused && (selected || editing);
+    const isEditing = focused && selected;
   // meta is always non-void to allow multiline editing like code blocks
     const value = element.value ?? Node.string(element);
 

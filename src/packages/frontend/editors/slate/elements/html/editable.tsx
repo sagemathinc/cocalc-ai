@@ -4,12 +4,12 @@
  */
 
 import { useEffect, useState } from "react";
-import { Editor, Path, Transforms } from "slate";
+import { Editor, Transforms } from "slate";
 import { register } from "../register";
 import { useFocused, useSelected, useSlate } from "../hooks";
 import { ensure_ends_in_two_newline, FOCUSED_COLOR } from "../../util";
 import HTML from "@cocalc/frontend/components/html-ssr";
-import { ReactEditor, useSlateSelection } from "../../slate-react";
+import { ReactEditor } from "../../slate-react";
 import { CodeBlockBody } from "../code-block/code-like";
 
 function isBR(s: string): boolean {
@@ -20,7 +20,7 @@ function isBR(s: string): boolean {
 const Element = ({ attributes, children, element }) => {
   const focused = useFocused();
   const selected = useSelected();
-  const selection = useSlateSelection();
+  const selection = editor.selection;
   const border =
     focused && selected
       ? `1px solid ${FOCUSED_COLOR}`
@@ -34,19 +34,7 @@ const Element = ({ attributes, children, element }) => {
   const [forceEdit, setForceEdit] = useState(false);
   const editor = useSlate();
 
-  let editing = false;
-  if (selection) {
-    try {
-      const path = ReactEditor.findPath(editor as any, element as any);
-      const { anchor, focus } = selection;
-      const contains = (p: Path) =>
-        Path.isAncestor(path, p) || Path.equals(path, p);
-      editing = contains(anchor.path) && contains(focus.path);
-    } catch {
-      editing = false;
-    }
-  }
-  const isEditing = forceEdit || (focused && (selected || editing));
+  const isEditing = forceEdit || (focused && selected);
 
   useEffect(() => {
     if (!focused) {

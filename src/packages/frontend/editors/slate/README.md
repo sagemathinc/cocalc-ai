@@ -95,6 +95,10 @@ flowchart TD
 Design Notes and Pitfalls
 - Slate memoizes element rendering; avoid relying on element re-render to show
   UI state that does not change the Slate value.
+- Performance: avoid subscribing heavy elements to the global `ChangeContext`
+  (e.g., `useChange()`), and avoid `useSlateSelection()` for every node in
+  large documents. Prefer `useSelected()` and `editor.selection` so only the
+  active element re-renders on selection changes.
 - Selection sync is fragile. Avoid mutating selection outside the keyboard
   handlers and the designated overlay path.
 - Use debounced save (`SAVE_DEBOUNCE_MS`) and sync caching to reduce churn.
