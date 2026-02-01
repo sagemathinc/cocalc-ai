@@ -1,6 +1,6 @@
 import { type ProviderEntry, type ProviderId } from "@cocalc/cloud";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { getControlPlaneSshKeypair } from "./ssh-key";
+import { getHostSshPublicKeys } from "./ssh-key";
 import { getServerProvider } from "./providers";
 
 export type ProviderContext = {
@@ -19,12 +19,11 @@ export async function getProviderContext(
     throw new Error(`unsupported cloud provider ${providerId}`);
   }
   const settings = await getServerSettings();
-  const { publicKey: controlPlanePublicKey } =
-    await getControlPlaneSshKeypair();
+  const sshPublicKeys = await getHostSshPublicKeys();
   const prefix = provider.getPrefix(settings);
   const creds = await provider.getCreds({
     settings,
-    controlPlanePublicKey,
+    sshPublicKeys,
     prefix,
     region: opts.region,
   });

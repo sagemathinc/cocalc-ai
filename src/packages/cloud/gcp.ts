@@ -345,12 +345,16 @@ export class GcpProvider implements CloudProvider {
     if (startupScript) {
       metadataItems.push({ key: "startup-script", value: startupScript });
     }
-    const sshPublicKey = spec.metadata?.ssh_public_key;
-    if (sshPublicKey) {
+    const sshPublicKeys = normalizeSshKeys(
+      spec.metadata?.ssh_public_keys,
+      spec.metadata?.ssh_public_key,
+    );
+    if (sshPublicKeys.length) {
       const sshUser = sshUserFor(spec);
+      const entries = sshPublicKeys.map((key) => `${sshUser}:${key}`);
       metadataItems.push({
         key: "ssh-keys",
-        value: `${sshUser}:${sshPublicKey}`,
+        value: entries.join("\n"),
       });
     }
 
@@ -415,6 +419,7 @@ export class GcpProvider implements CloudProvider {
         data_disk_name: dataDiskName,
         data_disk_uri: dataDiskSource,
         ssh_public_key: spec.metadata?.ssh_public_key,
+        ssh_public_keys: sshPublicKeys,
         ssh_user: sshUserFor(spec),
       },
     };
@@ -700,8 +705,11 @@ async function ensureSshMetadata(
   credentials: { projectId: string; credentials: any },
   client: InstancesClient,
 ): Promise<void> {
-  const sshPublicKey = runtime.metadata?.ssh_public_key;
-  if (!sshPublicKey) return;
+  const sshPublicKeys = normalizeSshKeys(
+    runtime.metadata?.ssh_public_keys,
+    runtime.metadata?.ssh_public_key,
+  );
+  if (!sshPublicKeys.length) return;
   const sshUser = runtime.metadata?.ssh_user ?? "ubuntu";
   const [instance] = await client.get({
     project: credentials.projectId,
@@ -711,12 +719,20 @@ async function ensureSshMetadata(
   const fingerprint = instance?.metadata?.fingerprint;
   if (!fingerprint) return;
   const items = instance?.metadata?.items ?? [];
-  const entry = `${sshUser}:${sshPublicKey}`;
   const current = items.find((item) => item.key === "ssh-keys");
-  if (current?.value?.includes(entry)) return;
-  const nextValue = current?.value
-    ? `${current.value}\n${entry}`
-    : entry;
+  const nextLines = new Set(
+    (current?.value ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => !!line),
+  );
+  for (const key of sshPublicKeys) {
+    const entry = `${sshUser}:${key}`;
+    if (!nextLines.has(entry)) {
+      nextLines.add(entry);
+    }
+  }
+  const nextValue = Array.from(nextLines).join("\n");
   const nextItems = items.filter((item) => item.key !== "ssh-keys");
   nextItems.push({ key: "ssh-keys", value: nextValue });
   await client.setMetadata({
@@ -728,4 +744,26 @@ async function ensureSshMetadata(
       items: nextItems,
     },
   });
+}
+
+function normalizeSshKeys(
+  raw?: string[] | string,
+  fallback?: string,
+): string[] {
+  const items: string[] = [];
+  if (Array.isArray(raw)) {
+    items.push(...raw);
+  } else if (typeof raw === "string") {
+    items.push(...raw.split(/\r?\n|,/g));
+  }
+  if (fallback) items.push(fallback);
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const entry of items) {
+    const trimmed = entry.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    cleaned.push(trimmed);
+  }
+  return cleaned;
 }

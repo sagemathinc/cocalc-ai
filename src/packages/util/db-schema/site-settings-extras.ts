@@ -256,8 +256,7 @@ export type SiteSettingsExtrasKeys =
   | "project_hosts_nebius_prefix"
   | "hyperstack_api_key"
   | "project_hosts_hyperstack_prefix"
-  | "control_plane_ssh_private_key_path"
-  | "control_plane_ssh_private_key"
+  | "project_hosts_ssh_public_keys"
   | "google_cloud_service_account_json"
   | "project_hosts_google_prefix"
   | "project_hosts_software_base_url"
@@ -951,6 +950,16 @@ export const EXTRAS: SettingsExtras = {
     group: "Payments & Billing",
     subgroup: "Pay as you Go",
   },
+  project_hosts_hyperstack_prefix: {
+    name: "Project Hosts: Hyperstack - Resource Prefix",
+    desc: "Prepend this string to all Hyperstack resources that are created, e.g., VM names, disks, etc. If the prefix is 'cocalc', then the project host with id 17 will be called 'cocalc-17'. REQUIRED or Hyperstack will not work.",
+    default: "cocalc",
+    to_val: to_trimmed_str,
+    show: project_hosts_hyperstack_enabled,
+    tags: ["Project Hosts", "Cloud", "Hyperstack"],
+    group: "Compute / Project Hosts",
+    subgroup: "Hyperstack",
+  },
   hyperstack_api_key: {
     name: "Project Hosts: Hyperstack - API Key",
     desc: "Your [Hyperstack API Key](https://console.hyperstack.cloud/api-keys). This supports managing project hosts on the [Hyperstack Cloud](https://www.hyperstack.cloud/). REQUIRED or Hyperstack will not work.",
@@ -962,36 +971,16 @@ export const EXTRAS: SettingsExtras = {
     subgroup: "Hyperstack",
     required_when: [{ key: "project_hosts_hyperstack_enabled", equals: "yes" }],
   },
-  project_hosts_hyperstack_prefix: {
-    name: "Project Hosts: Hyperstack - Resource Prefix",
-    desc: "Prepend this string to all Hyperstack resources that are created, e.g., VM names, disks, etc. If the prefix is 'cocalc', then the project host with id 17 will be called 'cocalc-17'. REQUIRED or Hyperstack will not work.",
-    default: "cocalc",
-    to_val: to_trimmed_str,
-    show: project_hosts_hyperstack_enabled,
-    tags: ["Project Hosts", "Cloud", "Hyperstack"],
-    group: "Compute / Project Hosts",
-    subgroup: "Hyperstack",
-  },
-  control_plane_ssh_private_key_path: {
-    name: "Control Plane: SSH Private Key Path",
-    desc: "Filesystem path to the control-plane SSH private key. When set, this overrides the database key. All hub processes must be able to read this file.",
+  project_hosts_ssh_public_keys: {
+    name: "Project Hosts: SSH Public Keys",
+    desc: "Optional SSH public keys to add to project hosts (one per line). These are installed for the ubuntu user so site admins can SSH if needed.",
     default: "",
     to_val: to_trimmed_str,
+    multiline: 4,
     tags: ["Project Hosts", "Security"],
     valid: () => true,
     group: "Compute / Project Hosts",
-    subgroup: "Security",
-  },
-  control_plane_ssh_private_key: {
-    name: "Control Plane: SSH Private Key (DB fallback)",
-    desc: "Control-plane SSH private key stored in the database. This is used if no filesystem path is configured.",
-    default: "",
-    password: true,
-    to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Security"],
-    valid: () => true,
-    group: "Compute / Project Hosts",
-    subgroup: "Security",
+    subgroup: "Access",
   },
 
   lambda_cloud_api_key: {

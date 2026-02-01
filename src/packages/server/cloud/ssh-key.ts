@@ -1,166 +1,27 @@
-import ssh from "micro-key-producer/ssh.js";
-import { randomBytes } from "micro-key-producer/utils.js";
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile, chmod } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
-import getLogger from "@cocalc/backend/logger";
-import getPool from "@cocalc/database/pool";
-import {
-  getServerSettings,
-  resetServerSettingsCache,
-} from "@cocalc/database/settings/server-settings";
-import { encryptSettingValue } from "@cocalc/database/settings/secret-settings";
-
-const logger = getLogger("server:cloud:ssh-key");
-const pool = () => getPool();
-
-export type ControlPlaneKeypair = {
-  publicKey: string;
-  privateKey: string;
-};
-
-let cachedKeypair: ControlPlaneKeypair | undefined;
-
-async function execFileText(
-  cmd: string,
-  args: string[],
-): Promise<{ stdout: string; stderr: string }> {
-  return await new Promise((resolve, reject) => {
-    const child = execFile(cmd, args, (err, stdout, stderr) => {
-      if (err) {
-        const detail = stderr?.toString().trim() || err.message;
-        return reject(new Error(detail));
-      }
-      resolve({
-        stdout: stdout?.toString() ?? "",
-        stderr: stderr?.toString() ?? "",
-      });
-    });
-    child?.stdin?.end();
-  });
+function parsePublicKeys(raw?: string): string[] {
+  if (!raw) return [];
+  return raw
+    .split(/\r?\n|,/g)
+    .map((entry) => entry.trim())
+    .filter((entry) =>
+      entry.startsWith("ssh-") ||
+      entry.startsWith("ecdsa-") ||
+      entry.startsWith("sk-"),
+    );
 }
 
-async function derivePublicKeyFromPath(path: string): Promise<string> {
-  const { stdout } = await execFileText("ssh-keygen", ["-y", "-f", path]);
-  return stdout.trim();
-}
-
-async function derivePublicKeyFromString(
-  privateKey: string,
-): Promise<string> {
-  const trimmed = privateKey.trim();
-  if (!trimmed) {
-    throw new Error("private key value is empty");
-  }
-  if (trimmed.startsWith("ssh-")) {
-    throw new Error("private key value looks like a public key");
-  }
-  if (!trimmed.includes("PRIVATE KEY")) {
-    throw new Error("private key value is missing PEM header");
-  }
-  const dir = await mkdtemp(join(tmpdir(), "cocalc-ssh-key-"));
-  const keyPath = join(dir, "id_ed25519");
-  try {
-    await writeFile(keyPath, privateKey);
-    await chmod(keyPath, 0o600);
-    return await derivePublicKeyFromPath(keyPath);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
-async function storePrivateKey(privateKey: string): Promise<void> {
-  const encrypted = await encryptSettingValue(
-    "control_plane_ssh_private_key",
-    privateKey,
-  );
-  await pool().query(
-    `
-      INSERT INTO server_settings (name, value, readonly)
-      VALUES ($1,$2,false)
-      ON CONFLICT (name)
-      DO UPDATE SET value=EXCLUDED.value, readonly=false
-    `,
-    ["control_plane_ssh_private_key", encrypted],
-  );
-  resetServerSettingsCache();
-}
-
-function generateKeypair(): ControlPlaneKeypair {
-  const seed = randomBytes(32);
-  const generated = ssh(seed, "cocalc-control-plane");
-  return {
-    publicKey: generated.publicKey.trim(),
-    privateKey: generated.privateKey,
-  };
-}
-
-export async function getControlPlaneSshKeypair(): Promise<ControlPlaneKeypair> {
-  if (cachedKeypair) {
-    return cachedKeypair;
-  }
-
+export async function getHostSshPublicKeys(): Promise<string[]> {
   const settings = await getServerSettings();
-  const path = settings.control_plane_ssh_private_key_path?.trim();
-  const stored = settings.control_plane_ssh_private_key?.trim();
-
-  if (path) {
-    const privateKey = await readFile(path, "utf8");
-    const publicKey = await derivePublicKeyFromPath(path);
-    cachedKeypair = { publicKey, privateKey };
-    return cachedKeypair;
+  const keys = parsePublicKeys(settings.project_hosts_ssh_public_keys);
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const key of keys) {
+    const trimmed = key.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    ordered.push(trimmed);
   }
-
-  if (stored) {
-    try {
-      const publicKey = await derivePublicKeyFromString(stored);
-      cachedKeypair = { publicKey, privateKey: stored };
-      return cachedKeypair;
-    } catch (err) {
-      logger.warn("invalid stored control-plane SSH key; regenerating", {
-        err: String(err),
-      });
-    }
-  }
-
-  const client = await pool().connect();
-  try {
-    await client.query("SELECT pg_advisory_lock(hashtext($1))", [
-      "control_plane_ssh_key",
-    ]);
-    resetServerSettingsCache();
-    const locked = await getServerSettings();
-    const lockedPath = locked.control_plane_ssh_private_key_path?.trim();
-    const lockedStored = locked.control_plane_ssh_private_key?.trim();
-    if (lockedPath) {
-      const privateKey = await readFile(lockedPath, "utf8");
-      const publicKey = await derivePublicKeyFromPath(lockedPath);
-      cachedKeypair = { publicKey, privateKey };
-      return cachedKeypair;
-    }
-    if (lockedStored) {
-      try {
-        const publicKey = await derivePublicKeyFromString(lockedStored);
-        cachedKeypair = { publicKey, privateKey: lockedStored };
-        return cachedKeypair;
-      } catch (err) {
-        logger.warn("invalid stored control-plane SSH key; regenerating", {
-          err: String(err),
-        });
-      }
-    }
-
-    const generated = generateKeypair();
-    await storePrivateKey(generated.privateKey);
-    cachedKeypair = generated;
-    logger.info("generated control-plane SSH keypair");
-    return cachedKeypair;
-  } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
-      "control_plane_ssh_key",
-    ]);
-    client.release();
-  }
+  return ordered;
 }
