@@ -884,16 +884,17 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           !event.altKey &&
           (event.key === "z" || event.key === "Z")
         ) {
+          const actionId = props.id ?? "slate-block";
           if (event.shiftKey) {
             if (actions?.redo != null) {
               saveNow?.();
-              actions.redo(props.id);
+              actions.redo(actionId);
               event.preventDefault();
               return;
             }
           } else if (actions?.undo != null) {
             saveNow?.();
-            actions.undo(props.id);
+            actions.undo(actionId);
             event.preventDefault();
             return;
           }
