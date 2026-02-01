@@ -35,6 +35,21 @@ Block Editor: Architecture, Design, Motivation
   avoiding a single huge Slate tree and minimizing render/selection churn.
 - Core idea: split Markdown into blocks, give each block its own Slate editor,
   and virtualize the list so only visible blocks are mounted.
+- Chunking: block editor now groups multiple top-level Markdown blocks into
+  **chunks** by size (never splitting a top-level block). Each chunk is a
+  single editor that may contain many Slate blocks. This keeps the editor
+  stable while still windowing large docs.
+- Chunk size override for dev/testing:
+  - `window.COCALC_SLATE_BLOCK_CHUNK_CHARS = 800` (or any positive number).
+- Large-doc debounce (to keep other editors responsive):
+  - `window.COCALC_SLATE_BLOCK_DEFER_CHARS = 200000` (default).
+  - `window.COCALC_SLATE_BLOCK_DEFER_MS = 300` (default).
+  - Set smaller values for dev or to observe re-chunking behavior.
+- Incremental chunking:
+  - Reuses unchanged prefix/suffix chunks and re-chunks only the middle window.
+- Optional profiling:
+- Page boundaries: chunks render a subtle "Page N" boundary label so it’s
+  clear where chunk edges are during manual testing.
 - State flow: block editors emit per-block changes; we merge back to Markdown
   and sync/save at the document level.
 - Editing constraints: cross-block selection is intentionally unsupported to

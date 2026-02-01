@@ -63,6 +63,8 @@ const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
 const BLOCK_CHUNK_TARGET_CHARS = 4000;
 const SHOW_BLOCK_BOUNDARIES = true;
+const BLOCK_DEFER_CHARS = 200_000;
+const BLOCK_DEFER_MS = 300;
 
 function getBlockChunkTargetChars(): number {
   if (typeof globalThis === "undefined") return BLOCK_CHUNK_TARGET_CHARS;
@@ -71,6 +73,24 @@ function getBlockChunkTargetChars(): number {
     return Math.floor(value);
   }
   return BLOCK_CHUNK_TARGET_CHARS;
+}
+
+function getBlockDeferChars(): number {
+  if (typeof globalThis === "undefined") return BLOCK_DEFER_CHARS;
+  const value = (globalThis as any).COCALC_SLATE_BLOCK_DEFER_CHARS;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return BLOCK_DEFER_CHARS;
+}
+
+function getBlockDeferMs(): number {
+  if (typeof globalThis === "undefined") return BLOCK_DEFER_MS;
+  const value = (globalThis as any).COCALC_SLATE_BLOCK_DEFER_MS;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return Math.floor(value);
+  }
+  return BLOCK_DEFER_MS;
 }
 
 function debugSyncLog(type: string, data?: Record<string, unknown>): void {
@@ -177,6 +197,12 @@ function isBlankParagraph(node: Descendant | undefined): boolean {
     node["children"][0]?.["text"] === ""
   );
 }
+
+export const __test__ = {
+  splitMarkdownToBlocks,
+  splitMarkdownToBlocksIncremental,
+  computeIncrementalSlices,
+};
 
 function stripTrailingBlankParagraphs(value: Descendant[]): Descendant[] {
   if (value.length <= 1) return value;
@@ -313,6 +339,116 @@ function splitMarkdownToBlocks(markdown: string): string[] {
   }
   flush();
   return chunks.length > 0 ? chunks : [""];
+}
+
+function commonPrefixLength(a: string, b: string): number {
+  const max = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < max && a.charCodeAt(i) === b.charCodeAt(i)) {
+    i += 1;
+  }
+  return i;
+}
+
+function commonSuffixLength(a: string, b: string, prefix: number): number {
+  const max = Math.min(a.length, b.length) - prefix;
+  let i = 0;
+  while (
+    i < max &&
+    a.charCodeAt(a.length - 1 - i) === b.charCodeAt(b.length - 1 - i)
+  ) {
+    i += 1;
+  }
+  return i;
+}
+
+type IncrementalSlices = {
+  prefixBlocks: string[];
+  suffixBlocks: string[];
+  middleText: string;
+};
+
+function computeIncrementalSlices(
+  prevMarkdown: string,
+  nextMarkdown: string,
+  prevBlocks: string[],
+): IncrementalSlices | null {
+  const prefix = commonPrefixLength(prevMarkdown, nextMarkdown);
+  const suffix = commonSuffixLength(prevMarkdown, nextMarkdown, prefix);
+  const oldLength = prevMarkdown.length;
+  const suffixStartOld = oldLength - suffix;
+
+  let prefixIndex = 0;
+  let prefixOffset = 0;
+  for (let i = 0; i < prevBlocks.length; i += 1) {
+    const blockLen = prevBlocks[i].length;
+    const sep = i < prevBlocks.length - 1 ? 2 : 0;
+    const nextOffset = prefixOffset + blockLen + sep;
+    if (prefix >= nextOffset) {
+      prefixOffset = nextOffset;
+      prefixIndex = i + 1;
+      continue;
+    }
+    break;
+  }
+
+  let suffixIndex = prevBlocks.length;
+  let suffixStartOffset = oldLength;
+  let offset = 0;
+  for (let i = 0; i < prevBlocks.length; i += 1) {
+    const blockLen = prevBlocks[i].length;
+    const sep = i < prevBlocks.length - 1 ? 2 : 0;
+    const nextOffset = offset + blockLen + sep;
+    if (suffixStartOld <= offset) {
+      suffixIndex = i;
+      suffixStartOffset = offset;
+      break;
+    }
+    if (suffixStartOld < nextOffset) {
+      suffixIndex = i + 1;
+      suffixStartOffset = nextOffset;
+      break;
+    }
+    offset = nextOffset;
+  }
+  if (suffixIndex >= prevBlocks.length) {
+    suffixStartOffset = oldLength;
+  }
+
+  const prefixBlocks = prefixIndex > 0 ? prevBlocks.slice(0, prefixIndex) : [];
+  const suffixBlocks =
+    suffixIndex < prevBlocks.length ? prevBlocks.slice(suffixIndex) : [];
+  const suffixReuseLen = Math.max(0, oldLength - suffixStartOffset);
+  const middleStart = prefixOffset;
+  const middleEnd = nextMarkdown.length - suffixReuseLen;
+
+  if (middleStart < 0 || middleEnd < middleStart) {
+    return null;
+  }
+
+  const middleText = nextMarkdown.slice(middleStart, middleEnd);
+  return { prefixBlocks, suffixBlocks, middleText };
+}
+
+function splitMarkdownToBlocksIncremental(
+  prevMarkdown: string,
+  nextMarkdown: string,
+  prevBlocks: string[],
+): string[] {
+  if (!prevMarkdown) return splitMarkdownToBlocks(nextMarkdown);
+  if (prevBlocks.length === 0) return splitMarkdownToBlocks(nextMarkdown);
+  if (prevMarkdown === nextMarkdown) return prevBlocks;
+  const slices = computeIncrementalSlices(
+    prevMarkdown,
+    nextMarkdown,
+    prevBlocks,
+  );
+  if (!slices) return splitMarkdownToBlocks(nextMarkdown);
+  const { prefixBlocks, suffixBlocks, middleText } = slices;
+  const middleBlocks =
+    middleText.length > 0 ? splitMarkdownToBlocks(middleText) : [];
+  const nextBlocks = [...prefixBlocks, ...middleBlocks, ...suffixBlocks];
+  return nextBlocks.length > 0 ? nextBlocks : [""];
 }
 
 interface BlockRowEditorProps {
@@ -1446,21 +1582,21 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const initialValue = value ?? "";
   const valueRef = useRef<string>(initialValue);
-  valueRef.current = initialValue;
   // Block mode treats each block independently, so always disable significant
   // blank lines to avoid confusing per-block newline behavior.
   const preserveBlankLines = false;
 
-  const initialBlocks = splitMarkdownToBlocks(initialValue);
-  const [blocks, setBlocks] = useState<string[]>(() => initialBlocks);
-  const blocksRef = useRef<string[]>(blocks);
   const nextBlockIdRef = useRef<number>(1);
   const newBlockId = useCallback(
     () => `b${nextBlockIdRef.current++}`,
     [],
   );
+  const [blocks, setBlocks] = useState<string[]>(() =>
+    splitMarkdownToBlocks(initialValue),
+  );
+  const blocksRef = useRef<string[]>(blocks);
   const [blockIds, setBlockIds] = useState<string[]>(() =>
-    initialBlocks.map(() => newBlockId()),
+    blocks.map(() => newBlockId()),
   );
   const blockIdsRef = useRef<string[]>(blockIds);
   const remoteVersionRef = useRef<number[]>(blocks.map(() => 0));
@@ -1614,13 +1750,66 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   );
 
   const setBlocksFromValue = useCallback((markdown: string) => {
+    if (markdown === valueRef.current && blocksRef.current.length > 0) {
+      return;
+    }
+    const prevMarkdown = valueRef.current ?? "";
+    const prevBlocks = blocksRef.current;
     valueRef.current = markdown;
-    const nextBlocks = splitMarkdownToBlocks(markdown);
+    const nextBlocks =
+      prevBlocks.length > 0 && prevMarkdown.length > 0
+        ? splitMarkdownToBlocksIncremental(prevMarkdown, markdown, prevBlocks)
+        : splitMarkdownToBlocks(markdown);
     bumpRemoteVersions(nextBlocks);
     blocksRef.current = nextBlocks;
     setBlocks(nextBlocks);
     updateBlockIdsForRemote(nextBlocks);
   }, [bumpRemoteVersions, updateBlockIdsForRemote]);
+
+  const pendingValueRef = useRef<string | null>(null);
+  const pendingValueTimerRef = useRef<number | null>(null);
+
+  const flushPendingValue = useCallback(() => {
+    if (pendingValueTimerRef.current != null) {
+      window.clearTimeout(pendingValueTimerRef.current);
+      pendingValueTimerRef.current = null;
+    }
+    const pending = pendingValueRef.current;
+    if (pending == null) return;
+    pendingValueRef.current = null;
+    setBlocksFromValue(pending);
+  }, [setBlocksFromValue]);
+
+  const schedulePendingValue = useCallback(
+    (markdown: string) => {
+      pendingValueRef.current = markdown;
+      if (pendingValueTimerRef.current != null) {
+        window.clearTimeout(pendingValueTimerRef.current);
+      }
+      const delay = getBlockDeferMs();
+      pendingValueTimerRef.current = window.setTimeout(() => {
+        pendingValueTimerRef.current = null;
+        flushPendingValue();
+      }, delay);
+    },
+    [flushPendingValue],
+  );
+
+  const applyBlocksFromValue = useCallback(
+    (markdown: string) => {
+      if (markdown === valueRef.current && blocksRef.current.length > 0) {
+        return;
+      }
+      const deferChars = getBlockDeferChars();
+      if (focusedIndex == null && markdown.length >= deferChars) {
+        schedulePendingValue(markdown);
+        return;
+      }
+      flushPendingValue();
+      setBlocksFromValue(markdown);
+    },
+    [focusedIndex, flushPendingValue, schedulePendingValue, setBlocksFromValue],
+  );
 
   const getFullMarkdown = useCallback(() => joinBlocks(blocksRef.current), []);
 
@@ -1656,14 +1845,20 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     }
     allowFocusedValueUpdateRef.current = false;
     if (pendingRemoteRef.current != null) return;
-    setBlocksFromValue(nextValue);
+    applyBlocksFromValue(nextValue);
   }, [
     value,
     focusedIndex,
     ignoreRemoteWhileFocused,
-    setBlocksFromValue,
+    applyBlocksFromValue,
     updatePendingRemoteIndicator,
   ]);
+
+  useEffect(() => {
+    if (focusedIndex != null) {
+      flushPendingValue();
+    }
+  }, [focusedIndex, flushPendingValue]);
 
   function shouldDeferRemoteMerge(): boolean {
     const idleMs = mergeIdleMsRef.current;
@@ -1699,7 +1894,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     mergeHelperRef.current.handleRemote({
       remote: pending,
       getLocal: () => joinBlocks(blocksRef.current),
-      applyMerged: setBlocksFromValue,
+      applyMerged: applyBlocksFromValue,
     });
   }
 
@@ -1734,14 +1929,14 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: () => joinBlocks(blocksRef.current),
-        applyMerged: setBlocksFromValue,
+        applyMerged: applyBlocksFromValue,
       });
     };
     actions._syncstring.on("change", change);
     return () => {
       actions._syncstring?.removeListener("change", change);
     };
-  }, [actions, focusedIndex, ignoreRemoteWhileFocused, setBlocksFromValue, updatePendingRemoteIndicator]);
+  }, [actions, focusedIndex, ignoreRemoteWhileFocused, applyBlocksFromValue, updatePendingRemoteIndicator]);
 
   useEffect(() => {
     if (!ignoreRemoteWhileFocused) return;
