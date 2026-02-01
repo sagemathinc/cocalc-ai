@@ -154,6 +154,9 @@ export function CodexConfigButton({
   const selectedModelValue = Form.useWatch("model", form) ?? value?.model;
   const selectedReasoningValue =
     Form.useWatch("reasoning", form) ?? value?.reasoning;
+  const selectedReasoningLabel =
+    reasoningOptions.find((r) => r.value === selectedReasoningValue)?.label ??
+    "";
   const currentSessionMode =
     Form.useWatch("sessionMode", form) ?? value?.sessionMode;
   const reasoningOptions = useMemo(() => {
