@@ -11,6 +11,8 @@ module.exports = {
   moduleNameMapper: {
     "^@cocalc/frontend/codemirror/static$":
       "<rootDir>/test/mocks/codemirror-static.js",
+    "^@cocalc/frontend/codemirror/init$":
+      "<rootDir>/test/mocks/codemirror-init.js",
     "^@cocalc/frontend/(.*)$": "<rootDir>/$1",
     "^p-limit$": "<rootDir>/test/mocks/p-limit.js",
     "^dropzone$": "<rootDir>/test/mocks/dropzone.js",
