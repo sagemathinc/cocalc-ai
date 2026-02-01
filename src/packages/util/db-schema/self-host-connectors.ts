@@ -28,6 +28,10 @@ Table({
       type: "string",
       desc: "Hash of the connector token secret.",
     },
+    ssh_key_seed: {
+      type: "string",
+      desc: "Deterministic seed used to derive the connector SSH key.",
+    },
     name: {
       type: "string",
       pg_type: "varchar(128)",

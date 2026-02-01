@@ -28,9 +28,11 @@ async function setRememberMeCookie({ req, res, account_id, maxAge }) {
   const { value } = await createRememberMeCookie(account_id, maxAge / 1000);
   const cookies = new Cookies(req, res);
   const { samesite_remember_me } = await getServerSettings();
+  const sameSite = samesite_remember_me;
   cookies.set(REMEMBER_ME_COOKIE_NAME, value, {
     maxAge,
-    sameSite: samesite_remember_me,
+    sameSite,
+    secure: req.protocol === "https",
   });
 }
 

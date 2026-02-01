@@ -64,14 +64,22 @@ export async function startMasterRegistration({
   const id = resolved;
   const name = process.env.PROJECT_HOST_NAME ?? runnerId ?? id;
   const region = process.env.PROJECT_HOST_REGION;
-  const public_url =
-    process.env.PROJECT_HOST_PUBLIC_URL ?? `http://${host}:${port}`;
-  const internal_url =
-    process.env.PROJECT_HOST_INTERNAL_URL ?? `http://${host}:${port}`;
+  const selfHostMode = (process.env.COCALC_SELF_HOST_MODE ?? "").toLowerCase();
+  const isSelfHostLocal = selfHostMode === "local";
+  const public_url = isSelfHostLocal
+    ? undefined
+    : process.env.PROJECT_HOST_PUBLIC_URL ?? `http://${host}:${port}`;
+  const internal_url = isSelfHostLocal
+    ? undefined
+    : process.env.PROJECT_HOST_INTERNAL_URL ?? `http://${host}:${port}`;
   const ssh_server =
     process.env.PROJECT_HOST_SSH_SERVER ??
     process.env.COCALC_SSH_SERVER ??
     `${host}:${2222}`;
+
+  if (isSelfHostLocal) {
+    logger.debug("self-host local registration omits public/internal urls");
+  }
 
   logger.info("registering with master", { masterAddress, id, public_url });
 

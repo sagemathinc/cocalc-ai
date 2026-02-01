@@ -14,7 +14,7 @@ codemirror.min.js
 .*.sage-backup
 .*.sage-history
 .*.smc-backup
-data/
+data*/
 .#*
 \#*
 node_modules
@@ -130,6 +130,7 @@ src/go-landing
 **/dist-prod/
 **/dist-prod-measure/
 **/dist-ts/
+src/packages/next/dist-types/
 
 src/packages/landing
 tsconfig.tsbuildinfo
@@ -207,6 +208,7 @@ patchflow
 data-0
 data-1
 
-publish.sh
+publish*.sh
 
 src/packages/next/lib/api-v2-manifest.ts
+src/create*.sh

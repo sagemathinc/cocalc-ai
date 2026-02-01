@@ -41,7 +41,6 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["cocalc-hub-server"]
           args:
-            - "--mode={{ .Values.mode }}"
             - "--conat-persist"
             - "--hostname=0.0.0.0"
           ports:
@@ -50,8 +49,10 @@ spec:
           env:
             - name: DATA
               value: "{{ .Values.data.path }}"
-            - name: COCALC_MODE
-              value: "{{ .Values.mode }}"
+            - name: COCALC_PRODUCT
+              value: "{{ .Values.product }}"
+            - name: COCALC_ROCKET_CONTROL_PLANE
+              value: "{{ .Values.controlPlane }}"
             - name: COCALC_SYNC
               value: "{{ .Values.data.path }}/sync"
             - name: PGHOST

@@ -19,8 +19,8 @@ if [ ! -f "$FILE" ]; then
   exit 1
 fi
 
-LATEST_KEY="${COCALC_R2_LATEST_KEY:-software/project/latest-${OS}-${ARCH}.json}"
-PREFIX="${COCALC_R2_PREFIX:-software/project/$VERSION}"
+LATEST_KEY="${COCALC_R2_LATEST_KEY:-software/project-sea/latest-${OS}-${ARCH}.json}"
+PREFIX="${COCALC_R2_PREFIX:-software/project-sea/$VERSION}"
 
 node ../../cloud/scripts/publish-r2.js \
   --file "$FILE" \

@@ -71,6 +71,7 @@ export function useHostOps({
   const refreshInFlight = useRef<Promise<void> | null>(null);
   const closedRef = useRef(false);
   const completedRef = useRef(new Set<string>());
+  const failedRef = useRef(new Set<string>());
   const lastFullRefreshRef = useRef(0);
 
   const closeStream = useCallback((op_id: string) => {
@@ -104,15 +105,18 @@ export function useHostOps({
           return next;
         }
         const kind = summary?.kind ?? current.kind;
-        if (
-          summary &&
-          isTerminal(summary.status) &&
-          !completedRef.current.has(summary.op_id)
-        ) {
-          completedRef.current.add(summary.op_id);
           if (
-            summary.kind === "host-upgrade-software" &&
-            summary.status === "succeeded"
+            summary &&
+            isTerminal(summary.status) &&
+            !completedRef.current.has(summary.op_id)
+          ) {
+            completedRef.current.add(summary.op_id);
+            if (summary.status === "failed" && !failedRef.current.has(summary.op_id)) {
+              failedRef.current.add(summary.op_id);
+            }
+            if (
+              summary.kind === "host-upgrade-software" &&
+              summary.status === "succeeded"
           ) {
             setTimeout(() => onUpgradeComplete?.(summary), 0);
           }
@@ -195,6 +199,9 @@ export function useHostOps({
       const now = Date.now();
       const ids = hostIdsRef.current;
       const hostMeta = hostMetaRef.current;
+      const hostStatusMap = new Map(
+        hostMeta.map((host) => [host.id, host.status]),
+      );
       const activeHostIds = new Set(Object.keys(hostOpsRef.current));
       const candidates = hostMeta
         .filter((host) => {
@@ -221,21 +228,41 @@ export function useHostOps({
             const ops = await listLro({
               scope_type: "host",
               scope_id: id,
-              include_completed: false,
+              include_completed: true,
             });
             const hostOps = ops.filter(
-              (op) => op.kind?.startsWith("host-") && !isDismissed(op),
+              (op) =>
+                op.kind?.startsWith("host-") &&
+                !isDismissed(op) &&
+                op.status !== "succeeded",
             );
             if (!hostOps.length) {
               return;
             }
             const latest = hostOps.sort((a, b) => toTime(b) - toTime(a))[0];
             if (!latest) return;
+            const status = hostStatusMap.get(id);
+            if (
+              status &&
+              !TRANSITION_STATUSES.has(status) &&
+              status !== "error" &&
+              latest.status &&
+              isTerminal(latest.status) &&
+              latest.status !== "failed"
+            ) {
+              return;
+            }
             next[id] = {
               op_id: latest.op_id,
               summary: latest,
               kind: latest.kind,
             };
+            if (
+              latest.status === "failed" &&
+              !failedRef.current.has(latest.op_id)
+            ) {
+              failedRef.current.add(latest.op_id);
+            }
             activeOpIds.add(latest.op_id);
             await ensureStream(id, latest.op_id, latest.scope_id);
           } catch (err) {

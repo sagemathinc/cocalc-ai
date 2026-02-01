@@ -1,11 +1,15 @@
 import express, { Router, type Request } from "express";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/hub/logger";
 import basePath from "@cocalc/backend/base-path";
 import { conatPassword } from "@cocalc/backend/data";
 import { buildBootstrapScriptWithStatus } from "@cocalc/server/cloud/bootstrap-host";
+import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import { verifyBootstrapToken } from "@cocalc/server/project-host/bootstrap-token";
-import siteURL from "@cocalc/database/settings/site-url";
+import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
+import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 
 const logger = getLogger("hub:servers:app:project-host-bootstrap");
 
@@ -18,6 +22,23 @@ function extractToken(req: Request): string | undefined {
   if (!header) return undefined;
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim();
+}
+
+function resolveBootstrapPyPath(): string | undefined {
+  const candidates: Array<string | undefined> = [
+    process.env.COCALC_BOOTSTRAP_PY,
+    process.env.COCALC_BUNDLE_DIR
+      ? join(process.env.COCALC_BUNDLE_DIR, "bundle", "bootstrap", "bootstrap.py")
+      : undefined,
+    join(process.cwd(), "packages/server/cloud/bootstrap/bootstrap.py"),
+    join(process.cwd(), "src/packages/server/cloud/bootstrap/bootstrap.py"),
+    join(__dirname, "../../../../server/cloud/bootstrap/bootstrap.py"),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 async function loadHostRow(hostId: string): Promise<any> {
@@ -57,6 +78,33 @@ async function updateBootstrapStatus(
 export default function init(router: Router) {
   const jsonParser = express.json({ limit: "256kb" });
 
+  router.get("/project-host/bootstrap.py", async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) {
+        res.status(401).send("missing bootstrap token");
+        return;
+      }
+      const tokenInfo = await verifyBootstrapToken(token, {
+        purpose: "bootstrap",
+      });
+      if (!tokenInfo) {
+        res.status(401).send("invalid bootstrap token");
+        return;
+      }
+      const path = resolveBootstrapPyPath();
+      if (!path) {
+        res.status(500).send("bootstrap.py not found");
+        return;
+      }
+      const contents = readFileSync(path, "utf8");
+      res.type("text/x-python").send(contents);
+    } catch (err) {
+      logger.warn("bootstrap.py fetch failed", err);
+      res.status(500).send("bootstrap.py fetch failed");
+    }
+  });
+
   router.get("/project-host/bootstrap", async (req, res) => {
     try {
       const token = extractToken(req);
@@ -73,18 +121,34 @@ export default function init(router: Router) {
       }
       const hostRow = await loadHostRow(tokenInfo.host_id);
       let baseUrl: string;
+      const machine: HostMachine = hostRow?.metadata?.machine ?? {};
+      const selfHostMode = machine?.metadata?.self_host_mode;
+      const isSelfHostLocal =
+        machine?.cloud === "self-host" &&
+        (!selfHostMode || selfHostMode === "local");
+      if (isSelfHostLocal) {
+        const localConfig = getLaunchpadLocalConfig("local");
+        const httpPort = localConfig.http_port ?? 9200;
+        baseUrl = `http://127.0.0.1:${httpPort}`;
+      } else {
       try {
-        baseUrl = await siteURL();
+        const resolved = await resolveLaunchpadBootstrapUrl({
+          fallbackHost: req.get("host"),
+          fallbackProtocol: req.protocol,
+        });
+        baseUrl = resolved.baseUrl;
       } catch {
         const hostHeader = req.get("host") ?? "";
         const proto = req.protocol;
         const base = basePath === "/" ? "" : basePath;
         baseUrl = `${proto}://${hostHeader}${base}`;
       }
+      }
       const script = await buildBootstrapScriptWithStatus(
         hostRow,
         token,
         baseUrl,
+        undefined,
       );
       res.type("text/x-shellscript").send(script);
     } catch (err) {

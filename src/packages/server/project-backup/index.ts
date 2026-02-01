@@ -1,9 +1,14 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
-import { readFile, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { secrets } from "@cocalc/backend/data";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
+import {
+  getLaunchpadRestAuth,
+  getLaunchpadRestPort,
+} from "@cocalc/server/launchpad/onprem-sshd";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
@@ -13,6 +18,7 @@ import {
 } from "@cocalc/util/consts";
 import { createBucket, R2BucketInfo } from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
+import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 
 const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
@@ -279,7 +285,9 @@ async function getProjectBackupSecret(project_id: string): Promise<string> {
 }
 
 const backupMasterKeyPath = join(secrets, "backup-master-key");
+const backupSharedSecretPath = join(secrets, "backup-shared-secret");
 let backupMasterKey: Buffer | undefined;
+let backupSharedSecret: string | undefined;
 
 async function getBackupMasterKey(): Promise<Buffer> {
   if (backupMasterKey) return backupMasterKey;
@@ -301,6 +309,24 @@ async function getBackupMasterKey(): Promise<Buffer> {
   }
   backupMasterKey = key;
   return key;
+}
+
+async function getSharedBackupSecret(): Promise<string> {
+  if (backupSharedSecret) return backupSharedSecret;
+  let encoded = "";
+  try {
+    encoded = (await readFile(backupSharedSecretPath, "utf8")).trim();
+  } catch {}
+  if (!encoded) {
+    encoded = randomBytes(32).toString("base64url");
+    try {
+      await writeFile(backupSharedSecretPath, encoded, { mode: 0o600 });
+    } catch (err) {
+      throw new Error(`failed to write backup shared secret: ${err}`);
+    }
+  }
+  backupSharedSecret = encoded;
+  return encoded;
 }
 
 function encryptBackupSecret(secret: string, key: Buffer): string {
@@ -372,7 +398,8 @@ export async function getBackupConfig({
   }
   const { rows } = await pool().query<{
     region: string | null;
-  }>("SELECT region FROM project_hosts WHERE id=$1 AND deleted IS NULL", [
+    metadata: any;
+  }>("SELECT region, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL", [
     host_id,
   ]);
   if (!rows[0]) {
@@ -380,6 +407,40 @@ export async function getBackupConfig({
   }
 
   await assertHostProjectAccess(host_id, project_id);
+
+  const rowMetadata = rows[0]?.metadata ?? {};
+  const machine: HostMachine = rowMetadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isSelfHostLocal =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  if (isSelfHostLocal) {
+    const config = getLaunchpadLocalConfig("local");
+    const restPort = getLaunchpadRestPort() ?? config.rest_port;
+    if (!restPort || !config.backup_root) {
+      return { toml: "", ttl_seconds: 0 };
+    }
+    const root = DEFAULT_BACKUP_ROOT;
+    try {
+      await mkdir(join(config.backup_root, root), { recursive: true });
+    } catch {
+      // Best-effort; rustic will surface a clearer error if repo is unusable.
+    }
+    const password = await getSharedBackupSecret();
+    const auth = await getLaunchpadRestAuth();
+    const authPrefix = auth
+      ? `${encodeURIComponent(auth.user)}:${encodeURIComponent(auth.password)}@`
+      : "";
+    const endpoint = `http://${authPrefix}127.0.0.1:${restPort}/${root}`;
+    const toml = [
+      "[repository]",
+      `repository = \"rest:${endpoint}\"`,
+      `password = \"${password}\"`,
+      "",
+    ].join("\n");
+    return { toml, ttl_seconds: DEFAULT_BACKUP_TTL_SECONDS };
+  }
 
   const hostRegion = rows[0]?.region ?? null;
   const hostR2Region = mapCloudRegionToR2Region(
@@ -431,6 +492,7 @@ export async function getBackupConfig({
 }
 
 async function assertHostProjectAccess(host_id: string, project_id: string) {
+  await ensureProjectMovesSchema();
   const { rows } = await pool().query<{
     host_id: string | null;
   }>("SELECT host_id FROM projects WHERE project_id=$1", [project_id]);
@@ -471,4 +533,25 @@ async function assertHostProjectAccess(host_id: string, project_id: string) {
     return;
   }
   throw new Error("project not assigned to host");
+}
+
+let projectMovesSchemaReady: Promise<void> | null = null;
+
+async function ensureProjectMovesSchema() {
+  if (projectMovesSchemaReady) {
+    return projectMovesSchemaReady;
+  }
+  projectMovesSchemaReady = (async () => {
+    await pool().query(
+      `
+      CREATE TABLE IF NOT EXISTS project_moves (
+        project_id UUID PRIMARY KEY,
+        source_host_id UUID,
+        dest_host_id UUID,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      )
+    `,
+    );
+  })();
+  return projectMovesSchemaReady;
 }

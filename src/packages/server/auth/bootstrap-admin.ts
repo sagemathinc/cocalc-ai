@@ -1,7 +1,7 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import siteURL from "@cocalc/database/settings/site-url";
-import { isPgliteEnabled } from "@cocalc/database/pool/pglite";
+import { isRocketProduct } from "@cocalc/server/launchpad/mode";
 import { secure_random_token } from "@cocalc/util/misc";
 
 const logger = getLogger("server:auth:bootstrap-admin");
@@ -77,7 +77,7 @@ async function formatBootstrapLink(
 export async function ensureBootstrapAdminToken(
   opts: { baseUrl?: string } = {},
 ): Promise<string | undefined> {
-  if (!isPgliteEnabled()) {
+  if (isRocketProduct()) {
     return;
   }
   const pool = getPool("long");

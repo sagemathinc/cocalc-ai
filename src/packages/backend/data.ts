@@ -14,7 +14,7 @@ import Dict = NodeJS.Dict;
 
 const DEFINITION = `CoCalc Environment Variables:
 - root -- if COCALC_ROOT is set then it; otherwise use [cocalc-source]/src/.
-- data -- if the environment variable DATA is set, use that.  Otherwise, use {root}/data
+- data -- if COCALC_DATA_DIR is set, use that. Otherwise, if DATA is set, use that. Otherwise, use {root}/data
 - pgdata -- if env var PGDATA is set, use that; otherwise, it is {data}/postgres: where data data is stored (if running locally)
 - pghost - if env var PGHOST is set, use that; otherwise, it is {data}/postgres/socket: what database connects to
 - projects -- If env var PROJECTS is set, use that; otherwise, it is {data}"/projects/[project_id]";
@@ -183,7 +183,16 @@ export function sslConfigToPsqlEnv(config: SSLConfig): PsqlSSLEnvConfig {
 }
 
 export const root: string = process.env.COCALC_ROOT ?? determineRoot();
-export const data: string = process.env.DATA ?? join(root, "data");
+const dataOverride = process.env.COCALC_DATA_DIR;
+const dataFallback = process.env.DATA;
+if (dataOverride && dataFallback && dataOverride !== dataFallback) {
+  console.warn(
+    `WARNING: COCALC_DATA_DIR overrides DATA (${dataOverride} != ${dataFallback})`,
+  );
+}
+const dataEnv = dataOverride ?? dataFallback;
+export const data: string = dataEnv ?? join(root, "data");
+process.env.DATA = data;
 
 // Database Config
 export const pguser: string = process.env.PGUSER ?? "smc";

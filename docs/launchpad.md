@@ -18,7 +18,7 @@ Launchpad supports two deployment modes (explicitly selected by an admin):
 
 Mode selection is explicit:
 
-- Default mode is **unset**: Launchpad starts, but does not start sshd/sshpiperd
+- Default mode is **unset**: Launchpad starts, but does not start sshd
   and does not activate host connectivity until an admin selects a mode.
 - Admins choose a mode in Admin Settings (later this will be a first-run setup
   dialog).
@@ -40,8 +40,8 @@ Set one base port and everything else is derived:
 - COCALC_HTTPS_PORT=COCALC_BASE_PORT
 - COCALC_HTTP_PORT=COCALC_BASE_PORT-1 (optional redirect only)
 - COCALC_SSHD_PORT=COCALC_BASE_PORT+1 (host reverse tunnel + SFTP)
-- COCALC_SSHPIPERD_PORT=COCALC_BASE_PORT+2 (end-user SSH)
 - COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
+- COCALC_LAUNCHPAD_HOST=localhost (hub host used in bootstrap URLs)
 
 Explicit port overrides are supported, but not expected in the simplest setup.
 
@@ -54,22 +54,28 @@ needed if you want to override defaults.
 # Optional overrides (defaults work if you omit all of this)
 export COCALC_BASE_PORT=8443
 export COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
+export COCALC_LAUNCHPAD_HOST=localhost
 export COCALC_DISABLE_HTTP=true
+# Optional: rotate self-signed certs this many days before expiry (default 30)
+export COCALC_LAUNCHPAD_CERT_ROTATE_DAYS=30
 ```
 
 ## Quick Start
 
 1. Optionally, pick a base port and data directory by setting environment variables.
    Example defaults:
-   - COCALC\_BASE\_PORT=8443
-   - COCALC\_DATA\_DIR=~/.local/share/cocalc/launchpad
+   - COCALC_BASE_PORT=8443
+   - COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
 
 2. Start the Launchpad hub.
-   - Provide TLS cert and key.
-   - Disable HTTP \(or keep it as redirect only\).
+   - If the host is **localhost**, Launchpad uses HTTP on the hub port.
+   - If the host is **non-local**, Launchpad auto-generates a self-signed
+     cert and uses HTTPS on the hub port.
+   - The hub performs the same on-prem TLS setup even when run outside
+     Launchpad (using the same env defaults).
 
 3. In Admin Settings, select **On‑prem** mode.
-   - Hub starts a locked down sshd \+ sshpiperd as child processes.
+   - Hub starts a locked down sshd as a child process.
 
 4. Create a host join token using the hub UI/CLI.
 
@@ -93,7 +99,11 @@ Host -> Hub (outbound only):
 Users -> Hub:
 
 - HTTPS/WSS to hub port
-- SSH to sshpiperd port
+- SSH to the per-host port shown by the hub
+
+If hosts run on a different machine, set `COCALC_LAUNCHPAD_HOST` to the hub’s
+LAN IP/hostname and ensure the hub listens on the LAN (e.g.
+`COCALC_HUB_HOSTNAME=0.0.0.0`).
 
 ## Backups (Rustic + SFTP)
 
@@ -111,5 +121,4 @@ is skipped and the proxy connects directly to localhost.
 
 - On\-prem and cloud modes are exclusive. If you need both, run two hubs.
 - Port changes require a hub restart.
-- PGlite (embedded Postgres) stores data in COCALC\_DATA\_DIR
-
+- PGlite (embedded Postgres) stores data in COCALC_DATA_DIR

@@ -71,7 +71,6 @@ Table({
           invite_requests: null, // who has requested to be invited
           deleted: null,
           host_id: null,
-          host: null,
           provisioned: null,
           provisioned_checked_at: null,
           region: null,
@@ -215,11 +214,6 @@ Table({
     host_id: {
       type: "uuid",
       desc: "Id of the project-host currently assigned to run this project.",
-    },
-    host: {
-      type: "map",
-      desc: "This is a map {host:'hostname_of_server', assigned:timestamp of when assigned to that server}.",
-      date: ["assigned"],
     },
     provisioned: {
       type: "boolean",

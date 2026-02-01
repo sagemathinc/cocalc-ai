@@ -144,7 +144,7 @@ export function RowEntryInner({
             rows={multiline}
             autoComplete="off"
             style={rowEntryStyle(value, valid)}
-            defaultValue={value}
+            value={value}
             placeholder={placeholder}
             visibilityToggle={true}
             disabled={disabled}
@@ -156,7 +156,7 @@ export function RowEntryInner({
           <Password
             autoComplete="off"
             style={rowEntryStyle(value, valid)}
-            defaultValue={value}
+            value={value}
             placeholder={placeholder}
             visibilityToggle={true}
             disabled={disabled}

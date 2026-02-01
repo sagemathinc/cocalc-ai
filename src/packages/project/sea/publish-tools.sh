@@ -4,8 +4,8 @@ set -Eeuo pipefail
 NAME="cocalc-project-tools"
 VERSION="$(node -p "require('../package.json').version")"
 BUILD_DIR="../build"
-ARCH="$(uname -m)"
-OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="${COCALC_TOOL_ARCH:-$(uname -m)}"
+OS="${COCALC_TOOL_OS:-$(uname -s | tr '[:upper:]' '[:lower:]')}"
 case "$ARCH" in
   x86_64|amd64) ARCH="amd64" ;;
   aarch64|arm64) ARCH="arm64" ;;

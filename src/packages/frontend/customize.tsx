@@ -141,10 +141,20 @@ export interface CustomizeState {
   terms_of_service_url: string;
   theming: boolean;
   verify_emails: false;
+  launchpad_mode?: string;
   version_min_browser: number;
   version_min_project: number;
   version_recommended_browser: number;
   versions: string;
+  cocalc_product?: string;
+  is_launchpad?: boolean;
+  is_rocket?: boolean;
+  launchpad_cloudflare_tunnel_status?: {
+    enabled: boolean;
+    running: boolean;
+    hostname?: string;
+    error?: string | null;
+  };
   // extra setting, injected by the hub, not the DB
   // we expect this to follow "ISO 3166-1 Alpha 2" + K1 (Tor network) + XX (unknown)
   // use a lib like https://github.com/michaelwittig/node-i18n-iso-countries
@@ -153,6 +163,7 @@ export interface CustomizeState {
   software: SoftwareEnvironments;
   _is_configured: boolean;
   project_hosts_nebius_enabled?: boolean;
+  project_hosts_self_host_alpha_enabled?: boolean;
   project_hosts_dns?: string;
   "project_hosts_google-cloud_enabled"?: boolean;
   "project_hosts_hyperstack_enabled"?: boolean;

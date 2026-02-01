@@ -38,8 +38,8 @@ import Cookies from "js-cookie";
 import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
 import { info as refCacheInfo } from "@cocalc/util/refcache";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
-import type { ConnectionStats } from "@cocalc/conat/core/types";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import type { ConnectionStats } from "@cocalc/conat/core/types";
 import { until } from "@cocalc/util/async-utils";
 import { delay } from "awaiting";
 import {
@@ -57,6 +57,7 @@ import type {
   LroScopeType,
   LroSummary,
 } from "@cocalc/conat/hub/api/lro";
+import type { Map as ImmutableMap } from "immutable";
 
 export interface ConatConnectionStatus {
   state: "connected" | "disconnected";
@@ -180,23 +181,43 @@ export class ConatClient extends EventEmitter {
     return undefined;
   }
 
+  private getHostInfo(host_id: string): ImmutableMap<string, any> | undefined {
+    const hostInfo = redux.getStore("projects")?.get("host_info")?.get(host_id);
+    if (!hostInfo) {
+      redux.getActions("projects")?.ensure_host_info(host_id);
+      return;
+    }
+    const updatedAt = hostInfo.get("updated_at");
+    if (typeof updatedAt === "number") {
+      if (Date.now() - updatedAt > 60_000) {
+        redux.getActions("projects")?.ensure_host_info(host_id);
+      }
+    }
+    return hostInfo;
+  }
+
   private getProjectHostAddress(project_id: string): string {
     // [ ] TODO: need a ttl cache, since otherwise this gets called
     // on literally every packet sent to the project!
     const project_map = redux.getStore("projects")?.get("project_map");
-    const project = project_map?.get(project_id);
-    const host =
-      (project?.get ? project.get("host") : (project as any)?.host) ??
-      undefined;
-    if (!host) {
+    const host_id = project_map?.getIn([project_id, "host_id"]) as
+      | string
+      | undefined;
+    if (!host_id) {
       // Fallback: no host yet, so stay on the default connection.
       return "";
     }
-    const public_url = host.get ? host.get("public_url") : host.public_url;
-    const internal_url = host.get
-      ? host.get("internal_url")
-      : host.internal_url;
-    return public_url || internal_url || "";
+    const hostInfo = this.getHostInfo(host_id);
+    if (!hostInfo) {
+      return "";
+    }
+    const localProxy = hostInfo.get("local_proxy");
+    if (localProxy && typeof window !== "undefined") {
+      const basePath = appBasePath && appBasePath !== "/" ? appBasePath : "";
+      return `${window.location.origin}${basePath}/${host_id}`;
+    }
+    const connectUrl = hostInfo.get("connect_url");
+    return connectUrl || "";
   }
 
   private permanentlyDisconnected = false;

@@ -3,7 +3,10 @@
 // pglite + nextless mode with lightweight defaults.
 const { dirname, join } = require("path");
 const { existsSync } = require("fs");
-const { applyLaunchpadDefaults, logLaunchpadConfig } = require("../lib/onprem-config");
+const {
+  applyLaunchpadDefaults,
+  logLaunchpadConfig,
+} = require("../lib/onprem-config");
 
 function prependPath(dir) {
   if (!dir || !existsSync(dir)) {
