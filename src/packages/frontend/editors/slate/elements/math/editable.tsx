@@ -31,10 +31,10 @@ const Element: React.FC<RenderElementProps> = ({
       setForceEdit(false);
       return;
     }
-    if (forceEdit && (!focused || !editing)) {
+    if (forceEdit && (!focused || !isEditing)) {
       setForceEdit(false);
     }
-  }, [forceEdit, focused, editing, isCollapsed]);
+  }, [forceEdit, focused, isEditing, isCollapsed]);
   useEffect(() => {
     if (focused && selected && isCollapsed) {
       setForceEdit(true);

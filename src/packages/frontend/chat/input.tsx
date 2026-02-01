@@ -86,14 +86,14 @@ export default function ChatInput({
   const lastLocalEditAtRef = useRef<number>(0);
   const allowFocusedUpdateRef = useRef<boolean>(false);
 
-  const getDraftInput = useCallback(() => {
+  const getDraftRecord = useCallback(() => {
     const rec = syncdb?.get_one({
       event: "draft",
       sender_id,
       date,
     });
     if (rec == null) return undefined;
-    return (rec as any).input;
+    return rec as any;
   }, [syncdb, sender_id, date]);
 
   const currentInputRef = useRef<string>(input);
@@ -114,7 +114,7 @@ export default function ChatInput({
       // but definitely don't save (thus updating active) if
       // the input didn't really change, since we use active for
       // showing that a user is writing to other users.
-      const input0 = getDraftInput();
+      const input0 = getDraftRecord()?.input;
       if (input0 != input) {
         if (input0 == null && !input) {
           // DO NOT save if you haven't written a draft before, and
@@ -142,7 +142,9 @@ export default function ChatInput({
   );
 
   useEffect(() => {
-    const dbInput = getDraftInput();
+    const draft = getDraftRecord();
+    const dbInput = draft?.input;
+    const remoteActive = Number(draft?.active ?? 0);
     // take version from syncdb if it is there; otherwise, version from input prop.
     // the db version is used when you refresh your browser while editing, or scroll up and down
     // thus unmounting and remounting the currently editing message (due to virtualization).
@@ -160,12 +162,15 @@ export default function ChatInput({
       current.trim().length === 0 && input.trim().length > 0;
     const shouldClear = input === "" && current !== "";
     if (focused && input !== current && !shouldPrefill && !shouldClear) {
+      if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
+        return;
+      }
       if (allowFocusedUpdateRef.current) {
         allowFocusedUpdateRef.current = false;
         controlRef.current?.allowNextValueUpdateWhileFocused?.();
       } else {
         pendingRemoteInputRef.current = input;
-        pendingRemoteAtRef.current = Date.now();
+        pendingRemoteAtRef.current = remoteActive || Date.now();
         return;
       }
     }
@@ -183,7 +188,7 @@ export default function ChatInput({
         }, n);
       }
     }
-  }, [date, sender_id, propsInput, getDraftInput, saveChat]);
+  }, [date, sender_id, propsInput, getDraftRecord, saveChat]);
 
   useEffect(() => {
     return () => {
@@ -233,14 +238,18 @@ export default function ChatInput({
         date,
       });
       const input = (x as any)?.input ?? "";
+      const remoteActive = Number((x as any)?.active ?? 0);
       if (isFocusedRef.current && input !== currentInputRef.current) {
+        if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
+          return;
+        }
         if (allowFocusedUpdateRef.current) {
           allowFocusedUpdateRef.current = false;
           controlRef.current?.allowNextValueUpdateWhileFocused?.();
         } else {
           // Defer draft updates while focused to avoid overwriting local typing.
           pendingRemoteInputRef.current = input;
-          pendingRemoteAtRef.current = Date.now();
+          pendingRemoteAtRef.current = remoteActive || Date.now();
           return;
         }
       }

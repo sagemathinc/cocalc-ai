@@ -20,7 +20,6 @@ function isBR(s: string): boolean {
 const Element = ({ attributes, children, element }) => {
   const focused = useFocused();
   const selected = useSelected();
-  const selection = editor.selection;
   const border =
     focused && selected
       ? `1px solid ${FOCUSED_COLOR}`
@@ -31,8 +30,9 @@ const Element = ({ attributes, children, element }) => {
   const is_comment = false;
   // const is_comment = html.startsWith("<!--") && html.endsWith("-->");
 
-  const [forceEdit, setForceEdit] = useState(false);
   const editor = useSlate();
+  const selection = editor.selection;
+  const [forceEdit, setForceEdit] = useState(false);
 
   const isEditing = forceEdit || (focused && selected);
 
@@ -41,10 +41,10 @@ const Element = ({ attributes, children, element }) => {
       setForceEdit(false);
       return;
     }
-    if (selection && !editing && forceEdit) {
+    if (selection && !isEditing && forceEdit) {
       setForceEdit(false);
     }
-  }, [forceEdit, focused, editing, selection]);
+  }, [forceEdit, focused, isEditing, selection]);
   useEffect(() => {
     if (focused && selected) {
       setForceEdit(true);
