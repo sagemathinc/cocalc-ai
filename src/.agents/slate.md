@@ -4,7 +4,7 @@
 
 - [ ] #easy keyboard shortcuts like "control+b" to bold the current selection/word don't work in block editor mode.
 
-- [ ] #chat #bug -- STILL when I hit shift+enter to send a message, the composer chat input will sometimes not be cleared.  It has the message I just sent in it after I send it. The cursor also still randomly jumps.  This is horrible.  We should fundamentally rewrite and rethink how composing chat messages works.
+- [ ] #chat #bug -- STILL when I hit shift+enter to send a message, the composer chat input will sometimes not be cleared.  It has the message I just sent in it after I send it. The cursor also still randomly jumps.   It usually works fine -- failures are rare. Maybe increase a timing threshold. 
 
 - [ ] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
   - [ ] back and forth in multimode editor

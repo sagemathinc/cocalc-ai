@@ -1,5 +1,7 @@
 # Make an Alpha Release of CoCalc-AI
 
+**Goal:** no  
+
 ## Blocker Todo List
 
 - [ ] fix bugs with chat composition - see [slate.md](./slate.md)
