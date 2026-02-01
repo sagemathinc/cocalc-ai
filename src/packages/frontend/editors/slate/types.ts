@@ -54,6 +54,8 @@ export interface Actions {
   undo?: (id: string) => void;
   redo?: (id: string) => void;
   shiftEnter?: (value: string) => void;
-  altEnter?: (value: string) => void;
+  altEnter?: (value: string, id?: string) => void;
+  registerBlockEditorControl?: (id: string, control: any) => void;
+  unregisterBlockEditorControl?: (id: string) => void;
   _syncstring?: any;
 }
