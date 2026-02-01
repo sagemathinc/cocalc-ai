@@ -416,9 +416,9 @@ export async function formatAction(
       const node: Node = {
         type: "math_inline",
         value,
-        isVoid: true,
         isInline: true,
-        children: [{ text: "" }],
+        isVoid: true,
+        children: [{ text: value }],
       };
       Transforms.insertFragment(editor, [node]);
       return;
@@ -481,15 +481,15 @@ function transformToEquation(editor: Editor, display: boolean): void {
       type: "math_block",
       value,
       isVoid: true,
-      children: [{ text: "" }],
+      children: [{ text: value }],
     };
   } else {
     node = {
       type: "math_inline",
       value,
-      isVoid: true,
       isInline: true,
-      children: [{ text: "" }],
+      isVoid: true,
+      children: [{ text: value }],
     };
   }
   Transforms.insertFragment(editor, [node]);
@@ -501,7 +501,7 @@ function transformToComment(editor: Editor): void {
     {
       type: "html_block",
       html,
-      isVoid: true,
+      isVoid: false,
       isInline: false,
       children: [{ text: "" }],
     },

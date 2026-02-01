@@ -1,5 +1,7 @@
 import { file_associations } from "@cocalc/frontend/file-associations";
-import detectLanguage from "@cocalc/frontend/misc/detect-language";
+import detectLanguage, {
+  guessPopularLanguage,
+} from "@cocalc/frontend/misc/detect-language";
 
 // Convert the info string for a fenced code block to a language label
 // when preferKernel is true return the actual kernel name or language.
@@ -8,12 +10,20 @@ export default function infoToMode(
   options: { value?: string; preferKernel?: boolean } = {},
 ): string {
   const { value, preferKernel } = options;
-  info = info?.trim().toLowerCase();
+  info = typeof info === "string" ? info.trim().toLowerCase() : "";
   if (!info) {
     if (!value) return ""; // no info
-    info = detectLanguage(value);
+    const popular = guessPopularLanguage(value);
+    if (popular) {
+      info = popular.mode;
+    } else {
+      info = detectLanguage(value);
+      if (info === "txt") {
+        // Best-guess fallback for UI readability when nothing matches.
+        info = "md";
+      }
+    }
   }
-
   if (info == "mermaid") {
     return "md";
   }
@@ -38,7 +48,7 @@ export default function infoToMode(
   // Also "python-markdown" uses these braces, though differently.
   //   https://python-markdown.github.io/extensions/fenced_code_blocks
   //   ``` { .html .foo .bar }
-  if (info[0] == "{") {
+  if (info?.[0] == "{") {
     info = info.slice(1, -1).trim();
     if (preferKernel) {
       const i = info.indexOf("kernel=");
@@ -57,7 +67,7 @@ export default function infoToMode(
   let mode = firstWord(info);
   // mode can have a leading dot which we ignore, e.g., see
   //   https://python-markdown.github.io/extensions/fenced_code_blocks/
-  if (mode[0] == ".") {
+  if (mode?.[0] == ".") {
     mode = mode.slice(1);
   }
 

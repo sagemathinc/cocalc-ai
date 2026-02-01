@@ -102,6 +102,28 @@ export function ensureRange(
   return { anchor, focus };
 }
 
+// Lightweight debug helper: enable by setting
+//   window.__slateDebugLog = true;           // console JSON
+// or
+//   window.__slateDebugTrace = [];           // collect events
+// Then call slateDebug("tag", { ...data }).
+export function slateDebug(tag: string, data?: Record<string, unknown>) {
+  if (typeof globalThis === "undefined") return;
+  const anyGlobal = globalThis as any;
+  const payload = { tag, ...(data ?? {}) };
+  try {
+    if (Array.isArray(anyGlobal.__slateDebugTrace)) {
+      anyGlobal.__slateDebugTrace.push(payload);
+    }
+    if (anyGlobal.__slateDebugLog) {
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify(payload));
+    }
+  } catch {
+    // ignore debug failures
+  }
+}
+
 // Range that contains the entire document.
 export function rangeAll(editor: Editor): Range {
   const first = pointAtPath(editor, [], 0, "start");

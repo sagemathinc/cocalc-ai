@@ -29,7 +29,7 @@ function softBreak({ editor }) {
   if (isElementOfType(fragment?.[0], "table")) {
     const br = {
       isInline: true,
-      isVoid: true,
+      isVoid: false,
       type: "html_inline",
       html: "<br />",
       children: [{ text: " " }],

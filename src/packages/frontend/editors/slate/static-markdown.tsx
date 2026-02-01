@@ -63,16 +63,26 @@ export default function StaticMarkdown({ value, style, className }: Props) {
 }
 
 function RenderElement({ element }) {
-  let children: React.JSX.Element[] = [];
-  if (element["children"]) {
-    let n = 0;
-    for (const child of element["children"]) {
-      children.push(<RenderElement key={n} element={child} />);
-      n += 1;
-    }
-  }
   if (element["type"]) {
     const C = getStaticRender(element.type);
+    // Math nodes render their own preview; avoid separately rendering children
+    // to prevent double-rendering of raw LaTeX text.
+    if (
+      element.type === "math_inline" ||
+      element.type === "math_inline_double" ||
+      element.type === "math_block" ||
+      element.type === "math_block_eqno"
+    ) {
+      return <C children={[]} element={element} attributes={{} as any} />;
+    }
+    let children: React.JSX.Element[] = [];
+    if (element["children"]) {
+      let n = 0;
+      for (const child of element["children"]) {
+        children.push(<RenderElement key={n} element={child} />);
+        n += 1;
+      }
+    }
     return <C children={children} element={element} attributes={{} as any} />;
   }
   // It's text

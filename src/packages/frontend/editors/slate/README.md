@@ -30,6 +30,36 @@ High-level Architecture
 - Virtualized list (react-virtuoso)
 - Tradeoff: no multi-block selection; use Markdown mode when needed
 
+Block Editor: Architecture, Design, Motivation
+- Motivation: keep editing fast and stable for very large Markdown files by
+  avoiding a single huge Slate tree and minimizing render/selection churn.
+- Core idea: split Markdown into blocks, give each block its own Slate editor,
+  and virtualize the list so only visible blocks are mounted.
+- Chunking: block editor now groups multiple top-level Markdown blocks into
+  **chunks** by size (never splitting a top-level block). Each chunk is a
+  single editor that may contain many Slate blocks. This keeps the editor
+  stable while still windowing large docs.
+- Chunk size override for dev/testing:
+  - `window.COCALC_SLATE_BLOCK_CHUNK_CHARS = 800` (or any positive number).
+- Large-doc debounce (to keep other editors responsive):
+  - `window.COCALC_SLATE_BLOCK_DEFER_CHARS = 200000` (default).
+  - `window.COCALC_SLATE_BLOCK_DEFER_MS = 300` (default).
+  - Set smaller values for dev or to observe re-chunking behavior.
+- Incremental chunking:
+  - Reuses unchanged prefix/suffix chunks and re-chunks only the middle window.
+- Optional profiling:
+- Page boundaries: chunks render a subtle "Page N" boundary label so it’s
+  clear where chunk edges are during manual testing.
+- State flow: block editors emit per-block changes; we merge back to Markdown
+  and sync/save at the document level.
+- Editing constraints: cross-block selection is intentionally unsupported to
+  keep the model simple and performance predictable.
+- Merge behavior: block-to-block operations (e.g., backspace at block start)
+  are handled by explicit merge logic rather than relying on Slate's normal
+  multi-node transforms across the entire document.
+- Design goal: a block editor is a collection of small, stable editors, not a
+  transient view of one giant editor.
+
 3) Slate wrapper
 - `slate-react.ts` wraps upstream `slate-react`
 - Adds windowing helpers, `forceUpdate`, and selection utilities
@@ -65,6 +95,10 @@ flowchart TD
 Design Notes and Pitfalls
 - Slate memoizes element rendering; avoid relying on element re-render to show
   UI state that does not change the Slate value.
+- Performance: avoid subscribing heavy elements to the global `ChangeContext`
+  (e.g., `useChange()`), and avoid `useSlateSelection()` for every node in
+  large documents. Prefer `useSelected()` and `editor.selection` so only the
+  active element re-renders on selection changes.
 - Selection sync is fragile. Avoid mutating selection outside the keyboard
   handlers and the designated overlay path.
 - Use debounced save (`SAVE_DEBOUNCE_MS`) and sync caching to reduce churn.

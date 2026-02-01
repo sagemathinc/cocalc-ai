@@ -5,6 +5,7 @@
 
 import { withInsertText } from "./insert-text";
 import { withDeleteBackward } from "./delete-backward";
+import { withDeleteForward } from "./delete-forward";
 import type { SlateEditor } from "../editable-markdown";
 import {
   Editor,
@@ -26,7 +27,7 @@ import { ReactEditor } from "../slate-react";
 import { formatHeading, getFocus, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
 import { toCodeLines } from "../elements/code-block/utils";
-import { ensureRange } from "../slate-util";
+import { ensureRange, getNodeAt, slateDebug } from "../slate-util";
 
 function rememberAutoformatSelection(editor: Editor, selection: Range): void {
   (editor as any).__autoformatSelection = selection;
@@ -36,6 +37,15 @@ function spacerParagraph(): Element {
   return {
     type: "paragraph",
     spacer: true,
+    children: [{ text: "" }],
+  } as Element;
+}
+
+function spacerParagraphWithId(spacerId: string): Element {
+  return {
+    type: "paragraph",
+    spacer: true,
+    spacerId,
     children: [{ text: "" }],
   } as Element;
 }
@@ -114,10 +124,13 @@ function autoformatCodeSpanAtCursor(editor: Editor): boolean {
     },
     { force: true },
   );
-  rememberAutoformatSelection(editor, {
+  const inlineSelection = {
     focus: { path: newPath, offset: 1 },
     anchor: { path: newPath, offset: 1 },
-  });
+  };
+  editor.selection = inlineSelection;
+  (editor as any).lastSelection = inlineSelection;
+  rememberAutoformatSelection(editor, inlineSelection);
   return true;
 }
 
@@ -266,7 +279,7 @@ function autoformatInlineMathAtCursor(editor: Editor): boolean {
     isInline: true,
     isVoid: true,
     display: false,
-    children: [{ text: "" }],
+    children: [{ text: inner }],
   });
   children.push({ text: " " });
 
@@ -324,6 +337,9 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
   }
 
   const blockPath = path.slice(0, path.length - 1);
+  const spacerId = `math-spacer-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
   Editor.withoutNormalizing(editor, () => {
     Transforms.delete(editor, {
       at: { path, offset: 0 },
@@ -333,14 +349,63 @@ function autoformatBlockMathAtStart(editor: Editor): boolean {
       editor,
       {
         type: "math_block",
-        isVoid: true,
         display: true,
         value: "",
+        isVoid: true,
         children: [{ text: "" }],
       } as any,
       { at: blockPath },
     );
+    const afterPath = Path.next(blockPath);
+    Transforms.insertNodes(editor, spacerParagraphWithId(spacerId), {
+      at: afterPath,
+    });
   });
+
+  let focused = false;
+  try {
+    for (const [, path] of Editor.nodes(editor, {
+      at: [],
+      match: (node) =>
+        Element.isElement(node) &&
+        node.type === "paragraph" &&
+        (node as any).spacerId === spacerId,
+    })) {
+      const point = Editor.start(editor, path as number[]);
+      setSelectionAndFocus(editor as ReactEditor, {
+        anchor: point,
+        focus: point,
+      });
+      editor.selection = { anchor: point, focus: point };
+      (editor as any).lastSelection = { anchor: point, focus: point };
+      rememberAutoformatSelection(editor, { anchor: point, focus: point });
+      Transforms.setNodes(editor, { spacerId: undefined } as any, {
+        at: path,
+      });
+      focused = true;
+      break;
+    }
+  } catch {
+    // ignore lookup failures
+  }
+
+  if (!focused) {
+    try {
+      const afterPath = Path.next(blockPath);
+      const afterPoint = Editor.start(editor, afterPath);
+      setSelectionAndFocus(editor as ReactEditor, {
+        anchor: afterPoint,
+        focus: afterPoint,
+      });
+      editor.selection = { anchor: afterPoint, focus: afterPoint };
+      (editor as any).lastSelection = { anchor: afterPoint, focus: afterPoint };
+      rememberAutoformatSelection(editor, { anchor: afterPoint, focus: afterPoint });
+    } catch {
+      // ignore selection failures
+    }
+  }
+
+  (editor as any).__autoformatDidBlock = true;
 
   return true;
 }
@@ -465,28 +530,95 @@ function autoformatListAtStart(editor: Editor): boolean {
     );
   });
 
-  const listItemEntry = Editor.above(editor, {
-    at: blockPath,
-    match: (node) => Element.isElement(node) && node.type === "list_item",
-  });
-  const listItemPath = listItemEntry?.[1] ?? blockPath;
-  let focus: Point | undefined;
-  try {
-    focus = Editor.start(editor, listItemPath);
-  } catch {
-    const textEntry = Editor.nodes(editor, {
-      at: listItemPath,
-      match: (node) => Text.isText(node),
-    }).next().value as [Text, Path] | undefined;
-    if (textEntry) {
+  const listEntry = Editor.above(editor, {
+    at: editor.selection ?? blockPath,
+    match: (node) =>
+      Element.isElement(node) &&
+      (node.type === "bullet_list" || node.type === "ordered_list"),
+  }) as [Element, Path] | undefined;
+  if ((window as any).__slateDebugLog) {
+    try {
+      const top = (editor.children || []).map((n: any, idx: number) => ({
+        idx,
+        type: Element.isElement(n) ? n.type : Text.isText(n) ? "text" : typeof n,
+        spacer: n.spacer ?? undefined,
+        children: Array.isArray(n.children)
+          ? n.children.map((c: any) =>
+              Element.isElement(c)
+                ? c.type
+                : Text.isText(c)
+                  ? "text"
+                  : typeof c,
+            )
+          : undefined,
+      }));
+      slateDebug("autoformat:list:tree", {
+        top,
+        listEntryPath: listEntry?.[1] ?? null,
+        selection: editor.selection ?? null,
+      });
+    } catch (err) {
+      slateDebug("autoformat:list:tree:error", { error: String(err) });
+    }
+  }
+  let listPath: Path | undefined = listEntry?.[1];
+  if (!listPath) {
+    const isList = (node: unknown) =>
+      Element.isElement(node) &&
+      (node.type === "bullet_list" || node.type === "ordered_list");
+    const tryPath = (path: Path) => {
+      if (listPath) return;
       try {
-        focus = Editor.start(editor, textEntry[1]);
+        const node = getNodeAt(editor, path);
+        if (isList(node)) listPath = path;
       } catch {
-        // ignore
+        // ignore invalid path
       }
+    };
+    tryPath(blockPath);
+    tryPath(Path.next(blockPath));
+    if (blockPath[blockPath.length - 1] > 0) {
+      tryPath(Path.previous(blockPath));
+    }
+  }
+  if (!listPath) {
+    listPath = blockPath;
+  }
+  const listItemEntry = Editor.nodes(editor, {
+    at: listPath,
+    match: (node) => Element.isElement(node) && node.type === "list_item",
+  }).next().value as [Element, Path] | undefined;
+  const listItemPath = listItemEntry?.[1] ?? listPath;
+  let focus: Point | undefined;
+  const textEntry = Editor.nodes(editor, {
+    at: listPath,
+    match: (node) => Text.isText(node),
+  }).next().value as [Text, Path] | undefined;
+  if (textEntry) {
+    try {
+      focus = Editor.start(editor, textEntry[1]);
+    } catch {
+      // ignore
+    }
+  }
+  if (!focus) {
+    try {
+      focus = Editor.start(editor, listPath);
+    } catch {
+      // ignore
     }
   }
   if (focus) {
+    (editor as any).__autoformatDidBlock = true;
+    (editor as any).__autoformatSelection = { anchor: focus, focus };
+    slateDebug("autoformat:list:focus", {
+      blockPath,
+      listItemPath,
+      listPath,
+      focus,
+      selection: editor.selection ?? null,
+      autoformatSelection: (editor as any).__autoformatSelection ?? null,
+    });
     setSelectionAndFocus(editor as ReactEditor, { focus, anchor: focus });
   }
   return true;
@@ -495,6 +627,7 @@ function autoformatListAtStart(editor: Editor): boolean {
 export const withAutoFormat = (editor) => {
   withInsertText(editor);
   withDeleteBackward(editor);
+  withDeleteForward(editor);
   const { insertData } = editor;
   if (typeof insertData === "function") {
     editor.insertData = (data) => {
@@ -959,6 +1092,7 @@ function markdownAutoformatAt(
     focusEditorAt(editor, new_cursor);
   } else {
     // **NON-INLINE CASE**
+    (editor as any).__autoformatDidBlock = true;
     // Remove the containing paragraph (not just the text node) so the new
     // block-level doc replaces it without leaving an empty paragraph.
     const paragraphEntry = Editor.above(editor, {
@@ -975,7 +1109,73 @@ function markdownAutoformatAt(
     const type = doc[0].type;
     const rules = getRules(type);
     if (type === "code_block") {
-      const focus = Editor.start(editor, blockPath);
+      slateDebug("autoformat:code_block", {
+        blockPath,
+        selection: editor.selection ?? null,
+        childrenLen: editor.children?.length ?? null,
+      });
+      // Due to spacer insertion, the code_block may have shifted forward.
+      let codePath = blockPath;
+      let node: Node | null = null;
+      try {
+        node = Editor.node(editor, codePath)[0] as Node;
+      } catch {
+        node = null;
+      }
+      if (!(Element.isElement(node) && node.type === "code_block")) {
+        const nextPath = Path.next(blockPath);
+        try {
+          const nextNode = Editor.node(editor, nextPath)[0] as Node;
+          if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+            codePath = nextPath;
+          }
+        } catch {
+          // fall through to original path
+        }
+      }
+      const focus = Editor.start(editor, codePath);
+      (editor as any).__autoformatSelection = { anchor: focus, focus };
+      slateDebug("autoformat:code_block:focus", {
+        blockPath,
+        codePath,
+        focus,
+        selection: editor.selection ?? null,
+        autoformatSelection: (editor as any).__autoformatSelection ?? null,
+      });
+      setSelectionAndFocus(editor, { focus, anchor: focus });
+      return true;
+    }
+    if (type === "math_block") {
+      // Place the caret after the displayed formula (in a spacer paragraph)
+      // so typing continues below the math block.
+      const afterPath = Path.next(blockPath);
+      let afterNode: Node | null = null;
+      if (Node.has(editor, afterPath)) {
+        afterNode = Editor.node(editor, afterPath)[0] as Node;
+      }
+      const isSpacer =
+        Element.isElement(afterNode) &&
+        afterNode.type === "paragraph" &&
+        (afterNode as any).spacer;
+      if (!isSpacer) {
+        Transforms.insertNodes(editor, spacerParagraph(), { at: afterPath });
+      }
+      const focus = Editor.start(editor, afterPath);
+      (editor as any).__autoformatSelection = { anchor: focus, focus };
+      setSelectionAndFocus(editor, { focus, anchor: focus });
+      return true;
+    }
+    if (type === "html_block" || type === "meta") {
+      // Move cursor after the block so typing continues in a paragraph.
+      const afterPath = Path.next(blockPath);
+      let nextNode: Node | null = null;
+      if (Node.has(editor, afterPath)) {
+        nextNode = Editor.node(editor, afterPath)[0] as Node;
+      }
+      if (!Element.isElement(nextNode) || nextNode.type !== "paragraph") {
+        Transforms.insertNodes(editor, { type: "paragraph", children: [{ text: "" }] }, { at: afterPath });
+      }
+      const focus = Editor.start(editor, afterPath);
       setSelectionAndFocus(editor, { focus, anchor: focus });
       return true;
     }
@@ -983,6 +1183,14 @@ function markdownAutoformatAt(
       const listItemPath = blockPath.concat(0);
       const paragraphPathInList = listItemPath.concat(0);
       const focus = Editor.start(editor, paragraphPathInList);
+      (editor as any).__autoformatSelection = { anchor: focus, focus };
+      slateDebug("autoformat:list:focus", {
+        blockPath,
+        listItemPath,
+        focus,
+        selection: editor.selection ?? null,
+        autoformatSelection: (editor as any).__autoformatSelection ?? null,
+      });
       setSelectionAndFocus(editor, { focus, anchor: focus });
       return true;
     }

@@ -142,23 +142,6 @@ function RenderElement({
   toggleHashtag,
   searchWords,
 }) {
-  let children: React.JSX.Element[] = [];
-  if (element["children"]) {
-    let n = 0;
-    for (const child of element["children"]) {
-      children.push(
-        <RenderElement
-          key={n}
-          element={child}
-          handleChange={handleChange}
-          selectedHashtags={selectedHashtags}
-          toggleHashtag={toggleHashtag}
-          searchWords={searchWords}
-        />,
-      );
-      n += 1;
-    }
-  }
   const type = element["type"];
   if (type) {
     if (selectedHashtags != null && type == "hashtag") {
@@ -178,6 +161,42 @@ function RenderElement({
     }
 
     const C = getStaticRender(element.type);
+    if (
+      type === "math_inline" ||
+      type === "math_inline_double" ||
+      type === "math_block" ||
+      type === "math_block_eqno"
+    ) {
+      return (
+        <C
+          children={[]}
+          element={element}
+          attributes={{} as any}
+          setElement={
+            handleChange == null
+              ? undefined
+              : (change) => handleChange(element, change)
+          }
+        />
+      );
+    }
+    let children: React.JSX.Element[] = [];
+    if (element["children"]) {
+      let n = 0;
+      for (const child of element["children"]) {
+        children.push(
+          <RenderElement
+            key={n}
+            element={child}
+            handleChange={handleChange}
+            selectedHashtags={selectedHashtags}
+            toggleHashtag={toggleHashtag}
+            searchWords={searchWords}
+          />,
+        );
+        n += 1;
+      }
+    }
     return (
       <C
         children={children}

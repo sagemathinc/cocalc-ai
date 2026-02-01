@@ -23,6 +23,7 @@ const pathShim = path.join(rootDir, "path-shim.ts");
 const frameContextShim = path.join(rootDir, "frame-context-shim.ts");
 const codeEditorConstShim = path.join(rootDir, "code-editor-const-shim.ts");
 const linkEditableShim = path.join(rootDir, "link-editable-shim.ts");
+const detectLanguageShim = path.join(rootDir, "detect-language-shim.ts");
 
 const shimPlugin = {
   name: "slate-shims",
@@ -69,6 +70,10 @@ const shimPlugin = {
     build.onResolve({ filter: /elements[\\/]+link[\\/]+editable$/ }, () => ({
       path: linkEditableShim,
     }));
+    build.onResolve(
+      { filter: /^@cocalc\/frontend\/misc\/detect-language$/ },
+      () => ({ path: detectLanguageShim }),
+    );
     build.onResolve({ filter: /^@cocalc\/frontend$/ }, () => ({
       path: frontendShim,
     }));

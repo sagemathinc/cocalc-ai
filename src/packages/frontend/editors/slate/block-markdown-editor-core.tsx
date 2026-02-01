@@ -20,6 +20,7 @@ import {
   Editor,
   Element as SlateElement,
   Node,
+  Point,
   Range,
   Path,
   Text,
@@ -34,6 +35,7 @@ import { slate_to_markdown } from "./slate-to-markdown";
 import { withNormalize } from "./normalize";
 import { withIsInline, withIsVoid } from "./plugins";
 import { withAutoFormat } from "./format/auto-format";
+import { withCodeLineInsertBreak } from "./elements/code-block/with-code-line-insert-break";
 import { withInsertBreakHack } from "./elements/link/editable";
 import { withNonfatalRange, withSelectionSafety } from "./patches";
 import { Element } from "./element";
@@ -44,22 +46,113 @@ import { ChangeContext } from "./use-change";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import type { SearchHook } from "./search";
 import { isAtBeginningOfBlock, isAtEndOfBlock } from "./control";
-import { getNodeAt, pointAtPath } from "./slate-util";
+import { pointAtPath } from "./slate-util";
 import type { SlateEditor } from "./types";
 import { IS_MACOS } from "./keyboard/register";
 import { moveListItemDown, moveListItemUp } from "./format/list-move";
 import { emptyParagraph, isWhitespaceParagraph } from "./padding";
+import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
+import { remapSelectionInDocWithSentinels } from "./sync/block-diff";
 import {
   buildCodeBlockDecorations,
   getPrismGrammar,
 } from "./elements/code-block/prism";
-import type { CodeBlock, CodeLine } from "./elements/code-block/types";
+import type { CodeBlock } from "./elements/code-block/types";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
+const BLOCK_CHUNK_TARGET_CHARS = 4000;
+const SHOW_BLOCK_BOUNDARIES = true;
+const BLOCK_DEFER_CHARS = 200_000;
+const BLOCK_DEFER_MS = 300;
+
+function getBlockChunkTargetChars(): number {
+  if (typeof globalThis === "undefined") return BLOCK_CHUNK_TARGET_CHARS;
+  const value = (globalThis as any).COCALC_SLATE_BLOCK_CHUNK_CHARS;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return BLOCK_CHUNK_TARGET_CHARS;
+}
+
+function getBlockDeferChars(): number {
+  if (typeof globalThis === "undefined") return BLOCK_DEFER_CHARS;
+  const value = (globalThis as any).COCALC_SLATE_BLOCK_DEFER_CHARS;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return BLOCK_DEFER_CHARS;
+}
+
+function getBlockDeferMs(): number {
+  if (typeof globalThis === "undefined") return BLOCK_DEFER_MS;
+  const value = (globalThis as any).COCALC_SLATE_BLOCK_DEFER_MS;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return Math.floor(value);
+  }
+  return BLOCK_DEFER_MS;
+}
+
+function debugSyncLog(type: string, data?: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  if (!(window as any).__slateDebugLog) return;
+  ensureSlateDebug();
+  logSlateDebug(`block-sync:${type}`, data);
+  // eslint-disable-next-line no-console
+  console.log(`[slate-sync:block] ${type}`, data ?? {});
+}
+
+function normalizePointForDoc(root: Node, point: { path: number[]; offset: number }, edge: "start" | "end") {
+  try {
+    const node = Node.get(root, point.path);
+    if (Text.isText(node)) {
+      return point;
+    }
+    return Editor[edge](root as any, point.path);
+  } catch {
+    return null;
+  }
+}
+
+function pointFromOffsetInDoc(doc: Descendant[], offset: number): { path: number[]; offset: number } {
+  let total = 0;
+  let lastPath: Path | null = null;
+  let lastLength = 0;
+  const root = { children: doc } as Descendant;
+  for (const [node, path] of Node.texts(root)) {
+    const nextTotal = total + node.text.length;
+    if (offset <= nextTotal) {
+      return { path, offset: Math.max(0, offset - total) };
+    }
+    total = nextTotal;
+    lastPath = path;
+    lastLength = node.text.length;
+  }
+  if (lastPath) {
+    return { path: lastPath, offset: lastLength };
+  }
+  return Editor.start({ children: doc } as any, [0]);
+}
+
+function blockSelectionPoint(
+  editor: SlateEditor,
+  position: "start" | "end",
+): Point {
+  try {
+    const children = editor.children as Descendant[];
+    const text = Node.string({ children } as any);
+    const offset = position === "start" ? 0 : text.length;
+    return pointFromOffsetInDoc(children, offset);
+  } catch {
+    // fall through to default point
+  }
+  const fallbackPath = position === "start" ? [0] : [0];
+  return pointAtPath(editor, fallbackPath, undefined, position);
+}
 
 const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
 const USE_BLOCK_GAP_CURSOR = false;
+const USE_BLOCK_CODE_SPACERS = false;
 const EMPTY_SEARCH: SearchHook = {
   decorate: () => [],
   Search: null as any,
@@ -92,6 +185,12 @@ function isBlankParagraph(node: Descendant | undefined): boolean {
     node["children"][0]?.["text"] === ""
   );
 }
+
+export const __test__ = {
+  splitMarkdownToBlocks,
+  splitMarkdownToBlocksIncremental,
+  computeIncrementalSlices,
+};
 
 function stripTrailingBlankParagraphs(value: Descendant[]): Descendant[] {
   if (value.length <= 1) return value;
@@ -166,6 +265,7 @@ interface BlockMarkdownEditorProps {
   preserveBlankLines?: boolean;
   getValueRef?: MutableRefObject<() => string>;
   disableBlockEditor?: boolean;
+  disableVirtualization?: boolean;
 }
 
 export function shouldUseBlockEditor({
@@ -188,16 +288,169 @@ function splitMarkdownToBlocks(markdown: string): string[] {
     (node) => !(node?.["type"] === "paragraph" && node?.["blank"] === true),
   );
   if (filtered.length === 0) return [""];
-  return filtered.map((node) =>
-    normalizeBlockMarkdown(
+  const nodeMarkdown = filtered.map((node) => {
+    if (SlateElement.isElement(node) && node.type === "code_block") {
+      const info = (node as any).info ? String((node as any).info).trim() : "";
+      const lines = Array.isArray(node.children)
+        ? node.children.map((child) => Node.string(child))
+        : [];
+      const fence = "```" + info;
+      return normalizeBlockMarkdown([fence, ...lines, "```"].join("\n"));
+    }
+    return normalizeBlockMarkdown(
       slate_to_markdown([node], { cache, preserveBlankLines: false }),
-    ),
+    );
+  });
+  const chunks: string[] = [];
+  let current: string[] = [];
+  let currentLength = 0;
+  const targetChars = getBlockChunkTargetChars();
+  const flush = () => {
+    if (current.length === 0) return;
+    chunks.push(current.join("\n\n"));
+    current = [];
+    currentLength = 0;
+  };
+  for (const block of nodeMarkdown) {
+    const blockLength = block.length;
+    const nextLength =
+      currentLength === 0 ? blockLength : currentLength + 2 + blockLength;
+    if (
+      current.length > 0 &&
+      nextLength > targetChars
+    ) {
+      flush();
+    }
+    current.push(block);
+    currentLength =
+      currentLength === 0 ? blockLength : currentLength + 2 + blockLength;
+  }
+  flush();
+  const result = chunks.length > 0 ? chunks : [""];
+  return result;
+}
+
+function commonPrefixLength(a: string, b: string): number {
+  const max = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < max && a.charCodeAt(i) === b.charCodeAt(i)) {
+    i += 1;
+  }
+  return i;
+}
+
+function commonSuffixLength(a: string, b: string, prefix: number): number {
+  const max = Math.min(a.length, b.length) - prefix;
+  let i = 0;
+  while (
+    i < max &&
+    a.charCodeAt(a.length - 1 - i) === b.charCodeAt(b.length - 1 - i)
+  ) {
+    i += 1;
+  }
+  return i;
+}
+
+type IncrementalSlices = {
+  prefixBlocks: string[];
+  suffixBlocks: string[];
+  middleText: string;
+};
+
+function computeIncrementalSlices(
+  prevMarkdown: string,
+  nextMarkdown: string,
+  prevBlocks: string[],
+): IncrementalSlices | null {
+  const prefix = commonPrefixLength(prevMarkdown, nextMarkdown);
+  const suffix = commonSuffixLength(prevMarkdown, nextMarkdown, prefix);
+  const oldLength = prevMarkdown.length;
+  const suffixStartOld = oldLength - suffix;
+
+  let prefixIndex = 0;
+  let prefixOffset = 0;
+  for (let i = 0; i < prevBlocks.length; i += 1) {
+    const blockLen = prevBlocks[i].length;
+    const sep = i < prevBlocks.length - 1 ? 2 : 0;
+    const nextOffset = prefixOffset + blockLen + sep;
+    if (prefix >= nextOffset) {
+      prefixOffset = nextOffset;
+      prefixIndex = i + 1;
+      continue;
+    }
+    break;
+  }
+
+  let suffixIndex = prevBlocks.length;
+  let suffixStartOffset = oldLength;
+  let offset = 0;
+  for (let i = 0; i < prevBlocks.length; i += 1) {
+    const blockLen = prevBlocks[i].length;
+    const sep = i < prevBlocks.length - 1 ? 2 : 0;
+    const nextOffset = offset + blockLen + sep;
+    if (suffixStartOld <= offset) {
+      suffixIndex = i;
+      suffixStartOffset = offset;
+      break;
+    }
+    if (suffixStartOld < nextOffset) {
+      suffixIndex = i + 1;
+      suffixStartOffset = nextOffset;
+      break;
+    }
+    offset = nextOffset;
+  }
+  if (suffixIndex >= prevBlocks.length) {
+    suffixStartOffset = oldLength;
+  }
+
+  const prefixBlocks = prefixIndex > 0 ? prevBlocks.slice(0, prefixIndex) : [];
+  const suffixBlocks =
+    suffixIndex < prevBlocks.length ? prevBlocks.slice(suffixIndex) : [];
+  const suffixReuseLen = Math.max(0, oldLength - suffixStartOffset);
+  const middleStart = prefixOffset;
+  const middleEnd = nextMarkdown.length - suffixReuseLen;
+
+  if (middleStart < 0 || middleEnd < middleStart) {
+    return null;
+  }
+
+  const middleText = nextMarkdown.slice(middleStart, middleEnd);
+  return { prefixBlocks, suffixBlocks, middleText };
+}
+
+function splitMarkdownToBlocksIncremental(
+  prevMarkdown: string,
+  nextMarkdown: string,
+  prevBlocks: string[],
+): string[] {
+  if (!prevMarkdown) return splitMarkdownToBlocks(nextMarkdown);
+  if (prevBlocks.length === 0) return splitMarkdownToBlocks(nextMarkdown);
+  if (prevMarkdown === nextMarkdown) return prevBlocks;
+  const slices = computeIncrementalSlices(
+    prevMarkdown,
+    nextMarkdown,
+    prevBlocks,
   );
+  if (!slices) {
+    return splitMarkdownToBlocks(nextMarkdown);
+  }
+  const { prefixBlocks, suffixBlocks, middleText } = slices;
+  const middleBlocks =
+    middleText.length > 0 ? splitMarkdownToBlocks(middleText) : [];
+  const nextBlocks = [...prefixBlocks, ...middleBlocks, ...suffixBlocks];
+  return nextBlocks.length > 0 ? nextBlocks : [""];
 }
 
 interface BlockRowEditorProps {
   index: number;
   markdown: string;
+  remoteVersion?: number;
+  isFocused?: boolean;
+  clearBlockSelection?: () => void;
+  onMergeWithPrevious?: (index: number) => void;
+  lastLocalEditAtRef: React.MutableRefObject<number>;
+  lastRemoteMergeAtRef: React.MutableRefObject<number>;
   onChangeMarkdown: (index: number, markdown: string) => void;
   onDeleteBlock: (index: number) => void;
   onFocus?: () => void;
@@ -224,6 +477,9 @@ interface BlockRowEditorProps {
     insertIndex?: number;
     buffer?: string;
   } | null>;
+  pendingSelectionRef: React.MutableRefObject<
+    { index: number; offset: number } | null
+  >;
   skipSelectionResetRef: React.MutableRefObject<Set<number>>;
   onNavigate: (index: number, position: "start" | "end") => void;
   onInsertGap: (
@@ -238,6 +494,7 @@ interface BlockRowEditorProps {
   unregisterEditor: (index: number, editor: SlateEditor) => void;
   getFullMarkdown: () => string;
   codeBlockExpandState: Map<string, boolean>;
+  blockCount: number;
   selected?: boolean;
   gutterWidth?: number;
   leafComponent?: React.ComponentType<RenderLeafProps>;
@@ -248,6 +505,12 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const {
       index,
       markdown,
+      remoteVersion = 0,
+      isFocused = false,
+      clearBlockSelection,
+      onMergeWithPrevious,
+      lastLocalEditAtRef,
+      lastRemoteMergeAtRef,
       onChangeMarkdown,
       onDeleteBlock,
       onFocus,
@@ -262,6 +525,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       setGapCursor,
       gapCursorRef,
       pendingGapInsertRef,
+      pendingSelectionRef,
       skipSelectionResetRef,
       onNavigate,
       onInsertGap,
@@ -272,6 +536,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       unregisterEditor,
       getFullMarkdown,
       codeBlockExpandState,
+      blockCount,
       selected = false,
       gutterWidth = 0,
       leafComponent,
@@ -283,7 +548,11 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         withNonfatalRange(
           withInsertBreakHack(
             withNormalize(
-              withAutoFormat(withIsInline(withIsVoid(withReact(createEditor())))),
+              withAutoFormat(
+                withIsInline(
+                  withIsVoid(withCodeLineInsertBreak(withReact(createEditor()))),
+                ),
+              ),
             ),
           ),
         ),
@@ -310,53 +579,132 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       (editor as any).blockIndex = index;
     }, [editor, index]);
 
-    const [value, setValue] = useState<Descendant[]>(() =>
-      withCodeBlockSpacers(
-        stripTrailingBlankParagraphs(
-          markdown_to_slate(
-            normalizeBlockMarkdown(markdown),
-            false,
-            syncCacheRef.current,
-          ),
+    const [value, setValue] = useState<Descendant[]>(() => {
+      const parsed = stripTrailingBlankParagraphs(
+        markdown_to_slate(
+          normalizeBlockMarkdown(markdown),
+          false,
+          syncCacheRef.current,
         ),
-      ),
-    );
+      );
+      return USE_BLOCK_CODE_SPACERS ? withCodeBlockSpacers(parsed) : parsed;
+    });
     const [change, setChange] = useState<number>(0);
     const lastMarkdownRef = useRef<string>(markdown);
 
+    const lastRemoteVersionRef = useRef<number>(remoteVersion);
     useEffect(() => {
-      if (markdown === lastMarkdownRef.current) return;
+      if (remoteVersion === lastRemoteVersionRef.current) return;
+      lastRemoteVersionRef.current = remoteVersion;
       lastMarkdownRef.current = markdown;
       syncCacheRef.current = {};
       editor.syncCache = syncCacheRef.current;
-      const nextValue = withCodeBlockSpacers(
-        stripTrailingBlankParagraphs(
-          markdown_to_slate(
-            normalizeBlockMarkdown(markdown),
-            false,
-            syncCacheRef.current,
-          ),
+      const parsed = stripTrailingBlankParagraphs(
+        markdown_to_slate(
+          normalizeBlockMarkdown(markdown),
+          false,
+          syncCacheRef.current,
         ),
       );
-      const skipReset = skipSelectionResetRef.current.has(index);
+      const nextValue = USE_BLOCK_CODE_SPACERS
+        ? withCodeBlockSpacers(parsed)
+        : parsed;
+      const prevSelection = editor.selection;
+      const now = Date.now();
+      const localAgeMs = now - lastLocalEditAtRef.current;
+      const remoteAgeMs = now - lastRemoteMergeAtRef.current;
+      const isFocusedNow = isFocused || ReactEditor.isFocused(editor);
+      const shouldRemap =
+        isFocusedNow && prevSelection && remoteAgeMs < 1000 && localAgeMs > 200;
+      debugSyncLog("remap-check", {
+        index,
+        isFocused: isFocusedNow,
+        localAgeMs,
+        remoteAgeMs,
+        shouldRemap,
+        remoteVersion,
+      });
+      const pendingSelection = pendingSelectionRef.current;
+      if (pendingSelection?.index === index) {
+        const point = pointFromOffsetInDoc(
+          nextValue,
+          pendingSelection.offset,
+        );
+        editor.selection = { anchor: point, focus: point };
+        ReactEditor.focus(editor);
+        onFocus?.();
+        pendingSelectionRef.current = null;
+        skipSelectionResetRef.current.add(index);
+      }
+      if (shouldRemap) {
+        const remapped = remapSelectionInDocWithSentinels(
+          value,
+          nextValue,
+          prevSelection,
+        );
+        if (remapped) {
+          const root = { children: nextValue } as Node;
+          const anchor = normalizePointForDoc(root, remapped.anchor, "start");
+          const focus = normalizePointForDoc(root, remapped.focus, "end");
+          if (anchor && focus) {
+            remapped.anchor = anchor;
+            remapped.focus = focus;
+          }
+          debugSyncLog("remap-apply", { selection: remapped });
+          skipSelectionResetRef.current.add(index);
+          editor.selection = remapped;
+        }
+      }
+      const skipReset =
+        skipSelectionResetRef.current.has(index) ||
+        localAgeMs < 200 ||
+        isFocusedNow;
+      debugSyncLog("selection-reset-check", {
+        index,
+        skipReset,
+        isFocused,
+        localAgeMs,
+      });
       if (skipReset) {
         skipSelectionResetRef.current.delete(index);
         const selection = editor.selection;
         if (selection) {
           const root = { children: nextValue } as Node;
-          const anchorOk = Node.has(root, selection.anchor.path);
-          const focusOk = Node.has(root, selection.focus.path);
+          const anchor = normalizePointForDoc(root, selection.anchor, "start");
+          const focus = normalizePointForDoc(root, selection.focus, "end");
+          const anchorOk = anchor != null;
+          const focusOk = focus != null;
+          debugSyncLog("selection-validate", {
+            index,
+            anchorOk,
+            focusOk,
+          });
           if (!anchorOk || !focusOk) {
             editor.selection = null;
             editor.marks = null;
+          } else {
+            editor.selection = { anchor, focus };
+            if (isFocusedNow && !ReactEditor.isFocused(editor)) {
+              ReactEditor.focus(editor);
+            }
           }
         }
       } else {
+        debugSyncLog("selection-reset:clear", { index });
         editor.selection = null;
         editor.marks = null;
       }
       setValue(nextValue);
-    }, [markdown, editor]);
+    }, [
+      remoteVersion,
+      markdown,
+      editor,
+      index,
+      isFocused,
+      value,
+      lastLocalEditAtRef,
+      lastRemoteMergeAtRef,
+    ]);
 
     const renderElement = useCallback(
       (props: RenderElementProps) => <Element {...props} />,
@@ -365,7 +713,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
 
     const codeBlockCacheRef = useRef<
       WeakMap<
-        CodeBlock,
+        SlateElement,
         { text: string; info: string; decorations: DecoratedRange[][] }
       >
     >(new WeakMap());
@@ -382,21 +730,29 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         const blockEntry = Editor.above(editor, {
           at: path,
           match: (n) =>
-            SlateElement.isElement(n) && n.type === "code_block",
+            SlateElement.isElement(n) &&
+            (n.type === "code_block" ||
+              n.type === "html_block" ||
+              n.type === "meta"),
         });
         if (!blockEntry) return [];
-        const [block, blockPath] = blockEntry as [CodeBlock, number[]];
+        const [block, blockPath] = blockEntry as [SlateElement, number[]];
         const lineIndex = lineEntry[1][lineEntry[1].length - 1];
         const cache = codeBlockCacheRef.current;
         const text = block.children.map((line) => Node.string(line)).join("\n");
-        const info = block.info ?? "";
+        const info =
+          block.type === "code_block"
+            ? (block as CodeBlock).info ?? ""
+            : block.type === "html_block"
+              ? "html"
+              : "yaml";
         const cached = cache.get(block);
         if (!cached || cached.text !== text || cached.info !== info) {
-          if (getPrismGrammar(info)) {
+          if (getPrismGrammar(info, text)) {
             cache.set(block, {
               text,
               info,
-              decorations: buildCodeBlockDecorations(block, blockPath),
+              decorations: buildCodeBlockDecorations(block as CodeBlock, blockPath, info),
             });
           } else {
             cache.set(block, { text, info, decorations: [] });
@@ -412,6 +768,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         if (read_only) return;
         setValue(newValue);
         setChange((prev) => prev + 1);
+        clearBlockSelection?.();
         const nextMarkdown = normalizeBlockMarkdown(
           slate_to_markdown(newValue, {
             cache: syncCacheRef.current,
@@ -421,7 +778,13 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         lastMarkdownRef.current = nextMarkdown;
         onChangeMarkdown(index, nextMarkdown);
       },
-      [index, onChangeMarkdown, preserveBlankLines, read_only],
+      [
+        clearBlockSelection,
+        index,
+        onChangeMarkdown,
+        preserveBlankLines,
+        read_only,
+      ],
     );
 
     const activeGap =
@@ -519,6 +882,27 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return;
         }
         if (event.defaultPrevented) return;
+        if (
+          (event.ctrlKey || event.metaKey) &&
+          !event.altKey &&
+          (event.key === "z" || event.key === "Z")
+        ) {
+          const actionId = props.id ?? "slate-block";
+          if (event.shiftKey) {
+            if (actions?.redo != null) {
+              saveNow?.();
+              actions.redo(actionId);
+              event.preventDefault();
+              return;
+            }
+          } else if (actions?.undo != null) {
+            saveNow?.();
+            actions.undo(actionId);
+            event.preventDefault();
+            return;
+          }
+        }
+        clearBlockSelection?.();
         const isSaveKey =
           (event.ctrlKey || event.metaKey) &&
           !event.altKey &&
@@ -548,11 +932,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           isAtBeginningOfBlock(editor, { mode: "highest" })
         ) {
           if (index > 0) {
-            const isEmpty = Editor.string(editor, []).length === 0;
-            if (isEmpty) {
-              onDeleteBlock(index);
-            }
-            onNavigate(index - 1, "end");
+            onMergeWithPrevious?.(index);
             event.preventDefault();
             return;
           }
@@ -666,7 +1046,9 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         if (
           !isFocused &&
           event.key !== "ArrowUp" &&
-          event.key !== "ArrowDown"
+          event.key !== "ArrowDown" &&
+          event.key !== "ArrowLeft" &&
+          event.key !== "ArrowRight"
         ) {
           return;
         }
@@ -704,6 +1086,36 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           return;
         }
 
+        if (
+          event.key === "ArrowLeft" &&
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection)
+        ) {
+          const topIndex = 0;
+          if (!Editor.isStart(editor, editor.selection.anchor, [topIndex])) {
+            return;
+          }
+          if (index > 0) {
+            onNavigate(index - 1, "end");
+            event.preventDefault();
+            return;
+          }
+        }
+
+        if (
+          event.key === "ArrowRight" &&
+          editor.selection != null &&
+          Range.isCollapsed(editor.selection)
+        ) {
+          const lastIndex = Math.max(0, editor.children.length - 1);
+          if (!Editor.isEnd(editor, editor.selection.anchor, [lastIndex])) {
+            return;
+          }
+          onNavigate(index + 1, "start");
+          event.preventDefault();
+          return;
+        }
+
         const moveCombo = IS_MACOS
           ? event.ctrlKey && event.metaKey && !event.altKey
           : event.ctrlKey &&
@@ -727,56 +1139,115 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         const domSelection =
           typeof window === "undefined" ? null : window.getSelection();
         const selection =
-          domSelection && domSelection.rangeCount > 0
-            ? ReactEditor.toSlateRange(editor, domSelection) ?? editor.selection
-            : editor.selection;
-        const getCodeBlockPath = () => {
+          editor.selection ??
+          (domSelection && domSelection.rangeCount > 0
+            ? ReactEditor.toSlateRange(editor, domSelection) ?? null
+            : null);
+        const codeBlockIndex = editor.children.findIndex(
+          (node) => SlateElement.isElement(node) && node.type === "code_block",
+        );
+        const spacerIndex =
+          selection &&
+          selection.focus.path.length > 0 &&
+          SlateElement.isElement(editor.children[selection.focus.path[0]]) &&
+          (editor.children[selection.focus.path[0]] as any).spacer
+            ? selection.focus.path[0]
+            : null;
+        const spacerBeforeCode =
+          spacerIndex != null &&
+          codeBlockIndex >= 0 &&
+          spacerIndex < codeBlockIndex;
+        const spacerAfterCode =
+          spacerIndex != null &&
+          codeBlockIndex >= 0 &&
+          spacerIndex > codeBlockIndex;
+        const codeBlockEntry = (() => {
           if (!selection) return null;
-          const codeEntry = Editor.above(editor, {
+          const entry = Editor.above(editor, {
             at: selection.focus,
-            match: (n) =>
-              SlateElement.isElement(n) && n.type === "code_block",
+            match: (node) =>
+              SlateElement.isElement(node) && node.type === "code_block",
           }) as [CodeBlock, number[]] | undefined;
-          return codeEntry?.[1] ?? null;
-        };
+          if (!entry) return null;
+          const [block, path] = entry;
+          const lineIndex = selection.focus.path[path.length];
+          if (typeof lineIndex !== "number") return null;
+          return {
+            block,
+            path,
+            lineIndex,
+          };
+        })();
+        const getCodeBlockPath = () => codeBlockEntry?.path ?? null;
         const isCodeBlockEdge = (direction: "up" | "down") => {
-          if (!selection || !Range.isCollapsed(selection)) return false;
-          const codeEntry = Editor.above(editor, {
-            at: selection.focus,
-            match: (n) =>
-              SlateElement.isElement(n) && n.type === "code_block",
-          }) as [CodeBlock, number[]] | undefined;
-          if (!codeEntry) return false;
-          const codePath = codeEntry[1];
-          const prevNode =
-            codePath[codePath.length - 1] > 0
-              ? getNodeAt(editor, Path.previous(codePath))
-              : null;
-          const nextNode = getNodeAt(editor, Path.next(codePath));
-          if (
-            (direction === "up" &&
-              prevNode &&
-              SlateElement.isElement(prevNode) &&
-              prevNode.type === "paragraph") ||
-            (direction === "down" &&
-              nextNode &&
-              SlateElement.isElement(nextNode) &&
-              nextNode.type === "paragraph")
-          ) {
-            return false;
-          }
-          const lineEntry = Editor.above(editor, {
-            at: selection.focus,
-            match: (n) =>
-              SlateElement.isElement(n) && n.type === "code_line",
-          }) as [CodeLine, number[]] | undefined;
-          if (!lineEntry) return false;
-          const linePath = lineEntry[1];
-          const lineIndex = linePath[linePath.length - 1];
-          if (direction === "up") return lineIndex === 0;
-          const lastIndex = Math.max(0, codeEntry[0].children.length - 1);
-          return lineIndex === lastIndex;
+          if (!selection) return false;
+          if (!codeBlockEntry) return false;
+          if (direction === "up") return codeBlockEntry.lineIndex === 0;
+          const lastIndex = Math.max(0, codeBlockEntry.block.children.length - 1);
+          return codeBlockEntry.lineIndex === lastIndex;
         };
+
+        if (
+          selection &&
+          (spacerBeforeCode || spacerAfterCode) &&
+          (event.key === "ArrowUp" || event.key === "ArrowDown")
+        ) {
+          if (event.key === "ArrowUp") {
+            if (spacerBeforeCode) {
+              if (index > 0) {
+                onNavigate(index - 1, "end");
+              } else {
+                onInsertGap({ index, side: "before" }, "", "end");
+              }
+            } else {
+              const point = blockSelectionPoint(editor, "end");
+              Transforms.setSelection(editor, { anchor: point, focus: point });
+              ReactEditor.focus(editor);
+            }
+          } else {
+            if (spacerAfterCode) {
+              if (index < blockCount - 1) {
+                onNavigate(index + 1, "start");
+              } else {
+                onInsertGap({ index, side: "after" }, "", "start");
+              }
+            } else {
+              const point = blockSelectionPoint(editor, "start");
+              Transforms.setSelection(editor, { anchor: point, focus: point });
+              ReactEditor.focus(editor);
+            }
+          }
+          event.preventDefault();
+          return;
+        }
+
+        if (
+          !USE_BLOCK_GAP_CURSOR &&
+          event.key === "ArrowUp" &&
+          isCodeBlockEdge("up")
+        ) {
+          if (index > 0) {
+            onNavigate(index - 1, "end");
+          } else {
+            onInsertGap({ index, side: "before" }, "", "end");
+          }
+          event.preventDefault();
+          return;
+        }
+
+        if (
+          !USE_BLOCK_GAP_CURSOR &&
+          event.key === "ArrowDown" &&
+          isCodeBlockEdge("down")
+        ) {
+          if (index < blockCount - 1) {
+            onNavigate(index + 1, "start");
+          } else {
+            onInsertGap({ index, side: "after" }, "", "start");
+          }
+          event.preventDefault();
+          return;
+        }
 
         if (USE_BLOCK_GAP_CURSOR) {
           if (
@@ -881,6 +1352,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       gapCursor?.index === index && gapCursor.side === "before";
     const showGapAfter =
       gapCursor?.index === index && gapCursor.side === "after";
+    const showBoundary = SHOW_BLOCK_BOUNDARIES && index > 0;
 
     return (
       <div
@@ -889,9 +1361,31 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           ...rowStyle,
           position: "relative",
           background: undefined,
+          borderTop: showBoundary
+            ? "1px dashed rgba(0, 0, 0, 0.12)"
+            : undefined,
+          paddingTop: showBoundary ? 12 : undefined,
+          marginTop: showBoundary ? 12 : undefined,
         }}
         data-slate-block-index={index}
       >
+        {showBoundary && (
+          <div
+            data-slate-block-boundary="true"
+            style={{
+              position: "absolute",
+              top: -15,
+              left: 10,
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "rgba(0, 0, 0, 0.35)",
+              pointerEvents: "none",
+            }}
+          >
+            {`Page ${index + 1}`}
+          </div>
+        )}
         {selected && (
           <div
             data-slate-block-selection="true"
@@ -1083,7 +1577,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     onFocus,
     saveDebounceMs = DEFAULT_SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
-    ignoreRemoteMergesWhileFocused = true,
     style,
     value,
     minimal,
@@ -1092,6 +1585,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     getValueRef,
     renderPath,
     leafComponent,
+    disableVirtualization = false,
   } = props;
   const actions = actions0 ?? {};
   const font_size = font_size0 ?? DEFAULT_FONT_SIZE;
@@ -1099,18 +1593,44 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const initialValue = value ?? "";
   const valueRef = useRef<string>(initialValue);
-  valueRef.current = initialValue;
   // Block mode treats each block independently, so always disable significant
   // blank lines to avoid confusing per-block newline behavior.
   const preserveBlankLines = false;
 
+  const nextBlockIdRef = useRef<number>(1);
+  const newBlockId = useCallback(
+    () => `b${nextBlockIdRef.current++}`,
+    [],
+  );
   const [blocks, setBlocks] = useState<string[]>(() =>
     splitMarkdownToBlocks(initialValue),
   );
   const blocksRef = useRef<string[]>(blocks);
+  const [blockIds, setBlockIds] = useState<string[]>(() =>
+    blocks.map(() => newBlockId()),
+  );
+  const blockIdsRef = useRef<string[]>(blockIds);
+  const remoteVersionRef = useRef<number[]>(blocks.map(() => 0));
+  const syncRemoteVersionLength = useCallback((nextBlocks: string[]) => {
+    const prevVersions = remoteVersionRef.current;
+    if (prevVersions.length === nextBlocks.length) return;
+    remoteVersionRef.current = nextBlocks.map((_, idx) => prevVersions[idx] ?? 0);
+  }, []);
+  const bumpRemoteVersionAt = useCallback((index: number, length: number) => {
+    const prevVersions = remoteVersionRef.current;
+    const next = [...prevVersions];
+    while (next.length < length) {
+      next.push(0);
+    }
+    next[index] = (next[index] ?? 0) + 1;
+    remoteVersionRef.current = next;
+  }, []);
   useEffect(() => {
     blocksRef.current = blocks;
   }, [blocks]);
+  useEffect(() => {
+    blockIdsRef.current = blockIds;
+  }, [blockIds]);
 
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const [blockSelection, setBlockSelection] = useState<{
@@ -1138,6 +1658,9 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     insertIndex?: number;
     buffer?: string;
   } | null>(null);
+  const pendingSelectionRef = useRef<{ index: number; offset: number } | null>(
+    null,
+  );
   const skipSelectionResetRef = useRef<Set<number>>(new Set());
   const setGapCursorState = useCallback(
     (
@@ -1166,12 +1689,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     new SimpleInputMerge(initialValue),
   );
   const lastLocalEditAtRef = useRef<number>(0);
+  const lastRemoteMergeAtRef = useRef<number>(0);
   const remoteMergeConfig =
     typeof window === "undefined"
       ? {}
       : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
-  const ignoreRemoteWhileFocused =
-    remoteMergeConfig.ignoreWhileFocused ?? ignoreRemoteMergesWhileFocused;
+  const ignoreRemoteWhileFocused = false;
   const mergeIdleMs =
     remoteMergeConfig.idleMs ??
     remoteMergeIdleMs ??
@@ -1186,6 +1709,11 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const updatePendingRemoteIndicator = useCallback(
     (remote: string, local: string) => {
       const preview = mergeHelperRef.current.previewMerge({ remote, local });
+      debugSyncLog("pending-indicator:preview", {
+        changed: preview.changed,
+        remoteLength: remote.length,
+        localLength: local.length,
+      });
       if (!preview.changed) {
         pendingRemoteRef.current = null;
         mergeHelperRef.current.noteApplied(preview.merged);
@@ -1200,12 +1728,99 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [],
   );
 
+  const bumpRemoteVersions = useCallback((nextBlocks: string[]) => {
+    const prevBlocks = blocksRef.current;
+    const prevVersions = remoteVersionRef.current;
+    if (nextBlocks.length !== prevBlocks.length) {
+      remoteVersionRef.current = nextBlocks.map(
+        (_, idx) => (prevVersions[idx] ?? 0) + 1,
+      );
+      return;
+    }
+    const nextVersions = nextBlocks.map((block, idx) => {
+      if (block !== prevBlocks[idx]) return (prevVersions[idx] ?? 0) + 1;
+      return prevVersions[idx] ?? 0;
+    });
+    remoteVersionRef.current = nextVersions;
+  }, []);
+
+  const updateBlockIdsForRemote = useCallback(
+    (nextBlocks: string[]) => {
+      const prevBlocks = blocksRef.current;
+      const prevIds = blockIdsRef.current;
+      const nextIds = nextBlocks.map((block, idx) => {
+        if (prevBlocks[idx] === block) {
+          return prevIds[idx] ?? newBlockId();
+        }
+        return newBlockId();
+      });
+      blockIdsRef.current = nextIds;
+      setBlockIds(nextIds);
+    },
+    [newBlockId],
+  );
+
   const setBlocksFromValue = useCallback((markdown: string) => {
+    if (markdown === valueRef.current && blocksRef.current.length > 0) {
+      return;
+    }
+    const prevMarkdown = valueRef.current ?? "";
+    const prevBlocks = blocksRef.current;
     valueRef.current = markdown;
-    const nextBlocks = splitMarkdownToBlocks(markdown);
+    const nextBlocks =
+      prevBlocks.length > 0 && prevMarkdown.length > 0
+        ? splitMarkdownToBlocksIncremental(prevMarkdown, markdown, prevBlocks)
+        : splitMarkdownToBlocks(markdown);
+    bumpRemoteVersions(nextBlocks);
     blocksRef.current = nextBlocks;
     setBlocks(nextBlocks);
-  }, []);
+    updateBlockIdsForRemote(nextBlocks);
+  }, [bumpRemoteVersions, updateBlockIdsForRemote]);
+
+  const pendingValueRef = useRef<string | null>(null);
+  const pendingValueTimerRef = useRef<number | null>(null);
+
+  const flushPendingValue = useCallback(() => {
+    if (pendingValueTimerRef.current != null) {
+      window.clearTimeout(pendingValueTimerRef.current);
+      pendingValueTimerRef.current = null;
+    }
+    const pending = pendingValueRef.current;
+    if (pending == null) return;
+    pendingValueRef.current = null;
+    setBlocksFromValue(pending);
+  }, [setBlocksFromValue]);
+
+  const schedulePendingValue = useCallback(
+    (markdown: string) => {
+      pendingValueRef.current = markdown;
+      if (pendingValueTimerRef.current != null) {
+        window.clearTimeout(pendingValueTimerRef.current);
+      }
+      const delay = getBlockDeferMs();
+      pendingValueTimerRef.current = window.setTimeout(() => {
+        pendingValueTimerRef.current = null;
+        flushPendingValue();
+      }, delay);
+    },
+    [flushPendingValue],
+  );
+
+  const applyBlocksFromValue = useCallback(
+    (markdown: string) => {
+      if (markdown === valueRef.current && blocksRef.current.length > 0) {
+        return;
+      }
+      const deferChars = getBlockDeferChars();
+      if (focusedIndex == null && markdown.length >= deferChars) {
+        schedulePendingValue(markdown);
+        return;
+      }
+      flushPendingValue();
+      setBlocksFromValue(markdown);
+    },
+    [focusedIndex, flushPendingValue, schedulePendingValue, setBlocksFromValue],
+  );
 
   const getFullMarkdown = useCallback(() => joinBlocks(blocksRef.current), []);
 
@@ -1216,6 +1831,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
 
   useEffect(() => {
     const nextValue = value ?? "";
+    debugSyncLog("value-prop", {
+      focusedIndex,
+      sameAsLastSet: nextValue === lastSetValueRef.current,
+      sameAsValueRef: nextValue === valueRef.current,
+      pendingRemote: pendingRemoteRef.current != null,
+    });
     if (nextValue === lastSetValueRef.current) {
       lastSetValueRef.current = null;
       return;
@@ -1227,29 +1848,28 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       focusedIndex != null &&
       !allowFocusedValueUpdate
     ) {
+      debugSyncLog("value-prop:defer-focused", {
+        focusedIndex,
+      });
       updatePendingRemoteIndicator(nextValue, joinBlocks(blocksRef.current));
       return;
     }
     allowFocusedValueUpdateRef.current = false;
     if (pendingRemoteRef.current != null) return;
-    setBlocksFromValue(nextValue);
+    applyBlocksFromValue(nextValue);
   }, [
     value,
     focusedIndex,
     ignoreRemoteWhileFocused,
-    setBlocksFromValue,
+    applyBlocksFromValue,
     updatePendingRemoteIndicator,
   ]);
 
   useEffect(() => {
-    if (controlRef == null) return;
-    controlRef.current = {
-      ...(controlRef.current ?? {}),
-      allowNextValueUpdateWhileFocused: () => {
-        allowFocusedValueUpdateRef.current = true;
-      },
-    };
-  }, [controlRef]);
+    if (focusedIndex != null) {
+      flushPendingValue();
+    }
+  }, [focusedIndex, flushPendingValue]);
 
   function shouldDeferRemoteMerge(): boolean {
     const idleMs = mergeIdleMsRef.current;
@@ -1261,6 +1881,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       window.clearTimeout(pendingRemoteTimerRef.current);
     }
     const idleMs = mergeIdleMsRef.current;
+    debugSyncLog("pending-remote:schedule", { idleMs });
     pendingRemoteTimerRef.current = window.setTimeout(() => {
       pendingRemoteTimerRef.current = null;
       flushPendingRemoteMerge();
@@ -1271,15 +1892,20 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
     if (!force && shouldDeferRemoteMerge()) {
+      debugSyncLog("pending-remote:defer", {
+        idleMs: mergeIdleMsRef.current,
+      });
       schedulePendingRemoteMerge();
       return;
     }
+    debugSyncLog("pending-remote:flush", { force });
     pendingRemoteRef.current = null;
     setPendingRemoteIndicator(false);
+    lastRemoteMergeAtRef.current = Date.now();
     mergeHelperRef.current.handleRemote({
       remote: pending,
       getLocal: () => joinBlocks(blocksRef.current),
-      applyMerged: setBlocksFromValue,
+      applyMerged: applyBlocksFromValue,
     });
   }
 
@@ -1295,6 +1921,11 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     if (actions._syncstring == null) return;
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
+      debugSyncLog("syncstring:change", {
+        focusedIndex,
+        remoteLength: remote.length,
+        shouldDefer: shouldDeferRemoteMerge(),
+      });
       if (ignoreRemoteWhileFocused && focusedIndex != null) {
         updatePendingRemoteIndicator(remote, joinBlocks(blocksRef.current));
         return;
@@ -1304,17 +1935,19 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         schedulePendingRemoteMerge();
         return;
       }
+      debugSyncLog("syncstring:apply", { remoteLength: remote.length });
+      lastRemoteMergeAtRef.current = Date.now();
       mergeHelperRef.current.handleRemote({
         remote,
         getLocal: () => joinBlocks(blocksRef.current),
-        applyMerged: setBlocksFromValue,
+        applyMerged: applyBlocksFromValue,
       });
     };
     actions._syncstring.on("change", change);
     return () => {
       actions._syncstring?.removeListener("change", change);
     };
-  }, [actions, focusedIndex, ignoreRemoteWhileFocused, setBlocksFromValue, updatePendingRemoteIndicator]);
+  }, [actions, focusedIndex, ignoreRemoteWhileFocused, applyBlocksFromValue, updatePendingRemoteIndicator]);
 
   useEffect(() => {
     if (!ignoreRemoteWhileFocused) return;
@@ -1352,6 +1985,16 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         blocksRef.current = next;
         return next;
       });
+      setBlockIds((prev) => {
+        if (prev.length >= blocksRef.current.length) return prev;
+        const next = [...prev];
+        while (next.length < blocksRef.current.length) {
+          next.push(newBlockId());
+        }
+        blockIdsRef.current = next;
+        return next;
+      });
+      syncRemoteVersionLength(blocksRef.current);
       if (is_current) saveBlocksDebounced();
       if (
         ignoreRemoteWhileFocused &&
@@ -1370,6 +2013,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       is_current,
       read_only,
       saveBlocksDebounced,
+      newBlockId,
+      syncRemoteVersionLength,
       updatePendingRemoteIndicator,
     ],
   );
@@ -1385,19 +2030,116 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "center" });
         return;
       }
-      const lastIndex = Math.max(0, editor.children.length - 1);
-      const basePath = position === "start" ? [0] : [lastIndex];
-      const point = pointAtPath(editor, basePath, undefined, position);
-      Transforms.setSelection(editor, { anchor: point, focus: point });
+      const point = blockSelectionPoint(editor, position);
       ReactEditor.focus(editor);
+      Transforms.setSelection(editor, { anchor: point, focus: point });
       setFocusedIndex(targetIndex);
     },
     [],
   );
 
+  const tryApplySelectionAtOffset = useCallback(
+    (index: number, offset: number) => {
+      if (index < 0 || index >= blocksRef.current.length) return false;
+      const editor = editorMapRef.current.get(index);
+      if (!editor) return false;
+      const point = pointFromOffsetInDoc(editor.children as Descendant[], offset);
+      ReactEditor.focus(editor);
+      Transforms.setSelection(editor, { anchor: point, focus: point });
+      setFocusedIndex(index);
+      return true;
+    },
+    [],
+  );
+
+  const setSelectionAtOffset = useCallback(
+    (index: number, offset: number) => {
+      if (index < 0 || index >= blocksRef.current.length) return false;
+      pendingSelectionRef.current = { index, offset };
+      const applied = tryApplySelectionAtOffset(index, offset);
+      if (!applied) {
+        virtuosoRef.current?.scrollToIndex({ index, align: "center" });
+        return false;
+      }
+      return true;
+    },
+    [tryApplySelectionAtOffset],
+  );
+
+
+  useEffect(() => {
+    if (controlRef == null) return;
+    controlRef.current = {
+      ...(controlRef.current ?? {}),
+      allowNextValueUpdateWhileFocused: () => {
+        allowFocusedValueUpdateRef.current = true;
+      },
+      focusBlock: (index: number, position: "start" | "end" = "start") => {
+        focusBlock(index, position);
+      },
+      setSelectionInBlock: (
+        index: number,
+        position: "start" | "end" = "start",
+      ) => {
+        if (index < 0 || index >= blocksRef.current.length) return false;
+        const editor = editorMapRef.current.get(index);
+        if (!editor) {
+          pendingFocusRef.current = { index, position };
+          virtuosoRef.current?.scrollToIndex({
+            index,
+            align: "center",
+          });
+          return false;
+        }
+        const point = blockSelectionPoint(editor, position);
+        ReactEditor.focus(editor);
+        Transforms.setSelection(editor, { anchor: point, focus: point });
+        setFocusedIndex(index);
+        return true;
+      },
+      getSelectionInBlock: () => {
+        const index = focusedIndex;
+        if (index == null) return null;
+        const editor = editorMapRef.current.get(index);
+        if (!editor || !editor.selection) return null;
+        return { index, selection: editor.selection };
+      },
+      getSelectionForBlock: (index: number) => {
+        const editor = editorMapRef.current.get(index);
+        if (!editor || !editor.selection) return null;
+        return { index, selection: editor.selection };
+      },
+      getSelectionOffsetForBlock: (index: number) => {
+        const editor = editorMapRef.current.get(index);
+        if (!editor || !editor.selection) return null;
+        return {
+          offset: editor.selection.anchor.offset,
+          text: Node.string({ children: editor.children } as any),
+        };
+      },
+      getBlocks: () => [...blocksRef.current],
+      setMarkdown: (markdown: string) => {
+        setBlocksFromValue(markdown);
+      },
+      getFocusedIndex: () => focusedIndex,
+    };
+  }, [controlRef, focusBlock, focusedIndex, setBlocksFromValue]);
+
   const registerEditor = useCallback(
     (index: number, editor: SlateEditor) => {
       editorMapRef.current.set(index, editor);
+      const pendingSelection = pendingSelectionRef.current;
+      if (pendingSelection?.index === index) {
+        pendingSelectionRef.current = null;
+        const point = pointFromOffsetInDoc(
+          editor.children as Descendant[],
+          pendingSelection.offset,
+        );
+        ReactEditor.focus(editor);
+        Transforms.setSelection(editor, { anchor: point, focus: point });
+        setFocusedIndex(index);
+        return;
+      }
       const pending = pendingFocusRef.current;
       if (pending?.index === index) {
         pendingFocusRef.current = null;
@@ -1429,6 +2171,13 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         blocksRef.current = next;
         return next;
       });
+      setBlockIds((prev) => {
+        const next = [...prev];
+        next.splice(insertIndex, 0, newBlockId());
+        blockIdsRef.current = next;
+        return next;
+      });
+      syncRemoteVersionLength(blocksRef.current);
       if (is_current) saveBlocksDebounced();
       const position: "start" | "end" =
         focusPosition ?? (initialText ? "end" : "start");
@@ -1441,7 +2190,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         align: "center",
       });
     },
-    [is_current, saveBlocksDebounced],
+    [is_current, newBlockId, saveBlocksDebounced, syncRemoteVersionLength],
   );
 
   const setBlockText = useCallback(
@@ -1456,15 +2205,32 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         }
         next[index] = text;
         blocksRef.current = next;
+        bumpRemoteVersionAt(index, next.length);
         return next;
       });
+      setBlockIds((prev) => {
+        if (prev.length >= blocksRef.current.length) return prev;
+        const next = [...prev];
+        while (next.length < blocksRef.current.length) {
+          next.push(newBlockId());
+        }
+        blockIdsRef.current = next;
+        return next;
+      });
+      syncRemoteVersionLength(blocksRef.current);
       if (is_current) saveBlocksDebounced();
     },
-    [is_current, saveBlocksDebounced],
+    [
+      bumpRemoteVersionAt,
+      is_current,
+      newBlockId,
+      saveBlocksDebounced,
+      syncRemoteVersionLength,
+    ],
   );
 
   const deleteBlockAtIndex = useCallback(
-    (index: number) => {
+    (index: number, opts?: { focus?: boolean }) => {
       if (index < 0 || index >= blocksRef.current.length) return;
       if (blocksRef.current.length === 1) return;
       lastLocalEditAtRef.current = Date.now();
@@ -1475,12 +2241,85 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         blocksRef.current = next;
         return next;
       });
+      setBlockIds((prev) => {
+        const next = [...prev];
+        next.splice(index, 1);
+        blockIdsRef.current = next;
+        return next;
+      });
+      syncRemoteVersionLength(blocksRef.current);
       if (is_current) saveBlocksDebounced();
+      if (opts?.focus === false) return;
       const targetIndex = Math.max(0, index - 1);
       pendingFocusRef.current = { index: targetIndex, position: "end" };
       virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "center" });
     },
-    [is_current, saveBlocksDebounced, setGapCursorState],
+    [
+      is_current,
+      saveBlocksDebounced,
+      setGapCursorState,
+      syncRemoteVersionLength,
+    ],
+  );
+
+  const mergeWithPreviousBlock = useCallback(
+    (index: number) => {
+      if (index <= 0) return;
+      const prevEditor = editorMapRef.current.get(index - 1);
+      const currEditor = editorMapRef.current.get(index);
+      if (!prevEditor || !currEditor) return;
+
+      lastLocalEditAtRef.current = Date.now();
+      setGapCursorState(null);
+
+      const insertIndex = prevEditor.children.length;
+      const insertPath: Path = [insertIndex];
+      const mergeOffset = (blocksRef.current[index - 1] ?? "").length;
+      const boundaryPoint = (() => {
+        const texts = Array.from(Node.texts(prevEditor));
+        for (let i = texts.length - 1; i >= 0; i -= 1) {
+          const [node, path] = texts[i];
+          if (node.text.length > 0) {
+            return { path, offset: node.text.length };
+          }
+        }
+        return Editor.end(prevEditor, Path.previous(insertPath));
+      })();
+      const boundaryRef = Editor.pointRef(prevEditor, boundaryPoint, {
+        affinity: "backward",
+      });
+      pendingSelectionRef.current = { index: index - 1, offset: mergeOffset };
+      const inserted = currEditor.children.map((node) =>
+        JSON.parse(JSON.stringify(node)),
+      );
+      try {
+        Transforms.setSelection(prevEditor, {
+          anchor: boundaryPoint,
+          focus: boundaryPoint,
+        });
+        Transforms.insertFragment(prevEditor, inserted);
+        const point = boundaryRef.current;
+        if (point) {
+          Transforms.setSelection(prevEditor, { anchor: point, focus: point });
+        }
+        ReactEditor.focus(prevEditor);
+        setFocusedIndex(index - 1);
+      } catch {
+        // If we cannot merge, leave selection unchanged.
+      } finally {
+        boundaryRef.unref();
+      }
+
+      deleteBlockAtIndex(index, { focus: false });
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          setSelectionAtOffset(index - 1, mergeOffset);
+        }, 0);
+      } else {
+        setSelectionAtOffset(index - 1, mergeOffset);
+      }
+    },
+    [deleteBlockAtIndex, setGapCursorState, setSelectionAtOffset],
   );
 
   const selectionRange = useMemo(() => {
@@ -1493,6 +2332,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   useEffect(() => {
     blockSelectionRef.current = blockSelection;
   }, [blockSelection]);
+
+  const clearBlockSelection = useCallback(() => {
+    if (!blockSelectionRef.current) return;
+    blockSelectionRef.current = null;
+    setBlockSelection(null);
+  }, []);
 
   const handleSelectBlock = useCallback(
     (index: number, opts: { shiftKey: boolean }) => {
@@ -1638,6 +2483,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
 
   const renderBlock = (index: number) => {
     const markdown = blocks[index] ?? "";
+    const remoteVersion = remoteVersionRef.current[index] ?? 0;
     const isSelected =
       selectionRange != null &&
       index >= selectionRange.start &&
@@ -1646,6 +2492,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       <BlockRowEditor
         index={index}
         markdown={markdown}
+        remoteVersion={remoteVersion}
+        isFocused={focusedIndex === index}
+        clearBlockSelection={clearBlockSelection}
+        onMergeWithPrevious={mergeWithPreviousBlock}
+        lastLocalEditAtRef={lastLocalEditAtRef}
+        lastRemoteMergeAtRef={lastRemoteMergeAtRef}
         onChangeMarkdown={handleBlockChange}
         onDeleteBlock={deleteBlockAtIndex}
         onFocus={() => {
@@ -1669,6 +2521,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         setGapCursor={setGapCursorState}
         gapCursorRef={gapCursorRef}
         pendingGapInsertRef={pendingGapInsertRef}
+        pendingSelectionRef={pendingSelectionRef}
         skipSelectionResetRef={skipSelectionResetRef}
         onNavigate={focusBlock}
         onInsertGap={insertBlockAtGap}
@@ -1679,6 +2532,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         unregisterEditor={unregisterEditor}
         getFullMarkdown={getFullMarkdown}
         codeBlockExpandState={codeBlockExpandStateRef.current}
+        blockCount={blocks.length}
         selected={isSelected}
         gutterWidth={gutterWidth}
         leafComponent={leafComponentResolved}
@@ -1708,8 +2562,44 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         handleSelectBlock(index, { shiftKey: true });
       }}
       onKeyDownCapture={(event) => {
+        if (focusedIndex != null) {
+          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+            const editor = editorMapRef.current.get(focusedIndex);
+            if (editor && editor.selection && Range.isCollapsed(editor.selection)) {
+              const root = { children: editor.children } as Node;
+              const normalized = normalizePointForDoc(
+                root,
+                editor.selection.anchor,
+                event.key === "ArrowLeft" ? "start" : "end",
+              );
+              if (!normalized) return;
+              const atEdge =
+                event.key === "ArrowLeft"
+                  ? Editor.isStart(editor, normalized, [])
+                  : Editor.isEnd(editor, normalized, []);
+              if (event.key === "ArrowLeft") {
+                if (atEdge && focusedIndex > 0) {
+                  focusBlock(focusedIndex - 1, "end");
+                  event.preventDefault();
+                  event.stopPropagation();
+                  return;
+                }
+              } else if (atEdge && focusedIndex < blocksRef.current.length - 1) {
+                focusBlock(focusedIndex + 1, "start");
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+              }
+            }
+          }
+        }
         if (!selectionRange) return;
         if (event.defaultPrevented) return;
+        if (focusedIndex != null) return;
+        if (typeof document !== "undefined") {
+          const active = document.activeElement;
+          if (containerRef.current && active !== containerRef.current) return;
+        }
         const key = event.key.toLowerCase();
         const isMod = event.metaKey || event.ctrlKey;
         const isMoveCombo = IS_MACOS
@@ -1826,12 +2716,23 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
           height,
         }}
       >
-        <Virtuoso
-          className="smc-vfill"
-          totalCount={blocks.length}
-          itemContent={(index) => renderBlock(index)}
-          ref={virtuosoRef}
-        />
+        {disableVirtualization ? (
+          <div>
+            {blocks.map((_, index) => (
+              <React.Fragment key={blockIds[index] ?? index}>
+                {renderBlock(index)}
+              </React.Fragment>
+            ))}
+          </div>
+        ) : (
+          <Virtuoso
+            className="smc-vfill"
+            totalCount={blocks.length}
+            itemContent={(index) => renderBlock(index)}
+            computeItemKey={(index) => blockIds[index] ?? index}
+            ref={virtuosoRef}
+          />
+        )}
       </div>
     </div>
   );

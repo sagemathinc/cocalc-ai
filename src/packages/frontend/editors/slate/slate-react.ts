@@ -11,6 +11,7 @@ import {
   useReadOnly,
   useSelected,
   useSlate,
+  useSlateSelection as upstreamUseSlateSelection,
   ReactEditor as UpstreamReactEditor,
   withReact as upstreamWithReact,
 } from "slate-react";
@@ -147,6 +148,8 @@ export const ReactEditor = Object.assign(UpstreamReactEditor, {
     editor.forceUpdate?.();
   },
 });
+
+export const useSlateSelection = upstreamUseSlateSelection;
 
 export const withReact = <T extends BaseEditor>(editor: T): T & ReactEditor => {
   const e = upstreamWithReact(editor) as T & UpstreamReactEditor;

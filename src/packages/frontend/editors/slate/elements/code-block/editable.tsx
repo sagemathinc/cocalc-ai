@@ -13,11 +13,10 @@ import {
   useState,
 } from "react";
 import { register, RenderElementProps } from "../register";
-import { useSlate } from "../hooks";
+import { useFocused, useSelected, useSlate } from "../hooks";
 import { useSetElement } from "../set-element";
 import infoToMode from "./info-to-mode";
 import ActionButtons, { RunFunction } from "./action-buttons";
-import { useChange } from "../../use-change";
 import { getHistory } from "./history";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { isEqual } from "lodash";
@@ -25,12 +24,13 @@ import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { ReactEditor } from "../../slate-react";
-import { useFocused } from "../hooks";
 import { hash_string } from "@cocalc/util/misc";
-import { Editor, Path, Transforms } from "slate";
+import { Editor, Transforms } from "slate";
 import { markdown_to_slate } from "../../markdown-to-slate";
 import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
+import { CodeBlockBody, CodeLineElement } from "./code-like";
+import { guessPopularLanguage } from "@cocalc/frontend/misc/detect-language";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -180,17 +180,36 @@ function FloatingActionMenu({
   );
 }
 
-function Element({ attributes, children, element }: RenderElementProps) {
+function shouldPreferRichText(text: string): boolean {
+  if (!text) return false;
+  const markdownHints = [
+    /^#{1,6}\s/m,
+    /^>\s/m,
+    /^(\s*[-*+]|\s*\d+\.)\s/m,
+    /```/,
+    /\[[^\]]+\]\([^)]+\)/,
+    /!\[[^\]]*\]\([^)]+\)/,
+    /(^|\s)`[^`]+`/m,
+    /\*\*[^*]+\*\*/,
+    /(^|\s)_[^_]+_/m,
+    /\|\s*[^|]+\s*\|/,
+  ];
+  const codeHints = [
+    /;\s*$/m,
+    /[{}]/,
+    /=>|::|->|<-|\+=|-=|\*=|\/=|==|!=|<=|>=/,
+    /^\s*(def|class|function|import|from|#include|using|public|private|static)\b/m,
+    /^\s*[A-Za-z_][\w]*\s*=\s*.+/m,
+    /^\s*(if|for|while|switch|case|return)\b/m,
+  ];
+  const hasMarkdown = markdownHints.some((re) => re.test(text));
+  const hasCode = codeHints.some((re) => re.test(text));
+  return hasMarkdown && !hasCode;
+}
+
+export function CodeLikeEditor({ attributes, children, element }: RenderElementProps) {
   if (element.type === "code_line") {
-    return (
-      <div
-        {...attributes}
-        className="cocalc-slate-code-line"
-        style={{ position: "relative" }}
-      >
-        {children}
-      </div>
-    );
+    return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
   }
   if (element.type != "code_block") {
     throw Error("bug");
@@ -205,7 +224,6 @@ function Element({ attributes, children, element }: RenderElementProps) {
   const runRef = useRef<RunFunction | null>(null);
   const setElement = useSetElement(editor, element);
   // textIndent: 0 is needed due to task lists -- see https://github.com/sagemathinc/cocalc/issues/6074
-  const { change } = useChange();
   const [history, setHistory] = useState<string[]>(
     getHistory(editor, element) ?? [],
   );
@@ -240,20 +258,23 @@ function Element({ attributes, children, element }: RenderElementProps) {
       // upstream change
       setInfo(element.info);
     }
-  }, [change, element]);
+  }, [editor, element, history, info]);
 
   const lineCount = getCodeBlockLineCount(element as CodeBlock);
   const modeLabel = infoToMode(info, { value: codeValue }) || "plain text";
   const shouldCollapse = false;
-  const selection = editor.selection;
-  const selectionInBlock =
-    !!focused &&
-    !!selection &&
-    Path.isAncestor(elementPath, selection.anchor.path) &&
-    Path.isAncestor(elementPath, selection.focus.path);
+  const selected = useSelected();
+  const selectionInBlock = !!focused && !!selected;
   const forceExpanded = selectionInBlock;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
   const markdownCandidate = (element as any).markdownCandidate;
+  const preferRichText =
+    !!markdownCandidate && shouldPreferRichText(codeValue ?? "");
+  const popularGuess = markdownCandidate
+    ? guessPopularLanguage(codeValue ?? "")
+    : null;
+  const showPopularGuess =
+    !!popularGuess && popularGuess.score >= 4;
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -298,49 +319,6 @@ function Element({ attributes, children, element }: RenderElementProps) {
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1 }}>
           <div style={{ position: "relative" }}>
-            {markdownCandidate && (
-              <div
-                contentEditable={false}
-                style={{
-                  position: "absolute",
-                  top: 6,
-                  left: 6,
-                  zIndex: 2,
-                  display: "flex",
-                  gap: "6px",
-                  background: "rgba(255, 255, 255, 0.9)",
-                  border: "1px solid #ddd",
-                  borderRadius: "6px",
-                  padding: "2px 6px",
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <Button
-                  size="small"
-                  type="text"
-                  style={{ color: "#666" }}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    convertMarkdownCandidate();
-                  }}
-                >
-                  Convert to rich text
-                </Button>
-                <Button
-                  size="small"
-                  type="text"
-                  style={{ color: "#666" }}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    dismissMarkdownCandidate();
-                  }}
-                >
-                  Dismiss
-                </Button>
-              </div>
-            )}
             {!disableMarkdownCodebar && (
               <div contentEditable={false}>
                 <FloatingActionMenu
@@ -414,7 +392,59 @@ function Element({ attributes, children, element }: RenderElementProps) {
                   .join("\n")}
               </pre>
             ) : (
-              <div className="cocalc-slate-code-block">{children}</div>
+              <CodeBlockBody>{children}</CodeBlockBody>
+            )}
+            {markdownCandidate && (
+              <div
+                contentEditable={false}
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-start",
+                  gap: "8px",
+                  marginTop: 6,
+                  marginBottom: 6,
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <Button
+                  size="small"
+                  type={preferRichText ? "primary" : "default"}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    convertMarkdownCandidate();
+                  }}
+                >
+                  Markdown
+                </Button>
+                <Button
+                  size="small"
+                  type={preferRichText ? "default" : "primary"}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dismissMarkdownCandidate();
+                  }}
+                >
+                  Code Block
+                </Button>
+                {showPopularGuess && popularGuess && (
+                  <Button
+                    size="small"
+                    type="default"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const info = popularGuess.mode;
+                      setInfo(info);
+                      setElement({ info } as any);
+                      dismissMarkdownCandidate();
+                    }}
+                  >
+                    {popularGuess.label}
+                  </Button>
+                )}
+              </div>
             )}
             {!disableMarkdownCodebar && output != null && (
               <div
@@ -475,7 +505,7 @@ function fromSlate({ node }) {
 register({
   slateType: "code_block",
   fromSlate,
-  Element,
+  Element: CodeLikeEditor,
   rules: {
     autoFocus: true,
     autoAdvance: true,
@@ -484,5 +514,5 @@ register({
 
 register({
   slateType: "code_line",
-  Element,
+  Element: CodeLikeEditor,
 });

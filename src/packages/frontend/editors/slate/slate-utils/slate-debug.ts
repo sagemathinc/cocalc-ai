@@ -105,13 +105,21 @@ export function getSlateDebug(): SlateDebug | null {
   return debug;
 }
 
+export function ensureSlateDebug(): SlateDebug | null {
+  return getSlateDebug();
+}
+
 export function logSlateDebug(
   type: string,
   data?: Record<string, unknown>,
 ): void {
   const debug = getSlateDebug();
   if (!debug) return;
-  debug.push(type, data);
+  const event = debug.push(type, data);
+  if ((window as any).__slateDebugLog) {
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify(event));
+  }
 }
 
 export function withSelectionReason<T>(

@@ -84,49 +84,17 @@ export default function ChatInput({
   const pendingRemoteInputRef = useRef<string | null>(null);
   const pendingRemoteAtRef = useRef<number>(0);
   const lastLocalEditAtRef = useRef<number>(0);
+  const allowFocusedUpdateRef = useRef<boolean>(false);
 
-  const getDraftInput = useCallback(() => {
+  const getDraftRecord = useCallback(() => {
     const rec = syncdb?.get_one({
       event: "draft",
       sender_id,
       date,
     });
     if (rec == null) return undefined;
-    return (rec as any).input;
+    return rec as any;
   }, [syncdb, sender_id, date]);
-
-  useEffect(() => {
-    const dbInput = getDraftInput();
-    // take version from syncdb if it is there; otherwise, version from input prop.
-    // the db version is used when you refresh your browser while editing, or scroll up and down
-    // thus unmounting and remounting the currently editing message (due to virtualization).
-    // See https://github.com/sagemathinc/cocalc/issues/6415
-    const input = (dbInput ?? propsInput) ?? "";
-    const current = currentInputRef.current ?? "";
-    const focused = isFocusedRef.current;
-    const shouldPrefill =
-      current.trim().length === 0 && input.trim().length > 0;
-    const shouldClear = input === "" && current !== "";
-    if (focused && input !== current && !shouldPrefill && !shouldClear) {
-      pendingRemoteInputRef.current = input;
-      pendingRemoteAtRef.current = Date.now();
-      return;
-    }
-    if (focused && input !== current) {
-      controlRef.current?.allowNextValueUpdateWhileFocused?.();
-    }
-    setInput(input);
-    currentInputRef.current = input;
-    lastSavedRef.current = input;
-    if (input?.trim() && moveCursorToEndOfLine) {
-      // have to wait until it's all rendered -- i hate code like this...
-      for (const n of [1, 10, 50]) {
-        setTimeout(() => {
-          controlRef.current?.moveCursorToEndOfLine();
-        }, n);
-      }
-    }
-  }, [date, sender_id, propsInput, getDraftInput]);
 
   const currentInputRef = useRef<string>(input);
   const saveOnUnmountRef = useRef<boolean>(true);
@@ -146,7 +114,7 @@ export default function ChatInput({
       // but definitely don't save (thus updating active) if
       // the input didn't really change, since we use active for
       // showing that a user is writing to other users.
-      const input0 = getDraftInput();
+      const input0 = getDraftRecord()?.input;
       if (input0 != input) {
         if (input0 == null && !input) {
           // DO NOT save if you haven't written a draft before, and
@@ -172,6 +140,55 @@ export default function ChatInput({
       trailing: true,
     },
   );
+
+  useEffect(() => {
+    const draft = getDraftRecord();
+    const dbInput = draft?.input;
+    const remoteActive = Number(draft?.active ?? 0);
+    // take version from syncdb if it is there; otherwise, version from input prop.
+    // the db version is used when you refresh your browser while editing, or scroll up and down
+    // thus unmounting and remounting the currently editing message (due to virtualization).
+    // See https://github.com/sagemathinc/cocalc/issues/6415
+    const input = (dbInput ?? propsInput) ?? "";
+    const current = currentInputRef.current ?? "";
+    const isClearing = input === "" && current !== "";
+    if (isClearing) {
+      saveChat.cancel();
+      pendingRemoteInputRef.current = null;
+      pendingRemoteAtRef.current = 0;
+    }
+    const focused = isFocusedRef.current;
+    const shouldPrefill =
+      current.trim().length === 0 && input.trim().length > 0;
+    const shouldClear = input === "" && current !== "";
+    if (focused && input !== current && !shouldPrefill && !shouldClear) {
+      if (allowFocusedUpdateRef.current) {
+        allowFocusedUpdateRef.current = false;
+        controlRef.current?.allowNextValueUpdateWhileFocused?.();
+      } else {
+        if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
+          return;
+        }
+        pendingRemoteInputRef.current = input;
+        pendingRemoteAtRef.current = remoteActive || Date.now();
+        return;
+      }
+    }
+    if (focused && input !== current) {
+      controlRef.current?.allowNextValueUpdateWhileFocused?.();
+    }
+    setInput(input);
+    currentInputRef.current = input;
+    lastSavedRef.current = input;
+    if (input?.trim() && moveCursorToEndOfLine) {
+      // have to wait until it's all rendered -- i hate code like this...
+      for (const n of [1, 10, 50]) {
+        setTimeout(() => {
+          controlRef.current?.moveCursorToEndOfLine();
+        }, n);
+      }
+    }
+  }, [date, sender_id, propsInput, getDraftRecord, saveChat]);
 
   useEffect(() => {
     return () => {
@@ -221,11 +238,20 @@ export default function ChatInput({
         date,
       });
       const input = (x as any)?.input ?? "";
+      const remoteActive = Number((x as any)?.active ?? 0);
       if (isFocusedRef.current && input !== currentInputRef.current) {
-        // Defer draft updates while focused to avoid overwriting local typing.
-        pendingRemoteInputRef.current = input;
-        pendingRemoteAtRef.current = Date.now();
-        return;
+        if (allowFocusedUpdateRef.current) {
+          allowFocusedUpdateRef.current = false;
+          controlRef.current?.allowNextValueUpdateWhileFocused?.();
+        } else {
+          if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
+            return;
+          }
+          // Defer draft updates while focused to avoid overwriting local typing.
+          pendingRemoteInputRef.current = input;
+          pendingRemoteAtRef.current = remoteActive || Date.now();
+          return;
+        }
       }
       if (input != lastSavedRef.current) {
         setInput(input);
@@ -298,6 +324,7 @@ export default function ChatInput({
         saveChat(input);
       }}
       onShiftEnter={(input) => {
+        saveChat.cancel();
         controlRef.current?.allowNextValueUpdateWhileFocused?.();
         setInput("");
         currentInputRef.current = "";
@@ -313,10 +340,12 @@ export default function ChatInput({
       style={style}
       onUndo={() => {
         saveChat.cancel();
+        allowFocusedUpdateRef.current = true;
         syncdb?.undo();
       }}
       onRedo={() => {
         saveChat.cancel();
+        allowFocusedUpdateRef.current = true;
         syncdb?.redo();
       }}
       editBarStyle={editBarStyle}

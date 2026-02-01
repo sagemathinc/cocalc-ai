@@ -18,7 +18,6 @@ import {
 import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { Icon } from "@cocalc/frontend/components";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
-import "@cocalc/frontend/editors/slate/elements/math/math-widget";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";

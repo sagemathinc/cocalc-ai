@@ -4,6 +4,14 @@
  */
 
 import { Range, Editor, Element, Path, Point, Text, Transforms } from "slate";
+import { isWhitespaceParagraph } from "../padding";
+
+const BACKWARD_DELETE_BLOCK_TYPES = new Set<string>([
+  "code_block",
+  "html_block",
+  "meta",
+  "math_block",
+]);
 
 export const withDeleteBackward = (editor) => {
   const { deleteBackward } = editor;
@@ -52,7 +60,31 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   const start = Editor.start(editor, path);
   if (!Point.equals(selection.anchor, start)) return;
 
+  if (block.type === "paragraph" && block["spacer"] === true) {
+    if (path[path.length - 1] > 0) {
+      const prevPath = Path.previous(path);
+      const prevNode = Editor.node(editor, prevPath)[0] as any;
+      if (Element.isElement(prevNode) && BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)) {
+        Transforms.removeNodes(editor, { at: prevPath });
+        // After removing the previous block, the spacer shifts to prevPath.
+        const targetPath = prevPath;
+        Transforms.setNodes(editor, { spacer: false } as any, { at: targetPath });
+        const start = Editor.start(editor, targetPath);
+        Transforms.select(editor, start);
+        return true;
+      }
+    }
+  }
+
   if (block.type === "paragraph") {
+    if (path[path.length - 1] > 0 && isWhitespaceParagraph(block)) {
+      const prevPath = Path.previous(path);
+      const prevNode = Editor.node(editor, prevPath)[0] as any;
+      if (Element.isElement(prevNode) && BACKWARD_DELETE_BLOCK_TYPES.has(prevNode.type)) {
+        Transforms.removeNodes(editor, { at: prevPath });
+        return true;
+      }
+    }
     if (pullParagraphIntoEmptyBlockquote(editor, path)) {
       return true;
     }
