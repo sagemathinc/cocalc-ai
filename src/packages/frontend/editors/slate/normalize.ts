@@ -35,17 +35,6 @@ type NormalizeFunction = (NormalizeInputs) => void;
 const NORMALIZERS: NormalizeFunction[] = [];
 const SKIP_ON_SELECTION = new WeakSet<NormalizeFunction>();
 
-const normalizeDebugEnabled = () =>
-  typeof window !== "undefined" && (window as any).__slateDebugLog;
-
-const normalizeDisabled = () =>
-  typeof window !== "undefined" && (window as any).__slateDisableNormalize;
-
-const normalizeNow = () =>
-  typeof performance !== "undefined" && typeof performance.now === "function"
-    ? performance.now()
-    : Date.now();
-
 function spacerParagraph(): Element {
   return {
     type: "paragraph",
@@ -58,31 +47,16 @@ export const withNormalize = (editor) => {
   const { normalizeNode } = editor;
 
   editor.normalizeNode = (entry) => {
-    if (normalizeDisabled()) {
-      return;
-    }
     const [node, path] = entry;
     const ops = editor.operations;
     const selectionOnly =
       ops.length > 0 && ops.every((op) => op.type === "set_selection");
-    const debugNormalize = normalizeDebugEnabled();
 
     for (const f of NORMALIZERS) {
       //const before = JSON.stringify(editor.children);
       const before = editor.children;
       if (selectionOnly && SKIP_ON_SELECTION.has(f)) continue;
-      const startedAt = debugNormalize ? normalizeNow() : 0;
       f({ editor, node, path });
-      if (debugNormalize) {
-        const duration = normalizeNow() - startedAt;
-        if (duration > 1) {
-          // eslint-disable-next-line no-console
-          console.log(
-            `[slate-normalize] ${f.name || "anon"} ${duration.toFixed(2)}ms`,
-            { path },
-          );
-        }
-      }
       if (before !== editor.children) {
         // changed so return; normalize will get called again by
         // slate until no changes.

@@ -65,21 +65,6 @@ const BLOCK_CHUNK_TARGET_CHARS = 4000;
 const SHOW_BLOCK_BOUNDARIES = true;
 const BLOCK_DEFER_CHARS = 200_000;
 const BLOCK_DEFER_MS = 300;
-const BLOCK_PROFILE_FLAG = "COCALC_SLATE_BLOCK_PROFILE";
-
-function blockProfileEnabled(): boolean {
-  if (typeof globalThis === "undefined") return false;
-  return Boolean((globalThis as any)[BLOCK_PROFILE_FLAG]);
-}
-
-function logBlockProfile(
-  label: string,
-  data: Record<string, unknown>,
-): void {
-  if (!blockProfileEnabled()) return;
-  // eslint-disable-next-line no-console
-  console.log(`[slate-block] ${label}`, data);
-}
 
 function getBlockChunkTargetChars(): number {
   if (typeof globalThis === "undefined") return BLOCK_CHUNK_TARGET_CHARS;
@@ -297,23 +282,12 @@ export function shouldUseBlockEditor({
 
 function splitMarkdownToBlocks(markdown: string): string[] {
   if (!markdown) return [""];
-  const start = typeof performance !== "undefined" ? performance.now() : 0;
-  const profile = blockProfileEnabled();
   const cache: { [node: string]: string } = {};
-  const parseStart = typeof performance !== "undefined" ? performance.now() : 0;
   const doc = markdown_to_slate(markdown, false, cache);
-  const parseEnd = typeof performance !== "undefined" ? performance.now() : 0;
   const filtered = doc.filter(
     (node) => !(node?.["type"] === "paragraph" && node?.["blank"] === true),
   );
   if (filtered.length === 0) return [""];
-  const codeBlocks = filtered.reduce(
-    (count, node) =>
-      SlateElement.isElement(node) && node.type === "code_block"
-        ? count + 1
-        : count,
-    0,
-  );
   const nodeMarkdown = filtered.map((node) => {
     if (SlateElement.isElement(node) && node.type === "code_block") {
       const info = (node as any).info ? String((node as any).info).trim() : "";
@@ -353,16 +327,6 @@ function splitMarkdownToBlocks(markdown: string): string[] {
   }
   flush();
   const result = chunks.length > 0 ? chunks : [""];
-  if (profile) {
-    const end = typeof performance !== "undefined" ? performance.now() : 0;
-    logBlockProfile("split full ms", {
-      ms: Math.round(end - start),
-      parseMs: Math.round(parseEnd - parseStart),
-      blocks: result.length,
-      chars: markdown.length,
-      codeBlocks,
-    });
-  }
   return result;
 }
 
@@ -460,7 +424,6 @@ function splitMarkdownToBlocksIncremental(
   nextMarkdown: string,
   prevBlocks: string[],
 ): string[] {
-  const start = typeof performance !== "undefined" ? performance.now() : 0;
   if (!prevMarkdown) return splitMarkdownToBlocks(nextMarkdown);
   if (prevBlocks.length === 0) return splitMarkdownToBlocks(nextMarkdown);
   if (prevMarkdown === nextMarkdown) return prevBlocks;
@@ -470,27 +433,12 @@ function splitMarkdownToBlocksIncremental(
     prevBlocks,
   );
   if (!slices) {
-    logBlockProfile("split incremental fallback", {
-      chars: nextMarkdown.length,
-      prevChars: prevMarkdown.length,
-    });
     return splitMarkdownToBlocks(nextMarkdown);
   }
   const { prefixBlocks, suffixBlocks, middleText } = slices;
   const middleBlocks =
     middleText.length > 0 ? splitMarkdownToBlocks(middleText) : [];
   const nextBlocks = [...prefixBlocks, ...middleBlocks, ...suffixBlocks];
-  if (blockProfileEnabled()) {
-    const end = typeof performance !== "undefined" ? performance.now() : 0;
-    logBlockProfile("split incremental", {
-      ms: Math.round(end - start),
-      prefixBlocks: prefixBlocks.length,
-      middleBlocks: middleBlocks.length,
-      suffixBlocks: suffixBlocks.length,
-      middleChars: middleText.length,
-      totalChars: nextMarkdown.length,
-    });
-  }
   return nextBlocks.length > 0 ? nextBlocks : [""];
 }
 
@@ -818,47 +766,15 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const handleChange = useCallback(
       (newValue: Descendant[]) => {
         if (read_only) return;
-        const perfEnabled =
-          typeof window !== "undefined" && (window as any).__slateDebugLog;
-        const perfStart =
-          perfEnabled && typeof performance !== "undefined"
-            ? performance.now()
-            : 0;
         setValue(newValue);
         setChange((prev) => prev + 1);
         clearBlockSelection?.();
-        const mdStart =
-          perfEnabled && typeof performance !== "undefined"
-            ? performance.now()
-            : 0;
         const nextMarkdown = normalizeBlockMarkdown(
           slate_to_markdown(newValue, {
             cache: syncCacheRef.current,
             preserveBlankLines,
           }),
         );
-        if (perfEnabled) {
-          const mdEnd =
-            typeof performance !== "undefined" ? performance.now() : 0;
-          let codeBlocks = 0;
-          for (const node of newValue) {
-            if (SlateElement.isElement(node) && node.type === "code_block") {
-              codeBlocks += 1;
-            }
-          }
-          const totalMs =
-            typeof performance !== "undefined" ? mdEnd - perfStart : 0;
-          const mdMs = mdEnd - mdStart;
-          // eslint-disable-next-line no-console
-          console.log("[slate-block] onChange perf", {
-            index,
-            mdMs: Number(mdMs.toFixed(2)),
-            totalMs: Number(totalMs.toFixed(2)),
-            topLevel: newValue.length,
-            codeBlocks,
-            markdownChars: nextMarkdown.length,
-          });
-        }
         lastMarkdownRef.current = nextMarkdown;
         onChangeMarkdown(index, nextMarkdown);
       },
@@ -1848,7 +1764,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     if (markdown === valueRef.current && blocksRef.current.length > 0) {
       return;
     }
-    const start = typeof performance !== "undefined" ? performance.now() : 0;
     const prevMarkdown = valueRef.current ?? "";
     const prevBlocks = blocksRef.current;
     valueRef.current = markdown;
@@ -1860,14 +1775,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     blocksRef.current = nextBlocks;
     setBlocks(nextBlocks);
     updateBlockIdsForRemote(nextBlocks);
-    if (blockProfileEnabled()) {
-      const end = typeof performance !== "undefined" ? performance.now() : 0;
-      logBlockProfile("split+apply ms", {
-        ms: Math.round(end - start),
-        blocks: nextBlocks.length,
-        chars: markdown.length,
-      });
-    }
   }, [bumpRemoteVersions, updateBlockIdsForRemote]);
 
   const pendingValueRef = useRef<string | null>(null);

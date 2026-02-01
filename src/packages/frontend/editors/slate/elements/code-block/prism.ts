@@ -336,10 +336,6 @@ export function buildCodeBlockDecorations(
   if (!grammar) return [];
   const cacheKey = `${lang}\u0000${text}`;
   const cached = getCachedNormalizedTokens(cacheKey);
-  if (!cached && typeof window !== "undefined" && (window as any).__slateDebugLog) {
-    // eslint-disable-next-line no-console
-    console.log("[slate-code] cache miss", { lang, chars: text.length });
-  }
   const normalizedTokens =
     cached ??
     (() => {
