@@ -46,6 +46,7 @@ import { SimpleInputMerge } from "../../../sync/editor/generic/simple-input-merg
 import { ChangeContext } from "./use-change";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import type { SearchHook } from "./search";
+import { useSearch } from "./search";
 import { isAtBeginningOfBlock, isAtEndOfBlock } from "./control";
 import { pointAtPath } from "./slate-util";
 import type { SlateEditor } from "./types";
@@ -66,6 +67,7 @@ import {
   getPrismGrammar,
 } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
+import { EditBar, useLinkURL, useListProperties, useMarks } from "./edit-bar";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
@@ -168,6 +170,50 @@ const EMPTY_SEARCH: SearchHook = {
   previous: () => undefined,
   next: () => undefined,
   focus: () => undefined,
+};
+
+const BLOCK_EDIT_BAR_HEIGHT = 25;
+
+const BlockEditBar: React.FC<{
+  editor: SlateEditor | null;
+  isCurrent: boolean;
+  updateSignal: number;
+  hideSearch?: boolean;
+}> = ({ editor, isCurrent, updateSignal, hideSearch }) => {
+  if (!editor) {
+    return (
+      <div
+        style={{
+          borderBottom: isCurrent
+            ? "1px solid lightgray"
+            : "1px solid transparent",
+          height: BLOCK_EDIT_BAR_HEIGHT,
+        }}
+      />
+    );
+  }
+  const search = useSearch({ editor });
+  const { marks, updateMarks } = useMarks(editor);
+  const { linkURL, updateLinkURL } = useLinkURL(editor);
+  const { listProperties, updateListProperties } = useListProperties(editor);
+
+  useEffect(() => {
+    updateMarks();
+    updateLinkURL();
+    updateListProperties();
+  }, [updateSignal, updateMarks, updateLinkURL, updateListProperties]);
+
+  return (
+    <EditBar
+      Search={search?.Search ?? EMPTY_SEARCH.Search}
+      isCurrent={isCurrent}
+      marks={marks}
+      linkURL={linkURL}
+      listProperties={listProperties}
+      editor={editor}
+      hideSearch={hideSearch}
+    />
+  );
 };
 
 function stripTrailingNewlines(markdown: string): string {
@@ -550,6 +596,7 @@ interface BlockRowEditorProps {
   saveNow?: () => void;
   registerEditor: (index: number, editor: SlateEditor) => void;
   unregisterEditor: (index: number, editor: SlateEditor) => void;
+  onEditorChange?: (index: number) => void;
   getFullMarkdown: () => string;
   codeBlockExpandState: Map<string, boolean>;
   blockCount: number;
@@ -596,6 +643,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       saveNow,
       registerEditor,
       unregisterEditor,
+      onEditorChange,
       getFullMarkdown,
       codeBlockExpandState,
       blockCount,
@@ -844,6 +892,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const handleChange = useCallback(
       (newValue: Descendant[]) => {
         if (read_only) return;
+        onEditorChange?.(index);
         setValue(newValue);
         setChange((prev) => prev + 1);
         clearBlockSelection?.();
@@ -1722,6 +1771,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   }, [blockIds]);
 
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const [lastFocusedIndex, setLastFocusedIndex] = useState<number | null>(null);
+  const [activeEditorSignal, setActiveEditorSignal] = useState<number>(0);
   const [blockSelection, setBlockSelection] = useState<{
     anchor: number;
     focus: number;
@@ -2369,6 +2420,21 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     }
   }, []);
 
+  useEffect(() => {
+    if (focusedIndex != null) {
+      setLastFocusedIndex(focusedIndex);
+    }
+    setActiveEditorSignal((prev) => prev + 1);
+  }, [focusedIndex]);
+
+  const handleActiveEditorChange = useCallback(
+    (index: number) => {
+      if (index !== focusedIndex) return;
+      setActiveEditorSignal((prev) => prev + 1);
+    },
+    [focusedIndex],
+  );
+
   const insertBlockAtGap = useCallback(
     (
       gap: { index: number; side: "before" | "after" },
@@ -2698,6 +2764,15 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [flushPendingRemoteMerge],
   );
 
+  const activeEditorIndex =
+    focusedIndex ?? lastFocusedIndex ?? null;
+  const activeEditor =
+    activeEditorIndex != null
+      ? editorMapRef.current.get(activeEditorIndex) ?? null
+      : null;
+  const editBarKey = activeEditorIndex ?? "none";
+  const hideSearch = true;
+
   const renderBlock = (index: number) => {
     const markdown = blocks[index] ?? "";
     const remoteVersion = remoteVersionRef.current[index] ?? 0;
@@ -2719,6 +2794,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         onDeleteBlock={deleteBlockAtIndex}
         onFocus={() => {
           setFocusedIndex(index);
+          setActiveEditorSignal((prev) => prev + 1);
           if (blockSelection) {
             setBlockSelection(null);
           }
@@ -2747,6 +2823,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         saveNow={saveBlocksNow}
         registerEditor={registerEditor}
         unregisterEditor={unregisterEditor}
+        onEditorChange={handleActiveEditorChange}
         getFullMarkdown={getFullMarkdown}
         codeBlockExpandState={codeBlockExpandStateRef.current}
         blockCount={blocks.length}
@@ -2946,6 +3023,13 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         position: "relative",
       }}
     >
+      <BlockEditBar
+        key={editBarKey}
+        editor={activeEditor ?? null}
+        isCurrent={!!is_current}
+        updateSignal={activeEditorSignal}
+        hideSearch={hideSearch}
+      />
       {!hidePath && renderPath}
       {showPendingRemoteIndicator && (
         <div
