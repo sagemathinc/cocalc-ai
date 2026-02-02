@@ -92,6 +92,10 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
           boundaries indicate chunks).
         </li>
         <li>
+          Blank lines are treated as paragraphs in inline editors, but not in
+          the block editor.
+        </li>
+        <li>
           Selection across blocks is block-based (use block selection for moving
           or deleting blocks).
         </li>
