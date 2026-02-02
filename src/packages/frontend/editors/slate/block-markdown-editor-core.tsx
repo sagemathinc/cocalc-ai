@@ -13,20 +13,15 @@ import React, {
   useState,
 } from "react";
 import { useRedux } from "@cocalc/frontend/app-framework";
-import { Descendant, Transforms } from "slate";
+import { Transforms } from "slate";
 import { type VirtuosoHandle } from "react-virtuoso";
 import { ReactEditor } from "./slate-react";
 import type { RenderLeafProps } from "./slate-react";
 import Leaf from "./leaf";
 import { Actions } from "./types";
-import { blockSelectionPoint, pointFromOffsetInDoc } from "./block-selection-utils";
+import { blockSelectionPoint } from "./block-selection-utils";
 import type { SlateEditor } from "./types";
-import {
-  findSlatePointNearMarkdownPosition,
-  indexToPosition,
-  markdownPositionToSlatePoint,
-  nearestMarkdownIndexForSlatePoint,
-} from "./sync";
+import { indexToPosition, nearestMarkdownIndexForSlatePoint } from "./sync";
 import { BlockEditBar } from "./block-edit-bar";
 import { SlateHelpModal } from "./help-modal";
 import { type PendingSelection } from "./block-row-editor";
@@ -38,16 +33,13 @@ import {
 import { useBlockSearch } from "./use-block-search";
 import { useBlockSelection } from "./use-block-selection";
 import { useBlockContainerEvents } from "./use-block-container-events";
+import { useBlockEditorRegistry } from "./use-block-editor-registry";
 import { useBlockEditorControl } from "./use-block-editor-control";
 import { useBlockMultiSelect } from "./use-block-multi-select";
 import { useBlockOps } from "./use-block-ops";
 import { useBlockRowRenderer } from "./use-block-row-renderer";
 import { useBlockSync } from "./use-block-sync";
-import {
-  globalIndexForBlockOffset,
-  joinBlocks,
-  normalizeBlockMarkdown,
-} from "./block-markdown-utils";
+import { globalIndexForBlockOffset, joinBlocks } from "./block-markdown-utils";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
@@ -414,79 +406,18 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     getMarkdownPositionForSelection,
   });
 
-  const registerEditor = useCallback(
-    (index: number, editor: SlateEditor) => {
-      editorMapRef.current.set(index, editor);
-      const pendingSelection = pendingSelectionRef.current;
-      if (pendingSelection?.index === index) {
-        pendingSelectionRef.current = null;
-        if (pendingSelection.mode === "markdown") {
-          const blockMarkdown = normalizeBlockMarkdown(
-            blocksRef.current[index] ?? "",
-          );
-          const pos =
-            pendingSelection.pos ??
-            indexToPosition({ index: 0, markdown: blockMarkdown });
-          const point =
-            (pos &&
-              markdownPositionToSlatePoint({
-                markdown: blockMarkdown,
-                pos,
-                editor,
-              })) ??
-            findSlatePointNearMarkdownPosition({
-              markdown: blockMarkdown,
-              pos,
-              editor,
-            }) ??
-            blockSelectionPoint(editor, "start");
-          if (point) {
-            ReactEditor.focus(editor);
-            Transforms.setSelection(editor, { anchor: point, focus: point });
-            setFocusedIndex(index);
-            return;
-          }
-        } else {
-          const point = pointFromOffsetInDoc(
-            editor.children as Descendant[],
-            pendingSelection.offset,
-          );
-          ReactEditor.focus(editor);
-          Transforms.setSelection(editor, { anchor: point, focus: point });
-          setFocusedIndex(index);
-          return;
-        }
-      }
-      const pending = pendingFocusRef.current;
-      if (pending?.index === index) {
-        pendingFocusRef.current = null;
-        focusBlock(index, pending.position);
-      }
-    },
-    [focusBlock],
-  );
-
-  const unregisterEditor = useCallback((index: number, editor: SlateEditor) => {
-    const current = editorMapRef.current.get(index);
-    if (current === editor) {
-      editorMapRef.current.delete(index);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (focusedIndex != null) {
-      setLastFocusedIndex(focusedIndex);
-    }
-    setActiveEditorSignal((prev) => prev + 1);
-  }, [focusedIndex]);
-
-  const handleActiveEditorChange = useCallback(
-    (index: number) => {
-      if (index !== focusedIndex) return;
-      setActiveEditorSignal((prev) => prev + 1);
-    },
-    [focusedIndex],
-  );
+  const { registerEditor, unregisterEditor, handleActiveEditorChange } =
+    useBlockEditorRegistry({
+      editorMapRef,
+      pendingSelectionRef,
+      pendingFocusRef,
+      blocksRef,
+      focusBlock,
+      setFocusedIndex,
+      focusedIndex,
+      setLastFocusedIndex,
+      setActiveEditorSignal,
+    });
 
   const {
     insertBlockAtGap,
