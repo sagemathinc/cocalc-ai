@@ -84,11 +84,18 @@ function FloatingActionMenu({
           onBlur={() => {
             onInfoBlur();
           }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
+            e.stopPropagation();
             if (e.keyCode == 13 && e.shiftKey) {
               onRun?.();
             }
           }}
+          onKeyUp={(e) => e.stopPropagation()}
+          onKeyPress={(e) => e.stopPropagation()}
+          onBeforeInput={(e) => e.stopPropagation()}
+          onInput={(e) => e.stopPropagation()}
           onChange={(e) => {
             const next = e.target.value;
             setInfo(next);
@@ -325,7 +332,6 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   info={info}
                   setInfo={(info) => {
                     setInfo(info);
-                    setElement({ info });
                   }}
                   showInfoInput={!!element.fence}
                   onInfoFocus={() => {
@@ -335,6 +341,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   onInfoBlur={() => {
                     infoFocusedRef.current = false;
                     editor.setIgnoreSelection(false);
+                    if (element.info != info) {
+                      setElement({ info });
+                    }
                   }}
                   renderActions={() => (
                     <ActionButtons

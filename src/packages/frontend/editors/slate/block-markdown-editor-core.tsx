@@ -14,6 +14,8 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { Button, Input, Popconfirm } from "antd";
+import { useRedux } from "@cocalc/frontend/app-framework";
 import {
   Descendant,
   DecoratedRange,
@@ -66,6 +68,12 @@ import {
   getPrismGrammar,
 } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
+import { EditBar, useLinkURL, useListProperties, useMarks } from "./edit-bar";
+import { SlateHelpModal } from "./help-modal";
+import { Icon } from "@cocalc/frontend/components";
+import { delay } from "awaiting";
+import { createSearchDecorate } from "./search/decorate";
+import { IS_TOUCH } from "@cocalc/frontend/feature";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
@@ -73,6 +81,7 @@ const BLOCK_CHUNK_TARGET_CHARS = 4000;
 const SHOW_BLOCK_BOUNDARIES = true;
 const BLOCK_DEFER_CHARS = 200_000;
 const BLOCK_DEFER_MS = 300;
+const SEARCH_BAR_HEIGHT = 23;
 
 function getBlockChunkTargetChars(): number {
   if (typeof globalThis === "undefined") return BLOCK_CHUNK_TARGET_CHARS;
@@ -158,7 +167,6 @@ function blockSelectionPoint(
   return pointAtPath(editor, fallbackPath, undefined, position);
 }
 
-const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
 const USE_BLOCK_GAP_CURSOR = false;
 const USE_BLOCK_CODE_SPACERS = false;
 const EMPTY_SEARCH: SearchHook = {
@@ -168,6 +176,60 @@ const EMPTY_SEARCH: SearchHook = {
   previous: () => undefined,
   next: () => undefined,
   focus: () => undefined,
+};
+
+const BLOCK_EDIT_BAR_HEIGHT = 25;
+
+const BlockEditBar: React.FC<{
+  editor: SlateEditor | null;
+  isCurrent: boolean;
+  updateSignal: number;
+  hideSearch?: boolean;
+  onHelp?: () => void;
+  searchHook?: SearchHook;
+}> = ({ editor, isCurrent, updateSignal, hideSearch, onHelp, searchHook }) => {
+  if (!editor) {
+    return (
+      <div
+        style={{
+          borderBottom: isCurrent
+            ? "1px solid lightgray"
+            : "1px solid transparent",
+          height: BLOCK_EDIT_BAR_HEIGHT,
+        }}
+      />
+    );
+  }
+  const search = searchHook ?? {
+    decorate: () => [],
+    Search: null as any,
+    search: "",
+    previous: () => undefined,
+    next: () => undefined,
+    focus: () => undefined,
+  };
+  const { marks, updateMarks } = useMarks(editor);
+  const { linkURL, updateLinkURL } = useLinkURL(editor);
+  const { listProperties, updateListProperties } = useListProperties(editor);
+
+  useEffect(() => {
+    updateMarks();
+    updateLinkURL();
+    updateListProperties();
+  }, [updateSignal, updateMarks, updateLinkURL, updateListProperties]);
+
+  return (
+    <EditBar
+      Search={search?.Search ?? EMPTY_SEARCH.Search}
+      isCurrent={isCurrent}
+      marks={marks}
+      linkURL={linkURL}
+      listProperties={listProperties}
+      editor={editor}
+      hideSearch={hideSearch}
+      onHelp={onHelp}
+    />
+  );
 };
 
 function stripTrailingNewlines(markdown: string): string {
@@ -235,6 +297,53 @@ function blockOffsetForGlobalIndex(
   return { index: last, offset: lastBlock.length };
 }
 
+type GlobalSelectionRange = { start: number; end: number };
+
+function findNextMatchIndex(
+  fullMarkdown: string,
+  query: string,
+  selection: GlobalSelectionRange | null,
+  lastMatchIndex: number | null,
+): number | null {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return null;
+  const lower = fullMarkdown.toLowerCase();
+  const length = normalized.length;
+  let from =
+    lastMatchIndex != null ? lastMatchIndex + length : selection?.end ?? 0;
+  if (from < 0) from = 0;
+  let idx = lower.indexOf(normalized, from);
+  if (idx === -1 && from > 0) {
+    idx = lower.indexOf(normalized, 0);
+  }
+  return idx === -1 ? null : idx;
+}
+
+function findPreviousMatchIndex(
+  fullMarkdown: string,
+  query: string,
+  selection: GlobalSelectionRange | null,
+  lastMatchIndex: number | null,
+): number | null {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return null;
+  const lower = fullMarkdown.toLowerCase();
+  let from =
+    lastMatchIndex != null
+      ? lastMatchIndex - 1
+      : selection?.start ?? lower.length;
+  if (from < 0) {
+    const wrapped = lower.lastIndexOf(normalized);
+    return wrapped === -1 ? null : wrapped;
+  }
+  if (from > lower.length) from = lower.length;
+  let idx = lower.lastIndexOf(normalized, from);
+  if (idx === -1 && from < lower.length) {
+    idx = lower.lastIndexOf(normalized);
+  }
+  return idx === -1 ? null : idx;
+}
+
 function isBlankParagraph(node: Descendant | undefined): boolean {
   return (
     node != null &&
@@ -250,6 +359,8 @@ export const __test__ = {
   splitMarkdownToBlocks,
   splitMarkdownToBlocksIncremental,
   computeIncrementalSlices,
+  findNextMatchIndex,
+  findPreviousMatchIndex,
 };
 
 function stripTrailingBlankParagraphs(value: Descendant[]): Descendant[] {
@@ -326,18 +437,6 @@ interface BlockMarkdownEditorProps {
   getValueRef?: MutableRefObject<() => string>;
   disableBlockEditor?: boolean;
   disableVirtualization?: boolean;
-}
-
-export function shouldUseBlockEditor({
-  value,
-  height,
-}: {
-  value?: string;
-  height?: string;
-}): boolean {
-  if (height === "auto") return false;
-  if (value == null) return true;
-  return value.length >= BLOCK_EDITOR_THRESHOLD_CHARS;
 }
 
 function splitMarkdownToBlocks(markdown: string): string[] {
@@ -550,17 +649,26 @@ interface BlockRowEditorProps {
   saveNow?: () => void;
   registerEditor: (index: number, editor: SlateEditor) => void;
   unregisterEditor: (index: number, editor: SlateEditor) => void;
+  onEditorChange?: (index: number) => void;
   getFullMarkdown: () => string;
   codeBlockExpandState: Map<string, boolean>;
   blockCount: number;
   selected?: boolean;
   gutterWidth?: number;
   leafComponent?: React.ComponentType<RenderLeafProps>;
+  searchHook?: SearchHook;
+  searchDecorate?: (entry: [Node, Path]) => DecoratedRange[];
+  searchQuery?: string;
 }
 
 type PendingSelection =
-  | { index: number; offset: number; mode: "text" }
-  | { index: number; pos: { line: number; ch: number }; mode: "markdown" };
+  | { index: number; offset: number; endOffset?: number; mode: "text" }
+  | {
+      index: number;
+      pos: { line: number; ch: number };
+      endPos?: { line: number; ch: number };
+      mode: "markdown";
+    };
 
 const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
   (props: BlockRowEditorProps) => {
@@ -596,12 +704,15 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       saveNow,
       registerEditor,
       unregisterEditor,
+      onEditorChange,
       getFullMarkdown,
       codeBlockExpandState,
       blockCount,
       selected = false,
       gutterWidth = 0,
       leafComponent,
+      searchHook,
+      searchDecorate,
     } = props;
 
     const syncCacheRef = useRef<any>({});
@@ -689,6 +800,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       const pendingSelection = pendingSelectionRef.current;
       if (pendingSelection?.index === index) {
         let point: Point | undefined;
+        let endPoint: Point | undefined;
         if (pendingSelection.mode === "markdown") {
           point =
             markdownPositionToSlatePoint({
@@ -703,11 +815,33 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             }) ??
             blockSelectionPoint(editor, "start") ??
             undefined;
+          if (pendingSelection.endPos) {
+            endPoint =
+              markdownPositionToSlatePoint({
+                markdown,
+                pos: pendingSelection.endPos,
+                editor,
+              }) ??
+              findSlatePointNearMarkdownPosition({
+                markdown,
+                pos: pendingSelection.endPos,
+                editor,
+              }) ??
+              point ??
+              undefined;
+          }
         } else {
           point = pointFromOffsetInDoc(nextValue, pendingSelection.offset);
+          if (pendingSelection.endOffset != null) {
+            endPoint = pointFromOffsetInDoc(
+              nextValue,
+              pendingSelection.endOffset,
+            );
+          }
         }
         if (point) {
-          editor.selection = { anchor: point, focus: point };
+          const focusPoint = endPoint ?? point;
+          editor.selection = { anchor: point, focus: focusPoint };
           ReactEditor.focus(editor);
           onFocus?.();
           pendingSelectionRef.current = null;
@@ -798,13 +932,15 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
 
     const decorate = useCallback(
       ([node, path]): DecoratedRange[] => {
-        if (!Text.isText(node)) return [];
+        const searchRanges =
+          searchDecorate != null ? searchDecorate([node, path]) : [];
+        if (!Text.isText(node)) return searchRanges;
         const lineEntry = Editor.above(editor, {
           at: path,
           match: (n) =>
             SlateElement.isElement(n) && n.type === "code_line",
         });
-        if (!lineEntry) return [];
+        if (!lineEntry) return searchRanges;
         const blockEntry = Editor.above(editor, {
           at: path,
           match: (n) =>
@@ -813,7 +949,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
               n.type === "html_block" ||
               n.type === "meta"),
         });
-        if (!blockEntry) return [];
+        if (!blockEntry) return searchRanges;
         const [block, blockPath] = blockEntry as [SlateElement, number[]];
         const lineIndex = lineEntry[1][lineEntry[1].length - 1];
         const cache = codeBlockCacheRef.current;
@@ -830,20 +966,28 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             cache.set(block, {
               text,
               info,
-              decorations: buildCodeBlockDecorations(block as CodeBlock, blockPath, info),
+              decorations: buildCodeBlockDecorations(
+                block as CodeBlock,
+                blockPath,
+                info,
+              ),
             });
           } else {
             cache.set(block, { text, info, decorations: [] });
           }
         }
-        return cache.get(block)?.decorations?.[lineIndex] ?? [];
+        const codeRanges = cache.get(block)?.decorations?.[lineIndex] ?? [];
+        if (searchRanges.length === 0) return codeRanges;
+        if (codeRanges.length === 0) return searchRanges;
+        return [...searchRanges, ...codeRanges];
       },
-      [editor],
+      [editor, searchDecorate],
     );
 
     const handleChange = useCallback(
       (newValue: Descendant[]) => {
         if (read_only) return;
+        onEditorChange?.(index);
         setValue(newValue);
         setChange((prev) => prev + 1);
         clearBlockSelection?.();
@@ -987,6 +1131,27 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           (event.key === "v" || event.key === "V")
         ) {
           (editor as any).__forcePlainTextPaste = true;
+        }
+        if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+          const key = event.key.toLowerCase();
+          if (key === "f") {
+            event.preventDefault();
+            const selectedText =
+              typeof window !== "undefined"
+                ? window.getSelection()?.toString()
+                : "";
+            searchHook?.focus(selectedText);
+            return;
+          }
+          if (key === "g") {
+            event.preventDefault();
+            if (event.shiftKey) {
+              searchHook?.previous();
+            } else {
+              searchHook?.next();
+            }
+            return;
+          }
         }
         clearBlockSelection?.();
         const isSaveKey =
@@ -1409,7 +1574,11 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           if (
             handler({
               editor,
-              extra: { actions: actions ?? {}, id: id ?? "", search: EMPTY_SEARCH },
+              extra: {
+                actions: actions ?? {},
+                id: id ?? "",
+                search: searchHook ?? EMPTY_SEARCH,
+              },
             })
           ) {
             event.preventDefault();
@@ -1428,6 +1597,7 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         onNavigate,
         onDeleteBlock,
         read_only,
+        searchHook,
         saveNow,
         setGapCursor,
         gapCursorRef,
@@ -1644,7 +1814,8 @@ const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
       prev.markdown === next.markdown &&
       prev.read_only === next.read_only &&
       prevGap === nextGap &&
-      prev.selected === next.selected
+      prev.selected === next.selected &&
+      prev.searchQuery === next.searchQuery
     );
   },
 );
@@ -1677,6 +1848,9 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const internalControlRef = useRef<any>(null);
   const blockControlRef = controlRef ?? internalControlRef;
   const actions = actions0 ?? {};
+  const storeName = actions0?.name ?? "";
+  const showHelpModal =
+    (useRedux(storeName, "show_slate_help") as boolean | undefined) ?? false;
   const font_size = font_size0 ?? DEFAULT_FONT_SIZE;
   const leafComponentResolved = leafComponent ?? Leaf;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1722,6 +1896,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   }, [blockIds]);
 
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const [lastFocusedIndex, setLastFocusedIndex] = useState<number | null>(null);
+  const [activeEditorSignal, setActiveEditorSignal] = useState<number>(0);
   const [blockSelection, setBlockSelection] = useState<{
     anchor: number;
     focus: number;
@@ -2199,6 +2375,405 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [],
   );
 
+  const setSelectionRangeFromMarkdownPosition = useCallback(
+    (
+      startPos: { line: number; ch: number } | undefined,
+      endPos: { line: number; ch: number } | undefined,
+    ) => {
+      if (startPos == null) return false;
+      if (endPos == null) return setSelectionFromMarkdownPosition(startPos);
+      const blocks = blocksRef.current;
+      const fullMarkdown = joinBlocks(blocks);
+      const startGlobal = positionToIndex({ markdown: fullMarkdown, pos: startPos });
+      if (startGlobal == null) return false;
+      const endGlobal = positionToIndex({ markdown: fullMarkdown, pos: endPos });
+      if (endGlobal == null) return setSelectionFromMarkdownPosition(startPos);
+      const start = blockOffsetForGlobalIndex(blocks, startGlobal);
+      const end = blockOffsetForGlobalIndex(blocks, endGlobal);
+      if (start.index !== end.index) {
+        return setSelectionFromMarkdownPosition(startPos);
+      }
+      const blockMarkdown = normalizeBlockMarkdown(blocks[start.index] ?? "");
+      const startBlockPos =
+        indexToPosition({ index: start.offset, markdown: blockMarkdown }) ??
+        { line: 0, ch: 0 };
+      const endBlockPos =
+        indexToPosition({ index: end.offset, markdown: blockMarkdown }) ??
+        startBlockPos;
+      const editor = editorMapRef.current.get(start.index);
+      if (!editor) {
+        pendingSelectionRef.current = {
+          index: start.index,
+          pos: startBlockPos,
+          endPos: endBlockPos,
+          mode: "markdown",
+        };
+        virtuosoRef.current?.scrollToIndex({
+          index: start.index,
+          align: "center",
+        });
+        return false;
+      }
+      const startPoint =
+        markdownPositionToSlatePoint({
+          markdown: blockMarkdown,
+          pos: startBlockPos,
+          editor,
+        }) ??
+        findSlatePointNearMarkdownPosition({
+          markdown: blockMarkdown,
+          pos: startBlockPos,
+          editor,
+        }) ??
+        blockSelectionPoint(editor, "start");
+      const endPoint =
+        markdownPositionToSlatePoint({
+          markdown: blockMarkdown,
+          pos: endBlockPos,
+          editor,
+        }) ??
+        findSlatePointNearMarkdownPosition({
+          markdown: blockMarkdown,
+          pos: endBlockPos,
+          editor,
+        }) ??
+        startPoint;
+      ReactEditor.focus(editor);
+      Transforms.setSelection(editor, { anchor: startPoint, focus: endPoint });
+      setFocusedIndex(start.index);
+      return true;
+    },
+    [setSelectionFromMarkdownPosition],
+  );
+
+  const getSelectionGlobalRange = useCallback(() => {
+    let index = focusedIndex ?? lastFocusedIndex ?? null;
+    let editor = index != null ? editorMapRef.current.get(index) ?? null : null;
+    if (!editor || !editor.selection) {
+      for (const [idx, candidate] of editorMapRef.current.entries()) {
+        if (!candidate?.selection) continue;
+        editor = candidate;
+        index = idx;
+        if (ReactEditor.isFocused(candidate)) break;
+      }
+    }
+    if (index == null || !editor || !editor.selection) return null;
+    const anchorLocal = nearestMarkdownIndexForSlatePoint(
+      editor,
+      editor.selection.anchor,
+    ).index;
+    const focusLocal = nearestMarkdownIndexForSlatePoint(
+      editor,
+      editor.selection.focus,
+    ).index;
+    if (anchorLocal < 0 || focusLocal < 0) return null;
+    const startLocal = Math.min(anchorLocal, focusLocal);
+    const endLocal = Math.max(anchorLocal, focusLocal);
+    const startGlobal = globalIndexForBlockOffset(
+      blocksRef.current,
+      index,
+      startLocal,
+    );
+    const endGlobal = globalIndexForBlockOffset(
+      blocksRef.current,
+      index,
+      endLocal,
+    );
+    return { start: startGlobal, end: endGlobal };
+  }, [focusedIndex, lastFocusedIndex]);
+
+  const selectGlobalRange = useCallback(
+    (startIndex: number, endIndex: number) => {
+      const blocks = blocksRef.current;
+      const fullMarkdown = joinBlocks(blocks);
+      const startPos = indexToPosition({ index: startIndex, markdown: fullMarkdown });
+      const endPos = indexToPosition({ index: endIndex, markdown: fullMarkdown });
+      if (startPos && endPos) {
+        setSelectionRangeFromMarkdownPosition(startPos, endPos);
+        return;
+      }
+      if (startPos) {
+        setSelectionFromMarkdownPosition(startPos);
+        return;
+      }
+      const start = blockOffsetForGlobalIndex(blocks, startIndex);
+      setSelectionAtOffset(start.index, start.offset);
+    },
+    [
+      setSelectionAtOffset,
+      setSelectionFromMarkdownPosition,
+      setSelectionRangeFromMarkdownPosition,
+    ],
+  );
+
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [replaceQuery, setReplaceQuery] = useState<string>("");
+  const searchInputRef = useRef<any>(null);
+  const lastMatchIndexRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    lastMatchIndexRef.current = null;
+    if (!searchQuery.trim()) {
+      setReplaceQuery("");
+    }
+  }, [searchQuery]);
+
+  const searchDecorate = useMemo(
+    () => createSearchDecorate(searchQuery),
+    [searchQuery],
+  );
+
+  const findNextMatch = useCallback(() => {
+    const query = searchQuery.trim();
+    if (!query) return;
+    const fullMarkdown = getFullMarkdown();
+    const selection = getSelectionGlobalRange();
+    const idx = findNextMatchIndex(
+      fullMarkdown,
+      query,
+      selection,
+      lastMatchIndexRef.current,
+    );
+    if (idx == null) return;
+    lastMatchIndexRef.current = idx;
+    selectGlobalRange(idx, idx + query.length);
+  }, [getFullMarkdown, getSelectionGlobalRange, searchQuery, selectGlobalRange]);
+
+  const findPreviousMatch = useCallback(() => {
+    const query = searchQuery.trim();
+    if (!query) return;
+    const fullMarkdown = getFullMarkdown();
+    const selection = getSelectionGlobalRange();
+    const idx = findPreviousMatchIndex(
+      fullMarkdown,
+      query,
+      selection,
+      lastMatchIndexRef.current,
+    );
+    if (idx == null) return;
+    lastMatchIndexRef.current = idx;
+    selectGlobalRange(idx, idx + query.length);
+  }, [getFullMarkdown, getSelectionGlobalRange, searchQuery, selectGlobalRange]);
+
+  const replaceOneMatch = useCallback(() => {
+    const query = searchQuery.trim();
+    if (!query) return;
+    const replacement = replaceQuery;
+    if (!replacement.trim()) return;
+    const fullMarkdown = getFullMarkdown();
+    const lower = fullMarkdown.toLowerCase();
+    const q = query.toLowerCase();
+    const selection = getSelectionGlobalRange();
+    let idx: number | null = null;
+    if (
+      selection &&
+      selection.end - selection.start === q.length &&
+      lower.slice(selection.start, selection.start + q.length) === q
+    ) {
+      idx = selection.start;
+    } else {
+      const from = selection?.end ?? 0;
+      idx = lower.indexOf(q, from);
+      if (idx === -1 && from > 0) {
+        idx = lower.indexOf(q, 0);
+      }
+      if (idx === -1) idx = null;
+    }
+    if (idx == null) return;
+    const nextMarkdown =
+      fullMarkdown.slice(0, idx) +
+      replacement +
+      fullMarkdown.slice(idx + q.length);
+    applyBlocksFromValue(nextMarkdown);
+    lastMatchIndexRef.current = idx;
+    selectGlobalRange(idx, idx + replacement.length);
+  }, [
+    applyBlocksFromValue,
+    getFullMarkdown,
+    getSelectionGlobalRange,
+    replaceQuery,
+    searchQuery,
+    selectGlobalRange,
+  ]);
+
+  const replaceAllMatches = useCallback(() => {
+    const query = searchQuery.trim();
+    if (!query) return;
+    const replacement = replaceQuery;
+    if (!replacement.trim()) return;
+    const fullMarkdown = getFullMarkdown();
+    const lower = fullMarkdown.toLowerCase();
+    const q = query.toLowerCase();
+    let idx = lower.indexOf(q);
+    if (idx === -1) return;
+    let out = "";
+    let last = 0;
+    let firstMatch: number | null = null;
+    while (idx !== -1) {
+      if (firstMatch == null) firstMatch = idx;
+      out += fullMarkdown.slice(last, idx) + replacement;
+      last = idx + q.length;
+      idx = lower.indexOf(q, last);
+    }
+    out += fullMarkdown.slice(last);
+    applyBlocksFromValue(out);
+    if (firstMatch != null) {
+      lastMatchIndexRef.current = firstMatch;
+      selectGlobalRange(firstMatch, firstMatch + replacement.length);
+    }
+  }, [
+    applyBlocksFromValue,
+    getFullMarkdown,
+    replaceQuery,
+    searchQuery,
+    selectGlobalRange,
+  ]);
+
+  const searchHook = useMemo<SearchHook>(() => {
+    const keyboardMessage = `Find Next (${IS_MACOS ? "⌘" : "ctrl"}-G) and Prev (Shift-${IS_MACOS ? "⌘" : "ctrl"}-G).`;
+    const Search = (
+      <div
+        style={{
+          border: 0,
+          width: "100%",
+          position: "relative",
+        }}
+      >
+        <div style={{ display: "flex" }}>
+          <Input
+            ref={searchInputRef}
+            allowClear
+            size="small"
+            placeholder="Search..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ border: 0, flex: 1 }}
+            onKeyDown={(event) => {
+              if (event.metaKey || event.ctrlKey) {
+                if (event.key === "f") {
+                  event.preventDefault();
+                  return;
+                }
+                if (event.key === "g") {
+                  event.preventDefault();
+                  if (event.shiftKey) {
+                    findPreviousMatch();
+                  } else {
+                    findNextMatch();
+                  }
+                  return;
+                }
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                findNextMatch();
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setSearchQuery("");
+                searchInputRef.current?.blur();
+                return;
+              }
+            }}
+          />
+          {searchQuery.trim() && (
+            <div style={{ height: SEARCH_BAR_HEIGHT }}>
+              <Button
+                shape="round"
+                type="text"
+                size="small"
+                style={{ padding: "0 5px" }}
+                onClick={findPreviousMatch}
+              >
+                <Icon name="chevron-up" />
+              </Button>{" "}
+              <Button
+                shape="round"
+                type="text"
+                size="small"
+                style={{ padding: "0 5px" }}
+                onClick={findNextMatch}
+              >
+                <Icon name="chevron-down" />
+              </Button>
+            </div>
+          )}
+        </div>
+        {searchQuery.trim() && (
+          <div
+            style={{
+              position: "absolute",
+              opacity: 0.95,
+              marginTop: "2px",
+              zIndex: 1,
+              background: "white",
+              width: "100%",
+              color: "rgb(102,102,102)",
+              borderLeft: "1px solid lightgrey",
+              borderBottom: "1px solid lightgrey",
+              boxShadow: "-3px 5px 2px lightgrey",
+            }}
+          >
+            <div style={{ display: "flex", gap: "6px", padding: "4px 6px" }}>
+              <Input
+                size="small"
+                placeholder="Replace with..."
+                value={replaceQuery}
+                onChange={(e) => setReplaceQuery(e.target.value)}
+              />
+              <Button
+                size="small"
+                type="text"
+                disabled={!replaceQuery.trim()}
+                onClick={replaceOneMatch}
+              >
+                Replace
+              </Button>
+              <Popconfirm
+                placement="bottomRight"
+                title={`Replace all instances of '${searchQuery}'?`}
+                onConfirm={replaceAllMatches}
+                okText="Yes, replace all"
+                cancelText="Cancel"
+                disabled={!replaceQuery.trim()}
+              >
+                <Button size="small" type="text" disabled={!replaceQuery.trim()}>
+                  Replace all
+                </Button>
+              </Popconfirm>
+            </div>
+            {!IS_TOUCH && (
+              <div style={{ marginLeft: "7px" }}>{keyboardMessage}</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+    return {
+      decorate: searchDecorate,
+      Search,
+      search: searchQuery,
+      previous: findPreviousMatch,
+      next: findNextMatch,
+      focus: async (search) => {
+        if (search?.trim()) {
+          setSearchQuery(search);
+          await delay(0);
+        }
+        searchInputRef.current?.focus({ cursor: "all" });
+      },
+    };
+  }, [
+    findNextMatch,
+    findPreviousMatch,
+    replaceAllMatches,
+    replaceOneMatch,
+    replaceQuery,
+    searchDecorate,
+    searchQuery,
+  ]);
+
   const getMarkdownPositionForSelection = useCallback(() => {
     let index = focusedIndex;
     if (index == null || !editorMapRef.current.get(index)?.selection) {
@@ -2368,6 +2943,21 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       editorMapRef.current.delete(index);
     }
   }, []);
+
+  useEffect(() => {
+    if (focusedIndex != null) {
+      setLastFocusedIndex(focusedIndex);
+    }
+    setActiveEditorSignal((prev) => prev + 1);
+  }, [focusedIndex]);
+
+  const handleActiveEditorChange = useCallback(
+    (index: number) => {
+      if (index !== focusedIndex) return;
+      setActiveEditorSignal((prev) => prev + 1);
+    },
+    [focusedIndex],
+  );
 
   const insertBlockAtGap = useCallback(
     (
@@ -2698,6 +3288,15 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [flushPendingRemoteMerge],
   );
 
+  const activeEditorIndex =
+    focusedIndex ?? lastFocusedIndex ?? null;
+  const activeEditor =
+    activeEditorIndex != null
+      ? editorMapRef.current.get(activeEditorIndex) ?? null
+      : null;
+  const editBarKey = activeEditorIndex ?? "none";
+  const hideSearch = false;
+
   const renderBlock = (index: number) => {
     const markdown = blocks[index] ?? "";
     const remoteVersion = remoteVersionRef.current[index] ?? 0;
@@ -2719,6 +3318,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         onDeleteBlock={deleteBlockAtIndex}
         onFocus={() => {
           setFocusedIndex(index);
+          setActiveEditorSignal((prev) => prev + 1);
           if (blockSelection) {
             setBlockSelection(null);
           }
@@ -2747,12 +3347,16 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         saveNow={saveBlocksNow}
         registerEditor={registerEditor}
         unregisterEditor={unregisterEditor}
+        onEditorChange={handleActiveEditorChange}
         getFullMarkdown={getFullMarkdown}
         codeBlockExpandState={codeBlockExpandStateRef.current}
         blockCount={blocks.length}
         selected={isSelected}
         gutterWidth={gutterWidth}
         leafComponent={leafComponentResolved}
+        searchHook={searchHook}
+        searchDecorate={searchDecorate}
+        searchQuery={searchQuery}
       />
     );
   };
@@ -2779,6 +3383,27 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         handleSelectBlock(index, { shiftKey: true });
       }}
       onKeyDownCapture={(event) => {
+        if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+          const key = event.key.toLowerCase();
+          if (key === "f" && focusedIndex == null) {
+            event.preventDefault();
+            const selectedText =
+              typeof window !== "undefined"
+                ? window.getSelection()?.toString()
+                : "";
+            searchHook.focus(selectedText);
+            return;
+          }
+          if (key === "g" && focusedIndex == null) {
+            event.preventDefault();
+            if (event.shiftKey) {
+              searchHook.previous();
+            } else {
+              searchHook.next();
+            }
+            return;
+          }
+        }
         if (
           event.key === "Enter" &&
           (event.altKey || event.metaKey) &&
@@ -2946,6 +3571,19 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         position: "relative",
       }}
     >
+      <BlockEditBar
+        key={editBarKey}
+        editor={activeEditor ?? null}
+        isCurrent={!!is_current}
+        updateSignal={activeEditorSignal}
+        hideSearch={hideSearch}
+        searchHook={searchHook}
+        onHelp={() => actions0?.setState?.({ show_slate_help: true })}
+      />
+      <SlateHelpModal
+        open={!!showHelpModal}
+        onClose={() => actions0?.setState?.({ show_slate_help: false })}
+      />
       {!hidePath && renderPath}
       {showPendingRemoteIndicator && (
         <div

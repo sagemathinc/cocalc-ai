@@ -46,6 +46,7 @@ const slate: EditorDescription = {
     "redo",
     "readonly_view", // change frame to readonly view (for now, at least).
     "sync",
+    "slate_help",
     "help",
   ]),
   buttons: set([
@@ -56,6 +57,7 @@ const slate: EditorDescription = {
     "set_zoom",
     "sync",
     "show_table_of_contents",
+    "slate_help",
   ]),
 } as const;
 
@@ -87,6 +89,7 @@ const cm: EditorDescription = {
     "sync",
     "settings",
     "terminal",
+    "slate_help",
   ]),
   buttons: set([
     "decrease_font_size",
@@ -100,6 +103,7 @@ const cm: EditorDescription = {
     "format-font-family",
     "format-font-size",
     "format-color",
+    "slate_help",
   ]),
 } as const;
 

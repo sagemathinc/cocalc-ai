@@ -20,7 +20,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { CSS, React, useIsMountedRef } from "@cocalc/frontend/app-framework";
+import {
+  CSS,
+  React,
+  useIsMountedRef,
+  useRedux,
+} from "@cocalc/frontend/app-framework";
 import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { useMentionableUsers } from "@cocalc/frontend/editors/markdown-input/mentionable-users";
 import { submit_mentions } from "@cocalc/frontend/editors/markdown-input/mentions";
@@ -73,6 +78,7 @@ import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
 import type { RenderElementProps } from "./slate-react";
 import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
+import { SlateHelpModal } from "./help-modal";
 import {
   findSlatePointNearMarkdownPosition,
   markdownPositionToSlatePoint,
@@ -91,9 +97,6 @@ import useUpload from "./upload";
 import { ChangeContext } from "./use-change";
 import { buildCodeBlockDecorations, getPrismGrammar } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
-import BlockMarkdownEditor, {
-  shouldUseBlockEditor,
-} from "./block-markdown-editor";
 
 export type { SlateEditor };
 
@@ -250,6 +253,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const isMountedRef = useIsMountedRef();
   const id = id0 ?? "";
   const actions = actions0 ?? {};
+  const storeName = actions0?.name ?? "";
+  const [localHelpOpen, setLocalHelpOpen] = useState(false);
+  const reduxHelpOpen = useRedux(
+    storeName,
+    "show_slate_help",
+  ) as boolean | undefined;
+  const showHelpModal = reduxHelpOpen ?? localHelpOpen;
   const font_size = font_size0 ?? desc?.get("font_size") ?? DEFAULT_FONT_SIZE; // so possible to use without specifying this.  TODO: should be from account settings
   const preserveBlankLines = preserveBlankLinesProp ?? false;
   const [change, setChange] = useState<number>(0);
@@ -1453,6 +1463,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         editor={editor}
         style={{ ...editBarStyle, paddingRight: 0 }}
         hideSearch={hideSearch}
+        onHelp={() => {
+          if (actions0?.setState != null) {
+            actions0.setState({ show_slate_help: true });
+          } else {
+            setLocalHelpOpen(true);
+          }
+        }}
       />
     );
   }
@@ -1474,6 +1491,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     },
     [flushPendingRemoteMerge],
   );
+
+  const editableFillStyle =
+    height !== "auto"
+      ? {
+          minHeight: "100%",
+          height: "100%",
+        }
+      : undefined;
 
   let slate = (
     <Slate editor={editor} value={editorValue} onChange={onChange}>
@@ -1511,6 +1536,23 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           renderElement={renderElement}
           renderLeaf={Leaf}
           onKeyDown={onKeyDown}
+          style={
+            useWindowing
+              ? editableFillStyle
+              : {
+                  height,
+                  position: "relative", // CRITICAL!!! Without this, editor will sometimes scroll the entire frame off the screen.  Do NOT delete position:'relative'.  5+ hours of work to figure this out!  Note that this isn't needed when using windowing above.
+                  minWidth: "80%",
+                  padding: "15px",
+                  background: "white",
+                  overflowX: "hidden",
+                  overflowY:
+                    height == "auto"
+                      ? "hidden" /* for height='auto' we never want a scrollbar  */
+                      : "auto" /* for this overflow, see https://github.com/ianstormtaylor/slate/issues/3706 */,
+                  ...pageStyle,
+                }
+          }
           onBlur={() => {
             editor.saveValue();
             updateMarks();
@@ -1540,23 +1582,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           onScroll={() => {
             updateScrollState();
           }}
-          style={
-            useWindowing
-              ? undefined
-              : {
-                  height,
-                  position: "relative", // CRITICAL!!! Without this, editor will sometimes scroll the entire frame off the screen.  Do NOT delete position:'relative'.  5+ hours of work to figure this out!  Note that this isn't needed when using windowing above.
-                  minWidth: "80%",
-                  padding: "15px",
-                  background: "white",
-                  overflowX: "hidden",
-                  overflowY:
-                    height == "auto"
-                      ? "hidden" /* for height='auto' we never want a scrollbar  */
-                      : "auto" /* for this overflow, see https://github.com/ianstormtaylor/slate/issues/3706 */,
-                  ...pageStyle,
-                }
-          }
           windowing={
             useWindowing
               ? {
@@ -1602,6 +1627,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             editor={editor}
             style={editBarStyle}
             hideSearch={hideSearch}
+            onHelp={() => {
+              if (actions0?.setState != null) {
+                actions0.setState({ show_slate_help: true });
+              } else {
+                setLocalHelpOpen(true);
+              }
+            }}
           />
         )}
         <div
@@ -1618,6 +1650,16 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           {slate}
         </div>
       </div>
+      <SlateHelpModal
+        open={!!showHelpModal}
+        onClose={() => {
+          if (actions0?.setState != null) {
+            actions0.setState({ show_slate_help: false });
+          } else {
+            setLocalHelpOpen(false);
+          }
+        }}
+      />
     </ChangeContext.Provider>
   );
   return useUpload(editor, body);
@@ -1626,14 +1668,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   if (props.disableBlockEditor) {
     return <FullEditableMarkdown {...props} />;
-  }
-  if (
-    shouldUseBlockEditor({
-      value: props.value,
-      height: props.height,
-    })
-  ) {
-    return <BlockMarkdownEditor {...props} />;
   }
   return <FullEditableMarkdown {...props} />;
 });
