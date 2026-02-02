@@ -74,18 +74,24 @@ full GCP spot build pipeline.
 ```
 
 Examples:
+
 - `1.10.4-2026.02.02`
 - `2.4.1-2026.02.02.1`
 
 ## Basic usage (local build)
 
+```sh
+export GCP_PROJECT="your-gcp-project-id"
+```
+
 ```bash
-python3 tools/build.py --image pytorch \
-  --registry us-docker.pkg.dev/<gcp-project>/rootfs \
-  --project <gcp-project>
+python3 tools/build.py --image minimal \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --project $GCP_PROJECT
 ```
 
 This will:
+
 1) build (multi‑arch if applicable)
 2) run tests
 3) push to Artifact Registry
@@ -96,7 +102,7 @@ This will:
 
 ```bash
 python3 tools/manifest.py \
-  --registry us-docker.pkg.dev/<gcp-project>/rootfs \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
   --out manifest.testing.json
 ```
 
@@ -112,10 +118,10 @@ python3 tools/promote.py \
 
 ```bash
 ./tools/gcp-builder.sh \
-  --image pytorch \
-  --project <gcp-project> \
+  --image minimal \
+  --project $GCP_PROJECT \
   --zone us-central1-a \
-  --registry us-docker.pkg.dev/<gcp-project>/rootfs
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs
 ```
 
 This launches a spot VM, runs the build, uploads logs, then deletes the VM.
