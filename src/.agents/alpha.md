@@ -12,6 +12,10 @@ For alpha testing it will be deployed by:
 
 ## Blocker Todo List
 
+- [ ] there are issues with rootfs overlayfs not unmounting properly still, probably due to the resource limiter thing.  this is very bad; e.g., it makes it so can't change the rootfs image.
+
+- [ ] Cocalc+plus: implement remote server proxy support (e.g., vscode, jupyter, etc.)
+
 - [ ] when opening a workspace it often says: "Error
   request -- no subscribers matching 'fs.project-8e9626fc-1e50-419b-8be8-b353068fc5a5'" in the file explorer listing, because the host itself isn't ready yet or the project isn't itself provisioned.
 
@@ -19,8 +23,14 @@ For alpha testing it will be deployed by:
   - [ ] install a nice .bashrc (instead of nothing)
   - [ ] default suggested image(s), with build automation
 
-- [ ] caching of rootfs images in R2 instead of pulling from upstream
+- [ ] recommended/supported docker images
 
-- [ ] #bug chat scroll position
+- [ ] **rootfs images:** caching in R2 instead of pulling from upstream
 
-- 
+- [ ] **share server:** finish rewriting share server using cloudflare workers
+
+- [ ] memory leak in cocalc+plus (at least) when using codex for a long time
+
+- [ ] codex-0.93 switches log format to use sqlite, so we will need to rewrite to use that...
+
+- [x] #bug chat scroll position
