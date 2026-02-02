@@ -80,6 +80,7 @@ interface Props {
   fontSize?: number;
   height?: string; // css height and also "auto" is fully supported.
   autoGrow?: boolean; // enable dynamic growth (defaults off unless height === "auto")
+  autoGrowMaxHeight?: number; // px cap for autoGrow (defaults to 50vh behavior)
   style?: CSSProperties;
   modeSwitchStyle?: CSSProperties;
   autoFocus?: boolean; // note - this is broken on safari for the slate editor, but works on chrome and firefox.
@@ -163,6 +164,7 @@ export default function MultiMarkdownInput({
   extraHelp,
   fixedMode,
   fontSize,
+  autoGrowMaxHeight,
   getValueRef,
   height = "auto",
   autoGrow,
@@ -221,6 +223,11 @@ export default function MultiMarkdownInput({
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
 
   const isAutoGrow = autoGrow ?? height === "auto";
+  const hasFixedHeight = height != null && height !== "auto";
+  const autoGrowMaxHeightStyle =
+    autoGrowMaxHeight != null
+      ? `${Math.max(autoGrowMaxHeight, MIN_INPUT_HEIGHT)}px`
+      : MAX_INPUT_HEIGHT;
   const internalControlRef = useRef<any>(null);
   const slateControlRef = controlRef ?? internalControlRef;
   const pendingModeSelectionRef = useRef<{
@@ -501,6 +508,7 @@ export default function MultiMarkdownInput({
           cmOptions={cmOptions}
           height={height}
           autoGrow={autoGrow ?? height === "auto"}
+          autoGrowMaxHeight={autoGrowMaxHeight}
           style={style}
           autoFocus={focused}
           submitMentionsRef={submitMentionsRef}
@@ -531,9 +539,9 @@ export default function MultiMarkdownInput({
       {mode === "editor" ? (
         <div
           style={{
-            height: isAutoGrow ? undefined : height,
+            height: hasFixedHeight ? height : undefined,
             minHeight: `${MIN_INPUT_HEIGHT}px`,
-            maxHeight: isAutoGrow ? MAX_INPUT_HEIGHT : height,
+            maxHeight: hasFixedHeight ? height : autoGrowMaxHeightStyle,
             overflowY: "auto",
             width: "100%",
             fontSize: "14px" /* otherwise button bar can be skewed */,
