@@ -35,6 +35,7 @@ import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectState } from "../project/page/project-state-hook";
 import { useProjectHasInternetAccess } from "../project/settings/has-internet-access-hook";
+import { useBookmarkedProjects } from "./use-bookmarked-projects";
 
 const PROJECT_NAME_STYLE: CSS = {
   whiteSpace: "nowrap",
@@ -266,6 +267,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
     "projects",
     "public_project_titles",
   );
+  const { bookmarkedProjects } = useBookmarkedProjects();
   //const project_map = useTypedRedux("projects", "project_map");
   const [mode, setMode] = useState<ProjectsNavMode>(
     getStoredProjectsNavMode,
@@ -309,6 +311,10 @@ export function ProjectsNav(props: ProjectsNavProps) {
   }, [openProjects]);
 
   const openProjectIds = project_ids;
+  const openProjectSet = useMemo(
+    () => new Set(openProjectIds),
+    [openProjectIds],
+  );
 
   const activeProjectId = useMemo(() => {
     if (openProjectIds.includes(activeTopTab)) return activeTopTab;
@@ -317,7 +323,6 @@ export function ProjectsNav(props: ProjectsNavProps) {
 
   const recentProjectIds = useMemo(() => {
     if (!projectMap) return [];
-    const openSet = new Set(openProjectIds);
     const ids = projectMap.keySeq().toArray();
     ids.sort((a, b) => {
       const aTime = projectMap.getIn([a, "last_edited"]);
@@ -336,8 +341,16 @@ export function ProjectsNav(props: ProjectsNavProps) {
           : 0;
       return bMs - aMs;
     });
-    return ids.filter((id) => !openSet.has(id)).slice(0, 10);
-  }, [projectMap, openProjectIds]);
+    return ids.filter((id) => !openProjectSet.has(id)).slice(0, 10);
+  }, [projectMap, openProjectSet]);
+
+  const starredProjectIds = useMemo(() => {
+    if (!projectMap || !bookmarkedProjects) return [];
+    return bookmarkedProjects.filter((id) => {
+      if (!projectMap.get(id)) return false;
+      return !openProjectSet.has(id);
+    });
+  }, [bookmarkedProjects, openProjectSet, projectMap]);
 
   function getProjectTitle(project_id: string): string {
     return (
@@ -407,8 +420,13 @@ export function ProjectsNav(props: ProjectsNavProps) {
     const openOptions = openProjectIds.map((project_id) => ({
       value: project_id,
       label: getProjectTitle(project_id),
+      closable: true,
     }));
     const recentOptions = recentProjectIds.map((project_id) => ({
+      value: project_id,
+      label: getProjectTitle(project_id),
+    }));
+    const starredOptions = starredProjectIds.map((project_id) => ({
       value: project_id,
       label: getProjectTitle(project_id),
     }));
@@ -416,6 +434,9 @@ export function ProjectsNav(props: ProjectsNavProps) {
     const groupedOptions = [
       ...(openOptions.length > 0
         ? [{ label: "Open projects", options: openOptions }]
+        : []),
+      ...(starredOptions.length > 0
+        ? [{ label: "Starred projects", options: starredOptions }]
         : []),
       ...(recentOptions.length > 0
         ? [{ label: "Recent projects", options: recentOptions }]
@@ -455,6 +476,40 @@ export function ProjectsNav(props: ProjectsNavProps) {
           showSearch
           optionFilterProp="label"
           optionLabelProp="label"
+          optionRender={(option) => {
+            const data = option.data as any;
+            const project_id = data?.value;
+            const closable = data?.closable;
+            return (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <span>{data?.label}</span>
+                {closable ? (
+                  <Button
+                    size="small"
+                    type="text"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      actions.close_project_tab(project_id);
+                    }}
+                  >
+                    <Icon name="times" />
+                  </Button>
+                ) : null}
+              </div>
+            );
+          }}
           options={groupedOptions}
           onSelect={(project_id) => {
             projectActions.open_project({
