@@ -222,6 +222,15 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   public async scrollToHeading(entry: TableOfContentsEntry): Promise<void> {
     const id = this.show_focused_frame_of_type("slate");
     if (id == null) return;
+    const blockControl = this.getBlockEditorControl(id);
+    const line =
+      entry?.extra != null && typeof entry.extra.line === "number"
+        ? entry.extra.line
+        : undefined;
+    if (blockControl?.setSelectionFromMarkdownPosition && line != null) {
+      const ok = blockControl.setSelectionFromMarkdownPosition({ line, ch: 0 });
+      if (ok) return;
+    }
     let editor = this.getSlateEditor(id);
     if (editor == null) {
       // if slate frame just created, have to wait until after it gets
