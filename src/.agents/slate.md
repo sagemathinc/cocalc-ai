@@ -1,31 +1,25 @@
-# Slate
+# (done) Slate Rewrite
 
-## Todo
+- [x] #feature find (and replace) search in doc; it's not visible at all right now.
 
-- [ ] #easy keyboard shortcuts like "control+b" to bold the current selection/word don't work in block editor mode.
+- [x] #bug type one character into mode-line popover for code and focus goes back into editor corrupted it with later keystrokes.  maybe there is a better approach to editing the mode line entirely?  requires some discussion and design work.
 
-- [ ] #chat #bug -- STILL when I hit shift+enter to send a message, the composer chat input will sometimes not be cleared.  It has the message I just sent in it after I send it. The cursor also still randomly jumps.   It usually works fine -- failures are rare. Maybe increase a timing threshold. 
+- [x] #ui "16 lines (collapsed)" - in static view mode, make clicking on this ALSO expand
 
-- [ ] #ux plain text paste: just ALWAYS show the text / code block option, even if only one line; it's just more predictable.
-  - [ ] make "shift+control+v" (and similar for macos) always paste without showing the code block at all.
-
-- [ ] #bug type one character into mode-line popover for code and focus goes back into editor corrupted it with later keystrokes.  maybe there is a better approach to editing the mode line entirely?  requires some discussion and design work.
-
-- [ ] #feature find (and replace) search in doc; it's not visible at all right now.
-
-- [ ] #feature the entire slate editor button bar is just not displayed so can't use any feature.  maybe find is part of that?
-
-- [ ] #doc add modal that documents:
+- [x] #doc add modal that documents:
   - [ ] keyboard shortcuts
   - [ ] what the editor supports, i.e., a list of features and intentional shortcomings (e.g., block mode selection)
   - Button to display this in the button bar that isn't displayed
   - Also a dropdown menu option for frame tree editors.
 
-- [ ] #wishlist make the task editor just use a single big slate editor, but with the same filtering and sorting options.  Is this possible in block editor mode now, or a new mode.  It would be SO amazing!
+- [x] #feature the entire slate editor button bar is just not displayed so can't use any feature.  maybe find is part of that?
 
-- [ ] #wishlist can we make a jupyter notebook mode?  i.e., a slate renderer for any jupyter notebook, i.e., a new "single document mode"...?
+- [x] #ux plain text paste: just ALWAYS show the text / code block option, even if only one line; it's just more predictable.
+  - [ ] make "shift+control+v" (and similar for macos) always paste without showing the code block at all.
 
-- [ ] #wishlist latex editor.  this would just start as one big prism (+latex mode) code editor, but proportionally spaced! Then we make math formulas display nicely using katex. Then we make \\section{...} etc. display nicely.  Etc.  Just iteratively replace things until it is beautiful and useful... but still usable.
+- [x] #chat #bug -- STILL when I hit shift+enter to send a message, the composer chat input will sometimes not be cleared.  It has the message I just sent in it after I send it. The cursor also still randomly jumps.   It usually works fine -- failures are rare. Maybe increase a timing threshold. 
+
+- [x] #easy keyboard shortcuts like "control+b" to bold the current selection/word don't work in block editor mode.
 
 - [x] #feature alt+enter (or command+enter) to jump between rich text and markdown editor, with cursor in the same place; requires mapping position in slate to position in markdown and back. 
   - [ ] back and forth in multimode editor
