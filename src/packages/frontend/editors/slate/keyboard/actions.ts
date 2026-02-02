@@ -24,6 +24,8 @@ register(
   [
     { key: ",", ctrl: true, shift: true },
     { key: ",", meta: true, shift: true },
+    { key: "<", ctrl: true },
+    { key: "<", meta: true },
   ],
   ({ extra }) => {
     extra?.actions.change_font_size?.(-1);
@@ -35,6 +37,8 @@ register(
   [
     { key: ".", ctrl: true, shift: true },
     { key: ".", meta: true, shift: true },
+    { key: ">", ctrl: true },
+    { key: ">", meta: true },
   ],
   ({ extra }) => {
     extra?.actions.change_font_size?.(+1);
