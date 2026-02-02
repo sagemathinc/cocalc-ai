@@ -5,13 +5,7 @@
 
 // Prototype: always-editable block editor for very large markdown documents.
 
-import React, {
-  MutableRefObject,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import React, { MutableRefObject, useCallback, useEffect, useRef } from "react";
 import { useRedux } from "@cocalc/frontend/app-framework";
 import { Transforms } from "slate";
 import { type VirtuosoHandle } from "react-virtuoso";
@@ -24,7 +18,6 @@ import type { SlateEditor } from "./types";
 import { indexToPosition, nearestMarkdownIndexForSlatePoint } from "./sync";
 import { BlockEditBar } from "./block-edit-bar";
 import { SlateHelpModal } from "./help-modal";
-import { type PendingSelection } from "./block-row-editor";
 import { BlockRowList } from "./block-row-list";
 import { splitMarkdownToBlocks } from "./block-chunking";
 import { useBlockSearch } from "./use-block-search";
@@ -37,6 +30,7 @@ import { useBlockOps } from "./use-block-ops";
 import { useBlockRowRenderer } from "./use-block-row-renderer";
 import { useBlockState } from "./use-block-state";
 import { useBlockSync } from "./use-block-sync";
+import { useBlockUiState } from "./use-block-ui-state";
 import { globalIndexForBlockOffset, joinBlocks } from "./block-markdown-utils";
 
 const DEFAULT_FONT_SIZE = 14;
@@ -126,47 +120,23 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     valueRef,
   });
 
-  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
-  const [lastFocusedIndex, setLastFocusedIndex] = useState<number | null>(null);
-  const [activeEditorSignal, setActiveEditorSignal] = useState<number>(0);
-  const [blockSelection, setBlockSelection] = useState<{
-    anchor: number;
-    focus: number;
-  } | null>(null);
-  const blockSelectionRef = useRef<{
-    anchor: number;
-    focus: number;
-  } | null>(null);
-  const [gapCursor, setGapCursor] = useState<{
-    index: number;
-    side: "before" | "after";
-    path?: number[];
-  } | null>(null);
-  const gapCursorRef = useRef<{
-    index: number;
-    side: "before" | "after";
-    path?: number[];
-  } | null>(null);
-  const pendingGapInsertRef = useRef<{
-    index: number;
-    side: "before" | "after";
-    path?: number[];
-    insertIndex?: number;
-    buffer?: string;
-  } | null>(null);
-  const pendingSelectionRef = useRef<PendingSelection | null>(null);
-  const skipSelectionResetRef = useRef<Set<number>>(new Set());
-  const setGapCursorState = useCallback(
-    (
-      next:
-        | { index: number; side: "before" | "after"; path?: number[] }
-        | null,
-    ) => {
-      gapCursorRef.current = next;
-      setGapCursor(next);
-    },
-    [],
-  );
+  const {
+    focusedIndex,
+    setFocusedIndex,
+    lastFocusedIndex,
+    setLastFocusedIndex,
+    activeEditorSignal,
+    setActiveEditorSignal,
+    blockSelection,
+    setBlockSelection,
+    blockSelectionRef,
+    gapCursor,
+    setGapCursorState,
+    gapCursorRef,
+    pendingGapInsertRef,
+    pendingSelectionRef,
+    skipSelectionResetRef,
+  } = useBlockUiState();
 
   const editorMapRef = useRef<Map<number, SlateEditor>>(new Map());
   const codeBlockExpandStateRef = useRef<Map<string, boolean>>(new Map());
