@@ -363,8 +363,10 @@ export function ProjectsNav(props: ProjectsNavProps) {
 
   function getProjectVisual(project_id: string) {
     const project = projectMap?.get(project_id);
+    const title = getProjectTitle(project_id);
     return {
-      title: getProjectTitle(project_id),
+      title,
+      label: title,
       color: project?.get?.("color"),
       avatar: project?.get?.("avatar_image_tiny"),
     };
@@ -587,7 +589,6 @@ export function ProjectsNav(props: ProjectsNavProps) {
           style={{ minWidth: 260, maxWidth: 400 }}
           placeholder="Switch workspace…"
           value={activeProjectId}
-          label={getProjectTitle(activeProjectId)}
           showSearch
           optionLabelProp="label"
           filterOption={false}
