@@ -14,6 +14,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useRedux } from "@cocalc/frontend/app-framework";
 import {
   Descendant,
   DecoratedRange,
@@ -68,6 +69,7 @@ import {
 } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
 import { EditBar, useLinkURL, useListProperties, useMarks } from "./edit-bar";
+import { SlateHelpModal } from "./help-modal";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
@@ -179,7 +181,8 @@ const BlockEditBar: React.FC<{
   isCurrent: boolean;
   updateSignal: number;
   hideSearch?: boolean;
-}> = ({ editor, isCurrent, updateSignal, hideSearch }) => {
+  onHelp?: () => void;
+}> = ({ editor, isCurrent, updateSignal, hideSearch, onHelp }) => {
   if (!editor) {
     return (
       <div
@@ -212,6 +215,7 @@ const BlockEditBar: React.FC<{
       listProperties={listProperties}
       editor={editor}
       hideSearch={hideSearch}
+      onHelp={onHelp}
     />
   );
 };
@@ -1726,6 +1730,9 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const internalControlRef = useRef<any>(null);
   const blockControlRef = controlRef ?? internalControlRef;
   const actions = actions0 ?? {};
+  const storeName = actions0?.name ?? "";
+  const showHelpModal =
+    (useRedux(storeName, "show_slate_help") as boolean | undefined) ?? false;
   const font_size = font_size0 ?? DEFAULT_FONT_SIZE;
   const leafComponentResolved = leafComponent ?? Leaf;
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -3029,6 +3036,11 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         isCurrent={!!is_current}
         updateSignal={activeEditorSignal}
         hideSearch={hideSearch}
+        onHelp={() => actions0?.setState?.({ show_slate_help: true })}
+      />
+      <SlateHelpModal
+        open={!!showHelpModal}
+        onClose={() => actions0?.setState?.({ show_slate_help: false })}
       />
       {!hidePath && renderPath}
       {showPendingRemoteIndicator && (

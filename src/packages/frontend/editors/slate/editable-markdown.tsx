@@ -20,7 +20,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { CSS, React, useIsMountedRef } from "@cocalc/frontend/app-framework";
+import {
+  CSS,
+  React,
+  useIsMountedRef,
+  useRedux,
+} from "@cocalc/frontend/app-framework";
 import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { useMentionableUsers } from "@cocalc/frontend/editors/markdown-input/mentionable-users";
 import { submit_mentions } from "@cocalc/frontend/editors/markdown-input/mentions";
@@ -73,6 +78,7 @@ import { Editable, ReactEditor, Slate, withReact } from "./slate-react";
 import type { RenderElementProps } from "./slate-react";
 import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
 import { slate_to_markdown } from "./slate-to-markdown";
+import { SlateHelpModal } from "./help-modal";
 import {
   findSlatePointNearMarkdownPosition,
   markdownPositionToSlatePoint,
@@ -250,6 +256,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const isMountedRef = useIsMountedRef();
   const id = id0 ?? "";
   const actions = actions0 ?? {};
+  const storeName = actions0?.name ?? "";
+  const showHelpModal =
+    (useRedux(storeName, "show_slate_help") as boolean | undefined) ?? false;
   const font_size = font_size0 ?? desc?.get("font_size") ?? DEFAULT_FONT_SIZE; // so possible to use without specifying this.  TODO: should be from account settings
   const preserveBlankLines = preserveBlankLinesProp ?? false;
   const [change, setChange] = useState<number>(0);
@@ -1453,6 +1462,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         editor={editor}
         style={{ ...editBarStyle, paddingRight: 0 }}
         hideSearch={hideSearch}
+        onHelp={() => actions0?.setState?.({ show_slate_help: true })}
       />
     );
   }
@@ -1602,6 +1612,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             editor={editor}
             style={editBarStyle}
             hideSearch={hideSearch}
+            onHelp={() => actions0?.setState?.({ show_slate_help: true })}
           />
         )}
         <div
@@ -1618,6 +1629,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           {slate}
         </div>
       </div>
+      <SlateHelpModal
+        open={!!showHelpModal}
+        onClose={() => actions0?.setState?.({ show_slate_help: false })}
+      />
     </ChangeContext.Provider>
   );
   return useUpload(editor, body);

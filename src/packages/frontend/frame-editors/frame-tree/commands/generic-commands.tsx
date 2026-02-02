@@ -433,6 +433,20 @@ addCommands({
     tour: "help",
   },
 
+  slate_help: {
+    pos: 5,
+    group: "help-link",
+    label: defineMessage({
+      id: "command.generic.slate_help.label",
+      defaultMessage: "Editor Help",
+    }),
+    icon: "info-circle",
+    title: defineMessage({
+      id: "command.generic.slate_help.title",
+      defaultMessage: "Show editor shortcuts and capabilities",
+    }),
+  },
+
   clear: {
     group: "action",
     button: labels.clear,

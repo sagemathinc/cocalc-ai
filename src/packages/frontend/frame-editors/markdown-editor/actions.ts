@@ -46,6 +46,7 @@ interface MarkdownEditorState extends CodeEditorState {
   build_exit: number; // for Rmd
   job_info?: ExecuteCodeOutputAsync; // for Rmd streaming with stats
   contents?: TableOfContentsEntryList; // table of contents data.
+  show_slate_help?: boolean;
 }
 
 export class Actions extends CodeEditorActions<MarkdownEditorState> {
@@ -357,6 +358,10 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
 
   help(): void {
     open_new_tab("https://doc.cocalc.com/markdown.html");
+  }
+
+  slate_help(): void {
+    this.setState({ show_slate_help: true });
   }
 
   languageModelGetText(
