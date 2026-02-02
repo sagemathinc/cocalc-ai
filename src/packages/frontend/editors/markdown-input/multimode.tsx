@@ -198,7 +198,7 @@ export default function MultiMarkdownInput({
   value,
   controlRef,
   preserveBlankLines = true,
-  disableBlockEditor,
+  disableBlockEditor = true,
 }: Props) {
   const {
     isFocused: isFocusedFrame,
