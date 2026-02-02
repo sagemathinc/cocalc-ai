@@ -352,7 +352,23 @@ export const StaticElement: React.FC<RenderElementProps> = ({
               ),
             }}
           />
-          <div style={{ marginTop: "6px", fontSize: "12px", color: "#666" }}>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setExpanded(true)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setExpanded(true);
+              }
+            }}
+            style={{
+              marginTop: "6px",
+              fontSize: "12px",
+              color: "#666",
+              cursor: "pointer",
+            }}
+          >
             {lineCount} lines (collapsed)
           </div>
         </div>
