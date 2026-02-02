@@ -1,3 +1,7 @@
+// Shared utilities for block sync settings and debug logging.
+// These helpers centralize configurable thresholds so block sync behavior stays
+// consistent across hooks and editor components.
+
 import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
 
 const BLOCK_DEFER_CHARS = 200_000;

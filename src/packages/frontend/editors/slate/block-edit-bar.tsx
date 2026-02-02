@@ -2,6 +2,9 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
+// BlockEditBar wraps the standard EditBar for block mode.
+// It keeps mark/link/list state in sync with the active block editor and
+// renders a placeholder bar when no editor is active.
 
 import React, { useEffect } from "react";
 import { EditBar, useLinkURL, useListProperties, useMarks } from "./edit-bar";

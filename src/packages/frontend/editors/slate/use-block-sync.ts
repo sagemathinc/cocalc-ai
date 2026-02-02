@@ -1,3 +1,7 @@
+// Block sync policy is centralized here for the block editor.
+// It manages debounced saves, remote merge deferral, and local edit tracking,
+// keeping synchronization concerns out of the core editor component.
+
 import { debounce } from "lodash";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SimpleInputMerge } from "../../../sync/editor/generic/simple-input-merge";

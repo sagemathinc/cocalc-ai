@@ -2,6 +2,9 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
+// Multi-block selection logic for block mode lives here.
+// It computes the selection range and provides operations like delete, move,
+// and insert, keeping block-markdown-editor-core simpler.
 
 import { useCallback, useEffect, useMemo } from "react";
 

@@ -2,6 +2,9 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
+// Registers and maintains the block editor control API.
+// It wires focus/selection helpers and markdown-position mapping into the
+// actions/controlRef so other parts of the app can drive the block editor.
 
 import { useEffect } from "react";
 import { Node, Transforms } from "slate";
