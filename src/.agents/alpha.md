@@ -7,8 +7,9 @@
 
 For alpha testing it will be deployed by:
 
-- making cocalc-plus npm installable (so for now, requiring they install node+npm in some way first)
+- making cocalc-plus npm installable (so for now, requiring they install node+npm in some way first).   `npx @cocalc/plus` 
 - running cocalc-launchpad with a reg token on a GCP VM with cloudflare,nebius,gcp,hyperstack,lambda all configured
+  - `npx @cocalc/launchpad` 
 
 ## Blocker Todo List
 
