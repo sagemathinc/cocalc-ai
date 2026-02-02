@@ -1,0 +1,16 @@
+id: minimal
+label: Minimal Ubuntu
+component_version: "25.10"
+image_name: minimal
+gpu: false
+arch: [amd64, arm64]
+priority: 100
+tags: [minimal, cpu]
+prepull: true
+description: Minimal Ubuntu base image for lightweight workspaces.
+
+tests:
+  - name: shell
+    cmd: "bash -lc 'echo ok'"
+  - name: python
+    cmd: "bash -lc 'python3 -V'"
