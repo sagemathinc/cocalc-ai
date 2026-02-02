@@ -447,6 +447,66 @@ export function ProjectsNav(props: ProjectsNavProps) {
         : []),
     ];
 
+    const hasResults = groupedOptions.some(
+      (group) => group.options && group.options.length > 0,
+    );
+
+    const renderOptionItem = (option) => {
+      const project_id = option?.value;
+      const closable = option?.closable;
+      return (
+        <div
+          key={project_id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 8px",
+            borderRadius: 6,
+            cursor: "pointer",
+          }}
+          onClick={() => {
+            projectActions.open_project({
+              project_id,
+              switch_to: true,
+            });
+            setDropdownOpen(false);
+          }}
+        >
+          <span
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={option?.label}
+          >
+            {option?.label}
+          </span>
+          {closable ? (
+            <Button
+              size="small"
+              type="text"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                actions.close_project_tab(project_id);
+              }}
+            >
+              <Icon name="times" />
+            </Button>
+          ) : null}
+        </div>
+      );
+    };
+
     return (
       <div
         style={{
@@ -489,62 +549,33 @@ export function ProjectsNav(props: ProjectsNavProps) {
           onSearch={setSearchValue}
           onClear={() => setSearchValue("")}
           allowClear
-          optionRender={(option) => {
-            const data = option.data as any;
-            const project_id = data?.value;
-            const closable = data?.closable;
-            return (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 8,
-                }}
-              >
-                <span
-                  style={{
-                    flex: "1 1 auto",
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={data?.label}
-                >
-                  {data?.label}
-                </span>
-                {closable ? (
-                  <Button
-                    size="small"
-                    type="text"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      actions.close_project_tab(project_id);
-                    }}
-                  >
-                    <Icon name="times" />
-                  </Button>
-                ) : null}
-              </div>
-            );
-          }}
           options={groupedOptions}
-          onSelect={(project_id) => {
-            projectActions.open_project({
-              project_id,
-              switch_to: true,
-            });
-            setDropdownOpen(false);
-          }}
           dropdownRender={(menu) => (
             <>
-              {menu}
+              <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                {hasResults ? (
+                  groupedOptions.map((group) => (
+                    <div key={group.label} style={{ padding: "4px 0" }}>
+                      <div
+                        style={{
+                          padding: "6px 8px",
+                          fontSize: 12,
+                          color: "#666",
+                        }}
+                      >
+                        {group.label}
+                      </div>
+                      {group.options.map((option) =>
+                        renderOptionItem(option),
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ padding: "8px 12px", color: "#888" }}>
+                    No workspaces found
+                  </div>
+                )}
+              </div>
               <Divider style={{ margin: "6px 0" }} />
               <div style={{ padding: "4px 8px" }}>
                 <Button
