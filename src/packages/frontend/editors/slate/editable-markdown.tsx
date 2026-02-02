@@ -257,8 +257,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const id = id0 ?? "";
   const actions = actions0 ?? {};
   const storeName = actions0?.name ?? "";
-  const showHelpModal =
-    (useRedux(storeName, "show_slate_help") as boolean | undefined) ?? false;
+  const [localHelpOpen, setLocalHelpOpen] = useState(false);
+  const reduxHelpOpen = useRedux(
+    storeName,
+    "show_slate_help",
+  ) as boolean | undefined;
+  const showHelpModal = reduxHelpOpen ?? localHelpOpen;
   const font_size = font_size0 ?? desc?.get("font_size") ?? DEFAULT_FONT_SIZE; // so possible to use without specifying this.  TODO: should be from account settings
   const preserveBlankLines = preserveBlankLinesProp ?? false;
   const [change, setChange] = useState<number>(0);
@@ -1462,7 +1466,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         editor={editor}
         style={{ ...editBarStyle, paddingRight: 0 }}
         hideSearch={hideSearch}
-        onHelp={() => actions0?.setState?.({ show_slate_help: true })}
+        onHelp={() => {
+          if (actions0?.setState != null) {
+            actions0.setState({ show_slate_help: true });
+          } else {
+            setLocalHelpOpen(true);
+          }
+        }}
       />
     );
   }
@@ -1612,7 +1622,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
             editor={editor}
             style={editBarStyle}
             hideSearch={hideSearch}
-            onHelp={() => actions0?.setState?.({ show_slate_help: true })}
+            onHelp={() => {
+              if (actions0?.setState != null) {
+                actions0.setState({ show_slate_help: true });
+              } else {
+                setLocalHelpOpen(true);
+              }
+            }}
           />
         )}
         <div
@@ -1631,7 +1647,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       </div>
       <SlateHelpModal
         open={!!showHelpModal}
-        onClose={() => actions0?.setState?.({ show_slate_help: false })}
+        onClose={() => {
+          if (actions0?.setState != null) {
+            actions0.setState({ show_slate_help: false });
+          } else {
+            setLocalHelpOpen(false);
+          }
+        }}
       />
     </ChangeContext.Provider>
   );

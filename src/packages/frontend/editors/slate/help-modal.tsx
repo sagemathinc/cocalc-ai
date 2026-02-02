@@ -67,12 +67,21 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
 
       <Title level={5}>Supported features</Title>
       <ul style={{ paddingLeft: 22 }}>
-        <li>Headings, paragraphs, lists, checkboxes</li>
+        <li>Headings, paragraphs, lists, checkboxes via [ ]</li>
         <li>Tables</li>
+        <li>Markdown references</li>
         <li>Links and images</li>
+        <li>#hashtags</li>
+        <li>Emojis (e.g., :smile:)</li>
         <li>Inline and display math</li>
         <li>Fenced code blocks and inline code</li>
+        <li>Jupyter execution for code blocks</li>
         <li>HTML blocks (when present in Markdown)</li>
+        <li>Metadata YAML headings</li>
+        <li>
+          Autoformat via <Text code>markdown[space]</Text> (use Shift+Space to
+          avoid autoformat)
+        </li>
       </ul>
 
       <Title level={5}>Block editor notes</Title>
