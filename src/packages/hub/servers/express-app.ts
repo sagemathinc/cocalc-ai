@@ -24,6 +24,7 @@ import initCustomize from "./app/customize";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
 import initSelfHostConnector from "./app/self-host-connector";
+import initRootfsManifest from "./app/rootfs-manifest";
 import initStats from "./app/stats";
 import { database } from "./database";
 import initHttpServer from "./http";
@@ -153,6 +154,7 @@ export default async function init(opts: Options): Promise<{
   }
   initAppRedirect(router, { includeAuth: !opts.nextServer });
   initProjectHostBootstrap(router);
+  initRootfsManifest(router);
   initSelfHostConnector(router);
 
   if (!opts.nextServer) {
