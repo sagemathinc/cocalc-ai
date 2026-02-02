@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Descendant, Editor, Node, Point } from "slate";
+import { Descendant, Editor, Node, Point, Text } from "slate";
 import type { SlateEditor } from "./types";
 import { pointAtPath } from "./slate-util";
 
@@ -41,4 +41,20 @@ export function blockSelectionPoint(
   }
   const fallbackPath = position === "start" ? [0] : [0];
   return pointAtPath(editor, fallbackPath, undefined, position);
+}
+
+export function normalizePointForDoc(
+  root: Node,
+  point: { path: number[]; offset: number },
+  edge: "start" | "end",
+) {
+  try {
+    const node = Node.get(root, point.path);
+    if (Text.isText(node)) {
+      return point;
+    }
+    return Editor[edge](root as any, point.path);
+  } catch {
+    return null;
+  }
 }
