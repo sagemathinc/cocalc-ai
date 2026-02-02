@@ -5,7 +5,6 @@
 
 // Prototype: always-editable block editor for very large markdown documents.
 
-import { debounce } from "lodash";
 import React, {
   MutableRefObject,
   useCallback,
@@ -43,7 +42,6 @@ import { withNonfatalRange, withSelectionSafety } from "./patches";
 import { Element } from "./element";
 import Leaf from "./leaf";
 import { Actions } from "./types";
-import { SimpleInputMerge } from "../../../sync/editor/generic/simple-input-merge";
 import { ChangeContext } from "./use-change";
 import { getHandler as getKeyboardHandler } from "./keyboard";
 import type { SearchHook } from "./search";
@@ -57,7 +55,6 @@ import type { SlateEditor } from "./types";
 import { IS_MACOS } from "./keyboard/register";
 import { moveListItemDown, moveListItemUp } from "./format/list-move";
 import { emptyParagraph, isWhitespaceParagraph } from "./padding";
-import { ensureSlateDebug, logSlateDebug } from "./slate-utils/slate-debug";
 import { remapSelectionInDocWithSentinels } from "./sync/block-diff";
 import {
   findSlatePointNearMarkdownPosition,
@@ -74,6 +71,7 @@ import { EditBar, useLinkURL, useListProperties, useMarks } from "./edit-bar";
 import { SlateHelpModal } from "./help-modal";
 import { useBlockSearch } from "./use-block-search";
 import { useBlockSelection } from "./use-block-selection";
+import { useBlockSync } from "./use-block-sync";
 import {
   findNextMatchIndex,
   findPreviousMatchIndex,
@@ -81,13 +79,12 @@ import {
   joinBlocks,
   normalizeBlockMarkdown,
 } from "./block-markdown-utils";
+import { debugSyncLog } from "./block-sync-utils";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
 const BLOCK_CHUNK_TARGET_CHARS = 4000;
 const SHOW_BLOCK_BOUNDARIES = true;
-const BLOCK_DEFER_CHARS = 200_000;
-const BLOCK_DEFER_MS = 300;
 
 function getBlockChunkTargetChars(): number {
   if (typeof globalThis === "undefined") return BLOCK_CHUNK_TARGET_CHARS;
@@ -98,32 +95,6 @@ function getBlockChunkTargetChars(): number {
   return BLOCK_CHUNK_TARGET_CHARS;
 }
 
-function getBlockDeferChars(): number {
-  if (typeof globalThis === "undefined") return BLOCK_DEFER_CHARS;
-  const value = (globalThis as any).COCALC_SLATE_BLOCK_DEFER_CHARS;
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
-  }
-  return BLOCK_DEFER_CHARS;
-}
-
-function getBlockDeferMs(): number {
-  if (typeof globalThis === "undefined") return BLOCK_DEFER_MS;
-  const value = (globalThis as any).COCALC_SLATE_BLOCK_DEFER_MS;
-  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-    return Math.floor(value);
-  }
-  return BLOCK_DEFER_MS;
-}
-
-function debugSyncLog(type: string, data?: Record<string, unknown>): void {
-  if (typeof window === "undefined") return;
-  if (!(window as any).__slateDebugLog) return;
-  ensureSlateDebug();
-  logSlateDebug(`block-sync:${type}`, data);
-  // eslint-disable-next-line no-console
-  console.log(`[slate-sync:block] ${type}`, data ?? {});
-}
 
 function normalizePointForDoc(root: Node, point: { path: number[]; offset: number }, edge: "start" | "end") {
   try {
@@ -1803,52 +1774,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   } | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
-  const lastSetValueRef = useRef<string | null>(null);
-  const pendingRemoteRef = useRef<string | null>(null);
-  const pendingRemoteTimerRef = useRef<number | null>(null);
-  const mergeHelperRef = useRef<SimpleInputMerge>(
-    new SimpleInputMerge(initialValue),
-  );
-  const lastLocalEditAtRef = useRef<number>(0);
-  const lastRemoteMergeAtRef = useRef<number>(0);
-  const remoteMergeConfig =
-    typeof window === "undefined"
-      ? {}
-      : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
-  const ignoreRemoteWhileFocused = false;
-  const mergeIdleMs =
-    remoteMergeConfig.idleMs ??
-    remoteMergeIdleMs ??
-    saveDebounceMs ??
-    DEFAULT_SAVE_DEBOUNCE_MS;
-  const mergeIdleMsRef = useRef<number>(mergeIdleMs);
-  mergeIdleMsRef.current = mergeIdleMs;
-  const [pendingRemoteIndicator, setPendingRemoteIndicator] =
-    useState<boolean>(false);
-  const allowFocusedValueUpdateRef = useRef<boolean>(false);
-
-  const updatePendingRemoteIndicator = useCallback(
-    (remote: string, local: string) => {
-      const preview = mergeHelperRef.current.previewMerge({ remote, local });
-      debugSyncLog("pending-indicator:preview", {
-        changed: preview.changed,
-        remoteLength: remote.length,
-        localLength: local.length,
-      });
-      if (!preview.changed) {
-        pendingRemoteRef.current = null;
-        mergeHelperRef.current.noteApplied(preview.merged);
-      } else {
-        pendingRemoteRef.current = remote;
-      }
-      setPendingRemoteIndicator((prev) =>
-        prev === preview.changed ? prev : preview.changed,
-      );
-      return preview.changed;
-    },
-    [],
-  );
-
   const bumpRemoteVersions = useCallback((nextBlocks: string[]) => {
     const prevBlocks = blocksRef.current;
     const prevVersions = remoteVersionRef.current;
@@ -1898,205 +1823,42 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     updateBlockIdsForRemote(nextBlocks);
   }, [bumpRemoteVersions, updateBlockIdsForRemote]);
 
-  const pendingValueRef = useRef<string | null>(null);
-  const pendingValueTimerRef = useRef<number | null>(null);
-
-  const flushPendingValue = useCallback(() => {
-    if (pendingValueTimerRef.current != null) {
-      window.clearTimeout(pendingValueTimerRef.current);
-      pendingValueTimerRef.current = null;
-    }
-    const pending = pendingValueRef.current;
-    if (pending == null) return;
-    pendingValueRef.current = null;
-    setBlocksFromValue(pending);
-  }, [setBlocksFromValue]);
-
-  const schedulePendingValue = useCallback(
-    (markdown: string) => {
-      pendingValueRef.current = markdown;
-      if (pendingValueTimerRef.current != null) {
-        window.clearTimeout(pendingValueTimerRef.current);
-      }
-      const delay = getBlockDeferMs();
-      pendingValueTimerRef.current = window.setTimeout(() => {
-        pendingValueTimerRef.current = null;
-        flushPendingValue();
-      }, delay);
-    },
-    [flushPendingValue],
-  );
-
-  const applyBlocksFromValue = useCallback(
-    (markdown: string) => {
-      if (markdown === valueRef.current && blocksRef.current.length > 0) {
-        return;
-      }
-      const deferChars = getBlockDeferChars();
-      if (focusedIndex == null && markdown.length >= deferChars) {
-        schedulePendingValue(markdown);
-        return;
-      }
-      flushPendingValue();
-      setBlocksFromValue(markdown);
-    },
-    [focusedIndex, flushPendingValue, schedulePendingValue, setBlocksFromValue],
-  );
-
   const getFullMarkdown = useCallback(() => joinBlocks(blocksRef.current), []);
+  const ignoreRemoteWhileFocused = false;
+
+  const {
+    applyBlocksFromValue,
+    allowNextValueUpdateWhileFocused,
+    flushPendingRemoteMerge,
+    markLocalEdit,
+    pendingRemoteIndicator,
+    saveBlocksDebounced,
+    saveBlocksNow,
+    lastLocalEditAtRef,
+    lastRemoteMergeAtRef,
+  } = useBlockSync({
+    actions,
+    value,
+    initialValue,
+    valueRef,
+    blocksRef,
+    focusedIndex,
+    ignoreRemoteWhileFocused,
+    remoteMergeIdleMs,
+    saveDebounceMs,
+    setBlocksFromValue,
+    getFullMarkdown,
+  });
 
   useEffect(() => {
     if (getValueRef == null) return;
     getValueRef.current = getFullMarkdown;
   }, [getValueRef, getFullMarkdown]);
 
-  useEffect(() => {
-    const nextValue = value ?? "";
-    debugSyncLog("value-prop", {
-      focusedIndex,
-      sameAsLastSet: nextValue === lastSetValueRef.current,
-      sameAsValueRef: nextValue === valueRef.current,
-      pendingRemote: pendingRemoteRef.current != null,
-    });
-    if (nextValue === lastSetValueRef.current) {
-      lastSetValueRef.current = null;
-      return;
-    }
-    if (nextValue === valueRef.current) return;
-    const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
-    if (
-      ignoreRemoteWhileFocused &&
-      focusedIndex != null &&
-      !allowFocusedValueUpdate
-    ) {
-      debugSyncLog("value-prop:defer-focused", {
-        focusedIndex,
-      });
-      updatePendingRemoteIndicator(nextValue, joinBlocks(blocksRef.current));
-      return;
-    }
-    allowFocusedValueUpdateRef.current = false;
-    if (pendingRemoteRef.current != null) return;
-    applyBlocksFromValue(nextValue);
-  }, [
-    value,
-    focusedIndex,
-    ignoreRemoteWhileFocused,
-    applyBlocksFromValue,
-    updatePendingRemoteIndicator,
-  ]);
-
-  useEffect(() => {
-    if (focusedIndex != null) {
-      flushPendingValue();
-    }
-  }, [focusedIndex, flushPendingValue]);
-
-  function shouldDeferRemoteMerge(): boolean {
-    const idleMs = mergeIdleMsRef.current;
-    return Date.now() - lastLocalEditAtRef.current < idleMs;
-  }
-
-  function schedulePendingRemoteMerge() {
-    if (pendingRemoteTimerRef.current != null) {
-      window.clearTimeout(pendingRemoteTimerRef.current);
-    }
-    const idleMs = mergeIdleMsRef.current;
-    debugSyncLog("pending-remote:schedule", { idleMs });
-    pendingRemoteTimerRef.current = window.setTimeout(() => {
-      pendingRemoteTimerRef.current = null;
-      flushPendingRemoteMerge();
-    }, idleMs);
-  }
-
-  function flushPendingRemoteMerge(force = false) {
-    const pending = pendingRemoteRef.current;
-    if (pending == null) return;
-    if (!force && shouldDeferRemoteMerge()) {
-      debugSyncLog("pending-remote:defer", {
-        idleMs: mergeIdleMsRef.current,
-      });
-      schedulePendingRemoteMerge();
-      return;
-    }
-    debugSyncLog("pending-remote:flush", { force });
-    pendingRemoteRef.current = null;
-    setPendingRemoteIndicator(false);
-    lastRemoteMergeAtRef.current = Date.now();
-    mergeHelperRef.current.handleRemote({
-      remote: pending,
-      getLocal: () => joinBlocks(blocksRef.current),
-      applyMerged: applyBlocksFromValue,
-    });
-  }
-
-  useEffect(() => {
-    return () => {
-      if (pendingRemoteTimerRef.current != null) {
-        window.clearTimeout(pendingRemoteTimerRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (actions._syncstring == null) return;
-    const change = () => {
-      const remote = actions._syncstring?.to_str() ?? "";
-      debugSyncLog("syncstring:change", {
-        focusedIndex,
-        remoteLength: remote.length,
-        shouldDefer: shouldDeferRemoteMerge(),
-      });
-      if (ignoreRemoteWhileFocused && focusedIndex != null) {
-        updatePendingRemoteIndicator(remote, joinBlocks(blocksRef.current));
-        return;
-      }
-      if (shouldDeferRemoteMerge()) {
-        pendingRemoteRef.current = remote;
-        schedulePendingRemoteMerge();
-        return;
-      }
-      debugSyncLog("syncstring:apply", { remoteLength: remote.length });
-      lastRemoteMergeAtRef.current = Date.now();
-      mergeHelperRef.current.handleRemote({
-        remote,
-        getLocal: () => joinBlocks(blocksRef.current),
-        applyMerged: applyBlocksFromValue,
-      });
-    };
-    actions._syncstring.on("change", change);
-    return () => {
-      actions._syncstring?.removeListener("change", change);
-    };
-  }, [actions, focusedIndex, ignoreRemoteWhileFocused, applyBlocksFromValue, updatePendingRemoteIndicator]);
-
-  useEffect(() => {
-    if (!ignoreRemoteWhileFocused) return;
-    if (focusedIndex == null) {
-      flushPendingRemoteMerge(true);
-    }
-  }, [focusedIndex, ignoreRemoteWhileFocused]);
-
-  const saveBlocksNow = useCallback(() => {
-    if (actions.set_value == null) return;
-    const markdown = joinBlocks(blocksRef.current);
-    if (markdown === valueRef.current) return;
-    lastSetValueRef.current = markdown;
-    valueRef.current = markdown;
-    mergeHelperRef.current.noteSaved(markdown);
-    actions.set_value(markdown);
-    actions.syncstring_commit?.();
-  }, [actions]);
-
-  const saveBlocksDebounced = useMemo(
-    () => debounce(saveBlocksNow, saveDebounceMs ?? DEFAULT_SAVE_DEBOUNCE_MS),
-    [saveBlocksNow, saveDebounceMs],
-  );
-
   const handleBlockChange = useCallback(
     (index: number, markdown: string) => {
       if (read_only) return;
-      lastLocalEditAtRef.current = Date.now();
+      markLocalEdit();
       skipSelectionResetRef.current.add(index);
       setBlocks((prev) => {
         if (index >= prev.length) return prev;
@@ -2117,26 +1879,14 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       });
       syncRemoteVersionLength(blocksRef.current);
       if (is_current) saveBlocksDebounced();
-      if (
-        ignoreRemoteWhileFocused &&
-        focusedIndex != null &&
-        pendingRemoteRef.current != null
-      ) {
-        updatePendingRemoteIndicator(
-          pendingRemoteRef.current,
-          joinBlocks(blocksRef.current),
-        );
-      }
     },
     [
-      focusedIndex,
-      ignoreRemoteWhileFocused,
       is_current,
+      markLocalEdit,
       read_only,
       saveBlocksDebounced,
       newBlockId,
       syncRemoteVersionLength,
-      updatePendingRemoteIndicator,
     ],
   );
 
@@ -2222,7 +1972,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     blockControlRef.current = {
       ...(blockControlRef.current ?? {}),
       allowNextValueUpdateWhileFocused: () => {
-        allowFocusedValueUpdateRef.current = true;
+        allowNextValueUpdateWhileFocused();
       },
       focusBlock: (index: number, position: "start" | "end" = "start") => {
         focusBlock(index, position);
@@ -2283,6 +2033,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     }
   }, [
     actions,
+    allowNextValueUpdateWhileFocused,
     blockControlRef,
     focusBlock,
     focusedIndex,
@@ -2373,7 +2124,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       focusPosition?: "start" | "end",
     ) => {
       const insertIndex = gap.side === "before" ? gap.index : gap.index + 1;
-      lastLocalEditAtRef.current = Date.now();
+      markLocalEdit();
       setGapCursorState(null);
       setBlocks((prev) => {
         const next = [...prev];
@@ -2400,13 +2151,19 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         align: "center",
       });
     },
-    [is_current, newBlockId, saveBlocksDebounced, syncRemoteVersionLength],
+    [
+      is_current,
+      markLocalEdit,
+      newBlockId,
+      saveBlocksDebounced,
+      syncRemoteVersionLength,
+    ],
   );
 
   const setBlockText = useCallback(
     (index: number, text: string) => {
       if (index < 0) return;
-      lastLocalEditAtRef.current = Date.now();
+      markLocalEdit();
       skipSelectionResetRef.current.add(index);
       setBlocks((prev) => {
         const next = [...prev];
@@ -2433,6 +2190,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [
       bumpRemoteVersionAt,
       is_current,
+      markLocalEdit,
       newBlockId,
       saveBlocksDebounced,
       syncRemoteVersionLength,
@@ -2443,7 +2201,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     (index: number, opts?: { focus?: boolean }) => {
       if (index < 0 || index >= blocksRef.current.length) return;
       if (blocksRef.current.length === 1) return;
-      lastLocalEditAtRef.current = Date.now();
+      markLocalEdit();
       setGapCursorState(null);
       setBlocks((prev) => {
         const next = [...prev];
@@ -2466,6 +2224,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     },
     [
       is_current,
+      markLocalEdit,
       saveBlocksDebounced,
       setGapCursorState,
       syncRemoteVersionLength,
@@ -2479,7 +2238,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
       const currEditor = editorMapRef.current.get(index);
       if (!prevEditor || !currEditor) return;
 
-      lastLocalEditAtRef.current = Date.now();
+      markLocalEdit();
       setGapCursorState(null);
 
       const insertIndex = prevEditor.children.length;
@@ -2533,7 +2292,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         setSelectionAtOffset(index - 1, mergeOffset);
       }
     },
-    [deleteBlockAtIndex, setGapCursorState, setSelectionAtOffset],
+    [
+      deleteBlockAtIndex,
+      markLocalEdit,
+      setGapCursorState,
+      setSelectionAtOffset,
+    ],
   );
 
   const selectionRange = useMemo(() => {
