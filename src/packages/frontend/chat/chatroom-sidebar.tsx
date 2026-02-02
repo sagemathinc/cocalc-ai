@@ -21,6 +21,7 @@ import { Resizable } from "re-resizable";
 import { Icon } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
 import type { ChatActions } from "./actions";
+import { ThreadBadge } from "./thread-badge";
 import type { ThreadMeta, ThreadSectionWithUnread } from "./threads";
 
 const THREAD_SIDEBAR_HEADER: React.CSSProperties = {
@@ -156,6 +157,8 @@ interface ChatRoomSidebarContentProps {
     threadKey: string,
     plainLabel: string,
     hasCustomName: boolean,
+    threadColor?: string,
+    threadIcon?: string,
   ) => void;
   openExportModal: (threadKey: string, label: string, isAI: boolean) => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
@@ -192,6 +195,8 @@ export function ChatRoomSidebarContent({
     hasCustomName: boolean,
     isPinned: boolean,
     isAI: boolean,
+    threadColor?: string,
+    threadIcon?: string,
   ): MenuProps => ({
     items: [
       {
@@ -223,7 +228,13 @@ export function ChatRoomSidebarContent({
     ],
     onClick: ({ key }) => {
       if (key === "rename") {
-        openRenameModal(threadKey, plainLabel, hasCustomName);
+        openRenameModal(
+          threadKey,
+          plainLabel,
+          hasCustomName,
+          threadColor,
+          threadIcon,
+        );
       } else if (key === "pin" || key === "unpin") {
         if (!actions?.setThreadPin) {
           antdMessage.error("Pinning chats is not available.");
@@ -261,8 +272,17 @@ export function ChatRoomSidebarContent({
   };
 
   const renderThreadRow = (thread: ThreadMeta) => {
-    const { key, displayLabel, hasCustomName, unreadCount, isAI, isPinned } =
-      thread;
+    const {
+      key,
+      displayLabel,
+      hasCustomName,
+      unreadCount,
+      isAI,
+      isPinned,
+      threadColor,
+      threadIcon,
+      hasCustomAppearance,
+    } = thread;
     const plainLabel = stripHtml(displayLabel);
     const isHovered = hoveredThread === key;
     const isMenuOpen = openThreadMenuKey === key;
@@ -295,9 +315,13 @@ export function ChatRoomSidebarContent({
             setHoveredThread((prev) => (prev === key ? null : prev))
           }
         >
-          <Tooltip title={iconTooltip}>
-            <Icon name={isAI ? "robot" : "users"} style={{ color: "#888" }} />
-          </Tooltip>
+          {hasCustomAppearance ? (
+            <ThreadBadge icon={threadIcon} color={threadColor} size={22} />
+          ) : (
+            <Tooltip title={iconTooltip}>
+              <Icon name={isAI ? "robot" : "users"} style={{ color: "#888" }} />
+            </Tooltip>
+          )}
           <div style={THREAD_ITEM_LABEL_STYLE}>{plainLabel}</div>
           {showDot && (
             <Tooltip title={dotTitle}>
@@ -335,6 +359,8 @@ export function ChatRoomSidebarContent({
                 hasCustomName,
                 isPinned,
                 isAI,
+                threadColor,
+                threadIcon,
               )}
               trigger={["click"]}
               open={openThreadMenuKey === key}

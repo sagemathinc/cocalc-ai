@@ -1,4 +1,7 @@
-import { __test__ } from "../block-markdown-editor-core";
+import {
+  computeIncrementalSlices,
+  splitMarkdownToBlocks,
+} from "../block-chunking";
 
 test("incremental chunking keeps the middle slice small for a local edit", () => {
   const prevChunkSize = (globalThis as any).COCALC_SLATE_BLOCK_CHUNK_CHARS;
@@ -9,10 +12,10 @@ test("incremental chunking keeps the middle slice small for a local edit", () =>
       return `paragraph ${idx} ${"x".repeat(40)}`;
     });
     const original = blocks.join("\n\n");
-    const prevBlocks = __test__.splitMarkdownToBlocks(original);
+    const prevBlocks = splitMarkdownToBlocks(original);
     const next = `Z${original}`;
 
-    const slices = __test__.computeIncrementalSlices(
+    const slices = computeIncrementalSlices(
       original,
       next,
       prevBlocks,

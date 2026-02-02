@@ -24,6 +24,7 @@ import type { ChatActions } from "./actions";
 import type { SubmitMentionsFn } from "./types";
 import { INPUT_HEIGHT } from "./utils";
 import type { ThreadMeta } from "./threads";
+import { ThreadBadge } from "./thread-badge";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -37,10 +38,10 @@ export interface ChatRoomComposerProps {
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
   isSelectedThreadAI: boolean;
-  sendMessage: (replyToOverride?: Date | null, extraInput?: string) => void;
   combinedFeedSelected: boolean;
   composerTargetKey: string | null;
   threads: ThreadMeta[];
+  selectedThread?: ThreadMeta | null;
   onComposerTargetChange: (key: string | null) => void;
   onComposerFocusChange: (focused: boolean) => void;
 }
@@ -57,10 +58,10 @@ export function ChatRoomComposer({
   submitMentionsRef,
   hasInput,
   isSelectedThreadAI,
-  sendMessage,
   combinedFeedSelected,
   composerTargetKey,
   threads,
+  selectedThread,
   onComposerTargetChange,
   onComposerFocusChange,
 }: ChatRoomComposerProps) {
@@ -81,6 +82,10 @@ export function ChatRoomComposer({
     composerTargetKey && targetOptions.some((opt) => opt.value === composerTargetKey)
       ? composerTargetKey
       : undefined;
+  const threadLabel = selectedThread?.displayLabel ?? selectedThread?.label;
+  const threadColor = selectedThread?.threadColor;
+  const threadIcon = selectedThread?.threadIcon;
+  const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
 
   const [viewportHeight, setViewportHeight] = useState<number>(() => {
     if (typeof window === "undefined") return 900;
@@ -246,6 +251,14 @@ export function ChatRoomComposer({
     }
   }, [isZenMode]);
 
+  const handleSend = useCallback(() => {
+    if (!hasInput) return;
+    on_send();
+    if (isZenMode) {
+      void toggleZenMode();
+    }
+  }, [hasInput, isZenMode, on_send, toggleZenMode]);
+
   const composerStyle: CSSProperties = {
     display: "flex",
     marginBottom: isZenMode && isFullscreen ? 0 : "5px",
@@ -316,13 +329,28 @@ export function ChatRoomComposer({
             />
           </div>
         )}
+        {hasCustomAppearance && threadLabel && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              color: "#666",
+              fontSize: "12px",
+              marginBottom: 6,
+            }}
+          >
+            <ThreadBadge icon={threadIcon} color={threadColor} size={18} />
+            <span>{stripHtml(threadLabel)}</span>
+          </div>
+        )}
         <div ref={inputContainerRef}>
           <ChatInput
             fontSize={fontSize}
             autoFocus
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
             input={input}
-            on_send={on_send}
+            on_send={handleSend}
             height={chatInputHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             onChange={(value) => {
@@ -408,7 +436,7 @@ export function ChatRoomComposer({
               }
             >
               <Button
-                onClick={() => sendMessage()}
+                onClick={handleSend}
                 disabled={!hasInput}
                 type="primary"
                 icon={<Icon name="paper-plane" />}
