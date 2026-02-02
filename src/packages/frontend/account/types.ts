@@ -93,6 +93,8 @@ export interface AccountState {
   is_admin: boolean;
   is_ready: boolean; // user signed in and account settings have been loaded.
   lti_id?: List<string>;
+  default_rootfs_image?: string;
+  default_rootfs_image_gpu?: string;
   created?: Date;
   ephemeral?: number;
   strategies?: List<TypedMap<PassportStrategyFrontend>>;

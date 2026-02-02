@@ -262,6 +262,11 @@ export type SiteSettingsExtrasKeys =
   | "project_hosts_software_base_url"
   | "project_hosts_bootstrap_channel"
   | "project_hosts_bootstrap_version"
+  | "project_rootfs_manifest_url"
+  | "project_rootfs_manifest_url_extra"
+  | "project_rootfs_default_image"
+  | "project_rootfs_default_image_gpu"
+  | "project_rootfs_prepull_images"
   | "project_hosts_self_host_connector_version"
   | "project_hosts_cloudflare_tunnel_enabled"
   | "project_hosts_cloudflare_tunnel_account_id"
@@ -977,7 +982,7 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     multiline: 4,
-    tags: ["Project Hosts", "Security", "Cloud", "SSH"],
+    tags: ["Project Hosts", "Cloud", "SSH"],
     valid: () => true,
     group: "Compute / Project Hosts",
     subgroup: "Access",
@@ -1087,6 +1092,56 @@ export const EXTRAS: SettingsExtras = {
     valid: () => true,
     group: "Compute / Project Hosts",
     subgroup: "Bootstrap",
+  },
+  project_rootfs_manifest_url: {
+    name: "Workspace RootFS Image Manifest URL",
+    desc: "Primary manifest URL that lists the curated root filesystem images shown to users when creating a workspace.",
+    default: "https://software.cocalc.ai/rootfs/manifest.json",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    valid: () => true,
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_manifest_url_extra: {
+    name: "Workspace RootFS Image Manifest URL (Additional)",
+    desc: "Optional additional manifest URL. Entries are merged with the primary manifest.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    valid: () => true,
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_default_image: {
+    name: "Workspace RootFS Default Image",
+    desc: "Default OCI image used when a user does not choose an image. This image is also pulled to every host.",
+    default: "ubuntu:25.10",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    valid: () => true,
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_default_image_gpu: {
+    name: "Workspace RootFS Default Image (GPU)",
+    desc: "Optional default OCI image used when a user enables GPU in workspace creation.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI", "GPU"],
+    valid: () => true,
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_prepull_images: {
+    name: "Workspace RootFS Prepull Images",
+    desc: "Comma-separated list of OCI images to pre-pull to every host (in addition to the default image).",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    valid: () => true,
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
   },
   project_hosts_self_host_connector_version: {
     name: "Project Hosts: Self-Host Connector Version",
