@@ -332,7 +332,6 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   info={info}
                   setInfo={(info) => {
                     setInfo(info);
-                    setElement({ info });
                   }}
                   showInfoInput={!!element.fence}
                   onInfoFocus={() => {
@@ -342,6 +341,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   onInfoBlur={() => {
                     infoFocusedRef.current = false;
                     editor.setIgnoreSelection(false);
+                    if (element.info != info) {
+                      setElement({ info });
+                    }
                   }}
                   renderActions={() => (
                     <ActionButtons
