@@ -396,6 +396,7 @@ export function ChatPanel({
         combinedFeedSelected={isCombinedFeedSelected}
         composerTargetKey={composerTargetKey}
         threads={threads}
+        selectedThread={selectedThread}
         onComposerTargetChange={setComposerTargetKey}
         onComposerFocusChange={setComposerFocused}
       />
@@ -434,7 +435,16 @@ export function ChatPanel({
             setSidebarVisible={setSidebarVisible}
             threadSections={threadSections}
             combinedThread={combinedThread}
-            openRenameModal={modalHandlers?.openRenameModal ?? (() => undefined)}
+            openRenameModal={
+              modalHandlers?.openRenameModal ??
+              ((
+                _threadKey,
+                _label,
+                _useCurrentLabel,
+                _color,
+                _icon,
+              ) => undefined)
+            }
             openExportModal={modalHandlers?.openExportModal ?? (() => undefined)}
             openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
             confirmDeleteThread={

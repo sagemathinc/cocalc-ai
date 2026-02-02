@@ -37,6 +37,9 @@ export interface ThreadSection<T extends ThreadListItem = ThreadListItem> {
 export type ThreadMeta = ThreadListItem & {
   displayLabel: string;
   hasCustomName: boolean;
+  threadColor?: string;
+  threadIcon?: string;
+  hasCustomAppearance: boolean;
   readCount: number;
   unreadCount: number;
   isAI: boolean;
@@ -192,6 +195,9 @@ export function useThreadSections({
       const rootMessage = thread.rootMessage;
       const storedName = field<string>(rootMessage, "name")?.trim();
       const hasCustomName = !!storedName;
+      const threadColor = field<string>(rootMessage, "thread_color")?.trim();
+      const threadIcon = field<string>(rootMessage, "thread_icon")?.trim();
+      const hasCustomAppearance = Boolean(threadColor || threadIcon);
       const displayLabel = storedName || thread.label;
       const pinValue = field<any>(rootMessage, "pin");
       const isPinned =
@@ -229,6 +235,9 @@ export function useThreadSections({
         ...thread,
         displayLabel,
         hasCustomName,
+        threadColor,
+        threadIcon,
+        hasCustomAppearance,
         readCount,
         unreadCount,
         isAI: !!isAI,
@@ -267,6 +276,9 @@ export function useThreadSections({
       messageCount,
       rootMessage: undefined,
       hasCustomName: false,
+      threadColor: undefined,
+      threadIcon: undefined,
+      hasCustomAppearance: false,
       readCount,
       unreadCount,
       isAI: false,

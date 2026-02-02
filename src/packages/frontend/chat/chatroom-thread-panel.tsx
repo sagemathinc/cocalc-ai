@@ -8,6 +8,7 @@ import { React } from "@cocalc/frontend/app-framework";
 import { Space } from "antd";
 import { ChatLog } from "./chat-log";
 import CodexConfigButton from "./codex";
+import { ThreadBadge } from "./thread-badge";
 import type { ChatActions } from "./actions";
 import type { ChatMessages } from "./types";
 import type * as immutable from "immutable";
@@ -100,11 +101,14 @@ export function ChatRoomThreadPanel({
     Boolean(selectedThread.rootMessage) &&
     Boolean(actions?.isCodexThread?.(new Date(parseInt(selectedThread.key, 10))));
   const selectedThreadForLog = selectedThreadKey ?? undefined;
-  const compactThreadLabel = selectedThread
-    ? "displayLabel" in selectedThread
-      ? selectedThread.displayLabel
-      : selectedThread.label
-    : undefined;
+  const threadMeta =
+    selectedThread && "displayLabel" in selectedThread
+      ? selectedThread
+      : undefined;
+  const compactThreadLabel = threadMeta?.displayLabel ?? selectedThread?.label;
+  const compactThreadIcon = threadMeta?.threadIcon;
+  const compactThreadColor = threadMeta?.threadColor;
+  const compactThreadHasAppearance = threadMeta?.hasCustomAppearance ?? false;
 
   return (
     <div
@@ -138,8 +142,18 @@ export function ChatRoomThreadPanel({
             fontSize: "12px",
             letterSpacing: "0.02em",
             textTransform: "uppercase",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
           }}
         >
+          {compactThreadHasAppearance && (
+            <ThreadBadge
+              icon={compactThreadIcon}
+              color={compactThreadColor}
+              size={18}
+            />
+          )}
           {compactThreadLabel}
         </div>
       )}

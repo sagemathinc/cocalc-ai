@@ -555,6 +555,13 @@ export class ChatActions extends Actions<ChatState> {
   };
 
   renameThread = (threadKey: string, name: string): boolean => {
+    return this.setThreadAppearance(threadKey, { name });
+  };
+
+  setThreadAppearance = (
+    threadKey: string,
+    opts: { name?: string; color?: string; icon?: string },
+  ): boolean => {
     if (this.syncdb == null) {
       return false;
     }
@@ -562,11 +569,29 @@ export class ChatActions extends Actions<ChatState> {
     if (entry == null) {
       return false;
     }
-    const trimmed = name.trim();
-    if (trimmed) {
-      entry.doc.name = trimmed;
-    } else {
-      delete entry.doc.name;
+    if ("name" in opts) {
+      const trimmed = (opts.name ?? "").trim();
+      if (trimmed) {
+        entry.doc.name = trimmed;
+      } else {
+        delete entry.doc.name;
+      }
+    }
+    if ("color" in opts) {
+      const trimmed = (opts.color ?? "").trim();
+      if (trimmed) {
+        entry.doc.thread_color = trimmed;
+      } else {
+        delete entry.doc.thread_color;
+      }
+    }
+    if ("icon" in opts) {
+      const trimmed = (opts.icon ?? "").trim();
+      if (trimmed) {
+        entry.doc.thread_icon = trimmed;
+      } else {
+        delete entry.doc.thread_icon;
+      }
     }
     this.setSyncdb(entry.doc);
     this.syncdb.commit();
