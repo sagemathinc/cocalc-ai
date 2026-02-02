@@ -7,12 +7,8 @@ import React from "react";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { Path } from "@cocalc/frontend/frame-editors/frame-tree/path";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
-import BlockMarkdownEditorCore, {
-  shouldUseBlockEditor,
-} from "./block-markdown-editor-core";
+import BlockMarkdownEditorCore from "./block-markdown-editor-core";
 import LeafWithCursor from "./leaf-with-cursor";
-
-export { shouldUseBlockEditor };
 
 export default function BlockMarkdownEditor(
   props: React.ComponentProps<typeof BlockMarkdownEditorCore>,

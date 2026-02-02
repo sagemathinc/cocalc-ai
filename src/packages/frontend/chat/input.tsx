@@ -36,6 +36,7 @@ interface Props {
   input?: string;
   on_paste?: (e) => void;
   height?: string;
+  autoGrowMaxHeight?: number;
   submitMentionsRef?: SubmitMentionsRef;
   fontSize?: number;
   hideHelp?: boolean;
@@ -67,6 +68,7 @@ export default function ChatInput({
   submitMentionsRef,
   syncdb,
   moveCursorToEndOfLine,
+  autoGrowMaxHeight,
 }: Props) {
   const intl = useIntl();
   const onSendRef = useRef<Function>(on_send);
@@ -361,6 +363,7 @@ export default function ChatInput({
         on_send(input);
       }}
       height={height}
+      autoGrowMaxHeight={autoGrowMaxHeight}
       placeholder={getPlaceholder()}
       fontSize={fontSize}
       hideHelp={hideHelp}

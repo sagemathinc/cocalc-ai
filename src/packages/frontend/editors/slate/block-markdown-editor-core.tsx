@@ -162,7 +162,6 @@ function blockSelectionPoint(
   return pointAtPath(editor, fallbackPath, undefined, position);
 }
 
-const BLOCK_EDITOR_THRESHOLD_CHARS = -1; // always on for prototyping
 const USE_BLOCK_GAP_CURSOR = false;
 const USE_BLOCK_CODE_SPACERS = false;
 const EMPTY_SEARCH: SearchHook = {
@@ -376,18 +375,6 @@ interface BlockMarkdownEditorProps {
   getValueRef?: MutableRefObject<() => string>;
   disableBlockEditor?: boolean;
   disableVirtualization?: boolean;
-}
-
-export function shouldUseBlockEditor({
-  value,
-  height,
-}: {
-  value?: string;
-  height?: string;
-}): boolean {
-  if (height === "auto") return false;
-  if (value == null) return true;
-  return value.length >= BLOCK_EDITOR_THRESHOLD_CHARS;
 }
 
 function splitMarkdownToBlocks(markdown: string): string[] {

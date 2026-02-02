@@ -97,9 +97,6 @@ import useUpload from "./upload";
 import { ChangeContext } from "./use-change";
 import { buildCodeBlockDecorations, getPrismGrammar } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
-import BlockMarkdownEditor, {
-  shouldUseBlockEditor,
-} from "./block-markdown-editor";
 
 export type { SlateEditor };
 
@@ -1495,6 +1492,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [flushPendingRemoteMerge],
   );
 
+  const editableFillStyle =
+    height !== "auto"
+      ? {
+          minHeight: "100%",
+          height: "100%",
+        }
+      : undefined;
+
   let slate = (
     <Slate editor={editor} value={editorValue} onChange={onChange}>
       <div style={{ position: "relative" }}>
@@ -1531,6 +1536,23 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           renderElement={renderElement}
           renderLeaf={Leaf}
           onKeyDown={onKeyDown}
+          style={
+            useWindowing
+              ? editableFillStyle
+              : {
+                  height,
+                  position: "relative", // CRITICAL!!! Without this, editor will sometimes scroll the entire frame off the screen.  Do NOT delete position:'relative'.  5+ hours of work to figure this out!  Note that this isn't needed when using windowing above.
+                  minWidth: "80%",
+                  padding: "15px",
+                  background: "white",
+                  overflowX: "hidden",
+                  overflowY:
+                    height == "auto"
+                      ? "hidden" /* for height='auto' we never want a scrollbar  */
+                      : "auto" /* for this overflow, see https://github.com/ianstormtaylor/slate/issues/3706 */,
+                  ...pageStyle,
+                }
+          }
           onBlur={() => {
             editor.saveValue();
             updateMarks();
@@ -1560,23 +1582,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           onScroll={() => {
             updateScrollState();
           }}
-          style={
-            useWindowing
-              ? undefined
-              : {
-                  height,
-                  position: "relative", // CRITICAL!!! Without this, editor will sometimes scroll the entire frame off the screen.  Do NOT delete position:'relative'.  5+ hours of work to figure this out!  Note that this isn't needed when using windowing above.
-                  minWidth: "80%",
-                  padding: "15px",
-                  background: "white",
-                  overflowX: "hidden",
-                  overflowY:
-                    height == "auto"
-                      ? "hidden" /* for height='auto' we never want a scrollbar  */
-                      : "auto" /* for this overflow, see https://github.com/ianstormtaylor/slate/issues/3706 */,
-                  ...pageStyle,
-                }
-          }
           windowing={
             useWindowing
               ? {
@@ -1663,14 +1668,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 export const EditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   if (props.disableBlockEditor) {
     return <FullEditableMarkdown {...props} />;
-  }
-  if (
-    shouldUseBlockEditor({
-      value: props.value,
-      height: props.height,
-    })
-  ) {
-    return <BlockMarkdownEditor {...props} />;
   }
   return <FullEditableMarkdown {...props} />;
 });
