@@ -427,6 +427,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     title?: string;
     description?: string;
     image?: string; // if given, sets the compute image (the ID string)
+    rootfs_image?: string; // if given, sets the rootfs image
     start?: boolean; // immediately start on create
     license?: string;
     host_id?: string;
@@ -438,6 +439,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       title: string;
       description: string;
       image?: string;
+      rootfs_image?: string;
       host_id?: string;
       region?: string;
       start: boolean;
@@ -446,6 +448,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       title: "No Title",
       description: "No Description",
       image,
+      rootfs_image: opts.rootfs_image,
       host_id: undefined,
       region: undefined,
       start: false,
@@ -454,6 +457,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (!opts2.image) {
       // make falseish same as not specified.
       delete opts2.image;
+    }
+    if (!opts2.rootfs_image) {
+      delete opts2.rootfs_image;
     }
 
     const project_id = await webapp_client.project_client.create(opts2);

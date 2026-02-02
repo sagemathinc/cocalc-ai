@@ -58,9 +58,6 @@ export function NewProjectCreator({
   );
   const [error, set_error] = useState<string>("");
   const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
-  const [title_manually, set_title_manually] = useState<boolean>(
-    default_value.length > 0,
-  );
   const [saving, setSaving] = useState<boolean>(false);
   const new_project_title_ref = useRef<any>(null);
   const [selectedHost, setSelectedHost] = useState<Host | undefined>();
@@ -156,10 +153,6 @@ export function NewProjectCreator({
   }, [title_text]);
 
   useEffect(() => {
-    set_title_manually(default_value.length > 0);
-  }, [default_value.length > 0]);
-
-  useEffect(() => {
     if (!selectedHost) return;
     const hostRegion = mapCloudRegionToR2Region(selectedHost.region);
     if (hostRegion !== projectRegion) {
@@ -189,7 +182,6 @@ export function NewProjectCreator({
   function reset_form(): void {
     set_title_text(default_value || getDefaultTitle());
     setProjectRegion(DEFAULT_R2_REGION);
-    set_title_manually(false);
     setSelectedHost(undefined);
     setShowAdvanced(false);
     set_error("");
@@ -264,7 +256,6 @@ export function NewProjectCreator({
   function input_on_change(): void {
     const text = (new_project_title_ref.current as any)?.input?.value;
     set_title_text(text);
-    set_title_manually(true);
   }
 
   function handle_keypress(e): void {
