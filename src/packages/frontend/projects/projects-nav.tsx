@@ -432,6 +432,41 @@ export function ProjectsNav(props: ProjectsNavProps) {
     const normalizedSearch = searchValue.trim().toLowerCase();
     const matchesSearch = (label: string) =>
       !normalizedSearch || label.toLowerCase().includes(normalizedSearch);
+    const renderLabelNode = (option) => {
+      return (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+          }}
+        >
+          {option?.avatar || option?.color ? (
+            <Avatar
+              style={{
+                backgroundColor: option?.color ?? undefined,
+                border: option?.color ? `2px solid ${option.color}` : undefined,
+              }}
+              shape="circle"
+              icon={option?.avatar ? <img src={option.avatar} /> : undefined}
+              size={18}
+            />
+          ) : (
+            <Icon name="circle" />
+          )}
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {option?.title}
+          </span>
+        </span>
+      );
+    };
     const makeOption = (project_id: string, closable?: boolean) => {
       const visual = getProjectVisual(project_id);
       const labelNode = renderLabelNode(visual);
@@ -469,42 +504,6 @@ export function ProjectsNav(props: ProjectsNavProps) {
     const hasResults = groupedOptions.some(
       (group) => group.options && group.options.length > 0,
     );
-
-    const renderLabelNode = (option) => {
-      return (
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            minWidth: 0,
-          }}
-        >
-          {option?.avatar || option?.color ? (
-            <Avatar
-              style={{
-                backgroundColor: option?.color ?? undefined,
-                border: option?.color ? `2px solid ${option.color}` : undefined,
-              }}
-              shape="circle"
-              icon={option?.avatar ? <img src={option.avatar} /> : undefined}
-              size={18}
-            />
-          ) : (
-            <Icon name="circle" />
-          )}
-          <span
-            style={{
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {option?.title}
-          </span>
-        </span>
-      );
-    };
 
     const renderOptionItem = (option) => {
       const project_id = option?.value;
@@ -605,7 +604,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
           onClear={() => setSearchValue("")}
           allowClear
           options={groupedOptions}
-          dropdownRender={(menu) => (
+          dropdownRender={() => (
             <>
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
                 {hasResults ? (
