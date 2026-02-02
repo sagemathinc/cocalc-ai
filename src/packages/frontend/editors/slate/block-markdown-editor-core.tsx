@@ -12,8 +12,7 @@ import type { RenderLeafProps } from "./slate-react";
 import Leaf from "./leaf";
 import { Actions } from "./types";
 import type { SlateEditor } from "./types";
-import { BlockEditBar } from "./block-edit-bar";
-import { SlateHelpModal } from "./help-modal";
+import { BlockEditorChrome } from "./block-editor-chrome";
 import { BlockRowList } from "./block-row-list";
 import { splitMarkdownToBlocks } from "./block-chunking";
 import { useBlockSearch } from "./use-block-search";
@@ -456,43 +455,21 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
         position: "relative",
       }}
     >
-      <BlockEditBar
-        key={editBarKey}
+      <BlockEditorChrome
+        editBarKey={editBarKey}
         editor={activeEditor ?? null}
         isCurrent={!!is_current}
         updateSignal={activeEditorSignal}
         hideSearch={hideSearch}
         searchHook={searchHook}
         onHelp={() => actions0?.setState?.({ show_slate_help: true })}
+        showHelpModal={!!showHelpModal}
+        onCloseHelp={() => actions0?.setState?.({ show_slate_help: false })}
+        hidePath={hidePath}
+        renderPath={renderPath}
+        showPendingRemoteIndicator={showPendingRemoteIndicator}
+        onMergePending={handleMergePending}
       />
-      <SlateHelpModal
-        open={!!showHelpModal}
-        onClose={() => actions0?.setState?.({ show_slate_help: false })}
-      />
-      {!hidePath && renderPath}
-      {showPendingRemoteIndicator && (
-        <div
-          role="button"
-          tabIndex={0}
-          onMouseDown={handleMergePending}
-          onClick={handleMergePending}
-          style={{
-            position: "absolute",
-            top: hidePath ? 6 : 30,
-            right: 8,
-            fontSize: 12,
-            padding: "2px 8px",
-            background: "rgba(255, 251, 230, 0.95)",
-            border: "1px solid rgba(255, 229, 143, 0.9)",
-            borderRadius: 4,
-            color: "#8c6d1f",
-            cursor: "pointer",
-            zIndex: 3,
-          }}
-        >
-          Remote changes pending
-        </div>
-      )}
       <BlockRowList
         blocks={blocks}
         blockIds={blockIds}
