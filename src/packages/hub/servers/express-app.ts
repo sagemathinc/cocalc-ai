@@ -464,7 +464,7 @@ function initLanding(router: express.Router) {
         { href: `${base}/auth/sign-up`, label: "Sign up" },
       ];
       if (signedIn) {
-        links.unshift({ href: `${base}/projects`, label: "Projects" });
+        links.unshift({ href: `${base}/projects`, label: "Workspaces" });
       }
       res.type("html").send(`<!doctype html>
 <html lang="en">
@@ -537,8 +537,7 @@ function initLanding(router: express.Router) {
   <body>
     <div class="wrap">
       <div class="card">
-        <h1>CoCalc Launchpad</h1>
-        <p>Lightweight control plane for managing project hosts and accounts.</p>
+        <h1 style="margin-bottom:30px">CoCalc Launchpad</h1>
         <div class="links">
           ${links
             .map((link, index) => {
