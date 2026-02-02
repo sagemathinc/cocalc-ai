@@ -21,7 +21,6 @@ import type { RenderLeafProps } from "./slate-react";
 import { formatSelectedText } from "./format/commands";
 import Leaf from "./leaf";
 import { Actions } from "./types";
-import type { SearchHook } from "./search";
 import {
   blockSelectionPoint,
   normalizePointForDoc,
@@ -35,7 +34,7 @@ import {
   markdownPositionToSlatePoint,
   nearestMarkdownIndexForSlatePoint,
 } from "./sync";
-import { EditBar, useLinkURL, useListProperties, useMarks } from "./edit-bar";
+import { BlockEditBar } from "./block-edit-bar";
 import { SlateHelpModal } from "./help-modal";
 import { BlockRowEditor, type PendingSelection } from "./block-row-editor";
 import {
@@ -53,70 +52,6 @@ import {
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
-const EMPTY_SEARCH: SearchHook = {
-  decorate: () => [],
-  Search: null as any,
-  search: "",
-  previous: () => undefined,
-  next: () => undefined,
-  focus: () => undefined,
-};
-
-const BLOCK_EDIT_BAR_HEIGHT = 25;
-
-const BlockEditBar: React.FC<{
-  editor: SlateEditor | null;
-  isCurrent: boolean;
-  updateSignal: number;
-  hideSearch?: boolean;
-  onHelp?: () => void;
-  searchHook?: SearchHook;
-}> = ({ editor, isCurrent, updateSignal, hideSearch, onHelp, searchHook }) => {
-  if (!editor) {
-    return (
-      <div
-        style={{
-          borderBottom: isCurrent
-            ? "1px solid lightgray"
-            : "1px solid transparent",
-          height: BLOCK_EDIT_BAR_HEIGHT,
-        }}
-      />
-    );
-  }
-  const search = searchHook ?? {
-    decorate: () => [],
-    Search: null as any,
-    search: "",
-    previous: () => undefined,
-    next: () => undefined,
-    focus: () => undefined,
-  };
-  const { marks, updateMarks } = useMarks(editor);
-  const { linkURL, updateLinkURL } = useLinkURL(editor);
-  const { listProperties, updateListProperties } = useListProperties(editor);
-
-  useEffect(() => {
-    updateMarks();
-    updateLinkURL();
-    updateListProperties();
-  }, [updateSignal, updateMarks, updateLinkURL, updateListProperties]);
-
-  return (
-    <EditBar
-      Search={search?.Search ?? EMPTY_SEARCH.Search}
-      isCurrent={isCurrent}
-      marks={marks}
-      linkURL={linkURL}
-      listProperties={listProperties}
-      editor={editor}
-      hideSearch={hideSearch}
-      onHelp={onHelp}
-    />
-  );
-};
-
-
 interface BlockMarkdownEditorProps {
   value?: string;
   actions?: Actions;
