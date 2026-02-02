@@ -163,10 +163,12 @@ systemctl start docker
 
 WORKDIR=/root/rootfs-images
 mkdir -p "$WORKDIR"
+BUILD_DIR="$WORKDIR/src/rootfs-images"
 
 if [[ -n "$REPO_TAR_URL" ]]; then
   echo "Downloading repo tarball from $REPO_TAR_URL"
   curl -fsSL "$REPO_TAR_URL" | tar -xz -C "$WORKDIR" --strip-components=1
+  BUILD_DIR="$WORKDIR"
 else
   if [[ -n "$REPO_TOKEN" ]]; then
     AUTH_URL="https://${REPO_TOKEN}@${REPO_URL#https://}"
@@ -178,7 +180,14 @@ else
   fi
 fi
 
-cd "$WORKDIR/src/rootfs-images"
+if [[ ! -d "$BUILD_DIR" ]]; then
+  echo "Build directory not found: $BUILD_DIR"
+  echo "Contents of $WORKDIR:"
+  ls -la "$WORKDIR"
+  exit 1
+fi
+
+cd "$BUILD_DIR"
 python3 tools/build.py --image "$IMAGE_ID" --registry "$REGISTRY" --project "$PROJECT"
 echo "=== rootfs-images build finished ==="
 date -u
