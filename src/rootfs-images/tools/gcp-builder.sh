@@ -13,6 +13,9 @@ REPO_TAR_URL=""
 GCS_BUCKET=""
 GCS_LOCATION="US"
 USE_LOCAL=1
+LOG_DIR="build-logs"
+TAIL_LOGS=1
+AUTO_DELETE=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,6 +29,9 @@ while [[ $# -gt 0 ]]; do
     --gcs-bucket) GCS_BUCKET="$2"; shift 2;;
     --gcs-location) GCS_LOCATION="$2"; shift 2;;
     --no-local) USE_LOCAL=0; shift;;
+    --log-dir) LOG_DIR="$2"; shift 2;;
+    --no-tail) TAIL_LOGS=0; shift;;
+    --no-delete) AUTO_DELETE=0; shift;;
     --machine-type) MACHINE_TYPE="$2"; shift 2;;
     --name-prefix) NAME_PREFIX="$2"; shift 2;;
     *) echo "unknown arg $1"; exit 1;;
@@ -33,7 +39,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$IMAGE_ID" || -z "$PROJECT" || -z "$ZONE" || -z "$REGISTRY" ]]; then
-  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local]" >&2
+  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete]" >&2
   exit 1
 fi
 
@@ -107,6 +113,8 @@ STARTUP_SCRIPT=$(mktemp)
 cat >"$STARTUP_SCRIPT" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
+exec > >(tee -a /var/log/rootfs-build.log) 2>&1
+trap 'echo "BUILD FAILED (line $LINENO)"; exit 1' ERR
 
 IMAGE_ID="${IMAGE_ID}"
 REGISTRY="${REGISTRY}"
@@ -114,6 +122,40 @@ PROJECT="${PROJECT}"
 REPO_URL="${REPO_URL}"
 REPO_TOKEN="${REPO_TOKEN}"
 REPO_TAR_URL="${REPO_TAR_URL}"
+AUTO_DELETE="${AUTO_DELETE}"
+
+self_delete() {
+  set +e
+  local token zone name project_id
+  project_id="$(curl -fs -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/project/project-id)"
+  zone="$(curl -fs -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | awk -F/ '{print $NF}')"
+  name="$(curl -fs -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/name)"
+  token="$(curl -fs -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')"
+  echo "Requesting instance deletion: ${project_id}/${zone}/${name}"
+  curl -fsS -X DELETE \
+    -H "Authorization: Bearer ${token}" \
+    "https://compute.googleapis.com/compute/v1/projects/${project_id}/zones/${zone}/instances/${name}"
+  set -e
+}
+
+cleanup() {
+  local status=$?
+  if [[ $status -eq 0 ]]; then
+    echo "BUILD SUCCESS"
+  else
+    echo "BUILD FAILED (exit $status)"
+  fi
+  if [[ "$AUTO_DELETE" -eq 1 ]]; then
+    echo "Auto-deleting build instance..."
+    self_delete || echo "Instance deletion request failed."
+  else
+    echo "Auto-delete disabled; instance will remain running."
+  fi
+}
+trap cleanup EXIT
+
+echo "=== rootfs-images build starting ==="
+date -u
 
 apt-get update -y
 apt-get install -y git docker.io python3 python3-yaml
@@ -138,6 +180,8 @@ fi
 
 cd "$WORKDIR/src/rootfs-images"
 python3 tools/build.py --image "$IMAGE_ID" --registry "$REGISTRY" --project "$PROJECT"
+echo "=== rootfs-images build finished ==="
+date -u
 SCRIPT
 
 # Replace variables in startup script
@@ -147,6 +191,7 @@ sed -i "s|\${PROJECT}|$PROJECT|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_URL}|$REPO_URL|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_TOKEN}|$REPO_TOKEN|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_TAR_URL}|$REPO_TAR_URL|g" "$STARTUP_SCRIPT"
+sed -i "s|\${AUTO_DELETE}|$AUTO_DELETE|g" "$STARTUP_SCRIPT"
 
 set -x
 
@@ -157,9 +202,29 @@ gcloud compute instances create "$NAME" \
   --provisioning-model=SPOT \
   --instance-termination-action=DELETE \
   --maintenance-policy=TERMINATE \
+  --scopes=https://www.googleapis.com/auth/cloud-platform \
   --metadata-from-file startup-script="$STARTUP_SCRIPT" \
   --boot-disk-size=200GB \
   --image-family=ubuntu-2204-lts \
   --image-project=ubuntu-os-cloud
 
-echo "Instance $NAME created in $ZONE. Delete it when the build finishes."
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/${NAME}.serial.log"
+
+if [[ "$TAIL_LOGS" -eq 1 ]]; then
+  echo "Tailing serial console logs to $LOG_FILE"
+  gcloud compute instances tail-serial-port-output "$NAME" --zone "$ZONE" --port 1 >"$LOG_FILE" 2>&1 &
+  TAIL_PID=$!
+else
+  echo "Serial console logs will not be tailed. Use:"
+  echo "  gcloud compute instances get-serial-port-output $NAME --zone $ZONE --port 1 > $LOG_FILE"
+fi
+
+echo "Instance $NAME created in $ZONE."
+echo "Log file: $LOG_FILE"
+if [[ "$AUTO_DELETE" -eq 1 ]]; then
+  echo "Auto-delete is enabled; instance will delete on success or failure."
+else
+  echo "Auto-delete is disabled; delete manually when done:"
+  echo "  gcloud compute instances delete $NAME --zone $ZONE"
+fi
