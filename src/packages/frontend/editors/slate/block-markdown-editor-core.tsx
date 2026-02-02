@@ -29,7 +29,7 @@ import {
 } from "./sync";
 import { BlockEditBar } from "./block-edit-bar";
 import { SlateHelpModal } from "./help-modal";
-import { BlockRowEditor, type PendingSelection } from "./block-row-editor";
+import { type PendingSelection } from "./block-row-editor";
 import { BlockRowList } from "./block-row-list";
 import {
   splitMarkdownToBlocks,
@@ -41,6 +41,7 @@ import { useBlockContainerEvents } from "./use-block-container-events";
 import { useBlockEditorControl } from "./use-block-editor-control";
 import { useBlockMultiSelect } from "./use-block-multi-select";
 import { useBlockOps } from "./use-block-ops";
+import { useBlockRowRenderer } from "./use-block-row-renderer";
 import { useBlockSync } from "./use-block-sync";
 import {
   globalIndexForBlockOffset,
@@ -577,69 +578,52 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const editBarKey = activeEditorIndex ?? "none";
   const hideSearch = false;
 
-  const renderBlock = (index: number) => {
-    const markdown = blocks[index] ?? "";
-    const remoteVersion = remoteVersionRef.current[index] ?? 0;
-    const isSelected =
-      selectionRange != null &&
-      index >= selectionRange.start &&
-      index <= selectionRange.end;
-    return (
-      <BlockRowEditor
-        index={index}
-        markdown={markdown}
-        remoteVersion={remoteVersion}
-        isFocused={focusedIndex === index}
-        clearBlockSelection={clearBlockSelection}
-        onMergeWithPrevious={mergeWithPreviousBlock}
-        lastLocalEditAtRef={lastLocalEditAtRef}
-        lastRemoteMergeAtRef={lastRemoteMergeAtRef}
-        onChangeMarkdown={handleBlockChange}
-        onDeleteBlock={deleteBlockAtIndex}
-        onFocus={() => {
-          setFocusedIndex(index);
-          setActiveEditorSignal((prev) => prev + 1);
-          if (blockSelection) {
-            setBlockSelection(null);
-          }
-          onFocus?.();
-        }}
-        onBlur={() => {
-          setFocusedIndex((prev) => (prev === index ? null : prev));
-          onBlur?.();
-        }}
-        onSelectBlock={handleSelectBlock}
-        autoFocus={autoFocus && index === 0}
-        read_only={read_only}
-        actions={actions}
-        id={props.id}
-        rowStyle={rowStyle}
-        gapCursor={gapCursor}
-        setGapCursor={setGapCursorState}
-        gapCursorRef={gapCursorRef}
-        pendingGapInsertRef={pendingGapInsertRef}
-        pendingSelectionRef={pendingSelectionRef}
-        skipSelectionResetRef={skipSelectionResetRef}
-        onNavigate={focusBlock}
-        onInsertGap={insertBlockAtGap}
-        onSetBlockText={setBlockText}
-        preserveBlankLines={preserveBlankLines}
-        saveNow={saveBlocksNow}
-        registerEditor={registerEditor}
-        unregisterEditor={unregisterEditor}
-        onEditorChange={handleActiveEditorChange}
-        getFullMarkdown={getFullMarkdown}
-        codeBlockExpandState={codeBlockExpandStateRef.current}
-        blockCount={blocks.length}
-        selected={isSelected}
-        gutterWidth={gutterWidth}
-        leafComponent={leafComponentResolved}
-        searchHook={searchHook}
-        searchDecorate={searchDecorate}
-        searchQuery={searchQuery}
-      />
-    );
-  };
+  const renderBlock = useBlockRowRenderer({
+    blocks,
+    remoteVersionRef,
+    focusedIndex,
+    blockSelection,
+    setBlockSelection,
+    setFocusedIndex,
+    setActiveEditorSignal,
+    onFocus,
+    onBlur,
+    autoFocus,
+    read_only,
+    actions,
+    id: props.id,
+    rowStyle,
+    gapCursor,
+    setGapCursor: setGapCursorState,
+    gapCursorRef,
+    pendingGapInsertRef,
+    pendingSelectionRef,
+    skipSelectionResetRef,
+    onNavigate: focusBlock,
+    onInsertGap: insertBlockAtGap,
+    onSetBlockText: setBlockText,
+    preserveBlankLines,
+    saveNow: saveBlocksNow,
+    registerEditor,
+    unregisterEditor,
+    onEditorChange: handleActiveEditorChange,
+    getFullMarkdown,
+    codeBlockExpandState: codeBlockExpandStateRef.current,
+    blockCount: blocks.length,
+    gutterWidth,
+    leafComponent: leafComponentResolved,
+    searchHook,
+    searchDecorate,
+    searchQuery,
+    clearBlockSelection,
+    onMergeWithPrevious: mergeWithPreviousBlock,
+    onChangeMarkdown: handleBlockChange,
+    onDeleteBlock: deleteBlockAtIndex,
+    selectedRange: selectionRange,
+    handleSelectBlock,
+    lastLocalEditAtRef,
+    lastRemoteMergeAtRef,
+  });
 
   const {
     onMouseDownCapture,
