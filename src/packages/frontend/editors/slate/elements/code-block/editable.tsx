@@ -272,8 +272,8 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const shouldCollapse = false;
   const selected = useSelected();
   const selectionInBlock = !!focused && !!selected;
-  const selection = editor.selection;
-  const selectionInside = useMemo(() => {
+  const isSelectionInsideBlock = useCallback(() => {
+    const selection = editor.selection;
     if (!selection) return false;
     try {
       const path = ReactEditor.findPath(editor, element);
@@ -285,7 +285,24 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     } catch {
       return false;
     }
-  }, [editor, element, selection]);
+  }, [editor, element]);
+  const syncSelectionFromDom = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const domSelection = window.getSelection?.();
+    if (!domSelection) return;
+    const ignoreSelection = editor.getIgnoreSelection?.() ?? false;
+    if (ignoreSelection) editor.setIgnoreSelection(false);
+    try {
+      const range = ReactEditor.toSlateRange(editor, domSelection);
+      if (range) {
+        Transforms.select(editor, range);
+      }
+    } catch {
+      // ignore selection conversion issues
+    } finally {
+      if (ignoreSelection) editor.setIgnoreSelection(true);
+    }
+  }, [editor]);
   const forceExpanded = selectionInBlock;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
   const markdownCandidate = (element as any).markdownCandidate;
@@ -337,14 +354,15 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
-      if (!selectionInside) return;
+      syncSelectionFromDom();
+      if (!isSelectionInsideBlock()) return;
       const text = event.clipboardData?.getData("text/plain");
       if (!text) return;
       event.preventDefault();
       event.stopPropagation();
       Editor.insertText(editor, text);
     },
-    [editor, selectionInside],
+    [editor, isSelectionInsideBlock, syncSelectionFromDom],
   );
 
   return (
