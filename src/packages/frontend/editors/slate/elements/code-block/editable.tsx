@@ -25,7 +25,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { ReactEditor } from "../../slate-react";
 import { hash_string } from "@cocalc/util/misc";
-import { Editor, Transforms } from "slate";
+import { Editor, Range, Transforms } from "slate";
 import { markdown_to_slate } from "../../markdown-to-slate";
 import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
@@ -272,6 +272,20 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const shouldCollapse = false;
   const selected = useSelected();
   const selectionInBlock = !!focused && !!selected;
+  const selection = editor.selection;
+  const selectionInside = useMemo(() => {
+    if (!selection) return false;
+    try {
+      const path = ReactEditor.findPath(editor, element);
+      const range = Editor.range(editor, path);
+      return (
+        Range.includes(range, selection.anchor) &&
+        Range.includes(range, selection.focus)
+      );
+    } catch {
+      return false;
+    }
+  }, [editor, element, selection]);
   const forceExpanded = selectionInBlock;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
   const markdownCandidate = (element as any).markdownCandidate;
@@ -320,6 +334,18 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       Transforms.insertNodes(editor, doc as any, { at: elementPath });
     });
   }, [editor, codeValue, elementPath]);
+
+  const handlePaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      if (!selectionInside) return;
+      const text = event.clipboardData?.getData("text/plain");
+      if (!text) return;
+      event.preventDefault();
+      event.stopPropagation();
+      Editor.insertText(editor, text);
+    },
+    [editor, selectionInside],
+  );
 
   return (
     <div {...attributes} spellCheck={false} style={{ textIndent: 0 }}>
@@ -401,7 +427,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   .join("\n")}
               </pre>
             ) : (
-              <CodeBlockBody>{children}</CodeBlockBody>
+              <CodeBlockBody onPaste={handlePaste}>{children}</CodeBlockBody>
             )}
             {markdownCandidate && (
               <div
