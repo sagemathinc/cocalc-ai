@@ -84,11 +84,18 @@ function FloatingActionMenu({
           onBlur={() => {
             onInfoBlur();
           }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
+            e.stopPropagation();
             if (e.keyCode == 13 && e.shiftKey) {
               onRun?.();
             }
           }}
+          onKeyUp={(e) => e.stopPropagation()}
+          onKeyPress={(e) => e.stopPropagation()}
+          onBeforeInput={(e) => e.stopPropagation()}
+          onInput={(e) => e.stopPropagation()}
           onChange={(e) => {
             const next = e.target.value;
             setInfo(next);

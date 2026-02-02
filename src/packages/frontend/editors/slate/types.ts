@@ -33,6 +33,8 @@ One class that implements this is frame-tree/mmarkdown-editor/actions.ts
 */
 
 export interface Actions {
+  name?: string;
+  setState?: (state: any) => void;
   getSlateEditor?: (id?: string) => SlateEditor | undefined;
   registerSlateEditor?: (id: string, editor: SlateEditor) => void;
   ensure_syncstring_is_saved?: () => Promise<void>;
