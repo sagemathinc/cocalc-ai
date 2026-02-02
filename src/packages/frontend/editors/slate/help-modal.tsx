@@ -71,6 +71,8 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
         <li>Tables</li>
         <li>Markdown references</li>
         <li>Links and images</li>
+        <li>Pasting and resizing inline images</li>
+        <li>Drag-and-drop upload of attachments</li>
         <li>#hashtags</li>
         <li>Emojis (e.g., :smile:)</li>
         <li>Inline and display math</li>
