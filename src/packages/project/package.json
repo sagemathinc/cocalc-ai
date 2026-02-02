@@ -64,10 +64,12 @@
     "clean": "rm -rf dist build tsconfig.tsbuildinfo",
     "build:bundle": "cd sea && ./build-bundle.sh && cd ../build && OS=$(uname -s | tr '[:upper:]' '[:lower:]') && if [ \"$OS\" != \"linux\" ]; then echo \"bundle build is linux-only\" >&2; exit 1; fi && tar Jcvf bundle-linux.tar.xz bundle",
     "build:tools": "cd sea && ./build-tools.sh",
+    "build:tools-minimal": "cd sea && ./build-tools-minimal.sh",
     "run:bundle": "node ./build/bundle/bundle/index.js",
     "sea": "pnpm build:tarball && cd sea && ./build-sea.sh",
     "publish:bundle": "cd sea && ./publish-bundle.sh",
     "publish:tools": "cd sea && ./publish-tools.sh",
+    "publish:tools-minimal": "cd sea && ./publish-tools-minimal.sh",
     "publish:sea": "cd sea && ./publish-sea.sh",
     "promote:sea": "cd sea && ./promote-sea.sh",
     "build:all": "pnpm build && pnpm build:tarball && pnpm build:sea"
