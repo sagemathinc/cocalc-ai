@@ -666,6 +666,23 @@ export const withAutoFormat = (editor) => {
       const isPlainTextOnly =
         !hasTypes ||
         (types.length === 1 && types[0] === "text/plain" && text !== "");
+      if (isPlainTextOnly && lineCount === 1) {
+        const trimmed = normalized.trim();
+        if (trimmed.length > 0) {
+          if (looksLikeEmail(trimmed)) {
+            Transforms.insertText(editor, trimmed);
+            return;
+          }
+          if (looksLikeUrl(trimmed)) {
+            Transforms.insertText(editor, trimmed);
+            return;
+          }
+          if (looksLikeFilePath(trimmed)) {
+            Transforms.insertText(editor, `\`${trimmed}\``);
+            return;
+          }
+        }
+      }
       if (isPlainTextOnly || lineCount >= MULTILINE_PASTE_THRESHOLD) {
         const pasteId = `paste-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         Transforms.insertNodes(
@@ -716,6 +733,30 @@ export const withAutoFormat = (editor) => {
 
   return editor;
 };
+
+function looksLikeUrl(text: string): boolean {
+  if (/^https?:\/\//i.test(text)) return true;
+  if (/^www\./i.test(text)) return true;
+  if (/^[A-Za-z0-9.-]+\.[A-Za-z]{2,}(\/|$)/.test(text)) return true;
+  return false;
+}
+
+function looksLikeEmail(text: string): boolean {
+  if (looksLikeUrl(text)) return false;
+  if (/\s/.test(text)) return false;
+  return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(text);
+}
+
+function looksLikeFilePath(text: string): boolean {
+  if (looksLikeUrl(text)) return false;
+  if (looksLikeEmail(text)) return false;
+  if (/^[A-Za-z]:[\\/]/.test(text)) return true; // Windows drive
+  if (/^~[\\/]/.test(text)) return true;
+  if (/^\.{1,2}[\\/]/.test(text)) return true;
+  if (/^\//.test(text)) return true;
+  if (/[\\/]/.test(text) && !/\s/.test(text)) return true;
+  return false;
+}
 
 function insertMultilineCodeText(editor: SlateEditor, text: string): boolean {
   if (!editor.selection) return false;
