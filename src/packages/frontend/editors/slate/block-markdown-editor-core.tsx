@@ -14,7 +14,7 @@ import React, {
 } from "react";
 import { useRedux } from "@cocalc/frontend/app-framework";
 import { Descendant, Transforms } from "slate";
-import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { type VirtuosoHandle } from "react-virtuoso";
 import { ReactEditor } from "./slate-react";
 import type { RenderLeafProps } from "./slate-react";
 import Leaf from "./leaf";
@@ -30,6 +30,7 @@ import {
 import { BlockEditBar } from "./block-edit-bar";
 import { SlateHelpModal } from "./help-modal";
 import { BlockRowEditor, type PendingSelection } from "./block-row-editor";
+import { BlockRowList } from "./block-row-list";
 import {
   splitMarkdownToBlocks,
   splitMarkdownToBlocksIncremental,
@@ -724,32 +725,16 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
           Remote changes pending
         </div>
       )}
-      <div
-        className={noVfill || height === "auto" ? undefined : "smc-vfill"}
-        style={{
-          width: "100%",
-          fontSize: font_size,
-          height,
-        }}
-      >
-        {disableVirtualization ? (
-          <div>
-            {blocks.map((_, index) => (
-              <React.Fragment key={blockIds[index] ?? index}>
-                {renderBlock(index)}
-              </React.Fragment>
-            ))}
-          </div>
-        ) : (
-          <Virtuoso
-            className="smc-vfill"
-            totalCount={blocks.length}
-            itemContent={(index) => renderBlock(index)}
-            computeItemKey={(index) => blockIds[index] ?? index}
-            ref={virtuosoRef}
-          />
-        )}
-      </div>
+      <BlockRowList
+        blocks={blocks}
+        blockIds={blockIds}
+        disableVirtualization={disableVirtualization}
+        renderBlock={renderBlock}
+        virtuosoRef={virtuosoRef}
+        height={height}
+        fontSize={font_size}
+        noVfill={noVfill}
+      />
     </div>
   );
 }
