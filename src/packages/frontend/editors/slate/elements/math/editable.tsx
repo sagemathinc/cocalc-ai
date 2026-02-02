@@ -25,6 +25,19 @@ const Element: React.FC<RenderElementProps> = ({
   const selection = editor.selection;
   const [forceEdit, setForceEdit] = useState(false);
   const isCollapsed = selection ? Range.isCollapsed(selection) : false;
+  const selectionInside = (() => {
+    if (!selection) return false;
+    try {
+      const path = ReactEditor.findPath(editor as any, element as any);
+      const range = Editor.range(editor, path);
+      return (
+        Range.includes(range, selection.anchor) &&
+        Range.includes(range, selection.focus)
+      );
+    } catch {
+      return false;
+    }
+  })();
   const isEditing = isCollapsed && (forceEdit || (focused && selected));
   useEffect(() => {
     if (!isCollapsed && forceEdit) {
@@ -35,6 +48,11 @@ const Element: React.FC<RenderElementProps> = ({
       setForceEdit(false);
     }
   }, [forceEdit, focused, isEditing, isCollapsed]);
+  useEffect(() => {
+    if (forceEdit && !selectionInside) {
+      setForceEdit(false);
+    }
+  }, [forceEdit, selectionInside]);
   useEffect(() => {
     if (focused && selected && isCollapsed) {
       setForceEdit(true);
