@@ -7,15 +7,11 @@
 
 import React, { MutableRefObject, useCallback, useEffect, useRef } from "react";
 import { useRedux } from "@cocalc/frontend/app-framework";
-import { Transforms } from "slate";
 import { type VirtuosoHandle } from "react-virtuoso";
-import { ReactEditor } from "./slate-react";
 import type { RenderLeafProps } from "./slate-react";
 import Leaf from "./leaf";
 import { Actions } from "./types";
-import { blockSelectionPoint } from "./block-selection-utils";
 import type { SlateEditor } from "./types";
-import { indexToPosition, nearestMarkdownIndexForSlatePoint } from "./sync";
 import { BlockEditBar } from "./block-edit-bar";
 import { SlateHelpModal } from "./help-modal";
 import { BlockRowList } from "./block-row-list";
@@ -25,13 +21,14 @@ import { useBlockSelection } from "./use-block-selection";
 import { useBlockContainerEvents } from "./use-block-container-events";
 import { useBlockEditorRegistry } from "./use-block-editor-registry";
 import { useBlockEditorControl } from "./use-block-editor-control";
+import { useBlockFocus } from "./use-block-focus";
 import { useBlockMultiSelect } from "./use-block-multi-select";
 import { useBlockOps } from "./use-block-ops";
 import { useBlockRowRenderer } from "./use-block-row-renderer";
 import { useBlockState } from "./use-block-state";
 import { useBlockSync } from "./use-block-sync";
 import { useBlockUiState } from "./use-block-ui-state";
-import { globalIndexForBlockOffset, joinBlocks } from "./block-markdown-utils";
+import { joinBlocks } from "./block-markdown-utils";
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
@@ -213,24 +210,14 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     ],
   );
 
-  const focusBlock = useCallback(
-    (targetIndex: number, position: "start" | "end") => {
-      if (targetIndex < 0 || targetIndex >= blocksRef.current.length) {
-        return;
-      }
-      const editor = editorMapRef.current.get(targetIndex);
-      if (!editor) {
-        pendingFocusRef.current = { index: targetIndex, position };
-        virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "center" });
-        return;
-      }
-      const point = blockSelectionPoint(editor, position);
-      ReactEditor.focus(editor);
-      Transforms.setSelection(editor, { anchor: point, focus: point });
-      setFocusedIndex(targetIndex);
-    },
-    [],
-  );
+  const { focusBlock, getMarkdownPositionForSelection } = useBlockFocus({
+    blocksRef,
+    editorMapRef,
+    pendingFocusRef,
+    virtuosoRef,
+    focusedIndex,
+    setFocusedIndex,
+  });
 
   const {
     getSelectionGlobalRange,
@@ -253,41 +240,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     selectGlobalRange,
     getSelectionGlobalRange,
   });
-
-  const getMarkdownPositionForSelection = useCallback(() => {
-    let index = focusedIndex;
-    if (index == null || !editorMapRef.current.get(index)?.selection) {
-      let fallbackIndex: number | null = null;
-      for (const [idx, editor] of editorMapRef.current.entries()) {
-        if (!editor?.selection) continue;
-        if (ReactEditor.isFocused(editor)) {
-          index = idx;
-          fallbackIndex = null;
-          break;
-        }
-        if (fallbackIndex == null) {
-          fallbackIndex = idx;
-        }
-      }
-      if (index == null && fallbackIndex != null) {
-        index = fallbackIndex;
-      }
-    }
-    if (index == null) return null;
-    const editor = editorMapRef.current.get(index);
-    if (!editor || !editor.selection) return null;
-    const { index: localIndex } = nearestMarkdownIndexForSlatePoint(
-      editor,
-      editor.selection.focus,
-    );
-    if (localIndex < 0) return null;
-    const blocks = blocksRef.current;
-    const globalIndex = globalIndexForBlockOffset(blocks, index, localIndex);
-    const fullMarkdown = joinBlocks(blocks);
-    return (
-      indexToPosition({ index: globalIndex, markdown: fullMarkdown }) ?? null
-    );
-  }, [focusedIndex]);
 
 
   useBlockEditorControl({
