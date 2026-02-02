@@ -597,7 +597,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
           placeholder="Switch workspace…"
           value={activeProjectId}
           showSearch
-          optionLabelProp="labelText"
+          optionLabelProp="label"
           filterOption={false}
           searchValue={searchValue}
           onSearch={setSearchValue}
