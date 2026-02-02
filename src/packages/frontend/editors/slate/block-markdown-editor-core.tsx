@@ -22,6 +22,7 @@ import { useBlockContainerEvents } from "./use-block-container-events";
 import { useBlockEditorRegistry } from "./use-block-editor-registry";
 import { useBlockEditorControl } from "./use-block-editor-control";
 import { useBlockFocus } from "./use-block-focus";
+import { useBlockLayout } from "./use-block-layout";
 import { useBlockMultiSelect } from "./use-block-multi-select";
 import { useBlockOps } from "./use-block-ops";
 import { useBlockRowRenderer } from "./use-block-row-renderer";
@@ -93,7 +94,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     (useRedux(storeName, "show_slate_help") as boolean | undefined) ?? false;
   const font_size = font_size0 ?? DEFAULT_FONT_SIZE;
   const leafComponentResolved = leafComponent ?? Leaf;
-  const containerRef = useRef<HTMLDivElement | null>(null);
   const initialValue = value ?? "";
   const valueRef = useRef<string>(initialValue);
   // Block mode treats each block independently, so always disable significant
@@ -134,6 +134,12 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     pendingSelectionRef,
     skipSelectionResetRef,
   } = useBlockUiState();
+
+  const { containerRef, setContainerRef, rowStyle, gutterWidth } =
+    useBlockLayout({
+      minimal,
+      divRef,
+    });
 
   const editorMapRef = useRef<Map<number, SlateEditor>>(new Map());
   const codeBlockExpandStateRef = useRef<Map<string, boolean>>(new Map());
@@ -301,24 +307,6 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     splitMarkdownToBlocks,
   });
 
-  const setContainerRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      containerRef.current = node;
-      if (typeof divRef === "function") {
-        divRef(node);
-      } else if (divRef && "current" in divRef) {
-        (divRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-      }
-    },
-    [divRef],
-  );
-
-  const rowStyle: React.CSSProperties = {
-    padding: minimal ? 0 : "0 70px",
-    minHeight: "1px",
-    position: "relative",
-  };
-  const gutterWidth = minimal ? 0 : 70;
 
   const showPendingRemoteIndicator =
     ignoreRemoteWhileFocused && pendingRemoteIndicator;
