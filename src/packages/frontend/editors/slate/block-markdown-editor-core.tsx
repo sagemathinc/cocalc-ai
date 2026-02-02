@@ -17,6 +17,7 @@ import { BlockRowList } from "./block-row-list";
 import { splitMarkdownToBlocks } from "./block-chunking";
 import { useBlockSearch } from "./use-block-search";
 import { useBlockSelection } from "./use-block-selection";
+import { useBlockChange } from "./use-block-change";
 import { useBlockContainerEvents } from "./use-block-container-events";
 import { useBlockEditorRegistry } from "./use-block-editor-registry";
 import { useBlockEditorControl } from "./use-block-editor-control";
@@ -174,40 +175,19 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     getValueRef.current = getFullMarkdown;
   }, [getValueRef, getFullMarkdown]);
 
-  const handleBlockChange = useCallback(
-    (index: number, markdown: string) => {
-      if (read_only) return;
-      markLocalEdit();
-      skipSelectionResetRef.current.add(index);
-      setBlocks((prev) => {
-        if (index >= prev.length) return prev;
-        if (prev[index] === markdown) return prev;
-        const next = [...prev];
-        next[index] = markdown;
-        blocksRef.current = next;
-        return next;
-      });
-      setBlockIds((prev) => {
-        if (prev.length >= blocksRef.current.length) return prev;
-        const next = [...prev];
-        while (next.length < blocksRef.current.length) {
-          next.push(newBlockId());
-        }
-        blockIdsRef.current = next;
-        return next;
-      });
-      syncRemoteVersionLength(blocksRef.current);
-      if (is_current) saveBlocksDebounced();
-    },
-    [
-      is_current,
-      markLocalEdit,
-      read_only,
-      saveBlocksDebounced,
-      newBlockId,
-      syncRemoteVersionLength,
-    ],
-  );
+  const { handleBlockChange } = useBlockChange({
+    readOnly: read_only,
+    isCurrent: is_current,
+    blocksRef,
+    setBlocks,
+    blockIdsRef,
+    setBlockIds,
+    newBlockId,
+    syncRemoteVersionLength,
+    markLocalEdit,
+    saveBlocksDebounced,
+    skipSelectionResetRef,
+  });
 
   const { focusBlock, getMarkdownPositionForSelection } = useBlockFocus({
     blocksRef,
