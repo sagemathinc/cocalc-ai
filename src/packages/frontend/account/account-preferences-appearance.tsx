@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Slider } from "antd";
+import { Button, Card, Select, Slider } from "antd";
 import { debounce } from "lodash";
 import { ReactElement, useMemo } from "react";
 import { FormattedMessage, defineMessages, useIntl } from "react-intl";
@@ -211,6 +211,7 @@ export function AccountPreferencesAppearance() {
   }
 
   function renderUserInterfacePanel(): ReactElement {
+    const tabAccentMode = other_settings.get("file_tab_accent_mode") ?? "bright";
     return (
       <Panel
         size="small"
@@ -289,6 +290,41 @@ export function AccountPreferencesAppearance() {
             defaultMessage={`<strong>Hide Account Balance</strong> in navigation bar`}
           />
         </Switch>
+        <LabeledRow
+          label={
+            <FormattedMessage
+              id="account.other-settings.file_tab_accent_mode"
+              defaultMessage="File tab accent colors"
+            />
+          }
+        >
+          <Select
+            size="small"
+            style={{ minWidth: 200 }}
+            value={tabAccentMode}
+            onChange={(value) => on_change("file_tab_accent_mode", value)}
+            options={[
+              {
+                label: intl.formatMessage(labels.off),
+                value: "off",
+              },
+              {
+                label: intl.formatMessage({
+                  id: "account.other-settings.file_tab_accent_mode.pastels",
+                  defaultMessage: "Pastels",
+                }),
+                value: "pastel",
+              },
+              {
+                label: intl.formatMessage({
+                  id: "account.other-settings.file_tab_accent_mode.bright",
+                  defaultMessage: "Bold",
+                }),
+                value: "bright",
+              },
+            ]}
+          />
+        </LabeledRow>
         {render_katex()}
       </Panel>
     );

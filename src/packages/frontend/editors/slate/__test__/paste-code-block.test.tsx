@@ -75,6 +75,70 @@ test("single-line plain text paste offers convert-to-rich-text option", () => {
   expect(code.markdownCandidate).toBe(true);
 });
 
+test("single-line url paste inserts plain text", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.selection = {
+    anchor: { path: [0, 0], offset: 0 },
+    focus: { path: [0, 0], offset: 0 },
+  };
+
+  const data = {
+    getData: (type: string) =>
+      type === "text/plain" ? "https://example.com/path" : "",
+    types: ["text/plain"],
+    items: [],
+  };
+
+  editor.insertData(data as any);
+
+  expect(editor.children.find((n: any) => n.type === "code_block")).toBeFalsy();
+  expect((editor.children[0] as any).children[0].text).toBe(
+    "https://example.com/path",
+  );
+});
+
+test("single-line file path paste inserts backticks", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.selection = {
+    anchor: { path: [0, 0], offset: 0 },
+    focus: { path: [0, 0], offset: 0 },
+  };
+
+  const data = {
+    getData: (type: string) => (type === "text/plain" ? "/tmp/foo.txt" : ""),
+    types: ["text/plain"],
+    items: [],
+  };
+
+  editor.insertData(data as any);
+
+  expect(editor.children.find((n: any) => n.type === "code_block")).toBeFalsy();
+  expect((editor.children[0] as any).children[0].text).toBe("`/tmp/foo.txt`");
+});
+
+test("single-line email paste inserts plain text", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
+  editor.selection = {
+    anchor: { path: [0, 0], offset: 0 },
+    focus: { path: [0, 0], offset: 0 },
+  };
+
+  const data = {
+    getData: (type: string) =>
+      type === "text/plain" ? "name@example.com" : "",
+    types: ["text/plain"],
+    items: [],
+  };
+
+  editor.insertData(data as any);
+
+  expect(editor.children.find((n: any) => n.type === "code_block")).toBeFalsy();
+  expect((editor.children[0] as any).children[0].text).toBe("name@example.com");
+});
+
 test("multiline paste preserves indentation in code blocks", () => {
   const editor = withAutoFormat(withReact(createEditor()));
   editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
