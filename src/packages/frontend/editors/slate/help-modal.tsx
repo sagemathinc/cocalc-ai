@@ -75,6 +75,7 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
         <li>Emojis (e.g., :smile:)</li>
         <li>Inline and display math</li>
         <li>Fenced code blocks and inline code</li>
+        <li>Mermaid diagrams via <Text code>```mermaid</Text></li>
         <li>Jupyter execution for code blocks</li>
         <li>HTML blocks (when present in Markdown)</li>
         <li>Metadata YAML headings</li>
