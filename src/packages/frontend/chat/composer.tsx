@@ -38,7 +38,6 @@ export interface ChatRoomComposerProps {
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
   isSelectedThreadAI: boolean;
-  sendMessage: (replyToOverride?: Date | null, extraInput?: string) => void;
   combinedFeedSelected: boolean;
   composerTargetKey: string | null;
   threads: ThreadMeta[];
@@ -59,7 +58,6 @@ export function ChatRoomComposer({
   submitMentionsRef,
   hasInput,
   isSelectedThreadAI,
-  sendMessage,
   combinedFeedSelected,
   composerTargetKey,
   threads,
@@ -253,6 +251,14 @@ export function ChatRoomComposer({
     }
   }, [isZenMode]);
 
+  const handleSend = useCallback(() => {
+    if (!hasInput) return;
+    on_send();
+    if (isZenMode) {
+      void toggleZenMode();
+    }
+  }, [hasInput, isZenMode, on_send, toggleZenMode]);
+
   const composerStyle: CSSProperties = {
     display: "flex",
     marginBottom: isZenMode && isFullscreen ? 0 : "5px",
@@ -344,7 +350,7 @@ export function ChatRoomComposer({
             autoFocus
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
             input={input}
-            on_send={on_send}
+            on_send={handleSend}
             height={chatInputHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             onChange={(value) => {
@@ -430,7 +436,7 @@ export function ChatRoomComposer({
               }
             >
               <Button
-                onClick={() => sendMessage()}
+                onClick={handleSend}
                 disabled={!hasInput}
                 type="primary"
                 icon={<Icon name="paper-plane" />}

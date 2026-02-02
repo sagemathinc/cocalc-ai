@@ -392,7 +392,6 @@ export function ChatPanel({
         submitMentionsRef={submitMentionsRef}
         hasInput={hasInput}
         isSelectedThreadAI={isSelectedThreadAI}
-        sendMessage={sendMessage}
         combinedFeedSelected={isCombinedFeedSelected}
         composerTargetKey={composerTargetKey}
         threads={threads}
