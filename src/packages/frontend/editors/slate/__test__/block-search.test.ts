@@ -1,6 +1,7 @@
-import { __test__ } from "../block-markdown-editor-core";
-
-const { findNextMatchIndex, findPreviousMatchIndex } = __test__;
+import {
+  findNextMatchIndex,
+  findPreviousMatchIndex,
+} from "../block-markdown-utils";
 
 describe("block search helpers", () => {
   test("findNextMatchIndex advances and wraps", () => {
