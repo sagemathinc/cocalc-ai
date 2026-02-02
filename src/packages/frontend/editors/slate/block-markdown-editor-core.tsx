@@ -42,6 +42,7 @@ import {
 } from "./block-chunking";
 import { useBlockSearch } from "./use-block-search";
 import { useBlockSelection } from "./use-block-selection";
+import { useBlockEditorControl } from "./use-block-editor-control";
 import { useBlockMultiSelect } from "./use-block-multi-select";
 import { useBlockSync } from "./use-block-sync";
 import {
@@ -398,81 +399,22 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   }, [focusedIndex]);
 
 
-  useEffect(() => {
-    if (blockControlRef == null) return;
-    blockControlRef.current = {
-      ...(blockControlRef.current ?? {}),
-      allowNextValueUpdateWhileFocused: () => {
-        allowNextValueUpdateWhileFocused();
-      },
-      focusBlock: (index: number, position: "start" | "end" = "start") => {
-        focusBlock(index, position);
-      },
-      setSelectionInBlock: (
-        index: number,
-        position: "start" | "end" = "start",
-      ) => {
-        if (index < 0 || index >= blocksRef.current.length) return false;
-        const editor = editorMapRef.current.get(index);
-        if (!editor) {
-          pendingFocusRef.current = { index, position };
-          virtuosoRef.current?.scrollToIndex({
-            index,
-            align: "center",
-          });
-          return false;
-        }
-        const point = blockSelectionPoint(editor, position);
-        ReactEditor.focus(editor);
-        Transforms.setSelection(editor, { anchor: point, focus: point });
-        setFocusedIndex(index);
-        return true;
-      },
-      getSelectionInBlock: () => {
-        const index = focusedIndex;
-        if (index == null) return null;
-        const editor = editorMapRef.current.get(index);
-        if (!editor || !editor.selection) return null;
-        return { index, selection: editor.selection };
-      },
-      getSelectionForBlock: (index: number) => {
-        const editor = editorMapRef.current.get(index);
-        if (!editor || !editor.selection) return null;
-        return { index, selection: editor.selection };
-      },
-      getSelectionOffsetForBlock: (index: number) => {
-        const editor = editorMapRef.current.get(index);
-        if (!editor || !editor.selection) return null;
-        return {
-          offset: editor.selection.anchor.offset,
-          text: Node.string({ children: editor.children } as any),
-        };
-      },
-      getBlocks: () => [...blocksRef.current],
-      setMarkdown: (markdown: string) => {
-        setBlocksFromValue(markdown);
-      },
-      getFocusedIndex: () => focusedIndex,
-      setSelectionFromMarkdownPosition,
-      getMarkdownPositionForSelection,
-    };
-    if (actions?.registerBlockEditorControl && id != null) {
-      actions.registerBlockEditorControl(id, blockControlRef.current);
-      return () => {
-        actions.unregisterBlockEditorControl?.(id);
-      };
-    }
-  }, [
+  useBlockEditorControl({
     actions,
-    allowNextValueUpdateWhileFocused,
-    blockControlRef,
-    focusBlock,
-    focusedIndex,
-    getMarkdownPositionForSelection,
     id,
+    blockControlRef,
+    allowNextValueUpdateWhileFocused,
+    focusBlock,
+    blocksRef,
+    editorMapRef,
+    pendingFocusRef,
+    virtuosoRef,
+    setFocusedIndex,
     setBlocksFromValue,
+    focusedIndex,
     setSelectionFromMarkdownPosition,
-  ]);
+    getMarkdownPositionForSelection,
+  });
 
   const registerEditor = useCallback(
     (index: number, editor: SlateEditor) => {
