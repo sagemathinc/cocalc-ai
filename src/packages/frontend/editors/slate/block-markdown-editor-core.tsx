@@ -49,6 +49,10 @@ import { getHandler as getKeyboardHandler } from "./keyboard";
 import type { SearchHook } from "./search";
 import { isAtBeginningOfBlock, isAtEndOfBlock } from "./control";
 import { pointAtPath } from "./slate-util";
+import {
+  blockSelectionPoint,
+  pointFromOffsetInDoc,
+} from "./block-selection-utils";
 import type { SlateEditor } from "./types";
 import { IS_MACOS } from "./keyboard/register";
 import { moveListItemDown, moveListItemUp } from "./format/list-move";
@@ -60,7 +64,6 @@ import {
   indexToPosition,
   markdownPositionToSlatePoint,
   nearestMarkdownIndexForSlatePoint,
-  positionToIndex,
 } from "./sync";
 import {
   buildCodeBlockDecorations,
@@ -70,8 +73,8 @@ import type { CodeBlock } from "./elements/code-block/types";
 import { EditBar, useLinkURL, useListProperties, useMarks } from "./edit-bar";
 import { SlateHelpModal } from "./help-modal";
 import { useBlockSearch } from "./use-block-search";
+import { useBlockSelection } from "./use-block-selection";
 import {
-  blockOffsetForGlobalIndex,
   findNextMatchIndex,
   findPreviousMatchIndex,
   globalIndexForBlockOffset,
@@ -132,42 +135,6 @@ function normalizePointForDoc(root: Node, point: { path: number[]; offset: numbe
   } catch {
     return null;
   }
-}
-
-function pointFromOffsetInDoc(doc: Descendant[], offset: number): { path: number[]; offset: number } {
-  let total = 0;
-  let lastPath: Path | null = null;
-  let lastLength = 0;
-  const root = { children: doc } as Descendant;
-  for (const [node, path] of Node.texts(root)) {
-    const nextTotal = total + node.text.length;
-    if (offset <= nextTotal) {
-      return { path, offset: Math.max(0, offset - total) };
-    }
-    total = nextTotal;
-    lastPath = path;
-    lastLength = node.text.length;
-  }
-  if (lastPath) {
-    return { path: lastPath, offset: lastLength };
-  }
-  return Editor.start({ children: doc } as any, [0]);
-}
-
-function blockSelectionPoint(
-  editor: SlateEditor,
-  position: "start" | "end",
-): Point {
-  try {
-    const children = editor.children as Descendant[];
-    const text = Node.string({ children } as any);
-    const offset = position === "start" ? 0 : text.length;
-    return pointFromOffsetInDoc(children, offset);
-  } catch {
-    // fall through to default point
-  }
-  const fallbackPath = position === "start" ? [0] : [0];
-  return pointAtPath(editor, fallbackPath, undefined, position);
 }
 
 const USE_BLOCK_GAP_CURSOR = false;
@@ -2192,210 +2159,20 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     [],
   );
 
-  const tryApplySelectionAtOffset = useCallback(
-    (index: number, offset: number) => {
-      if (index < 0 || index >= blocksRef.current.length) return false;
-      const editor = editorMapRef.current.get(index);
-      if (!editor) return false;
-      const point = pointFromOffsetInDoc(editor.children as Descendant[], offset);
-      ReactEditor.focus(editor);
-      Transforms.setSelection(editor, { anchor: point, focus: point });
-      setFocusedIndex(index);
-      return true;
-    },
-    [],
-  );
-
-  const setSelectionAtOffset = useCallback(
-    (index: number, offset: number) => {
-      if (index < 0 || index >= blocksRef.current.length) return false;
-      pendingSelectionRef.current = { index, offset, mode: "text" };
-      const applied = tryApplySelectionAtOffset(index, offset);
-      if (!applied) {
-        virtuosoRef.current?.scrollToIndex({ index, align: "center" });
-        return false;
-      }
-      return true;
-    },
-    [tryApplySelectionAtOffset],
-  );
-
-  const setSelectionFromMarkdownPosition = useCallback(
-    (pos: { line: number; ch: number } | undefined) => {
-      if (pos == null) return false;
-      const blocks = blocksRef.current;
-      const fullMarkdown = joinBlocks(blocks);
-      const globalIndex = positionToIndex({ markdown: fullMarkdown, pos });
-      if (globalIndex == null) return false;
-      const target = blockOffsetForGlobalIndex(blocks, globalIndex);
-      const blockMarkdown = normalizeBlockMarkdown(blocks[target.index] ?? "");
-      const blockPos =
-        indexToPosition({ index: target.offset, markdown: blockMarkdown }) ??
-        { line: 0, ch: 0 };
-      const editor = editorMapRef.current.get(target.index);
-      if (!editor) {
-        pendingSelectionRef.current = {
-          index: target.index,
-          pos: blockPos,
-          mode: "markdown",
-        };
-        virtuosoRef.current?.scrollToIndex({
-          index: target.index,
-          align: "center",
-        });
-        return false;
-      }
-      const point =
-        markdownPositionToSlatePoint({
-          markdown: blockMarkdown,
-          pos: blockPos,
-          editor,
-        }) ??
-        findSlatePointNearMarkdownPosition({
-          markdown: blockMarkdown,
-          pos: blockPos,
-          editor,
-        }) ??
-        blockSelectionPoint(editor, "start");
-      if (!point) return false;
-      ReactEditor.focus(editor);
-      Transforms.setSelection(editor, { anchor: point, focus: point });
-      setFocusedIndex(target.index);
-      return true;
-    },
-    [],
-  );
-
-  const setSelectionRangeFromMarkdownPosition = useCallback(
-    (
-      startPos: { line: number; ch: number } | undefined,
-      endPos: { line: number; ch: number } | undefined,
-    ) => {
-      if (startPos == null) return false;
-      if (endPos == null) return setSelectionFromMarkdownPosition(startPos);
-      const blocks = blocksRef.current;
-      const fullMarkdown = joinBlocks(blocks);
-      const startGlobal = positionToIndex({ markdown: fullMarkdown, pos: startPos });
-      if (startGlobal == null) return false;
-      const endGlobal = positionToIndex({ markdown: fullMarkdown, pos: endPos });
-      if (endGlobal == null) return setSelectionFromMarkdownPosition(startPos);
-      const start = blockOffsetForGlobalIndex(blocks, startGlobal);
-      const end = blockOffsetForGlobalIndex(blocks, endGlobal);
-      if (start.index !== end.index) {
-        return setSelectionFromMarkdownPosition(startPos);
-      }
-      const blockMarkdown = normalizeBlockMarkdown(blocks[start.index] ?? "");
-      const startBlockPos =
-        indexToPosition({ index: start.offset, markdown: blockMarkdown }) ??
-        { line: 0, ch: 0 };
-      const endBlockPos =
-        indexToPosition({ index: end.offset, markdown: blockMarkdown }) ??
-        startBlockPos;
-      const editor = editorMapRef.current.get(start.index);
-      if (!editor) {
-        pendingSelectionRef.current = {
-          index: start.index,
-          pos: startBlockPos,
-          endPos: endBlockPos,
-          mode: "markdown",
-        };
-        virtuosoRef.current?.scrollToIndex({
-          index: start.index,
-          align: "center",
-        });
-        return false;
-      }
-      const startPoint =
-        markdownPositionToSlatePoint({
-          markdown: blockMarkdown,
-          pos: startBlockPos,
-          editor,
-        }) ??
-        findSlatePointNearMarkdownPosition({
-          markdown: blockMarkdown,
-          pos: startBlockPos,
-          editor,
-        }) ??
-        blockSelectionPoint(editor, "start");
-      const endPoint =
-        markdownPositionToSlatePoint({
-          markdown: blockMarkdown,
-          pos: endBlockPos,
-          editor,
-        }) ??
-        findSlatePointNearMarkdownPosition({
-          markdown: blockMarkdown,
-          pos: endBlockPos,
-          editor,
-        }) ??
-        startPoint;
-      ReactEditor.focus(editor);
-      Transforms.setSelection(editor, { anchor: startPoint, focus: endPoint });
-      setFocusedIndex(start.index);
-      return true;
-    },
-    [setSelectionFromMarkdownPosition],
-  );
-
-  const getSelectionGlobalRange = useCallback(() => {
-    let index = focusedIndex ?? lastFocusedIndex ?? null;
-    let editor = index != null ? editorMapRef.current.get(index) ?? null : null;
-    if (!editor || !editor.selection) {
-      for (const [idx, candidate] of editorMapRef.current.entries()) {
-        if (!candidate?.selection) continue;
-        editor = candidate;
-        index = idx;
-        if (ReactEditor.isFocused(candidate)) break;
-      }
-    }
-    if (index == null || !editor || !editor.selection) return null;
-    const anchorLocal = nearestMarkdownIndexForSlatePoint(
-      editor,
-      editor.selection.anchor,
-    ).index;
-    const focusLocal = nearestMarkdownIndexForSlatePoint(
-      editor,
-      editor.selection.focus,
-    ).index;
-    if (anchorLocal < 0 || focusLocal < 0) return null;
-    const startLocal = Math.min(anchorLocal, focusLocal);
-    const endLocal = Math.max(anchorLocal, focusLocal);
-    const startGlobal = globalIndexForBlockOffset(
-      blocksRef.current,
-      index,
-      startLocal,
-    );
-    const endGlobal = globalIndexForBlockOffset(
-      blocksRef.current,
-      index,
-      endLocal,
-    );
-    return { start: startGlobal, end: endGlobal };
-  }, [focusedIndex, lastFocusedIndex]);
-
-  const selectGlobalRange = useCallback(
-    (startIndex: number, endIndex: number) => {
-      const blocks = blocksRef.current;
-      const fullMarkdown = joinBlocks(blocks);
-      const startPos = indexToPosition({ index: startIndex, markdown: fullMarkdown });
-      const endPos = indexToPosition({ index: endIndex, markdown: fullMarkdown });
-      if (startPos && endPos) {
-        setSelectionRangeFromMarkdownPosition(startPos, endPos);
-        return;
-      }
-      if (startPos) {
-        setSelectionFromMarkdownPosition(startPos);
-        return;
-      }
-      const start = blockOffsetForGlobalIndex(blocks, startIndex);
-      setSelectionAtOffset(start.index, start.offset);
-    },
-    [
-      setSelectionAtOffset,
-      setSelectionFromMarkdownPosition,
-      setSelectionRangeFromMarkdownPosition,
-    ],
-  );
+  const {
+    getSelectionGlobalRange,
+    selectGlobalRange,
+    setSelectionAtOffset,
+    setSelectionFromMarkdownPosition,
+  } = useBlockSelection({
+    blocksRef,
+    editorMapRef,
+    pendingSelectionRef,
+    virtuosoRef,
+    focusedIndex,
+    lastFocusedIndex,
+    setFocusedIndex,
+  });
 
   const { searchHook, searchDecorate, searchQuery } = useBlockSearch({
     getFullMarkdown,
