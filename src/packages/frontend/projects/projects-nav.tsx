@@ -489,7 +489,18 @@ export function ProjectsNav(props: ProjectsNavProps) {
                   gap: 8,
                 }}
               >
-                <span>{data?.label}</span>
+                <span
+                  style={{
+                    flex: "1 1 auto",
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={data?.label}
+                >
+                  {data?.label}
+                </span>
                 {closable ? (
                   <Button
                     size="small"
