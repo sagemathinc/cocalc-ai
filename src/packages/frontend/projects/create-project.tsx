@@ -7,7 +7,7 @@
 Create a new project
 */
 
-import { Button, Card, Form, Input, Select, Space, Typography } from "antd";
+import { Button, Card, Form, Input, Modal, Radio, Select, Space, Tag, Typography } from "antd";
 import { delay } from "awaiting";
 import { FormattedMessage, useIntl } from "react-intl";
 
@@ -18,13 +18,9 @@ import {
   useMemo,
   useRef,
   useState,
+  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { A, ErrorDisplay, Icon, Paragraph } from "@cocalc/frontend/components";
-import {
-  derive_project_img_name,
-  SoftwareEnvironment,
-  SoftwareEnvironmentState,
-} from "@cocalc/frontend/custom-software/selector";
 import { labels } from "@cocalc/frontend/i18n";
 import track from "@cocalc/frontend/user-tracking";
 import {
@@ -37,6 +33,8 @@ import {
 import { capitalize } from "@cocalc/util/misc";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { SelectNewHost } from "@cocalc/frontend/hosts/select-new-host";
+import { useRootfsImages } from "@cocalc/frontend/rootfs/manifest";
+import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 
 interface Props {
   default_value: string;
@@ -64,11 +62,15 @@ export function NewProjectCreator({
     default_value.length > 0,
   );
   const [saving, setSaving] = useState<boolean>(false);
-  const [selected, setSelected] = useState<SoftwareEnvironmentState>({});
   const new_project_title_ref = useRef<any>(null);
   const [selectedHost, setSelectedHost] = useState<Host | undefined>();
   const [projectRegion, setProjectRegion] =
     useState<R2Region>(DEFAULT_R2_REGION);
+  const [rootfsModalOpen, setRootfsModalOpen] = useState<boolean>(false);
+  const [rootfsTouched, setRootfsTouched] = useState<boolean>(false);
+  const [rootfsImage, setRootfsImage] = useState<string | undefined>();
+  const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
+  const [rootfsDraft, setRootfsDraft] = useState<string>("");
   const regionOptions = useMemo(
     () =>
       R2_REGIONS.map((region) => ({
@@ -77,8 +79,77 @@ export function NewProjectCreator({
       })),
     [],
   );
+  const manifestUrl = useTypedRedux(
+    "customize",
+    "project_rootfs_manifest_url",
+  );
+  const manifestUrlExtra = useTypedRedux(
+    "customize",
+    "project_rootfs_manifest_url_extra",
+  );
+  const siteDefaultRootfs = useTypedRedux(
+    "customize",
+    "project_rootfs_default_image",
+  );
+  const siteDefaultRootfsGpu = useTypedRedux(
+    "customize",
+    "project_rootfs_default_image_gpu",
+  );
+  const accountDefaultRootfs = useTypedRedux(
+    "account",
+    "default_rootfs_image",
+  );
+  const accountDefaultRootfsGpu = useTypedRedux(
+    "account",
+    "default_rootfs_image_gpu",
+  );
 
   const [form] = Form.useForm();
+  const manifestUrls = useMemo(
+    () =>
+      [manifestUrl, manifestUrlExtra]
+        .map((url) => url?.trim())
+        .filter((url): url is string => !!url && url.length > 0),
+    [manifestUrl, manifestUrlExtra],
+  );
+  const { images: rootfsImages, loading: rootfsLoading, error: rootfsError } =
+    useRootfsImages(manifestUrls);
+  const isGpu = selectedHost?.gpu ?? false;
+  const effectiveDefaultRootfs = useMemo(() => {
+    const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
+    const siteGpu = siteDefaultRootfsGpu?.trim() || "";
+    const accountDefault = accountDefaultRootfs?.trim() || "";
+    const accountDefaultGpu = accountDefaultRootfsGpu?.trim() || "";
+    if (isGpu) {
+      return (
+        accountDefaultGpu ||
+        siteGpu ||
+        accountDefault ||
+        siteDefault ||
+        DEFAULT_PROJECT_IMAGE
+      );
+    }
+    return accountDefault || siteDefault || DEFAULT_PROJECT_IMAGE;
+  }, [
+    accountDefaultRootfs,
+    accountDefaultRootfsGpu,
+    isGpu,
+    siteDefaultRootfs,
+    siteDefaultRootfsGpu,
+  ]);
+  const filteredRootfsImages = useMemo(
+    () =>
+      rootfsImages.filter((entry) => {
+        if (isGpu) return true;
+        return entry.gpu !== true;
+      }),
+    [rootfsImages, isGpu],
+  );
+  const selectedRootfsEntry = useMemo(() => {
+    const image = rootfsImage?.trim();
+    if (!image) return undefined;
+    return rootfsImages.find((entry) => entry.image === image);
+  }, [rootfsImages, rootfsImage]);
 
   useEffect(() => {
     form.setFieldsValue({ title: title_text });
@@ -96,6 +167,12 @@ export function NewProjectCreator({
     }
   }, [projectRegion, selectedHost]);
 
+  useEffect(() => {
+    if (!rootfsTouched) {
+      setRootfsImage(effectiveDefaultRootfs);
+    }
+  }, [effectiveDefaultRootfs, rootfsTouched]);
+
   const is_mounted_ref = useIsMountedRef();
 
   async function select_text(): Promise<void> {
@@ -112,12 +189,16 @@ export function NewProjectCreator({
   function reset_form(): void {
     set_title_text(default_value || getDefaultTitle());
     setProjectRegion(DEFAULT_R2_REGION);
-    setSelected({});
     set_title_manually(false);
     setSelectedHost(undefined);
     setShowAdvanced(false);
     set_error("");
     setSaving(false);
+    setRootfsTouched(false);
+    setRootfsImage(effectiveDefaultRootfs);
+    setRootfsModalOpen(false);
+    setRootfsMode("catalog");
+    setRootfsDraft("");
   }
 
   function start_editing(): void {
@@ -134,10 +215,15 @@ export function NewProjectCreator({
   async function create_project(): Promise<void> {
     setSaving(true);
     const actions = redux.getActions("projects");
+    const defaultComputeImage =
+      await redux.getStore("customize").getDefaultComputeImage();
     let project_id: string;
+    const chosenRootfs =
+      rootfsImage?.trim() || effectiveDefaultRootfs || DEFAULT_PROJECT_IMAGE;
     const opts = {
       title: title_text,
-      image: await derive_project_img_name(selected),
+      image: defaultComputeImage,
+      rootfs_image: chosenRootfs,
       start: true,
       host_id: selectedHost?.id,
       region: projectRegion,
@@ -171,11 +257,7 @@ export function NewProjectCreator({
       // no name of new project
       !title_text?.trim() ||
       // currently saving (?)
-      saving ||
-      // user wants a non-default image, but hasn't selected one yet
-      ((selected.image_type === "custom" ||
-        selected.image_type === "standard") &&
-        selected.image_selected == null)
+      saving
     );
   }
 
@@ -193,17 +275,117 @@ export function NewProjectCreator({
     }
   }
 
-  function onChangeHandler(obj: SoftwareEnvironmentState): void {
-    // only change the project title, if the user has not manually set it or it is empty - or if it is a custom image
-    // by default, this contains a generic date-based title.
-    if (obj.title_text != null) {
-      if (!title_text) {
-        set_title_text(obj.title_text);
-      } else if (!title_manually && obj.image_type === "custom") {
-        set_title_text(obj.title_text);
-      }
-    }
-    setSelected(obj);
+  function openRootfsModal() {
+    const current = (rootfsImage?.trim() ||
+      effectiveDefaultRootfs ||
+      DEFAULT_PROJECT_IMAGE) as string;
+    setRootfsDraft(current);
+    const isCatalog = filteredRootfsImages.some(
+      (entry) => entry.image === current,
+    );
+    setRootfsMode(isCatalog ? "catalog" : "custom");
+    setRootfsModalOpen(true);
+  }
+
+  function renderRootfsModal() {
+    if (!rootfsModalOpen) return null;
+    const options = filteredRootfsImages.map((entry) => ({
+      value: entry.image,
+      label: entry.label || entry.image,
+    }));
+    const activeEntry = filteredRootfsImages.find(
+      (entry) => entry.image === rootfsDraft,
+    );
+    return (
+      <Modal
+        open
+        width={720}
+        title="Root Filesystem Software Image"
+        onCancel={() => setRootfsModalOpen(false)}
+        onOk={() => {
+          const trimmed = rootfsDraft.trim();
+          const next =
+            rootfsMode === "custom"
+              ? trimmed || effectiveDefaultRootfs
+              : rootfsDraft || effectiveDefaultRootfs;
+          setRootfsImage(next || effectiveDefaultRootfs);
+          setRootfsTouched(true);
+          setRootfsModalOpen(false);
+        }}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            Pick the base OCI image for this workspace. You can always change it
+            later in workspace settings.
+          </Paragraph>
+          <Radio.Group
+            value={rootfsMode}
+            onChange={(e) => setRootfsMode(e.target.value)}
+          >
+            <Radio value="catalog">Curated images</Radio>
+            <Radio value="custom">Custom image</Radio>
+          </Radio.Group>
+          {rootfsMode === "catalog" ? (
+            <>
+              <Select
+                showSearch
+                options={options}
+                value={rootfsDraft}
+                placeholder="Select an image"
+                onChange={(value) => setRootfsDraft(value)}
+                loading={rootfsLoading}
+                disabled={rootfsLoading}
+              />
+              {activeEntry?.description && (
+                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                  {activeEntry.description}
+                </Paragraph>
+              )}
+              {activeEntry?.gpu && (
+                <Tag color="purple">GPU image</Tag>
+              )}
+              {rootfsError && (
+                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                  Manifest load issue: {rootfsError}
+                </Paragraph>
+              )}
+            </>
+          ) : (
+            <Input
+              value={rootfsDraft}
+              placeholder="docker.io/library/ubuntu:24.04"
+              onChange={(e) => setRootfsDraft(e.target.value)}
+            />
+          )}
+        </Space>
+      </Modal>
+    );
+  }
+
+  function renderRootfsSection(): React.JSX.Element {
+    const displayImage =
+      rootfsImage?.trim() || effectiveDefaultRootfs || DEFAULT_PROJECT_IMAGE;
+    const displayLabel =
+      selectedRootfsEntry?.label || displayImage || DEFAULT_PROJECT_IMAGE;
+    return (
+      <Card size="small" bodyStyle={{ padding: "10px 12px" }}>
+        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+          <div style={{ fontWeight: 600 }}>Root Filesystem Software Image</div>
+          <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            Select the OCI image that provides the base software environment for
+            this workspace.
+          </Paragraph>
+          <Space wrap>
+            <Button onClick={openRootfsModal} disabled={saving}>
+              Choose image...
+            </Button>
+            <Tag color="blue">{displayLabel}</Tag>
+            {selectedRootfsEntry?.gpu && <Tag color="purple">GPU</Tag>}
+          </Space>
+          {renderRootfsModal()}
+        </Space>
+      </Card>
+    );
   }
 
   function render_input_section(): React.JSX.Element | undefined {
@@ -237,6 +419,7 @@ export function NewProjectCreator({
             />
           </Form.Item>
         </Form>
+        {renderRootfsSection()}
         <Button
           type="link"
           onClick={() => setShowAdvanced((prev) => !prev)}
@@ -259,7 +442,6 @@ export function NewProjectCreator({
                 }}
               />
             </Paragraph>
-            <SoftwareEnvironment onChange={onChangeHandler} />
             <Card size="small" bodyStyle={{ padding: "10px 12px" }}>
               <Space direction="vertical" size="small" style={{ width: "100%" }}>
                 <div style={{ fontWeight: 600 }}>Backup region</div>

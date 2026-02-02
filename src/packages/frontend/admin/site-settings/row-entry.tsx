@@ -4,7 +4,8 @@
  */
 
 import humanizeList from "humanize-list";
-import { Button } from "antd";
+import { Button, Select } from "antd";
+import { useMemo } from "react";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import { SERVER_SETTINGS_ENV_PREFIX } from "@cocalc/util/consts";
 import { ConfigValid, RowType } from "@cocalc/util/db-schema/site-defaults";
@@ -13,6 +14,7 @@ import { ON_PREM_DEFAULT_QUOTAS, upgrades } from "@cocalc/util/upgrade-spec";
 import { JsonEditor } from "../json-editor";
 import { RowEntryInner, testIsInvalid } from "./row-entry-inner";
 import { IsReadonly } from "./types";
+import { useRootfsImages } from "@cocalc/frontend/rootfs/manifest";
 
 const MAX_UPGRADES = upgrades.max_per_project;
 
@@ -43,6 +45,7 @@ interface RowEntryProps extends RowEntryInnerProps {
   onJsonEntryChange: (name: string, value?: string) => void;
   onChangeEntry: (name: string, value: string) => void;
   onClearSecret?: (name: string) => void;
+  rootfsManifestUrls?: string[];
 }
 
 export function RowEntry({
@@ -63,6 +66,7 @@ export function RowEntry({
   clearable,
   update,
   onClearSecret,
+  rootfsManifestUrls,
 }: RowEntryProps) {
   if (isReadonly == null) return null; // typescript
 
@@ -86,6 +90,16 @@ export function RowEntry({
     return <div />;
   } else {
     switch (name) {
+      case "project_rootfs_prepull_images":
+        return (
+          <RootfsPrepullEntry
+            name={name}
+            value={value}
+            isReadonly={isReadonly}
+            onChangeEntry={onChangeEntry}
+            manifestUrls={rootfsManifestUrls ?? []}
+          />
+        );
       case "default_quotas":
       case "max_upgrades":
         const ro: boolean = isReadonly[name];
@@ -204,6 +218,59 @@ function VersionHint({ value }: { value: string }) {
         value={`${version}`}
       />{" "}
       {error}
+    </div>
+  );
+}
+
+function RootfsPrepullEntry({
+  name,
+  value,
+  isReadonly,
+  onChangeEntry,
+  manifestUrls,
+}: {
+  name: string;
+  value: string;
+  isReadonly: IsReadonly | null;
+  onChangeEntry: (name: string, value: string) => void;
+  manifestUrls: string[];
+}) {
+  const { images, loading, error } = useRootfsImages(manifestUrls);
+  const selected = useMemo(
+    () =>
+      (value ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    [value],
+  );
+  const options = useMemo(
+    () =>
+      images.map((entry) => ({
+        value: entry.image,
+        label: entry.gpu ? `${entry.label} (GPU)` : entry.label || entry.image,
+      })),
+    [images],
+  );
+  const disabled = isReadonly?.[name] ?? false;
+
+  return (
+    <div>
+      <Select
+        mode="tags"
+        style={{ width: "100%" }}
+        placeholder="Select images to pre-pull"
+        onChange={(vals) => onChangeEntry(name, vals.join(", "))}
+        options={options}
+        value={selected}
+        disabled={disabled}
+        loading={loading}
+      />
+      {error && (
+        <div style={{ marginTop: "6px", color: "#a66", fontSize: "90%" }}>
+          Manifest load issue: {error}
+        </div>
+      )}
     </div>
   );
 }

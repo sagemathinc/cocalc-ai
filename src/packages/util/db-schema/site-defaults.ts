@@ -118,6 +118,11 @@ export type SiteSettingsKeys =
   | "project_hosts_nebius_enabled"
   | "cloudflare_mode"
   | "project_hosts_dns"
+  | "project_rootfs_manifest_url"
+  | "project_rootfs_manifest_url_extra"
+  | "project_rootfs_default_image"
+  | "project_rootfs_default_image_gpu"
+  | "project_rootfs_prepull_images"
   | "samesite_remember_me"
   | "user_tracking";
 
@@ -999,6 +1004,51 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Domain",
     show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
     required_when: [{ key: "cloudflare_mode", equals: "self" }],
+  },
+  project_rootfs_manifest_url: {
+    name: "Workspace RootFS Image Manifest URL",
+    desc: "Primary manifest URL that lists the curated root filesystem images shown to users when creating a workspace.",
+    default: "https://software.cocalc.ai/rootfs/manifest.json",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_manifest_url_extra: {
+    name: "Workspace RootFS Image Manifest URL (Additional)",
+    desc: "Optional additional manifest URL. Entries are merged with the primary manifest.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_default_image: {
+    name: "Workspace RootFS Default Image",
+    desc: "Default OCI image used when a user does not choose an image. This image is also pulled to every host.",
+    default: "ubuntu:25.10",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_default_image_gpu: {
+    name: "Workspace RootFS Default Image (GPU)",
+    desc: "Optional default OCI image used when a user enables GPU in workspace creation.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI", "GPU"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_prepull_images: {
+    name: "Workspace RootFS Prepull Images",
+    desc: "Comma-separated list of OCI images to pre-pull to every host (in addition to the default image).",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
   },
   samesite_remember_me: {
     name: "sameSite setting for remember_me authentication cookie",

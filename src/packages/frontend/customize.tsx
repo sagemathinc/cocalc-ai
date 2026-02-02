@@ -165,6 +165,11 @@ export interface CustomizeState {
   project_hosts_nebius_enabled?: boolean;
   project_hosts_self_host_alpha_enabled?: boolean;
   project_hosts_dns?: string;
+  project_rootfs_manifest_url?: string;
+  project_rootfs_manifest_url_extra?: string;
+  project_rootfs_default_image?: string;
+  project_rootfs_default_image_gpu?: string;
+  project_rootfs_prepull_images?: string;
   "project_hosts_google-cloud_enabled"?: boolean;
   "project_hosts_hyperstack_enabled"?: boolean;
   "project_hosts_lambda_enabled"?: boolean;
