@@ -1,5 +1,7 @@
 # RootFS Image Build System (GCP Spot + Artifact Registry)
 
+**License:** All code in `src/rootfs-images/` is MIT licensed. See [LICENSE](./LICENSE).
+
 This directory defines a greenfield, customer‑runnable pipeline to build and
 publish RootFS OCI images for CoCalc workspaces using GCP Spot instances and
 Artifact Registry (for SOC2 scanning).
