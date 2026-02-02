@@ -273,6 +273,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
     getStoredProjectsNavMode,
   );
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
   const selectRef = useRef<any>(null);
 
   useEffect(() => {
@@ -417,19 +418,22 @@ export function ProjectsNav(props: ProjectsNavProps) {
   }
 
   function renderDropdownNav() {
+    const normalizedSearch = searchValue.trim().toLowerCase();
+    const matchesSearch = (label: string) =>
+      !normalizedSearch || label.toLowerCase().includes(normalizedSearch);
     const openOptions = openProjectIds.map((project_id) => ({
       value: project_id,
       label: getProjectTitle(project_id),
       closable: true,
-    }));
+    })).filter((option) => matchesSearch(option.label));
     const recentOptions = recentProjectIds.map((project_id) => ({
       value: project_id,
       label: getProjectTitle(project_id),
-    }));
+    })).filter((option) => matchesSearch(option.label));
     const starredOptions = starredProjectIds.map((project_id) => ({
       value: project_id,
       label: getProjectTitle(project_id),
-    }));
+    })).filter((option) => matchesSearch(option.label));
 
     const groupedOptions = [
       ...(openOptions.length > 0
@@ -469,13 +473,22 @@ export function ProjectsNav(props: ProjectsNavProps) {
           ref={selectRef}
           size="middle"
           open={dropdownOpen}
-          onDropdownVisibleChange={setDropdownOpen}
+          onDropdownVisibleChange={(open) => {
+            setDropdownOpen(open);
+            if (!open) {
+              setSearchValue("");
+            }
+          }}
           style={{ minWidth: 260, maxWidth: 400 }}
           placeholder="Switch workspace…"
           value={activeProjectId}
           showSearch
-          optionFilterProp="label"
           optionLabelProp="label"
+          filterOption={false}
+          searchValue={searchValue}
+          onSearch={setSearchValue}
+          onClear={() => setSearchValue("")}
+          allowClear
           optionRender={(option) => {
             const data = option.data as any;
             const project_id = data?.value;
