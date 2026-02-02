@@ -35,6 +35,7 @@ import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectState } from "../project/page/project-state-hook";
 import { useProjectHasInternetAccess } from "../project/settings/has-internet-access-hook";
+import { useBookmarkedProjects } from "./use-bookmarked-projects";
 
 const PROJECT_NAME_STYLE: CSS = {
   whiteSpace: "nowrap",
@@ -132,7 +133,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
     return (
       <>
         <div style={fontStyle}>
-          This project does not have access to the internet.
+          This workspace does not have access to the internet.
         </div>
         {mode === "popover" ? <hr /> : null}
       </>
@@ -154,7 +155,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
         />
         <hr />
         <div style={{ color: COLORS.GRAY }}>
-          Hint: Shift+click any project or file tab to open it in new window.
+          Hint: Shift+click any workspace or file tab to open it in new window.
         </div>
       </div>
     );
@@ -266,11 +267,13 @@ export function ProjectsNav(props: ProjectsNavProps) {
     "projects",
     "public_project_titles",
   );
+  const { bookmarkedProjects } = useBookmarkedProjects();
   //const project_map = useTypedRedux("projects", "project_map");
   const [mode, setMode] = useState<ProjectsNavMode>(
     getStoredProjectsNavMode,
   );
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
   const selectRef = useRef<any>(null);
 
   useEffect(() => {
@@ -309,6 +312,10 @@ export function ProjectsNav(props: ProjectsNavProps) {
   }, [openProjects]);
 
   const openProjectIds = project_ids;
+  const openProjectSet = useMemo(
+    () => new Set(openProjectIds),
+    [openProjectIds],
+  );
 
   const activeProjectId = useMemo(() => {
     if (openProjectIds.includes(activeTopTab)) return activeTopTab;
@@ -317,7 +324,6 @@ export function ProjectsNav(props: ProjectsNavProps) {
 
   const recentProjectIds = useMemo(() => {
     if (!projectMap) return [];
-    const openSet = new Set(openProjectIds);
     const ids = projectMap.keySeq().toArray();
     ids.sort((a, b) => {
       const aTime = projectMap.getIn([a, "last_edited"]);
@@ -336,15 +342,34 @@ export function ProjectsNav(props: ProjectsNavProps) {
           : 0;
       return bMs - aMs;
     });
-    return ids.filter((id) => !openSet.has(id)).slice(0, 10);
-  }, [projectMap, openProjectIds]);
+    return ids.filter((id) => !openProjectSet.has(id)).slice(0, 10);
+  }, [projectMap, openProjectSet]);
+
+  const starredProjectIds = useMemo(() => {
+    if (!projectMap || !bookmarkedProjects) return [];
+    return bookmarkedProjects.filter((id) => {
+      if (!projectMap.get(id)) return false;
+      return !openProjectSet.has(id);
+    });
+  }, [bookmarkedProjects, openProjectSet, projectMap]);
 
   function getProjectTitle(project_id: string): string {
     return (
       projectMap?.getIn([project_id, "title"]) ??
       publicProjectTitles?.get(project_id) ??
-      "Untitled project"
+      "Untitled workspace"
     );
+  }
+
+  function getProjectVisual(project_id: string) {
+    const project = projectMap?.get(project_id);
+    const title = getProjectTitle(project_id);
+    return {
+      title,
+      label: title,
+      color: project?.get?.("color"),
+      avatar: project?.get?.("avatar_image_tiny"),
+    };
   }
 
   function onEdit(project_id: string, action: "add" | "remove") {
@@ -404,23 +429,137 @@ export function ProjectsNav(props: ProjectsNavProps) {
   }
 
   function renderDropdownNav() {
-    const openOptions = openProjectIds.map((project_id) => ({
-      value: project_id,
-      label: getProjectTitle(project_id),
-    }));
-    const recentOptions = recentProjectIds.map((project_id) => ({
-      value: project_id,
-      label: getProjectTitle(project_id),
-    }));
+    const normalizedSearch = searchValue.trim().toLowerCase();
+    const matchesSearch = (label: string) =>
+      !normalizedSearch || label.toLowerCase().includes(normalizedSearch);
+    const renderLabelNode = (option) => {
+      return (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+          }}
+        >
+          {option?.avatar || option?.color ? (
+            <Avatar
+              style={{
+                backgroundColor: option?.color ?? undefined,
+                border: option?.color ? `2px solid ${option.color}` : undefined,
+              }}
+              shape="circle"
+              icon={option?.avatar ? <img src={option.avatar} /> : undefined}
+              size={18}
+            />
+          ) : (
+            <Icon name="circle" />
+          )}
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {option?.title}
+          </span>
+        </span>
+      );
+    };
+    const makeOption = (project_id: string, closable?: boolean) => {
+      const visual = getProjectVisual(project_id);
+      const labelNode = renderLabelNode(visual);
+      return {
+        value: project_id,
+        ...visual,
+        label: labelNode,
+        labelText: visual.title,
+        closable,
+      };
+    };
+
+    const openOptions = openProjectIds
+      .map((project_id) => makeOption(project_id, true))
+      .filter((option) => matchesSearch(option.title));
+    const recentOptions = recentProjectIds
+      .map((project_id) => makeOption(project_id))
+      .filter((option) => matchesSearch(option.title));
+    const starredOptions = starredProjectIds
+      .map((project_id) => makeOption(project_id))
+      .filter((option) => matchesSearch(option.title));
 
     const groupedOptions = [
       ...(openOptions.length > 0
-        ? [{ label: "Open projects", options: openOptions }]
+        ? [{ label: "Open workspaces", options: openOptions }]
+        : []),
+      ...(starredOptions.length > 0
+        ? [{ label: "Starred workspaces", options: starredOptions }]
         : []),
       ...(recentOptions.length > 0
-        ? [{ label: "Recent projects", options: recentOptions }]
+        ? [{ label: "Recent workspaces", options: recentOptions }]
         : []),
     ];
+
+    const hasResults = groupedOptions.some(
+      (group) => group.options && group.options.length > 0,
+    );
+
+    const renderOptionItem = (option) => {
+      const project_id = option?.value;
+      const closable = option?.closable;
+      return (
+        <div
+          key={project_id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 8px",
+            borderRadius: 6,
+            cursor: "pointer",
+          }}
+          onClick={() => {
+            projectActions.open_project({
+              project_id,
+              switch_to: true,
+            });
+            setDropdownOpen(false);
+          }}
+        >
+          <span
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={option?.title}
+          >
+            {renderLabelNode(option)}
+          </span>
+          {closable ? (
+            <Button
+              size="small"
+              type="text"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                actions.close_project_tab(project_id);
+              }}
+            >
+              <Icon name="times" />
+            </Button>
+          ) : null}
+        </div>
+      );
+    };
 
     return (
       <div
@@ -434,7 +573,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
       >
         <Tooltip
           title={
-            mode === "tabs" ? "Switch to project list" : "Switch to tabs"
+            mode === "tabs" ? "Switch to workspace list" : "Switch to tabs"
           }
         >
           <Button
@@ -448,31 +587,56 @@ export function ProjectsNav(props: ProjectsNavProps) {
           ref={selectRef}
           size="middle"
           open={dropdownOpen}
-          onDropdownVisibleChange={setDropdownOpen}
+          onDropdownVisibleChange={(open) => {
+            setDropdownOpen(open);
+            if (!open) {
+              setSearchValue("");
+            }
+          }}
           style={{ minWidth: 260, maxWidth: 400 }}
-          placeholder="Switch project…"
+          placeholder="Switch workspace…"
           value={activeProjectId}
           showSearch
-          optionFilterProp="label"
           optionLabelProp="label"
+          filterOption={false}
+          searchValue={searchValue}
+          onSearch={setSearchValue}
+          onClear={() => setSearchValue("")}
+          allowClear
           options={groupedOptions}
-          onSelect={(project_id) => {
-            projectActions.open_project({
-              project_id,
-              switch_to: true,
-            });
-            setDropdownOpen(false);
-          }}
-          dropdownRender={(menu) => (
+          dropdownRender={() => (
             <>
-              {menu}
+              <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                {hasResults ? (
+                  groupedOptions.map((group) => (
+                    <div key={group.label} style={{ padding: "4px 0" }}>
+                      <div
+                        style={{
+                          padding: "6px 8px",
+                          fontSize: 12,
+                          color: "#666",
+                        }}
+                      >
+                        {group.label}
+                      </div>
+                      {group.options.map((option) =>
+                        renderOptionItem(option),
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ padding: "8px 12px", color: "#888" }}>
+                    No workspaces found
+                  </div>
+                )}
+              </div>
               <Divider style={{ margin: "6px 0" }} />
               <div style={{ padding: "4px 8px" }}>
                 <Button
                   size="small"
                   onClick={() => actions.set_active_tab("projects")}
                 >
-                  All projects…
+                  All workspaces…
                 </Button>
               </div>
             </>
@@ -506,7 +670,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
           <div style={{ padding: "0 8px", flex: "0 0 auto" }}>
             <Tooltip
               title={
-                mode === "tabs" ? "Switch to project list" : "Switch to tabs"
+                mode === "tabs" ? "Switch to workspace list" : "Switch to tabs"
               }
             >
               <Button
