@@ -361,6 +361,15 @@ export function ProjectsNav(props: ProjectsNavProps) {
     );
   }
 
+  function getProjectVisual(project_id: string) {
+    const project = projectMap?.get(project_id);
+    return {
+      title: getProjectTitle(project_id),
+      color: project?.get?.("color"),
+      avatar: project?.get?.("avatar_image_tiny"),
+    };
+  }
+
   function onEdit(project_id: string, action: "add" | "remove") {
     if (action === "add") {
       actions.set_active_tab("projects");
@@ -421,19 +430,25 @@ export function ProjectsNav(props: ProjectsNavProps) {
     const normalizedSearch = searchValue.trim().toLowerCase();
     const matchesSearch = (label: string) =>
       !normalizedSearch || label.toLowerCase().includes(normalizedSearch);
-    const openOptions = openProjectIds.map((project_id) => ({
-      value: project_id,
-      label: getProjectTitle(project_id),
-      closable: true,
-    })).filter((option) => matchesSearch(option.label));
-    const recentOptions = recentProjectIds.map((project_id) => ({
-      value: project_id,
-      label: getProjectTitle(project_id),
-    })).filter((option) => matchesSearch(option.label));
-    const starredOptions = starredProjectIds.map((project_id) => ({
-      value: project_id,
-      label: getProjectTitle(project_id),
-    })).filter((option) => matchesSearch(option.label));
+    const openOptions = openProjectIds
+      .map((project_id) => ({
+        value: project_id,
+        ...getProjectVisual(project_id),
+        closable: true,
+      }))
+      .filter((option) => matchesSearch(option.title));
+    const recentOptions = recentProjectIds
+      .map((project_id) => ({
+        value: project_id,
+        ...getProjectVisual(project_id),
+      }))
+      .filter((option) => matchesSearch(option.title));
+    const starredOptions = starredProjectIds
+      .map((project_id) => ({
+        value: project_id,
+        ...getProjectVisual(project_id),
+      }))
+      .filter((option) => matchesSearch(option.title));
 
     const groupedOptions = [
       ...(openOptions.length > 0
@@ -482,9 +497,39 @@ export function ProjectsNav(props: ProjectsNavProps) {
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
             }}
-            title={option?.label}
+            title={option?.title}
           >
-            {option?.label}
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                minWidth: 0,
+              }}
+            >
+              {option?.avatar || option?.color ? (
+                <Avatar
+                  style={{
+                    backgroundColor: option?.color ?? undefined,
+                    border: option?.color ? `2px solid ${option.color}` : undefined,
+                  }}
+                  shape="circle"
+                  icon={option?.avatar ? <img src={option.avatar} /> : undefined}
+                  size={18}
+                />
+              ) : (
+                <Icon name="circle" />
+              )}
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {option?.title}
+              </span>
+            </span>
           </span>
           {closable ? (
             <Button
@@ -542,6 +587,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
           style={{ minWidth: 260, maxWidth: 400 }}
           placeholder="Switch workspace…"
           value={activeProjectId}
+          label={getProjectTitle(activeProjectId)}
           showSearch
           optionLabelProp="label"
           filterOption={false}
