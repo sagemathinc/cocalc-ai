@@ -53,6 +53,20 @@ tests:
     cmd: "bash -lc 'python3 - <<EOF\nimport torch; print(torch.__version__)\nEOF'"
 ```
 
+## Development (local build & shell)
+
+For local iteration, you can build and run any image directly using standard
+docker/podman commands. Example for the minimal image:
+
+```sh
+cd images/minimal/
+podman build -t minimal .
+podman run --rm -it minimal bash
+```
+
+This is often the fastest way to iterate on a Dockerfile before running the
+full GCP spot build pipeline.
+
 ## Tag format
 
 ```
