@@ -27,10 +27,6 @@ register({ key: "Enter" }, ({ editor }) => {
         match: (n) => Element.isElement(n) && n.type === "code_line",
       });
       if (lineEntry) {
-        const codeBlockEntry = Editor.above(editor, {
-          at: selection,
-          match: (n) => Element.isElement(n) && n.type === "code_block",
-        });
         const htmlMetaEntry = Editor.above(editor, {
           at: selection,
           match: (n) =>
@@ -60,13 +56,7 @@ register({ key: "Enter" }, ({ editor }) => {
             // ignore and fall through to insertBreak
           }
         }
-        const lineText = Editor.string(editor, lineEntry[1]);
-        const indentMatch = lineText.match(/^[\t ]*/);
-        const indent = indentMatch?.[0] ?? "";
         editor.insertBreak();
-        if (codeBlockEntry && indent) {
-          Transforms.insertText(editor, indent);
-        }
         return true;
       }
     const mathEntry = Editor.above(editor, {

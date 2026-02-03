@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { withInsertBreak } from "./insert-break";
 import { withInsertText } from "./insert-text";
 import { withDeleteBackward } from "./delete-backward";
 import { withDeleteForward } from "./delete-forward";
@@ -625,6 +626,7 @@ function autoformatListAtStart(editor: Editor): boolean {
 }
 
 export const withAutoFormat = (editor) => {
+  withInsertBreak(editor);
   withInsertText(editor);
   withDeleteBackward(editor);
   withDeleteForward(editor);
