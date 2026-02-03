@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -49,48 +50,55 @@ def build_platforms(image):
     return arch
 
 
-def docker_buildx(image, registry: str, tag: str):
+def container_tool(name: str | None = None) -> str:
+    if name:
+        return name
+    if shutil.which("podman"):
+        return "podman"
+    return "docker"
+
+
+def build_ref(registry: str, image_name: str, tag: str, arch: str | None):
+    if arch:
+        return image_ref(registry, image_name, f"{tag}-{arch}")
+    return image_ref(registry, image_name, tag)
+
+
+def build_image(image, registry: str, tag: str, arch: str | None, tool: str):
     image_name = image["image_name"]
-    platforms = build_platforms(image)
-    platforms_csv = ",".join([f"linux/{a}" for a in platforms])
     dockerfile = str(Path(image["_path"]).parent / "Dockerfile")
     context_dir = str(Path(image["_path"]).parent)
-    ref = image_ref(registry, image_name, tag)
-    cmd = [
-        "docker",
-        "buildx",
-        "build",
-        "--platform",
-        platforms_csv,
-        "--push",
-        "-t",
-        ref,
-        "-f",
-        dockerfile,
-        context_dir,
-    ]
+    ref = build_ref(registry, image_name, tag, arch)
+    cmd = [tool, "build", "-t", ref, "-f", dockerfile, context_dir]
+    if arch:
+        cmd.insert(2, f"--arch={arch}")
     run(cmd)
+    run([tool, "push", ref])
     return ref
 
 
-def run_tests(image_ref_value: str, tests):
+def run_tests(image_ref_value: str, tests, tool: str):
     for test in tests or []:
         name = test.get("name", "test")
         cmd = test.get("cmd")
         if not cmd:
             continue
         print(f"==> test: {name}")
-        run(["docker", "run", "--rm", image_ref_value, "bash", "-lc", cmd])
+        run([tool, "run", "--rm", image_ref_value, "bash", "-lc", cmd])
 
 
 def get_digest(ref: str):
     try:
-        output = run(
-            ["docker", "buildx", "imagetools", "inspect", ref, "--format", "{{json .}}"],
-            capture=True,
-        )
-        data = json.loads(output)
-        return data.get("digest")
+        if shutil.which("skopeo"):
+            output = run(
+                ["skopeo", "inspect", f"docker://{ref}", "--format", "{{.Digest}}"],
+                capture=True,
+            )
+            return output.strip() or None
+        if shutil.which("podman"):
+            output = run(["podman", "manifest", "inspect", ref], capture=True)
+            data = json.loads(output)
+            return data.get("digest")
     except Exception as err:
         print("warning: unable to read digest", err)
         return None
@@ -130,16 +138,18 @@ def check_scan(ref: str, project: str):
         print("warning: scan query failed", err)
 
 
-def write_artifact(image_id: str, ref: str, tag: str, digest: str | None):
+def write_artifact(image_id: str, ref: str, tag: str, digest: str | None, arch: str | None):
     ARTIFACTS_DIR.mkdir(exist_ok=True)
     data = {
         "image_id": image_id,
         "ref": ref,
         "tag": tag,
         "digest": digest,
+        "arch": arch,
         "updated_at": datetime.utcnow().isoformat() + "Z",
     }
-    path = ARTIFACTS_DIR / f"{image_id}.json"
+    name = f"{image_id}-{arch}.json" if arch else f"{image_id}.json"
+    path = ARTIFACTS_DIR / name
     path.write_text(json.dumps(data, indent=2))
     print(f"wrote build metadata: {path}")
 
@@ -150,19 +160,28 @@ def main():
     parser.add_argument("--registry", required=True, help="Artifact Registry base")
     parser.add_argument("--project", default=os.environ.get("GCP_PROJECT", ""))
     parser.add_argument("--tag", default="")
+    parser.add_argument("--arch", default="", help="amd64|arm64 (required for multi-arch)")
+    parser.add_argument("--tool", default="", help="podman or docker")
     args = parser.parse_args()
 
     image = load_image(args.image)
     component_version = image.get("component_version", "0")
     tag = args.tag or build_tag(component_version)
-    ref = docker_buildx(image, args.registry, tag)
+    allowed_arch = build_platforms(image)
+    arch = args.arch.strip() or (allowed_arch[0] if len(allowed_arch) == 1 else "")
+    if not arch:
+        raise RuntimeError("arch required for multi-arch image; use --arch")
+    if arch not in allowed_arch:
+        raise RuntimeError(f"arch {arch} not allowed; expected one of {allowed_arch}")
+    tool = container_tool(args.tool or None)
+    ref = build_image(image, args.registry, tag, arch, tool)
 
-    run_tests(ref, image.get("tests"))
+    run_tests(ref, image.get("tests"), tool)
 
     digest = get_digest(ref)
     check_scan(ref, args.project)
 
-    write_artifact(args.image, ref, tag, digest)
+    write_artifact(args.image, ref, tag, digest, arch)
 
 
 if __name__ == "__main__":

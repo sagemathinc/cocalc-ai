@@ -7,6 +7,9 @@ ZONE=""
 REGISTRY=""
 MACHINE_TYPE="n2-standard-8"
 NAME_PREFIX="rootfs-builder"
+ARCH=""
+IMAGE_FAMILY="ubuntu-2204-lts"
+IMAGE_PROJECT="ubuntu-os-cloud"
 REPO_URL="https://github.com/sagemathinc/cocalc-ai.git"
 REPO_TOKEN=""
 REPO_TAR_URL=""
@@ -19,6 +22,7 @@ AUTO_DELETE=1
 SERVICE_ACCOUNT=""
 AUTO_IAM=1
 AUTO_REPO=1
+TAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -35,6 +39,10 @@ while [[ $# -gt 0 ]]; do
     --log-dir) LOG_DIR="$2"; shift 2;;
     --no-tail) TAIL_LOGS=0; shift;;
     --no-delete) AUTO_DELETE=0; shift;;
+    --arch) ARCH="$2"; shift 2;;
+    --tag) TAG="$2"; shift 2;;
+    --image-family) IMAGE_FAMILY="$2"; shift 2;;
+    --image-project) IMAGE_PROJECT="$2"; shift 2;;
     --service-account) SERVICE_ACCOUNT="$2"; shift 2;;
     --no-iam-binding) AUTO_IAM=0; shift;;
     --no-repo-create) AUTO_REPO=0; shift;;
@@ -45,7 +53,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$IMAGE_ID" || -z "$PROJECT" || -z "$ZONE" || -z "$REGISTRY" ]]; then
-  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete] [--service-account <email>] [--no-iam-binding] [--no-repo-create]" >&2
+  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete] [--arch <amd64|arm64>] [--tag <tag>] [--image-family <name>] [--image-project <name>] [--service-account <email>] [--no-iam-binding] [--no-repo-create]" >&2
   exit 1
 fi
 
@@ -114,6 +122,19 @@ if [[ "$USE_LOCAL" -eq 1 ]]; then
   upload_local_tree
 fi
 
+if [[ -z "$ARCH" ]]; then
+  ARCH="amd64"
+fi
+
+if [[ "$ARCH" == "arm64" ]]; then
+  if [[ "$MACHINE_TYPE" == "n2-standard-8" ]]; then
+    MACHINE_TYPE="t2a-standard-4"
+  fi
+  if [[ "$IMAGE_FAMILY" == "ubuntu-2204-lts" ]]; then
+    IMAGE_FAMILY="ubuntu-2204-lts-arm64"
+  fi
+fi
+
 REGISTRY_HOST="${REGISTRY%%/*}"
 REGISTRY_REST="${REGISTRY#*/}"
 REGISTRY_PROJECT="${REGISTRY_REST%%/*}"
@@ -165,6 +186,8 @@ REPO_TOKEN="${REPO_TOKEN}"
 REPO_TAR_URL="${REPO_TAR_URL}"
 AUTO_DELETE="${AUTO_DELETE}"
 REGISTRY_HOST="${REGISTRY_HOST}"
+ARCH="${ARCH}"
+TAG="${TAG}"
 
 self_delete() {
   set +e
@@ -200,36 +223,10 @@ echo "=== rootfs-images build starting ==="
 date -u
 
 apt-get update -y
-apt-get install -y git docker.io qemu-user-static python3 python3-yaml curl ca-certificates
-systemctl start docker
-if ! docker buildx version >/dev/null 2>&1; then
-  echo "Installing docker buildx plugin"
-  arch="$(uname -m)"
-  case "$arch" in
-    x86_64) arch="amd64";;
-    aarch64) arch="arm64";;
-    *) echo "Unsupported arch for buildx: $arch"; exit 1;;
-  esac
-  buildx_version="$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest | python3 -c 'import sys, json; print(json.load(sys.stdin)["tag_name"])' || true)"
-  if [[ -z "$buildx_version" ]]; then
-    buildx_version="v0.31.1"
-  fi
-  plugin_dir="/usr/lib/docker/cli-plugins"
-  if [[ -d /usr/libexec/docker/cli-plugins ]]; then
-    plugin_dir="/usr/libexec/docker/cli-plugins"
-  fi
-  mkdir -p "$plugin_dir"
-  curl -fsSL "https://github.com/docker/buildx/releases/download/${buildx_version}/buildx-${buildx_version}.linux-${arch}" \
-    -o "$plugin_dir/docker-buildx"
-  chmod +x "$plugin_dir/docker-buildx"
-fi
-docker buildx version || true
-docker run --privileged --rm tonistiigi/binfmt --install all
-docker buildx create --use --name cocalc-builder || docker buildx use cocalc-builder
-docker buildx inspect --bootstrap
+apt-get install -y git podman python3 python3-yaml curl ca-certificates
 
 ACCESS_TOKEN="$(curl -fs -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')"
-echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REGISTRY_HOST}"
+echo "$ACCESS_TOKEN" | podman login -u oauth2accesstoken --password-stdin "https://${REGISTRY_HOST}"
 
 WORKDIR=/root/rootfs-images
 mkdir -p "$WORKDIR"
@@ -258,7 +255,7 @@ if [[ ! -d "$BUILD_DIR" ]]; then
 fi
 
 cd "$BUILD_DIR"
-python3 tools/build.py --image "$IMAGE_ID" --registry "$REGISTRY" --project "$PROJECT"
+python3 tools/build.py --image "$IMAGE_ID" --registry "$REGISTRY" --project "$PROJECT" --arch "$ARCH" --tool podman ${TAG:+--tag "$TAG"}
 echo "=== rootfs-images build finished ==="
 date -u
 SCRIPT
@@ -272,6 +269,8 @@ sed -i "s|\${REPO_TOKEN}|$REPO_TOKEN|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_TAR_URL}|$REPO_TAR_URL|g" "$STARTUP_SCRIPT"
 sed -i "s|\${AUTO_DELETE}|$AUTO_DELETE|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REGISTRY_HOST}|$REGISTRY_HOST|g" "$STARTUP_SCRIPT"
+sed -i "s|\${ARCH}|$ARCH|g" "$STARTUP_SCRIPT"
+sed -i "s|\${TAG}|$TAG|g" "$STARTUP_SCRIPT"
 
 set -x
 
@@ -286,8 +285,8 @@ gcloud compute instances create "$NAME" \
   --scopes=https://www.googleapis.com/auth/cloud-platform \
   --metadata-from-file startup-script="$STARTUP_SCRIPT" \
   --boot-disk-size=200GB \
-  --image-family=ubuntu-2204-lts \
-  --image-project=ubuntu-os-cloud
+  --image-family="$IMAGE_FAMILY" \
+  --image-project="$IMAGE_PROJECT"
 
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/${NAME}.serial.log"

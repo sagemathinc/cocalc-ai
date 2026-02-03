@@ -87,16 +87,40 @@ export GCP_PROJECT="your-gcp-project-id"
 ```bash
 python3 tools/build.py --image minimal \
   --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
-  --project $GCP_PROJECT
+  --project $GCP_PROJECT \
+  --arch amd64 \
+  --tool podman
 ```
 
 This will:
 
-1) build (multi‑arch if applicable)
+1) build (single‑arch)
 2) run tests
 3) push to Artifact Registry
 4) check scan results
 5) write build metadata to build-artifacts/
+
+To build multi‑arch images, run per‑arch builds, then merge:
+
+```bash
+python3 tools/build.py --image minimal \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --project $GCP_PROJECT \
+  --arch amd64 \
+  --tool podman
+
+python3 tools/build.py --image minimal \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --project $GCP_PROJECT \
+  --arch arm64 \
+  --tool podman
+
+python3 tools/manifest-merge.py \
+  --image minimal \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --project $GCP_PROJECT \
+  --tag 25.10-2026.02.03
+```
 
 ## Generate testing manifest
 
@@ -121,7 +145,8 @@ python3 tools/promote.py \
   --image minimal \
   --project $GCP_PROJECT \
   --zone us-central1-a \
-  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --arch amd64
 ```
 
 This launches a spot VM, runs the build, uploads logs, then deletes the VM.
