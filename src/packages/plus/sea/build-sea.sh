@@ -36,7 +36,14 @@ case "$OS" in
     codesign --remove-signature "$TARGET" || true
 
     # Inject the SEA blob into the Mach-O binary, specifying the segment name for macOS
-    pnpm exec postject "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
+    env -u npm_config_npm_globalconfig \
+      -u npm_config_verify_deps_before_run \
+      -u npm_config__jsr_registry \
+      -u npm_config_enable_pre_post_scripts \
+      -u npm_config_package_import_method \
+      -u npm_config_git_checks \
+      NPM_CONFIG_LOGLEVEL=error \
+      npx -y postject "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
       --sentinel-fuse "$FUSE" \
       --macho-segment-name NODE_SEA
 
@@ -53,7 +60,14 @@ case "$OS" in
 
   linux)
     # Inject into the ELF binary (no Mach-O segment flag on Linux)
-    pnpm exec postject "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
+    env -u npm_config_npm_globalconfig \
+      -u npm_config_verify_deps_before_run \
+      -u npm_config__jsr_registry \
+      -u npm_config_enable_pre_post_scripts \
+      -u npm_config_package_import_method \
+      -u npm_config_git_checks \
+      NPM_CONFIG_LOGLEVEL=error \
+      npx -y postject "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
       --sentinel-fuse "$FUSE"
     ;;
 
