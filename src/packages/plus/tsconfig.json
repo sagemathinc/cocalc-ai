@@ -3,7 +3,6 @@
   "compilerOptions": {
     "rootDir": "./",
     "outDir": "dist",
-    "preserveShebang": true,
     "baseUrl": ".",
     "paths": {
       "@cocalc/lite": ["../lite"],

@@ -5,14 +5,15 @@
   "main": "./electron.js",
   "exports": {
     ".": "./dist/index.js",
-    "./*": "./dist/*.js"
+    "./*": "./dist/*.js",
+    "./ssh/*": "./dist/ssh/*.js"
   },
   "bin": {
     "cocalc-plus": "./dist/bin/start.js"
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "build": "pnpm exec tsc --build",
+    "build": "pnpm exec tsc --build && node bin/add-shebang.js",
     "test": "exit 0",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo sea/sea-prep.blob build",
     "build:static": "cd sea && ./build-static.sh",

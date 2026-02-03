@@ -62,6 +62,8 @@ import { close as terminatePersistServer } from "@cocalc/backend/conat/persist";
 import * as Module from "module";
 import { delay } from "awaiting";
 
+const ssh = {} as any;
+
 export const hubApi: HubApi = {
   system,
   projects,
@@ -75,6 +77,7 @@ export const hubApi: HubApi = {
   software,
   controlAgent,
   lro,
+  ssh,
 };
 
 const logger = getLogger("server:conat:api");

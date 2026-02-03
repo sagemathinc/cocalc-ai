@@ -35,6 +35,7 @@ import FileTabs from "./file-tabs";
 import { ShareIndicator } from "./share-indicator";
 import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
+import { SshButton } from "@cocalc/frontend/ssh";
 
 const INDICATOR_STYLE: React.CSSProperties = {
   overflow: "hidden",
@@ -86,7 +87,12 @@ export default function ProjectTabs(props: PTProps) {
           <ShareIndicatorTab activeTab={activeTab} project_id={project_id} />
           <ChatIndicatorTab activeTab={activeTab} project_id={project_id} />
         </div>
-        {lite && <SettingsButton />}
+        {lite && (
+          <>
+            <SshButton />
+            <SettingsButton />
+          </>
+        )}
       </div>
     </div>
   );

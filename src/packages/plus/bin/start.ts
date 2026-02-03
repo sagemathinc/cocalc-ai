@@ -124,6 +124,10 @@ if (argv[0] === "ssh") {
     process.exit(0);
   }
 
+  if (!process.env.COCALC_ENABLE_SSH_UI) {
+    process.env.COCALC_ENABLE_SSH_UI = "1";
+  }
+
   const daemonStop = hasFlag(argv, "--daemon-stop");
   const daemonStatus = hasFlag(argv, "--daemon-status");
   const daemon = hasFlag(argv, "--daemon");
@@ -187,5 +191,12 @@ if (argv[0] === "ssh") {
     console.error("Failed to load @cocalc/lite/main");
     process.exit(1);
   }
-  liteMain.main();
+  let sshUi: any = undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    sshUi = require("../ssh/ui");
+  } catch {
+    // ignore
+  }
+  liteMain.main({ sshUi });
 }

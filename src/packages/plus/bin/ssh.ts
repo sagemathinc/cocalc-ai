@@ -4,6 +4,7 @@ import { Command } from "commander";
 import {
   collectRepeatable,
   connectSession,
+  canBindPort,
   getRemoteStatus,
   listSessions,
   statusSession,
@@ -21,7 +22,7 @@ async function listSessionsTable(withStatus: boolean) {
     return bv.localeCompare(av);
   });
   const header = withStatus
-    ? ["Target", "Port", "Status", "Last Used"]
+    ? ["Target", "Port", "Status", "Tunnel", "Last Used"]
     : ["Target", "Port", "Last Used"];
   const rows: string[][] = [];
   for (const entry of entries) {
@@ -29,11 +30,15 @@ async function listSessionsTable(withStatus: boolean) {
     const port = entry.localPort != null ? String(entry.localPort) : "";
     const lastUsed = entry.lastUsed || "";
     let status = "";
+    let tunnel = "";
     if (withStatus) {
       status = await getRemoteStatus(entry);
+      if (entry.localPort != null) {
+        tunnel = (await canBindPort(entry.localPort)) ? "idle" : "active";
+      }
     }
     if (withStatus) {
-      rows.push([target, port, status, lastUsed]);
+      rows.push([target, port, status, tunnel, lastUsed]);
     } else {
       rows.push([target, port, lastUsed]);
     }
@@ -42,7 +47,11 @@ async function listSessionsTable(withStatus: boolean) {
     .setHeading(...header)
     .addRowMatrix(rows);
   table.setStyle("unicode-round");
-  table.setWidth(1, 15).setWrapped(1);
+  const targetWidth = Math.max(
+    12,
+    Math.ceil(Math.max(...rows.map((row) => row[0].length)) / 2),
+  );
+  table.setWidth(1, targetWidth).setWrapped(1);
   console.log(table.toString());
 }
 
