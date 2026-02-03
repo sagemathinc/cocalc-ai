@@ -151,6 +151,19 @@ python3 tools/promote.py \
 
 This launches a spot VM, runs the build, uploads logs, then deletes the VM.
 
+## Parallel GCP builds (amd64 + arm64)
+
+```bash
+./tools/gcp-build-multi.sh \
+  --image minimal \
+  --project $GCP_PROJECT \
+  --zone us-central1-a \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs
+```
+
+This runs native builds for amd64 and arm64 in parallel (for non‑GPU images), then
+merges them into a single multi‑arch tag.
+
 ## Notes
 
 - GPU images are amd64 only.

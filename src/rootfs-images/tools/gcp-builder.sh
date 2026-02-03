@@ -23,6 +23,7 @@ SERVICE_ACCOUNT=""
 AUTO_IAM=1
 AUTO_REPO=1
 TAG=""
+WAIT_FOR_BUILD=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -46,6 +47,7 @@ while [[ $# -gt 0 ]]; do
     --service-account) SERVICE_ACCOUNT="$2"; shift 2;;
     --no-iam-binding) AUTO_IAM=0; shift;;
     --no-repo-create) AUTO_REPO=0; shift;;
+    --wait) WAIT_FOR_BUILD=1; shift;;
     --machine-type) MACHINE_TYPE="$2"; shift 2;;
     --name-prefix) NAME_PREFIX="$2"; shift 2;;
     *) echo "unknown arg $1"; exit 1;;
@@ -53,7 +55,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$IMAGE_ID" || -z "$PROJECT" || -z "$ZONE" || -z "$REGISTRY" ]]; then
-  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete] [--arch <amd64|arm64>] [--tag <tag>] [--image-family <name>] [--image-project <name>] [--service-account <email>] [--no-iam-binding] [--no-repo-create]" >&2
+  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete] [--arch <amd64|arm64>] [--tag <tag>] [--image-family <name>] [--image-project <name>] [--service-account <email>] [--no-iam-binding] [--no-repo-create] [--wait]" >&2
   exit 1
 fi
 
@@ -290,6 +292,21 @@ gcloud compute instances create "$NAME" \
 
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/${NAME}.serial.log"
+
+if [[ "$WAIT_FOR_BUILD" -eq 1 ]]; then
+  echo "Tailing serial console logs to $LOG_FILE (waiting for completion)"
+  set +e
+  set +o pipefail
+  gcloud compute instances tail-serial-port-output "$NAME" --zone "$ZONE" --port 1 | tee "$LOG_FILE"
+  TAIL_STATUS=$?
+  set -e
+  set -o pipefail
+  if grep -q "BUILD SUCCESS" "$LOG_FILE"; then
+    exit 0
+  fi
+  echo "Build did not report success (tail exit $TAIL_STATUS)."
+  exit 1
+fi
 
 if [[ "$TAIL_LOGS" -eq 1 ]]; then
   echo "Tailing serial console logs to $LOG_FILE"
