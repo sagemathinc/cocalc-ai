@@ -46,7 +46,6 @@ need_cmd() {
 }
 
 need_cmd curl
-need_cmd node
 
 sha256_check() {
   local file="$1"
@@ -64,7 +63,7 @@ sha256_check() {
 get_json_field() {
   local file="$1"
   local field="$2"
-  node -e "const fs=require('fs');const data=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));console.log(data[process.argv[2]]||'');" "$file" "$field"
+  tr -d '\n' < "$file" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p"
 }
 
 download() {

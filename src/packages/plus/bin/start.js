@@ -130,6 +130,10 @@ if (argv[0] === "ssh") {
     process.env.COCALC_WRITE_CONNECTION_INFO = connInfo;
   }
 
+  if (process.env.COCALC_OPEN_BROWSER == null) {
+    process.env.COCALC_OPEN_BROWSER = daemon || daemonChild ? "0" : "1";
+  }
+
   if (daemonStop) {
     stopDaemon(pidfile);
     process.exit(0);

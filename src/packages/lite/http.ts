@@ -13,6 +13,7 @@ import {
 import getLogger from "@cocalc/backend/logger";
 import port0 from "@cocalc/backend/port";
 import { once } from "node:events";
+import { spawn } from "node:child_process";
 import { project_id } from "@cocalc/project/data";
 import { handleFileDownload } from "@cocalc/conat/files/file-download";
 import { join } from "node:path";
@@ -179,4 +180,25 @@ function showURL({ url, AUTH_TOKEN }) {
     : "";
   console.log("*".repeat(60) + "\n");
   console.log(`CoCalc Lite Server:  ${url}${auth}`);
+  openUrlIfRequested(`${url}${auth}`);
+}
+
+function openUrlIfRequested(url: string) {
+  const flag = (process.env.COCALC_OPEN_BROWSER || "").toLowerCase();
+  if (flag !== "1" && flag !== "true" && flag !== "yes") return;
+  const platform = process.platform;
+  let cmd: string;
+  let args: string[];
+  if (platform === "darwin") {
+    cmd = "open";
+    args = [url];
+  } else {
+    cmd = "xdg-open";
+    args = [url];
+  }
+  try {
+    spawn(cmd, args, { stdio: "ignore", detached: true }).unref();
+  } catch {
+    // ignore failures (headless or missing opener)
+  }
 }

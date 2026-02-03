@@ -62,6 +62,17 @@ function pickFreePort() {
   });
 }
 
+function canBindPort(port) {
+  const net = require("node:net");
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false));
+    srv.listen(port, "127.0.0.1", () => {
+      srv.close(() => resolve(true));
+    });
+  });
+}
+
 function buildSshArgs(opts) {
   const args = [];
   if (opts.port) {
@@ -158,6 +169,13 @@ async function ensureRemoteReady(opts, install, upgrade) {
 }
 
 async function startRemote(opts, remoteInfoPath, remotePidPath, remoteLogPath) {
+  let remoteBin = "cocalc-plus";
+  try {
+    remoteBin = sshExec(opts, "command -v cocalc-plus").trim() || remoteBin;
+  } catch {
+    // Fall back to default path if PATH isn't updated in this session.
+    remoteBin = "$HOME/.local/bin/cocalc-plus";
+  }
   const env = [
     "HOST=127.0.0.1",
     "PORT=0",
@@ -166,7 +184,7 @@ async function startRemote(opts, remoteInfoPath, remotePidPath, remoteLogPath) {
     `COCALC_DAEMON_PIDFILE=${remotePidPath}`,
     `COCALC_DAEMON_LOG=${remoteLogPath}`,
   ].join(" ");
-  const cmd = `mkdir -p ${path.dirname(remoteInfoPath)} && ${env} cocalc-plus --daemon --write-connection-info ${remoteInfoPath} --pidfile ${remotePidPath} --log ${remoteLogPath}`;
+  const cmd = `mkdir -p ${path.dirname(remoteInfoPath)} && ${env} ${remoteBin} --daemon --write-connection-info ${remoteInfoPath} --pidfile ${remotePidPath} --log ${remoteLogPath}`;
   sshExec(opts, cmd, true);
   const info = await waitRemoteFile(opts, remoteInfoPath, 20000);
   return JSON.parse(info);
@@ -206,6 +224,7 @@ async function main(args) {
   const label = target;
   const { localDir, remoteDir } = infoPathFor(label);
   fs.mkdirSync(localDir, { recursive: true });
+  const localPortPath = path.join(localDir, "local-port");
 
   const remoteInfoPath = `${remoteDir}/connection.json`;
   const remotePidPath = `${remoteDir}/daemon.pid`;
@@ -230,9 +249,19 @@ async function main(args) {
     ? parseInt(remotePortArg, 10)
     : info.port;
 
-  const localPort = localPortArg && localPortArg !== "auto"
-    ? parseInt(localPortArg, 10)
-    : await pickFreePort();
+  let localPort;
+  if (localPortArg && localPortArg !== "auto") {
+    localPort = parseInt(localPortArg, 10);
+  } else if (fs.existsSync(localPortPath)) {
+    const saved = parseInt(fs.readFileSync(localPortPath, "utf8").trim(), 10);
+    if (saved && (await canBindPort(saved))) {
+      localPort = saved;
+    }
+  }
+  if (!localPort) {
+    localPort = await pickFreePort();
+    fs.writeFileSync(localPortPath, String(localPort));
+  }
 
   const url = `http://localhost:${localPort}?auth_token=${encodeURIComponent(info.token || "")}`;
 
