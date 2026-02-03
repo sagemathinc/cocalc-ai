@@ -26,8 +26,17 @@
 - [ ] Diagnostics: --log-level debug already exists; add --verbose-ssh to show exact commands.
 
 - [ ] enable proxying of remote apps (e.g., jupyterlab) and make sure it works
+  - this is probably just enabling a button in the frontend when lite mode is true, instead of explicitly disabling it; there might not be anything else to do.
 
-- [ ] reflect-sync integration
+- [ ] reflect-sync integration issues:
+  - [ ] make it so configuration of sync is focused around "Remote SSH Sessions" targets, e.g., maybe use an antd expand button to configure sync.  The configuration would be:
+    - path, ignores presets
+    - primary key is just a local path; don't allow a path that is contained in another path
+    - make the remote path equal local path for simplicity, relative to HOME directory
+    - advanced mode:
+      - different remote path, not relative to home directory, conflict modes
+  - [ ] also make port forwards be part of the remote ssy target:
+    - local port, remote port (defaults to local port), direction (defaults to remote --&gt; local)
 
 - [ ] document how this works and that remote sessions are persistent (e.g., terminals, jupyter kernels, etc. do not stop). 
 

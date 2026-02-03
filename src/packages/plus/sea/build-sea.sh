@@ -99,4 +99,6 @@ cd ../build/sea
 ls -lh $TARGET.tar.xz
 ls -lh $NAME-$VERSION-$MACHINE-$OS
 
+ln -sfn $NAME-$VERSION-$MACHINE-$OS $NAME
+
 echo "Built `pwd`/$TARGET.tar.xz"
