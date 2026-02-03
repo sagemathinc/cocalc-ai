@@ -10,8 +10,6 @@ MACHINE="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 SIGN_ID="${COCALC_PLUS_SIGN_ID:-}"
 ENTITLEMENTS="${COCALC_PLUS_ENTITLEMENTS:-entitlements.plist}"
-PNPM_STORE_DIR="${PNPM_STORE_DIR:-$PWD/.pnpm-store}"
-PNPM_CACHE_DIR="${PNPM_CACHE_DIR:-$PWD/.pnpm-cache}"
 
 # final single-file executable
 TARGET="./$NAME-$VERSION-$MACHINE-$OS"
@@ -19,7 +17,6 @@ TARGET="./$NAME-$VERSION-$MACHINE-$OS"
 NODE_BIN="$(command -v node)"
 
 echo "Building SEA for $OS"
-mkdir -p "$PNPM_STORE_DIR" "$PNPM_CACHE_DIR"
 
 # 1) Stage the node runtime we’ll inject into
 cp "$NODE_BIN" "$TARGET"
@@ -39,8 +36,7 @@ case "$OS" in
     codesign --remove-signature "$TARGET" || true
 
     # Inject the SEA blob into the Mach-O binary, specifying the segment name for macOS
-    PNPM_STORE_DIR="$PNPM_STORE_DIR" PNPM_CACHE_DIR="$PNPM_CACHE_DIR" \
-    pnpm dlx postject@latest "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
+    pnpm exec postject "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
       --sentinel-fuse "$FUSE" \
       --macho-segment-name NODE_SEA
 
@@ -57,8 +53,7 @@ case "$OS" in
 
   linux)
     # Inject into the ELF binary (no Mach-O segment flag on Linux)
-    PNPM_STORE_DIR="$PNPM_STORE_DIR" PNPM_CACHE_DIR="$PNPM_CACHE_DIR" \
-    pnpm dlx postject@latest "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
+    pnpm exec postject "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
       --sentinel-fuse "$FUSE"
     ;;
 
