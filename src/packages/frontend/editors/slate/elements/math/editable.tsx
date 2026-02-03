@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from "react";
 import { Editor, Node, Path, Range, Transforms } from "slate";
 import { register, RenderElementProps } from "../register";
-import { useFocused, useSlate } from "../hooks";
+import { useFocused, useSlate, useSlateSelection } from "../hooks";
 import { ReactEditor } from "../../slate-react";
 import { StaticElement } from "./index";
 
@@ -21,7 +21,7 @@ const Element: React.FC<RenderElementProps> = ({
   }
   const editor = useSlate();
   const focused = useFocused();
-  const selection = editor.selection;
+  const selection = useSlateSelection();
   const [forceEdit, setForceEdit] = useState(false);
   const isCollapsed = selection ? Range.isCollapsed(selection) : false;
   const selectionInside = (() => {
