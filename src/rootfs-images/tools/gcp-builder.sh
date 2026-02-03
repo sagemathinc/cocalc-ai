@@ -228,7 +228,7 @@ apt-get update -y
 apt-get install -y git podman python3 python3-yaml curl ca-certificates
 
 ACCESS_TOKEN="$(curl -fs -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')"
-echo "$ACCESS_TOKEN" | podman login -u oauth2accesstoken --password-stdin "https://${REGISTRY_HOST}"
+echo "$ACCESS_TOKEN" | podman login -u oauth2accesstoken --password-stdin "${REGISTRY_HOST}"
 
 WORKDIR=/root/rootfs-images
 mkdir -p "$WORKDIR"
