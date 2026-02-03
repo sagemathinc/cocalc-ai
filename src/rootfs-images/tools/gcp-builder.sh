@@ -16,6 +16,8 @@ USE_LOCAL=1
 LOG_DIR="build-logs"
 TAIL_LOGS=1
 AUTO_DELETE=1
+SERVICE_ACCOUNT=""
+AUTO_IAM=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +34,8 @@ while [[ $# -gt 0 ]]; do
     --log-dir) LOG_DIR="$2"; shift 2;;
     --no-tail) TAIL_LOGS=0; shift;;
     --no-delete) AUTO_DELETE=0; shift;;
+    --service-account) SERVICE_ACCOUNT="$2"; shift 2;;
+    --no-iam-binding) AUTO_IAM=0; shift;;
     --machine-type) MACHINE_TYPE="$2"; shift 2;;
     --name-prefix) NAME_PREFIX="$2"; shift 2;;
     *) echo "unknown arg $1"; exit 1;;
@@ -39,7 +43,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$IMAGE_ID" || -z "$PROJECT" || -z "$ZONE" || -z "$REGISTRY" ]]; then
-  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete]" >&2
+  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete] [--service-account <email>] [--no-iam-binding]" >&2
   exit 1
 fi
 
@@ -108,6 +112,18 @@ if [[ "$USE_LOCAL" -eq 1 ]]; then
   upload_local_tree
 fi
 
+if [[ "$AUTO_IAM" -eq 1 ]]; then
+  SA_TO_BIND="$SERVICE_ACCOUNT"
+  if [[ -z "$SA_TO_BIND" ]]; then
+    PROJECT_NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+    SA_TO_BIND="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+  fi
+  echo "Ensuring Artifact Registry writer role for $SA_TO_BIND"
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member "serviceAccount:$SA_TO_BIND" \
+    --role "roles/artifactregistry.writer" >/dev/null
+fi
+
 NAME="${NAME_PREFIX}-${IMAGE_ID}-$(date +%s)"
 STARTUP_SCRIPT=$(mktemp)
 cat >"$STARTUP_SCRIPT" <<'SCRIPT'
@@ -123,6 +139,7 @@ REPO_URL="${REPO_URL}"
 REPO_TOKEN="${REPO_TOKEN}"
 REPO_TAR_URL="${REPO_TAR_URL}"
 AUTO_DELETE="${AUTO_DELETE}"
+REGISTRY_HOST="${REGISTRY_HOST}"
 
 self_delete() {
   set +e
@@ -186,6 +203,9 @@ docker run --privileged --rm tonistiigi/binfmt --install all
 docker buildx create --use --name cocalc-builder || docker buildx use cocalc-builder
 docker buildx inspect --bootstrap
 
+ACCESS_TOKEN="$(curl -fs -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')"
+echo "$ACCESS_TOKEN" | docker login -u oauth2accesstoken --password-stdin "https://${REGISTRY_HOST}"
+
 WORKDIR=/root/rootfs-images
 mkdir -p "$WORKDIR"
 BUILD_DIR="$WORKDIR/src/rootfs-images"
@@ -226,6 +246,8 @@ sed -i "s|\${REPO_URL}|$REPO_URL|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_TOKEN}|$REPO_TOKEN|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_TAR_URL}|$REPO_TAR_URL|g" "$STARTUP_SCRIPT"
 sed -i "s|\${AUTO_DELETE}|$AUTO_DELETE|g" "$STARTUP_SCRIPT"
+REGISTRY_HOST="${REGISTRY%%/*}"
+sed -i "s|\${REGISTRY_HOST}|$REGISTRY_HOST|g" "$STARTUP_SCRIPT"
 
 set -x
 
@@ -236,6 +258,7 @@ gcloud compute instances create "$NAME" \
   --provisioning-model=SPOT \
   --instance-termination-action=DELETE \
   --maintenance-policy=TERMINATE \
+  ${SERVICE_ACCOUNT:+--service-account "$SERVICE_ACCOUNT"} \
   --scopes=https://www.googleapis.com/auth/cloud-platform \
   --metadata-from-file startup-script="$STARTUP_SCRIPT" \
   --boot-disk-size=200GB \
