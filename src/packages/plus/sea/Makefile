@@ -58,7 +58,7 @@ sea: clean-sea
 	@[ -s sea-prep.blob ] || (echo "sea-prep.blob missing" && exit 1)
 	@[ -s sea.term ] || (echo "sea.term missing (fuse) — ensure Node wrote it" && exit 1)
 	@echo "→ Inject SEA blob (Mach-O segment + sentinel fuse)"
-	npx -y postject@latest "$(BIN)" NODE_SEA_BLOB sea-prep.blob \
+	pnpm dlx postject@latest "$(BIN)" NODE_SEA_BLOB sea-prep.blob \
 	  --sentinel-fuse "$(FUSE)" \
 	  --macho-segment-name NODE_SEA
 	@echo "SEA injection done: $(BIN)"

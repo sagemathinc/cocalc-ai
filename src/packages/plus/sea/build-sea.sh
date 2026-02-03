@@ -34,7 +34,7 @@ case "$OS" in
     codesign --remove-signature "$TARGET" || true
 
     # Inject the SEA blob into the Mach-O binary, specifying the segment name for macOS
-    npx -y postject "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
+    pnpm dlx postject@latest "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
       --sentinel-fuse "$FUSE" \
       --macho-segment-name NODE_SEA
 
@@ -44,7 +44,7 @@ case "$OS" in
 
   linux)
     # Inject into the ELF binary (no Mach-O segment flag on Linux)
-    npx -y postject "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
+    pnpm dlx postject@latest "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
       --sentinel-fuse "$FUSE"
     ;;
 
@@ -74,6 +74,6 @@ mv $TARGET.tar.xz ../build/sea
 cd ../build/sea
 
 ls -lh $TARGET.tar.xz
-ls -lh $RAW_TARGET
+ls -lh $NAME-$VERSION-$MACHINE-$OS
 
 echo "Built `pwd`/$TARGET.tar.xz"
