@@ -8,6 +8,8 @@ export VERSION="$npm_package_version"
 FUSE="NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"   # must match your sea-config.json
 MACHINE="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+SIGN_ID="${COCALC_PLUS_SIGN_ID:-}"
+ENTITLEMENTS="${COCALC_PLUS_ENTITLEMENTS:-entitlements.plist}"
 
 # final single-file executable
 TARGET="./$NAME-$VERSION-$MACHINE-$OS"
@@ -38,8 +40,15 @@ case "$OS" in
       --sentinel-fuse "$FUSE" \
       --macho-segment-name NODE_SEA
 
-    # Re-sign ad-hoc so macOS will run it
-    codesign --force --sign - "$TARGET"
+    # Re-sign so macOS will run it (Developer ID if provided, otherwise ad-hoc)
+    if [[ -n "$SIGN_ID" ]]; then
+      codesign --force --sign "$SIGN_ID" \
+        --options runtime \
+        --entitlements "$ENTITLEMENTS" \
+        "$TARGET"
+    else
+      codesign --force --sign - "$TARGET"
+    fi
     ;;
 
   linux)
