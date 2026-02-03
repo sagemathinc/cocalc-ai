@@ -7,6 +7,9 @@ ZONE=""
 REGISTRY=""
 MACHINE_TYPE="n2-standard-8"
 NAME_PREFIX="rootfs-builder"
+ARCH=""
+IMAGE_FAMILY="ubuntu-2204-lts"
+IMAGE_PROJECT="ubuntu-os-cloud"
 REPO_URL="https://github.com/sagemathinc/cocalc-ai.git"
 REPO_TOKEN=""
 REPO_TAR_URL=""
@@ -16,6 +19,11 @@ USE_LOCAL=1
 LOG_DIR="build-logs"
 TAIL_LOGS=1
 AUTO_DELETE=1
+SERVICE_ACCOUNT=""
+AUTO_IAM=1
+AUTO_REPO=1
+TAG=""
+WAIT_FOR_BUILD=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +40,14 @@ while [[ $# -gt 0 ]]; do
     --log-dir) LOG_DIR="$2"; shift 2;;
     --no-tail) TAIL_LOGS=0; shift;;
     --no-delete) AUTO_DELETE=0; shift;;
+    --arch) ARCH="$2"; shift 2;;
+    --tag) TAG="$2"; shift 2;;
+    --image-family) IMAGE_FAMILY="$2"; shift 2;;
+    --image-project) IMAGE_PROJECT="$2"; shift 2;;
+    --service-account) SERVICE_ACCOUNT="$2"; shift 2;;
+    --no-iam-binding) AUTO_IAM=0; shift;;
+    --no-repo-create) AUTO_REPO=0; shift;;
+    --wait) WAIT_FOR_BUILD=1; shift;;
     --machine-type) MACHINE_TYPE="$2"; shift 2;;
     --name-prefix) NAME_PREFIX="$2"; shift 2;;
     *) echo "unknown arg $1"; exit 1;;
@@ -39,7 +55,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$IMAGE_ID" || -z "$PROJECT" || -z "$ZONE" || -z "$REGISTRY" ]]; then
-  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete]" >&2
+  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete] [--arch <amd64|arm64>] [--tag <tag>] [--image-family <name>] [--image-project <name>] [--service-account <email>] [--no-iam-binding] [--no-repo-create] [--wait]" >&2
   exit 1
 fi
 
@@ -108,7 +124,55 @@ if [[ "$USE_LOCAL" -eq 1 ]]; then
   upload_local_tree
 fi
 
-NAME="${NAME_PREFIX}-${IMAGE_ID}-$(date +%s)"
+if [[ -z "$ARCH" ]]; then
+  ARCH="amd64"
+fi
+
+if [[ "$ARCH" == "arm64" ]]; then
+  if [[ "$MACHINE_TYPE" == "n2-standard-8" ]]; then
+    MACHINE_TYPE="t2a-standard-4"
+  fi
+  if [[ "$IMAGE_FAMILY" == "ubuntu-2204-lts" ]]; then
+    IMAGE_FAMILY="ubuntu-2204-lts-arm64"
+  fi
+fi
+
+REGISTRY_HOST="${REGISTRY%%/*}"
+REGISTRY_REST="${REGISTRY#*/}"
+REGISTRY_PROJECT="${REGISTRY_REST%%/*}"
+REGISTRY_REPO="${REGISTRY_REST#*/}"
+REGISTRY_REPO="${REGISTRY_REPO%%/*}"
+REGISTRY_LOCATION="${REGISTRY_HOST%-docker.pkg.dev}"
+if [[ "$REGISTRY_LOCATION" == "$REGISTRY_HOST" ]]; then
+  REGISTRY_LOCATION="us"
+fi
+
+if [[ "$AUTO_IAM" -eq 1 ]]; then
+  SA_TO_BIND="$SERVICE_ACCOUNT"
+  if [[ -z "$SA_TO_BIND" ]]; then
+    PROJECT_NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+    SA_TO_BIND="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+  fi
+  echo "Ensuring Artifact Registry writer role for $SA_TO_BIND"
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member "serviceAccount:$SA_TO_BIND" \
+    --role "roles/artifactregistry.writer" >/dev/null
+fi
+
+if [[ "$AUTO_REPO" -eq 1 ]]; then
+  if ! gcloud artifacts repositories describe "$REGISTRY_REPO" \
+    --location "$REGISTRY_LOCATION" \
+    --project "$PROJECT" >/dev/null 2>&1; then
+    echo "Creating Artifact Registry repo $REGISTRY_REPO in $REGISTRY_LOCATION"
+    gcloud artifacts repositories create "$REGISTRY_REPO" \
+      --location "$REGISTRY_LOCATION" \
+      --repository-format docker \
+      --project "$PROJECT" \
+      --description "CoCalc rootfs images"
+  fi
+fi
+
+NAME="${NAME_PREFIX}-${IMAGE_ID}-${ARCH}-$(date +%s)-$$"
 STARTUP_SCRIPT=$(mktemp)
 cat >"$STARTUP_SCRIPT" <<'SCRIPT'
 #!/usr/bin/env bash
@@ -123,6 +187,9 @@ REPO_URL="${REPO_URL}"
 REPO_TOKEN="${REPO_TOKEN}"
 REPO_TAR_URL="${REPO_TAR_URL}"
 AUTO_DELETE="${AUTO_DELETE}"
+REGISTRY_HOST="${REGISTRY_HOST}"
+ARCH="${ARCH}"
+TAG="${TAG}"
 
 self_delete() {
   set +e
@@ -158,15 +225,19 @@ echo "=== rootfs-images build starting ==="
 date -u
 
 apt-get update -y
-apt-get install -y git docker.io python3 python3-yaml
-systemctl start docker
+apt-get install -y git podman python3 python3-yaml curl ca-certificates
+
+ACCESS_TOKEN="$(curl -fs -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')"
+echo "$ACCESS_TOKEN" | podman login -u oauth2accesstoken --password-stdin "${REGISTRY_HOST}"
 
 WORKDIR=/root/rootfs-images
 mkdir -p "$WORKDIR"
+BUILD_DIR="$WORKDIR/src/rootfs-images"
 
 if [[ -n "$REPO_TAR_URL" ]]; then
   echo "Downloading repo tarball from $REPO_TAR_URL"
   curl -fsSL "$REPO_TAR_URL" | tar -xz -C "$WORKDIR" --strip-components=1
+  BUILD_DIR="$WORKDIR"
 else
   if [[ -n "$REPO_TOKEN" ]]; then
     AUTH_URL="https://${REPO_TOKEN}@${REPO_URL#https://}"
@@ -178,8 +249,15 @@ else
   fi
 fi
 
-cd "$WORKDIR/src/rootfs-images"
-python3 tools/build.py --image "$IMAGE_ID" --registry "$REGISTRY" --project "$PROJECT"
+if [[ ! -d "$BUILD_DIR" ]]; then
+  echo "Build directory not found: $BUILD_DIR"
+  echo "Contents of $WORKDIR:"
+  ls -la "$WORKDIR"
+  exit 1
+fi
+
+cd "$BUILD_DIR"
+python3 tools/build.py --image "$IMAGE_ID" --registry "$REGISTRY" --project "$PROJECT" --arch "$ARCH" --tool podman ${TAG:+--tag "$TAG"}
 echo "=== rootfs-images build finished ==="
 date -u
 SCRIPT
@@ -192,6 +270,9 @@ sed -i "s|\${REPO_URL}|$REPO_URL|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_TOKEN}|$REPO_TOKEN|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_TAR_URL}|$REPO_TAR_URL|g" "$STARTUP_SCRIPT"
 sed -i "s|\${AUTO_DELETE}|$AUTO_DELETE|g" "$STARTUP_SCRIPT"
+sed -i "s|\${REGISTRY_HOST}|$REGISTRY_HOST|g" "$STARTUP_SCRIPT"
+sed -i "s|\${ARCH}|$ARCH|g" "$STARTUP_SCRIPT"
+sed -i "s|\${TAG}|$TAG|g" "$STARTUP_SCRIPT"
 
 set -x
 
@@ -202,14 +283,30 @@ gcloud compute instances create "$NAME" \
   --provisioning-model=SPOT \
   --instance-termination-action=DELETE \
   --maintenance-policy=TERMINATE \
+  ${SERVICE_ACCOUNT:+--service-account "$SERVICE_ACCOUNT"} \
   --scopes=https://www.googleapis.com/auth/cloud-platform \
   --metadata-from-file startup-script="$STARTUP_SCRIPT" \
   --boot-disk-size=200GB \
-  --image-family=ubuntu-2204-lts \
-  --image-project=ubuntu-os-cloud
+  --image-family="$IMAGE_FAMILY" \
+  --image-project="$IMAGE_PROJECT"
 
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/${NAME}.serial.log"
+
+if [[ "$WAIT_FOR_BUILD" -eq 1 ]]; then
+  echo "Tailing serial console logs to $LOG_FILE (waiting for completion)"
+  set +e
+  set +o pipefail
+  gcloud compute instances tail-serial-port-output "$NAME" --zone "$ZONE" --port 1 | tee "$LOG_FILE"
+  TAIL_STATUS=$?
+  set -e
+  set -o pipefail
+  if grep -q "BUILD SUCCESS" "$LOG_FILE"; then
+    exit 0
+  fi
+  echo "Build did not report success (tail exit $TAIL_STATUS)."
+  exit 1
+fi
 
 if [[ "$TAIL_LOGS" -eq 1 ]]; then
   echo "Tailing serial console logs to $LOG_FILE"

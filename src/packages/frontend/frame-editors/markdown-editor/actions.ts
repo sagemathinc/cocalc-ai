@@ -29,6 +29,7 @@ import { ReactEditor } from "@cocalc/frontend/editors/slate/slate-react";
 import { Transforms } from "slate";
 import { toggle_checkbox } from "@cocalc/frontend/editors/task-editor/desc-rendering";
 import { parseTableOfContents } from "@cocalc/frontend/markdown";
+import { parseHeader } from "@cocalc/frontend/markdown/header";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import {
@@ -223,10 +224,18 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     const id = this.show_focused_frame_of_type("slate");
     if (id == null) return;
     const blockControl = this.getBlockEditorControl(id);
-    const line =
+    const rawLine =
       entry?.extra != null && typeof entry.extra.line === "number"
         ? entry.extra.line
         : undefined;
+    const headerInfo = parseHeader(this._syncstring?.to_str?.() ?? "");
+    const headerLineOffset =
+      headerInfo.header == null
+        ? 0
+        : (headerInfo.header.length === 0
+            ? 0
+            : headerInfo.header.split("\n").length) + 2;
+    const line = rawLine == null ? undefined : rawLine + headerLineOffset;
     if (blockControl?.setSelectionFromMarkdownPosition && line != null) {
       const ok = blockControl.setSelectionFromMarkdownPosition({ line, ch: 0 });
       if (ok) return;
