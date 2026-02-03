@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Editor, Element, Transforms } from "slate";
+import { Editor, Element, Text, Transforms } from "slate";
 import { register, IS_MACOS } from "./register";
 import { rangeAll } from "../slate-util";
 import { withSelectionReason } from "../slate-utils/slate-debug";
@@ -48,8 +48,22 @@ register({ key: "a", meta: IS_MACOS, ctrl: !IS_MACOS }, ({ editor }) => {
       return true;
     }
     const [, path] = codeEntry;
+    const textEntries = Array.from(
+      Editor.nodes(editor, {
+        at: path,
+        match: (node) => Text.isText(node),
+      }),
+    ) as [Text, number[]][];
+    const first = textEntries[0];
+    const last = textEntries[textEntries.length - 1];
+    const anchor = first
+      ? { path: first[1], offset: 0 }
+      : Editor.start(editor, path);
+    const focus = last
+      ? { path: last[1], offset: last[0].text.length }
+      : Editor.end(editor, path);
     withSelectionReason(editor, "select-all-code-block", () => {
-      Transforms.select(editor, Editor.range(editor, path));
+      Transforms.setSelection(editor, { anchor, focus });
     });
     lastCodeSelectAt.set(editor, now);
     return true;
