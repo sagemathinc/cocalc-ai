@@ -37,13 +37,15 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
   app: Application;
   port: number;
   isHttps: boolean;
+  hostname: string;
 }> {
   const app = express();
 
-  const port = port0 ?? (await getPort());
+  const requestedPort = port0 ?? (await getPort());
   const hostEnv = process.env.HOST ?? "localhost";
   const { isHttps, hostname } = sanitizeHost(hostEnv);
   let httpServer: AnyServer;
+  let actualPort = requestedPort;
 
   if (isHttps) {
     const { key, cert, keyPath, certPath } = getOrCreateSelfSigned(hostname);
@@ -60,10 +62,14 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
       }
     });
 
-    httpServer.listen(port, hostname);
+    httpServer.listen(requestedPort, hostname);
     await once(httpServer, "listening");
 
-    showURL({ url: `https://${hostname}:${port}`, AUTH_TOKEN });
+    const addr = httpServer.address();
+    if (addr && typeof addr === "object" && addr.port) {
+      actualPort = addr.port;
+    }
+    showURL({ url: `https://${hostname}:${actualPort}`, AUTH_TOKEN });
     console.log(`TLS: key=${keyPath}\n     cert=${certPath}`);
   } else {
     httpServer = httpCreateServer(app);
@@ -79,9 +85,13 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
       }
     });
 
-    httpServer.listen(port, hostname);
+    httpServer.listen(requestedPort, hostname);
     await once(httpServer, "listening");
-    showURL({ url: `http://${hostname}:${port}`, AUTH_TOKEN });
+    const addr = httpServer.address();
+    if (addr && typeof addr === "object" && addr.port) {
+      actualPort = addr.port;
+    }
+    showURL({ url: `http://${hostname}:${actualPort}`, AUTH_TOKEN });
   }
 
   const info: any = {};
@@ -95,7 +105,7 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
     console.log(JSON.stringify(info, undefined, 2));
   }
   console.log("\n" + "*".repeat(60));
-  return { httpServer, app, port, isHttps };
+  return { httpServer, app, port: actualPort, isHttps, hostname };
 }
 
 export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
