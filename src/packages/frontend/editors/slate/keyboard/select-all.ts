@@ -7,6 +7,7 @@ import { Editor, Element, Transforms } from "slate";
 import { register, IS_MACOS } from "./register";
 import { rangeAll } from "../slate-util";
 import { withSelectionReason } from "../slate-utils/slate-debug";
+import { ReactEditor } from "../slate-react";
 
 // We use this to support windowing.
 
@@ -20,9 +21,21 @@ export function selectAll(editor: Editor) {
 }
 
 register({ key: "a", meta: IS_MACOS, ctrl: !IS_MACOS }, ({ editor }) => {
-  const selection = editor.selection;
+  const selection =
+    editor.selection ??
+    (() => {
+      if (typeof window === "undefined") return null;
+      const domSelection = window.getSelection();
+      if (!domSelection || domSelection.rangeCount === 0) return null;
+      try {
+        return ReactEditor.toSlateRange(editor as any, domSelection) ?? null;
+      } catch {
+        return null;
+      }
+    })();
   const codeEntry = selection
     ? Editor.above(editor, {
+        at: selection.focus,
         match: (node) => Element.isElement(node) && node.type === "code_block",
       })
     : null;
