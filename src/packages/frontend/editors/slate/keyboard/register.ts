@@ -76,5 +76,11 @@ export function register(
 
 export function getHandler(event): KeyHandler | undefined {
   // console.log(event.key);
-  return keyHandlers[EventToString(event)];
+  const direct = keyHandlers[EventToString(event)];
+  if (direct != null) return direct;
+  if (event?.code === "Semicolon") {
+    const prefix = `${event.shiftKey}${event.ctrlKey}${event.metaKey}${event.altKey}`;
+    return keyHandlers[`${prefix};`] ?? keyHandlers[`${prefix}:`];
+  }
+  return undefined;
 }
