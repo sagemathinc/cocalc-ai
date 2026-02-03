@@ -827,6 +827,28 @@ function insertMultilineCodeText(editor: SlateEditor, text: string): boolean {
   return true;
 }
 
+export function insertPlainTextInCodeBlock(
+  editor: SlateEditor,
+  text: string,
+): boolean {
+  if (!editor.selection) return false;
+  if (!text) return false;
+  if (text.includes("\n")) {
+    return insertMultilineCodeText(editor, text);
+  }
+  const focus = editor.selection.focus;
+  const lineEntry = Editor.above(editor, {
+    at: focus,
+    match: (n) => Element.isElement(n) && n.type === "code_line",
+  }) as [Element, Path] | undefined;
+  if (!lineEntry) return false;
+  if (!Range.isCollapsed(editor.selection)) {
+    Transforms.delete(editor);
+  }
+  Transforms.insertText(editor, text);
+  return true;
+}
+
 // Use conversion back and forth to markdown to autoformat
 // what is right before the cursor in the current text node.
 // Returns true if autoformat actually happens.

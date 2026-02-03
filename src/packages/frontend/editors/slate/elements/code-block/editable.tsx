@@ -25,8 +25,9 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { ReactEditor } from "../../slate-react";
 import { hash_string } from "@cocalc/util/misc";
-import { Editor, Range, Transforms } from "slate";
+import { Editor, Transforms } from "slate";
 import { markdown_to_slate } from "../../markdown-to-slate";
+import { insertPlainTextInCodeBlock } from "../../format/auto-format";
 import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
 import { CodeBlockBody, CodeLineElement } from "./code-like";
@@ -272,28 +273,15 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const shouldCollapse = false;
   const selected = useSelected();
   const selectionInBlock = !!focused && !!selected;
-  const isSelectionInsideBlock = useCallback(() => {
-    const selection = editor.selection;
-    if (!selection) return false;
-    try {
-      const path = ReactEditor.findPath(editor, element);
-      const range = Editor.range(editor, path);
-      return (
-        Range.includes(range, selection.anchor) &&
-        Range.includes(range, selection.focus)
-      );
-    } catch {
-      return false;
-    }
-  }, [editor, element]);
   const syncSelectionFromDom = useCallback(() => {
     if (typeof window === "undefined") return;
     const domSelection = window.getSelection?.();
-    if (!domSelection) return;
+    if (!domSelection || domSelection.rangeCount === 0) return;
+    const domRange = domSelection.getRangeAt(0);
     const ignoreSelection = editor.getIgnoreSelection?.() ?? false;
     if (ignoreSelection) editor.setIgnoreSelection(false);
     try {
-      const range = ReactEditor.toSlateRange(editor, domSelection);
+      const range = ReactEditor.toSlateRange(editor, domRange);
       if (range) {
         Transforms.select(editor, range);
       }
@@ -354,15 +342,16 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
-      syncSelectionFromDom();
-      if (!isSelectionInsideBlock()) return;
       const text = event.clipboardData?.getData("text/plain");
       if (!text) return;
       event.preventDefault();
       event.stopPropagation();
-      Editor.insertText(editor, text);
+      syncSelectionFromDom();
+      if (!insertPlainTextInCodeBlock(editor, text)) {
+        Editor.insertText(editor, text);
+      }
     },
-    [editor, isSelectionInsideBlock, syncSelectionFromDom],
+    [editor, syncSelectionFromDom],
   );
 
   return (
