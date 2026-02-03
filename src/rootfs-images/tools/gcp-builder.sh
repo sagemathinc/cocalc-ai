@@ -172,7 +172,7 @@ if [[ "$AUTO_REPO" -eq 1 ]]; then
   fi
 fi
 
-NAME="${NAME_PREFIX}-${IMAGE_ID}-$(date +%s)"
+NAME="${NAME_PREFIX}-${IMAGE_ID}-${ARCH}-$(date +%s)-$$"
 STARTUP_SCRIPT=$(mktemp)
 cat >"$STARTUP_SCRIPT" <<'SCRIPT'
 #!/usr/bin/env bash
