@@ -350,8 +350,8 @@ export function ChatPanel({
     actions.deleteDraft(composerDraftKey);
     setInput("");
   }
-  function on_send(): void {
-    sendMessage();
+  function on_send(value?: string): void {
+    sendMessage(undefined, value);
   }
 
   const renderChatContent = () => (

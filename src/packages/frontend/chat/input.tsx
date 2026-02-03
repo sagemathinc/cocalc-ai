@@ -25,7 +25,7 @@ import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import { SubmitMentionsRef } from "./types";
 
 interface Props {
-  on_send: (value: string) => void;
+  on_send: (value?: string) => void;
   onChange: (string) => void;
   syncdb: ImmerDB | undefined;
   // date:
