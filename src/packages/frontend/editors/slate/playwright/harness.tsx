@@ -67,6 +67,8 @@ declare global {
         range: Range | number,
         position?: "start" | "end",
       ) => boolean | void;
+      setSelectionFromMarkdownA?: (pos: { line: number; ch: number }) => boolean;
+      setSelectionFromMarkdownB?: (pos: { line: number; ch: number }) => boolean;
       getBlocksA?: () => string[];
       getBlocksB?: () => string[];
       getSelectionA: () => Range | null;
@@ -389,6 +391,8 @@ function Harness(): React.JSX.Element {
     const syncRef = useRef(new FakeSyncstring(markdown));
     const getValueRefA = useRef<() => string>(() => "");
     const getValueRefB = useRef<() => string>(() => "");
+    const controlRefA = useRef<any>(null);
+    const controlRefB = useRef<any>(null);
     const selectionRefA = useRef<{
       setSelection: (range: Range) => void;
       getSelection: () => Range | null;
@@ -414,6 +418,12 @@ function Harness(): React.JSX.Element {
           if (typeof range === "number") return false;
           selectionRefB.current?.setSelection(range);
           return true;
+        },
+        setSelectionFromMarkdownA: (pos) => {
+          return controlRefA.current?.setSelectionFromMarkdownPosition?.(pos) ?? false;
+        },
+        setSelectionFromMarkdownB: (pos) => {
+          return controlRefB.current?.setSelectionFromMarkdownPosition?.(pos) ?? false;
         },
         getSelectionA: () => selectionRefA.current?.getSelection() ?? null,
         getSelectionB: () => selectionRefB.current?.getSelection() ?? null,
@@ -444,6 +454,7 @@ function Harness(): React.JSX.Element {
                 disableWindowing={true}
                 ignoreRemoteMergesWhileFocused={false}
                 remoteMergeIdleMs={150}
+                controlRef={controlRefA}
                 selectionRef={selectionRefA}
                 getValueRef={getValueRefA}
               />
@@ -459,6 +470,7 @@ function Harness(): React.JSX.Element {
                 disableWindowing={true}
                 ignoreRemoteMergesWhileFocused={false}
                 remoteMergeIdleMs={150}
+                controlRef={controlRefB}
                 selectionRef={selectionRefB}
                 getValueRef={getValueRefB}
               />

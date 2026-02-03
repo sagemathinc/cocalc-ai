@@ -917,8 +917,14 @@ test("sync: remote edit in active line keeps caret at end", async ({
     return window.__slateCollabTest?.getMarkdownA?.().includes("this is a string");
   });
 
-  await editorA.locator("text=this is a string").first().click();
-  await page.keyboard.press("End");
+  const selectionSet = await page.evaluate(() => {
+    const md = window.__slateCollabTest?.getMarkdownA?.() ?? "";
+    const lines = md.split("\n");
+    const line = lines.findIndex((l) => l.includes("this is a string"));
+    const ch = line >= 0 ? lines[line].length : 0;
+    return window.__slateCollabTest?.setSelectionFromMarkdownA?.({ line, ch }) ?? false;
+  });
+  expect(selectionSet).toBe(true);
 
   await page.evaluate(() => {
     window.__slateCollabTest?.setRemote(
