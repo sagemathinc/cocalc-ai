@@ -18,6 +18,7 @@ TAIL_LOGS=1
 AUTO_DELETE=1
 SERVICE_ACCOUNT=""
 AUTO_IAM=1
+AUTO_REPO=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --no-delete) AUTO_DELETE=0; shift;;
     --service-account) SERVICE_ACCOUNT="$2"; shift 2;;
     --no-iam-binding) AUTO_IAM=0; shift;;
+    --no-repo-create) AUTO_REPO=0; shift;;
     --machine-type) MACHINE_TYPE="$2"; shift 2;;
     --name-prefix) NAME_PREFIX="$2"; shift 2;;
     *) echo "unknown arg $1"; exit 1;;
@@ -43,7 +45,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$IMAGE_ID" || -z "$PROJECT" || -z "$ZONE" || -z "$REGISTRY" ]]; then
-  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete] [--service-account <email>] [--no-iam-binding]" >&2
+  echo "usage: gcp-builder.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--repo-url <url>] [--repo-token <token>] [--repo-tar <url>] [--gcs-bucket <bucket>] [--gcs-location <loc>] [--no-local] [--log-dir <dir>] [--no-tail] [--no-delete] [--service-account <email>] [--no-iam-binding] [--no-repo-create]" >&2
   exit 1
 fi
 
@@ -112,6 +114,16 @@ if [[ "$USE_LOCAL" -eq 1 ]]; then
   upload_local_tree
 fi
 
+REGISTRY_HOST="${REGISTRY%%/*}"
+REGISTRY_REST="${REGISTRY#*/}"
+REGISTRY_PROJECT="${REGISTRY_REST%%/*}"
+REGISTRY_REPO="${REGISTRY_REST#*/}"
+REGISTRY_REPO="${REGISTRY_REPO%%/*}"
+REGISTRY_LOCATION="${REGISTRY_HOST%-docker.pkg.dev}"
+if [[ "$REGISTRY_LOCATION" == "$REGISTRY_HOST" ]]; then
+  REGISTRY_LOCATION="us"
+fi
+
 if [[ "$AUTO_IAM" -eq 1 ]]; then
   SA_TO_BIND="$SERVICE_ACCOUNT"
   if [[ -z "$SA_TO_BIND" ]]; then
@@ -122,6 +134,19 @@ if [[ "$AUTO_IAM" -eq 1 ]]; then
   gcloud projects add-iam-policy-binding "$PROJECT" \
     --member "serviceAccount:$SA_TO_BIND" \
     --role "roles/artifactregistry.writer" >/dev/null
+fi
+
+if [[ "$AUTO_REPO" -eq 1 ]]; then
+  if ! gcloud artifacts repositories describe "$REGISTRY_REPO" \
+    --location "$REGISTRY_LOCATION" \
+    --project "$PROJECT" >/dev/null 2>&1; then
+    echo "Creating Artifact Registry repo $REGISTRY_REPO in $REGISTRY_LOCATION"
+    gcloud artifacts repositories create "$REGISTRY_REPO" \
+      --location "$REGISTRY_LOCATION" \
+      --repository-format docker \
+      --project "$PROJECT" \
+      --description "CoCalc rootfs images"
+  fi
 fi
 
 NAME="${NAME_PREFIX}-${IMAGE_ID}-$(date +%s)"
@@ -246,7 +271,6 @@ sed -i "s|\${REPO_URL}|$REPO_URL|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_TOKEN}|$REPO_TOKEN|g" "$STARTUP_SCRIPT"
 sed -i "s|\${REPO_TAR_URL}|$REPO_TAR_URL|g" "$STARTUP_SCRIPT"
 sed -i "s|\${AUTO_DELETE}|$AUTO_DELETE|g" "$STARTUP_SCRIPT"
-REGISTRY_HOST="${REGISTRY%%/*}"
 sed -i "s|\${REGISTRY_HOST}|$REGISTRY_HOST|g" "$STARTUP_SCRIPT"
 
 set -x
