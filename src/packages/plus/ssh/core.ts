@@ -312,6 +312,7 @@ export async function startRemote(
     "PORT=0",
     "AUTH_TOKEN=short",
     "COCALC_ENABLE_SSH_UI=0",
+    "COCALC_DATA_DIR=$HOME/.local/share/cocalc-plus/data",
     `COCALC_REMOTE_SSH_TARGET='${safeTarget}'`,
     `COCALC_WRITE_CONNECTION_INFO=${remoteInfoPath}`,
     `COCALC_DAEMON_PIDFILE=${remotePidPath}`,

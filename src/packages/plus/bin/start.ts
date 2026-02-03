@@ -4,6 +4,7 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { main as sshMain } from "./ssh";
 
@@ -194,6 +195,16 @@ if (argv[0] === "ssh") {
     console.error("Unknown args:", argv.join(" "));
     usage();
     process.exit(1);
+  }
+
+  if (!process.env.COCALC_DATA_DIR && !process.env.DATA) {
+    process.env.COCALC_DATA_DIR = path.join(
+      os.homedir(),
+      ".local",
+      "share",
+      "cocalc-plus",
+      "data",
+    );
   }
 
   const liteMain = require("@cocalc/lite/main");
