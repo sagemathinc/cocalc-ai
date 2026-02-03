@@ -2,7 +2,7 @@ import type {
   ReflectForwardRow,
   ReflectSessionRow,
 } from "@cocalc/conat/hub/api/reflect";
-import { runReflectJson } from "./runner";
+import { runReflect, runReflectJson } from "./runner";
 
 type ListSessionsOpts = {
   selectors?: string[];
@@ -31,4 +31,25 @@ export async function listSessionsUI(
 export async function listForwardsUI(): Promise<ReflectForwardRow[]> {
   const args = ["forward", "list", "--json"];
   return await runReflectJson<ReflectForwardRow[]>(args);
+}
+
+export async function createSessionUI(opts: {
+  alpha: string;
+  beta: string;
+  name?: string;
+  labels?: string[];
+  target?: string;
+}): Promise<void> {
+  const args = ["create", opts.alpha, opts.beta];
+  if (opts.name) {
+    args.push("--name", opts.name);
+  }
+  const labels = Array.isArray(opts.labels) ? opts.labels : [];
+  if (opts.target) {
+    labels.push(`cocalc-plus-target=${opts.target}`);
+  }
+  for (const label of labels) {
+    args.push("--label", label);
+  }
+  await runReflect(args);
 }

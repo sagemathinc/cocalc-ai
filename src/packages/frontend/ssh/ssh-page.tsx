@@ -1,4 +1,15 @@
-import { Alert, Button, Divider, Space, Table, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Divider,
+  Form,
+  Input,
+  Modal,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -75,6 +86,8 @@ export const SshPage: React.FC = React.memo(() => {
   );
   const [reflectLoading, setReflectLoading] = useState(false);
   const [reflectError, setReflectError] = useState<string | null>(null);
+  const [reflectModalOpen, setReflectModalOpen] = useState(false);
+  const [reflectForm] = Form.useForm();
 
   if (sshRemoteTarget) {
     return (
@@ -136,6 +149,32 @@ export const SshPage: React.FC = React.memo(() => {
       setReflectForwards(forwards || []);
     } catch (err: any) {
       setReflectError(err?.message || String(err));
+    } finally {
+      setReflectLoading(false);
+    }
+  };
+
+  const handleCreateReflect = async () => {
+    try {
+      const values = await reflectForm.validateFields();
+      setReflectLoading(true);
+      await webapp_client.conat_client.hub.reflect.createSessionUI({
+        alpha: values.alpha,
+        beta: values.beta,
+        name: values.name || undefined,
+      });
+      setReflectModalOpen(false);
+      reflectForm.resetFields();
+      await loadReflect();
+      alert_message({ type: "success", message: "Reflect sync session created" });
+    } catch (err: any) {
+      if (err?.errorFields) {
+        return;
+      }
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
     } finally {
       setReflectLoading(false);
     }
@@ -369,6 +408,9 @@ export const SshPage: React.FC = React.memo(() => {
         <Button size="small" onClick={loadReflect} loading={reflectLoading}>
           Refresh
         </Button>
+        <Button size="small" onClick={() => setReflectModalOpen(true)}>
+          New Session
+        </Button>
       </Space>
       {reflectError ? (
         <Alert
@@ -403,6 +445,34 @@ export const SshPage: React.FC = React.memo(() => {
           />
         </>
       )}
+      <Modal
+        title="New Reflect Sync Session"
+        open={reflectModalOpen}
+        onOk={handleCreateReflect}
+        onCancel={() => setReflectModalOpen(false)}
+        okText="Create"
+        confirmLoading={reflectLoading}
+      >
+        <Form form={reflectForm} layout="vertical">
+          <Form.Item
+            label="Local path"
+            name="alpha"
+            rules={[{ required: true, message: "Enter a local path" }]}
+          >
+            <Input placeholder="/home/user/project" />
+          </Form.Item>
+          <Form.Item
+            label="Remote path"
+            name="beta"
+            rules={[{ required: true, message: "Enter a remote path" }]}
+          >
+            <Input placeholder="user@host:/home/user/project" />
+          </Form.Item>
+          <Form.Item label="Name (optional)" name="name">
+            <Input placeholder="my-sync" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 });
