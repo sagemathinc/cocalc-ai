@@ -2,14 +2,6 @@
 
 ## Todo
 
-- [ ] Remote session management: 
-  - [x] cocalc-plus ssh list (local registry of targets + last port + status), 
-  - [x] cocalc-plus ssh stop  (uses saved pidfile)
-  - [x] cocalc-plus ssh status  (ping).
-  - [ ] cocalc-plus ssh stop --force (in case not reachable)
-  - [ ] #bug it often thinks cocalc-plus isn't installed because running a remote command over ssh is trick due to PATH issues.
-  - [x] make table look nice using ascii-table3 with same style as used in `packages/conat/sync/inventory.ts` 
-
 - [ ] Robust cleanup: detect dead tunnels/servers and prune stale entries; optional --keep or --ttl.
 
 - [ ] login shell config
@@ -33,8 +25,19 @@
 
 - [ ] enable proxying of remote apps (e.g., jupyterlab) and make sure it works
 
+- [ ] reflect-sync integration
 
-- [ ] reflect-sync integration? 
+- [ ] document how this works and that remote sessions are persistent (e.g., terminals, jupyter kernels, etc. do not stop). 
+
+- [ ] improve the website
+
+- [x] Remote session management: 
+  - [x] cocalc-plus ssh list (local registry of targets + last port + status), 
+  - [x] cocalc-plus ssh stop  (uses saved pidfile)
+  - [x] cocalc-plus ssh status  (ping)
+  - [x] make table look nice using ascii-table3 with same style as used in `packages/conat/sync/inventory.ts` 
+
+### Reflect Sync -- background
 
 Reflect-sync is a powerful open source program I wrote with codex over 2 months, but haven't used yet.  It's an extremely efficient rsync + sqlite program for bidirectional file sync over ssh, and also supports configuring arbitrary maintained port forwards.   It would fit naturally into this "Remote SSH Sessions" page, where one could easily configure and see the status of the following:
 

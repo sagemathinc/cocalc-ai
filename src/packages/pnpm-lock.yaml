@@ -1273,6 +1273,9 @@ importers:
 
   plus:
     dependencies:
+      '@cocalc/conat':
+        specifier: workspace:*
+        version: link:../conat
       '@cocalc/lite':
         specifier: workspace:*
         version: link:../lite

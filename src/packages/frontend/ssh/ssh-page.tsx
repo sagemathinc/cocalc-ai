@@ -1,4 +1,4 @@
-import { Button, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Divider, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -11,6 +11,10 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import type { SshSessionRow } from "@cocalc/conat/hub/api/ssh";
+import type {
+  ReflectForwardRow,
+  ReflectSessionRow,
+} from "@cocalc/conat/hub/api/reflect";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { lite, project_id } from "@cocalc/frontend/lite";
 
@@ -38,10 +42,39 @@ function tunnelTag(active?: boolean) {
   return <Tag>idle</Tag>;
 }
 
+function reflectStateTag(state?: string) {
+  if (!state) return <Tag>unknown</Tag>;
+  if (state === "running") return <Tag color="green">running</Tag>;
+  if (state === "stopped") return <Tag color="default">stopped</Tag>;
+  if (state === "error") return <Tag color="red">error</Tag>;
+  return <Tag>{state}</Tag>;
+}
+
+function formatEndpoint(
+  row: ReflectSessionRow,
+  side: "alpha" | "beta",
+): string {
+  const host = side === "alpha" ? row.alpha_host : row.beta_host;
+  const port = side === "alpha" ? row.alpha_port : row.beta_port;
+  const root = side === "alpha" ? row.alpha_root : row.beta_root;
+  if (host) {
+    return `${host}${port ? `:${port}` : ""}:${root}`;
+  }
+  return root;
+}
+
 export const SshPage: React.FC = React.memo(() => {
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
   const [rows, setRows] = useState<SshSessionRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [reflectSessions, setReflectSessions] = useState<ReflectSessionRow[]>(
+    [],
+  );
+  const [reflectForwards, setReflectForwards] = useState<ReflectForwardRow[]>(
+    [],
+  );
+  const [reflectLoading, setReflectLoading] = useState(false);
+  const [reflectError, setReflectError] = useState<string | null>(null);
 
   if (sshRemoteTarget) {
     return (
@@ -91,8 +124,26 @@ export const SshPage: React.FC = React.memo(() => {
     }
   };
 
+  const loadReflect = async () => {
+    setReflectLoading(true);
+    setReflectError(null);
+    try {
+      const [sessions, forwards] = await Promise.all([
+        webapp_client.conat_client.hub.reflect.listSessionsUI({}),
+        webapp_client.conat_client.hub.reflect.listForwardsUI(),
+      ]);
+      setReflectSessions(sessions || []);
+      setReflectForwards(forwards || []);
+    } catch (err: any) {
+      setReflectError(err?.message || String(err));
+    } finally {
+      setReflectLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadSessions();
+    loadReflect();
   }, []);
 
   const handleOpen = async (target: string) => {
@@ -186,6 +237,102 @@ export const SshPage: React.FC = React.memo(() => {
     [rows],
   );
 
+  const reflectSessionColumns = useMemo<ColumnsType<ReflectSessionRow>>(
+    () => [
+      {
+        title: "ID",
+        dataIndex: "id",
+        key: "id",
+        width: 80,
+      },
+      {
+        title: "Name",
+        dataIndex: "name",
+        key: "name",
+        width: 160,
+        render: (val) => val || "-",
+      },
+      {
+        title: "State",
+        key: "state",
+        width: 160,
+        render: (_, row) => (
+          <Space size={6}>
+            {reflectStateTag(row.actual_state)}
+            <Typography.Text type="secondary">
+              {row.desired_state}
+            </Typography.Text>
+          </Space>
+        ),
+      },
+      {
+        title: "Alpha",
+        key: "alpha",
+        render: (_, row) => (
+          <Typography.Text code>{formatEndpoint(row, "alpha")}</Typography.Text>
+        ),
+      },
+      {
+        title: "Beta",
+        key: "beta",
+        render: (_, row) => (
+          <Typography.Text code>{formatEndpoint(row, "beta")}</Typography.Text>
+        ),
+      },
+      {
+        title: "Last Sync",
+        key: "last",
+        width: 180,
+        render: (_, row) =>
+          row.last_clean_sync_at
+            ? new Date(row.last_clean_sync_at).toLocaleString()
+            : "-",
+      },
+    ],
+    [],
+  );
+
+  const reflectForwardColumns = useMemo<ColumnsType<ReflectForwardRow>>(
+    () => [
+      {
+        title: "ID",
+        dataIndex: "id",
+        key: "id",
+        width: 80,
+      },
+      {
+        title: "Name",
+        dataIndex: "name",
+        key: "name",
+        width: 160,
+        render: (val) => val || "-",
+      },
+      {
+        title: "Direction",
+        dataIndex: "direction",
+        key: "direction",
+        width: 140,
+      },
+      {
+        title: "Local",
+        key: "local",
+        render: (_, row) => `${row.local_host}:${row.local_port}`,
+      },
+      {
+        title: "Remote",
+        key: "remote",
+        render: (_, row) => `${row.remote_host}:${row.remote_port}`,
+      },
+      {
+        title: "State",
+        key: "state",
+        width: 140,
+        render: (_, row) => reflectStateTag(row.actual_state),
+      },
+    ],
+    [],
+  );
+
   return (
     <div style={PAGE_STYLE}>
       <Space style={TITLE_STYLE} size={12} align="center">
@@ -214,6 +361,48 @@ export const SshPage: React.FC = React.memo(() => {
         pagination={false}
         size="small"
       />
+      <Divider />
+      <Space style={TITLE_STYLE} size={12} align="center">
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          Reflect Sync (beta)
+        </Typography.Title>
+        <Button size="small" onClick={loadReflect} loading={reflectLoading}>
+          Refresh
+        </Button>
+      </Space>
+      {reflectError ? (
+        <Alert
+          type="warning"
+          showIcon
+          message="Reflect Sync UI unavailable"
+          description={reflectError}
+        />
+      ) : (
+        <>
+          <Typography.Title level={5} style={{ marginTop: 12 }}>
+            Sessions
+          </Typography.Title>
+          <Table
+            rowKey={(row) => row.id}
+            columns={reflectSessionColumns}
+            dataSource={reflectSessions}
+            loading={reflectLoading}
+            pagination={false}
+            size="small"
+          />
+          <Typography.Title level={5} style={{ marginTop: 16 }}>
+            Forwards
+          </Typography.Title>
+          <Table
+            rowKey={(row) => row.id}
+            columns={reflectForwardColumns}
+            dataSource={reflectForwards}
+            loading={reflectLoading}
+            pagination={false}
+            size="small"
+          />
+        </>
+      )}
     </div>
   );
 });

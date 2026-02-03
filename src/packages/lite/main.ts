@@ -41,7 +41,10 @@ function conat(opts?): Client {
   return conatServer.client({ path: "/", ...opts });
 }
 
-export async function main(opts?: { sshUi?: any }): Promise<number> {
+export async function main(opts?: {
+  sshUi?: any;
+  reflectUi?: any;
+}): Promise<number> {
   logger.debug("main");
   enableMemoryUseLogger();
   process.chdir(process.env.HOME ?? "");
@@ -103,7 +106,11 @@ export async function main(opts?: { sshUi?: any }): Promise<number> {
   const path = process.cwd();
 
   logger.debug("start hub api");
-  await initHubApi({ client: conatClient, sshUi: opts?.sshUi });
+  await initHubApi({
+    client: conatClient,
+    sshUi: opts?.sshUi,
+    reflectUi: opts?.reflectUi,
+  });
 
   logger.debug("start fs service");
   localPathFileserver({

@@ -298,6 +298,17 @@ export async function ensureRemoteReady(
   );
 }
 
+async function stopRemoteDaemonBestEffort(
+  opts: SshOptions,
+  target: string,
+): Promise<void> {
+  const { remoteDir } = infoPathFor(target);
+  const remotePidPath = `${remoteDir}/daemon.pid`;
+  const remoteBin = await resolveRemoteBin(opts);
+  const cmd = `if [ -f ${remotePidPath} ]; then ${remoteBin} --daemon-stop --pidfile ${remotePidPath} >/dev/null 2>&1 || true; fi`;
+  sshExec(opts, cmd, true);
+}
+
 export async function startRemote(
   opts: SshOptions,
   target: string,
@@ -375,6 +386,9 @@ export async function connectSession(
     console.log("Remote state:", remoteDir);
   }
 
+  if (options.upgrade) {
+    await stopRemoteDaemonBestEffort(sshOpts, target);
+  }
   await ensureRemoteReady(sshOpts, !options.noInstall, !!options.upgrade);
 
   let info: ConnectionInfo;
@@ -382,13 +396,33 @@ export async function connectSession(
     const content = sshExec(sshOpts, `cat ${remoteInfoPath}`);
     info = JSON.parse(content) as ConnectionInfo;
   } else {
-    info = await startRemote(
-      sshOpts,
-      target,
-      remoteInfoPath,
-      remotePidPath,
-      remoteLogPath,
-    );
+    let reused = false;
+    if (!options.upgrade) {
+      const status = await getRemoteStatus({
+        target,
+        identity: options.identity,
+        proxyJump: options.proxyJump,
+        sshArgs,
+      });
+      if (status === "running") {
+        try {
+          const content = sshExec(sshOpts, `cat ${remoteInfoPath}`);
+          info = JSON.parse(content) as ConnectionInfo;
+          reused = true;
+        } catch {
+          reused = false;
+        }
+      }
+    }
+    if (!reused) {
+      info = await startRemote(
+        sshOpts,
+        target,
+        remoteInfoPath,
+        remotePidPath,
+        remoteLogPath,
+      );
+    }
   }
 
   const remotePort = options.remotePort && options.remotePort !== "auto"

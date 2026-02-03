@@ -97,9 +97,22 @@ function daemonize(args: string[], pidfile?: string | null, logfile?: string | n
 
 const isCommand = (arg?: string) =>
   arg && (arg.startsWith("-") || arg === "ssh" || arg === "version");
+const isSelfPath = (arg?: string) => {
+  if (!arg) return false;
+  if (!arg.includes("/") && !arg.includes("\\")) return false;
+  const base = path.basename(arg);
+  const execBase = path.basename(process.execPath);
+  if (base !== execBase && !base.startsWith("cocalc-plus")) return false;
+  try {
+    return fs.existsSync(arg);
+  } catch {
+    return false;
+  }
+};
 let argv = process.argv.slice(2);
 argv = argv.filter(
-  (arg) => arg !== process.execPath && arg !== process.argv[1],
+  (arg) =>
+    arg !== process.execPath && arg !== process.argv[1] && !isSelfPath(arg),
 );
 if (argv.length >= 1) {
   const base = path.basename(argv[0]);
@@ -197,7 +210,7 @@ if (argv[0] === "ssh") {
     process.exit(1);
   }
 
-  if (!process.env.COCALC_DATA_DIR && !process.env.DATA) {
+  if (!process.env.COCALC_DATA_DIR) {
     process.env.COCALC_DATA_DIR = path.join(
       os.homedir(),
       ".local",
@@ -219,5 +232,12 @@ if (argv[0] === "ssh") {
   } catch {
     // ignore
   }
-  liteMain.main({ sshUi });
+  let reflectUi: any = undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    reflectUi = require("../reflect/ui");
+  } catch {
+    // ignore
+  }
+  liteMain.main({ sshUi, reflectUi });
 }

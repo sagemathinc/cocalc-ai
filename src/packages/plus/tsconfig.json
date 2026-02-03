@@ -5,6 +5,8 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
+      "@cocalc/conat": ["../conat"],
+      "@cocalc/conat/*": ["../conat/*"],
       "@cocalc/lite": ["../lite"],
       "@cocalc/lite/*": ["../lite/*"]
     }

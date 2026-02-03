@@ -14,10 +14,19 @@ import { callRemoteHub, hasRemote, project_id } from "../remote";
 import { join } from "node:path";
 import { controlAgentDev } from "./control-agent";
 import { setSshUi, ssh } from "./ssh";
+import { setReflectUi, reflect } from "./reflect";
 
 const logger = getLogger("lite:hub:api");
 
-export async function init({ client, sshUi }: { client; sshUi?: any }) {
+export async function init({
+  client,
+  sshUi,
+  reflectUi,
+}: {
+  client;
+  sshUi?: any;
+  reflectUi?: any;
+}) {
   const subject = "hub.*.*.api";
   const filename = join(data, "hub.db");
   logger.debug(`init -- subject='${subject}', options=`, {
@@ -26,6 +35,9 @@ export async function init({ client, sshUi }: { client; sshUi?: any }) {
   });
   if (sshUi) {
     setSshUi(sshUi);
+  }
+  if (reflectUi) {
+    setReflectUi(reflectUi);
   }
   await initUserQuery({ filename });
   const api = await client.subscribe(subject, { queue: "0" });
@@ -122,6 +134,7 @@ export const hubApi: HubApi = {
   jupyter: {},
   controlAgent: { controlAgentDev },
   ssh,
+  reflect,
 } as any;
 
 async function getResponse({ name, args, account_id, project_id }) {

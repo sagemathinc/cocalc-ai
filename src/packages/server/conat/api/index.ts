@@ -63,6 +63,7 @@ import * as Module from "module";
 import { delay } from "awaiting";
 
 const ssh = {} as any;
+const reflect = {} as any;
 
 export const hubApi: HubApi = {
   system,
@@ -78,6 +79,7 @@ export const hubApi: HubApi = {
   controlAgent,
   lro,
   ssh,
+  reflect,
 };
 
 const logger = getLogger("server:conat:api");
