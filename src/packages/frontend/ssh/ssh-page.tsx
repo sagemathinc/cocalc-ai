@@ -8,6 +8,7 @@ import {
   useMemo,
   useState,
   redux,
+  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import type { SshSessionRow } from "@cocalc/conat/hub/api/ssh";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -38,8 +39,40 @@ function tunnelTag(active?: boolean) {
 }
 
 export const SshPage: React.FC = React.memo(() => {
+  const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
   const [rows, setRows] = useState<SshSessionRow[]>([]);
   const [loading, setLoading] = useState(false);
+
+  if (sshRemoteTarget) {
+    return (
+      <div style={PAGE_STYLE}>
+        <Space style={TITLE_STYLE} size={12} align="center">
+          {lite && (
+            <Button
+              size="small"
+              onClick={() => {
+                redux.getActions("page").set_active_tab(project_id);
+              }}
+            >
+              Back
+            </Button>
+          )}
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            Remote SSH Session
+          </Typography.Title>
+        </Space>
+        <Typography.Paragraph>
+          SSH session management is disabled in this remote instance.
+        </Typography.Paragraph>
+        <Typography.Paragraph>
+          Target:{" "}
+          <Typography.Text code copyable={{ text: sshRemoteTarget }}>
+            {sshRemoteTarget}
+          </Typography.Text>
+        </Typography.Paragraph>
+      </div>
+    );
+  }
 
   const loadSessions = async () => {
     setLoading(true);

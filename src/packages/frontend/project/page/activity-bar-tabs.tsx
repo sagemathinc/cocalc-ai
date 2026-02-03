@@ -35,7 +35,7 @@ import FileTabs from "./file-tabs";
 import { ShareIndicator } from "./share-indicator";
 import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
-import { SshButton } from "@cocalc/frontend/ssh";
+import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
 
 const INDICATOR_STYLE: React.CSSProperties = {
   overflow: "hidden",
@@ -52,6 +52,7 @@ export default function ProjectTabs(props: PTProps) {
   const { project_id } = props;
   const openFiles = useTypedRedux({ project_id }, "open_files_order");
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
+  const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
 
   //if (openFiles.size == 0) return <></>;
 
@@ -89,7 +90,7 @@ export default function ProjectTabs(props: PTProps) {
         </div>
         {lite && (
           <>
-            <SshButton />
+            {sshRemoteTarget ? <RemoteSshButton /> : <SshButton />}
             <SettingsButton />
           </>
         )}

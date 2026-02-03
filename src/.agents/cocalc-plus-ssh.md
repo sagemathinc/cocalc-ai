@@ -33,6 +33,18 @@
 
 - [ ] enable proxying of remote apps (e.g., jupyterlab) and make sure it works
 
+
+- [ ] reflect-sync integration? 
+
+Reflect-sync is a powerful open source program I wrote with codex over 2 months, but haven't used yet.  It's an extremely efficient rsync + sqlite program for bidirectional file sync over ssh, and also supports configuring arbitrary maintained port forwards.   It would fit naturally into this "Remote SSH Sessions" page, where one could easily configure and see the status of the following:
+
+- a list of directories to bidirectionally sync to the remote ssh target that you'll run cocalc-plus on
+- ports to forward and their direction
+
+Reflect sync is mainly a cli program, but I think it could easily be a library we just include in our bundle. It has no binary package dependencies (it uses node:sqlite), and just relies on rsync being installed -- we could make that one of the tools (similar to rg) so it just works in case rsync isn't installed (see `/home/wstein/upstream/rsync/rsync-static` )... or just show an error in this case.
+
+The value add is that reflect-sync is very efficient and direct, open source, and doesn't involve any user data going to dropbox/google drive/etc. 
+
 ## Goal
 
 Deliver a one-command "CoCalc Plus Remote" experience:

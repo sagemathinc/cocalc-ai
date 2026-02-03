@@ -148,6 +148,13 @@ export class PageActions extends Actions<PageState> {
       if (!LITE_TABS.has(key)) {
         key = project_id;
       }
+      if (key === "ssh") {
+        const sshRemoteTarget =
+          redux.getStore("customize")?.get("ssh_remote_target") ?? "";
+        if (sshRemoteTarget) {
+          key = project_id;
+        }
+      }
     }
 
     const prev_key = this.redux.getStore("page").get("active_top_tab");

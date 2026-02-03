@@ -82,6 +82,7 @@ for (const k in site_settings_conf) {
 const defaults: any = dict(defaultKeyVals);
 defaults.is_commercial = defaults.commercial;
 defaults._is_configured = false; // will be true after set via call to server
+defaults.ssh_remote_target = "";
 
 // CustomizeState is maybe extension of what's in SiteSettings
 // so maybe there is a more clever way like this to do it than
@@ -97,6 +98,7 @@ export type SoftwareEnvironments = TypedMap<{
 export interface CustomizeState {
   time: number; // this will always get set once customize has loaded.
   is_commercial: boolean;
+  ssh_remote_target?: string;
 
   openai_enabled: boolean;
   agent_openai_control_agent_enabled: boolean;

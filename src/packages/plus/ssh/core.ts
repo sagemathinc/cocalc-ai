@@ -300,15 +300,19 @@ export async function ensureRemoteReady(
 
 export async function startRemote(
   opts: SshOptions,
+  target: string,
   remoteInfoPath: string,
   remotePidPath: string,
   remoteLogPath: string,
 ): Promise<ConnectionInfo> {
   const remoteBin = await resolveRemoteBin(opts);
+  const safeTarget = target.replace(/'/g, "'\\''");
   const env = [
     "HOST=127.0.0.1",
     "PORT=0",
     "AUTH_TOKEN=short",
+    "COCALC_ENABLE_SSH_UI=0",
+    `COCALC_REMOTE_SSH_TARGET='${safeTarget}'`,
     `COCALC_WRITE_CONNECTION_INFO=${remoteInfoPath}`,
     `COCALC_DAEMON_PIDFILE=${remotePidPath}`,
     `COCALC_DAEMON_LOG=${remoteLogPath}`,
@@ -377,7 +381,13 @@ export async function connectSession(
     const content = sshExec(sshOpts, `cat ${remoteInfoPath}`);
     info = JSON.parse(content) as ConnectionInfo;
   } else {
-    info = await startRemote(sshOpts, remoteInfoPath, remotePidPath, remoteLogPath);
+    info = await startRemote(
+      sshOpts,
+      target,
+      remoteInfoPath,
+      remotePidPath,
+      remoteLogPath,
+    );
   }
 
   const remotePort = options.remotePort && options.remotePort !== "auto"
