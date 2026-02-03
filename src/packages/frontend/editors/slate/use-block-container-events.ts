@@ -10,6 +10,7 @@ import { useCallback } from "react";
 import { Editor, Node, Range } from "slate";
 import { formatSelectedText } from "./format/commands";
 import { IS_MACOS } from "./keyboard/register";
+import { getFontSizeDeltaFromKey } from "./keyboard/font-size-shortcut";
 import { normalizePointForDoc } from "./block-selection-utils";
 import { joinBlocks } from "./block-markdown-utils";
 import type { SearchHook } from "./search";
@@ -104,6 +105,15 @@ export function useBlockContainerEvents({
           } else {
             searchHook.next();
           }
+          return;
+        }
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        const delta = getFontSizeDeltaFromKey(event.key, event.shiftKey);
+        if (delta != null && actions?.change_font_size != null) {
+          actions.change_font_size(delta, id);
+          event.preventDefault();
+          event.stopPropagation();
           return;
         }
       }
