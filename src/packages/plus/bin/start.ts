@@ -97,6 +97,16 @@ function daemonize(args: string[], pidfile?: string | null, logfile?: string | n
 const isCommand = (arg?: string) =>
   arg && (arg.startsWith("-") || arg === "ssh" || arg === "version");
 let argv = process.argv.slice(2);
+argv = argv.filter(
+  (arg) => arg !== process.execPath && arg !== process.argv[1],
+);
+if (argv.length >= 1) {
+  const base = path.basename(argv[0]);
+  const execBase = path.basename(process.execPath);
+  if (base === execBase || base.startsWith("cocalc-plus")) {
+    argv = argv.slice(1);
+  }
+}
 if (argv.length === 0 || !isCommand(argv[0])) {
   const alt = process.argv.slice(1);
   const idx = alt.findIndex((arg) => isCommand(arg));

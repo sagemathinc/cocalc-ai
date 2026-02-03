@@ -105,7 +105,6 @@ if (path.basename(process.argv[1]) == "node") {
     path.join(destDir, `src/packages/${name}/bin/`);
   if (!process.env.COCALC_BIN_PATH) {
     process.env.COCALC_BIN_PATH = binPath;
-    console.log(binPath);
   }
   process.env.PATH = binPath + path.delimiter + process.env.PATH;
   process.env.COCALC_PROJECT_HOST_VERSION ??= version;
