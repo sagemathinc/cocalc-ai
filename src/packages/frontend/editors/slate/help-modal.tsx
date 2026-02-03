@@ -56,11 +56,11 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
         </li>
         <li>
           <KB>
-            {IS_MACOS ? "Ctrl+Cmd" : MOD + "+Shift"}+↑
+            {IS_MACOS ? "Ctrl+⌘" : MOD + "+Shift"}+↑
           </KB>{" "}
           /{" "}
           <KB>
-            {IS_MACOS ? "Ctrl+Cmd" : MOD + "+Shift"}+↓
+            {IS_MACOS ? "Ctrl+⌘" : MOD + "+Shift"}+↓
           </KB>{" "}
           move list item up/down
         </li>
