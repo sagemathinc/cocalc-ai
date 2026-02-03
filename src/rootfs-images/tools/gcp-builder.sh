@@ -168,7 +168,10 @@ if ! docker buildx version >/dev/null 2>&1; then
     aarch64) arch="arm64";;
     *) echo "Unsupported arch for buildx: $arch"; exit 1;;
   esac
-  buildx_version="v0.14.1"
+  buildx_version="$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest | python3 -c 'import sys, json; print(json.load(sys.stdin)["tag_name"])' || true)"
+  if [[ -z "$buildx_version" ]]; then
+    buildx_version="v0.31.1"
+  fi
   plugin_dir="/usr/lib/docker/cli-plugins"
   if [[ -d /usr/libexec/docker/cli-plugins ]]; then
     plugin_dir="/usr/libexec/docker/cli-plugins"
