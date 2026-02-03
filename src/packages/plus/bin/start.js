@@ -88,14 +88,14 @@ function daemonize(args, pidfile, logfile) {
   process.exit(0);
 }
 
+const isCommand = (arg) =>
+  arg && (arg.startsWith("-") || arg === "ssh" || arg === "version");
 let argv = process.argv.slice(2);
-if (argv.length === 0 && process.argv.length >= 2) {
-  const candidate = process.argv[1];
-  if (
-    candidate &&
-    (candidate.startsWith("-") || candidate === "ssh" || candidate === "version")
-  ) {
-    argv = process.argv.slice(1);
+if (argv.length === 0 || !isCommand(argv[0])) {
+  const alt = process.argv.slice(1);
+  const idx = alt.findIndex((arg) => isCommand(arg));
+  if (idx !== -1) {
+    argv = alt.slice(idx);
   }
 }
 if (argv[0] === "ssh") {
