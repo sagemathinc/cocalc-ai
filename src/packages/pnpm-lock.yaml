@@ -1276,6 +1276,9 @@ importers:
       '@cocalc/lite':
         specifier: workspace:*
         version: link:../lite
+      ascii-table3:
+        specifier: ^1.0.1
+        version: 1.0.1
     devDependencies:
       '@electron/rebuild':
         specifier: ^4.0.1

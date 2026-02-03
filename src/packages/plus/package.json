@@ -21,9 +21,10 @@
     "run:bundle": "node --trace-warnings ./build/bundle/bundle/index.js",
     "sea": "pnpm build:tarball && cd sea && ./build-sea.sh",
     "sea:signed": "pnpm build:tarball && cd sea && make signed-tar",
-    "publish:sea": "cd sea && ./publish-sea.sh",
+    "publish:sea": "pnpm tsc:root && cd sea && ./publish-sea.sh",
     "publish:sea:signed": "pnpm sea:signed && pnpm publish:sea",
-    "publish:site": "cd site && ./publish-site.sh",
+    "publish:site": "pnpm tsc:root && cd site && ./publish-site.sh",
+    "tsc:root": "cd ../.. && pnpm tsc",
     "build:all": "pnpm build && pnpm build:tarball && pnpm sea",
     "app": "pnpm run build && node bin/start.js",
     "app-electron": "pnpm electron-rebuild && electron ."
@@ -39,7 +40,8 @@
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {
-    "@cocalc/lite": "workspace:*"
+    "@cocalc/lite": "workspace:*",
+    "ascii-table3": "^1.0.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",

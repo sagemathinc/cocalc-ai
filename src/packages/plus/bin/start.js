@@ -10,12 +10,14 @@ function usage() {
   console.log(`Usage:
   cocalc-plus version
   cocalc-plus ssh user@host[:port] [options]
+  cocalc-plus ssh --target user@host[:port] [options]
   cocalc-plus [--daemon] [--write-connection-info PATH] [--pidfile PATH]
 
 Examples:
   cocalc-plus
   cocalc-plus ssh list
   cocalc-plus ssh user@host
+  cocalc-plus ssh --target list
   cocalc-plus ssh user@host --local-port 42800 --no-open
 `);
 }

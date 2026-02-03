@@ -8,8 +8,14 @@
   - [x] cocalc-plus ssh status  (ping).
   - [ ] cocalc-plus ssh stop --force (in case not reachable)
   - [ ] #bug it often thinks cocalc-plus isn't installed because running a remote command over ssh is trick due to PATH issues.
+  - [ ] make table look nice using ascii-table3 with same style as used in `packages/conat/sync/inventory.ts` 
 
 - [ ] Robust cleanup: detect dead tunnels/servers and prune stale entries; optional --keep or --ttl.
+
+- [ ] delete old versions from `~/.cache/cocalc/cocalc-plus/` on upgrade, since it is just a cache and they waste a lot of space
+
+- [ ] add version check to startup
+  - use this to print warning if remote server is not up to date, with instructions about how to upgrade
 
 - [ ] Port + token UX: stable local port is done; add “reconnect” command that reuses saved port/token if still live.
 
@@ -22,6 +28,8 @@
 - [ ] SSH hardening: explicit --no-install, --forward-only, better errors when ssh fails.
 
 - [ ] Diagnostics: --log-level debug already exists; add --verbose-ssh to show exact commands.
+
+- [ ] enable proxying of remote apps (e.g., jupyterlab) and make sure it works
 
 ## Goal
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const { spawn, spawnSync } = require("node:child_process");
+const { AsciiTable3 } = require("ascii-table3");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -14,11 +15,13 @@ function parseTarget(raw) {
 function usage() {
   console.log(`Usage:
   cocalc-plus ssh user@host[:port] [options]
+  cocalc-plus ssh --target user@host[:port] [options]
   cocalc-plus ssh list
   cocalc-plus ssh status user@host[:port]
   cocalc-plus ssh stop user@host[:port]
 
 Options:
+  --target <target>     disambiguate targets named list/status/stop
   --local-port <n|auto>
   --remote-port <n|auto>
   --no-open
@@ -35,6 +38,8 @@ Examples:
   cocalc-plus ssh list
   cocalc-plus ssh status user@host
   cocalc-plus ssh stop user@host
+  cocalc-plus ssh --target list
+  cocalc-plus ssh -- list
   cocalc-plus ssh user@host:2222 --identity ~/.ssh/id_ed25519
   cocalc-plus ssh user@host --proxy-jump jumpbox
   cocalc-plus ssh user@host --no-open --local-port 42800
@@ -232,35 +237,27 @@ async function listRegistry(withStatus) {
   const header = withStatus
     ? ["Target", "Port", "Status", "Last Used"]
     : ["Target", "Port", "Last Used"];
-  const targetWidth = Math.min(
-    48,
-    Math.max(header[0].length, ...entries.map((e) => String(e.target).length)),
-  );
-  const statusWidth = 10;
-  console.log(
-    withStatus
-      ? `${header[0].padEnd(targetWidth)}  ${header[1].padEnd(6)}  ${header[2].padEnd(statusWidth)}  ${header[3]}`
-      : `${header[0].padEnd(targetWidth)}  ${header[1].padEnd(6)}  ${header[2]}`,
-  );
+  const rows = [];
   for (const entry of entries) {
     const target = String(entry.target);
-    const trimmed =
-      target.length > targetWidth
-        ? `${target.slice(0, Math.max(targetWidth - 3, 0))}...`
-        : target;
-    const port =
-      entry.localPort != null ? String(entry.localPort) : "";
+    const port = entry.localPort != null ? String(entry.localPort) : "";
     const lastUsed = entry.lastUsed || "";
     let status = "";
     if (withStatus) {
       status = await getRemoteStatus(entry);
     }
-    console.log(
-      withStatus
-        ? `${trimmed.padEnd(targetWidth)}  ${port.padEnd(6)}  ${status.padEnd(statusWidth)}  ${lastUsed}`
-        : `${trimmed.padEnd(targetWidth)}  ${port.padEnd(6)}  ${lastUsed}`,
-    );
+    if (withStatus) {
+      rows.push([target, port, status, lastUsed]);
+    } else {
+      rows.push([target, port, lastUsed]);
+    }
   }
+  const table = new AsciiTable3("SSH Targets")
+    .setHeading(...header)
+    .addRowMatrix(rows);
+  table.setStyle("unicode-round");
+  table.setWidth(1, 30).setWrapped(1);
+  console.log(table.toString());
 }
 
 async function waitRemoteFile(opts, remotePath, timeoutMs = 10000) {
@@ -351,7 +348,12 @@ async function main(args) {
   }
 
   let mode = "connect";
-  if (["list", "status", "stop"].includes(args[0])) {
+  let explicitTarget = popArg(args, "--target");
+  if (args[0] === "--") {
+    args.shift();
+    explicitTarget = explicitTarget ?? args.shift();
+  }
+  if (!explicitTarget && ["list", "status", "stop"].includes(args[0])) {
     mode = args.shift();
     if (mode === "list") {
       await listRegistry(true);
@@ -359,12 +361,12 @@ async function main(args) {
     }
   }
 
-  if (args.length === 0) {
+  if (!explicitTarget && args.length === 0) {
     usage();
     process.exit(1);
   }
 
-  const target = args.shift();
+  const target = explicitTarget ?? args.shift();
   const { host, port } = parseTarget(target);
 
   const localPortArg = popArg(args, "--local-port");
