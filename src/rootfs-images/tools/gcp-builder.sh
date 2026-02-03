@@ -158,8 +158,30 @@ echo "=== rootfs-images build starting ==="
 date -u
 
 apt-get update -y
-apt-get install -y git docker.io python3 python3-yaml
+apt-get install -y git docker.io qemu-user-static python3 python3-yaml curl ca-certificates
 systemctl start docker
+if ! docker buildx version >/dev/null 2>&1; then
+  echo "Installing docker buildx plugin"
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64) arch="amd64";;
+    aarch64) arch="arm64";;
+    *) echo "Unsupported arch for buildx: $arch"; exit 1;;
+  esac
+  buildx_version="v0.14.1"
+  plugin_dir="/usr/lib/docker/cli-plugins"
+  if [[ -d /usr/libexec/docker/cli-plugins ]]; then
+    plugin_dir="/usr/libexec/docker/cli-plugins"
+  fi
+  mkdir -p "$plugin_dir"
+  curl -fsSL "https://github.com/docker/buildx/releases/download/${buildx_version}/buildx-${buildx_version}.linux-${arch}" \
+    -o "$plugin_dir/docker-buildx"
+  chmod +x "$plugin_dir/docker-buildx"
+fi
+docker buildx version || true
+docker run --privileged --rm tonistiigi/binfmt --install all
+docker buildx create --use --name cocalc-builder || docker buildx use cocalc-builder
+docker buildx inspect --bootstrap
 
 WORKDIR=/root/rootfs-images
 mkdir -p "$WORKDIR"
