@@ -1,6 +1,6 @@
 {
   "name": "@cocalc/plus",
-  "version": "0.2.9",
+  "version": "0.2.11",
   "description": "CoCalcPlus: productized wrapper around CoCalc Lite",
   "main": "./electron.js",
   "exports": {
@@ -15,7 +15,7 @@
     "build": "pnpm exec tsc --build",
     "test": "exit 0",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo sea/sea-prep.blob build",
-    "build:static": "cd ../static && pnpm clean && pnpm install && pnpm build",
+    "build:static": "cd sea && ./build-static.sh",
     "build:bundle": "pnpm build:static && cd sea && ./build-bundle.sh",
     "build:tarball": "pnpm build:bundle && cd build && tar Jcvf bundle.tar.xz bundle",
     "run:bundle": "node --trace-warnings ./build/bundle/bundle/index.js",

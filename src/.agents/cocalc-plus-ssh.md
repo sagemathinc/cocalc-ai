@@ -1,5 +1,28 @@
 # CoCalc Plus SSH Remote Mode (Draft Strategy)
 
+## Todo
+
+- [ ] Remote session management: 
+  - [x] cocalc-plus ssh list (local registry of targets + last port + status), 
+  - [x] cocalc-plus ssh stop  (uses saved pidfile)
+  - [x] cocalc-plus ssh status  (ping).
+  - [ ] cocalc-plus ssh stop --force (in case not reachable)
+  - [ ] #bug it often thinks cocalc-plus isn't installed because running a remote command over ssh is trick due to PATH issues.
+
+- [ ] Robust cleanup: detect dead tunnels/servers and prune stale entries; optional --keep or --ttl.
+
+- [ ] Port + token UX: stable local port is done; add “reconnect” command that reuses saved port/token if still live.
+
+- [ ] Remote daemon lifecycle: graceful shutdown (SIGTERM + wait), and status from pidfile + HTTP health.
+
+- [ ] Config sync (settings, preferences): export local settings to a bundle, push over SSH, and import on remote startup.
+
+- [ ] Secrets sync (opt‑in): separate encrypted store or per‑target prompt; clear UX and clear “do not sync” default.
+
+- [ ] SSH hardening: explicit --no-install, --forward-only, better errors when ssh fails.
+
+- [ ] Diagnostics: --log-level debug already exists; add --verbose-ssh to show exact commands.
+
 ## Goal
 
 Deliver a one-command "CoCalc Plus Remote" experience:
@@ -221,11 +244,13 @@ Local supported:
 ## Implementation Plan (Phased)
 
 ### Phase 0 — Plumbing & CLI skeleton
+
 - Add `cocalc-plus ssh` subcommand with argument parsing.
 - Add `--ssh-arg`, `--identity`, `--proxy-jump` passthrough support.
 - Implement local port selection helper (node-based).
 
 ### Phase 1 — Remote install & daemon
+
 - SSH to target and detect OS/arch.
 - Install `cocalc-plus` on remote (install.sh) if missing.
 - Add `--write-connection-info` flag on server startup:
@@ -233,17 +258,20 @@ Local supported:
 - Implement internal daemonization (pidfile + log).
 
 ### Phase 2 — Tunneling + UX
+
 - Create SSH control socket for reuse.
 - Forward local → remote with the selected ports.
 - Print URL + token.
 - `--open` support to launch browser.
 
 ### Phase 3 — Reconnect & lifecycle
+
 - If remote daemon already running, reuse its connection info.
 - `ssh --status`, `ssh --stop` commands.
 - Add local “session list” (read cached connection info).
 
 ### Phase 4 — Hardening
+
 - Add timeouts + retries.
 - Robust cleanup for temp files.
 - Better error messages for common SSH failures.

@@ -42,7 +42,8 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
 }> {
   const app = express();
 
-  const requestedPort = port0 ?? (await getPort());
+  const requestedPort =
+    Number.isFinite(port0) && port0 > 0 ? port0 : await getPort();
   const hostEnv = process.env.HOST ?? "localhost";
   const { isHttps, hostname } = sanitizeHost(hostEnv);
   let httpServer: AnyServer;

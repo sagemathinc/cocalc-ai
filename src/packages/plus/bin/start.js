@@ -14,6 +14,7 @@ function usage() {
 
 Examples:
   cocalc-plus
+  cocalc-plus ssh list
   cocalc-plus ssh user@host
   cocalc-plus ssh user@host --local-port 42800 --no-open
 `);

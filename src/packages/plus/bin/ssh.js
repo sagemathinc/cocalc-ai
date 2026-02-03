@@ -14,6 +14,9 @@ function parseTarget(raw) {
 function usage() {
   console.log(`Usage:
   cocalc-plus ssh user@host[:port] [options]
+  cocalc-plus ssh list
+  cocalc-plus ssh status user@host[:port]
+  cocalc-plus ssh stop user@host[:port]
 
 Options:
   --local-port <n|auto>
@@ -29,6 +32,9 @@ Options:
 
 Examples:
   cocalc-plus ssh user@host
+  cocalc-plus ssh list
+  cocalc-plus ssh status user@host
+  cocalc-plus ssh stop user@host
   cocalc-plus ssh user@host:2222 --identity ~/.ssh/id_ed25519
   cocalc-plus ssh user@host --proxy-jump jumpbox
   cocalc-plus ssh user@host --no-open --local-port 42800
@@ -90,19 +96,48 @@ function buildSshArgs(opts) {
   return args;
 }
 
-function sshExec(opts, cmd, inherit = false) {
+function sshRun(opts, cmd, execOpts = {}) {
   const sshArgs = buildSshArgs(opts);
-  const finalArgs = sshArgs.concat([opts.host, cmd]);
-  const res = spawnSync("ssh", finalArgs, {
+  const finalArgs = sshArgs.concat(execOpts.extraArgs || [], [opts.host, cmd]);
+  return spawnSync("ssh", finalArgs, {
     encoding: "utf8",
-    stdio: inherit ? "inherit" : "pipe",
+    stdio: execOpts.inherit ? "inherit" : "pipe",
+    timeout: execOpts.timeoutMs,
   });
+}
+
+function sshExec(opts, cmd, inherit = false) {
+  const res = sshRun(opts, cmd, { inherit });
   if (res.error) throw res.error;
   if (res.status !== 0) {
     const stderr = res.stderr?.toString() ?? "";
     throw new Error(`ssh failed: ${stderr || res.status}`);
   }
   return (res.stdout || "").toString().trim();
+}
+
+function probeRemoteBin(opts, extraArgs = []) {
+  const which = sshRun(opts, "command -v cocalc-plus", {
+    timeoutMs: 5000,
+    extraArgs,
+  });
+  if (which.error || which.status === 255) {
+    return { status: "unreachable", path: "" };
+  }
+  if (which.status === 0) {
+    return { status: "found", path: (which.stdout || "").toString().trim() };
+  }
+  const test = sshRun(opts, 'test -x "$HOME/.local/bin/cocalc-plus"', {
+    timeoutMs: 5000,
+    extraArgs,
+  });
+  if (test.error || test.status === 255) {
+    return { status: "unreachable", path: "" };
+  }
+  if (test.status === 0) {
+    return { status: "found", path: "$HOME/.local/bin/cocalc-plus" };
+  }
+  return { status: "missing", path: "$HOME/.local/bin/cocalc-plus" };
 }
 
 function openUrl(url) {
@@ -125,18 +160,107 @@ function sleep(ms) {
 
 function infoPathFor(target) {
   const hash = crypto.createHash("sha1").update(target).digest("hex");
+  const baseDir = path.join(
+    os.homedir(),
+    ".local",
+    "share",
+    "cocalc-plus",
+    "ssh",
+  );
   return {
     hash,
-    localDir: path.join(
-      os.homedir(),
-      ".local",
-      "share",
-      "cocalc-plus",
-      "ssh",
-      hash,
-    ),
+    baseDir,
+    localDir: path.join(baseDir, hash),
     remoteDir: `$HOME/.local/share/cocalc-plus/ssh/${hash}`,
   };
+}
+
+function registryPath() {
+  return path.join(
+    os.homedir(),
+    ".local",
+    "share",
+    "cocalc-plus",
+    "ssh",
+    "registry.json",
+  );
+}
+
+function loadRegistry() {
+  const file = registryPath();
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const obj = {};
+      for (const entry of parsed) {
+        if (entry?.target) obj[entry.target] = entry;
+      }
+      return obj;
+    }
+    if (parsed && typeof parsed === "object") return parsed;
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+function saveRegistry(registry) {
+  const file = registryPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(registry, null, 2));
+}
+
+function updateRegistry(target, data) {
+  const registry = loadRegistry();
+  registry[target] = { target, ...(registry[target] || {}), ...data };
+  saveRegistry(registry);
+}
+
+async function listRegistry(withStatus) {
+  const registry = loadRegistry();
+  const entries = Object.values(registry);
+  if (entries.length === 0) {
+    console.log("No saved SSH targets.");
+    return;
+  }
+  entries.sort((a, b) => {
+    const av = a.lastUsed || "";
+    const bv = b.lastUsed || "";
+    return bv.localeCompare(av);
+  });
+  const header = withStatus
+    ? ["Target", "Port", "Status", "Last Used"]
+    : ["Target", "Port", "Last Used"];
+  const targetWidth = Math.min(
+    48,
+    Math.max(header[0].length, ...entries.map((e) => String(e.target).length)),
+  );
+  const statusWidth = 10;
+  console.log(
+    withStatus
+      ? `${header[0].padEnd(targetWidth)}  ${header[1].padEnd(6)}  ${header[2].padEnd(statusWidth)}  ${header[3]}`
+      : `${header[0].padEnd(targetWidth)}  ${header[1].padEnd(6)}  ${header[2]}`,
+  );
+  for (const entry of entries) {
+    const target = String(entry.target);
+    const trimmed =
+      target.length > targetWidth
+        ? `${target.slice(0, Math.max(targetWidth - 3, 0))}...`
+        : target;
+    const port =
+      entry.localPort != null ? String(entry.localPort) : "";
+    const lastUsed = entry.lastUsed || "";
+    let status = "";
+    if (withStatus) {
+      status = await getRemoteStatus(entry);
+    }
+    console.log(
+      withStatus
+        ? `${trimmed.padEnd(targetWidth)}  ${port.padEnd(6)}  ${status.padEnd(statusWidth)}  ${lastUsed}`
+        : `${trimmed.padEnd(targetWidth)}  ${port.padEnd(6)}  ${lastUsed}`,
+    );
+  }
 }
 
 async function waitRemoteFile(opts, remotePath, timeoutMs = 10000) {
@@ -153,12 +277,48 @@ async function waitRemoteFile(opts, remotePath, timeoutMs = 10000) {
   throw new Error(`Timed out waiting for ${remotePath}`);
 }
 
+async function resolveRemoteBin(opts) {
+  const probe = probeRemoteBin(opts);
+  if (probe.status === "found" && probe.path) return probe.path;
+  return "$HOME/.local/bin/cocalc-plus";
+}
+
+async function getRemoteStatus(entry) {
+  const target = entry.target;
+  const { host, port } = parseTarget(target);
+  const sshOpts = {
+    host,
+    port,
+    identity: entry.identity,
+    proxyJump: entry.proxyJump,
+    sshArgs: entry.sshArgs || [],
+  };
+  const { remoteDir } = infoPathFor(target);
+  const remotePidPath = `${remoteDir}/daemon.pid`;
+  const extraArgs = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"];
+  const probe = probeRemoteBin(sshOpts, extraArgs);
+  if (probe.status === "unreachable") return "unreachable";
+  if (probe.status === "missing") return "missing";
+  const remoteBin = probe.path || "$HOME/.local/bin/cocalc-plus";
+  const res = sshRun(
+    sshOpts,
+    `${remoteBin} --daemon-status --pidfile ${remotePidPath}`,
+    { timeoutMs: 5000, extraArgs },
+  );
+  if (res.error) return "unreachable";
+  if (res.status === 0) return "running";
+  if (res.status === 1) return "stopped";
+  return "error";
+}
+
 async function ensureRemoteReady(opts, install, upgrade) {
-  try {
-    sshExec(opts, "command -v cocalc-plus >/dev/null 2>&1");
-    if (!upgrade) return;
-  } catch {
-    if (!install) throw new Error("cocalc-plus not installed on remote");
+  const probe = probeRemoteBin(opts);
+  if (probe.status === "found" && !upgrade) return;
+  if (probe.status === "unreachable") {
+    throw new Error("ssh unreachable");
+  }
+  if (probe.status === "missing" && !install) {
+    throw new Error("cocalc-plus not installed on remote");
   }
   if (!install && !upgrade) return;
   sshExec(
@@ -169,13 +329,7 @@ async function ensureRemoteReady(opts, install, upgrade) {
 }
 
 async function startRemote(opts, remoteInfoPath, remotePidPath, remoteLogPath) {
-  let remoteBin = "cocalc-plus";
-  try {
-    remoteBin = sshExec(opts, "command -v cocalc-plus").trim() || remoteBin;
-  } catch {
-    // Fall back to default path if PATH isn't updated in this session.
-    remoteBin = "$HOME/.local/bin/cocalc-plus";
-  }
+  const remoteBin = await resolveRemoteBin(opts);
   const env = [
     "HOST=127.0.0.1",
     "PORT=0",
@@ -194,6 +348,20 @@ async function main(args) {
   if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
     usage();
     process.exit(0);
+  }
+
+  let mode = "connect";
+  if (["list", "status", "stop"].includes(args[0])) {
+    mode = args.shift();
+    if (mode === "list") {
+      await listRegistry(true);
+      return;
+    }
+  }
+
+  if (args.length === 0) {
+    usage();
+    process.exit(1);
   }
 
   const target = args.shift();
@@ -235,6 +403,17 @@ async function main(args) {
     console.log("Remote state:", remoteDir);
   }
 
+  if (mode === "status" || mode === "stop") {
+    await ensureRemoteReady(sshOpts, false, false);
+    const remoteBin = await resolveRemoteBin(sshOpts);
+    const cmd = `${remoteBin} --daemon-${mode} --pidfile ${remotePidPath}`;
+    sshExec(sshOpts, cmd, true);
+    if (mode === "stop") {
+      updateRegistry(label, { lastStopped: new Date().toISOString() });
+    }
+    return;
+  }
+
   await ensureRemoteReady(sshOpts, !noInstall, upgrade);
 
   let info;
@@ -264,6 +443,16 @@ async function main(args) {
   }
 
   const url = `http://localhost:${localPort}?auth_token=${encodeURIComponent(info.token || "")}`;
+
+  updateRegistry(label, {
+    host,
+    port,
+    localPort,
+    lastUsed: new Date().toISOString(),
+    identity: identity || undefined,
+    proxyJump: proxyJump || undefined,
+    sshArgs: sshArgs.length > 0 ? sshArgs : undefined,
+  });
 
   const tunnelArgs = buildSshArgs(sshOpts).concat([
     "-N",
