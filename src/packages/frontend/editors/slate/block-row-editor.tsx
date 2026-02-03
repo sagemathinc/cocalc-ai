@@ -899,6 +899,23 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           }
         }
 
+        const handler = getKeyboardHandler(event);
+        if (handler) {
+          if (
+            handler({
+              editor,
+              extra: {
+                actions: actions ?? {},
+                id: id ?? "",
+                search: searchHook ?? EMPTY_SEARCH,
+              },
+            })
+          ) {
+            event.preventDefault();
+            return;
+          }
+        }
+
         if (event.ctrlKey || event.metaKey || event.altKey) return;
 
         const domSelection =
@@ -1083,21 +1100,7 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
           }
         }
 
-        const handler = getKeyboardHandler(event);
-        if (handler) {
-          if (
-            handler({
-              editor,
-              extra: {
-                actions: actions ?? {},
-                id: id ?? "",
-                search: searchHook ?? EMPTY_SEARCH,
-              },
-            })
-          ) {
-            event.preventDefault();
-          }
-        }
+        // handled above so modifier shortcuts still work in block mode
       },
       [
         actions,
