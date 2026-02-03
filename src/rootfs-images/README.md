@@ -164,6 +164,10 @@ This launches a spot VM, runs the build, uploads logs, then deletes the VM.
 This runs native builds for amd64 and arm64 in parallel (for non‑GPU images), then
 merges them into a single multi‑arch tag.
 
+The wrapper performs a one‑time IAM/repo preflight to avoid concurrent
+`add-iam-policy-binding` conflicts, then disables those steps for the parallel
+builds.
+
 ## Notes
 
 - GPU images are amd64 only.

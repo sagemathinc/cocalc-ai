@@ -8,6 +8,9 @@ REGISTRY=""
 TAG=""
 ZONE_AMD64=""
 ZONE_ARM64=""
+SERVICE_ACCOUNT=""
+PREPARE_IAM=1
+PREPARE_REPO=1
 PASSTHRU=()
 
 while [[ $# -gt 0 ]]; do
@@ -19,13 +22,16 @@ while [[ $# -gt 0 ]]; do
     --tag) TAG="$2"; shift 2;;
     --zone-amd64) ZONE_AMD64="$2"; shift 2;;
     --zone-arm64) ZONE_ARM64="$2"; shift 2;;
+    --service-account) SERVICE_ACCOUNT="$2"; PASSTHRU+=("$1" "$2"); shift 2;;
+    --no-iam-binding) PREPARE_IAM=0; PASSTHRU+=("$1"); shift;;
+    --no-repo-create) PREPARE_REPO=0; PASSTHRU+=("$1"); shift;;
     --arch) echo "error: --arch is managed by gcp-build-multi.sh"; exit 1;;
     *) PASSTHRU+=("$1"); shift;;
   esac
 done
 
 if [[ -z "$IMAGE_ID" || -z "$PROJECT" || -z "$ZONE" || -z "$REGISTRY" ]]; then
-  echo "usage: gcp-build-multi.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--tag <tag>] [--zone-amd64 <zone>] [--zone-arm64 <zone>] [-- ... passthru args to gcp-builder.sh]" >&2
+  echo "usage: gcp-build-multi.sh --image <id> --project <gcp-project> --zone <zone> --registry <artifact-registry> [--tag <tag>] [--zone-amd64 <zone>] [--zone-arm64 <zone>] [--service-account <email>] [--no-iam-binding] [--no-repo-create] [-- ... passthru args to gcp-builder.sh]" >&2
   exit 1
 fi
 
@@ -38,6 +44,50 @@ fi
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ROOTFS_DIR="$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
+
+if [[ "$PREPARE_IAM" -eq 1 ]]; then
+  if ! command -v gcloud >/dev/null 2>&1; then
+    echo "gcloud is required for IAM preflight; install gcloud or pass --no-iam-binding." >&2
+    exit 1
+  fi
+  SA_TO_BIND="$SERVICE_ACCOUNT"
+  if [[ -z "$SA_TO_BIND" ]]; then
+    PROJECT_NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+    SA_TO_BIND="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+  fi
+  echo "Ensuring Artifact Registry writer role for $SA_TO_BIND"
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member "serviceAccount:$SA_TO_BIND" \
+    --role "roles/artifactregistry.writer" >/dev/null
+  PASSTHRU+=("--no-iam-binding")
+fi
+
+if [[ "$PREPARE_REPO" -eq 1 ]]; then
+  if ! command -v gcloud >/dev/null 2>&1; then
+    echo "gcloud is required for repo preflight; install gcloud or pass --no-repo-create." >&2
+    exit 1
+  fi
+  REGISTRY_HOST="${REGISTRY%%/*}"
+  REGISTRY_REST="${REGISTRY#*/}"
+  REGISTRY_PROJECT="${REGISTRY_REST%%/*}"
+  REGISTRY_REPO="${REGISTRY_REST#*/}"
+  REGISTRY_REPO="${REGISTRY_REPO%%/*}"
+  REGISTRY_LOCATION="${REGISTRY_HOST%-docker.pkg.dev}"
+  if [[ "$REGISTRY_LOCATION" == "$REGISTRY_HOST" ]]; then
+    REGISTRY_LOCATION="us"
+  fi
+  if ! gcloud artifacts repositories describe "$REGISTRY_REPO" \
+    --location "$REGISTRY_LOCATION" \
+    --project "$PROJECT" >/dev/null 2>&1; then
+    echo "Creating Artifact Registry repo $REGISTRY_REPO in $REGISTRY_LOCATION"
+    gcloud artifacts repositories create "$REGISTRY_REPO" \
+      --location "$REGISTRY_LOCATION" \
+      --repository-format docker \
+      --project "$PROJECT" \
+      --description "CoCalc rootfs images"
+  fi
+  PASSTHRU+=("--no-repo-create")
+fi
 
 eval "$(python3 - <<PY
 import shlex
