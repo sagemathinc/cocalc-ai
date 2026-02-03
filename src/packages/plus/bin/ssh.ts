@@ -1,67 +1,56 @@
 #!/usr/bin/env node
-const { spawn, spawnSync } = require("node:child_process");
-const { AsciiTable3 } = require("ascii-table3");
-const crypto = require("node:crypto");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+import { spawn, spawnSync } from "node:child_process";
+import { AsciiTable3 } from "ascii-table3";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { Command } from "commander";
 
-function parseTarget(raw) {
+type SshExecOptions = {
+  inherit?: boolean;
+  timeoutMs?: number;
+  extraArgs?: string[];
+};
+
+type SshOptions = {
+  host: string;
+  port: number | null;
+  identity?: string;
+  proxyJump?: string;
+  sshArgs: string[];
+};
+
+type RegistryEntry = {
+  target: string;
+  host?: string;
+  port?: number | null;
+  localPort?: number;
+  lastUsed?: string;
+  lastStopped?: string;
+  identity?: string;
+  proxyJump?: string;
+  sshArgs?: string[];
+};
+
+type ProbeResult = {
+  status: "found" | "missing" | "unreachable";
+  path: string;
+};
+
+type ConnectionInfo = {
+  port: number;
+  token?: string;
+  [key: string]: unknown;
+};
+
+function parseTarget(raw: string) {
   const m = raw.match(/^(.*?)(?::(\d+))?$/);
   if (!m) throw new Error(`Invalid target: ${raw}`);
   return { host: m[1], port: m[2] ? parseInt(m[2], 10) : null };
 }
 
-function usage() {
-  console.log(`Usage:
-  cocalc-plus ssh user@host[:port] [options]
-  cocalc-plus ssh --target user@host[:port] [options]
-  cocalc-plus ssh list
-  cocalc-plus ssh status user@host[:port]
-  cocalc-plus ssh stop user@host[:port]
-
-Options:
-  --target <target>     disambiguate targets named list/status/stop
-  --local-port <n|auto>
-  --remote-port <n|auto>
-  --no-open
-  --no-install
-  --upgrade
-  --forward-only
-  --ssh-arg <arg>        (repeatable)
-  --identity <file>
-  --proxy-jump <host>
-  --log-level <info|debug>
-
-Examples:
-  cocalc-plus ssh user@host
-  cocalc-plus ssh list
-  cocalc-plus ssh status user@host
-  cocalc-plus ssh stop user@host
-  cocalc-plus ssh --target list
-  cocalc-plus ssh -- list
-  cocalc-plus ssh user@host:2222 --identity ~/.ssh/id_ed25519
-  cocalc-plus ssh user@host --proxy-jump jumpbox
-  cocalc-plus ssh user@host --no-open --local-port 42800
-`);
-}
-
-function popArg(args, name) {
-  const idx = args.indexOf(name);
-  if (idx === -1) return null;
-  const val = args[idx + 1];
-  args.splice(idx, 2);
-  return val;
-}
-
-function popFlag(args, name) {
-  const idx = args.indexOf(name);
-  if (idx === -1) return false;
-  args.splice(idx, 1);
-  return true;
-}
-
-function pickFreePort() {
+function pickFreePort(): Promise<number> {
   const net = require("node:net");
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -73,7 +62,7 @@ function pickFreePort() {
   });
 }
 
-function canBindPort(port) {
+function canBindPort(port: number): Promise<boolean> {
   const net = require("node:net");
   return new Promise((resolve) => {
     const srv = net.createServer();
@@ -84,8 +73,8 @@ function canBindPort(port) {
   });
 }
 
-function buildSshArgs(opts) {
-  const args = [];
+function buildSshArgs(opts: SshOptions): string[] {
+  const args: string[] = [];
   if (opts.port) {
     args.push("-p", String(opts.port));
   }
@@ -101,7 +90,7 @@ function buildSshArgs(opts) {
   return args;
 }
 
-function sshRun(opts, cmd, execOpts = {}) {
+function sshRun(opts: SshOptions, cmd: string, execOpts: SshExecOptions = {}) {
   const sshArgs = buildSshArgs(opts);
   const finalArgs = sshArgs.concat(execOpts.extraArgs || [], [opts.host, cmd]);
   return spawnSync("ssh", finalArgs, {
@@ -111,7 +100,7 @@ function sshRun(opts, cmd, execOpts = {}) {
   });
 }
 
-function sshExec(opts, cmd, inherit = false) {
+function sshExec(opts: SshOptions, cmd: string, inherit = false): string {
   const res = sshRun(opts, cmd, { inherit });
   if (res.error) throw res.error;
   if (res.status !== 0) {
@@ -121,7 +110,7 @@ function sshExec(opts, cmd, inherit = false) {
   return (res.stdout || "").toString().trim();
 }
 
-function probeRemoteBin(opts, extraArgs = []) {
+function probeRemoteBin(opts: SshOptions, extraArgs: string[] = []): ProbeResult {
   const which = sshRun(opts, "command -v cocalc-plus", {
     timeoutMs: 5000,
     extraArgs,
@@ -145,25 +134,18 @@ function probeRemoteBin(opts, extraArgs = []) {
   return { status: "missing", path: "$HOME/.local/bin/cocalc-plus" };
 }
 
-function openUrl(url) {
+function openUrl(url: string) {
   const platform = process.platform;
-  let cmd;
-  let args;
-  if (platform === "darwin") {
-    cmd = "open";
-    args = [url];
-  } else {
-    cmd = "xdg-open";
-    args = [url];
-  }
+  const cmd = platform === "darwin" ? "open" : "xdg-open";
+  const args = [url];
   spawn(cmd, args, { stdio: "ignore", detached: true }).unref();
 }
 
-function sleep(ms) {
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function infoPathFor(target) {
+function infoPathFor(target: string) {
   const hash = crypto.createHash("sha1").update(target).digest("hex");
   const baseDir = path.join(
     os.homedir(),
@@ -191,13 +173,13 @@ function registryPath() {
   );
 }
 
-function loadRegistry() {
+function loadRegistry(): Record<string, RegistryEntry> {
   const file = registryPath();
   try {
     const raw = fs.readFileSync(file, "utf8");
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      const obj = {};
+      const obj: Record<string, RegistryEntry> = {};
       for (const entry of parsed) {
         if (entry?.target) obj[entry.target] = entry;
       }
@@ -210,19 +192,19 @@ function loadRegistry() {
   return {};
 }
 
-function saveRegistry(registry) {
+function saveRegistry(registry: Record<string, RegistryEntry>) {
   const file = registryPath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(registry, null, 2));
 }
 
-function updateRegistry(target, data) {
+function updateRegistry(target: string, data: Partial<RegistryEntry>) {
   const registry = loadRegistry();
-  registry[target] = { target, ...(registry[target] || {}), ...data };
+  registry[target] = { ...(registry[target] || {}), ...data, target };
   saveRegistry(registry);
 }
 
-async function listRegistry(withStatus) {
+async function listRegistry(withStatus: boolean) {
   const registry = loadRegistry();
   const entries = Object.values(registry);
   if (entries.length === 0) {
@@ -237,7 +219,7 @@ async function listRegistry(withStatus) {
   const header = withStatus
     ? ["Target", "Port", "Status", "Last Used"]
     : ["Target", "Port", "Last Used"];
-  const rows = [];
+  const rows: string[][] = [];
   for (const entry of entries) {
     const target = String(entry.target);
     const port = entry.localPort != null ? String(entry.localPort) : "";
@@ -256,11 +238,15 @@ async function listRegistry(withStatus) {
     .setHeading(...header)
     .addRowMatrix(rows);
   table.setStyle("unicode-round");
-  table.setWidth(1, 30).setWrapped(1);
+  table.setWidth(1, 15).setWrapped(1);
   console.log(table.toString());
 }
 
-async function waitRemoteFile(opts, remotePath, timeoutMs = 10000) {
+async function waitRemoteFile(
+  opts: SshOptions,
+  remotePath: string,
+  timeoutMs = 10000,
+) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
@@ -274,16 +260,16 @@ async function waitRemoteFile(opts, remotePath, timeoutMs = 10000) {
   throw new Error(`Timed out waiting for ${remotePath}`);
 }
 
-async function resolveRemoteBin(opts) {
+async function resolveRemoteBin(opts: SshOptions): Promise<string> {
   const probe = probeRemoteBin(opts);
   if (probe.status === "found" && probe.path) return probe.path;
   return "$HOME/.local/bin/cocalc-plus";
 }
 
-async function getRemoteStatus(entry) {
+async function getRemoteStatus(entry: RegistryEntry): Promise<string> {
   const target = entry.target;
   const { host, port } = parseTarget(target);
-  const sshOpts = {
+  const sshOpts: SshOptions = {
     host,
     port,
     identity: entry.identity,
@@ -308,7 +294,11 @@ async function getRemoteStatus(entry) {
   return "error";
 }
 
-async function ensureRemoteReady(opts, install, upgrade) {
+async function ensureRemoteReady(
+  opts: SshOptions,
+  install: boolean,
+  upgrade: boolean,
+) {
   const probe = probeRemoteBin(opts);
   if (probe.status === "found" && !upgrade) return;
   if (probe.status === "unreachable") {
@@ -325,7 +315,12 @@ async function ensureRemoteReady(opts, install, upgrade) {
   );
 }
 
-async function startRemote(opts, remoteInfoPath, remotePidPath, remoteLogPath) {
+async function startRemote(
+  opts: SshOptions,
+  remoteInfoPath: string,
+  remotePidPath: string,
+  remoteLogPath: string,
+): Promise<ConnectionInfo> {
   const remoteBin = await resolveRemoteBin(opts);
   const env = [
     "HOST=127.0.0.1",
@@ -338,59 +333,62 @@ async function startRemote(opts, remoteInfoPath, remotePidPath, remoteLogPath) {
   const cmd = `mkdir -p ${path.dirname(remoteInfoPath)} && ${env} ${remoteBin} --daemon --write-connection-info ${remoteInfoPath} --pidfile ${remotePidPath} --log ${remoteLogPath}`;
   sshExec(opts, cmd, true);
   const info = await waitRemoteFile(opts, remoteInfoPath, 20000);
-  return JSON.parse(info);
+  return JSON.parse(info) as ConnectionInfo;
 }
 
-async function main(args) {
-  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
-    usage();
-    process.exit(0);
-  }
+function collectRepeatable(value: string, previous: string[]): string[] {
+  previous.push(value);
+  return previous;
+}
 
-  let mode = "connect";
-  let explicitTarget = popArg(args, "--target");
-  if (args[0] === "--") {
-    args.shift();
-    explicitTarget = explicitTarget ?? args.shift();
-  }
-  if (!explicitTarget && ["list", "status", "stop"].includes(args[0])) {
-    mode = args.shift();
-    if (mode === "list") {
-      await listRegistry(true);
-      return;
-    }
-  }
-
-  if (!explicitTarget && args.length === 0) {
-    usage();
-    process.exit(1);
-  }
-
-  const target = explicitTarget ?? args.shift();
+async function statusOrStop(
+  mode: "status" | "stop",
+  target: string,
+  opts: { identity?: string; proxyJump?: string; sshArg?: string[] },
+) {
   const { host, port } = parseTarget(target);
-
-  const localPortArg = popArg(args, "--local-port");
-  const remotePortArg = popArg(args, "--remote-port");
-  const noOpen = popFlag(args, "--no-open");
-  const noInstall = popFlag(args, "--no-install");
-  const upgrade = popFlag(args, "--upgrade");
-  const forwardOnly = popFlag(args, "--forward-only");
-  const identity = popArg(args, "--identity");
-  const proxyJump = popArg(args, "--proxy-jump");
-  const logLevel = popArg(args, "--log-level") || "info";
-
-  const sshArgs = [];
-  let next;
-  while ((next = popArg(args, "--ssh-arg"))) {
-    sshArgs.push(next);
+  const sshOpts: SshOptions = {
+    host,
+    port,
+    identity: opts.identity,
+    proxyJump: opts.proxyJump,
+    sshArgs: opts.sshArg || [],
+  };
+  const { remoteDir } = infoPathFor(target);
+  const remotePidPath = `${remoteDir}/daemon.pid`;
+  await ensureRemoteReady(sshOpts, false, false);
+  const remoteBin = await resolveRemoteBin(sshOpts);
+  const cmd = `${remoteBin} --daemon-${mode} --pidfile ${remotePidPath}`;
+  sshExec(sshOpts, cmd, true);
+  if (mode === "stop") {
+    updateRegistry(target, { lastStopped: new Date().toISOString() });
   }
-  if (args.length > 0) {
-    console.error("Unknown args:", args.join(" "));
-    usage();
-    process.exit(1);
-  }
+}
 
-  const sshOpts = { host, port, identity, proxyJump, sshArgs };
+async function connect(
+  target: string,
+  options: {
+    localPort?: string;
+    remotePort?: string;
+    noOpen?: boolean;
+    noInstall?: boolean;
+    upgrade?: boolean;
+    forwardOnly?: boolean;
+    identity?: string;
+    proxyJump?: string;
+    logLevel?: string;
+    sshArg?: string[];
+  },
+) {
+  const { host, port } = parseTarget(target);
+  const sshArgs = options.sshArg || [];
+  const sshOpts: SshOptions = {
+    host,
+    port,
+    identity: options.identity,
+    proxyJump: options.proxyJump,
+    sshArgs,
+  };
   const label = target;
   const { localDir, remoteDir } = infoPathFor(label);
   fs.mkdirSync(localDir, { recursive: true });
@@ -400,39 +398,28 @@ async function main(args) {
   const remotePidPath = `${remoteDir}/daemon.pid`;
   const remoteLogPath = `${remoteDir}/daemon.log`;
 
-  if (logLevel === "debug") {
+  if (options.logLevel === "debug") {
     console.log("Target:", sshOpts);
     console.log("Remote state:", remoteDir);
   }
 
-  if (mode === "status" || mode === "stop") {
-    await ensureRemoteReady(sshOpts, false, false);
-    const remoteBin = await resolveRemoteBin(sshOpts);
-    const cmd = `${remoteBin} --daemon-${mode} --pidfile ${remotePidPath}`;
-    sshExec(sshOpts, cmd, true);
-    if (mode === "stop") {
-      updateRegistry(label, { lastStopped: new Date().toISOString() });
-    }
-    return;
-  }
+  await ensureRemoteReady(sshOpts, !options.noInstall, !!options.upgrade);
 
-  await ensureRemoteReady(sshOpts, !noInstall, upgrade);
-
-  let info;
-  if (forwardOnly) {
+  let info: ConnectionInfo;
+  if (options.forwardOnly) {
     const content = sshExec(sshOpts, `cat ${remoteInfoPath}`);
-    info = JSON.parse(content);
+    info = JSON.parse(content) as ConnectionInfo;
   } else {
     info = await startRemote(sshOpts, remoteInfoPath, remotePidPath, remoteLogPath);
   }
 
-  const remotePort = remotePortArg && remotePortArg !== "auto"
-    ? parseInt(remotePortArg, 10)
+  const remotePort = options.remotePort && options.remotePort !== "auto"
+    ? parseInt(options.remotePort, 10)
     : info.port;
 
-  let localPort;
-  if (localPortArg && localPortArg !== "auto") {
-    localPort = parseInt(localPortArg, 10);
+  let localPort: number | undefined;
+  if (options.localPort && options.localPort !== "auto") {
+    localPort = parseInt(options.localPort, 10);
   } else if (fs.existsSync(localPortPath)) {
     const saved = parseInt(fs.readFileSync(localPortPath, "utf8").trim(), 10);
     if (saved && (await canBindPort(saved))) {
@@ -444,15 +431,17 @@ async function main(args) {
     fs.writeFileSync(localPortPath, String(localPort));
   }
 
-  const url = `http://localhost:${localPort}?auth_token=${encodeURIComponent(info.token || "")}`;
+  const url = `http://localhost:${localPort}?auth_token=${encodeURIComponent(
+    info.token || "",
+  )}`;
 
   updateRegistry(label, {
     host,
     port,
     localPort,
     lastUsed: new Date().toISOString(),
-    identity: identity || undefined,
-    proxyJump: proxyJump || undefined,
+    identity: options.identity || undefined,
+    proxyJump: options.proxyJump || undefined,
     sshArgs: sshArgs.length > 0 ? sshArgs : undefined,
   });
 
@@ -465,7 +454,7 @@ async function main(args) {
 
   console.log(`Forwarding localhost:${localPort} -> ${host}:${remotePort}`);
   console.log(url);
-  if (!noOpen) {
+  if (!options.noOpen) {
     openUrl(url);
   }
 
@@ -473,4 +462,82 @@ async function main(args) {
   tunnel.on("exit", (code) => process.exit(code ?? 0));
 }
 
-module.exports = { main };
+export async function main(argv: string[] = process.argv.slice(2)) {
+  const program = new Command();
+  program
+    .name("cocalc-plus ssh")
+    .usage("user@host[:port] [options]")
+    .showHelpAfterError()
+    .argument("[target]")
+    .option("--target <target>", "disambiguate targets named list/status/stop")
+    .option("--local-port <n|auto>")
+    .option("--remote-port <n|auto>")
+    .option("--no-open")
+    .option("--no-install")
+    .option("--upgrade")
+    .option("--forward-only")
+    .option("--ssh-arg <arg>", "(repeatable)", collectRepeatable, [])
+    .option("--identity <file>")
+    .option("--proxy-jump <host>")
+    .option("--log-level <info|debug>", "", "info")
+    .addHelpText(
+      "after",
+      `\nExamples:\n  cocalc-plus ssh user@host\n  cocalc-plus ssh list\n  cocalc-plus ssh status user@host\n  cocalc-plus ssh stop user@host\n  cocalc-plus ssh --target list\n  cocalc-plus ssh -- list\n  cocalc-plus ssh user@host:2222 --identity ~/.ssh/id_ed25519\n  cocalc-plus ssh user@host --proxy-jump jumpbox\n  cocalc-plus ssh user@host --no-open --local-port 42800\n`,
+    )
+    .action(async (target: string | undefined, options) => {
+      const finalTarget = options.target ?? target;
+      if (!finalTarget) {
+        program.help({ error: true });
+        return;
+      }
+      await connect(finalTarget, options);
+    });
+
+  program
+    .command("list")
+    .description("list saved ssh targets")
+    .action(async () => {
+      await listRegistry(true);
+    });
+
+  program
+    .command("status")
+    .argument("[target]")
+    .option("--target <target>")
+    .option("--ssh-arg <arg>", "(repeatable)", collectRepeatable, [])
+    .option("--identity <file>")
+    .option("--proxy-jump <host>")
+    .action(async (target: string | undefined, options) => {
+      const finalTarget = options.target ?? target;
+      if (!finalTarget) {
+        program.error("Missing target for status.");
+        return;
+      }
+      await statusOrStop("status", finalTarget, options);
+    });
+
+  program
+    .command("stop")
+    .argument("[target]")
+    .option("--target <target>")
+    .option("--ssh-arg <arg>", "(repeatable)", collectRepeatable, [])
+    .option("--identity <file>")
+    .option("--proxy-jump <host>")
+    .action(async (target: string | undefined, options) => {
+      const finalTarget = options.target ?? target;
+      if (!finalTarget) {
+        program.error("Missing target for stop.");
+        return;
+      }
+      await statusOrStop("stop", finalTarget, options);
+    });
+
+  await program.parseAsync(argv, { from: "user" });
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("cocalc-plus ssh failed:", err?.message || err);
+    process.exit(1);
+  });
+}

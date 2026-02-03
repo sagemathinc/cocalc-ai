@@ -8,9 +8,11 @@
   - [x] cocalc-plus ssh status  (ping).
   - [ ] cocalc-plus ssh stop --force (in case not reachable)
   - [ ] #bug it often thinks cocalc-plus isn't installed because running a remote command over ssh is trick due to PATH issues.
-  - [ ] make table look nice using ascii-table3 with same style as used in `packages/conat/sync/inventory.ts` 
+  - [x] make table look nice using ascii-table3 with same style as used in `packages/conat/sync/inventory.ts` 
 
 - [ ] Robust cleanup: detect dead tunnels/servers and prune stale entries; optional --keep or --ttl.
+
+- [ ] login shell config
 
 - [ ] delete old versions from `~/.cache/cocalc/cocalc-plus/` on upgrade, since it is just a cache and they waste a lot of space
 

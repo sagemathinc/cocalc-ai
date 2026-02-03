@@ -8,7 +8,7 @@
     "./*": "./dist/*.js"
   },
   "bin": {
-    "cocalc-plus": "./bin/start.js"
+    "cocalc-plus": "./dist/bin/start.js"
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
@@ -26,7 +26,7 @@
     "publish:site": "pnpm tsc:root && cd site && ./publish-site.sh",
     "tsc:root": "cd ../.. && pnpm tsc",
     "build:all": "pnpm build && pnpm build:tarball && pnpm sea",
-    "app": "pnpm run build && node bin/start.js",
+    "app": "pnpm run build && node dist/bin/start.js",
     "app-electron": "pnpm electron-rebuild && electron ."
   },
   "files": [
@@ -41,7 +41,8 @@
   "license": "SEE LICENSE.md",
   "dependencies": {
     "@cocalc/lite": "workspace:*",
-    "ascii-table3": "^1.0.1"
+    "ascii-table3": "^1.0.1",
+    "commander": "^14.0.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",

@@ -2,9 +2,10 @@
 // CoCalc Plus CLI entrypoint. Delegates to the Lite starter so runtime
 // behavior stays identical while packaging lives in @cocalc/plus.
 
-const { spawn } = require("node:child_process");
-const fs = require("node:fs");
-const path = require("node:path");
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { main as sshMain } from "./ssh";
 
 function usage() {
   console.log(`Usage:
@@ -22,7 +23,7 @@ Examples:
 `);
 }
 
-function pickArg(args, name) {
+function pickArg(args: string[], name: string) {
   const idx = args.indexOf(name);
   if (idx === -1) return null;
   const value = args[idx + 1];
@@ -30,14 +31,14 @@ function pickArg(args, name) {
   return value;
 }
 
-function hasFlag(args, name) {
+function hasFlag(args: string[], name: string) {
   const idx = args.indexOf(name);
   if (idx === -1) return false;
   args.splice(idx, 1);
   return true;
 }
 
-function stopDaemon(pidfile) {
+function stopDaemon(pidfile?: string | null) {
   if (!pidfile || !fs.existsSync(pidfile)) {
     console.error("Missing pidfile:", pidfile);
     process.exit(1);
@@ -50,16 +51,16 @@ function stopDaemon(pidfile) {
   try {
     process.kill(pid);
     console.log(`Stopped daemon pid=${pid}`);
-  } catch (err) {
+  } catch (err: any) {
     console.error(`Failed to stop pid=${pid}:`, err?.message || err);
     process.exit(1);
   }
 }
 
-function daemonize(args, pidfile, logfile) {
+function daemonize(args: string[], pidfile?: string | null, logfile?: string | null) {
   const childArgs = args.concat(["--daemon-child"]);
-  let stdoutFd = "ignore";
-  let stderrFd = "ignore";
+  let stdoutFd: "ignore" | number = "ignore";
+  let stderrFd: "ignore" | number = "ignore";
   if (logfile) {
     fs.mkdirSync(path.dirname(logfile), { recursive: true });
     const fd = fs.openSync(logfile, "a");
@@ -74,7 +75,9 @@ function daemonize(args, pidfile, logfile) {
   if (typeof stdoutFd === "number") {
     try {
       fs.closeSync(stdoutFd);
-    } catch {}
+    } catch {
+      // ignore
+    }
   }
   child.unref();
   if (pidfile) {
@@ -91,7 +94,7 @@ function daemonize(args, pidfile, logfile) {
   process.exit(0);
 }
 
-const isCommand = (arg) =>
+const isCommand = (arg?: string) =>
   arg && (arg.startsWith("-") || arg === "ssh" || arg === "version");
 let argv = process.argv.slice(2);
 if (argv.length === 0 || !isCommand(argv[0])) {
@@ -102,15 +105,13 @@ if (argv.length === 0 || !isCommand(argv[0])) {
   }
 }
 if (argv[0] === "ssh") {
-  try {
-    require("./ssh").main(argv.slice(1));
-  } catch (err) {
-    console.error("cocalc-plus ssh failed:", err);
+  sshMain(argv.slice(1)).catch((err) => {
+    console.error("cocalc-plus ssh failed:", err?.message || err);
     process.exitCode = 1;
-  }
+  });
 } else if (argv[0] === "version" || argv[0] === "--version" || argv[0] === "-v") {
   try {
-    const pkgPath = path.join(__dirname, "..", "package.json");
+    const pkgPath = path.join(__dirname, "..", "..", "package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
     console.log(pkg.version || "unknown");
   } catch {
@@ -118,15 +119,17 @@ if (argv[0] === "ssh") {
   }
   process.exit(0);
 } else {
+  if (argv[0] === "-h" || argv[0] === "--help") {
+    usage();
+    process.exit(0);
+  }
 
   const daemonStop = hasFlag(argv, "--daemon-stop");
   const daemonStatus = hasFlag(argv, "--daemon-status");
   const daemon = hasFlag(argv, "--daemon");
   const daemonChild = hasFlag(argv, "--daemon-child");
-  const pidfile =
-    pickArg(argv, "--pidfile") || process.env.COCALC_DAEMON_PIDFILE;
-  const logfile =
-    pickArg(argv, "--log") || process.env.COCALC_DAEMON_LOG;
+  const pidfile = pickArg(argv, "--pidfile") || process.env.COCALC_DAEMON_PIDFILE;
+  const logfile = pickArg(argv, "--log") || process.env.COCALC_DAEMON_LOG;
 
   const connInfo = pickArg(argv, "--write-connection-info");
   if (connInfo) {
@@ -141,39 +144,48 @@ if (argv[0] === "ssh") {
     stopDaemon(pidfile);
     process.exit(0);
   }
+
   if (daemonStatus) {
     if (!pidfile || !fs.existsSync(pidfile)) {
-      console.log("daemon not running");
+      console.log("stopped");
       process.exit(1);
     }
     const pid = parseInt(fs.readFileSync(pidfile, "utf8").trim(), 10);
+    if (!pid) {
+      console.log("stopped");
+      process.exit(1);
+    }
     try {
       process.kill(pid, 0);
-      console.log(`daemon running pid=${pid}`);
+      console.log("running");
       process.exit(0);
     } catch {
-      console.log("daemon not running");
+      console.log("stopped");
       process.exit(1);
     }
   }
 
   if (daemon && !daemonChild) {
-    daemonize(process.argv.slice(1), pidfile, logfile);
-    process.exit(0);
+    daemonize(argv, pidfile, logfile);
   }
 
-  if (!daemonChild) {
-    // basic help for direct invocation
-    if (argv[0] === "-h" || argv[0] === "--help") {
-      usage();
-      process.exit(0);
+  if (!process.env.COCALC_BIN_PATH) {
+    const tools = process.env.COCALC_TOOLS_DIR;
+    if (tools) {
+      process.env.COCALC_BIN_PATH = path.join(tools, "bin");
     }
   }
 
-  try {
-    require("@cocalc/lite/bin/start");
-  } catch (err) {
-    console.error("cocalc-plus failed to start:", err);
-    process.exitCode = 1;
+  if (argv.length > 0) {
+    console.error("Unknown args:", argv.join(" "));
+    usage();
+    process.exit(1);
   }
+
+  const liteMain = require("@cocalc/lite/main");
+  if (typeof liteMain.main !== "function") {
+    console.error("Failed to load @cocalc/lite/main");
+    process.exit(1);
+  }
+  liteMain.main();
 }

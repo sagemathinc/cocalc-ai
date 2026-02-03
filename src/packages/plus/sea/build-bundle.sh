@@ -7,7 +7,7 @@
 #
 # The script expects pnpm v8+ and Node 18+ (Node 24 for runtime).
 # It runs the package build for @cocalc/plus, bundles the entry point
-# packages/plus/bin/start.js (delegating to @cocalc/lite/main),
+# packages/plus/dist/bin/start.js (delegating to @cocalc/lite/main),
 # and copies the static frontend assets.
 #
 # Native addons copied by ncc (e.g. zeromq, node-pty) are preserved.
@@ -29,8 +29,11 @@ rm -rf "$OUT"/*
 
 cd "$ROOT"
 
+echo "- Build @cocalc/plus"
+pnpm --filter @cocalc/plus build
+
 echo "- Bundle entry point with @vercel/ncc"
-ncc build packages/plus/bin/start.js \
+ncc build packages/plus/dist/bin/start.js \
   -o "$OUT"/bundle \
   --source-map \
   --external bufferutil \
