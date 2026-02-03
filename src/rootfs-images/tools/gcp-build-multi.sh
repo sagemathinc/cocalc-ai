@@ -153,7 +153,6 @@ if [[ "${#ARCHES[@]}" -gt 1 ]]; then
   python3 "$SCRIPT_DIR/manifest-merge.py" \
     --image "$IMAGE_ID" \
     --registry "$REGISTRY" \
-    --project "$PROJECT" \
     --tag "$TAG"
 else
   echo "Starting build for ${ARCHES[0]} with tag $TAG"
