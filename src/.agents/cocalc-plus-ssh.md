@@ -3,13 +3,15 @@
 ## Todo
 
 - [ ] Robust cleanup: detect dead tunnels/servers and prune stale entries; optional --keep or --ttl.
+  - even if dead, the user may want to start them again later when the target is available; user should be able to explicitly kill and remove any server though.
 
-- [ ] login shell config
+- [ ] login shell config -- make sure that the PATH etc is what user would get when using a login shell. E.g., I  don't have /usr/local/bin/ in the path, which is weird when using cocalc-plus itself.
 
-- [ ] delete old versions from `~/.cache/cocalc/cocalc-plus/` on upgrade, since it is just a cache and they waste a lot of space
+- [ ] delete old versions from `~/.cache/cocalc/cocalc-plus/` on upgrade, since it is just a cache and they waste space
 
 - [ ] add version check to startup
   - use this to print warning if remote server is not up to date, with instructions about how to upgrade
+  - surface version mismatch in the UI
 
 - [ ] Port + token UX: stable local port is done; add “reconnect” command that reuses saved port/token if still live.
 
@@ -30,6 +32,12 @@
 - [ ] document how this works and that remote sessions are persistent (e.g., terminals, jupyter kernels, etc. do not stop). 
 
 - [ ] improve the website
+
+- [ ] implement `cocalc-plus uninstall` and recommend that.  
+  - mention on https://software.cocalc.ai/software/cocalc-plus/index.html 
+  - it should delete the extracted files from bundle in ~/.cache (or wherever)
+  - undo changes to PATH (?).
+  - do NOT delete config/state info (the sqlite database) unless use `cocalc-plus uninstall --purge` 
 
 - [x] Remote session management: 
   - [x] cocalc-plus ssh list (local registry of targets + last port + status), 

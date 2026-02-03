@@ -16,6 +16,16 @@ const inferredName = exeName.startsWith("cocalc-plus") ? "cocalc-plus" : "";
 const name =
   "${NAME}" || process.env.COCALC_NAME || inferredName || "cocalc";
 const mainScript = "${MAIN}";
+const quiet =
+  process.env.COCALC_SEA_QUIET === "1" ||
+  process.argv.includes("reflect") ||
+  process.argv.includes("--run-reflect");
+
+function log(...args) {
+  if (!quiet) {
+    console.log(...args);
+  }
+}
 
 function extractAssetsSync() {
   const { getRawAsset } = require("node:sea");
@@ -31,7 +41,7 @@ function extractAssetsSync() {
 
   const stamp = path.join(destDir, ".ok");
   if (!fs.existsSync(stamp)) {
-    console.log("Unpacking...");
+    log("Unpacking...");
     const ab = getRawAsset("cocalc.tar.xz");
     const buf = Buffer.from(new Uint8Array(ab));
 
@@ -54,7 +64,7 @@ function extractAssetsSync() {
 
     fs.writeFileSync(stamp, "");
   }
-  console.log("Assets ready at:", destDir);
+  log("Assets ready at:", destDir);
   return destDir;
 }
 
@@ -85,7 +95,7 @@ if (path.basename(process.argv[1]) == "node") {
   process.exit(0);
 } else {
   const destDir = extractAssetsSync();
-  console.log("CoCalc Project Host (v" + version + ")");
+  log("CoCalc Project Host (v" + version + ")");
 
   const script = path.join(destDir, mainScript);
 

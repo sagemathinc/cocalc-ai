@@ -6,17 +6,49 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { ensureBundle, runReflect } from "../reflect/runner";
 import { main as sshMain } from "./ssh";
+
+async function maybeRunReflectBundle() {
+  const idx = process.argv.indexOf("--run-reflect");
+  if (idx === -1) return false;
+  const bundle = process.argv[idx + 1];
+  if (!bundle) {
+    console.error("Missing bundle path for --run-reflect");
+    process.exit(1);
+  }
+  let args = process.argv.slice(idx + 2);
+  if (args[0] === "--") {
+    args = args.slice(1);
+  }
+  if (!fs.existsSync(bundle)) {
+    try {
+      await ensureBundle(bundle);
+    } catch (err: any) {
+      console.error(err?.message || err);
+      process.exit(1);
+    }
+  }
+  process.env.REFLECT_ENTRY ??= bundle;
+  process.argv = [process.execPath, bundle, ...args];
+  // Avoid ncc rewriting dynamic import into require.
+  const dynamicImport = new Function("p", "return import(p);");
+  await dynamicImport(pathToFileURL(bundle).href);
+  return true;
+}
 
 function usage() {
   console.log(`Usage:
   cocalc-plus version
+  cocalc-plus reflect --version
   cocalc-plus ssh user@host[:port] [options]
   cocalc-plus ssh --target user@host[:port] [options]
   cocalc-plus [--daemon] [--write-connection-info PATH] [--pidfile PATH]
 
 Examples:
   cocalc-plus
+  cocalc-plus reflect --version
   cocalc-plus ssh list
   cocalc-plus ssh user@host
   cocalc-plus ssh --target list
@@ -95,57 +127,92 @@ function daemonize(args: string[], pidfile?: string | null, logfile?: string | n
   process.exit(0);
 }
 
-const isCommand = (arg?: string) =>
-  arg && (arg.startsWith("-") || arg === "ssh" || arg === "version");
-const isSelfPath = (arg?: string) => {
-  if (!arg) return false;
-  if (!arg.includes("/") && !arg.includes("\\")) return false;
-  const base = path.basename(arg);
-  const execBase = path.basename(process.execPath);
-  if (base !== execBase && !base.startsWith("cocalc-plus")) return false;
-  try {
-    return fs.existsSync(arg);
-  } catch {
-    return false;
+async function runCli() {
+  if (process.argv.includes("--run-reflect")) {
+    await maybeRunReflectBundle();
+    return;
   }
-};
-let argv = process.argv.slice(2);
-argv = argv.filter(
-  (arg) =>
-    arg !== process.execPath && arg !== process.argv[1] && !isSelfPath(arg),
-);
-if (argv.length >= 1) {
-  const base = path.basename(argv[0]);
-  const execBase = path.basename(process.execPath);
-  if (base === execBase || base.startsWith("cocalc-plus")) {
-    argv = argv.slice(1);
+
+  const isCommand = (arg?: string) =>
+    arg &&
+    (arg.startsWith("-") ||
+      arg === "ssh" ||
+      arg === "version" ||
+      arg === "reflect");
+  const isSelfPath = (arg?: string) => {
+    if (!arg) return false;
+    if (!arg.includes("/") && !arg.includes("\\")) return false;
+    const base = path.basename(arg);
+    const execBase = path.basename(process.execPath);
+    if (base !== execBase && !base.startsWith("cocalc-plus")) return false;
+    try {
+      return fs.existsSync(arg);
+    } catch {
+      return false;
+    }
+  };
+  let argv = process.argv.slice(2);
+  argv = argv.filter(
+    (arg) =>
+      arg !== process.execPath && arg !== process.argv[1] && !isSelfPath(arg),
+  );
+  if (argv.length >= 1) {
+    const base = path.basename(argv[0]);
+    const execBase = path.basename(process.execPath);
+    if (base === execBase || base.startsWith("cocalc-plus")) {
+      argv = argv.slice(1);
+    }
   }
-}
-if (argv.length === 0 || !isCommand(argv[0])) {
-  const alt = process.argv.slice(1);
-  const idx = alt.findIndex((arg) => isCommand(arg));
-  if (idx !== -1) {
-    argv = alt.slice(idx);
+  if (argv.length === 0 || !isCommand(argv[0])) {
+    const alt = process.argv.slice(1);
+    const idx = alt.findIndex((arg) => isCommand(arg));
+    if (idx !== -1) {
+      argv = alt.slice(idx);
+    }
   }
-}
-if (argv[0] === "ssh") {
-  sshMain(argv.slice(1)).catch((err) => {
-    console.error("cocalc-plus ssh failed:", err?.message || err);
-    process.exitCode = 1;
-  });
-} else if (argv[0] === "version" || argv[0] === "--version" || argv[0] === "-v") {
-  try {
-    const pkgPath = path.join(__dirname, "..", "..", "package.json");
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-    console.log(pkg.version || "unknown");
-  } catch {
-    console.log("unknown");
+  if (argv[0] === "ssh") {
+    await sshMain(argv.slice(1));
+    return;
   }
-  process.exit(0);
-} else {
+  if (argv[0] === "reflect") {
+    const reflectArgs = argv.slice(1);
+    if (reflectArgs.length === 0) {
+      console.log("Usage: cocalc-plus reflect --version");
+      return;
+    }
+    if (reflectArgs.includes("-h") || reflectArgs.includes("--help")) {
+      console.log("Usage: cocalc-plus reflect --version");
+      return;
+    }
+    try {
+      const output = await runReflect(reflectArgs);
+      if (output) {
+        console.log(output);
+      }
+    } catch (err: any) {
+      console.error(err?.message || err);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (
+    argv[0] === "version" ||
+    argv[0] === "--version" ||
+    argv[0] === "-v"
+  ) {
+    try {
+      const pkgPath = path.join(__dirname, "..", "..", "package.json");
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      console.log(pkg.version || "unknown");
+    } catch {
+      console.log("unknown");
+    }
+    return;
+  }
+
   if (argv[0] === "-h" || argv[0] === "--help") {
     usage();
-    process.exit(0);
+    return;
   }
 
   if (!process.env.COCALC_ENABLE_SSH_UI) {
@@ -170,26 +237,29 @@ if (argv[0] === "ssh") {
 
   if (daemonStop) {
     stopDaemon(pidfile);
-    process.exit(0);
+    return;
   }
 
   if (daemonStatus) {
     if (!pidfile || !fs.existsSync(pidfile)) {
       console.log("stopped");
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     const pid = parseInt(fs.readFileSync(pidfile, "utf8").trim(), 10);
     if (!pid) {
       console.log("stopped");
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     try {
       process.kill(pid, 0);
       console.log("running");
-      process.exit(0);
+      return;
     } catch {
       console.log("stopped");
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   }
 
@@ -207,7 +277,8 @@ if (argv[0] === "ssh") {
   if (argv.length > 0) {
     console.error("Unknown args:", argv.join(" "));
     usage();
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   if (!process.env.COCALC_DATA_DIR) {
@@ -223,7 +294,8 @@ if (argv[0] === "ssh") {
   const liteMain = require("@cocalc/lite/main");
   if (typeof liteMain.main !== "function") {
     console.error("Failed to load @cocalc/lite/main");
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   let sshUi: any = undefined;
   try {
@@ -239,5 +311,10 @@ if (argv[0] === "ssh") {
   } catch {
     // ignore
   }
-  liteMain.main({ sshUi, reflectUi });
+  await liteMain.main({ sshUi, reflectUi });
 }
+
+runCli().catch((err) => {
+  console.error(err?.message || err);
+  process.exit(1);
+});

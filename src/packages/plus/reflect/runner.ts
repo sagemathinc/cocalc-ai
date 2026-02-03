@@ -21,6 +21,21 @@ const DEFAULT_BUNDLE_PATH = process.env.COCALC_REFLECT_BUNDLE_PATH ?? path.join(
   "bundle.mjs",
 );
 
+function resolveNodeBinary(): string {
+  const override = process.env.COCALC_REFLECT_NODE_PATH;
+  if (override && fs.existsSync(override)) {
+    return override;
+  }
+  const execBase = path.basename(process.execPath);
+  if (execBase.startsWith("cocalc-plus")) {
+    const sibling = path.join(path.dirname(process.execPath), "node");
+    if (fs.existsSync(sibling)) {
+      return sibling;
+    }
+  }
+  return process.execPath;
+}
+
 async function downloadBundle(dest: string): Promise<void> {
   const res = await fetch(DEFAULT_BUNDLE_URL);
   if (!res.ok) {
@@ -33,23 +48,31 @@ async function downloadBundle(dest: string): Promise<void> {
   await writeFile(dest, buf, { mode: 0o644 });
 }
 
-async function ensureBundle(): Promise<string> {
-  if (fs.existsSync(DEFAULT_BUNDLE_PATH)) {
-    return DEFAULT_BUNDLE_PATH;
+export async function ensureBundle(dest?: string): Promise<string> {
+  const target = dest ?? DEFAULT_BUNDLE_PATH;
+  if (fs.existsSync(target)) {
+    return target;
   }
-  await downloadBundle(DEFAULT_BUNDLE_PATH);
-  return DEFAULT_BUNDLE_PATH;
+  await downloadBundle(target);
+  return target;
 }
 
 export async function runReflect(args: string[], opts?: { timeoutMs?: number }) {
   const bundle = await ensureBundle();
+  const nodeBin = resolveNodeBinary();
+  const nodeBase = path.basename(nodeBin);
+  const useSelfRunner =
+    nodeBin === process.execPath && nodeBase.startsWith("cocalc-plus");
   const env = {
     ...process.env,
     REFLECT_HOME: DEFAULT_HOME,
     REFLECT_ENTRY: bundle,
   };
   return await new Promise<string>((resolve, reject) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+    const childArgs = useSelfRunner
+      ? ["--run-reflect", bundle, "--", ...args]
+      : [bundle, ...args];
+    const child = spawn(nodeBin, childArgs, {
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });

@@ -391,7 +391,7 @@ export async function connectSession(
   }
   await ensureRemoteReady(sshOpts, !options.noInstall, !!options.upgrade);
 
-  let info: ConnectionInfo;
+  let info: ConnectionInfo | null = null;
   if (options.forwardOnly) {
     const content = sshExec(sshOpts, `cat ${remoteInfoPath}`);
     info = JSON.parse(content) as ConnectionInfo;
@@ -411,6 +411,7 @@ export async function connectSession(
           reused = true;
         } catch {
           reused = false;
+          info = null;
         }
       }
     }
@@ -423,6 +424,10 @@ export async function connectSession(
         remoteLogPath,
       );
     }
+  }
+
+  if (!info) {
+    throw new Error("Failed to retrieve remote connection info");
   }
 
   const remotePort = options.remotePort && options.remotePort !== "auto"
