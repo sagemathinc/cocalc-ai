@@ -56,6 +56,10 @@ esac
 
 rm cocalc.js cocalc.tar.xz sea-prep.blob
 
+mkdir -p ../build/sea
+RAW_TARGET="../build/sea/$NAME-$VERSION-$MACHINE-$OS"
+cp "$TARGET" "$RAW_TARGET"
+
 mv $TARGET $NAME
 mkdir $TARGET
 mv $NAME $TARGET
@@ -65,11 +69,11 @@ cd ..
 tar Jcvf $TARGET.tar.xz $TARGET
 rm -rf $TARGET
 
-mkdir -p ../build/sea
 mv $TARGET.tar.xz ../build/sea
 
 cd ../build/sea
 
 ls -lh $TARGET.tar.xz
+ls -lh $RAW_TARGET
 
 echo "Built `pwd`/$TARGET.tar.xz"
