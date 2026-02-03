@@ -45,3 +45,33 @@ test("enter autoindents inside code blocks", () => {
   expect(editor.selection?.focus.path).toEqual([0, 1, 0]);
   expect(editor.selection?.focus.offset).toBe(2);
 });
+
+test("enter autoindents after python ':'", () => {
+  const editor = withAutoFormat(withReact(createEditor()));
+  editor.children = [
+    { type: "code_block", info: "py", children: toCodeLines("def f():") },
+  ] as any;
+  editor.selection = {
+    anchor: { path: [0, 0, 0], offset: 8 },
+    focus: { path: [0, 0, 0], offset: 8 },
+  };
+
+  const handler = getHandler({
+    key: "Enter",
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+  });
+  expect(handler).toBeTruthy();
+  handler?.({
+    editor: editor as any,
+    extra: { actions: {}, id: "", search: EMPTY_SEARCH },
+  });
+
+  expect(getCodeBlockText(editor.children[0] as any)).toBe(
+    "def f():\n    "
+  );
+  expect(editor.selection?.focus.path).toEqual([0, 1, 0]);
+  expect(editor.selection?.focus.offset).toBe(4);
+});
