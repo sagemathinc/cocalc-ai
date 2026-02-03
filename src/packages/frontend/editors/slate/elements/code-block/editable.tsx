@@ -27,6 +27,7 @@ import { ReactEditor } from "../../slate-react";
 import { hash_string } from "@cocalc/util/misc";
 import { Editor, Transforms } from "slate";
 import { markdown_to_slate } from "../../markdown-to-slate";
+import { insertPlainTextInCodeBlock } from "../../format/auto-format";
 import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
 import { CodeBlockBody, CodeLineElement } from "./code-like";
@@ -272,6 +273,24 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const shouldCollapse = false;
   const selected = useSelected();
   const selectionInBlock = !!focused && !!selected;
+  const syncSelectionFromDom = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const domSelection = window.getSelection?.();
+    if (!domSelection || domSelection.rangeCount === 0) return;
+    const domRange = domSelection.getRangeAt(0);
+    const ignoreSelection = editor.getIgnoreSelection?.() ?? false;
+    if (ignoreSelection) editor.setIgnoreSelection(false);
+    try {
+      const range = ReactEditor.toSlateRange(editor, domRange);
+      if (range) {
+        Transforms.select(editor, range);
+      }
+    } catch {
+      // ignore selection conversion issues
+    } finally {
+      if (ignoreSelection) editor.setIgnoreSelection(true);
+    }
+  }, [editor]);
   const forceExpanded = selectionInBlock;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
   const markdownCandidate = (element as any).markdownCandidate;
@@ -320,6 +339,20 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       Transforms.insertNodes(editor, doc as any, { at: elementPath });
     });
   }, [editor, codeValue, elementPath]);
+
+  const handlePaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const text = event.clipboardData?.getData("text/plain");
+      if (!text) return;
+      event.preventDefault();
+      event.stopPropagation();
+      syncSelectionFromDom();
+      if (!insertPlainTextInCodeBlock(editor, text)) {
+        Editor.insertText(editor, text);
+      }
+    },
+    [editor, syncSelectionFromDom],
+  );
 
   return (
     <div {...attributes} spellCheck={false} style={{ textIndent: 0 }}>
@@ -401,7 +434,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   .join("\n")}
               </pre>
             ) : (
-              <CodeBlockBody>{children}</CodeBlockBody>
+              <CodeBlockBody onPaste={handlePaste}>{children}</CodeBlockBody>
             )}
             {markdownCandidate && (
               <div

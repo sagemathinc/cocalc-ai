@@ -38,6 +38,16 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   if (codeLineEntry != null) {
     const [, linePath] = codeLineEntry;
     const lineIndex = linePath[linePath.length - 1];
+    if (selection.anchor.offset === 0) {
+      const lineText = Editor.string(editor, linePath);
+      if (lineText === "" && lineIndex > 0) {
+        const prevPath = Path.previous(linePath);
+        Transforms.removeNodes(editor, { at: linePath });
+        const prevEnd = Editor.end(editor, prevPath);
+        Transforms.select(editor, prevEnd);
+        return true;
+      }
+    }
     if (selection.anchor.offset === 0 && lineIndex === 0) {
       const codeBlockEntry = Editor.above(editor, {
         at: linePath,

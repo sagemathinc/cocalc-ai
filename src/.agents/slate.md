@@ -1,20 +1,20 @@
 # Slate Rewrite
 
-- [ ] #bug math formula editing (both inline and display); it works to edit, but when the cursor leaves the formula, it doesn't hide the raw code.  I think this was broke by changing the useSelection() hook for better performance; and now we have to handle another case.
+- [x] #feature it would be very nice if (like in jupyter) doing control+a once in a code cell only highlights all code in that cell. Doing control+a a second time would then select the whole document as usual.
 
-- [ ] #feature add control+; as a shortcut to split a code cell into two cells.
+- [x] #feature add control+; as a shortcut to split a code cell into two cells.
 
-- [ ] #feature it would be very nice if (like in jupyter) doing control+a once in a code cell only highlights all code in that cell. Doing control+a a second time would then select the whole document as usual.
+- [x] #feature clicking on table of contents to jump to corresponding section in markdown. We have inverse and forward search, so this might not be too difficult...
 
-- [ ] #feature clicking on table of contents to jump to corresponding section in markdown. We have inverse and forward search, so this might not be too difficult...
+- [x] #bug math formula editing (both inline and display); it works to edit, but when the cursor leaves the formula, it doesn't hide the raw code.  I think this was broke by changing the useSelection() hook for better performance; and now we have to handle another case.
 
-- [ ] #bug missing keyboard shortcut: control+&gt; to increase font size and and control+&lt; to decrease it.  There's actions for this and see the code-editor and othe frame-editors for the function to do it. 
+- [x] #bug missing keyboard shortcut: control+&gt; to increase font size and and control+&lt; to decrease it.  There's actions for this and see the code-editor and othe frame-editors for the function to do it. 
 
-- [ ] #bug the "move list item up/down" keyboard shortcut doesn't work on a mac, due to conflict with text selection; let's just keep it as ctrl instead of option on mac, and see if that works.
+- [x] #bug I was editing some code in a code block (shell mode) doing basic copy and paste, and things quickly got all corrupted/messed up, so that keyboard navigation didn't work, cursor jumped around when navigating etc.  I.e., somehow the slate tree got out of sync with the DOM. Basically pasting a line of code into the code editor easily causes things to break.
 
-- [ ] #bug I was editing some code in a code block (shell mode) doing basic copy and paste, and things quickly got all corrupted/messed up, so that keyboard navigation didn't work, cursor jumped around when navigating etc.  I.e., somehow the slate tree got out of sync with the DOM. Basically pasting a line of code into the code editor easily causes things to break.
+- [x] #bug the "move list item up/down" keyboard shortcut doesn't work on a mac, due to conflict with text selection; let's just keep it as ctrl instead of option on mac, and see if that works.
 
-- [ ] #feature it would be nice to have a little bit of code editing functionality.  Not a lot but something.  The one really useful thing we're missing is autoindent to the level of the previous line.
+- [x] #feature it would be nice to have a little bit of code editing functionality.  Not a lot but something.  The one really useful thing we're missing is autoindent to the level of the previous line.
 
 - [x] focusing the input editor in the Message editor in slate mode isn't possible; only markdown mode allows focus. 
 

@@ -4,9 +4,9 @@
  */
 
 import React, { useEffect, useState } from "react";
-import { Editor, Node, Range, Transforms } from "slate";
+import { Editor, Node, Path, Range, Transforms } from "slate";
 import { register, RenderElementProps } from "../register";
-import { useFocused, useSelected, useSlate } from "../hooks";
+import { useFocused, useSlate, useSlateSelection } from "../hooks";
 import { ReactEditor } from "../../slate-react";
 import { StaticElement } from "./index";
 
@@ -21,11 +21,24 @@ const Element: React.FC<RenderElementProps> = ({
   }
   const editor = useSlate();
   const focused = useFocused();
-  const selected = useSelected();
-  const selection = editor.selection;
+  const selection = useSlateSelection();
   const [forceEdit, setForceEdit] = useState(false);
   const isCollapsed = selection ? Range.isCollapsed(selection) : false;
-  const isEditing = isCollapsed && (forceEdit || (focused && selected));
+  const selectionInside = (() => {
+    if (!selection) return false;
+    try {
+      const path = ReactEditor.findPath(editor as any, element as any);
+      const { anchor, focus } = selection;
+      const anchorInside =
+        Path.equals(anchor.path, path) || Path.isAncestor(path, anchor.path);
+      const focusInside =
+        Path.equals(focus.path, path) || Path.isAncestor(path, focus.path);
+      return anchorInside && focusInside;
+    } catch {
+      return false;
+    }
+  })();
+  const isEditing = isCollapsed && (forceEdit || (focused && selectionInside));
   useEffect(() => {
     if (!isCollapsed && forceEdit) {
       setForceEdit(false);
@@ -36,10 +49,15 @@ const Element: React.FC<RenderElementProps> = ({
     }
   }, [forceEdit, focused, isEditing, isCollapsed]);
   useEffect(() => {
-    if (focused && selected && isCollapsed) {
+    if (forceEdit && selection && !selectionInside) {
+      setForceEdit(false);
+    }
+  }, [forceEdit, selectionInside, selection]);
+  useEffect(() => {
+    if (focused && selectionInside && isCollapsed) {
       setForceEdit(true);
     }
-  }, [focused, selected, isCollapsed]);
+  }, [focused, selectionInside, isCollapsed]);
   useEffect(() => {
     try {
       const path = ReactEditor.findPath(editor as any, element as any);

@@ -55,7 +55,14 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
           <KB>Tab</KB> / <KB>Shift+Tab</KB> indent / outdent list items
         </li>
         <li>
-          <KB>{MOD}+Shift+↑</KB> / <KB>{MOD}+Shift+↓</KB> move list item up/down
+          <KB>
+            {IS_MACOS ? "Ctrl+⌘" : MOD + "+Shift"}+↑
+          </KB>{" "}
+          /{" "}
+          <KB>
+            {IS_MACOS ? "Ctrl+⌘" : MOD + "+Shift"}+↓
+          </KB>{" "}
+          move list item up/down
         </li>
         <li>
           <KB>{IS_MACOS ? "Ctrl" : MOD}+D</KB> forward delete

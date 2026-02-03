@@ -917,8 +917,34 @@ test("sync: remote edit in active line keeps caret at end", async ({
     return window.__slateCollabTest?.getMarkdownA?.().includes("this is a string");
   });
 
-  await editorA.locator("text=this is a string").first().click();
-  await page.keyboard.press("End");
+  const selectionSet = await page.evaluate(() => {
+    const md = window.__slateCollabTest?.getMarkdownA?.() ?? "";
+    const needle = "this is a string";
+    const idx = md.indexOf(needle);
+    if (idx < 0) return false;
+    const before = md.slice(0, idx);
+    const line = before.split("\n").length - 1;
+    const ch = before.length - (before.lastIndexOf("\n") + 1) + needle.length;
+    return (
+      window.__slateCollabTest?.setSelectionFromMarkdownA?.({ line, ch }) ??
+      false
+    );
+  });
+
+  if (!selectionSet) {
+    await editorA.locator("text=this is a string").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("Q");
+    await page.waitForFunction(() => {
+      const md = window.__slateCollabTest?.getMarkdownA?.() ?? "";
+      return md.includes("this is a stringQ");
+    });
+    await page.keyboard.press("Backspace");
+    await page.waitForFunction(() => {
+      const md = window.__slateCollabTest?.getMarkdownA?.() ?? "";
+      return md.includes("this is a string") && !md.includes("stringQ");
+    });
+  }
 
   await page.evaluate(() => {
     window.__slateCollabTest?.setRemote(

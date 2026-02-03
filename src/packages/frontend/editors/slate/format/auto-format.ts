@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { withInsertBreak } from "./insert-break";
 import { withInsertText } from "./insert-text";
 import { withDeleteBackward } from "./delete-backward";
 import { withDeleteForward } from "./delete-forward";
@@ -625,6 +626,7 @@ function autoformatListAtStart(editor: Editor): boolean {
 }
 
 export const withAutoFormat = (editor) => {
+  withInsertBreak(editor);
   withInsertText(editor);
   withDeleteBackward(editor);
   withDeleteForward(editor);
@@ -822,6 +824,28 @@ function insertMultilineCodeText(editor: SlateEditor, text: string): boolean {
     Transforms.select(editor, point);
   }
 
+  return true;
+}
+
+export function insertPlainTextInCodeBlock(
+  editor: SlateEditor,
+  text: string,
+): boolean {
+  if (!editor.selection) return false;
+  if (!text) return false;
+  if (text.includes("\n")) {
+    return insertMultilineCodeText(editor, text);
+  }
+  const focus = editor.selection.focus;
+  const lineEntry = Editor.above(editor, {
+    at: focus,
+    match: (n) => Element.isElement(n) && n.type === "code_line",
+  }) as [Element, Path] | undefined;
+  if (!lineEntry) return false;
+  if (!Range.isCollapsed(editor.selection)) {
+    Transforms.delete(editor);
+  }
+  Transforms.insertText(editor, text);
   return true;
 }
 
