@@ -664,11 +664,14 @@ export const SshPage: React.FC = React.memo(() => {
             return "-";
           }
           const text = sessions
-            .map((session) =>
-              session.alpha_root === session.beta_root
-                ? session.alpha_root
-                : `${session.alpha_root}↔${session.beta_root}`,
-            )
+            .map((session) => {
+              const path =
+                session.alpha_root === session.beta_root
+                  ? session.alpha_root
+                  : `${session.alpha_root}↔${session.beta_root}`;
+              const status = session.actual_state || session.desired_state;
+              return status ? `${path} (${status})` : path;
+            })
             .join(", ");
           return (
             <Button
