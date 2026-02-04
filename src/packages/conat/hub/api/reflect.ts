@@ -6,6 +6,8 @@ export const reflect = {
   createSessionUI: requireSignedIn,
   createForwardUI: requireSignedIn,
   terminateSessionUI: requireSignedIn,
+  startSessionUI: requireSignedIn,
+  stopSessionUI: requireSignedIn,
   terminateForwardUI: requireSignedIn,
   listSessionLogsUI: requireSignedIn,
   listDaemonLogsUI: requireSignedIn,
@@ -85,6 +87,8 @@ export interface ReflectApi {
     name?: string;
   }) => Promise<void>;
   terminateSessionUI: (opts: { idOrName: string; force?: boolean }) => Promise<void>;
+  startSessionUI: (opts: { idOrName: string }) => Promise<void>;
+  stopSessionUI: (opts: { idOrName: string }) => Promise<void>;
   terminateForwardUI: (opts: { id: number }) => Promise<void>;
   listSessionLogsUI: (opts: {
     idOrName: string;

@@ -410,6 +410,34 @@ export const SshPage: React.FC = React.memo(() => {
     }
   };
 
+  const handleStopReflectSession = async (target: string, id: number) => {
+    try {
+      await webapp_client.conat_client.hub.reflect.stopSessionUI({
+        idOrName: String(id),
+      });
+      await loadReflectForTarget(target);
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
+  const handleStartReflectSession = async (target: string, id: number) => {
+    try {
+      await webapp_client.conat_client.hub.reflect.startSessionUI({
+        idOrName: String(id),
+      });
+      await loadReflectForTarget(target);
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
   const formatReflectLogs = (rows: ReflectLogRow[]) => {
     return rows
       .map((row) => {
@@ -706,17 +734,37 @@ export const SshPage: React.FC = React.memo(() => {
       key: "actions",
       width: 120,
       render: (_, row) => (
-        <Popconfirm
-          title="Delete this sync?"
-          description="This will remove the session and its metadata."
-          okText="Delete"
-          cancelText="Cancel"
-          onConfirm={() => handleTerminateSession(target, row.id)}
-        >
-          <Button size="small" danger>
-            Delete
-          </Button>
-        </Popconfirm>
+        <Space size={6}>
+          {row.actual_state === "running" ? (
+            <Popconfirm
+              title="Pause this sync?"
+              description="This will stop syncing until you resume it."
+              okText="Pause"
+              cancelText="Cancel"
+              onConfirm={() => handleStopReflectSession(target, row.id)}
+            >
+              <Button size="small">Pause</Button>
+            </Popconfirm>
+          ) : (
+            <Button
+              size="small"
+              onClick={() => handleStartReflectSession(target, row.id)}
+            >
+              Start
+            </Button>
+          )}
+          <Popconfirm
+            title="Delete this sync?"
+            description="This will remove the session and its metadata."
+            okText="Delete"
+            cancelText="Cancel"
+            onConfirm={() => handleTerminateSession(target, row.id)}
+          >
+            <Button size="small" danger>
+              Delete
+            </Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];

@@ -3,6 +3,8 @@ export {
   createForwardUI,
   terminateForwardUI,
   terminateSessionUI,
+  startSessionUI,
+  stopSessionUI,
   listForwardsUI,
   listSessionsUI,
   listSessionLogsUI,

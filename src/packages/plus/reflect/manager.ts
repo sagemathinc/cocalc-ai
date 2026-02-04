@@ -544,6 +544,42 @@ export async function terminateSessionUI(opts: {
   }
 }
 
+export async function stopSessionUI(opts: {
+  idOrName: string;
+}): Promise<void> {
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    installExitHook(mod, sessionDb);
+    const row = mod.resolveSessionRow(sessionDb, opts.idOrName);
+    if (!row) {
+      throw new Error(`reflect session '${opts.idOrName}' not found`);
+    }
+    mod.setDesiredState(sessionDb, row.id, "stopped");
+    await stopSession(mod, sessionDb, row);
+  } catch (err: any) {
+    throw new Error(`reflect stopSessionUI failed: ${err?.message || err}`);
+  }
+}
+
+export async function startSessionUI(opts: {
+  idOrName: string;
+}): Promise<void> {
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    installExitHook(mod, sessionDb);
+    const row = mod.resolveSessionRow(sessionDb, opts.idOrName);
+    if (!row) {
+      throw new Error(`reflect session '${opts.idOrName}' not found`);
+    }
+    mod.setDesiredState(sessionDb, row.id, "running");
+    await startSession(mod, sessionDb, row);
+  } catch (err: any) {
+    throw new Error(`reflect startSessionUI failed: ${err?.message || err}`);
+  }
+}
+
 export async function listForwardsUI(): Promise<ReflectForwardRow[]> {
   try {
     const mod = await loadReflectSync();
