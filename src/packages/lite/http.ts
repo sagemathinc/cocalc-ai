@@ -28,7 +28,7 @@ import fs from "node:fs";
 import { initAuth } from "./auth-token";
 import { getCustomizePayload } from "./hub/settings";
 import { getOrCreateSelfSigned } from "./tls";
-import { createProxyServer } from "http-proxy-3";
+import { attachProxyServer } from "@cocalc/project/servers/proxy/proxy";
 
 const logger = getLogger("lite:static");
 
@@ -162,42 +162,18 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
   });
 }
 
-function initProjectProxy({ app, httpServer }: { app: Application; httpServer: AnyServer }) {
-  const proxyPort = Number(process.env.COCALC_PROXY_PORT ?? 8080);
-  const proxyHost = process.env.COCALC_PROXY_HOST ?? "127.0.0.1";
-  const target = { host: proxyHost, port: proxyPort };
-  const base = project_id.replace(/^\/+|\/+$/g, "");
-  const proxyPattern = new RegExp(`^/${base}/(?:port|proxy|server)/`);
-
-  const proxy = createProxyServer({
-    xfwd: true,
-    ws: true,
-  });
-
-  proxy.on("error", (err, req, res) => {
-    logger.warn("proxy error", { err: `${err}`, url: req?.url });
-    if (!res || (res as any).headersSent) return;
-    try {
-      (res as any).writeHead(502, { "Content-Type": "text/plain" });
-      (res as any).end("Bad Gateway\n");
-    } catch {
-      /* ignore */
-    }
-  });
-
-  app.use((req, res, next) => {
-    if (!req.url || !proxyPattern.test(req.url)) return next();
-    proxy.web(req, res, { target, prependPath: false });
-  });
-
-  httpServer.prependListener("upgrade", (req, socket, head) => {
-    if (!req.url || !proxyPattern.test(req.url)) return;
-    try {
-      proxy.ws(req, socket, head, { target, prependPath: false });
-    } catch {
-      socket.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
-      socket.destroy();
-    }
+function initProjectProxy({
+  app,
+  httpServer,
+}: {
+  app: Application;
+  httpServer: AnyServer;
+}) {
+  attachProxyServer({
+    app,
+    httpServer,
+    base_url: project_id,
+    host: "localhost",
   });
 }
 
