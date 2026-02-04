@@ -502,7 +502,7 @@ export const AccountPage: React.FC = () => {
     return (
       <Space>
         {is_commercial ? <BalanceButton /> : undefined}
-        <MembershipBadge />
+        {!lite && <MembershipBadge />}
         <I18NSelector isWide={isWide} />
         {!lite && (
           <SignOut everywhere={false} highlight={true} narrow={!isWide} />
