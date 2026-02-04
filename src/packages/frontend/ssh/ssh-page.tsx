@@ -68,6 +68,21 @@ function statusTag(status?: string) {
   return <Tag>{value}</Tag>;
 }
 
+function syncStateDisplay(row: ReflectSessionRow) {
+  const desired = row.desired_state || "unknown";
+  const actual = row.actual_state || "unknown";
+  if (desired === actual) {
+    return <Space size={6}>{reflectStateTag(actual)}</Space>;
+  }
+  return (
+    <Space size={6}>
+      {reflectStateTag(desired)}
+      <Typography.Text type="secondary">→</Typography.Text>
+      {reflectStateTag(actual)}
+    </Space>
+  );
+}
+
 function tunnelTag(active?: boolean) {
   if (active) return <Tag color="blue">active</Tag>;
   return <Tag>idle</Tag>;
@@ -456,6 +471,11 @@ export const SshPage: React.FC = React.memo(() => {
     }
   };
 
+  const handleOpenForward = (port: number) => {
+    if (typeof window === "undefined") return;
+    window.open(`http://localhost:${port}`, "_blank", "noopener");
+  };
+
   const handleTerminateForward = async (target: string, id: number) => {
     try {
       await webapp_client.conat_client.hub.reflect.terminateForwardUI({ id });
@@ -660,6 +680,11 @@ export const SshPage: React.FC = React.memo(() => {
         title: "Target",
         dataIndex: "target",
         key: "target",
+        render: (value, row) => (
+          <Button size="small" type="link" onClick={() => handleOpen(row.target)}>
+            {value}
+          </Button>
+        ),
       },
       {
         title: "Port",
@@ -820,19 +845,12 @@ export const SshPage: React.FC = React.memo(() => {
         </Typography.Text>
       ),
     },
-    {
-      title: "State",
-      key: "state",
-      width: 160,
-      render: (_, row) => (
-        <Space size={6}>
-          {reflectStateTag(row.actual_state)}
-          <Typography.Text type="secondary">
-            {row.desired_state}
-          </Typography.Text>
-        </Space>
-      ),
-    },
+      {
+        title: "State",
+        key: "state",
+        width: 160,
+        render: (_, row) => syncStateDisplay(row),
+      },
     {
       title: "Last Sync",
       key: "last",
@@ -903,7 +921,15 @@ export const SshPage: React.FC = React.memo(() => {
       {
         title: "Local",
         key: "local",
-        render: (_, fwd) => formatForwardLocal(fwd),
+        render: (_, fwd) => (
+          <Button
+            size="small"
+            type="link"
+            onClick={() => handleOpenForward(fwd.local_port)}
+          >
+            {formatForwardLocal(fwd)}
+          </Button>
+        ),
       },
       {
         title: "Remote",
@@ -951,7 +977,15 @@ export const SshPage: React.FC = React.memo(() => {
       },
     ];
     return (
-      <div style={{ padding: "12px 8px" }}>
+        <div
+          style={{
+            padding: "16px 12px",
+            margin: "12px 0",
+            borderRadius: 8,
+            background: "#fafafa",
+            border: "1px solid #f0f0f0",
+          }}
+        >
         <Space style={{ marginBottom: 8 }} size={12} align="center">
           <Typography.Title level={5} style={{ margin: 0 }}>
             Sync
@@ -1215,7 +1249,31 @@ export const SshPage: React.FC = React.memo(() => {
             rules={[
               { required: true, message: "Enter a target like user@host:22" },
             ]}
-            extra="[user@]hostname[:port] (port is optional)"
+            extra={
+              <Space size={6}>
+                <Typography.Text type="secondary">
+                  [user@]hostname[:port] (port is optional)
+                </Typography.Text>
+                <Popover
+                  content={
+                    <div style={{ maxWidth: 280 }}>
+                      <Typography.Paragraph style={{ marginBottom: 0 }}>
+                        We will connect over SSH, ensure CoCalc Plus is installed
+                        on the remote machine, and start a local tunnel so you
+                        can use the remote server in your browser.
+                      </Typography.Paragraph>
+                    </div>
+                  }
+                >
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<InfoCircleOutlined />}
+                    aria-label="SSH target help"
+                  />
+                </Popover>
+              </Space>
+            }
           >
             <Input placeholder="user@host:22" />
           </Form.Item>
