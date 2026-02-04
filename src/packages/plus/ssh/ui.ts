@@ -4,6 +4,7 @@ import {
   getRemoteStatus,
   listSessions,
   statusSession,
+  updateRegistry,
 } from "./core";
 
 export type SshSessionRow = {
@@ -79,6 +80,14 @@ export async function statusSessionUI(target: string): Promise<string> {
     throw new Error(`Unknown target: ${target}`);
   }
   return await getRemoteStatus(entry);
+}
+
+export async function addSessionUI(target: string): Promise<void> {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    throw new Error("Target is required");
+  }
+  updateRegistry(trimmed, {});
 }
 
 export async function stopSessionUI(target: string): Promise<void> {

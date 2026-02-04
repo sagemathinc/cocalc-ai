@@ -38,6 +38,10 @@ export const ssh: Ssh = {
     const mod = await loadUi();
     return mod.connectSessionUI(opts.target, opts.options);
   },
+  addSessionUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.addSessionUI(opts.target);
+  },
   stopSessionUI: async (opts) => {
     const mod = await loadUi();
     return mod.stopSessionUI(opts.target);

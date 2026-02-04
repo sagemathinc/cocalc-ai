@@ -3,6 +3,7 @@ import { requireSignedIn } from "./util";
 export const ssh = {
   listSessionsUI: requireSignedIn,
   connectSessionUI: requireSignedIn,
+  addSessionUI: requireSignedIn,
   stopSessionUI: requireSignedIn,
   statusSessionUI: requireSignedIn,
 };
@@ -40,6 +41,7 @@ export interface Ssh {
       localUrl?: string;
     };
   }) => Promise<ConnectUiResult>;
+  addSessionUI: (opts: { target: string }) => Promise<void>;
   stopSessionUI: (opts: { target: string }) => Promise<void>;
   statusSessionUI: (opts: { target: string }) => Promise<string>;
 }

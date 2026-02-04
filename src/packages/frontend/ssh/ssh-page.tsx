@@ -151,6 +151,8 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectLogTitle, setReflectLogTitle] = useState<string>("Logs");
   const [reflectLogError, setReflectLogError] = useState<string | null>(null);
   const [reflectLogTarget, setReflectLogTarget] = useState<string | null>(null);
+  const [targetModalOpen, setTargetModalOpen] = useState(false);
+  const [targetForm] = Form.useForm();
 
   if (sshRemoteTarget) {
     return (
@@ -286,6 +288,25 @@ export const SshPage: React.FC = React.memo(() => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAddTarget = async () => {
+    try {
+      const values = await targetForm.validateFields();
+      const target = values.target?.trim();
+      await webapp_client.conat_client.hub.ssh.addSessionUI({ target });
+      setTargetModalOpen(false);
+      targetForm.resetFields();
+      await loadSessions();
+    } catch (err: any) {
+      if (err?.errorFields) {
+        return;
+      }
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
     }
   };
 
@@ -836,6 +857,9 @@ export const SshPage: React.FC = React.memo(() => {
         <Typography.Title level={4} style={{ margin: 0 }}>
           Remote SSH Sessions
         </Typography.Title>
+        <Button size="small" onClick={() => setTargetModalOpen(true)}>
+          New Remote Session
+        </Button>
         <Button size="small" onClick={loadSessions} loading={loading}>
           Refresh
         </Button>
@@ -942,6 +966,26 @@ export const SshPage: React.FC = React.memo(() => {
               },
             ]}
           />
+        </Form>
+      </Modal>
+
+      <Modal
+        title="New Remote Session"
+        open={targetModalOpen}
+        onOk={handleAddTarget}
+        onCancel={() => setTargetModalOpen(false)}
+        okText="Create"
+      >
+        <Form form={targetForm} layout="vertical">
+          <Form.Item
+            label="SSH target"
+            name="target"
+            rules={[
+              { required: true, message: "Enter a target like user@host:22" },
+            ]}
+          >
+            <Input placeholder="user@host:22" />
+          </Form.Item>
         </Form>
       </Modal>
 
