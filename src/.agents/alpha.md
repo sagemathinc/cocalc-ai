@@ -13,23 +13,9 @@ For alpha testing it will be deployed by:
 
 ## Blocker Todo List
 
-To make various paths much more transparent I changed the function 
-
-```
-patchesStreamName
-```
-
-in `build/cocalc-lite/src/packages/conat/sync/synctable-stream.ts` to take just the path of the document as input, instead of the string_id (which is a sha1 hash).  I think I updated all callers to use this, except I haven't updated the use of patchesStreamName here:
-
-`build/cocalc-lite/src/packages/backend/sandbox/sync-fs-service.ts` 
-
-It's a little tricky.  Can you look into it?
-
-- [ ] do not compress patches in sqlite db; this will make searching the full history possible and use by external tools very easy.
-
 - [ ] codex: eliminate the markdown links instructions and instead use a heuristic to turn files refs that it outputs into links
 
-- [ ] opening files not in HOME
+- [ ] opening files not in \$HOME
 
 - [ ] #bug chat scroll position jumping -- happens a lot when switching between two rooms
 
@@ -59,7 +45,7 @@ It's a little tricky.  Can you look into it?
 
 - [ ] launchpad: ssh to project via cloudflare tunnels and WARP, and/or just expose the ip of the server.
 
-- [ ] codex: ui -- the headers in the thinking log get smooshed together still
+- [ ] codex: ui -- the markdown headers in the thinking log get smooshed together still
 
 - [ ] codex: memory leak when using codex chat for a long time
 

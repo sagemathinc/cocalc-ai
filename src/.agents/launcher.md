@@ -117,3 +117,17 @@ This solves the split between “New file” and “Servers”.
 - **Keep changes incremental**; Phase 1 can ship without storage changes.
 - **App Servers** should be first‑class but still open in new tab as today.
 - **AI** should not block normal creation—always keep manual path obvious.
+
+## App Launcher Thoughts
+
+As follow up for app install flow, right now this file defines how apps run:
+
+`build/cocalc-lite/src/packages/project/named-servers/list.ts` 
+
+We could do the following:
+
+- move it to cocalc/src/packages/util/apps/ so it can be imported by @cocalc/frontend and @cocalc/project
+- specify additional directions about how to install each app on linux or macos; if the install instructions are given, then we offer.  If they aren't provided and the app isn't installed, then we tell user "not installed; please install".
+- I always wanted to make this extensible by users -- i.e., add your own app.    This requires them providing a spec to run it, and figure out how to use a base_url... or we setup an ssh port forward.   Often cocalc is also just running locally on the user's computer, and then no forward or base_url is actually needed, since they just open the app on localhost.
+
+It's not thought through.

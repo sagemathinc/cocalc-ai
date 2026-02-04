@@ -12,6 +12,7 @@ import {
   ProjectActions,
   redux,
   useActions,
+  useRedux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import {
@@ -31,6 +32,8 @@ import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activit
 import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
 import { filename_extension, is_only_downloadable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
+import type { NamedServerName } from "@cocalc/util/types/servers";
 import { PathNavigator } from "../explorer/path-navigator";
 import { ProjectServerTiles } from "../servers/server-tiles";
 import { useAvailableFeatures } from "../use-available-features";
@@ -39,6 +42,17 @@ import { NewFileDropdown } from "./new-file-dropdown";
 import { NewFileButton } from "./new-file-button";
 import { AIGenerateDocumentModal } from "../page/home-page/ai-generate-document";
 import { Ext } from "../page/home-page/ai-generate-examples";
+import {
+  APP_CATALOG,
+  QUICK_CREATE_MAP,
+} from "./launcher-catalog";
+import {
+  LAUNCHER_SETTINGS_KEY,
+  getProjectLauncherDefaults,
+  getUserLauncherPrefs,
+  mergeLauncherSettings,
+} from "./launcher-preferences";
+import { LauncherCustomizeModal } from "./launcher-customize-modal";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -74,6 +88,27 @@ export default function NewFilePage(props: Props) {
   const { project_id } = props;
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
+  const student_project_functionality =
+    useStudentProjectFunctionality(project_id);
+  const other_settings = useTypedRedux("account", "other_settings");
+  const account_id = useTypedRedux("account", "account_id");
+  const is_admin = useTypedRedux("account", "is_admin");
+  const project_settings = useRedux([
+    "projects",
+    "project_map",
+    project_id,
+    "settings",
+  ]);
+  const user_group = useRedux([
+    "projects",
+    "project_map",
+    project_id,
+    "users",
+    account_id,
+    "group",
+  ]);
+  const can_edit_project_defaults =
+    !!is_admin || user_group === "owner";
   const [extensionWarning, setExtensionWarning] = useState<boolean>(false);
   const current_path = useTypedRedux({ project_id }, "current_path");
   const filename0 = useTypedRedux({ project_id }, "default_filename");
@@ -84,6 +119,8 @@ export default function NewFilePage(props: Props) {
   const [aiPrompt, setAiPrompt] = useState<string>("");
   const [aiExt, setAiExt] = useState<Ext>("ipynb");
   const [showAiModal, setShowAiModal] = useState<boolean>(false);
+  const [showCustomizeModal, setShowCustomizeModal] =
+    useState<boolean>(false);
   const file_creation_error = useTypedRedux(
     { project_id },
     "file_creation_error",
@@ -92,9 +129,76 @@ export default function NewFilePage(props: Props) {
     return <Loading theme="medium" />;
   }
 
+  const projectLauncherDefaults = getProjectLauncherDefaults(
+    project_settings?.get?.(LAUNCHER_SETTINGS_KEY),
+  );
+  const userLauncherPrefs = getUserLauncherPrefs(
+    other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
+  );
+  const mergedLauncher = mergeLauncherSettings({
+    projectDefaults: projectLauncherDefaults,
+    userPrefs: userLauncherPrefs,
+  });
+
+  function isQuickCreateAvailable(id: string): boolean {
+    switch (id) {
+      case "ipynb":
+        return availableFeatures.jupyter_notebook;
+      case "sage":
+        return availableFeatures.sage;
+      case "tex":
+        return availableFeatures.latex;
+      case "qmd":
+        return availableFeatures.qmd;
+      case "rmd":
+        return availableFeatures.rmd;
+      default:
+        return true;
+    }
+  }
+
+  function isAppVisible(id: NamedServerName): boolean {
+    switch (id) {
+      case "jupyterlab":
+        return !student_project_functionality.disableJupyterLabServer;
+      case "jupyter":
+        return !student_project_functionality.disableJupyterClassicServer;
+      case "code":
+        return !student_project_functionality.disableVSCodeServer;
+      case "pluto":
+        return !student_project_functionality.disablePlutoServer;
+      case "rserver":
+        return !student_project_functionality.disableRServer;
+      default:
+        return true;
+    }
+  }
+
+  const quickCreateIds = mergedLauncher.quickCreate.filter(isQuickCreateAvailable);
+  const quickCreateSpecs = quickCreateIds
+    .map((id) => QUICK_CREATE_MAP[id])
+    .filter(Boolean);
+
+  const appIds = mergedLauncher.apps.filter(
+    (id) => APP_CATALOG.find((app) => app.id === id) != null,
+  ) as NamedServerName[];
+  const visibleApps = appIds.filter(isAppVisible);
+
   function getActions(): ProjectActions {
     if (actions == null) throw new Error("bug");
     return actions;
+  }
+
+  function saveUserLauncherPrefs(prefs: any | null) {
+    redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, prefs);
+  }
+
+  async function saveProjectLauncherDefaults(prefs: any) {
+    await redux
+      .getActions("projects")
+      .set_project_settings(project_id, {
+        [LAUNCHER_SETTINGS_KEY]: prefs,
+      });
   }
 
   const [creatingFile, setCreatingFile] = useState<string>("");
@@ -469,7 +573,19 @@ export default function NewFilePage(props: Props) {
             initialPrompt={aiPrompt}
           />
 
-          <h3 style={{ marginTop: "25px" }}>Quick Create</h3>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginTop: "25px",
+            }}
+          >
+            <h3 style={{ margin: 0 }}>Quick Create</h3>
+            <Button size="small" onClick={() => setShowCustomizeModal(true)}>
+              Customize
+            </Button>
+          </div>
           <Paragraph
             style={{
               color: COLORS.GRAY_M,
@@ -477,41 +593,20 @@ export default function NewFilePage(props: Props) {
               marginBottom: "10px",
             }}
           >
-            Create the most common files instantly. You can customize this later.
+            Create the most common files instantly. Uses the filename below.
           </Paragraph>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-            {availableFeatures.jupyter_notebook && (
+            {quickCreateSpecs.map((spec) => (
               <NewFileButton
-                name="Notebook"
-                ext="ipynb"
+                key={spec.id}
+                name={spec.label}
+                ext={spec.ext}
                 size="small"
                 mode="secondary"
+                icon={spec.icon}
                 on_click={quickCreate}
               />
-            )}
-            <NewFileButton
-              name="Markdown"
-              ext="md"
-              size="small"
-              mode="secondary"
-              on_click={quickCreate}
-            />
-            {availableFeatures.latex && (
-              <NewFileButton
-                name="LaTeX"
-                ext="tex"
-                size="small"
-                mode="secondary"
-                on_click={quickCreate}
-              />
-            )}
-            <NewFileButton
-              name="Terminal"
-              ext="term"
-              size="small"
-              mode="secondary"
-              on_click={quickCreate}
-            />
+            ))}
           </div>
 
           <Paragraph
@@ -610,10 +705,19 @@ export default function NewFilePage(props: Props) {
             Code, Pluto, R IDE, and more). They run in the same environment and
             can access your files.
           </Paragraph>
-          <ProjectServerTiles />
+          <ProjectServerTiles visibleApps={visibleApps} />
         </Col>
       </Row>
       {renderUpload()}
+      <LauncherCustomizeModal
+        open={showCustomizeModal}
+        onClose={() => setShowCustomizeModal(false)}
+        initialQuickCreate={mergedLauncher.quickCreate}
+        initialApps={mergedLauncher.apps as NamedServerName[]}
+        onSaveUser={saveUserLauncherPrefs}
+        onSaveProject={saveProjectLauncherDefaults}
+        canEditProjectDefaults={can_edit_project_defaults}
+      />
     </SettingBox>
   );
 }
