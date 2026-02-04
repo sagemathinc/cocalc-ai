@@ -1,6 +1,7 @@
 import {
   Alert,
   Button,
+  Card,
   Collapse,
   Divider,
   Form,
@@ -670,6 +671,8 @@ export const SshPage: React.FC = React.memo(() => {
 
   const expandedRowRender = (row: SshSessionRow) => {
     const state = ensureReflectState(row.target);
+    const hasSessions = state.sessions.length > 0;
+    const hasForwards = state.forwards.length > 0;
     const forwardColumns: ColumnsType<ReflectForwardRow> = [
       {
         title: "Local",
@@ -714,13 +717,6 @@ export const SshPage: React.FC = React.memo(() => {
           </Typography.Title>
           <Button
             size="small"
-            onClick={() => loadReflectForTarget(row.target)}
-            loading={state.loading}
-          >
-            Refresh
-          </Button>
-          <Button
-            size="small"
             onClick={() => {
               setReflectModalTarget(row.target);
               setReflectModalOpen(true);
@@ -728,9 +724,20 @@ export const SshPage: React.FC = React.memo(() => {
           >
             New Sync
           </Button>
-          <Button size="small" onClick={loadDaemonLogs}>
-            Logs
-          </Button>
+          {hasSessions ? (
+            <>
+              <Button
+                size="small"
+                onClick={() => loadReflectForTarget(row.target)}
+                loading={state.loading}
+              >
+                Refresh
+              </Button>
+              <Button size="small" onClick={loadDaemonLogs}>
+                Logs
+              </Button>
+            </>
+          ) : null}
         </Space>
         {state.error ? (
           <Alert
@@ -739,15 +746,17 @@ export const SshPage: React.FC = React.memo(() => {
             message="Reflect Sync unavailable"
             description={state.error}
           />
-        ) : (
-          <Table
-            rowKey={(r) => r.id}
-            columns={reflectSessionColumns}
-            dataSource={state.sessions}
-            pagination={false}
-            size="small"
-          />
-        )}
+        ) : hasSessions ? (
+          <Card size="small" style={{ marginBottom: 16 }}>
+            <Table
+              rowKey={(r) => r.id}
+              columns={reflectSessionColumns}
+              dataSource={state.sessions}
+              pagination={false}
+              size="small"
+            />
+          </Card>
+        ) : null}
         <Divider style={{ margin: "16px 0" }} />
         <Space style={{ marginBottom: 8 }} size={12} align="center">
           <Typography.Title level={5} style={{ margin: 0 }}>
@@ -763,13 +772,17 @@ export const SshPage: React.FC = React.memo(() => {
             New Forward
           </Button>
         </Space>
-        <Table
-          rowKey={(r) => r.id}
-          columns={forwardColumns}
-          dataSource={state.forwards}
-          pagination={false}
-          size="small"
-        />
+        {hasForwards ? (
+          <Card size="small">
+            <Table
+              rowKey={(r) => r.id}
+              columns={forwardColumns}
+              dataSource={state.forwards}
+              pagination={false}
+              size="small"
+            />
+          </Card>
+        ) : null}
       </div>
     );
   };
