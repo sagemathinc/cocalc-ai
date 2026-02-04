@@ -49,6 +49,7 @@ import {
 } from "@cocalc/jupyter/util/misc";
 import { isSha1, sha1 } from "@cocalc/util/misc";
 import { shouldUseIframe } from "@cocalc/jupyter/util/iframe";
+import { join } from "path";
 
 const { close, required, defaults } = misc;
 
@@ -141,7 +142,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   protected blobStoreOptions = () => {
     return {
-      name: `jupyter:${this.path}`,
+      name: join("jupyter", this.path),
       project_id: this.project_id,
       config: {
         max_bytes: MAX_BLOB_STORE_SIZE,
@@ -572,9 +573,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
               obj.backend_kernel_info = undefined;
             }
             this.setState(obj);
-            if (
-              !this.is_project && orig_kernel !== kernel
-            ) {
+            if (!this.is_project && orig_kernel !== kernel) {
               this.set_cm_options();
             }
 

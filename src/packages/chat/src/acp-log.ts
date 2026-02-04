@@ -1,4 +1,4 @@
-import sha1 from "sha1";
+import { join } from "path";
 
 /**
  * Canonical identifiers for persisting and streaming ACP/Codex activity logs.
@@ -27,10 +27,13 @@ export type AcpLogRefs = Readonly<{
   subject: string;
 }>;
 
-export function deriveAcpLogStoreName(project_id: string, path: string): string {
+export function deriveAcpLogStoreName(
+  _project_id: string,
+  path: string,
+): string {
   // Historically we used sha1(project_id, path) via client_db.sha1, which for
   // string inputs is equivalent to sha1(project_id + path).
-  return `acp-log:${sha1(`${project_id}${path}`)}`;
+  return join("acp-log", path);
 }
 
 export function deriveAcpLogRefs(opts: {
