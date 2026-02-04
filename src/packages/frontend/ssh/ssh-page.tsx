@@ -396,6 +396,20 @@ export const SshPage: React.FC = React.memo(() => {
     }
   };
 
+  const handleTerminateSession = async (target: string, id: number) => {
+    try {
+      await webapp_client.conat_client.hub.reflect.terminateSessionUI({
+        idOrName: String(id),
+      });
+      await loadReflectForTarget(target);
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
   const formatReflectLogs = (rows: ReflectLogRow[]) => {
     return rows
       .map((row) => {
@@ -634,61 +648,78 @@ export const SshPage: React.FC = React.memo(() => {
     [rows, reflectByTarget],
   );
 
-  const reflectSessionColumns = useMemo<ColumnsType<ReflectSessionRow>>(
-    () => [
-      {
-        title: "Local Path",
-        dataIndex: "alpha_root",
-        key: "alpha_root",
-        render: (val) => <Typography.Text code>{val}</Typography.Text>,
-      },
-      {
-        title: "Remote Path",
-        dataIndex: "beta_root",
-        key: "beta_root",
-        render: (val, row) => (
-          <Typography.Text code>
-            {row.beta_host
-              ? `${row.beta_host}${row.beta_port ? `:${row.beta_port}` : ""}:${val}`
-              : val}
+  const buildReflectSessionColumns = (
+    target: string,
+  ): ColumnsType<ReflectSessionRow> => [
+    {
+      title: "Local Path",
+      dataIndex: "alpha_root",
+      key: "alpha_root",
+      render: (val) => <Typography.Text code>{val}</Typography.Text>,
+    },
+    {
+      title: "Remote Path",
+      dataIndex: "beta_root",
+      key: "beta_root",
+      render: (val, row) => (
+        <Typography.Text code>
+          {row.beta_host
+            ? `${row.beta_host}${row.beta_port ? `:${row.beta_port}` : ""}:${val}`
+            : val}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: "State",
+      key: "state",
+      width: 160,
+      render: (_, row) => (
+        <Space size={6}>
+          {reflectStateTag(row.actual_state)}
+          <Typography.Text type="secondary">
+            {row.desired_state}
           </Typography.Text>
-        ),
-      },
-      {
-        title: "State",
-        key: "state",
-        width: 160,
-        render: (_, row) => (
-          <Space size={6}>
-            {reflectStateTag(row.actual_state)}
-            <Typography.Text type="secondary">
-              {row.desired_state}
-            </Typography.Text>
-          </Space>
-        ),
-      },
-      {
-        title: "Last Sync",
-        key: "last",
-        width: 180,
-        render: (_, row) =>
-          row.last_clean_sync_at
-            ? new Date(row.last_clean_sync_at).toLocaleString()
-            : "-",
-      },
-      {
-        title: "Logs",
-        key: "logs",
-        width: 110,
-        render: (_, row) => (
-          <Button size="small" onClick={() => loadSessionLogs(row)}>
-            Logs
+        </Space>
+      ),
+    },
+    {
+      title: "Last Sync",
+      key: "last",
+      width: 180,
+      render: (_, row) =>
+        row.last_clean_sync_at
+          ? new Date(row.last_clean_sync_at).toLocaleString()
+          : "-",
+    },
+    {
+      title: "Logs",
+      key: "logs",
+      width: 110,
+      render: (_, row) => (
+        <Button size="small" onClick={() => loadSessionLogs(row)}>
+          Logs
+        </Button>
+      ),
+    },
+    {
+      title: "Actions",
+      key: "actions",
+      width: 120,
+      render: (_, row) => (
+        <Popconfirm
+          title="Delete this sync?"
+          description="This will remove the session and its metadata."
+          okText="Delete"
+          cancelText="Cancel"
+          onConfirm={() => handleTerminateSession(target, row.id)}
+        >
+          <Button size="small" danger>
+            Delete
           </Button>
-        ),
-      },
-    ],
-    [],
-  );
+        </Popconfirm>
+      ),
+    },
+  ];
 
   const expandedRowRender = (row: SshSessionRow) => {
     const state = ensureReflectState(row.target);
@@ -786,7 +817,7 @@ export const SshPage: React.FC = React.memo(() => {
           <Card size="small" style={{ marginBottom: 16 }}>
             <Table
               rowKey={(r) => r.id}
-              columns={reflectSessionColumns}
+              columns={buildReflectSessionColumns(row.target)}
               dataSource={state.sessions}
               pagination={false}
               size="small"

@@ -521,6 +521,29 @@ export async function listSessionsUI(opts?: {
   }
 }
 
+export async function terminateSessionUI(opts: {
+  idOrName: string;
+  force?: boolean;
+}): Promise<void> {
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    installExitHook(mod, sessionDb);
+    const row = mod.resolveSessionRow(sessionDb, opts.idOrName);
+    if (!row) {
+      throw new Error(`reflect session '${opts.idOrName}' not found`);
+    }
+    await mod.terminateSession({
+      sessionDb,
+      id: row.id,
+      logger: undefined,
+      force: !!opts.force,
+    });
+  } catch (err: any) {
+    throw new Error(`reflect terminateSessionUI failed: ${err?.message || err}`);
+  }
+}
+
 export async function listForwardsUI(): Promise<ReflectForwardRow[]> {
   try {
     const mod = await loadReflectSync();

@@ -5,6 +5,7 @@ export const reflect = {
   listForwardsUI: requireSignedIn,
   createSessionUI: requireSignedIn,
   createForwardUI: requireSignedIn,
+  terminateSessionUI: requireSignedIn,
   terminateForwardUI: requireSignedIn,
   listSessionLogsUI: requireSignedIn,
   listDaemonLogsUI: requireSignedIn,
@@ -83,6 +84,7 @@ export interface ReflectApi {
     direction?: "remote_to_local" | "local_to_remote";
     name?: string;
   }) => Promise<void>;
+  terminateSessionUI: (opts: { idOrName: string; force?: boolean }) => Promise<void>;
   terminateForwardUI: (opts: { id: number }) => Promise<void>;
   listSessionLogsUI: (opts: {
     idOrName: string;
