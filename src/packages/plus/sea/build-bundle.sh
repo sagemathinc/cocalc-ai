@@ -37,7 +37,8 @@ ncc build packages/plus/dist/bin/start.js \
   -o "$OUT"/bundle \
   --source-map \
   --external bufferutil \
-  --external utf-8-validate
+  --external utf-8-validate \
+  --external reflect-sync
 
 # zeromq expects its build manifest next to the native addon; ncc copies the
 # compiled .node file but not the manifest.json, so copy it manually.
@@ -104,7 +105,57 @@ copy_js_pkg() {
   fi
 }
 
-copy_js_pkg "reflect-sync"
+resolve_js_pkg_dir() {
+  local pkg="$1"
+  local base="$2"
+  node -e "const path=require('path');const {createRequire}=require('module');const r=createRequire(path.join(process.argv[1],'package.json'));const entry=r.resolve(process.argv[2]);console.log(path.dirname(path.dirname(entry)));" "$base" "$pkg" 2>/dev/null || true
+}
+
+copy_js_pkg_tree() {
+  local pkg="$1"
+  local base="$2"
+  local out="$3"
+  node -e '
+const fs = require("fs");
+const path = require("path");
+const { createRequire } = require("module");
+const base = process.argv[1];
+const rootPkg = process.argv[2];
+const req = createRequire(path.join(base, "package.json"));
+const seen = new Set();
+function add(name) {
+  if (seen.has(name)) return;
+  let pkgJsonPath;
+  try {
+    pkgJsonPath = req.resolve(`${name}/package.json`);
+  } catch {
+    return;
+  }
+  seen.add(name);
+  let pkgJson;
+  try {
+    pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+  } catch {
+    pkgJson = {};
+  }
+  const deps = pkgJson.dependencies || {};
+  for (const dep of Object.keys(deps)) add(dep);
+  const dir = path.dirname(pkgJsonPath);
+  process.stdout.write(`${name}\t${dir}\n`);
+}
+add(rootPkg);
+' "$base" "$pkg" | while IFS=$'\t' read -r name dir; do
+    if [ -z "$name" ] || [ -z "$dir" ]; then
+      continue
+    fi
+    dest="$out/bundle/node_modules/$name"
+    mkdir -p "$(dirname "$dest")"
+    rsync -aL "$dir"/ "$dest"/
+  done
+}
+
+echo "- Copy reflect-sync + deps (from @cocalc/plus)"
+copy_js_pkg_tree "reflect-sync" "$ROOT/packages/plus" "$OUT"
 
 echo "- Copy static frontend assets"
 mkdir -p "$OUT"/static

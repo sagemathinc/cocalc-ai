@@ -5,7 +5,7 @@
 - [ ] Robust cleanup: detect dead tunnels/servers and prune stale entries; optional --keep or --ttl.
   - even if dead, the user may want to start them again later when the target is available; user should be able to explicitly kill and remove any server though.
 
-- [ ] login shell config -- make sure that the PATH etc is what user would get when using a login shell. E.g., I  don't have /usr/local/bin/ in the path, which is weird when using cocalc-plus itself.
+- [ ] login shell config: make sure that the PATH etc is what user would get when using a login shell. E.g., I  don't have /usr/local/bin/ in the path, which is weird when using cocalc-plus itself.
 
 - [ ] delete old versions from `~/.cache/cocalc/cocalc-plus/` on upgrade, since it is just a cache and they waste space
 

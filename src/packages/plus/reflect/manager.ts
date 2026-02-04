@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -24,6 +25,10 @@ let reflectSyncPromise: Promise<ReflectSync> | null = null;
 let sessionDbPath: string | null = null;
 const schedulerChildren = new Map<number, ChildProcess>();
 let exitHookInstalled = false;
+const dynamicImport = new Function(
+  "p",
+  "return import(p);",
+) as (p: string) => Promise<any>;
 
 function ensureReflectEnv() {
   if (!process.env.REFLECT_HOME) {
@@ -34,7 +39,9 @@ function ensureReflectEnv() {
 async function loadReflectSync(): Promise<ReflectSync> {
   if (!reflectSyncPromise) {
     ensureReflectEnv();
-    reflectSyncPromise = import("reflect-sync") as Promise<ReflectSync>;
+    const entry = requireCjs.resolve("reflect-sync");
+    const href = pathToFileURL(entry).href;
+    reflectSyncPromise = dynamicImport(href) as Promise<ReflectSync>;
   }
   return reflectSyncPromise;
 }
@@ -316,22 +323,30 @@ export async function listSessionsUI(opts?: {
   selectors?: string[];
   target?: string;
 }): Promise<ReflectSessionRow[]> {
-  const mod = await loadReflectSync();
-  const sessionDb = await ensureSessionDb(mod);
-  installExitHook(mod, sessionDb);
-  const selectors = buildSelectors(opts?.selectors, opts?.target);
-  let rows = mod.selectSessions(sessionDb, selectors) as SessionRow[];
-  await reconcileSessions(mod, sessionDb, rows);
-  rows = mod.selectSessions(sessionDb, selectors) as SessionRow[];
-  return rows.map(mapSessionRow);
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    installExitHook(mod, sessionDb);
+    const selectors = buildSelectors(opts?.selectors, opts?.target);
+    let rows = mod.selectSessions(sessionDb, selectors) as SessionRow[];
+    await reconcileSessions(mod, sessionDb, rows);
+    rows = mod.selectSessions(sessionDb, selectors) as SessionRow[];
+    return rows.map(mapSessionRow);
+  } catch (err: any) {
+    throw new Error(`reflect listSessionsUI failed: ${err?.message || err}`);
+  }
 }
 
 export async function listForwardsUI(): Promise<ReflectForwardRow[]> {
-  const mod = await loadReflectSync();
-  const sessionDb = await ensureSessionDb(mod);
-  installExitHook(mod, sessionDb);
-  const rows = mod.selectForwardSessions(sessionDb) as ForwardRow[];
-  return rows.map(mapForwardRow);
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    installExitHook(mod, sessionDb);
+    const rows = mod.selectForwardSessions(sessionDb) as ForwardRow[];
+    return rows.map(mapForwardRow);
+  } catch (err: any) {
+    throw new Error(`reflect listForwardsUI failed: ${err?.message || err}`);
+  }
 }
 
 export async function createSessionUI(opts: {
@@ -341,30 +356,34 @@ export async function createSessionUI(opts: {
   labels?: string[];
   target?: string;
 }): Promise<void> {
-  const mod = await loadReflectSync();
-  const sessionDb = await ensureSessionDb(mod);
-  installExitHook(mod, sessionDb);
-  const labels = Array.isArray(opts.labels) ? [...opts.labels] : [];
-  if (opts.target) {
-    labels.push(`cocalc-plus-target=${opts.target}`);
-  }
-  const id = await mod.newSession({
-    alphaSpec: opts.alpha,
-    betaSpec: opts.beta,
-    sessionDb,
-    compress: "auto",
-    compressLevel: "",
-    prefer: "alpha",
-    hash: "sha256",
-    label: labels,
-    name: opts.name,
-    ignore: [],
-    logger: undefined,
-  });
-  const row = mod.loadSessionById(sessionDb, id) as SessionRow | null;
-  if (row) {
-    mod.setDesiredState(sessionDb, id, "running");
-    await startSession(mod, sessionDb, row);
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    installExitHook(mod, sessionDb);
+    const labels = Array.isArray(opts.labels) ? [...opts.labels] : [];
+    if (opts.target) {
+      labels.push(`cocalc-plus-target=${opts.target}`);
+    }
+    const id = await mod.newSession({
+      alphaSpec: opts.alpha,
+      betaSpec: opts.beta,
+      sessionDb,
+      compress: "auto",
+      compressLevel: "",
+      prefer: "alpha",
+      hash: "sha256",
+      label: labels,
+      name: opts.name,
+      ignore: [],
+      logger: undefined,
+    });
+    const row = mod.loadSessionById(sessionDb, id) as SessionRow | null;
+    if (row) {
+      mod.setDesiredState(sessionDb, id, "running");
+      await startSession(mod, sessionDb, row);
+    }
+  } catch (err: any) {
+    throw new Error(`reflect createSessionUI failed: ${err?.message || err}`);
   }
 }
 
