@@ -123,14 +123,34 @@ const base = process.argv[1];
 const rootPkg = process.argv[2];
 const req = createRequire(path.join(base, "package.json"));
 const seen = new Set();
+function resolvePackageRoot(name) {
+  try {
+    const pkgJsonPath = req.resolve(`${name}/package.json`);
+    return { pkgJsonPath, dir: path.dirname(pkgJsonPath) };
+  } catch {}
+  let entry;
+  try {
+    entry = req.resolve(name);
+  } catch {
+    return null;
+  }
+  let dir = path.dirname(entry);
+  while (dir && dir !== path.dirname(dir)) {
+    const candidate = path.join(dir, "package.json");
+    if (fs.existsSync(candidate)) {
+      return { pkgJsonPath: candidate, dir };
+    }
+    dir = path.dirname(dir);
+  }
+  return null;
+}
 function add(name) {
   if (seen.has(name)) return;
-  let pkgJsonPath;
-  try {
-    pkgJsonPath = req.resolve(`${name}/package.json`);
-  } catch {
+  const resolved = resolvePackageRoot(name);
+  if (!resolved) {
     return;
   }
+  const { pkgJsonPath, dir } = resolved;
   seen.add(name);
   let pkgJson;
   try {
@@ -140,7 +160,6 @@ function add(name) {
   }
   const deps = pkgJson.dependencies || {};
   for (const dep of Object.keys(deps)) add(dep);
-  const dir = path.dirname(pkgJsonPath);
   process.stdout.write(`${name}\t${dir}\n`);
 }
 add(rootPkg);
