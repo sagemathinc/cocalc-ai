@@ -210,6 +210,9 @@ export const SshPage: React.FC = React.memo(() => {
   const [openingTargets, setOpeningTargets] = useState<Record<string, boolean>>(
     {},
   );
+  const [openingStatus, setOpeningStatus] = useState<Record<string, string>>(
+    {},
+  );
   const [reflectByTarget, setReflectByTarget] = useState<
     Record<string, ReflectTargetState>
   >({});
@@ -390,8 +393,18 @@ export const SshPage: React.FC = React.memo(() => {
 
   const handleOpen = async (target: string) => {
     setOpeningTargets((prev) => ({ ...prev, [target]: true }));
+    setOpeningStatus((prev) => ({
+      ...prev,
+      [target]: "Connecting…",
+    }));
     try {
-      const result = await connectSessionWithRetry(target);
+      const result = await connectSessionWithRetry(target, {
+        onStage: (stage) =>
+          setOpeningStatus((prev) => ({
+            ...prev,
+            [target]: stage,
+          })),
+      });
       if (result?.url) {
         const localUrl =
           typeof window !== "undefined" ? window.location.href : undefined;
@@ -406,6 +419,7 @@ export const SshPage: React.FC = React.memo(() => {
       });
     } finally {
       setOpeningTargets((prev) => ({ ...prev, [target]: false }));
+      setOpeningStatus((prev) => ({ ...prev, [target]: "" }));
     }
   };
 
@@ -488,12 +502,20 @@ export const SshPage: React.FC = React.memo(() => {
     }
   };
 
-  const connectSessionWithRetry = async (target: string) => {
+  const connectSessionWithRetry = async (
+    target: string,
+    opts?: { onStage?: (stage: string) => void },
+  ) => {
     const localUrl =
       typeof window !== "undefined" ? window.location.href : undefined;
     let result;
     for (let attempt = 1; attempt <= REMOTE_READY_ATTEMPTS; attempt += 1) {
       try {
+        const stage =
+          attempt === 1
+            ? "Connecting…"
+            : `Waiting for server (${attempt}/${REMOTE_READY_ATTEMPTS})…`;
+        opts?.onStage?.(stage);
         result = await webapp_client.conat_client.hub.ssh.connectSessionUI({
           target,
           options: {
@@ -536,8 +558,18 @@ export const SshPage: React.FC = React.memo(() => {
 
   const openRemotePath = async (target: string, path: string) => {
     setOpeningTargets((prev) => ({ ...prev, [target]: true }));
+    setOpeningStatus((prev) => ({
+      ...prev,
+      [target]: "Connecting…",
+    }));
     try {
-      const result = await connectSessionWithRetry(target);
+      const result = await connectSessionWithRetry(target, {
+        onStage: (stage) =>
+          setOpeningStatus((prev) => ({
+            ...prev,
+            [target]: stage,
+          })),
+      });
       if (!result?.url) return;
       const localUrl =
         typeof window !== "undefined" ? window.location.href : undefined;
@@ -559,6 +591,7 @@ export const SshPage: React.FC = React.memo(() => {
       });
     } finally {
       setOpeningTargets((prev) => ({ ...prev, [target]: false }));
+      setOpeningStatus((prev) => ({ ...prev, [target]: "" }));
     }
   };
 
@@ -936,7 +969,9 @@ export const SshPage: React.FC = React.memo(() => {
             return (
               <Space size={6}>
                 <Spin size="small" />
-                <Typography.Text type="secondary">starting…</Typography.Text>
+                <Typography.Text type="secondary">
+                  {openingStatus[row.target] || "Starting…"}
+                </Typography.Text>
               </Space>
             );
           }
@@ -998,7 +1033,7 @@ export const SshPage: React.FC = React.memo(() => {
         },
       },
     ],
-    [rows, reflectByTarget, openingTargets],
+    [rows, reflectByTarget, openingTargets, openingStatus],
   );
 
   const buildReflectSessionColumns = (
