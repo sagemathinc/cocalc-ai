@@ -82,6 +82,49 @@ function deserializeIgnoreRules(raw?: string | null): string[] {
   }
 }
 
+function parseTarget(target: string): { host: string; port?: number | null } {
+  const trimmed = target.trim();
+  const match = /^(?:(?<user>[^@]+)@)?(?<host>[^:]+)(?::(?<port>\d+))?$/.exec(
+    trimmed,
+  );
+  if (!match) {
+    throw new Error(`Invalid SSH target: ${target}`);
+  }
+  const user = match.groups?.user;
+  const hostPart = match.groups?.host?.trim() ?? "";
+  const port = match.groups?.port ? Number(match.groups.port) : undefined;
+  if (port != null && (!Number.isInteger(port) || port <= 0 || port > 65535)) {
+    throw new Error(`Invalid SSH port in target: ${target}`);
+  }
+  return {
+    host: user ? `${user}@${hostPart}` : hostPart,
+    port: port ?? null,
+  };
+}
+
+function normalizeLocalPath(input: string): string {
+  const resolved = path.resolve(input);
+  return resolved.replace(/\/+$/, "") || "/";
+}
+
+function isNestedPath(a: string, b: string): boolean {
+  if (a === b) return true;
+  return a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+
+function readGitignore(localPath: string): string[] {
+  try {
+    const gitignorePath = path.join(localPath, ".gitignore");
+    const raw = fs.readFileSync(gitignorePath, "utf8");
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+  } catch {
+    return [];
+  }
+}
+
 function parseLogMeta(meta: any) {
   if (!meta) return null;
   if (typeof meta === "object") return meta;
@@ -251,7 +294,11 @@ async function startSession(
     child.stderr.on("data", (buf) => {
       const text = String(buf).trim();
       if (text) {
-        logWriter?.log("error", text);
+        const level =
+          text.includes(" ℹ️ ") || text.includes(" [scheduler.")
+            ? "info"
+            : "error";
+        logWriter?.log(level, text);
       }
     });
   }
@@ -451,31 +498,67 @@ export async function listForwardsUI(): Promise<ReflectForwardRow[]> {
 }
 
 export async function createSessionUI(opts: {
-  alpha: string;
-  beta: string;
+  alpha?: string;
+  beta?: string;
+  localPath?: string;
+  remotePath?: string;
   name?: string;
   labels?: string[];
+  prefer?: "alpha" | "beta";
+  ignore?: string[];
+  useGitignore?: boolean;
   target?: string;
 }): Promise<void> {
   try {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
     installExitHook(mod, sessionDb);
+    const localPath = opts.localPath ?? opts.alpha;
+    const remotePath = opts.remotePath ?? opts.beta;
+    if (!localPath) {
+      throw new Error("Missing local path");
+    }
+    if (!path.isAbsolute(localPath)) {
+      throw new Error("Local path must be absolute");
+    }
     const labels = Array.isArray(opts.labels) ? [...opts.labels] : [];
     if (opts.target) {
       labels.push(`cocalc-plus-target=${opts.target}`);
     }
+    const normalizedLocal = normalizeLocalPath(localPath);
+    const existing = mod.selectSessions(
+      sessionDb,
+      buildSelectors([], opts.target),
+    ) as SessionRow[];
+    for (const row of existing) {
+      const other = normalizeLocalPath(row.alpha_root);
+      if (isNestedPath(normalizedLocal, other)) {
+        throw new Error(
+          `Local path overlaps existing sync: ${row.alpha_root}`,
+        );
+      }
+    }
+    const ignoreRules = [
+      ...(opts.useGitignore ? readGitignore(normalizedLocal) : []),
+      ...(opts.ignore ?? []),
+    ].filter((entry) => entry && entry.trim());
+    let betaSpec = remotePath ?? normalizedLocal;
+    if (opts.target) {
+      const { host, port } = parseTarget(opts.target);
+      const hostSpec = `${host}${port ? `:${port}` : ""}`;
+      betaSpec = `${hostSpec}:${betaSpec}`;
+    }
     const id = await mod.newSession({
-      alphaSpec: opts.alpha,
-      betaSpec: opts.beta,
+      alphaSpec: normalizedLocal,
+      betaSpec,
       sessionDb,
       compress: "auto",
       compressLevel: "",
-      prefer: "alpha",
+      prefer: opts.prefer ?? "alpha",
       hash: "sha256",
       label: labels,
       name: opts.name,
-      ignore: [],
+      ignore: ignoreRules,
       logger: undefined,
     });
     const row = mod.loadSessionById(sessionDb, id) as SessionRow | null;
@@ -485,6 +568,52 @@ export async function createSessionUI(opts: {
     }
   } catch (err: any) {
     throw new Error(`reflect createSessionUI failed: ${err?.message || err}`);
+  }
+}
+
+export async function createForwardUI(opts: {
+  target: string;
+  localPort: number;
+  remotePort?: number;
+  direction?: "remote_to_local" | "local_to_remote";
+  name?: string;
+}): Promise<void> {
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    installExitHook(mod, sessionDb);
+    const { host, port } = parseTarget(opts.target);
+    const remotePort = opts.remotePort ?? opts.localPort;
+    const remoteSpec = `${host}${port ? `:${port}` : ""}:${remotePort}`;
+    const localSpec = `127.0.0.1:${opts.localPort}`;
+    const direction = opts.direction ?? "remote_to_local";
+    const left =
+      direction === "remote_to_local" ? remoteSpec : localSpec;
+    const right =
+      direction === "remote_to_local" ? localSpec : remoteSpec;
+    await mod.createForward({
+      sessionDb,
+      name: opts.name,
+      left,
+      right,
+      compress: false,
+      logger: undefined,
+    });
+  } catch (err: any) {
+    throw new Error(`reflect createForwardUI failed: ${err?.message || err}`);
+  }
+}
+
+export async function terminateForwardUI(opts: {
+  id: number;
+}): Promise<void> {
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    installExitHook(mod, sessionDb);
+    mod.terminateForward(sessionDb, opts.id, undefined);
+  } catch (err: any) {
+    throw new Error(`reflect terminateForwardUI failed: ${err?.message || err}`);
   }
 }
 

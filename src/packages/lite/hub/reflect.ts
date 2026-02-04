@@ -39,6 +39,14 @@ export const reflect: ReflectApi = {
     const mod = await loadUi();
     return mod.createSessionUI(opts);
   },
+  createForwardUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.createForwardUI(opts);
+  },
+  terminateForwardUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.terminateForwardUI(opts);
+  },
   listSessionLogsUI: async (opts) => {
     const mod = await loadUi();
     return mod.listSessionLogsUI(opts);

@@ -4,6 +4,8 @@ export const reflect = {
   listSessionsUI: requireSignedIn,
   listForwardsUI: requireSignedIn,
   createSessionUI: requireSignedIn,
+  createForwardUI: requireSignedIn,
+  terminateForwardUI: requireSignedIn,
   listSessionLogsUI: requireSignedIn,
   listDaemonLogsUI: requireSignedIn,
 };
@@ -63,12 +65,25 @@ export interface ReflectApi {
   }) => Promise<ReflectSessionRow[]>;
   listForwardsUI: () => Promise<ReflectForwardRow[]>;
   createSessionUI: (opts: {
-    alpha: string;
-    beta: string;
+    alpha?: string;
+    beta?: string;
+    localPath?: string;
+    remotePath?: string;
     name?: string;
     labels?: string[];
+    prefer?: "alpha" | "beta";
+    ignore?: string[];
+    useGitignore?: boolean;
     target?: string;
   }) => Promise<void>;
+  createForwardUI: (opts: {
+    target: string;
+    localPort: number;
+    remotePort?: number;
+    direction?: "remote_to_local" | "local_to_remote";
+    name?: string;
+  }) => Promise<void>;
+  terminateForwardUI: (opts: { id: number }) => Promise<void>;
   listSessionLogsUI: (opts: {
     idOrName: string;
     limit?: number;

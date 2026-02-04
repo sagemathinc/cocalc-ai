@@ -1,5 +1,7 @@
 export {
   createSessionUI,
+  createForwardUI,
+  terminateForwardUI,
   listForwardsUI,
   listSessionsUI,
   listSessionLogsUI,
