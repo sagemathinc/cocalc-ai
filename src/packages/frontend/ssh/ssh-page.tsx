@@ -47,6 +47,7 @@ const PAGE_STYLE: CSS = {
 
 const REMOTE_READY_ATTEMPTS = 8;
 const REMOTE_READY_TIMEOUT_MS = 7000;
+const STATUS_CONCURRENCY = 3;
 
 const TITLE_STYLE: CSS = {
   marginBottom: "12px",
@@ -213,6 +214,9 @@ export const SshPage: React.FC = React.memo(() => {
   const [openingStatus, setOpeningStatus] = useState<Record<string, string>>(
     {},
   );
+  const [statusLoadingTargets, setStatusLoadingTargets] = useState<
+    Record<string, boolean>
+  >({});
   const [reflectByTarget, setReflectByTarget] = useState<
     Record<string, ReflectTargetState>
   >({});
@@ -326,7 +330,10 @@ export const SshPage: React.FC = React.memo(() => {
     );
   };
 
-  const loadSessions = async (opts?: { background?: boolean }) => {
+  const loadSessions = async (opts?: {
+    background?: boolean;
+    refreshStatus?: boolean;
+  }) => {
     const background = opts?.background ?? rows.length > 0;
     if (background) {
       setRefreshing(true);
@@ -335,9 +342,13 @@ export const SshPage: React.FC = React.memo(() => {
     }
     try {
       const data = await webapp_client.conat_client.hub.ssh.listSessionsUI({
-        withStatus: true,
+        withStatus: false,
       });
-      setRows(data || []);
+      const nextRows = data || [];
+      setRows(nextRows);
+      if (opts?.refreshStatus ?? true) {
+        void refreshSessionStatus(nextRows.map((row) => row.target));
+      }
     } catch (err: any) {
       alert_message({
         type: "error",
@@ -545,6 +556,46 @@ export const SshPage: React.FC = React.memo(() => {
       }
     }
     return result;
+  };
+
+  const refreshSessionStatus = async (targets: string[]) => {
+    const queue = targets.filter(Boolean);
+    const runOne = async (): Promise<void> => {
+      const target = queue.shift();
+      if (!target) return;
+      setStatusLoadingTargets((prev) => ({ ...prev, [target]: true }));
+      try {
+        const status =
+          await webapp_client.conat_client.hub.ssh.statusSessionUI({
+            target,
+          });
+        setRows((prev) =>
+          prev.map((row) =>
+            row.target === target ? { ...row, status } : row,
+          ),
+        );
+      } catch {
+        setRows((prev) =>
+          prev.map((row) =>
+            row.target === target
+              ? { ...row, status: row.status ?? "unreachable" }
+              : row,
+          ),
+        );
+      } finally {
+        setStatusLoadingTargets((prev) => {
+          const next = { ...prev };
+          delete next[target];
+          return next;
+        });
+        await runOne();
+      }
+    };
+    const runners = Array.from(
+      { length: Math.min(STATUS_CONCURRENCY, queue.length) },
+      () => runOne(),
+    );
+    await Promise.all(runners);
   };
 
   const openLocalPath = (path: string) => {
@@ -975,6 +1026,14 @@ export const SshPage: React.FC = React.memo(() => {
               </Space>
             );
           }
+          if (statusLoadingTargets[row.target]) {
+            return (
+              <Space size={6}>
+                <Spin size="small" />
+                <Typography.Text type="secondary">checking…</Typography.Text>
+              </Space>
+            );
+          }
           return statusTag(row.status);
         },
       },
@@ -1033,7 +1092,7 @@ export const SshPage: React.FC = React.memo(() => {
         },
       },
     ],
-    [rows, reflectByTarget, openingTargets, openingStatus],
+    [rows, reflectByTarget, openingTargets, openingStatus, statusLoadingTargets],
   );
 
   const buildReflectSessionColumns = (
