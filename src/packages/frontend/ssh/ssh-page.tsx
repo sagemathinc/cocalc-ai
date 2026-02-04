@@ -140,24 +140,6 @@ function parseIgnoreRules(raw?: string | null) {
   return extractIgnoreRules(raw);
 }
 
-async function waitForUrlReady(
-  url: string,
-  timeoutMs = 20000,
-  intervalMs = 500,
-): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      await fetch(url, { mode: "no-cors", cache: "no-store" });
-      return true;
-    } catch {
-      // ignore and retry
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  return false;
-}
-
 export const SshPage: React.FC = React.memo(() => {
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
   const [rows, setRows] = useState<SshSessionRow[]>([]);
@@ -322,18 +304,9 @@ export const SshPage: React.FC = React.memo(() => {
         typeof window !== "undefined" ? window.location.href : undefined;
       const result = await webapp_client.conat_client.hub.ssh.connectSessionUI({
         target,
-        options: { noOpen: true, localUrl },
+        options: { noOpen: true, localUrl, waitForReady: true },
       });
       if (result?.url) {
-        const ready = await waitForUrlReady(result.url);
-        if (!ready) {
-          alert_message({
-            type: "warning",
-            message:
-              "Remote server is still starting. Please try again in a moment.",
-          });
-          return;
-        }
         const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
         window.open(
           result.url,

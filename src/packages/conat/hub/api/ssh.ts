@@ -40,6 +40,8 @@ export interface Ssh {
       logLevel?: string;
       sshArg?: string[];
       localUrl?: string;
+      waitForReady?: boolean;
+      readyTimeoutMs?: number;
     };
   }) => Promise<ConnectUiResult>;
   addSessionUI: (opts: { target: string }) => Promise<void>;

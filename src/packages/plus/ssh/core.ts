@@ -1,6 +1,8 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 
@@ -48,6 +50,8 @@ export type ConnectOptions = {
   logLevel?: string;
   sshArg?: string[];
   localUrl?: string;
+  waitForReady?: boolean;
+  readyTimeoutMs?: number;
 };
 
 export type ConnectResult = {
@@ -199,6 +203,42 @@ export function sshExec(opts: SshOptions, cmd: string, inherit = false): string 
     throw new Error(`ssh failed: ${stderr || res.status}`);
   }
   return (res.stdout || "").toString().trim();
+}
+
+async function waitForLocalUrl(
+  url: string,
+  timeoutMs = 8000,
+  intervalMs = 250,
+): Promise<boolean> {
+  const parsed = new URL(url);
+  const client = parsed.protocol === "https:" ? https : http;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ok = await new Promise<boolean>((resolve) => {
+      const req = client.request(
+        {
+          method: "GET",
+          hostname: parsed.hostname,
+          port: parsed.port,
+          path: parsed.pathname + parsed.search,
+          timeout: 2000,
+        },
+        (res) => {
+          res.resume();
+          resolve(true);
+        },
+      );
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+      req.on("error", () => resolve(false));
+      req.end();
+    });
+    if (ok) return true;
+    await sleep(intervalMs);
+  }
+  return false;
 }
 
 export type ProbeResult = {
@@ -505,6 +545,16 @@ export async function connectSession(
   }
 
   const tunnel = spawn("ssh", tunnelArgs, { stdio: "inherit" });
+  if (options.waitForReady) {
+    const ready = await waitForLocalUrl(
+      url,
+      options.readyTimeoutMs ?? 8000,
+    );
+    if (!ready) {
+      tunnel.kill();
+      throw new Error("Remote server did not respond in time");
+    }
+  }
   return {
     url,
     localPort,
