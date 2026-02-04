@@ -109,6 +109,28 @@ function formatForwardRemote(fwd: ReflectForwardRow, target?: string) {
   return endpoint;
 }
 
+function normalizeSyncPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return "";
+  if (trimmed === "~") return "";
+  if (trimmed.startsWith("~/")) {
+    return trimmed.slice(2);
+  }
+  const homeMatch = /^(\/(?:home|Users)\/[^/]+)(?:\/(.*))?$/.exec(trimmed);
+  if (homeMatch) {
+    return homeMatch[2] ?? "";
+  }
+  return trimmed.replace(/^\/+/, "");
+}
+
+function encodePathSegments(path: string): string {
+  return path
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 function parseSshTarget(target: string): { host: string; port: number | null } {
   const trimmed = target.trim();
   const match = /^(?:(?<user>[^@]+)@)?(?<host>[^:]+)(?::(?<port>\d+))?$/.exec(
@@ -183,6 +205,7 @@ export const SshPage: React.FC = React.memo(() => {
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
   const [rows, setRows] = useState<SshSessionRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [reflectByTarget, setReflectByTarget] = useState<
     Record<string, ReflectTargetState>
   >({});
@@ -296,8 +319,13 @@ export const SshPage: React.FC = React.memo(() => {
     );
   };
 
-  const loadSessions = async () => {
-    setLoading(true);
+  const loadSessions = async (opts?: { background?: boolean }) => {
+    const background = opts?.background ?? rows.length > 0;
+    if (background) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const data = await webapp_client.conat_client.hub.ssh.listSessionsUI({
         withStatus: true,
@@ -309,7 +337,11 @@ export const SshPage: React.FC = React.memo(() => {
         message: err?.message || String(err),
       });
     } finally {
-      setLoading(false);
+      if (background) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -353,53 +385,20 @@ export const SshPage: React.FC = React.memo(() => {
   };
 
   const handleOpen = async (target: string) => {
-    setLoading(true);
     try {
-      const localUrl =
-        typeof window !== "undefined" ? window.location.href : undefined;
-      let result;
-      for (let attempt = 1; attempt <= REMOTE_READY_ATTEMPTS; attempt += 1) {
-        try {
-          result = await webapp_client.conat_client.hub.ssh.connectSessionUI({
-            target,
-            options: {
-              noOpen: true,
-              localUrl,
-              waitForReady: true,
-              readyTimeoutMs: REMOTE_READY_TIMEOUT_MS,
-            },
-          });
-          break;
-        } catch (err: any) {
-          const message = err?.message || String(err);
-          if (
-            message.includes("Remote server did not respond in time") &&
-            attempt < REMOTE_READY_ATTEMPTS
-          ) {
-            if (attempt === 1) {
-              alert_message({
-                type: "info",
-                message: "Remote server is still starting — retrying...",
-              });
-            }
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            continue;
-          }
-          throw err;
-        }
-      }
+      const result = await connectSessionWithRetry(target);
       if (result?.url) {
+        const localUrl =
+          typeof window !== "undefined" ? window.location.href : undefined;
         const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
         window.open(result.url, windowName ?? "_blank", "noopener");
       }
-      await loadSessions();
+      await loadSessions({ background: true });
     } catch (err: any) {
       alert_message({
         type: "error",
         message: err?.message || String(err),
       });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -423,22 +422,18 @@ export const SshPage: React.FC = React.memo(() => {
   };
 
   const handleStop = async (target: string) => {
-    setLoading(true);
     try {
       await webapp_client.conat_client.hub.ssh.stopSessionUI({ target });
-      await loadSessions();
+      await loadSessions({ background: true });
     } catch (err: any) {
       alert_message({
         type: "error",
         message: err?.message || String(err),
       });
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleDeleteTarget = async (target: string) => {
-    setLoading(true);
     try {
       try {
         const [sessions, forwards] = await Promise.all([
@@ -477,14 +472,83 @@ export const SshPage: React.FC = React.memo(() => {
         });
       }
       await webapp_client.conat_client.hub.ssh.deleteSessionUI({ target });
-      await loadSessions();
+      await loadSessions({ background: true });
     } catch (err: any) {
       alert_message({
         type: "error",
         message: err?.message || String(err),
       });
-    } finally {
-      setLoading(false);
+    }
+  };
+
+  const connectSessionWithRetry = async (target: string) => {
+    const localUrl =
+      typeof window !== "undefined" ? window.location.href : undefined;
+    let result;
+    for (let attempt = 1; attempt <= REMOTE_READY_ATTEMPTS; attempt += 1) {
+      try {
+        result = await webapp_client.conat_client.hub.ssh.connectSessionUI({
+          target,
+          options: {
+            noOpen: true,
+            localUrl,
+            waitForReady: true,
+            readyTimeoutMs: REMOTE_READY_TIMEOUT_MS,
+          },
+        });
+        break;
+      } catch (err: any) {
+        const message = err?.message || String(err);
+        if (
+          message.includes("Remote server did not respond in time") &&
+          attempt < REMOTE_READY_ATTEMPTS
+        ) {
+          if (attempt === 1) {
+            alert_message({
+              type: "info",
+              message: "Remote server is still starting — retrying...",
+            });
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          continue;
+        }
+        throw err;
+      }
+    }
+    return result;
+  };
+
+  const openLocalPath = (path: string) => {
+    if (!lite || !project_id) return;
+    const actions = redux.getProjectActions(project_id);
+    if (!actions) return;
+    const normalized = normalizeSyncPath(path);
+    actions.open_directory(normalized);
+    redux.getActions("page").set_active_tab(project_id);
+  };
+
+  const openRemotePath = async (target: string, path: string) => {
+    try {
+      const result = await connectSessionWithRetry(target);
+      if (!result?.url) return;
+      const localUrl =
+        typeof window !== "undefined" ? window.location.href : undefined;
+      const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
+      const normalized = normalizeSyncPath(path);
+      const encoded = encodePathSegments(normalized);
+      const url = new URL(result.url);
+      const base = url.pathname.endsWith("/")
+        ? url.pathname.slice(0, -1)
+        : url.pathname;
+      const suffix = encoded ? `/files/${encoded}/` : "/files/";
+      url.pathname = `${base}${suffix}`;
+      window.open(url.toString(), windowName ?? "_blank", "noopener");
+      await loadSessions({ background: true });
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
     }
   };
 
@@ -907,18 +971,37 @@ export const SshPage: React.FC = React.memo(() => {
       title: "Local Path",
       dataIndex: "alpha_root",
       key: "alpha_root",
-      render: (val) => <Typography.Text code>{val}</Typography.Text>,
+      render: (val) =>
+        lite && project_id ? (
+          <Button
+            size="small"
+            type="link"
+            style={{ padding: 0 }}
+            onClick={() => openLocalPath(String(val))}
+          >
+            <Typography.Text code>{val}</Typography.Text>
+          </Button>
+        ) : (
+          <Typography.Text code>{val}</Typography.Text>
+        ),
     },
     {
       title: "Remote Path",
       dataIndex: "beta_root",
       key: "beta_root",
       render: (val, row) => (
-        <Typography.Text code>
-          {row.beta_host
-            ? `${row.beta_host}${row.beta_port ? `:${row.beta_port}` : ""}:${val}`
-            : val}
-        </Typography.Text>
+        <Button
+          size="small"
+          type="link"
+          style={{ padding: 0 }}
+          onClick={() => openRemotePath(target, String(val))}
+        >
+          <Typography.Text code>
+            {row.beta_host
+              ? `${row.beta_host}${row.beta_port ? `:${row.beta_port}` : ""}:${val}`
+              : val}
+          </Typography.Text>
+        </Button>
       ),
     },
       {
@@ -1055,12 +1138,13 @@ export const SshPage: React.FC = React.memo(() => {
     return (
         <div
           style={{
-            padding: "16px 12px",
-            margin: "12px 12px 16px 40px",
-            borderRadius: 8,
-            background: "#fafafa",
-            border: "1px solid #f0f0f0",
-            borderLeft: "4px solid #d9d9d9",
+            padding: "16px 16px",
+            margin: "16px 16px 20px 56px",
+            borderRadius: 10,
+            background: "#fbfbfb",
+            border: "1px solid #e6e6e6",
+            borderLeft: "5px solid #d0d0d0",
+            boxShadow: "0 2px 6px rgba(0, 0, 0, 0.04)",
           }}
         >
         <Space style={{ marginBottom: 8 }} size={12} align="center">
@@ -1202,7 +1286,11 @@ export const SshPage: React.FC = React.memo(() => {
         <Button size="small" onClick={() => setTargetModalOpen(true)}>
           New Remote Session
         </Button>
-        <Button size="small" onClick={loadSessions} loading={loading}>
+        <Button
+          size="small"
+          onClick={() => loadSessions({ background: true })}
+          loading={refreshing || loading}
+        >
           Refresh
         </Button>
       </Space>
