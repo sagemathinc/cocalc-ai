@@ -137,6 +137,27 @@ function pathsOverlap(a: string, b: string) {
   return aNorm.startsWith(`${bNorm}/`) || bNorm.startsWith(`${aNorm}/`);
 }
 
+function filterForwardsByTarget(
+  forwards: ReflectForwardRow[],
+  target: string,
+): ReflectForwardRow[] {
+  const { host, port } = parseSshTarget(target);
+  const targetHost = host;
+  const targetHostNoUser = host.split("@").pop() ?? host;
+  return forwards.filter((row) => {
+    const rowPort = row.ssh_port ?? null;
+    const rowHost = row.ssh_host ?? "";
+    const rowHostNoUser = rowHost.split("@").pop() ?? rowHost;
+    const hostMatches =
+      rowHost === targetHost || rowHostNoUser === targetHostNoUser;
+    if (!hostMatches) return false;
+    if (port == null) {
+      return rowPort == null || rowPort === 22;
+    }
+    return rowPort === port;
+  });
+}
+
 function extractIgnoreRules(raw?: string) {
   if (!raw) return [];
   return raw
@@ -306,21 +327,10 @@ export const SshPage: React.FC = React.memo(() => {
         webapp_client.conat_client.hub.reflect.listSessionsUI({ target }),
         webapp_client.conat_client.hub.reflect.listForwardsUI(),
       ]);
-      const { host, port } = parseSshTarget(target);
-      const targetHost = host;
-      const targetHostNoUser = host.split("@").pop() ?? host;
-      const filteredForwards = (forwards || []).filter((row) => {
-        const rowPort = row.ssh_port ?? null;
-        const rowHost = row.ssh_host ?? "";
-        const rowHostNoUser = rowHost.split("@").pop() ?? rowHost;
-        const hostMatches =
-          rowHost === targetHost || rowHostNoUser === targetHostNoUser;
-        if (!hostMatches) return false;
-        if (port == null) {
-          return rowPort == null || rowPort === 22;
-        }
-        return rowPort === port;
-      });
+      const filteredForwards = filterForwardsByTarget(
+        forwards || [],
+        target,
+      );
       setReflectByTarget((prev) => ({
         ...prev,
         [target]: {
@@ -428,7 +438,44 @@ export const SshPage: React.FC = React.memo(() => {
   };
 
   const handleDeleteTarget = async (target: string) => {
+    setLoading(true);
     try {
+      try {
+        const [sessions, forwards] = await Promise.all([
+          webapp_client.conat_client.hub.reflect.listSessionsUI({ target }),
+          webapp_client.conat_client.hub.reflect.listForwardsUI(),
+        ]);
+        const filteredForwards = filterForwardsByTarget(
+          forwards || [],
+          target,
+        );
+        const results = await Promise.allSettled([
+          ...(sessions || []).map((session) =>
+            webapp_client.conat_client.hub.reflect.terminateSessionUI({
+              idOrName: String(session.id),
+            }),
+          ),
+          ...filteredForwards.map((forward) =>
+            webapp_client.conat_client.hub.reflect.terminateForwardUI({
+              id: forward.id,
+            }),
+          ),
+        ]);
+        const failures = results.filter((r) => r.status === "rejected");
+        if (failures.length > 0) {
+          alert_message({
+            type: "warning",
+            message: "Some syncs or forwards could not be removed.",
+          });
+        }
+      } catch (err: any) {
+        alert_message({
+          type: "warning",
+          message:
+            err?.message ||
+            "Unable to clean up syncs/forwards; removing session anyway.",
+        });
+      }
       await webapp_client.conat_client.hub.ssh.deleteSessionUI({ target });
       await loadSessions();
     } catch (err: any) {
@@ -436,6 +483,8 @@ export const SshPage: React.FC = React.memo(() => {
         type: "error",
         message: err?.message || String(err),
       });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -837,7 +886,7 @@ export const SshPage: React.FC = React.memo(() => {
             ) : null}
             <Popconfirm
               title="Remove this session?"
-              description="This removes the target from the local list."
+              description="Removes this target, and also removes any related syncs and port forwards (no files are deleted)."
               okText="Remove"
               cancelText="Cancel"
               onConfirm={() => handleDeleteTarget(row.target)}

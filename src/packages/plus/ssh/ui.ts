@@ -96,6 +96,11 @@ export async function deleteSessionUI(target: string): Promise<void> {
   if (!trimmed) {
     throw new Error("Target is required");
   }
+  const existing = activeTunnels.get(trimmed);
+  if (isTunnelActive(existing)) {
+    existing?.tunnel.kill();
+    activeTunnels.delete(trimmed);
+  }
   deleteSession(trimmed);
 }
 
