@@ -12,6 +12,7 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import AIAvatar from "@cocalc/frontend/components/ai-avatar";
 import { labels } from "@cocalc/frontend/i18n";
+import { lite } from "@cocalc/frontend/lite";
 import { COLORS } from "@cocalc/util/theme";
 import {
   VALID_PREFERENCES_SUB_TYPES,
@@ -229,26 +230,30 @@ export function SettingsOverview() {
             description={intl.formatMessage(MESSAGES.ai)}
           />
         </Card>
-        <Card
-          {...CARD_PROPS}
-          onClick={() => handleNavigate("settings/preferences/communication")}
-        >
-          <Card.Meta
-            avatar={<Icon name={COMMUNICATION_ICON_NAME} />}
-            title={intl.formatMessage(labels.communication)}
-            description={intl.formatMessage(MESSAGES.communication)}
-          />
-        </Card>
-        <Card
-          {...CARD_PROPS}
-          onClick={() => handleNavigate("settings/preferences/keys")}
-        >
-          <Card.Meta
-            avatar={<Icon name={KEYS_ICON_NAME} />}
-            title={intl.formatMessage(labels.ssh_and_api_keys)}
-            description={intl.formatMessage(MESSAGES.keys)}
-          />
-        </Card>
+        {!lite && (
+          <Card
+            {...CARD_PROPS}
+            onClick={() => handleNavigate("settings/preferences/communication")}
+          >
+            <Card.Meta
+              avatar={<Icon name={COMMUNICATION_ICON_NAME} />}
+              title={intl.formatMessage(labels.communication)}
+              description={intl.formatMessage(MESSAGES.communication)}
+            />
+          </Card>
+        )}
+        {!lite && (
+          <Card
+            {...CARD_PROPS}
+            onClick={() => handleNavigate("settings/preferences/keys")}
+          >
+            <Card.Meta
+              avatar={<Icon name={KEYS_ICON_NAME} />}
+              title={intl.formatMessage(labels.ssh_and_api_keys)}
+              description={intl.formatMessage(MESSAGES.keys)}
+            />
+          </Card>
+        )}
         <Card
           {...CARD_PROPS}
           onClick={() => handleNavigate("settings/preferences/other")}
@@ -331,22 +336,25 @@ export function SettingsOverview() {
         </>
       )}
 
-      <Divider plain>
-        <Icon name="files" /> {intl.formatMessage(labels.files)}
-      </Divider>
-      <Flex {...FLEX_PROPS}>
-        <Card
-          {...CARD_PROPS}
-          onClick={() => handleNavigate("settings/public-files")}
-        >
-          <Card.Meta
-            avatar={<Icon name="share-square" />}
-            title={intl.formatMessage(labels.published_files)}
-            description={intl.formatMessage(MESSAGES.files)}
-          />
-        </Card>
-
-      </Flex>
+      {!lite && (
+        <>
+          <Divider plain>
+            <Icon name="files" /> {intl.formatMessage(labels.files)}
+          </Divider>
+          <Flex {...FLEX_PROPS}>
+            <Card
+              {...CARD_PROPS}
+              onClick={() => handleNavigate("settings/public-files")}
+            >
+              <Card.Meta
+                avatar={<Icon name="share-square" />}
+                title={intl.formatMessage(labels.published_files)}
+                description={intl.formatMessage(MESSAGES.files)}
+              />
+            </Card>
+          </Flex>
+        </>
+      )}
 
       {is_commercial && (
         <>

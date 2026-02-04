@@ -17,6 +17,10 @@ register({ key: "Enter", shift: true }, ({ editor, extra }) => {
   // newlines, which can instead be done with control+enter.
   const shiftEnter = extra?.actions?.shiftEnter;
   if (shiftEnter != null) {
+    const editorAny = editor as unknown as { _hasUnsavedChanges?: any };
+    if (editorAny._hasUnsavedChanges === false) {
+      editorAny._hasUnsavedChanges = undefined;
+    }
     shiftEnter(editor.getMarkdownValue());
     return true;
   }

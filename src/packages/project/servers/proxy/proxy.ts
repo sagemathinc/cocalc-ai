@@ -26,6 +26,7 @@ This proxy gets typically exposed externally via the proxy in
 */
 
 import * as http from "node:http";
+import type express from "express";
 import { userInfo } from "node:os";
 import httpProxy from "http-proxy-3";
 import { getLogger } from "@cocalc/project/logger";
@@ -56,54 +57,9 @@ export async function startProxyServer({
   }
 
   logger.debug("startProxyServer", { base_url, port, host });
-  const base = normalizeBase(base_url);
-  const serverPattern = buildPattern(base, "server");
-  const proxyPattern = buildPattern(base, "proxy");
-  const portPattern = buildPattern(base, "port");
-
-  function getTarget(req) {
-    const url = req.url ?? "";
-    const mPort = portPattern.exec(url);
-    if (mPort) {
-      const port = Number(mPort[1]);
-      return { port, host: "localhost" };
-    }
-    const mServer = serverPattern.exec(url) || proxyPattern.exec(url);
-    if (mServer) {
-      const port = Number(mServer[1]);
-      const rest = mServer[2] || "/";
-      // Rewrite path by mutating req.url before proxying
-      req.url = rest;
-      return { port, host: "localhost" };
-    }
-
-    logger.debug("URL not matched", { url });
-    throw Error("not matched");
-  }
-
-  const proxy = httpProxy.createProxyServer({
-    xfwd: true,
-    ws: true,
-    // We set target per-request.
-  });
-
-  proxy.on("error", (err, req, res) => {
-    const url = (req as http.IncomingMessage).url;
-    logger.warn("proxy error", { err, url });
-    // Best-effort error response (HTTP only):
-    if (!res || (res as http.ServerResponse).headersSent) return;
-    try {
-      (res as http.ServerResponse).writeHead(502, {
-        "Content-Type": "text/plain",
-      });
-      (res as http.ServerResponse).end("Bad Gateway\n");
-    } catch {
-      /* ignore */
-    }
-  });
-
-  proxy.on("proxyReq", (proxyReq) => {
-    proxyReq.setHeader("X-Proxy-By", "cocalc-lite-proxy");
+  const { proxy, getTarget } = createProxyResolver({
+    base_url,
+    host: "localhost",
   });
 
   const proxyServer = http.createServer((req, res) => {
@@ -140,6 +96,47 @@ export async function startProxyServer({
   return proxyServer;
 }
 
+export function attachProxyServer({
+  app,
+  httpServer,
+  base_url = getProxyBaseUrl({ project_id }),
+  host = "localhost",
+}: {
+  app?: express.Application;
+  httpServer?: http.Server;
+  base_url?: string;
+  host?: string;
+}) {
+  if (!app && !httpServer) {
+    throw new Error("attachProxyServer requires app or httpServer");
+  }
+  const { proxy, getTarget } = createProxyResolver({ base_url, host });
+
+  if (app) {
+    app.use((req, res, next) => {
+      try {
+        const target = getTarget(req);
+        proxy.web(req, res, { target, prependPath: false });
+      } catch {
+        return next();
+      }
+    });
+  }
+
+  if (httpServer) {
+    httpServer.prependListener("upgrade", (req, socket, head) => {
+      try {
+        const target = getTarget(req);
+        proxy.ws(req, socket, head, {
+          target,
+        });
+      } catch {
+        return;
+      }
+    });
+  }
+}
+
 // Build the default base_url from project/compute ids.
 function getProxyBaseUrl({ project_id }: { project_id: string }): string {
   return `${project_id}`;
@@ -162,4 +159,64 @@ function buildPattern(base: string, type: "server" | "port" | "proxy"): RegExp {
   const prefix = `/${escapeRegExp(base)}/${type}/`;
   // capture numeric port, then optionally capture the rest of the path
   return new RegExp(`^${prefix}(\\d+)(/.*)?$`);
+}
+
+function createProxyResolver({
+  base_url,
+  host,
+}: {
+  base_url: string;
+  host: string;
+}) {
+  const base = normalizeBase(base_url);
+  const serverPattern = buildPattern(base, "server");
+  const proxyPattern = buildPattern(base, "proxy");
+  const portPattern = buildPattern(base, "port");
+
+  function getTarget(req: http.IncomingMessage) {
+    const url = req.url ?? "";
+    const mPort = portPattern.exec(url);
+    if (mPort) {
+      const port = Number(mPort[1]);
+      return { port, host };
+    }
+    const mServer = serverPattern.exec(url) || proxyPattern.exec(url);
+    if (mServer) {
+      const port = Number(mServer[1]);
+      const rest = mServer[2] || "/";
+      // Rewrite path by mutating req.url before proxying
+      req.url = rest;
+      return { port, host };
+    }
+
+    logger.debug("URL not matched", { url });
+    throw Error("not matched");
+  }
+
+  const proxy = httpProxy.createProxyServer({
+    xfwd: true,
+    ws: true,
+    // We set target per-request.
+  });
+
+  proxy.on("error", (err, req, res) => {
+    const url = (req as http.IncomingMessage).url;
+    logger.warn("proxy error", { err, url });
+    // Best-effort error response (HTTP only):
+    if (!res || (res as http.ServerResponse).headersSent) return;
+    try {
+      (res as http.ServerResponse).writeHead(502, {
+        "Content-Type": "text/plain",
+      });
+      (res as http.ServerResponse).end("Bad Gateway\n");
+    } catch {
+      /* ignore */
+    }
+  });
+
+  proxy.on("proxyReq", (proxyReq) => {
+    proxyReq.setHeader("X-Proxy-By", "cocalc-lite-proxy");
+  });
+
+  return { proxy, getTarget };
 }

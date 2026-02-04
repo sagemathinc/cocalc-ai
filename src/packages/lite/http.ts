@@ -28,6 +28,7 @@ import fs from "node:fs";
 import { initAuth } from "./auth-token";
 import { getCustomizePayload } from "./hub/settings";
 import { getOrCreateSelfSigned } from "./tls";
+import { attachProxyServer } from "@cocalc/project/servers/proxy/proxy";
 
 const logger = getLogger("lite:static");
 
@@ -107,6 +108,7 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
     console.log(JSON.stringify(info, undefined, 2));
   }
   console.log("\n" + "*".repeat(60));
+  initProjectProxy({ app, httpServer });
   return { httpServer, app, port: actualPort, isHttps, hostname };
 }
 
@@ -158,6 +160,21 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
     if (req.url.endsWith("__webpack_hmr")) return;
     logger.debug("redirecting", req.url);
     res.redirect("/static/app.html");
+  });
+}
+
+function initProjectProxy({
+  app,
+  httpServer,
+}: {
+  app: Application;
+  httpServer: AnyServer;
+}) {
+  attachProxyServer({
+    app,
+    httpServer,
+    base_url: project_id,
+    host: "localhost",
   });
 }
 
