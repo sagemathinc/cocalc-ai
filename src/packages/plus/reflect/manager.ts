@@ -27,6 +27,7 @@ let reflectSyncPromise: Promise<ReflectSync> | null = null;
 let sessionDbPath: string | null = null;
 const schedulerChildren = new Map<number, ChildProcess>();
 let exitHookInstalled = false;
+let daemonLogger: { logger: any; close: () => void } | null = null;
 const dynamicImport = new Function(
   "p",
   "return import(p);",
@@ -50,6 +51,17 @@ async function loadReflectSync(): Promise<ReflectSync> {
   return reflectSyncPromise;
 }
 
+function resolveReflectDist(moduleFile: string): string {
+  const entry = requireCjs.resolve("reflect-sync");
+  const distDir = path.dirname(entry);
+  return path.join(distDir, moduleFile);
+}
+
+async function importReflectDist<T>(moduleFile: string): Promise<T> {
+  const href = pathToFileURL(resolveReflectDist(moduleFile)).href;
+  return (await dynamicImport(href)) as T;
+}
+
 async function ensureSessionDb(mod: ReflectSync): Promise<string> {
   if (sessionDbPath) return sessionDbPath;
   const dbPath = mod.getSessionDbPath();
@@ -66,6 +78,44 @@ function isPidAlive(pid?: number | null): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function getDaemonLogger(sessionDb: string) {
+  if (daemonLogger) return daemonLogger;
+  const mod = await importReflectDist<{
+    createDaemonLogger: (
+      sessionDbPath: string,
+      opts?: { scope?: string; keepMs?: number; keepRows?: number },
+    ) => { logger: any; close: () => void };
+  }>("daemon-logs.js");
+  daemonLogger = mod.createDaemonLogger(sessionDb, {
+    scope: "cocalc-plus",
+  });
+  process.once("exit", () => {
+    try {
+      daemonLogger?.close();
+    } catch {
+      // ignore
+    }
+  });
+  return daemonLogger;
+}
+
+async function logDaemon(
+  sessionDb: string,
+  level: "debug" | "info" | "warn" | "error",
+  message: string,
+  meta?: Record<string, unknown>,
+) {
+  try {
+    const logger = await getDaemonLogger(sessionDb);
+    const fn = logger.logger?.[level] ?? logger.logger?.info;
+    if (fn) {
+      fn.call(logger.logger, message, meta);
+    }
+  } catch {
+    // ignore daemon logging failures
   }
 }
 
@@ -223,6 +273,138 @@ function createSessionLogWriter(
   }
 }
 
+function normalizeRemoteRoot(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.startsWith("/") || trimmed.startsWith("~")) return trimmed;
+  return `~/${trimmed}`;
+}
+
+function shellEscape(s: string) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
+async function ensureRemoteRoot(
+  host: string,
+  port: number | null | undefined,
+  root: string,
+) {
+  const args = [
+    "-o",
+    "ConnectTimeout=5",
+    "-C",
+    "-T",
+    "-o",
+    "BatchMode=yes",
+  ];
+  if (port != null) {
+    args.push("-p", String(port));
+  }
+  const target = normalizeRemoteRoot(root);
+  const cmd = `mkdir -p -- ${shellEscape(target)}`;
+  args.push(host, `sh -lc ${shellEscape(cmd)}`);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("ssh", args, { stdio: "ignore" });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`ssh mkdir failed (exit ${code})`));
+      }
+    });
+  });
+}
+
+async function ensureRootsExist(
+  sessionDb: string,
+  row: SessionRow,
+  logWriter?: ReturnType<typeof createSessionLogWriter>,
+) {
+  const tasks: Promise<void>[] = [];
+  const localRoots: Array<{ side: "alpha" | "beta"; root: string }> = [];
+  const remoteRoots: Array<{
+    side: "alpha" | "beta";
+    host: string;
+    port: number | null | undefined;
+    root: string;
+  }> = [];
+
+  if (row.alpha_host) {
+    remoteRoots.push({
+      side: "alpha",
+      host: row.alpha_host,
+      port: row.alpha_port,
+      root: row.alpha_root,
+    });
+  } else {
+    localRoots.push({ side: "alpha", root: row.alpha_root });
+  }
+  if (row.beta_host) {
+    remoteRoots.push({
+      side: "beta",
+      host: row.beta_host,
+      port: row.beta_port,
+      root: row.beta_root,
+    });
+  } else {
+    localRoots.push({ side: "beta", root: row.beta_root });
+  }
+
+  for (const local of localRoots) {
+    const abs = normalizeLocalPath(local.root);
+    tasks.push(
+      fs.promises
+        .mkdir(abs, { recursive: true })
+        .then(() =>
+          logWriter?.log("info", `ensured local ${local.side} root`, {
+            path: abs,
+          }),
+        )
+        .catch((err) => {
+          logWriter?.log("error", `failed to create local ${local.side} root`, {
+            path: abs,
+            error: err?.message || String(err),
+          });
+          throw err;
+        }),
+    );
+  }
+
+  for (const remote of remoteRoots) {
+    tasks.push(
+      ensureRemoteRoot(remote.host, remote.port, remote.root)
+        .then(() =>
+          logWriter?.log("info", `ensured remote ${remote.side} root`, {
+            host: remote.host,
+            port: remote.port,
+            path: remote.root,
+          }),
+        )
+        .catch((err) => {
+          logWriter?.log(
+            "error",
+            `failed to create remote ${remote.side} root`,
+            {
+              host: remote.host,
+              port: remote.port,
+              path: remote.root,
+              error: err?.message || String(err),
+            },
+          );
+          throw err;
+        }),
+    );
+  }
+
+  if (tasks.length > 0) {
+    await Promise.all(tasks);
+    await logDaemon(sessionDb, "info", "sync roots ensured", {
+      sessionId: row.id,
+    });
+  }
+}
+
 function spawnSchedulerChild(opts: SchedulerOptions): ChildProcess {
   const nodeBin = resolveNodeBinary();
   const env: NodeJS.ProcessEnv = {
@@ -314,6 +496,19 @@ async function startSession(
 
   const opts = buildSchedulerOptions(mod, sessionDb, row);
   const logWriter = createSessionLogWriter(mod, sessionDb, row.id);
+  await logDaemon(sessionDb, "info", "starting scheduler", {
+    sessionId: row.id,
+    target: row.name ?? null,
+  });
+  try {
+    await ensureRootsExist(sessionDb, row, logWriter);
+  } catch (err: any) {
+    await logDaemon(sessionDb, "error", "failed to ensure sync roots", {
+      sessionId: row.id,
+      error: err?.message || String(err),
+    });
+    throw err;
+  }
   logWriter?.log("info", "starting scheduler");
   const child = spawnSchedulerChild(opts);
   schedulerChildren.set(row.id, child);
@@ -364,6 +559,11 @@ async function startSession(
       code,
       signal,
     });
+    void logDaemon(sessionDb, "warn", "scheduler exited", {
+      sessionId: row.id,
+      code,
+      signal,
+    });
     logWriter?.close();
   });
 }
@@ -374,6 +574,9 @@ async function stopSession(
   row: SessionRow,
 ) {
   const logWriter = createSessionLogWriter(mod, sessionDb, row.id);
+  await logDaemon(sessionDb, "info", "stopping scheduler", {
+    sessionId: row.id,
+  });
   const existing = schedulerChildren.get(row.id);
   if (existing?.pid) {
     existing.kill("SIGTERM");
@@ -511,6 +714,9 @@ export async function listSessionsUI(opts?: {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
     installExitHook(mod, sessionDb);
+    await logDaemon(sessionDb, "debug", "listSessionsUI called", {
+      target: opts?.target,
+    });
     const selectors = buildSelectors(opts?.selectors, opts?.target);
     let rows = mod.selectSessions(sessionDb, selectors) as SessionRow[];
     await reconcileSessions(mod, sessionDb, rows);
@@ -551,6 +757,9 @@ export async function stopSessionUI(opts: {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
     installExitHook(mod, sessionDb);
+    await logDaemon(sessionDb, "info", "stopSessionUI", {
+      idOrName: opts.idOrName,
+    });
     const row = mod.resolveSessionRow(sessionDb, opts.idOrName);
     if (!row) {
       throw new Error(`reflect session '${opts.idOrName}' not found`);
@@ -569,6 +778,9 @@ export async function startSessionUI(opts: {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
     installExitHook(mod, sessionDb);
+    await logDaemon(sessionDb, "info", "startSessionUI", {
+      idOrName: opts.idOrName,
+    });
     const row = mod.resolveSessionRow(sessionDb, opts.idOrName);
     if (!row) {
       throw new Error(`reflect session '${opts.idOrName}' not found`);
@@ -589,6 +801,9 @@ export async function editSessionUI(opts: {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
     installExitHook(mod, sessionDb);
+    await logDaemon(sessionDb, "info", "editSessionUI", {
+      idOrName: opts.idOrName,
+    });
     const row = mod.resolveSessionRow(sessionDb, opts.idOrName);
     if (!row) {
       throw new Error(`reflect session '${opts.idOrName}' not found`);
@@ -627,7 +842,36 @@ export async function listForwardsUI(): Promise<ReflectForwardRow[]> {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
     installExitHook(mod, sessionDb);
-    const rows = mod.selectForwardSessions(sessionDb) as ForwardRow[];
+    await logDaemon(sessionDb, "debug", "listForwardsUI called");
+    let rows = mod.selectForwardSessions(sessionDb) as ForwardRow[];
+    const forwardRunner = await importReflectDist<{
+      launchForwardProcess: (
+        sessionDb: string,
+        row: ForwardRow,
+      ) => Promise<number | null>;
+    }>("forward-runner.js");
+    for (const row of rows) {
+      if (row.desired_state !== "running") continue;
+      if (row.monitor_pid && isPidAlive(row.monitor_pid)) {
+        continue;
+      }
+      mod.updateForwardSession(sessionDb, row.id, {
+        monitor_pid: null,
+        actual_state: "stopped",
+      });
+      const pid = await forwardRunner.launchForwardProcess(sessionDb, row);
+      if (pid) {
+        await logDaemon(sessionDb, "info", "restarted forward", {
+          id: row.id,
+          pid,
+        });
+      } else {
+        await logDaemon(sessionDb, "warn", "forward restart failed", {
+          id: row.id,
+        });
+      }
+    }
+    rows = mod.selectForwardSessions(sessionDb) as ForwardRow[];
     return rows.map(mapForwardRow);
   } catch (err: any) {
     throw new Error(`reflect listForwardsUI failed: ${err?.message || err}`);
@@ -650,6 +894,11 @@ export async function createSessionUI(opts: {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
     installExitHook(mod, sessionDb);
+    await logDaemon(sessionDb, "info", "createSessionUI", {
+      target: opts.target,
+      localPath: opts.localPath,
+      remotePath: opts.remotePath,
+    });
     const localPath = opts.localPath ?? opts.alpha;
     const remotePath = opts.remotePath ?? opts.beta;
     if (!localPath) {
@@ -735,6 +984,11 @@ export async function createForwardUI(opts: {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
     installExitHook(mod, sessionDb);
+    await logDaemon(sessionDb, "info", "createForwardUI", {
+      target: opts.target,
+      localPort: opts.localPort,
+      remotePort: opts.remotePort,
+    });
     const { host, port } = parseTarget(opts.target);
     const remotePort = opts.remotePort ?? opts.localPort;
     const remoteSpec = `${host}${port ? `:${port}` : ""}:${remotePort}`;
@@ -764,6 +1018,9 @@ export async function terminateForwardUI(opts: {
     const mod = await loadReflectSync();
     const sessionDb = await ensureSessionDb(mod);
     installExitHook(mod, sessionDb);
+    await logDaemon(sessionDb, "info", "terminateForwardUI", {
+      id: opts.id,
+    });
     mod.terminateForward(sessionDb, opts.id, undefined);
   } catch (err: any) {
     throw new Error(`reflect terminateForwardUI failed: ${err?.message || err}`);
