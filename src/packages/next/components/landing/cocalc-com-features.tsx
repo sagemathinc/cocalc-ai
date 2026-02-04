@@ -380,7 +380,7 @@ export function CoCalcComFeatures() {
               </Paragraph>
               <Paragraph style={{ color: txtCol }}>
                 Upgrade your workspaces with a{" "}
-                <A style={link} href={"/store/membership"}>
+                <A style={link} href={"/settings/store"}>
                   membership
                 </A>{" "}
                 to unlock internet access, better hosting quality, and other

@@ -18,7 +18,7 @@ import {
 import getBalance from "./get-balance";
 import { getTotalChargesThisMonth } from "./get-charges";
 import { getPurchaseQuotas } from "./purchase-quotas";
-import { ALLOWED_SLACK } from "./shopping-cart-checkout";
+import { ALLOWED_SLACK } from "./constants";
 
 // Throws an exception if purchase is not allowed.  Code should
 // call this before giving the thing and doing createPurchase.

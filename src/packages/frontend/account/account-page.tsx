@@ -84,6 +84,7 @@ import { SettingsOverview } from "./settings-index";
 import MembershipBadge from "./membership-badge";
 import { lite, project_id } from "@cocalc/frontend/lite";
 import { AdminPage } from "@cocalc/frontend/admin";
+import { StorePage } from "@cocalc/frontend/store";
 
 export const ACCOUNT_SETTINGS_ICON_NAME: IconName = "settings";
 
@@ -326,6 +327,15 @@ export const AccountPage: React.FC = () => {
     }
     // adds a few conditional tabs
     items.push({ type: "divider" });
+    items.push({
+      key: "store",
+      label: (
+        <span>
+          <Icon name="shopping-cart" /> Store
+        </span>
+      ),
+      children: active_page === "store" && <StorePage />,
+    });
 
     if (is_commercial) {
       items.push({

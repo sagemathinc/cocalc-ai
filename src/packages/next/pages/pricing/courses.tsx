@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Layout, List } from "antd";
+import { Button, Layout, List } from "antd";
 
 import { Icon } from "@cocalc/frontend/components/icon";
 import Footer from "components/landing/footer";
@@ -11,7 +11,6 @@ import Head from "components/landing/head";
 import Header from "components/landing/header";
 import { Paragraph, Title } from "components/misc";
 import A from "components/misc/A";
-import { LinkToStore } from "components/store/link";
 import { MAX_WIDTH } from "lib/config";
 import { Customize } from "lib/customize";
 import withCustomize from "lib/with-customize";
@@ -24,6 +23,8 @@ const FEATURES = [
   "Collaborative help directly inside student work",
   "No local installs — everything runs in the browser",
 ];
+
+const STORE_URL = "/settings/store";
 
 export default function Courses({ customize }) {
   const { siteName } = customize;
@@ -63,7 +64,23 @@ function Body(): JSX.Element {
         course-wide pricing or invoicing, please <A href="/support/new">contact
         support</A>.
       </Paragraph>
-      <LinkToStore label="View Memberships" />
+      <div
+        style={{
+          fontSize: "150%",
+          fontWeight: "bold",
+          textAlign: "center",
+          marginTop: "30px",
+        }}
+      >
+        <Button
+          size="large"
+          type="primary"
+          href={STORE_URL}
+          icon={<Icon name="shopping-cart" />}
+        >
+          View Store
+        </Button>
+      </div>
     </div>
   );
 }

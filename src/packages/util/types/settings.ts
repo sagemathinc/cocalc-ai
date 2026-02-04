@@ -28,6 +28,7 @@ export type PreferencesSubTabKey = `preferences-${PreferencesSubTabType}`;
 export const VALID_SETTINGS_PAGES = [
   "index",
   "profile",
+  "store",
   "subscriptions",
   "licenses",
   "payg",

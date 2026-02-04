@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Layout } from "antd";
+import { Alert, Button, Layout } from "antd";
 
 import { Icon } from "@cocalc/frontend/components/icon";
 import Footer from "components/landing/footer";
@@ -11,7 +11,6 @@ import Head from "components/landing/head";
 import Header from "components/landing/header";
 import { Paragraph, Text, Title } from "components/misc";
 import A from "components/misc/A";
-import { LinkToStore } from "components/store/link";
 import { MAX_WIDTH } from "lib/config";
 import { Customize, useCustomize } from "lib/customize";
 import withCustomize from "lib/with-customize";
@@ -21,6 +20,7 @@ import type { JSX } from "react";
 // internal link to the contact form
 const URL_SUPPORT =
   "/support/new?type=purchase&subject=CoCalc%20Institutional&body=&title=Purchase%20Institutional%20License";
+const STORE_URL = "/settings/store";
 
 export default function Courses({ customize }) {
   const { siteName } = customize;
@@ -119,7 +119,14 @@ function Body(): JSX.Element {
         }
       />
       <Paragraph style={{ textAlign: "center" }}>
-        <LinkToStore />
+        <Button
+          size="large"
+          type="primary"
+          href={STORE_URL}
+          icon={<Icon name="shopping-cart" />}
+        >
+          View Store
+        </Button>
       </Paragraph>
     </div>
   );

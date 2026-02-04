@@ -4,8 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import ShowError from "@cocalc/frontend/components/error";
 import { redux } from "@cocalc/frontend/app-framework";
 import Payments from "@cocalc/frontend/purchases/payments";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { join } from "path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   LLMUsageHelpContent,
@@ -132,8 +130,10 @@ function Links({ onClose }) {
         size="small"
         type="link"
         key="store"
-        target="_blank"
-        href={join(appBasePath, "store")}
+        onClick={() => {
+          openPage("store");
+          onClose();
+        }}
       >
         Store
       </Button>

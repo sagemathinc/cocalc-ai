@@ -918,10 +918,13 @@ function Description({ description, service }) {
   }
   if (service === "membership") {
     const { class: membershipClass, subscription_id } = description;
+    const subscriptionLabel =
+      subscription_id && subscription_id > 0
+        ? `subscription ${subscription_id}`
+        : "admin assigned";
     return (
       <>
-        Membership: {membershipClass ?? "unknown"} (subscription{" "}
-        {subscription_id})
+        Membership: {membershipClass ?? "unknown"} ({subscriptionLabel})
       </>
     );
   }

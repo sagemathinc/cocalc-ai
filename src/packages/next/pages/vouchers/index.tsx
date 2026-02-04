@@ -41,7 +41,7 @@ export default function Overview({ customize }) {
             </div>
             <OverviewRow>
               <Product
-                href={"/store/vouchers"}
+                href={"/settings/store"}
                 icon="shopping-cart"
                 title="Buy Vouchers"
               >

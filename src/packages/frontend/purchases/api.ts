@@ -375,19 +375,6 @@ export async function cancelCurrentCheckoutSession() {
   await api("purchases/cancel-current-checkout-session");
 }
 
-export async function shoppingCartCheckout() {
-  await api("purchases/shopping-cart-checkout");
-}
-
-export async function getShoppingCartCheckoutParams(
-  opts: {
-    payment_intent?: string;
-    processing?: boolean;
-  } = {},
-) {
-  return await api("purchases/get-shopping-cart-checkout-params", opts);
-}
-
 export interface MembershipChangeQuote {
   change: "new" | "upgrade" | "downgrade";
   target_class: string;
