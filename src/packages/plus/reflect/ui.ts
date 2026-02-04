@@ -5,6 +5,7 @@ export {
   terminateSessionUI,
   startSessionUI,
   stopSessionUI,
+  editSessionUI,
   listForwardsUI,
   listSessionsUI,
   listSessionLogsUI,

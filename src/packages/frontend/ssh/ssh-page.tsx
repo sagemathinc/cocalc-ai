@@ -125,6 +125,19 @@ function extractIgnoreRules(raw?: string) {
     .filter((entry) => entry.length > 0);
 }
 
+function parseIgnoreRules(raw?: string | null) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.map((entry) => String(entry).trim()).filter(Boolean);
+    }
+  } catch {
+    // fall back to text parsing
+  }
+  return extractIgnoreRules(raw);
+}
+
 export const SshPage: React.FC = React.memo(() => {
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
   const [rows, setRows] = useState<SshSessionRow[]>([]);
@@ -138,6 +151,13 @@ export const SshPage: React.FC = React.memo(() => {
     null,
   );
   const [reflectForm] = Form.useForm();
+  const [editSessionTarget, setEditSessionTarget] = useState<string | null>(
+    null,
+  );
+  const [editSessionRow, setEditSessionRow] =
+    useState<ReflectSessionRow | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editForm] = Form.useForm();
   const [forwardModalOpen, setForwardModalOpen] = useState(false);
   const [forwardModalTarget, setForwardModalTarget] = useState<string | null>(
     null,
@@ -431,6 +451,43 @@ export const SshPage: React.FC = React.memo(() => {
       });
       await loadReflectForTarget(target);
     } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
+  const openEditSession = (target: string, row: ReflectSessionRow) => {
+    setEditSessionTarget(target);
+    setEditSessionRow(row);
+    editForm.setFieldsValue({
+      prefer: row.prefer ?? "alpha",
+      ignoreRules: parseIgnoreRules(row.ignore_rules).join("\n"),
+    });
+    setEditModalOpen(true);
+  };
+
+  const handleEditSession = async () => {
+    if (!editSessionRow || !editSessionTarget) return;
+    try {
+      const values = await editForm.validateFields();
+      const ignoreRules = extractIgnoreRules(values.ignoreRules);
+      await webapp_client.conat_client.hub.reflect.editSessionUI({
+        idOrName: String(editSessionRow.id),
+        prefer: values.prefer,
+        ignore: ignoreRules,
+      });
+      setEditModalOpen(false);
+      setEditSessionRow(null);
+      setEditSessionTarget(null);
+      editForm.resetFields();
+      await loadReflectForTarget(editSessionTarget);
+      alert_message({ type: "success", message: "Sync updated" });
+    } catch (err: any) {
+      if (err?.errorFields) {
+        return;
+      }
       alert_message({
         type: "error",
         message: err?.message || String(err),
@@ -753,6 +810,9 @@ export const SshPage: React.FC = React.memo(() => {
               Start
             </Button>
           )}
+          <Button size="small" onClick={() => openEditSession(target, row)}>
+            Edit
+          </Button>
           <Popconfirm
             title="Delete this sync?"
             description="This will remove the session and its metadata."
@@ -1064,6 +1124,39 @@ export const SshPage: React.FC = React.memo(() => {
             ]}
           >
             <Input placeholder="user@host:22" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={
+          editSessionTarget
+            ? `Edit Sync for ${editSessionTarget}`
+            : "Edit Sync"
+        }
+        open={editModalOpen}
+        onOk={handleEditSession}
+        onCancel={() => {
+          setEditModalOpen(false);
+          setEditSessionRow(null);
+          setEditSessionTarget(null);
+        }}
+        okText="Save"
+      >
+        <Form form={editForm} layout="vertical">
+          <Form.Item label="Conflict preference" name="prefer">
+            <Select
+              options={[
+                { value: "alpha", label: "Prefer local (alpha)" },
+                { value: "beta", label: "Prefer remote (beta)" },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item label="Additional ignore patterns" name="ignoreRules">
+            <Input.TextArea
+              autoSize={{ minRows: 3, maxRows: 6 }}
+              placeholder="node_modules\n*.log"
+            />
           </Form.Item>
         </Form>
       </Modal>

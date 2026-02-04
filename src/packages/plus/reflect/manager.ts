@@ -580,6 +580,48 @@ export async function startSessionUI(opts: {
   }
 }
 
+export async function editSessionUI(opts: {
+  idOrName: string;
+  ignore?: string[];
+  prefer?: "alpha" | "beta";
+}): Promise<void> {
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    installExitHook(mod, sessionDb);
+    const row = mod.resolveSessionRow(sessionDb, opts.idOrName);
+    if (!row) {
+      throw new Error(`reflect session '${opts.idOrName}' not found`);
+    }
+    const restartForPrefer =
+      opts.prefer != null &&
+      opts.prefer !== row.prefer &&
+      row.actual_state === "running";
+    if (opts.prefer && opts.prefer !== row.prefer) {
+      mod.updateSession(sessionDb, row.id, { prefer: opts.prefer });
+    }
+    if (opts.ignore) {
+      await mod.editSession({
+        sessionDb,
+        id: row.id,
+        resetIgnore: true,
+        ignoreAdd: opts.ignore,
+      });
+    }
+    if (restartForPrefer) {
+      const refreshed = mod.loadSessionById(sessionDb, row.id) as
+        | SessionRow
+        | null;
+      if (refreshed) {
+        await stopSession(mod, sessionDb, refreshed);
+        await startSession(mod, sessionDb, refreshed);
+      }
+    }
+  } catch (err: any) {
+    throw new Error(`reflect editSessionUI failed: ${err?.message || err}`);
+  }
+}
+
 export async function listForwardsUI(): Promise<ReflectForwardRow[]> {
   try {
     const mod = await loadReflectSync();
