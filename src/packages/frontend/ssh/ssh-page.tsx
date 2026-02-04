@@ -12,6 +12,7 @@ import {
   Popconfirm,
   Select,
   Space,
+  Spin,
   Switch,
   Table,
   Tag,
@@ -206,6 +207,9 @@ export const SshPage: React.FC = React.memo(() => {
   const [rows, setRows] = useState<SshSessionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [openingTargets, setOpeningTargets] = useState<Record<string, boolean>>(
+    {},
+  );
   const [reflectByTarget, setReflectByTarget] = useState<
     Record<string, ReflectTargetState>
   >({});
@@ -385,6 +389,7 @@ export const SshPage: React.FC = React.memo(() => {
   };
 
   const handleOpen = async (target: string) => {
+    setOpeningTargets((prev) => ({ ...prev, [target]: true }));
     try {
       const result = await connectSessionWithRetry(target);
       if (result?.url) {
@@ -399,6 +404,8 @@ export const SshPage: React.FC = React.memo(() => {
         type: "error",
         message: err?.message || String(err),
       });
+    } finally {
+      setOpeningTargets((prev) => ({ ...prev, [target]: false }));
     }
   };
 
@@ -528,6 +535,7 @@ export const SshPage: React.FC = React.memo(() => {
   };
 
   const openRemotePath = async (target: string, path: string) => {
+    setOpeningTargets((prev) => ({ ...prev, [target]: true }));
     try {
       const result = await connectSessionWithRetry(target);
       if (!result?.url) return;
@@ -549,6 +557,8 @@ export const SshPage: React.FC = React.memo(() => {
         type: "error",
         message: err?.message || String(err),
       });
+    } finally {
+      setOpeningTargets((prev) => ({ ...prev, [target]: false }));
     }
   };
 
@@ -820,11 +830,20 @@ export const SshPage: React.FC = React.memo(() => {
         title: "Target",
         dataIndex: "target",
         key: "target",
-        render: (value, row) => (
-          <Button size="small" type="link" onClick={() => handleOpen(row.target)}>
-            {value}
-          </Button>
-        ),
+        render: (value, row) => {
+          const opening = !!openingTargets[row.target];
+          return (
+            <Button
+              size="small"
+              type="link"
+              onClick={() => handleOpen(row.target)}
+              loading={opening}
+              disabled={opening}
+            >
+              {value}
+            </Button>
+          );
+        },
       },
       {
         title: "Port",
@@ -912,7 +931,17 @@ export const SshPage: React.FC = React.memo(() => {
         dataIndex: "status",
         key: "status",
         width: 140,
-        render: (_, row) => statusTag(row.status),
+        render: (_, row) => {
+          if (openingTargets[row.target]) {
+            return (
+              <Space size={6}>
+                <Spin size="small" />
+                <Typography.Text type="secondary">starting…</Typography.Text>
+              </Space>
+            );
+          }
+          return statusTag(row.status);
+        },
       },
       {
         title: "Tunnel",
@@ -930,9 +959,16 @@ export const SshPage: React.FC = React.memo(() => {
         title: "Actions",
         key: "actions",
         width: 200,
-        render: (_, row) => (
-          <Space>
-            <Button size="small" onClick={() => handleOpen(row.target)}>
+        render: (_, row) => {
+          const opening = !!openingTargets[row.target];
+          return (
+            <Space>
+            <Button
+              size="small"
+              onClick={() => handleOpen(row.target)}
+              loading={opening}
+              disabled={opening}
+            >
               Open
             </Button>
             {row.status === "running" ? (
@@ -958,10 +994,11 @@ export const SshPage: React.FC = React.memo(() => {
               <Button size="small">Remove</Button>
             </Popconfirm>
           </Space>
-        ),
+          );
+        },
       },
     ],
-    [rows, reflectByTarget],
+    [rows, reflectByTarget, openingTargets],
   );
 
   const buildReflectSessionColumns = (
