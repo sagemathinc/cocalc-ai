@@ -251,13 +251,18 @@ export function ChatRoomComposer({
     }
   }, [isZenMode]);
 
-  const handleSend = useCallback(() => {
-    if (!hasInput) return;
-    on_send();
-    if (isZenMode) {
-      void toggleZenMode();
-    }
-  }, [hasInput, isZenMode, on_send, toggleZenMode]);
+  const handleSend = useCallback(
+    (value?: string | { preventDefault?: () => void }) => {
+      const effective =
+        typeof value === "string" ? value : input;
+      if (!effective || !effective.trim()) return;
+      on_send();
+      if (isZenMode) {
+        void toggleZenMode();
+      }
+    },
+    [input, isZenMode, on_send, toggleZenMode],
+  );
 
   const composerStyle: CSSProperties = {
     display: "flex",
