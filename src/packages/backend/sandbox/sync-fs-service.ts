@@ -93,10 +93,11 @@ export class SyncFsService extends EventEmitter {
       const existing = this.store.get(path);
       if (!existing) {
         // Fresh store entry but history may already exist in the patch stream.
-        const { heads, maxVersion } = await this.getStreamHeads({
-          project_id: meta.project_id,
-          string_id,
-        });
+    const { heads, maxVersion } = await this.getStreamHeads({
+      project_id: meta.project_id,
+      string_id,
+      path: meta.relativePath,
+    });
         if (heads.length > 0 || maxVersion > 0) {
           // Reconstruct the current document from the patch stream (respecting
           // snapshots) to avoid emitting an orphaned "initial" patch that
@@ -488,6 +489,7 @@ export class SyncFsService extends EventEmitter {
     const { heads, maxVersion, maxTimeMs } = await this.getStreamHeads({
       project_id: meta.project_id,
       string_id,
+      path: relativePath,
     });
     const parents = heads;
     const parentMaxMs =
@@ -523,6 +525,7 @@ export class SyncFsService extends EventEmitter {
       const writer = await this.getPatchWriter({
         project_id: meta.project_id,
         string_id,
+        path: relativePath,
       });
       if (process.env.SYNC_FS_DEBUG) {
         console.log("sync-fs appendPatch publish", {
@@ -555,14 +558,16 @@ export class SyncFsService extends EventEmitter {
   private async getPatchWriter({
     project_id,
     string_id,
+    path,
   }: {
     project_id: string;
     string_id: string;
+    path: string;
   }): Promise<AStream<any>> {
     const cached = this.patchWriters.get(string_id);
     if (cached) return cached;
     const writer = new AStream({
-      name: patchesStreamName({ string_id }),
+      name: patchesStreamName({ path }),
       project_id,
       client: this.getConatClient(),
       noInventory: true,
@@ -656,15 +661,17 @@ export class SyncFsService extends EventEmitter {
   private async getStreamHeads({
     project_id,
     string_id,
+    path,
   }: {
     project_id: string;
     string_id: string;
+    path: string;
   }): Promise<{
     heads: PatchId[];
     maxVersion: number;
     maxTimeMs: number;
   }> {
-    const writer = await this.getPatchWriter({ project_id, string_id });
+    const writer = await this.getPatchWriter({ project_id, string_id, path });
     const persisted = this.store.getFsHead(string_id);
     let info: StreamInfo =
       this.streamInfo.get(string_id) ??
@@ -740,7 +747,7 @@ export class SyncFsService extends EventEmitter {
       if (process.env.SYNC_FS_DEBUG) {
         console.log("sync-fs getStreamHeads retry from start", { string_id });
       }
-      return this.getStreamHeads({ project_id, string_id });
+      return this.getStreamHeads({ project_id, string_id, path });
     }
     if (process.env.SYNC_FS_DEBUG) {
       console.log("sync-fs getStreamHeads done", {

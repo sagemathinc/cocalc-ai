@@ -299,6 +299,18 @@ export class JupyterKernel
 
   isClosed = () => this._state == "closed";
 
+  private updateSettings = (settings: {
+    backend_state?: BackendState;
+    kernel_state?: KernelState;
+  }): void => {
+    const syncdb = this._actions?.syncdb;
+    if (!syncdb || !syncdb.isReady()) {
+      return;
+    }
+    syncdb.set({ type: "settings", ...settings });
+    syncdb.commit();
+  };
+
   get_path = () => {
     return this._path;
   };
@@ -314,7 +326,7 @@ export class JupyterKernel
     this._state = state;
     this.emit("state", this._state);
     this.emit(this._state); // we *SHOULD* use this everywhere, not above.
-    this._actions?.syncdb?.set({ type: "settings", backend_state: state });
+    this.updateSettings({ backend_state: state });
   };
 
   private setFailed = (error: string): void => {
@@ -526,10 +538,7 @@ export class JupyterKernel
       if (mesg.content != null && mesg.content.execution_state != null) {
         this.kernel_state = mesg.content.execution_state;
         this.emit("execution_state", mesg.content.execution_state);
-        this._actions?.syncdb?.set({
-          type: "settings",
-          kernel_state: mesg.content.execution_state,
-        });
+        this.updateSettings({ kernel_state: mesg.content.execution_state });
       }
 
       if (mesg.content?.comm_id != null) {

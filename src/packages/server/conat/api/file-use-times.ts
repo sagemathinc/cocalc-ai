@@ -41,7 +41,7 @@ export async function fileUseTimes({
   }
 
   if (edit_times) {
-    const name = patchesStreamName({ project_id, path });
+    const name = patchesStreamName({ path });
     // TODO: performance worries - this involves reading all data for the full history of editing
     // this file, setting up a watch, etc., then removing it.... It is thus not optimized as
     // much as possible.  Instead, probably we want to grab this data from somewhere else, e.g., some

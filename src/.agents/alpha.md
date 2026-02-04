@@ -13,21 +13,27 @@ For alpha testing it will be deployed by:
 
 ## Blocker Todo List
 
-- [x] plus: do not show membership in settings or any other none-lite things
+To make various paths much more transparent I changed the function 
 
-- [ ] #n ow plus: enable app server proxy support (e.g., vscode, jupyter, etc.)
+```
+patchesStreamName
+```
 
-- [ ] jupyter kernel state isn't reported properly
+in `build/cocalc-lite/src/packages/conat/sync/synctable-stream.ts` to take just the path of the document as input, instead of the string_id (which is a sha1 hash).  I think I updated all callers to use this, except I haven't updated the use of patchesStreamName here:
 
-- [ ] consider changing the persist sqlite path to the actual file path instead of a hash
+`build/cocalc-lite/src/packages/backend/sandbox/sync-fs-service.ts` 
+
+It's a little tricky.  Can you look into it?
+
+- [ ] do not compress patches in sqlite db; this will make searching the full history possible and use by external tools very easy.
+
+- [ ] codex: eliminate the markdown links instructions and instead use a heuristic to turn files refs that it outputs into links
 
 - [ ] opening files not in HOME
 
 - [ ] #bug chat scroll position jumping -- happens a lot when switching between two rooms
 
 - [ ] plus: implement remote ssh, sync, and port forward integration
-
-- [ ] plus: do not open account settings by default -- open file explorer
 
 - [ ] launchpad: implement /scratch for workspaces (just another btrfs that is never snapshotted or backed up, and has the same size as the main filesystem for the project).
 
@@ -60,5 +66,13 @@ For alpha testing it will be deployed by:
 - [ ] codex: proxy so this actually works, or private directory with auth data that is copied into place on usage
 
 - [ ] codex: codex-0.93 switched log format to use sqlite, so we may need to rewrite to use that.
+
+- [x]  change the persist sqlite path to the actual file path instead of a hash
+
+- [x] jupyter kernel state isn't reported properly
+
+- [x] plus: do not show membership in settings or any other none-lite things
+
+- [x] plus: enable app server proxy support (e.g., vscode, jupyter, etc.)
 
 - [x] #bug chat scroll position

@@ -20,7 +20,7 @@ import {
 } from "@cocalc/frontend/misc/local-storage";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { JupyterActions as JupyterActions0 } from "@cocalc/jupyter/redux/actions";
-import { CellToolbarName } from "@cocalc/jupyter/types";
+import { CellToolbarName, type BackendState, type KernelState } from "@cocalc/jupyter/types";
 import { callback2, once } from "@cocalc/util/async-utils";
 import { bufferToBase64 } from "@cocalc/util/base64";
 import { Config as FormatterConfig, Syntax } from "@cocalc/util/code-formatter";
@@ -154,7 +154,7 @@ export class JupyterActions extends JupyterActions0 {
     // nbgrader support
     this.nbgrader_actions = new NBGraderActions(this, this.redux);
 
-    this.syncdb.once("ready", () => {
+    const handleSyncdbReady = () => {
       const ipywidgets_state = this.syncdb.ipywidgets_state;
       if (ipywidgets_state == null) {
         throw Error(
@@ -181,7 +181,13 @@ export class JupyterActions extends JupyterActions0 {
       }
       this.watchIpynb();
       this.refreshKernelStatus();
-    });
+    };
+
+    if (this.syncdb.isReady()) {
+      handleSyncdbReady();
+    } else {
+      this.syncdb.once("ready", handleSyncdbReady);
+    }
 
     this.initOpenLog();
 
@@ -1648,10 +1654,36 @@ export class JupyterActions extends JupyterActions0 {
   refreshKernelStatus = async () => {
     await this.waitUntilProjectIsRunning();
     if (this.isClosed()) return;
-    const client = await this.getJupyterClient();
-    if (client == null || this.isClosed()) return;
-    const status = await client.getKernelStatus();
-    this.syncdb.set({ type: "settings", ...status });
+    let status:
+      | { backend_state: BackendState; kernel_state: KernelState }
+      | null = null;
+    await until(
+      async () => {
+        if (this.isClosed()) return true;
+        const client = await this.getJupyterClient();
+        if (client == null) {
+          return false;
+        }
+        try {
+          status = await client.getKernelStatus();
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { min: 500, max: 5000 },
+    );
+    if (this.isClosed() || status == null) return;
+    const kernelStatus = status as {
+      backend_state: BackendState;
+      kernel_state: KernelState;
+    };
+    this.syncdb.set({
+      type: "settings",
+      backend_state: kernelStatus.backend_state,
+      kernel_state: kernelStatus.kernel_state,
+    });
+    this.syncdb.commit();
   };
 
   getMessageLimit = () => {

@@ -20,7 +20,7 @@ export async function history({
   await assertCollab({ account_id, project_id });
 
   const client = conat();
-  const name = patchesStreamName({ project_id, path });
+  const name = patchesStreamName({ path });
   const astream = client.sync.astream({
     name,
     project_id,
