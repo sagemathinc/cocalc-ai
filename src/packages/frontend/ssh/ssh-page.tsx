@@ -695,17 +695,32 @@ export const SshPage: React.FC = React.memo(() => {
         key: "actions",
         width: 120,
         render: (_, fwd) => (
-          <Popconfirm
-            title="Remove this forward?"
-            description="This will stop and delete the port forward."
-            okText="Remove"
-            cancelText="Cancel"
-            onConfirm={() => handleTerminateForward(row.target, fwd.id)}
-          >
-            <Button size="small" danger>
-              Remove
+          <Space size={6}>
+            <Button
+              size="small"
+              onClick={() => {
+                if (typeof window === "undefined") return;
+                window.open(
+                  `http://localhost:${fwd.local_port}`,
+                  "_blank",
+                  "noopener",
+                );
+              }}
+            >
+              Open
             </Button>
-          </Popconfirm>
+            <Popconfirm
+              title="Remove this forward?"
+              description="This will stop and delete the port forward."
+              okText="Remove"
+              cancelText="Cancel"
+              onConfirm={() => handleTerminateForward(row.target, fwd.id)}
+            >
+              <Button size="small" danger>
+                Remove
+              </Button>
+            </Popconfirm>
+          </Space>
         ),
       },
     ];
