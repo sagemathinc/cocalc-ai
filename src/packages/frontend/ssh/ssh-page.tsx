@@ -44,6 +44,9 @@ const PAGE_STYLE: CSS = {
   overflow: "auto",
 } as const;
 
+const REMOTE_READY_ATTEMPTS = 8;
+const REMOTE_READY_TIMEOUT_MS = 7000;
+
 const TITLE_STYLE: CSS = {
   marginBottom: "12px",
 } as const;
@@ -302,17 +305,40 @@ export const SshPage: React.FC = React.memo(() => {
     try {
       const localUrl =
         typeof window !== "undefined" ? window.location.href : undefined;
-      const result = await webapp_client.conat_client.hub.ssh.connectSessionUI({
-        target,
-        options: { noOpen: true, localUrl, waitForReady: true },
-      });
+      let result;
+      for (let attempt = 1; attempt <= REMOTE_READY_ATTEMPTS; attempt += 1) {
+        try {
+          result = await webapp_client.conat_client.hub.ssh.connectSessionUI({
+            target,
+            options: {
+              noOpen: true,
+              localUrl,
+              waitForReady: true,
+              readyTimeoutMs: REMOTE_READY_TIMEOUT_MS,
+            },
+          });
+          break;
+        } catch (err: any) {
+          const message = err?.message || String(err);
+          if (
+            message.includes("Remote server did not respond in time") &&
+            attempt < REMOTE_READY_ATTEMPTS
+          ) {
+            if (attempt === 1) {
+              alert_message({
+                type: "info",
+                message: "Remote server is still starting — retrying...",
+              });
+            }
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            continue;
+          }
+          throw err;
+        }
+      }
       if (result?.url) {
         const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
-        window.open(
-          result.url,
-          windowName ?? "_blank",
-          "noopener",
-        );
+        window.open(result.url, windowName ?? "_blank", "noopener");
       }
       await loadSessions();
     } catch (err: any) {
