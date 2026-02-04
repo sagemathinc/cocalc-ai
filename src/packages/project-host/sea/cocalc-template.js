@@ -19,6 +19,7 @@ const mainScript = "${MAIN}";
 const quiet =
   process.env.COCALC_SEA_QUIET === "1" ||
   process.argv.includes("reflect") ||
+  process.argv.includes("reflect-sync") ||
   process.argv.includes("--run-reflect");
 
 function log(...args) {

@@ -1,6 +1,21 @@
 # CoCalc Plus SSH Remote Mode (Draft Strategy)
 
-## Todo
+## Reflect Sync UI todo
+
+- [ ] port forward is backwards
+- [ ] click on the "Remote: ...." button should provide link to local server
+- [ ] paths for sync should be relative to HOME by default; also HOME on remote machine is usually totally different than local machine.  Use `~/` not hardcoded full path.
+- [ ] the expand UI is too overwhelming and cluttered:
+  - ONLY show the buttons to create new thing first; show the columns and table only when there is at least one entry.
+- [ ] for forwards have button to open port via http in browser (since usually a server)
+- [ ] delete sync
+- [ ] pause sync
+- [ ] edit what can be edited about a sync
+- [ ] "Additional ignore patterns":
+  - explain the format or give a link to it.
+  - AI: could describe what you want to ignore and it would fill in a guess?  I wonder if there's a way to do AI integrations for everything generically this way....?  We need a generic AI assistant react component don't we, which is as popular as popovers and tooltips.
+
+## Other Todo
 
 - [ ] Robust cleanup: detect dead tunnels/servers and prune stale entries; optional --keep or --ttl.
   - even if dead, the user may want to start them again later when the target is available; user should be able to explicitly kill and remove any server though.
@@ -28,15 +43,15 @@
 - [ ] enable proxying of remote apps (e.g., jupyterlab) and make sure it works
   - this is probably just enabling a button in the frontend when lite mode is true, instead of explicitly disabling it; there might not be anything else to do.
 
-- [ ] reflect-sync integration improvements:
-  - [ ] make it so configuration of sync is focused around "Remote SSH Sessions" targets, e.g., maybe use an antd expand button to configure sync.  The configuration would be:
+- [x] reflect-sync integration improvements:
+  - [x] make it so configuration of sync is focused around "Remote SSH Sessions" targets, e.g., maybe use an antd expand button to configure sync.  The configuration would be:
     - path
       - advanced: remote path (defaults to local path)
       - ignore configuration (default to parsing .gitignore if present?)
       - local path not relative to home directory, conflict model
     - primary key is just the local path; don't use the reflect sync "name" at all
     - don't allow a local path that is contained in another path or contains another path (for simplicity and to avoid confusion
-  - [ ] also make port forwards be part of the remote ssh target:
+  - [x] also make port forwards be part of the remote ssh target:
     - local port, remote port (defaults to remote=local port), optional direction (defaults to remote --&gt; local)
   - [ ] improve logs to be less confusing
 
@@ -62,7 +77,7 @@
   - [x] cocalc-plus ssh status  (ping)
   - [x] make table look nice using ascii-table3 with same style as used in `packages/conat/sync/inventory.ts` 
 
-### Reflect Sync -- background
+## Reflect Sync -- background
 
 Reflect-sync is a powerful open source program I wrote with codex over 2 months, but haven't used yet.  It's an extremely efficient rsync + sqlite program for bidirectional file sync over ssh, and also supports configuring arbitrary maintained port forwards.   It would fit naturally into this "Remote SSH Sessions" page, where one could easily configure and see the status of the following:
 

@@ -9,10 +9,16 @@ import path from "node:path";
 import { reflectVersion } from "../reflect/manager";
 import { main as sshMain } from "./ssh";
 
+const dynamicImport = new Function(
+  "p",
+  "return import(p);",
+) as (p: string) => Promise<any>;
+
 function usage() {
   console.log(`Usage:
   cocalc-plus version
   cocalc-plus reflect --version
+  cocalc-plus reflect-sync [args...]
   cocalc-plus ssh user@host[:port] [options]
   cocalc-plus ssh --target user@host[:port] [options]
   cocalc-plus [--daemon] [--write-connection-info PATH] [--pidfile PATH]
@@ -20,6 +26,7 @@ function usage() {
 Examples:
   cocalc-plus
   cocalc-plus reflect --version
+  cocalc-plus reflect-sync --version
   cocalc-plus ssh list
   cocalc-plus ssh user@host
   cocalc-plus ssh --target list
@@ -111,7 +118,9 @@ async function runCli() {
     }
     const opts = JSON.parse(process.env.REFLECT_OPTS ?? "{}");
     const entry = process.env.REFLECT_SYNC_ENTRY;
-    const mod = entry ? await import(entry) : await import("reflect-sync");
+    const mod = entry
+      ? await dynamicImport(entry)
+      : await dynamicImport("reflect-sync");
     await mod.runScheduler(opts);
     return;
   }
@@ -121,7 +130,8 @@ async function runCli() {
     (arg.startsWith("-") ||
       arg === "ssh" ||
       arg === "version" ||
-      arg === "reflect");
+      arg === "reflect" ||
+      arg === "reflect-sync");
   const isSelfPath = (arg?: string) => {
     if (!arg) return false;
     if (!arg.includes("/") && !arg.includes("\\")) return false;
@@ -172,6 +182,11 @@ async function runCli() {
       return;
     }
     console.log("Usage: cocalc-plus reflect --version");
+    return;
+  }
+  if (argv[0] === "reflect-sync") {
+    process.argv = [process.execPath, "reflect-sync", ...argv.slice(1)];
+    await dynamicImport("reflect-sync/cli");
     return;
   }
   if (

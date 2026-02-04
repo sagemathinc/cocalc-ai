@@ -235,6 +235,15 @@ function buildSchedulerOptions(
   const alphaDb = row.alpha_db ?? paths.alpha_db;
   const betaDb = row.beta_db ?? paths.beta_db;
   const baseDb = row.base_db ?? paths.base_db;
+  let remoteCommand: string | undefined;
+  if (row.remote_scan_cmd) {
+    const trimmed = row.remote_scan_cmd.trim();
+    remoteCommand = trimmed.replace(/\s+scan\s*$/i, "");
+  } else if (row.alpha_host || row.beta_host) {
+    remoteCommand =
+      process.env.COCALC_REFLECT_REMOTE_COMMAND ??
+      "$HOME/.local/bin/cocalc-plus reflect-sync";
+  }
   return {
     alphaRoot: row.alpha_root,
     betaRoot: row.beta_root,
@@ -250,7 +259,7 @@ function buildSchedulerOptions(
     betaPort: row.beta_port ?? undefined,
     alphaRemoteDb: row.alpha_remote_db ?? "",
     betaRemoteDb: row.beta_remote_db ?? "",
-    remoteCommand: row.remote_scan_cmd ?? undefined,
+    remoteCommand,
     disableHotWatch: !!row.disable_hot_sync,
     disableHotSync: !!row.disable_hot_sync,
     disableFullSync: !!row.disable_full_sync,
@@ -561,6 +570,15 @@ export async function createSessionUI(opts: {
       ignore: ignoreRules,
       logger: undefined,
     });
+    if (opts.target) {
+      const remoteBase =
+        process.env.COCALC_REFLECT_REMOTE_COMMAND ??
+        "$HOME/.local/bin/cocalc-plus reflect-sync";
+      mod.updateSession(sessionDb, id, {
+        remote_scan_cmd: `${remoteBase} scan`,
+        remote_watch_cmd: `${remoteBase} watch`,
+      });
+    }
     const row = mod.loadSessionById(sessionDb, id) as SessionRow | null;
     if (row) {
       mod.setDesiredState(sessionDb, id, "running");

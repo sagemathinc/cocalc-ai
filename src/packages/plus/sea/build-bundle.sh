@@ -121,16 +121,16 @@ const path = require("path");
 const { createRequire } = require("module");
 const base = process.argv[1];
 const rootPkg = process.argv[2];
-const req = createRequire(path.join(base, "package.json"));
+const rootReq = createRequire(path.join(base, "package.json"));
 const seen = new Set();
-function resolvePackageRoot(name) {
+function resolvePackageRoot(name, resolver) {
   try {
-    const pkgJsonPath = req.resolve(`${name}/package.json`);
+    const pkgJsonPath = resolver.resolve(`${name}/package.json`);
     return { pkgJsonPath, dir: path.dirname(pkgJsonPath) };
   } catch {}
   let entry;
   try {
-    entry = req.resolve(name);
+    entry = resolver.resolve(name);
   } catch {
     return null;
   }
@@ -144,9 +144,9 @@ function resolvePackageRoot(name) {
   }
   return null;
 }
-function add(name) {
+function add(name, resolver) {
   if (seen.has(name)) return;
-  const resolved = resolvePackageRoot(name);
+  const resolved = resolvePackageRoot(name, resolver);
   if (!resolved) {
     return;
   }
@@ -159,10 +159,11 @@ function add(name) {
     pkgJson = {};
   }
   const deps = pkgJson.dependencies || {};
-  for (const dep of Object.keys(deps)) add(dep);
+  const pkgReq = createRequire(path.join(dir, "package.json"));
+  for (const dep of Object.keys(deps)) add(dep, pkgReq);
   process.stdout.write(`${name}\t${dir}\n`);
 }
-add(rootPkg);
+add(rootPkg, rootReq);
 ' "$base" "$pkg" | while IFS=$'\t' read -r name dir; do
     if [ -z "$name" ] || [ -z "$dir" ]; then
       continue
@@ -175,6 +176,10 @@ add(rootPkg);
 
 echo "- Copy reflect-sync + deps (from @cocalc/plus)"
 copy_js_pkg_tree "reflect-sync" "$ROOT/packages/plus" "$OUT"
+if [ ! -f "$OUT/bundle/node_modules/reflect-sync/dist/index.js" ]; then
+  echo "ERROR: reflect-sync not copied into bundle output"
+  exit 1
+fi
 
 echo "- Copy static frontend assets"
 mkdir -p "$OUT"/static
