@@ -83,23 +83,27 @@ function isPidAlive(pid?: number | null): boolean {
 
 async function getDaemonLogger(sessionDb: string) {
   if (daemonLogger) return daemonLogger;
-  const mod = await importReflectDist<{
-    createDaemonLogger: (
-      sessionDbPath: string,
-      opts?: { scope?: string; keepMs?: number; keepRows?: number },
-    ) => { logger: any; close: () => void };
-  }>("daemon-logs.js");
-  daemonLogger = mod.createDaemonLogger(sessionDb, {
-    scope: "cocalc-plus",
-  });
-  process.once("exit", () => {
-    try {
-      daemonLogger?.close();
-    } catch {
-      // ignore
-    }
-  });
-  return daemonLogger;
+  try {
+    const mod = await importReflectDist<{
+      createDaemonLogger: (
+        sessionDbPath: string,
+        opts?: { scope?: string; keepMs?: number; keepRows?: number },
+      ) => { logger: any; close: () => void };
+    }>("daemon-logs.js");
+    daemonLogger = mod.createDaemonLogger(sessionDb, {
+      scope: "cocalc-plus",
+    });
+    process.once("exit", () => {
+      try {
+        daemonLogger?.close();
+      } catch {
+        // ignore
+      }
+    });
+    return daemonLogger;
+  } catch {
+    return null;
+  }
 }
 
 async function logDaemon(
@@ -110,12 +114,35 @@ async function logDaemon(
 ) {
   try {
     const logger = await getDaemonLogger(sessionDb);
-    const fn = logger.logger?.[level] ?? logger.logger?.info;
+    const fn = logger?.logger?.[level] ?? logger?.logger?.info;
     if (fn) {
       fn.call(logger.logger, message, meta);
+      return;
     }
   } catch {
     // ignore daemon logging failures
+  }
+  try {
+    const mod = await loadReflectSync();
+    mod.ensureSessionDb(sessionDb);
+    const db: any = mod.openSessionDb(sessionDb);
+    try {
+      const stmt = db.prepare(
+        `INSERT INTO daemon_logs(ts, level, scope, message, meta)
+         VALUES(?, ?, ?, ?, ?)`,
+      );
+      stmt.run(
+        Date.now(),
+        level,
+        "cocalc-plus",
+        message,
+        meta ? JSON.stringify(meta) : null,
+      );
+    } finally {
+      db.close();
+    }
+  } catch {
+    // ignore fallback logging failures
   }
 }
 
@@ -1111,6 +1138,7 @@ export async function listDaemonLogsUI(opts?: {
 }): Promise<ReflectLogRow[]> {
   const mod = await loadReflectSync();
   const sessionDb = await ensureSessionDb(mod);
+  await logDaemon(sessionDb, "debug", "listDaemonLogsUI");
   const db: any = mod.openSessionDb(sessionDb);
   try {
     const where: string[] = ["1 = 1"];
