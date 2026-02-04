@@ -173,6 +173,18 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectLogTarget, setReflectLogTarget] = useState<string | null>(null);
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const [targetForm] = Form.useForm();
+  const ignoreHelp = (
+    <Typography.Text type="secondary">
+      Use gitignore-style patterns.{" "}
+      <Typography.Link
+        href="https://git-scm.com/docs/gitignore"
+        target="_blank"
+        rel="noreferrer"
+      >
+        Format reference
+      </Typography.Link>
+    </Typography.Text>
+  );
 
   if (sshRemoteTarget) {
     return (
@@ -1097,6 +1109,7 @@ export const SshPage: React.FC = React.memo(() => {
                     <Form.Item
                       label="Additional ignore patterns"
                       name="ignoreRules"
+                      extra={ignoreHelp}
                     >
                       <Input.TextArea
                         autoSize={{ minRows: 3, maxRows: 6 }}
@@ -1155,7 +1168,11 @@ export const SshPage: React.FC = React.memo(() => {
               ]}
             />
           </Form.Item>
-          <Form.Item label="Additional ignore patterns" name="ignoreRules">
+          <Form.Item
+            label="Additional ignore patterns"
+            name="ignoreRules"
+            extra={ignoreHelp}
+          >
             <Input.TextArea
               autoSize={{ minRows: 3, maxRows: 6 }}
               placeholder="node_modules\n*.log"
