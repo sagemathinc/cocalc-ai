@@ -28,6 +28,7 @@ import { getAuthToken } from "./auth-token";
 import getLogger from "@cocalc/backend/logger";
 import compression from "compression";
 import { enableMemoryUseLogger } from "@cocalc/backend/memory";
+import { startProxyServer as startProjectProxyServer } from "@cocalc/project/servers/proxy/proxy";
 
 const logger = getLogger("lite:main");
 
@@ -90,6 +91,12 @@ export async function main(): Promise<number> {
   logger.debug("start project services");
   cleanup();
   startProjectServices({ client: conatClient });
+
+  logger.debug("start project HTTP proxy server");
+  await startProjectProxyServer({
+    port: Number(process.env.COCALC_PROXY_PORT ?? 8080),
+    host: process.env.COCALC_PROXY_HOST ?? "127.0.0.1",
+  });
 
   logger.debug("start changefeed server");
   initChangefeeds({ client: conatClient });

@@ -13,7 +13,9 @@ For alpha testing it will be deployed by:
 
 ## Blocker Todo List
 
-- [ ]  trying to create a zip file via the UI fails
+- [x] plus: do not show membership in settings or any other none-lite things
+
+- [ ] #n ow plus: enable app server proxy support (e.g., vscode, jupyter, etc.)
 
 - [ ] jupyter kernel state isn't reported properly
 
@@ -21,13 +23,11 @@ For alpha testing it will be deployed by:
 
 - [ ] opening files not in HOME
 
+- [ ] #bug chat scroll position jumping -- happens a lot when switching between two rooms
+
 - [ ] plus: implement remote ssh, sync, and port forward integration
 
-- [ ] plus: do not show membership in settings
-
 - [ ] plus: do not open account settings by default -- open file explorer
-
-- [ ] plus: enable app server proxy support (e.g., vscode, jupyter, etc.)
 
 - [ ] launchpad: implement /scratch for workspaces (just another btrfs that is never snapshotted or backed up, and has the same size as the main filesystem for the project).
 
@@ -53,12 +53,12 @@ For alpha testing it will be deployed by:
 
 - [ ] launchpad: ssh to project via cloudflare tunnels and WARP, and/or just expose the ip of the server.
 
+- [ ] codex: ui -- the headers in the thinking log get smooshed together still
+
 - [ ] codex: memory leak when using codex chat for a long time
 
 - [ ] codex: proxy so this actually works, or private directory with auth data that is copied into place on usage
 
 - [ ] codex: codex-0.93 switched log format to use sqlite, so we may need to rewrite to use that.
-
-- [ ] cloud: hyperstack data disks don't get deleted on deprovision
 
 - [x] #bug chat scroll position
