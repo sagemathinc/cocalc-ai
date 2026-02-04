@@ -2873,10 +2873,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.setState({ just_closed_files: List([]) });
   }
 
-  showComputeServers = () => {};
-
-  createComputeServerDialog = () => {};
-
   setServerTab = (_name: string) => {
     this.set_active_tab("servers", {
       change_history: true,
