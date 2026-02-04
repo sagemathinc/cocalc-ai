@@ -7,6 +7,16 @@ import passwordHash, {
 const AUTH_COOKIE_NAME = "cocalc-lite-auth";
 const NINETY_DAYS_SECS = 90 * 24 * 60 * 60;
 
+function normalizeCookieHost(host?: string) {
+  if (!host) return "unknown";
+  return host.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function getAuthCookieName(host?: string) {
+  if (!host) return AUTH_COOKIE_NAME;
+  return `${AUTH_COOKIE_NAME}-${normalizeCookieHost(host)}`;
+}
+
 function parseCookies(header?: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
@@ -31,9 +41,14 @@ function getAuthCookieValue(AUTH_TOKEN?: string) {
   return passwordHash(AUTH_TOKEN);
 }
 
-function makeAuthCookie(secure: boolean, AUTH_COOKIE_VALUE: string): string {
+function makeAuthCookie(
+  secure: boolean,
+  AUTH_COOKIE_VALUE: string,
+  host?: string,
+): string {
+  const cookieName = getAuthCookieName(host);
   const attrs = [
-    `${AUTH_COOKIE_NAME}=${encodeURIComponent(AUTH_COOKIE_VALUE)}`,
+    `${cookieName}=${encodeURIComponent(AUTH_COOKIE_VALUE)}`,
     "Path=/",
     `Max-Age=${NINETY_DAYS_SECS}`,
     "HttpOnly",
@@ -58,7 +73,8 @@ export async function initAuth({ app, AUTH_TOKEN, isHttps }) {
     if (!AUTH_TOKEN) return next(); // no auth enabled
 
     const cookies = parseCookies(req.headers.cookie);
-    const hasCookie = verifyPassword(AUTH_TOKEN, cookies[AUTH_COOKIE_NAME]);
+    const cookieName = getAuthCookieName(req.headers.host);
+    const hasCookie = verifyPassword(AUTH_TOKEN, cookies[cookieName]);
 
     // No cookie: check a one-time query token
     const u = new URL(req.url, "http://x"); // origin placeholder
@@ -76,7 +92,10 @@ export async function initAuth({ app, AUTH_TOKEN, isHttps }) {
 
     if (token && safeEqualStr(token, AUTH_TOKEN)) {
       // Good token → set cookie and redirect to clean URL (no query token)
-      res.setHeader("Set-Cookie", makeAuthCookie(isHttps, AUTH_COOKIE_VALUE));
+      res.setHeader(
+        "Set-Cookie",
+        makeAuthCookie(isHttps, AUTH_COOKIE_VALUE, req.headers.host),
+      );
       const clean = stripAuthTokenFromUrlPath(req.url);
       // 303 avoids issues with non-GET replays
       res.status(303).setHeader("Location", clean).end();
