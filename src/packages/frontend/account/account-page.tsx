@@ -263,32 +263,40 @@ export const AccountPage: React.FC = () => {
             children: active_page === "preferences" &&
               active_sub_tab === "preferences-ai" && <AccountPreferencesAI />,
           },
-          {
-            key: "preferences-communication",
-            label: (
-              <span>
-                <Icon name={COMMUNICATION_ICON_NAME} />{" "}
-                {intl.formatMessage(labels.communication)}
-              </span>
-            ),
-            children: active_page === "preferences" &&
-              active_sub_tab === "preferences-communication" && (
-                <AccountPreferencesCommunication />
-              ),
-          },
-          {
-            key: "preferences-keys",
-            label: (
-              <span>
-                <Icon name={KEYS_ICON_NAME} />{" "}
-                {intl.formatMessage(labels.ssh_and_api_keys)}
-              </span>
-            ),
-            children: active_page === "preferences" &&
-              active_sub_tab === "preferences-keys" && (
-                <AccountPreferencesSecurity />
-              ),
-          },
+          ...(lite
+            ? []
+            : [
+                {
+                  key: "preferences-communication",
+                  label: (
+                    <span>
+                      <Icon name={COMMUNICATION_ICON_NAME} />{" "}
+                      {intl.formatMessage(labels.communication)}
+                    </span>
+                  ),
+                  children: active_page === "preferences" &&
+                    active_sub_tab === "preferences-communication" && (
+                      <AccountPreferencesCommunication />
+                    ),
+                },
+              ]),
+          ...(lite
+            ? []
+            : [
+                {
+                  key: "preferences-keys",
+                  label: (
+                    <span>
+                      <Icon name={KEYS_ICON_NAME} />{" "}
+                      {intl.formatMessage(labels.ssh_and_api_keys)}
+                    </span>
+                  ),
+                  children: active_page === "preferences" &&
+                    active_sub_tab === "preferences-keys" && (
+                      <AccountPreferencesSecurity />
+                    ),
+                },
+              ]),
           {
             key: "preferences-other",
             label: (
