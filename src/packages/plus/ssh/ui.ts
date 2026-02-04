@@ -1,6 +1,7 @@
 import type { ConnectOptions, ConnectResult } from "./core";
 import {
   connectSession,
+  deleteSession,
   getRemoteStatus,
   listSessions,
   statusSession,
@@ -88,6 +89,14 @@ export async function addSessionUI(target: string): Promise<void> {
     throw new Error("Target is required");
   }
   updateRegistry(trimmed, {});
+}
+
+export async function deleteSessionUI(target: string): Promise<void> {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    throw new Error("Target is required");
+  }
+  deleteSession(trimmed);
 }
 
 export async function stopSessionUI(target: string): Promise<void> {

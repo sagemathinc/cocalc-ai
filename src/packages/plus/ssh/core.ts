@@ -127,6 +127,20 @@ export function listSessions(): RegistryEntry[] {
   return Object.values(loadRegistry());
 }
 
+export function deleteSession(target: string) {
+  const registry = loadRegistry();
+  if (registry[target]) {
+    delete registry[target];
+    saveRegistry(registry);
+  }
+  const { localDir } = infoPathFor(target);
+  try {
+    fs.rmSync(localDir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+}
+
 export function pickFreePort(): Promise<number> {
   const net = require("node:net");
   return new Promise((resolve, reject) => {

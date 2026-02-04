@@ -140,6 +140,24 @@ function parseIgnoreRules(raw?: string | null) {
   return extractIgnoreRules(raw);
 }
 
+async function waitForUrlReady(
+  url: string,
+  timeoutMs = 20000,
+  intervalMs = 500,
+): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      await fetch(url, { mode: "no-cors", cache: "no-store" });
+      return true;
+    } catch {
+      // ignore and retry
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+
 export const SshPage: React.FC = React.memo(() => {
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
   const [rows, setRows] = useState<SshSessionRow[]>([]);
@@ -307,6 +325,15 @@ export const SshPage: React.FC = React.memo(() => {
         options: { noOpen: true, localUrl },
       });
       if (result?.url) {
+        const ready = await waitForUrlReady(result.url);
+        if (!ready) {
+          alert_message({
+            type: "warning",
+            message:
+              "Remote server is still starting. Please try again in a moment.",
+          });
+          return;
+        }
         const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
         window.open(
           result.url,
@@ -356,6 +383,18 @@ export const SshPage: React.FC = React.memo(() => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteTarget = async (target: string) => {
+    try {
+      await webapp_client.conat_client.hub.ssh.deleteSessionUI({ target });
+      await loadSessions();
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
     }
   };
 
@@ -732,16 +771,27 @@ export const SshPage: React.FC = React.memo(() => {
             <Button size="small" onClick={() => handleOpen(row.target)}>
               Open
             </Button>
+            {row.status === "running" ? (
+              <Popconfirm
+                title="Stop this session?"
+                description="This will stop the remote daemon for this target."
+                okText="Stop"
+                cancelText="Cancel"
+                onConfirm={() => handleStop(row.target)}
+              >
+                <Button size="small" danger>
+                  Stop
+                </Button>
+              </Popconfirm>
+            ) : null}
             <Popconfirm
-              title="Stop this session?"
-              description="This will stop the remote daemon for this target."
-              okText="Stop"
+              title="Remove this session?"
+              description="This removes the target from the local list."
+              okText="Remove"
               cancelText="Cancel"
-              onConfirm={() => handleStop(row.target)}
+              onConfirm={() => handleDeleteTarget(row.target)}
             >
-              <Button size="small" danger>
-                Stop
-              </Button>
+              <Button size="small">Remove</Button>
             </Popconfirm>
           </Space>
         ),
@@ -1166,6 +1216,7 @@ export const SshPage: React.FC = React.memo(() => {
             rules={[
               { required: true, message: "Enter a target like user@host:22" },
             ]}
+            extra="[user@]hostname[:port] (port is optional)"
           >
             <Input placeholder="user@host:22" />
           </Form.Item>
