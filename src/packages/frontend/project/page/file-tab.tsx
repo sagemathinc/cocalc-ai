@@ -130,7 +130,7 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     icon: "server",
     flyout: ServersFlyout,
     noAnonymous: false,
-    noLite: true,
+    noLite: false,
   },
   users: {
     label: labels.users,
