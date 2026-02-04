@@ -8,6 +8,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popover,
   Popconfirm,
   Select,
   Space,
@@ -17,6 +18,7 @@ import {
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import { InfoCircleOutlined } from "@ant-design/icons";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
   CSS,
@@ -1011,6 +1013,32 @@ export const SshPage: React.FC = React.memo(() => {
         <Typography.Title level={4} style={{ margin: 0 }}>
           Remote SSH Sessions
         </Typography.Title>
+        <Popover
+          placement="right"
+          content={
+            <div style={{ maxWidth: 340 }}>
+              <Typography.Paragraph style={{ marginBottom: 8 }}>
+                Use this page to connect to any Linux or macOS server you can
+                reach over SSH and run CoCalc Plus there. Each session starts a
+                remote CoCalc server and opens a local URL via a secure SSH
+                tunnel, so everything stays on your machine and the remote host.
+              </Typography.Paragraph>
+              <Typography.Paragraph style={{ marginBottom: 0 }}>
+                You can also enable bidirectional file sync between your local
+                folders and the remote server, plus create port forwards that
+                make remote services (e.g., web apps) available at
+                http://localhost on your computer.
+              </Typography.Paragraph>
+            </div>
+          }
+        >
+          <Button
+            size="small"
+            type="text"
+            icon={<InfoCircleOutlined />}
+            aria-label="About Remote SSH Sessions"
+          />
+        </Popover>
         <Button size="small" onClick={() => setTargetModalOpen(true)}>
           New Remote Session
         </Button>
