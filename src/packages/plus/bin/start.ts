@@ -110,7 +110,8 @@ async function runCli() {
       );
     }
     const opts = JSON.parse(process.env.REFLECT_OPTS ?? "{}");
-    const mod = await import("reflect-sync");
+    const entry = process.env.REFLECT_SYNC_ENTRY;
+    const mod = entry ? await import(entry) : await import("reflect-sync");
     await mod.runScheduler(opts);
     return;
   }

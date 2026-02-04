@@ -4,6 +4,8 @@ export const reflect = {
   listSessionsUI: requireSignedIn,
   listForwardsUI: requireSignedIn,
   createSessionUI: requireSignedIn,
+  listSessionLogsUI: requireSignedIn,
+  listDaemonLogsUI: requireSignedIn,
 };
 
 export type ReflectSessionRow = {
@@ -41,6 +43,19 @@ export type ReflectForwardRow = {
   ssh_args?: string | null;
 };
 
+export type ReflectLogRow = {
+  id: number;
+  ts: number;
+  level: string;
+  scope?: string | null;
+  message: string;
+  meta?: any;
+};
+
+export type ReflectSessionLogRow = ReflectLogRow & {
+  session_id: number;
+};
+
 export interface ReflectApi {
   listSessionsUI: (opts?: {
     selectors?: string[];
@@ -54,4 +69,23 @@ export interface ReflectApi {
     labels?: string[];
     target?: string;
   }) => Promise<void>;
+  listSessionLogsUI: (opts: {
+    idOrName: string;
+    limit?: number;
+    sinceTs?: number;
+    afterId?: number;
+    order?: "asc" | "desc";
+    minLevel?: string;
+    scope?: string;
+    message?: string;
+  }) => Promise<ReflectSessionLogRow[]>;
+  listDaemonLogsUI: (opts?: {
+    limit?: number;
+    sinceTs?: number;
+    afterId?: number;
+    order?: "asc" | "desc";
+    minLevel?: string;
+    scope?: string;
+    message?: string;
+  }) => Promise<ReflectLogRow[]>;
 }

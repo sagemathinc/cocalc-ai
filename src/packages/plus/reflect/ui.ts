@@ -1,1 +1,7 @@
-export { createSessionUI, listForwardsUI, listSessionsUI } from "./manager";
+export {
+  createSessionUI,
+  listForwardsUI,
+  listSessionsUI,
+  listSessionLogsUI,
+  listDaemonLogsUI,
+} from "./manager";

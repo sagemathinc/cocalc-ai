@@ -24,6 +24,8 @@ import {
 import type { SshSessionRow } from "@cocalc/conat/hub/api/ssh";
 import type {
   ReflectForwardRow,
+  ReflectLogRow,
+  ReflectSessionLogRow,
   ReflectSessionRow,
 } from "@cocalc/conat/hub/api/reflect";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -88,6 +90,12 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectError, setReflectError] = useState<string | null>(null);
   const [reflectModalOpen, setReflectModalOpen] = useState(false);
   const [reflectForm] = Form.useForm();
+  const [reflectLogModalOpen, setReflectLogModalOpen] = useState(false);
+  const [reflectLogRows, setReflectLogRows] = useState<ReflectLogRow[]>([]);
+  const [reflectLogLoading, setReflectLogLoading] = useState(false);
+  const [reflectLogTitle, setReflectLogTitle] = useState<string>("Logs");
+  const [reflectLogError, setReflectLogError] = useState<string | null>(null);
+  const [reflectLogTarget, setReflectLogTarget] = useState<string | null>(null);
 
   if (sshRemoteTarget) {
     return (
@@ -177,6 +185,75 @@ export const SshPage: React.FC = React.memo(() => {
       });
     } finally {
       setReflectLoading(false);
+    }
+  };
+
+  const formatReflectLogs = (rows: ReflectLogRow[]) => {
+    return rows
+      .map((row) => {
+        const ts = new Date(row.ts).toLocaleString();
+        const scope = row.scope ? ` (${row.scope})` : "";
+        const meta = row.meta ? ` ${JSON.stringify(row.meta)}` : "";
+        return `${ts} [${row.level}]${scope} ${row.message}${meta}`;
+      })
+      .join("\n");
+  };
+
+  const loadSessionLogs = async (row: ReflectSessionRow) => {
+    setReflectLogTitle(`Session Logs: ${row.name ?? row.id}`);
+    setReflectLogTarget(String(row.id));
+    setReflectLogError(null);
+    setReflectLogLoading(true);
+    setReflectLogModalOpen(true);
+    try {
+      const logs = (await webapp_client.conat_client.hub.reflect.listSessionLogsUI(
+        {
+          idOrName: String(row.id),
+          order: "desc",
+          limit: 200,
+        },
+      )) as ReflectSessionLogRow[];
+      setReflectLogRows(logs || []);
+    } catch (err: any) {
+      setReflectLogError(err?.message || String(err));
+      setReflectLogRows([]);
+    } finally {
+      setReflectLogLoading(false);
+    }
+  };
+
+  const loadDaemonLogs = async () => {
+    setReflectLogTitle("Reflect Daemon Logs");
+    setReflectLogTarget("daemon");
+    setReflectLogError(null);
+    setReflectLogLoading(true);
+    setReflectLogModalOpen(true);
+    try {
+      const logs = (await webapp_client.conat_client.hub.reflect.listDaemonLogsUI(
+        {
+          order: "desc",
+          limit: 200,
+        },
+      )) as ReflectLogRow[];
+      setReflectLogRows(logs || []);
+    } catch (err: any) {
+      setReflectLogError(err?.message || String(err));
+      setReflectLogRows([]);
+    } finally {
+      setReflectLogLoading(false);
+    }
+  };
+
+  const refreshLogView = async () => {
+    if (!reflectLogTarget) return;
+    if (reflectLogTarget === "daemon") {
+      await loadDaemonLogs();
+      return;
+    }
+    const id = reflectLogTarget;
+    const row = reflectSessions.find((r) => String(r.id) === id);
+    if (row) {
+      await loadSessionLogs(row);
     }
   };
 
@@ -327,8 +404,18 @@ export const SshPage: React.FC = React.memo(() => {
             ? new Date(row.last_clean_sync_at).toLocaleString()
             : "-",
       },
+      {
+        title: "Logs",
+        key: "logs",
+        width: 110,
+        render: (_, row) => (
+          <Button size="small" onClick={() => loadSessionLogs(row)}>
+            Logs
+          </Button>
+        ),
+      },
     ],
-    [],
+    [reflectSessions],
   );
 
   const reflectForwardColumns = useMemo<ColumnsType<ReflectForwardRow>>(
@@ -411,6 +498,9 @@ export const SshPage: React.FC = React.memo(() => {
         <Button size="small" onClick={() => setReflectModalOpen(true)}>
           New Session
         </Button>
+        <Button size="small" onClick={loadDaemonLogs}>
+          Daemon Logs
+        </Button>
       </Space>
       {reflectError ? (
         <Alert
@@ -472,6 +562,35 @@ export const SshPage: React.FC = React.memo(() => {
             <Input placeholder="my-sync" />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title={reflectLogTitle}
+        open={reflectLogModalOpen}
+        onCancel={() => setReflectLogModalOpen(false)}
+        footer={[
+          <Button key="refresh" onClick={refreshLogView} loading={reflectLogLoading}>
+            Refresh
+          </Button>,
+          <Button key="close" onClick={() => setReflectLogModalOpen(false)}>
+            Close
+          </Button>,
+        ]}
+      >
+        {reflectLogError ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Unable to load logs"
+            description={reflectLogError}
+          />
+        ) : (
+          <Input.TextArea
+            value={formatReflectLogs(reflectLogRows)}
+            readOnly
+            autoSize={{ minRows: 8, maxRows: 16 }}
+            placeholder={reflectLogLoading ? "Loading logs..." : "No logs"}
+          />
+        )}
       </Modal>
     </div>
   );

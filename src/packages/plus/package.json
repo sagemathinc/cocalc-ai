@@ -1,6 +1,6 @@
 {
   "name": "@cocalc/plus",
-  "version": "0.2.31",
+  "version": "0.2.32",
   "description": "CoCalcPlus: productized wrapper around CoCalc Lite",
   "main": "./electron.js",
   "exports": {

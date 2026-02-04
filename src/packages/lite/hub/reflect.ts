@@ -39,4 +39,12 @@ export const reflect: ReflectApi = {
     const mod = await loadUi();
     return mod.createSessionUI(opts);
   },
+  listSessionLogsUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.listSessionLogsUI(opts);
+  },
+  listDaemonLogsUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.listDaemonLogsUI(opts);
+  },
 };

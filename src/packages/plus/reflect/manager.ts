@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import type {
   ReflectForwardRow,
+  ReflectLogRow,
+  ReflectSessionLogRow,
   ReflectSessionRow,
 } from "@cocalc/conat/hub/api/reflect";
 import type {
@@ -29,6 +31,8 @@ const dynamicImport = new Function(
   "p",
   "return import(p);",
 ) as (p: string) => Promise<any>;
+
+const LOG_LEVELS = ["debug", "info", "warn", "error"];
 
 function ensureReflectEnv() {
   if (!process.env.REFLECT_HOME) {
@@ -78,6 +82,23 @@ function deserializeIgnoreRules(raw?: string | null): string[] {
   }
 }
 
+function parseLogMeta(meta: any) {
+  if (!meta) return null;
+  if (typeof meta === "object") return meta;
+  try {
+    return JSON.parse(meta);
+  } catch {
+    return { __error: "failed to parse meta JSON" };
+  }
+}
+
+function normalizeLogLevels(minLevel?: string) {
+  if (!minLevel) return null;
+  const idx = LOG_LEVELS.indexOf(minLevel.toLowerCase());
+  if (idx === -1) return null;
+  return LOG_LEVELS.slice(idx);
+}
+
 function resolveNodeBinary(): string {
   const override = process.env.COCALC_REFLECT_NODE_PATH;
   if (override && fs.existsSync(override)) {
@@ -93,26 +114,71 @@ function resolveNodeBinary(): string {
   return process.execPath;
 }
 
+function createSessionLogWriter(
+  mod: ReflectSync,
+  sessionDb: string,
+  sessionId: number,
+) {
+  try {
+    const db: any = mod.openSessionDb(sessionDb);
+    const stmt = db.prepare(`
+      INSERT INTO session_logs(session_id, ts, level, scope, message, meta)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    return {
+      log: (
+        level: "debug" | "info" | "warn" | "error",
+        message: string,
+        meta?: Record<string, unknown>,
+      ) => {
+        stmt.run(
+          sessionId,
+          Date.now(),
+          level,
+          "cocalc-plus",
+          message,
+          meta ? JSON.stringify(meta) : null,
+        );
+      },
+      close: () => {
+        try {
+          db.close();
+        } catch {
+          // ignore
+        }
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 function spawnSchedulerChild(opts: SchedulerOptions): ChildProcess {
   const nodeBin = resolveNodeBinary();
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     REFLECT_HOME: process.env.REFLECT_HOME,
     REFLECT_OPTS: JSON.stringify(opts),
   };
+  try {
+    const entry = requireCjs.resolve("reflect-sync");
+    env.REFLECT_SYNC_ENTRY = pathToFileURL(entry).href;
+  } catch {
+    // ignore - scheduler will try default module resolution
+  }
   const execBase = path.basename(process.execPath);
   const useSelfRunner = execBase.startsWith("cocalc-plus");
   if (useSelfRunner) {
     return spawn(process.execPath, ["--run-reflect-scheduler"], {
       env,
-      stdio: ["ignore", "ignore", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
   }
   const script =
-    "import('reflect-sync').then((m)=>m.runScheduler(JSON.parse(process.env.REFLECT_OPTS||'{}'))).catch((err)=>{console.error(err);process.exit(1);});";
+    "const entry=process.env.REFLECT_SYNC_ENTRY||'reflect-sync';import(entry).then((m)=>m.runScheduler(JSON.parse(process.env.REFLECT_OPTS||'{}'))).catch((err)=>{console.error(err);process.exit(1);});";
   return spawn(nodeBin, ["-e", script], {
     env,
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 
@@ -168,8 +234,35 @@ async function startSession(
   }
 
   const opts = buildSchedulerOptions(mod, sessionDb, row);
+  const logWriter = createSessionLogWriter(mod, sessionDb, row.id);
+  logWriter?.log("info", "starting scheduler");
   const child = spawnSchedulerChild(opts);
   schedulerChildren.set(row.id, child);
+
+  if (child.stdout) {
+    child.stdout.on("data", (buf) => {
+      const text = String(buf).trim();
+      if (text) {
+        logWriter?.log("info", text);
+      }
+    });
+  }
+  if (child.stderr) {
+    child.stderr.on("data", (buf) => {
+      const text = String(buf).trim();
+      if (text) {
+        logWriter?.log("error", text);
+      }
+    });
+  }
+
+  child.on("error", (err) => {
+    logWriter?.log("error", "scheduler spawn failed", {
+      error: err?.message ?? String(err),
+    });
+    mod.updateSession(sessionDb, row.id, { scheduler_pid: null });
+    mod.setActualState(sessionDb, row.id, "error");
+  });
 
   if (child.pid) {
     mod.updateSession(sessionDb, row.id, { scheduler_pid: child.pid });
@@ -180,10 +273,15 @@ async function startSession(
     mod.setActualState(sessionDb, row.id, "error");
   }
 
-  child.once("exit", () => {
+  child.once("exit", (code, signal) => {
     schedulerChildren.delete(row.id);
     mod.updateSession(sessionDb, row.id, { scheduler_pid: null });
     mod.setActualState(sessionDb, row.id, "stopped");
+    logWriter?.log("warn", "scheduler exited", {
+      code,
+      signal,
+    });
+    logWriter?.close();
   });
 }
 
@@ -192,6 +290,7 @@ async function stopSession(
   sessionDb: string,
   row: SessionRow,
 ) {
+  const logWriter = createSessionLogWriter(mod, sessionDb, row.id);
   const existing = schedulerChildren.get(row.id);
   if (existing?.pid) {
     existing.kill("SIGTERM");
@@ -202,6 +301,8 @@ async function stopSession(
   mod.updateSession(sessionDb, row.id, { scheduler_pid: null });
   mod.setDesiredState(sessionDb, row.id, "stopped");
   mod.setActualState(sessionDb, row.id, "stopped");
+  logWriter?.log("info", "scheduler stopped");
+  logWriter?.close();
 }
 
 async function reconcileSessions(
@@ -399,5 +500,116 @@ export async function reflectVersion(): Promise<string> {
       `reflectVersion: failed to resolve reflect-sync version: ${err?.message || err}`,
     );
     return "unknown";
+  }
+}
+
+export async function listSessionLogsUI(opts: {
+  idOrName: string;
+  limit?: number;
+  sinceTs?: number;
+  afterId?: number;
+  order?: "asc" | "desc";
+  minLevel?: string;
+  scope?: string;
+  message?: string;
+}): Promise<ReflectSessionLogRow[]> {
+  const mod = await loadReflectSync();
+  const sessionDb = await ensureSessionDb(mod);
+  const session = mod.resolveSessionRow(sessionDb, opts.idOrName);
+  if (!session) {
+    throw new Error(`reflect session '${opts.idOrName}' not found`);
+  }
+  const db: any = mod.openSessionDb(sessionDb);
+  try {
+    const where: string[] = ["session_id = ?"];
+    const params: any[] = [session.id];
+    if (typeof opts.afterId === "number") {
+      where.push("id > ?");
+      params.push(opts.afterId);
+    }
+    if (typeof opts.sinceTs === "number") {
+      where.push("ts >= ?");
+      params.push(opts.sinceTs);
+    }
+    const levels = normalizeLogLevels(opts.minLevel);
+    if (levels) {
+      where.push(`level IN (${levels.map(() => "?").join(",")})`);
+      params.push(...levels);
+    }
+    if (opts.scope) {
+      where.push("scope = ?");
+      params.push(opts.scope);
+    }
+    if (opts.message) {
+      where.push("message = ?");
+      params.push(opts.message);
+    }
+    const order = opts.order === "desc" ? "DESC" : "ASC";
+    const limit = Math.max(1, opts.limit ?? 200);
+    const stmt = db.prepare(`SELECT id, session_id, ts, level, scope, message, meta
+       FROM session_logs
+      WHERE ${where.join(" AND ")}
+      ORDER BY id ${order}
+      LIMIT ?`);
+    const rows = stmt.all(...params, limit);
+    return rows.map((row: any) => ({
+      ...row,
+      meta: parseLogMeta(row.meta),
+    }));
+  } finally {
+    db.close();
+  }
+}
+
+export async function listDaemonLogsUI(opts?: {
+  limit?: number;
+  sinceTs?: number;
+  afterId?: number;
+  order?: "asc" | "desc";
+  minLevel?: string;
+  scope?: string;
+  message?: string;
+}): Promise<ReflectLogRow[]> {
+  const mod = await loadReflectSync();
+  const sessionDb = await ensureSessionDb(mod);
+  const db: any = mod.openSessionDb(sessionDb);
+  try {
+    const where: string[] = ["1 = 1"];
+    const params: any[] = [];
+    if (typeof opts?.afterId === "number") {
+      where.push("id > ?");
+      params.push(opts.afterId);
+    }
+    if (typeof opts?.sinceTs === "number") {
+      where.push("ts >= ?");
+      params.push(opts.sinceTs);
+    }
+    const levels = normalizeLogLevels(opts?.minLevel);
+    if (levels) {
+      where.push(`level IN (${levels.map(() => "?").join(",")})`);
+      params.push(...levels);
+    }
+    if (opts?.scope) {
+      where.push("scope = ?");
+      params.push(opts.scope);
+    }
+    if (opts?.message) {
+      where.push("message = ?");
+      params.push(opts.message);
+    }
+    const order = opts?.order === "desc" ? "DESC" : "ASC";
+    const limit = Math.max(1, opts?.limit ?? 200);
+    const stmt = db.prepare(`SELECT id, ts, level, scope, message, meta
+       FROM daemon_logs
+      WHERE ${where.join(" AND ")}
+      ORDER BY id ${order}
+      LIMIT ?`);
+    const rows = stmt.all(...params, limit);
+    return rows.map((row: any) => ({
+      ...row,
+      meta: parseLogMeta(row.meta),
+    }));
+  } finally {
+    db.close();
   }
 }
