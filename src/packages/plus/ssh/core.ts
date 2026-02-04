@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -185,16 +185,6 @@ export function buildSshArgs(opts: SshOptions): string[] {
   return args;
 }
 
-export function sshRun(opts: SshOptions, cmd: string, execOpts: SshExecOptions = {}) {
-  const sshArgs = buildSshArgs(opts);
-  const finalArgs = sshArgs.concat(execOpts.extraArgs || [], [opts.host, cmd]);
-  return spawnSync("ssh", finalArgs, {
-    encoding: "utf8",
-    stdio: execOpts.inherit ? "inherit" : "pipe",
-    timeout: execOpts.timeoutMs,
-  });
-}
-
 export function sshRunAsync(
   opts: SshOptions,
   cmd: string,
@@ -241,8 +231,12 @@ export function sshRunAsync(
   });
 }
 
-export function sshExec(opts: SshOptions, cmd: string, inherit = false): string {
-  const res = sshRun(opts, cmd, { inherit });
+export async function sshExecAsync(
+  opts: SshOptions,
+  cmd: string,
+  inherit = false,
+): Promise<string> {
+  const res = await sshRunAsync(opts, cmd, { inherit });
   if (res.error) throw res.error;
   if (res.status !== 0) {
     const stderr = res.stderr?.toString() ?? "";
@@ -292,30 +286,6 @@ export type ProbeResult = {
   path: string;
 };
 
-export function probeRemoteBin(opts: SshOptions, extraArgs: string[] = []): ProbeResult {
-  const which = sshRun(opts, "command -v cocalc-plus", {
-    timeoutMs: 5000,
-    extraArgs,
-  });
-  if (which.error || which.status === 255) {
-    return { status: "unreachable", path: "" };
-  }
-  if (which.status === 0) {
-    return { status: "found", path: (which.stdout || "").toString().trim() };
-  }
-  const test = sshRun(opts, 'test -x "$HOME/.local/bin/cocalc-plus"', {
-    timeoutMs: 5000,
-    extraArgs,
-  });
-  if (test.error || test.status === 255) {
-    return { status: "unreachable", path: "" };
-  }
-  if (test.status === 0) {
-    return { status: "found", path: "$HOME/.local/bin/cocalc-plus" };
-  }
-  return { status: "missing", path: "$HOME/.local/bin/cocalc-plus" };
-}
-
 export function openUrl(url: string) {
   const platform = process.platform;
   const cmd = platform === "darwin" ? "open" : "xdg-open";
@@ -334,7 +304,7 @@ export async function waitRemoteFile(
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const content = sshExec(opts, `cat ${remotePath}`);
+      const content = await sshExecAsync(opts, `cat ${remotePath}`);
       if (content) return content;
     } catch {
       // ignore and retry
@@ -345,7 +315,7 @@ export async function waitRemoteFile(
 }
 
 export async function resolveRemoteBin(opts: SshOptions): Promise<string> {
-  const probe = probeRemoteBin(opts);
+  const probe = await probeRemoteBinAsync(opts);
   if (probe.status === "found" && probe.path) return probe.path;
   return "$HOME/.local/bin/cocalc-plus";
 }
@@ -411,7 +381,7 @@ export async function ensureRemoteReady(
   install: boolean,
   upgrade: boolean,
 ) {
-  const probe = probeRemoteBin(opts);
+  const probe = await probeRemoteBinAsync(opts);
   if (probe.status === "found" && !upgrade) return;
   if (probe.status === "unreachable") {
     throw new Error("ssh unreachable");
@@ -420,7 +390,7 @@ export async function ensureRemoteReady(
     throw new Error("cocalc-plus not installed on remote");
   }
   if (!install && !upgrade) return;
-  sshExec(
+  await sshExecAsync(
     opts,
     "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash",
     true,
@@ -435,7 +405,11 @@ async function stopRemoteDaemonBestEffort(
   const remotePidPath = `${remoteDir}/daemon.pid`;
   const remoteBin = await resolveRemoteBin(opts);
   const cmd = `if [ -f ${remotePidPath} ]; then ${remoteBin} --daemon-stop --pidfile ${remotePidPath} >/dev/null 2>&1 || true; fi`;
-  sshExec(opts, cmd, true);
+  try {
+    await sshExecAsync(opts, cmd, true);
+  } catch {
+    // ignore best-effort stop failures
+  }
 }
 
 export async function startRemote(
@@ -467,7 +441,7 @@ export async function startRemote(
     localUrl ? `COCALC_REMOTE_SSH_LOCAL_URL=${shellQuote(localUrl)}` : "",
   ].join(" ");
   const cmd = `mkdir -p ${path.dirname(remoteInfoPath)} && ${env} ${remoteBin} --daemon --write-connection-info ${remoteInfoPath} --pidfile ${remotePidPath} --log ${remoteLogPath}`;
-  sshExec(opts, cmd, true);
+  await sshExecAsync(opts, cmd, true);
   const info = await waitRemoteFile(opts, remoteInfoPath, 20000);
   return JSON.parse(info) as ConnectionInfo;
 }
@@ -490,7 +464,7 @@ export async function statusSession(
   await ensureRemoteReady(sshOpts, false, false);
   const remoteBin = await resolveRemoteBin(sshOpts);
   const cmd = `${remoteBin} --daemon-${mode} --pidfile ${remotePidPath}`;
-  sshExec(sshOpts, cmd, true);
+  await sshExecAsync(sshOpts, cmd, true);
   if (mode === "stop") {
     updateRegistry(target, { lastStopped: new Date().toISOString() });
   }
@@ -543,7 +517,7 @@ export async function connectSession(
 
   let info: ConnectionInfo | null = null;
   if (options.forwardOnly) {
-    const content = sshExec(sshOpts, `cat ${remoteInfoPath}`);
+    const content = await sshExecAsync(sshOpts, `cat ${remoteInfoPath}`);
     info = JSON.parse(content) as ConnectionInfo;
   } else {
     let reused = false;
@@ -556,7 +530,7 @@ export async function connectSession(
       });
       if (status === "running") {
         try {
-          const content = sshExec(sshOpts, `cat ${remoteInfoPath}`);
+          const content = await sshExecAsync(sshOpts, `cat ${remoteInfoPath}`);
           info = JSON.parse(content) as ConnectionInfo;
           reused = true;
         } catch {
