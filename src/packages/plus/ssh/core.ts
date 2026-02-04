@@ -195,6 +195,52 @@ export function sshRun(opts: SshOptions, cmd: string, execOpts: SshExecOptions =
   });
 }
 
+export function sshRunAsync(
+  opts: SshOptions,
+  cmd: string,
+  execOpts: SshExecOptions = {},
+): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
+  const sshArgs = buildSshArgs(opts);
+  const finalArgs = sshArgs.concat(execOpts.extraArgs || [], [opts.host, cmd]);
+  const stdio = execOpts.inherit ? "inherit" : "pipe";
+  return new Promise((resolve) => {
+    const child = spawn("ssh", finalArgs, { stdio });
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+    let timeout: NodeJS.Timeout | null = null;
+    if (child.stdout) {
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+      });
+    }
+    if (child.stderr) {
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+    }
+    const finalize = (
+      status: number | null,
+      error?: Error,
+    ) => {
+      if (finished) return;
+      finished = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      resolve({ status, stdout, stderr, error });
+    };
+    if (execOpts.timeoutMs) {
+      timeout = setTimeout(() => {
+        child.kill("SIGKILL");
+        finalize(null, new Error("ssh timeout"));
+      }, execOpts.timeoutMs);
+    }
+    child.once("error", (err) => finalize(null, err as Error));
+    child.once("exit", (code) => finalize(code ?? null));
+  });
+}
+
 export function sshExec(opts: SshOptions, cmd: string, inherit = false): string {
   const res = sshRun(opts, cmd, { inherit });
   if (res.error) throw res.error;
@@ -304,6 +350,34 @@ export async function resolveRemoteBin(opts: SshOptions): Promise<string> {
   return "$HOME/.local/bin/cocalc-plus";
 }
 
+async function probeRemoteBinAsync(
+  opts: SshOptions,
+  extraArgs: string[] = [],
+): Promise<{ status: "found" | "missing" | "unreachable"; path: string }> {
+  const which = await sshRunAsync(opts, "command -v cocalc-plus", {
+    timeoutMs: 5000,
+    extraArgs,
+  });
+  if (which.error || which.status === 255) {
+    return { status: "unreachable", path: "" };
+  }
+  if (which.status === 0) {
+    const path = (which.stdout || "").toString().trim();
+    return { status: "found", path };
+  }
+  const test = await sshRunAsync(opts, 'test -x "$HOME/.local/bin/cocalc-plus"', {
+    timeoutMs: 5000,
+    extraArgs,
+  });
+  if (test.error || test.status === 255) {
+    return { status: "unreachable", path: "" };
+  }
+  if (test.status === 0) {
+    return { status: "found", path: "$HOME/.local/bin/cocalc-plus" };
+  }
+  return { status: "missing", path: "$HOME/.local/bin/cocalc-plus" };
+}
+
 export async function getRemoteStatus(entry: RegistryEntry): Promise<string> {
   const target = entry.target;
   const { host, port } = parseTarget(target);
@@ -317,11 +391,11 @@ export async function getRemoteStatus(entry: RegistryEntry): Promise<string> {
   const { remoteDir } = infoPathFor(target);
   const remotePidPath = `${remoteDir}/daemon.pid`;
   const extraArgs = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"];
-  const probe = probeRemoteBin(sshOpts, extraArgs);
+  const probe = await probeRemoteBinAsync(sshOpts, extraArgs);
   if (probe.status === "unreachable") return "unreachable";
   if (probe.status === "missing") return "missing";
   const remoteBin = probe.path || "$HOME/.local/bin/cocalc-plus";
-  const res = sshRun(
+  const res = await sshRunAsync(
     sshOpts,
     `${remoteBin} --daemon-status --pidfile ${remotePidPath}`,
     { timeoutMs: 5000, extraArgs },

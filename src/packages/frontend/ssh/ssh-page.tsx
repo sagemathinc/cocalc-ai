@@ -47,7 +47,7 @@ const PAGE_STYLE: CSS = {
 
 const REMOTE_READY_ATTEMPTS = 8;
 const REMOTE_READY_TIMEOUT_MS = 7000;
-const STATUS_CONCURRENCY = 3;
+const STATUS_CONCURRENCY = 7;
 
 const TITLE_STYLE: CSS = {
   marginBottom: "12px",
