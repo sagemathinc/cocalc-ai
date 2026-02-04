@@ -90,6 +90,22 @@ esac
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
 
+copy_js_pkg() {
+  local pkg="$1"
+  local dir
+  dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  if [ -n "$dir" ]; then
+    echo "- Copy js package ${pkg}"
+    mkdir -p "$OUT"/bundle/node_modules/"$pkg"
+    # Follow symlinks so pnpm store paths are materialized.
+    rsync -aL "$dir"/ "$OUT"/bundle/node_modules/"$pkg"/
+  else
+    echo "  (skipping ${pkg}; not found)"
+  fi
+}
+
+copy_js_pkg "reflect-sync"
+
 echo "- Copy static frontend assets"
 mkdir -p "$OUT"/static
 rsync -a --delete \

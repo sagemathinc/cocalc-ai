@@ -30,23 +30,30 @@
 
 - [ ] reflect-sync integration issues:
   - [ ] make it so configuration of sync is focused around "Remote SSH Sessions" targets, e.g., maybe use an antd expand button to configure sync.  The configuration would be:
-    - path, ignores presets
-    - primary key is just a local path; don't allow a path that is contained in another path
-    - make the remote path equal local path for simplicity, relative to HOME directory
-    - advanced mode:
-      - different remote path, not relative to home directory, conflict modes
-  - [ ] also make port forwards be part of the remote ssy target:
-    - local port, remote port (defaults to local port), direction (defaults to remote --&gt; local)
+    - path
+      - advanced: remote path (defaults to local path)
+      - ignore configuration (default to parsing .gitignore if present?)
+      - local path not relative to home directory, conflict model
+    - primary key is just the local path; don't use the reflect sync "name" at all
+    - don't allow a local path that is contained in another path or contains another path (for simplicity and to avoid confusion
+  - [ ] also make port forwards be part of the remote ssh target:
+    - local port, remote port (defaults to remote=local port), optional direction (defaults to remote --&gt; local)
 
 - [ ] document how this works and that remote sessions are persistent (e.g., terminals, jupyter kernels, etc. do not stop). 
 
 - [ ] improve the website
 
-- [ ] implement `cocalc-plus uninstall` and recommend that.  
+- [ ] implement `cocalc-plus uninstall` and recommend that.
   - mention on https://software.cocalc.ai/software/cocalc-plus/index.html 
   - it should delete the extracted files from bundle in ~/.cache (or wherever)
   - undo changes to PATH (?).
   - do NOT delete config/state info (the sqlite database) unless use `cocalc-plus uninstall --purge` 
+
+- rsync static binary
+  ```
+  wstein@lite:~/upstream/rsync/rsync-3.4.1$ ls -lht rsync-static 
+  -rwxrwxr-x 1 wstein wstein 2.8M Oct 13 23:55 rsync-static
+  ```
 
 - [x] Remote session management: 
   - [x] cocalc-plus ssh list (local registry of targets + last port + status), 

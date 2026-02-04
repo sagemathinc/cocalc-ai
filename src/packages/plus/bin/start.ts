@@ -6,37 +6,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { ensureBundle, runReflect } from "../reflect/runner";
+import { reflectVersion } from "../reflect/manager";
 import { main as sshMain } from "./ssh";
-
-async function maybeRunReflectBundle() {
-  const idx = process.argv.indexOf("--run-reflect");
-  if (idx === -1) return false;
-  const bundle = process.argv[idx + 1];
-  if (!bundle) {
-    console.error("Missing bundle path for --run-reflect");
-    process.exit(1);
-  }
-  let args = process.argv.slice(idx + 2);
-  if (args[0] === "--") {
-    args = args.slice(1);
-  }
-  if (!fs.existsSync(bundle)) {
-    try {
-      await ensureBundle(bundle);
-    } catch (err: any) {
-      console.error(err?.message || err);
-      process.exit(1);
-    }
-  }
-  process.env.REFLECT_ENTRY ??= bundle;
-  process.argv = [process.execPath, bundle, ...args];
-  // Avoid ncc rewriting dynamic import into require.
-  const dynamicImport = new Function("p", "return import(p);");
-  await dynamicImport(pathToFileURL(bundle).href);
-  return true;
-}
 
 function usage() {
   console.log(`Usage:
@@ -128,8 +99,19 @@ function daemonize(args: string[], pidfile?: string | null, logfile?: string | n
 }
 
 async function runCli() {
-  if (process.argv.includes("--run-reflect")) {
-    await maybeRunReflectBundle();
+  if (process.argv.includes("--run-reflect-scheduler")) {
+    if (!process.env.REFLECT_HOME) {
+      process.env.REFLECT_HOME = path.join(
+        os.homedir(),
+        ".local",
+        "share",
+        "cocalc-plus",
+        "reflect-sync",
+      );
+    }
+    const opts = JSON.parse(process.env.REFLECT_OPTS ?? "{}");
+    const mod = await import("reflect-sync");
+    await mod.runScheduler(opts);
     return;
   }
 
@@ -184,15 +166,11 @@ async function runCli() {
       console.log("Usage: cocalc-plus reflect --version");
       return;
     }
-    try {
-      const output = await runReflect(reflectArgs);
-      if (output) {
-        console.log(output);
-      }
-    } catch (err: any) {
-      console.error(err?.message || err);
-      process.exitCode = 1;
+    if (reflectArgs.includes("--version") || reflectArgs.includes("-v")) {
+      console.log(await reflectVersion());
+      return;
     }
+    console.log("Usage: cocalc-plus reflect --version");
     return;
   }
   if (
