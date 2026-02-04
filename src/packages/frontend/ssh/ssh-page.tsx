@@ -205,6 +205,33 @@ export const SshPage: React.FC = React.memo(() => {
       </Typography.Link>
     </Typography.Text>
   );
+  const targetHelp = (
+    <div style={{ marginTop: 8 }}>
+      <Space size={6}>
+        <Typography.Text type="secondary">
+          [user@]hostname[:port] (port is optional)
+        </Typography.Text>
+        <Popover
+          content={
+            <div style={{ maxWidth: 280 }}>
+              <Typography.Paragraph style={{ marginBottom: 0 }}>
+                We will connect over SSH, ensure CoCalc Plus is installed on the
+                remote machine, and start a local tunnel so you can use the
+                remote server in your browser.
+              </Typography.Paragraph>
+            </div>
+          }
+        >
+          <Button
+            size="small"
+            type="text"
+            icon={<InfoCircleOutlined />}
+            aria-label="SSH target help"
+          />
+        </Popover>
+      </Space>
+    </div>
+  );
 
   if (sshRemoteTarget) {
     return (
@@ -980,10 +1007,11 @@ export const SshPage: React.FC = React.memo(() => {
         <div
           style={{
             padding: "16px 12px",
-            margin: "12px 0",
+            margin: "12px 12px 16px 40px",
             borderRadius: 8,
             background: "#fafafa",
             border: "1px solid #f0f0f0",
+            borderLeft: "4px solid #d9d9d9",
           }}
         >
         <Space style={{ marginBottom: 8 }} size={12} align="center">
@@ -1249,31 +1277,7 @@ export const SshPage: React.FC = React.memo(() => {
             rules={[
               { required: true, message: "Enter a target like user@host:22" },
             ]}
-            extra={
-              <Space size={6}>
-                <Typography.Text type="secondary">
-                  [user@]hostname[:port] (port is optional)
-                </Typography.Text>
-                <Popover
-                  content={
-                    <div style={{ maxWidth: 280 }}>
-                      <Typography.Paragraph style={{ marginBottom: 0 }}>
-                        We will connect over SSH, ensure CoCalc Plus is installed
-                        on the remote machine, and start a local tunnel so you
-                        can use the remote server in your browser.
-                      </Typography.Paragraph>
-                    </div>
-                  }
-                >
-                  <Button
-                    size="small"
-                    type="text"
-                    icon={<InfoCircleOutlined />}
-                    aria-label="SSH target help"
-                  />
-                </Popover>
-              </Space>
-            }
+            extra={targetHelp}
           >
             <Input placeholder="user@host:22" />
           </Form.Item>
