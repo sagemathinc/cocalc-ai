@@ -27,6 +27,16 @@ export default function RemoteSshButton() {
 
   const url =
     typeof window !== "undefined" ? window.location.href : undefined;
+  const localUrlFromReferrer =
+    typeof document !== "undefined" && document.referrer
+      ? document.referrer
+      : undefined;
+  const localUrlFromName =
+    typeof window !== "undefined" && window.name?.startsWith("cocalc|")
+      ? window.name.slice("cocalc|".length)
+      : undefined;
+  const effectiveLocalUrl =
+    localUrlFromReferrer || localUrlFromName || localUrl || undefined;
 
   return (
     <>
@@ -59,17 +69,20 @@ export default function RemoteSshButton() {
               {target}
             </Typography.Text>
           </Typography.Paragraph>
-          {localUrl && (
+          {effectiveLocalUrl && (
             <>
               <Typography.Paragraph>
                 Local session URL:{" "}
-                <Typography.Text code copyable={{ text: localUrl }}>
-                  {localUrl}
+                <Typography.Text
+                  code
+                  copyable={{ text: effectiveLocalUrl }}
+                >
+                  {effectiveLocalUrl}
                 </Typography.Text>
               </Typography.Paragraph>
               <Button
                 onClick={() => {
-                  window.open(localUrl, "_blank", "noopener");
+                  window.open(effectiveLocalUrl, "_blank", "noopener");
                 }}
               >
                 Open local session

@@ -7,6 +7,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Switch,
@@ -74,18 +75,12 @@ function reflectStateTag(state?: string) {
   return <Tag>{state}</Tag>;
 }
 
-function formatForwardDirection(direction?: string) {
-  if (direction === "remote_to_local") return "remote → local";
-  if (direction === "local_to_remote") return "local → remote";
-  return direction ?? "unknown";
-}
-
 function formatForwardLocal(fwd: ReflectForwardRow) {
   return `${fwd.local_host}:${fwd.local_port}`;
 }
 
-function formatForwardRemote(fwd: ReflectForwardRow) {
-  const host = fwd.remote_host || fwd.ssh_host || "remote";
+function formatForwardRemote(fwd: ReflectForwardRow, target?: string) {
+  const host = target || fwd.ssh_host || fwd.remote_host || "remote";
   const endpoint = `${host}:${fwd.remote_port}`;
   if (fwd.ssh_port) {
     return `${endpoint} (ssh:${fwd.ssh_port})`;
@@ -147,6 +142,8 @@ export const SshPage: React.FC = React.memo(() => {
     null,
   );
   const [forwardForm] = Form.useForm();
+  const forwardLocalPort = Form.useWatch("localPort", forwardForm);
+  const forwardRemotePort = Form.useWatch("remotePort", forwardForm);
   const [reflectLogModalOpen, setReflectLogModalOpen] = useState(false);
   const [reflectLogRows, setReflectLogRows] = useState<ReflectLogRow[]>([]);
   const [reflectLogLoading, setReflectLogLoading] = useState(false);
@@ -228,9 +225,19 @@ export const SshPage: React.FC = React.memo(() => {
         webapp_client.conat_client.hub.reflect.listForwardsUI(),
       ]);
       const { host, port } = parseSshTarget(target);
+      const targetHost = host;
+      const targetHostNoUser = host.split("@").pop() ?? host;
       const filteredForwards = (forwards || []).filter((row) => {
         const rowPort = row.ssh_port ?? null;
-        return row.ssh_host === host && rowPort === (port ?? null);
+        const rowHost = row.ssh_host ?? "";
+        const rowHostNoUser = rowHost.split("@").pop() ?? rowHost;
+        const hostMatches =
+          rowHost === targetHost || rowHostNoUser === targetHostNoUser;
+        if (!hostMatches) return false;
+        if (port == null) {
+          return rowPort == null || rowPort === 22;
+        }
+        return rowPort === port;
       });
       setReflectByTarget((prev) => ({
         ...prev,
@@ -256,12 +263,19 @@ export const SshPage: React.FC = React.memo(() => {
   const handleOpen = async (target: string) => {
     setLoading(true);
     try {
+      const localUrl =
+        typeof window !== "undefined" ? window.location.href : undefined;
       const result = await webapp_client.conat_client.hub.ssh.connectSessionUI({
         target,
-        options: { noOpen: true },
+        options: { noOpen: true, localUrl },
       });
       if (result?.url) {
-        window.open(result.url, "_blank", "noopener");
+        const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
+        window.open(
+          result.url,
+          windowName ?? "_blank",
+          "noopener",
+        );
       }
       await loadSessions();
     } catch (err: any) {
@@ -329,7 +343,7 @@ export const SshPage: React.FC = React.memo(() => {
         target: forwardModalTarget,
         localPort: Number(values.localPort),
         remotePort: values.remotePort ? Number(values.remotePort) : undefined,
-        direction: values.direction,
+        direction: "local_to_remote",
         name: values.name || undefined,
       });
       setForwardModalOpen(false);
@@ -441,6 +455,15 @@ export const SshPage: React.FC = React.memo(() => {
   }, []);
 
   useEffect(() => {
+    rows.forEach((row) => {
+      const state = reflectByTarget[row.target];
+      if (!state || (!state.loading && state.forwards.length === 0)) {
+        loadReflectForTarget(row.target);
+      }
+    });
+  }, [rows]);
+
+  useEffect(() => {
     if (reflectModalOpen) {
       reflectForm.setFieldsValue({
         prefer: "alpha",
@@ -452,7 +475,8 @@ export const SshPage: React.FC = React.memo(() => {
   useEffect(() => {
     if (forwardModalOpen) {
       forwardForm.setFieldsValue({
-        direction: "remote_to_local",
+        localPort: 8080,
+        remotePort: undefined,
       });
     }
   }, [forwardModalOpen, forwardForm]);
@@ -469,6 +493,78 @@ export const SshPage: React.FC = React.memo(() => {
         dataIndex: "localPort",
         key: "localPort",
         width: 110,
+      },
+      {
+        title: "Port Forwards",
+        key: "forwards",
+        render: (_, row) => {
+          const state = reflectByTarget[row.target];
+          if (state?.loading) {
+            return "…";
+          }
+          const forwards = state?.forwards ?? [];
+          if (!forwards.length) {
+            return "-";
+          }
+          const text = forwards
+            .map((fwd) =>
+              fwd.local_port === fwd.remote_port
+                ? String(fwd.local_port)
+                : `${fwd.local_port}→${fwd.remote_port}`,
+            )
+            .join(", ");
+          return (
+            <Button
+              size="small"
+              type="link"
+              onClick={() => {
+                setExpandedTargets((prev) => {
+                  if (prev.includes(row.target)) return prev;
+                  return [...prev, row.target];
+                });
+                loadReflectForTarget(row.target);
+              }}
+            >
+              {text}
+            </Button>
+          );
+        },
+      },
+      {
+        title: "Syncs",
+        key: "syncs",
+        render: (_, row) => {
+          const state = reflectByTarget[row.target];
+          if (state?.loading) {
+            return "…";
+          }
+          const sessions = state?.sessions ?? [];
+          if (!sessions.length) {
+            return "-";
+          }
+          const text = sessions
+            .map((session) =>
+              session.alpha_root === session.beta_root
+                ? session.alpha_root
+                : `${session.alpha_root}↔${session.beta_root}`,
+            )
+            .join(", ");
+          return (
+            <Button
+              size="small"
+              type="link"
+              onClick={() => {
+                setExpandedTargets((prev) => {
+                  if (prev.includes(row.target)) return prev;
+                  return [...prev, row.target];
+                });
+                loadReflectForTarget(row.target);
+              }}
+            >
+              {text}
+            </Button>
+          );
+        },
       },
       {
         title: "Status",
@@ -498,14 +594,22 @@ export const SshPage: React.FC = React.memo(() => {
             <Button size="small" onClick={() => handleOpen(row.target)}>
               Open
             </Button>
-            <Button size="small" danger onClick={() => handleStop(row.target)}>
-              Stop
-            </Button>
+            <Popconfirm
+              title="Stop this session?"
+              description="This will stop the remote daemon for this target."
+              okText="Stop"
+              cancelText="Cancel"
+              onConfirm={() => handleStop(row.target)}
+            >
+              <Button size="small" danger>
+                Stop
+              </Button>
+            </Popconfirm>
           </Space>
         ),
       },
     ],
-    [rows],
+    [rows, reflectByTarget],
   );
 
   const reflectSessionColumns = useMemo<ColumnsType<ReflectSessionRow>>(
@@ -568,13 +672,6 @@ export const SshPage: React.FC = React.memo(() => {
     const state = ensureReflectState(row.target);
     const forwardColumns: ColumnsType<ReflectForwardRow> = [
       {
-        title: "Direction",
-        dataIndex: "direction",
-        key: "direction",
-        width: 160,
-        render: (value) => formatForwardDirection(value),
-      },
-      {
         title: "Local",
         key: "local",
         render: (_, fwd) => formatForwardLocal(fwd),
@@ -582,7 +679,7 @@ export const SshPage: React.FC = React.memo(() => {
       {
         title: "Remote",
         key: "remote",
-        render: (_, fwd) => formatForwardRemote(fwd),
+        render: (_, fwd) => formatForwardRemote(fwd, row.target),
       },
       {
         title: "State",
@@ -595,13 +692,17 @@ export const SshPage: React.FC = React.memo(() => {
         key: "actions",
         width: 120,
         render: (_, fwd) => (
-          <Button
-            size="small"
-            danger
-            onClick={() => handleTerminateForward(row.target, fwd.id)}
+          <Popconfirm
+            title="Remove this forward?"
+            description="This will stop and delete the port forward."
+            okText="Remove"
+            cancelText="Cancel"
+            onConfirm={() => handleTerminateForward(row.target, fwd.id)}
           >
-            Remove
-          </Button>
+            <Button size="small" danger>
+              Remove
+            </Button>
+          </Popconfirm>
         ),
       },
     ];
@@ -831,18 +932,30 @@ export const SshPage: React.FC = React.memo(() => {
         okText="Create"
       >
         <Form form={forwardForm} layout="vertical">
-          <Form.Item
-            label="Direction"
-            name="direction"
-            rules={[{ required: true, message: "Select a direction" }]}
-          >
-            <Select
-              options={[
-                { value: "remote_to_local", label: "remote → local" },
-                { value: "local_to_remote", label: "local → remote" },
-              ]}
-            />
-          </Form.Item>
+          {(() => {
+            const localPort =
+              typeof forwardLocalPort === "number" && forwardLocalPort > 0
+                ? forwardLocalPort
+                : 8080;
+            const remotePort =
+              typeof forwardRemotePort === "number" && forwardRemotePort > 0
+                ? forwardRemotePort
+                : localPort;
+            const target = forwardModalTarget ?? "remote host";
+            const message =
+              `Make it so a remote server listening on port ${remotePort} at ` +
+              `${target} is available as http://localhost:${localPort}.`;
+            return (
+              <>
+                <Alert
+                  type="info"
+                  showIcon
+                  message={message}
+                  style={{ marginBottom: 12 }}
+                />
+              </>
+            );
+          })()}
           <Form.Item
             label="Local port"
             name="localPort"

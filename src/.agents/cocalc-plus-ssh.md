@@ -2,8 +2,14 @@
 
 ## Reflect Sync UI todo
 
-- [ ] localhost:port1 and localhost:port2 are using the same token... which is VERY confusing to the browser.
-- [ ] port forward is backwards
+regarding port forwarding, can we change "Port forwards map local → remote connections." to something that is really clear, e.g., "Make a server listening on localhost:[port] on  [ssh target] be available on localhost:[port] on your local computer."  And have the port and sshtarget in the alert be filled in with what is in the box.  Put 8080 in by default.  
+
+I.e., make it ridiculously  obvious to any user what will happen.  Maybe use your language skills to do a better job than me.
+
+Draw a mermaid diagram (with the actual port and target labeled) and use the StaticMarkdown component in the modal to make it super clear?
+
+- [x] localhost:port1 and localhost:port2 are using the same token... which is VERY confusing to the browser.
+- [x] port forward is backwards
 - [ ] click on the "Remote: ...." button should provide a link to the local server in the modal (with token?)
 - [ ] paths for sync should be relative to HOME by default; also HOME on remote machine is usually totally different than local machine.  Use `~/` not hardcoded full path.
 - [ ] the expand UI is too overwhelming and cluttered:

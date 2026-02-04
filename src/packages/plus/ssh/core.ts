@@ -47,6 +47,7 @@ export type ConnectOptions = {
   proxyJump?: string;
   logLevel?: string;
   sshArg?: string[];
+  localUrl?: string;
 };
 
 export type ConnectResult = {
@@ -438,9 +439,11 @@ export async function connectSession(
     }
     if (!reused) {
       const authToken = crypto.randomBytes(16).toString("hex");
-      const localUrlForRemote = `http://localhost:${localPort}?auth_token=${encodeURIComponent(
-        authToken,
-      )}`;
+      const localUrlForRemote =
+        options.localUrl ??
+        `http://localhost:${localPort}?auth_token=${encodeURIComponent(
+          authToken,
+        )}`;
       info = await startRemote(
         sshOpts,
         target,

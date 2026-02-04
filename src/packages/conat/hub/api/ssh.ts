@@ -37,6 +37,7 @@ export interface Ssh {
       proxyJump?: string;
       logLevel?: string;
       sshArg?: string[];
+      localUrl?: string;
     };
   }) => Promise<ConnectUiResult>;
   stopSessionUI: (opts: { target: string }) => Promise<void>;

@@ -2,11 +2,15 @@
   "extends": "../tsconfig.json",
   "compilerOptions": {
     "incremental": true,
-    "lib": ["es5", "es6", "es2017", "dom"],
-    "outDir": "dist",
-    "rootDirs": ["./src"],
-    "sourceMap": true
+    "rootDir": "./src",
+    "outDir": "dist-ts/src",
+    "sourceMap": true,
+    "allowJs": true,
+    "allowSyntheticDefaultImports": true,
+    "moduleResolution": "node",
+    "lib": ["es5", "es6", "es2017", "dom"]
   },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.js", "src/**/*.jsx"],
   "references": [
     { "path": "../backend" },
     { "path": "../frontend" },
