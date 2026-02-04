@@ -1,0 +1,138 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import { Col, Modal, Row } from "antd";
+import { Gutter } from "antd/es/grid/row";
+import { useState } from "@cocalc/frontend/app-framework";
+import { Text } from "@cocalc/frontend/components";
+import { HelpEmailLink } from "@cocalc/frontend/customize";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
+import { useProjectContext } from "@cocalc/frontend/project/context";
+import { R_IDE } from "@cocalc/util/consts/ui";
+import { NamedServerName } from "@cocalc/util/types/servers";
+import { NamedServerPanel } from "../named-server-panel";
+import { NewFileButton } from "../new/new-file-button";
+import { useAvailableFeatures } from "../use-available-features";
+
+// Antd's 24 grid system
+const md = 6;
+const sm = 12;
+const y: Gutter = 30;
+const gutter: [Gutter, Gutter] = [20, y / 2];
+const newRowStyle = { marginTop: `${y}px` };
+
+export function ProjectServerTiles() {
+  const { project_id } = useProjectContext();
+  const student_project_functionality =
+    useStudentProjectFunctionality(project_id);
+  const available = useAvailableFeatures(project_id);
+  const [showNamedServer, setShowNamedServer] = useState<"" | NamedServerName>(
+    "",
+  );
+
+  function toggleShowNamedServer(name: NamedServerName): void {
+    showNamedServer == name ? setShowNamedServer("") : setShowNamedServer(name);
+  }
+
+  const noServers: boolean =
+    !available.jupyter_notebook &&
+    !available.jupyter_lab &&
+    !available.vscode &&
+    !available.julia &&
+    !available.rserver;
+
+  return (
+    <>
+      <Row gutter={gutter} style={newRowStyle}>
+        {available.jupyter_lab &&
+          !student_project_functionality.disableJupyterLabServer && (
+            <Col sm={sm} md={md}>
+              <NewFileButton
+                name={<span style={{ fontSize: "14pt" }}>JupyterLab</span>}
+                icon={"ipynb"}
+                active={showNamedServer === "jupyterlab"}
+                on_click={() => toggleShowNamedServer("jupyterlab")}
+              />
+            </Col>
+          )}
+        {available.vscode && !student_project_functionality.disableVSCodeServer && (
+          <Col sm={sm} md={md}>
+            <NewFileButton
+              name={<span style={{ fontSize: "14pt" }}>VS Code</span>}
+              icon={"vscode"}
+              active={showNamedServer === "code"}
+              on_click={() => toggleShowNamedServer("code")}
+            />
+          </Col>
+        )}
+        {available.julia && !student_project_functionality.disablePlutoServer && (
+          <Col sm={sm} md={md}>
+            <NewFileButton
+              name={<span style={{ fontSize: "14pt" }}>Pluto (Julia)</span>}
+              icon={"julia"}
+              active={showNamedServer === "pluto"}
+              on_click={() => toggleShowNamedServer("pluto")}
+            />
+          </Col>
+        )}
+        {available.rserver && !student_project_functionality.disableRServer && (
+          <Col sm={sm} md={md}>
+            <NewFileButton
+              name={<span style={{ fontSize: "14pt" }}>{R_IDE}</span>}
+              icon={"r"}
+              active={showNamedServer === "rserver"}
+              on_click={() => toggleShowNamedServer("rserver")}
+            />
+          </Col>
+        )}
+        {available.jupyter_notebook &&
+          !student_project_functionality.disableJupyterClassicServer && (
+            <Col sm={sm} md={md}>
+              <NewFileButton
+                name={<span style={{ fontSize: "14pt" }}>Jupyter Classic</span>}
+                icon={"ipynb"}
+                active={showNamedServer === "jupyter"}
+                on_click={() => toggleShowNamedServer("jupyter")}
+              />
+            </Col>
+          )}
+        {noServers && (
+          <Col sm={sm} md={md}>
+            <NewFileButton
+              name={"No servers available"}
+              icon={"exclamation-circle"}
+              on_click={() =>
+                Modal.info({
+                  title: "No servers available",
+                  content: (
+                    <>
+                      No available server has been detected in this project
+                      environment. You can{" "}
+                      <HelpEmailLink text="ask an administrator" /> to install
+                      e.g. JupyterLab by running <br />
+                      <Text code>pip install jupyterlab</Text>
+                      <br />
+                      globally.
+                    </>
+                  ),
+                })
+              }
+            />
+          </Col>
+        )}
+      </Row>
+
+      <div>
+        {showNamedServer && (
+          <NamedServerPanel
+            project_id={project_id}
+            name={showNamedServer}
+            style={{ maxWidth: "1200px", margin: "30px auto" }}
+          />
+        )}
+      </div>
+    </>
+  );
+}

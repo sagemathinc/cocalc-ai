@@ -40,6 +40,7 @@ interface Props {
   filename: string;
   makeNewFilename?: (ext: string) => void;
   filenameChanged?: boolean;
+  showServers?: boolean;
 }
 
 // Use Rows and Cols to append more buttons to this class.
@@ -54,6 +55,7 @@ export function FileTypeSelector({
   filename,
   makeNewFilename,
   filenameChanged,
+  showServers = true,
 }: Props) {
   const { project_id } = useProjectContext();
   const intl = useIntl();
@@ -179,28 +181,6 @@ export function FileTypeSelector({
         </Section>
 
         <Row gutter={gutter} style={newRowStyle}>
-          {availableFeatures.x11 && (
-            <Col sm={sm} md={md}>
-              <Tip
-                delayShow={DELAY_SHOW_MS}
-                title={intl.formatMessage(labels.x11_desktop)}
-                icon={NEW_FILETYPE_ICONS.x11}
-                tip={intl.formatMessage({
-                  id: "new.file-type-selector.x11.tooltip",
-                  defaultMessage:
-                    "Create an X11 desktop for running graphical applications. CoCalc lets you collaboratively run any graphical Linux application in your browser.",
-                })}
-              >
-                <NewFileButton
-                  name={intl.formatMessage(labels.x11_desktop)}
-                  on_click={create_file}
-                  ext="x11"
-                  size={btnSize}
-                  active={btnActive("x11")}
-                />
-              </Tip>
-            </Col>
-          )}
           {projectActions != null && (
             <Col sm={doubleSm} md={doubleMd}>
               <NewFileButton
@@ -562,7 +542,7 @@ export function FileTypeSelector({
       {renderJupyterNotebook()}
       {renderTeachingSocial()}
       {renderMarkdown()}
-      {renderServers()}
+      {showServers ? renderServers() : null}
       {renderUtilities()}
     </div>
   );

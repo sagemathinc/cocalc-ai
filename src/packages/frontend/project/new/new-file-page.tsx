@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Input, Modal, Space } from "antd";
+import { Button, Input, Modal, Select, Space } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { defineMessage, FormattedMessage, useIntl } from "react-intl";
 import { default_filename } from "@cocalc/frontend/account";
@@ -32,9 +32,13 @@ import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-con
 import { filename_extension, is_only_downloadable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { PathNavigator } from "../explorer/path-navigator";
+import { ProjectServerTiles } from "../servers/server-tiles";
 import { useAvailableFeatures } from "../use-available-features";
 import { FileTypeSelector } from "./file-type-selector";
 import { NewFileDropdown } from "./new-file-dropdown";
+import { NewFileButton } from "./new-file-button";
+import { AIGenerateDocumentModal } from "../page/home-page/ai-generate-document";
+import { Ext } from "../page/home-page/ai-generate-examples";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -77,6 +81,9 @@ export default function NewFilePage(props: Props) {
     filename0 ? filename0 : default_filename(undefined, project_id),
   );
   const [filenameChanged, setFilenameChanged] = useState<boolean>(false);
+  const [aiPrompt, setAiPrompt] = useState<string>("");
+  const [aiExt, setAiExt] = useState<Ext>("ipynb");
+  const [showAiModal, setShowAiModal] = useState<boolean>(false);
   const file_creation_error = useTypedRedux(
     { project_id },
     "file_creation_error",
@@ -92,8 +99,8 @@ export default function NewFilePage(props: Props) {
 
   const [creatingFile, setCreatingFile] = useState<string>("");
 
-  async function createFile(ext?: string) {
-    const filename = inputRef.current?.input.value;
+  async function createFile(ext?: string, overrideFilename?: string) {
+    const filename = overrideFilename ?? inputRef.current?.input.value;
     if (!filename) {
       return;
     }
@@ -129,6 +136,19 @@ export default function NewFilePage(props: Props) {
     } else {
       setExtensionWarning(true);
     }
+  }
+
+  function quickCreate(ext: string) {
+    const current = inputRef.current?.input.value?.trim();
+    if (!current) {
+      const next =
+        filename0 ? filename0 : default_filename(ext, project_id);
+      setFilename(next);
+      setFilenameChanged(true);
+      createFile(ext, next);
+      return;
+    }
+    submit(ext);
   }
 
   function renderError() {
@@ -390,6 +410,110 @@ export default function NewFilePage(props: Props) {
       </Modal>
       <Row key={"new-file-row"}>
         <Col sm={12}>
+          <h3>Create with AI</h3>
+          <Paragraph
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: "14px",
+              marginBottom: "10px",
+            }}
+          >
+            Describe what you want to build and let CoCalc create a starting
+            document.
+          </Paragraph>
+          <Space.Compact style={{ width: "100%" }}>
+            <Input
+              size="large"
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              placeholder="Describe what you want to create..."
+              onPressEnter={() => {
+                if (aiPrompt.trim()) {
+                  setShowAiModal(true);
+                }
+              }}
+            />
+            <Select
+              size="large"
+              value={aiExt}
+              onChange={(value) => setAiExt(value)}
+              style={{ minWidth: "140px" }}
+              options={[
+                availableFeatures.jupyter_notebook
+                  ? { value: "ipynb", label: "Notebook" }
+                  : undefined,
+                availableFeatures.sage
+                  ? { value: "ipynb-sagemath", label: "SageMath Notebook" }
+                  : undefined,
+                { value: "md", label: "Markdown" },
+                availableFeatures.latex ? { value: "tex", label: "LaTeX" } : undefined,
+                availableFeatures.qmd ? { value: "qmd", label: "Quarto" } : undefined,
+                availableFeatures.rmd ? { value: "rmd", label: "RMarkdown" } : undefined,
+              ].filter(Boolean) as { value: Ext; label: string }[]}
+            />
+            <Button
+              size="large"
+              type="primary"
+              onClick={() => setShowAiModal(true)}
+              disabled={!aiPrompt.trim()}
+            >
+              Create
+            </Button>
+          </Space.Compact>
+
+          <AIGenerateDocumentModal
+            project_id={project_id}
+            show={showAiModal}
+            setShow={setShowAiModal}
+            ext={aiExt}
+            initialPrompt={aiPrompt}
+          />
+
+          <h3 style={{ marginTop: "25px" }}>Quick Create</h3>
+          <Paragraph
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: "14px",
+              marginBottom: "10px",
+            }}
+          >
+            Create the most common files instantly. You can customize this later.
+          </Paragraph>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+            {availableFeatures.jupyter_notebook && (
+              <NewFileButton
+                name="Notebook"
+                ext="ipynb"
+                size="small"
+                mode="secondary"
+                on_click={quickCreate}
+              />
+            )}
+            <NewFileButton
+              name="Markdown"
+              ext="md"
+              size="small"
+              mode="secondary"
+              on_click={quickCreate}
+            />
+            {availableFeatures.latex && (
+              <NewFileButton
+                name="LaTeX"
+                ext="tex"
+                size="small"
+                mode="secondary"
+                on_click={quickCreate}
+              />
+            )}
+            <NewFileButton
+              name="Terminal"
+              ext="term"
+              size="small"
+              mode="secondary"
+              on_click={quickCreate}
+            />
+          </div>
+
           <Paragraph
             style={{
               color: COLORS.GRAY_M,
@@ -464,6 +588,7 @@ export default function NewFilePage(props: Props) {
               }}
             />
           </Paragraph>
+          <h3 style={{ marginTop: "25px" }}>Browse all file types</h3>
           <FileTypeSelector
             create_file={submit}
             create_folder={createFolder}
@@ -471,7 +596,21 @@ export default function NewFilePage(props: Props) {
             availableFeatures={availableFeatures}
             filename={filename}
             filenameChanged={filenameChanged}
+            showServers={false}
           />
+          <h3 style={{ marginTop: "25px" }}>Apps</h3>
+          <Paragraph
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: "14px",
+              marginBottom: "10px",
+            }}
+          >
+            Launch full IDEs and app servers in this project (JupyterLab, VS
+            Code, Pluto, R IDE, and more). They run in the same environment and
+            can access your files.
+          </Paragraph>
+          <ProjectServerTiles />
         </Col>
       </Row>
       {renderUpload()}
