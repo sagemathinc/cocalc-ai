@@ -74,6 +74,25 @@ function reflectStateTag(state?: string) {
   return <Tag>{state}</Tag>;
 }
 
+function formatForwardDirection(direction?: string) {
+  if (direction === "remote_to_local") return "remote → local";
+  if (direction === "local_to_remote") return "local → remote";
+  return direction ?? "unknown";
+}
+
+function formatForwardLocal(fwd: ReflectForwardRow) {
+  return `${fwd.local_host}:${fwd.local_port}`;
+}
+
+function formatForwardRemote(fwd: ReflectForwardRow) {
+  const host = fwd.remote_host || fwd.ssh_host || "remote";
+  const endpoint = `${host}:${fwd.remote_port}`;
+  if (fwd.ssh_port) {
+    return `${endpoint} (ssh:${fwd.ssh_port})`;
+  }
+  return endpoint;
+}
+
 function parseSshTarget(target: string): { host: string; port: number | null } {
   const trimmed = target.trim();
   const match = /^(?:(?<user>[^@]+)@)?(?<host>[^:]+)(?::(?<port>\d+))?$/.exec(
@@ -275,7 +294,7 @@ export const SshPage: React.FC = React.memo(() => {
     try {
       const values = await reflectForm.validateFields();
       const localPath = values.localPath?.trim();
-      const remotePath = values.remotePath?.trim() || localPath;
+      const remotePath = values.remotePath?.trim() || undefined;
       const ignoreRules = extractIgnoreRules(values.ignoreRules);
       const prefer = values.prefer;
       await webapp_client.conat_client.hub.reflect.createSessionUI({
@@ -553,16 +572,17 @@ export const SshPage: React.FC = React.memo(() => {
         dataIndex: "direction",
         key: "direction",
         width: 160,
+        render: (value) => formatForwardDirection(value),
       },
       {
         title: "Local",
         key: "local",
-        render: (_, fwd) => `${fwd.local_host}:${fwd.local_port}`,
+        render: (_, fwd) => formatForwardLocal(fwd),
       },
       {
         title: "Remote",
         key: "remote",
-        render: (_, fwd) => `${fwd.remote_host}:${fwd.remote_port}`,
+        render: (_, fwd) => formatForwardRemote(fwd),
       },
       {
         title: "State",
@@ -655,19 +675,18 @@ export const SshPage: React.FC = React.memo(() => {
 
   const validateLocalPath = async (_: any, value?: string) => {
     if (!value || !value.trim()) {
-      throw new Error("Enter an absolute local path");
+      throw new Error("Enter a local path");
     }
     const trimmed = value.trim();
-    if (!trimmed.startsWith("/")) {
-      throw new Error("Local path must be absolute");
-    }
     if (!reflectModalTarget) return;
-    const existing = ensureReflectState(reflectModalTarget).sessions;
-    for (const row of existing) {
-      if (pathsOverlap(trimmed, row.alpha_root)) {
-        throw new Error(
-          `Local path overlaps existing sync: ${row.alpha_root}`,
-        );
+    if (trimmed.startsWith("/")) {
+      const existing = ensureReflectState(reflectModalTarget).sessions;
+      for (const row of existing) {
+        if (pathsOverlap(trimmed, row.alpha_root)) {
+          throw new Error(
+            `Local path overlaps existing sync: ${row.alpha_root}`,
+          );
+        }
       }
     }
   };
@@ -740,7 +759,7 @@ export const SshPage: React.FC = React.memo(() => {
             name="localPath"
             rules={[{ validator: validateLocalPath }]}
           >
-            <Input placeholder="/home/user/project" />
+            <Input placeholder="~/project or /home/user/project" />
           </Form.Item>
           <Collapse
             size="small"
@@ -754,7 +773,7 @@ export const SshPage: React.FC = React.memo(() => {
                       label="Remote path (defaults to local path)"
                       name="remotePath"
                     >
-                      <Input placeholder="/home/user/project" />
+                      <Input placeholder="~/project" />
                     </Form.Item>
                     <Form.Item
                       label="Conflict preference"

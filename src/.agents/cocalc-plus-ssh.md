@@ -2,15 +2,18 @@
 
 ## Reflect Sync UI todo
 
+- [ ] localhost:port1 and localhost:port2 are using the same token... which is VERY confusing to the browser.
 - [ ] port forward is backwards
-- [ ] click on the "Remote: ...." button should provide link to local server
+- [ ] click on the "Remote: ...." button should provide a link to the local server in the modal (with token?)
 - [ ] paths for sync should be relative to HOME by default; also HOME on remote machine is usually totally different than local machine.  Use `~/` not hardcoded full path.
 - [ ] the expand UI is too overwhelming and cluttered:
   - ONLY show the buttons to create new thing first; show the columns and table only when there is at least one entry.
-- [ ] for forwards have button to open port via http in browser (since usually a server)
-- [ ] delete sync
-- [ ] pause sync
-- [ ] edit what can be edited about a sync
+  - put list of syncs/ports in a card and add a margin
+- [ ] port forward (remote --&gt; local): add button to open port via http in another browser tab (since usually to a server)
+- [ ] delete an existing sync
+- [ ] pause an existing sync
+- [ ] edit an existing sync: many things can edited and some are useful (unclear what to do here; at least edit the ignores, maybe the preference side)
+- [ ] add way to see the status of sync
 - [ ] "Additional ignore patterns":
   - explain the format or give a link to it.
   - AI: could describe what you want to ignore and it would fill in a guess?  I wonder if there's a way to do AI integrations for everything generically this way....?  We need a generic AI assistant react component don't we, which is as popular as popovers and tooltips.

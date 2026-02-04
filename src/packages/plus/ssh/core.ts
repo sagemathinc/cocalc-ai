@@ -315,19 +315,27 @@ export async function startRemote(
   remoteInfoPath: string,
   remotePidPath: string,
   remoteLogPath: string,
+  options?: {
+    authToken?: string;
+    localUrl?: string;
+  },
 ): Promise<ConnectionInfo> {
   const remoteBin = await resolveRemoteBin(opts);
-  const safeTarget = target.replace(/'/g, "'\\''");
+  const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+  const safeTarget = shellQuote(target);
+  const authToken = options?.authToken;
+  const localUrl = options?.localUrl;
   const env = [
     "HOST=127.0.0.1",
     "PORT=0",
-    "AUTH_TOKEN=short",
+    authToken ? `AUTH_TOKEN=${shellQuote(authToken)}` : "AUTH_TOKEN=short",
     "COCALC_ENABLE_SSH_UI=0",
     "COCALC_DATA_DIR=$HOME/.local/share/cocalc-plus/data",
-    `COCALC_REMOTE_SSH_TARGET='${safeTarget}'`,
+    `COCALC_REMOTE_SSH_TARGET=${safeTarget}`,
     `COCALC_WRITE_CONNECTION_INFO=${remoteInfoPath}`,
     `COCALC_DAEMON_PIDFILE=${remotePidPath}`,
     `COCALC_DAEMON_LOG=${remoteLogPath}`,
+    localUrl ? `COCALC_REMOTE_SSH_LOCAL_URL=${shellQuote(localUrl)}` : "",
   ].join(" ");
   const cmd = `mkdir -p ${path.dirname(remoteInfoPath)} && ${env} ${remoteBin} --daemon --write-connection-info ${remoteInfoPath} --pidfile ${remotePidPath} --log ${remoteLogPath}`;
   sshExec(opts, cmd, true);
@@ -380,6 +388,19 @@ export async function connectSession(
   const remoteInfoPath = `${remoteDir}/connection.json`;
   const remotePidPath = `${remoteDir}/daemon.pid`;
   const remoteLogPath = `${remoteDir}/daemon.log`;
+  let localPort: number | undefined;
+  if (options.localPort && options.localPort !== "auto") {
+    localPort = parseInt(options.localPort, 10);
+  } else if (fs.existsSync(localPortPath)) {
+    const saved = parseInt(fs.readFileSync(localPortPath, "utf8").trim(), 10);
+    if (saved && (await canBindPort(saved))) {
+      localPort = saved;
+    }
+  }
+  if (!localPort) {
+    localPort = await pickFreePort();
+    fs.writeFileSync(localPortPath, String(localPort));
+  }
 
   if (options.logLevel === "debug") {
     console.log("Target:", sshOpts);
@@ -416,12 +437,17 @@ export async function connectSession(
       }
     }
     if (!reused) {
+      const authToken = crypto.randomBytes(16).toString("hex");
+      const localUrlForRemote = `http://localhost:${localPort}?auth_token=${encodeURIComponent(
+        authToken,
+      )}`;
       info = await startRemote(
         sshOpts,
         target,
         remoteInfoPath,
         remotePidPath,
         remoteLogPath,
+        { authToken, localUrl: localUrlForRemote },
       );
     }
   }
@@ -433,20 +459,6 @@ export async function connectSession(
   const remotePort = options.remotePort && options.remotePort !== "auto"
     ? parseInt(options.remotePort, 10)
     : info.port;
-
-  let localPort: number | undefined;
-  if (options.localPort && options.localPort !== "auto") {
-    localPort = parseInt(options.localPort, 10);
-  } else if (fs.existsSync(localPortPath)) {
-    const saved = parseInt(fs.readFileSync(localPortPath, "utf8").trim(), 10);
-    if (saved && (await canBindPort(saved))) {
-      localPort = saved;
-    }
-  }
-  if (!localPort) {
-    localPort = await pickFreePort();
-    fs.writeFileSync(localPortPath, String(localPort));
-  }
 
   const url = `http://localhost:${localPort}?auth_token=${encodeURIComponent(
     info.token || "",

@@ -102,9 +102,36 @@ function parseTarget(target: string): { host: string; port?: number | null } {
   };
 }
 
+function expandLocalPath(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed === "~") {
+    return os.homedir();
+  }
+  if (trimmed.startsWith("~/")) {
+    return path.join(os.homedir(), trimmed.slice(2));
+  }
+  if (!path.isAbsolute(trimmed)) {
+    return path.join(os.homedir(), trimmed);
+  }
+  return trimmed;
+}
+
 function normalizeLocalPath(input: string): string {
-  const resolved = path.resolve(input);
+  const expanded = expandLocalPath(input);
+  const resolved = path.resolve(expanded);
   return resolved.replace(/\/+$/, "") || "/";
+}
+
+function toHomeRelative(absPath: string): string {
+  const normalized = absPath.replace(/\/+$/, "") || "/";
+  const home = os.homedir().replace(/\/+$/, "") || "/";
+  if (normalized === home) {
+    return "~";
+  }
+  if (normalized.startsWith(`${home}/`)) {
+    return `~/${normalized.slice(home.length + 1)}`;
+  }
+  return normalized;
 }
 
 function isNestedPath(a: string, b: string): boolean {
@@ -527,9 +554,6 @@ export async function createSessionUI(opts: {
     if (!localPath) {
       throw new Error("Missing local path");
     }
-    if (!path.isAbsolute(localPath)) {
-      throw new Error("Local path must be absolute");
-    }
     const labels = Array.isArray(opts.labels) ? [...opts.labels] : [];
     if (opts.target) {
       labels.push(`cocalc-plus-target=${opts.target}`);
@@ -551,7 +575,17 @@ export async function createSessionUI(opts: {
       ...(opts.useGitignore ? readGitignore(normalizedLocal) : []),
       ...(opts.ignore ?? []),
     ].filter((entry) => entry && entry.trim());
-    let betaSpec = remotePath ?? normalizedLocal;
+    let betaSpec =
+      remotePath ??
+      (opts.target ? toHomeRelative(normalizedLocal) : normalizedLocal);
+    if (
+      opts.target &&
+      remotePath &&
+      !remotePath.startsWith("/") &&
+      !remotePath.startsWith("~")
+    ) {
+      betaSpec = `~/${remotePath}`;
+    }
     if (opts.target) {
       const { host, port } = parseTarget(opts.target);
       const hostSpec = `${host}${port ? `:${port}` : ""}`;

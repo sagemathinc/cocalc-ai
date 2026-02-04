@@ -19,6 +19,8 @@ const LABEL_STYLE: React.CSSProperties = {
 
 export default function RemoteSshButton() {
   const target = useTypedRedux("customize", "ssh_remote_target") ?? "";
+  const localUrl =
+    useTypedRedux("customize", "ssh_remote_url") ?? "";
   const [open, setOpen] = React.useState(false);
 
   if (!target) return null;
@@ -57,6 +59,23 @@ export default function RemoteSshButton() {
               {target}
             </Typography.Text>
           </Typography.Paragraph>
+          {localUrl && (
+            <>
+              <Typography.Paragraph>
+                Local session URL:{" "}
+                <Typography.Text code copyable={{ text: localUrl }}>
+                  {localUrl}
+                </Typography.Text>
+              </Typography.Paragraph>
+              <Button
+                onClick={() => {
+                  window.open(localUrl, "_blank", "noopener");
+                }}
+              >
+                Open local session
+              </Button>
+            </>
+          )}
           {url && (
             <>
               <Typography.Paragraph>
