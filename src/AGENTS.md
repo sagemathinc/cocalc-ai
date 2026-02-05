@@ -52,8 +52,7 @@ This file provides guidance to Claude Code (claude.ai/code), Gemini CLI (https:/
 ### Development
 
 - **IMPORTANT**: Always run `prettier -w [filename]` immediately after editing any .ts, .tsx, .md, or .json file to ensure consistent styling
-- After TypeScript or `*.tsx` changes, run `pnpm build` in the relevant package directory
-  - When editing the frontend, run `pnpm build-dev` in `packages/static` (this implicitly builds the frontend)
+- After TypeScript or `*.tsx` changes, run `pnpm tsc --build` in the relevant package directory
 
 ## Architecture Overview
 
@@ -157,7 +156,7 @@ CoCalc is organized as a monorepo with key packages:
 ## Git Workflow
 
 - Never modify a file when in the `master` or `main` branch
-- All changes happen through feature branches, which are pushed as pull requests to GitHub
+- All changes happen through feature branches.
 - When creating a new file, run `git add [filename]` to track the file.
 - Prefix git commits with the package and general area. e.g. 'frontend/latex: ...' if it concerns latex editor changes in the packages/frontend/... code.
 - When pushing a new branch to Github, track it upstream. e.g. `git push --set-upstream origin feature-foo` for branch "feature-foo".
@@ -183,6 +182,9 @@ Examples:
 - `labels.masked_files` - for common UI labels
 - `account.sign-out.button.title` - for account sign-out dialog
 - `command.generic.force_build.label` - for command labels
+
+Also we use the term "project" most everywhere in the code for the containers 
+users work in, but the word "workspace" in user facing text.
 
 ### Usage Patterns
 
