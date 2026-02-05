@@ -5,14 +5,22 @@
 
 import { Button, type MenuProps, Space } from "antd";
 import { useIntl } from "react-intl";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DropdownMenu, Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import {
+  LAUNCHER_SETTINGS_KEY,
+  getProjectLauncherDefaults,
+  getUserLauncherPrefs,
+  mergeLauncherSettings,
+} from "@cocalc/frontend/project/new/launcher-preferences";
 import { ProjectActions } from "@cocalc/frontend/project_store";
 import { COLORS } from "@cocalc/util/theme";
 import { EXTs as ALL_FILE_BUTTON_TYPES } from "./file-listing/utils";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 
 interface Props {
+  project_id: string;
   file_search: string;
   current_path: string;
   actions: ProjectActions;
@@ -23,6 +31,7 @@ interface Props {
 }
 
 export const NewButton: React.FC<Props> = ({
+  project_id,
   file_search = "",
   actions,
   create_folder,
@@ -31,6 +40,18 @@ export const NewButton: React.FC<Props> = ({
   disabled,
 }: Props) => {
   const intl = useIntl();
+  const other_settings = useTypedRedux("account", "other_settings");
+  const project_launcher = useTypedRedux(
+    "projects",
+    "project_map",
+  )?.getIn([project_id, "launcher"]);
+  const mergedLauncher = mergeLauncherSettings({
+    projectDefaults: getProjectLauncherDefaults(project_launcher),
+    userPrefs: getUserLauncherPrefs(
+      other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
+      project_id,
+    ),
+  });
 
   function new_file_button_types() {
     if (configuration != undefined) {
@@ -108,6 +129,40 @@ export const NewButton: React.FC<Props> = ({
   }
 
   const items: MenuProps["items"] = [
+    ...(React.useMemo(() => {
+      const allowed = new Set<string>(new_file_button_types() as string[]);
+      const quick = mergedLauncher.quickCreate
+        .filter((ext) => allowed.has(ext))
+        .filter((ext, idx, arr) => arr.indexOf(ext) === idx)
+        .map((ext) => {
+          const data = file_options("x." + ext);
+          return {
+            key: `quick:${ext}`,
+            onClick: () => on_dropdown_entry_clicked(ext),
+            label: (
+              <span style={{ whiteSpace: "nowrap" }}>
+                <Icon name={data.icon} />{" "}
+                <span style={{ textTransform: "capitalize" }}>{data.name} </span>{" "}
+                <span style={{ color: COLORS.GRAY_D }}>(.{ext})</span>
+              </span>
+            ),
+          };
+        });
+      if (quick.length === 0) return [];
+      return [
+        {
+          key: "__quick_create__",
+          disabled: true,
+          label: (
+            <span style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
+              Quick Create
+            </span>
+          ),
+        },
+        ...quick,
+        { type: "divider" as const },
+      ];
+    }, [mergedLauncher.quickCreate, configuration])),
     ...new_file_button_types().map(file_dropdown_item),
     { type: "divider" },
     {
