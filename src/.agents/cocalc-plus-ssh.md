@@ -9,7 +9,7 @@
 - [x] window title in lite remote mode should include target
 - [ ] fix opening `files/some/path` on remote
 - [ ] support opening paths outside HOME (`files/.root/...`) in a stable way
-- [ ] verify remove-session fully terminates related forwards/processes (the lingering `ps` case)
+- [x] verify remove-session fully terminates related forwards/processes (the lingering `ps` case)
 
 ### Phase 2: runtime robustness and operability (medium risk)
 
@@ -97,7 +97,7 @@
 - [x] in sync, make local path clickable, with clicking it open that path in the file explorer in cocalc (so it just changes the page in the current browser tab).
 
 - [x] removing an ssh session should also remove all the corresponding sync and port forward sessions.  Does it?  if not, implement it.  Also, the remove dialog should clearly explain what remove does, including disabling sync and port forwards, but not deleting any user files. 
-  - [ ] ALSO, I created an ssh remote session, then removed it, and checked with "ps" and saw that the port forward was still running.
+  - [x] ALSO, I created an ssh remote session, then removed it, and checked with "ps" and saw that the port forward was still running.
 
 - [x] Showing "running" twice under sync state looks weird. If the current and desired states are the same, just show current; if not, show both with an arrow from one to the other or a spinner or something?
 

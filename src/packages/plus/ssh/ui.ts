@@ -8,6 +8,7 @@ import {
   upgradeRemote,
   upgradeLocal,
   statusSession,
+  stopRegisteredTunnel,
   updateRegistry,
 } from "./core";
 import type { UpgradeInfo } from "./core";
@@ -130,6 +131,7 @@ export async function deleteSessionUI(target: string): Promise<void> {
     existing?.tunnel.kill();
     activeTunnels.delete(trimmed);
   }
+  await stopRegisteredTunnel(trimmed);
   deleteSession(trimmed);
 }
 
@@ -139,6 +141,7 @@ export async function stopSessionUI(target: string): Promise<void> {
     existing?.tunnel.kill();
     activeTunnels.delete(target);
   }
+  await stopRegisteredTunnel(target);
   await statusSession("stop", target, {});
 }
 
@@ -155,6 +158,7 @@ export async function upgradeSessionUI(
     existing?.tunnel.kill();
     activeTunnels.delete(target);
   }
+  await stopRegisteredTunnel(target);
   await upgradeRemote(entry, { localUrl });
 }
 

@@ -26,6 +26,7 @@ export type RegistryEntry = {
   host?: string;
   port?: number | null;
   localPort?: number;
+  tunnelPid?: number;
   lastUsed?: string;
   lastStopped?: string;
   identity?: string;
@@ -162,6 +163,88 @@ export function deleteSession(target: string) {
   } catch {
     // ignore
   }
+}
+
+function isPidAlive(pid?: number | null): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readProcessCommand(pid: number): Promise<string | null> {
+  return await new Promise((resolve) => {
+    const child = spawn("ps", ["-p", String(pid), "-o", "command="], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    child.stdout?.on("data", (chunk) => {
+      out += chunk.toString();
+    });
+    child.once("error", () => resolve(null));
+    child.once("close", (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+      resolve(out.trim() || null);
+    });
+  });
+}
+
+function isManagedTunnelCommand(entry: RegistryEntry, cmd: string): boolean {
+  if (!cmd.includes("ssh")) return false;
+  if (entry.localPort && !cmd.includes(`${entry.localPort}:127.0.0.1:`)) {
+    return false;
+  }
+  const { host } = parseTarget(entry.target);
+  const hostNoUser = host.split("@").pop() ?? host;
+  return cmd.includes(host) || cmd.includes(hostNoUser);
+}
+
+async function stopTunnelForEntry(
+  entry: RegistryEntry,
+  opts?: { force?: boolean },
+): Promise<boolean> {
+  const pid = entry.tunnelPid;
+  if (!pid || !isPidAlive(pid)) return false;
+  const cmd = await readProcessCommand(pid);
+  if (!opts?.force && cmd && !isManagedTunnelCommand(entry, cmd)) {
+    return false;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return false;
+  }
+  const deadline = Date.now() + 1500;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await sleep(100);
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // ignore
+  }
+  return !isPidAlive(pid);
+}
+
+export async function stopRegisteredTunnel(target: string): Promise<boolean> {
+  const registry = loadRegistry();
+  const entry = registry[target];
+  if (!entry) return false;
+  const stopped = await stopTunnelForEntry(entry, { force: false });
+  if (entry.tunnelPid) {
+    delete entry.tunnelPid;
+    entry.lastStopped = new Date().toISOString();
+    registry[target] = entry;
+    saveRegistry(registry);
+  }
+  return stopped;
 }
 
 export function pickFreePort(): Promise<number> {
@@ -1022,6 +1105,20 @@ export async function connectSession(
   }
 
   const tunnel = spawn("ssh", tunnelArgs, { stdio: "inherit" });
+  updateRegistry(label, {
+    tunnelPid: tunnel.pid ?? undefined,
+  });
+  tunnel.once("exit", () => {
+    const registry = loadRegistry();
+    const entry = registry[label];
+    if (!entry) return;
+    if (entry.tunnelPid != null) {
+      delete entry.tunnelPid;
+      entry.lastStopped = new Date().toISOString();
+      registry[label] = entry;
+      saveRegistry(registry);
+    }
+  });
   if (options.waitForReady) {
     const ready = await waitForLocalUrl(
       url,
