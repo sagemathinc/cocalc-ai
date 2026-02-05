@@ -4,6 +4,7 @@ export const ssh = {
   listSessionsUI: requireSignedIn,
   connectSessionUI: requireSignedIn,
   addSessionUI: requireSignedIn,
+  setSessionStarredUI: requireSignedIn,
   deleteSessionUI: requireSignedIn,
   stopSessionUI: requireSignedIn,
   upgradeSessionUI: requireSignedIn,
@@ -14,6 +15,7 @@ export const ssh = {
 
 export type SshSessionRow = {
   target: string;
+  starred?: boolean;
   localPort?: number;
   lastUsed?: string;
   lastStopped?: string;
@@ -63,6 +65,10 @@ export interface Ssh {
     };
   }) => Promise<ConnectUiResult>;
   addSessionUI: (opts: { target: string }) => Promise<void>;
+  setSessionStarredUI: (opts: {
+    target: string;
+    starred: boolean;
+  }) => Promise<void>;
   deleteSessionUI: (opts: { target: string }) => Promise<void>;
   stopSessionUI: (opts: { target: string }) => Promise<void>;
   upgradeSessionUI: (opts: { target: string; localUrl?: string }) => Promise<void>;

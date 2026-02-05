@@ -42,6 +42,10 @@ export const ssh: Ssh = {
     const mod = await loadUi();
     return mod.addSessionUI(opts.target);
   },
+  setSessionStarredUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.setSessionStarredUI(opts.target, opts.starred);
+  },
   deleteSessionUI: async (opts) => {
     const mod = await loadUi();
     return mod.deleteSessionUI(opts.target);

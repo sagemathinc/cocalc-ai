@@ -9,6 +9,7 @@ import type {
   ReflectLogRow,
   ReflectSessionLogRow,
   ReflectSessionRow,
+  ReflectSessionStatusRow,
 } from "@cocalc/conat/hub/api/reflect";
 import type {
   ForwardRow,
@@ -1069,6 +1070,109 @@ export async function reflectVersion(): Promise<string> {
       `reflectVersion: failed to resolve reflect-sync version: ${err?.message || err}`,
     );
     return "unknown";
+  }
+}
+
+async function runReflectCliJson(
+  sessionDb: string,
+  args: string[],
+): Promise<any> {
+  const cliPath = resolveReflectDist("cli.js");
+  return await new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [cliPath, "--session-db", sessionDb, ...args],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: process.env,
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (buf) => {
+      stdout += String(buf);
+    });
+    child.stderr?.on("data", (buf) => {
+      stderr += String(buf);
+    });
+    child.once("error", (err) => {
+      reject(err);
+    });
+    child.once("close", (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            stderr.trim() ||
+              stdout.trim() ||
+              `reflect-sync exited with code ${code}`,
+          ),
+        );
+        return;
+      }
+      const text = stdout.trim();
+      if (!text) {
+        reject(new Error("reflect-sync returned empty JSON output"));
+        return;
+      }
+      try {
+        resolve(JSON.parse(text));
+      } catch (err: any) {
+        reject(
+          new Error(
+            `unable to parse reflect-sync JSON output: ${err?.message || err}`,
+          ),
+        );
+      }
+    });
+  });
+}
+
+export async function getSessionStatusUI(opts: {
+  idOrName: string;
+}): Promise<ReflectSessionStatusRow> {
+  try {
+    const mod = await loadReflectSync();
+    const sessionDb = await ensureSessionDb(mod);
+    const row = mod.resolveSessionRow(sessionDb, opts.idOrName);
+    if (!row) {
+      throw new Error(`reflect session '${opts.idOrName}' not found`);
+    }
+    const status = await runReflectCliJson(sessionDb, [
+      "status",
+      "--json",
+      String(row.id),
+    ]);
+    const checked_at = Date.now();
+    return {
+      checked_at,
+      status: String(status?.health?.status ?? "unknown"),
+      reason:
+        status?.health?.reason != null ? String(status.health.reason) : null,
+      running: !!status?.state?.running,
+      pending: !!status?.state?.pending,
+      errors:
+        typeof status?.state?.errors === "number"
+          ? status.state.errors
+          : null,
+      cycles:
+        typeof status?.state?.cycles === "number"
+          ? status.state.cycles
+          : null,
+      last_cycle_ms:
+        typeof status?.state?.last_cycle_ms === "number"
+          ? status.state.last_cycle_ms
+          : null,
+      last_clean_at:
+        typeof status?.session?.sync?.lastCleanAt === "number"
+          ? status.session.sync.lastCleanAt
+          : null,
+      last_heartbeat:
+        typeof status?.lastHeartbeat?.ts === "number"
+          ? status.lastHeartbeat.ts
+          : null,
+    };
+  } catch (err: any) {
+    throw new Error(`reflect getSessionStatusUI failed: ${err?.message || err}`);
   }
 }
 

@@ -8,6 +8,7 @@ export {
   editSessionUI,
   listForwardsUI,
   listSessionsUI,
+  getSessionStatusUI,
   listSessionLogsUI,
   listDaemonLogsUI,
 } from "./manager";

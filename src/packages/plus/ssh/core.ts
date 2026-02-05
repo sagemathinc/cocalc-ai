@@ -22,15 +22,35 @@ export type SshOptions = {
 
 export type RegistryEntry = {
   target: string;
+  starred?: boolean;
   host?: string;
   port?: number | null;
   localPort?: number;
+  tunnelPid?: number;
   lastUsed?: string;
   lastStopped?: string;
   identity?: string;
   proxyJump?: string;
   sshArgs?: string[];
 };
+
+export type PruneSessionsOptions = {
+  ttlMs?: number;
+  keep?: number;
+  nowMs?: number;
+  auto?: boolean;
+};
+
+export type PruneSessionsResult = {
+  total: number;
+  removed: string[];
+  skippedStarred: number;
+  skippedActiveTunnel: number;
+};
+
+const DEFAULT_STALE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+const DEFAULT_STALE_KEEP = 50;
+const AUTO_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export type ConnectionInfo = {
   port: number;
@@ -114,6 +134,17 @@ export function registryPath() {
   );
 }
 
+function pruneStatePath() {
+  return path.join(
+    os.homedir(),
+    ".local",
+    "share",
+    "cocalc-plus",
+    "ssh",
+    "prune-state.json",
+  );
+}
+
 export function loadRegistry(): Record<string, RegistryEntry> {
   const file = registryPath();
   try {
@@ -145,7 +176,147 @@ export function updateRegistry(target: string, data: Partial<RegistryEntry>) {
   saveRegistry(registry);
 }
 
-export function listSessions(): RegistryEntry[] {
+function parseTime(value?: string): number {
+  if (!value) return 0;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? t : 0;
+}
+
+function newestActivityMs(entry: RegistryEntry): number {
+  return Math.max(parseTime(entry.lastUsed), parseTime(entry.lastStopped));
+}
+
+function normalizeKeep(raw?: number): number {
+  if (!Number.isFinite(raw as number)) return DEFAULT_STALE_KEEP;
+  return Math.max(0, Math.floor(raw as number));
+}
+
+function normalizeTtlMs(raw?: number): number {
+  if (!Number.isFinite(raw as number)) return DEFAULT_STALE_TTL_MS;
+  return Math.max(0, Math.floor(raw as number));
+}
+
+function shouldAutoPrune(nowMs: number): boolean {
+  const file = pruneStatePath();
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    const lastRunMs = Number(raw?.lastRunMs ?? 0);
+    if (Number.isFinite(lastRunMs) && nowMs - lastRunMs < AUTO_PRUNE_INTERVAL_MS) {
+      return false;
+    }
+  } catch {
+    // ignore
+  }
+  return true;
+}
+
+function markAutoPruned(nowMs: number): void {
+  const file = pruneStatePath();
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ lastRunMs: nowMs }, null, 2));
+  } catch {
+    // ignore
+  }
+}
+
+export function parseDurationMs(value: string): number {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) {
+    throw new Error("Duration is empty");
+  }
+  const match = raw.match(/^(\d+)\s*(ms|s|m|h|d|w)?$/);
+  if (!match) {
+    throw new Error(
+      `Invalid duration '${value}'. Use forms like 500ms, 30s, 12h, 30d`,
+    );
+  }
+  const amount = Number(match[1]);
+  const unit = match[2] ?? "d";
+  const mult: Record<string, number> = {
+    ms: 1,
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+    w: 7 * 24 * 60 * 60 * 1000,
+  };
+  return amount * mult[unit];
+}
+
+export function pruneStaleSessions(
+  opts: PruneSessionsOptions = {},
+): PruneSessionsResult {
+  const nowMs = opts.nowMs ?? Date.now();
+  const ttlMs = normalizeTtlMs(opts.ttlMs);
+  const keep = normalizeKeep(opts.keep);
+  const cutoff = nowMs - ttlMs;
+  const registry = loadRegistry();
+  const entries = Object.values(registry);
+  const protectedTargets = new Set<string>();
+  const pruneCandidates: RegistryEntry[] = [];
+  let skippedStarred = 0;
+  let skippedActiveTunnel = 0;
+
+  for (const entry of entries) {
+    if (entry.starred) {
+      protectedTargets.add(entry.target);
+      skippedStarred += 1;
+      continue;
+    }
+    if (isPidAlive(entry.tunnelPid ?? null)) {
+      protectedTargets.add(entry.target);
+      skippedActiveTunnel += 1;
+      continue;
+    }
+    pruneCandidates.push(entry);
+  }
+
+  pruneCandidates.sort((a, b) => newestActivityMs(b) - newestActivityMs(a));
+  for (let i = 0; i < Math.min(keep, pruneCandidates.length); i += 1) {
+    protectedTargets.add(pruneCandidates[i].target);
+  }
+
+  const removed: string[] = [];
+  for (const entry of pruneCandidates) {
+    if (protectedTargets.has(entry.target)) continue;
+    const newest = newestActivityMs(entry);
+    if (ttlMs > 0 && newest > 0 && newest > cutoff) continue;
+    delete registry[entry.target];
+    removed.push(entry.target);
+    const { localDir } = infoPathFor(entry.target);
+    try {
+      fs.rmSync(localDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+
+  if (removed.length > 0) {
+    saveRegistry(registry);
+  }
+
+  return {
+    total: entries.length,
+    removed,
+    skippedStarred,
+    skippedActiveTunnel,
+  };
+}
+
+export function listSessions(opts: PruneSessionsOptions = {}): RegistryEntry[] {
+  const shouldRunAuto = opts.auto !== false;
+  if (shouldRunAuto) {
+    const nowMs = opts.nowMs ?? Date.now();
+    if (shouldAutoPrune(nowMs)) {
+      pruneStaleSessions({
+        ttlMs: opts.ttlMs,
+        keep: opts.keep,
+        nowMs,
+      });
+      markAutoPruned(nowMs);
+    }
+  }
   return Object.values(loadRegistry());
 }
 
@@ -161,6 +332,88 @@ export function deleteSession(target: string) {
   } catch {
     // ignore
   }
+}
+
+function isPidAlive(pid?: number | null): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readProcessCommand(pid: number): Promise<string | null> {
+  return await new Promise((resolve) => {
+    const child = spawn("ps", ["-p", String(pid), "-o", "command="], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    child.stdout?.on("data", (chunk) => {
+      out += chunk.toString();
+    });
+    child.once("error", () => resolve(null));
+    child.once("close", (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+      resolve(out.trim() || null);
+    });
+  });
+}
+
+function isManagedTunnelCommand(entry: RegistryEntry, cmd: string): boolean {
+  if (!cmd.includes("ssh")) return false;
+  if (entry.localPort && !cmd.includes(`${entry.localPort}:127.0.0.1:`)) {
+    return false;
+  }
+  const { host } = parseTarget(entry.target);
+  const hostNoUser = host.split("@").pop() ?? host;
+  return cmd.includes(host) || cmd.includes(hostNoUser);
+}
+
+async function stopTunnelForEntry(
+  entry: RegistryEntry,
+  opts?: { force?: boolean },
+): Promise<boolean> {
+  const pid = entry.tunnelPid;
+  if (!pid || !isPidAlive(pid)) return false;
+  const cmd = await readProcessCommand(pid);
+  if (!opts?.force && cmd && !isManagedTunnelCommand(entry, cmd)) {
+    return false;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return false;
+  }
+  const deadline = Date.now() + 1500;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await sleep(100);
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // ignore
+  }
+  return !isPidAlive(pid);
+}
+
+export async function stopRegisteredTunnel(target: string): Promise<boolean> {
+  const registry = loadRegistry();
+  const entry = registry[target];
+  if (!entry) return false;
+  const stopped = await stopTunnelForEntry(entry, { force: false });
+  if (entry.tunnelPid) {
+    delete entry.tunnelPid;
+    entry.lastStopped = new Date().toISOString();
+    registry[target] = entry;
+    saveRegistry(registry);
+  }
+  return stopped;
 }
 
 export function pickFreePort(): Promise<number> {
@@ -1021,6 +1274,20 @@ export async function connectSession(
   }
 
   const tunnel = spawn("ssh", tunnelArgs, { stdio: "inherit" });
+  updateRegistry(label, {
+    tunnelPid: tunnel.pid ?? undefined,
+  });
+  tunnel.once("exit", () => {
+    const registry = loadRegistry();
+    const entry = registry[label];
+    if (!entry) return;
+    if (entry.tunnelPid != null) {
+      delete entry.tunnelPid;
+      entry.lastStopped = new Date().toISOString();
+      registry[label] = entry;
+      saveRegistry(registry);
+    }
+  });
   if (options.waitForReady) {
     const ready = await waitForLocalUrl(
       url,

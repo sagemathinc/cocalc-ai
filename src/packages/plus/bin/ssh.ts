@@ -7,11 +7,27 @@ import {
   canBindPort,
   getRemoteStatus,
   listSessions,
+  parseDurationMs,
+  pruneStaleSessions,
   statusSession,
 } from "../ssh/core";
 
-async function listSessionsTable(withStatus: boolean) {
-  const entries = listSessions();
+type ListOptions = {
+  withStatus: boolean;
+  ttlMs?: number;
+  keep?: number;
+  prune?: boolean;
+};
+
+async function listSessionsTable(opts: ListOptions) {
+  if (opts.prune !== false) {
+    pruneStaleSessions({ ttlMs: opts.ttlMs, keep: opts.keep });
+  }
+  const entries = listSessions({
+    auto: false,
+    ttlMs: opts.ttlMs,
+    keep: opts.keep,
+  });
   if (entries.length === 0) {
     console.log("No saved SSH targets.");
     return;
@@ -21,7 +37,7 @@ async function listSessionsTable(withStatus: boolean) {
     const bv = b.lastUsed || "";
     return bv.localeCompare(av);
   });
-  const header = withStatus
+  const header = opts.withStatus
     ? ["Target", "Port", "Status", "Tunnel", "Last Used"]
     : ["Target", "Port", "Last Used"];
   const rows: string[][] = [];
@@ -31,13 +47,13 @@ async function listSessionsTable(withStatus: boolean) {
     const lastUsed = entry.lastUsed || "";
     let status = "";
     let tunnel = "";
-    if (withStatus) {
+    if (opts.withStatus) {
       status = await getRemoteStatus(entry);
       if (entry.localPort != null) {
         tunnel = (await canBindPort(entry.localPort)) ? "idle" : "active";
       }
     }
-    if (withStatus) {
+    if (opts.withStatus) {
       rows.push([target, port, status, tunnel, lastUsed]);
     } else {
       rows.push([target, port, lastUsed]);
@@ -53,6 +69,15 @@ async function listSessionsTable(withStatus: boolean) {
   );
   table.setWidth(1, targetWidth).setWrapped(1);
   console.log(table.toString());
+}
+
+function parseOptionalKeep(value?: string): number | undefined {
+  if (value == null || value === "") return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`Invalid --keep '${value}' (must be a non-negative integer)`);
+  }
+  return Math.floor(n);
 }
 
 export async function main(argv: string[] = process.argv.slice(2)) {
@@ -90,8 +115,19 @@ export async function main(argv: string[] = process.argv.slice(2)) {
   program
     .command("list")
     .description("list saved ssh targets")
-    .action(async () => {
-      await listSessionsTable(true);
+    .option("--ttl <duration>", "stale TTL, e.g. 30d, 12h, 45m")
+    .option("--keep <count>", "always keep this many most-recent entries")
+    .option("--no-prune", "disable stale-entry pruning for this command")
+    .action(async (options) => {
+      const ttlMs =
+        options.ttl != null ? parseDurationMs(String(options.ttl)) : undefined;
+      const keep = parseOptionalKeep(options.keep);
+      await listSessionsTable({
+        withStatus: true,
+        ttlMs,
+        keep,
+        prune: options.prune,
+      });
     });
 
   program

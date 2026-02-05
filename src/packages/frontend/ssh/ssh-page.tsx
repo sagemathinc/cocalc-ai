@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Collapse,
   Divider,
   Empty,
@@ -17,11 +18,13 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { InfoCircleOutlined } from "@ant-design/icons";
+import { CopyOutlined, InfoCircleOutlined } from "@ant-design/icons";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { Icon } from "@cocalc/frontend/components/icon";
 import {
   CSS,
   React,
@@ -31,6 +34,7 @@ import {
   redux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import { COLORS } from "@cocalc/util/theme";
 import type {
   SshSessionRow,
   UpgradeInfoPayload,
@@ -40,6 +44,7 @@ import type {
   ReflectLogRow,
   ReflectSessionLogRow,
   ReflectSessionRow,
+  ReflectSessionStatusRow,
 } from "@cocalc/conat/hub/api/reflect";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { lite, project_id } from "@cocalc/frontend/lite";
@@ -52,6 +57,7 @@ const PAGE_STYLE: CSS = {
 const REMOTE_READY_ATTEMPTS = 8;
 const REMOTE_READY_TIMEOUT_MS = 7000;
 const STATUS_CONCURRENCY = 7;
+const TARGET_FILTER_STORAGE_KEY = "cocalc.ssh.target-filter";
 
 const TITLE_STYLE: CSS = {
   marginBottom: "12px",
@@ -63,6 +69,20 @@ type ReflectTargetState = {
   loading: boolean;
   error: string | null;
 };
+
+type ReflectStatusKey = string;
+
+type SshSortField = "starred" | "target" | "status" | "lastUsed";
+type SshSortDirection = "asc" | "desc";
+
+const SSH_STATUS_ORDER = ["running", "stopped", "unknown"] as const;
+const SSH_STATUS_RANK: Record<string, number> = SSH_STATUS_ORDER.reduce(
+  (acc, status, index) => {
+    acc[status] = index;
+    return acc;
+  },
+  {} as Record<string, number>,
+);
 
 function statusTag(status?: string) {
   const value = status ?? "unknown";
@@ -102,6 +122,39 @@ function reflectStateTag(state?: string) {
   return <Tag>{state}</Tag>;
 }
 
+function compareText(a?: string, b?: string) {
+  return (a ?? "").localeCompare(b ?? "", undefined, { sensitivity: "base" });
+}
+
+function compareNumber(a?: number, b?: number) {
+  return (a ?? 0) - (b ?? 0);
+}
+
+function sessionStatusKey(target: string, id: number): ReflectStatusKey {
+  return `${target}:${id}`;
+}
+
+function formatMs(value?: number | null): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return "-";
+  }
+  if (value < 1000) return `${Math.round(value)} ms`;
+  const seconds = value / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)} s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${Math.round(seconds % 60)}s`;
+}
+
+function formatRelative(ts?: number | null): string {
+  if (typeof ts !== "number" || !Number.isFinite(ts)) return "-";
+  const delta = Date.now() - ts;
+  if (delta < 0) return "just now";
+  if (delta < 60_000) return `${Math.max(1, Math.floor(delta / 1000))}s ago`;
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
+  return `${Math.floor(delta / 86_400_000)}d ago`;
+}
+
 function formatForwardLocal(fwd: ReflectForwardRow) {
   return `${fwd.local_host}:${fwd.local_port}`;
 }
@@ -115,18 +168,23 @@ function formatForwardRemote(fwd: ReflectForwardRow, target?: string) {
   return endpoint;
 }
 
-function normalizeSyncPath(path: string): string {
+function normalizeSyncPath(path: string): string | null {
   const trimmed = path.trim();
   if (!trimmed) return "";
   if (trimmed === "~") return "";
   if (trimmed.startsWith("~/")) {
     return trimmed.slice(2);
   }
-  const homeMatch = /^(\/(?:home|Users)\/[^/]+)(?:\/(.*))?$/.exec(trimmed);
+  if (!trimmed.startsWith("/")) {
+    return trimmed.replace(/^\.\/+/, "");
+  }
+  const homeMatch = /^(\/(?:home|Users)\/[^/]+|\/root)(?:\/(.*))?$/.exec(
+    trimmed,
+  );
   if (homeMatch) {
     return homeMatch[2] ?? "";
   }
-  return trimmed.replace(/^\/+/, "");
+  return null;
 }
 
 function encodePathSegments(path: string): string {
@@ -227,6 +285,11 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectByTarget, setReflectByTarget] = useState<
     Record<string, ReflectTargetState>
   >({});
+  const [reflectSessionStatus, setReflectSessionStatus] = useState<
+    Record<ReflectStatusKey, ReflectSessionStatusRow | undefined>
+  >({});
+  const [reflectSessionStatusLoading, setReflectSessionStatusLoading] =
+    useState<Record<ReflectStatusKey, boolean>>({});
   const [upgradeInfo, setUpgradeInfo] = useState<UpgradeInfoPayload>({
     remotes: {},
   });
@@ -257,8 +320,22 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectLogTitle, setReflectLogTitle] = useState<string>("Logs");
   const [reflectLogError, setReflectLogError] = useState<string | null>(null);
   const [reflectLogTarget, setReflectLogTarget] = useState<string | null>(null);
+  const [reflectLogViewMode, setReflectLogViewMode] = useState<"table" | "raw">(
+    "table",
+  );
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const [targetForm] = Form.useForm();
+  const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
+  const [targetFilter, setTargetFilter] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return window.localStorage.getItem(TARGET_FILTER_STORAGE_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
+  const [sortField, setSortField] = useState<SshSortField>("starred");
+  const [sortDirection, setSortDirection] = useState<SshSortDirection>("asc");
   const ignoreHelp = (
     <Typography.Text type="secondary">
       Use gitignore-style patterns.{" "}
@@ -435,19 +512,41 @@ export const SshPage: React.FC = React.memo(() => {
         webapp_client.conat_client.hub.reflect.listSessionsUI({ target }),
         webapp_client.conat_client.hub.reflect.listForwardsUI(),
       ]);
-      const filteredForwards = filterForwardsByTarget(
-        forwards || [],
-        target,
-      );
+      const nextSessions = sessions || [];
+      const filteredForwards = filterForwardsByTarget(forwards || [], target);
       setReflectByTarget((prev) => ({
         ...prev,
         [target]: {
-          sessions: sessions || [],
+          sessions: nextSessions,
           forwards: filteredForwards,
           loading: false,
           error: null,
         },
       }));
+      setReflectSessionStatus((prev) => {
+        const keep = new Set(
+          nextSessions.map((row) => sessionStatusKey(target, row.id)),
+        );
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(`${target}:`) && !keep.has(key)) {
+            delete next[key];
+          }
+        }
+        return next;
+      });
+      setReflectSessionStatusLoading((prev) => {
+        const keep = new Set(
+          nextSessions.map((row) => sessionStatusKey(target, row.id)),
+        );
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(`${target}:`) && !keep.has(key)) {
+            delete next[key];
+          }
+        }
+        return next;
+      });
     } catch (err: any) {
       setReflectByTarget((prev) => ({
         ...prev,
@@ -457,6 +556,28 @@ export const SshPage: React.FC = React.memo(() => {
           error: err?.message || String(err),
         },
       }));
+    }
+  };
+
+  const checkReflectSessionStatus = async (
+    target: string,
+    row: ReflectSessionRow,
+  ) => {
+    const key = sessionStatusKey(target, row.id);
+    setReflectSessionStatusLoading((prev) => ({ ...prev, [key]: true }));
+    try {
+      const status =
+        await webapp_client.conat_client.hub.reflect.getSessionStatusUI({
+          idOrName: String(row.id),
+        });
+      setReflectSessionStatus((prev) => ({ ...prev, [key]: status }));
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    } finally {
+      setReflectSessionStatusLoading((prev) => ({ ...prev, [key]: false }));
     }
   };
 
@@ -492,18 +613,79 @@ export const SshPage: React.FC = React.memo(() => {
     }
   };
 
+  const handleCopyTarget = async (target: string) => {
+    try {
+      await navigator.clipboard.writeText(target);
+      setCopiedTarget(target);
+      setTimeout(() => {
+        setCopiedTarget((current) => (current === target ? null : current));
+      }, 1200);
+    } catch {
+      alert_message({
+        type: "error",
+        message: "Unable to copy target",
+      });
+    }
+  };
+
   const handleAddTarget = async () => {
     try {
       const values = await targetForm.validateFields();
       const target = values.target?.trim();
+      if (!target) {
+        throw new Error("Target is required");
+      }
+      const autoStart = values.autoStart !== false;
       await webapp_client.conat_client.hub.ssh.addSessionUI({ target });
       setTargetModalOpen(false);
       targetForm.resetFields();
       await loadSessions();
+      if (autoStart) {
+        setOpeningTargets((prev) => ({ ...prev, [target]: true }));
+        setOpeningStatus((prev) => ({ ...prev, [target]: "Starting…" }));
+        try {
+          await connectSessionWithRetry(target, {
+            onStage: (stage) =>
+              setOpeningStatus((prev) => ({
+                ...prev,
+                [target]: stage,
+              })),
+          });
+          await loadSessions({ background: true });
+        } finally {
+          setOpeningTargets((prev) => ({ ...prev, [target]: false }));
+          setOpeningStatus((prev) => ({ ...prev, [target]: "" }));
+        }
+      }
     } catch (err: any) {
       if (err?.errorFields) {
         return;
       }
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
+  const handleToggleStar = async (row: SshSessionRow) => {
+    const nextStarred = !row.starred;
+    setRows((prev) =>
+      prev.map((item) =>
+        item.target === row.target ? { ...item, starred: nextStarred } : item,
+      ),
+    );
+    try {
+      await webapp_client.conat_client.hub.ssh.setSessionStarredUI({
+        target: row.target,
+        starred: nextStarred,
+      });
+    } catch (err: any) {
+      setRows((prev) =>
+        prev.map((item) =>
+          item.target === row.target ? { ...item, starred: row.starred } : item,
+        ),
+      );
       alert_message({
         type: "error",
         message: err?.message || String(err),
@@ -557,10 +739,7 @@ export const SshPage: React.FC = React.memo(() => {
           webapp_client.conat_client.hub.reflect.listSessionsUI({ target }),
           webapp_client.conat_client.hub.reflect.listForwardsUI(),
         ]);
-        const filteredForwards = filterForwardsByTarget(
-          forwards || [],
-          target,
-        );
+        const filteredForwards = filterForwardsByTarget(forwards || [], target);
         const results = await Promise.allSettled([
           ...(sessions || []).map((session) =>
             webapp_client.conat_client.hub.reflect.terminateSessionUI({
@@ -650,14 +829,13 @@ export const SshPage: React.FC = React.memo(() => {
       if (!target) return;
       setStatusLoadingTargets((prev) => ({ ...prev, [target]: true }));
       try {
-        const status =
-          await webapp_client.conat_client.hub.ssh.statusSessionUI({
+        const status = await webapp_client.conat_client.hub.ssh.statusSessionUI(
+          {
             target,
-          });
+          },
+        );
         setRows((prev) =>
-          prev.map((row) =>
-            row.target === target ? { ...row, status } : row,
-          ),
+          prev.map((row) => (row.target === target ? { ...row, status } : row)),
         );
       } catch {
         setRows((prev) =>
@@ -688,6 +866,13 @@ export const SshPage: React.FC = React.memo(() => {
     const actions = redux.getProjectActions(project_id);
     if (!actions) return;
     const normalized = normalizeSyncPath(path);
+    if (normalized == null) {
+      alert_message({
+        type: "info",
+        message: "Opening paths outside $HOME is not supported yet.",
+      });
+      return;
+    }
     actions.open_directory(normalized);
     redux.getActions("page").set_active_tab(project_id);
   };
@@ -711,6 +896,13 @@ export const SshPage: React.FC = React.memo(() => {
         typeof window !== "undefined" ? window.location.href : undefined;
       const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
       const normalized = normalizeSyncPath(path);
+      if (normalized == null) {
+        alert_message({
+          type: "info",
+          message: "Opening paths outside $HOME is not supported yet.",
+        });
+        return;
+      }
       const encoded = encodePathSegments(normalized);
       const url = new URL(result.url);
       const base = url.pathname.endsWith("/")
@@ -897,20 +1089,116 @@ export const SshPage: React.FC = React.memo(() => {
       .join("\n");
   };
 
+  const reflectLogColumns = useMemo<ColumnsType<ReflectLogRow>>(
+    () => [
+      {
+        title: "Time",
+        key: "ts",
+        width: 180,
+        render: (_, row) => new Date(row.ts).toLocaleString(),
+      },
+      {
+        title: "Level",
+        dataIndex: "level",
+        key: "level",
+        width: 90,
+        render: (value) => <Tag>{value}</Tag>,
+      },
+      {
+        title: "Scope",
+        dataIndex: "scope",
+        key: "scope",
+        width: 180,
+        ellipsis: true,
+        render: (value) => {
+          if (!value) return "-";
+          return (
+            <Tooltip title={value}>
+              <Typography.Text
+                style={{
+                  display: "inline-block",
+                  maxWidth: 160,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {value}
+              </Typography.Text>
+            </Tooltip>
+          );
+        },
+      },
+      {
+        title: "Message",
+        dataIndex: "message",
+        key: "message",
+        ellipsis: true,
+        render: (value) => (
+          <Tooltip title={value}>
+            <Typography.Text
+              style={{
+                display: "inline-block",
+                maxWidth: "100%",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {value}
+            </Typography.Text>
+          </Tooltip>
+        ),
+      },
+      {
+        title: "Meta",
+        key: "meta",
+        width: 260,
+        ellipsis: true,
+        render: (_, row) => {
+          if (!row.meta) return "-";
+          const text = JSON.stringify(row.meta);
+          return (
+            <Tooltip
+              title={
+                <div style={{ maxWidth: 900, whiteSpace: "pre-wrap" }}>{text}</div>
+              }
+            >
+              <Typography.Text
+                type="secondary"
+                style={{
+                  fontFamily: "monospace",
+                  display: "inline-block",
+                  maxWidth: 240,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {text}
+              </Typography.Text>
+            </Tooltip>
+          );
+        },
+      },
+    ],
+    [],
+  );
+
   const loadSessionLogs = async (row: ReflectSessionRow) => {
     setReflectLogTitle(`Session Logs: ${row.alpha_root}`);
     setReflectLogTarget(String(row.id));
+    setReflectLogViewMode("table");
     setReflectLogError(null);
     setReflectLogLoading(true);
     setReflectLogModalOpen(true);
     try {
-      const logs = (await webapp_client.conat_client.hub.reflect.listSessionLogsUI(
-        {
+      const logs =
+        (await webapp_client.conat_client.hub.reflect.listSessionLogsUI({
           idOrName: String(row.id),
           order: "desc",
           limit: 200,
-        },
-      )) as ReflectSessionLogRow[];
+        })) as ReflectSessionLogRow[];
       setReflectLogRows(logs || []);
     } catch (err: any) {
       setReflectLogError(err?.message || String(err));
@@ -923,16 +1211,16 @@ export const SshPage: React.FC = React.memo(() => {
   const loadDaemonLogs = async () => {
     setReflectLogTitle("Reflect Daemon Logs");
     setReflectLogTarget("daemon");
+    setReflectLogViewMode("table");
     setReflectLogError(null);
     setReflectLogLoading(true);
     setReflectLogModalOpen(true);
     try {
-      const logs = (await webapp_client.conat_client.hub.reflect.listDaemonLogsUI(
-        {
+      const logs =
+        (await webapp_client.conat_client.hub.reflect.listDaemonLogsUI({
           order: "desc",
           limit: 200,
-        },
-      )) as ReflectLogRow[];
+        })) as ReflectLogRow[];
       setReflectLogRows(logs || []);
     } catch (err: any) {
       setReflectLogError(err?.message || String(err));
@@ -994,24 +1282,101 @@ export const SshPage: React.FC = React.memo(() => {
     }
   }, [forwardModalOpen, forwardForm]);
 
+  useEffect(() => {
+    if (targetModalOpen) {
+      targetForm.setFieldsValue({
+        autoStart: true,
+      });
+    }
+  }, [targetModalOpen, targetForm]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(TARGET_FILTER_STORAGE_KEY, targetFilter);
+    } catch {
+      // ignore storage errors
+    }
+  }, [targetFilter]);
+
   const columns = useMemo<ColumnsType<SshSessionRow>>(
     () => [
+      {
+        title: (
+          <Icon
+            name="star-filled"
+            style={{ fontSize: 16, color: COLORS.YELL_LL }}
+          />
+        ),
+        dataIndex: "starred",
+        key: "starred",
+        width: 48,
+        align: "center",
+        sorter: true,
+        sortDirections: ["ascend", "descend"],
+        sortOrder:
+          sortField === "starred"
+            ? sortDirection === "asc"
+              ? "ascend"
+              : "descend"
+            : undefined,
+        onCell: () => ({
+          onClick: (event: React.MouseEvent) => {
+            event.stopPropagation();
+          },
+          style: { cursor: "pointer" },
+        }),
+        render: (starred: boolean, row: SshSessionRow) => (
+          <span
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleToggleStar(row);
+            }}
+            style={{ cursor: "pointer", fontSize: 18 }}
+          >
+            <Icon
+              name={starred ? "star-filled" : "star"}
+              style={{ color: starred ? COLORS.STAR : COLORS.GRAY_L }}
+            />
+          </span>
+        ),
+      },
       {
         title: "Target",
         dataIndex: "target",
         key: "target",
+        sorter: true,
+        sortDirections: ["ascend", "descend"],
+        sortOrder:
+          sortField === "target"
+            ? sortDirection === "asc"
+              ? "ascend"
+              : "descend"
+            : undefined,
         render: (value, row) => {
           const opening = !!openingTargets[row.target];
           return (
-            <Button
-              size="small"
-              type="link"
-              onClick={() => handleOpen(row.target)}
-              loading={opening}
-              disabled={opening}
-            >
-              {value}
-            </Button>
+            <Space size={6}>
+              <Button
+                size="small"
+                type="link"
+                onClick={() => handleOpen(row.target)}
+                loading={opening}
+                disabled={opening}
+              >
+                {value}
+              </Button>
+              <Tooltip
+                title={copiedTarget === row.target ? "Copied" : "Copy target"}
+              >
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<CopyOutlined />}
+                  onClick={() => handleCopyTarget(row.target)}
+                />
+              </Tooltip>
+            </Space>
           );
         },
       },
@@ -1101,6 +1466,14 @@ export const SshPage: React.FC = React.memo(() => {
         dataIndex: "status",
         key: "status",
         width: 140,
+        sorter: true,
+        sortDirections: ["ascend", "descend"],
+        sortOrder:
+          sortField === "status"
+            ? sortDirection === "asc"
+              ? "ascend"
+              : "descend"
+            : undefined,
         render: (_, row) => {
           if (upgradingTargets[row.target]) {
             return (
@@ -1142,6 +1515,14 @@ export const SshPage: React.FC = React.memo(() => {
         title: "Last Used",
         dataIndex: "lastUsed",
         key: "lastUsed",
+        sorter: true,
+        sortDirections: ["ascend", "descend"],
+        sortOrder:
+          sortField === "lastUsed"
+            ? sortDirection === "asc"
+              ? "ascend"
+              : "descend"
+            : undefined,
       },
       {
         title: "Actions",
@@ -1212,8 +1593,108 @@ export const SshPage: React.FC = React.memo(() => {
       statusLoadingTargets,
       upgradingTargets,
       upgradeInfo,
+      copiedTarget,
+      sortField,
+      sortDirection,
     ],
   );
+
+  const filteredRows = useMemo(() => {
+    const query = targetFilter.trim().toLowerCase();
+    if (!query) return rows;
+    return rows.filter((row) => row.target.toLowerCase().includes(query));
+  }, [rows, targetFilter]);
+
+  const visibleRows = useMemo(() => {
+    const dir = sortDirection === "asc" ? 1 : -1;
+    return [...filteredRows].sort((a, b) => {
+      let result = 0;
+      switch (sortField) {
+        case "starred":
+          result = compareNumber(
+            Number(b.starred ?? false),
+            Number(a.starred ?? false),
+          );
+          break;
+        case "target":
+          result = compareText(a.target, b.target);
+          break;
+        case "status": {
+          const aStatus = a.status ?? "unknown";
+          const bStatus = b.status ?? "unknown";
+          const aRank = SSH_STATUS_RANK[aStatus] ?? SSH_STATUS_ORDER.length;
+          const bRank = SSH_STATUS_RANK[bStatus] ?? SSH_STATUS_ORDER.length;
+          result = compareNumber(aRank, bRank);
+          break;
+        }
+        case "lastUsed": {
+          const aTs = a.lastUsed ? Date.parse(a.lastUsed) : 0;
+          const bTs = b.lastUsed ? Date.parse(b.lastUsed) : 0;
+          result = compareNumber(
+            Number.isNaN(aTs) ? 0 : aTs,
+            Number.isNaN(bTs) ? 0 : bTs,
+          );
+          break;
+        }
+      }
+      if (result !== 0) return dir * result;
+      return compareText(a.target, b.target);
+    });
+  }, [filteredRows, sortDirection, sortField]);
+
+  const renderSyncConfidence = (target: string, row: ReflectSessionRow) => {
+    const key = sessionStatusKey(target, row.id);
+    const loadingStatus = !!reflectSessionStatusLoading[key];
+    const status = reflectSessionStatus[key];
+    if (loadingStatus) {
+      return (
+        <Space size={6}>
+          <Spin size="small" />
+          <Typography.Text type="secondary">Checking…</Typography.Text>
+        </Space>
+      );
+    }
+    if (status) {
+      const health = status.status || "unknown";
+      const healthy =
+        health === "healthy" &&
+        status.running &&
+        !status.pending &&
+        (status.errors ?? 0) === 0;
+      const inProgress = !!status.pending;
+      return (
+        <Space size={4} direction="vertical">
+          <Space size={6}>
+            <Tag color={healthy ? "green" : inProgress ? "blue" : "default"}>
+              {healthy
+                ? "all synced"
+                : inProgress
+                  ? "sync in progress"
+                  : health}
+            </Tag>
+            {typeof status.errors === "number" && status.errors > 0 ? (
+              <Tag color="red">errors: {status.errors}</Tag>
+            ) : null}
+          </Space>
+          <Typography.Text type="secondary">
+            cycle {formatMs(status.last_cycle_ms)} • heartbeat{" "}
+            {formatRelative(status.last_heartbeat)}
+          </Typography.Text>
+        </Space>
+      );
+    }
+    if (row.actual_state !== "running") {
+      return <Typography.Text type="secondary">stopped</Typography.Text>;
+    }
+    if (row.last_clean_sync_at) {
+      return (
+        <Typography.Text type="secondary">
+          likely synced • last clean {formatRelative(row.last_clean_sync_at)}
+        </Typography.Text>
+      );
+    }
+    return <Typography.Text type="secondary">unknown</Typography.Text>;
+  };
 
   const buildReflectSessionColumns = (
     target: string,
@@ -1255,12 +1736,12 @@ export const SshPage: React.FC = React.memo(() => {
         </Button>
       ),
     },
-      {
-        title: "State",
-        key: "state",
-        width: 160,
-        render: (_, row) => syncStateDisplay(row),
-      },
+    {
+      title: "State",
+      key: "state",
+      width: 160,
+      render: (_, row) => syncStateDisplay(row),
+    },
     {
       title: "Last Sync",
       key: "last",
@@ -1269,6 +1750,12 @@ export const SshPage: React.FC = React.memo(() => {
         row.last_clean_sync_at
           ? new Date(row.last_clean_sync_at).toLocaleString()
           : "-",
+    },
+    {
+      title: "Confidence",
+      key: "confidence",
+      width: 300,
+      render: (_, row) => renderSyncConfidence(target, row),
     },
     {
       title: "Logs",
@@ -1283,7 +1770,7 @@ export const SshPage: React.FC = React.memo(() => {
     {
       title: "Actions",
       key: "actions",
-      width: 120,
+      width: 220,
       render: (_, row) => (
         <Space size={6}>
           {row.actual_state === "running" ? (
@@ -1306,6 +1793,15 @@ export const SshPage: React.FC = React.memo(() => {
           )}
           <Button size="small" onClick={() => openEditSession(target, row)}>
             Edit
+          </Button>
+          <Button
+            size="small"
+            onClick={() => checkReflectSessionStatus(target, row)}
+            loading={
+              !!reflectSessionStatusLoading[sessionStatusKey(target, row.id)]
+            }
+          >
+            Check
           </Button>
           <Popconfirm
             title="Delete this sync?"
@@ -1387,17 +1883,17 @@ export const SshPage: React.FC = React.memo(() => {
       },
     ];
     return (
-        <div
-          style={{
-            padding: "16px 16px",
-            margin: "16px 16px 20px 56px",
-            borderRadius: 10,
-            background: "#fbfbfb",
-            border: "1px solid #e6e6e6",
-            borderLeft: "5px solid #d0d0d0",
-            boxShadow: "0 2px 6px rgba(0, 0, 0, 0.04)",
-          }}
-        >
+      <div
+        style={{
+          padding: "16px 16px",
+          margin: "16px 16px 20px 56px",
+          borderRadius: 10,
+          background: "#fbfbfb",
+          border: "1px solid #e6e6e6",
+          borderLeft: "5px solid #d0d0d0",
+          boxShadow: "0 2px 6px rgba(0, 0, 0, 0.04)",
+        }}
+      >
         <Space style={{ marginBottom: 8 }} size={12} align="center">
           <Typography.Title level={5} style={{ margin: 0 }}>
             Sync
@@ -1547,14 +2043,33 @@ export const SshPage: React.FC = React.memo(() => {
         >
           Check for Upgrades
         </Button>
+        <Input
+          allowClear
+          placeholder="Filter targets…"
+          value={targetFilter}
+          style={{ width: 240 }}
+          onChange={(e) => setTargetFilter(e.target.value)}
+        />
       </Space>
       <Table
         rowKey={(row) => row.target}
         columns={columns}
-        dataSource={rows}
+        dataSource={visibleRows}
         loading={loading}
         pagination={false}
         size="small"
+        onChange={(_, __, sorter) => {
+          if (Array.isArray(sorter) || !sorter?.field) {
+            return;
+          }
+          const field = sorter.field as SshSortField;
+          const order = sorter.order;
+          if (!order) {
+            return;
+          }
+          setSortField(field);
+          setSortDirection(order === "ascend" ? "asc" : "desc");
+        }}
         expandable={{
           expandedRowRender,
           expandedRowKeys: expandedTargets,
@@ -1574,9 +2089,7 @@ export const SshPage: React.FC = React.memo(() => {
 
       <Modal
         title={
-          reflectModalTarget
-            ? `New Sync for ${reflectModalTarget}`
-            : "New Sync"
+          reflectModalTarget ? `New Sync for ${reflectModalTarget}` : "New Sync"
         }
         open={reflectModalOpen}
         onOk={handleCreateReflect}
@@ -1612,10 +2125,7 @@ export const SshPage: React.FC = React.memo(() => {
                     >
                       <Input placeholder="~/project" />
                     </Form.Item>
-                    <Form.Item
-                      label="Conflict preference"
-                      name="prefer"
-                    >
+                    <Form.Item label="Conflict preference" name="prefer">
                       <Select
                         options={[
                           {
@@ -1658,10 +2168,13 @@ export const SshPage: React.FC = React.memo(() => {
         title="New Remote Session"
         open={targetModalOpen}
         onOk={handleAddTarget}
-        onCancel={() => setTargetModalOpen(false)}
+        onCancel={() => {
+          setTargetModalOpen(false);
+          targetForm.resetFields();
+        }}
         okText="Create"
       >
-        <Form form={targetForm} layout="vertical">
+        <Form form={targetForm} layout="vertical" initialValues={{ autoStart: true }}>
           <Form.Item
             label="SSH target"
             name="target"
@@ -1672,14 +2185,15 @@ export const SshPage: React.FC = React.memo(() => {
           >
             <Input placeholder="user@host:22" />
           </Form.Item>
+          <Form.Item name="autoStart" valuePropName="checked" style={{ marginBottom: 0 }}>
+            <Checkbox>Start session immediately</Checkbox>
+          </Form.Item>
         </Form>
       </Modal>
 
       <Modal
         title={
-          editSessionTarget
-            ? `Edit Sync for ${editSessionTarget}`
-            : "Edit Sync"
+          editSessionTarget ? `Edit Sync for ${editSessionTarget}` : "Edit Sync"
         }
         open={editModalOpen}
         onOk={handleEditSession}
@@ -1758,7 +2272,10 @@ export const SshPage: React.FC = React.memo(() => {
           >
             <InputNumber min={1} max={65535} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item label="Remote port (defaults to local port)" name="remotePort">
+          <Form.Item
+            label="Remote port (defaults to local port)"
+            name="remotePort"
+          >
             <InputNumber min={1} max={65535} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item label="Name (optional)" name="name">
@@ -1771,8 +2288,14 @@ export const SshPage: React.FC = React.memo(() => {
         title={reflectLogTitle}
         open={reflectLogModalOpen}
         onCancel={() => setReflectLogModalOpen(false)}
+        width={1200}
+        styles={{ body: { overflowY: "hidden" } }}
         footer={[
-          <Button key="refresh" onClick={refreshLogView} loading={reflectLogLoading}>
+          <Button
+            key="refresh"
+            onClick={refreshLogView}
+            loading={reflectLogLoading}
+          >
             Refresh
           </Button>,
           <Button key="close" onClick={() => setReflectLogModalOpen(false)}>
@@ -1798,11 +2321,41 @@ export const SshPage: React.FC = React.memo(() => {
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           />
         ) : (
-          <Input.TextArea
-            value={formatReflectLogs(reflectLogRows)}
-            readOnly
-            autoSize={{ minRows: 8, maxRows: 16 }}
-          />
+          <>
+            <Space style={{ marginBottom: 8 }}>
+              <Button
+                size="small"
+                type={reflectLogViewMode === "table" ? "primary" : "default"}
+                onClick={() => setReflectLogViewMode("table")}
+              >
+                Pretty
+              </Button>
+              <Button
+                size="small"
+                type={reflectLogViewMode === "raw" ? "primary" : "default"}
+                onClick={() => setReflectLogViewMode("raw")}
+              >
+                Raw
+              </Button>
+            </Space>
+            {reflectLogViewMode === "table" ? (
+              <Table
+                rowKey={(row) => row.id}
+                columns={reflectLogColumns}
+                dataSource={reflectLogRows}
+                size="small"
+                pagination={false}
+                tableLayout="fixed"
+                scroll={{ y: 420 }}
+              />
+            ) : (
+              <Input.TextArea
+                value={formatReflectLogs(reflectLogRows)}
+                readOnly
+                autoSize={{ minRows: 8, maxRows: 16 }}
+              />
+            )}
+          </>
         )}
       </Modal>
     </div>

@@ -8,12 +8,14 @@ import {
   upgradeRemote,
   upgradeLocal,
   statusSession,
+  stopRegisteredTunnel,
   updateRegistry,
 } from "./core";
 import type { UpgradeInfo } from "./core";
 
 export type SshSessionRow = {
   target: string;
+  starred?: boolean;
   localPort?: number;
   lastUsed?: string;
   lastStopped?: string;
@@ -47,6 +49,7 @@ export async function listSessionsUI(opts?: {
   for (const entry of entries) {
     const row: SshSessionRow = {
       target: entry.target,
+      starred: !!entry.starred,
       localPort: entry.localPort,
       lastUsed: entry.lastUsed,
       lastStopped: entry.lastStopped,
@@ -107,6 +110,17 @@ export async function addSessionUI(target: string): Promise<void> {
   updateRegistry(trimmed, {});
 }
 
+export async function setSessionStarredUI(
+  target: string,
+  starred: boolean,
+): Promise<void> {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    throw new Error("Target is required");
+  }
+  updateRegistry(trimmed, { starred: !!starred });
+}
+
 export async function deleteSessionUI(target: string): Promise<void> {
   const trimmed = target.trim();
   if (!trimmed) {
@@ -117,6 +131,7 @@ export async function deleteSessionUI(target: string): Promise<void> {
     existing?.tunnel.kill();
     activeTunnels.delete(trimmed);
   }
+  await stopRegisteredTunnel(trimmed);
   deleteSession(trimmed);
 }
 
@@ -126,6 +141,7 @@ export async function stopSessionUI(target: string): Promise<void> {
     existing?.tunnel.kill();
     activeTunnels.delete(target);
   }
+  await stopRegisteredTunnel(target);
   await statusSession("stop", target, {});
 }
 
@@ -142,6 +158,7 @@ export async function upgradeSessionUI(
     existing?.tunnel.kill();
     activeTunnels.delete(target);
   }
+  await stopRegisteredTunnel(target);
   await upgradeRemote(entry, { localUrl });
 }
 
