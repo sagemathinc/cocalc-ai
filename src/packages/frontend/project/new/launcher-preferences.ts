@@ -90,11 +90,10 @@ export function getUserLauncherPrefs(
     project_id && obj.perProject && obj.perProject[project_id]
       ? normalizeObject<LauncherUserPrefs>(obj.perProject[project_id])
       : {};
-  const useBase = project_id == null;
-  const baseQuick = useBase ? normalizeList(obj.quickCreate) : [];
-  const baseApps = useBase ? normalizeList(obj.apps) : [];
-  const baseHiddenQuick = useBase ? normalizeList(obj.hiddenQuickCreate) : [];
-  const baseHiddenApps = useBase ? normalizeList(obj.hiddenApps) : [];
+  const baseQuick = normalizeList(obj.quickCreate);
+  const baseApps = normalizeList(obj.apps);
+  const baseHiddenQuick = normalizeList(obj.hiddenQuickCreate);
+  const baseHiddenApps = normalizeList(obj.hiddenApps);
   const perQuick = normalizeList(perProject.quickCreate);
   const perApps = normalizeList(perProject.apps);
   const perHiddenQuick = normalizeList(perProject.hiddenQuickCreate);
@@ -109,10 +108,29 @@ export function getUserLauncherPrefs(
 
 export function updateUserLauncherPrefs(
   settings: unknown,
-  project_id: string,
+  project_id: string | undefined,
   prefs: LauncherUserPrefs | null,
 ): LauncherUserPrefsStore {
   const obj = normalizeObject<LauncherUserPrefsStore>(settings);
+  if (!project_id) {
+    if (prefs == null) {
+      const {
+        quickCreate: _quickCreate,
+        apps: _apps,
+        hiddenQuickCreate: _hiddenQuickCreate,
+        hiddenApps: _hiddenApps,
+        ...rest
+      } = obj;
+      return rest as LauncherUserPrefsStore;
+    }
+    return {
+      ...obj,
+      quickCreate: prefs.quickCreate ?? [],
+      apps: prefs.apps ?? [],
+      hiddenQuickCreate: prefs.hiddenQuickCreate ?? [],
+      hiddenApps: prefs.hiddenApps ?? [],
+    };
+  }
   const perProject = {
     ...(obj.perProject ?? {}),
   } as Record<string, LauncherUserPrefs>;
