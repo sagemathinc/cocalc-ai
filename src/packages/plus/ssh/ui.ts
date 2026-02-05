@@ -14,6 +14,7 @@ import type { UpgradeInfo } from "./core";
 
 export type SshSessionRow = {
   target: string;
+  starred?: boolean;
   localPort?: number;
   lastUsed?: string;
   lastStopped?: string;
@@ -47,6 +48,7 @@ export async function listSessionsUI(opts?: {
   for (const entry of entries) {
     const row: SshSessionRow = {
       target: entry.target,
+      starred: !!entry.starred,
       localPort: entry.localPort,
       lastUsed: entry.lastUsed,
       lastStopped: entry.lastStopped,
@@ -105,6 +107,17 @@ export async function addSessionUI(target: string): Promise<void> {
     throw new Error("Target is required");
   }
   updateRegistry(trimmed, {});
+}
+
+export async function setSessionStarredUI(
+  target: string,
+  starred: boolean,
+): Promise<void> {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    throw new Error("Target is required");
+  }
+  updateRegistry(trimmed, { starred: !!starred });
 }
 
 export async function deleteSessionUI(target: string): Promise<void> {

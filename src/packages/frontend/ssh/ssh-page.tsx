@@ -23,6 +23,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import { CopyOutlined, InfoCircleOutlined } from "@ant-design/icons";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { Icon } from "@cocalc/frontend/components/icon";
 import {
   CSS,
   React,
@@ -32,6 +33,7 @@ import {
   redux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import { COLORS } from "@cocalc/util/theme";
 import type {
   SshSessionRow,
   UpgradeInfoPayload,
@@ -549,6 +551,33 @@ export const SshPage: React.FC = React.memo(() => {
     }
   };
 
+  const handleToggleStar = async (row: SshSessionRow) => {
+    const nextStarred = !row.starred;
+    setRows((prev) =>
+      prev.map((item) =>
+        item.target === row.target ? { ...item, starred: nextStarred } : item,
+      ),
+    );
+    try {
+      await webapp_client.conat_client.hub.ssh.setSessionStarredUI({
+        target: row.target,
+        starred: nextStarred,
+      });
+    } catch (err: any) {
+      setRows((prev) =>
+        prev.map((item) =>
+          item.target === row.target
+            ? { ...item, starred: row.starred }
+            : item,
+        ),
+      );
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
   const handleStop = async (target: string) => {
     try {
       await webapp_client.conat_client.hub.ssh.stopSessionUI({ target });
@@ -1043,6 +1072,38 @@ export const SshPage: React.FC = React.memo(() => {
 
   const columns = useMemo<ColumnsType<SshSessionRow>>(
     () => [
+      {
+        title: (
+          <Icon
+            name="star-filled"
+            style={{ fontSize: 16, color: COLORS.YELL_LL }}
+          />
+        ),
+        dataIndex: "starred",
+        key: "starred",
+        width: 48,
+        align: "center",
+        onCell: () => ({
+          onClick: (event: React.MouseEvent) => {
+            event.stopPropagation();
+          },
+          style: { cursor: "pointer" },
+        }),
+        render: (starred: boolean, row: SshSessionRow) => (
+          <span
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleToggleStar(row);
+            }}
+            style={{ cursor: "pointer", fontSize: 18 }}
+          >
+            <Icon
+              name={starred ? "star-filled" : "star"}
+              style={{ color: starred ? COLORS.STAR : COLORS.GRAY_L }}
+            />
+          </span>
+        ),
+      },
       {
         title: "Target",
         dataIndex: "target",

@@ -22,6 +22,7 @@ export type SshOptions = {
 
 export type RegistryEntry = {
   target: string;
+  starred?: boolean;
   host?: string;
   port?: number | null;
   localPort?: number;
