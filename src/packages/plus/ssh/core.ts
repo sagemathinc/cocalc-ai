@@ -286,6 +286,20 @@ export type ProbeResult = {
   path: string;
 };
 
+const REMOTE_STATUS_CACHE_MS = 10_000;
+const remoteStatusCache = new Map<string, { status: string; ts: number }>();
+
+function getCachedRemoteStatus(target: string, maxAgeMs = REMOTE_STATUS_CACHE_MS) {
+  const cached = remoteStatusCache.get(target);
+  if (!cached) return null;
+  if (Date.now() - cached.ts > maxAgeMs) return null;
+  return cached.status;
+}
+
+function setCachedRemoteStatus(target: string, status: string) {
+  remoteStatusCache.set(target, { status, ts: Date.now() });
+}
+
 export function openUrl(url: string) {
   const platform = process.platform;
   const cmd = platform === "darwin" ? "open" : "xdg-open";
@@ -348,8 +362,15 @@ async function probeRemoteBinAsync(
   return { status: "missing", path: "$HOME/.local/bin/cocalc-plus" };
 }
 
-export async function getRemoteStatus(entry: RegistryEntry): Promise<string> {
+export async function getRemoteStatus(
+  entry: RegistryEntry,
+  opts?: { force?: boolean; maxAgeMs?: number },
+): Promise<string> {
   const target = entry.target;
+  if (!opts?.force) {
+    const cached = getCachedRemoteStatus(target, opts?.maxAgeMs);
+    if (cached) return cached;
+  }
   const { host, port } = parseTarget(target);
   const sshOpts: SshOptions = {
     host,
@@ -362,18 +383,26 @@ export async function getRemoteStatus(entry: RegistryEntry): Promise<string> {
   const remotePidPath = `${remoteDir}/daemon.pid`;
   const extraArgs = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"];
   const probe = await probeRemoteBinAsync(sshOpts, extraArgs);
-  if (probe.status === "unreachable") return "unreachable";
-  if (probe.status === "missing") return "missing";
+  if (probe.status === "unreachable") {
+    setCachedRemoteStatus(target, "unreachable");
+    return "unreachable";
+  }
+  if (probe.status === "missing") {
+    setCachedRemoteStatus(target, "missing");
+    return "missing";
+  }
   const remoteBin = probe.path || "$HOME/.local/bin/cocalc-plus";
   const res = await sshRunAsync(
     sshOpts,
     `${remoteBin} --daemon-status --pidfile ${remotePidPath}`,
     { timeoutMs: 5000, extraArgs },
   );
-  if (res.error) return "unreachable";
-  if (res.status === 0) return "running";
-  if (res.status === 1) return "stopped";
-  return "error";
+  let status = "error";
+  if (res.error) status = "unreachable";
+  else if (res.status === 0) status = "running";
+  else if (res.status === 1) status = "stopped";
+  setCachedRemoteStatus(target, status);
+  return status;
 }
 
 export async function ensureRemoteReady(
