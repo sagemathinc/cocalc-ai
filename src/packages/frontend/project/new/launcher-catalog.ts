@@ -33,12 +33,6 @@ export const QUICK_CREATE_CATALOG: QuickCreateSpec[] = [
   { id: "py", ext: "py", label: "Python", icon: NEW_FILETYPE_ICONS.py },
   { id: "jl", ext: "jl", label: "Julia", icon: NEW_FILETYPE_ICONS.jl },
   { id: "r", ext: "r", label: "R", icon: NEW_FILETYPE_ICONS.r },
-  {
-    id: "sage",
-    ext: "sage",
-    label: "Sage Worksheet",
-    icon: NEW_FILETYPE_ICONS.sage,
-  },
   { id: "term", ext: "term", label: "Terminal", icon: NEW_FILETYPE_ICONS.term },
   {
     id: "slides",

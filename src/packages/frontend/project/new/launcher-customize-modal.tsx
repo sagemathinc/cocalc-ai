@@ -3,8 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Checkbox, Divider, Modal, Space, Typography } from "antd";
-import { useEffect, useState } from "react";
+import { Button, Checkbox, Divider, Modal, Select, Space, Typography } from "antd";
+import { useEffect, useState, type ReactNode } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import type { NamedServerName } from "@cocalc/util/types/servers";
 import {
@@ -12,6 +12,9 @@ import {
   SortableItem,
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
+import { file_associations } from "@cocalc/frontend/file-associations";
+import { file_options } from "@cocalc/frontend/editor-tmp";
+import { keys } from "@cocalc/util/misc";
 import {
   APP_CATALOG,
   APP_MAP,
@@ -105,22 +108,46 @@ export function LauncherCustomizeModal({
     onClose();
   }
 
+  function discardChanges() {
+    onClose();
+  }
+
   const hiddenQuick = QUICK_CREATE_CATALOG.filter(
     (spec) => !quickCreate.includes(spec.id),
   );
   const hiddenApps = APP_CATALOG.filter((spec) => !apps.includes(spec.id));
 
-  function renderQuickRow(id: string, checked: boolean, draggable: boolean) {
-    const spec = QUICK_CREATE_MAP[id];
-    if (!spec) return null;
+  function renderQuickRow(
+    id: string,
+    checked: boolean,
+    draggable: boolean,
+    clickable: boolean,
+  ) {
+    const spec =
+      QUICK_CREATE_MAP[id] ??
+      (() => {
+        const data = file_options(`x.${id}`);
+        return {
+          icon: data.icon ?? "file",
+          label: data.name ?? id,
+        };
+      })();
     return (
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "6px 0",
+          padding: "4px 0",
+          cursor: clickable ? "pointer" : undefined,
         }}
+        onClick={
+          clickable
+            ? () => {
+                toggleQuickCreate(id, true);
+              }
+            : undefined
+        }
       >
         <Space>
           {draggable ? (
@@ -139,7 +166,12 @@ export function LauncherCustomizeModal({
     );
   }
 
-  function renderAppRow(id: NamedServerName, checked: boolean, draggable: boolean) {
+  function renderAppRow(
+    id: NamedServerName,
+    checked: boolean,
+    draggable: boolean,
+    clickable: boolean,
+  ) {
     const spec = APP_MAP[id];
     if (!spec) return null;
     return (
@@ -148,8 +180,16 @@ export function LauncherCustomizeModal({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "6px 0",
+          padding: "4px 0",
+          cursor: clickable ? "pointer" : undefined,
         }}
+        onClick={
+          clickable
+            ? () => {
+                toggleApp(id, true);
+              }
+            : undefined
+        }
       >
         <Space>
           {draggable ? (
@@ -172,10 +212,10 @@ export function LauncherCustomizeModal({
     <Modal
       title="Customize Launcher"
       open={open}
-      onCancel={onClose}
+      onCancel={saveUser}
       onOk={saveUser}
-      okText="Save for me"
-      cancelText="Cancel"
+      okText="Save"
+      cancelText="Save"
       footer={
         <Space style={{ width: "100%", justifyContent: "space-between" }}>
           <Space>
@@ -187,74 +227,132 @@ export function LauncherCustomizeModal({
             )}
           </Space>
           <Space>
-            <Button onClick={onClose}>Cancel</Button>
+            <Button danger onClick={discardChanges}>
+              Discard changes
+            </Button>
             <Button type="primary" onClick={saveUser}>
-              Save for me
+              Save
             </Button>
           </Space>
         </Space>
       }
-      width={720}
+      width={860}
     >
-      <Typography.Title level={4} style={{ marginBottom: "8px" }}>
-        Quick Create
-      </Typography.Title>
-      <SortableList
-        items={quickCreate}
-        onDragStop={(oldIndex, newIndex) =>
-          setQuickCreate(reorder(quickCreate, oldIndex, newIndex))
-        }
-        Item={({ id }: { id: string }) => renderQuickRow(id, true, true)}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "24px",
+        }}
       >
-        {quickCreate.map((id) => (
-          <SortableItem key={id} id={id}>
-            {renderQuickRow(id, true, true)}
-          </SortableItem>
-        ))}
-      </SortableList>
-      {hiddenQuick.length > 0 && (
-        <div style={{ marginTop: "10px" }}>
-          <Typography.Text type="secondary">
-            Available
-          </Typography.Text>
-          {hiddenQuick.map((spec) => (
-            <div key={spec.id}>{renderQuickRow(spec.id, false, false)}</div>
-          ))}
-        </div>
-      )}
-
-      <Divider />
-
-      <Typography.Title level={4} style={{ marginBottom: "8px" }}>
-        Apps
-      </Typography.Title>
-      <SortableList
-        items={apps}
-        onDragStop={(oldIndex, newIndex) =>
-          setApps(reorder(apps, oldIndex, newIndex) as NamedServerName[])
-        }
-        Item={({ id }: { id: string }) =>
-          renderAppRow(id as NamedServerName, true, true)
-        }
-      >
-        {apps.map((id) => (
-          <SortableItem key={id} id={id}>
-            {renderAppRow(id, true, true)}
-          </SortableItem>
-        ))}
-      </SortableList>
-      {hiddenApps.length > 0 && (
-        <div style={{ marginTop: "10px" }}>
-          <Typography.Text type="secondary">
-            Available
-          </Typography.Text>
-          {hiddenApps.map((spec) => (
-            <div key={spec.id}>
-              {renderAppRow(spec.id, false, false)}
+        <div>
+          <Typography.Title level={5} style={{ marginBottom: "6px" }}>
+            Quick Create
+          </Typography.Title>
+          <SortableList
+            items={quickCreate}
+            onDragStop={(oldIndex, newIndex) =>
+              setQuickCreate(reorder(quickCreate, oldIndex, newIndex))
+            }
+            Item={({ id }: { id: string }) =>
+              renderQuickRow(id, true, true, false)
+            }
+          >
+            {quickCreate.map((id) => (
+              <SortableItem key={id} id={id}>
+                {renderQuickRow(id, true, true, false)}
+              </SortableItem>
+            ))}
+          </SortableList>
+          {hiddenQuick.length > 0 && (
+            <div style={{ marginTop: "8px" }}>
+              <Typography.Text type="secondary">
+                Available
+              </Typography.Text>
+              {hiddenQuick.map((spec) => (
+                <div key={spec.id}>
+                  {renderQuickRow(spec.id, false, false, true)}
+                </div>
+              ))}
             </div>
-          ))}
+          )}
+          <Divider style={{ margin: "10px 0" }} />
+          <Typography.Text type="secondary">
+            Add more file types
+          </Typography.Text>
+          <Select<string>
+            showSearch
+            allowClear
+            placeholder="Search file types..."
+            style={{ width: "100%", marginTop: "6px" }}
+            value={undefined}
+            options={(() => {
+              const list = keys(file_associations).sort();
+              const seen = new Set<string>();
+              const options: { value: string; label: ReactNode }[] = [];
+              for (let ext of list) {
+                if (ext === "/" || ext === "sage") continue;
+                const data = file_associations[ext];
+                if (data?.exclude_from_menu) continue;
+                if (data?.name && seen.has(data.name)) continue;
+                if (data?.name) seen.add(data.name);
+                const value = data?.ext ?? ext;
+                if (!value || value === "sage") continue;
+                if (quickCreate.includes(value)) continue;
+                const info = file_options(`x.${value}`);
+                options.push({
+                  value,
+                  label: (
+                    <span>
+                      <Icon name={info.icon ?? "file"} />{" "}
+                      {info.name ?? value}{" "}
+                      <span style={{ opacity: 0.6 }}>({value})</span>
+                    </span>
+                  ),
+                });
+              }
+              return options;
+            })()}
+            onSelect={(value: string) => {
+              if (!quickCreate.includes(value)) {
+                setQuickCreate([value, ...quickCreate]);
+              }
+            }}
+          />
         </div>
-      )}
+        <div>
+          <Typography.Title level={5} style={{ marginBottom: "6px" }}>
+            Apps
+          </Typography.Title>
+          <SortableList
+            items={apps}
+            onDragStop={(oldIndex, newIndex) =>
+              setApps(reorder(apps, oldIndex, newIndex) as NamedServerName[])
+            }
+            Item={({ id }: { id: string }) =>
+              renderAppRow(id as NamedServerName, true, true, false)
+            }
+          >
+            {apps.map((id) => (
+              <SortableItem key={id} id={id}>
+                {renderAppRow(id, true, true, false)}
+              </SortableItem>
+            ))}
+          </SortableList>
+          {hiddenApps.length > 0 && (
+            <div style={{ marginTop: "8px" }}>
+              <Typography.Text type="secondary">
+                Available
+              </Typography.Text>
+              {hiddenApps.map((spec) => (
+                <div key={spec.id}>
+                  {renderAppRow(spec.id, false, false, true)}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </Modal>
   );
 }

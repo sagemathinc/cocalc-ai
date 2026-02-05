@@ -46,6 +46,7 @@ import {
   APP_CATALOG,
   QUICK_CREATE_MAP,
 } from "./launcher-catalog";
+import { file_options } from "@cocalc/frontend/editor-tmp";
 import {
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
@@ -174,9 +175,21 @@ export default function NewFilePage(props: Props) {
     }
   }
 
-  const quickCreateIds = mergedLauncher.quickCreate.filter(isQuickCreateAvailable);
+  const quickCreateIds = mergedLauncher.quickCreate
+    .filter((id) => id !== "sage")
+    .filter(isQuickCreateAvailable);
   const quickCreateSpecs = quickCreateIds
-    .map((id) => QUICK_CREATE_MAP[id])
+    .map((id) => {
+      const spec = QUICK_CREATE_MAP[id];
+      if (spec) return spec;
+      const data = file_options(`x.${id}`);
+      return {
+        id,
+        ext: id,
+        label: data.name ?? id,
+        icon: data.icon ?? "file",
+      };
+    })
     .filter(Boolean);
 
   const appIds = mergedLauncher.apps.filter(
