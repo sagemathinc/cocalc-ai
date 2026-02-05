@@ -44,6 +44,7 @@ import type {
   ReflectLogRow,
   ReflectSessionLogRow,
   ReflectSessionRow,
+  ReflectSessionStatusRow,
 } from "@cocalc/conat/hub/api/reflect";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { lite, project_id } from "@cocalc/frontend/lite";
@@ -68,6 +69,8 @@ type ReflectTargetState = {
   loading: boolean;
   error: string | null;
 };
+
+type ReflectStatusKey = string;
 
 type SshSortField = "starred" | "target" | "status" | "lastUsed";
 type SshSortDirection = "asc" | "desc";
@@ -125,6 +128,31 @@ function compareText(a?: string, b?: string) {
 
 function compareNumber(a?: number, b?: number) {
   return (a ?? 0) - (b ?? 0);
+}
+
+function sessionStatusKey(target: string, id: number): ReflectStatusKey {
+  return `${target}:${id}`;
+}
+
+function formatMs(value?: number | null): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return "-";
+  }
+  if (value < 1000) return `${Math.round(value)} ms`;
+  const seconds = value / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)} s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${Math.round(seconds % 60)}s`;
+}
+
+function formatRelative(ts?: number | null): string {
+  if (typeof ts !== "number" || !Number.isFinite(ts)) return "-";
+  const delta = Date.now() - ts;
+  if (delta < 0) return "just now";
+  if (delta < 60_000) return `${Math.max(1, Math.floor(delta / 1000))}s ago`;
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
+  return `${Math.floor(delta / 86_400_000)}d ago`;
 }
 
 function formatForwardLocal(fwd: ReflectForwardRow) {
@@ -252,6 +280,11 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectByTarget, setReflectByTarget] = useState<
     Record<string, ReflectTargetState>
   >({});
+  const [reflectSessionStatus, setReflectSessionStatus] = useState<
+    Record<ReflectStatusKey, ReflectSessionStatusRow | undefined>
+  >({});
+  const [reflectSessionStatusLoading, setReflectSessionStatusLoading] =
+    useState<Record<ReflectStatusKey, boolean>>({});
   const [upgradeInfo, setUpgradeInfo] = useState<UpgradeInfoPayload>({
     remotes: {},
   });
@@ -474,16 +507,41 @@ export const SshPage: React.FC = React.memo(() => {
         webapp_client.conat_client.hub.reflect.listSessionsUI({ target }),
         webapp_client.conat_client.hub.reflect.listForwardsUI(),
       ]);
+      const nextSessions = sessions || [];
       const filteredForwards = filterForwardsByTarget(forwards || [], target);
       setReflectByTarget((prev) => ({
         ...prev,
         [target]: {
-          sessions: sessions || [],
+          sessions: nextSessions,
           forwards: filteredForwards,
           loading: false,
           error: null,
         },
       }));
+      setReflectSessionStatus((prev) => {
+        const keep = new Set(
+          nextSessions.map((row) => sessionStatusKey(target, row.id)),
+        );
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(`${target}:`) && !keep.has(key)) {
+            delete next[key];
+          }
+        }
+        return next;
+      });
+      setReflectSessionStatusLoading((prev) => {
+        const keep = new Set(
+          nextSessions.map((row) => sessionStatusKey(target, row.id)),
+        );
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          if (key.startsWith(`${target}:`) && !keep.has(key)) {
+            delete next[key];
+          }
+        }
+        return next;
+      });
     } catch (err: any) {
       setReflectByTarget((prev) => ({
         ...prev,
@@ -493,6 +551,28 @@ export const SshPage: React.FC = React.memo(() => {
           error: err?.message || String(err),
         },
       }));
+    }
+  };
+
+  const checkReflectSessionStatus = async (
+    target: string,
+    row: ReflectSessionRow,
+  ) => {
+    const key = sessionStatusKey(target, row.id);
+    setReflectSessionStatusLoading((prev) => ({ ...prev, [key]: true }));
+    try {
+      const status =
+        await webapp_client.conat_client.hub.reflect.getSessionStatusUI({
+          idOrName: String(row.id),
+        });
+      setReflectSessionStatus((prev) => ({ ...prev, [key]: status }));
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    } finally {
+      setReflectSessionStatusLoading((prev) => ({ ...prev, [key]: false }));
     }
   };
 
@@ -1543,6 +1623,60 @@ export const SshPage: React.FC = React.memo(() => {
     });
   }, [filteredRows, sortDirection, sortField]);
 
+  const renderSyncConfidence = (target: string, row: ReflectSessionRow) => {
+    const key = sessionStatusKey(target, row.id);
+    const loadingStatus = !!reflectSessionStatusLoading[key];
+    const status = reflectSessionStatus[key];
+    if (loadingStatus) {
+      return (
+        <Space size={6}>
+          <Spin size="small" />
+          <Typography.Text type="secondary">Checking…</Typography.Text>
+        </Space>
+      );
+    }
+    if (status) {
+      const health = status.status || "unknown";
+      const healthy =
+        health === "healthy" &&
+        status.running &&
+        !status.pending &&
+        (status.errors ?? 0) === 0;
+      const inProgress = !!status.pending;
+      return (
+        <Space size={4} direction="vertical">
+          <Space size={6}>
+            <Tag color={healthy ? "green" : inProgress ? "blue" : "default"}>
+              {healthy
+                ? "all synced"
+                : inProgress
+                  ? "sync in progress"
+                  : health}
+            </Tag>
+            {typeof status.errors === "number" && status.errors > 0 ? (
+              <Tag color="red">errors: {status.errors}</Tag>
+            ) : null}
+          </Space>
+          <Typography.Text type="secondary">
+            cycle {formatMs(status.last_cycle_ms)} • heartbeat{" "}
+            {formatRelative(status.last_heartbeat)}
+          </Typography.Text>
+        </Space>
+      );
+    }
+    if (row.actual_state !== "running") {
+      return <Typography.Text type="secondary">stopped</Typography.Text>;
+    }
+    if (row.last_clean_sync_at) {
+      return (
+        <Typography.Text type="secondary">
+          likely synced • last clean {formatRelative(row.last_clean_sync_at)}
+        </Typography.Text>
+      );
+    }
+    return <Typography.Text type="secondary">unknown</Typography.Text>;
+  };
+
   const buildReflectSessionColumns = (
     target: string,
   ): ColumnsType<ReflectSessionRow> => [
@@ -1599,6 +1733,12 @@ export const SshPage: React.FC = React.memo(() => {
           : "-",
     },
     {
+      title: "Confidence",
+      key: "confidence",
+      width: 300,
+      render: (_, row) => renderSyncConfidence(target, row),
+    },
+    {
       title: "Logs",
       key: "logs",
       width: 110,
@@ -1611,7 +1751,7 @@ export const SshPage: React.FC = React.memo(() => {
     {
       title: "Actions",
       key: "actions",
-      width: 120,
+      width: 220,
       render: (_, row) => (
         <Space size={6}>
           {row.actual_state === "running" ? (
@@ -1634,6 +1774,15 @@ export const SshPage: React.FC = React.memo(() => {
           )}
           <Button size="small" onClick={() => openEditSession(target, row)}>
             Edit
+          </Button>
+          <Button
+            size="small"
+            onClick={() => checkReflectSessionStatus(target, row)}
+            loading={
+              !!reflectSessionStatusLoading[sessionStatusKey(target, row.id)]
+            }
+          >
+            Check
           </Button>
           <Popconfirm
             title="Delete this sync?"

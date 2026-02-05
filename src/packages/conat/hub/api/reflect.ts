@@ -2,6 +2,7 @@ import { requireSignedIn } from "./util";
 
 export const reflect = {
   listSessionsUI: requireSignedIn,
+  getSessionStatusUI: requireSignedIn,
   listForwardsUI: requireSignedIn,
   createSessionUI: requireSignedIn,
   createForwardUI: requireSignedIn,
@@ -62,11 +63,27 @@ export type ReflectSessionLogRow = ReflectLogRow & {
   session_id: number;
 };
 
+export type ReflectSessionStatusRow = {
+  checked_at: number;
+  status: string;
+  reason?: string | null;
+  running?: boolean;
+  pending?: boolean;
+  errors?: number | null;
+  cycles?: number | null;
+  last_cycle_ms?: number | null;
+  last_clean_at?: number | null;
+  last_heartbeat?: number | null;
+};
+
 export interface ReflectApi {
   listSessionsUI: (opts?: {
     selectors?: string[];
     target?: string;
   }) => Promise<ReflectSessionRow[]>;
+  getSessionStatusUI: (opts: {
+    idOrName: string;
+  }) => Promise<ReflectSessionStatusRow>;
   listForwardsUI: () => Promise<ReflectForwardRow[]>;
   createSessionUI: (opts: {
     alpha?: string;
