@@ -1,4 +1,4 @@
-# CoCalc Plus SSH Remote Mode (Draft Strategy)
+# (done) CoCalc Plus SSH Remote Mode (Draft Strategy)
 
 ## Updated finish plan (2026-02-05)
 
