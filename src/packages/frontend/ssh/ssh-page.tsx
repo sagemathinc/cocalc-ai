@@ -546,10 +546,31 @@ export const SshPage: React.FC = React.memo(() => {
     try {
       const values = await targetForm.validateFields();
       const target = values.target?.trim();
+      if (!target) {
+        throw new Error("Target is required");
+      }
+      const autoStart = values.autoStart !== false;
       await webapp_client.conat_client.hub.ssh.addSessionUI({ target });
       setTargetModalOpen(false);
       targetForm.resetFields();
       await loadSessions();
+      if (autoStart) {
+        setOpeningTargets((prev) => ({ ...prev, [target]: true }));
+        setOpeningStatus((prev) => ({ ...prev, [target]: "Starting…" }));
+        try {
+          await connectSessionWithRetry(target, {
+            onStage: (stage) =>
+              setOpeningStatus((prev) => ({
+                ...prev,
+                [target]: stage,
+              })),
+          });
+          await loadSessions({ background: true });
+        } finally {
+          setOpeningTargets((prev) => ({ ...prev, [target]: false }));
+          setOpeningStatus((prev) => ({ ...prev, [target]: "" }));
+        }
+      }
     } catch (err: any) {
       if (err?.errorFields) {
         return;
@@ -1160,6 +1181,14 @@ export const SshPage: React.FC = React.memo(() => {
       });
     }
   }, [forwardModalOpen, forwardForm]);
+
+  useEffect(() => {
+    if (targetModalOpen) {
+      targetForm.setFieldsValue({
+        autoStart: true,
+      });
+    }
+  }, [targetModalOpen, targetForm]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1970,10 +1999,13 @@ export const SshPage: React.FC = React.memo(() => {
         title="New Remote Session"
         open={targetModalOpen}
         onOk={handleAddTarget}
-        onCancel={() => setTargetModalOpen(false)}
+        onCancel={() => {
+          setTargetModalOpen(false);
+          targetForm.resetFields();
+        }}
         okText="Create"
       >
-        <Form form={targetForm} layout="vertical">
+        <Form form={targetForm} layout="vertical" initialValues={{ autoStart: true }}>
           <Form.Item
             label="SSH target"
             name="target"
@@ -1983,6 +2015,13 @@ export const SshPage: React.FC = React.memo(() => {
             extra={targetHelp}
           >
             <Input placeholder="user@host:22" />
+          </Form.Item>
+          <Form.Item
+            label="Start session immediately"
+            name="autoStart"
+            valuePropName="checked"
+          >
+            <Switch />
           </Form.Item>
         </Form>
       </Modal>

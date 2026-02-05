@@ -31,7 +31,7 @@
 
 ## Reflect Sync UI todo
 
-- [ ] automatically start on create of new remote session
+- [x] automatically start on create of new remote session
 
 - [ ] connecting via ssh doesn't work on macos 
 
