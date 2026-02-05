@@ -7,7 +7,13 @@ import { Space } from "antd";
 import { join } from "path";
 import { defineMessage, useIntl } from "react-intl";
 import { Button } from "@cocalc/frontend/antd-bootstrap";
-import { DropdownMenu, Icon, Tip, VisibleLG, type MenuItems } from "@cocalc/frontend/components";
+import {
+  DropdownMenu,
+  Icon,
+  Tip,
+  VisibleLG,
+  type MenuItems,
+} from "@cocalc/frontend/components";
 import LinkRetry from "@cocalc/frontend/components/link-retry";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
@@ -19,10 +25,15 @@ import { type JSX, type MouseEvent } from "react";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import Snapshots from "@cocalc/frontend/project/snapshots";
 import Backups from "@cocalc/frontend/project/backups";
-import { BACKUPS, isBackupsPath } from "@cocalc/frontend/project/listing/use-backups";
+import {
+  BACKUPS,
+  isBackupsPath,
+} from "@cocalc/frontend/project/listing/use-backups";
 import { lite } from "@cocalc/frontend/lite";
 import TourButton from "./tour/button";
 import CloneProject from "./clone";
+
+const SHOW_APPS = false;
 
 const OPEN_MSG = defineMessage({
   id: "project.explorer.misc-side-buttons.open_dir.tooltip",
@@ -135,7 +146,6 @@ export function MiscSideButtons() {
     );
   }
 
-
   function render_vscode_button(): JSX.Element | undefined {
     if (student_project_functionality.disableVSCodeServer) {
       return;
@@ -203,16 +213,15 @@ export function MiscSideButtons() {
         current_path.startsWith(SNAPSHOTS + "/")) && <Snapshots />}
       {current_path &&
         isBackupsPath(current_path) &&
-        (current_path === BACKUPS || current_path.startsWith(`${BACKUPS}/`)) && (
-          <Backups />
-        )}
-      <Space.Compact>
-        {render_jupyterlab_button()}
-        {render_vscode_button()}
-      </Space.Compact>
-      <Space.Compact>
-        {render_upload_button()}
-      </Space.Compact>
+        (current_path === BACKUPS ||
+          current_path.startsWith(`${BACKUPS}/`)) && <Backups />}
+      {SHOW_APPS && (
+        <Space.Compact>
+          {render_jupyterlab_button()}
+          {render_vscode_button()}
+        </Space.Compact>
+      )}
+      <Space.Compact>{render_upload_button()}</Space.Compact>
       <div className="pull-right">
         <Space.Compact>
           {render_hidden_toggle()}
