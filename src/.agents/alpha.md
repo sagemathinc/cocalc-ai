@@ -27,6 +27,8 @@ For alpha testing it will be deployed by:
 
 - [ ] plus: fullscreen button
 
+- [ ] chat bug: paste image and send chat quickly -- text is cleared but image stays; and doesn't get resized before send.
+
 - [ ] launchpad: implement /scratch for workspaces (just another btrfs that is never snapshotted or backed up, and has the same size as the main filesystem for the project).
 
 - [ ] launchpad: there are issues with rootfs overlayfs not unmounting properly still, probably due to the resource limiter thing.  this is very bad; e.g., it makes it so can't change the rootfs image.

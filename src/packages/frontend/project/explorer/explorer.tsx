@@ -455,6 +455,7 @@ export function Explorer() {
             >
               <div ref={newFileRef}>
                 <NewButton
+                  project_id={project_id}
                   file_search={file_search ?? ""}
                   current_path={current_path}
                   actions={actions}

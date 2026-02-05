@@ -44,11 +44,16 @@ import {
   QUICK_CREATE_MAP,
 } from "./launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
-import { DropdownMenu, MenuItems } from "@cocalc/frontend/components/dropdown-menu";
 import {
+  LAUNCHER_GLOBAL_DEFAULTS,
+  LAUNCHER_SITE_REMOVE_APPS_KEY,
+  LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
-  getUserLauncherPrefs,
+  getSiteLauncherDefaults,
+  getUserLauncherLayers,
   mergeLauncherSettings,
   updateUserLauncherPrefs,
 } from "./launcher-preferences";
@@ -84,6 +89,22 @@ export default function NewFilePage(props: Props) {
   const other_settings = useTypedRedux("account", "other_settings");
   const account_id = useTypedRedux("account", "account_id");
   const is_admin = useTypedRedux("account", "is_admin");
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
+  const site_launcher_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
+  const site_remove_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  );
+  const site_remove_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_APPS_KEY,
+  );
   const project_launcher = useRedux([
     "projects",
     "project_map",
@@ -126,13 +147,29 @@ export default function NewFilePage(props: Props) {
   const projectLauncherDefaults = getProjectLauncherDefaults(
     project_launcher,
   );
-  const userLauncherPrefs = getUserLauncherPrefs(
+  const siteLauncherDefaults = getSiteLauncherDefaults({
+    quickCreate: site_launcher_quick,
+    apps: site_launcher_apps,
+    hiddenQuickCreate: site_remove_quick,
+    hiddenApps: site_remove_apps,
+  });
+  const userLauncherLayers = getUserLauncherLayers(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
     project_id,
   );
-  const mergedLauncher = mergeLauncherSettings({
+  const inheritedForProjectUser = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
     projectDefaults: projectLauncherDefaults,
-    userPrefs: userLauncherPrefs,
+    accountUserPrefs: userLauncherLayers.account,
+  });
+  const inheritedForProjectDefaults = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+  });
+  const mergedLauncher = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+    projectDefaults: projectLauncherDefaults,
+    accountUserPrefs: userLauncherLayers.account,
+    projectUserPrefs: userLauncherLayers.project,
   });
 
   function isQuickCreateAvailable(id: string): boolean {
@@ -225,24 +262,12 @@ export default function NewFilePage(props: Props) {
   const appSpecs = visibleApps
     .map((id) => APP_MAP[id])
     .filter(Boolean) as { id: NamedServerName; label: string; icon: IconName }[];
-  const primaryApps = appSpecs.slice(0, 4);
-  const moreApps = appSpecs.slice(4);
   const serversDisabled: boolean =
     !!student_project_functionality.disableJupyterLabServer &&
     !!student_project_functionality.disableJupyterClassicServer &&
     !!student_project_functionality.disableVSCodeServer &&
     !!student_project_functionality.disablePlutoServer &&
     !!student_project_functionality.disableRServer;
-
-  const moreAppItems: MenuItems = moreApps.map((spec) => ({
-    key: spec.id,
-    label: (
-      <span>
-        <Icon name={spec.icon} /> {spec.label}
-      </span>
-    ),
-    onClick: () => setShowServerPanel(spec.id),
-  }));
 
   function getActions(): ProjectActions {
     if (actions == null) throw new Error("bug");
@@ -652,7 +677,7 @@ export default function NewFilePage(props: Props) {
             </Button>
           </div>
           <Space wrap>
-            {primaryApps.map((spec) => (
+            {appSpecs.map((spec) => (
               <NewFileButton
                 key={`app-${spec.id}`}
                 name={spec.label}
@@ -662,14 +687,6 @@ export default function NewFilePage(props: Props) {
                 on_click={() => setShowServerPanel(spec.id)}
               />
             ))}
-            {moreApps.length > 0 && (
-              <DropdownMenu
-                button
-                size="small"
-                title="More..."
-                items={moreAppItems}
-              />
-            )}
             {serversDisabled && (
               <Button
                 size="small"
@@ -692,9 +709,54 @@ export default function NewFilePage(props: Props) {
         onClose={() => setShowCustomizeModal(false)}
         initialQuickCreate={mergedLauncher.quickCreate}
         initialApps={mergedLauncher.apps as NamedServerName[]}
+        userBaseQuickCreate={inheritedForProjectUser.quickCreate}
+        userBaseApps={inheritedForProjectUser.apps as NamedServerName[]}
+        projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
+        projectBaseApps={inheritedForProjectDefaults.apps as NamedServerName[]}
+        globalDefaults={siteLauncherDefaults}
         onSaveUser={saveUserLauncherPrefs}
         onSaveProject={saveProjectLauncherDefaults}
         canEditProjectDefaults={can_edit_project_defaults}
+        contributions={[
+          {
+            key: "built-in",
+            title: "Built-in defaults",
+            quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+            appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
+          },
+          {
+            key: "site",
+            title: "Site defaults",
+            quickCreateAdd: siteLauncherDefaults.quickCreate,
+            quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
+            appsAdd: siteLauncherDefaults.apps,
+            appsRemove: siteLauncherDefaults.hiddenApps,
+          },
+          {
+            key: "project",
+            title: "Workspace defaults",
+            quickCreateAdd: projectLauncherDefaults.quickCreate,
+            quickCreateRemove: projectLauncherDefaults.hiddenQuickCreate,
+            appsAdd: projectLauncherDefaults.apps,
+            appsRemove: projectLauncherDefaults.hiddenApps,
+          },
+          {
+            key: "account",
+            title: "Your account overrides",
+            quickCreateAdd: userLauncherLayers.account.quickCreate,
+            quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
+            appsAdd: userLauncherLayers.account.apps,
+            appsRemove: userLauncherLayers.account.hiddenApps,
+          },
+          {
+            key: "workspace-user",
+            title: "This workspace overrides",
+            quickCreateAdd: userLauncherLayers.project.quickCreate,
+            quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
+            appsAdd: userLauncherLayers.project.apps,
+            appsRemove: userLauncherLayers.project.hiddenApps,
+          },
+        ]}
       />
       <AIGenerateDocumentModal
         project_id={project_id}

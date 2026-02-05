@@ -118,6 +118,10 @@ export type SiteSettingsKeys =
   | "project_hosts_nebius_enabled"
   | "cloudflare_mode"
   | "project_hosts_dns"
+  | "launcher_default_quick_create"
+  | "launcher_default_apps"
+  | "launcher_remove_quick_create"
+  | "launcher_remove_apps"
   | "project_rootfs_manifest_url"
   | "project_rootfs_manifest_url_extra"
   | "project_rootfs_default_image"
@@ -309,6 +313,12 @@ export const split_iframe_comm_hosts: ToValFunc<string[]> = (hosts) =>
 
 const split_strings: ToValFunc<string[]> = (str) =>
   (str ?? "").match(/[a-zA-Z0-9]+/g) || [];
+
+const split_csv_tokens: ToValFunc<string[]> = (str) =>
+  (str ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^[a-zA-Z0-9_-]+$/.test(s));
 
 function num_dns_hosts(val): string {
   return `Found ${split_iframe_comm_hosts(val).length} hosts.`;
@@ -1004,6 +1014,50 @@ export const site_settings_conf: SiteSettings = {
     subgroup: "Domain",
     show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
     required_when: [{ key: "cloudflare_mode", equals: "self" }],
+  },
+  launcher_default_quick_create: {
+    name: "Launcher: Default Quick Create",
+    desc: "Comma-separated default quick-create ids used by workspaces when project and user defaults are unset (e.g. chat,ipynb,md,tex,term).",
+    default: "chat,ipynb,md,tex,term",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
+  },
+  launcher_default_apps: {
+    name: "Launcher: Default Apps",
+    desc: "Comma-separated default app ids shown in launcher sections when project and user defaults are unset (e.g. jupyterlab,code,jupyter,pluto,rserver).",
+    default: "jupyterlab,code,jupyter,pluto,rserver",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
+  },
+  launcher_remove_quick_create: {
+    name: "Launcher: Remove Quick Create",
+    desc: "Comma-separated quick-create ids removed from inherited launcher defaults at the site level.",
+    default: "",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
+  },
+  launcher_remove_apps: {
+    name: "Launcher: Remove Apps",
+    desc: "Comma-separated app ids removed from inherited launcher defaults at the site level.",
+    default: "",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
   },
   project_rootfs_manifest_url: {
     name: "Workspace RootFS Image Manifest URL",

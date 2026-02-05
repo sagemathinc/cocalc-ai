@@ -1,4 +1,4 @@
-# Revamp the Launcher
+# (done) Revamp the Launcher
 
 ## 1\) Personalization model (global → project → user)
 
@@ -60,8 +60,6 @@ This solves the split between “New file” and “Servers”.
 - Add a Quick Create row (pinned defaults)
 - Put app servers on the same page as first‑class tiles
 - AI entry at top with basic routing (even if simple at first)
-
-
 
 ## Plan (detailed)
 
