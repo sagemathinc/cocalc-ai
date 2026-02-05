@@ -973,7 +973,7 @@ export const SshPage: React.FC = React.memo(() => {
       {
         title: "Time",
         key: "ts",
-        width: 190,
+        width: 180,
         render: (_, row) => new Date(row.ts).toLocaleString(),
       },
       {
@@ -988,28 +988,77 @@ export const SshPage: React.FC = React.memo(() => {
         dataIndex: "scope",
         key: "scope",
         width: 180,
-        render: (value) => value || "-",
+        ellipsis: true,
+        render: (value) => {
+          if (!value) return "-";
+          return (
+            <Tooltip title={value}>
+              <Typography.Text
+                style={{
+                  display: "inline-block",
+                  maxWidth: 160,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {value}
+              </Typography.Text>
+            </Tooltip>
+          );
+        },
       },
       {
         title: "Message",
         dataIndex: "message",
         key: "message",
+        ellipsis: true,
+        render: (value) => (
+          <Tooltip title={value}>
+            <Typography.Text
+              style={{
+                display: "inline-block",
+                maxWidth: "100%",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {value}
+            </Typography.Text>
+          </Tooltip>
+        ),
       },
       {
         title: "Meta",
         key: "meta",
-        width: 280,
-        render: (_, row) =>
-          row.meta ? (
-            <Typography.Text
-              type="secondary"
-              style={{ fontFamily: "monospace" }}
+        width: 260,
+        ellipsis: true,
+        render: (_, row) => {
+          if (!row.meta) return "-";
+          const text = JSON.stringify(row.meta);
+          return (
+            <Tooltip
+              title={
+                <div style={{ maxWidth: 900, whiteSpace: "pre-wrap" }}>{text}</div>
+              }
             >
-              {JSON.stringify(row.meta)}
-            </Typography.Text>
-          ) : (
-            "-"
-          ),
+              <Typography.Text
+                type="secondary"
+                style={{
+                  fontFamily: "monospace",
+                  display: "inline-block",
+                  maxWidth: 240,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {text}
+              </Typography.Text>
+            </Tooltip>
+          );
+        },
       },
     ],
     [],
@@ -2035,6 +2084,8 @@ export const SshPage: React.FC = React.memo(() => {
         title={reflectLogTitle}
         open={reflectLogModalOpen}
         onCancel={() => setReflectLogModalOpen(false)}
+        width={1200}
+        styles={{ body: { maxHeight: "70vh", overflow: "auto" } }}
         footer={[
           <Button
             key="refresh"
@@ -2090,6 +2141,7 @@ export const SshPage: React.FC = React.memo(() => {
                 dataSource={reflectLogRows}
                 size="small"
                 pagination={false}
+                tableLayout="fixed"
                 scroll={{ y: 360 }}
               />
             ) : (
