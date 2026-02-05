@@ -91,10 +91,10 @@ export function NewFileButton({
         );
       case "small":
         return (
-          <div>
-            {displayed_icon}{" "}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            {displayed_icon}
             <span style={{ color: COLORS.GRAY_D }}>{name}</span>
-          </div>
+          </span>
         );
       default:
         unreachable(size);
