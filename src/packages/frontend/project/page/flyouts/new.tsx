@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Flex, Input, Space, Tag } from "antd";
+import { Button, Flex, Input, Select, Space, Tag } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { default_filename } from "@cocalc/frontend/account";
@@ -22,14 +22,11 @@ import {
   IconName,
   Paragraph,
   SelectorInput,
-  Tip,
 } from "@cocalc/frontend/components";
 import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
 import { file_options } from "@cocalc/frontend/editor-tmp";
-import { labels } from "@cocalc/frontend/i18n";
-import { DELAY_SHOW_MS } from "@cocalc/frontend/project//new/consts";
+import { file_associations } from "@cocalc/frontend/file-associations";
 import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator";
-import { FileTypeSelector } from "@cocalc/frontend/project/new";
 import { DropdownMenu } from "@cocalc/frontend/components/dropdown-menu";
 import {
   NEW_FILETYPE_ICONS,
@@ -57,7 +54,7 @@ import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-fea
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
-import { separate_file_extension, trunc_middle } from "@cocalc/util/misc";
+import { keys, separate_file_extension, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../common";
 import { DEFAULT_EXT, FLYOUT_PADDING } from "./consts";
@@ -210,6 +207,32 @@ export function NewFlyout({
         icon: data.icon ?? "file",
       };
     });
+  const moreFileTypeOptions = React.useMemo(() => {
+    const list = keys(file_associations).sort();
+    const seen = new Set<string>();
+    const options: { value: string; label: React.ReactNode }[] = [];
+    for (let ext of list) {
+      if (ext === "/" || ext === "sage") continue;
+      const data = file_associations[ext];
+      if (data?.exclude_from_menu) continue;
+      if (data?.name && seen.has(data.name)) continue;
+      if (data?.name) seen.add(data.name);
+      const value = data?.ext ?? ext;
+      if (!value || value === "sage") continue;
+      const info = file_options(`x.${value}`);
+      const icon = (info.icon ?? "file") as IconName;
+      options.push({
+        value,
+        label: (
+          <span>
+            <Icon name={icon} /> {info.name ?? value}{" "}
+            <span style={{ opacity: 0.6 }}>({value})</span>
+          </span>
+        ),
+      });
+    }
+    return options;
+  }, []);
 
   const visibleAppsSeen = new Set<NamedServerName>();
   const appSpecs = mergedLauncher.apps
@@ -579,6 +602,36 @@ export function NewFlyout({
             />
           ))}
         </Flex>
+        <div style={{ marginTop: "8px" }}>
+          <div style={{ marginBottom: "6px", fontWeight: 500 }}>More file types</div>
+          <div style={{ display: "flex", gap: "8px", flexDirection: "column" }}>
+            <Select<string>
+              showSearch
+              allowClear
+              placeholder="Search file types..."
+              style={{ width: "100%" }}
+              value={undefined}
+              options={moreFileTypeOptions}
+              onSelect={(value: string) => handleOnClick(value)}
+            />
+            <Flex gap={8} wrap>
+              <Button
+                size="small"
+                onClick={() => handleOnClick("/")}
+                disabled={!filename.trim()}
+              >
+                <Icon name="folder" /> Create folder
+              </Button>
+              <Button
+                size="small"
+                onClick={() => handleOnClick("")}
+                disabled={!filename.trim() || filename.endsWith("/")}
+              >
+                <Icon name="file" /> File with no extension
+              </Button>
+            </Flex>
+          </div>
+        </div>
         <Flex justify="space-between" align="center" style={{ marginTop: "4px" }}>
           <Tag color="geekblue">Apps</Tag>
           {moreApps.length > 0 && (
@@ -613,64 +666,6 @@ export function NewFlyout({
         {showServerPanel && (
           <NamedServerPanel project_id={project_id} name={showServerPanel} />
         )}
-        <FileTypeSelector
-          mode="flyout"
-          selectedExt={ext}
-          projectActions={actions}
-          create_file={handleOnClick}
-          availableFeatures={availableFeatures}
-          filename={filename}
-          filenameChanged={manual}
-          makeNewFilename={(ext: string) => setFilename(getNewFilename(ext))}
-        />
-        <Tag color={COLORS.ANTD_ORANGE}>Additional types</Tag>
-        <Tip
-          delayShow={DELAY_SHOW_MS}
-          title="Folder (directory)"
-          icon={"folder"}
-          tip={intl.formatMessage({
-            id: "project.page.flyouts.new.folder.tooltip",
-            defaultMessage:
-              "Creating a subdirectory in the current directory instead of a file.",
-            description: "A folder in a file-system",
-          })}
-        >
-          <NewFileButton
-            name={intl.formatMessage(labels.folder)}
-            on_click={handleOnClick}
-            ext="/"
-            size="small"
-            active={ext === "/"}
-          />
-        </Tip>
-        <Tip
-          delayShow={DELAY_SHOW_MS}
-          title={intl.formatMessage({
-            id: "project.page.flyouts.new.filename_without_ext.title",
-            defaultMessage: "No file extension",
-            description: "File without an extension in a file-system",
-          })}
-          icon={"file"}
-          tip={intl.formatMessage({
-            id: "project.page.flyouts.new.filename_without_ext.tooltip",
-            defaultMessage: `Create a file without a file extension,
-              for example a <code>Makefile</code>.
-              You can also type <code>filename.[space]</code> and backspace once.`,
-          })}
-        >
-          <NewFileButton
-            name={intl.formatMessage({
-              id: "project.page.flyouts.new.filename_without_ext.label",
-              defaultMessage: "Create file - no extension",
-              description: "File without an extension in a file-system",
-            })}
-            on_click={handleOnClick}
-            ext=""
-            size="small"
-            active={ext === ""}
-          />
-        </Tip>
-        <NewFileDropdown mode="flyout" create_file={handleOnClick} />
         <hr />
         <Tag color={COLORS.GRAY_L}>Filename generator</Tag>
         <SelectorInput
