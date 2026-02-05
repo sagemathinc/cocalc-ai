@@ -5,12 +5,15 @@
 
 import { Button, Space, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
-import { redux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, SettingBox, Paragraph } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import type { Project } from "./types";
 import {
+  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   getProjectLauncherDefaults,
+  getSiteLauncherDefaults,
   LAUNCHER_GLOBAL_DEFAULTS,
 } from "../new/launcher-preferences";
 import { LauncherCustomizeModal } from "../new/launcher-customize-modal";
@@ -25,6 +28,18 @@ interface Props {
 
 export function LauncherDefaults({ project_id, project }: Props) {
   const [showProjectModal, setShowProjectModal] = useState(false);
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
+  const site_launcher_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
+  const siteLauncherDefaults = getSiteLauncherDefaults({
+    quickCreate: site_launcher_quick,
+    apps: site_launcher_apps,
+  });
 
   const launcher_settings = project.get("launcher");
   const projectDefaults = useMemo(
@@ -35,10 +50,14 @@ export function LauncherDefaults({ project_id, project }: Props) {
   const effectiveQuickCreate =
     projectDefaults.quickCreate && projectDefaults.quickCreate.length > 0
       ? projectDefaults.quickCreate
+      : siteLauncherDefaults.quickCreate && siteLauncherDefaults.quickCreate.length > 0
+        ? siteLauncherDefaults.quickCreate
       : LAUNCHER_GLOBAL_DEFAULTS.quickCreate;
   const effectiveApps =
     projectDefaults.apps && projectDefaults.apps.length > 0
       ? projectDefaults.apps
+      : siteLauncherDefaults.apps && siteLauncherDefaults.apps.length > 0
+        ? siteLauncherDefaults.apps
       : LAUNCHER_GLOBAL_DEFAULTS.apps;
 
   const quickCreateSpecs = useMemo((): { id: string; label: string; icon: IconName }[] => {
@@ -117,6 +136,7 @@ export function LauncherDefaults({ project_id, project }: Props) {
         onClose={() => setShowProjectModal(false)}
         initialQuickCreate={effectiveQuickCreate}
         initialApps={effectiveApps as NamedServerName[]}
+        globalDefaults={siteLauncherDefaults}
         onSaveProject={(prefs) =>
           redux
             .getActions("projects")

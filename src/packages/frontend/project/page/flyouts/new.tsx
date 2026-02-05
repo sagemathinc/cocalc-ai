@@ -39,8 +39,11 @@ import { NewFileButton } from "@cocalc/frontend/project/new/new-file-button";
 import { NewFileDropdown } from "@cocalc/frontend/project/new/new-file-dropdown";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import {
+  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
+  getSiteLauncherDefaults,
   getUserLauncherPrefs,
   mergeLauncherSettings,
   updateUserLauncherPrefs,
@@ -84,6 +87,14 @@ export function NewFlyout({
   const intl = useIntl();
   const other_settings = useTypedRedux("account", "other_settings");
   const account_id = useTypedRedux("account", "account_id");
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
+  const site_launcher_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
   const project_launcher = useTypedRedux(
     "projects",
     "project_map",
@@ -124,11 +135,16 @@ export function NewFlyout({
   );
 
   const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
+  const siteLauncherDefaults = getSiteLauncherDefaults({
+    quickCreate: site_launcher_quick,
+    apps: site_launcher_apps,
+  });
   const userLauncherPrefs = getUserLauncherPrefs(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
     project_id,
   );
   const mergedLauncher = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
     projectDefaults: projectLauncherDefaults,
     userPrefs: userLauncherPrefs,
   });
@@ -695,6 +711,7 @@ export function NewFlyout({
         onClose={() => setShowCustomizeModal(false)}
         initialQuickCreate={mergedLauncher.quickCreate}
         initialApps={mergedLauncher.apps as NamedServerName[]}
+        globalDefaults={siteLauncherDefaults}
         onSaveUser={saveUserLauncherPrefs}
         onSaveProject={saveProjectLauncherDefaults}
         canEditProjectDefaults={can_edit_project_defaults}

@@ -46,8 +46,11 @@ import {
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { DropdownMenu, MenuItems } from "@cocalc/frontend/components/dropdown-menu";
 import {
+  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
+  getSiteLauncherDefaults,
   getUserLauncherPrefs,
   mergeLauncherSettings,
   updateUserLauncherPrefs,
@@ -84,6 +87,14 @@ export default function NewFilePage(props: Props) {
   const other_settings = useTypedRedux("account", "other_settings");
   const account_id = useTypedRedux("account", "account_id");
   const is_admin = useTypedRedux("account", "is_admin");
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
+  const site_launcher_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
   const project_launcher = useRedux([
     "projects",
     "project_map",
@@ -126,11 +137,16 @@ export default function NewFilePage(props: Props) {
   const projectLauncherDefaults = getProjectLauncherDefaults(
     project_launcher,
   );
+  const siteLauncherDefaults = getSiteLauncherDefaults({
+    quickCreate: site_launcher_quick,
+    apps: site_launcher_apps,
+  });
   const userLauncherPrefs = getUserLauncherPrefs(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
     project_id,
   );
   const mergedLauncher = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
     projectDefaults: projectLauncherDefaults,
     userPrefs: userLauncherPrefs,
   });
@@ -692,6 +708,7 @@ export default function NewFilePage(props: Props) {
         onClose={() => setShowCustomizeModal(false)}
         initialQuickCreate={mergedLauncher.quickCreate}
         initialApps={mergedLauncher.apps as NamedServerName[]}
+        globalDefaults={siteLauncherDefaults}
         onSaveUser={saveUserLauncherPrefs}
         onSaveProject={saveProjectLauncherDefaults}
         canEditProjectDefaults={can_edit_project_defaults}

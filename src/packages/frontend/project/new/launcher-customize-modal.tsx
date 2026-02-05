@@ -46,6 +46,7 @@ interface Props {
   onClose: () => void;
   initialQuickCreate: string[];
   initialApps: NamedServerName[];
+  globalDefaults?: LauncherProjectDefaults;
   onSaveUser?: (prefs: LauncherUserPrefs | null) => void;
   onSaveProject?: (prefs: LauncherProjectDefaults) => void;
   canEditProjectDefaults?: boolean;
@@ -57,6 +58,7 @@ export function LauncherCustomizeModal({
   onClose,
   initialQuickCreate,
   initialApps,
+  globalDefaults,
   onSaveUser,
   onSaveProject,
   canEditProjectDefaults = false,
@@ -124,9 +126,19 @@ export function LauncherCustomizeModal({
   }
 
   function resetProjectDefaults() {
+    const defaults = {
+      quickCreate:
+        globalDefaults?.quickCreate?.length
+          ? globalDefaults.quickCreate
+          : LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+      apps:
+        globalDefaults?.apps?.length
+          ? globalDefaults.apps
+          : LAUNCHER_GLOBAL_DEFAULTS.apps,
+    };
     onSaveProject?.({
-      quickCreate: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-      apps: LAUNCHER_GLOBAL_DEFAULTS.apps,
+      quickCreate: defaults.quickCreate,
+      apps: defaults.apps,
     });
     onClose();
   }

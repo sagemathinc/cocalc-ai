@@ -33,6 +33,9 @@ export const LAUNCHER_GLOBAL_DEFAULTS: Required<LauncherProjectDefaults> = {
   apps: ["jupyterlab", "code", "jupyter", "pluto", "rserver"],
 };
 
+export const LAUNCHER_SITE_DEFAULTS_QUICK_KEY = "launcher_default_quick_create";
+export const LAUNCHER_SITE_DEFAULTS_APPS_KEY = "launcher_default_apps";
+
 function normalizeList(value: unknown): string[] {
   if (value == null) return [];
   if (typeof (value as any).toJS === "function") {
@@ -78,6 +81,23 @@ export function getProjectLauncherDefaults(
       ? quickCreate
       : undefined,
     apps: apps.length ? apps : undefined,
+  };
+}
+
+export function getSiteLauncherDefaults({
+  quickCreate,
+  apps,
+}: {
+  quickCreate?: unknown;
+  apps?: unknown;
+}): LauncherProjectDefaults {
+  const normalizedQuickCreate = normalizeList(quickCreate);
+  const normalizedApps = normalizeList(apps);
+  return {
+    quickCreate: normalizedQuickCreate.length
+      ? normalizedQuickCreate
+      : undefined,
+    apps: normalizedApps.length ? normalizedApps : undefined,
   };
 }
 
@@ -152,17 +172,23 @@ function filterKnown(list: string[], catalog: Record<string, unknown>): string[]
 export function mergeLauncherSettings({
   projectDefaults,
   userPrefs,
+  globalDefaults,
 }: {
   projectDefaults?: LauncherProjectDefaults;
   userPrefs?: LauncherUserPrefs;
+  globalDefaults?: LauncherProjectDefaults;
 }): LauncherMerged {
   const baseQuick =
     projectDefaults?.quickCreate?.length
       ? projectDefaults.quickCreate
+      : globalDefaults?.quickCreate?.length
+        ? globalDefaults.quickCreate
       : LAUNCHER_GLOBAL_DEFAULTS.quickCreate;
   const baseApps =
     projectDefaults?.apps?.length
       ? projectDefaults.apps
+      : globalDefaults?.apps?.length
+        ? globalDefaults.apps
       : LAUNCHER_GLOBAL_DEFAULTS.apps;
 
   const userQuick =

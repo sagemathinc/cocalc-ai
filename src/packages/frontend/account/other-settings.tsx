@@ -43,8 +43,11 @@ import {
 } from "@cocalc/frontend/project/new/launcher-catalog";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import {
+  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   getUserLauncherPrefs,
   LAUNCHER_SETTINGS_KEY,
+  getSiteLauncherDefaults,
   mergeLauncherSettings,
   updateUserLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
@@ -79,6 +82,14 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   const { locale } = useLocalizationCtx();
   const isCoCalcCom = useTypedRedux("customize", "is_cocalc_com");
   const user_defined_llm = useTypedRedux("customize", "user_defined_llm");
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
+  const site_launcher_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
   const [showLauncherCustomize, setShowLauncherCustomize] = useState(false);
 
   const [model, setModel] = useLanguageModelSetting();
@@ -404,7 +415,12 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
     return <Loading />;
   }
 
+  const siteLauncherDefaults = getSiteLauncherDefaults({
+    quickCreate: site_launcher_quick,
+    apps: site_launcher_apps,
+  });
   const accountLauncher = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
     userPrefs: getUserLauncherPrefs(
       props.other_settings.get(LAUNCHER_SETTINGS_KEY),
     ),
@@ -527,6 +543,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
           onClose={() => setShowLauncherCustomize(false)}
           initialQuickCreate={accountLauncher.quickCreate}
           initialApps={accountLauncher.apps as NamedServerName[]}
+          globalDefaults={siteLauncherDefaults}
           onSaveUser={(prefs) => {
             on_change(
               LAUNCHER_SETTINGS_KEY,

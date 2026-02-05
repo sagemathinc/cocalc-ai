@@ -9,8 +9,11 @@ import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DropdownMenu, Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import {
+  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
+  getSiteLauncherDefaults,
   getUserLauncherPrefs,
   mergeLauncherSettings,
 } from "@cocalc/frontend/project/new/launcher-preferences";
@@ -41,11 +44,24 @@ export const NewButton: React.FC<Props> = ({
 }: Props) => {
   const intl = useIntl();
   const other_settings = useTypedRedux("account", "other_settings");
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
+  const site_launcher_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
   const project_launcher = useTypedRedux(
     "projects",
     "project_map",
   )?.getIn([project_id, "launcher"]);
+  const siteLauncherDefaults = getSiteLauncherDefaults({
+    quickCreate: site_launcher_quick,
+    apps: site_launcher_apps,
+  });
   const mergedLauncher = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
     projectDefaults: getProjectLauncherDefaults(project_launcher),
     userPrefs: getUserLauncherPrefs(
       other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
