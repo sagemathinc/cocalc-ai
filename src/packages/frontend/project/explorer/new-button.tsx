@@ -144,26 +144,37 @@ export const NewButton: React.FC<Props> = ({
     }
   }
 
+  const allowedTypes = React.useMemo(
+    () => new_file_button_types() as string[],
+    [configuration],
+  );
+  const quickExtensions = React.useMemo(() => {
+    const allowed = new Set<string>(allowedTypes);
+    return mergedLauncher.quickCreate
+      .filter((ext) => allowed.has(ext))
+      .filter((ext, idx, arr) => arr.indexOf(ext) === idx);
+  }, [mergedLauncher.quickCreate, allowedTypes]);
+  const fullListExtensions = React.useMemo(() => {
+    const quickSet = new Set<string>(quickExtensions);
+    return allowedTypes.filter((ext) => !quickSet.has(ext));
+  }, [allowedTypes, quickExtensions]);
+
   const items: MenuProps["items"] = [
     ...(React.useMemo(() => {
-      const allowed = new Set<string>(new_file_button_types() as string[]);
-      const quick = mergedLauncher.quickCreate
-        .filter((ext) => allowed.has(ext))
-        .filter((ext, idx, arr) => arr.indexOf(ext) === idx)
-        .map((ext) => {
-          const data = file_options("x." + ext);
-          return {
-            key: `quick:${ext}`,
-            onClick: () => on_dropdown_entry_clicked(ext),
-            label: (
-              <span style={{ whiteSpace: "nowrap" }}>
-                <Icon name={data.icon} />{" "}
-                <span style={{ textTransform: "capitalize" }}>{data.name} </span>{" "}
-                <span style={{ color: COLORS.GRAY_D }}>(.{ext})</span>
-              </span>
-            ),
-          };
-        });
+      const quick = quickExtensions.map((ext) => {
+        const data = file_options("x." + ext);
+        return {
+          key: `quick:${ext}`,
+          onClick: () => on_dropdown_entry_clicked(ext),
+          label: (
+            <span style={{ whiteSpace: "nowrap" }}>
+              <Icon name={data.icon} />{" "}
+              <span style={{ textTransform: "capitalize" }}>{data.name} </span>{" "}
+              <span style={{ color: COLORS.GRAY_D }}>(.{ext})</span>
+            </span>
+          ),
+        };
+      });
       if (quick.length === 0) return [];
       return [
         {
@@ -178,8 +189,8 @@ export const NewButton: React.FC<Props> = ({
         ...quick,
         { type: "divider" as const },
       ];
-    }, [mergedLauncher.quickCreate, configuration])),
-    ...new_file_button_types().map(file_dropdown_item),
+    }, [quickExtensions])),
+    ...fullListExtensions.map(file_dropdown_item),
     { type: "divider" },
     {
       key: "folder",
