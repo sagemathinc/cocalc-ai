@@ -4,6 +4,7 @@
  */
 
 import { redux } from "./app-framework";
+import { lite } from "@cocalc/frontend/lite";
 
 // Calling set_window_title will set the title, but also put a notification
 // count to the left of the title; if called with no arguments just updates
@@ -29,6 +30,11 @@ export function set_window_title(title?: string): void {
     title = last_title;
   }
   last_title = title;
+  const sshRemoteTarget =
+    lite ? (redux.getStore("customize")?.get("ssh_remote_target") ?? "") : "";
+  if (sshRemoteTarget) {
+    title = String(sshRemoteTarget);
+  }
   const u = notifyCount();
   if (u) {
     title = `(${u}) ${title}`;
