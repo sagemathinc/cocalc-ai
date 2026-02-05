@@ -52,6 +52,7 @@ import {
   getProjectLauncherDefaults,
   getUserLauncherPrefs,
   mergeLauncherSettings,
+  updateUserLauncherPrefs,
 } from "./launcher-preferences";
 import { LauncherCustomizeModal } from "./launcher-customize-modal";
 
@@ -94,11 +95,11 @@ export default function NewFilePage(props: Props) {
   const other_settings = useTypedRedux("account", "other_settings");
   const account_id = useTypedRedux("account", "account_id");
   const is_admin = useTypedRedux("account", "is_admin");
-  const project_settings = useRedux([
+  const project_launcher = useRedux([
     "projects",
     "project_map",
     project_id,
-    "settings",
+    "launcher",
   ]);
   const user_group = useRedux([
     "projects",
@@ -131,10 +132,11 @@ export default function NewFilePage(props: Props) {
   }
 
   const projectLauncherDefaults = getProjectLauncherDefaults(
-    project_settings?.get?.(LAUNCHER_SETTINGS_KEY),
+    project_launcher,
   );
   const userLauncherPrefs = getUserLauncherPrefs(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
+    project_id,
   );
   const mergedLauncher = mergeLauncherSettings({
     projectDefaults: projectLauncherDefaults,
@@ -203,15 +205,18 @@ export default function NewFilePage(props: Props) {
   }
 
   function saveUserLauncherPrefs(prefs: any | null) {
-    redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, prefs);
+    const next = updateUserLauncherPrefs(
+      other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
+      project_id,
+      prefs,
+    );
+    redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
   }
 
   async function saveProjectLauncherDefaults(prefs: any) {
     await redux
       .getActions("projects")
-      .set_project_settings(project_id, {
-        [LAUNCHER_SETTINGS_KEY]: prefs,
-      });
+      .set_project_launcher(project_id, prefs);
   }
 
   const [creatingFile, setCreatingFile] = useState<string>("");

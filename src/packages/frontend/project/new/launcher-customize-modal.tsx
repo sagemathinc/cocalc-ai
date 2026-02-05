@@ -25,6 +25,7 @@ import {
   buildHiddenList,
   LauncherProjectDefaults,
   LauncherUserPrefs,
+  LAUNCHER_GLOBAL_DEFAULTS,
 } from "./launcher-preferences";
 
 function move<T>(list: T[], index: number, delta: number): T[] {
@@ -45,9 +46,10 @@ interface Props {
   onClose: () => void;
   initialQuickCreate: string[];
   initialApps: NamedServerName[];
-  onSaveUser: (prefs: LauncherUserPrefs | null) => void;
+  onSaveUser?: (prefs: LauncherUserPrefs | null) => void;
   onSaveProject?: (prefs: LauncherProjectDefaults) => void;
   canEditProjectDefaults?: boolean;
+  saveMode?: "user" | "project";
 }
 
 export function LauncherCustomizeModal({
@@ -58,6 +60,7 @@ export function LauncherCustomizeModal({
   onSaveUser,
   onSaveProject,
   canEditProjectDefaults = false,
+  saveMode = "user",
 }: Props) {
   const [quickCreate, setQuickCreate] = useState<string[]>([]);
   const [apps, setApps] = useState<NamedServerName[]>([]);
@@ -89,6 +92,10 @@ export function LauncherCustomizeModal({
   }
 
   function saveUser() {
+    if (!onSaveUser) {
+      onClose();
+      return;
+    }
     onSaveUser({
       quickCreate,
       apps,
@@ -99,6 +106,10 @@ export function LauncherCustomizeModal({
   }
 
   function resetUser() {
+    if (!onSaveUser) {
+      onClose();
+      return;
+    }
     onSaveUser(null);
     onClose();
   }
@@ -111,6 +122,16 @@ export function LauncherCustomizeModal({
   function discardChanges() {
     onClose();
   }
+
+  function resetProjectDefaults() {
+    onSaveProject?.({
+      quickCreate: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+      apps: LAUNCHER_GLOBAL_DEFAULTS.apps,
+    });
+    onClose();
+  }
+
+  const isProjectMode = saveMode === "project";
 
   const hiddenQuick = QUICK_CREATE_CATALOG.filter(
     (spec) => !quickCreate.includes(spec.id),
@@ -212,15 +233,19 @@ export function LauncherCustomizeModal({
     <Modal
       title="Customize Launcher"
       open={open}
-      onCancel={saveUser}
-      onOk={saveUser}
+      onCancel={isProjectMode ? saveProjectDefaults : saveUser}
+      onOk={isProjectMode ? saveProjectDefaults : saveUser}
       okText="Save"
       cancelText="Save"
       footer={
         <Space style={{ width: "100%", justifyContent: "space-between" }}>
           <Space>
-            <Button onClick={resetUser}>Reset to defaults</Button>
-            {canEditProjectDefaults && onSaveProject && (
+            {isProjectMode ? (
+              <Button onClick={resetProjectDefaults}>Reset to defaults</Button>
+            ) : (
+              <Button onClick={resetUser}>Reset to defaults</Button>
+            )}
+            {!isProjectMode && canEditProjectDefaults && onSaveProject && (
               <Button onClick={saveProjectDefaults} type="default">
                 Save as project defaults
               </Button>
@@ -230,7 +255,10 @@ export function LauncherCustomizeModal({
             <Button danger onClick={discardChanges}>
               Discard changes
             </Button>
-            <Button type="primary" onClick={saveUser}>
+            <Button
+              type="primary"
+              onClick={isProjectMode ? saveProjectDefaults : saveUser}
+            >
               Save
             </Button>
           </Space>

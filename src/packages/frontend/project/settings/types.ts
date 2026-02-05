@@ -36,6 +36,7 @@ export type Project = TypedMap<{
   state?: { state: "opened" | "running" | "starting" | "stopping" };
   status: ProjectStatus;
   settings: ProjectSettings;
+  launcher?: Map<string, any>;
   compute_image: string;
   rootfs_image?: string;
 }>;
