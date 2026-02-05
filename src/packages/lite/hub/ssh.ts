@@ -38,12 +38,32 @@ export const ssh: Ssh = {
     const mod = await loadUi();
     return mod.connectSessionUI(opts.target, opts.options);
   },
+  addSessionUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.addSessionUI(opts.target);
+  },
+  deleteSessionUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.deleteSessionUI(opts.target);
+  },
   stopSessionUI: async (opts) => {
     const mod = await loadUi();
     return mod.stopSessionUI(opts.target);
   },
+  upgradeSessionUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.upgradeSessionUI(opts.target, opts.localUrl);
+  },
+  upgradeLocalUI: async () => {
+    const mod = await loadUi();
+    return mod.upgradeLocalUI();
+  },
   statusSessionUI: async (opts) => {
     const mod = await loadUi();
     return mod.statusSessionUI(opts.target);
+  },
+  getUpgradeInfoUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.getUpgradeInfoUI(opts);
   },
 };

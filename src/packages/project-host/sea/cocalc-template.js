@@ -119,6 +119,7 @@ if (path.basename(process.argv[1]) == "node") {
   }
   process.env.PATH = binPath + path.delimiter + process.env.PATH;
   process.env.COCALC_PROJECT_HOST_VERSION ??= version;
+  process.env.COCALC_SEA_VERSION ??= version;
 
   process.env.AUTH_TOKEN ??= "random";
 

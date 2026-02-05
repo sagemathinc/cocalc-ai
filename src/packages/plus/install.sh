@@ -78,6 +78,10 @@ echo "Downloading CoCalc Plus manifest..."
 download "$PLUS_MANIFEST_URL" "$tmpdir/plus.json"
 PLUS_URL="$(get_json_field "$tmpdir/plus.json" "url")"
 PLUS_SHA="$(get_json_field "$tmpdir/plus.json" "sha256")"
+PLUS_VERSION="$(get_json_field "$tmpdir/plus.json" "version")"
+if [[ -z "$PLUS_VERSION" && -n "$PLUS_URL" ]]; then
+  PLUS_VERSION="$(echo "$PLUS_URL" | sed -n 's#.*/cocalc-plus/\([0-9][^/]*\)/.*#\1#p')"
+fi
 
 if [[ -z "$PLUS_URL" || -z "$PLUS_SHA" ]]; then
   echo "Invalid plus manifest at $PLUS_MANIFEST_URL" >&2
@@ -118,9 +122,22 @@ WRAPPER="$BIN_HOME/cocalc-plus"
 cat > "$WRAPPER" <<EOF
 #!/usr/bin/env bash
 export COCALC_BIN_PATH="$TOOLS_DIR/current/bin"
+export COCALC_PLUS_HOME="$INSTALL_ROOT"
+${PLUS_VERSION:+export COCALC_PLUS_VERSION="$PLUS_VERSION"}
 exec "$BIN_DIR/cocalc-plus" "\$@"
 EOF
 chmod +x "$WRAPPER"
+
+if [[ -n "$PLUS_VERSION" ]]; then
+  cat > "$INSTALL_ROOT/version.json" <<EOF
+{
+  "version": "$PLUS_VERSION",
+  "os": "$OS",
+  "arch": "$ARCH",
+  "updatedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+EOF
+fi
 
 PATH_LINE="export PATH=\"$BIN_HOME:\$PATH\""
 FISH_LINE="set -gx PATH \"$BIN_HOME\" \$PATH"

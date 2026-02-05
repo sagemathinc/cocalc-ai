@@ -1,21 +1,26 @@
 import {
   Alert,
   Button,
+  Card,
   Collapse,
   Divider,
+  Empty,
   Form,
   Input,
   InputNumber,
   Modal,
+  Popover,
   Popconfirm,
   Select,
   Space,
+  Spin,
   Switch,
   Table,
   Tag,
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import { InfoCircleOutlined } from "@ant-design/icons";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
   CSS,
@@ -26,7 +31,10 @@ import {
   redux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import type { SshSessionRow } from "@cocalc/conat/hub/api/ssh";
+import type {
+  SshSessionRow,
+  UpgradeInfoPayload,
+} from "@cocalc/conat/hub/api/ssh";
 import type {
   ReflectForwardRow,
   ReflectLogRow,
@@ -40,6 +48,10 @@ const PAGE_STYLE: CSS = {
   padding: "16px",
   overflow: "auto",
 } as const;
+
+const REMOTE_READY_ATTEMPTS = 8;
+const REMOTE_READY_TIMEOUT_MS = 7000;
+const STATUS_CONCURRENCY = 7;
 
 const TITLE_STYLE: CSS = {
   marginBottom: "12px",
@@ -60,6 +72,21 @@ function statusTag(status?: string) {
   if (value === "unreachable") return <Tag color="red">unreachable</Tag>;
   if (value === "error") return <Tag color="red">error</Tag>;
   return <Tag>{value}</Tag>;
+}
+
+function syncStateDisplay(row: ReflectSessionRow) {
+  const desired = row.desired_state || "unknown";
+  const actual = row.actual_state || "unknown";
+  if (desired === actual) {
+    return <Space size={6}>{reflectStateTag(actual)}</Space>;
+  }
+  return (
+    <Space size={6}>
+      {reflectStateTag(desired)}
+      <Typography.Text type="secondary">→</Typography.Text>
+      {reflectStateTag(actual)}
+    </Space>
+  );
 }
 
 function tunnelTag(active?: boolean) {
@@ -86,6 +113,28 @@ function formatForwardRemote(fwd: ReflectForwardRow, target?: string) {
     return `${endpoint} (ssh:${fwd.ssh_port})`;
   }
   return endpoint;
+}
+
+function normalizeSyncPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return "";
+  if (trimmed === "~") return "";
+  if (trimmed.startsWith("~/")) {
+    return trimmed.slice(2);
+  }
+  const homeMatch = /^(\/(?:home|Users)\/[^/]+)(?:\/(.*))?$/.exec(trimmed);
+  if (homeMatch) {
+    return homeMatch[2] ?? "";
+  }
+  return trimmed.replace(/^\/+/, "");
+}
+
+function encodePathSegments(path: string): string {
+  return path
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 function parseSshTarget(target: string): { host: string; port: number | null } {
@@ -116,6 +165,27 @@ function pathsOverlap(a: string, b: string) {
   return aNorm.startsWith(`${bNorm}/`) || bNorm.startsWith(`${aNorm}/`);
 }
 
+function filterForwardsByTarget(
+  forwards: ReflectForwardRow[],
+  target: string,
+): ReflectForwardRow[] {
+  const { host, port } = parseSshTarget(target);
+  const targetHost = host;
+  const targetHostNoUser = host.split("@").pop() ?? host;
+  return forwards.filter((row) => {
+    const rowPort = row.ssh_port ?? null;
+    const rowHost = row.ssh_host ?? "";
+    const rowHostNoUser = rowHost.split("@").pop() ?? rowHost;
+    const hostMatches =
+      rowHost === targetHost || rowHostNoUser === targetHostNoUser;
+    if (!hostMatches) return false;
+    if (port == null) {
+      return rowPort == null || rowPort === 22;
+    }
+    return rowPort === port;
+  });
+}
+
 function extractIgnoreRules(raw?: string) {
   if (!raw) return [];
   return raw
@@ -124,19 +194,56 @@ function extractIgnoreRules(raw?: string) {
     .filter((entry) => entry.length > 0);
 }
 
+function parseIgnoreRules(raw?: string | null) {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.map((entry) => String(entry).trim()).filter(Boolean);
+    }
+  } catch {
+    // fall back to text parsing
+  }
+  return extractIgnoreRules(raw);
+}
+
 export const SshPage: React.FC = React.memo(() => {
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
   const [rows, setRows] = useState<SshSessionRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [openingTargets, setOpeningTargets] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [openingStatus, setOpeningStatus] = useState<Record<string, string>>(
+    {},
+  );
+  const [statusLoadingTargets, setStatusLoadingTargets] = useState<
+    Record<string, boolean>
+  >({});
+  const [upgradingTargets, setUpgradingTargets] = useState<
+    Record<string, boolean>
+  >({});
   const [reflectByTarget, setReflectByTarget] = useState<
     Record<string, ReflectTargetState>
   >({});
+  const [upgradeInfo, setUpgradeInfo] = useState<UpgradeInfoPayload>({
+    remotes: {},
+  });
+  const [upgradeChecking, setUpgradeChecking] = useState(false);
   const [expandedTargets, setExpandedTargets] = useState<string[]>([]);
   const [reflectModalOpen, setReflectModalOpen] = useState(false);
   const [reflectModalTarget, setReflectModalTarget] = useState<string | null>(
     null,
   );
   const [reflectForm] = Form.useForm();
+  const [editSessionTarget, setEditSessionTarget] = useState<string | null>(
+    null,
+  );
+  const [editSessionRow, setEditSessionRow] =
+    useState<ReflectSessionRow | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editForm] = Form.useForm();
   const [forwardModalOpen, setForwardModalOpen] = useState(false);
   const [forwardModalTarget, setForwardModalTarget] = useState<string | null>(
     null,
@@ -150,6 +257,47 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectLogTitle, setReflectLogTitle] = useState<string>("Logs");
   const [reflectLogError, setReflectLogError] = useState<string | null>(null);
   const [reflectLogTarget, setReflectLogTarget] = useState<string | null>(null);
+  const [targetModalOpen, setTargetModalOpen] = useState(false);
+  const [targetForm] = Form.useForm();
+  const ignoreHelp = (
+    <Typography.Text type="secondary">
+      Use gitignore-style patterns.{" "}
+      <Typography.Link
+        href="https://git-scm.com/docs/gitignore"
+        target="_blank"
+        rel="noreferrer"
+      >
+        Format reference
+      </Typography.Link>
+    </Typography.Text>
+  );
+  const targetHelp = (
+    <div style={{ marginTop: 8 }}>
+      <Space size={6}>
+        <Typography.Text type="secondary">
+          [user@]hostname[:port] (port is optional)
+        </Typography.Text>
+        <Popover
+          content={
+            <div style={{ maxWidth: 280 }}>
+              <Typography.Paragraph style={{ marginBottom: 0 }}>
+                We will connect over SSH, ensure CoCalc Plus is installed on the
+                remote machine, and start a local tunnel so you can use the
+                remote server in your browser.
+              </Typography.Paragraph>
+            </div>
+          }
+        >
+          <Button
+            size="small"
+            type="text"
+            icon={<InfoCircleOutlined />}
+            aria-label="SSH target help"
+          />
+        </Popover>
+      </Space>
+    </div>
+  );
 
   if (sshRemoteTarget) {
     return (
@@ -193,20 +341,83 @@ export const SshPage: React.FC = React.memo(() => {
     );
   };
 
-  const loadSessions = async () => {
-    setLoading(true);
+  const loadSessions = async (opts?: {
+    background?: boolean;
+    refreshStatus?: boolean;
+  }) => {
+    const background = opts?.background ?? rows.length > 0;
+    if (background) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const data = await webapp_client.conat_client.hub.ssh.listSessionsUI({
-        withStatus: true,
+        withStatus: false,
       });
-      setRows(data || []);
+      const nextRows = data || [];
+      setRows(nextRows);
+      if (opts?.refreshStatus ?? true) {
+        void refreshSessionStatus(nextRows.map((row) => row.target));
+      }
+      const missingUpgradeTargets = nextRows.some(
+        (row) => !upgradeInfo.remotes?.[row.target],
+      );
+      if (missingUpgradeTargets) {
+        void loadUpgradeInfo({ scope: "remote" });
+      }
     } catch (err: any) {
       alert_message({
         type: "error",
         message: err?.message || String(err),
       });
     } finally {
-      setLoading(false);
+      if (background) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
+    }
+  };
+
+  const loadUpgradeInfo = async (opts?: {
+    force?: boolean;
+    scope?: "local" | "remote" | "all";
+  }) => {
+    setUpgradeChecking(true);
+    try {
+      const data = await webapp_client.conat_client.hub.ssh.getUpgradeInfoUI({
+        force: opts?.force,
+        scope: opts?.scope,
+      });
+      if (data) {
+        setUpgradeInfo((prev) => ({
+          local: data.local ?? prev.local,
+          remotes: {
+            ...prev.remotes,
+            ...(data.remotes || {}),
+          },
+        }));
+        if (data.local && typeof window !== "undefined") {
+          try {
+            window.localStorage.setItem(
+              "cocalc-plus-upgrade-info",
+              JSON.stringify(data.local),
+            );
+            window.dispatchEvent(
+              new CustomEvent("cocalc-plus-upgrade-info", {
+                detail: data.local,
+              }),
+            );
+          } catch {
+            // ignore storage errors
+          }
+        }
+      }
+    } catch (err: any) {
+      // ignore upgrade check failures; surface when requested
+    } finally {
+      setUpgradeChecking(false);
     }
   };
 
@@ -224,21 +435,10 @@ export const SshPage: React.FC = React.memo(() => {
         webapp_client.conat_client.hub.reflect.listSessionsUI({ target }),
         webapp_client.conat_client.hub.reflect.listForwardsUI(),
       ]);
-      const { host, port } = parseSshTarget(target);
-      const targetHost = host;
-      const targetHostNoUser = host.split("@").pop() ?? host;
-      const filteredForwards = (forwards || []).filter((row) => {
-        const rowPort = row.ssh_port ?? null;
-        const rowHost = row.ssh_host ?? "";
-        const rowHostNoUser = rowHost.split("@").pop() ?? rowHost;
-        const hostMatches =
-          rowHost === targetHost || rowHostNoUser === targetHostNoUser;
-        if (!hostMatches) return false;
-        if (port == null) {
-          return rowPort == null || rowPort === 22;
-        }
-        return rowPort === port;
-      });
+      const filteredForwards = filterForwardsByTarget(
+        forwards || [],
+        target,
+      );
       setReflectByTarget((prev) => ({
         ...prev,
         [target]: {
@@ -261,45 +461,273 @@ export const SshPage: React.FC = React.memo(() => {
   };
 
   const handleOpen = async (target: string) => {
-    setLoading(true);
+    setOpeningTargets((prev) => ({ ...prev, [target]: true }));
+    setOpeningStatus((prev) => ({
+      ...prev,
+      [target]: "Connecting…",
+    }));
     try {
-      const localUrl =
-        typeof window !== "undefined" ? window.location.href : undefined;
-      const result = await webapp_client.conat_client.hub.ssh.connectSessionUI({
-        target,
-        options: { noOpen: true, localUrl },
+      const result = await connectSessionWithRetry(target, {
+        onStage: (stage) =>
+          setOpeningStatus((prev) => ({
+            ...prev,
+            [target]: stage,
+          })),
       });
       if (result?.url) {
+        const localUrl =
+          typeof window !== "undefined" ? window.location.href : undefined;
         const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
-        window.open(
-          result.url,
-          windowName ?? "_blank",
-          "noopener",
-        );
+        window.open(result.url, windowName ?? "_blank", "noopener");
       }
-      await loadSessions();
+      await loadSessions({ background: true });
     } catch (err: any) {
       alert_message({
         type: "error",
         message: err?.message || String(err),
       });
     } finally {
-      setLoading(false);
+      setOpeningTargets((prev) => ({ ...prev, [target]: false }));
+      setOpeningStatus((prev) => ({ ...prev, [target]: "" }));
+    }
+  };
+
+  const handleAddTarget = async () => {
+    try {
+      const values = await targetForm.validateFields();
+      const target = values.target?.trim();
+      await webapp_client.conat_client.hub.ssh.addSessionUI({ target });
+      setTargetModalOpen(false);
+      targetForm.resetFields();
+      await loadSessions();
+    } catch (err: any) {
+      if (err?.errorFields) {
+        return;
+      }
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
     }
   };
 
   const handleStop = async (target: string) => {
-    setLoading(true);
     try {
       await webapp_client.conat_client.hub.ssh.stopSessionUI({ target });
-      await loadSessions();
+      await loadSessions({ background: true });
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
+  const handleUpgrade = async (target: string) => {
+    setUpgradingTargets((prev) => ({ ...prev, [target]: true }));
+    setOpeningStatus((prev) => ({ ...prev, [target]: "Upgrading…" }));
+    try {
+      const localUrl =
+        typeof window !== "undefined" ? window.location.href : undefined;
+      await webapp_client.conat_client.hub.ssh.upgradeSessionUI({
+        target,
+        localUrl,
+      });
+      await loadSessions({ background: true, refreshStatus: true });
+      await loadUpgradeInfo({ force: true, scope: "remote" });
+      alert_message({
+        type: "success",
+        message: "Remote server upgraded",
+      });
     } catch (err: any) {
       alert_message({
         type: "error",
         message: err?.message || String(err),
       });
     } finally {
-      setLoading(false);
+      setUpgradingTargets((prev) => ({ ...prev, [target]: false }));
+      setOpeningStatus((prev) => ({ ...prev, [target]: "" }));
+    }
+  };
+
+  const handleDeleteTarget = async (target: string) => {
+    try {
+      try {
+        const [sessions, forwards] = await Promise.all([
+          webapp_client.conat_client.hub.reflect.listSessionsUI({ target }),
+          webapp_client.conat_client.hub.reflect.listForwardsUI(),
+        ]);
+        const filteredForwards = filterForwardsByTarget(
+          forwards || [],
+          target,
+        );
+        const results = await Promise.allSettled([
+          ...(sessions || []).map((session) =>
+            webapp_client.conat_client.hub.reflect.terminateSessionUI({
+              idOrName: String(session.id),
+            }),
+          ),
+          ...filteredForwards.map((forward) =>
+            webapp_client.conat_client.hub.reflect.terminateForwardUI({
+              id: forward.id,
+            }),
+          ),
+        ]);
+        const failures = results.filter((r) => r.status === "rejected");
+        if (failures.length > 0) {
+          alert_message({
+            type: "warning",
+            message: "Some syncs or forwards could not be removed.",
+          });
+        }
+      } catch (err: any) {
+        alert_message({
+          type: "warning",
+          message:
+            err?.message ||
+            "Unable to clean up syncs/forwards; removing session anyway.",
+        });
+      }
+      await webapp_client.conat_client.hub.ssh.deleteSessionUI({ target });
+      await loadSessions({ background: true });
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
+  const connectSessionWithRetry = async (
+    target: string,
+    opts?: { onStage?: (stage: string) => void },
+  ) => {
+    const localUrl =
+      typeof window !== "undefined" ? window.location.href : undefined;
+    let result;
+    for (let attempt = 1; attempt <= REMOTE_READY_ATTEMPTS; attempt += 1) {
+      try {
+        const stage =
+          attempt === 1
+            ? "Connecting…"
+            : `Waiting for server (${attempt}/${REMOTE_READY_ATTEMPTS})…`;
+        opts?.onStage?.(stage);
+        result = await webapp_client.conat_client.hub.ssh.connectSessionUI({
+          target,
+          options: {
+            noOpen: true,
+            localUrl,
+            waitForReady: true,
+            readyTimeoutMs: REMOTE_READY_TIMEOUT_MS,
+          },
+        });
+        break;
+      } catch (err: any) {
+        const message = err?.message || String(err);
+        if (
+          message.includes("Remote server did not respond in time") &&
+          attempt < REMOTE_READY_ATTEMPTS
+        ) {
+          if (attempt === 1) {
+            alert_message({
+              type: "info",
+              message: "Remote server is still starting — retrying...",
+            });
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          continue;
+        }
+        throw err;
+      }
+    }
+    return result;
+  };
+
+  const refreshSessionStatus = async (targets: string[]) => {
+    const queue = targets.filter(Boolean);
+    const runOne = async (): Promise<void> => {
+      const target = queue.shift();
+      if (!target) return;
+      setStatusLoadingTargets((prev) => ({ ...prev, [target]: true }));
+      try {
+        const status =
+          await webapp_client.conat_client.hub.ssh.statusSessionUI({
+            target,
+          });
+        setRows((prev) =>
+          prev.map((row) =>
+            row.target === target ? { ...row, status } : row,
+          ),
+        );
+      } catch {
+        setRows((prev) =>
+          prev.map((row) =>
+            row.target === target
+              ? { ...row, status: row.status ?? "unreachable" }
+              : row,
+          ),
+        );
+      } finally {
+        setStatusLoadingTargets((prev) => {
+          const next = { ...prev };
+          delete next[target];
+          return next;
+        });
+        await runOne();
+      }
+    };
+    const runners = Array.from(
+      { length: Math.min(STATUS_CONCURRENCY, queue.length) },
+      () => runOne(),
+    );
+    await Promise.all(runners);
+  };
+
+  const openLocalPath = (path: string) => {
+    if (!lite || !project_id) return;
+    const actions = redux.getProjectActions(project_id);
+    if (!actions) return;
+    const normalized = normalizeSyncPath(path);
+    actions.open_directory(normalized);
+    redux.getActions("page").set_active_tab(project_id);
+  };
+
+  const openRemotePath = async (target: string, path: string) => {
+    setOpeningTargets((prev) => ({ ...prev, [target]: true }));
+    setOpeningStatus((prev) => ({
+      ...prev,
+      [target]: "Connecting…",
+    }));
+    try {
+      const result = await connectSessionWithRetry(target, {
+        onStage: (stage) =>
+          setOpeningStatus((prev) => ({
+            ...prev,
+            [target]: stage,
+          })),
+      });
+      if (!result?.url) return;
+      const localUrl =
+        typeof window !== "undefined" ? window.location.href : undefined;
+      const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
+      const normalized = normalizeSyncPath(path);
+      const encoded = encodePathSegments(normalized);
+      const url = new URL(result.url);
+      const base = url.pathname.endsWith("/")
+        ? url.pathname.slice(0, -1)
+        : url.pathname;
+      const suffix = encoded ? `/files/${encoded}/` : "/files/";
+      url.pathname = `${base}${suffix}`;
+      window.open(url.toString(), windowName ?? "_blank", "noopener");
+      await loadSessions({ background: true });
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    } finally {
+      setOpeningTargets((prev) => ({ ...prev, [target]: false }));
+      setOpeningStatus((prev) => ({ ...prev, [target]: "" }));
     }
   };
 
@@ -362,11 +790,95 @@ export const SshPage: React.FC = React.memo(() => {
     }
   };
 
+  const handleOpenForward = (port: number) => {
+    if (typeof window === "undefined") return;
+    window.open(`http://localhost:${port}`, "_blank", "noopener");
+  };
+
   const handleTerminateForward = async (target: string, id: number) => {
     try {
       await webapp_client.conat_client.hub.reflect.terminateForwardUI({ id });
       await loadReflectForTarget(target);
     } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
+  const handleTerminateSession = async (target: string, id: number) => {
+    try {
+      await webapp_client.conat_client.hub.reflect.terminateSessionUI({
+        idOrName: String(id),
+      });
+      await loadReflectForTarget(target);
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
+  const handleStopReflectSession = async (target: string, id: number) => {
+    try {
+      await webapp_client.conat_client.hub.reflect.stopSessionUI({
+        idOrName: String(id),
+      });
+      await loadReflectForTarget(target);
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
+  const handleStartReflectSession = async (target: string, id: number) => {
+    try {
+      await webapp_client.conat_client.hub.reflect.startSessionUI({
+        idOrName: String(id),
+      });
+      await loadReflectForTarget(target);
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    }
+  };
+
+  const openEditSession = (target: string, row: ReflectSessionRow) => {
+    setEditSessionTarget(target);
+    setEditSessionRow(row);
+    editForm.setFieldsValue({
+      prefer: row.prefer ?? "alpha",
+      ignoreRules: parseIgnoreRules(row.ignore_rules).join("\n"),
+    });
+    setEditModalOpen(true);
+  };
+
+  const handleEditSession = async () => {
+    if (!editSessionRow || !editSessionTarget) return;
+    try {
+      const values = await editForm.validateFields();
+      const ignoreRules = extractIgnoreRules(values.ignoreRules);
+      await webapp_client.conat_client.hub.reflect.editSessionUI({
+        idOrName: String(editSessionRow.id),
+        prefer: values.prefer,
+        ignore: ignoreRules,
+      });
+      setEditModalOpen(false);
+      setEditSessionRow(null);
+      setEditSessionTarget(null);
+      editForm.resetFields();
+      await loadReflectForTarget(editSessionTarget);
+      alert_message({ type: "success", message: "Sync updated" });
+    } catch (err: any) {
+      if (err?.errorFields) {
+        return;
+      }
       alert_message({
         type: "error",
         message: err?.message || String(err),
@@ -452,6 +964,7 @@ export const SshPage: React.FC = React.memo(() => {
 
   useEffect(() => {
     loadSessions();
+    void loadUpgradeInfo();
   }, []);
 
   useEffect(() => {
@@ -487,6 +1000,20 @@ export const SshPage: React.FC = React.memo(() => {
         title: "Target",
         dataIndex: "target",
         key: "target",
+        render: (value, row) => {
+          const opening = !!openingTargets[row.target];
+          return (
+            <Button
+              size="small"
+              type="link"
+              onClick={() => handleOpen(row.target)}
+              loading={opening}
+              disabled={opening}
+            >
+              {value}
+            </Button>
+          );
+        },
       },
       {
         title: "Port",
@@ -543,11 +1070,14 @@ export const SshPage: React.FC = React.memo(() => {
             return "-";
           }
           const text = sessions
-            .map((session) =>
-              session.alpha_root === session.beta_root
-                ? session.alpha_root
-                : `${session.alpha_root}↔${session.beta_root}`,
-            )
+            .map((session) => {
+              const path =
+                session.alpha_root === session.beta_root
+                  ? session.alpha_root
+                  : `${session.alpha_root}↔${session.beta_root}`;
+              const status = session.actual_state || session.desired_state;
+              return status ? `${path} (${status})` : path;
+            })
             .join(", ");
           return (
             <Button
@@ -571,7 +1101,35 @@ export const SshPage: React.FC = React.memo(() => {
         dataIndex: "status",
         key: "status",
         width: 140,
-        render: (_, row) => statusTag(row.status),
+        render: (_, row) => {
+          if (upgradingTargets[row.target]) {
+            return (
+              <Space size={6}>
+                <Spin size="small" />
+                <Typography.Text type="secondary">upgrading…</Typography.Text>
+              </Space>
+            );
+          }
+          if (openingTargets[row.target]) {
+            return (
+              <Space size={6}>
+                <Spin size="small" />
+                <Typography.Text type="secondary">
+                  {openingStatus[row.target] || "Starting…"}
+                </Typography.Text>
+              </Space>
+            );
+          }
+          if (statusLoadingTargets[row.target]) {
+            return (
+              <Space size={6}>
+                <Spin size="small" />
+                <Typography.Text type="secondary">checking…</Typography.Text>
+              </Space>
+            );
+          }
+          return statusTag(row.status);
+        },
       },
       {
         title: "Tunnel",
@@ -589,92 +1147,199 @@ export const SshPage: React.FC = React.memo(() => {
         title: "Actions",
         key: "actions",
         width: 200,
-        render: (_, row) => (
-          <Space>
-            <Button size="small" onClick={() => handleOpen(row.target)}>
-              Open
-            </Button>
-            <Popconfirm
-              title="Stop this session?"
-              description="This will stop the remote daemon for this target."
-              okText="Stop"
-              cancelText="Cancel"
-              onConfirm={() => handleStop(row.target)}
-            >
-              <Button size="small" danger>
-                Stop
+        render: (_, row) => {
+          const opening = !!openingTargets[row.target];
+          const upgrading = !!upgradingTargets[row.target];
+          const upgradeAvailable =
+            upgradeInfo.remotes?.[row.target]?.upgradeAvailable;
+          return (
+            <Space>
+              <Button
+                size="small"
+                onClick={() => handleOpen(row.target)}
+                loading={opening}
+                disabled={opening || upgrading}
+              >
+                Open
               </Button>
-            </Popconfirm>
-          </Space>
-        ),
+              {row.status === "running" ? (
+                <Popconfirm
+                  title="Stop this session?"
+                  description="This will stop the remote daemon for this target."
+                  okText="Stop"
+                  cancelText="Cancel"
+                  onConfirm={() => handleStop(row.target)}
+                >
+                  <Button size="small" danger disabled={upgrading}>
+                    Stop
+                  </Button>
+                </Popconfirm>
+              ) : null}
+              {upgradeAvailable ? (
+                <Popconfirm
+                  title="Upgrade remote server?"
+                  description="This will install the latest cocalc-plus on the remote host. Any running terminals and notebooks will restart."
+                  okText="Upgrade"
+                  cancelText="Cancel"
+                  onConfirm={() => handleUpgrade(row.target)}
+                >
+                  <Button size="small" disabled={opening || upgrading}>
+                    Upgrade
+                  </Button>
+                </Popconfirm>
+              ) : null}
+              <Popconfirm
+                title="Remove this session?"
+                description="Removes this target, and also removes any related syncs and port forwards (no files are deleted)."
+                okText="Remove"
+                cancelText="Cancel"
+                onConfirm={() => handleDeleteTarget(row.target)}
+              >
+                <Button size="small" disabled={opening || upgrading}>
+                  Remove
+                </Button>
+              </Popconfirm>
+            </Space>
+          );
+        },
       },
     ],
-    [rows, reflectByTarget],
+    [
+      rows,
+      reflectByTarget,
+      openingTargets,
+      openingStatus,
+      statusLoadingTargets,
+      upgradingTargets,
+      upgradeInfo,
+    ],
   );
 
-  const reflectSessionColumns = useMemo<ColumnsType<ReflectSessionRow>>(
-    () => [
-      {
-        title: "Local Path",
-        dataIndex: "alpha_root",
-        key: "alpha_root",
-        render: (val) => <Typography.Text code>{val}</Typography.Text>,
-      },
-      {
-        title: "Remote Path",
-        dataIndex: "beta_root",
-        key: "beta_root",
-        render: (val, row) => (
+  const buildReflectSessionColumns = (
+    target: string,
+  ): ColumnsType<ReflectSessionRow> => [
+    {
+      title: "Local Path",
+      dataIndex: "alpha_root",
+      key: "alpha_root",
+      render: (val) =>
+        lite && project_id ? (
+          <Button
+            size="small"
+            type="link"
+            style={{ padding: 0 }}
+            onClick={() => openLocalPath(String(val))}
+          >
+            <Typography.Text code>{val}</Typography.Text>
+          </Button>
+        ) : (
+          <Typography.Text code>{val}</Typography.Text>
+        ),
+    },
+    {
+      title: "Remote Path",
+      dataIndex: "beta_root",
+      key: "beta_root",
+      render: (val, row) => (
+        <Button
+          size="small"
+          type="link"
+          style={{ padding: 0 }}
+          onClick={() => openRemotePath(target, String(val))}
+        >
           <Typography.Text code>
             {row.beta_host
               ? `${row.beta_host}${row.beta_port ? `:${row.beta_port}` : ""}:${val}`
               : val}
           </Typography.Text>
-        ),
-      },
+        </Button>
+      ),
+    },
       {
         title: "State",
         key: "state",
         width: 160,
-        render: (_, row) => (
-          <Space size={6}>
-            {reflectStateTag(row.actual_state)}
-            <Typography.Text type="secondary">
-              {row.desired_state}
-            </Typography.Text>
-          </Space>
-        ),
+        render: (_, row) => syncStateDisplay(row),
       },
-      {
-        title: "Last Sync",
-        key: "last",
-        width: 180,
-        render: (_, row) =>
-          row.last_clean_sync_at
-            ? new Date(row.last_clean_sync_at).toLocaleString()
-            : "-",
-      },
-      {
-        title: "Logs",
-        key: "logs",
-        width: 110,
-        render: (_, row) => (
-          <Button size="small" onClick={() => loadSessionLogs(row)}>
-            Logs
+    {
+      title: "Last Sync",
+      key: "last",
+      width: 180,
+      render: (_, row) =>
+        row.last_clean_sync_at
+          ? new Date(row.last_clean_sync_at).toLocaleString()
+          : "-",
+    },
+    {
+      title: "Logs",
+      key: "logs",
+      width: 110,
+      render: (_, row) => (
+        <Button size="small" onClick={() => loadSessionLogs(row)}>
+          Logs
+        </Button>
+      ),
+    },
+    {
+      title: "Actions",
+      key: "actions",
+      width: 120,
+      render: (_, row) => (
+        <Space size={6}>
+          {row.actual_state === "running" ? (
+            <Popconfirm
+              title="Pause this sync?"
+              description="This will stop syncing until you resume it."
+              okText="Pause"
+              cancelText="Cancel"
+              onConfirm={() => handleStopReflectSession(target, row.id)}
+            >
+              <Button size="small">Pause</Button>
+            </Popconfirm>
+          ) : (
+            <Button
+              size="small"
+              onClick={() => handleStartReflectSession(target, row.id)}
+            >
+              Start
+            </Button>
+          )}
+          <Button size="small" onClick={() => openEditSession(target, row)}>
+            Edit
           </Button>
-        ),
-      },
-    ],
-    [],
-  );
+          <Popconfirm
+            title="Delete this sync?"
+            description="This will remove the session and its metadata."
+            okText="Delete"
+            cancelText="Cancel"
+            onConfirm={() => handleTerminateSession(target, row.id)}
+          >
+            <Button size="small" danger>
+              Delete
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
 
   const expandedRowRender = (row: SshSessionRow) => {
     const state = ensureReflectState(row.target);
+    const hasSessions = state.sessions.length > 0;
+    const hasForwards = state.forwards.length > 0;
     const forwardColumns: ColumnsType<ReflectForwardRow> = [
       {
         title: "Local",
         key: "local",
-        render: (_, fwd) => formatForwardLocal(fwd),
+        render: (_, fwd) => (
+          <Button
+            size="small"
+            type="link"
+            onClick={() => handleOpenForward(fwd.local_port)}
+          >
+            {formatForwardLocal(fwd)}
+          </Button>
+        ),
       },
       {
         title: "Remote",
@@ -692,33 +1357,51 @@ export const SshPage: React.FC = React.memo(() => {
         key: "actions",
         width: 120,
         render: (_, fwd) => (
-          <Popconfirm
-            title="Remove this forward?"
-            description="This will stop and delete the port forward."
-            okText="Remove"
-            cancelText="Cancel"
-            onConfirm={() => handleTerminateForward(row.target, fwd.id)}
-          >
-            <Button size="small" danger>
-              Remove
+          <Space size={6}>
+            <Button
+              size="small"
+              onClick={() => {
+                if (typeof window === "undefined") return;
+                window.open(
+                  `http://localhost:${fwd.local_port}`,
+                  "_blank",
+                  "noopener",
+                );
+              }}
+            >
+              Open
             </Button>
-          </Popconfirm>
+            <Popconfirm
+              title="Remove this forward?"
+              description="This will stop and delete the port forward."
+              okText="Remove"
+              cancelText="Cancel"
+              onConfirm={() => handleTerminateForward(row.target, fwd.id)}
+            >
+              <Button size="small" danger>
+                Remove
+              </Button>
+            </Popconfirm>
+          </Space>
         ),
       },
     ];
     return (
-      <div style={{ padding: "12px 8px" }}>
+        <div
+          style={{
+            padding: "16px 16px",
+            margin: "16px 16px 20px 56px",
+            borderRadius: 10,
+            background: "#fbfbfb",
+            border: "1px solid #e6e6e6",
+            borderLeft: "5px solid #d0d0d0",
+            boxShadow: "0 2px 6px rgba(0, 0, 0, 0.04)",
+          }}
+        >
         <Space style={{ marginBottom: 8 }} size={12} align="center">
           <Typography.Title level={5} style={{ margin: 0 }}>
             Sync
           </Typography.Title>
-          <Button
-            size="small"
-            onClick={() => loadReflectForTarget(row.target)}
-            loading={state.loading}
-          >
-            Refresh
-          </Button>
           <Button
             size="small"
             onClick={() => {
@@ -727,6 +1410,13 @@ export const SshPage: React.FC = React.memo(() => {
             }}
           >
             New Sync
+          </Button>
+          <Button
+            size="small"
+            onClick={() => loadReflectForTarget(row.target)}
+            loading={state.loading}
+          >
+            Refresh
           </Button>
           <Button size="small" onClick={loadDaemonLogs}>
             Logs
@@ -739,15 +1429,17 @@ export const SshPage: React.FC = React.memo(() => {
             message="Reflect Sync unavailable"
             description={state.error}
           />
-        ) : (
-          <Table
-            rowKey={(r) => r.id}
-            columns={reflectSessionColumns}
-            dataSource={state.sessions}
-            pagination={false}
-            size="small"
-          />
-        )}
+        ) : hasSessions ? (
+          <Card size="small" style={{ marginBottom: 16 }}>
+            <Table
+              rowKey={(r) => r.id}
+              columns={buildReflectSessionColumns(row.target)}
+              dataSource={state.sessions}
+              pagination={false}
+              size="small"
+            />
+          </Card>
+        ) : null}
         <Divider style={{ margin: "16px 0" }} />
         <Space style={{ marginBottom: 8 }} size={12} align="center">
           <Typography.Title level={5} style={{ margin: 0 }}>
@@ -763,13 +1455,17 @@ export const SshPage: React.FC = React.memo(() => {
             New Forward
           </Button>
         </Space>
-        <Table
-          rowKey={(r) => r.id}
-          columns={forwardColumns}
-          dataSource={state.forwards}
-          pagination={false}
-          size="small"
-        />
+        {hasForwards ? (
+          <Card size="small">
+            <Table
+              rowKey={(r) => r.id}
+              columns={forwardColumns}
+              dataSource={state.forwards}
+              pagination={false}
+              size="small"
+            />
+          </Card>
+        ) : null}
       </div>
     );
   };
@@ -808,8 +1504,48 @@ export const SshPage: React.FC = React.memo(() => {
         <Typography.Title level={4} style={{ margin: 0 }}>
           Remote SSH Sessions
         </Typography.Title>
-        <Button size="small" onClick={loadSessions} loading={loading}>
+        <Popover
+          placement="right"
+          content={
+            <div style={{ maxWidth: 340 }}>
+              <Typography.Paragraph style={{ marginBottom: 8 }}>
+                Use this page to connect to any Linux or macOS server you can
+                reach over SSH and run CoCalc Plus there. Each session starts a
+                remote CoCalc server and opens a local URL via a secure SSH
+                tunnel, so everything stays on your machine and the remote host.
+              </Typography.Paragraph>
+              <Typography.Paragraph style={{ marginBottom: 0 }}>
+                You can also enable bidirectional file sync between your local
+                folders and the remote server, plus create port forwards that
+                make remote services (e.g., web apps) available at
+                http://localhost on your computer.
+              </Typography.Paragraph>
+            </div>
+          }
+        >
+          <Button
+            size="small"
+            type="text"
+            icon={<InfoCircleOutlined />}
+            aria-label="About Remote SSH Sessions"
+          />
+        </Popover>
+        <Button size="small" onClick={() => setTargetModalOpen(true)}>
+          New Remote Session
+        </Button>
+        <Button
+          size="small"
+          onClick={() => loadSessions({ background: true })}
+          loading={refreshing || loading}
+        >
           Refresh
+        </Button>
+        <Button
+          size="small"
+          onClick={() => loadUpgradeInfo({ force: true, scope: "all" })}
+          loading={upgradeChecking}
+        >
+          Check for Upgrades
         </Button>
       </Space>
       <Table
@@ -903,6 +1639,7 @@ export const SshPage: React.FC = React.memo(() => {
                     <Form.Item
                       label="Additional ignore patterns"
                       name="ignoreRules"
+                      extra={ignoreHelp}
                     >
                       <Input.TextArea
                         autoSize={{ minRows: 3, maxRows: 6 }}
@@ -914,6 +1651,64 @@ export const SshPage: React.FC = React.memo(() => {
               },
             ]}
           />
+        </Form>
+      </Modal>
+
+      <Modal
+        title="New Remote Session"
+        open={targetModalOpen}
+        onOk={handleAddTarget}
+        onCancel={() => setTargetModalOpen(false)}
+        okText="Create"
+      >
+        <Form form={targetForm} layout="vertical">
+          <Form.Item
+            label="SSH target"
+            name="target"
+            rules={[
+              { required: true, message: "Enter a target like user@host:22" },
+            ]}
+            extra={targetHelp}
+          >
+            <Input placeholder="user@host:22" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={
+          editSessionTarget
+            ? `Edit Sync for ${editSessionTarget}`
+            : "Edit Sync"
+        }
+        open={editModalOpen}
+        onOk={handleEditSession}
+        onCancel={() => {
+          setEditModalOpen(false);
+          setEditSessionRow(null);
+          setEditSessionTarget(null);
+        }}
+        okText="Save"
+      >
+        <Form form={editForm} layout="vertical">
+          <Form.Item label="Conflict preference" name="prefer">
+            <Select
+              options={[
+                { value: "alpha", label: "Prefer local (alpha)" },
+                { value: "beta", label: "Prefer remote (beta)" },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            label="Additional ignore patterns"
+            name="ignoreRules"
+            extra={ignoreHelp}
+          >
+            <Input.TextArea
+              autoSize={{ minRows: 3, maxRows: 6 }}
+              placeholder="node_modules\n*.log"
+            />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -992,12 +1787,21 @@ export const SshPage: React.FC = React.memo(() => {
             message="Unable to load logs"
             description={reflectLogError}
           />
+        ) : reflectLogLoading ? (
+          <Space size={8} align="center">
+            <Spin size="small" />
+            <Typography.Text type="secondary">Loading logs…</Typography.Text>
+          </Space>
+        ) : reflectLogRows.length === 0 ? (
+          <Empty
+            description="No daemon logs yet"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          />
         ) : (
           <Input.TextArea
             value={formatReflectLogs(reflectLogRows)}
             readOnly
             autoSize={{ minRows: 8, maxRows: 16 }}
-            placeholder={reflectLogLoading ? "Loading logs..." : "No logs"}
           />
         )}
       </Modal>

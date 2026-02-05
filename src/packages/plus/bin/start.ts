@@ -105,6 +105,122 @@ function daemonize(args: string[], pidfile?: string | null, logfile?: string | n
   process.exit(0);
 }
 
+function normalizeOsArch() {
+  const platform = os.platform();
+  const osName =
+    platform === "darwin" ? "darwin" : platform === "linux" ? "linux" : platform;
+  const archRaw = os.arch();
+  const arch =
+    archRaw === "x64"
+      ? "amd64"
+      : archRaw === "arm64"
+        ? "arm64"
+        : archRaw;
+  return { os: osName, arch };
+}
+
+function getPackageVersion() {
+  if (process.env.COCALC_PLUS_VERSION) {
+    return process.env.COCALC_PLUS_VERSION;
+  }
+  if (process.env.COCALC_PROJECT_HOST_VERSION) {
+    return process.env.COCALC_PROJECT_HOST_VERSION;
+  }
+  if (process.env.COCALC_SEA_VERSION) {
+    return process.env.COCALC_SEA_VERSION;
+  }
+  if (process.env.npm_package_version) {
+    return process.env.npm_package_version;
+  }
+  const extractVersionFromPath = (value?: string) => {
+    if (!value) return undefined;
+    const match = value.match(/[/\\]cocalc[/\\][^/\\]+[/\\]([^/\\]+)[/\\]/);
+    return match?.[1];
+  };
+  const envPathVersion =
+    extractVersionFromPath(process.env.COCALC_BIN_PATH) ||
+    extractVersionFromPath(__dirname);
+  if (envPathVersion) return envPathVersion;
+  const findVersionUp = (startDir: string) => {
+    let current = startDir;
+    for (let i = 0; i < 8; i += 1) {
+      try {
+        const pkgPath = path.join(current, "package.json");
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+          if (pkg?.version) {
+            return pkg.version as string;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+    return undefined;
+  };
+  try {
+    const pkgPath = path.join(__dirname, "..", "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    return pkg.version || "unknown";
+  } catch {
+    // ignore
+  }
+  const argvPath = process.argv[1];
+  if (argvPath) {
+    const found = findVersionUp(path.dirname(argvPath));
+    if (found) return found;
+  }
+  try {
+    const pkgPath = path.join(process.cwd(), "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    return pkg.version || "unknown";
+  } catch {
+    // ignore
+  }
+  const found = findVersionUp(process.cwd());
+  if (found) return found;
+  try {
+    const baseDir =
+      process.env.COCALC_PLUS_HOME ??
+      process.env.COCALC_DATA_DIR ??
+      path.join(os.homedir(), ".local", "share", "cocalc-plus");
+    const versionPath = path.join(baseDir, "version.json");
+    const raw = JSON.parse(fs.readFileSync(versionPath, "utf8"));
+    if (raw?.version) {
+      return raw.version;
+    }
+  } catch {
+    // ignore
+  }
+  return "unknown";
+}
+
+function writeVersionInfo() {
+  const dataDir =
+    process.env.COCALC_DATA_DIR ||
+    path.join(os.homedir(), ".local", "share", "cocalc-plus", "data");
+  const outPath =
+    process.env.COCALC_WRITE_VERSION_INFO ||
+    path.join(dataDir, "version.json");
+  if (!outPath) return;
+  const { os: osName, arch } = normalizeOsArch();
+  const payload = {
+    version: getPackageVersion(),
+    os: osName,
+    arch,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, JSON.stringify(payload, null, 2));
+  } catch {
+    // ignore
+  }
+}
+
 async function runCli() {
   if (process.argv.includes("--run-reflect-scheduler")) {
     if (!process.env.REFLECT_HOME) {
@@ -194,13 +310,7 @@ async function runCli() {
     argv[0] === "--version" ||
     argv[0] === "-v"
   ) {
-    try {
-      const pkgPath = path.join(__dirname, "..", "..", "package.json");
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-      console.log(pkg.version || "unknown");
-    } catch {
-      console.log("unknown");
-    }
+    console.log(getPackageVersion());
     return;
   }
 
@@ -284,6 +394,8 @@ async function runCli() {
       "data",
     );
   }
+
+  writeVersionInfo();
 
   const liteMain = require("@cocalc/lite/main");
   if (typeof liteMain.main !== "function") {

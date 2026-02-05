@@ -1,10 +1,16 @@
 import type { ConnectOptions, ConnectResult } from "./core";
 import {
   connectSession,
+  deleteSession,
+  getUpgradeInfo,
   getRemoteStatus,
   listSessions,
+  upgradeRemote,
+  upgradeLocal,
   statusSession,
+  updateRegistry,
 } from "./core";
+import type { UpgradeInfo } from "./core";
 
 export type SshSessionRow = {
   target: string;
@@ -19,6 +25,11 @@ export type ConnectUiResult = {
   url: string;
   localPort: number;
   remotePort: number;
+};
+
+export type UpgradeInfoPayload = {
+  local?: UpgradeInfo;
+  remotes: Record<string, UpgradeInfo>;
 };
 
 const activeTunnels = new Map<string, ConnectResult>();
@@ -81,6 +92,34 @@ export async function statusSessionUI(target: string): Promise<string> {
   return await getRemoteStatus(entry);
 }
 
+export async function getUpgradeInfoUI(opts?: {
+  force?: boolean;
+  scope?: "local" | "remote" | "all";
+}): Promise<UpgradeInfoPayload> {
+  return await getUpgradeInfo(opts);
+}
+
+export async function addSessionUI(target: string): Promise<void> {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    throw new Error("Target is required");
+  }
+  updateRegistry(trimmed, {});
+}
+
+export async function deleteSessionUI(target: string): Promise<void> {
+  const trimmed = target.trim();
+  if (!trimmed) {
+    throw new Error("Target is required");
+  }
+  const existing = activeTunnels.get(trimmed);
+  if (isTunnelActive(existing)) {
+    existing?.tunnel.kill();
+    activeTunnels.delete(trimmed);
+  }
+  deleteSession(trimmed);
+}
+
 export async function stopSessionUI(target: string): Promise<void> {
   const existing = activeTunnels.get(target);
   if (isTunnelActive(existing)) {
@@ -88,4 +127,24 @@ export async function stopSessionUI(target: string): Promise<void> {
     activeTunnels.delete(target);
   }
   await statusSession("stop", target, {});
+}
+
+export async function upgradeSessionUI(
+  target: string,
+  localUrl?: string,
+): Promise<void> {
+  const entry = listSessions().find((item) => item.target === target);
+  if (!entry) {
+    throw new Error(`Unknown target: ${target}`);
+  }
+  const existing = activeTunnels.get(target);
+  if (isTunnelActive(existing)) {
+    existing?.tunnel.kill();
+    activeTunnels.delete(target);
+  }
+  await upgradeRemote(entry, { localUrl });
+}
+
+export async function upgradeLocalUI(): Promise<void> {
+  await upgradeLocal();
 }

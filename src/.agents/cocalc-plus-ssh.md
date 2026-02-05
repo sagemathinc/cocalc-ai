@@ -2,27 +2,109 @@
 
 ## Reflect Sync UI todo
 
-regarding port forwarding, can we change "Port forwards map local → remote connections." to something that is really clear, e.g., "Make a server listening on localhost:[port] on  [ssh target] be available on localhost:[port] on your local computer."  And have the port and sshtarget in the alert be filled in with what is in the box.  Put 8080 in by default.  
+- [ ] automatically start on create of new remote session
 
-I.e., make it ridiculously  obvious to any user what will happen.  Maybe use your language skills to do a better job than me.
+- [ ] more status of sync: are all files sync'd or are some not sync'd?  Checkbox if they are all sync'd.  This is possibly expensive so click to update (?).  If sync'ing a lot of data, this could provide a "percent done" sort of thing. 
 
-Draw a mermaid diagram (with the actual port and target labeled) and use the StaticMarkdown component in the modal to make it super clear?
+- [ ] remote server upgrade -- make it one click to upgrade a remote server to the latest available version; we need to determine somehow if there even is a newer version, etc. (since latest version may vary depending on architecture).  Also this needs a warning because any running notebooks and terminals are reset on upgrade.
+
+- [ ] local server upgrade: if the local server is out of date, it would be very good to also have a way to click a button and upgrade it...
+
+- [ ] projects already have a color that can be set in project settings.  it does NOTHING in lite mode, since normally it only impacts the project tab, which isn't displayed in lite mode. Let's make it so the color of the project is shows as a 3px solid border on the left of the screen, i.e., add a `border-left` style to the component with class cocalc-webapp-container.
+
+- [ ] filter -- a box where you can type and only the remote sessions whose target match are shown
+
+- [ ] add a little "copy" icon next to the target name/url, so it's easy to copy (right now it's impossible).
+
+- [ ] starring -- i.e., a column where you can start certain sessions
+
+- [ ] sorting -- sort by some columns; antd makes this easy - target, starred, status, last used
+
+- [ ] window title: in lite mode when whatever is set to make that "Remote: " button appear in the upper right, it would be good to short circuit whatever displays the window title and instead have the SSH target as the title, since otherwise it is very hard to distinguish these sessions.
+
+- [ ] fix bug that opening cocalc-plus at files/some/path does not work. 
+
+- [ ] provide a way that works to open cocalc-plus files not in HOME, e.g., files/.root/some/path
+
+- [x] #wontfix (bad idea?) Make the same "SSH sessions" react component also be visible in settings in a new page called "Remote Sessions".   This would be next to the pages for "Settings"/"Profile"/"Preferences"/"Admin". Also, is there a better name for this. In VS Code it is called "VS Code Remote Development". We could call it "Remote Sessions" and not emphasize ssh so much, since ssh suggests "something in a terminal"; it just happens to be how it works.   Also for the button in the upper right it would be nice to add a label "Local" to it, to emphasize it isn't remote.  For the remote session the modal "Remote SSH Session" could just have the heading "Remote Session".
+
+- [x] missing root when syncing.  It is very easy to hit this when using cocalc this way:
+  - create a new sync directory, e.g. my-project
+
+  - of course the remote server doesn't have my-project yet
+
+  - just get an error in the target since: "
+    ```
+    2/4/2026, 1:41:55 PM [warn] (cocalc-plus) scheduler exited {"code":1,"signal":null}
+    2/4/2026, 1:41:55 PM [error] (cocalc-plus) MissingRootError: sync root missing: beta root 'ctl:/home/cocalc/x' does not exist
+        at failMissingRoot (file:///home/wstein/build/cocalc-lite2/src/packages/node_modules/.pnpm/reflect-sync@0.15.1/node_modules/reflect-sync/dist/scheduler.js:509:28)
+        at ensureRootsExist (file:///home/wstein/build/cocalc-lite2/src/packages/node_modules/.pnpm/reflect-sync@0.15.1/node_modules/reflect-sync/dist/scheduler.js:584:13)
+        at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+        at async runScheduler0 (file:///home/wstein/build/cocalc-lite2/src/packages/node_modules/.pnpm/reflect-sync@0.15.1/node_modules/reflect-sync/dist/scheduler.js:655:5)
+        at async Module.runScheduler (file:///home/wstein/build/cocalc-lite2/src/packages/node_modules/.pnpm/reflect-sync@0.15.1/node_modules/reflect-sync/dist/scheduler.js:167:9) {
+      side: 'beta'
+    }
+    2/4/2026, 1:41:55 PM [error] (cocalc-plus) Failed to start scheduler: MissingRootError: sync root missing: beta root 'ctl:/home/cocalc/x' does not exist undefined
+    ```
+
+    "
+
+  - instead we really need to just create the missing root (on either side) on startup.  This could be an options to reflect-sync that we set or we try to run mkdir over ssh.
+
+  - all that said, at any point just doing "mkdir" fixes the problem -- reflect sync starts working and syncing as soon as the missing directory is created.
+
+- [x] what happens if a port forward gets killed for some reason?  what I want: it gets restarted automatically
+
+- [x] speed up getting session status -- loading the ssh page feels really slow.   There's also a lot of actions, e.g., clicking on a session to open it, that locks the entire page with a spinner... why?  It just feels slow.
+
+- [x] The "Reflect Daemon Logs" are always empty.  Seems suspicious.
+
+- [x] the expand UI is still too overwhelming and cluttered:  add more margin; it's just very hard to see where the expanded row stops and the next row starts.
+
+- [x] in sync, make remote path clickable, with clicking it open the REMOTE server at that path in the file explorer. This opens a new browser tab (or reuses the browser tab for a remote ssh session, if we already opeend one?). 
+
+- [x] in sync, make local path clickable, with clicking it open that path in the file explorer in cocalc (so it just changes the page in the current browser tab).
+
+- [x] removing an ssh session should also remove all the corresponding sync and port forward sessions.  Does it?  if not, implement it.  Also, the remove dialog should clearly explain what remove does, including disabling sync and port forwards, but not deleting any user files. 
+  - [ ] ALSO, I created an ssh remote session, then removed it, and checked with "ps" and saw that the port forward was still running.
+
+- [x] Showing "running" twice under sync state looks weird. If the current and desired states are the same, just show current; if not, show both with an arrow from one to the other or a spinner or something?
+
+- [x] make the session target in the list of ssh sessions be clickable; clicking on it should be identical clicking the "open" button.
+
+- [x] move "[user@]hostname[:port] (port is optional)" down a bit -- it's too close to the input box.  It would also be nice to have info popup that explains what will happen.
+
+- [x] for the ssh target, can we support [user@]hostname[:port] and document that we support that in the dialog to make a new ssh target.  Note that the [:port] part of course requires special handling and introduces some incompat with ip6, but that's ok with me.  Maybe we already support this, so we just need to document it.
+
+- [x] in port foward, make the local address "localhost:8080" clickable; click does same thing as "open" button.
+
+- [x] the first time opening any remote server, it always says the site isn't available (so I see an error), then a  few seconds later it works (with no manual refresh required).  It would be much better to probe and be sure the remote server is running before creating the new tab.
+
+- [x] delete ssh server session
+
+- [x] do not show "stop" button if the ssh session is already stopped
+
+- [x] delete an existing sync
+
+- [x] pause an existing sync
+
+- [x] "Additional ignore patterns":
+  - explain the format and note that I think reflect-sync doesn't fully implement the git ignore syntax -- please check the reflect-sync source code, but I think there are some limitations to keep things really fast.    It would be really nice though to just summarize a few key rules, since even the official git page is overwhelming. 
+  - AI: could describe what you want to ignore and it would fill in a guess?  I wonder if there's a way to do AI integrations for everything generically this way....?  We need a generic AI assistant react component don't we, which is as popular as popovers and tooltips.
+
+- [x] edit an existing sync: many things can edited and some are useful (unclear what to do here; at least edit the ignores, maybe the preference side)
+
+- [x] create new remote server -- just enter [user@]hostname[:port], get new row
 
 - [x] localhost:port1 and localhost:port2 are using the same token... which is VERY confusing to the browser.
+
 - [x] port forward is backwards
-- [ ] click on the "Remote: ...." button should provide a link to the local server in the modal (with token?)
-- [ ] paths for sync should be relative to HOME by default; also HOME on remote machine is usually totally different than local machine.  Use `~/` not hardcoded full path.
-- [ ] the expand UI is too overwhelming and cluttered:
-  - ONLY show the buttons to create new thing first; show the columns and table only when there is at least one entry.
-  - put list of syncs/ports in a card and add a margin
-- [ ] port forward (remote --&gt; local): add button to open port via http in another browser tab (since usually to a server)
-- [ ] delete an existing sync
-- [ ] pause an existing sync
-- [ ] edit an existing sync: many things can edited and some are useful (unclear what to do here; at least edit the ignores, maybe the preference side)
-- [ ] add way to see the status of sync
-- [ ] "Additional ignore patterns":
-  - explain the format or give a link to it.
-  - AI: could describe what you want to ignore and it would fill in a guess?  I wonder if there's a way to do AI integrations for everything generically this way....?  We need a generic AI assistant react component don't we, which is as popular as popovers and tooltips.
+
+- [x] click on the "Remote: ...." button should provide a link to the local server in the modal (with token?)
+
+- [x] paths for sync should be relative to HOME by default; also HOME on remote machine is usually totally different than local machine.  Use `~/` not hardcoded full path.
+
+- [x] port forward (remote --&gt; local): add button to open port via http in another browser tab (since usually to a server)
 
 ## Other Todo
 
@@ -51,6 +133,8 @@ Draw a mermaid diagram (with the actual port and target labeled) and use the Sta
 
 - [ ] enable proxying of remote apps (e.g., jupyterlab) and make sure it works
   - this is probably just enabling a button in the frontend when lite mode is true, instead of explicitly disabling it; there might not be anything else to do.
+
+- [ ] Create an Electron App.
 
 - [x] reflect-sync integration improvements:
   - [x] make it so configuration of sync is focused around "Remote SSH Sessions" targets, e.g., maybe use an antd expand button to configure sync.  The configuration would be:
