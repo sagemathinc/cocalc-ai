@@ -36,6 +36,7 @@ import { ShareIndicator } from "./share-indicator";
 import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
 import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
+import SshUpgradeButton from "@cocalc/frontend/ssh/ssh-upgrade-button";
 
 const INDICATOR_STYLE: React.CSSProperties = {
   overflow: "hidden",
@@ -91,6 +92,7 @@ export default function ProjectTabs(props: PTProps) {
         {lite && (
           <>
             {sshRemoteTarget ? <RemoteSshButton /> : <SshButton />}
+            <SshUpgradeButton />
             <SettingsButton />
           </>
         )}

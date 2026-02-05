@@ -7,7 +7,9 @@ export const ssh = {
   deleteSessionUI: requireSignedIn,
   stopSessionUI: requireSignedIn,
   upgradeSessionUI: requireSignedIn,
+  upgradeLocalUI: requireSignedIn,
   statusSessionUI: requireSignedIn,
+  getUpgradeInfoUI: requireSignedIn,
 };
 
 export type SshSessionRow = {
@@ -23,6 +25,21 @@ export type ConnectUiResult = {
   url: string;
   localPort: number;
   remotePort: number;
+};
+
+export type UpgradeInfo = {
+  currentVersion?: string;
+  latestVersion?: string;
+  upgradeAvailable: boolean;
+  os?: string;
+  arch?: string;
+  checkedAt: string;
+  error?: string;
+};
+
+export type UpgradeInfoPayload = {
+  local?: UpgradeInfo;
+  remotes: Record<string, UpgradeInfo>;
 };
 
 export interface Ssh {
@@ -49,5 +66,10 @@ export interface Ssh {
   deleteSessionUI: (opts: { target: string }) => Promise<void>;
   stopSessionUI: (opts: { target: string }) => Promise<void>;
   upgradeSessionUI: (opts: { target: string; localUrl?: string }) => Promise<void>;
+  upgradeLocalUI: () => Promise<void>;
   statusSessionUI: (opts: { target: string }) => Promise<string>;
+  getUpgradeInfoUI: (opts?: {
+    force?: boolean;
+    scope?: "local" | "remote" | "all";
+  }) => Promise<UpgradeInfoPayload>;
 }

@@ -4,6 +4,7 @@ import {
   Card,
   Collapse,
   Divider,
+  Empty,
   Form,
   Input,
   InputNumber,
@@ -30,7 +31,10 @@ import {
   redux,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import type { SshSessionRow } from "@cocalc/conat/hub/api/ssh";
+import type {
+  SshSessionRow,
+  UpgradeInfoPayload,
+} from "@cocalc/conat/hub/api/ssh";
 import type {
   ReflectForwardRow,
   ReflectLogRow,
@@ -223,6 +227,10 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectByTarget, setReflectByTarget] = useState<
     Record<string, ReflectTargetState>
   >({});
+  const [upgradeInfo, setUpgradeInfo] = useState<UpgradeInfoPayload>({
+    remotes: {},
+  });
+  const [upgradeChecking, setUpgradeChecking] = useState(false);
   const [expandedTargets, setExpandedTargets] = useState<string[]>([]);
   const [reflectModalOpen, setReflectModalOpen] = useState(false);
   const [reflectModalTarget, setReflectModalTarget] = useState<string | null>(
@@ -352,6 +360,12 @@ export const SshPage: React.FC = React.memo(() => {
       if (opts?.refreshStatus ?? true) {
         void refreshSessionStatus(nextRows.map((row) => row.target));
       }
+      const missingUpgradeTargets = nextRows.some(
+        (row) => !upgradeInfo.remotes?.[row.target],
+      );
+      if (missingUpgradeTargets) {
+        void loadUpgradeInfo({ scope: "remote" });
+      }
     } catch (err: any) {
       alert_message({
         type: "error",
@@ -363,6 +377,32 @@ export const SshPage: React.FC = React.memo(() => {
       } else {
         setLoading(false);
       }
+    }
+  };
+
+  const loadUpgradeInfo = async (opts?: {
+    force?: boolean;
+    scope?: "local" | "remote" | "all";
+  }) => {
+    setUpgradeChecking(true);
+    try {
+      const data = await webapp_client.conat_client.hub.ssh.getUpgradeInfoUI({
+        force: opts?.force,
+        scope: opts?.scope,
+      });
+      if (data) {
+        setUpgradeInfo((prev) => ({
+          local: data.local ?? prev.local,
+          remotes: {
+            ...prev.remotes,
+            ...(data.remotes || {}),
+          },
+        }));
+      }
+    } catch (err: any) {
+      // ignore upgrade check failures; surface when requested
+    } finally {
+      setUpgradeChecking(false);
     }
   };
 
@@ -479,6 +519,7 @@ export const SshPage: React.FC = React.memo(() => {
         localUrl,
       });
       await loadSessions({ background: true, refreshStatus: true });
+      await loadUpgradeInfo({ force: true, scope: "remote" });
       alert_message({
         type: "success",
         message: "Remote server upgraded",
@@ -908,6 +949,7 @@ export const SshPage: React.FC = React.memo(() => {
 
   useEffect(() => {
     loadSessions();
+    void loadUpgradeInfo();
   }, []);
 
   useEffect(() => {
@@ -1093,53 +1135,57 @@ export const SshPage: React.FC = React.memo(() => {
         render: (_, row) => {
           const opening = !!openingTargets[row.target];
           const upgrading = !!upgradingTargets[row.target];
+          const upgradeAvailable =
+            upgradeInfo.remotes?.[row.target]?.upgradeAvailable;
           return (
             <Space>
-            <Button
-              size="small"
-              onClick={() => handleOpen(row.target)}
-              loading={opening}
-              disabled={opening || upgrading}
-            >
-              Open
-            </Button>
-            {row.status === "running" ? (
-              <Popconfirm
-                title="Stop this session?"
-                description="This will stop the remote daemon for this target."
-                okText="Stop"
-                cancelText="Cancel"
-                onConfirm={() => handleStop(row.target)}
+              <Button
+                size="small"
+                onClick={() => handleOpen(row.target)}
+                loading={opening}
+                disabled={opening || upgrading}
               >
-                <Button size="small" danger disabled={upgrading}>
-                  Stop
+                Open
+              </Button>
+              {row.status === "running" ? (
+                <Popconfirm
+                  title="Stop this session?"
+                  description="This will stop the remote daemon for this target."
+                  okText="Stop"
+                  cancelText="Cancel"
+                  onConfirm={() => handleStop(row.target)}
+                >
+                  <Button size="small" danger disabled={upgrading}>
+                    Stop
+                  </Button>
+                </Popconfirm>
+              ) : null}
+              {upgradeAvailable ? (
+                <Popconfirm
+                  title="Upgrade remote server?"
+                  description="This will install the latest cocalc-plus on the remote host. Any running terminals and notebooks will restart."
+                  okText="Upgrade"
+                  cancelText="Cancel"
+                  onConfirm={() => handleUpgrade(row.target)}
+                >
+                  <Button size="small" disabled={opening || upgrading}>
+                    Upgrade
+                  </Button>
+                </Popconfirm>
+              ) : null}
+              <Popconfirm
+                title="Remove this session?"
+                description="Removes this target, and also removes any related syncs and port forwards (no files are deleted)."
+                okText="Remove"
+                cancelText="Cancel"
+                onConfirm={() => handleDeleteTarget(row.target)}
+              >
+                <Button size="small" disabled={opening || upgrading}>
+                  Remove
                 </Button>
               </Popconfirm>
-            ) : null}
-            <Popconfirm
-              title="Upgrade remote server?"
-              description="This will install the latest cocalc-plus on the remote host. Any running terminals and notebooks will restart."
-              okText="Upgrade"
-              cancelText="Cancel"
-              onConfirm={() => handleUpgrade(row.target)}
-            >
-              <Button size="small" disabled={opening || upgrading}>
-                Upgrade
-              </Button>
-            </Popconfirm>
-            <Popconfirm
-              title="Remove this session?"
-              description="Removes this target, and also removes any related syncs and port forwards (no files are deleted)."
-              okText="Remove"
-              cancelText="Cancel"
-              onConfirm={() => handleDeleteTarget(row.target)}
-            >
-              <Button size="small" disabled={opening || upgrading}>
-                Remove
-              </Button>
-            </Popconfirm>
-          </Space>
-        );
+            </Space>
+          );
         },
       },
     ],
@@ -1150,6 +1196,7 @@ export const SshPage: React.FC = React.memo(() => {
       openingStatus,
       statusLoadingTargets,
       upgradingTargets,
+      upgradeInfo,
     ],
   );
 
@@ -1349,20 +1396,16 @@ export const SshPage: React.FC = React.memo(() => {
           >
             New Sync
           </Button>
-          {hasSessions ? (
-            <>
-              <Button
-                size="small"
-                onClick={() => loadReflectForTarget(row.target)}
-                loading={state.loading}
-              >
-                Refresh
-              </Button>
-              <Button size="small" onClick={loadDaemonLogs}>
-                Logs
-              </Button>
-            </>
-          ) : null}
+          <Button
+            size="small"
+            onClick={() => loadReflectForTarget(row.target)}
+            loading={state.loading}
+          >
+            Refresh
+          </Button>
+          <Button size="small" onClick={loadDaemonLogs}>
+            Logs
+          </Button>
         </Space>
         {state.error ? (
           <Alert
@@ -1481,6 +1524,13 @@ export const SshPage: React.FC = React.memo(() => {
           loading={refreshing || loading}
         >
           Refresh
+        </Button>
+        <Button
+          size="small"
+          onClick={() => loadUpgradeInfo({ force: true })}
+          loading={upgradeChecking}
+        >
+          Check for Upgrades
         </Button>
       </Space>
       <Table
@@ -1722,12 +1772,21 @@ export const SshPage: React.FC = React.memo(() => {
             message="Unable to load logs"
             description={reflectLogError}
           />
+        ) : reflectLogLoading ? (
+          <Space size={8} align="center">
+            <Spin size="small" />
+            <Typography.Text type="secondary">Loading logs…</Typography.Text>
+          </Space>
+        ) : reflectLogRows.length === 0 ? (
+          <Empty
+            description="No daemon logs yet"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          />
         ) : (
           <Input.TextArea
             value={formatReflectLogs(reflectLogRows)}
             readOnly
             autoSize={{ minRows: 8, maxRows: 16 }}
-            placeholder={reflectLogLoading ? "Loading logs..." : "No logs"}
           />
         )}
       </Modal>

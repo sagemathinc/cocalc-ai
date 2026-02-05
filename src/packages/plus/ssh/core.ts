@@ -38,6 +38,24 @@ export type ConnectionInfo = {
   [key: string]: unknown;
 };
 
+export type VersionInfo = {
+  version: string;
+  os: string;
+  arch: string;
+  updatedAt?: string;
+  source?: string;
+};
+
+export type UpgradeInfo = {
+  currentVersion?: string;
+  latestVersion?: string;
+  upgradeAvailable: boolean;
+  os?: string;
+  arch?: string;
+  checkedAt: string;
+  error?: string;
+};
+
 export type ConnectOptions = {
   localPort?: string;
   remotePort?: string;
@@ -288,6 +306,10 @@ export type ProbeResult = {
 
 const REMOTE_STATUS_CACHE_MS = 10_000;
 const remoteStatusCache = new Map<string, { status: string; ts: number }>();
+const UPGRADE_CACHE_MS = 24 * 60 * 60 * 1000;
+const latestManifestCache = new Map<string, { data: any; ts: number }>();
+const localUpgradeCache: { info?: UpgradeInfo; ts?: number } = {};
+const remoteUpgradeCache = new Map<string, { info: UpgradeInfo; ts: number }>();
 
 function getCachedRemoteStatus(target: string, maxAgeMs = REMOTE_STATUS_CACHE_MS) {
   const cached = remoteStatusCache.get(target);
@@ -298,6 +320,282 @@ function getCachedRemoteStatus(target: string, maxAgeMs = REMOTE_STATUS_CACHE_MS
 
 function setCachedRemoteStatus(target: string, status: string) {
   remoteStatusCache.set(target, { status, ts: Date.now() });
+}
+
+function getSoftwareBaseUrl() {
+  const base =
+    process.env.COCALC_PLUS_BASE_URL ||
+    process.env.COCALC_SOFTWARE_BASE_URL ||
+    "https://software.cocalc.ai/software";
+  return base.replace(/\/+$/, "");
+}
+
+function normalizeOsArch() {
+  const platform = os.platform();
+  const osName =
+    platform === "darwin" ? "darwin" : platform === "linux" ? "linux" : platform;
+  const archRaw = os.arch();
+  const arch =
+    archRaw === "x64"
+      ? "amd64"
+      : archRaw === "arm64"
+        ? "arm64"
+        : archRaw;
+  return { os: osName, arch };
+}
+
+function compareVersions(a?: string, b?: string): number {
+  if (!a || !b) return 0;
+  const norm = (v: string) => v.split(/[+-]/)[0];
+  const partsA = norm(a).split(".").map((n) => parseInt(n, 10));
+  const partsB = norm(b).split(".").map((n) => parseInt(n, 10));
+  const len = Math.max(partsA.length, partsB.length);
+  for (let i = 0; i < len; i += 1) {
+    const va = partsA[i] ?? 0;
+    const vb = partsB[i] ?? 0;
+    if (va > vb) return 1;
+    if (va < vb) return -1;
+  }
+  return 0;
+}
+
+function extractVersion(raw?: string): string | null {
+  if (!raw) return null;
+  const match = raw.match(
+    /(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/,
+  );
+  return match?.[1] ?? null;
+}
+
+function getLatestVersion(latest: any): string | undefined {
+  if (!latest) return undefined;
+  if (typeof latest.version === "string") return latest.version;
+  const fromUrl = extractVersion(
+    typeof latest.url === "string" ? latest.url : undefined,
+  );
+  if (fromUrl) return fromUrl;
+  return undefined;
+}
+
+async function fetchJson(url: string): Promise<any> {
+  return await new Promise((resolve, reject) => {
+    const client = url.startsWith("https:") ? https : http;
+    const req = client.get(url, (res) => {
+      if (!res.statusCode || res.statusCode >= 400) {
+        res.resume();
+        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        return;
+      }
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+    req.on("error", reject);
+  });
+}
+
+async function getLatestManifest(osName: string, arch: string, force = false) {
+  const key = `${osName}-${arch}`;
+  const cached = latestManifestCache.get(key);
+  if (!force && cached && Date.now() - cached.ts < UPGRADE_CACHE_MS) {
+    return cached.data;
+  }
+  const url = `${getSoftwareBaseUrl()}/cocalc-plus/latest-${osName}-${arch}.json`;
+  const data = await fetchJson(url);
+  latestManifestCache.set(key, { data, ts: Date.now() });
+  return data;
+}
+
+async function readRemoteVersionInfo(
+  opts: SshOptions,
+  target: string,
+): Promise<VersionInfo | null> {
+  const { remoteDir } = infoPathFor(target);
+  const remoteVersionPath = `${remoteDir}/version.json`;
+  try {
+    const content = await sshExecAsync(opts, `cat ${remoteVersionPath}`);
+    const parsed = JSON.parse(content);
+    if (parsed?.version && parsed?.os && parsed?.arch) {
+      return {
+        version: String(parsed.version),
+        os: String(parsed.os),
+        arch: String(parsed.arch),
+        updatedAt: parsed.updatedAt,
+        source: "file",
+      };
+    }
+  } catch {
+    // ignore and fall back
+  }
+  try {
+    const remoteBin = await resolveRemoteBin(opts);
+    const versionRaw = await sshExecAsync(opts, `${remoteBin} version`);
+    const version = extractVersion(versionRaw) ?? "unknown";
+    const unameOs = await sshExecAsync(opts, "uname -s");
+    const unameArch = await sshExecAsync(opts, "uname -m");
+    const osName =
+      unameOs.toLowerCase().includes("darwin")
+        ? "darwin"
+        : unameOs.toLowerCase().includes("linux")
+          ? "linux"
+          : unameOs.toLowerCase();
+    let arch = unameArch.trim();
+    if (arch === "x86_64" || arch === "amd64") arch = "amd64";
+    if (arch === "aarch64" || arch === "arm64") arch = "arm64";
+    return {
+      version,
+      os: osName,
+      arch,
+      updatedAt: new Date().toISOString(),
+      source: "probe",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getLocalUpgradeInfo(
+  opts?: { force?: boolean },
+): Promise<UpgradeInfo> {
+  if (!opts?.force && localUpgradeCache.info && localUpgradeCache.ts) {
+    if (Date.now() - localUpgradeCache.ts < UPGRADE_CACHE_MS) {
+      return localUpgradeCache.info;
+    }
+  }
+  const { os: osName, arch } = normalizeOsArch();
+  let currentVersion = "unknown";
+  try {
+    const pkgPath = path.join(__dirname, "..", "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    currentVersion = pkg.version || "unknown";
+  } catch {
+    currentVersion = "unknown";
+  }
+  let latestVersion = "unknown";
+  let upgradeAvailable = false;
+  let error: string | undefined;
+  try {
+    const latest = await getLatestManifest(osName, arch, !!opts?.force);
+    latestVersion = getLatestVersion(latest) ?? "unknown";
+    upgradeAvailable =
+      currentVersion !== "unknown" &&
+      latestVersion !== "unknown" &&
+      compareVersions(currentVersion, latestVersion) < 0;
+  } catch (err: any) {
+    error = err?.message || String(err);
+  }
+  const info: UpgradeInfo = {
+    currentVersion,
+    latestVersion,
+    upgradeAvailable,
+    os: osName,
+    arch,
+    checkedAt: new Date().toISOString(),
+    error,
+  };
+  localUpgradeCache.info = info;
+  localUpgradeCache.ts = Date.now();
+  return info;
+}
+
+export async function getRemoteUpgradeInfo(
+  entry: RegistryEntry,
+  opts?: { force?: boolean },
+): Promise<UpgradeInfo> {
+  const cached = remoteUpgradeCache.get(entry.target);
+  if (!opts?.force && cached && Date.now() - cached.ts < UPGRADE_CACHE_MS) {
+    return cached.info;
+  }
+  const { host, port } = parseTarget(entry.target);
+  const sshOpts: SshOptions = {
+    host,
+    port,
+    identity: entry.identity,
+    proxyJump: entry.proxyJump,
+    sshArgs: entry.sshArgs || [],
+  };
+  const baseInfo = await readRemoteVersionInfo(sshOpts, entry.target);
+  let latestVersion = "unknown";
+  let upgradeAvailable = false;
+  let error: string | undefined;
+  if (baseInfo?.os && baseInfo?.arch && baseInfo?.version) {
+    try {
+      const latest = await getLatestManifest(
+        baseInfo.os,
+        baseInfo.arch,
+        !!opts?.force,
+      );
+      latestVersion = getLatestVersion(latest) ?? "unknown";
+      upgradeAvailable =
+        baseInfo.version !== "unknown" &&
+        latestVersion !== "unknown" &&
+        compareVersions(baseInfo.version, latestVersion) < 0;
+    } catch (err: any) {
+      error = err?.message || String(err);
+    }
+  } else {
+    error = "missing version info";
+  }
+  const info: UpgradeInfo = {
+    currentVersion: baseInfo?.version ?? "unknown",
+    latestVersion,
+    upgradeAvailable,
+    os: baseInfo?.os,
+    arch: baseInfo?.arch,
+    checkedAt: new Date().toISOString(),
+    error,
+  };
+  remoteUpgradeCache.set(entry.target, { info, ts: Date.now() });
+  return info;
+}
+
+export async function getUpgradeInfo(opts?: {
+  force?: boolean;
+  scope?: "local" | "remote" | "all";
+}): Promise<{ local?: UpgradeInfo; remotes: Record<string, UpgradeInfo> }> {
+  const scope = opts?.scope ?? "all";
+  const result: { local?: UpgradeInfo; remotes: Record<string, UpgradeInfo> } = {
+    remotes: {},
+  };
+  if (scope === "local" || scope === "all") {
+    result.local = await getLocalUpgradeInfo({ force: opts?.force });
+  }
+  if (scope === "remote" || scope === "all") {
+    const entries = listSessions();
+    const pending = entries.slice();
+    const concurrency = 4;
+    const workers = new Array(concurrency).fill(null).map(async () => {
+      while (pending.length > 0) {
+        const entry = pending.shift();
+        if (!entry) continue;
+        try {
+          const info = await getRemoteUpgradeInfo(entry, {
+            force: opts?.force,
+          });
+          result.remotes[entry.target] = info;
+        } catch (err: any) {
+          result.remotes[entry.target] = {
+            upgradeAvailable: false,
+            currentVersion: "unknown",
+            latestVersion: "unknown",
+            checkedAt: new Date().toISOString(),
+            error: err?.message || String(err),
+          };
+        }
+      }
+    });
+    await Promise.all(workers);
+  }
+  return result;
 }
 
 export function openUrl(url: string) {
@@ -483,6 +781,19 @@ export async function upgradeRemote(
   }
 }
 
+export async function upgradeLocal(): Promise<void> {
+  const cmd =
+    "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash";
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("bash", ["-lc", cmd], { stdio: "inherit" });
+    child.once("error", (err) => reject(err));
+    child.once("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`upgrade failed with code ${code}`));
+    });
+  });
+}
+
 export async function startRemote(
   opts: SshOptions,
   target: string,
@@ -499,6 +810,8 @@ export async function startRemote(
   const safeTarget = shellQuote(target);
   const authToken = options?.authToken;
   const localUrl = options?.localUrl;
+  const { remoteDir } = infoPathFor(target);
+  const remoteVersionPath = `${remoteDir}/version.json`;
   const env = [
     "HOST=127.0.0.1",
     "PORT=0",
@@ -507,6 +820,7 @@ export async function startRemote(
     "COCALC_DATA_DIR=$HOME/.local/share/cocalc-plus/data",
     `COCALC_REMOTE_SSH_TARGET=${safeTarget}`,
     `COCALC_WRITE_CONNECTION_INFO=${remoteInfoPath}`,
+    `COCALC_WRITE_VERSION_INFO=${remoteVersionPath}`,
     `COCALC_DAEMON_PIDFILE=${remotePidPath}`,
     `COCALC_DAEMON_LOG=${remoteLogPath}`,
     localUrl ? `COCALC_REMOTE_SSH_LOCAL_URL=${shellQuote(localUrl)}` : "",

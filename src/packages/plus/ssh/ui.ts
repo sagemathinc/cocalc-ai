@@ -2,12 +2,15 @@ import type { ConnectOptions, ConnectResult } from "./core";
 import {
   connectSession,
   deleteSession,
+  getUpgradeInfo,
   getRemoteStatus,
   listSessions,
   upgradeRemote,
+  upgradeLocal,
   statusSession,
   updateRegistry,
 } from "./core";
+import type { UpgradeInfo } from "./core";
 
 export type SshSessionRow = {
   target: string;
@@ -22,6 +25,11 @@ export type ConnectUiResult = {
   url: string;
   localPort: number;
   remotePort: number;
+};
+
+export type UpgradeInfoPayload = {
+  local?: UpgradeInfo;
+  remotes: Record<string, UpgradeInfo>;
 };
 
 const activeTunnels = new Map<string, ConnectResult>();
@@ -84,6 +92,13 @@ export async function statusSessionUI(target: string): Promise<string> {
   return await getRemoteStatus(entry);
 }
 
+export async function getUpgradeInfoUI(opts?: {
+  force?: boolean;
+  scope?: "local" | "remote" | "all";
+}): Promise<UpgradeInfoPayload> {
+  return await getUpgradeInfo(opts);
+}
+
 export async function addSessionUI(target: string): Promise<void> {
   const trimmed = target.trim();
   if (!trimmed) {
@@ -128,4 +143,8 @@ export async function upgradeSessionUI(
     activeTunnels.delete(target);
   }
   await upgradeRemote(entry, { localUrl });
+}
+
+export async function upgradeLocalUI(): Promise<void> {
+  await upgradeLocal();
 }

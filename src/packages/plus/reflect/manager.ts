@@ -114,11 +114,13 @@ async function logDaemon(
 ) {
   try {
     const logger = await getDaemonLogger(sessionDb);
-    const sink = logger?.logger;
-    const fn = sink?.[level] ?? sink?.info;
-    if (fn && sink) {
-      fn.call(sink, message, meta);
-      return;
+    if (logger?.logger) {
+      const sink = logger.logger;
+      const fn = sink?.[level] ?? sink?.info;
+      if (fn) {
+        fn.call(sink, message, meta);
+        return;
+      }
     }
   } catch {
     // ignore daemon logging failures

@@ -47,7 +47,8 @@ node ../../cloud/scripts/publish-r2.js \
   --latest-key "$LATEST_KEY" \
   --public-base-url "${COCALC_R2_PUBLIC_BASE_URL:-}" \
   --os "$OS" \
-  --arch "$ARCH"
+  --arch "$ARCH" \
+  --version "$VERSION"
 
 if [ -n "$TMPDIR" ]; then
   rm -rf "$TMPDIR"
