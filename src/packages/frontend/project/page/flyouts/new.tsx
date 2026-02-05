@@ -27,7 +27,6 @@ import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { file_associations } from "@cocalc/frontend/file-associations";
 import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator";
-import { DropdownMenu } from "@cocalc/frontend/components/dropdown-menu";
 import {
   NEW_FILETYPE_ICONS,
   isNewFiletypeIconName,
@@ -266,8 +265,6 @@ export function NewFlyout({
       return true;
     })
     .map((id) => APP_MAP[id]);
-  const primaryApps = appSpecs.slice(0, 4);
-  const moreApps = appSpecs.slice(4);
 
   // generate a new filename on demand, depends on the selected extension, existing files in the current directory, etc.
   function getNewFilename(ext: string): string {
@@ -655,25 +652,9 @@ export function NewFlyout({
         </div>
         <Flex justify="space-between" align="center" style={{ marginTop: "4px" }}>
           <Tag color="geekblue">Apps</Tag>
-          {moreApps.length > 0 && (
-            <DropdownMenu
-              button
-              size="small"
-              title="More..."
-              items={moreApps.map((app) => ({
-                key: app.id,
-                label: (
-                  <span>
-                    <Icon name={app.icon} /> {app.label}
-                  </span>
-                ),
-                onClick: () => setShowServerPanel(app.id),
-              }))}
-            />
-          )}
         </Flex>
         <Flex gap={6} wrap>
-          {primaryApps.map((app) => (
+          {appSpecs.map((app) => (
             <NewFileButton
               key={`flyout-app-${app.id}`}
               name={app.label}

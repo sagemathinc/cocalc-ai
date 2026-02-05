@@ -44,7 +44,6 @@ import {
   QUICK_CREATE_MAP,
 } from "./launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
-import { DropdownMenu, MenuItems } from "@cocalc/frontend/components/dropdown-menu";
 import {
   LAUNCHER_SITE_REMOVE_APPS_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
@@ -262,24 +261,12 @@ export default function NewFilePage(props: Props) {
   const appSpecs = visibleApps
     .map((id) => APP_MAP[id])
     .filter(Boolean) as { id: NamedServerName; label: string; icon: IconName }[];
-  const primaryApps = appSpecs.slice(0, 4);
-  const moreApps = appSpecs.slice(4);
   const serversDisabled: boolean =
     !!student_project_functionality.disableJupyterLabServer &&
     !!student_project_functionality.disableJupyterClassicServer &&
     !!student_project_functionality.disableVSCodeServer &&
     !!student_project_functionality.disablePlutoServer &&
     !!student_project_functionality.disableRServer;
-
-  const moreAppItems: MenuItems = moreApps.map((spec) => ({
-    key: spec.id,
-    label: (
-      <span>
-        <Icon name={spec.icon} /> {spec.label}
-      </span>
-    ),
-    onClick: () => setShowServerPanel(spec.id),
-  }));
 
   function getActions(): ProjectActions {
     if (actions == null) throw new Error("bug");
@@ -689,7 +676,7 @@ export default function NewFilePage(props: Props) {
             </Button>
           </div>
           <Space wrap>
-            {primaryApps.map((spec) => (
+            {appSpecs.map((spec) => (
               <NewFileButton
                 key={`app-${spec.id}`}
                 name={spec.label}
@@ -699,14 +686,6 @@ export default function NewFilePage(props: Props) {
                 on_click={() => setShowServerPanel(spec.id)}
               />
             ))}
-            {moreApps.length > 0 && (
-              <DropdownMenu
-                button
-                size="small"
-                title="More..."
-                items={moreAppItems}
-              />
-            )}
             {serversDisabled && (
               <Button
                 size="small"

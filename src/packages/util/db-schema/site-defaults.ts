@@ -1023,6 +1023,8 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Workspace"],
     group: "Branding & UI",
     subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
   },
   launcher_default_apps: {
     name: "Launcher: Default Apps",
@@ -1032,6 +1034,8 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Workspace"],
     group: "Branding & UI",
     subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
   },
   launcher_remove_quick_create: {
     name: "Launcher: Remove Quick Create",
@@ -1041,6 +1045,8 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Workspace"],
     group: "Branding & UI",
     subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
   },
   launcher_remove_apps: {
     name: "Launcher: Remove Apps",
@@ -1050,6 +1056,8 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Workspace"],
     group: "Branding & UI",
     subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
   },
   project_rootfs_manifest_url: {
     name: "Workspace RootFS Image Manifest URL",

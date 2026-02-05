@@ -30,6 +30,7 @@ import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
 import GcpServiceAccountWizard from "./gcp-service-account-wizard";
 import NebiusCliWizard from "./nebius-cli-wizard";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
+import LauncherDefaultsWizard from "./launcher-defaults-wizard";
 import {
   toCustomOpenAIModel,
   toOllamaModel,
@@ -854,6 +855,12 @@ export default function SiteSettings({ close }) {
           onClose={closeWizard}
           onApply={applyWizardSettings}
           softwareBaseUrl={data?.project_hosts_software_base_url}
+        />
+        <LauncherDefaultsWizard
+          open={activeWizard === "launcher-defaults"}
+          onClose={closeWizard}
+          data={data ?? {}}
+          onApply={applyWizardSettings}
         />
         <Row key="filter">
           <Col span={12}>
