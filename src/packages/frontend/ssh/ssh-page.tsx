@@ -293,6 +293,9 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectLogTitle, setReflectLogTitle] = useState<string>("Logs");
   const [reflectLogError, setReflectLogError] = useState<string | null>(null);
   const [reflectLogTarget, setReflectLogTarget] = useState<string | null>(null);
+  const [reflectLogViewMode, setReflectLogViewMode] = useState<"table" | "raw">(
+    "table",
+  );
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const [targetForm] = Form.useForm();
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
@@ -986,9 +989,54 @@ export const SshPage: React.FC = React.memo(() => {
       .join("\n");
   };
 
+  const reflectLogColumns = useMemo<ColumnsType<ReflectLogRow>>(
+    () => [
+      {
+        title: "Time",
+        key: "ts",
+        width: 190,
+        render: (_, row) => new Date(row.ts).toLocaleString(),
+      },
+      {
+        title: "Level",
+        dataIndex: "level",
+        key: "level",
+        width: 90,
+        render: (value) => <Tag>{value}</Tag>,
+      },
+      {
+        title: "Scope",
+        dataIndex: "scope",
+        key: "scope",
+        width: 180,
+        render: (value) => value || "-",
+      },
+      {
+        title: "Message",
+        dataIndex: "message",
+        key: "message",
+      },
+      {
+        title: "Meta",
+        key: "meta",
+        width: 280,
+        render: (_, row) =>
+          row.meta ? (
+            <Typography.Text type="secondary" style={{ fontFamily: "monospace" }}>
+              {JSON.stringify(row.meta)}
+            </Typography.Text>
+          ) : (
+            "-"
+          ),
+      },
+    ],
+    [],
+  );
+
   const loadSessionLogs = async (row: ReflectSessionRow) => {
     setReflectLogTitle(`Session Logs: ${row.alpha_root}`);
     setReflectLogTarget(String(row.id));
+    setReflectLogViewMode("table");
     setReflectLogError(null);
     setReflectLogLoading(true);
     setReflectLogModalOpen(true);
@@ -1012,6 +1060,7 @@ export const SshPage: React.FC = React.memo(() => {
   const loadDaemonLogs = async () => {
     setReflectLogTitle("Reflect Daemon Logs");
     setReflectLogTarget("daemon");
+    setReflectLogViewMode("table");
     setReflectLogError(null);
     setReflectLogLoading(true);
     setReflectLogModalOpen(true);
@@ -2034,11 +2083,40 @@ export const SshPage: React.FC = React.memo(() => {
             image={Empty.PRESENTED_IMAGE_SIMPLE}
           />
         ) : (
-          <Input.TextArea
-            value={formatReflectLogs(reflectLogRows)}
-            readOnly
-            autoSize={{ minRows: 8, maxRows: 16 }}
-          />
+          <>
+            <Space style={{ marginBottom: 8 }}>
+              <Button
+                size="small"
+                type={reflectLogViewMode === "table" ? "primary" : "default"}
+                onClick={() => setReflectLogViewMode("table")}
+              >
+                Pretty
+              </Button>
+              <Button
+                size="small"
+                type={reflectLogViewMode === "raw" ? "primary" : "default"}
+                onClick={() => setReflectLogViewMode("raw")}
+              >
+                Raw
+              </Button>
+            </Space>
+            {reflectLogViewMode === "table" ? (
+              <Table
+                rowKey={(row) => row.id}
+                columns={reflectLogColumns}
+                dataSource={reflectLogRows}
+                size="small"
+                pagination={false}
+                scroll={{ y: 360 }}
+              />
+            ) : (
+              <Input.TextArea
+                value={formatReflectLogs(reflectLogRows)}
+                readOnly
+                autoSize={{ minRows: 8, maxRows: 16 }}
+              />
+            )}
+          </>
         )}
       </Modal>
     </div>
