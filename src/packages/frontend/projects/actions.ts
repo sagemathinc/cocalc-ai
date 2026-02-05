@@ -250,6 +250,35 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   };
 
+  set_project_settings = async (
+    project_id: string,
+    settings: object,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set settings -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    await this.projects_table_set(
+      { project_id, settings },
+      "deep",
+    );
+  };
+
+  set_project_launcher = async (
+    project_id: string,
+    launcher: object,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set launcher defaults -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    await this.projects_table_set({ project_id, launcher }, "shallow");
+  };
+
   setProjectColor = async (
     project_id: string,
     color: string,

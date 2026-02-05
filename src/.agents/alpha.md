@@ -13,25 +13,15 @@ For alpha testing it will be deployed by:
 
 ## Blocker Todo List
 
-To make various paths much more transparent I changed the function 
+- [ ] plus: drag-n-drop to upload doesn't work; this matters because we do run this on REMOTE machines.
 
-```
-patchesStreamName
-```
-
-in `build/cocalc-lite/src/packages/conat/sync/synctable-stream.ts` to take just the path of the document as input, instead of the string_id (which is a sha1 hash).  I think I updated all callers to use this, except I haven't updated the use of patchesStreamName here:
-
-`build/cocalc-lite/src/packages/backend/sandbox/sync-fs-service.ts` 
-
-It's a little tricky.  Can you look into it?
-
-- [ ] do not compress patches in sqlite db; this will make searching the full history possible and use by external tools very easy.
-
-- [ ] codex: eliminate the markdown links instructions and instead use a heuristic to turn files refs that it outputs into links
-
-- [ ] opening files not in HOME
-
-- [ ] #bug chat scroll position jumping -- happens a lot when switching between two rooms
+- [ ] opening files not in \$HOME
+  - [ ] #bug in cocalc-plus I did this: `ln -s / .root; open .root` and ended up with an unclosable broken tab.
+  - [ ] just fully go through and support PATH's that start with /, but have them give an error when access through safe fs sandbox.  Make paths starting with / map to the overlayfs mountpoint if it exists; if it doesn't, it's an error saying you must start the workspace.  The location of the overlayfs will be input to creating the sandbox.  Finally if an absolute path is in the actual home directory of the user, that's an error, to keep things canonical.
+  - [ ] for the persist server, we have directories -- jupyter/, patchflow/, etc., that have a relative-to-home path under them.  For absolute paths we have to similarly name things, so how about we just do:
+    - jupyter/root and jupyter/home
+    - patchflow/root and patchflow/home
+  - Alternative to all of this... just make ALL paths absolute.  Is it possible?
 
 - [ ] plus: implement remote ssh, sync, and port forward integration
 
@@ -59,7 +49,7 @@ It's a little tricky.  Can you look into it?
 
 - [ ] launchpad: ssh to project via cloudflare tunnels and WARP, and/or just expose the ip of the server.
 
-- [ ] codex: ui -- the headers in the thinking log get smooshed together still
+- [ ] codex: ui -- the markdown headers in the thinking log get smooshed together still
 
 - [ ] codex: memory leak when using codex chat for a long time
 
