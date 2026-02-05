@@ -1041,7 +1041,7 @@ export class ChatActions extends Actions<ChatState> {
       }
     }
     if (nextConfig && !nextConfig.model) {
-      nextConfig.model = "gpt-5.2-codex";
+      nextConfig.model = "gpt-5.3-codex";
     }
 
     const now = webapp_client.server_time();
