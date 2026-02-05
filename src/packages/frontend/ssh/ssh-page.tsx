@@ -2121,7 +2121,7 @@ export const SshPage: React.FC = React.memo(() => {
         open={reflectLogModalOpen}
         onCancel={() => setReflectLogModalOpen(false)}
         width={1200}
-        styles={{ body: { maxHeight: "70vh", overflowY: "hidden" } }}
+        styles={{ body: { overflowY: "hidden" } }}
         footer={[
           <Button
             key="refresh"
@@ -2178,7 +2178,7 @@ export const SshPage: React.FC = React.memo(() => {
                 size="small"
                 pagination={false}
                 tableLayout="fixed"
-                scroll={{ y: 360 }}
+                scroll={{ y: 420 }}
               />
             ) : (
               <Input.TextArea
