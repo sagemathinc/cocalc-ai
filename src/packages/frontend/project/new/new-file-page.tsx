@@ -68,20 +68,23 @@ const CREATE_MSG = defineMessage({
 
 interface Props {
   project_id: string;
+  initialFilename?: string;
+  autoFocusFilename?: boolean;
 }
 
 export default function NewFilePage(props: Props) {
   const intl = useIntl();
+  const { project_id, initialFilename, autoFocusFilename = true } = props;
   const inputRef = useRef<any>(null);
   useEffect(() => {
+    if (!autoFocusFilename) return;
     setTimeout(() => {
       if (inputRef.current) {
         inputRef.current.focus();
         inputRef.current.select();
       }
     }, 1);
-  }, []);
-  const { project_id } = props;
+  }, [autoFocusFilename]);
   const actions = useActions({ project_id });
   const availableFeatures = useAvailableFeatures(project_id);
   const student_project_functionality =
@@ -124,9 +127,16 @@ export default function NewFilePage(props: Props) {
   const [extensionWarning, setExtensionWarning] = useState<boolean>(false);
   const current_path = useTypedRedux({ project_id }, "current_path");
   const filename0 = useTypedRedux({ project_id }, "default_filename");
+  const fallbackFilename = filename0
+    ? filename0
+    : default_filename(undefined, project_id);
   const [filename, setFilename] = useState<string>(
-    filename0 ? filename0 : default_filename(undefined, project_id),
+    initialFilename?.trim() ? initialFilename : fallbackFilename,
   );
+  useEffect(() => {
+    if (initialFilename === undefined) return;
+    setFilename(initialFilename.trim() ? initialFilename : fallbackFilename);
+  }, [initialFilename, fallbackFilename]);
   const [aiPrompt, setAiPrompt] = useState<string>("");
   const [aiExt, setAiExt] = useState<Ext>("ipynb");
   const [showAiModal, setShowAiModal] = useState<boolean>(false);
@@ -535,7 +545,7 @@ export default function NewFilePage(props: Props) {
             <Input
               size="large"
               ref={inputRef}
-              autoFocus
+              autoFocus={autoFocusFilename}
               value={filename}
               disabled={extensionWarning}
               placeholder={"Name your file, folder, or a URL to download from..."}

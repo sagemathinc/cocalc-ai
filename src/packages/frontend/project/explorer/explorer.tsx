@@ -45,7 +45,6 @@ import useListing, {
 import useBackupsListing from "@cocalc/frontend/project/listing/use-backups";
 import filterListing from "@cocalc/frontend/project/listing/filter-listing";
 import ShowError from "@cocalc/frontend/components/error";
-import { MainConfiguration } from "@cocalc/frontend/project_configuration";
 import {
   getPublicFiles,
   useStrippedPublicPaths,
@@ -632,9 +631,6 @@ export function Explorer() {
                 actions={actions}
                 project_id={project_id}
                 shiftIsDown={shiftIsDown}
-                configuration_main={
-                  configuration?.get("main") as MainConfiguration | undefined
-                }
                 publicFiles={publicFiles}
               />
             )}
