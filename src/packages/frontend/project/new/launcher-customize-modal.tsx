@@ -22,10 +22,8 @@ import {
   QUICK_CREATE_MAP,
 } from "./launcher-catalog";
 import {
-  buildHiddenList,
   LauncherProjectDefaults,
   LauncherUserPrefs,
-  LAUNCHER_GLOBAL_DEFAULTS,
 } from "./launcher-preferences";
 
 function move<T>(list: T[], index: number, delta: number): T[] {
@@ -46,6 +44,10 @@ interface Props {
   onClose: () => void;
   initialQuickCreate: string[];
   initialApps: NamedServerName[];
+  userBaseQuickCreate?: string[];
+  userBaseApps?: NamedServerName[];
+  projectBaseQuickCreate?: string[];
+  projectBaseApps?: NamedServerName[];
   globalDefaults?: LauncherProjectDefaults;
   onSaveUser?: (prefs: LauncherUserPrefs | null) => void;
   onSaveProject?: (prefs: LauncherProjectDefaults) => void;
@@ -58,7 +60,10 @@ export function LauncherCustomizeModal({
   onClose,
   initialQuickCreate,
   initialApps,
-  globalDefaults,
+  userBaseQuickCreate,
+  userBaseApps,
+  projectBaseQuickCreate,
+  projectBaseApps,
   onSaveUser,
   onSaveProject,
   canEditProjectDefaults = false,
@@ -66,6 +71,10 @@ export function LauncherCustomizeModal({
 }: Props) {
   const [quickCreate, setQuickCreate] = useState<string[]>([]);
   const [apps, setApps] = useState<NamedServerName[]>([]);
+  const userBaseQuick = userBaseQuickCreate ?? initialQuickCreate;
+  const userBaseAppList = userBaseApps ?? initialApps;
+  const projectBaseQuick = projectBaseQuickCreate ?? userBaseQuick;
+  const projectBaseAppList = projectBaseApps ?? userBaseApps ?? initialApps;
 
   useEffect(() => {
     if (!open) return;
@@ -98,11 +107,15 @@ export function LauncherCustomizeModal({
       onClose();
       return;
     }
+    const addQuick = quickCreate.filter((id) => !userBaseQuick.includes(id));
+    const removeQuick = userBaseQuick.filter((id) => !quickCreate.includes(id));
+    const addApps = apps.filter((id) => !userBaseAppList.includes(id));
+    const removeApps = userBaseAppList.filter((id) => !apps.includes(id));
     onSaveUser({
-      quickCreate,
-      apps,
-      hiddenQuickCreate: buildHiddenList(quickCreate, QUICK_CREATE_MAP),
-      hiddenApps: buildHiddenList(apps, APP_MAP),
+      quickCreate: addQuick,
+      apps: addApps,
+      hiddenQuickCreate: removeQuick,
+      hiddenApps: removeApps,
     });
     onClose();
   }
@@ -117,7 +130,16 @@ export function LauncherCustomizeModal({
   }
 
   function saveProjectDefaults() {
-    onSaveProject?.({ quickCreate, apps });
+    const addQuick = quickCreate.filter((id) => !projectBaseQuick.includes(id));
+    const removeQuick = projectBaseQuick.filter((id) => !quickCreate.includes(id));
+    const addApps = apps.filter((id) => !projectBaseAppList.includes(id));
+    const removeApps = projectBaseAppList.filter((id) => !apps.includes(id));
+    onSaveProject?.({
+      quickCreate: addQuick,
+      apps: addApps as string[],
+      hiddenQuickCreate: removeQuick,
+      hiddenApps: removeApps,
+    });
     onClose();
   }
 
@@ -126,20 +148,7 @@ export function LauncherCustomizeModal({
   }
 
   function resetProjectDefaults() {
-    const defaults = {
-      quickCreate:
-        globalDefaults?.quickCreate?.length
-          ? globalDefaults.quickCreate
-          : LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-      apps:
-        globalDefaults?.apps?.length
-          ? globalDefaults.apps
-          : LAUNCHER_GLOBAL_DEFAULTS.apps,
-    };
-    onSaveProject?.({
-      quickCreate: defaults.quickCreate,
-      apps: defaults.apps,
-    });
+    onSaveProject?.({});
     onClose();
   }
 

@@ -46,12 +46,14 @@ import {
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { DropdownMenu, MenuItems } from "@cocalc/frontend/components/dropdown-menu";
 import {
+  LAUNCHER_SITE_REMOVE_APPS_KEY,
+  LAUNCHER_SITE_REMOVE_QUICK_KEY,
   LAUNCHER_SITE_DEFAULTS_APPS_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
   getProjectLauncherDefaults,
   getSiteLauncherDefaults,
-  getUserLauncherPrefs,
+  getUserLauncherLayers,
   mergeLauncherSettings,
   updateUserLauncherPrefs,
 } from "./launcher-preferences";
@@ -94,6 +96,14 @@ export default function NewFilePage(props: Props) {
   const site_launcher_apps = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
+  const site_remove_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  );
+  const site_remove_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_APPS_KEY,
   );
   const project_launcher = useRedux([
     "projects",
@@ -140,15 +150,26 @@ export default function NewFilePage(props: Props) {
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
     apps: site_launcher_apps,
+    hiddenQuickCreate: site_remove_quick,
+    hiddenApps: site_remove_apps,
   });
-  const userLauncherPrefs = getUserLauncherPrefs(
+  const userLauncherLayers = getUserLauncherLayers(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
     project_id,
   );
+  const inheritedForProjectUser = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+    projectDefaults: projectLauncherDefaults,
+    accountUserPrefs: userLauncherLayers.account,
+  });
+  const inheritedForProjectDefaults = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+  });
   const mergedLauncher = mergeLauncherSettings({
     globalDefaults: siteLauncherDefaults,
     projectDefaults: projectLauncherDefaults,
-    userPrefs: userLauncherPrefs,
+    accountUserPrefs: userLauncherLayers.account,
+    projectUserPrefs: userLauncherLayers.project,
   });
 
   function isQuickCreateAvailable(id: string): boolean {
@@ -708,6 +729,10 @@ export default function NewFilePage(props: Props) {
         onClose={() => setShowCustomizeModal(false)}
         initialQuickCreate={mergedLauncher.quickCreate}
         initialApps={mergedLauncher.apps as NamedServerName[]}
+        userBaseQuickCreate={inheritedForProjectUser.quickCreate}
+        userBaseApps={inheritedForProjectUser.apps as NamedServerName[]}
+        projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
+        projectBaseApps={inheritedForProjectDefaults.apps as NamedServerName[]}
         globalDefaults={siteLauncherDefaults}
         onSaveUser={saveUserLauncherPrefs}
         onSaveProject={saveProjectLauncherDefaults}

@@ -120,6 +120,8 @@ export type SiteSettingsKeys =
   | "project_hosts_dns"
   | "launcher_default_quick_create"
   | "launcher_default_apps"
+  | "launcher_remove_quick_create"
+  | "launcher_remove_apps"
   | "project_rootfs_manifest_url"
   | "project_rootfs_manifest_url_extra"
   | "project_rootfs_default_image"
@@ -1026,6 +1028,24 @@ export const site_settings_conf: SiteSettings = {
     name: "Launcher: Default Apps",
     desc: "Comma-separated default app ids shown in launcher sections when project and user defaults are unset (e.g. jupyterlab,code,jupyter,pluto,rserver).",
     default: "jupyterlab,code,jupyter,pluto,rserver",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+  },
+  launcher_remove_quick_create: {
+    name: "Launcher: Remove Quick Create",
+    desc: "Comma-separated quick-create ids removed from inherited launcher defaults at the site level.",
+    default: "",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+  },
+  launcher_remove_apps: {
+    name: "Launcher: Remove Apps",
+    desc: "Comma-separated app ids removed from inherited launcher defaults at the site level.",
+    default: "",
     to_val: split_csv_tokens,
     tags: ["Workspace"],
     group: "Branding & UI",

@@ -43,9 +43,11 @@ import {
 } from "@cocalc/frontend/project/new/launcher-catalog";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import {
+  LAUNCHER_SITE_REMOVE_APPS_KEY,
+  LAUNCHER_SITE_REMOVE_QUICK_KEY,
   LAUNCHER_SITE_DEFAULTS_APPS_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
-  getUserLauncherPrefs,
+  getUserLauncherLayers,
   LAUNCHER_SETTINGS_KEY,
   getSiteLauncherDefaults,
   mergeLauncherSettings,
@@ -89,6 +91,14 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   const site_launcher_apps = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
+  const site_remove_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  );
+  const site_remove_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_APPS_KEY,
   );
   const [showLauncherCustomize, setShowLauncherCustomize] = useState(false);
 
@@ -418,12 +428,18 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
     apps: site_launcher_apps,
+    hiddenQuickCreate: site_remove_quick,
+    hiddenApps: site_remove_apps,
   });
+  const userLauncherLayers = getUserLauncherLayers(
+    props.other_settings.get(LAUNCHER_SETTINGS_KEY),
+  );
   const accountLauncher = mergeLauncherSettings({
     globalDefaults: siteLauncherDefaults,
-    userPrefs: getUserLauncherPrefs(
-      props.other_settings.get(LAUNCHER_SETTINGS_KEY),
-    ),
+    accountUserPrefs: userLauncherLayers.account,
+  });
+  const inheritedForAccount = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
   });
   const accountQuickCreateSpecs = accountLauncher.quickCreate.map((id) => {
     const spec = QUICK_CREATE_MAP[id];
@@ -543,6 +559,8 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
           onClose={() => setShowLauncherCustomize(false)}
           initialQuickCreate={accountLauncher.quickCreate}
           initialApps={accountLauncher.apps as NamedServerName[]}
+          userBaseQuickCreate={inheritedForAccount.quickCreate}
+          userBaseApps={inheritedForAccount.apps as NamedServerName[]}
           globalDefaults={siteLauncherDefaults}
           onSaveUser={(prefs) => {
             on_change(

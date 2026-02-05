@@ -171,6 +171,8 @@ export interface CustomizeState {
   project_hosts_dns?: string;
   launcher_default_quick_create?: List<string>;
   launcher_default_apps?: List<string>;
+  launcher_remove_quick_create?: List<string>;
+  launcher_remove_apps?: List<string>;
   project_rootfs_manifest_url?: string;
   project_rootfs_manifest_url_extra?: string;
   project_rootfs_default_image?: string;
