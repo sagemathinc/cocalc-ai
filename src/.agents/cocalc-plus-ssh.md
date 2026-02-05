@@ -1,24 +1,55 @@
 # CoCalc Plus SSH Remote Mode (Draft Strategy)
 
+## Updated finish plan (2026-02-05)
+
+### Phase 1: UX correctness and visibility (low risk, immediate user value)
+
+- [ ] auto-start sync scheduler when creating a new remote session (optional default + toggle)
+- [ ] sync confidence/status surface: "all files synced" + on-demand deep check/progress
+- [ ] window title in lite remote mode should include target
+- [ ] fix opening `files/some/path` on remote
+- [ ] support opening paths outside HOME (`files/.root/...`) in a stable way
+- [ ] verify remove-session fully terminates related forwards/processes (the lingering `ps` case)
+
+### Phase 2: runtime robustness and operability (medium risk)
+
+- [ ] robust cleanup policy for stale sessions/tunnels (explicit remove remains authoritative)
+- [ ] login-shell/PATH behavior parity
+- [ ] cache cleanup of old extracted versions under `~/.cache/cocalc/cocalc-plus/`
+- [ ] startup version checks + mismatch warning path in CLI/UI
+- [ ] remote daemon lifecycle hardening (graceful stop + reliable health/status)
+- [ ] diagnostics expansion (`--verbose-ssh`)
+- [ ] SSH hardening UX (`--no-install`, `--forward-only`, clearer failures)
+
+### Phase 3: platform/product expansion (higher scope)
+
+- [ ] config sync bundle (opt-in)
+- [ ] secrets sync model (opt-in, secure-by-default)
+- [ ] uninstall workflow (`cocalc-plus uninstall` + `--purge`)
+- [ ] Electron app
+- [ ] docs/site quality pass
+
 ## Reflect Sync UI todo
 
 - [ ] automatically start on create of new remote session
 
+- [ ] connecting via ssh doesn't work on macos 
+
 - [ ] more status of sync: are all files sync'd or are some not sync'd?  Checkbox if they are all sync'd.  This is possibly expensive so click to update (?).  If sync'ing a lot of data, this could provide a "percent done" sort of thing. 
 
-- [ ] remote server upgrade -- make it one click to upgrade a remote server to the latest available version; we need to determine somehow if there even is a newer version, etc. (since latest version may vary depending on architecture).  Also this needs a warning because any running notebooks and terminals are reset on upgrade.
+- [x] remote server upgrade -- make it one click to upgrade a remote server to the latest available version; we need to determine somehow if there even is a newer version, etc. (since latest version may vary depending on architecture).  Also this needs a warning because any running notebooks and terminals are reset on upgrade.
 
-- [ ] local server upgrade: if the local server is out of date, it would be very good to also have a way to click a button and upgrade it...
+- [x] local server upgrade: if the local server is out of date, it would be very good to also have a way to click a button and upgrade it...
 
-- [ ] projects already have a color that can be set in project settings.  it does NOTHING in lite mode, since normally it only impacts the project tab, which isn't displayed in lite mode. Let's make it so the color of the project is shows as a 3px solid border on the left of the screen, i.e., add a `border-left` style to the component with class cocalc-webapp-container.
+- [x] projects already have a color that can be set in project settings.  it does NOTHING in lite mode, since normally it only impacts the project tab, which isn't displayed in lite mode. Let's make it so the color of the project is shows as a 3px solid border on the left of the screen, i.e., add a `border-left` style to the component with class cocalc-webapp-container.
 
-- [ ] filter -- a box where you can type and only the remote sessions whose target match are shown
+- [x] filter -- a box where you can type and only the remote sessions whose target match are shown
 
-- [ ] add a little "copy" icon next to the target name/url, so it's easy to copy (right now it's impossible).
+- [x] add a little "copy" icon next to the target name/url, so it's easy to copy (right now it's impossible).
 
-- [ ] starring -- i.e., a column where you can start certain sessions
+- [x] starring -- i.e., a column where you can start certain sessions
 
-- [ ] sorting -- sort by some columns; antd makes this easy - target, starred, status, last used
+- [x] sorting -- sort by some columns; antd makes this easy - target, starred, status, last used
 
 - [ ] window title: in lite mode when whatever is set to make that "Remote: " button appear in the upper right, it would be good to short circuit whatever displays the window title and instead have the SSH target as the title, since otherwise it is very hard to distinguish these sessions.
 
@@ -131,7 +162,7 @@
 
 - [ ] Diagnostics: --log-level debug already exists; add --verbose-ssh to show exact commands.
 
-- [ ] enable proxying of remote apps (e.g., jupyterlab) and make sure it works
+- [x] enable proxying of remote apps (e.g., jupyterlab) and make sure it works
   - this is probably just enabling a button in the frontend when lite mode is true, instead of explicitly disabling it; there might not be anything else to do.
 
 - [ ] Create an Electron App.
@@ -146,7 +177,7 @@
     - don't allow a local path that is contained in another path or contains another path (for simplicity and to avoid confusion
   - [x] also make port forwards be part of the remote ssh target:
     - local port, remote port (defaults to remote=local port), optional direction (defaults to remote --&gt; local)
-  - [ ] improve logs to be less confusing
+  - [x] improve logs to be less confusing
 
 - [ ] document how this works and that remote sessions are persistent (e.g., terminals, jupyter kernels, etc. do not stop). 
 
