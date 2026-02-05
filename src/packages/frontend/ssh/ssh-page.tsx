@@ -398,6 +398,21 @@ export const SshPage: React.FC = React.memo(() => {
             ...(data.remotes || {}),
           },
         }));
+        if (data.local && typeof window !== "undefined") {
+          try {
+            window.localStorage.setItem(
+              "cocalc-plus-upgrade-info",
+              JSON.stringify(data.local),
+            );
+            window.dispatchEvent(
+              new CustomEvent("cocalc-plus-upgrade-info", {
+                detail: data.local,
+              }),
+            );
+          } catch {
+            // ignore storage errors
+          }
+        }
       }
     } catch (err: any) {
       // ignore upgrade check failures; surface when requested
@@ -1527,7 +1542,7 @@ export const SshPage: React.FC = React.memo(() => {
         </Button>
         <Button
           size="small"
-          onClick={() => loadUpgradeInfo({ force: true })}
+          onClick={() => loadUpgradeInfo({ force: true, scope: "all" })}
           loading={upgradeChecking}
         >
           Check for Upgrades

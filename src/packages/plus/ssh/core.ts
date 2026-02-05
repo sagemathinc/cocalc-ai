@@ -311,6 +311,56 @@ const latestManifestCache = new Map<string, { data: any; ts: number }>();
 const localUpgradeCache: { info?: UpgradeInfo; ts?: number } = {};
 const remoteUpgradeCache = new Map<string, { info: UpgradeInfo; ts: number }>();
 
+function extractVersionFromPath(value?: string) {
+  if (!value) return undefined;
+  const match = value.match(/[/\\]cocalc[/\\][^/\\]+[/\\]([^/\\]+)[/\\]/);
+  return match?.[1];
+}
+
+function getLocalVersion(): string {
+  if (process.env.COCALC_PLUS_VERSION) return process.env.COCALC_PLUS_VERSION;
+  if (process.env.COCALC_PROJECT_HOST_VERSION)
+    return process.env.COCALC_PROJECT_HOST_VERSION;
+  if (process.env.COCALC_SEA_VERSION) return process.env.COCALC_SEA_VERSION;
+  if (process.env.npm_package_version) return process.env.npm_package_version;
+  const pathVersion =
+    extractVersionFromPath(process.env.COCALC_BIN_PATH) ||
+    extractVersionFromPath(__dirname);
+  if (pathVersion) return pathVersion;
+  try {
+    const pkgPath = path.join(__dirname, "..", "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    if (pkg?.version) return pkg.version;
+  } catch {
+    // ignore
+  }
+  try {
+    const pkgPath = path.join(process.cwd(), "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    if (pkg?.version) return pkg.version;
+  } catch {
+    // ignore
+  }
+  try {
+    const baseDir =
+      process.env.COCALC_PLUS_HOME ??
+      process.env.COCALC_DATA_DIR ??
+      path.join(os.homedir(), ".local", "share", "cocalc-plus");
+    const candidates = [
+      path.join(baseDir, "version.json"),
+      path.join(baseDir, "data", "version.json"),
+    ];
+    for (const versionPath of candidates) {
+      if (!fs.existsSync(versionPath)) continue;
+      const raw = JSON.parse(fs.readFileSync(versionPath, "utf8"));
+      if (raw?.version) return raw.version;
+    }
+  } catch {
+    // ignore
+  }
+  return "unknown";
+}
+
 function getCachedRemoteStatus(target: string, maxAgeMs = REMOTE_STATUS_CACHE_MS) {
   const cached = remoteStatusCache.get(target);
   if (!cached) return null;
@@ -472,14 +522,7 @@ export async function getLocalUpgradeInfo(
     }
   }
   const { os: osName, arch } = normalizeOsArch();
-  let currentVersion = "unknown";
-  try {
-    const pkgPath = path.join(__dirname, "..", "..", "package.json");
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-    currentVersion = pkg.version || "unknown";
-  } catch {
-    currentVersion = "unknown";
-  }
+  const currentVersion = getLocalVersion();
   let latestVersion = "unknown";
   let upgradeAvailable = false;
   let error: string | undefined;

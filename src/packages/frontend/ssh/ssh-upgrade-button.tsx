@@ -20,6 +20,7 @@ const LABEL_STYLE: React.CSSProperties = {
 } as const;
 
 const SKIP_KEY = "cocalc-plus-upgrade-skip";
+const INFO_KEY = "cocalc-plus-upgrade-info";
 
 export default function SshUpgradeButton() {
   const [upgradeInfo, setUpgradeInfo] = React.useState<UpgradeInfo | null>(null);
@@ -48,7 +49,32 @@ export default function SshUpgradeButton() {
   }, []);
 
   React.useEffect(() => {
+    const readStored = () => {
+      try {
+        const raw = window.localStorage.getItem(INFO_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed?.currentVersion || parsed?.latestVersion) {
+          setUpgradeInfo(parsed);
+        }
+      } catch {
+        // ignore storage parse errors
+      }
+    };
+    readStored();
     void loadUpgradeInfo(false);
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as UpgradeInfo | undefined;
+      if (detail) {
+        setUpgradeInfo(detail);
+      } else {
+        readStored();
+      }
+    };
+    window.addEventListener("cocalc-plus-upgrade-info", handler);
+    return () => {
+      window.removeEventListener("cocalc-plus-upgrade-info", handler);
+    };
   }, [loadUpgradeInfo]);
 
   const latestVersion = upgradeInfo?.latestVersion;
