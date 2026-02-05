@@ -4,9 +4,9 @@
 
 ### Phase 1: UX correctness and visibility (low risk, immediate user value)
 
-- [ ] auto-start sync scheduler when creating a new remote session (optional default + toggle)
-- [ ] sync confidence/status surface: "all files synced" + on-demand deep check/progress
-- [ ] window title in lite remote mode should include target
+- [x] auto-start sync scheduler when creating a new remote session (optional default + toggle)
+- [x] sync confidence/status surface: "all files synced" + on-demand deep check/progress
+- [x] window title in lite remote mode should include target
 - [ ] fix opening `files/some/path` on remote
 - [ ] support opening paths outside HOME (`files/.root/...`) in a stable way
 - [ ] verify remove-session fully terminates related forwards/processes (the lingering `ps` case)
@@ -51,7 +51,7 @@
 
 - [x] sorting -- sort by some columns; antd makes this easy - target, starred, status, last used
 
-- [ ] window title: in lite mode when whatever is set to make that "Remote: " button appear in the upper right, it would be good to short circuit whatever displays the window title and instead have the SSH target as the title, since otherwise it is very hard to distinguish these sessions.
+- [x] window title: in lite mode when whatever is set to make that "Remote: " button appear in the upper right, it would be good to short circuit whatever displays the window title and instead have the SSH target as the title, since otherwise it is very hard to distinguish these sessions.
 
 - [ ] fix bug that opening cocalc-plus at files/some/path does not work. 
 
