@@ -168,18 +168,23 @@ function formatForwardRemote(fwd: ReflectForwardRow, target?: string) {
   return endpoint;
 }
 
-function normalizeSyncPath(path: string): string {
+function normalizeSyncPath(path: string): string | null {
   const trimmed = path.trim();
   if (!trimmed) return "";
   if (trimmed === "~") return "";
   if (trimmed.startsWith("~/")) {
     return trimmed.slice(2);
   }
-  const homeMatch = /^(\/(?:home|Users)\/[^/]+)(?:\/(.*))?$/.exec(trimmed);
+  if (!trimmed.startsWith("/")) {
+    return trimmed.replace(/^\.\/+/, "");
+  }
+  const homeMatch = /^(\/(?:home|Users)\/[^/]+|\/root)(?:\/(.*))?$/.exec(
+    trimmed,
+  );
   if (homeMatch) {
     return homeMatch[2] ?? "";
   }
-  return trimmed.replace(/^\/+/, "");
+  return null;
 }
 
 function encodePathSegments(path: string): string {
@@ -861,6 +866,13 @@ export const SshPage: React.FC = React.memo(() => {
     const actions = redux.getProjectActions(project_id);
     if (!actions) return;
     const normalized = normalizeSyncPath(path);
+    if (normalized == null) {
+      alert_message({
+        type: "info",
+        message: "Opening paths outside $HOME is not supported yet.",
+      });
+      return;
+    }
     actions.open_directory(normalized);
     redux.getActions("page").set_active_tab(project_id);
   };
@@ -884,6 +896,13 @@ export const SshPage: React.FC = React.memo(() => {
         typeof window !== "undefined" ? window.location.href : undefined;
       const windowName = localUrl ? `cocalc|${localUrl}` : undefined;
       const normalized = normalizeSyncPath(path);
+      if (normalized == null) {
+        alert_message({
+          type: "info",
+          message: "Opening paths outside $HOME is not supported yet.",
+        });
+        return;
+      }
       const encoded = encodePathSegments(normalized);
       const url = new URL(result.url);
       const base = url.pathname.endsWith("/")
