@@ -17,10 +17,11 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { InfoCircleOutlined } from "@ant-design/icons";
+import { CopyOutlined, InfoCircleOutlined } from "@ant-design/icons";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
   CSS,
@@ -272,6 +273,7 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectLogTarget, setReflectLogTarget] = useState<string | null>(null);
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const [targetForm] = Form.useForm();
+  const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
   const [targetFilter, setTargetFilter] = useState<string>(() => {
     if (typeof window === "undefined") return "";
     try {
@@ -510,6 +512,21 @@ export const SshPage: React.FC = React.memo(() => {
     } finally {
       setOpeningTargets((prev) => ({ ...prev, [target]: false }));
       setOpeningStatus((prev) => ({ ...prev, [target]: "" }));
+    }
+  };
+
+  const handleCopyTarget = async (target: string) => {
+    try {
+      await navigator.clipboard.writeText(target);
+      setCopiedTarget(target);
+      setTimeout(() => {
+        setCopiedTarget((current) => (current === target ? null : current));
+      }, 1200);
+    } catch {
+      alert_message({
+        type: "error",
+        message: "Unable to copy target",
+      });
     }
   };
 
@@ -1033,15 +1050,27 @@ export const SshPage: React.FC = React.memo(() => {
         render: (value, row) => {
           const opening = !!openingTargets[row.target];
           return (
-            <Button
-              size="small"
-              type="link"
-              onClick={() => handleOpen(row.target)}
-              loading={opening}
-              disabled={opening}
-            >
-              {value}
-            </Button>
+            <Space size={6}>
+              <Button
+                size="small"
+                type="link"
+                onClick={() => handleOpen(row.target)}
+                loading={opening}
+                disabled={opening}
+              >
+                {value}
+              </Button>
+              <Tooltip
+                title={copiedTarget === row.target ? "Copied" : "Copy target"}
+              >
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<CopyOutlined />}
+                  onClick={() => handleCopyTarget(row.target)}
+                />
+              </Tooltip>
+            </Space>
           );
         },
       },
@@ -1242,6 +1271,7 @@ export const SshPage: React.FC = React.memo(() => {
       statusLoadingTargets,
       upgradingTargets,
       upgradeInfo,
+      copiedTarget,
     ],
   );
 
