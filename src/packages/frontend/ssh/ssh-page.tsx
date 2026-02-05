@@ -68,6 +68,18 @@ type ReflectTargetState = {
   error: string | null;
 };
 
+type SshSortField = "starred" | "target" | "status" | "lastUsed";
+type SshSortDirection = "asc" | "desc";
+
+const SSH_STATUS_ORDER = ["running", "stopped", "unknown"] as const;
+const SSH_STATUS_RANK: Record<string, number> = SSH_STATUS_ORDER.reduce(
+  (acc, status, index) => {
+    acc[status] = index;
+    return acc;
+  },
+  {} as Record<string, number>,
+);
+
 function statusTag(status?: string) {
   const value = status ?? "unknown";
   if (value === "running") return <Tag color="green">running</Tag>;
@@ -104,6 +116,14 @@ function reflectStateTag(state?: string) {
   if (state === "stopped") return <Tag color="default">stopped</Tag>;
   if (state === "error") return <Tag color="red">error</Tag>;
   return <Tag>{state}</Tag>;
+}
+
+function compareText(a?: string, b?: string) {
+  return (a ?? "").localeCompare(b ?? "", undefined, { sensitivity: "base" });
+}
+
+function compareNumber(a?: number, b?: number) {
+  return (a ?? 0) - (b ?? 0);
 }
 
 function formatForwardLocal(fwd: ReflectForwardRow) {
@@ -284,6 +304,8 @@ export const SshPage: React.FC = React.memo(() => {
       return "";
     }
   });
+  const [sortField, setSortField] = useState<SshSortField>("starred");
+  const [sortDirection, setSortDirection] = useState<SshSortDirection>("asc");
   const ignoreHelp = (
     <Typography.Text type="secondary">
       Use gitignore-style patterns.{" "}
@@ -1083,6 +1105,14 @@ export const SshPage: React.FC = React.memo(() => {
         key: "starred",
         width: 48,
         align: "center",
+        sorter: true,
+        sortDirections: ["ascend", "descend"],
+        sortOrder:
+          sortField === "starred"
+            ? sortDirection === "asc"
+              ? "ascend"
+              : "descend"
+            : undefined,
         onCell: () => ({
           onClick: (event: React.MouseEvent) => {
             event.stopPropagation();
@@ -1108,6 +1138,14 @@ export const SshPage: React.FC = React.memo(() => {
         title: "Target",
         dataIndex: "target",
         key: "target",
+        sorter: true,
+        sortDirections: ["ascend", "descend"],
+        sortOrder:
+          sortField === "target"
+            ? sortDirection === "asc"
+              ? "ascend"
+              : "descend"
+            : undefined,
         render: (value, row) => {
           const opening = !!openingTargets[row.target];
           return (
@@ -1221,6 +1259,14 @@ export const SshPage: React.FC = React.memo(() => {
         dataIndex: "status",
         key: "status",
         width: 140,
+        sorter: true,
+        sortDirections: ["ascend", "descend"],
+        sortOrder:
+          sortField === "status"
+            ? sortDirection === "asc"
+              ? "ascend"
+              : "descend"
+            : undefined,
         render: (_, row) => {
           if (upgradingTargets[row.target]) {
             return (
@@ -1262,6 +1308,14 @@ export const SshPage: React.FC = React.memo(() => {
         title: "Last Used",
         dataIndex: "lastUsed",
         key: "lastUsed",
+        sorter: true,
+        sortDirections: ["ascend", "descend"],
+        sortOrder:
+          sortField === "lastUsed"
+            ? sortDirection === "asc"
+              ? "ascend"
+              : "descend"
+            : undefined,
       },
       {
         title: "Actions",
@@ -1333,6 +1387,8 @@ export const SshPage: React.FC = React.memo(() => {
       upgradingTargets,
       upgradeInfo,
       copiedTarget,
+      sortField,
+      sortDirection,
     ],
   );
 
@@ -1341,6 +1397,40 @@ export const SshPage: React.FC = React.memo(() => {
     if (!query) return rows;
     return rows.filter((row) => row.target.toLowerCase().includes(query));
   }, [rows, targetFilter]);
+
+  const visibleRows = useMemo(() => {
+    const dir = sortDirection === "asc" ? 1 : -1;
+    return [...filteredRows].sort((a, b) => {
+      let result = 0;
+      switch (sortField) {
+        case "starred":
+          result = compareNumber(Number(b.starred ?? false), Number(a.starred ?? false));
+          break;
+        case "target":
+          result = compareText(a.target, b.target);
+          break;
+        case "status": {
+          const aStatus = a.status ?? "unknown";
+          const bStatus = b.status ?? "unknown";
+          const aRank = SSH_STATUS_RANK[aStatus] ?? SSH_STATUS_ORDER.length;
+          const bRank = SSH_STATUS_RANK[bStatus] ?? SSH_STATUS_ORDER.length;
+          result = compareNumber(aRank, bRank);
+          break;
+        }
+        case "lastUsed": {
+          const aTs = a.lastUsed ? Date.parse(a.lastUsed) : 0;
+          const bTs = b.lastUsed ? Date.parse(b.lastUsed) : 0;
+          result = compareNumber(
+            Number.isNaN(aTs) ? 0 : aTs,
+            Number.isNaN(bTs) ? 0 : bTs,
+          );
+          break;
+        }
+      }
+      if (result !== 0) return dir * result;
+      return compareText(a.target, b.target);
+    });
+  }, [filteredRows, sortDirection, sortField]);
 
   const buildReflectSessionColumns = (
     target: string,
@@ -1685,10 +1775,22 @@ export const SshPage: React.FC = React.memo(() => {
       <Table
         rowKey={(row) => row.target}
         columns={columns}
-        dataSource={filteredRows}
+        dataSource={visibleRows}
         loading={loading}
         pagination={false}
         size="small"
+        onChange={(_, __, sorter) => {
+          if (Array.isArray(sorter) || !sorter?.field) {
+            return;
+          }
+          const field = sorter.field as SshSortField;
+          const order = sorter.order;
+          if (!order) {
+            return;
+          }
+          setSortField(field);
+          setSortDirection(order === "ascend" ? "asc" : "desc");
+        }}
         expandable={{
           expandedRowRender,
           expandedRowKeys: expandedTargets,
