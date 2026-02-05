@@ -3,7 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Checkbox, Divider, Modal, Select, Space, Typography } from "antd";
+import {
+  Button,
+  Checkbox,
+  Divider,
+  Modal,
+  Popover,
+  Select,
+  Space,
+  Typography,
+} from "antd";
 import { useEffect, useState, type ReactNode } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import type { NamedServerName } from "@cocalc/util/types/servers";
@@ -153,6 +162,20 @@ export function LauncherCustomizeModal({
   }
 
   const isProjectMode = saveMode === "project";
+  const mergeHelp = (
+    <div style={{ maxWidth: "380px" }}>
+      <Typography.Paragraph style={{ marginBottom: "6px" }}>
+        Launcher items are merged additively, in this order:
+      </Typography.Paragraph>
+      <Typography.Paragraph style={{ marginBottom: "6px" }}>
+        built-in defaults, site defaults, project defaults, account defaults, and then
+        per-workspace user overrides.
+      </Typography.Paragraph>
+      <Typography.Paragraph style={{ marginBottom: 0 }}>
+        Each layer can add items and explicitly remove inherited items.
+      </Typography.Paragraph>
+    </div>
+  );
 
   const hiddenQuick = QUICK_CREATE_CATALOG.filter(
     (spec) => !quickCreate.includes(spec.id),
@@ -287,6 +310,19 @@ export function LauncherCustomizeModal({
       }
       width={860}
     >
+      <div style={{ marginBottom: "8px" }}>
+        <Space size={4} align="center">
+          <Typography.Text type="secondary">How this merges</Typography.Text>
+          <Popover content={mergeHelp} trigger={["hover", "click"]}>
+            <Button
+              type="text"
+              size="small"
+              icon={<Icon name="question-circle" />}
+              style={{ paddingInline: 4 }}
+            />
+          </Popover>
+        </Space>
+      </div>
       <div
         style={{
           display: "grid",
