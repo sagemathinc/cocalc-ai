@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Collapse,
   Divider,
   Empty,
@@ -2016,12 +2017,8 @@ export const SshPage: React.FC = React.memo(() => {
           >
             <Input placeholder="user@host:22" />
           </Form.Item>
-          <Form.Item
-            label="Start session immediately"
-            name="autoStart"
-            valuePropName="checked"
-          >
-            <Switch />
+          <Form.Item name="autoStart" valuePropName="checked" style={{ marginBottom: 0 }}>
+            <Checkbox>Start session immediately</Checkbox>
           </Form.Item>
         </Form>
       </Modal>
