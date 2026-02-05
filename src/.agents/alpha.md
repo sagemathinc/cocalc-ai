@@ -13,11 +13,15 @@ For alpha testing it will be deployed by:
 
 ## Blocker Todo List
 
-- [ ] codex: eliminate the markdown links instructions and instead use a heuristic to turn files refs that it outputs into links
+- [ ] plus: drag-n-drop to upload doesn't work; this matters because we do run this on REMOTE machines.
 
 - [ ] opening files not in \$HOME
-
-- [ ] #bug chat scroll position jumping -- happens a lot when switching between two rooms
+  - [ ] #bug in cocalc-plus I did this: `ln -s / .root; open .root` and ended up with an unclosable broken tab.
+  - [ ] just fully go through and support PATH's that start with /, but have them give an error when access through safe fs sandbox.  Make paths starting with / map to the overlayfs mountpoint if it exists; if it doesn't, it's an error saying you must start the workspace.  The location of the overlayfs will be input to creating the sandbox.  Finally if an absolute path is in the actual home directory of the user, that's an error, to keep things canonical.
+  - [ ] for the persist server, we have directories -- jupyter/, patchflow/, etc., that have a relative-to-home path under them.  For absolute paths we have to similarly name things, so how about we just do:
+    - jupyter/root and jupyter/home
+    - patchflow/root and patchflow/home
+  - Alternative to all of this... just make ALL paths absolute.  Is it possible?
 
 - [ ] plus: implement remote ssh, sync, and port forward integration
 
