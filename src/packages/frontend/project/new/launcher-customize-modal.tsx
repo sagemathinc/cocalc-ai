@@ -8,6 +8,11 @@ import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import type { NamedServerName } from "@cocalc/util/types/servers";
 import {
+  DragHandle,
+  SortableItem,
+  SortableList,
+} from "@cocalc/frontend/components/sortable-list";
+import {
   APP_CATALOG,
   APP_MAP,
   QUICK_CREATE_CATALOG,
@@ -26,6 +31,10 @@ function move<T>(list: T[], index: number, delta: number): T[] {
   const [item] = next.splice(index, 1);
   next.splice(target, 0, item);
   return next;
+}
+
+function reorder<T>(list: T[], oldIndex: number, newIndex: number): T[] {
+  return move(list, oldIndex, newIndex - oldIndex);
 }
 
 interface Props {
@@ -96,6 +105,69 @@ export function LauncherCustomizeModal({
     onClose();
   }
 
+  const hiddenQuick = QUICK_CREATE_CATALOG.filter(
+    (spec) => !quickCreate.includes(spec.id),
+  );
+  const hiddenApps = APP_CATALOG.filter((spec) => !apps.includes(spec.id));
+
+  function renderQuickRow(id: string, checked: boolean, draggable: boolean) {
+    const spec = QUICK_CREATE_MAP[id];
+    if (!spec) return null;
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "6px 0",
+        }}
+      >
+        <Space>
+          {draggable ? (
+            <DragHandle id={id} />
+          ) : (
+            <span style={{ width: "18px", display: "inline-block" }} />
+          )}
+          <Icon name={spec.icon} />
+          <span>{spec.label}</span>
+        </Space>
+        <Checkbox
+          checked={checked}
+          onChange={(e) => toggleQuickCreate(id, e.target.checked)}
+        />
+      </div>
+    );
+  }
+
+  function renderAppRow(id: NamedServerName, checked: boolean, draggable: boolean) {
+    const spec = APP_MAP[id];
+    if (!spec) return null;
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "6px 0",
+        }}
+      >
+        <Space>
+          {draggable ? (
+            <DragHandle id={id} />
+          ) : (
+            <span style={{ width: "18px", display: "inline-block" }} />
+          )}
+          <Icon name={spec.icon} />
+          <span>{spec.label}</span>
+        </Space>
+        <Checkbox
+          checked={checked}
+          onChange={(e) => toggleApp(id, e.target.checked)}
+        />
+      </div>
+    );
+  }
+
   return (
     <Modal
       title="Customize Launcher"
@@ -127,98 +199,62 @@ export function LauncherCustomizeModal({
       <Typography.Title level={4} style={{ marginBottom: "8px" }}>
         Quick Create
       </Typography.Title>
-      {QUICK_CREATE_CATALOG.map((spec) => {
-        const index = quickCreate.indexOf(spec.id);
-        const checked = index !== -1;
-        return (
-          <div
-            key={spec.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "6px 0",
-            }}
-          >
-            <Checkbox
-              checked={checked}
-              onChange={(e) => toggleQuickCreate(spec.id, e.target.checked)}
-            >
-              <Space>
-                <Icon name={spec.icon} />
-                <span>{spec.label}</span>
-              </Space>
-            </Checkbox>
-            <Space>
-              <Button
-                size="small"
-                disabled={!checked || index <= 0}
-                onClick={() =>
-                  setQuickCreate(move(quickCreate, index, -1))
-                }
-              >
-                <Icon name="arrow-up" />
-              </Button>
-              <Button
-                size="small"
-                disabled={!checked || index === -1 || index >= quickCreate.length - 1}
-                onClick={() =>
-                  setQuickCreate(move(quickCreate, index, 1))
-                }
-              >
-                <Icon name="arrow-down" />
-              </Button>
-            </Space>
-          </div>
-        );
-      })}
+      <SortableList
+        items={quickCreate}
+        onDragStop={(oldIndex, newIndex) =>
+          setQuickCreate(reorder(quickCreate, oldIndex, newIndex))
+        }
+        Item={({ id }: { id: string }) => renderQuickRow(id, true, true)}
+      >
+        {quickCreate.map((id) => (
+          <SortableItem key={id} id={id}>
+            {renderQuickRow(id, true, true)}
+          </SortableItem>
+        ))}
+      </SortableList>
+      {hiddenQuick.length > 0 && (
+        <div style={{ marginTop: "10px" }}>
+          <Typography.Text type="secondary">
+            Available
+          </Typography.Text>
+          {hiddenQuick.map((spec) => (
+            <div key={spec.id}>{renderQuickRow(spec.id, false, false)}</div>
+          ))}
+        </div>
+      )}
 
       <Divider />
 
       <Typography.Title level={4} style={{ marginBottom: "8px" }}>
         Apps
       </Typography.Title>
-      {APP_CATALOG.map((spec) => {
-        const index = apps.indexOf(spec.id);
-        const checked = index !== -1;
-        return (
-          <div
-            key={spec.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "6px 0",
-            }}
-          >
-            <Checkbox
-              checked={checked}
-              onChange={(e) => toggleApp(spec.id, e.target.checked)}
-            >
-              <Space>
-                <Icon name={spec.icon} />
-                <span>{spec.label}</span>
-              </Space>
-            </Checkbox>
-            <Space>
-              <Button
-                size="small"
-                disabled={!checked || index <= 0}
-                onClick={() => setApps(move(apps, index, -1))}
-              >
-                <Icon name="arrow-up" />
-              </Button>
-              <Button
-                size="small"
-                disabled={!checked || index === -1 || index >= apps.length - 1}
-                onClick={() => setApps(move(apps, index, 1))}
-              >
-                <Icon name="arrow-down" />
-              </Button>
-            </Space>
-          </div>
-        );
-      })}
+      <SortableList
+        items={apps}
+        onDragStop={(oldIndex, newIndex) =>
+          setApps(reorder(apps, oldIndex, newIndex) as NamedServerName[])
+        }
+        Item={({ id }: { id: string }) =>
+          renderAppRow(id as NamedServerName, true, true)
+        }
+      >
+        {apps.map((id) => (
+          <SortableItem key={id} id={id}>
+            {renderAppRow(id, true, true)}
+          </SortableItem>
+        ))}
+      </SortableList>
+      {hiddenApps.length > 0 && (
+        <div style={{ marginTop: "10px" }}>
+          <Typography.Text type="secondary">
+            Available
+          </Typography.Text>
+          {hiddenApps.map((spec) => (
+            <div key={spec.id}>
+              {renderAppRow(spec.id, false, false)}
+            </div>
+          ))}
+        </div>
+      )}
     </Modal>
   );
 }
