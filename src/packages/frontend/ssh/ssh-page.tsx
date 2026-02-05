@@ -233,18 +233,6 @@ function parseIgnoreRules(raw?: string | null) {
 
 export const SshPage: React.FC = React.memo(() => {
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
-  const activeTopTab = useTypedRedux("page", "active_top_tab");
-  const projectMap = useTypedRedux("projects", "project_map");
-  const projectColor = projectMap?.getIn([activeTopTab, "color"]) as
-    | string
-    | undefined;
-  const pageStyle = useMemo<CSS>(
-    () => ({
-      ...PAGE_STYLE,
-      borderLeft: projectColor ? `3px solid ${projectColor}` : undefined,
-    }),
-    [projectColor],
-  );
   const [rows, setRows] = useState<SshSessionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -351,7 +339,7 @@ export const SshPage: React.FC = React.memo(() => {
 
   if (sshRemoteTarget) {
     return (
-      <div style={pageStyle}>
+      <div style={PAGE_STYLE}>
         <Space style={TITLE_STYLE} size={12} align="center">
           {lite && (
             <Button
@@ -485,10 +473,7 @@ export const SshPage: React.FC = React.memo(() => {
         webapp_client.conat_client.hub.reflect.listSessionsUI({ target }),
         webapp_client.conat_client.hub.reflect.listForwardsUI(),
       ]);
-      const filteredForwards = filterForwardsByTarget(
-        forwards || [],
-        target,
-      );
+      const filteredForwards = filterForwardsByTarget(forwards || [], target);
       setReflectByTarget((prev) => ({
         ...prev,
         [target]: {
@@ -591,9 +576,7 @@ export const SshPage: React.FC = React.memo(() => {
     } catch (err: any) {
       setRows((prev) =>
         prev.map((item) =>
-          item.target === row.target
-            ? { ...item, starred: row.starred }
-            : item,
+          item.target === row.target ? { ...item, starred: row.starred } : item,
         ),
       );
       alert_message({
@@ -649,10 +632,7 @@ export const SshPage: React.FC = React.memo(() => {
           webapp_client.conat_client.hub.reflect.listSessionsUI({ target }),
           webapp_client.conat_client.hub.reflect.listForwardsUI(),
         ]);
-        const filteredForwards = filterForwardsByTarget(
-          forwards || [],
-          target,
-        );
+        const filteredForwards = filterForwardsByTarget(forwards || [], target);
         const results = await Promise.allSettled([
           ...(sessions || []).map((session) =>
             webapp_client.conat_client.hub.reflect.terminateSessionUI({
@@ -742,14 +722,13 @@ export const SshPage: React.FC = React.memo(() => {
       if (!target) return;
       setStatusLoadingTargets((prev) => ({ ...prev, [target]: true }));
       try {
-        const status =
-          await webapp_client.conat_client.hub.ssh.statusSessionUI({
+        const status = await webapp_client.conat_client.hub.ssh.statusSessionUI(
+          {
             target,
-          });
+          },
+        );
         setRows((prev) =>
-          prev.map((row) =>
-            row.target === target ? { ...row, status } : row,
-          ),
+          prev.map((row) => (row.target === target ? { ...row, status } : row)),
         );
       } catch {
         setRows((prev) =>
@@ -1022,7 +1001,10 @@ export const SshPage: React.FC = React.memo(() => {
         width: 280,
         render: (_, row) =>
           row.meta ? (
-            <Typography.Text type="secondary" style={{ fontFamily: "monospace" }}>
+            <Typography.Text
+              type="secondary"
+              style={{ fontFamily: "monospace" }}
+            >
               {JSON.stringify(row.meta)}
             </Typography.Text>
           ) : (
@@ -1041,13 +1023,12 @@ export const SshPage: React.FC = React.memo(() => {
     setReflectLogLoading(true);
     setReflectLogModalOpen(true);
     try {
-      const logs = (await webapp_client.conat_client.hub.reflect.listSessionLogsUI(
-        {
+      const logs =
+        (await webapp_client.conat_client.hub.reflect.listSessionLogsUI({
           idOrName: String(row.id),
           order: "desc",
           limit: 200,
-        },
-      )) as ReflectSessionLogRow[];
+        })) as ReflectSessionLogRow[];
       setReflectLogRows(logs || []);
     } catch (err: any) {
       setReflectLogError(err?.message || String(err));
@@ -1065,12 +1046,11 @@ export const SshPage: React.FC = React.memo(() => {
     setReflectLogLoading(true);
     setReflectLogModalOpen(true);
     try {
-      const logs = (await webapp_client.conat_client.hub.reflect.listDaemonLogsUI(
-        {
+      const logs =
+        (await webapp_client.conat_client.hub.reflect.listDaemonLogsUI({
           order: "desc",
           limit: 200,
-        },
-      )) as ReflectLogRow[];
+        })) as ReflectLogRow[];
       setReflectLogRows(logs || []);
     } catch (err: any) {
       setReflectLogError(err?.message || String(err));
@@ -1453,7 +1433,10 @@ export const SshPage: React.FC = React.memo(() => {
       let result = 0;
       switch (sortField) {
         case "starred":
-          result = compareNumber(Number(b.starred ?? false), Number(a.starred ?? false));
+          result = compareNumber(
+            Number(b.starred ?? false),
+            Number(a.starred ?? false),
+          );
           break;
         case "target":
           result = compareText(a.target, b.target);
@@ -1521,12 +1504,12 @@ export const SshPage: React.FC = React.memo(() => {
         </Button>
       ),
     },
-      {
-        title: "State",
-        key: "state",
-        width: 160,
-        render: (_, row) => syncStateDisplay(row),
-      },
+    {
+      title: "State",
+      key: "state",
+      width: 160,
+      render: (_, row) => syncStateDisplay(row),
+    },
     {
       title: "Last Sync",
       key: "last",
@@ -1653,17 +1636,17 @@ export const SshPage: React.FC = React.memo(() => {
       },
     ];
     return (
-        <div
-          style={{
-            padding: "16px 16px",
-            margin: "16px 16px 20px 56px",
-            borderRadius: 10,
-            background: "#fbfbfb",
-            border: "1px solid #e6e6e6",
-            borderLeft: "5px solid #d0d0d0",
-            boxShadow: "0 2px 6px rgba(0, 0, 0, 0.04)",
-          }}
-        >
+      <div
+        style={{
+          padding: "16px 16px",
+          margin: "16px 16px 20px 56px",
+          borderRadius: 10,
+          background: "#fbfbfb",
+          border: "1px solid #e6e6e6",
+          borderLeft: "5px solid #d0d0d0",
+          boxShadow: "0 2px 6px rgba(0, 0, 0, 0.04)",
+        }}
+      >
         <Space style={{ marginBottom: 8 }} size={12} align="center">
           <Typography.Title level={5} style={{ margin: 0 }}>
             Sync
@@ -1755,7 +1738,7 @@ export const SshPage: React.FC = React.memo(() => {
   };
 
   return (
-    <div style={pageStyle}>
+    <div style={PAGE_STYLE}>
       <Space style={TITLE_STYLE} size={12} align="center">
         {lite && (
           <Button
@@ -1859,9 +1842,7 @@ export const SshPage: React.FC = React.memo(() => {
 
       <Modal
         title={
-          reflectModalTarget
-            ? `New Sync for ${reflectModalTarget}`
-            : "New Sync"
+          reflectModalTarget ? `New Sync for ${reflectModalTarget}` : "New Sync"
         }
         open={reflectModalOpen}
         onOk={handleCreateReflect}
@@ -1897,10 +1878,7 @@ export const SshPage: React.FC = React.memo(() => {
                     >
                       <Input placeholder="~/project" />
                     </Form.Item>
-                    <Form.Item
-                      label="Conflict preference"
-                      name="prefer"
-                    >
+                    <Form.Item label="Conflict preference" name="prefer">
                       <Select
                         options={[
                           {
@@ -1962,9 +1940,7 @@ export const SshPage: React.FC = React.memo(() => {
 
       <Modal
         title={
-          editSessionTarget
-            ? `Edit Sync for ${editSessionTarget}`
-            : "Edit Sync"
+          editSessionTarget ? `Edit Sync for ${editSessionTarget}` : "Edit Sync"
         }
         open={editModalOpen}
         onOk={handleEditSession}
@@ -2043,7 +2019,10 @@ export const SshPage: React.FC = React.memo(() => {
           >
             <InputNumber min={1} max={65535} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item label="Remote port (defaults to local port)" name="remotePort">
+          <Form.Item
+            label="Remote port (defaults to local port)"
+            name="remotePort"
+          >
             <InputNumber min={1} max={65535} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item label="Name (optional)" name="name">
@@ -2057,7 +2036,11 @@ export const SshPage: React.FC = React.memo(() => {
         open={reflectLogModalOpen}
         onCancel={() => setReflectLogModalOpen(false)}
         footer={[
-          <Button key="refresh" onClick={refreshLogView} loading={reflectLogLoading}>
+          <Button
+            key="refresh"
+            onClick={refreshLogView}
+            loading={reflectLogLoading}
+          >
             Refresh
           </Button>,
           <Button key="close" onClick={() => setReflectLogModalOpen(false)}>

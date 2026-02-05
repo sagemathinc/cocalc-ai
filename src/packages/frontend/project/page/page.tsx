@@ -87,6 +87,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     project_id,
     "deleted",
   ]);
+  const project_color = useRedux(["projects", "project_map", project_id, "color"]);
   const projectCtx = useProjectContextProvider({
     project_id,
     is_active,
@@ -392,7 +393,13 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
 
   return (
     <ProjectContext.Provider value={projectCtx}>
-      <div className="container-content" style={PAGE_STYLE}>
+      <div
+        className="container-content"
+        style={{
+          ...PAGE_STYLE,
+          borderLeft: project_color ? `2.5px solid ${project_color}` : undefined,
+        }}
+      >
         <StudentPayUpgrade project_id={project_id} />
         <DiskSpaceWarning project_id={project_id} />
         <RamWarning project_id={project_id} />
