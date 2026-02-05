@@ -10,6 +10,7 @@ import { Icon, SettingBox, Paragraph } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import type { Project } from "./types";
 import {
+  LAUNCHER_GLOBAL_DEFAULTS,
   LAUNCHER_SITE_REMOVE_APPS_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
   LAUNCHER_SITE_DEFAULTS_APPS_KEY,
@@ -154,6 +155,30 @@ export function LauncherDefaults({ project_id, project }: Props) {
             .set_project_launcher(project_id, prefs)
         }
         saveMode="project"
+        contributions={[
+          {
+            key: "built-in",
+            title: "Built-in defaults",
+            quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+            appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
+          },
+          {
+            key: "site",
+            title: "Site defaults",
+            quickCreateAdd: siteLauncherDefaults.quickCreate,
+            quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
+            appsAdd: siteLauncherDefaults.apps,
+            appsRemove: siteLauncherDefaults.hiddenApps,
+          },
+          {
+            key: "workspace",
+            title: "Workspace defaults",
+            quickCreateAdd: projectDefaults.quickCreate,
+            quickCreateRemove: projectDefaults.hiddenQuickCreate,
+            appsAdd: projectDefaults.apps,
+            appsRemove: projectDefaults.hiddenApps,
+          },
+        ]}
       />
     </SettingBox>
   );

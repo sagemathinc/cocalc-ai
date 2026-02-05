@@ -43,6 +43,7 @@ import {
 } from "@cocalc/frontend/project/new/launcher-catalog";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import {
+  LAUNCHER_GLOBAL_DEFAULTS,
   LAUNCHER_SITE_REMOVE_APPS_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
   LAUNCHER_SITE_DEFAULTS_APPS_KEY,
@@ -572,6 +573,30 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
               ),
             );
           }}
+          contributions={[
+            {
+              key: "built-in",
+              title: "Built-in defaults",
+              quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+              appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
+            },
+            {
+              key: "site",
+              title: "Site defaults",
+              quickCreateAdd: siteLauncherDefaults.quickCreate,
+              quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
+              appsAdd: siteLauncherDefaults.apps,
+              appsRemove: siteLauncherDefaults.hiddenApps,
+            },
+            {
+              key: "account",
+              title: "Your account overrides",
+              quickCreateAdd: userLauncherLayers.account.quickCreate,
+              quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
+              appsAdd: userLauncherLayers.account.apps,
+              appsRemove: userLauncherLayers.account.hiddenApps,
+            },
+          ]}
         />
       </>
     );

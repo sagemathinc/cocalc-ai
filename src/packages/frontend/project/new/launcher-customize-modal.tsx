@@ -8,9 +8,9 @@ import {
   Checkbox,
   Divider,
   Modal,
-  Popover,
   Select,
   Space,
+  Tag,
   Typography,
 } from "antd";
 import { useEffect, useState, type ReactNode } from "react";
@@ -62,6 +62,16 @@ interface Props {
   onSaveProject?: (prefs: LauncherProjectDefaults) => void;
   canEditProjectDefaults?: boolean;
   saveMode?: "user" | "project";
+  contributions?: LauncherContributionLayer[];
+}
+
+export interface LauncherContributionLayer {
+  key: string;
+  title: string;
+  quickCreateAdd?: string[];
+  quickCreateRemove?: string[];
+  appsAdd?: string[];
+  appsRemove?: string[];
 }
 
 export function LauncherCustomizeModal({
@@ -77,9 +87,11 @@ export function LauncherCustomizeModal({
   onSaveProject,
   canEditProjectDefaults = false,
   saveMode = "user",
+  contributions = [],
 }: Props) {
   const [quickCreate, setQuickCreate] = useState<string[]>([]);
   const [apps, setApps] = useState<NamedServerName[]>([]);
+  const [showMergeDetails, setShowMergeDetails] = useState<boolean>(false);
   const userBaseQuick = userBaseQuickCreate ?? initialQuickCreate;
   const userBaseAppList = userBaseApps ?? initialApps;
   const projectBaseQuick = projectBaseQuickCreate ?? userBaseQuick;
@@ -89,6 +101,7 @@ export function LauncherCustomizeModal({
     if (!open) return;
     setQuickCreate(initialQuickCreate);
     setApps(initialApps);
+    setShowMergeDetails(false);
   }, [open, initialQuickCreate, initialApps]);
 
   function toggleQuickCreate(id: string, checked: boolean) {
@@ -162,20 +175,6 @@ export function LauncherCustomizeModal({
   }
 
   const isProjectMode = saveMode === "project";
-  const mergeHelp = (
-    <div style={{ maxWidth: "380px" }}>
-      <Typography.Paragraph style={{ marginBottom: "6px" }}>
-        Launcher items are merged additively, in this order:
-      </Typography.Paragraph>
-      <Typography.Paragraph style={{ marginBottom: "6px" }}>
-        built-in defaults, site defaults, project defaults, account defaults, and then
-        per-workspace user overrides.
-      </Typography.Paragraph>
-      <Typography.Paragraph style={{ marginBottom: 0 }}>
-        Each layer can add items and explicitly remove inherited items.
-      </Typography.Paragraph>
-    </div>
-  );
 
   const hiddenQuick = QUICK_CREATE_CATALOG.filter(
     (spec) => !quickCreate.includes(spec.id),
@@ -273,6 +272,39 @@ export function LauncherCustomizeModal({
     );
   }
 
+  function quickLabel(id: string): string {
+    const spec = QUICK_CREATE_MAP[id];
+    if (spec) return spec.label;
+    const data = file_options(`x.${id}`);
+    return data.name ?? id;
+  }
+
+  function appLabel(id: string): string {
+    const spec = APP_MAP[id as NamedServerName];
+    if (spec) return spec.label;
+    return id;
+  }
+
+  function renderTags(
+    ids: string[] | undefined,
+    color: string,
+    label: (id: string) => string,
+    prefix: string,
+  ) {
+    if (!ids?.length) {
+      return <Typography.Text type="secondary">none</Typography.Text>;
+    }
+    return (
+      <Space size={[6, 6]} wrap>
+        {ids.map((id) => (
+          <Tag key={`${prefix}-${id}`} color={color} style={{ marginInlineEnd: 0 }}>
+            {label(id)} <span style={{ opacity: 0.65 }}>({id})</span>
+          </Tag>
+        ))}
+      </Space>
+    );
+  }
+
   return (
     <Modal
       title="Customize Launcher"
@@ -311,18 +343,97 @@ export function LauncherCustomizeModal({
       width={860}
     >
       <div style={{ marginBottom: "8px" }}>
-        <Space size={4} align="center">
-          <Typography.Text type="secondary">How this merges</Typography.Text>
-          <Popover content={mergeHelp} trigger={["hover", "click"]}>
-            <Button
-              type="text"
-              size="small"
-              icon={<Icon name="question-circle" />}
-              style={{ paddingInline: 4 }}
-            />
-          </Popover>
-        </Space>
+        <Button
+          size="small"
+          type="default"
+          onClick={() => setShowMergeDetails(!showMergeDetails)}
+        >
+          <Icon name={showMergeDetails ? "caret-down" : "caret-right"} /> How this
+          merges
+        </Button>
       </div>
+      {showMergeDetails && (
+        <div style={{ marginBottom: "14px" }}>
+          <Typography.Paragraph style={{ marginBottom: "6px" }}>
+            Launcher items are merged additively in this order: built-in defaults, site
+            defaults, workspace defaults, account defaults, then workspace-user
+            overrides.
+          </Typography.Paragraph>
+          <Typography.Paragraph style={{ marginBottom: "10px" }}>
+            Each layer can add items and explicitly remove inherited items.
+          </Typography.Paragraph>
+          <Typography.Text strong>Current contributions</Typography.Text>
+          <div
+            style={{
+              marginTop: "6px",
+              display: "grid",
+              gridTemplateColumns: "1fr",
+              gap: "8px",
+              maxHeight: "220px",
+              overflowY: "auto",
+              border: "1px solid #f0f0f0",
+              borderRadius: "8px",
+              padding: "10px",
+            }}
+          >
+            {contributions.map((layer) => (
+              <div
+                key={layer.key}
+                style={{ borderBottom: "1px dashed #f0f0f0", paddingBottom: "8px" }}
+              >
+                <Typography.Text strong>{layer.title}</Typography.Text>
+                <div style={{ marginTop: "4px" }}>
+                  <Typography.Text type="secondary">Quick + </Typography.Text>
+                  {renderTags(
+                    layer.quickCreateAdd,
+                    "blue",
+                    quickLabel,
+                    `${layer.key}-qadd`,
+                  )}
+                </div>
+                <div style={{ marginTop: "4px" }}>
+                  <Typography.Text type="secondary">Quick - </Typography.Text>
+                  {renderTags(
+                    layer.quickCreateRemove,
+                    "volcano",
+                    quickLabel,
+                    `${layer.key}-qremove`,
+                  )}
+                </div>
+                <div style={{ marginTop: "4px" }}>
+                  <Typography.Text type="secondary">Apps + </Typography.Text>
+                  {renderTags(
+                    layer.appsAdd,
+                    "green",
+                    appLabel,
+                    `${layer.key}-aadd`,
+                  )}
+                </div>
+                <div style={{ marginTop: "4px" }}>
+                  <Typography.Text type="secondary">Apps - </Typography.Text>
+                  {renderTags(
+                    layer.appsRemove,
+                    "red",
+                    appLabel,
+                    `${layer.key}-aremove`,
+                  )}
+                </div>
+              </div>
+            ))}
+            <div>
+              <Typography.Text strong>Effective launcher state</Typography.Text>
+              <div style={{ marginTop: "4px" }}>
+                <Typography.Text type="secondary">Quick Create: </Typography.Text>
+                {renderTags(quickCreate, "processing", quickLabel, "effective-quick")}
+              </div>
+              <div style={{ marginTop: "4px" }}>
+                <Typography.Text type="secondary">Apps: </Typography.Text>
+                {renderTags(apps, "success", appLabel, "effective-apps")}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <div
         style={{
           display: "grid",

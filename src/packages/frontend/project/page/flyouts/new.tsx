@@ -35,6 +35,7 @@ import { NewFileButton } from "@cocalc/frontend/project/new/new-file-button";
 import { NewFileDropdown } from "@cocalc/frontend/project/new/new-file-dropdown";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import {
+  LAUNCHER_GLOBAL_DEFAULTS,
   LAUNCHER_SITE_REMOVE_APPS_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
   LAUNCHER_SITE_DEFAULTS_APPS_KEY,
@@ -716,6 +717,46 @@ export function NewFlyout({
         onSaveUser={saveUserLauncherPrefs}
         onSaveProject={saveProjectLauncherDefaults}
         canEditProjectDefaults={can_edit_project_defaults}
+        contributions={[
+          {
+            key: "built-in",
+            title: "Built-in defaults",
+            quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+            appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
+          },
+          {
+            key: "site",
+            title: "Site defaults",
+            quickCreateAdd: siteLauncherDefaults.quickCreate,
+            quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
+            appsAdd: siteLauncherDefaults.apps,
+            appsRemove: siteLauncherDefaults.hiddenApps,
+          },
+          {
+            key: "project",
+            title: "Workspace defaults",
+            quickCreateAdd: projectLauncherDefaults.quickCreate,
+            quickCreateRemove: projectLauncherDefaults.hiddenQuickCreate,
+            appsAdd: projectLauncherDefaults.apps,
+            appsRemove: projectLauncherDefaults.hiddenApps,
+          },
+          {
+            key: "account",
+            title: "Your account overrides",
+            quickCreateAdd: userLauncherLayers.account.quickCreate,
+            quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
+            appsAdd: userLauncherLayers.account.apps,
+            appsRemove: userLauncherLayers.account.hiddenApps,
+          },
+          {
+            key: "workspace-user",
+            title: "This workspace overrides",
+            quickCreateAdd: userLauncherLayers.project.quickCreate,
+            quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
+            appsAdd: userLauncherLayers.project.apps,
+            appsRemove: userLauncherLayers.project.hiddenApps,
+          },
+        ]}
       />
     </>
   );
