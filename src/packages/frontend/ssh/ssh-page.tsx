@@ -2085,7 +2085,7 @@ export const SshPage: React.FC = React.memo(() => {
         open={reflectLogModalOpen}
         onCancel={() => setReflectLogModalOpen(false)}
         width={1200}
-        styles={{ body: { maxHeight: "70vh", overflow: "auto" } }}
+        styles={{ body: { maxHeight: "70vh", overflowY: "hidden" } }}
         footer={[
           <Button
             key="refresh"
