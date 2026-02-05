@@ -52,6 +52,7 @@ const PAGE_STYLE: CSS = {
 const REMOTE_READY_ATTEMPTS = 8;
 const REMOTE_READY_TIMEOUT_MS = 7000;
 const STATUS_CONCURRENCY = 7;
+const TARGET_FILTER_STORAGE_KEY = "cocalc.ssh.target-filter";
 
 const TITLE_STYLE: CSS = {
   marginBottom: "12px",
@@ -271,6 +272,14 @@ export const SshPage: React.FC = React.memo(() => {
   const [reflectLogTarget, setReflectLogTarget] = useState<string | null>(null);
   const [targetModalOpen, setTargetModalOpen] = useState(false);
   const [targetForm] = Form.useForm();
+  const [targetFilter, setTargetFilter] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    try {
+      return window.localStorage.getItem(TARGET_FILTER_STORAGE_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
   const ignoreHelp = (
     <Typography.Text type="secondary">
       Use gitignore-style patterns.{" "}
@@ -1006,6 +1015,15 @@ export const SshPage: React.FC = React.memo(() => {
     }
   }, [forwardModalOpen, forwardForm]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(TARGET_FILTER_STORAGE_KEY, targetFilter);
+    } catch {
+      // ignore storage errors
+    }
+  }, [targetFilter]);
+
   const columns = useMemo<ColumnsType<SshSessionRow>>(
     () => [
       {
@@ -1226,6 +1244,12 @@ export const SshPage: React.FC = React.memo(() => {
       upgradeInfo,
     ],
   );
+
+  const filteredRows = useMemo(() => {
+    const query = targetFilter.trim().toLowerCase();
+    if (!query) return rows;
+    return rows.filter((row) => row.target.toLowerCase().includes(query));
+  }, [rows, targetFilter]);
 
   const buildReflectSessionColumns = (
     target: string,
@@ -1559,11 +1583,18 @@ export const SshPage: React.FC = React.memo(() => {
         >
           Check for Upgrades
         </Button>
+        <Input
+          allowClear
+          placeholder="Filter targets…"
+          value={targetFilter}
+          style={{ width: 240 }}
+          onChange={(e) => setTargetFilter(e.target.value)}
+        />
       </Space>
       <Table
         rowKey={(row) => row.target}
         columns={columns}
-        dataSource={rows}
+        dataSource={filteredRows}
         loading={loading}
         pagination={false}
         size="small"
