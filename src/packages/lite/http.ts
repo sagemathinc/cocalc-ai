@@ -159,8 +159,49 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
   app.get("*", (req, res) => {
     if (req.url.endsWith("__webpack_hmr")) return;
     logger.debug("redirecting", req.url);
-    res.redirect("/static/app.html");
+    const target = mapLiteTarget(req.originalUrl || req.url || "");
+    if (!target) {
+      res.redirect("/static/app.html");
+      return;
+    }
+    const redirectUrl = new URL("http://host/static/app.html");
+    redirectUrl.searchParams.set("target", target);
+    res.redirect(redirectUrl.pathname + redirectUrl.search);
   });
+}
+
+function mapLiteTarget(rawUrl: string): string {
+  const parsed = new URL(`http://host${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`);
+  const pathname = parsed.pathname;
+  let targetPath = "";
+  if (pathname.startsWith("/projects/")) {
+    targetPath = pathname.slice(1);
+  } else if (pathname.startsWith(`/${project_id}/`)) {
+    targetPath = `projects${pathname}`;
+  } else if (
+    pathname === "/files" ||
+    pathname.startsWith("/files/") ||
+    pathname === "/new" ||
+    pathname.startsWith("/new/") ||
+    pathname === "/search" ||
+    pathname.startsWith("/search/") ||
+    pathname === "/settings" ||
+    pathname.startsWith("/settings/") ||
+    pathname === "/log" ||
+    pathname.startsWith("/log/") ||
+    pathname === "/port" ||
+    pathname.startsWith("/port/") ||
+    pathname === "/raw" ||
+    pathname.startsWith("/raw/")
+  ) {
+    targetPath = `projects/${project_id}${pathname}`;
+  } else {
+    targetPath = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+  }
+  if (!targetPath || targetPath === "static/app.html") {
+    return "";
+  }
+  return `${targetPath}${parsed.search || ""}`;
 }
 
 function initProjectProxy({
