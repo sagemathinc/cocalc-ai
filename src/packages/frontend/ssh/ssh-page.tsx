@@ -209,6 +209,18 @@ function parseIgnoreRules(raw?: string | null) {
 
 export const SshPage: React.FC = React.memo(() => {
   const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
+  const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const projectMap = useTypedRedux("projects", "project_map");
+  const projectColor = projectMap?.getIn([activeTopTab, "color"]) as
+    | string
+    | undefined;
+  const pageStyle = useMemo<CSS>(
+    () => ({
+      ...PAGE_STYLE,
+      borderLeft: projectColor ? `3px solid ${projectColor}` : undefined,
+    }),
+    [projectColor],
+  );
   const [rows, setRows] = useState<SshSessionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -301,7 +313,7 @@ export const SshPage: React.FC = React.memo(() => {
 
   if (sshRemoteTarget) {
     return (
-      <div style={PAGE_STYLE}>
+      <div style={pageStyle}>
         <Space style={TITLE_STYLE} size={12} align="center">
           {lite && (
             <Button
@@ -1489,7 +1501,7 @@ export const SshPage: React.FC = React.memo(() => {
   };
 
   return (
-    <div style={PAGE_STYLE}>
+    <div style={pageStyle}>
       <Space style={TITLE_STYLE} size={12} align="center">
         {lite && (
           <Button
