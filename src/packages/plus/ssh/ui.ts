@@ -4,6 +4,7 @@ import {
   deleteSession,
   getRemoteStatus,
   listSessions,
+  upgradeRemote,
   statusSession,
   updateRegistry,
 } from "./core";
@@ -111,4 +112,20 @@ export async function stopSessionUI(target: string): Promise<void> {
     activeTunnels.delete(target);
   }
   await statusSession("stop", target, {});
+}
+
+export async function upgradeSessionUI(
+  target: string,
+  localUrl?: string,
+): Promise<void> {
+  const entry = listSessions().find((item) => item.target === target);
+  if (!entry) {
+    throw new Error(`Unknown target: ${target}`);
+  }
+  const existing = activeTunnels.get(target);
+  if (isTunnelActive(existing)) {
+    existing?.tunnel.kill();
+    activeTunnels.delete(target);
+  }
+  await upgradeRemote(entry, { localUrl });
 }

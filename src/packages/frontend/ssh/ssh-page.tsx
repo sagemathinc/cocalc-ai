@@ -217,6 +217,9 @@ export const SshPage: React.FC = React.memo(() => {
   const [statusLoadingTargets, setStatusLoadingTargets] = useState<
     Record<string, boolean>
   >({});
+  const [upgradingTargets, setUpgradingTargets] = useState<
+    Record<string, boolean>
+  >({});
   const [reflectByTarget, setReflectByTarget] = useState<
     Record<string, ReflectTargetState>
   >({});
@@ -462,6 +465,32 @@ export const SshPage: React.FC = React.memo(() => {
         type: "error",
         message: err?.message || String(err),
       });
+    }
+  };
+
+  const handleUpgrade = async (target: string) => {
+    setUpgradingTargets((prev) => ({ ...prev, [target]: true }));
+    setOpeningStatus((prev) => ({ ...prev, [target]: "Upgrading…" }));
+    try {
+      const localUrl =
+        typeof window !== "undefined" ? window.location.href : undefined;
+      await webapp_client.conat_client.hub.ssh.upgradeSessionUI({
+        target,
+        localUrl,
+      });
+      await loadSessions({ background: true, refreshStatus: true });
+      alert_message({
+        type: "success",
+        message: "Remote server upgraded",
+      });
+    } catch (err: any) {
+      alert_message({
+        type: "error",
+        message: err?.message || String(err),
+      });
+    } finally {
+      setUpgradingTargets((prev) => ({ ...prev, [target]: false }));
+      setOpeningStatus((prev) => ({ ...prev, [target]: "" }));
     }
   };
 
@@ -1016,6 +1045,14 @@ export const SshPage: React.FC = React.memo(() => {
         key: "status",
         width: 140,
         render: (_, row) => {
+          if (upgradingTargets[row.target]) {
+            return (
+              <Space size={6}>
+                <Spin size="small" />
+                <Typography.Text type="secondary">upgrading…</Typography.Text>
+              </Space>
+            );
+          }
           if (openingTargets[row.target]) {
             return (
               <Space size={6}>
@@ -1055,13 +1092,14 @@ export const SshPage: React.FC = React.memo(() => {
         width: 200,
         render: (_, row) => {
           const opening = !!openingTargets[row.target];
+          const upgrading = !!upgradingTargets[row.target];
           return (
             <Space>
             <Button
               size="small"
               onClick={() => handleOpen(row.target)}
               loading={opening}
-              disabled={opening}
+              disabled={opening || upgrading}
             >
               Open
             </Button>
@@ -1073,11 +1111,22 @@ export const SshPage: React.FC = React.memo(() => {
                 cancelText="Cancel"
                 onConfirm={() => handleStop(row.target)}
               >
-                <Button size="small" danger>
+                <Button size="small" danger disabled={upgrading}>
                   Stop
                 </Button>
               </Popconfirm>
             ) : null}
+            <Popconfirm
+              title="Upgrade remote server?"
+              description="This will install the latest cocalc-plus on the remote host. Any running terminals and notebooks will restart."
+              okText="Upgrade"
+              cancelText="Cancel"
+              onConfirm={() => handleUpgrade(row.target)}
+            >
+              <Button size="small" disabled={opening || upgrading}>
+                Upgrade
+              </Button>
+            </Popconfirm>
             <Popconfirm
               title="Remove this session?"
               description="Removes this target, and also removes any related syncs and port forwards (no files are deleted)."
@@ -1085,14 +1134,23 @@ export const SshPage: React.FC = React.memo(() => {
               cancelText="Cancel"
               onConfirm={() => handleDeleteTarget(row.target)}
             >
-              <Button size="small">Remove</Button>
+              <Button size="small" disabled={opening || upgrading}>
+                Remove
+              </Button>
             </Popconfirm>
           </Space>
-          );
+        );
         },
       },
     ],
-    [rows, reflectByTarget, openingTargets, openingStatus, statusLoadingTargets],
+    [
+      rows,
+      reflectByTarget,
+      openingTargets,
+      openingStatus,
+      statusLoadingTargets,
+      upgradingTargets,
+    ],
   );
 
   const buildReflectSessionColumns = (

@@ -6,6 +6,7 @@ export const ssh = {
   addSessionUI: requireSignedIn,
   deleteSessionUI: requireSignedIn,
   stopSessionUI: requireSignedIn,
+  upgradeSessionUI: requireSignedIn,
   statusSessionUI: requireSignedIn,
 };
 
@@ -47,5 +48,6 @@ export interface Ssh {
   addSessionUI: (opts: { target: string }) => Promise<void>;
   deleteSessionUI: (opts: { target: string }) => Promise<void>;
   stopSessionUI: (opts: { target: string }) => Promise<void>;
+  upgradeSessionUI: (opts: { target: string; localUrl?: string }) => Promise<void>;
   statusSessionUI: (opts: { target: string }) => Promise<string>;
 }

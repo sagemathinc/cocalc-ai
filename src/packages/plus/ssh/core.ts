@@ -441,6 +441,48 @@ async function stopRemoteDaemonBestEffort(
   }
 }
 
+export async function upgradeRemote(
+  entry: RegistryEntry,
+  options?: { localUrl?: string; restart?: boolean },
+): Promise<void> {
+  const target = entry.target;
+  const { host, port } = parseTarget(target);
+  const sshOpts: SshOptions = {
+    host,
+    port,
+    identity: entry.identity,
+    proxyJump: entry.proxyJump,
+    sshArgs: entry.sshArgs || [],
+  };
+  const { remoteDir } = infoPathFor(target);
+  const remoteInfoPath = `${remoteDir}/connection.json`;
+  const remotePidPath = `${remoteDir}/daemon.pid`;
+  const remoteLogPath = `${remoteDir}/daemon.log`;
+  const wasRunning = await getRemoteStatus(entry, { force: true });
+
+  await stopRemoteDaemonBestEffort(sshOpts, target);
+  await ensureRemoteReady(sshOpts, true, true);
+
+  if (options?.restart !== false && wasRunning === "running") {
+    const authToken = crypto.randomBytes(16).toString("hex");
+    const localUrl =
+      options?.localUrl ??
+      (entry.localPort
+        ? `http://localhost:${entry.localPort}?auth_token=${encodeURIComponent(
+            authToken,
+          )}`
+        : undefined);
+    await startRemote(
+      sshOpts,
+      target,
+      remoteInfoPath,
+      remotePidPath,
+      remoteLogPath,
+      { authToken, localUrl },
+    );
+  }
+}
+
 export async function startRemote(
   opts: SshOptions,
   target: string,

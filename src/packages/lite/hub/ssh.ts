@@ -50,6 +50,10 @@ export const ssh: Ssh = {
     const mod = await loadUi();
     return mod.stopSessionUI(opts.target);
   },
+  upgradeSessionUI: async (opts) => {
+    const mod = await loadUi();
+    return mod.upgradeSessionUI(opts.target, opts.localUrl);
+  },
   statusSessionUI: async (opts) => {
     const mod = await loadUi();
     return mod.statusSessionUI(opts.target);
