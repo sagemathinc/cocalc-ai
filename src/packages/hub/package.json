@@ -21,7 +21,7 @@
     "async": "^1.5.2",
     "awaiting": "^3.0.0",
     "blocked": "^1.1.0",
-    "commander": "^7.2.0",
+    "commander": "^14.0.1",
     "cookie-parser": "^1.4.3",
     "cookies": "^0.8.0",
     "cors": "^2.8.5",
