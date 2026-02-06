@@ -18,6 +18,15 @@ import {
   type CodexSessionConfig,
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
+import {
+  clearNavigatorTargetProjectId,
+  loadNavigatorConfig,
+  loadNavigatorSessionId,
+  loadNavigatorTargetProjectId,
+  saveNavigatorConfig,
+  saveNavigatorSessionId,
+  saveNavigatorTargetProjectId,
+} from "./navigator-state";
 
 type TurnStatus = "running" | "completed" | "failed" | "interrupted";
 
@@ -36,8 +45,6 @@ type TurnEntry = {
   events: AcpStreamMessage[];
 };
 
-const SESSION_KEY_PREFIX = "cocalc:navigator:acp-session";
-const CONFIG_KEY_PREFIX = "cocalc:navigator:acp-config";
 const SESSION_MODE_OPTIONS: Array<{
   value: CodexSessionMode;
   label: string;
@@ -73,14 +80,6 @@ function formatElapsed(ms?: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
-function storageKey(projectId: string): string {
-  return `${SESSION_KEY_PREFIX}:${projectId}`;
-}
-
-function configStorageKey(projectId: string): string {
-  return `${CONFIG_KEY_PREFIX}:${projectId}`;
-}
-
 interface NavigatorShellProps {
   project_id: string;
 }
@@ -91,6 +90,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
   const [error, setError] = useState("");
   const [turns, setTurns] = useState<TurnEntry[]>([]);
   const [sessionId, setSessionId] = useState<string>("");
+  const [targetProjectId, setTargetProjectId] = useState<string>(project_id);
   const [model, setModel] = useState<string>(defaultModelName());
   const [reasoning, setReasoning] = useState<CodexReasoningId | undefined>(
     defaultReasoningForModel(defaultModelName()),
@@ -101,51 +101,35 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
   const latestTurn = turns[0];
 
   useEffect(() => {
-    try {
-      const value = localStorage.getItem(storageKey(project_id)) ?? "";
-      setSessionId(value);
-    } catch {
-      setSessionId("");
-    }
-    try {
-      const raw = localStorage.getItem(configStorageKey(project_id)) ?? "";
-      if (!raw) return;
-      const cfg = JSON.parse(raw) as {
-        model?: string;
-        reasoning?: CodexReasoningId;
-        sessionMode?: CodexSessionMode;
-      };
-      const model0 =
-        typeof cfg.model === "string" && cfg.model.trim()
-          ? cfg.model
-          : defaultModelName();
-      const sessionMode0 =
-        cfg.sessionMode === "read-only" ||
-        cfg.sessionMode === "workspace-write" ||
-        cfg.sessionMode === "full-access"
-          ? cfg.sessionMode
-          : "read-only";
-      const modelInfo = NAVIGATOR_MODELS.find((m) => m.name === model0);
-      const reasoning0 = modelInfo?.reasoning?.some((entry) => entry.id === cfg.reasoning)
-        ? cfg.reasoning
-        : defaultReasoningForModel(model0);
-      setModel(model0);
-      setReasoning(reasoning0);
-      setSessionMode(sessionMode0);
-    } catch {}
+    const loadedSession = loadNavigatorSessionId(project_id);
+    setSessionId(loadedSession);
+    const loadedTarget = loadNavigatorTargetProjectId(project_id);
+    setTargetProjectId(loadedTarget);
+    const cfg = loadNavigatorConfig(project_id);
+    if (!cfg) return;
+    const model0 =
+      typeof cfg.model === "string" && cfg.model.trim()
+        ? cfg.model
+        : defaultModelName();
+    const sessionMode0 =
+      cfg.sessionMode === "read-only" ||
+      cfg.sessionMode === "workspace-write" ||
+      cfg.sessionMode === "full-access"
+        ? cfg.sessionMode
+        : "read-only";
+    const modelInfo = NAVIGATOR_MODELS.find((m) => m.name === model0);
+    const reasoning0 = modelInfo?.reasoning?.some((entry) => entry.id === cfg.reasoning)
+      ? cfg.reasoning
+      : defaultReasoningForModel(model0);
+    setModel(model0);
+    setReasoning(reasoning0);
+    setSessionMode(sessionMode0);
   }, [project_id]);
 
   function saveSessionId(value?: string) {
     const next = value?.trim() ?? "";
     setSessionId(next);
-    try {
-      const key = storageKey(project_id);
-      if (next) {
-        localStorage.setItem(key, next);
-      } else {
-        localStorage.removeItem(key);
-      }
-    } catch {}
+    saveNavigatorSessionId(next);
   }
 
   function updateTurn(id: string, update: (turn: TurnEntry) => TurnEntry) {
@@ -157,9 +141,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     reasoning?: CodexReasoningId;
     sessionMode: CodexSessionMode;
   }) {
-    try {
-      localStorage.setItem(configStorageKey(project_id), JSON.stringify(next));
-    } catch {}
+    saveNavigatorConfig(next);
   }
 
   function onChangeModel(value: string) {
@@ -189,6 +171,16 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
       reasoning,
       sessionMode: value,
     });
+  }
+
+  function onSetTargetToCurrentProject() {
+    setTargetProjectId(project_id);
+    saveNavigatorTargetProjectId(project_id);
+  }
+
+  function onUseGlobalDefaultTarget() {
+    clearNavigatorTargetProjectId();
+    setTargetProjectId(project_id);
   }
 
   async function runAction() {
@@ -227,7 +219,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
 
     try {
       const stream = await webapp_client.conat_client.streamAcp({
-        project_id,
+        project_id: targetProjectId || project_id,
         prompt: text,
         session_id: sessionAtStart,
         config: requestConfig,
@@ -299,7 +291,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
       sessionId || latestTurn?.sessionIdAtEnd || latestTurn?.sessionIdAtStart;
     try {
       await webapp_client.conat_client.interruptAcp({
-        project_id,
+        project_id: targetProjectId || project_id,
         threadId,
         note: "navigator-shell interrupt",
       });
@@ -426,9 +418,27 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         <Tag color={sessionId ? "green" : "default"}>
           Session: {sessionId || "new"}
         </Tag>
+        <Tag>
+          Target: {targetProjectId || project_id}
+          {targetProjectId !== project_id ? " (global override)" : ""}
+        </Tag>
         <Tag>{model}</Tag>
         <Tag>{reasoning ?? "default reasoning"}</Tag>
         <Tag>Mode: {sessionMode}</Tag>
+        <Button
+          size="small"
+          onClick={onSetTargetToCurrentProject}
+          disabled={busy || targetProjectId === project_id}
+        >
+          Use current project
+        </Button>
+        <Button
+          size="small"
+          onClick={onUseGlobalDefaultTarget}
+          disabled={busy || targetProjectId === project_id}
+        >
+          Clear target override
+        </Button>
         <Button size="small" onClick={resetSession} disabled={busy || !sessionId}>
           Reset session
         </Button>
@@ -486,6 +496,24 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
             ),
           }))}
         />
+      ) : null}
+      {showAdvancedTrace ? (
+        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+          <Input
+            size="small"
+            value={targetProjectId}
+            onChange={(e) => setTargetProjectId(e.target.value.trim())}
+            placeholder="Navigator target project id"
+            disabled={busy}
+          />
+          <Button
+            size="small"
+            onClick={() => saveNavigatorTargetProjectId(targetProjectId)}
+            disabled={busy || !targetProjectId}
+          >
+            Save target
+          </Button>
+        </div>
       ) : null}
     </div>
   );
