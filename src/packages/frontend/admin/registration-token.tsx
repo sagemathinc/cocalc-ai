@@ -339,7 +339,7 @@ export function RegistrationToken() {
           <Switch />
         </Form.Item>
         <Form.Item {...tailLayout}>
-          <AntdButton.Group>
+          <Space.Compact>
             <AntdButton type="primary" htmlType="submit">
               Save
             </AntdButton>
@@ -356,7 +356,7 @@ export function RegistrationToken() {
               <CancelText />
             </AntdButton>
             <AntdButton onClick={onRandom}>Randomize</AntdButton>
-          </AntdButton.Group>
+          </Space.Compact>
         </Form.Item>
       </Form>
     );
@@ -365,7 +365,7 @@ export function RegistrationToken() {
   function render_buttons() {
     const any_selected = sel_rows.length > 0;
     return (
-      <AntdButton.Group style={{ margin: "10px 0" }}>
+      <Space.Compact style={{ margin: "10px 0" }}>
         <AntdButton
           type={!any_selected ? "primary" : "default"}
           disabled={any_selected}
@@ -389,7 +389,7 @@ export function RegistrationToken() {
           <Icon name="refresh" />
           Refresh
         </AntdButton>
-      </AntdButton.Group>
+      </Space.Compact>
     );
   }
 

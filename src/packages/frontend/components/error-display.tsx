@@ -82,20 +82,19 @@ export function ErrorDisplay({
   }
 
   function render_alert() {
-    const [message, description] = msgdesc();
+    const [title, description] = msgdesc();
     // tweak the case where it's not a banner
-    const extra = banner ? undefined : { closable: true, onClose };
+    const closable =
+      onClose != null || banner ? (onClose ? { onClose } : true) : false;
     return (
       <Alert
         banner={banner}
         showIcon
         style={{ ...ELEMENT_STYLE, ...style }}
         type={type() as any}
-        message={message}
+        title={title}
         description={description}
-        onClose={onClose}
-        closable={onClose != null || banner}
-        {...extra}
+        closable={closable}
       />
     );
   }
