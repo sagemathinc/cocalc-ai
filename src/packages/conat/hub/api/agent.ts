@@ -1,3 +1,13 @@
+/*
+Hub `agent.*` API contract and auth transform metadata.
+
+Who calls this:
+- Any caller using `initHubApi(...)` (browser/frontend, lite clients, server code)
+  can invoke `hub.agent.execute(...)` and `hub.agent.manifest(...)`.
+- On the server/lite side, the hub request dispatcher uses this file via
+  `transformArgs` in `conat/hub/api/index.ts` to enforce account auth and
+  shape typed request/response signatures.
+*/
 import { authFirstRequireAccount } from "./util";
 
 export const agent = {

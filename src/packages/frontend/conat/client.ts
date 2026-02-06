@@ -42,6 +42,11 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
 import { until } from "@cocalc/util/async-utils";
 import { delay } from "awaiting";
+import type {
+  AgentExecuteRequest,
+  AgentExecuteResponse,
+  AgentManifestEntry,
+} from "@cocalc/conat/hub/api/agent";
 import {
   deleteRememberMe,
   setRememberMe,
@@ -466,6 +471,22 @@ export class ConatClient extends EventEmitter {
       timeout,
       client: this.conat(),
     });
+  };
+
+  // Convenience wrapper for hub.agent.* so callers don't need to go
+  // through hub namespaces directly.
+  agent = {
+    manifest: async (): Promise<AgentManifestEntry[]> => {
+      return await this.hub.agent.manifest();
+    },
+    execute: async (
+      opts: Omit<AgentExecuteRequest, "account_id">,
+    ): Promise<AgentExecuteResponse> => {
+      return await this.hub.agent.execute({
+        ...opts,
+        account_id: this.client.account_id,
+      });
+    },
   };
 
   synctable: ConatSyncTableFunction = async (
