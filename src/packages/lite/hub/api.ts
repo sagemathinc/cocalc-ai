@@ -124,10 +124,22 @@ async function getNames(account_ids: string[]) {
   return { ...names, ...x };
 }
 
+async function logClientError(_opts?: { event?: string; error?: string }) {
+  // No-op in lite mode.
+}
+
+async function userTracking(_opts?: { event?: string; value?: object }) {
+  // No-op in lite mode.
+}
+
+async function webappError(_opts?: object) {
+  // No-op in lite mode.
+}
+
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add
 // host-specific implementations of hub APIs. Keep the defaults minimal here.
 export const hubApi: HubApi = {
-  system: { getNames },
+  system: { getNames, logClientError, userTracking, webappError },
   projects: {},
   db: { touch: () => {}, userQuery },
   purchases: {},

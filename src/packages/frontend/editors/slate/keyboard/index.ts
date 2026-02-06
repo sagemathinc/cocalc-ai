@@ -17,5 +17,4 @@ import "./sync";
 import "./move-block";
 import "./toggle-collapse-sections";
 import "./find";
-import "./move-list";
 import "./split-code-block";
