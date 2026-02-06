@@ -137,6 +137,9 @@ export function cleanup(): void {
     "DEBUG_CONSOLE",
     "CONAT_SERVER",
     "PORT",
+    "PGHOST",
+    "PGUSER",
+    "PGDATABASE",
     "HISTFILE",
     "PROMPT_COMMAND",
   ];
