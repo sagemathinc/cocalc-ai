@@ -8,7 +8,6 @@ import { CodexExecAgent } from "@cocalc/ai/acp";
 import { account_id as ACCOUNT_ID } from "@cocalc/backend/data";
 import type { AcpStreamPayload } from "@cocalc/conat/ai/acp/types";
 import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
-import { llm as runLlm } from "@cocalc/conat/llm/client";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import type {
   AgentExecuteRequest,
@@ -19,15 +18,6 @@ import type {
 } from "@cocalc/conat/hub/api/agent";
 import { conat } from "@cocalc/conat/client";
 import { project_id as LOCAL_PROJECT_ID } from "@cocalc/project/data";
-import {
-  DEFAULT_MODEL,
-  isAnthropicModel,
-  isCustomOpenAI,
-  isGoogleModel,
-  isMistralModel,
-  isOllamaLLM,
-  isOpenAIModel,
-} from "@cocalc/util/db-schema/llm-utils";
 import { callRemoteHub, hasRemote, project_id as REMOTE_PROJECT_ID } from "../remote";
 import { getLiteServerSettings } from "./settings";
 
@@ -101,39 +91,6 @@ function randomRequestId(prefix = "agent-plan"): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value != null && !Array.isArray(value);
-}
-
-function getPlannerModel(): string {
-  const settings = getLiteServerSettings();
-  const preferred =
-    typeof settings?.default_llm === "string" && settings.default_llm.trim()
-      ? settings.default_llm.trim()
-      : DEFAULT_MODEL;
-  const hasKeyForModel = (model: string): boolean => {
-    if (isOpenAIModel(model)) {
-      return !!settings?.openai_api_key;
-    }
-    if (isGoogleModel(model)) {
-      return !!settings?.google_vertexai_key;
-    }
-    if (isAnthropicModel(model)) {
-      return !!settings?.anthropic_api_key;
-    }
-    if (isMistralModel(model)) {
-      return !!settings?.mistral_api_key;
-    }
-    if (isCustomOpenAI(model) || isOllamaLLM(model)) {
-      return true;
-    }
-    return true;
-  };
-  if (hasKeyForModel(preferred)) {
-    return preferred;
-  }
-  if (settings?.openai_api_key) {
-    return "gpt-4o-mini-8k";
-  }
-  return preferred;
 }
 
 function getPlannerCodexModel(explicit?: string): string {
@@ -432,7 +389,6 @@ export async function plan(opts: AgentPlanRequest): Promise<AgentPlanResponse> {
       : fallbackManifest;
   const manifest = manifest0.filter((entry) => !!entry?.actionType);
   let raw = "";
-  let codexError = "";
   try {
     raw = await runPlannerWithCodex({
       account_id: opts.account_id,
@@ -443,22 +399,11 @@ export async function plan(opts: AgentPlanRequest): Promise<AgentPlanResponse> {
       model: opts.model,
     });
   } catch (err) {
-    codexError = `${err}`;
-  }
-  if (!raw) {
-    raw = await runLlm({
-      account_id: opts.account_id,
-      model: opts.model ?? getPlannerModel(),
-      system: buildPlannerSystemPrompt(maxActions),
-      input: buildPlannerInput({
-        prompt,
-        defaults: opts.defaults,
-        manifest,
-      }),
-      maxTokens: 1200,
-      timeout: 30 * 1000,
-      tag: "agent-planner",
-    });
+    return {
+      status: "failed",
+      requestId,
+      error: `Codex planner failed: ${err}`,
+    };
   }
   try {
     const plan = parsePlannerOutput({ raw, maxActions });
@@ -482,7 +427,7 @@ export async function plan(opts: AgentPlanRequest): Promise<AgentPlanResponse> {
     return {
       status: "failed",
       requestId,
-      error: codexError ? `${err} (codex: ${codexError})` : `${err}`,
+      error: `${err}`,
       raw,
     };
   }

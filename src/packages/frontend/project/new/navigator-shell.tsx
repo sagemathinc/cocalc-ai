@@ -43,6 +43,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
   const [plannedAction, setPlannedAction] = useState<ActionEnvelope | null>(
     null,
   );
+  const [plannedActions, setPlannedActions] = useState<ActionEnvelope[]>([]);
 
   const manifestByAction = useMemo(() => {
     const map = new Map<string, AgentManifestEntry>();
@@ -124,11 +125,13 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
       if (response.status !== "planned" || !response.plan?.actions?.length) {
         throw Error(response.error ?? "Planner did not return an action.");
       }
-      const firstAction = response.plan.actions[0];
+      const actions = response.plan.actions;
+      const firstAction = actions[0];
       setPlannedAction(firstAction);
+      setPlannedActions(actions);
       const label =
         response.plan.summary?.trim() ||
-        `Planned action: ${firstAction.actionType}`;
+        `Planned ${actions.length} action${actions.length === 1 ? "" : "s"}`;
       setHistory((cur) => [
         {
           ts: new Date().toISOString(),
@@ -299,6 +302,9 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         {plannedAction ? (
           <>
             <Tag color="green">{plannedAction.actionType}</Tag>
+            <Tag>
+              {plannedActions.length} step{plannedActions.length === 1 ? "" : "s"}
+            </Tag>
             {manifestByAction.get(plannedAction.actionType)?.riskLevel ? (
               <Tag>
                 Risk: {manifestByAction.get(plannedAction.actionType)?.riskLevel}
@@ -322,13 +328,22 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         </Button>
         {manifest ? <Tag>{manifest.length} capabilities</Tag> : null}
       </Space>
+      {plannedActions.length > 1 ? (
+        <Alert
+          style={{ marginTop: 8 }}
+          type="info"
+          showIcon
+          message="This shell currently executes only step 1 of the plan."
+          description="Use this trace to inspect the full plan before running."
+        />
+      ) : null}
       {plannedAction ? (
         <Input.TextArea
           style={{ marginTop: 8 }}
-          value={prettify(plannedAction)}
+          value={prettify(plannedActions)}
           readOnly
           autoSize={{ minRows: 4, maxRows: 10 }}
-          placeholder="Planned action appears here..."
+          placeholder="Planned actions appear here..."
         />
       ) : null}
       <Input.TextArea
