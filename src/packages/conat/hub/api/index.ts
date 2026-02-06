@@ -13,6 +13,7 @@ import { type Software, software } from "./software";
 import { type LroApi, lro } from "./lro";
 import { type Ssh, ssh } from "./ssh";
 import { type ReflectApi, reflect } from "./reflect";
+import { type AgentApi, agent } from "./agent";
 
 export interface HubApi {
   system: System;
@@ -28,6 +29,7 @@ export interface HubApi {
   lro: LroApi;
   ssh: Ssh;
   reflect: ReflectApi;
+  agent: AgentApi;
 }
 
 const HubApiStructure = {
@@ -44,6 +46,7 @@ const HubApiStructure = {
   lro,
   ssh,
   reflect,
+  agent,
 } as const;
 
 export function transformArgs({

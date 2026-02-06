@@ -2,8 +2,6 @@
 Runtime bridge for wiring agent-sdk to real hub/project clients.
 */
 
-import type { HubApi } from "@cocalc/conat/hub/api";
-import type { ProjectApi } from "@cocalc/conat/project/api";
 import type { AgentCapabilityRegistry } from "./capabilities";
 import { AgentCapabilityRegistry as Registry } from "./capabilities";
 import { AgentExecutor, type AgentExecutorOptions } from "./executor";
@@ -16,8 +14,32 @@ import type {
   AgentSdkContext,
 } from "./adapters";
 
-type HubClientLike = Pick<HubApi, "system" | "projects">;
-type ProjectClientLike = Pick<ProjectApi, "system" | "apps">;
+type Awaitable<T> = T | Promise<T>;
+
+type HubClientLike = {
+  system: {
+    ping: () => Awaitable<{ now: number }>;
+    getCustomize: (fields?: string[]) => Awaitable<any>;
+  };
+  projects: {
+    createProject: (opts: any) => Awaitable<string>;
+  };
+};
+
+type ProjectClientLike = {
+  system: {
+    listing: (opts: { path: string; hidden?: boolean }) => Awaitable<any[]>;
+    writeTextFileToProject: (opts: {
+      path: string;
+      content: string;
+    }) => Awaitable<void>;
+  };
+  apps: {
+    start: (name: string) => Awaitable<any>;
+    stop: (name: string) => Awaitable<void>;
+    status: (name: string) => Awaitable<any>;
+  };
+};
 
 export type AgentSdkProjectResolver = (
   projectId: string,
@@ -183,4 +205,3 @@ export function createLaunchpadAgentSdkBridge(options: {
     executor: options.executor,
   });
 }
-

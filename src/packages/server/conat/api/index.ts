@@ -51,6 +51,7 @@ import * as fileSync from "./file-sync";
 import * as hosts from "./hosts";
 import * as software from "./software";
 import * as lro from "./lro";
+import * as agent from "./agent";
 
 import getLogger from "@cocalc/backend/logger";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
@@ -76,6 +77,7 @@ export const hubApi: HubApi = {
   hosts,
   software,
   lro,
+  agent,
   ssh,
   reflect,
 };

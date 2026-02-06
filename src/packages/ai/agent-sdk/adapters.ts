@@ -2,38 +2,38 @@
 Adapter contracts for wiring agent-sdk capabilities to real CoCalc APIs.
 */
 
-import type { HubApi } from "@cocalc/conat/hub/api";
-import type { ProjectApi } from "@cocalc/conat/project/api";
 import type { CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import type { DirectoryListingEntry } from "@cocalc/util/types";
 
+type Awaitable<T> = T | Promise<T>;
+
 export type AgentHubAdapter = {
-  ping: HubApi["system"]["ping"];
-  getCustomize: (fields?: string[]) => Promise<Customize>;
-  createProject: (opts: CreateProjectOptions) => Promise<string>;
+  ping: () => Awaitable<{ now: number }>;
+  getCustomize: (fields?: string[]) => Awaitable<Customize>;
+  createProject: (opts: CreateProjectOptions) => Awaitable<string>;
 };
 
 export type AgentProjectAppsAdapter = {
-  start: ProjectApi["apps"]["start"];
-  stop: ProjectApi["apps"]["stop"];
-  status: ProjectApi["apps"]["status"];
+  start: (name: string) => Awaitable<unknown>;
+  stop: (name: string) => Awaitable<void>;
+  status: (name: string) => Awaitable<unknown>;
 };
 
 export type AgentProjectAdapter = {
   listing: (opts: {
     path: string;
     hidden?: boolean;
-  }) => Promise<DirectoryListingEntry[]>;
+  }) => Awaitable<DirectoryListingEntry[]>;
   writeTextFileToProject: (opts: {
     path: string;
     content: string;
-  }) => Promise<void>;
+  }) => Awaitable<void>;
   apps: AgentProjectAppsAdapter;
 };
 
 export type AgentUIAdapter = {
-  openFile?: (opts: { projectId: string; path: string }) => Promise<void>;
+  openFile?: (opts: { projectId: string; path: string }) => Awaitable<void>;
 };
 
 export type AgentSdkAdapters = {
@@ -67,4 +67,3 @@ export function requireProjectAdapter(
   }
   return project;
 }
-
