@@ -9,256 +9,151 @@ import {
   requireProjectAdapter,
   type AgentSdkContext,
 } from "../adapters";
+import { z } from "zod";
 
-type PingArgs = Record<string, never> | undefined;
+const pingArgsSchema = z
+  .union([z.null(), z.undefined(), z.object({}).strict()])
+  .transform((value) => (value == null ? undefined : value));
+type PingArgs = z.infer<typeof pingArgsSchema>;
 
-type GetCustomizeArgs = {
-  fields?: string[];
-};
+const getCustomizeArgsSchema = z.object({
+  fields: z.array(z.string()).optional(),
+});
+type GetCustomizeArgs = z.infer<typeof getCustomizeArgsSchema>;
 
-type CreateProjectArgs = {
-  title?: string;
-  description?: string;
-  host_id?: string;
-  image?: string;
-  rootfs_image?: string;
-  region?: string;
-  start?: boolean;
-  src_project_id?: string;
-};
+const createProjectArgsSchema = z.object({
+  title: z.string().optional(),
+  description: z.string().optional(),
+  host_id: z.string().optional(),
+  image: z.string().optional(),
+  rootfs_image: z.string().optional(),
+  region: z.string().optional(),
+  start: z.boolean().optional(),
+  src_project_id: z.string().optional(),
+});
+type CreateProjectArgs = z.infer<typeof createProjectArgsSchema>;
 
-type ListingArgs = {
-  path: string;
-  hidden?: boolean;
-};
+const listingArgsSchema = z.object({
+  path: z.string(),
+  hidden: z.boolean().optional(),
+});
+type ListingArgs = z.infer<typeof listingArgsSchema>;
 
-type FsReadFileArgs = {
-  path: string;
-  encoding?: string;
-};
+const fsReadFileArgsSchema = z.object({
+  path: z.string(),
+  encoding: z.string().optional(),
+});
+type FsReadFileArgs = z.infer<typeof fsReadFileArgsSchema>;
 
-type FsWriteFileArgs = {
-  path: string;
-  data: string;
-  saveLast?: boolean;
-};
+const fsWriteFileArgsSchema = z.object({
+  path: z.string(),
+  data: z.string(),
+  saveLast: z.boolean().optional(),
+});
+type FsWriteFileArgs = z.infer<typeof fsWriteFileArgsSchema>;
 
-type FsReaddirArgs = {
-  path: string;
-};
+const fsReaddirArgsSchema = z.object({
+  path: z.string(),
+});
+type FsReaddirArgs = z.infer<typeof fsReaddirArgsSchema>;
 
-type FsMoveArgs = {
-  src: string | string[];
-  dest: string;
-  overwrite?: boolean;
-};
+const fsMoveArgsSchema = z.object({
+  src: z.union([z.string(), z.array(z.string()).nonempty()]),
+  dest: z.string(),
+  overwrite: z.boolean().optional(),
+});
+type FsMoveArgs = z.infer<typeof fsMoveArgsSchema>;
 
-type FsRenameArgs = {
-  oldPath: string;
-  newPath: string;
-};
+const fsRenameArgsSchema = z.object({
+  oldPath: z.string(),
+  newPath: z.string(),
+});
+type FsRenameArgs = z.infer<typeof fsRenameArgsSchema>;
 
-type FsRealpathArgs = {
-  path: string;
-};
+const fsRealpathArgsSchema = z.object({
+  path: z.string(),
+});
+type FsRealpathArgs = z.infer<typeof fsRealpathArgsSchema>;
 
-type WriteTextFileArgs = {
-  path: string;
-  content: string;
-};
+const writeTextFileArgsSchema = z.object({
+  path: z.string(),
+  content: z.string(),
+});
+type WriteTextFileArgs = z.infer<typeof writeTextFileArgsSchema>;
 
-type AppNameArgs = {
-  name: string;
-};
+const appNameArgsSchema = z.object({
+  name: z.string(),
+});
+type AppNameArgs = z.infer<typeof appNameArgsSchema>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value != null;
+function formatZodError(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => {
+      if (issue.path.length === 0) {
+        return issue.message;
+      }
+      return `${issue.path.join(".")}: ${issue.message}`;
+    })
+    .join("; ");
 }
 
-function asString(
-  value: unknown,
-  field: string,
-  opts: { optional?: boolean } = {},
-): string {
-  if (value == null && opts.optional) {
-    return value as any;
+function parseWithSchema<T>(schema: z.ZodType<T>, args: unknown): T {
+  const result = schema.safeParse(args);
+  if (result.success) {
+    return result.data;
   }
-  if (typeof value !== "string") {
-    throw new Error(`${field} must be a string`);
-  }
-  return value;
+  throw new Error(formatZodError(result.error));
 }
 
 function parsePingArgs(args: unknown): PingArgs {
-  if (args == null) {
-    return undefined;
-  }
-  if (isRecord(args) && Object.keys(args).length === 0) {
-    return {};
-  }
-  throw new Error("ping does not accept arguments");
+  return parseWithSchema(pingArgsSchema, args);
 }
 
 function parseGetCustomizeArgs(args: unknown): GetCustomizeArgs {
   if (args == null) {
     return {};
   }
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  const { fields } = args;
-  if (fields != null) {
-    if (!Array.isArray(fields) || fields.some((x) => typeof x !== "string")) {
-      throw new Error("fields must be an array of strings");
-    }
-  }
-  return { fields: fields as string[] | undefined };
+  return parseWithSchema(getCustomizeArgsSchema, args);
 }
 
 function parseCreateProjectArgs(args: unknown): CreateProjectArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  const title = asString(args.title, "title", { optional: true });
-  const description = asString(args.description, "description", {
-    optional: true,
-  });
-  const host_id = asString(args.host_id, "host_id", { optional: true });
-  const image = asString(args.image, "image", { optional: true });
-  const rootfs_image = asString(args.rootfs_image, "rootfs_image", {
-    optional: true,
-  });
-  const region = asString(args.region, "region", { optional: true });
-  const src_project_id = asString(args.src_project_id, "src_project_id", {
-    optional: true,
-  });
-  const start =
-    args.start == null
-      ? undefined
-      : typeof args.start === "boolean"
-        ? args.start
-        : (() => {
-            throw new Error("start must be a boolean");
-          })();
-  return {
-    title,
-    description,
-    host_id,
-    image,
-    rootfs_image,
-    region,
-    start,
-    src_project_id,
-  };
+  return parseWithSchema(createProjectArgsSchema, args);
 }
 
 function parseListingArgs(args: unknown): ListingArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  const path = asString(args.path, "path");
-  const hidden =
-    args.hidden == null
-      ? undefined
-      : typeof args.hidden === "boolean"
-        ? args.hidden
-        : (() => {
-            throw new Error("hidden must be a boolean");
-          })();
-  return { path, hidden };
+  return parseWithSchema(listingArgsSchema, args);
 }
 
 function parseWriteTextArgs(args: unknown): WriteTextFileArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  const path = asString(args.path, "path");
-  const content = asString(args.content, "content");
-  return { path, content };
+  return parseWithSchema(writeTextFileArgsSchema, args);
 }
 
 function parseFsReadFileArgs(args: unknown): FsReadFileArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  const path = asString(args.path, "path");
-  const encoding = asString(args.encoding, "encoding", { optional: true });
-  return { path, encoding };
+  return parseWithSchema(fsReadFileArgsSchema, args);
 }
 
 function parseFsWriteFileArgs(args: unknown): FsWriteFileArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  const path = asString(args.path, "path");
-  const data = asString(args.data, "data");
-  const saveLast =
-    args.saveLast == null
-      ? undefined
-      : typeof args.saveLast === "boolean"
-        ? args.saveLast
-        : (() => {
-            throw new Error("saveLast must be a boolean");
-          })();
-  return { path, data, saveLast };
+  return parseWithSchema(fsWriteFileArgsSchema, args);
 }
 
 function parseFsReaddirArgs(args: unknown): FsReaddirArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  return { path: asString(args.path, "path") };
+  return parseWithSchema(fsReaddirArgsSchema, args);
 }
 
 function parseFsMoveArgs(args: unknown): FsMoveArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  const src0 = args.src;
-  let src: string | string[];
-  if (typeof src0 === "string") {
-    src = src0;
-  } else if (Array.isArray(src0) && src0.length > 0) {
-    if (src0.some((x) => typeof x !== "string")) {
-      throw new Error("src array must contain only strings");
-    }
-    src = src0 as string[];
-  } else {
-    throw new Error("src must be a string or non-empty array of strings");
-  }
-  const overwrite =
-    args.overwrite == null
-      ? undefined
-      : typeof args.overwrite === "boolean"
-        ? args.overwrite
-        : (() => {
-            throw new Error("overwrite must be a boolean");
-          })();
-  return { src, dest: asString(args.dest, "dest"), overwrite };
+  return parseWithSchema(fsMoveArgsSchema, args);
 }
 
 function parseFsRenameArgs(args: unknown): FsRenameArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  return {
-    oldPath: asString(args.oldPath, "oldPath"),
-    newPath: asString(args.newPath, "newPath"),
-  };
+  return parseWithSchema(fsRenameArgsSchema, args);
 }
 
 function parseFsRealpathArgs(args: unknown): FsRealpathArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  return { path: asString(args.path, "path") };
+  return parseWithSchema(fsRealpathArgsSchema, args);
 }
 
 function parseAppNameArgs(args: unknown): AppNameArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  return { name: asString(args.name, "name") };
+  return parseWithSchema(appNameArgsSchema, args);
 }
 
 export function registerBasicCapabilities(
