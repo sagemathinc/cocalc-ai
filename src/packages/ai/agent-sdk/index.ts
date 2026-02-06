@@ -5,3 +5,4 @@ export * from "./executor";
 export * from "./memory";
 export * from "./adapters";
 export * from "./packs";
+export * from "./manifest";
