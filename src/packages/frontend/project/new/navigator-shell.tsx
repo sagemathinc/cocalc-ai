@@ -1,4 +1,4 @@
-import { Alert, Button, Input, Space, Tag, Typography } from "antd";
+import { Alert, Button, Collapse, Input, Space, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import type {
   AgentExecuteRequest,
@@ -12,6 +12,9 @@ type ActionEnvelope = AgentExecuteRequest["action"];
 
 type ResultEntry = {
   ts: string;
+  startedAt?: string;
+  finishedAt?: string;
+  elapsedMs?: number;
   prompt: string;
   label: string;
   mode: "plan" | "preview" | "run" | "confirm" | "manifest";
@@ -30,6 +33,13 @@ function prettify(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function formatElapsed(ms?: number): string {
+  if (ms == null) return "n/a";
+  if (ms < 1000) return `${ms} ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(2)} s`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
 interface NavigatorShellProps {
   project_id: string;
 }
@@ -46,6 +56,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     null,
   );
   const [plannedActions, setPlannedActions] = useState<ActionEnvelope[]>([]);
+  const [showAdvancedTrace, setShowAdvancedTrace] = useState(false);
 
   const manifestByAction = useMemo(() => {
     const map = new Map<string, AgentManifestEntry>();
@@ -70,15 +81,22 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
   }): Promise<AgentExecuteResponse> {
     setError("");
     try {
+      const startedMs = Date.now();
+      const startedAt = new Date(startedMs).toISOString();
       const response: AgentExecuteResponse =
         await webapp_client.conat_client.agent.execute({
           action,
           defaults: { projectId: project_id },
           confirmationToken,
         });
+      const finishedMs = Date.now();
+      const finishedAt = new Date(finishedMs).toISOString();
       setHistory((cur) => [
         {
-          ts: new Date().toISOString(),
+          ts: finishedAt,
+          startedAt,
+          finishedAt,
+          elapsedMs: finishedMs - startedMs,
           prompt: promptText,
           label,
           mode,
@@ -103,6 +121,8 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     setError("");
     setBusy("plan");
     try {
+      const startedMs = Date.now();
+      const startedAt = new Date(startedMs).toISOString();
       const response: AgentPlanResponse = await webapp_client.conat_client.agent.plan(
         {
           prompt: text,
@@ -110,6 +130,8 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           manifest: manifest ?? undefined,
         },
       );
+      const finishedMs = Date.now();
+      const finishedAt = new Date(finishedMs).toISOString();
       if (response.status !== "planned" || !response.plan?.actions?.length) {
         throw Error(response.error ?? "Planner did not return an action.");
       }
@@ -122,7 +144,10 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         `Planned ${actions.length} action${actions.length === 1 ? "" : "s"}`;
       setHistory((cur) => [
         {
-          ts: new Date().toISOString(),
+          ts: finishedAt,
+          startedAt,
+          finishedAt,
+          elapsedMs: finishedMs - startedMs,
           prompt: text,
           label,
           mode: "plan",
@@ -243,11 +268,18 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     setError("");
     setBusy("manifest");
     try {
+      const startedMs = Date.now();
+      const startedAt = new Date(startedMs).toISOString();
       const value = await webapp_client.conat_client.agent.manifest();
+      const finishedMs = Date.now();
+      const finishedAt = new Date(finishedMs).toISOString();
       setManifest(value);
       setHistory((cur) => [
         {
-          ts: new Date().toISOString(),
+          ts: finishedAt,
+          startedAt,
+          finishedAt,
+          elapsedMs: finishedMs - startedMs,
           prompt: "manifest",
           label: "Capability manifest",
           mode: "manifest",
@@ -376,6 +408,14 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         </Button>
         {manifest ? <Tag>{manifest.length} capabilities</Tag> : null}
       </Space>
+      <Space style={{ marginTop: 8 }} size={8}>
+        <Button size="small" onClick={() => setShowAdvancedTrace((v) => !v)}>
+          {showAdvancedTrace ? "Hide advanced trace" : "Advanced trace"}
+        </Button>
+        {lastResult?.elapsedMs != null ? (
+          <Tag color="purple">Last elapsed: {formatElapsed(lastResult.elapsedMs)}</Tag>
+        ) : null}
+      </Space>
       {plannedActions.length > 1 ? (
         <Alert
           style={{ marginTop: 8 }}
@@ -400,6 +440,9 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           lastResult
             ? prettify({
                 at: lastResult.ts,
+                startedAt: lastResult.startedAt,
+                finishedAt: lastResult.finishedAt,
+                elapsedMs: lastResult.elapsedMs,
                 mode: lastResult.mode,
                 prompt: lastResult.prompt,
                 label: lastResult.label,
@@ -411,6 +454,33 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         autoSize={{ minRows: 8, maxRows: 20 }}
         placeholder="Latest result appears here..."
       />
+      {showAdvancedTrace && history.length > 0 ? (
+        <Collapse
+          style={{ marginTop: 8 }}
+          size="small"
+          items={history.map((entry, i) => ({
+            key: `${entry.ts}-${i}`,
+            label: `${entry.mode.toUpperCase()} • ${entry.label}`,
+            extra: `${entry.ts} • ${formatElapsed(entry.elapsedMs)}`,
+            children: (
+              <Input.TextArea
+                value={prettify({
+                  at: entry.ts,
+                  startedAt: entry.startedAt,
+                  finishedAt: entry.finishedAt,
+                  elapsedMs: entry.elapsedMs,
+                  prompt: entry.prompt,
+                  label: entry.label,
+                  mode: entry.mode,
+                  response: entry.response,
+                })}
+                readOnly
+                autoSize={{ minRows: 6, maxRows: 14 }}
+              />
+            ),
+          }))}
+        />
+      ) : null}
     </div>
   );
 }
