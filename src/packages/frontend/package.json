@@ -181,7 +181,9 @@
     "i18n:unused": "bash ./i18n/bin/unused.sh",
     "i18n:delete": "bash ./i18n/bin/delete.sh",
     "i18n:update": "pnpm i18n:extract && pnpm i18n:upload && pnpm i18n:download && pnpm i18n:compile",
-    "spellcheck": "git ls-files \"*.ts\" \"*.tsx\" | xargs cspell --config cspell.json"
+    "spellcheck": "git ls-files \"*.ts\" \"*.tsx\" | xargs cspell --config cspell.json",
+    "check:antd-deprecations": "node ./scripts/check-antd-deprecations.mjs",
+    "check:antd-deprecations:ci": "node ./scripts/check-antd-deprecations.mjs --fail-on-findings"
   },
   "homepage": "https://github.com/sagemathinc/cocalc",
   "repository": {
