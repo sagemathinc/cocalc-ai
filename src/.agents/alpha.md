@@ -13,8 +13,6 @@ For alpha testing it will be deployed by:
 
 ## Blocker Todo List
 
-- [ ] plus: drag-n-drop to upload doesn't work; this matters because we do run this on REMOTE machines.
-
 - [ ] opening files not in \$HOME
   - [ ] #bug in cocalc-plus I did this: `ln -s / .root; open .root` and ended up with an unclosable broken tab.
   - [ ] just fully go through and support PATH's that start with /, but have them give an error when access through safe fs sandbox.  Make paths starting with / map to the overlayfs mountpoint if it exists; if it doesn't, it's an error saying you must start the workspace.  The location of the overlayfs will be input to creating the sandbox.  Finally if an absolute path is in the actual home directory of the user, that's an error, to keep things canonical.
@@ -22,14 +20,6 @@ For alpha testing it will be deployed by:
     - jupyter/root and jupyter/home
     - patchflow/root and patchflow/home
   - Alternative to all of this... just make ALL paths absolute.  Is it possible?
-
-- [ ] plus: implement remote ssh, sync, and port forward integration
-
-- [ ] plus: fullscreen button
-
-- [ ] plus: remote sessions -- get it to work on macos
-
-- [ ] chat bug: paste image and send chat quickly -- text is cleared but image stays; and doesn't get resized before send.
 
 - [ ] launchpad: implement /scratch for workspaces (just another btrfs that is never snapshotted or backed up, and has the same size as the main filesystem for the project).
 
@@ -61,7 +51,15 @@ For alpha testing it will be deployed by:
 
 - [ ] codex: proxy so this actually works, or private directory with auth data that is copied into place on usage
 
-- [ ] codex: codex-0.93 switched log format to use sqlite, so we may need to rewrite to use that.
+- [ ] plus: drag-n-drop to upload doesn't work; this matters because we do run this on REMOTE machines.
+
+- [ ] #bug slate: in code block often hitting backspace at the beginning of a line deletes the line, rather than joining it to the previous line.
+
+- [x] plus: remote sessions -- get it to work on macos
+
+- [x] codex: codex-0.93 switched log format to use sqlite, so we may need to rewrite to use that.
+
+- [x] plus: implement remote ssh, sync, and port forward integration
 
 - [x]  change the persist sqlite path to the actual file path instead of a hash
 
