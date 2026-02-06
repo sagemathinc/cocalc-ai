@@ -3,7 +3,8 @@ Hub `agent.*` API contract and auth transform metadata.
 
 Who calls this:
 - Any caller using `initHubApi(...)` (browser/frontend, lite clients, server code)
-  can invoke `hub.agent.execute(...)` and `hub.agent.manifest(...)`.
+  can invoke `hub.agent.execute(...)`, `hub.agent.manifest(...)`, and
+  `hub.agent.plan(...)`.
 - On the server/lite side, the hub request dispatcher uses this file via
   `transformArgs` in `conat/hub/api/index.ts` to enforce account auth and
   shape typed request/response signatures.
@@ -13,6 +14,7 @@ import { authFirstRequireAccount } from "./util";
 export const agent = {
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
+  plan: authFirstRequireAccount,
 };
 
 export type AgentExecuteRequest = {
@@ -65,7 +67,31 @@ export type AgentManifestEntry = {
   tags: string[];
 };
 
+export type AgentPlanRequest = {
+  account_id?: string;
+  prompt: string;
+  manifest?: AgentManifestEntry[];
+  model?: string;
+  maxActions?: number;
+  defaults?: {
+    accountId?: string;
+    projectId?: string;
+  };
+};
+
+export type AgentPlanResponse = {
+  status: "planned" | "failed";
+  requestId: string;
+  plan?: {
+    summary?: string;
+    actions: AgentExecuteRequest["action"][];
+  };
+  error?: string;
+  raw?: string;
+};
+
 export interface AgentApi {
   execute: (opts: AgentExecuteRequest) => Promise<AgentExecuteResponse>;
   manifest: (opts?: { account_id?: string }) => Promise<AgentManifestEntry[]>;
+  plan: (opts: AgentPlanRequest) => Promise<AgentPlanResponse>;
 }

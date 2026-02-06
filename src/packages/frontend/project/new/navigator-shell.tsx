@@ -4,23 +4,17 @@ import type {
   AgentExecuteRequest,
   AgentExecuteResponse,
   AgentManifestEntry,
+  AgentPlanResponse,
 } from "@cocalc/conat/hub/api/agent";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 type ActionEnvelope = AgentExecuteRequest["action"];
 
-type ParsedPrompt =
-  | {
-      action: ActionEnvelope;
-      label: string;
-    }
-  | { error: string };
-
 type ResultEntry = {
   ts: string;
   prompt: string;
   label: string;
-  mode: "preview" | "run" | "confirm" | "manifest";
+  mode: "plan" | "preview" | "run" | "confirm" | "manifest";
   response: unknown;
 };
 
@@ -29,127 +23,6 @@ type PendingConfirmation = {
   label: string;
   prompt: string;
 };
-
-function parsePrompt(prompt: string): ParsedPrompt {
-  const text = prompt.trim();
-  if (!text) {
-    return { error: "Please enter a command." };
-  }
-  if (/^ping$/i.test(text)) {
-    return {
-      label: "Ping hub",
-      action: { actionType: "hub.system.ping", args: {} },
-    };
-  }
-  const list = text.match(/^list(?:\s+(.+))?$/i);
-  if (list) {
-    return {
-      label: "List files",
-      action: {
-        actionType: "project.fs.readdir",
-        args: { path: (list[1] ?? ".").trim() || "." },
-      },
-    };
-  }
-  const status = text.match(/^status\s+([a-z0-9_-]+)$/i);
-  if (status) {
-    return {
-      label: `App status: ${status[1]}`,
-      action: {
-        actionType: "project.apps.status",
-        args: { name: status[1] },
-      },
-    };
-  }
-  const start = text.match(/^start\s+([a-z0-9_-]+)$/i);
-  if (start) {
-    return {
-      label: `Start app: ${start[1]}`,
-      action: {
-        actionType: "project.apps.start",
-        args: { name: start[1] },
-      },
-    };
-  }
-  const stop = text.match(/^stop\s+([a-z0-9_-]+)$/i);
-  if (stop) {
-    return {
-      label: `Stop app: ${stop[1]}`,
-      action: {
-        actionType: "project.apps.stop",
-        args: { name: stop[1] },
-      },
-    };
-  }
-  const write = text.match(/^write\s+(\S+)\s+:::\s+([\s\S]+)$/i);
-  if (write) {
-    return {
-      label: `Write file: ${write[1]}`,
-      action: {
-        actionType: "project.fs.writeFile",
-        args: { path: write[1], data: write[2] },
-      },
-    };
-  }
-  const read = text.match(/^read\s+(\S+)$/i);
-  if (read) {
-    return {
-      label: `Read file: ${read[1]}`,
-      action: {
-        actionType: "project.fs.readFile",
-        args: { path: read[1], encoding: "utf8" },
-      },
-    };
-  }
-  const readbin = text.match(/^readbin\s+(\S+)$/i);
-  if (readbin) {
-    return {
-      label: `Read file (binary): ${readbin[1]}`,
-      action: {
-        actionType: "project.fs.readFile",
-        args: { path: readbin[1] },
-      },
-    };
-  }
-  const rename = text.match(/^rename\s+(\S+)\s+->\s+(\S+)$/i);
-  if (rename) {
-    return {
-      label: `Rename file: ${rename[1]} -> ${rename[2]}`,
-      action: {
-        actionType: "project.fs.rename",
-        args: { oldPath: rename[1], newPath: rename[2] },
-      },
-    };
-  }
-  const move = text.match(/^move\s+(.+)\s+->\s+(\S+)$/i);
-  if (move) {
-    const paths = move[1]
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
-    return {
-      label: `Move files: ${paths.join(", ")} -> ${move[2]}`,
-      action: {
-        actionType: "project.fs.move",
-        args: { src: paths.length === 1 ? paths[0] : paths, dest: move[2] },
-      },
-    };
-  }
-  const realpath = text.match(/^realpath\s+(\S+)$/i);
-  if (realpath) {
-    return {
-      label: `Realpath: ${realpath[1]}`,
-      action: {
-        actionType: "project.fs.realpath",
-        args: { path: realpath[1] },
-      },
-    };
-  }
-  return {
-    error:
-      "Unknown command. Try: ping | list [path] | read <path> | readbin <path> | write <path> ::: <text> | rename <src> -> <dest> | move <a,b> -> <dest> | realpath <path> | status <app> | start <app> | stop <app>",
-  };
-}
 
 function prettify(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -161,14 +34,16 @@ interface NavigatorShellProps {
 
 export function NavigatorShell({ project_id }: NavigatorShellProps) {
   const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState<"" | "execute" | "manifest">("");
+  const [busy, setBusy] = useState<"" | "plan" | "execute" | "manifest">("");
   const [error, setError] = useState("");
   const [history, setHistory] = useState<ResultEntry[]>([]);
   const [manifest, setManifest] = useState<AgentManifestEntry[] | null>(null);
   const [pendingConfirmation, setPendingConfirmation] =
     useState<PendingConfirmation | null>(null);
+  const [plannedAction, setPlannedAction] = useState<ActionEnvelope | null>(
+    null,
+  );
 
-  const parsed = useMemo(() => parsePrompt(prompt), [prompt]);
   const manifestByAction = useMemo(() => {
     const map = new Map<string, AgentManifestEntry>();
     for (const entry of manifest ?? []) {
@@ -229,32 +104,75 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     }
   }
 
-  async function runAction() {
-    const parsed = parsePrompt(prompt);
-    if ("error" in parsed) {
-      setError(parsed.error);
-      return;
+  async function planPrompt(
+    promptText: string,
+  ): Promise<{ action: ActionEnvelope; label: string }> {
+    const text = promptText.trim();
+    if (!text) {
+      throw Error("Please enter a prompt.");
     }
-    await executeAction({
-      action: parsed.action,
-      label: parsed.label,
-      promptText: prompt.trim(),
-      mode: "run",
-    });
+    setError("");
+    setBusy("plan");
+    try {
+      const response: AgentPlanResponse = await webapp_client.conat_client.agent.plan(
+        {
+          prompt: text,
+          defaults: { projectId: project_id },
+          manifest: manifest ?? undefined,
+        },
+      );
+      if (response.status !== "planned" || !response.plan?.actions?.length) {
+        throw Error(response.error ?? "Planner did not return an action.");
+      }
+      const firstAction = response.plan.actions[0];
+      setPlannedAction(firstAction);
+      const label =
+        response.plan.summary?.trim() ||
+        `Planned action: ${firstAction.actionType}`;
+      setHistory((cur) => [
+        {
+          ts: new Date().toISOString(),
+          prompt: text,
+          label,
+          mode: "plan",
+          response,
+        },
+        ...cur,
+      ]);
+      return { action: firstAction, label };
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function runAction() {
+    try {
+      const promptText = prompt.trim();
+      const planned = await planPrompt(promptText);
+      await executeAction({
+        action: planned.action,
+        label: planned.label,
+        promptText,
+        mode: "run",
+      });
+    } catch (err) {
+      setError(`${err}`);
+    }
   }
 
   async function previewAction() {
-    const parsed = parsePrompt(prompt);
-    if ("error" in parsed) {
-      setError(parsed.error);
-      return;
+    try {
+      const promptText = prompt.trim();
+      const planned = await planPrompt(promptText);
+      await executeAction({
+        action: { ...planned.action, dryRun: true },
+        label: `Preview: ${planned.label}`,
+        promptText,
+        mode: "preview",
+      });
+    } catch (err) {
+      setError(`${err}`);
     }
-    await executeAction({
-      action: { ...parsed.action, dryRun: true },
-      label: `Preview: ${parsed.label}`,
-      promptText: prompt.trim(),
-      mode: "preview",
-    });
   }
 
   async function confirmAction() {
@@ -303,8 +221,8 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         type="secondary"
         style={{ marginBottom: "8px", marginTop: "6px" }}
       >
-        Deterministic command shell over `hub.agent.execute` while planner
-        integration is in progress.
+        LLM planner over `hub.agent.plan` with policy-gated execution via
+        `hub.agent.execute`.
       </Typography.Paragraph>
       {error ? (
         <Alert
@@ -356,13 +274,13 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           size="large"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="Try: list . | read notes.md | rename a.txt -> b.txt | move a.txt,b.txt -> docs"
+          placeholder="Describe what you want to do, e.g. read a.txt or start vscode"
           onPressEnter={() => runAction()}
         />
         <Button
           size="large"
           onClick={previewAction}
-          loading={busy === "execute"}
+          loading={busy === "plan" || busy === "execute"}
           disabled={busy !== ""}
         >
           Preview
@@ -371,28 +289,28 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           size="large"
           type="primary"
           onClick={runAction}
-          loading={busy === "execute"}
+          loading={busy === "plan" || busy === "execute"}
           disabled={busy !== ""}
         >
           Run
         </Button>
       </div>
       <Space style={{ marginTop: 8 }} size={8} wrap>
-        {"error" in parsed ? (
-          <Tag color="orange">No executable action</Tag>
-        ) : (
+        {plannedAction ? (
           <>
-            <Tag color="green">{parsed.action.actionType}</Tag>
-            {manifestByAction.get(parsed.action.actionType)?.riskLevel ? (
+            <Tag color="green">{plannedAction.actionType}</Tag>
+            {manifestByAction.get(plannedAction.actionType)?.riskLevel ? (
               <Tag>
-                Risk: {manifestByAction.get(parsed.action.actionType)?.riskLevel}
+                Risk: {manifestByAction.get(plannedAction.actionType)?.riskLevel}
               </Tag>
             ) : null}
-            {manifestByAction.get(parsed.action.actionType)
+            {manifestByAction.get(plannedAction.actionType)
               ?.requiresConfirmationByDefault ? (
               <Tag color="gold">Confirm by default</Tag>
             ) : null}
           </>
+        ) : (
+          <Tag color="orange">No plan yet</Tag>
         )}
         <Button
           size="small"
@@ -402,19 +320,17 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         >
           Refresh manifest
         </Button>
-        {manifest ? (
-          <Tag>{manifest.length} capabilities</Tag>
-        ) : null}
+        {manifest ? <Tag>{manifest.length} capabilities</Tag> : null}
       </Space>
-      {"error" in parsed ? null : (
+      {plannedAction ? (
         <Input.TextArea
           style={{ marginTop: 8 }}
-          value={prettify(parsed.action)}
+          value={prettify(plannedAction)}
           readOnly
           autoSize={{ minRows: 4, maxRows: 10 }}
-          placeholder="Action preview..."
+          placeholder="Planned action appears here..."
         />
-      )}
+      ) : null}
       <Input.TextArea
         style={{ marginTop: 8 }}
         value={
