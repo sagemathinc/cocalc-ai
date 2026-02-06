@@ -654,6 +654,7 @@ function setup_cocalc_analytics(w) {
 
 async function init_analytics() {
   await store.until_configured();
+  if (store.get("lite")) return;
   if (!store.get("is_commercial")) return;
 
   let w: any;
