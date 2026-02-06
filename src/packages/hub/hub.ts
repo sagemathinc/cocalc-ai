@@ -437,6 +437,11 @@ async function main(): Promise<void> {
       program.mentions =
       program.updateDatabaseSchema =
         true;
+    // In daemon mode, do not run one-shot maintenance commands that
+    // intentionally call process.exit() right after execution.
+    program.deleteExpired = false;
+    program.blobMaintenance = false;
+    program.updateStats = false;
   }
   if (process.env.COCALC_DISABLE_NEXT) {
     program.nextServer = false;
