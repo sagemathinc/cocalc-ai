@@ -780,7 +780,7 @@ export default function NewFilePage(props: Props) {
         onCancel={() => setShowUploadModal(false)}
         title="Upload files"
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <FileUpload
           project_id={project_id}
@@ -793,7 +793,7 @@ export default function NewFilePage(props: Props) {
         onCancel={() => setShowServerPanel("")}
         footer={null}
         width={820}
-        destroyOnClose
+        destroyOnHidden
         title={showServerPanel ? APP_MAP[showServerPanel]?.label : undefined}
       >
         {showServerPanel && (

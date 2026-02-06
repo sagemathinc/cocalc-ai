@@ -44,7 +44,7 @@ export default function FindRestoreModal({
       style={{ maxWidth: "90vw" }}
       onCancel={onCancel}
       footer={null}
-      destroyOnClose
+      destroyOnHidden
     >
       <Space direction="vertical" style={{ width: "100%" }} size="middle">
         <div>

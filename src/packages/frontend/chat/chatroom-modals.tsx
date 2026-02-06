@@ -197,7 +197,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         onCancel={closeExportModal}
         onOk={handleExportThread}
         okText="Export"
-        destroyOnClose
+        destroyOnHidden
       >
         <Space direction="vertical" size={10} style={{ width: "100%" }}>
           <div>
@@ -218,7 +218,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         onCancel={closeRenameModal}
         onOk={handleRenameSave}
         okText="Save"
-        destroyOnClose
+        destroyOnHidden
       >
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           <div>
@@ -282,7 +282,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         onCancel={closeForkModal}
         onOk={handleForkThread}
         okText="Fork"
-        destroyOnClose
+        destroyOnHidden
       >
         <Space direction="vertical" size={10} style={{ width: "100%" }}>
           <div>

@@ -19,7 +19,7 @@ export function HostProjectsBrowser({
       width={900}
       title={`Projects on ${host.name ?? host.id}`}
       okText="Close"
-      destroyOnClose
+      destroyOnHidden
     >
       <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
         Showing projects assigned to this host. Use “Load more” to page through

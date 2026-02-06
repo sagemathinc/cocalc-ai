@@ -194,7 +194,7 @@ export function HostPickerModal({
           <Icon name="server" /> {isCreate ? "Choose host" : "Move to host"}
         </Space>
       }
-      destroyOnClose
+      destroyOnHidden
     >
       {showOfflineMoveWarning && currentHostId && !currentHostAvailable && (
         <Alert

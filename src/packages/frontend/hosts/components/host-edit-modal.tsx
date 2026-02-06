@@ -426,7 +426,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       confirmLoading={saving}
       okText="Save"
       okButtonProps={{ disabled: disableSave }}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical">
         {isDeprovisioned ? (

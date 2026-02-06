@@ -212,7 +212,7 @@ export function FindScopeBar({
       ) : null}
       <Modal
         open={selectorOpen}
-        destroyOnClose
+        destroyOnHidden
         width={mode === "flyout" ? 640 : 860}
         title="Select Search Folder"
         okText="Use this folder"
