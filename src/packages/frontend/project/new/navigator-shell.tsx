@@ -1,8 +1,23 @@
-import { Alert, Button, Collapse, Input, Space, Tag, Typography } from "antd";
+import {
+  Alert,
+  Button,
+  Collapse,
+  Input,
+  Select,
+  Space,
+  Tag,
+  Typography,
+} from "antd";
 import { useEffect, useRef, useState } from "react";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { CodexActivity } from "@cocalc/frontend/chat/codex-activity";
+import {
+  DEFAULT_CODEX_MODELS,
+  type CodexReasoningId,
+  type CodexSessionConfig,
+  type CodexSessionMode,
+} from "@cocalc/util/ai/codex";
 
 type TurnStatus = "running" | "completed" | "failed" | "interrupted";
 
@@ -15,12 +30,37 @@ type TurnEntry = {
   elapsedMs?: number;
   sessionIdAtStart?: string;
   sessionIdAtEnd?: string;
+  requestConfig?: CodexSessionConfig;
   finalResponse?: string;
   error?: string;
   events: AcpStreamMessage[];
 };
 
 const SESSION_KEY_PREFIX = "cocalc:navigator:acp-session";
+const CONFIG_KEY_PREFIX = "cocalc:navigator:acp-config";
+const SESSION_MODE_OPTIONS: Array<{
+  value: CodexSessionMode;
+  label: string;
+}> = [
+  { value: "read-only", label: "Read only" },
+  { value: "workspace-write", label: "Workspace write" },
+  { value: "full-access", label: "Full access" },
+];
+const NAVIGATOR_MODELS = DEFAULT_CODEX_MODELS.filter((m) =>
+  m.name.includes("codex"),
+);
+
+function defaultModelName(): string {
+  return NAVIGATOR_MODELS[0]?.name ?? DEFAULT_CODEX_MODELS[0]?.name ?? "";
+}
+
+function defaultReasoningForModel(modelName: string): CodexReasoningId | undefined {
+  const model = NAVIGATOR_MODELS.find((m) => m.name === modelName);
+  const reasoning =
+    model?.reasoning?.find((entry) => entry.default)?.id ??
+    model?.reasoning?.[0]?.id;
+  return reasoning;
+}
 
 function prettify(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -37,6 +77,10 @@ function storageKey(projectId: string): string {
   return `${SESSION_KEY_PREFIX}:${projectId}`;
 }
 
+function configStorageKey(projectId: string): string {
+  return `${CONFIG_KEY_PREFIX}:${projectId}`;
+}
+
 interface NavigatorShellProps {
   project_id: string;
 }
@@ -47,6 +91,11 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
   const [error, setError] = useState("");
   const [turns, setTurns] = useState<TurnEntry[]>([]);
   const [sessionId, setSessionId] = useState<string>("");
+  const [model, setModel] = useState<string>(defaultModelName());
+  const [reasoning, setReasoning] = useState<CodexReasoningId | undefined>(
+    defaultReasoningForModel(defaultModelName()),
+  );
+  const [sessionMode, setSessionMode] = useState<CodexSessionMode>("read-only");
   const [showAdvancedTrace, setShowAdvancedTrace] = useState(false);
   const stopRequestedRef = useRef(false);
   const latestTurn = turns[0];
@@ -58,6 +107,32 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     } catch {
       setSessionId("");
     }
+    try {
+      const raw = localStorage.getItem(configStorageKey(project_id)) ?? "";
+      if (!raw) return;
+      const cfg = JSON.parse(raw) as {
+        model?: string;
+        reasoning?: CodexReasoningId;
+        sessionMode?: CodexSessionMode;
+      };
+      const model0 =
+        typeof cfg.model === "string" && cfg.model.trim()
+          ? cfg.model
+          : defaultModelName();
+      const sessionMode0 =
+        cfg.sessionMode === "read-only" ||
+        cfg.sessionMode === "workspace-write" ||
+        cfg.sessionMode === "full-access"
+          ? cfg.sessionMode
+          : "read-only";
+      const modelInfo = NAVIGATOR_MODELS.find((m) => m.name === model0);
+      const reasoning0 = modelInfo?.reasoning?.some((entry) => entry.id === cfg.reasoning)
+        ? cfg.reasoning
+        : defaultReasoningForModel(model0);
+      setModel(model0);
+      setReasoning(reasoning0);
+      setSessionMode(sessionMode0);
+    } catch {}
   }, [project_id]);
 
   function saveSessionId(value?: string) {
@@ -77,6 +152,45 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     setTurns((cur) => cur.map((turn) => (turn.id === id ? update(turn) : turn)));
   }
 
+  function saveConfig(next: {
+    model: string;
+    reasoning?: CodexReasoningId;
+    sessionMode: CodexSessionMode;
+  }) {
+    try {
+      localStorage.setItem(configStorageKey(project_id), JSON.stringify(next));
+    } catch {}
+  }
+
+  function onChangeModel(value: string) {
+    const nextReasoning = defaultReasoningForModel(value);
+    setModel(value);
+    setReasoning(nextReasoning);
+    saveConfig({
+      model: value,
+      reasoning: nextReasoning,
+      sessionMode,
+    });
+  }
+
+  function onChangeReasoning(value?: CodexReasoningId) {
+    setReasoning(value);
+    saveConfig({
+      model,
+      reasoning: value,
+      sessionMode,
+    });
+  }
+
+  function onChangeSessionMode(value: CodexSessionMode) {
+    setSessionMode(value);
+    saveConfig({
+      model,
+      reasoning,
+      sessionMode: value,
+    });
+  }
+
   async function runAction() {
     const text = prompt.trim();
     if (!text || busy) return;
@@ -91,6 +205,12 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     let sessionAtEnd = sessionAtStart;
     let finalResponse = "";
     const events: AcpStreamMessage[] = [];
+    const requestConfig: CodexSessionConfig = {
+      model,
+      reasoning,
+      sessionMode,
+      allowWrite: sessionMode !== "read-only",
+    };
 
     setTurns((cur) => [
       {
@@ -99,6 +219,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         status: "running",
         startedAt,
         sessionIdAtStart: sessionAtStart,
+        requestConfig,
         events: [],
       },
       ...cur,
@@ -109,6 +230,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         project_id,
         prompt: text,
         session_id: sessionAtStart,
+        config: requestConfig,
       });
       for await (const message of stream) {
         events.push(message);
@@ -246,6 +368,50 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           Stop
         </Button>
       </div>
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          marginTop: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <Select
+          size="small"
+          style={{ minWidth: 220 }}
+          value={model}
+          options={NAVIGATOR_MODELS.map((entry) => ({
+            value: entry.name,
+            label: entry.name,
+          }))}
+          onChange={(value) => onChangeModel(value)}
+          disabled={busy}
+        />
+        <Select
+          size="small"
+          style={{ minWidth: 160 }}
+          value={reasoning}
+          options={
+            NAVIGATOR_MODELS.find((entry) => entry.name === model)?.reasoning?.map(
+              (entry) => ({
+                value: entry.id,
+                label: entry.label,
+              }),
+            ) ?? []
+          }
+          onChange={(value) => onChangeReasoning(value)}
+          disabled={busy}
+          placeholder="Reasoning"
+        />
+        <Select
+          size="small"
+          style={{ minWidth: 170 }}
+          value={sessionMode}
+          options={SESSION_MODE_OPTIONS}
+          onChange={(value) => onChangeSessionMode(value)}
+          disabled={busy}
+        />
+      </div>
       <Space style={{ marginTop: 8 }} size={8} wrap>
         {latestTurn ? (
           <>
@@ -260,6 +426,9 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         <Tag color={sessionId ? "green" : "default"}>
           Session: {sessionId || "new"}
         </Tag>
+        <Tag>{model}</Tag>
+        <Tag>{reasoning ?? "default reasoning"}</Tag>
+        <Tag>Mode: {sessionMode}</Tag>
         <Button size="small" onClick={resetSession} disabled={busy || !sessionId}>
           Reset session
         </Button>
@@ -306,6 +475,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
                   prompt: turn.prompt,
                   sessionIdAtStart: turn.sessionIdAtStart,
                   sessionIdAtEnd: turn.sessionIdAtEnd,
+                  requestConfig: turn.requestConfig,
                   finalResponse: turn.finalResponse,
                   error: turn.error,
                   events: turn.events,
