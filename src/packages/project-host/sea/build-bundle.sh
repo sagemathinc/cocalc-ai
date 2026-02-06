@@ -159,8 +159,19 @@ for dest_root in "$OUT/bundle" "$OUT/main"; do
 done
 
 echo "- Copy project-runner templates"
-mkdir -p "$OUT"/bundle/templates
-cp -r packages/project-runner/templates/. "$OUT"/bundle/templates/
+for dest_root in "$OUT/bundle" "$OUT/main"; do
+  mkdir -p "$dest_root/templates"
+  cp -r packages/project-runner/templates/. "$dest_root/templates/"
+done
+
+for required in \
+  "$OUT/bundle/templates/linux/bashrc" \
+  "$OUT/bundle/templates/linux/bash_profile"; do
+  if [ ! -f "$required" ]; then
+    echo "ERROR: missing required template in bundle: $required" >&2
+    exit 1
+  fi
+done
 
 echo "- Remove other platform binaries"
 rm -rf "$OUT"/build/win32 "$OUT"/build/darwin || true
