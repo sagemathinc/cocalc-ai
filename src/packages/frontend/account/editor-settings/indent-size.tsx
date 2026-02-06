@@ -27,7 +27,7 @@ export function EditorSettingsIndentSize(props: Props): React.JSX.Element {
         min={2}
         max={32}
         value={props.tab_size}
-        addonAfter="spaces"
+        suffix="spaces"
       />
     </LabeledRow>
   );

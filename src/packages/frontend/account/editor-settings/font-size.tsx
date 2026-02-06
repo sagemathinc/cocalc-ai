@@ -29,7 +29,7 @@ export function EditorSettingsFontSize(props: Props) {
         min={5}
         max={32}
         value={props.font_size}
-        addonAfter="px"
+        suffix="px"
       />
     </LabeledRow>
   );
