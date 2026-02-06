@@ -127,6 +127,7 @@ function compactManifest(
 ): Array<{
   actionType: string;
   summary: string;
+  argsSchema?: unknown;
   riskLevel: string;
   sideEffectScope: string;
   requiresConfirmationByDefault: boolean;
@@ -135,6 +136,7 @@ function compactManifest(
   return manifest.map((entry) => ({
     actionType: entry.actionType,
     summary: entry.summary,
+    argsSchema: entry.argsSchema,
     riskLevel: entry.riskLevel,
     sideEffectScope: entry.sideEffectScope,
     requiresConfirmationByDefault: entry.requiresConfirmationByDefault,

@@ -59,6 +59,7 @@ export type AgentManifestEntry = {
   namespace?: string;
   summary: string;
   description?: string;
+  argsSchema?: unknown;
   riskLevel: string;
   sideEffectScope: string;
   requiresConfirmationByDefault: boolean;

@@ -19,9 +19,11 @@ type ResultEntry = {
 };
 
 type PendingConfirmation = {
-  action: ActionEnvelope;
+  actions: ActionEnvelope[];
+  stepIndex: number;
   label: string;
   prompt: string;
+  dryRun: boolean;
 };
 
 function prettify(value: unknown): string {
@@ -65,9 +67,8 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     promptText: string;
     mode: ResultEntry["mode"];
     confirmationToken?: string;
-  }) {
+  }): Promise<AgentExecuteResponse> {
     setError("");
-    setBusy("execute");
     try {
       const response: AgentExecuteResponse =
         await webapp_client.conat_client.agent.execute({
@@ -75,19 +76,6 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           defaults: { projectId: project_id },
           confirmationToken,
         });
-      if (
-        response.status === "blocked" &&
-        response.requiresConfirmation &&
-        !confirmationToken
-      ) {
-        setPendingConfirmation({
-          action: { ...action, dryRun: false },
-          label,
-          prompt: promptText,
-        });
-      } else {
-        setPendingConfirmation(null);
-      }
       setHistory((cur) => [
         {
           ts: new Date().toISOString(),
@@ -98,16 +86,16 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         },
         ...cur,
       ]);
+      return response;
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      setBusy("");
+      throw err;
     }
   }
 
   async function planPrompt(
-    promptText: string,
-  ): Promise<{ action: ActionEnvelope; label: string }> {
+    promptText: string
+  ): Promise<{ actions: ActionEnvelope[]; label: string }> {
     const text = promptText.trim();
     if (!text) {
       throw Error("Please enter a prompt.");
@@ -142,7 +130,65 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         },
         ...cur,
       ]);
-      return { action: firstAction, label };
+      return { actions, label };
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function executePlannedActions({
+    actions,
+    label,
+    promptText,
+    dryRun,
+    mode,
+    startIndex = 0,
+    confirmationToken,
+  }: {
+    actions: ActionEnvelope[];
+    label: string;
+    promptText: string;
+    dryRun: boolean;
+    mode: "run" | "preview" | "confirm";
+    startIndex?: number;
+    confirmationToken?: string;
+  }) {
+    if (actions.length === 0) {
+      throw Error("Planner returned no actions.");
+    }
+    setBusy("execute");
+    try {
+      let token = confirmationToken;
+      for (let i = startIndex; i < actions.length; i++) {
+        const baseAction = actions[i];
+        const action: ActionEnvelope = { ...baseAction, dryRun };
+        const response = await executeAction({
+          action,
+          label: `${label} • step ${i + 1}/${actions.length}: ${baseAction.actionType}`,
+          promptText,
+          mode: mode === "confirm" ? "confirm" : mode,
+          confirmationToken: token,
+        });
+        token = undefined;
+        if (
+          response.status === "blocked" &&
+          response.requiresConfirmation &&
+          !confirmationToken
+        ) {
+          setPendingConfirmation({
+            actions,
+            stepIndex: i,
+            label,
+            prompt: promptText,
+            dryRun,
+          });
+          return;
+        }
+        if (response.status !== "completed") {
+          return;
+        }
+      }
+      setPendingConfirmation(null);
     } finally {
       setBusy("");
     }
@@ -152,10 +198,11 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     try {
       const promptText = prompt.trim();
       const planned = await planPrompt(promptText);
-      await executeAction({
-        action: planned.action,
+      await executePlannedActions({
+        actions: planned.actions,
         label: planned.label,
         promptText,
+        dryRun: false,
         mode: "run",
       });
     } catch (err) {
@@ -167,10 +214,11 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     try {
       const promptText = prompt.trim();
       const planned = await planPrompt(promptText);
-      await executeAction({
-        action: { ...planned.action, dryRun: true },
+      await executePlannedActions({
+        actions: planned.actions,
         label: `Preview: ${planned.label}`,
         promptText,
+        dryRun: true,
         mode: "preview",
       });
     } catch (err) {
@@ -180,11 +228,13 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
 
   async function confirmAction() {
     if (!pendingConfirmation) return;
-    await executeAction({
-      action: { ...pendingConfirmation.action, dryRun: false },
+    await executePlannedActions({
+      actions: pendingConfirmation.actions,
       label: `Confirmed: ${pendingConfirmation.label}`,
       promptText: pendingConfirmation.prompt,
+      dryRun: pendingConfirmation.dryRun,
       mode: "confirm",
+      startIndex: pendingConfirmation.stepIndex,
       confirmationToken: "user-confirmed",
     });
   }
@@ -246,9 +296,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
             <div>
               <div style={{ marginBottom: 8 }}>
                 This action was blocked pending confirmation:
-                <code style={{ marginLeft: 6 }}>
-                  {pendingConfirmation.action.actionType}
-                </code>
+                <code style={{ marginLeft: 6 }}>{pendingConfirmation.actions[pendingConfirmation.stepIndex]?.actionType}</code>
               </div>
               <Space>
                 <Button
@@ -333,8 +381,8 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           style={{ marginTop: 8 }}
           type="info"
           showIcon
-          message="This shell currently executes only step 1 of the plan."
-          description="Use this trace to inspect the full plan before running."
+          message="This shell executes all planned steps sequentially."
+          description="If a step requires confirmation, execution pauses and resumes after you confirm."
         />
       ) : null}
       {plannedAction ? (

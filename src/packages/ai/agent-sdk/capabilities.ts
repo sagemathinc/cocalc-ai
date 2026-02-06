@@ -29,6 +29,8 @@ export type AgentCapabilityDescriptor<
   namespace?: string;
   summary: string;
   description?: string;
+  // JSON-schema-like description of expected args for planner grounding.
+  argsSchema?: unknown;
   riskLevel?: AgentRiskLevel;
   sideEffectScope?: AgentActionScope;
   requiresConfirmationByDefault?: boolean;
@@ -76,4 +78,3 @@ export class AgentCapabilityRegistry<TContext = unknown> {
     return [...this.capabilities.values()];
   }
 }
-

@@ -10,6 +10,7 @@ export type AgentCapabilityManifestEntry = {
   namespace?: string;
   summary: string;
   description?: string;
+  argsSchema?: unknown;
   riskLevel: AgentRiskLevel;
   sideEffectScope: AgentActionScope;
   requiresConfirmationByDefault: boolean;
@@ -26,6 +27,9 @@ function toEntry<TContext = unknown>(
     namespace: descriptor.namespace,
     summary: descriptor.summary,
     description: descriptor.description,
+    ...(descriptor.argsSchema != null
+      ? { argsSchema: descriptor.argsSchema }
+      : {}),
     riskLevel: descriptor.riskLevel ?? "write",
     sideEffectScope: descriptor.sideEffectScope ?? "project",
     requiresConfirmationByDefault:
@@ -46,4 +50,3 @@ export function buildCapabilityManifest<TContext = unknown>(
     .map((descriptor) => toEntry(descriptor))
     .sort((a, b) => a.actionType.localeCompare(b.actionType));
 }
-

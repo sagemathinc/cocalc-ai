@@ -86,6 +86,26 @@ const appNameArgsSchema = z.object({
 });
 type AppNameArgs = z.infer<typeof appNameArgsSchema>;
 
+function toArgsSchema(schema: z.ZodTypeAny): unknown | undefined {
+  try {
+    return z.toJSONSchema(schema, { io: "input" });
+  } catch {
+    return undefined;
+  }
+}
+
+const getCustomizeArgsManifestSchema = toArgsSchema(getCustomizeArgsSchema);
+const createProjectArgsManifestSchema = toArgsSchema(createProjectArgsSchema);
+const listingArgsManifestSchema = toArgsSchema(listingArgsSchema);
+const writeTextFileArgsManifestSchema = toArgsSchema(writeTextFileArgsSchema);
+const fsReadFileArgsManifestSchema = toArgsSchema(fsReadFileArgsSchema);
+const fsWriteFileArgsManifestSchema = toArgsSchema(fsWriteFileArgsSchema);
+const fsReaddirArgsManifestSchema = toArgsSchema(fsReaddirArgsSchema);
+const fsRenameArgsManifestSchema = toArgsSchema(fsRenameArgsSchema);
+const fsMoveArgsManifestSchema = toArgsSchema(fsMoveArgsSchema);
+const fsRealpathArgsManifestSchema = toArgsSchema(fsRealpathArgsSchema);
+const appNameArgsManifestSchema = toArgsSchema(appNameArgsSchema);
+
 function formatZodError(error: z.ZodError): string {
   return error.issues
     .map((issue) => {
@@ -163,6 +183,10 @@ export function registerBasicCapabilities(
     actionType: "hub.system.ping",
     namespace: "hub.system",
     summary: "Ping the hub and return current server time",
+    argsSchema: {
+      description: "No arguments required",
+      oneOf: [{ type: "null" }, { type: "object", additionalProperties: false }],
+    },
     riskLevel: "read",
     sideEffectScope: "system",
     validateArgs: parsePingArgs,
@@ -176,6 +200,7 @@ export function registerBasicCapabilities(
     actionType: "hub.system.get_customize",
     namespace: "hub.system",
     summary: "Read customize/site settings keys",
+    argsSchema: getCustomizeArgsManifestSchema,
     riskLevel: "read",
     sideEffectScope: "system",
     validateArgs: parseGetCustomizeArgs,
@@ -189,6 +214,7 @@ export function registerBasicCapabilities(
     actionType: "hub.projects.create",
     namespace: "hub.projects",
     summary: "Create a new project",
+    argsSchema: createProjectArgsManifestSchema,
     riskLevel: "write",
     sideEffectScope: "workspace",
     validateArgs: parseCreateProjectArgs,
@@ -206,6 +232,7 @@ export function registerBasicCapabilities(
     actionType: "project.system.listing",
     namespace: "project.system",
     summary: "List files in a project path",
+    argsSchema: listingArgsManifestSchema,
     riskLevel: "read",
     sideEffectScope: "project",
     validateArgs: parseListingArgs,
@@ -219,6 +246,7 @@ export function registerBasicCapabilities(
     actionType: "project.system.write_text_file",
     namespace: "project.system",
     summary: "Write text content to a project file",
+    argsSchema: writeTextFileArgsManifestSchema,
     riskLevel: "write",
     sideEffectScope: "project",
     validateArgs: parseWriteTextArgs,
@@ -236,6 +264,7 @@ export function registerBasicCapabilities(
     actionType: "project.fs.readFile",
     namespace: "project.fs",
     summary: "Read a file using the project fs API",
+    argsSchema: fsReadFileArgsManifestSchema,
     riskLevel: "read",
     sideEffectScope: "project",
     validateArgs: parseFsReadFileArgs,
@@ -250,6 +279,7 @@ export function registerBasicCapabilities(
     actionType: "project.fs.writeFile",
     namespace: "project.fs",
     summary: "Write a file using the project fs API",
+    argsSchema: fsWriteFileArgsManifestSchema,
     riskLevel: "write",
     sideEffectScope: "project",
     validateArgs: parseFsWriteFileArgs,
@@ -267,6 +297,7 @@ export function registerBasicCapabilities(
     actionType: "project.fs.readdir",
     namespace: "project.fs",
     summary: "Read directory entries using the project fs API",
+    argsSchema: fsReaddirArgsManifestSchema,
     riskLevel: "read",
     sideEffectScope: "project",
     validateArgs: parseFsReaddirArgs,
@@ -281,6 +312,7 @@ export function registerBasicCapabilities(
     actionType: "project.fs.rename",
     namespace: "project.fs",
     summary: "Rename or move a file using the project fs API",
+    argsSchema: fsRenameArgsManifestSchema,
     riskLevel: "write",
     sideEffectScope: "project",
     validateArgs: parseFsRenameArgs,
@@ -298,6 +330,7 @@ export function registerBasicCapabilities(
     actionType: "project.fs.move",
     namespace: "project.fs",
     summary: "Move files using the project fs API",
+    argsSchema: fsMoveArgsManifestSchema,
     riskLevel: "write",
     sideEffectScope: "project",
     validateArgs: parseFsMoveArgs,
@@ -315,6 +348,7 @@ export function registerBasicCapabilities(
     actionType: "project.fs.realpath",
     namespace: "project.fs",
     summary: "Resolve real path using the project fs API",
+    argsSchema: fsRealpathArgsManifestSchema,
     riskLevel: "read",
     sideEffectScope: "project",
     validateArgs: parseFsRealpathArgs,
@@ -329,6 +363,7 @@ export function registerBasicCapabilities(
     actionType: "project.apps.status",
     namespace: "project.apps",
     summary: "Get status of a named project app server",
+    argsSchema: appNameArgsManifestSchema,
     riskLevel: "read",
     sideEffectScope: "project",
     validateArgs: parseAppNameArgs,
@@ -342,6 +377,7 @@ export function registerBasicCapabilities(
     actionType: "project.apps.start",
     namespace: "project.apps",
     summary: "Start a named project app server",
+    argsSchema: appNameArgsManifestSchema,
     riskLevel: "write",
     sideEffectScope: "project",
     validateArgs: parseAppNameArgs,
@@ -358,6 +394,7 @@ export function registerBasicCapabilities(
     actionType: "project.apps.stop",
     namespace: "project.apps",
     summary: "Stop a named project app server",
+    argsSchema: appNameArgsManifestSchema,
     riskLevel: "write",
     sideEffectScope: "project",
     validateArgs: parseAppNameArgs,
