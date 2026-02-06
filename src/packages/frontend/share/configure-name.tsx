@@ -116,7 +116,7 @@ export function ConfigureName({
               <Alert
                 style={{ margin: "15px 0" }}
                 type="error"
-                message={error}
+                title={error}
               />
             )}
             {(name || choosingName) && (

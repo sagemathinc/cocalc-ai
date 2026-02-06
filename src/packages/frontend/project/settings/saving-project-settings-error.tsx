@@ -58,7 +58,7 @@ export default function SavingProjectSettingsError({ project_id }: Props) {
     <div style={{ width: "100%" }}>
       <Alert
         style={{ margin: "15px auto", maxWidth: "900px" }}
-        message={<b>{error}</b>}
+        title={<b>{error}</b>}
         description={description}
         type="error"
       />

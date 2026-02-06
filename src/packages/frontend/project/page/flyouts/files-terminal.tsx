@@ -286,11 +286,11 @@ export function TerminalFlyout({
     };
     if (error) {
       return (
-        <Alert banner closable type="error" message={error} style={style} />
+        <Alert banner closable type="error" title={error} style={style} />
       );
     } else if (status) {
       return (
-        <Alert banner closable type="info" message={status} style={style} />
+        <Alert banner closable type="info" title={status} style={style} />
       );
     }
   }

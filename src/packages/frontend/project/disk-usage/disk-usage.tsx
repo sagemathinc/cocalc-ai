@@ -92,7 +92,7 @@ export default function DiskUsage({
             <Alert
               style={{ margin: "15px 0" }}
               showIcon
-              message="OVER QUOTA"
+              title="OVER QUOTA"
               description="Delete files or increase your quota."
               type="error"
             />

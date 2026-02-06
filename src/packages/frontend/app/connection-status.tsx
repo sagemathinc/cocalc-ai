@@ -62,7 +62,7 @@ export function ConnectionStatsDisplay({
 
       {!connected && !!status.reason && (
         <Alert
-          message={capitalize(status.reason)}
+          title={capitalize(status.reason)}
           type="warning"
           showIcon
           style={{ marginBottom: 10 }}

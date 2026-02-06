@@ -218,7 +218,7 @@ export const SearchBar = memo(
           <Alert
             style={HelpStyle}
             type="info"
-            message={describeFindPrefill(prefill)}
+            title={describeFindPrefill(prefill)}
           />
         );
       }
@@ -252,7 +252,7 @@ export const SearchBar = memo(
         } else {
           text = `Showing files matching "${file_search}"`;
         }
-        return <Alert style={HelpStyle} type="info" message={text} />;
+        return <Alert style={HelpStyle} type="info" title={text} />;
       }
     }
 
@@ -264,7 +264,7 @@ export const SearchBar = memo(
             type="error"
             closable
             onClose={dismiss_alert}
-            message={file_creation_error}
+            title={file_creation_error}
           />
         );
       }

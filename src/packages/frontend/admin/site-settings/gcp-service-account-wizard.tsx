@@ -201,7 +201,7 @@ export default function GcpServiceAccountWizard({
         <Alert
           type="info"
           showIcon
-          message="This wizard generates a service account JSON key using gcloud."
+          title="This wizard generates a service account JSON key using gcloud."
           description="Advanced users can skip this and paste JSON directly into the setting."
         />
         <div>
@@ -276,7 +276,7 @@ export default function GcpServiceAccountWizard({
                 type="warning"
                 showIcon
                 style={{ marginTop: "8px" }}
-                message="This does not look like a service account key JSON."
+                title="This does not look like a service account key JSON."
               />
             ) : null}
             {jsonValid ? (
@@ -284,7 +284,7 @@ export default function GcpServiceAccountWizard({
                 type="success"
                 showIcon
                 style={{ marginTop: "8px" }}
-                message={`Detected service account: ${jsonEmail}`}
+                title={`Detected service account: ${jsonEmail}`}
                 description={`Project ID: ${jsonProjectId}`}
               />
             ) : null}
@@ -321,7 +321,7 @@ export default function GcpServiceAccountWizard({
           </Button>
         </div>
         {jsonNotice ? (
-          <Alert type="success" showIcon message={jsonNotice} />
+          <Alert type="success" showIcon title={jsonNotice} />
         ) : null}
       </Space>
     </Modal>

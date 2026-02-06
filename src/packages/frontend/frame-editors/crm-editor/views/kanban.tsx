@@ -112,7 +112,7 @@ export default function Kanban({
       {error && (
         <Alert
           type="error"
-          message="Database Query Error"
+          title="Database Query Error"
           description={error}
         />
       )}
@@ -142,7 +142,7 @@ export default function Kanban({
             showIcon
             style={{ height: "fit-content", margin: "auto" }}
             type="error"
-            message="Select a category field above, if available."
+            title="Select a category field above, if available."
           />
         )}
         {categoryField &&

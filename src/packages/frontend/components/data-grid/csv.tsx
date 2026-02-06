@@ -50,7 +50,7 @@ export default function CSV({
     return (
       <Alert
         style={{ margin: "15px 0" }}
-        message={
+        title={
           <div>
             {error}
             <br />

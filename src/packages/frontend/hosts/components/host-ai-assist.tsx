@@ -71,7 +71,7 @@ export const HostAiAssist: React.FC<HostAiAssistProps> = ({ ai }) => {
       >
         Get recommendations
       </Button>
-      {aiError && <Alert type="error" message={aiError} />}
+      {aiError && <Alert type="error" title={aiError} />}
       {aiResults.length > 0 && (
         <Space orientation="vertical" style={{ width: "100%" }} size="small">
           {aiResults.map((rec, idx) => {

@@ -1408,7 +1408,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
           banner
           showIcon
           closable
-          message={error}
+          title={error}
           onClick={() => setError("")}
         />
       ) : undefined}

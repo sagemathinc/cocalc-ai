@@ -6,7 +6,7 @@ export default function AdminWarning() {
       showIcon
       type="error"
       style={{ margin: "15px 0" }}
-      message={
+      title={
         <strong>
           Warning: you are using this project as an administrator.
         </strong>

@@ -420,7 +420,7 @@ export function BackupsTab({
         marginBottom: mode === "flyout" ? "8px" : 0,
         maxWidth: mode === "flyout" ? undefined : "360px",
       }}
-      message="Snapshots vs Backups"
+      title="Snapshots vs Backups"
       description={
         <>
           <Button
@@ -559,7 +559,7 @@ export function BackupsTab({
         </div>
       )}
       {error ? (
-        <Alert style={{ marginTop: "10px" }} type="error" message={error} />
+        <Alert style={{ marginTop: "10px" }} type="error" title={error} />
       ) : null}
       {loading ? (
         <div style={{ marginTop: "10px" }}>
@@ -570,7 +570,7 @@ export function BackupsTab({
         <Alert
           style={{ marginTop: "10px" }}
           type="warning"
-          message="No results."
+          title="No results."
         />
       ) : null}
       {results.length > 0 || state.filter.trim() ? (

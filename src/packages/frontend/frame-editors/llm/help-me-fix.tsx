@@ -165,7 +165,7 @@ export default function HelpMeFix({
           type="error"
           showIcon
           closable
-          message={errorGettingHelp}
+          title={errorGettingHelp}
           onClick={() => setErrorGettingHelp("")}
         />
       )}

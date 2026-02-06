@@ -200,7 +200,7 @@ export function HostPickerModal({
         <Alert
           type="warning"
           showIcon
-          message={
+          title={
             currentHost
               ? `Source host is ${currentHost.status}`
               : "Source host is unavailable"
@@ -220,7 +220,7 @@ export function HostPickerModal({
         <Alert
           type="warning"
           showIcon
-          message="Files in /scratch (if any) will be discarded. Snapshots are not moved; only backups are preserved."
+          title="Files in /scratch (if any) will be discarded. Snapshots are not moved; only backups are preserved."
           style={{ marginBottom: 12 }}
         />
       ) : null}

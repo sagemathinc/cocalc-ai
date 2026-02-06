@@ -335,7 +335,7 @@ export const Datastore: React.FC<Props> = React.memo((props: Props) => {
         type={"warning"}
         showIcon={false}
         banner
-        message={
+        title={
           <div>
             <Typography.Text strong>
               <FormattedMessage
@@ -550,7 +550,7 @@ export const Datastore: React.FC<Props> = React.memo((props: Props) => {
         showIcon={false}
         banner
         type="info"
-        message={<div>{render_help_content()}</div>}
+        title={<div>{render_help_content()}</div>}
       />
     );
   }
@@ -562,7 +562,7 @@ export const Datastore: React.FC<Props> = React.memo((props: Props) => {
         type="error"
         banner
         showIcon={false}
-        message={
+        title={
           <div>
             <h3>No internet access</h3>
             <p>

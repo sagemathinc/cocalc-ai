@@ -169,9 +169,9 @@ export default function Payments({
         {data?.length == 0 &&
           !hasMore &&
           (unfinished ? (
-            <Alert showIcon type="success" message="All Payments Succeeded!" />
+            <Alert showIcon type="success" title="All Payments Succeeded!" />
           ) : (
-            <Alert showIcon type="info" message="No Payments" />
+            <Alert showIcon type="info" title="No Payments" />
           ))}
         {data != null && data?.length > 0 && (
           <>

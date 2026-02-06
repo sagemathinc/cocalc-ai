@@ -48,7 +48,7 @@ export function StudentProjectsStartStopPanel({
     return (
       <Alert
         type={type}
-        message={
+        title={
           <div>
             {capitalize(state_name)} all projects... <Spin />
             <br />

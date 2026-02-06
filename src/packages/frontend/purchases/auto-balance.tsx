@@ -174,7 +174,7 @@ export function AutoBalanceModal({ onClose }) {
           name="trigger"
         >
           <InputNumber
-            addonBefore="$"
+            prefix="$"
             min={AUTOBALANCE_RANGES.trigger[0]}
             max={AUTOBALANCE_RANGES.trigger[1]}
           />
@@ -197,7 +197,7 @@ export function AutoBalanceModal({ onClose }) {
           name="amount"
         >
           <InputNumber
-            addonBefore="$"
+            prefix="$"
             min={AUTOBALANCE_RANGES.amount[0]}
             max={AUTOBALANCE_RANGES.amount[1]}
           />
@@ -231,7 +231,7 @@ export function AutoBalanceModal({ onClose }) {
           >
             <InputNumber
               step={10}
-              addonBefore="$"
+              prefix="$"
               min={AUTOBALANCE_RANGES.max_day[0]}
               max={AUTOBALANCE_RANGES.max_day[1]}
             />
@@ -255,7 +255,7 @@ export function AutoBalanceModal({ onClose }) {
           >
             <InputNumber
               step={25}
-              addonBefore="$"
+              prefix="$"
               min={AUTOBALANCE_RANGES.max_week[0]}
               max={AUTOBALANCE_RANGES.max_week[1]}
             />
@@ -279,7 +279,7 @@ export function AutoBalanceModal({ onClose }) {
           >
             <InputNumber
               step={100}
-              addonBefore="$"
+              prefix="$"
               min={AUTOBALANCE_RANGES.max_month[0]}
               max={AUTOBALANCE_RANGES.max_month[1]}
             />
@@ -327,7 +327,7 @@ function Status({ autoBalance, style }: { autoBalance; style? }) {
       style={style}
       showIcon
       type={autoBalance.enabled ? "warning" : "info"}
-      message={
+      title={
         <Flex>
           <div>
             Status: <b>{autoBalance.enabled ? " Enabled" : " NOT Enabled"}</b>

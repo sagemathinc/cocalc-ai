@@ -108,7 +108,7 @@ export function StudentProjectSoftwareEnvironment({
     return (
       <Alert
         type={"warning"}
-        message={
+        title={
           <>
             <strong>Warning:</strong> Do not change a specialized software
             environment after it has already been deployed and in use!

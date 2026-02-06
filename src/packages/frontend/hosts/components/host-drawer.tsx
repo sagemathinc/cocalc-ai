@@ -442,7 +442,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <Alert
               type="warning"
               showIcon
-              message="Connector offline"
+              title="Connector offline"
               description={
                 <Button size="small" onClick={handleSetupClick}>
                   Set up connector
@@ -494,7 +494,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <Alert
               type="error"
               showIcon
-              message="Provisioning error"
+              title="Provisioning error"
               description={host.last_error}
             />
           )}

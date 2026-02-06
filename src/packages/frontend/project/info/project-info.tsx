@@ -213,7 +213,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
 
     function render_disconnected() {
       if (!disconnected) return;
-      return <Alert type={"warning"} message={"Warning: disconnected …"} />;
+      return <Alert type={"warning"} title={"Warning: disconnected …"} />;
     }
 
     // if collapsed, we sum up the values of the children

@@ -199,7 +199,7 @@ export function FindScopeBar({
           style={{ marginBottom: "8px" }}
           type="warning"
           showIcon
-          message={pathWarning.message}
+          title={pathWarning.message}
         />
       ) : null}
       {checkingPath ? (
@@ -207,7 +207,7 @@ export function FindScopeBar({
           style={{ marginBottom: "8px" }}
           type="info"
           showIcon
-          message="Checking path..."
+          title="Checking path..."
         />
       ) : null}
       <Modal

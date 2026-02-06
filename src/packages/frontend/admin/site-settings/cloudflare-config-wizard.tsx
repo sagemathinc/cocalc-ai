@@ -163,7 +163,7 @@ export default function CloudflareConfigWizard({
         <Alert
           type="info"
           showIcon
-          message="Configure Cloudflare Tunnel + R2 in one pass."
+          title="Configure Cloudflare Tunnel + R2 in one pass."
           description="This wizard fills in the Cloudflare settings for Launchpad. Advanced users can edit fields manually."
         />
         <div>
@@ -210,7 +210,7 @@ export default function CloudflareConfigWizard({
                   type="warning"
                   showIcon
                   style={{ marginTop: "8px" }}
-                  message="Account IDs are 32 lowercase hex characters."
+                  title="Account IDs are 32 lowercase hex characters."
                 />
               ) : null}
               <div
@@ -432,10 +432,10 @@ Required R2 token permissions:
           <Alert
             type="warning"
             showIcon
-            message={`Fill in required field: ${missing}`}
+            title={`Fill in required field: ${missing}`}
           />
         ) : null}
-        {notice ? <Alert type="success" showIcon message={notice} /> : null}
+        {notice ? <Alert type="success" showIcon title={notice} /> : null}
       </Space>
     </Modal>
   );

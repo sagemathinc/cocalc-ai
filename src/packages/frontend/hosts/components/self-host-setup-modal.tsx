@@ -164,7 +164,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
           <Alert
             type="warning"
             showIcon
-            message="Direct install requires Ubuntu 24.x or newer"
+            title="Direct install requires Ubuntu 24.x or newer"
             description="This host must be running Ubuntu Linux 24.x (or newer). Other Linux distributions are not supported yet."
           />
         ) : (
@@ -208,7 +208,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
           <Alert
             type="warning"
             showIcon
-            message="No SSH target provided"
+            title="No SSH target provided"
             description="Without an SSH target, the host must be able to reach the hub’s SSH port directly."
           />
         )}
@@ -220,7 +220,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
         {error && (
           <Alert
             type="error"
-            message={error}
+            title={error}
             showIcon
             action={
               <Button size="small" onClick={onRefresh} disabled={loading}>
@@ -230,7 +230,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
           />
         )}
         {notice && (
-          <Alert type="success" showIcon message={notice} />
+          <Alert type="success" showIcon title={notice} />
         )}
         {installCommand && useSshPairing && onInstall && hasSshTarget ? (
           <>

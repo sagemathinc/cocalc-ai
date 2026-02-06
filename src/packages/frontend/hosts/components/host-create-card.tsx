@@ -91,7 +91,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
         <Alert
           type="info"
           showIcon
-          message="Your membership does not allow creating workspace hosts."
+          title="Your membership does not allow creating workspace hosts."
           style={{ marginBottom: 12 }}
         />
       )}

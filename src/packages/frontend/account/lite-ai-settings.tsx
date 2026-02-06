@@ -126,7 +126,7 @@ export default function LiteAISettings() {
         the corresponding AI UI is enabled automatically.
       </p>
       {error && (
-        <Alert type="error" message="Error" description={error} closable />
+        <Alert type="error" title="Error" description={error} closable />
       )}
       <Space orientation="vertical" style={{ width: "100%" }} size="middle">
         {PROVIDERS.map(({ keyField, label, placeholder }) => (

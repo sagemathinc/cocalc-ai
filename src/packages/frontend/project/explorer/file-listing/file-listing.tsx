@@ -160,7 +160,7 @@ export function FileListing({
             style={{ marginBottom: 8 }}
             type="info"
             showIcon
-            message="Snapshots vs Backups"
+            title="Snapshots vs Backups"
             description={
               <>
                 Snapshots in this folder are fast local readonly filesystem
@@ -186,7 +186,7 @@ export function FileListing({
             style={{ marginBottom: 8 }}
             type="info"
             showIcon
-            message="Backups vs Snapshots"
+            title="Backups vs Snapshots"
             description={
               <>
                 Backups are durable, deduplicated archives stored separately,

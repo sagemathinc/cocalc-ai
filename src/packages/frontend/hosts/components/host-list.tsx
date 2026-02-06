@@ -960,7 +960,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <Alert
       type="warning"
       showIcon
-      message={
+      title={
         visibleHosts.length === 0
           ? "No hosts match this filter."
           : `Showing ${visibleHosts.length} of ${hosts.length} hosts.`

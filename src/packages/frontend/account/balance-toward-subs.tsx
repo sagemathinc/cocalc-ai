@@ -14,7 +14,7 @@ export default function UseBalanceTowardSubscriptions({
       style={{ marginBottom: "15px" }}
       type="info"
       showIcon
-      message={
+      title={
         <div>
           <Tooltip
             title={

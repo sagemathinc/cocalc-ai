@@ -428,7 +428,7 @@ export function MembershipTiers() {
             />
           </Form.Item>
           <Form.Item {...tailLayout}>
-            <Button.Group>
+            <Space.Compact>
               <Button type="primary" htmlType="submit" disabled={hasJsonErrors}>
                 Save
               </Button>
@@ -444,7 +444,7 @@ export function MembershipTiers() {
               <Button htmlType="button" onClick={() => set_editing(null)}>
                 Cancel
               </Button>
-            </Button.Group>
+            </Space.Compact>
             {hasJsonErrors && (
               <div style={{ marginTop: "8px" }}>
                 <Text type="danger">
@@ -464,7 +464,7 @@ export function MembershipTiers() {
       (id) => (data[id]?.subscription_count ?? 0) > 0,
     );
     return (
-      <Button.Group style={{ margin: "10px 0" }}>
+      <Space.Compact style={{ margin: "10px 0" }}>
         <Button
           type={!any_selected ? "primary" : "default"}
           disabled={any_selected}
@@ -484,7 +484,7 @@ export function MembershipTiers() {
         <Button onClick={() => load()}>
           <Icon name="refresh" /> Refresh
         </Button>
-      </Button.Group>
+      </Space.Compact>
     );
   }
 

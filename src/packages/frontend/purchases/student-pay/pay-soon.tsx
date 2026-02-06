@@ -20,7 +20,7 @@ export default function PaySoon({ when, purchaseInfo, setOpen }: Props) {
     <Alert
       type="success"
       banner
-      message={
+      title={
         <div style={{ fontSize: "12pt" }}>
           <span
             onClick={() => {

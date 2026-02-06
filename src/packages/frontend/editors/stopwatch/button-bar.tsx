@@ -7,7 +7,7 @@
 Some buttons
 */
 import { HistoryOutlined, RedoOutlined, UndoOutlined } from "@ant-design/icons";
-import { Button } from "antd";
+import { Button, Space } from "antd";
 import { useIntl } from "react-intl";
 
 import { Rendered } from "@cocalc/frontend/app-framework";
@@ -41,7 +41,7 @@ function timeTravelButton(actions: TimeActions): Rendered {
 
 function undoRedoGroup(actions: TimeActions): Rendered {
   return (
-    <Button.Group key={"undo-group"}>
+    <Space.Compact key={"undo-group"}>
       <Button
         key={"undo"}
         title={"Undo last thing you did"}
@@ -58,6 +58,6 @@ function undoRedoGroup(actions: TimeActions): Rendered {
       >
         Redo
       </Button>
-    </Button.Group>
+    </Space.Compact>
   );
 }

@@ -689,7 +689,7 @@ export default function LanguageModelTitleBarButton({
         )}
         {renderSubmit()}
         {error ? (
-          <Alert type="error" message={error} />
+          <Alert type="error" title={error} />
         ) : (
           renderCostEstimation()
         )}

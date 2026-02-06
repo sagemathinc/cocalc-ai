@@ -96,7 +96,7 @@ export default function ProjectImage({ avatarImage, onChange }: Props) {
         <Alert
           style={{ marginTop: "15px" }}
           type="error"
-          message={error}
+          title={error}
           showIcon
         />
       )}

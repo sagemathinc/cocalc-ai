@@ -477,7 +477,7 @@ export default function SiteSettings({ close }) {
               margin: "0 auto 20px auto",
               border: "1px solid lightgrey",
             }}
-            message={
+            title={
               <div>
                 <b>Cloudflare tunnel is not healthy.</b>{" "}
                 {cloudflareStatus?.error
@@ -494,7 +494,7 @@ export default function SiteSettings({ close }) {
             margin: "0 auto 20px auto",
             border: "1px solid lightgrey",
           }}
-          message={
+          title={
             <div>
               <i>
                 <ul style={{ marginBottom: 0 }}>
@@ -807,7 +807,7 @@ export default function SiteSettings({ close }) {
             showIcon
             type="warning"
             style={{ maxWidth: "900px", margin: "20px auto" }}
-            message="Setup overview"
+            title="Setup overview"
             description={
               <ul style={{ marginBottom: 0 }}>
                 {setupOverview.map(([group, info]) => (
@@ -931,7 +931,7 @@ export default function SiteSettings({ close }) {
           <Alert
             showIcon
             type="warning"
-            message={`Some items may be hidden by the search filter or a selected tag.`}
+            title={`Some items may be hidden by the search filter or a selected tag.`}
           />
         ) : undefined}
       </Well>

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Popover, Tooltip } from "antd";
+import { Button, Popover, Tooltip, Space } from "antd";
 import {
   CSSProperties,
   MutableRefObject,
@@ -335,7 +335,7 @@ export default function RunButton({
                     date={created >= new Date() ? new Date() : created}
                   />
                 </div>
-                <Button.Group>
+                <Space.Compact>
                   <Button
                     onClick={() => {
                       setShowPopover(false);
@@ -358,7 +358,7 @@ export default function RunButton({
                   >
                     Hide Output
                   </Button>
-                </Button.Group>
+                </Space.Compact>
               </div>
             )}
           </div>

@@ -41,7 +41,7 @@ export default function Count({ dbtable, lowerBound }: Props) {
 
   return (
     <div>
-      {error && <Alert type="error" message={error} />}
+      {error && <Alert type="error" title={error} />}
       {!error && count != null && (
         <Stat title={"Table size"} value={<>Approx {count}</>} />
       )}

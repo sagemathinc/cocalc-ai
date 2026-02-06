@@ -229,7 +229,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="Selected GPU isn't available in this region."
+          title="Selected GPU isn't available in this region."
           description={
             gcpCompatibilityWarning.compatibleRegions.length ? (
               <Select
@@ -260,7 +260,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="Selected GPU isn't available in this zone."
+          title="Selected GPU isn't available in this zone."
           description={
             gcpCompatibilityWarning.compatibleZones.length ? (
               <Select
@@ -307,7 +307,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="No SSH target provided"
+          title="No SSH target provided"
           description="Without an SSH target, the host must be able to reach the hub’s SSH port directly."
         />
       )}
@@ -384,7 +384,7 @@ export const HostCreateProviderFields: React.FC<HostCreateProviderFieldsProps> =
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          message="Cloud catalog unavailable"
+          title="Cloud catalog unavailable"
           description={catalogError}
         />
       )}

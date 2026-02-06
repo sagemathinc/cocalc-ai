@@ -44,8 +44,8 @@ export default function PasswordResetForm({ onNavigate }: PasswordResetProps) {
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-      {error && <Alert type="error" showIcon message={error} />}
-      {success && <Alert type="success" showIcon message={success} />}
+      {error && <Alert type="error" showIcon title={error} />}
+      {success && <Alert type="success" showIcon title={success} />}
       <div>
         <div>Email address</div>
         <Input

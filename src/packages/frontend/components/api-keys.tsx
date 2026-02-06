@@ -227,7 +227,7 @@ export default function ApiKeys({ manage, mode = "project" }: Props) {
     <>
       {error && (
         <Alert
-          message={error}
+          title={error}
           type="error"
           closable
           onClose={() => setError(null)}

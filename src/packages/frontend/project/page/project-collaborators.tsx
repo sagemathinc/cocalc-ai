@@ -45,7 +45,7 @@ export function ProjectCollaboratorsPage(): React.JSX.Element {
         <Alert
           type="warning"
           showIcon
-          message="Collaborator configuration is disabled."
+          title="Collaborator configuration is disabled."
         />
       );
     }

@@ -70,7 +70,7 @@ function EditOrganizations({ obj, field, organizations }) {
           save={save}
         />
       )}
-      {saveError && <Alert message={saveError} type="error" />}
+      {saveError && <Alert title={saveError} type="error" />}
       {organizations != null && (
         <OrganizationsList organizations={organizations} save={save} />
       )}
@@ -144,7 +144,7 @@ export function AddOrganization({
 
   return (
     <div>
-      {error && <Alert message={error} type="error" />}
+      {error && <Alert title={error} type="error" />}
       {(newMatches == null || newMatches.length == 0) && (
         <Input.Search
           allowClear

@@ -44,13 +44,13 @@ export default function Account() {
           {users.length == 0 ? (
             <Alert
               type="warning"
-              message={`No Matches for ${query}`}
+              title={`No Matches for ${query}`}
               style={{ margin: "5px" }}
             />
           ) : (
             <Alert
               type="info"
-              message={`${users.length} ${plural(
+              title={`${users.length} ${plural(
                 users.length,
                 "Match",
                 "Matches"

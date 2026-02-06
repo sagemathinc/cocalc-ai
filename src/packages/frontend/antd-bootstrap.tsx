@@ -471,7 +471,7 @@ export function Alert(props: AlertProps) {
   }
   return (
     <AntdAlert
-      message={children}
+      title={children}
       type={type}
       style={style}
       banner={banner}

@@ -51,7 +51,7 @@ function EditPerson({ obj, field, id }) {
           save={save}
         />
       )}
-      {saveError && <Alert message={saveError} type="error" />}
+      {saveError && <Alert title={saveError} type="error" />}
       {id != null && <Person id={id} />}
     </div>
   );

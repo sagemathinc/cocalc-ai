@@ -1922,7 +1922,7 @@ export const SshPage: React.FC = React.memo(() => {
           <Alert
             type="warning"
             showIcon
-            message="Reflect Sync unavailable"
+            title="Reflect Sync unavailable"
             description={state.error}
           />
         ) : hasSessions ? (
@@ -2259,7 +2259,7 @@ export const SshPage: React.FC = React.memo(() => {
                 <Alert
                   type="info"
                   showIcon
-                  message={message}
+                  title={message}
                   style={{ marginBottom: 12 }}
                 />
               </>
@@ -2307,7 +2307,7 @@ export const SshPage: React.FC = React.memo(() => {
           <Alert
             type="warning"
             showIcon
-            message="Unable to load logs"
+            title="Unable to load logs"
             description={reflectLogError}
           />
         ) : reflectLogLoading ? (

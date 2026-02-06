@@ -116,7 +116,7 @@ export default function ResumeSubscription({
     body = (
       <Alert
         type="success"
-        message="You have successfully resumed your subscription!"
+        title="You have successfully resumed your subscription!"
       />
     );
   } else {
@@ -131,7 +131,7 @@ export default function ResumeSubscription({
           <Alert
             showIcon
             style={{ margin: "30px" }}
-            message={
+            title={
               <div style={{ fontSize: "11pt" }}>
                 {costToResume == 0 ? (
                   <>

@@ -231,7 +231,7 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
         style={{ marginTop: "10px" }}
         type="warning"
         showIcon
-        message={`Find path is inside .${restrictedTab}.`}
+        title={`Find path is inside .${restrictedTab}.`}
         description={
           <div>
             Other tabs are disabled for this path. Jump to the corresponding

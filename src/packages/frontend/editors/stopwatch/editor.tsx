@@ -110,7 +110,7 @@ export default function EditorTime() {
 
   return (
     <div className="smc-vfill">
-      {error && <Alert type="error" message={`Error: ${error}`} />}
+      {error && <Alert type="error" title={`Error: ${error}`} />}
       {renderButtonBar()}
       <div className="smc-vfill" style={{ overflowY: "auto" }}>
         {renderStopwatches()}

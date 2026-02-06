@@ -56,7 +56,7 @@ function EditPeople({ obj, field, people }) {
           save={save}
         />
       )}
-      {saveError && <Alert message={saveError} type="error" />}
+      {saveError && <Alert title={saveError} type="error" />}
       {people != null && <PeopleList people={people} save={save} />}
     </div>
   );
@@ -128,7 +128,7 @@ export function AddPerson({
 
   return (
     <div>
-      {error && <Alert message={error} type="error" />}
+      {error && <Alert title={error} type="error" />}
       {(newMatches == null || newMatches.length == 0) && (
         <Input.Search
           allowClear
