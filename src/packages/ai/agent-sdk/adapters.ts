@@ -25,10 +25,15 @@ export type AgentProjectAdapter = {
     path: string;
     hidden?: boolean;
   }) => Awaitable<DirectoryListingEntry[]>;
+  moveFiles: (opts: { paths: string[]; dest: string }) => Awaitable<void>;
+  renameFile: (opts: { src: string; dest: string }) => Awaitable<void>;
+  realpath: (path: string) => Awaitable<string>;
+  canonicalPaths: (paths: string[]) => Awaitable<string[]>;
   writeTextFileToProject: (opts: {
     path: string;
     content: string;
   }) => Awaitable<void>;
+  readTextFileFromProject: (opts: { path: string }) => Awaitable<string>;
   apps: AgentProjectAppsAdapter;
 };
 

@@ -31,9 +31,31 @@ type ListingArgs = {
   hidden?: boolean;
 };
 
+type MoveFilesArgs = {
+  paths: string[];
+  dest: string;
+};
+
+type RenameFileArgs = {
+  src: string;
+  dest: string;
+};
+
+type RealpathArgs = {
+  path: string;
+};
+
+type CanonicalPathsArgs = {
+  paths: string[];
+};
+
 type WriteTextFileArgs = {
   path: string;
   content: string;
+};
+
+type ReadTextFileArgs = {
+  path: string;
 };
 
 type AppNameArgs = {
@@ -146,6 +168,58 @@ function parseWriteTextArgs(args: unknown): WriteTextFileArgs {
   return { path, content };
 }
 
+function parseReadTextArgs(args: unknown): ReadTextFileArgs {
+  if (!isRecord(args)) {
+    throw new Error("args must be an object");
+  }
+  return { path: asString(args.path, "path") };
+}
+
+function parseMoveFilesArgs(args: unknown): MoveFilesArgs {
+  if (!isRecord(args)) {
+    throw new Error("args must be an object");
+  }
+  const { paths } = args;
+  if (!Array.isArray(paths) || paths.length === 0) {
+    throw new Error("paths must be a non-empty array");
+  }
+  if (paths.some((x) => typeof x !== "string")) {
+    throw new Error("paths must contain only strings");
+  }
+  return { paths: paths as string[], dest: asString(args.dest, "dest") };
+}
+
+function parseRenameFileArgs(args: unknown): RenameFileArgs {
+  if (!isRecord(args)) {
+    throw new Error("args must be an object");
+  }
+  return {
+    src: asString(args.src, "src"),
+    dest: asString(args.dest, "dest"),
+  };
+}
+
+function parseRealpathArgs(args: unknown): RealpathArgs {
+  if (!isRecord(args)) {
+    throw new Error("args must be an object");
+  }
+  return { path: asString(args.path, "path") };
+}
+
+function parseCanonicalPathsArgs(args: unknown): CanonicalPathsArgs {
+  if (!isRecord(args)) {
+    throw new Error("args must be an object");
+  }
+  const { paths } = args;
+  if (!Array.isArray(paths) || paths.length === 0) {
+    throw new Error("paths must be a non-empty array");
+  }
+  if (paths.some((x) => typeof x !== "string")) {
+    throw new Error("paths must contain only strings");
+  }
+  return { paths: paths as string[] };
+}
+
 function parseAppNameArgs(args: unknown): AppNameArgs {
   if (!isRecord(args)) {
     throw new Error("args must be an object");
@@ -230,6 +304,82 @@ export function registerBasicCapabilities(
   });
 
   registry.register({
+    actionType: "project.system.read_text_file",
+    namespace: "project.system",
+    summary: "Read text content from a project file",
+    riskLevel: "read",
+    sideEffectScope: "project",
+    validateArgs: parseReadTextArgs,
+    handler: async ({ path }, { context }) => {
+      const project = requireProjectAdapter(context);
+      const content = await project.readTextFileFromProject({ path });
+      return { path, content };
+    },
+  });
+
+  registry.register({
+    actionType: "project.system.rename_file",
+    namespace: "project.system",
+    summary: "Rename or move a file within a project",
+    riskLevel: "write",
+    sideEffectScope: "project",
+    validateArgs: parseRenameFileArgs,
+    handler: async ({ src, dest }, { context, dryRun }) => {
+      if (dryRun) {
+        return { dryRun: true, src, dest };
+      }
+      const project = requireProjectAdapter(context);
+      await project.renameFile({ src, dest });
+      return { renamed: true, src, dest };
+    },
+  });
+
+  registry.register({
+    actionType: "project.system.move_files",
+    namespace: "project.system",
+    summary: "Move one or more files into a destination path",
+    riskLevel: "write",
+    sideEffectScope: "project",
+    validateArgs: parseMoveFilesArgs,
+    handler: async ({ paths, dest }, { context, dryRun }) => {
+      if (dryRun) {
+        return { dryRun: true, paths, dest };
+      }
+      const project = requireProjectAdapter(context);
+      await project.moveFiles({ paths, dest });
+      return { moved: paths.length, dest };
+    },
+  });
+
+  registry.register({
+    actionType: "project.system.realpath",
+    namespace: "project.system",
+    summary: "Resolve a path to its absolute canonical location",
+    riskLevel: "read",
+    sideEffectScope: "project",
+    validateArgs: parseRealpathArgs,
+    handler: async ({ path }, { context }) => {
+      const project = requireProjectAdapter(context);
+      const resolved = await project.realpath(path);
+      return { path, resolved };
+    },
+  });
+
+  registry.register({
+    actionType: "project.system.canonical_paths",
+    namespace: "project.system",
+    summary: "Canonicalize multiple paths in one request",
+    riskLevel: "read",
+    sideEffectScope: "project",
+    validateArgs: parseCanonicalPathsArgs,
+    handler: async ({ paths }, { context }) => {
+      const project = requireProjectAdapter(context);
+      const canonical = await project.canonicalPaths(paths);
+      return { paths, canonical };
+    },
+  });
+
+  registry.register({
     actionType: "project.apps.status",
     namespace: "project.apps",
     summary: "Get status of a named project app server",
@@ -277,4 +427,3 @@ export function registerBasicCapabilities(
 
   return registry;
 }
-

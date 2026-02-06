@@ -29,10 +29,15 @@ type HubClientLike = {
 type ProjectClientLike = {
   system: {
     listing: (opts: { path: string; hidden?: boolean }) => Awaitable<any[]>;
+    moveFiles: (opts: { paths: string[]; dest: string }) => Awaitable<void>;
+    renameFile: (opts: { src: string; dest: string }) => Awaitable<void>;
+    realpath: (path: string) => Awaitable<string>;
+    canonicalPaths: (paths: string[]) => Awaitable<string[]>;
     writeTextFileToProject: (opts: {
       path: string;
       content: string;
     }) => Awaitable<void>;
+    readTextFileFromProject: (opts: { path: string }) => Awaitable<string>;
   };
   apps: {
     start: (name: string) => Awaitable<any>;
@@ -87,7 +92,12 @@ function hubAdapterFromClient(client: HubClientLike): AgentHubAdapter {
 function projectAdapterFromClient(client: ProjectClientLike): AgentProjectAdapter {
   return {
     listing: (opts) => client.system.listing(opts),
+    moveFiles: (opts) => client.system.moveFiles(opts),
+    renameFile: (opts) => client.system.renameFile(opts),
+    realpath: (path) => client.system.realpath(path),
+    canonicalPaths: (paths) => client.system.canonicalPaths(paths),
     writeTextFileToProject: (opts) => client.system.writeTextFileToProject(opts),
+    readTextFileFromProject: (opts) => client.system.readTextFileFromProject(opts),
     apps: {
       start: (name: string) => client.apps.start(name),
       stop: (name: string) => client.apps.stop(name),

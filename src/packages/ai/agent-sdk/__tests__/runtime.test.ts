@@ -19,7 +19,14 @@ function makeProjectClient(tag: string): Pick<ProjectApi, "system" | "apps"> {
     system: {
       listing: async ({ path }: { path: string }) =>
         [{ name: `${tag}:${path}` }] as any,
+      moveFiles: async () => undefined,
+      renameFile: async () => undefined,
+      realpath: async (path: string) => `/abs/${path}`,
+      canonicalPaths: async (paths: string[]) =>
+        paths.map((p) => `/canonical/${p}`),
       writeTextFileToProject: async () => undefined,
+      readTextFileFromProject: async ({ path }: { path: string }) =>
+        `content:${path}`,
     } as any,
     apps: {
       start: async (name: string) =>
@@ -44,7 +51,7 @@ describe("agent-sdk runtime bridge", () => {
       defaults: { projectId: "project-default" },
     });
 
-    expect(bridge.manifest().length).toBe(8);
+    expect(bridge.manifest().length).toBe(13);
 
     const ping = await bridge.execute({
       action: { actionType: "hub.system.ping", args: {} },
@@ -85,4 +92,3 @@ describe("agent-sdk runtime bridge", () => {
     expect(seen).toEqual(["project-abc"]);
   });
 });
-
