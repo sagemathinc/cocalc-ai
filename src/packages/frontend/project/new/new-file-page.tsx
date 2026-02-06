@@ -59,6 +59,8 @@ import {
 } from "./launcher-preferences";
 import { LauncherCustomizeModal } from "./launcher-customize-modal";
 import { NamedServerPanel } from "../named-server-panel";
+import { lite } from "@cocalc/frontend/lite";
+import { NavigatorShell } from "./navigator-shell";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -712,6 +714,7 @@ export default function NewFilePage(props: Props) {
               </Button>
             )}
           </Space>
+          {lite ? <NavigatorShell project_id={project_id} /> : null}
         </Col>
       </Row>
       <LauncherCustomizeModal
