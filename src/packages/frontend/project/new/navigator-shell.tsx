@@ -82,9 +82,13 @@ function formatElapsed(ms?: number): string {
 
 interface NavigatorShellProps {
   project_id: string;
+  defaultTargetProjectId?: string;
 }
 
-export function NavigatorShell({ project_id }: NavigatorShellProps) {
+export function NavigatorShell({
+  project_id,
+  defaultTargetProjectId,
+}: NavigatorShellProps) {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -103,7 +107,9 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
   useEffect(() => {
     const loadedSession = loadNavigatorSessionId(project_id);
     setSessionId(loadedSession);
-    const loadedTarget = loadNavigatorTargetProjectId(project_id);
+    const loadedTarget = loadNavigatorTargetProjectId(
+      defaultTargetProjectId?.trim() || project_id,
+    );
     setTargetProjectId(loadedTarget);
     const cfg = loadNavigatorConfig(project_id);
     if (!cfg) return;
@@ -124,7 +130,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     setModel(model0);
     setReasoning(reasoning0);
     setSessionMode(sessionMode0);
-  }, [project_id]);
+  }, [project_id, defaultTargetProjectId]);
 
   function saveSessionId(value?: string) {
     const next = value?.trim() ?? "";

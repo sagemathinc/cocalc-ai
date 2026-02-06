@@ -169,6 +169,9 @@ export default function NewFilePage(props: Props) {
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
     project_id,
   );
+  const navigator_target_project_id = other_settings?.get?.(
+    "navigator_target_project_id",
+  );
   const inheritedForProjectUser = mergeLauncherSettings({
     globalDefaults: siteLauncherDefaults,
     projectDefaults: projectLauncherDefaults,
@@ -714,7 +717,16 @@ export default function NewFilePage(props: Props) {
               </Button>
             )}
           </Space>
-          {lite ? <NavigatorShell project_id={project_id} /> : null}
+          {lite ? (
+            <NavigatorShell
+              project_id={project_id}
+              defaultTargetProjectId={
+                typeof navigator_target_project_id === "string"
+                  ? navigator_target_project_id
+                  : undefined
+              }
+            />
+          ) : null}
         </Col>
       </Row>
       <LauncherCustomizeModal
