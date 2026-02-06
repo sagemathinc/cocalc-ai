@@ -9,7 +9,7 @@ describe("buildCapabilityManifest", () => {
     registerBasicCapabilities(registry);
 
     const manifest = buildCapabilityManifest(registry);
-    expect(manifest.length).toBe(14);
+    expect(manifest.length).toBe(11);
     expect(manifest[0].actionType).toBe("hub.projects.create");
     expect(
       manifest.find((x) => x.actionType === "project.system.write_text_file"),

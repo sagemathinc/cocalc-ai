@@ -56,7 +56,7 @@ describe("agent-sdk runtime bridge", () => {
       defaults: { projectId: "project-default" },
     });
 
-    expect(bridge.manifest().length).toBe(14);
+    expect(bridge.manifest().length).toBe(11);
 
     const ping = await bridge.execute({
       action: { actionType: "hub.system.ping", args: {} },
@@ -75,12 +75,16 @@ describe("agent-sdk runtime bridge", () => {
 
     const read = await bridge.execute({
       action: {
-        actionType: "project.fs.readFile",
+        actionType: "project.fs.readText",
         args: { path: "a.txt" },
       },
     });
     expect(read.status).toBe("completed");
-    expect(read.result).toEqual({ path: "a.txt", data: "content:default:a.txt" });
+    expect(read.result).toEqual({
+      path: "a.txt",
+      encoding: "utf8",
+      text: "content:default:a.txt",
+    });
   });
 
   test("uses projectResolver for targeted launchpad project", async () => {

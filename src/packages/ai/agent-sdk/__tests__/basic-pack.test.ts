@@ -107,12 +107,9 @@ describe("basic capability pack", () => {
       "project.apps.start",
       "project.apps.status",
       "project.apps.stop",
-      "project.fs.move",
-      "project.fs.readFile",
-      "project.fs.readdir",
-      "project.fs.realpath",
-      "project.fs.rename",
-      "project.fs.writeFile",
+      "project.fs.call",
+      "project.fs.readText",
+      "project.fs.writeText",
       "project.system.listing",
       "project.system.write_text_file",
     ]);
@@ -164,13 +161,17 @@ describe("basic capability pack", () => {
 
     const read = await executor.execute({
       action: {
-        actionType: "project.fs.readFile",
+        actionType: "project.fs.readText",
         args: { path: "a.txt" },
       },
       context,
     });
     expect(read.status).toBe("completed");
-    expect(read.result).toEqual({ path: "a.txt", data: "content:a.txt" });
+    expect(read.result).toEqual({
+      path: "a.txt",
+      encoding: "utf8",
+      text: "content:a.txt",
+    });
     expect(calls.fsRead).toBe(1);
   });
 
@@ -194,8 +195,11 @@ describe("basic capability pack", () => {
 
     const rename = await executor.execute({
       action: {
-        actionType: "project.fs.rename",
-        args: { oldPath: "a.txt", newPath: "b.txt" },
+        actionType: "project.fs.call",
+        args: {
+          method: "rename",
+          args: ["a.txt", "b.txt"],
+        },
         dryRun: true,
       },
       context,
@@ -203,8 +207,8 @@ describe("basic capability pack", () => {
     expect(rename.status).toBe("completed");
     expect(rename.result).toEqual({
       dryRun: true,
-      oldPath: "a.txt",
-      newPath: "b.txt",
+      method: "rename",
+      args: ["a.txt", "b.txt"],
     });
     expect(calls.fsRename).toBe(0);
   });

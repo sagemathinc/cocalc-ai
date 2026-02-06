@@ -39,41 +39,34 @@ const listingArgsSchema = z.object({
 });
 type ListingArgs = z.infer<typeof listingArgsSchema>;
 
-const fsReadFileArgsSchema = z.object({
+const fsMethodSchema = z.enum([
+  "readFile",
+  "writeFile",
+  "readdir",
+  "rename",
+  "move",
+  "realpath",
+]);
+type FsMethod = z.infer<typeof fsMethodSchema>;
+
+const fsCallArgsSchema = z.object({
+  method: fsMethodSchema,
+  args: z.array(z.unknown()).default([]),
+});
+type FsCallArgs = z.infer<typeof fsCallArgsSchema>;
+
+const fsReadTextArgsSchema = z.object({
   path: z.string(),
   encoding: z.string().optional(),
 });
-type FsReadFileArgs = z.infer<typeof fsReadFileArgsSchema>;
+type FsReadTextArgs = z.infer<typeof fsReadTextArgsSchema>;
 
-const fsWriteFileArgsSchema = z.object({
+const fsWriteTextArgsSchema = z.object({
   path: z.string(),
-  data: z.string(),
+  content: z.string(),
   saveLast: z.boolean().optional(),
 });
-type FsWriteFileArgs = z.infer<typeof fsWriteFileArgsSchema>;
-
-const fsReaddirArgsSchema = z.object({
-  path: z.string(),
-});
-type FsReaddirArgs = z.infer<typeof fsReaddirArgsSchema>;
-
-const fsMoveArgsSchema = z.object({
-  src: z.union([z.string(), z.array(z.string()).nonempty()]),
-  dest: z.string(),
-  overwrite: z.boolean().optional(),
-});
-type FsMoveArgs = z.infer<typeof fsMoveArgsSchema>;
-
-const fsRenameArgsSchema = z.object({
-  oldPath: z.string(),
-  newPath: z.string(),
-});
-type FsRenameArgs = z.infer<typeof fsRenameArgsSchema>;
-
-const fsRealpathArgsSchema = z.object({
-  path: z.string(),
-});
-type FsRealpathArgs = z.infer<typeof fsRealpathArgsSchema>;
+type FsWriteTextArgs = z.infer<typeof fsWriteTextArgsSchema>;
 
 const writeTextFileArgsSchema = z.object({
   path: z.string(),
@@ -98,12 +91,9 @@ const getCustomizeArgsManifestSchema = toArgsSchema(getCustomizeArgsSchema);
 const createProjectArgsManifestSchema = toArgsSchema(createProjectArgsSchema);
 const listingArgsManifestSchema = toArgsSchema(listingArgsSchema);
 const writeTextFileArgsManifestSchema = toArgsSchema(writeTextFileArgsSchema);
-const fsReadFileArgsManifestSchema = toArgsSchema(fsReadFileArgsSchema);
-const fsWriteFileArgsManifestSchema = toArgsSchema(fsWriteFileArgsSchema);
-const fsReaddirArgsManifestSchema = toArgsSchema(fsReaddirArgsSchema);
-const fsRenameArgsManifestSchema = toArgsSchema(fsRenameArgsSchema);
-const fsMoveArgsManifestSchema = toArgsSchema(fsMoveArgsSchema);
-const fsRealpathArgsManifestSchema = toArgsSchema(fsRealpathArgsSchema);
+const fsCallArgsManifestSchema = toArgsSchema(fsCallArgsSchema);
+const fsReadTextArgsManifestSchema = toArgsSchema(fsReadTextArgsSchema);
+const fsWriteTextArgsManifestSchema = toArgsSchema(fsWriteTextArgsSchema);
 const appNameArgsManifestSchema = toArgsSchema(appNameArgsSchema);
 
 function formatZodError(error: z.ZodError): string {
@@ -148,32 +138,35 @@ function parseWriteTextArgs(args: unknown): WriteTextFileArgs {
   return parseWithSchema(writeTextFileArgsSchema, args);
 }
 
-function parseFsReadFileArgs(args: unknown): FsReadFileArgs {
-  return parseWithSchema(fsReadFileArgsSchema, args);
+function parseFsCallArgs(args: unknown): FsCallArgs {
+  return parseWithSchema(fsCallArgsSchema, args);
 }
 
-function parseFsWriteFileArgs(args: unknown): FsWriteFileArgs {
-  return parseWithSchema(fsWriteFileArgsSchema, args);
+function parseFsReadTextArgs(args: unknown): FsReadTextArgs {
+  return parseWithSchema(fsReadTextArgsSchema, args);
 }
 
-function parseFsReaddirArgs(args: unknown): FsReaddirArgs {
-  return parseWithSchema(fsReaddirArgsSchema, args);
-}
-
-function parseFsMoveArgs(args: unknown): FsMoveArgs {
-  return parseWithSchema(fsMoveArgsSchema, args);
-}
-
-function parseFsRenameArgs(args: unknown): FsRenameArgs {
-  return parseWithSchema(fsRenameArgsSchema, args);
-}
-
-function parseFsRealpathArgs(args: unknown): FsRealpathArgs {
-  return parseWithSchema(fsRealpathArgsSchema, args);
+function parseFsWriteTextArgs(args: unknown): FsWriteTextArgs {
+  return parseWithSchema(fsWriteTextArgsSchema, args);
 }
 
 function parseAppNameArgs(args: unknown): AppNameArgs {
   return parseWithSchema(appNameArgsSchema, args);
+}
+
+function isFsWriteMethod(method: FsMethod): boolean {
+  return method === "writeFile" || method === "rename" || method === "move";
+}
+
+function asText(data: string | Buffer, encoding = "utf8"): string {
+  if (typeof data === "string") {
+    return data;
+  }
+  try {
+    return data.toString(encoding as BufferEncoding);
+  } catch {
+    return data.toString("utf8");
+  }
 }
 
 export function registerBasicCapabilities(
@@ -261,101 +254,108 @@ export function registerBasicCapabilities(
   });
 
   registry.register({
-    actionType: "project.fs.readFile",
+    actionType: "project.fs.call",
     namespace: "project.fs",
-    summary: "Read a file using the project fs API",
-    argsSchema: fsReadFileArgsManifestSchema,
+    summary:
+      "Generic Node.js-style fs call over the project adapter (method + args)",
+    argsSchema: fsCallArgsManifestSchema,
+    riskLevel: "write",
+    sideEffectScope: "project",
+    validateArgs: parseFsCallArgs,
+    handler: async ({ method, args }, { context, dryRun }) => {
+      const fs = requireFsAdapter(context);
+      if (dryRun && isFsWriteMethod(method)) {
+        return { dryRun: true, method, args };
+      }
+      switch (method) {
+        case "readFile": {
+          const [path, encoding] = parseWithSchema(
+            z.tuple([z.string(), z.string().optional()]),
+            args,
+          );
+          const result = await fs.readFile(path, encoding);
+          return { method, args: [path, encoding], result };
+        }
+        case "writeFile": {
+          const [path, data, saveLast] = parseWithSchema(
+            z.tuple([z.string(), z.string(), z.boolean().optional()]),
+            args,
+          );
+          await fs.writeFile(path, data, saveLast);
+          return { method, args: [path, data, saveLast], result: undefined };
+        }
+        case "readdir": {
+          const [path, options] = parseWithSchema(
+            z.tuple([z.string(), z.unknown().optional()]),
+            args,
+          );
+          const result = await fs.readdir(path, options);
+          return { method, args: [path, options], result };
+        }
+        case "rename": {
+          const [oldPath, newPath] = parseWithSchema(
+            z.tuple([z.string(), z.string()]),
+            args,
+          );
+          await fs.rename(oldPath, newPath);
+          return { method, args: [oldPath, newPath], result: undefined };
+        }
+        case "move": {
+          const [src, dest, options] = parseWithSchema(
+            z.tuple([
+              z.union([z.string(), z.array(z.string()).nonempty()]),
+              z.string(),
+              z.object({ overwrite: z.boolean().optional() }).optional(),
+            ]),
+            args,
+          );
+          await fs.move(src, dest, options);
+          return { method, args: [src, dest, options], result: undefined };
+        }
+        case "realpath": {
+          const [path] = parseWithSchema(z.tuple([z.string()]), args);
+          const result = await fs.realpath(path);
+          return { method, args: [path], result };
+        }
+      }
+    },
+  });
+
+  registry.register({
+    actionType: "project.fs.readText",
+    namespace: "project.fs",
+    summary: "Read a text file (UTF-8 by default)",
+    argsSchema: fsReadTextArgsManifestSchema,
     riskLevel: "read",
     sideEffectScope: "project",
-    validateArgs: parseFsReadFileArgs,
+    validateArgs: parseFsReadTextArgs,
     handler: async ({ path, encoding }, { context }) => {
       const fs = requireFsAdapter(context);
-      const data = await fs.readFile(path, encoding);
-      return { path, data };
+      const resolvedEncoding = encoding ?? "utf8";
+      const data = await fs.readFile(path, resolvedEncoding);
+      return {
+        path,
+        encoding: resolvedEncoding,
+        text: asText(data, resolvedEncoding),
+      };
     },
   });
 
   registry.register({
-    actionType: "project.fs.writeFile",
+    actionType: "project.fs.writeText",
     namespace: "project.fs",
-    summary: "Write a file using the project fs API",
-    argsSchema: fsWriteFileArgsManifestSchema,
+    summary: "Write text file content (UTF-8)",
+    argsSchema: fsWriteTextArgsManifestSchema,
     riskLevel: "write",
     sideEffectScope: "project",
-    validateArgs: parseFsWriteFileArgs,
-    handler: async ({ path, data, saveLast }, { context, dryRun }) => {
+    validateArgs: parseFsWriteTextArgs,
+    handler: async ({ path, content, saveLast }, { context, dryRun }) => {
       if (dryRun) {
-        return { dryRun: true, path, bytes: Buffer.byteLength(data, "utf8") };
+        return { dryRun: true, path, bytes: Buffer.byteLength(content, "utf8") };
       }
       const fs = requireFsAdapter(context);
-      await fs.writeFile(path, data, saveLast);
-      return { path, bytes: Buffer.byteLength(data, "utf8") };
-    },
-  });
-
-  registry.register({
-    actionType: "project.fs.readdir",
-    namespace: "project.fs",
-    summary: "Read directory entries using the project fs API",
-    argsSchema: fsReaddirArgsManifestSchema,
-    riskLevel: "read",
-    sideEffectScope: "project",
-    validateArgs: parseFsReaddirArgs,
-    handler: async ({ path }, { context }) => {
-      const fs = requireFsAdapter(context);
-      const entries = await fs.readdir(path);
-      return { path, entries };
-    },
-  });
-
-  registry.register({
-    actionType: "project.fs.rename",
-    namespace: "project.fs",
-    summary: "Rename or move a file using the project fs API",
-    argsSchema: fsRenameArgsManifestSchema,
-    riskLevel: "write",
-    sideEffectScope: "project",
-    validateArgs: parseFsRenameArgs,
-    handler: async ({ oldPath, newPath }, { context, dryRun }) => {
-      if (dryRun) {
-        return { dryRun: true, oldPath, newPath };
-      }
-      const fs = requireFsAdapter(context);
-      await fs.rename(oldPath, newPath);
-      return { renamed: true, oldPath, newPath };
-    },
-  });
-
-  registry.register({
-    actionType: "project.fs.move",
-    namespace: "project.fs",
-    summary: "Move files using the project fs API",
-    argsSchema: fsMoveArgsManifestSchema,
-    riskLevel: "write",
-    sideEffectScope: "project",
-    validateArgs: parseFsMoveArgs,
-    handler: async ({ src, dest, overwrite }, { context, dryRun }) => {
-      if (dryRun) {
-        return { dryRun: true, src, dest, overwrite };
-      }
-      const fs = requireFsAdapter(context);
-      await fs.move(src, dest, { overwrite });
-      return { moved: true, src, dest, overwrite };
-    },
-  });
-
-  registry.register({
-    actionType: "project.fs.realpath",
-    namespace: "project.fs",
-    summary: "Resolve real path using the project fs API",
-    argsSchema: fsRealpathArgsManifestSchema,
-    riskLevel: "read",
-    sideEffectScope: "project",
-    validateArgs: parseFsRealpathArgs,
-    handler: async ({ path }, { context }) => {
-      const fs = requireFsAdapter(context);
-      const resolved = await fs.realpath(path);
-      return { path, resolved };
+      await fs.writeFile(path, content, saveLast);
+      return { path, bytes: Buffer.byteLength(content, "utf8") };
     },
   });
 
