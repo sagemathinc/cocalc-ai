@@ -148,7 +148,7 @@ export const SelfHostSetupModal: React.FC<SelfHostSetupModalProps> = ({
         </Button>,
       ]}
     >
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         {isDirect ? (
           <Typography.Paragraph>
             This connector installs the project host directly on this machine

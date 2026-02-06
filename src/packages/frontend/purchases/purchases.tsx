@@ -868,7 +868,7 @@ function PurchaseModal({ purchase, onClose, admin }) {
       onCancel={onClose}
       title={<>Purchase Id={purchase.id}</>}
     >
-      <Space direction="vertical">
+      <Space orientation="vertical">
         <PurchaseDescription {...purchase} admin={admin} />
         <div>
           Time: <TimeAgo date={purchase.text} />

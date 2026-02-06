@@ -46,7 +46,7 @@ export default function FindRestoreModal({
       footer={null}
       destroyOnHidden
     >
-      <Space direction="vertical" style={{ width: "100%" }} size="middle">
+      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
         <div>
           <div style={{ marginBottom: "4px", color: "#666" }}>
             Selected path
@@ -54,7 +54,7 @@ export default function FindRestoreModal({
           <Typography.Text code>{path}</Typography.Text>
         </div>
         {error ? <Alert type="error" message={error} /> : null}
-        <Space direction="vertical" style={{ width: "100%" }}>
+        <Space orientation="vertical" style={{ width: "100%" }}>
           <Button
             type="primary"
             block

@@ -114,7 +114,7 @@ export default function LauncherDefaultsWizard({
       title="Launcher Defaults Wizard"
       width={920}
     >
-      <Space direction="vertical" style={{ width: "100%" }} size={14}>
+      <Space orientation="vertical" style={{ width: "100%" }} size={14}>
         <Alert
           type="info"
           showIcon

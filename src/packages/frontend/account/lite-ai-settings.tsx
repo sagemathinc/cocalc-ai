@@ -128,7 +128,7 @@ export default function LiteAISettings() {
       {error && (
         <Alert type="error" message="Error" description={error} closable />
       )}
-      <Space direction="vertical" style={{ width: "100%" }} size="middle">
+      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
         {PROVIDERS.map(({ keyField, label, placeholder }) => (
           <Row key={keyField} gutter={8} align="middle">
             <Col span={8}>{label}</Col>

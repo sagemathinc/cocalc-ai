@@ -318,7 +318,7 @@ export function RegistrationToken() {
           <InputNumber min={limit_min} step={1} />
         </Form.Item>
         <Form.Item label="Restrictions">
-          <Space direction="vertical">
+          <Space orientation="vertical">
             <Form.Item
               name={["customize", "disableCollaborators"]}
               valuePropName="checked"

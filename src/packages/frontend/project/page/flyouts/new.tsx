@@ -553,8 +553,8 @@ export function NewFlyout({
   function renderHead() {
     const padding = { padding: FLYOUT_PADDING };
     return (
-      <Space direction="vertical">
-        <Space direction="horizontal" style={padding}>
+      <Space orientation="vertical">
+        <Space orientation="horizontal" style={padding}>
           <FormattedMessage
             id="project.page.flyouts.new.header_location"
             defaultMessage={"Location:"}
@@ -600,7 +600,7 @@ export function NewFlyout({
     return (
       <Space
         style={{ width: "100%", overflowX: "hidden", padding: FLYOUT_PADDING }}
-        direction="vertical"
+        orientation="vertical"
       >
         <Flex justify="space-between" align="center">
           <Tag color="blue">Quick Create</Tag>
@@ -692,7 +692,7 @@ export function NewFlyout({
           padding: FLYOUT_PADDING,
           borderTop: FIX_BORDER,
         }}
-        direction="vertical"
+        orientation="vertical"
       >
         {renderCreateFileButton()}
       </Space>

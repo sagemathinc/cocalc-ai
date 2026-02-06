@@ -362,7 +362,7 @@ export const Datastore: React.FC<Props> = React.memo((props: Props) => {
     return (
       <Space.Compact
         size={size}
-        direction={isFlyout ? "vertical" : "horizontal"}
+        orientation={isFlyout ? "vertical" : "horizontal"}
       >
         <Tooltip
           title={`Modify ${record.name}'s configuration.`}

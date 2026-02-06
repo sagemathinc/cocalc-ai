@@ -458,7 +458,7 @@ function TestCustomLLM({ llm }: { llm: UserDefinedLLM }) {
 
   // TODO implement a button (or whatever) to query the backend and show the response in real time
   return (
-    <Space direction="vertical">
+    <Space orientation="vertical">
       <Flex vertical={false} align="center" gap={5}>
         <Flex>Prompt: </Flex>
         <Input

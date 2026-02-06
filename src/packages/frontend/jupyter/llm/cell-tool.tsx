@@ -1083,7 +1083,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
 
         return (
           <Paragraph>
-            <Space direction="horizontal">
+            <Space orientation="horizontal">
               <Text>Target language:</Text>
               <Select
                 value={targetLanguage}
@@ -1112,7 +1112,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
       case "translate_text":
         return (
           <Paragraph>
-            <Space direction="horizontal">
+            <Space orientation="horizontal">
               <Text>Target language:</Text>
               <LanguageSelector
                 value={targetTextLanguage}
@@ -1181,7 +1181,7 @@ export function LLMCellTool({ actions, id, style, llmTools, cellType }: Props) {
 
     return (
       <Space
-        direction="vertical"
+        orientation="vertical"
         style={{
           width: `${CONTENT_WIDTH}px`,
           overflow: "auto",

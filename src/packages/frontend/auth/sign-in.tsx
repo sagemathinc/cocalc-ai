@@ -37,7 +37,7 @@ export default function SignInForm({ onNavigate }: SignInProps) {
   }
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       {error && <Alert type="error" showIcon message={error} />}
       <div>
         <div>Email address</div>

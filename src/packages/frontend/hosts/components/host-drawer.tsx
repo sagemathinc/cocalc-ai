@@ -321,7 +321,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       open={open && !!host}
     >
       {host ? (
-        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+        <Space orientation="vertical" style={{ width: "100%" }} size="middle">
           <Space size="small">
             <Tag>
               {host.machine?.cloud
@@ -342,7 +342,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             )}
           </Space>
           {!showUpgradeProgress && (
-            <Space direction="vertical" size="small">
+            <Space orientation="vertical" size="small">
               <HostOpProgress op={activeOp} />
               {canCancelBackups && (
                 <Popconfirm
@@ -366,7 +366,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               Connector ID: {host.region}
             </Typography.Text>
           )}
-          <Space direction="vertical" size="small">
+          <Space orientation="vertical" size="small">
             {host.machine?.cloud && host.public_ip && (
               <Typography.Text copyable={{ text: host.public_ip }}>
                 Public IP: {host.public_ip}
@@ -398,7 +398,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               </Typography.Text>
             )}
           </Space>
-          <Space direction="vertical" size="small">
+          <Space orientation="vertical" size="small">
             <HostWorkspaceStatus host={host} fontSize={14} />
             <Button size="small" onClick={() => setShowProjects(true)}>
               Browse projects
@@ -407,7 +407,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           {(host.version ||
             host.project_bundle_version ||
             host.tools_version) && (
-            <Space direction="vertical" size="small">
+            <Space orientation="vertical" size="small">
               <Typography.Text strong>Software</Typography.Text>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {[
@@ -452,7 +452,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           )}
           {showUpgradeProgress && <HostOpProgress op={activeOp} />}
           {isSelfHost && selfHost && !host.deleted && (
-            <Space direction="vertical" size="small">
+            <Space orientation="vertical" size="small">
               <Typography.Text strong>Connector actions</Typography.Text>
               <Space wrap>
                 <Button
@@ -505,7 +505,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           ) : hostLog.length === 0 ? (
             <Typography.Text type="secondary">No actions yet.</Typography.Text>
           ) : (
-            <Space direction="vertical" style={{ width: "100%" }} size="small">
+            <Space orientation="vertical" style={{ width: "100%" }} size="small">
               {hostLog.map((entry) => (
                 <Card
                   key={entry.id}

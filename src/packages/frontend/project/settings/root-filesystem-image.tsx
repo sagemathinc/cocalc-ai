@@ -236,7 +236,7 @@ export default function RootFilesystemImage() {
             </div>
           )}
 
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
             <Radio.Group
               value={rootfsMode}
               onChange={(e) => setRootfsMode(e.target.value)}

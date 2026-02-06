@@ -159,7 +159,7 @@ export default function CloudflareConfigWizard({
       title="Cloudflare Configuration Wizard"
       width={920}
     >
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
         <Alert
           type="info"
           showIcon
@@ -175,7 +175,7 @@ export default function CloudflareConfigWizard({
             onChange={(e) => setMode(e.target.value)}
             style={{ marginTop: "8px" }}
           >
-            <Space direction="vertical">
+            <Space orientation="vertical">
               <Radio value="none">No Cloudflare (self-hosted only)</Radio>
               <Radio value="self">Use my own Cloudflare account</Radio>
               <Radio value="managed">

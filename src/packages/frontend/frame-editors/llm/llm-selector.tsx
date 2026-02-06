@@ -345,7 +345,7 @@ export default function LLMSelector({
 
   // all models selectable here must be in selectableLLMs(default: USER_SELECTABLE_LANGUAGE_MODELS) + the custom ones from the Ollama configuration
   return (
-    <Space direction="horizontal" style={{ whiteSpace: "nowrap" }}>
+    <Space orientation="horizontal" style={{ whiteSpace: "nowrap" }}>
       <Select
         styles={{ popup: { root: style } }}
         size={size}

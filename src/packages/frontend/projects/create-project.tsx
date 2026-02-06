@@ -304,7 +304,7 @@ export function NewProjectCreator({
           setRootfsModalOpen(false);
         }}
       >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
             Pick the base OCI image for this workspace. You can always change it
             later in workspace settings.
@@ -360,7 +360,7 @@ export function NewProjectCreator({
       selectedRootfsEntry?.label || displayImage || DEFAULT_PROJECT_IMAGE;
     return (
       <Card size="small" bodyStyle={{ padding: "10px 12px" }}>
-        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="small" style={{ width: "100%" }}>
           <div style={{ fontWeight: 600 }}>Root Filesystem Software Image</div>
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
             Select the OCI image that provides the base software environment for
@@ -386,7 +386,7 @@ export function NewProjectCreator({
     });
 
     return (
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <Form form={form} layout="vertical">
           <Form.Item
             label={intl.formatMessage(labels.title)}
@@ -419,7 +419,7 @@ export function NewProjectCreator({
           {showAdvanced ? "Hide advanced" : "Show advanced"}
         </Button>
         {showAdvanced && (
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
             <Paragraph type="secondary">
               <FormattedMessage
                 id="projects.create-project.explanation"
@@ -434,7 +434,7 @@ export function NewProjectCreator({
               />
             </Paragraph>
             <Card size="small" bodyStyle={{ padding: "10px 12px" }}>
-              <Space direction="vertical" size="small" style={{ width: "100%" }}>
+              <Space orientation="vertical" size="small" style={{ width: "100%" }}>
                 <div style={{ fontWeight: 600 }}>Backup region</div>
                 <Select
                   value={projectRegion}
@@ -474,7 +474,7 @@ export function NewProjectCreator({
   if (!open) return null;
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <div>
         <Title level={4} style={{ marginBottom: 4 }}>
           {intl.formatMessage(labels.create_project)}

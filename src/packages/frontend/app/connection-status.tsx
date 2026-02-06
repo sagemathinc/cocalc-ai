@@ -55,7 +55,7 @@ export function ConnectionStatsDisplay({
   }
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       <Typography.Title level={5}>
         <Badge status={statusColor as any} text={statusText} /> {icon}
       </Typography.Title>

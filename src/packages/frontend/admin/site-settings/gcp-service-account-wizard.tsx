@@ -197,7 +197,7 @@ export default function GcpServiceAccountWizard({
       title="Google Cloud Service Account JSON Wizard (gcloud)"
       width={920}
     >
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
         <Alert
           type="info"
           showIcon

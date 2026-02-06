@@ -289,7 +289,7 @@ export function HostPickerModal({
             return (
               <List.Item style={muted ? { opacity: 0.6 } : undefined}>
                 <Space
-                  direction="vertical"
+                  orientation="vertical"
                   style={{ width: "100%" }}
                   size="small"
                 >

@@ -101,7 +101,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
         provider={provider}
       />
       <Divider style={{ margin: "8px 0" }} />
-      <Space direction="vertical" style={{ width: "100%" }} size="small">
+      <Space orientation="vertical" style={{ width: "100%" }} size="small">
         {provider.selectedProvider !== "self-host" && (
           <Typography.Text type="secondary">
             Cost estimate (placeholder): updates with size/region
@@ -136,7 +136,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
       {isAdmin && hasExternalProviders && (
         <>
           <Divider style={{ margin: "12px 0" }} />
-          <Space direction="vertical" style={{ width: "100%" }} size="small">
+          <Space orientation="vertical" style={{ width: "100%" }} size="small">
             <Typography.Text type="secondary">Admin tools</Typography.Text>
             <Space size="small" wrap>
               <Select

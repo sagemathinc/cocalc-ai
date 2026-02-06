@@ -1663,7 +1663,7 @@ export const SshPage: React.FC = React.memo(() => {
         (status.errors ?? 0) === 0;
       const inProgress = !!status.pending;
       return (
-        <Space size={4} direction="vertical">
+        <Space size={4} orientation="vertical">
           <Space size={6}>
             <Tag color={healthy ? "green" : inProgress ? "blue" : "default"}>
               {healthy

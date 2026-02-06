@@ -123,7 +123,7 @@ export function StudentProjectSoftwareEnvironment({
 
   function render_controls_body() {
     return (
-      <Space direction="vertical" style={{ width: "100%" }}>
+      <Space orientation="vertical" style={{ width: "100%" }}>
         <ComputeImageSelector
           current_image={software_image ?? default_compute_img}
           layout={"dialog"}

@@ -261,7 +261,7 @@ export function MembershipStatusPanel({
       {loading && <Loading />}
       {error && !loading && <Alert type="error" message={error} />}
       {!loading && !error && membership && (
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Descriptions size="small" column={1}>
             <Descriptions.Item label="Tier">
               <Space>

@@ -115,7 +115,7 @@ export default function SignUpForm({ onNavigate }: SignUpProps) {
   const issueList = Object.values(issues).filter(Boolean);
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       {bootstrap && (
         <Alert
           type="info"

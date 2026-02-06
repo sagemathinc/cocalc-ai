@@ -600,7 +600,7 @@ export default function LanguageModelTitleBarButton({
               }
             }}
             content={() => (
-              <Space direction="vertical" style={{ maxWidth: "50vw" }}>
+              <Space orientation="vertical" style={{ maxWidth: "50vw" }}>
                 <StaticMarkdown
                   value={message}
                   style={{
@@ -639,7 +639,7 @@ export default function LanguageModelTitleBarButton({
 
   function renderContent() {
     return (
-      <Space direction="vertical" style={{ width: "800px", maxWidth: "50vw" }}>
+      <Space orientation="vertical" style={{ width: "800px", maxWidth: "50vw" }}>
         <Paragraph>
           Describe what you want the language model{" "}
           <LLMNameLink model={model} /> to do. Be specific!

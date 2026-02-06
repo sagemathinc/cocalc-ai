@@ -171,7 +171,7 @@ export default function ApiKeys({ manage, mode = "project" }: Props) {
       title: "Operation",
       align: "right",
       render: (_text, record) => (
-        <Space.Compact direction={isFlyout ? "vertical" : "horizontal"}>
+        <Space.Compact orientation={isFlyout ? "vertical" : "horizontal"}>
           <Popconfirm
             title="Are you sure you want to delete this key?"
             onConfirm={() => deleteApiKey(record.id)}

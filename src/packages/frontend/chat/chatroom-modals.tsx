@@ -199,7 +199,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         okText="Export"
         destroyOnHidden
       >
-        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               Filename
@@ -220,7 +220,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         okText="Save"
         destroyOnHidden
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               Chat name
@@ -284,7 +284,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         okText="Fork"
         destroyOnHidden
       >
-        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               New chat name

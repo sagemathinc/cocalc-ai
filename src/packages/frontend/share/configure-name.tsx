@@ -67,7 +67,7 @@ export function ConfigureName({
   }
 
   return (
-    <Space direction="vertical">
+    <Space orientation="vertical">
       <div>
         <Title level={4}>
           <Icon name="global" /> Name{name ? `: ${name}` : " - optional"}

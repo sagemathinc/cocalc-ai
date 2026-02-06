@@ -214,7 +214,7 @@ function PaymentIntentsTable({ paymentIntents, onFinished, account_id }) {
       render: (status, { intent }) => {
         if (intent.metadata.refund_date) {
           return (
-            <Space direction="vertical" size="small">
+            <Space orientation="vertical" size="small">
               <div>
                 <Tag>Refunded</Tag>{" "}
                 <TimeAgo date={parseInt(intent.metadata.refund_date)} />
