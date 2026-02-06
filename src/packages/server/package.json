@@ -21,6 +21,7 @@
     "./conat/socketio": "./dist/conat/socketio/index.js",
     "./conat/project/*": "./dist/conat/project/*.js",
     "./project-backup": "./dist/project-backup/index.js",
+    "./llm": "./dist/llm/index.js",
     "./purchases/*": "./dist/purchases/*.js",
     "./stripe/*": "./dist/stripe/*.js",
     "./projects/control": "./dist/projects/control/index.js",
@@ -32,10 +33,7 @@
     "./test": "./dist/test/index.js",
     "./test/*": "./dist/test/*.js"
   },
-  "keywords": [
-    "utilities",
-    "cocalc"
-  ],
+  "keywords": ["utilities", "cocalc"],
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo",
