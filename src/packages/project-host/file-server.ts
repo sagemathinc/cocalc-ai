@@ -90,6 +90,14 @@ function volName(project_id: string) {
   return `project-${project_id}`;
 }
 
+function scratchVolName(project_id: string) {
+  return `${volName(project_id)}-scratch`;
+}
+
+function volumeName(project_id: string, scratch?: boolean) {
+  return scratch ? scratchVolName(project_id) : volName(project_id);
+}
+
 function requireHostId(): string {
   const id = getLocalHostId();
   if (!id) {
@@ -131,12 +139,14 @@ export async function getVolume(project_id: string) {
   return vol;
 }
 
-export async function ensureVolume(project_id: string) {
+export async function ensureVolume(project_id: string, scratch?: boolean) {
   if (fs == null) {
     throw Error("file server not initialized");
   }
-  const vol = await fs.subvolumes.ensure(volName(project_id));
-  queueProjectProvisioned(project_id, true);
+  const vol = await fs.subvolumes.ensure(volumeName(project_id, scratch));
+  if (!scratch) {
+    queueProjectProvisioned(project_id, true);
+  }
   return vol;
 }
 
@@ -144,24 +154,34 @@ export async function deleteVolume(project_id: string) {
   if (fs == null) {
     throw Error("file server not initialized");
   }
-  const vol = await fs.subvolumes.get(volName(project_id));
-  if (!(await exists(vol.path))) {
-    queueProjectProvisioned(project_id, false);
-    await deleteBackupIndexCache(project_id);
-    return;
-  }
-  try {
-    const snapshots = await vol.snapshots.readdir();
-    for (const name of snapshots) {
-      await vol.snapshots.delete(name);
+  const deleteIfExists = async ({
+    name,
+    clearSnapshots = false,
+  }: {
+    name: string;
+    clearSnapshots?: boolean;
+  }) => {
+    const vol = await fs!.subvolumes.get(name);
+    if (!(await exists(vol.path))) return;
+    if (clearSnapshots) {
+      try {
+        const snapshots = await vol.snapshots.readdir();
+        for (const snapshot of snapshots) {
+          await vol.snapshots.delete(snapshot);
+        }
+      } catch (err) {
+        logger.warn("deleteVolume: snapshot cleanup failed", {
+          project_id,
+          name,
+          err: `${err}`,
+        });
+      }
     }
-  } catch (err) {
-    logger.warn("deleteVolume: snapshot cleanup failed", {
-      project_id,
-      err: `${err}`,
-    });
-  }
-  await fs.subvolumes.delete(volName(project_id));
+    await fs!.subvolumes.delete(name);
+  };
+
+  await deleteIfExists({ name: volName(project_id), clearSnapshots: true });
+  await deleteIfExists({ name: scratchVolName(project_id) });
   queueProjectProvisioned(project_id, false);
   await deleteBackupIndexCache(project_id);
 }
@@ -210,7 +230,11 @@ function getFileSync() {
 }
 
 function projectMountpoint(project_id: string): string {
-  return join(getMountPoint(), `project-${project_id}`);
+  return join(getMountPoint(), volName(project_id));
+}
+
+function scratchMountpoint(project_id: string): string {
+  return join(getMountPoint(), scratchVolName(project_id));
 }
 
 function isSubPath(parent: string, child: string): boolean {
@@ -353,11 +377,15 @@ function projectHostPath(
 
 async function mount({
   project_id,
+  scratch,
 }: {
   project_id: string;
+  scratch?: boolean;
 }): Promise<{ path: string }> {
-  logger.debug("mount", { project_id });
-  return { path: projectMountpoint(project_id) };
+  logger.debug("mount", { project_id, scratch });
+  return {
+    path: scratch ? scratchMountpoint(project_id) : projectMountpoint(project_id),
+  };
 }
 
 async function clone({
@@ -386,24 +414,39 @@ async function getUsage({ project_id }: { project_id: string }): Promise<{
   return await vol.quota.usage();
 }
 
-async function getQuota({ project_id }: { project_id: string }): Promise<{
+async function getQuota({
+  project_id,
+  scratch,
+}: {
+  project_id: string;
+  scratch?: boolean;
+}): Promise<{
   size: number;
   used: number;
 }> {
-  logger.debug("getQuota", { project_id });
-  const vol = await getVolume(project_id);
+  logger.debug("getQuota", { project_id, scratch });
+  const volName = volumeName(project_id, scratch);
+  if (fs == null) {
+    throw Error("file server not initialized");
+  }
+  const vol = await fs.subvolumes.get(volName);
   return await vol.quota.get();
 }
 
 async function setQuota({
   project_id,
   size,
+  scratch,
 }: {
   project_id: string;
   size: number | string;
+  scratch?: boolean;
 }): Promise<void> {
-  logger.debug("setQuota", { project_id });
-  const vol = await getVolume(project_id);
+  logger.debug("setQuota", { project_id, scratch });
+  if (fs == null) {
+    throw Error("file server not initialized");
+  }
+  const vol = await fs.subvolumes.get(volumeName(project_id, scratch));
   await vol.quota.set(size);
 }
 
@@ -1536,8 +1579,8 @@ export async function initFileServer({
   const file = await createFileServer({
     client,
     mount: reuseInFlight(mount),
-    ensureVolume: reuseInFlight(async ({ project_id }) => {
-      await ensureVolume(project_id);
+    ensureVolume: reuseInFlight(async ({ project_id, scratch }) => {
+      await ensureVolume(project_id, scratch);
     }),
     clone,
     getUsage: reuseInFlight(getUsage),

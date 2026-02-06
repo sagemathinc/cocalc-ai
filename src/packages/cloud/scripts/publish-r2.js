@@ -340,6 +340,8 @@ async function main() {
   const latestKey = args["latest-key"] || process.env.COCALC_R2_LATEST_KEY;
   const manifestOs = args.os || process.env.COCALC_R2_OS;
   const manifestArch = args.arch || process.env.COCALC_R2_ARCH;
+  const filename = path.basename(filePath);
+  const key = args.key || joinKey(prefix, filename);
   const manifestVersion =
     args.version ||
     process.env.COCALC_R2_VERSION ||
@@ -348,8 +350,6 @@ async function main() {
     extractVersion(filename);
 
   const host = `${accountId}.r2.cloudflarestorage.com`;
-  const filename = path.basename(filePath);
-  const key = args.key || joinKey(prefix, filename);
   const contentType =
     args["content-type"] ||
     process.env.COCALC_R2_CONTENT_TYPE ||

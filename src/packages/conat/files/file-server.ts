@@ -75,9 +75,17 @@ export interface FileTextPreview {
 }
 
 export interface Fileserver {
-  mount: (opts: { project_id: string }) => Promise<{ path: string }>;
+  mount: (opts: {
+    project_id: string;
+    // if true, resolve the non-backed-up scratch volume path
+    scratch?: boolean;
+  }) => Promise<{ path: string }>;
   // ensure a project volume exists (idempotent)
-  ensureVolume: (opts: { project_id: string }) => Promise<void>;
+  ensureVolume: (opts: {
+    project_id: string;
+    // if true, ensure the non-backed-up scratch volume
+    scratch?: boolean;
+  }) => Promise<void>;
 
   // create project_id as an exact lightweight clone of src_project_id
   clone: (opts: {
@@ -91,7 +99,11 @@ export interface Fileserver {
     free: number;
   }>;
 
-  getQuota: (opts: { project_id: string }) => Promise<{
+  getQuota: (opts: {
+    project_id: string;
+    // if true, operate on scratch volume quota
+    scratch?: boolean;
+  }) => Promise<{
     size: number;
     used: number;
   }>;
@@ -99,6 +111,8 @@ export interface Fileserver {
   setQuota: (opts: {
     project_id: string;
     size: number | string;
+    // if true, operate on scratch volume quota
+    scratch?: boolean;
   }) => Promise<void>;
 
   cp: (opts: {
