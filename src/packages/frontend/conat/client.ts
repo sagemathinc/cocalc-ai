@@ -11,6 +11,7 @@ import { parseQueryWithOptions } from "@cocalc/sync/table/util";
 import { type HubApi, initHubApi } from "@cocalc/conat/hub/api";
 import { type ProjectApi, projectApiClient } from "@cocalc/conat/project/api";
 import { isValidUUID } from "@cocalc/util/misc";
+import { handleErrorMessage } from "@cocalc/conat/util";
 import { PubSub } from "@cocalc/conat/sync/pubsub";
 import type { ChatOptions } from "@cocalc/util/types/llm";
 import { dkv } from "@cocalc/conat/sync/dkv";
@@ -76,6 +77,10 @@ export interface ConatConnectionStatus {
 }
 
 const DEFAULT_TIMEOUT = 15000;
+const AGENT_MANIFEST_TIMEOUT = 60_000;
+const AGENT_EXECUTE_TIMEOUT = 10 * 60_000;
+const AGENT_PLAN_TIMEOUT = 10 * 60_000;
+const AGENT_RUN_TIMEOUT = 20 * 60_000;
 
 const DEBUG = false;
 
@@ -480,32 +485,57 @@ export class ConatClient extends EventEmitter {
   // Convenience wrapper for hub.agent.* so callers don't need to go
   // through hub namespaces directly.
   agent = {
-    manifest: async (): Promise<AgentManifestEntry[]> => {
-      return await this.hub.agent.manifest();
+    manifest: async (opts?: {
+      timeoutMs?: number;
+    }): Promise<AgentManifestEntry[]> => {
+      const response = await this.callHub({
+        name: "agent.manifest",
+        args: [{}],
+        timeout: opts?.timeoutMs ?? AGENT_MANIFEST_TIMEOUT,
+      });
+      return handleErrorMessage(response);
     },
     plan: async (
       opts: Omit<AgentPlanRequest, "account_id">,
     ): Promise<AgentPlanResponse> => {
-      return await this.hub.agent.plan({
-        ...opts,
-        account_id: this.client.account_id,
+      const { timeoutMs, ...planOpts } = opts as Omit<
+        AgentPlanRequest,
+        "account_id"
+      > & { timeoutMs?: number };
+      const response = await this.callHub({
+        name: "agent.plan",
+        args: [{ ...planOpts, account_id: this.client.account_id }],
+        timeout: timeoutMs ?? AGENT_PLAN_TIMEOUT,
       });
+      return handleErrorMessage(response);
     },
     execute: async (
       opts: Omit<AgentExecuteRequest, "account_id">,
     ): Promise<AgentExecuteResponse> => {
-      return await this.hub.agent.execute({
-        ...opts,
-        account_id: this.client.account_id,
+      const { timeoutMs, ...executeOpts } = opts as Omit<
+        AgentExecuteRequest,
+        "account_id"
+      > & { timeoutMs?: number };
+      const response = await this.callHub({
+        name: "agent.execute",
+        args: [{ ...executeOpts, account_id: this.client.account_id }],
+        timeout: timeoutMs ?? AGENT_EXECUTE_TIMEOUT,
       });
+      return handleErrorMessage(response);
     },
     run: async (
       opts: Omit<AgentRunRequest, "account_id">,
     ): Promise<AgentRunResponse> => {
-      return await this.hub.agent.run({
-        ...opts,
-        account_id: this.client.account_id,
+      const { timeoutMs, ...runOpts } = opts as Omit<
+        AgentRunRequest,
+        "account_id"
+      > & { timeoutMs?: number };
+      const response = await this.callHub({
+        name: "agent.run",
+        args: [{ ...runOpts, account_id: this.client.account_id }],
+        timeout: timeoutMs ?? AGENT_RUN_TIMEOUT,
       });
+      return handleErrorMessage(response);
     },
   };
 
