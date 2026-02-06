@@ -97,7 +97,17 @@ function parsePrompt(prompt: string): ParsedPrompt {
       label: `Read file: ${read[1]}`,
       action: {
         actionType: "project.fs.readFile",
-        args: { path: read[1] },
+        args: { path: read[1], encoding: "utf8" },
+      },
+    };
+  }
+  const readbin = text.match(/^readbin\s+(\S+)$/i);
+  if (readbin) {
+    return {
+      label: `Read file (binary): ${readbin[1]}`,
+      action: {
+        actionType: "project.fs.readFile",
+        args: { path: readbin[1] },
       },
     };
   }
@@ -137,7 +147,7 @@ function parsePrompt(prompt: string): ParsedPrompt {
   }
   return {
     error:
-      "Unknown command. Try: ping | list [path] | read <path> | write <path> ::: <text> | rename <src> -> <dest> | move <a,b> -> <dest> | realpath <path> | status <app> | start <app> | stop <app>",
+      "Unknown command. Try: ping | list [path] | read <path> | readbin <path> | write <path> ::: <text> | rename <src> -> <dest> | move <a,b> -> <dest> | realpath <path> | status <app> | start <app> | stop <app>",
   };
 }
 

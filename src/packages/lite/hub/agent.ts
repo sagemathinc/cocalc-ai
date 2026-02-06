@@ -5,11 +5,13 @@ import {
   type AgentCapabilityManifestEntry,
 } from "@cocalc/ai/agent-sdk";
 import { account_id as ACCOUNT_ID } from "@cocalc/backend/data";
+import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
 import { projectApiClient } from "@cocalc/conat/project/api";
 import type {
   AgentExecuteRequest,
   AgentExecuteResponse,
 } from "@cocalc/conat/hub/api/agent";
+import { conat } from "@cocalc/conat/client";
 import { project_id as LOCAL_PROJECT_ID } from "@cocalc/project/data";
 import { callRemoteHub, hasRemote, project_id as REMOTE_PROJECT_ID } from "../remote";
 
@@ -40,6 +42,7 @@ function createBridge({
   defaults?: { projectId?: string; accountId?: string };
 }) {
   const projectId = defaults?.projectId ?? getProjectId();
+  const conatClient = conat();
   return createPlusAgentSdkBridge({
     hub: {
       system: { ping, getCustomize },
@@ -50,6 +53,10 @@ function createBridge({
       },
     },
     project: projectApiClient({ project_id: projectId }),
+    fs: fsClient({
+      client: conatClient,
+      subject: fsSubject({ project_id: projectId }),
+    }),
     defaults: {
       accountId: ACCOUNT_ID,
       projectId,
