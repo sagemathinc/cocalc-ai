@@ -1,33 +1,26 @@
 import { Alert, Button, Collapse, Input, Space, Tag, Typography } from "antd";
-import { useMemo, useState } from "react";
-import type {
-  AgentExecuteRequest,
-  AgentExecuteResponse,
-  AgentManifestEntry,
-  AgentPlanResponse,
-} from "@cocalc/conat/hub/api/agent";
+import { useEffect, useRef, useState } from "react";
+import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { CodexActivity } from "@cocalc/frontend/chat/codex-activity";
 
-type ActionEnvelope = AgentExecuteRequest["action"];
+type TurnStatus = "running" | "completed" | "failed" | "interrupted";
 
-type ResultEntry = {
-  ts: string;
-  startedAt?: string;
+type TurnEntry = {
+  id: string;
+  prompt: string;
+  status: TurnStatus;
+  startedAt: string;
   finishedAt?: string;
   elapsedMs?: number;
-  prompt: string;
-  label: string;
-  mode: "plan" | "preview" | "run" | "confirm" | "manifest";
-  response: unknown;
+  sessionIdAtStart?: string;
+  sessionIdAtEnd?: string;
+  finalResponse?: string;
+  error?: string;
+  events: AcpStreamMessage[];
 };
 
-type PendingConfirmation = {
-  actions: ActionEnvelope[];
-  stepIndex: number;
-  label: string;
-  prompt: string;
-  dryRun: boolean;
-};
+const SESSION_KEY_PREFIX = "cocalc:navigator:acp-session";
 
 function prettify(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -40,274 +33,183 @@ function formatElapsed(ms?: number): string {
   return `${(ms / 1000).toFixed(1)} s`;
 }
 
+function storageKey(projectId: string): string {
+  return `${SESSION_KEY_PREFIX}:${projectId}`;
+}
+
 interface NavigatorShellProps {
   project_id: string;
 }
 
 export function NavigatorShell({ project_id }: NavigatorShellProps) {
   const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState<"" | "plan" | "execute" | "manifest">("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [history, setHistory] = useState<ResultEntry[]>([]);
-  const [manifest, setManifest] = useState<AgentManifestEntry[] | null>(null);
-  const [pendingConfirmation, setPendingConfirmation] =
-    useState<PendingConfirmation | null>(null);
-  const [plannedAction, setPlannedAction] = useState<ActionEnvelope | null>(
-    null,
-  );
-  const [plannedActions, setPlannedActions] = useState<ActionEnvelope[]>([]);
+  const [turns, setTurns] = useState<TurnEntry[]>([]);
+  const [sessionId, setSessionId] = useState<string>("");
   const [showAdvancedTrace, setShowAdvancedTrace] = useState(false);
+  const stopRequestedRef = useRef(false);
+  const latestTurn = turns[0];
 
-  const manifestByAction = useMemo(() => {
-    const map = new Map<string, AgentManifestEntry>();
-    for (const entry of manifest ?? []) {
-      map.set(entry.actionType, entry);
-    }
-    return map;
-  }, [manifest]);
-
-  async function executeAction({
-    action,
-    label,
-    promptText,
-    mode,
-    confirmationToken,
-  }: {
-    action: ActionEnvelope;
-    label: string;
-    promptText: string;
-    mode: ResultEntry["mode"];
-    confirmationToken?: string;
-  }): Promise<AgentExecuteResponse> {
-    setError("");
+  useEffect(() => {
     try {
-      const startedMs = Date.now();
-      const startedAt = new Date(startedMs).toISOString();
-      const response: AgentExecuteResponse =
-        await webapp_client.conat_client.agent.execute({
-          action,
-          defaults: { projectId: project_id },
-          confirmationToken,
-        });
-      const finishedMs = Date.now();
-      const finishedAt = new Date(finishedMs).toISOString();
-      setHistory((cur) => [
-        {
-          ts: finishedAt,
-          startedAt,
-          finishedAt,
-          elapsedMs: finishedMs - startedMs,
-          prompt: promptText,
-          label,
-          mode,
-          response,
-        },
-        ...cur,
-      ]);
-      return response;
-    } catch (err) {
-      setError(`${err}`);
-      throw err;
+      const value = localStorage.getItem(storageKey(project_id)) ?? "";
+      setSessionId(value);
+    } catch {
+      setSessionId("");
     }
+  }, [project_id]);
+
+  function saveSessionId(value?: string) {
+    const next = value?.trim() ?? "";
+    setSessionId(next);
+    try {
+      const key = storageKey(project_id);
+      if (next) {
+        localStorage.setItem(key, next);
+      } else {
+        localStorage.removeItem(key);
+      }
+    } catch {}
   }
 
-  async function planPrompt(
-    promptText: string
-  ): Promise<{ actions: ActionEnvelope[]; label: string }> {
-    const text = promptText.trim();
-    if (!text) {
-      throw Error("Please enter a prompt.");
-    }
-    setError("");
-    setBusy("plan");
-    try {
-      const startedMs = Date.now();
-      const startedAt = new Date(startedMs).toISOString();
-      const response: AgentPlanResponse = await webapp_client.conat_client.agent.plan(
-        {
-          prompt: text,
-          defaults: { projectId: project_id },
-          manifest: manifest ?? undefined,
-        },
-      );
-      const finishedMs = Date.now();
-      const finishedAt = new Date(finishedMs).toISOString();
-      if (response.status !== "planned" || !response.plan?.actions?.length) {
-        throw Error(response.error ?? "Planner did not return an action.");
-      }
-      const actions = response.plan.actions;
-      const firstAction = actions[0];
-      setPlannedAction(firstAction);
-      setPlannedActions(actions);
-      const label =
-        response.plan.summary?.trim() ||
-        `Planned ${actions.length} action${actions.length === 1 ? "" : "s"}`;
-      setHistory((cur) => [
-        {
-          ts: finishedAt,
-          startedAt,
-          finishedAt,
-          elapsedMs: finishedMs - startedMs,
-          prompt: text,
-          label,
-          mode: "plan",
-          response,
-        },
-        ...cur,
-      ]);
-      return { actions, label };
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function executePlannedActions({
-    actions,
-    label,
-    promptText,
-    dryRun,
-    mode,
-    startIndex = 0,
-    confirmationToken,
-  }: {
-    actions: ActionEnvelope[];
-    label: string;
-    promptText: string;
-    dryRun: boolean;
-    mode: "run" | "preview" | "confirm";
-    startIndex?: number;
-    confirmationToken?: string;
-  }) {
-    if (actions.length === 0) {
-      throw Error("Planner returned no actions.");
-    }
-    setBusy("execute");
-    try {
-      let token = confirmationToken;
-      for (let i = startIndex; i < actions.length; i++) {
-        const baseAction = actions[i];
-        const action: ActionEnvelope = { ...baseAction, dryRun };
-        const response = await executeAction({
-          action,
-          label: `${label} • step ${i + 1}/${actions.length}: ${baseAction.actionType}`,
-          promptText,
-          mode: mode === "confirm" ? "confirm" : mode,
-          confirmationToken: token,
-        });
-        token = undefined;
-        if (
-          response.status === "blocked" &&
-          response.requiresConfirmation &&
-          !confirmationToken
-        ) {
-          setPendingConfirmation({
-            actions,
-            stepIndex: i,
-            label,
-            prompt: promptText,
-            dryRun,
-          });
-          return;
-        }
-        if (response.status !== "completed") {
-          return;
-        }
-      }
-      setPendingConfirmation(null);
-    } finally {
-      setBusy("");
-    }
+  function updateTurn(id: string, update: (turn: TurnEntry) => TurnEntry) {
+    setTurns((cur) => cur.map((turn) => (turn.id === id ? update(turn) : turn)));
   }
 
   async function runAction() {
-    try {
-      const promptText = prompt.trim();
-      const planned = await planPrompt(promptText);
-      await executePlannedActions({
-        actions: planned.actions,
-        label: planned.label,
-        promptText,
-        dryRun: false,
-        mode: "run",
-      });
-    } catch (err) {
-      setError(`${err}`);
-    }
-  }
-
-  async function previewAction() {
-    try {
-      const promptText = prompt.trim();
-      const planned = await planPrompt(promptText);
-      await executePlannedActions({
-        actions: planned.actions,
-        label: `Preview: ${planned.label}`,
-        promptText,
-        dryRun: true,
-        mode: "preview",
-      });
-    } catch (err) {
-      setError(`${err}`);
-    }
-  }
-
-  async function confirmAction() {
-    if (!pendingConfirmation) return;
-    await executePlannedActions({
-      actions: pendingConfirmation.actions,
-      label: `Confirmed: ${pendingConfirmation.label}`,
-      promptText: pendingConfirmation.prompt,
-      dryRun: pendingConfirmation.dryRun,
-      mode: "confirm",
-      startIndex: pendingConfirmation.stepIndex,
-      confirmationToken: "user-confirmed",
-    });
-  }
-
-  async function loadManifest() {
+    const text = prompt.trim();
+    if (!text || busy) return;
     setError("");
-    setBusy("manifest");
+    setBusy(true);
+    stopRequestedRef.current = false;
+
+    const startedMs = Date.now();
+    const startedAt = new Date(startedMs).toISOString();
+    const turnId = `nav-${startedMs}-${Math.random().toString(36).slice(2, 8)}`;
+    const sessionAtStart = sessionId || undefined;
+    let sessionAtEnd = sessionAtStart;
+    let finalResponse = "";
+    const events: AcpStreamMessage[] = [];
+
+    setTurns((cur) => [
+      {
+        id: turnId,
+        prompt: text,
+        status: "running",
+        startedAt,
+        sessionIdAtStart: sessionAtStart,
+        events: [],
+      },
+      ...cur,
+    ]);
+
     try {
-      const startedMs = Date.now();
-      const startedAt = new Date(startedMs).toISOString();
-      const value = await webapp_client.conat_client.agent.manifest();
+      const stream = await webapp_client.conat_client.streamAcp({
+        project_id,
+        prompt: text,
+        session_id: sessionAtStart,
+      });
+      for await (const message of stream) {
+        events.push(message);
+        if (message.type === "summary") {
+          finalResponse = message.finalResponse ?? finalResponse;
+          const threadId =
+            typeof message.threadId === "string" ? message.threadId : "";
+          if (threadId) {
+            sessionAtEnd = threadId;
+            saveSessionId(threadId);
+          }
+        }
+        if (message.type === "error") {
+          setError(message.error);
+        }
+        updateTurn(turnId, (turn) => ({
+          ...turn,
+          events: [...events],
+          finalResponse: finalResponse || turn.finalResponse,
+          sessionIdAtEnd: sessionAtEnd,
+        }));
+      }
+
       const finishedMs = Date.now();
       const finishedAt = new Date(finishedMs).toISOString();
-      setManifest(value);
-      setHistory((cur) => [
-        {
-          ts: finishedAt,
-          startedAt,
-          finishedAt,
-          elapsedMs: finishedMs - startedMs,
-          prompt: "manifest",
-          label: "Capability manifest",
-          mode: "manifest",
-          response: value,
-        },
-        ...cur,
-      ]);
+      const hasError = events.some((message) => message.type === "error");
+      updateTurn(turnId, (turn) => ({
+        ...turn,
+        status: hasError
+          ? stopRequestedRef.current
+            ? "interrupted"
+            : "failed"
+          : "completed",
+        finishedAt,
+        elapsedMs: finishedMs - startedMs,
+        events: [...events],
+        finalResponse,
+        sessionIdAtEnd: sessionAtEnd,
+      }));
     } catch (err) {
-      setError(`${err}`);
+      const finishedMs = Date.now();
+      const finishedAt = new Date(finishedMs).toISOString();
+      const message = `${err}`;
+      setError(message);
+      updateTurn(turnId, (turn) => ({
+        ...turn,
+        status: stopRequestedRef.current ? "interrupted" : "failed",
+        finishedAt,
+        elapsedMs: finishedMs - startedMs,
+        error: message,
+        events: [...events],
+        finalResponse,
+        sessionIdAtEnd: sessionAtEnd,
+      }));
     } finally {
-      setBusy("");
+      setBusy(false);
+      stopRequestedRef.current = false;
     }
   }
 
-  const lastResult = history[0];
+  async function stopAction() {
+    if (!busy) return;
+    stopRequestedRef.current = true;
+    setError("");
+    const threadId =
+      sessionId || latestTurn?.sessionIdAtEnd || latestTurn?.sessionIdAtStart;
+    try {
+      await webapp_client.conat_client.interruptAcp({
+        project_id,
+        threadId,
+        note: "navigator-shell interrupt",
+      });
+    } catch (err) {
+      setError(`Unable to stop current run: ${err}`);
+    }
+  }
+
+  function resetSession() {
+    saveSessionId("");
+  }
+
+  const latestStatusColor: Record<TurnStatus, string> = {
+    running: "processing",
+    completed: "success",
+    failed: "error",
+    interrupted: "warning",
+  };
 
   return (
     <div style={{ marginTop: "16px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <h4 style={{ margin: 0 }}>Ask CoCalc (Preview)</h4>
+        <h4 style={{ margin: 0 }}>Ask CoCalc</h4>
         <Tag color="blue">Lite</Tag>
+        <Tag color="cyan">Codex</Tag>
       </div>
       <Typography.Paragraph
         type="secondary"
         style={{ marginBottom: "8px", marginTop: "6px" }}
       >
-        LLM planner over `hub.agent.plan` with policy-gated execution via
-        `hub.agent.execute`.
+        Global navigator shell using the same ACP/Codex runtime as chat, but not
+        tied to a .chat file.
       </Typography.Paragraph>
       {error ? (
         <Alert
@@ -318,164 +220,98 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           style={{ marginBottom: 8 }}
         />
       ) : null}
-      {pendingConfirmation ? (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 8 }}
-          message="Confirmation required"
-          description={
-            <div>
-              <div style={{ marginBottom: 8 }}>
-                This action was blocked pending confirmation:
-                <code style={{ marginLeft: 6 }}>{pendingConfirmation.actions[pendingConfirmation.stepIndex]?.actionType}</code>
-              </div>
-              <Space>
-                <Button
-                  type="primary"
-                  size="small"
-                  onClick={confirmAction}
-                  loading={busy === "execute"}
-                  disabled={busy !== ""}
-                >
-                  Confirm & Run
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => setPendingConfirmation(null)}
-                  disabled={busy !== ""}
-                >
-                  Cancel
-                </Button>
-              </Space>
-            </div>
-          }
-        />
-      ) : null}
       <div style={{ display: "flex", gap: 8 }}>
         <Input
           size="large"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="Describe what you want to do, e.g. read a.txt or start vscode"
+          placeholder="Describe what you want to do, e.g. move b.txt to archive/"
           onPressEnter={() => runAction()}
         />
         <Button
           size="large"
-          onClick={previewAction}
-          loading={busy === "plan" || busy === "execute"}
-          disabled={busy !== ""}
-        >
-          Preview
-        </Button>
-        <Button
-          size="large"
           type="primary"
           onClick={runAction}
-          loading={busy === "plan" || busy === "execute"}
-          disabled={busy !== ""}
+          loading={busy}
+          disabled={busy}
         >
           Run
         </Button>
+        <Button
+          size="large"
+          danger
+          onClick={stopAction}
+          disabled={!busy}
+        >
+          Stop
+        </Button>
       </div>
       <Space style={{ marginTop: 8 }} size={8} wrap>
-        {plannedAction ? (
+        {latestTurn ? (
           <>
-            <Tag color="green">{plannedAction.actionType}</Tag>
-            <Tag>
-              {plannedActions.length} step{plannedActions.length === 1 ? "" : "s"}
+            <Tag color={latestStatusColor[latestTurn.status]}>
+              {latestTurn.status}
             </Tag>
-            {manifestByAction.get(plannedAction.actionType)?.riskLevel ? (
-              <Tag>
-                Risk: {manifestByAction.get(plannedAction.actionType)?.riskLevel}
-              </Tag>
-            ) : null}
-            {manifestByAction.get(plannedAction.actionType)
-              ?.requiresConfirmationByDefault ? (
-              <Tag color="gold">Confirm by default</Tag>
-            ) : null}
+            <Tag>Elapsed: {formatElapsed(latestTurn.elapsedMs)}</Tag>
           </>
         ) : (
-          <Tag color="orange">No plan yet</Tag>
+          <Tag color="orange">No runs yet</Tag>
         )}
-        <Button
-          size="small"
-          onClick={loadManifest}
-          loading={busy === "manifest"}
-          disabled={busy !== ""}
-        >
-          Refresh manifest
+        <Tag color={sessionId ? "green" : "default"}>
+          Session: {sessionId || "new"}
+        </Tag>
+        <Button size="small" onClick={resetSession} disabled={busy || !sessionId}>
+          Reset session
         </Button>
-        {manifest ? <Tag>{manifest.length} capabilities</Tag> : null}
-      </Space>
-      <Space style={{ marginTop: 8 }} size={8}>
         <Button size="small" onClick={() => setShowAdvancedTrace((v) => !v)}>
           {showAdvancedTrace ? "Hide advanced trace" : "Advanced trace"}
         </Button>
-        {lastResult?.elapsedMs != null ? (
-          <Tag color="purple">Last elapsed: {formatElapsed(lastResult.elapsedMs)}</Tag>
-        ) : null}
       </Space>
-      {plannedActions.length > 1 ? (
-        <Alert
-          style={{ marginTop: 8 }}
-          type="info"
-          showIcon
-          message="This shell executes all planned steps sequentially."
-          description="If a step requires confirmation, execution pauses and resumes after you confirm."
-        />
-      ) : null}
-      {plannedAction ? (
+      {latestTurn?.finalResponse ? (
         <Input.TextArea
           style={{ marginTop: 8 }}
-          value={prettify(plannedActions)}
+          value={latestTurn.finalResponse}
           readOnly
-          autoSize={{ minRows: 4, maxRows: 10 }}
-          placeholder="Planned actions appear here..."
+          autoSize={{ minRows: 5, maxRows: 16 }}
+          placeholder="Final response appears here..."
         />
       ) : null}
-      <Input.TextArea
-        style={{ marginTop: 8 }}
-        value={
-          lastResult
-            ? prettify({
-                at: lastResult.ts,
-                startedAt: lastResult.startedAt,
-                finishedAt: lastResult.finishedAt,
-                elapsedMs: lastResult.elapsedMs,
-                mode: lastResult.mode,
-                prompt: lastResult.prompt,
-                label: lastResult.label,
-                result: lastResult.response,
-              })
-            : ""
-        }
-        readOnly
-        autoSize={{ minRows: 8, maxRows: 20 }}
-        placeholder="Latest result appears here..."
-      />
-      {showAdvancedTrace && history.length > 0 ? (
+      {latestTurn?.events?.length ? (
+        <div style={{ marginTop: 8 }}>
+          <CodexActivity
+            events={latestTurn.events}
+            generating={busy && latestTurn.status === "running"}
+            durationLabel={formatElapsed(latestTurn.elapsedMs)}
+            persistKey={`navigator-shell:${project_id}:${latestTurn.id}`}
+            projectId={project_id}
+            expanded={false}
+          />
+        </div>
+      ) : null}
+      {showAdvancedTrace && turns.length > 0 ? (
         <Collapse
           style={{ marginTop: 8 }}
           size="small"
-          items={history.map((entry, i) => ({
-            key: `${entry.ts}-${i}`,
-            label: `${entry.mode.toUpperCase()} • ${entry.label}`,
-            extra: `${entry.ts} • ${formatElapsed(entry.elapsedMs)}`,
+          items={turns.map((turn) => ({
+            key: turn.id,
+            label: `${turn.status.toUpperCase()} • ${turn.prompt}`,
+            extra: `${turn.startedAt} • ${formatElapsed(turn.elapsedMs)}`,
             children: (
               <Input.TextArea
                 value={prettify({
-                  at: entry.ts,
-                  startedAt: entry.startedAt,
-                  finishedAt: entry.finishedAt,
-                  elapsedMs: entry.elapsedMs,
-                  prompt: entry.prompt,
-                  label: entry.label,
-                  mode: entry.mode,
-                  response: entry.response,
+                  startedAt: turn.startedAt,
+                  finishedAt: turn.finishedAt,
+                  elapsedMs: turn.elapsedMs,
+                  status: turn.status,
+                  prompt: turn.prompt,
+                  sessionIdAtStart: turn.sessionIdAtStart,
+                  sessionIdAtEnd: turn.sessionIdAtEnd,
+                  finalResponse: turn.finalResponse,
+                  error: turn.error,
+                  events: turn.events,
                 })}
                 readOnly
-                autoSize={{ minRows: 6, maxRows: 14 }}
+                autoSize={{ minRows: 8, maxRows: 18 }}
               />
             ),
           }))}
