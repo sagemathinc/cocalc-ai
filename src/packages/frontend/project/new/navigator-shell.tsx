@@ -91,9 +91,67 @@ function parsePrompt(prompt: string): ParsedPrompt {
       },
     };
   }
+  const read = text.match(/^read\s+(\S+)$/i);
+  if (read) {
+    return {
+      label: `Read file: ${read[1]}`,
+      action: {
+        actionType: "project.system.read_text_file",
+        args: { path: read[1] },
+      },
+    };
+  }
+  const rename = text.match(/^rename\s+(\S+)\s+->\s+(\S+)$/i);
+  if (rename) {
+    return {
+      label: `Rename file: ${rename[1]} -> ${rename[2]}`,
+      action: {
+        actionType: "project.system.rename_file",
+        args: { src: rename[1], dest: rename[2] },
+      },
+    };
+  }
+  const move = text.match(/^move\s+(.+)\s+->\s+(\S+)$/i);
+  if (move) {
+    const paths = move[1]
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    return {
+      label: `Move files: ${paths.join(", ")} -> ${move[2]}`,
+      action: {
+        actionType: "project.system.move_files",
+        args: { paths, dest: move[2] },
+      },
+    };
+  }
+  const realpath = text.match(/^realpath\s+(\S+)$/i);
+  if (realpath) {
+    return {
+      label: `Realpath: ${realpath[1]}`,
+      action: {
+        actionType: "project.system.realpath",
+        args: { path: realpath[1] },
+      },
+    };
+  }
+  const canonical = text.match(/^canonical\s+(.+)$/i);
+  if (canonical) {
+    const paths = canonical[1]
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    return {
+      label: `Canonical paths: ${paths.join(", ")}`,
+      action: {
+        actionType: "project.system.canonical_paths",
+        args: { paths },
+      },
+    };
+  }
   return {
     error:
-      "Unknown command. Try: ping | list [path] | status <app> | start <app> | stop <app> | write <path> ::: <text>",
+      "Unknown command. Try: ping | list [path] | read <path> | write <path> ::: <text> | rename <src> -> <dest> | move <a,b> -> <dest> | realpath <path> | canonical <a,b> | status <app> | start <app> | stop <app>",
   };
 }
 
@@ -302,7 +360,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           size="large"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="Try: ping | list . | status code | start jupyterlab"
+          placeholder="Try: list . | read notes.md | rename a.txt -> b.txt | move a.txt,b.txt -> docs"
           onPressEnter={() => runAction()}
         />
         <Button
