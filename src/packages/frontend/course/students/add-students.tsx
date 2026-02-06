@@ -406,7 +406,7 @@ export default function AddStudents({
         return (
           <Alert
             type="info"
-            message={msg}
+            title={msg}
             style={{ margin: "15px 0" }}
             closable
             onClose={() => set_existing_students(undefined)}

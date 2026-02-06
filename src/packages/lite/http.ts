@@ -140,6 +140,10 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
     "/webapp/favicon.ico",
     express.static(join(ASSET_PATH, "favicon.ico")),
   );
+  app.use(
+    "/webapp/serviceWorker.js",
+    express.static(join(ASSET_PATH, "serviceWorker.js")),
+  );
 
   app.get("/customize", async (_, res) => {
     const payload = await getCustomizePayload();

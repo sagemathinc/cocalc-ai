@@ -527,7 +527,7 @@ export const AddCollaborators: React.FC<Props> = ({
 
     function render_search_help(): React.JSX.Element | undefined {
       if (focused && results.length === 0) {
-        return <Alert type="info" message={"Press enter to search..."} />;
+        return <Alert type="info" title={"Press enter to search..."} />;
       }
     }
 
@@ -669,7 +669,7 @@ export const AddCollaborators: React.FC<Props> = ({
         closable
         onClose={reset}
         type="success"
-        message={invite_result}
+        title={invite_result}
       />
     );
   }

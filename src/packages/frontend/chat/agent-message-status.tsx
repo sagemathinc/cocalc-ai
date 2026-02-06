@@ -181,7 +181,7 @@ export function AgentMessageStatus({
         placement="right"
         open={showDrawer}
         onClose={handleDrawerClose}
-        destroyOnClose
+        destroyOnHidden
         size={activitySize}
         resizable={{
           onResize: setActivitySize,

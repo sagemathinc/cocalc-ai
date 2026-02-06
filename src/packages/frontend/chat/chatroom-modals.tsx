@@ -197,9 +197,9 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         onCancel={closeExportModal}
         onOk={handleExportThread}
         okText="Export"
-        destroyOnClose
+        destroyOnHidden
       >
-        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               Filename
@@ -218,9 +218,9 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         onCancel={closeRenameModal}
         onOk={handleRenameSave}
         okText="Save"
-        destroyOnClose
+        destroyOnHidden
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               Chat name
@@ -282,9 +282,9 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         onCancel={closeForkModal}
         onOk={handleForkThread}
         okText="Fork"
-        destroyOnClose
+        destroyOnHidden
       >
-        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               New chat name

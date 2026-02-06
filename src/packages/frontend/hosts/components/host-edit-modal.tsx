@@ -426,7 +426,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       confirmLoading={saving}
       okText="Save"
       okButtonProps={{ disabled: disableSave }}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical">
         {isDeprovisioned ? (
@@ -459,7 +459,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            message="Selected GPU isn't available in this region."
+            title="Selected GPU isn't available in this region."
             description={
               gcpCompatibilityWarning.compatibleRegions.length && !lockRegionZone ? (
                 <Select
@@ -490,7 +490,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            message="Selected GPU isn't available in this zone."
+            title="Selected GPU isn't available in this zone."
             description={
               gcpCompatibilityWarning.compatibleZones.length && !lockRegionZone ? (
                 <Select

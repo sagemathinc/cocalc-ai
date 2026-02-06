@@ -167,7 +167,7 @@ export default function PayNow({
         />
       )}
       <Divider>Other Options</Divider>
-      <Space direction="vertical">
+      <Space orientation="vertical">
         <PayLink project_id={project_id} />
         <Transfer project_id={project_id} />
         <Button

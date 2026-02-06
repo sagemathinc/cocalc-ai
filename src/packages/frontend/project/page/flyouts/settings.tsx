@@ -329,7 +329,7 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
   }
 
   return wrap(
-    <Space direction="vertical" style={{ padding: "0", width: "100%" }}>
+    <Space orientation="vertical" style={{ padding: "0", width: "100%" }}>
       {renderStatus()}
       {renderSettings()}
     </Space>,

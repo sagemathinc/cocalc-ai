@@ -162,7 +162,7 @@ export default function RenameFile({ duplicate, clear }: Props) {
           <Alert
             style={{ marginTop: "15px" }}
             type="warning"
-            message={
+            title={
               "Changing the filename extension may cause your file to no longer open properly."
             }
             showIcon
@@ -173,7 +173,7 @@ export default function RenameFile({ duplicate, clear }: Props) {
           style={{ marginTop: "15px" }}
           showIcon
           type="error"
-          message={`The maximum length of a filename is ${MAX_FILENAME_LENGTH}.`}
+          title={`The maximum length of a filename is ${MAX_FILENAME_LENGTH}.`}
         />
       )}
       <ShowError setError={setError} error={error} />

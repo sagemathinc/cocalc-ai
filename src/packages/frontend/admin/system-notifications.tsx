@@ -70,7 +70,7 @@ export function SystemNotifications({}) {
                 once in the upper right until you explicitly mark it done (they
                 can dismiss it).
                 <hr />
-                <Alert message={mesg} />
+                <Alert title={mesg} />
               </div>
             }
             onConfirm={() => {

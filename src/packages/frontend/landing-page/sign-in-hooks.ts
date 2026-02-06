@@ -12,6 +12,8 @@ import * as LS from "../misc/local-storage-typed";
 import { SignedIn } from "@cocalc/util/message-types";
 import { join } from "path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { lite } from "@cocalc/frontend/lite";
+import { store as customizeStore } from "@cocalc/frontend/customize";
 
 async function tracking_events(): Promise<void> {
   if (localStorage == null) return;
@@ -26,6 +28,13 @@ async function tracking_events(): Promise<void> {
 }
 
 async function analytics_send(mesg: SignedIn): Promise<void> {
+  if (lite) {
+    return;
+  }
+  await customizeStore.until_configured();
+  if (!customizeStore.get("is_commercial")) {
+    return;
+  }
   window
     .fetch(join(appBasePath, "analytics.js"), {
       method: "POST",

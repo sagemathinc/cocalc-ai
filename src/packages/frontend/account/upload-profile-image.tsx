@@ -74,7 +74,7 @@ export default function UploadProfileImage({ account_id, onChange }: Props) {
         <Alert
           style={{ marginTop: "15px" }}
           type="error"
-          message={error}
+          title={error}
           showIcon
         />
       )}

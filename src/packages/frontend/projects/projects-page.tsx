@@ -379,7 +379,7 @@ export const ProjectsPage: React.FC = () => {
             <Row>
               <Col sm={24} md={24} lg={contentCol}>
                 <Space
-                  direction="vertical"
+                  orientation="vertical"
                   size={10}
                   style={{
                     width: "100%",

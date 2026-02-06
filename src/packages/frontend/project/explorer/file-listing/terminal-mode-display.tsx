@@ -15,7 +15,7 @@ export function TerminalModeDisplay({ style }) {
       banner
       type="info"
       style={style}
-      message={
+      title={
         <>
           You are in <a onClick={() => setExtra(!extra)}>terminal mode</a>.
         </>

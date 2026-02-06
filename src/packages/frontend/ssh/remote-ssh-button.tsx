@@ -56,7 +56,7 @@ export default function RemoteSshButton() {
           </Button>,
         ]}
       >
-        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Typography.Paragraph>
             You are viewing a remote session started via{" "}
             <Typography.Text code>cocalc-plus ssh</Typography.Text>. Managing

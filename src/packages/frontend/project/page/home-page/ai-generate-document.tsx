@@ -998,7 +998,7 @@ function AIGenerateDocument({
                 banner
                 type={saving ? "info" : "warning"}
                 style={{ fontWeight: "bold" }}
-                message={message}
+                title={message}
               />
             ) : (
               <FormattedMessage
@@ -1097,7 +1097,7 @@ function AIGenerateDocument({
           }}
           showIcon
           type="error"
-          message="Error"
+          title="Error"
           description={<Markdown value={error} />}
         />
       ) : undefined}

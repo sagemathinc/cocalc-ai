@@ -253,7 +253,7 @@ export default function Configure({
                   value={sharingOptionsState}
                   onChange={handleSharingOptionsChange}
                 >
-                  <Space direction="vertical">
+                  <Space orientation="vertical">
                     <Radio
                       name="sharing_options"
                       value="public_listed"
@@ -347,7 +347,7 @@ export default function Configure({
       {sharingOptionsState !== "private" ? (
         <Row gutter={GUTTER}>
           <Col span={12} style={{ color: COLORS.GRAY_M }}>
-            <Space direction="vertical">
+            <Space orientation="vertical">
               <div>
                 <Title level={4}>
                   <Icon name="pencil" /> Description
@@ -391,7 +391,7 @@ export default function Configure({
           </Col>
           <Col span={12}>
             {/* width:100% because we want the CopyToClipBoard be wide */}
-            <Space direction="vertical" style={{ width: "100%" }}>
+            <Space orientation="vertical" style={{ width: "100%" }}>
               <div style={{ width: "100%" }}>
                 <Title level={4}>
                   <Icon name="external-link" /> Location of share

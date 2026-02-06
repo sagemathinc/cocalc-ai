@@ -141,7 +141,7 @@ export function HostOpProgress({
   const displayPercent = percent ?? 0;
 
   return (
-    <Space direction="vertical" size={2} style={{ width: "100%" }}>
+    <Space orientation="vertical" size={2} style={{ width: "100%" }}>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {actionLabel}: {label}
         {start_ts != null && (

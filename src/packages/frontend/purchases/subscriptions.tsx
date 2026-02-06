@@ -137,7 +137,7 @@ function SubscriptionActions({
   );
 
   return (
-    <Space direction="vertical">
+    <Space orientation="vertical">
       {loading && <Spin />}
       {error && !loading && (
         <Alert
@@ -508,7 +508,7 @@ function SubscriptionModal({ subscription, getSubscriptions, onClose }) {
       onOk={onClose}
       onCancel={onClose}
     >
-      <Space style={{ width: "100%" }} direction="vertical">
+      <Space style={{ width: "100%" }} orientation="vertical">
         <SubscriptionDescription
           metadata={subscription.metadata}
         />

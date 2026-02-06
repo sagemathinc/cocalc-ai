@@ -14,7 +14,7 @@ import {
   PlayCircleTwoTone,
   StopTwoTone,
 } from "@ant-design/icons";
-import { Button, Col, Modal, Row, TimePicker, Tooltip } from "antd";
+import { Button, Col, Modal, Row, TimePicker, Tooltip, Space } from "antd";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import { CSSProperties, useEffect, useState } from "react";
@@ -295,25 +295,25 @@ export default function Stopwatch(props: StopwatchProps) {
     switch (props.state) {
       case "stopped":
         return (
-          <Button.Group>
+          <Space.Compact>
             {renderStartButton()}
             {renderEditTimeButton()}
-          </Button.Group>
+          </Space.Compact>
         );
       case "paused":
         return (
-          <Button.Group>
+          <Space.Compact>
             {renderStartButton()}
             {renderResetButton()}
             {renderEditTimeButton()}
-          </Button.Group>
+          </Space.Compact>
         );
       case "running":
         return (
-          <Button.Group>
+          <Space.Compact>
             {renderPauseButton()}
             {renderResetButton()}
-          </Button.Group>
+          </Space.Compact>
         );
       default:
         assertNever(props.state);

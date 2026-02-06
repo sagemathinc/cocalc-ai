@@ -43,7 +43,7 @@ export default function ViewMenu({
 }) {
   return (
     <Space
-      direction="horizontal"
+      orientation="horizontal"
       wrap
       style={{ maxHeight: "135px", overflowY: "auto" }}
     >

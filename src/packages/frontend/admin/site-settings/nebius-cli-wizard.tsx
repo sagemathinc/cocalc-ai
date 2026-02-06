@@ -209,11 +209,11 @@ You can review the script here: ${
       title="Nebius Configuration Wizard"
       width={920}
     >
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
         <Alert
           type="info"
           showIcon
-          message="Configure Nebius CLI credentials in one pass."
+          title="Configure Nebius CLI credentials in one pass."
           description="This wizard generates credentials via the Nebius CLI and fills in all required settings."
         />
         <div>
@@ -241,7 +241,7 @@ You can review the script here: ${
               type="warning"
               showIcon
               style={{ marginTop: "8px" }}
-              message={parseError}
+              title={parseError}
             />
           ) : null}
           {parsed ? (
@@ -249,7 +249,7 @@ You can review the script here: ${
               type="success"
               showIcon
               style={{ marginTop: "8px" }}
-              message="Parsed Nebius configuration."
+              title="Parsed Nebius configuration."
               description={
                 <div>
                   <div>
@@ -279,7 +279,7 @@ You can review the script here: ${
         >
           Apply Settings
         </Button>
-        {notice ? <Alert type="success" showIcon message={notice} /> : null}
+        {notice ? <Alert type="success" showIcon title={notice} /> : null}
       </Space>
     </Modal>
   );

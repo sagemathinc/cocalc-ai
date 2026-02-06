@@ -161,7 +161,7 @@ export default function Statements({
         <Alert
           style={{ maxWidth: "500px", margin: "auto", padding: "30px" }}
           type="info"
-          message={`You do not have any ${adjective} statements yet.`}
+          title={`You do not have any ${adjective} statements yet.`}
           showIcon
         />
       )}

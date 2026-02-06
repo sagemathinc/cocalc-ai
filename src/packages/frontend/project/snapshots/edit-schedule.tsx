@@ -149,7 +149,7 @@ export default function EditSchedule() {
               <Flex style={{ marginBottom: "5px" }}>
                 <div style={{ flex: 0.5 }}>Every 15 minutes</div>
                 <InputNumber
-                  addonAfter="snapshots"
+                  suffix="snapshots"
                   precision={0}
                   style={{ flex: 0.5 }}
                   step={1}
@@ -171,7 +171,7 @@ export default function EditSchedule() {
               <Flex style={{ marginBottom: "5px" }}>
                 <div style={{ flex: 0.5 }}>Daily</div>
                 <InputNumber
-                  addonAfter="snapshots"
+                  suffix="snapshots"
                   style={{ flex: 0.5 }}
                   step={1}
                   min={1}
@@ -190,7 +190,7 @@ export default function EditSchedule() {
               <Flex style={{ marginBottom: "5px" }}>
                 <div style={{ flex: 0.5 }}>Weekly</div>
                 <InputNumber
-                  addonAfter="snapshots"
+                  suffix="snapshots"
                   style={{ flex: 0.5 }}
                   step={1}
                   min={1}
@@ -211,7 +211,7 @@ export default function EditSchedule() {
               <Flex>
                 <div style={{ flex: 0.5 }}>Monthly</div>
                 <InputNumber
-                  addonAfter="snapshots"
+                  suffix="snapshots"
                   style={{ flex: 0.5 }}
                   step={1}
                   min={1}

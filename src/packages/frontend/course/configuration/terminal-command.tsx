@@ -93,7 +93,7 @@ export function TerminalCommandPanel({ name }: Props) {
           onChange={(t) => setTimeout(t ?? null)}
           min={0}
           max={30}
-          addonAfter={"minute timeout"}
+          suffix={"minute timeout"}
         />
       </Form>
     );

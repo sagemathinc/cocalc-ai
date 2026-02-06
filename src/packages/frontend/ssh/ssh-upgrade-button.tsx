@@ -156,7 +156,7 @@ export default function SshUpgradeButton() {
           </Button>,
         ]}
       >
-        <Space direction="vertical" size={12}>
+        <Space orientation="vertical" size={12}>
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             A newer version of CoCalc Plus is available. Upgrading downloads the
             latest binary to your system. You may need to restart CoCalc Plus to

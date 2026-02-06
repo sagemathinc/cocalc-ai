@@ -248,7 +248,7 @@ export function FilesBottom({
 
   function renderSelectExtra() {
     return (
-      <Space size="small" direction="horizontal" wrap>
+      <Space size="small" orientation="horizontal" wrap>
         {singleFile != null ? renderDownloadView() : undefined}
         <FilesSelectButtons
           setMode={setMode}
@@ -345,7 +345,7 @@ export function FilesBottom({
     if (!shown) return;
     const disabled = connectionStatus !== "connected";
     return (
-      <Space size="small" direction="horizontal">
+      <Space size="small" orientation="horizontal">
         {connectionStatus !== "" ? (
           <span title={connectionStatus}>
             <ConnectionStatusIcon status={connectionStatus} />

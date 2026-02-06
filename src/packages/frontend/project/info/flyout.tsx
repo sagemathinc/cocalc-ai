@@ -228,7 +228,7 @@ export function Flyout(_: Readonly<Props>): React.JSX.Element {
         <Alert
           type="warning"
           banner={true}
-          message={`${projectLabel} is not running.`}
+          title={`${projectLabel} is not running.`}
         />
       );
     }

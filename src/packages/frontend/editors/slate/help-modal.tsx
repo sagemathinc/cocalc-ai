@@ -33,7 +33,7 @@ export const SlateHelpModal: React.FC<Props> = ({ open, onClose }) => {
       okText="Close"
       cancelButtonProps={{ style: { display: "none" } }}
       width={700}
-      destroyOnClose
+      destroyOnHidden
     >
       <Title level={5}>Keyboard shortcuts</Title>
       <ul style={{ paddingLeft: 22 }}>

@@ -260,7 +260,7 @@ export default function RetentionConfig({
         <Alert
           showIcon
           style={{ maxWidth: "600px", margin: "5px auto" }}
-          message={info}
+          title={info}
           type={
             info.includes("error")
               ? "error"

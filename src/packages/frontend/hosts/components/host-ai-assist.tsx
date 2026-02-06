@@ -36,7 +36,7 @@ export const HostAiAssist: React.FC<HostAiAssistProps> = ({ ai }) => {
     }
     style={{ marginBottom: 16 }}
   >
-    <Space direction="vertical" style={{ width: "100%" }}>
+    <Space orientation="vertical" style={{ width: "100%" }}>
       <Input.TextArea
         value={aiQuestion}
         onChange={(e) => setAiQuestion(e.target.value)}
@@ -71,9 +71,9 @@ export const HostAiAssist: React.FC<HostAiAssistProps> = ({ ai }) => {
       >
         Get recommendations
       </Button>
-      {aiError && <Alert type="error" message={aiError} />}
+      {aiError && <Alert type="error" title={aiError} />}
       {aiResults.length > 0 && (
-        <Space direction="vertical" style={{ width: "100%" }} size="small">
+        <Space orientation="vertical" style={{ width: "100%" }} size="small">
           {aiResults.map((rec, idx) => {
             const providerLabel = isKnownProvider(rec.provider)
               ? getProviderDescriptor(rec.provider).label
@@ -89,7 +89,7 @@ export const HostAiAssist: React.FC<HostAiAssistProps> = ({ ai }) => {
                 size="small"
                 bodyStyle={{ padding: "10px 12px" }}
               >
-              <Space direction="vertical" style={{ width: "100%" }} size={2}>
+              <Space orientation="vertical" style={{ width: "100%" }} size={2}>
                 <Space align="start" style={{ justifyContent: "space-between" }}>
                   <div>
                     <Typography.Text strong>
@@ -107,7 +107,7 @@ export const HostAiAssist: React.FC<HostAiAssistProps> = ({ ai }) => {
                     Apply
                   </Button>
                 </Space>
-                <Space direction="vertical" size={0}>
+                <Space orientation="vertical" size={0}>
                   <Typography.Text type="secondary">
                     {providerLabel} · {regionLabel}
                   </Typography.Text>

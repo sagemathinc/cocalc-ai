@@ -537,7 +537,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             : "descend"
           : undefined,
       render: (_: string, host: Host) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           <Button type="link" onClick={() => onDetails(host)}>
             {host.name}
           </Button>
@@ -579,7 +579,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const detail = getSelfHostDetail(host);
         if (!detail) return baseLabel;
         return (
-          <Space direction="vertical" size={0}>
+          <Space orientation="vertical" size={0}>
             <span>{baseLabel}</span>
             <Typography.Text type="secondary">{detail}</Typography.Text>
           </Space>
@@ -640,7 +640,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const statusLabel = host.deleted ? "deleted" : host.status;
         const op = hostOps?.[host.id];
         return (
-          <Space direction="vertical" size={2}>
+          <Space orientation="vertical" size={2}>
             <Space size="small">
               <Tooltip
                 title={getHostStatusTooltip(
@@ -960,7 +960,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <Alert
       type="warning"
       showIcon
-      message={
+      title={
         visibleHosts.length === 0
           ? "No hosts match this filter."
           : `Showing ${visibleHosts.length} of ${hosts.length} hosts.`

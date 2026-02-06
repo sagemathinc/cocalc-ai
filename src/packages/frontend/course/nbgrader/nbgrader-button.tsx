@@ -80,7 +80,7 @@ export function NbgraderButton({ name, assignment_id }: Props) {
       <Alert
         style={{ marginTop: "5px" }}
         type="success"
-        message={
+        title={
           <span style={{ fontSize: "14px" }}>
             Autograded {status.succeeded}/{total} assignments.{failed}
             {not_attempted}

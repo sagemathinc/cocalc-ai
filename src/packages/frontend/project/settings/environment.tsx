@@ -142,7 +142,7 @@ export const Environment: React.FC<Props> = ({
             banner
             type="info"
             showIcon={false}
-            message={instructions}
+            title={instructions}
           />
         ) : undefined}
       </>

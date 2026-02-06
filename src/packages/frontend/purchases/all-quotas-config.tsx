@@ -13,7 +13,7 @@ import {
   Progress,
   Spin,
   Table,
-  Tag,
+  Tag, Space,
 } from "antd";
 import { cloneDeep, isEqual } from "lodash";
 import { useEffect, useRef, useState } from "react";
@@ -261,7 +261,7 @@ export default function AllQuotasConfig() {
       </div>
 
       <div style={{ marginBottom: "15px" }}>
-        <Button.Group style={{ marginRight: "5px" }}>
+        <Space.Compact style={{ marginRight: "5px" }}>
           {/*<Button onClick={handleCancel} disabled={!changed || saving}>
               Cancel
             </Button>*/}
@@ -274,7 +274,7 @@ export default function AllQuotasConfig() {
             {saving ? "Saving..." : changed ? "Save Changes" : "Saved"}
             {saving && <Spin style={{ marginLeft: "15px" }} delay={500} />}
           </Button>
-        </Button.Group>
+        </Space.Compact>
       </div>
       {serviceQuotas != null ? (
         <div style={{ overflow: "auto" }}>

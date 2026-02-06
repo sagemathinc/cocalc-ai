@@ -157,7 +157,7 @@ export default function Export({
         </div>
         {state == "saving" && <Loading text={"Saving"} theme="medium" />}
         {error && (
-          <Alert style={{ margin: "15px 0" }} message={error} type="error" />
+          <Alert style={{ margin: "15px 0" }} title={error} type="error" />
         )}
       </div>
     </Modal>

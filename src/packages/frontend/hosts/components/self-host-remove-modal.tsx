@@ -64,7 +64,7 @@ multipass purge`;
         </Button>,
       ]}
     >
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph>
           Run the commands below on your computer to remove the connector and (optionally)
           delete the VM. After that, click “Mark removed in CoCalc”.

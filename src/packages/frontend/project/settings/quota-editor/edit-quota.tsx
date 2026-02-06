@@ -54,7 +54,7 @@ export default function EditQuota({
           // is this even a problem given InputNumber...?
           parse_number_input(quotaState[name]) == null ? "error" : undefined
         }
-        addonAfter={
+        suffix={
           units ? (
             <div style={{ width: "50px" }}>
               <b>{displayUnits(units)}</b>

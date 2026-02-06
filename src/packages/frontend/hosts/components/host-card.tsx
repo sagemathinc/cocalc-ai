@@ -272,7 +272,7 @@ export const HostCard: React.FC<HostCardProps> = ({
       }
       actions={actions.filter(Boolean) as React.ReactNode[]}
     >
-      <Space direction="vertical" size="small">
+      <Space orientation="vertical" size="small">
         {host.reprovision_required && (
           <Tooltip title="Host config changed while stopped; will reprovision on next start.">
             <Tag color="orange">Reprovision on next start</Tag>

@@ -203,7 +203,7 @@ export function AdminMembership({ account_id }: { account_id: string }) {
             <Text type="secondary">No admin-assigned membership.</Text>
           )}
           <div style={{ marginTop: "10px" }}>
-            <Space direction="vertical" style={{ width: "100%" }} size="middle">
+            <Space orientation="vertical" style={{ width: "100%" }} size="middle">
               <div>
                 <Text>Membership tier</Text>
                 <Select

@@ -420,7 +420,7 @@ export function Output(props: OutputProps) {
               ifEmpty={
                 <Alert
                   type="info"
-                  message="Table of Contents is empty"
+                  title="Table of Contents is empty"
                   description={
                     <>
                       Add <Text code>{"\\section{...}"}</Text> and{" "}

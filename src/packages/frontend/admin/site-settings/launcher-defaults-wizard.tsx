@@ -114,11 +114,11 @@ export default function LauncherDefaultsWizard({
       title="Launcher Defaults Wizard"
       width={920}
     >
-      <Space direction="vertical" style={{ width: "100%" }} size={14}>
+      <Space orientation="vertical" style={{ width: "100%" }} size={14}>
         <Alert
           type="info"
           showIcon
-          message="Launcher defaults are additive."
+          title="Launcher defaults are additive."
           description="Layers are merged in order: built-in, site, project, account, project-user. Add lists append; remove lists explicitly hide inherited entries."
         />
         <div>

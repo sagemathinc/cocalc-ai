@@ -55,7 +55,7 @@ export default function AppStatus({
           type="warning"
           showIcon
           style={{ marginBottom: "10px" }}
-          message={hint.title}
+          title={hint.title}
           description={
             <div>
               {hint.note ? <div style={{ marginBottom: "6px" }}>{hint.note}</div> : null}

@@ -18,5 +18,5 @@ export function UpgradeRestartWarning(props: { style?: React.CSSProperties }) {
       computations.
     </span>
   );
-  return <Alert type="info" message={mesg} style={props.style} />;
+  return <Alert type="info" title={mesg} style={props.style} />;
 }

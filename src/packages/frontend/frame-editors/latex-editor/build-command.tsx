@@ -205,7 +205,7 @@ export const BuildCommand: React.FC<Props> = React.memo((props: Props) => {
         type="info"
         style={{ padding: "10px 10px 0 10px" }}
         showIcon={false}
-        message={"Build Command Help"}
+        title={"Build Command Help"}
         description={
           <Paragraph style={{ fontSize: "90%" }}>
             Select a build engine from the menu at the right, or enter

@@ -6,6 +6,7 @@
 import type { IconName } from "@cocalc/frontend/components/icon";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { lite } from "@cocalc/frontend/lite";
 
 import { ProfileSettings } from "./profile-settings";
 import { AccountSettings } from "./settings/account-settings";
@@ -53,7 +54,7 @@ export function AccountPreferencesProfile() {
         strategies={strategies}
         unlisted={unlisted}
       />
-      <MembershipStatusPanel />
+      {!lite && <MembershipStatusPanel />}
       <ProfileSettings email_address={email_address} />
     </>
   );

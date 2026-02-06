@@ -320,7 +320,7 @@ function AiGenFormula({ mode, text = "", project_id, locale, cb }: Props) {
       </HelpIcon>
     );
     return (
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <Paragraph style={{ marginBottom: 0 }}>
           <FormattedMessage
             id="codemirror.extensions.ai_formula.description"

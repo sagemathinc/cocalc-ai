@@ -351,7 +351,7 @@ export const ErrorsAndWarnings: React.FC<ErrorsAndWarningsProps> = React.memo(
             style={{ margin: "15px" }}
             type="error"
             showIcon
-            message={"\\include error -- ensure all included files exist"}
+            title={"\\include error -- ensure all included files exist"}
             description={`${includeError}`.replace(/Error:/g, "")}
           />
         )}

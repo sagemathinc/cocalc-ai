@@ -168,7 +168,7 @@ export default function FileTabs({ openFiles, project_id, activeTab }) {
           if (actions == null || !key) return;
           actions.set_active_tab(path_to_tab(keyToPath(key)));
         }}
-        popupClassName={"cocalc-files-tabs-more"}
+        classNames={{ popup: { root: "cocalc-files-tabs-more" } }}
       />
     </SortableTabs>
   );

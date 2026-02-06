@@ -524,7 +524,7 @@ function AddTarget({ settings, actions, project_id }) {
         <Alert
           style={{ marginTop: "15px" }}
           type="warning"
-          message={
+          title={
             <div>
               {path} does not exist.{" "}
               <Button disabled={loading} onClick={add}>

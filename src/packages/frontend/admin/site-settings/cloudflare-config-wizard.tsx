@@ -159,11 +159,11 @@ export default function CloudflareConfigWizard({
       title="Cloudflare Configuration Wizard"
       width={920}
     >
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={16} style={{ width: "100%" }}>
         <Alert
           type="info"
           showIcon
-          message="Configure Cloudflare Tunnel + R2 in one pass."
+          title="Configure Cloudflare Tunnel + R2 in one pass."
           description="This wizard fills in the Cloudflare settings for Launchpad. Advanced users can edit fields manually."
         />
         <div>
@@ -175,7 +175,7 @@ export default function CloudflareConfigWizard({
             onChange={(e) => setMode(e.target.value)}
             style={{ marginTop: "8px" }}
           >
-            <Space direction="vertical">
+            <Space orientation="vertical">
               <Radio value="none">No Cloudflare (self-hosted only)</Radio>
               <Radio value="self">Use my own Cloudflare account</Radio>
               <Radio value="managed">
@@ -210,7 +210,7 @@ export default function CloudflareConfigWizard({
                   type="warning"
                   showIcon
                   style={{ marginTop: "8px" }}
-                  message="Account IDs are 32 lowercase hex characters."
+                  title="Account IDs are 32 lowercase hex characters."
                 />
               ) : null}
               <div
@@ -432,10 +432,10 @@ Required R2 token permissions:
           <Alert
             type="warning"
             showIcon
-            message={`Fill in required field: ${missing}`}
+            title={`Fill in required field: ${missing}`}
           />
         ) : null}
-        {notice ? <Alert type="success" showIcon message={notice} /> : null}
+        {notice ? <Alert type="success" showIcon title={notice} /> : null}
       </Space>
     </Modal>
   );

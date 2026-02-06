@@ -175,7 +175,7 @@ function AddTable({ setAdding, tables, setTables }) {
           showIcon
           style={{ margin: "10px 0 10px 0" }}
           type="info"
-          message="There are no additional tables available.  If you close a table you will be able to restore it from here any time later."
+          title="There are no additional tables available.  If you close a table you will be able to restore it from here any time later."
         />
       )}
       {options.length > 0 && (

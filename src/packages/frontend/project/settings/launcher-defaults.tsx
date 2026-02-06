@@ -104,7 +104,7 @@ export function LauncherDefaults({ project_id, project }: Props) {
         workspace. Each user can still further customize their buttons on their
         +New page.
       </Paragraph>
-      <Space direction="vertical" style={{ width: "100%" }}>
+      <Space orientation="vertical" style={{ width: "100%" }}>
         <div>
           <div
             style={{

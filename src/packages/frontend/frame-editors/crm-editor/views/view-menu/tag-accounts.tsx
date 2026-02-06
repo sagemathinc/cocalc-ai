@@ -175,7 +175,7 @@ export default function TagAccounts({
         <Alert
           style={{ margin: "15px 0" }}
           type="info"
-          message={
+          title={
             <>
               The above tags will be {add ? "added to" : "removed from"} each
               selected account, then we will attempt to sync each with

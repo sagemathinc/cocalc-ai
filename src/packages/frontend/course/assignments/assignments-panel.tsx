@@ -231,7 +231,7 @@ export function AssignmentsPanel(props: Props) {
             fontSize: "12pt",
             maxWidth: "800px",
           }}
-          message={
+          title={
             <b>
               <a onClick={() => frameActions.setModal("add-assignments")}>
                 <FormattedMessage

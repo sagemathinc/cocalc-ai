@@ -267,7 +267,7 @@ export function CodexConfigButton({
         width={560}
         bodyStyle={{ maxHeight: "75vh", overflowY: "auto" }}
       >
-        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+        <Space orientation="vertical" style={{ width: "100%" }} size={12}>
           <Form form={form} layout="vertical">
             <SectionTitle>Session basics</SectionTitle>
             <div style={gridTwoColStyle}>
@@ -379,7 +379,7 @@ export function CodexConfigButton({
               style={formItemStyle}
             >
               <Radio.Group style={{ width: "100%" }}>
-                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Space orientation="vertical" size={8} style={{ width: "100%" }}>
                   {MODE_OPTIONS.map((option) => {
                     const selected = currentSessionMode === option.value;
                     return (

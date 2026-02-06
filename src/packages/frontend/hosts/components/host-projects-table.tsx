@@ -58,7 +58,7 @@ export function HostProjectsTable({
         dataIndex: "title",
         key: "title",
         render: (_title, row) => (
-          <Space direction="vertical" size={0}>
+          <Space orientation="vertical" size={0}>
             <Typography.Text ellipsis style={{ maxWidth: 240 }}>
               {row.title || row.project_id}
             </Typography.Text>
@@ -150,7 +150,7 @@ export function HostProjectsTable({
   }, [summary]);
 
   return (
-    <Space direction="vertical" style={{ width: "100%" }} size="small">
+    <Space orientation="vertical" style={{ width: "100%" }} size="small">
       {showSummary && summaryLabel && (
         <Typography.Text type="secondary">{summaryLabel}</Typography.Text>
       )}
