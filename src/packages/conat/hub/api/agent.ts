@@ -3,8 +3,8 @@ Hub `agent.*` API contract and auth transform metadata.
 
 Who calls this:
 - Any caller using `initHubApi(...)` (browser/frontend, lite clients, server code)
-  can invoke `hub.agent.execute(...)`, `hub.agent.manifest(...)`, and
-  `hub.agent.plan(...)`.
+  can invoke `hub.agent.execute(...)`, `hub.agent.manifest(...)`,
+  `hub.agent.plan(...)`, and `hub.agent.run(...)`.
 - On the server/lite side, the hub request dispatcher uses this file via
   `transformArgs` in `conat/hub/api/index.ts` to enforce account auth and
   shape typed request/response signatures.
@@ -15,6 +15,7 @@ export const agent = {
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
   plan: authFirstRequireAccount,
+  run: authFirstRequireAccount,
 };
 
 export type AgentExecuteRequest = {
@@ -91,8 +92,52 @@ export type AgentPlanResponse = {
   raw?: string;
 };
 
+export type AgentRunStep = {
+  stepIndex: number;
+  planner?: {
+    summary?: string;
+    raw?: string;
+  };
+  action?: AgentExecuteRequest["action"];
+  execution?: AgentExecuteResponse;
+  observation?: string;
+};
+
+export type AgentRunState = {
+  goal: string;
+  steps: AgentRunStep[];
+  pendingConfirmation?: {
+    stepIndex: number;
+    action: AgentExecuteRequest["action"];
+  };
+  summary?: string;
+};
+
+export type AgentRunRequest = {
+  account_id?: string;
+  prompt: string;
+  model?: string;
+  maxSteps?: number;
+  dryRun?: boolean;
+  manifest?: AgentManifestEntry[];
+  defaults?: {
+    accountId?: string;
+    projectId?: string;
+  };
+  state?: AgentRunState;
+  confirmationToken?: string;
+};
+
+export type AgentRunResponse = {
+  status: "completed" | "awaiting_confirmation" | "failed";
+  requestId: string;
+  state: AgentRunState;
+  error?: string;
+};
+
 export interface AgentApi {
   execute: (opts: AgentExecuteRequest) => Promise<AgentExecuteResponse>;
   manifest: (opts?: { account_id?: string }) => Promise<AgentManifestEntry[]>;
   plan: (opts: AgentPlanRequest) => Promise<AgentPlanResponse>;
+  run: (opts: AgentRunRequest) => Promise<AgentRunResponse>;
 }

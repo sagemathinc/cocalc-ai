@@ -48,6 +48,8 @@ import type {
   AgentManifestEntry,
   AgentPlanRequest,
   AgentPlanResponse,
+  AgentRunRequest,
+  AgentRunResponse,
 } from "@cocalc/conat/hub/api/agent";
 import {
   deleteRememberMe,
@@ -493,6 +495,14 @@ export class ConatClient extends EventEmitter {
       opts: Omit<AgentExecuteRequest, "account_id">,
     ): Promise<AgentExecuteResponse> => {
       return await this.hub.agent.execute({
+        ...opts,
+        account_id: this.client.account_id,
+      });
+    },
+    run: async (
+      opts: Omit<AgentRunRequest, "account_id">,
+    ): Promise<AgentRunResponse> => {
+      return await this.hub.agent.run({
         ...opts,
         account_id: this.client.account_id,
       });

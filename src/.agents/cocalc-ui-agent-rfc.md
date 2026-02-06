@@ -396,6 +396,214 @@ MVP is complete when:
 - launchpad mode passes isolation and audit requirements
 - overall UX is meaningfully usable for low-typing workflows
 
+### 11.13 Execution Plan V2 (Reactive Loop + Catalog + Script)
+
+This supersedes the old "static list plan then run first action" approach.
+The target runtime is an observe-act loop with retrieval-based tool grounding.
+
+#### 11.13.1 Architecture Decisions
+
+- Use Codex-first planning/execution in `cocalc-plus` (subscription-backed path).
+- Keep execution policy-gated via SDK executor; model never mutates state directly.
+- Replace full-manifest-in-context with retrieval:
+  - `catalog.search(query)` for ranked action ids
+  - `catalog.describe(actionType)` for exact schema/examples
+- Keep full manifest available for debug/admin only, not default model context.
+- Add `script.run` for branching/loops/composition, still under policy controls.
+- Treat runtime location as a first-class routing dimension:
+  - `browser`
+  - `project`
+  - `project-host`
+  - `hub`
+
+#### 11.13.2 Runtime Protocol (single turn)
+
+Loop until done/cancel/error/max-steps:
+
+1. observe
+  - current goal
+  - prior steps + observations
+  - selected capability context (from catalog tools)
+2. decide
+  - `next_action` or `done`
+3. execute
+  - validate args
+  - policy check
+  - run action
+4. observe result
+  - structured observation payload
+  - append to loop history
+
+Stop conditions:
+
+- `done`
+- blocked awaiting confirmation
+- hard error
+- step budget exceeded
+
+#### 11.13.3 API Changes
+
+Add to `hub.agent.*`:
+
+- `run`
+  - starts/continues reactive loop
+  - returns step stream or step batch + final status
+- `catalog_search`
+  - query + filters -> ranked action summaries
+- `catalog_describe`
+  - action type -> full schema/examples/risk/policy info
+
+Keep existing:
+
+- `manifest` (debug)
+- `execute` (single action executor boundary)
+
+#### 11.13.4 Catalog Model
+
+Each action descriptor includes:
+
+- `actionType`, namespace, summary
+- arg schema (JSON schema from zod input schema)
+- usage examples (at least 1 happy-path)
+- risk/scope/confirmation defaults
+- tags/keywords for retrieval
+
+Catalog storage:
+
+- in-memory index (startup built from registry)
+- deterministic ranking function (keyword + namespace + risk filters)
+- no LLM dependency for search
+
+#### 11.13.5 Script Mode
+
+New capability:
+
+- `script.run` (TypeScript only, first version)
+
+Execution model:
+
+- script receives a minimal SDK object (`cc`) with approved primitives
+- all side-effectful calls go through the same policy executor
+- supports dry-run and confirmation checkpoints
+
+Runtime model (required):
+
+- `script.run` accepts an explicit runtime target:
+  - `browser` for UI state work (tabs, layout, focused editor)
+  - `project` for workspace file/process tasks
+  - `project-host` for host-local project operations with better locality
+  - `hub` for control-plane/database-local tasks
+- action descriptors must declare allowed runtimes; orchestrator rejects invalid placements.
+
+Use cases:
+
+- conditional logic ("if exists then ... else ...")
+- loops over many projects/files
+- mixed operations requiring intermediate computation
+
+#### 11.13.6 Frontend UX Plan
+
+Navigator shell should show:
+
+- live step timeline (`plan`, `execute`, `observe`)
+- current step index and status
+- confirmation pauses with resume
+- final summary
+
+Debug mode:
+
+- full raw planner output
+- chosen catalog calls (`search`, `describe`)
+- per-step action envelopes
+
+Default mode:
+
+- concise task progress + user-safe details
+- progressive disclosure:
+  - collapsed by default
+  - expandable details for advanced/debug users
+
+#### 11.13.7 Implementation Phases
+
+P1: Loop engine foundation (lite mode first)
+
+- implement `hub.agent.run` using Codex in a step loop
+- keep using existing `execute` for actual actions
+- wire confirmations and resume token/state
+
+Acceptance:
+
+- can solve conditional prompt patterns without precomputed static plan
+- blocked steps pause and can resume
+
+P2: Catalog tools
+
+- implement `catalog_search` and `catalog_describe`
+- planner prompt updated to use catalog tools before proposing actions
+
+Acceptance:
+
+- no full manifest required in planner context
+- rename/move args use canonical names consistently
+
+P3: Script mode MVP
+
+- add `script.run` action and runtime
+- include policy interception and dry-run
+
+Acceptance:
+
+- "if/else + loop" prompts execute correctly via script mode
+- all writes still audited and policy-gated
+
+P4: UI action surface (`ui.tabs.*`) in plus mode
+
+- `ui.tabs.list`, `ui.tabs.close`, `ui.tabs.reorder`
+- bridge frontend state actions into executor-safe adapters
+
+Acceptance:
+
+- prompts like "close non-chat tabs" and "sort tabs by mtime" work end-to-end
+
+P5: Launchpad adaptation
+
+- capability token scoping
+- strict tenant boundary checks
+- audit hardening
+- snapshot-backed policy mode for eligible filesystem mutations:
+  - pre-action btrfs snapshot
+  - execute
+  - verify/review window
+  - TTL-based snapshot cleanup
+  - exclude irreversible cross-boundary actions (billing/access/network-external)
+
+Acceptance:
+
+- same API contract works with launchpad constraints
+- security tests pass for cross-tenant denial
+
+#### 11.13.8 Testing Plan (concrete)
+
+- unit:
+  - loop state transitions
+  - catalog ranking/describe correctness
+  - script policy interception
+- integration (lite):
+  - conditional file tasks
+  - multi-step tasks with confirmation
+  - recovery after interrupted run
+- UI:
+  - timeline renders full step sequence
+  - pause/resume UX
+
+#### 11.13.9 Immediate Build Queue
+
+1. Add `hub.agent.run` (lite) with step-loop state.
+2. Add `catalog_search` and `catalog_describe` over registry.
+3. Update navigator shell to consume `run` stream and timeline.
+4. Add `script.run` scaffolding and first guarded runtime.
+5. Add first `ui.tabs.*` adapters in plus mode.
+
 ## 12. Success Metrics
 
 - Time-to-first-successful-agent-task.

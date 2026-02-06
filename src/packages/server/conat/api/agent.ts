@@ -13,6 +13,8 @@ import type {
   AgentManifestEntry,
   AgentPlanRequest,
   AgentPlanResponse,
+  AgentRunRequest,
+  AgentRunResponse,
 } from "@cocalc/conat/hub/api/agent";
 import * as projects from "./projects";
 import * as system from "./system";
@@ -369,4 +371,16 @@ export async function plan(opts: AgentPlanRequest): Promise<AgentPlanResponse> {
       raw,
     };
   }
+}
+
+export async function run(opts: AgentRunRequest): Promise<AgentRunResponse> {
+  return {
+    status: "failed",
+    requestId: randomRequestId("agent-run"),
+    state: opts.state ?? {
+      goal: opts.prompt?.trim() || "",
+      steps: [],
+    },
+    error: "agent.run is not implemented for launchpad yet",
+  };
 }
