@@ -10,6 +10,7 @@ import { registerBasicCapabilities } from "./packs";
 import type { AgentActionEnvelope, AgentActionResult, AgentActor } from "./types";
 import type {
   AgentHubAdapter,
+  AgentProjectFsAdapter,
   AgentProjectAdapter,
   AgentSdkContext,
 } from "./adapters";
@@ -29,15 +30,10 @@ type HubClientLike = {
 type ProjectClientLike = {
   system: {
     listing: (opts: { path: string; hidden?: boolean }) => Awaitable<any[]>;
-    moveFiles: (opts: { paths: string[]; dest: string }) => Awaitable<void>;
-    renameFile: (opts: { src: string; dest: string }) => Awaitable<void>;
-    realpath: (path: string) => Awaitable<string>;
-    canonicalPaths: (paths: string[]) => Awaitable<string[]>;
     writeTextFileToProject: (opts: {
       path: string;
       content: string;
     }) => Awaitable<void>;
-    readTextFileFromProject: (opts: { path: string }) => Awaitable<string>;
   };
   apps: {
     start: (name: string) => Awaitable<any>;
@@ -50,10 +46,33 @@ export type AgentSdkProjectResolver = (
   projectId: string,
 ) => Promise<ProjectClientLike> | ProjectClientLike;
 
+type FsClientLike = {
+  readFile: (path: string, encoding?: string) => Awaitable<string | Buffer>;
+  writeFile: (
+    path: string,
+    data: string | Buffer,
+    saveLast?: boolean,
+  ) => Awaitable<void>;
+  readdir: (path: string, options?: unknown) => Awaitable<unknown>;
+  rename: (oldPath: string, newPath: string) => Awaitable<void>;
+  move: (
+    src: string | string[],
+    dest: string,
+    options?: { overwrite?: boolean },
+  ) => Awaitable<void>;
+  realpath: (path: string) => Awaitable<string>;
+};
+
+export type AgentSdkFsResolver = (
+  projectId: string,
+) => Promise<FsClientLike> | FsClientLike;
+
 export type CreateAgentSdkBridgeOptions = {
   hub: HubClientLike;
   project?: ProjectClientLike;
   projectResolver?: AgentSdkProjectResolver;
+  fs?: FsClientLike;
+  fsResolver?: AgentSdkFsResolver;
   defaults?: AgentSdkContext["defaults"];
   executor?: Omit<
     AgentExecutorOptions<AgentSdkContext>,
@@ -92,17 +111,31 @@ function hubAdapterFromClient(client: HubClientLike): AgentHubAdapter {
 function projectAdapterFromClient(client: ProjectClientLike): AgentProjectAdapter {
   return {
     listing: (opts) => client.system.listing(opts),
-    moveFiles: (opts) => client.system.moveFiles(opts),
-    renameFile: (opts) => client.system.renameFile(opts),
-    realpath: (path) => client.system.realpath(path),
-    canonicalPaths: (paths) => client.system.canonicalPaths(paths),
     writeTextFileToProject: (opts) => client.system.writeTextFileToProject(opts),
-    readTextFileFromProject: (opts) => client.system.readTextFileFromProject(opts),
     apps: {
       start: (name: string) => client.apps.start(name),
       stop: (name: string) => client.apps.stop(name),
       status: (name: string) => client.apps.status(name),
     },
+  };
+}
+
+function fsAdapterFromClient(client: FsClientLike): AgentProjectFsAdapter {
+  return {
+    readFile: (path: string, encoding?: string) => client.readFile(path, encoding),
+    writeFile: (
+      path: string,
+      data: string | Buffer,
+      saveLast?: boolean,
+    ) => client.writeFile(path, data, saveLast),
+    readdir: (path: string, options?: unknown) => client.readdir(path, options),
+    rename: (oldPath: string, newPath: string) => client.rename(oldPath, newPath),
+    move: (
+      src: string | string[],
+      dest: string,
+      options?: { overwrite?: boolean },
+    ) => client.move(src, dest, options),
+    realpath: (path: string) => client.realpath(path),
   };
 }
 
@@ -136,21 +169,29 @@ export function createAgentSdkBridge(
   async function buildContext(
     action?: AgentActionEnvelope,
   ): Promise<AgentSdkContext> {
+    const projectId = projectIdFromAction(action, options.defaults);
     let projectAdapter: AgentProjectAdapter | undefined;
     if (options.project) {
       projectAdapter = projectAdapterFromClient(options.project);
     } else if (options.projectResolver) {
-      const projectId = projectIdFromAction(action, options.defaults);
       if (projectId) {
         const projectClient = await options.projectResolver(projectId);
         projectAdapter = projectAdapterFromClient(projectClient);
       }
+    }
+    let fsAdapter: AgentProjectFsAdapter | undefined;
+    if (options.fs) {
+      fsAdapter = fsAdapterFromClient(options.fs);
+    } else if (options.fsResolver && projectId) {
+      const fsClient = await options.fsResolver(projectId);
+      fsAdapter = fsAdapterFromClient(fsClient);
     }
 
     return {
       adapters: {
         hub: hubAdapter,
         project: projectAdapter,
+        fs: fsAdapter,
       },
       defaults: options.defaults,
     };
@@ -191,12 +232,14 @@ export function createAgentSdkBridge(
 export function createPlusAgentSdkBridge(options: {
   hub: HubClientLike;
   project: ProjectClientLike;
+  fs?: FsClientLike;
   defaults?: AgentSdkContext["defaults"];
   executor?: CreateAgentSdkBridgeOptions["executor"];
 }): AgentSdkBridge {
   return createAgentSdkBridge({
     hub: options.hub,
     project: options.project,
+    fs: options.fs,
     defaults: options.defaults,
     executor: options.executor,
   });
@@ -205,12 +248,14 @@ export function createPlusAgentSdkBridge(options: {
 export function createLaunchpadAgentSdkBridge(options: {
   hub: HubClientLike;
   projectResolver: AgentSdkProjectResolver;
+  fsResolver?: AgentSdkFsResolver;
   defaults?: AgentSdkContext["defaults"];
   executor?: CreateAgentSdkBridgeOptions["executor"];
 }): AgentSdkBridge {
   return createAgentSdkBridge({
     hub: options.hub,
     projectResolver: options.projectResolver,
+    fsResolver: options.fsResolver,
     defaults: options.defaults,
     executor: options.executor,
   });

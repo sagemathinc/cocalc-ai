@@ -19,14 +19,7 @@ function makeProjectClient(tag: string): Pick<ProjectApi, "system" | "apps"> {
     system: {
       listing: async ({ path }: { path: string }) =>
         [{ name: `${tag}:${path}` }] as any,
-      moveFiles: async () => undefined,
-      renameFile: async () => undefined,
-      realpath: async (path: string) => `/abs/${path}`,
-      canonicalPaths: async (paths: string[]) =>
-        paths.map((p) => `/canonical/${p}`),
       writeTextFileToProject: async () => undefined,
-      readTextFileFromProject: async ({ path }: { path: string }) =>
-        `content:${path}`,
     } as any,
     apps: {
       start: async (name: string) =>
@@ -43,15 +36,27 @@ function makeProjectClient(tag: string): Pick<ProjectApi, "system" | "apps"> {
   };
 }
 
+function makeFsClient(tag: string) {
+  return {
+    readFile: async (path: string) => `content:${tag}:${path}`,
+    writeFile: async () => undefined,
+    readdir: async (path: string) => [`entry:${tag}:${path}`],
+    rename: async () => undefined,
+    move: async () => undefined,
+    realpath: async (path: string) => `/abs/${tag}/${path}`,
+  };
+}
+
 describe("agent-sdk runtime bridge", () => {
   test("builds manifest and executes with single project client", async () => {
     const bridge = createAgentSdkBridge({
       hub: makeHubClient(),
       project: makeProjectClient("default"),
+      fs: makeFsClient("default"),
       defaults: { projectId: "project-default" },
     });
 
-    expect(bridge.manifest().length).toBe(13);
+    expect(bridge.manifest().length).toBe(14);
 
     const ping = await bridge.execute({
       action: { actionType: "hub.system.ping", args: {} },
@@ -67,6 +72,15 @@ describe("agent-sdk runtime bridge", () => {
     });
     expect(listing.status).toBe("completed");
     expect(listing.result).toEqual([{ name: "default:tmp" }]);
+
+    const read = await bridge.execute({
+      action: {
+        actionType: "project.fs.readFile",
+        args: { path: "a.txt" },
+      },
+    });
+    expect(read.status).toBe("completed");
+    expect(read.result).toEqual({ path: "a.txt", data: "content:default:a.txt" });
   });
 
   test("uses projectResolver for targeted launchpad project", async () => {
@@ -78,6 +92,7 @@ describe("agent-sdk runtime bridge", () => {
         seen.push(projectId);
         return makeProjectClient(projectId);
       },
+      fsResolver: async (projectId: string) => makeFsClient(projectId),
     });
 
     const result = await bridge.execute({

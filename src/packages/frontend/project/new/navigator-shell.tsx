@@ -46,8 +46,8 @@ function parsePrompt(prompt: string): ParsedPrompt {
     return {
       label: "List files",
       action: {
-        actionType: "project.system.listing",
-        args: { path: (list[1] ?? ".").trim() || ".", hidden: false },
+        actionType: "project.fs.readdir",
+        args: { path: (list[1] ?? ".").trim() || "." },
       },
     };
   }
@@ -86,8 +86,8 @@ function parsePrompt(prompt: string): ParsedPrompt {
     return {
       label: `Write file: ${write[1]}`,
       action: {
-        actionType: "project.system.write_text_file",
-        args: { path: write[1], content: write[2] },
+        actionType: "project.fs.writeFile",
+        args: { path: write[1], data: write[2] },
       },
     };
   }
@@ -96,7 +96,7 @@ function parsePrompt(prompt: string): ParsedPrompt {
     return {
       label: `Read file: ${read[1]}`,
       action: {
-        actionType: "project.system.read_text_file",
+        actionType: "project.fs.readFile",
         args: { path: read[1] },
       },
     };
@@ -106,8 +106,8 @@ function parsePrompt(prompt: string): ParsedPrompt {
     return {
       label: `Rename file: ${rename[1]} -> ${rename[2]}`,
       action: {
-        actionType: "project.system.rename_file",
-        args: { src: rename[1], dest: rename[2] },
+        actionType: "project.fs.rename",
+        args: { oldPath: rename[1], newPath: rename[2] },
       },
     };
   }
@@ -120,8 +120,8 @@ function parsePrompt(prompt: string): ParsedPrompt {
     return {
       label: `Move files: ${paths.join(", ")} -> ${move[2]}`,
       action: {
-        actionType: "project.system.move_files",
-        args: { paths, dest: move[2] },
+        actionType: "project.fs.move",
+        args: { src: paths.length === 1 ? paths[0] : paths, dest: move[2] },
       },
     };
   }
@@ -130,28 +130,14 @@ function parsePrompt(prompt: string): ParsedPrompt {
     return {
       label: `Realpath: ${realpath[1]}`,
       action: {
-        actionType: "project.system.realpath",
+        actionType: "project.fs.realpath",
         args: { path: realpath[1] },
-      },
-    };
-  }
-  const canonical = text.match(/^canonical\s+(.+)$/i);
-  if (canonical) {
-    const paths = canonical[1]
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
-    return {
-      label: `Canonical paths: ${paths.join(", ")}`,
-      action: {
-        actionType: "project.system.canonical_paths",
-        args: { paths },
       },
     };
   }
   return {
     error:
-      "Unknown command. Try: ping | list [path] | read <path> | write <path> ::: <text> | rename <src> -> <dest> | move <a,b> -> <dest> | realpath <path> | canonical <a,b> | status <app> | start <app> | stop <app>",
+      "Unknown command. Try: ping | list [path] | read <path> | write <path> ::: <text> | rename <src> -> <dest> | move <a,b> -> <dest> | realpath <path> | status <app> | start <app> | stop <app>",
   };
 }
 

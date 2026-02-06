@@ -5,6 +5,7 @@ import {
   type AgentActionResult,
 } from "@cocalc/ai/agent-sdk";
 import { projectApiClient } from "@cocalc/conat/project/api";
+import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
 import { conat } from "@cocalc/backend/conat";
 import type {
   AgentExecuteRequest,
@@ -37,6 +38,13 @@ function createBridge({
       return projectApiClient({
         project_id: projectId,
         client: await conatClientPromise,
+      });
+    },
+    fsResolver: async (projectId: string) => {
+      await assertCollab({ account_id, project_id: projectId });
+      return fsClient({
+        client: await conatClientPromise,
+        subject: fsSubject({ project_id: projectId }),
       });
     },
     defaults: {

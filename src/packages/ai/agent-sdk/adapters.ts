@@ -20,20 +20,32 @@ export type AgentProjectAppsAdapter = {
   status: (name: string) => Awaitable<unknown>;
 };
 
+export type AgentProjectFsAdapter = {
+  readFile: (path: string, encoding?: string) => Awaitable<string | Buffer>;
+  writeFile: (
+    path: string,
+    data: string | Buffer,
+    saveLast?: boolean,
+  ) => Awaitable<void>;
+  readdir: (path: string, options?: unknown) => Awaitable<unknown>;
+  rename: (oldPath: string, newPath: string) => Awaitable<void>;
+  move: (
+    src: string | string[],
+    dest: string,
+    options?: { overwrite?: boolean },
+  ) => Awaitable<void>;
+  realpath: (path: string) => Awaitable<string>;
+};
+
 export type AgentProjectAdapter = {
   listing: (opts: {
     path: string;
     hidden?: boolean;
   }) => Awaitable<DirectoryListingEntry[]>;
-  moveFiles: (opts: { paths: string[]; dest: string }) => Awaitable<void>;
-  renameFile: (opts: { src: string; dest: string }) => Awaitable<void>;
-  realpath: (path: string) => Awaitable<string>;
-  canonicalPaths: (paths: string[]) => Awaitable<string[]>;
   writeTextFileToProject: (opts: {
     path: string;
     content: string;
   }) => Awaitable<void>;
-  readTextFileFromProject: (opts: { path: string }) => Awaitable<string>;
   apps: AgentProjectAppsAdapter;
 };
 
@@ -44,6 +56,7 @@ export type AgentUIAdapter = {
 export type AgentSdkAdapters = {
   hub?: AgentHubAdapter;
   project?: AgentProjectAdapter;
+  fs?: AgentProjectFsAdapter;
   ui?: AgentUIAdapter;
 };
 
@@ -71,4 +84,14 @@ export function requireProjectAdapter(
     throw new Error("Project adapter is not configured");
   }
   return project;
+}
+
+export function requireFsAdapter(
+  context: AgentSdkContext,
+): AgentProjectFsAdapter {
+  const fs = context.adapters.fs;
+  if (!fs) {
+    throw new Error("FS adapter is not configured");
+  }
+  return fs;
 }

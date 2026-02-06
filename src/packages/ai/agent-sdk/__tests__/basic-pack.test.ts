@@ -10,9 +10,12 @@ describe("basic capability pack", () => {
       createProject: number;
       listing: number;
       writeText: number;
-      readText: number;
-      renameFile: number;
-      moveFiles: number;
+      fsRead: number;
+      fsWrite: number;
+      fsRename: number;
+      fsMove: number;
+      fsReaddir: number;
+      fsRealpath: number;
       appStart: number;
       appStop: number;
     };
@@ -21,9 +24,12 @@ describe("basic capability pack", () => {
       createProject: 0,
       listing: 0,
       writeText: 0,
-      readText: 0,
-      renameFile: 0,
-      moveFiles: 0,
+      fsRead: 0,
+      fsWrite: 0,
+      fsRename: 0,
+      fsMove: 0,
+      fsReaddir: 0,
+      fsRealpath: 0,
       appStart: 0,
       appStop: 0,
     };
@@ -42,21 +48,8 @@ describe("basic capability pack", () => {
             calls.listing += 1;
             return [{ name: "a.txt" }] as any;
           },
-          moveFiles: async () => {
-            calls.moveFiles += 1;
-          },
-          renameFile: async () => {
-            calls.renameFile += 1;
-          },
-          realpath: async (path: string) => `/abs/${path}`,
-          canonicalPaths: async (paths: string[]) =>
-            paths.map((p) => `/canonical/${p}`),
           writeTextFileToProject: async () => {
             calls.writeText += 1;
-          },
-          readTextFileFromProject: async ({ path }: { path: string }) => {
-            calls.readText += 1;
-            return `content:${path}`;
           },
           apps: {
             start: async (name: string) => {
@@ -75,6 +68,29 @@ describe("basic capability pack", () => {
             status: async () => ({ state: "stopped" }),
           },
         },
+        fs: {
+          readFile: async (path: string) => {
+            calls.fsRead += 1;
+            return `content:${path}`;
+          },
+          writeFile: async () => {
+            calls.fsWrite += 1;
+          },
+          readdir: async (path: string) => {
+            calls.fsReaddir += 1;
+            return [`entry:${path}`];
+          },
+          rename: async () => {
+            calls.fsRename += 1;
+          },
+          move: async () => {
+            calls.fsMove += 1;
+          },
+          realpath: async (path: string) => {
+            calls.fsRealpath += 1;
+            return `/abs/${path}`;
+          },
+        },
       },
     };
     return { context, calls };
@@ -91,12 +107,13 @@ describe("basic capability pack", () => {
       "project.apps.start",
       "project.apps.status",
       "project.apps.stop",
-      "project.system.canonical_paths",
+      "project.fs.move",
+      "project.fs.readFile",
+      "project.fs.readdir",
+      "project.fs.realpath",
+      "project.fs.rename",
+      "project.fs.writeFile",
       "project.system.listing",
-      "project.system.move_files",
-      "project.system.read_text_file",
-      "project.system.realpath",
-      "project.system.rename_file",
       "project.system.write_text_file",
     ]);
   });
@@ -147,14 +164,14 @@ describe("basic capability pack", () => {
 
     const read = await executor.execute({
       action: {
-        actionType: "project.system.read_text_file",
+        actionType: "project.fs.readFile",
         args: { path: "a.txt" },
       },
       context,
     });
     expect(read.status).toBe("completed");
-    expect(read.result).toEqual({ path: "a.txt", content: "content:a.txt" });
-    expect(calls.readText).toBe(1);
+    expect(read.result).toEqual({ path: "a.txt", data: "content:a.txt" });
+    expect(calls.fsRead).toBe(1);
   });
 
   test("dry-run avoids side effects", async () => {
@@ -177,8 +194,8 @@ describe("basic capability pack", () => {
 
     const rename = await executor.execute({
       action: {
-        actionType: "project.system.rename_file",
-        args: { src: "a.txt", dest: "b.txt" },
+        actionType: "project.fs.rename",
+        args: { oldPath: "a.txt", newPath: "b.txt" },
         dryRun: true,
       },
       context,
@@ -186,9 +203,9 @@ describe("basic capability pack", () => {
     expect(rename.status).toBe("completed");
     expect(rename.result).toEqual({
       dryRun: true,
-      src: "a.txt",
-      dest: "b.txt",
+      oldPath: "a.txt",
+      newPath: "b.txt",
     });
-    expect(calls.renameFile).toBe(0);
+    expect(calls.fsRename).toBe(0);
   });
 });

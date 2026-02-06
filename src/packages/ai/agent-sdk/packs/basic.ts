@@ -4,6 +4,7 @@ Initial basic capability pack backed by hub/project adapters.
 
 import type { AgentCapabilityRegistry } from "../capabilities";
 import {
+  requireFsAdapter,
   requireHubAdapter,
   requireProjectAdapter,
   type AgentSdkContext,
@@ -31,31 +32,39 @@ type ListingArgs = {
   hidden?: boolean;
 };
 
-type MoveFilesArgs = {
-  paths: string[];
-  dest: string;
+type FsReadFileArgs = {
+  path: string;
+  encoding?: string;
 };
 
-type RenameFileArgs = {
-  src: string;
-  dest: string;
+type FsWriteFileArgs = {
+  path: string;
+  data: string;
+  saveLast?: boolean;
 };
 
-type RealpathArgs = {
+type FsReaddirArgs = {
   path: string;
 };
 
-type CanonicalPathsArgs = {
-  paths: string[];
+type FsMoveArgs = {
+  src: string | string[];
+  dest: string;
+  overwrite?: boolean;
+};
+
+type FsRenameArgs = {
+  oldPath: string;
+  newPath: string;
+};
+
+type FsRealpathArgs = {
+  path: string;
 };
 
 type WriteTextFileArgs = {
   path: string;
   content: string;
-};
-
-type ReadTextFileArgs = {
-  path: string;
 };
 
 type AppNameArgs = {
@@ -168,56 +177,81 @@ function parseWriteTextArgs(args: unknown): WriteTextFileArgs {
   return { path, content };
 }
 
-function parseReadTextArgs(args: unknown): ReadTextFileArgs {
+function parseFsReadFileArgs(args: unknown): FsReadFileArgs {
+  if (!isRecord(args)) {
+    throw new Error("args must be an object");
+  }
+  const path = asString(args.path, "path");
+  const encoding = asString(args.encoding, "encoding", { optional: true });
+  return { path, encoding };
+}
+
+function parseFsWriteFileArgs(args: unknown): FsWriteFileArgs {
+  if (!isRecord(args)) {
+    throw new Error("args must be an object");
+  }
+  const path = asString(args.path, "path");
+  const data = asString(args.data, "data");
+  const saveLast =
+    args.saveLast == null
+      ? undefined
+      : typeof args.saveLast === "boolean"
+        ? args.saveLast
+        : (() => {
+            throw new Error("saveLast must be a boolean");
+          })();
+  return { path, data, saveLast };
+}
+
+function parseFsReaddirArgs(args: unknown): FsReaddirArgs {
   if (!isRecord(args)) {
     throw new Error("args must be an object");
   }
   return { path: asString(args.path, "path") };
 }
 
-function parseMoveFilesArgs(args: unknown): MoveFilesArgs {
+function parseFsMoveArgs(args: unknown): FsMoveArgs {
   if (!isRecord(args)) {
     throw new Error("args must be an object");
   }
-  const { paths } = args;
-  if (!Array.isArray(paths) || paths.length === 0) {
-    throw new Error("paths must be a non-empty array");
+  const src0 = args.src;
+  let src: string | string[];
+  if (typeof src0 === "string") {
+    src = src0;
+  } else if (Array.isArray(src0) && src0.length > 0) {
+    if (src0.some((x) => typeof x !== "string")) {
+      throw new Error("src array must contain only strings");
+    }
+    src = src0 as string[];
+  } else {
+    throw new Error("src must be a string or non-empty array of strings");
   }
-  if (paths.some((x) => typeof x !== "string")) {
-    throw new Error("paths must contain only strings");
-  }
-  return { paths: paths as string[], dest: asString(args.dest, "dest") };
+  const overwrite =
+    args.overwrite == null
+      ? undefined
+      : typeof args.overwrite === "boolean"
+        ? args.overwrite
+        : (() => {
+            throw new Error("overwrite must be a boolean");
+          })();
+  return { src, dest: asString(args.dest, "dest"), overwrite };
 }
 
-function parseRenameFileArgs(args: unknown): RenameFileArgs {
+function parseFsRenameArgs(args: unknown): FsRenameArgs {
   if (!isRecord(args)) {
     throw new Error("args must be an object");
   }
   return {
-    src: asString(args.src, "src"),
-    dest: asString(args.dest, "dest"),
+    oldPath: asString(args.oldPath, "oldPath"),
+    newPath: asString(args.newPath, "newPath"),
   };
 }
 
-function parseRealpathArgs(args: unknown): RealpathArgs {
+function parseFsRealpathArgs(args: unknown): FsRealpathArgs {
   if (!isRecord(args)) {
     throw new Error("args must be an object");
   }
   return { path: asString(args.path, "path") };
-}
-
-function parseCanonicalPathsArgs(args: unknown): CanonicalPathsArgs {
-  if (!isRecord(args)) {
-    throw new Error("args must be an object");
-  }
-  const { paths } = args;
-  if (!Array.isArray(paths) || paths.length === 0) {
-    throw new Error("paths must be a non-empty array");
-  }
-  if (paths.some((x) => typeof x !== "string")) {
-    throw new Error("paths must contain only strings");
-  }
-  return { paths: paths as string[] };
 }
 
 function parseAppNameArgs(args: unknown): AppNameArgs {
@@ -304,78 +338,95 @@ export function registerBasicCapabilities(
   });
 
   registry.register({
-    actionType: "project.system.read_text_file",
-    namespace: "project.system",
-    summary: "Read text content from a project file",
+    actionType: "project.fs.readFile",
+    namespace: "project.fs",
+    summary: "Read a file using the project fs API",
     riskLevel: "read",
     sideEffectScope: "project",
-    validateArgs: parseReadTextArgs,
-    handler: async ({ path }, { context }) => {
-      const project = requireProjectAdapter(context);
-      const content = await project.readTextFileFromProject({ path });
-      return { path, content };
+    validateArgs: parseFsReadFileArgs,
+    handler: async ({ path, encoding }, { context }) => {
+      const fs = requireFsAdapter(context);
+      const data = await fs.readFile(path, encoding);
+      return { path, data };
     },
   });
 
   registry.register({
-    actionType: "project.system.rename_file",
-    namespace: "project.system",
-    summary: "Rename or move a file within a project",
+    actionType: "project.fs.writeFile",
+    namespace: "project.fs",
+    summary: "Write a file using the project fs API",
     riskLevel: "write",
     sideEffectScope: "project",
-    validateArgs: parseRenameFileArgs,
-    handler: async ({ src, dest }, { context, dryRun }) => {
+    validateArgs: parseFsWriteFileArgs,
+    handler: async ({ path, data, saveLast }, { context, dryRun }) => {
       if (dryRun) {
-        return { dryRun: true, src, dest };
+        return { dryRun: true, path, bytes: Buffer.byteLength(data, "utf8") };
       }
-      const project = requireProjectAdapter(context);
-      await project.renameFile({ src, dest });
-      return { renamed: true, src, dest };
+      const fs = requireFsAdapter(context);
+      await fs.writeFile(path, data, saveLast);
+      return { path, bytes: Buffer.byteLength(data, "utf8") };
     },
   });
 
   registry.register({
-    actionType: "project.system.move_files",
-    namespace: "project.system",
-    summary: "Move one or more files into a destination path",
-    riskLevel: "write",
-    sideEffectScope: "project",
-    validateArgs: parseMoveFilesArgs,
-    handler: async ({ paths, dest }, { context, dryRun }) => {
-      if (dryRun) {
-        return { dryRun: true, paths, dest };
-      }
-      const project = requireProjectAdapter(context);
-      await project.moveFiles({ paths, dest });
-      return { moved: paths.length, dest };
-    },
-  });
-
-  registry.register({
-    actionType: "project.system.realpath",
-    namespace: "project.system",
-    summary: "Resolve a path to its absolute canonical location",
+    actionType: "project.fs.readdir",
+    namespace: "project.fs",
+    summary: "Read directory entries using the project fs API",
     riskLevel: "read",
     sideEffectScope: "project",
-    validateArgs: parseRealpathArgs,
+    validateArgs: parseFsReaddirArgs,
     handler: async ({ path }, { context }) => {
-      const project = requireProjectAdapter(context);
-      const resolved = await project.realpath(path);
+      const fs = requireFsAdapter(context);
+      const entries = await fs.readdir(path);
+      return { path, entries };
+    },
+  });
+
+  registry.register({
+    actionType: "project.fs.rename",
+    namespace: "project.fs",
+    summary: "Rename or move a file using the project fs API",
+    riskLevel: "write",
+    sideEffectScope: "project",
+    validateArgs: parseFsRenameArgs,
+    handler: async ({ oldPath, newPath }, { context, dryRun }) => {
+      if (dryRun) {
+        return { dryRun: true, oldPath, newPath };
+      }
+      const fs = requireFsAdapter(context);
+      await fs.rename(oldPath, newPath);
+      return { renamed: true, oldPath, newPath };
+    },
+  });
+
+  registry.register({
+    actionType: "project.fs.move",
+    namespace: "project.fs",
+    summary: "Move files using the project fs API",
+    riskLevel: "write",
+    sideEffectScope: "project",
+    validateArgs: parseFsMoveArgs,
+    handler: async ({ src, dest, overwrite }, { context, dryRun }) => {
+      if (dryRun) {
+        return { dryRun: true, src, dest, overwrite };
+      }
+      const fs = requireFsAdapter(context);
+      await fs.move(src, dest, { overwrite });
+      return { moved: true, src, dest, overwrite };
+    },
+  });
+
+  registry.register({
+    actionType: "project.fs.realpath",
+    namespace: "project.fs",
+    summary: "Resolve real path using the project fs API",
+    riskLevel: "read",
+    sideEffectScope: "project",
+    validateArgs: parseFsRealpathArgs,
+    handler: async ({ path }, { context }) => {
+      const fs = requireFsAdapter(context);
+      const resolved = await fs.realpath(path);
       return { path, resolved };
-    },
-  });
-
-  registry.register({
-    actionType: "project.system.canonical_paths",
-    namespace: "project.system",
-    summary: "Canonicalize multiple paths in one request",
-    riskLevel: "read",
-    sideEffectScope: "project",
-    validateArgs: parseCanonicalPathsArgs,
-    handler: async ({ paths }, { context }) => {
-      const project = requireProjectAdapter(context);
-      const canonical = await project.canonicalPaths(paths);
-      return { paths, canonical };
     },
   });
 
