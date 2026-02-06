@@ -20,7 +20,14 @@ type ResultEntry = {
   ts: string;
   prompt: string;
   label: string;
+  mode: "preview" | "run" | "confirm" | "manifest";
   response: unknown;
+};
+
+type PendingConfirmation = {
+  action: ActionEnvelope;
+  label: string;
+  prompt: string;
 };
 
 function parsePrompt(prompt: string): ParsedPrompt {
@@ -104,28 +111,59 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
   const [error, setError] = useState("");
   const [history, setHistory] = useState<ResultEntry[]>([]);
   const [manifest, setManifest] = useState<AgentManifestEntry[] | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] =
+    useState<PendingConfirmation | null>(null);
 
   const parsed = useMemo(() => parsePrompt(prompt), [prompt]);
-
-  async function runAction() {
-    const parsed = parsePrompt(prompt);
-    if ("error" in parsed) {
-      setError(parsed.error);
-      return;
+  const manifestByAction = useMemo(() => {
+    const map = new Map<string, AgentManifestEntry>();
+    for (const entry of manifest ?? []) {
+      map.set(entry.actionType, entry);
     }
+    return map;
+  }, [manifest]);
+
+  async function executeAction({
+    action,
+    label,
+    promptText,
+    mode,
+    confirmationToken,
+  }: {
+    action: ActionEnvelope;
+    label: string;
+    promptText: string;
+    mode: ResultEntry["mode"];
+    confirmationToken?: string;
+  }) {
     setError("");
     setBusy("execute");
     try {
       const response: AgentExecuteResponse =
         await webapp_client.conat_client.agent.execute({
-          action: parsed.action,
+          action,
           defaults: { projectId: project_id },
+          confirmationToken,
         });
+      if (
+        response.status === "blocked" &&
+        response.requiresConfirmation &&
+        !confirmationToken
+      ) {
+        setPendingConfirmation({
+          action: { ...action, dryRun: false },
+          label,
+          prompt: promptText,
+        });
+      } else {
+        setPendingConfirmation(null);
+      }
       setHistory((cur) => [
         {
           ts: new Date().toISOString(),
-          prompt: prompt.trim(),
-          label: parsed.label,
+          prompt: promptText,
+          label,
+          mode,
           response,
         },
         ...cur,
@@ -135,6 +173,45 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
     } finally {
       setBusy("");
     }
+  }
+
+  async function runAction() {
+    const parsed = parsePrompt(prompt);
+    if ("error" in parsed) {
+      setError(parsed.error);
+      return;
+    }
+    await executeAction({
+      action: parsed.action,
+      label: parsed.label,
+      promptText: prompt.trim(),
+      mode: "run",
+    });
+  }
+
+  async function previewAction() {
+    const parsed = parsePrompt(prompt);
+    if ("error" in parsed) {
+      setError(parsed.error);
+      return;
+    }
+    await executeAction({
+      action: { ...parsed.action, dryRun: true },
+      label: `Preview: ${parsed.label}`,
+      promptText: prompt.trim(),
+      mode: "preview",
+    });
+  }
+
+  async function confirmAction() {
+    if (!pendingConfirmation) return;
+    await executeAction({
+      action: { ...pendingConfirmation.action, dryRun: false },
+      label: `Confirmed: ${pendingConfirmation.label}`,
+      promptText: pendingConfirmation.prompt,
+      mode: "confirm",
+      confirmationToken: "user-confirmed",
+    });
   }
 
   async function loadManifest() {
@@ -148,6 +225,7 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           ts: new Date().toISOString(),
           prompt: "manifest",
           label: "Capability manifest",
+          mode: "manifest",
           response: value,
         },
         ...cur,
@@ -183,7 +261,43 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           style={{ marginBottom: 8 }}
         />
       ) : null}
-      <Space.Compact style={{ width: "100%" }}>
+      {pendingConfirmation ? (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 8 }}
+          message="Confirmation required"
+          description={
+            <div>
+              <div style={{ marginBottom: 8 }}>
+                This action was blocked pending confirmation:
+                <code style={{ marginLeft: 6 }}>
+                  {pendingConfirmation.action.actionType}
+                </code>
+              </div>
+              <Space>
+                <Button
+                  type="primary"
+                  size="small"
+                  onClick={confirmAction}
+                  loading={busy === "execute"}
+                  disabled={busy !== ""}
+                >
+                  Confirm & Run
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => setPendingConfirmation(null)}
+                  disabled={busy !== ""}
+                >
+                  Cancel
+                </Button>
+              </Space>
+            </div>
+          }
+        />
+      ) : null}
+      <div style={{ display: "flex", gap: 8 }}>
         <Input
           size="large"
           value={prompt}
@@ -193,6 +307,14 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         />
         <Button
           size="large"
+          onClick={previewAction}
+          loading={busy === "execute"}
+          disabled={busy !== ""}
+        >
+          Preview
+        </Button>
+        <Button
+          size="large"
           type="primary"
           onClick={runAction}
           loading={busy === "execute"}
@@ -200,12 +322,23 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
         >
           Run
         </Button>
-      </Space.Compact>
+      </div>
       <Space style={{ marginTop: 8 }} size={8} wrap>
         {"error" in parsed ? (
           <Tag color="orange">No executable action</Tag>
         ) : (
-          <Tag color="green">{parsed.action.actionType}</Tag>
+          <>
+            <Tag color="green">{parsed.action.actionType}</Tag>
+            {manifestByAction.get(parsed.action.actionType)?.riskLevel ? (
+              <Tag>
+                Risk: {manifestByAction.get(parsed.action.actionType)?.riskLevel}
+              </Tag>
+            ) : null}
+            {manifestByAction.get(parsed.action.actionType)
+              ?.requiresConfirmationByDefault ? (
+              <Tag color="gold">Confirm by default</Tag>
+            ) : null}
+          </>
         )}
         <Button
           size="small"
@@ -219,12 +352,22 @@ export function NavigatorShell({ project_id }: NavigatorShellProps) {
           <Tag>{manifest.length} capabilities</Tag>
         ) : null}
       </Space>
+      {"error" in parsed ? null : (
+        <Input.TextArea
+          style={{ marginTop: 8 }}
+          value={prettify(parsed.action)}
+          readOnly
+          autoSize={{ minRows: 4, maxRows: 10 }}
+          placeholder="Action preview..."
+        />
+      )}
       <Input.TextArea
         style={{ marginTop: 8 }}
         value={
           lastResult
             ? prettify({
                 at: lastResult.ts,
+                mode: lastResult.mode,
                 prompt: lastResult.prompt,
                 label: lastResult.label,
                 result: lastResult.response,
