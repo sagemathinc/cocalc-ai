@@ -30,6 +30,11 @@
       "require": "./dist/sync/index.js",
       "types": "./dist/sync/index.d.ts"
     },
+    "./agent-sdk": {
+      "import": "./dist/agent-sdk/index.js",
+      "require": "./dist/agent-sdk/index.js",
+      "types": "./dist/agent-sdk/index.d.ts"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
