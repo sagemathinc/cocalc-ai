@@ -1047,12 +1047,25 @@ class exports.PostgreSQL extends EventEmitter    # emits a 'connect' event whene
             cb         : required
         dbg = @_dbg("delete_expired(...)")
         dbg()
+        ignore_missing_table = (table, err) =>
+            if not err?
+                return false
+            # During startup against a brand-new DB (or while migrations are
+            # still being applied), some tables might not exist yet.  Treat
+            # this as non-fatal and continue.
+            if err.code == '42P01' or "#{err}".indexOf('does not exist') != -1
+                dbg("ignoring missing table '#{table}' while deleting expired rows -- #{err}")
+                return true
+            return false
         f = (table, cb) =>
             dbg("table='#{table}'")
             if opts.count_only
                 @_query
                     query : "SELECT COUNT(*) FROM #{table} WHERE expire <= NOW()"
                     cb    : (err, result) =>
+                        if ignore_missing_table(table, err)
+                            cb()
+                            return
                         if not err
                             dbg("COUNT for table #{table} is #{result.rows[0].count}")
                         cb(err)
@@ -1061,6 +1074,9 @@ class exports.PostgreSQL extends EventEmitter    # emits a 'connect' event whene
                 @_query
                     query : "DELETE FROM #{table} WHERE expire <= NOW()"
                     cb    : (err) =>
+                        if ignore_missing_table(table, err)
+                            cb()
+                            return
                         dbg("finished deleting expired entries from '#{table}' -- #{err}")
                         cb(err)
         if opts.table
