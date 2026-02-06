@@ -32,7 +32,7 @@ The model proposes actions. The executor validates, applies policy, requests con
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
   User[User]
   UI[Ask CoCalc UI]
   Planner[Planner / Router]
@@ -130,4 +130,3 @@ const result = await executor.execute({
   - idempotent replay behavior
 
 Next step is adding real adapter-backed capabilities over existing hub/project/ui APIs.
-
