@@ -393,7 +393,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     if (!getProject(project_id)) {
       throw Error("project is not hosted on this project-host");
     }
-    return await startCodexDeviceAuth(account_id);
+    return await startCodexDeviceAuth(project_id, account_id);
   }
 
   async function codexDeviceAuthStatus({
@@ -418,7 +418,11 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       throw Error("invalid id");
     }
     const status = getCodexDeviceAuthStatus(id);
-    if (!status || status.accountId !== account_id) {
+    if (
+      !status ||
+      status.accountId !== account_id ||
+      status.projectId !== project_id
+    ) {
       throw Error("unknown device auth id");
     }
     return status;
@@ -446,7 +450,11 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       throw Error("invalid id");
     }
     const status = getCodexDeviceAuthStatus(id);
-    if (!status || status.accountId !== account_id) {
+    if (
+      !status ||
+      status.accountId !== account_id ||
+      status.projectId !== project_id
+    ) {
       throw Error("unknown device auth id");
     }
     const canceled = cancelCodexDeviceAuth(id);

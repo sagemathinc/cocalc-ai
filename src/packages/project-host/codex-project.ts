@@ -225,21 +225,105 @@ async function ensureContainer({
   return { name, rootfs, codexPath: containerPath, home };
 }
 
+function toStringEnv(env?: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!env) return out;
+  for (const key in env) {
+    if (typeof env[key] === "string") {
+      out[key] = `${env[key]}`;
+    }
+  }
+  return out;
+}
+
+export type SpawnCodexInProjectContainerOptions = {
+  projectId: string;
+  accountId?: string;
+  args: string[];
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  authRuntime?: CodexAuthRuntime;
+  touchReason?: string | false;
+};
+
+export type SpawnCodexInProjectContainerResult = {
+  proc: ReturnType<typeof spawn>;
+  cmd: string;
+  args: string[];
+  cwd?: string;
+  authRuntime: CodexAuthRuntime;
+  containerName: string;
+};
+
+export async function spawnCodexInProjectContainer({
+  projectId,
+  accountId,
+  args,
+  cwd,
+  env: extraEnv,
+  authRuntime: explicitAuthRuntime,
+  touchReason = "codex",
+}: SpawnCodexInProjectContainerOptions): Promise<SpawnCodexInProjectContainerResult> {
+  const authRuntime =
+    explicitAuthRuntime ?? (await resolveCodexAuthRuntime({ projectId, accountId }));
+  if (explicitAuthRuntime) {
+    logger.debug("using explicit codex auth runtime", {
+      projectId,
+      accountId,
+      ...redactCodexAuthRuntime(authRuntime),
+    });
+  } else {
+    logResolvedCodexAuthRuntime(projectId, accountId, authRuntime);
+  }
+  const key = leaseKey(projectId, authRuntime.contextId);
+  const release = await containerLeases.acquire(key);
+  let info: ContainerInfo | undefined;
+  try {
+    info = await ensureContainer({ projectId, authRuntime, extraEnv });
+  } catch (err) {
+    await release();
+    throw err;
+  }
+
+  const execArgs: string[] = [
+    "exec",
+    "-i",
+    "--workdir",
+    cwd && cwd.startsWith("/") ? cwd : "/root",
+    "-e",
+    "HOME=/root",
+  ];
+  const execEnv = { ...authRuntime.env, ...toStringEnv(extraEnv) };
+  for (const key in execEnv) {
+    execArgs.push("-e", `${key}=${execEnv[key]}`);
+  }
+  execArgs.push(info.name, info.codexPath, ...args);
+  logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
+  const proc = spawn("podman", execArgs, {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  proc.on("exit", async () => {
+    try {
+      await release();
+    } finally {
+      if (touchReason) {
+        void touchProjectLastEdited(projectId, touchReason);
+      }
+    }
+  });
+  return {
+    proc,
+    cmd: "podman",
+    args: execArgs,
+    cwd,
+    authRuntime,
+    containerName: info.name,
+  };
+}
+
 export function initCodexProjectRunner(): void {
   setCodexProjectSpawner({
     async spawnCodexExec({ projectId, accountId, args, cwd, env: extraEnv }) {
-      const authRuntime = await resolveCodexAuthRuntime({ projectId, accountId });
-      logResolvedCodexAuthRuntime(projectId, accountId, authRuntime);
-      const key = leaseKey(projectId, authRuntime.contextId);
-      const release = await containerLeases.acquire(key);
-      let info: ContainerInfo | undefined;
-      try {
-        info = await ensureContainer({ projectId, authRuntime, extraEnv });
-      } catch (err) {
-        await release();
-        throw err;
-      }
-
       const hasSandboxFlag =
         args.includes("--full-auto") ||
         args.includes("--dangerously-bypass-approvals-and-sandbox") ||
@@ -249,37 +333,19 @@ export function initCodexProjectRunner(): void {
           "codex project: missing sandbox flag; defaulting to --full-auto",
         );
       }
-      const execArgs: string[] = [
-        "exec",
-        "-i",
-        "--workdir",
-        cwd && cwd.startsWith("/") ? cwd : "/root",
-        "-e",
-        "HOME=/root",
-        ...Object.entries(authRuntime.env).flatMap(([key, val]) => [
-          "-e",
-          `${key}=${val}`,
-        ]),
-        info.name,
-        info.codexPath,
-        ...(hasSandboxFlag ? args : ["--full-auto", ...args]),
-      ];
-      logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
-      const proc = spawn("podman", execArgs, {
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      proc.on("exit", async () => {
-        try {
-          await release();
-        } finally {
-          void touchProjectLastEdited(projectId, "codex");
-        }
+      const spawned = await spawnCodexInProjectContainer({
+        projectId,
+        accountId,
+        cwd,
+        env: extraEnv,
+        args: hasSandboxFlag ? args : ["--full-auto", ...args],
+        touchReason: "codex",
       });
       return {
-        proc,
-        cmd: "podman",
-        args: execArgs,
-        cwd,
+        proc: spawned.proc,
+        cmd: spawned.cmd,
+        args: spawned.args,
+        cwd: spawned.cwd,
       };
     },
   });

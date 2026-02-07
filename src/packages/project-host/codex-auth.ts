@@ -84,6 +84,29 @@ function sharedHomeRuntime({
   };
 }
 
+export function resolveSubscriptionCodexHome(accountId: string): string | undefined {
+  const subscriptionRoot = process.env.COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT;
+  if (!subscriptionRoot) return undefined;
+  return join(subscriptionRoot, accountId);
+}
+
+export function subscriptionRuntime({
+  projectId,
+  accountId,
+  codexHome,
+}: {
+  projectId: string;
+  accountId: string;
+  codexHome?: string;
+}): CodexAuthRuntime {
+  return {
+    source: "subscription",
+    contextId: hashText(`subscription:${projectId}:${accountId}`).slice(0, 16),
+    codexHome,
+    env: {},
+  };
+}
+
 export async function resolveCodexAuthRuntime({
   projectId,
   accountId,
@@ -115,20 +138,11 @@ export async function resolveCodexAuthRuntime({
   const siteKey = process.env.COCALC_CODEX_AUTH_SITE_OPENAI_KEY;
 
   if (accountId) {
-    const subscriptionRoot = process.env.COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT;
-    if (subscriptionRoot) {
-      const codexHome = join(subscriptionRoot, accountId);
+    const codexHome = resolveSubscriptionCodexHome(accountId);
+    if (codexHome) {
       const authFile = join(codexHome, "auth.json");
       if (await pathExists(authFile)) {
-        return {
-          source: "subscription",
-          contextId: hashText(`subscription:${projectId}:${accountId}`).slice(
-            0,
-            16,
-          ),
-          codexHome,
-          env: {},
-        };
+        return subscriptionRuntime({ projectId, accountId, codexHome });
       }
     }
   }

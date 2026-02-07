@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import {
+  resolveSubscriptionCodexHome,
+  subscriptionRuntime,
+} from "./codex-auth";
+import { spawnCodexInProjectContainer } from "./codex-project";
 
 const logger = getLogger("project-host:codex-device-auth");
 
@@ -10,6 +14,7 @@ type DeviceAuthState = "pending" | "completed" | "failed" | "canceled";
 
 type DeviceAuthSession = {
   id: string;
+  projectId: string;
   accountId: string;
   codexHome: string;
   proc: ChildProcess;
@@ -60,32 +65,37 @@ function appendOutput(session: DeviceAuthSession, chunk: string): void {
   updateParsedHints(session);
 }
 
-function subscriptionRootPath(): string {
-  const root = process.env.COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT;
-  if (!root) {
+export async function startCodexDeviceAuth(
+  projectId: string,
+  accountId: string,
+): Promise<ReturnType<typeof snapshot>> {
+  const codexHome = resolveSubscriptionCodexHome(accountId);
+  if (!codexHome) {
     throw new Error(
       "COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT must be set for device auth",
     );
   }
-  return root;
-}
-
-export async function startCodexDeviceAuth(
-  accountId: string,
-): Promise<ReturnType<typeof snapshot>> {
-  const root = subscriptionRootPath();
-  const codexHome = join(root, accountId);
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
-  const id = randomUUID();
-  const proc = spawn("codex", ["login", "--device-auth"], {
-    env: {
-      ...process.env,
-      CODEX_HOME: codexHome,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
+  // Ensure we run in subscription auth mode (not key/shared-home fallback)
+  // while performing device login.
+  const authRuntime = subscriptionRuntime({
+    projectId,
+    accountId,
+    codexHome,
   });
+
+  const spawned = await spawnCodexInProjectContainer({
+    projectId,
+    accountId,
+    args: ["login", "--device-auth"],
+    authRuntime,
+    touchReason: "codex-device-auth",
+  });
+  const id = randomUUID();
+  const proc = spawned.proc;
   const session: DeviceAuthSession = {
     id,
+    projectId,
     accountId,
     codexHome,
     proc,
@@ -104,6 +114,7 @@ export async function startCodexDeviceAuth(
     session.updatedAt = Date.now();
     logger.warn("codex device auth spawn error", {
       id,
+      projectId,
       accountId,
       err: `${err}`,
     });
@@ -123,6 +134,7 @@ export async function startCodexDeviceAuth(
     }
     logger.debug("codex device auth exited", {
       id,
+      projectId,
       accountId,
       state: session.state,
       code,
@@ -136,6 +148,7 @@ export async function startCodexDeviceAuth(
 function snapshot(session: DeviceAuthSession) {
   return {
     id: session.id,
+    projectId: session.projectId,
     accountId: session.accountId,
     codexHome: session.codexHome,
     state: session.state,
