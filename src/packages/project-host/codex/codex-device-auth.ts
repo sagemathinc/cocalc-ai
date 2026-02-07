@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { type ChildProcess } from "node:child_process";
-import { mkdir } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
 import {
+  ensureCodexCredentialsStoreFile,
   resolveSubscriptionCodexHome,
   subscriptionRuntime,
 } from "./codex-auth";
@@ -75,7 +75,7 @@ export async function startCodexDeviceAuth(
       "COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT must be set for device auth",
     );
   }
-  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  await ensureCodexCredentialsStoreFile(codexHome);
   // Ensure we run in subscription auth mode (not key/shared-home fallback)
   // while performing device login.
   const authRuntime = subscriptionRuntime({

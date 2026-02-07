@@ -43,7 +43,7 @@ import {
   startCodexDeviceAuth,
   getCodexDeviceAuthStatus,
   cancelCodexDeviceAuth,
-} from "../codex-device-auth";
+} from "../codex/codex-device-auth";
 
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;

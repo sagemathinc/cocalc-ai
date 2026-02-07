@@ -107,6 +107,37 @@ export function subscriptionRuntime({
   };
 }
 
+const CODEX_CREDENTIAL_STORE_SETTING = 'cli_auth_credentials_store = "file"';
+
+function upsertCredentialStoreSetting(configToml: string): string {
+  const settingPattern =
+    /^(?!\s*#)\s*cli_auth_credentials_store\s*=\s*.*$/m;
+  if (settingPattern.test(configToml)) {
+    return configToml.replace(settingPattern, CODEX_CREDENTIAL_STORE_SETTING);
+  }
+  if (!configToml.trim()) {
+    return `${CODEX_CREDENTIAL_STORE_SETTING}\n`;
+  }
+  const suffix = configToml.endsWith("\n") ? "" : "\n";
+  return `${configToml}${suffix}${CODEX_CREDENTIAL_STORE_SETTING}\n`;
+}
+
+export async function ensureCodexCredentialsStoreFile(
+  codexHome: string,
+): Promise<void> {
+  await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
+  const configPath = join(codexHome, "config.toml");
+  let raw = "";
+  try {
+    raw = await fs.readFile(configPath, "utf8");
+  } catch {
+    raw = "";
+  }
+  const updated = upsertCredentialStoreSetting(raw);
+  if (updated === raw) return;
+  await fs.writeFile(configPath, updated, { mode: 0o600 });
+}
+
 export async function resolveCodexAuthRuntime({
   projectId,
   accountId,
@@ -142,6 +173,16 @@ export async function resolveCodexAuthRuntime({
     if (codexHome) {
       const authFile = join(codexHome, "auth.json");
       if (await pathExists(authFile)) {
+        try {
+          await ensureCodexCredentialsStoreFile(codexHome);
+        } catch (err) {
+          logger.warn("failed to ensure codex file credential store setting", {
+            projectId,
+            accountId,
+            codexHome,
+            err: `${err}`,
+          });
+        }
         return subscriptionRuntime({ projectId, accountId, codexHome });
       }
     }

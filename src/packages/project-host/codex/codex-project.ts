@@ -13,8 +13,8 @@ import { networkArgument } from "@cocalc/project-runner/run/podman";
 import { mountArg } from "@cocalc/backend/podman";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
-import { getProject } from "./sqlite/projects";
-import { touchProjectLastEdited } from "./last-edited";
+import { getProject } from "../sqlite/projects";
+import { touchProjectLastEdited } from "../last-edited";
 import {
   type CodexAuthRuntime,
   logResolvedCodexAuthRuntime,
