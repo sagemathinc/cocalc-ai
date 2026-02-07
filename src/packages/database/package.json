@@ -31,7 +31,7 @@
     "immutable": "^4.3.0",
     "lodash": "^4.17.21",
     "lru-cache": "^7.18.3",
-    "pg": "^8.7.1",
+    "pg": "^8.16.3",
     "random-key": "^0.3.2",
     "read": "^1.0.7",
     "sql-string-escape": "^1.1.6",
@@ -40,18 +40,21 @@
   "devDependencies": {
     "@types/lodash": "^4.17.20",
     "@types/node": "^22.10.10",
-    "@types/pg": "^8.6.1",
-    "coffeescript": "^2.5.1"
+    "@types/pg": "^8.16.0"
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "build": "../node_modules/.bin/tsc  --build && coffee -c -o dist/ ./",
+    "build": "../node_modules/.bin/tsc  --build",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "test": "pnpm test:pglite",
     "test:both": "pnpm test:psql && pnpm test:pglite",
-    "test:psql": "NODE_NO_WARNINGS=1 pnpm exec jest --forceExit --maxWorkers=1",
-    "test:pglite": "NODE_NO_WARNINGS=1 COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' pnpm exec jest  --forceExit",
+    "test:psql": "NODE_NO_WARNINGS=1 pnpm exec jest --forceExit --maxWorkers=1 $JEST_EXTRA_ARGS",
+    "test:psql:debug": "JEST_EXTRA_ARGS=--detectOpenHandles pnpm run test:psql",
+    "test:pglite": "NODE_NO_WARNINGS=1 COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' pnpm exec jest  --forceExit $JEST_EXTRA_ARGS",
+    "test:pglite:serial": "JEST_EXTRA_ARGS=--runInBand pnpm run test:pglite",
+    "test:pglite:debug": "JEST_EXTRA_ARGS=--detectOpenHandles pnpm run test:pglite",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" | grep -Ev '\\.coffee|coffee$'",
+    "coverage": "pnpm exec jest --coverage --forceExit --runInBand",
     "prepublishOnly": "pnpm test"
   },
   "repository": {

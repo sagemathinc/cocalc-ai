@@ -6,7 +6,10 @@ import { createIndexesQueries } from "./indexes";
 import { createTable } from "./table";
 import getLogger from "@cocalc/backend/logger";
 import { SCHEMA } from "@cocalc/util/schema";
-import { dropDeprecatedTables } from "./drop-deprecated-tables";
+import {
+  dropDeprecatedTables,
+  hasDeprecatedTables,
+} from "./drop-deprecated-tables";
 import { primaryKeys } from "./table";
 import { isEqual } from "lodash";
 
@@ -74,6 +77,10 @@ function parseTriggerDependencyError(
   }
   return { trigger, table: normalizedTable };
 }
+type ColumnAction = {
+  action: "alter" | "add";
+  column: string;
+};
 
 async function alterColumnOfTable(
   db: Client,
@@ -138,12 +145,12 @@ async function alterColumnOfTable(
   }
 }
 
-async function syncTableSchemaColumns(
+async function getColumnActions(
   db: Client,
   schema: TableSchema,
-): Promise<void> {
-  // log.debug("syncTableSchemaColumns", "table = ", schema.name);
+): Promise<ColumnAction[]> {
   const columnTypeInfo = await getColumnTypeInfo(db, schema.name);
+  const actions: ColumnAction[] = [];
 
   for (const column in schema.fields) {
     const info = schema.fields[column];
@@ -151,25 +158,44 @@ async function syncTableSchemaColumns(
     if (cur_type != null) {
       cur_type = cur_type.split(" ")[0];
     }
-    let goal_type = pgType(info).toLowerCase().split(" ")[0];
-    if (goal_type === "serial") {
-      // We can't do anything with this (or we could, but it's way too complicated).
-      continue;
-    }
-    if (goal_type.slice(0, 4) === "char") {
-      // we do NOT support changing between fixed length and variable length strength
-      goal_type = "var" + goal_type;
+    const goal_type_raw = pgType(info).toLowerCase();
+    let goal_type = goal_type_raw;
+    if (goal_type_raw.includes("[]")) {
+      goal_type = "array";
+    } else {
+      goal_type = goal_type_raw.split(" ")[0];
+      if (goal_type === "serial") {
+        // We can't do anything with this (or we could, but it's way too complicated).
+        continue;
+      }
+      if (goal_type.slice(0, 4) === "char") {
+        // we do NOT support changing between fixed length and variable length strength
+        goal_type = "var" + goal_type;
+      }
     }
     if (cur_type == null) {
       // column is in our schema, but not in the actual database
-      await alterColumnOfTable(db, schema, "add", column);
+      actions.push({ action: "add", column });
     } else if (cur_type !== goal_type) {
-      if (goal_type.includes("[]") || goal_type.includes("varchar")) {
+      if (goal_type_raw.includes("[]") || goal_type_raw.includes("varchar")) {
         // NO support for array or varchar schema changes (even detecting)!
         continue;
       }
-      await alterColumnOfTable(db, schema, "alter", column);
+      actions.push({ action: "alter", column });
     }
+  }
+
+  return actions;
+}
+
+async function syncTableSchemaColumns(
+  db: Client,
+  schema: TableSchema,
+): Promise<void> {
+  log.debug("syncTableSchemaColumns", "table = ", schema.name);
+  const actions = await getColumnActions(db, schema);
+  for (const { action, column } of actions) {
+    await alterColumnOfTable(db, schema, action, column);
   }
 }
 
@@ -214,33 +240,54 @@ async function updateIndex(
   }
 }
 
-async function syncTableSchemaIndexes(
+type IndexAction = {
+  action: "create" | "delete";
+  name: string;
+  query?: string;
+  unique?: boolean;
+};
+
+async function getIndexActions(
   db: Client,
   schema: TableSchema,
-): Promise<void> {
-  //   const dbg = (...args) =>
-  //     log.debug("syncTableSchemaIndexes", "table = ", schema.name, ...args);
-  //   dbg();
-
+): Promise<IndexAction[]> {
   const curIndexes = await getCurrentIndexes(db, schema.name);
-  //dbg("curIndexes", curIndexes);
-
-  // these are the indexes we are supposed to have
-
   const goalIndexes = createIndexesQueries(schema);
-  // dbg("goalIndexes", goalIndexes);
   const goalIndexNames = new Set<string>();
+  const actions: IndexAction[] = [];
+
   for (const x of goalIndexes) {
     goalIndexNames.add(x.name);
     if (!curIndexes.has(x.name)) {
-      await updateIndex(db, schema.name, "create", x.name, x.query, x.unique);
+      actions.push({
+        action: "create",
+        name: x.name,
+        query: x.query,
+        unique: x.unique,
+      });
     }
   }
   for (const name of curIndexes) {
     // only delete indexes that end with _idx; don't want to delete, e.g., pkey primary key indexes.
     if (name.endsWith("_idx") && !goalIndexNames.has(name)) {
-      await updateIndex(db, schema.name, "delete", name);
+      actions.push({ action: "delete", name });
     }
+  }
+
+  return actions;
+}
+
+async function syncTableSchemaIndexes(
+  db: Client,
+  schema: TableSchema,
+): Promise<void> {
+  const dbg = (...args) =>
+    log.debug("syncTableSchemaIndexes", "table = ", schema.name, ...args);
+  dbg();
+  const actions = await getIndexActions(db, schema);
+  dbg("indexActions", actions);
+  for (const { action, name, query, unique } of actions) {
+    await updateIndex(db, schema.name, action, name, query, unique);
   }
 }
 
@@ -337,20 +384,76 @@ export async function syncSchema(
   }
 }
 
+export async function schemaNeedsSync(
+  dbSchema: DBSchema = SCHEMA,
+  role?: string,
+): Promise<boolean> {
+  const dbg = (...args) => log.info("schemaNeedsSync", { role }, ...args);
+  dbg("checking schema");
+
+  const db = getClient();
+  try {
+    await db.connect();
+    if (role) {
+      await db.query(`SET ROLE ${role}`);
+    }
+    if (await hasDeprecatedTables(db)) {
+      dbg("detected deprecated tables");
+      return true;
+    }
+
+    const allTables = await getAllTables(db);
+    const missingTables = await getMissingTables(dbSchema, allTables);
+    if (missingTables.size > 0) {
+      dbg("detected missing tables", missingTables);
+      return true;
+    }
+
+    for (const table of allTables) {
+      const schema = dbSchema[table];
+      if (schema == null || schema.external || schema.virtual) {
+        continue;
+      }
+      const columnActions = await getColumnActions(db, schema);
+      if (columnActions.length > 0) {
+        dbg("detected column changes needed", schema.name, columnActions);
+        return true;
+      }
+      const indexActions = await getIndexActions(db, schema);
+      if (indexActions.length > 0) {
+        dbg("detected index changes needed", schema.name, indexActions);
+        return true;
+      }
+      const primaryKeyDiff = await getPrimaryKeyDiff(db, schema);
+      if (primaryKeyDiff != null) {
+        dbg("detected primary key changes needed", schema.name, primaryKeyDiff);
+        return true;
+      }
+    }
+    dbg("schema matches");
+    return false;
+  } catch (err) {
+    dbg("FAILED to check schema", { role }, err);
+    throw err;
+  } finally {
+    db.end();
+  }
+}
+
 async function syncTableSchemaPrimaryKeys(
   db: Client,
   schema: TableSchema,
 ): Promise<void> {
-  // log.debug("syncTableSchemaPrimaryKeys", "table = ", schema.name);
-  const actualPrimaryKeys = (await getPrimaryKeys(db, schema.name)).sort();
-  const goalPrimaryKeys = primaryKeys(schema.name).sort();
-  if (isEqual(actualPrimaryKeys, goalPrimaryKeys)) {
+  log.debug("syncTableSchemaPrimaryKeys", "table = ", schema.name);
+  const primaryKeyDiff = await getPrimaryKeyDiff(db, schema);
+  if (primaryKeyDiff == null) {
     return;
   }
-  //   log.debug("syncTableSchemaPrimaryKeys", "table = ", schema.name, {
-  //     actualPrimaryKeys,
-  //     goalPrimaryKeys,
-  //   });
+  const { actualPrimaryKeys, goalPrimaryKeys } = primaryKeyDiff;
+  log.debug("syncTableSchemaPrimaryKeys", "table = ", schema.name, {
+    actualPrimaryKeys,
+    goalPrimaryKeys,
+  });
   for (const key of goalPrimaryKeys) {
     if (!actualPrimaryKeys.includes(key)) {
       const defaultValue = schema.default_primary_key_value?.[key];
@@ -384,4 +487,22 @@ WHERE  i.indrelid = '${table}'::regclass
 AND    i.indisprimary
 `);
   return rows.map((row) => row.name);
+}
+
+async function getPrimaryKeyDiff(
+  db: Client,
+  schema: TableSchema,
+): Promise<
+  | {
+      actualPrimaryKeys: string[];
+      goalPrimaryKeys: string[];
+    }
+  | undefined
+> {
+  const actualPrimaryKeys = (await getPrimaryKeys(db, schema.name)).sort();
+  const goalPrimaryKeys = primaryKeys(schema.name).sort();
+  if (isEqual(actualPrimaryKeys, goalPrimaryKeys)) {
+    return undefined;
+  }
+  return { actualPrimaryKeys, goalPrimaryKeys };
 }

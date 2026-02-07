@@ -399,7 +399,7 @@ importers:
         specifier: ^7.18.3
         version: 7.18.3
       pg:
-        specifier: ^8.7.1
+        specifier: ^8.16.3
         version: 8.16.3
       random-key:
         specifier: ^0.3.2
@@ -421,11 +421,8 @@ importers:
         specifier: ^22.10.10
         version: 22.19.1
       '@types/pg':
-        specifier: ^8.6.1
-        version: 8.15.6
-      coffeescript:
-        specifier: ^2.5.1
-        version: 2.7.0
+        specifier: ^8.16.0
+        version: 8.16.0
 
   file-server:
     dependencies:
@@ -1204,7 +1201,7 @@ importers:
         specifier: ^1.2.2
         version: 1.2.2
       pg:
-        specifier: ^8.7.1
+        specifier: ^8.16.3
         version: 8.16.3
       react:
         specifier: ^19.2.1
@@ -5401,8 +5398,8 @@ packages:
   '@types/pbf@3.0.5':
     resolution: {integrity: sha512-j3pOPiEcWZ34R6a6mN07mUkM4o4Lwf6hPNt8eilOeZhTFbxFXmKhvXl9Y28jotFPaI1bpPDJsbCprUoNke6OrA==}
 
-  '@types/pg@8.15.6':
-    resolution: {integrity: sha512-NoaMtzhxOrubeL/7UZuNTrejB4MPAJ0RpxZqXQf2qXuVlTPuG6Y8p4u9dKRaue4yjmC7ZhzVO2/Yyyn25znrPQ==}
+  '@types/pg@8.16.0':
+    resolution: {integrity: sha512-RmhMd/wD+CF8Dfo+cVIy3RR5cl8CyfXQ0tGgW6XBL8L4LM/UTEbNXYRbLwU6w+CgrKBNbrQWt4FUtTfaU5jSYQ==}
 
   '@types/primus@7.3.9':
     resolution: {integrity: sha512-5dZ/vciGvoNxXzbDksgu3OUQ00SOQMleKVNDA7HgsB/qlhL/HayKreKCrchO+nMjGU2NHpy90g80cdzCeevxKg==}
@@ -17194,7 +17191,7 @@ snapshots:
 
   '@types/pbf@3.0.5': {}
 
-  '@types/pg@8.15.6':
+  '@types/pg@8.16.0':
     dependencies:
       '@types/node': 22.19.1
       pg-protocol: 1.10.3
