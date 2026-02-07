@@ -7,7 +7,7 @@ import type { PostgreSQL } from "../types";
 
 export interface SetProjectHostOptions {
   project_id: string;
-  host: string;
+  host_id: string;
 }
 
 export async function setProjectHost(
@@ -18,8 +18,8 @@ export async function setProjectHost(
 
   await db.async_query({
     query: "UPDATE projects",
-    jsonb_set: {
-      host: { host: opts.host, assigned },
+    set: {
+      host_id: opts.host_id,
     },
     where: { "project_id :: UUID = $": opts.project_id },
   });
@@ -38,7 +38,7 @@ export async function unsetProjectHost(
   await db.async_query({
     query: "UPDATE projects",
     set: {
-      host: null,
+      host_id: null,
     },
     where: { "project_id :: UUID = $": opts.project_id },
   });
@@ -53,7 +53,7 @@ export async function getProjectHost(
   opts: GetProjectHostOptions,
 ): Promise<string | undefined> {
   const { rows } = await db.async_query({
-    query: "SELECT host#>>'{host}' AS host FROM projects",
+    query: "SELECT host_id FROM projects",
     where: { "project_id :: UUID = $": opts.project_id },
   });
 
@@ -61,7 +61,7 @@ export async function getProjectHost(
     return undefined;
   }
 
-  const host = rows[0].host;
+  const host = rows[0].host_id;
   // SQL returns null for missing values, but we want undefined
   return host ?? undefined;
 }

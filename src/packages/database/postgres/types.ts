@@ -452,7 +452,7 @@ export interface PostgreSQLMethods extends EventEmitter {
   get_open_unused_projects(opts: {
     min_age_days?: number;
     max_age_days?: number;
-    host: string;
+    host_id: string;
     cb: CB<string[]>;
   }): void;
 
@@ -476,7 +476,7 @@ export interface PostgreSQLMethods extends EventEmitter {
 
   set_project_host(opts: {
     project_id: string;
-    host: string;
+    host_id: string;
     cb: CB<Date>;
   }): void;
   unset_project_host(opts: { project_id: string; cb: CB }): void;

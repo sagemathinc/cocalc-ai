@@ -12,287 +12,156 @@ import type { PostgreSQL } from "../types";
 
 describe("project host methods", () => {
   const database: PostgreSQL = db();
+  const setProjectHost = callback_opts(
+    database.set_project_host.bind(database),
+  ) as (opts: { project_id: string; host_id: string }) => Promise<Date>;
+  const getProjectHost = callback_opts(
+    database.get_project_host.bind(database),
+  ) as (opts: { project_id: string }) => Promise<string | undefined>;
+  const unsetProjectHost = callback_opts(
+    database.unset_project_host.bind(database),
+  ) as (opts: { project_id: string }) => Promise<void>;
+
+  async function insertProject(project_id: string): Promise<void> {
+    await getPool().query("INSERT INTO projects (project_id) VALUES ($1)", [
+      project_id,
+    ]);
+  }
+
+  async function insertProjectHost(host_id: string, name?: string): Promise<void> {
+    await getPool().query(
+      "INSERT INTO project_hosts (id, name, created, updated) VALUES ($1, $2, NOW(), NOW())",
+      [host_id, name ?? `host-${host_id.slice(0, 8)}`],
+    );
+  }
 
   beforeAll(async () => {
     await initEphemeralDatabase({});
   }, 15000);
+
+  afterEach(async () => {
+    const pool = getPool();
+    await pool.query("DELETE FROM projects");
+    await pool.query("DELETE FROM project_hosts");
+  });
 
   afterAll(async () => {
     await testCleanup();
   });
 
   describe("set_project_host and get_project_host", () => {
-    it("sets and retrieves project host", async () => {
-      const pool = getPool();
+    it("sets and retrieves project host_id", async () => {
       const projectId = uuid();
-      const hostName = "compute-server-01";
+      const hostId = uuid();
+      await insertProject(projectId);
+      await insertProjectHost(hostId, "compute-server-01");
 
-      // Create project
-      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
-        projectId,
-      ]);
-
-      // Set project host
       const before = Date.now();
-      const assigned = await callback_opts(
-        database.set_project_host.bind(database),
-      )({
+      const assigned = await setProjectHost({
         project_id: projectId,
-        host: hostName,
+        host_id: hostId,
       });
       const after = Date.now();
 
-      // Verify assigned timestamp is returned and is recent
       expect(assigned).toBeInstanceOf(Date);
       expect(assigned.getTime()).toBeGreaterThanOrEqual(before);
       expect(assigned.getTime()).toBeLessThanOrEqual(after);
 
-      // Get project host
-      const result = await callback_opts(
-        database.get_project_host.bind(database),
-      )({
-        project_id: projectId,
-      });
-
-      expect(result).toBe(hostName);
+      const result = await getProjectHost({ project_id: projectId });
+      expect(result).toBe(hostId);
     });
 
-    it("returns undefined for project without host", async () => {
-      const pool = getPool();
+    it("returns undefined for project without host_id", async () => {
       const projectId = uuid();
+      await insertProject(projectId);
 
-      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
-        projectId,
-      ]);
-
-      const result = await callback_opts(
-        database.get_project_host.bind(database),
-      )({
-        project_id: projectId,
-      });
-
+      const result = await getProjectHost({ project_id: projectId });
       expect(result).toBeUndefined();
     });
 
-    it("updates host when set multiple times", async () => {
-      const pool = getPool();
+    it("updates host_id when set multiple times", async () => {
       const projectId = uuid();
+      const hostId1 = uuid();
+      const hostId2 = uuid();
 
-      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
-        projectId,
-      ]);
+      await insertProject(projectId);
+      await insertProjectHost(hostId1, "server-01");
+      await insertProjectHost(hostId2, "server-02");
 
-      // Set first host
-      const host1 = "server-01";
-      const assigned1 = await callback_opts(
-        database.set_project_host.bind(database),
-      )({
+      const assigned1 = await setProjectHost({
         project_id: projectId,
-        host: host1,
+        host_id: hostId1,
       });
+      expect(await getProjectHost({ project_id: projectId })).toBe(hostId1);
 
-      let result = await callback_opts(
-        database.get_project_host.bind(database),
-      )({
-        project_id: projectId,
-      });
-      expect(result).toBe(host1);
-
-      // Wait a bit to ensure different timestamp
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      // Set second host
-      const host2 = "server-02";
-      const assigned2 = await callback_opts(
-        database.set_project_host.bind(database),
-      )({
+      const assigned2 = await setProjectHost({
         project_id: projectId,
-        host: host2,
+        host_id: hostId2,
       });
-
-      // Verify second assignment is later
       expect(assigned2.getTime()).toBeGreaterThan(assigned1.getTime());
-
-      result = await callback_opts(database.get_project_host.bind(database))({
-        project_id: projectId,
-      });
-      expect(result).toBe(host2);
+      expect(await getProjectHost({ project_id: projectId })).toBe(hostId2);
     });
 
-    it("handles various host name formats", async () => {
-      const pool = getPool();
-      const projectId = uuid();
-
-      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
-        projectId,
-      ]);
-
-      const hostNames = [
-        "simple-host",
-        "host.with.dots",
-        "host-with-dashes",
-        "192.168.1.100",
-        "host_with_underscores",
-      ];
-
-      for (const hostName of hostNames) {
-        await callback_opts(database.set_project_host.bind(database))({
-          project_id: projectId,
-          host: hostName,
-        });
-
-        const result = await callback_opts(
-          database.get_project_host.bind(database),
-        )({
-          project_id: projectId,
-        });
-
-        expect(result).toBe(hostName);
-      }
-    });
   });
 
   describe("unset_project_host", () => {
-    it("unsets project host", async () => {
-      const pool = getPool();
+    it("unsets project host_id", async () => {
       const projectId = uuid();
-      const hostName = "compute-server-01";
+      const hostId = uuid();
 
-      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
-        projectId,
-      ]);
-
-      // Set host
-      await callback_opts(database.set_project_host.bind(database))({
+      await insertProject(projectId);
+      await insertProjectHost(hostId, "compute-server-01");
+      await setProjectHost({
         project_id: projectId,
-        host: hostName,
+        host_id: hostId,
       });
 
-      // Verify host is set
-      let result = await callback_opts(
-        database.get_project_host.bind(database),
-      )({
-        project_id: projectId,
-      });
-      expect(result).toBe(hostName);
-
-      // Unset host
-      await callback_opts(database.unset_project_host.bind(database))({
-        project_id: projectId,
-      });
-
-      // Verify host is unset
-      result = await callback_opts(database.get_project_host.bind(database))({
-        project_id: projectId,
-      });
-      expect(result).toBeUndefined();
+      expect(await getProjectHost({ project_id: projectId })).toBe(hostId);
+      await unsetProjectHost({ project_id: projectId });
+      expect(await getProjectHost({ project_id: projectId })).toBeUndefined();
     });
 
-    it("unset succeeds even if host was never set", async () => {
-      const pool = getPool();
+    it("unset succeeds even if host_id was never set", async () => {
       const projectId = uuid();
+      await insertProject(projectId);
 
-      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
-        projectId,
-      ]);
-
-      // Unset host (even though it was never set)
-      await callback_opts(database.unset_project_host.bind(database))({
-        project_id: projectId,
-      });
-
-      // Verify host is still undefined
-      const result = await callback_opts(
-        database.get_project_host.bind(database),
-      )({
-        project_id: projectId,
-      });
-      expect(result).toBeUndefined();
+      await unsetProjectHost({ project_id: projectId });
+      expect(await getProjectHost({ project_id: projectId })).toBeUndefined();
     });
 
-    it("can set host again after unsetting", async () => {
-      const pool = getPool();
+    it("can set host_id again after unsetting", async () => {
       const projectId = uuid();
+      const hostId1 = uuid();
+      const hostId2 = uuid();
 
-      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
-        projectId,
-      ]);
+      await insertProject(projectId);
+      await insertProjectHost(hostId1, "server-01");
+      await insertProjectHost(hostId2, "server-02");
 
-      // Set, unset, set again
-      await callback_opts(database.set_project_host.bind(database))({
-        project_id: projectId,
-        host: "server-01",
-      });
+      await setProjectHost({ project_id: projectId, host_id: hostId1 });
+      await unsetProjectHost({ project_id: projectId });
+      await setProjectHost({ project_id: projectId, host_id: hostId2 });
 
-      await callback_opts(database.unset_project_host.bind(database))({
-        project_id: projectId,
-      });
-
-      await callback_opts(database.set_project_host.bind(database))({
-        project_id: projectId,
-        host: "server-02",
-      });
-
-      const result = await callback_opts(
-        database.get_project_host.bind(database),
-      )({
-        project_id: projectId,
-      });
-      expect(result).toBe("server-02");
+      expect(await getProjectHost({ project_id: projectId })).toBe(hostId2);
     });
   });
 
-  describe("edge cases", () => {
-    it("handles empty string as host", async () => {
-      const pool = getPool();
+  describe("storage behavior", () => {
+    it("stores host_id in the projects table", async () => {
       const projectId = uuid();
+      const hostId = uuid();
 
-      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
-        projectId,
-      ]);
+      await insertProject(projectId);
+      await insertProjectHost(hostId, "server-01");
+      await setProjectHost({ project_id: projectId, host_id: hostId });
 
-      await callback_opts(database.set_project_host.bind(database))({
-        project_id: projectId,
-        host: "",
-      });
-
-      const result = await callback_opts(
-        database.get_project_host.bind(database),
-      )({
-        project_id: projectId,
-      });
-      expect(result).toBe("");
-    });
-
-    it("preserves assigned timestamp in JSONB structure", async () => {
-      const pool = getPool();
-      const projectId = uuid();
-
-      await pool.query("INSERT INTO projects (project_id) VALUES ($1)", [
-        projectId,
-      ]);
-
-      const assigned = await callback_opts(
-        database.set_project_host.bind(database),
-      )({
-        project_id: projectId,
-        host: "server-01",
-      });
-
-      // Query the full JSONB structure
-      const { rows } = await pool.query(
-        "SELECT host FROM projects WHERE project_id = $1",
+      const { rows } = await getPool().query(
+        "SELECT host_id FROM projects WHERE project_id = $1",
         [projectId],
       );
-
-      expect(rows[0].host).toMatchObject({
-        host: "server-01",
-        assigned: expect.any(String), // ISO timestamp string in JSONB
-      });
-
-      // Verify assigned timestamp matches
-      const storedAssigned = new Date(rows[0].host.assigned);
-      expect(storedAssigned.getTime()).toBe(assigned.getTime());
+      expect(rows[0].host_id).toBe(hostId);
     });
   });
 });

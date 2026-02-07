@@ -379,7 +379,7 @@ export async function recently_modified_projects(
 export interface GetOpenUnusedProjectsOptions {
   min_age_days?: number;
   max_age_days?: number;
-  host: string;
+  host_id: string;
 }
 
 export async function get_open_unused_projects(
@@ -396,7 +396,8 @@ export async function get_open_unused_projects(
       where: [
         { "last_edited >= $::TIMESTAMP": days_ago(max_age_days) },
         { "last_edited <= $::TIMESTAMP": days_ago(min_age_days) },
-        { "host#>>'{host}' = $::TEXT": opts.host },
+        { "host_id :: UUID = $": opts.host_id },
+        "host_id IN (SELECT id FROM project_hosts WHERE deleted IS NULL)",
         "state#>>'{state}' = 'opened'",
       ],
     },

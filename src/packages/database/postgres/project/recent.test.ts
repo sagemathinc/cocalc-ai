@@ -22,7 +22,7 @@ describe("recent project queries", () => {
   ) as (opts: {
     min_age_days?: number;
     max_age_days?: number;
-    host: string;
+    host_id: string;
   }) => Promise<string[]>;
   const recentProjectsLegacy = callback_opts(
     database.recent_projects.bind(database),
@@ -41,7 +41,7 @@ describe("recent project queries", () => {
   async function getOpenUnusedProjects(opts: {
     min_age_days?: number;
     max_age_days?: number;
-    host: string;
+    host_id: string;
   }): Promise<string[]> {
     return getOpenUnusedProjectsLegacy(opts);
   }
@@ -54,25 +54,34 @@ describe("recent project queries", () => {
     return recentProjectsLegacy(opts);
   }
 
+  async function insertProjectHost(opts: {
+    host_id: string;
+    name?: string;
+  }): Promise<void> {
+    const pool = getPool();
+    await pool.query(
+      "INSERT INTO project_hosts (id, name, created, updated) VALUES ($1, $2, NOW(), NOW())",
+      [opts.host_id, opts.name ?? `host-${opts.host_id.slice(0, 8)}`],
+    );
+  }
+
   async function insertProject(opts: {
     project_id: string;
     last_edited: Date;
-    host?: string;
+    host_id?: string;
     state?: string;
   }): Promise<void> {
     const pool = getPool();
-    const hostValue =
-      opts.host == null ? null : JSON.stringify({ host: opts.host });
     const stateValue =
       opts.state == null ? null : JSON.stringify({ state: opts.state });
     await pool.query(
-      "INSERT INTO projects (project_id, title, users, last_edited, host, state) VALUES ($1, $2, $3, $4, $5, $6)",
+      "INSERT INTO projects (project_id, title, users, last_edited, host_id, state) VALUES ($1, $2, $3, $4, $5, $6)",
       [
         opts.project_id,
         "Test Project",
         JSON.stringify({}),
         opts.last_edited,
-        hostValue,
+        opts.host_id ?? null,
         stateValue,
       ],
     );
@@ -85,6 +94,7 @@ describe("recent project queries", () => {
   afterEach(async () => {
     const pool = getPool();
     await pool.query("DELETE FROM projects");
+    await pool.query("DELETE FROM project_hosts");
   });
 
   afterAll(async () => {
@@ -124,48 +134,58 @@ describe("recent project queries", () => {
 
   it("get_open_unused_projects returns projects in the expected window", async () => {
     const now = Date.now();
-    const host = "test-host";
+    const host_id = uuid();
+    const other_host_id = uuid();
     const inWindowId = uuid();
     const tooRecentId = uuid();
     const tooOldId = uuid();
     const wrongHostId = uuid();
     const wrongStateId = uuid();
 
+    await insertProjectHost({
+      host_id,
+      name: "test-host",
+    });
+    await insertProjectHost({
+      host_id: other_host_id,
+      name: "other-host",
+    });
+
     await insertProject({
       project_id: inWindowId,
       last_edited: new Date(now - 60 * 24 * 60 * 60 * 1000),
-      host,
+      host_id,
       state: "opened",
     });
     await insertProject({
       project_id: tooRecentId,
       last_edited: new Date(now - 10 * 24 * 60 * 60 * 1000),
-      host,
+      host_id,
       state: "opened",
     });
     await insertProject({
       project_id: tooOldId,
       last_edited: new Date(now - 200 * 24 * 60 * 60 * 1000),
-      host,
+      host_id,
       state: "opened",
     });
     await insertProject({
       project_id: wrongHostId,
       last_edited: new Date(now - 60 * 24 * 60 * 60 * 1000),
-      host: "other-host",
+      host_id: other_host_id,
       state: "opened",
     });
     await insertProject({
       project_id: wrongStateId,
       last_edited: new Date(now - 60 * 24 * 60 * 60 * 1000),
-      host,
+      host_id,
       state: "running",
     });
 
     const results = await getOpenUnusedProjects({
       min_age_days: 30,
       max_age_days: 120,
-      host,
+      host_id,
     });
     const resultSet = new Set(results);
 
