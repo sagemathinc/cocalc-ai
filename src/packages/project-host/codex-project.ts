@@ -15,6 +15,13 @@ import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
 import { getProject } from "./sqlite/projects";
 import { touchProjectLastEdited } from "./last-edited";
+import {
+  type CodexAuthRuntime,
+  logResolvedCodexAuthRuntime,
+  redactCodexAuthRuntime,
+  resolveCodexAuthRuntime,
+  resolveSharedCodexHome,
+} from "./codex-auth";
 
 const logger = getLogger("project-host:codex-project");
 const CONTAINER_TTL_MS = Number(
@@ -28,8 +35,35 @@ type ContainerInfo = {
   home: string;
 };
 
-function codexContainerName(projectId: string): string {
-  return `codex-${projectId}`;
+function codexContainerName(projectId: string, contextId: string): string {
+  return `codex-${projectId}-${contextId.slice(0, 12)}`;
+}
+
+function leaseKey(projectId: string, contextId: string): string {
+  return `${projectId}:${contextId}`;
+}
+
+function parseLeaseKey(key: string): { projectId: string; contextId: string } {
+  const i = key.indexOf(":");
+  if (i === -1) {
+    return { projectId: key, contextId: "shared-home" };
+  }
+  return { projectId: key.slice(0, i), contextId: key.slice(i + 1) };
+}
+
+function redactPodmanArgs(args: string[]): string {
+  const redacted = [...args];
+  for (let i = 0; i < redacted.length - 1; i++) {
+    if (redacted[i] !== "-e") continue;
+    const raw = redacted[i + 1];
+    const j = raw.indexOf("=");
+    if (j === -1) continue;
+    const key = raw.slice(0, j);
+    if (/(KEY|TOKEN|SECRET|PASSWORD)/i.test(key)) {
+      redacted[i + 1] = `${key}=***`;
+    }
+  }
+  return argsJoin(redacted);
 }
 
 async function podman(args: string[]): Promise<void> {
@@ -86,31 +120,39 @@ async function resolveCodexBinary(): Promise<{
   return { hostPath, containerPath, mount: hostDir };
 }
 
-function resolveCodexHome(): string {
-  return process.env.COCALC_CODEX_HOME ??
-    (process.env.HOME ? join(process.env.HOME, ".codex") : "/root/.codex");
-}
-
 const containerLeases = new RefcountLeaseManager<string>({
   delayMs: CONTAINER_TTL_MS,
-  disposer: async (projectId: string) => {
-    const name = codexContainerName(projectId);
+  disposer: async (key: string) => {
+    const { projectId, contextId } = parseLeaseKey(key);
+    const name = codexContainerName(projectId, contextId);
     try {
       await podman(["rm", "-f", "-t", "0", name]);
     } catch (err) {
-      logger.debug("codex container rm failed", { projectId, err: `${err}` });
+      logger.debug("codex container rm failed", {
+        projectId,
+        contextId,
+        err: `${err}`,
+      });
     }
     await unmount(projectId);
   },
 });
 
-async function ensureContainer(projectId: string): Promise<ContainerInfo> {
+async function ensureContainer({
+  projectId,
+  authRuntime,
+  extraEnv,
+}: {
+  projectId: string;
+  authRuntime: CodexAuthRuntime;
+  extraEnv?: NodeJS.ProcessEnv;
+}): Promise<ContainerInfo> {
   const { home, scratch } = await localPath({ project_id: projectId });
   const image = (await fs.readFile(getImageNamePath(home), "utf8")).trim();
   const rootfs = await mountRootFs({ project_id: projectId, home, config: { image } });
-  const name = codexContainerName(projectId);
+  const name = codexContainerName(projectId, authRuntime.contextId);
   const { containerPath, mount } = await resolveCodexBinary();
-  const codexHome = resolveCodexHome();
+  const codexHome = authRuntime.codexHome ?? resolveSharedCodexHome();
   const projectRow = getProject(projectId);
   const hasGpu =
     projectRow?.run_quota?.gpu === true ||
@@ -135,6 +177,16 @@ async function ensureContainer(projectId: string): Promise<ContainerInfo> {
     HOME: "/root",
     image,
   });
+  for (const key in authRuntime.env) {
+    env[key] = authRuntime.env[key];
+  }
+  if (extraEnv) {
+    for (const key in extraEnv) {
+      if (typeof extraEnv[key] === "string") {
+        env[key] = `${extraEnv[key]}`;
+      }
+    }
+  }
   for (const key in env) {
     args.push("-e", `${key}=${env[key]}`);
   }
@@ -148,19 +200,26 @@ async function ensureContainer(projectId: string): Promise<ContainerInfo> {
     args.push(mountArg({ source: src, target: mounts[src], readOnly: true }));
   }
   args.push(mountArg({ source: mount, target: "/opt/codex/bin", readOnly: true }));
-  try {
-    const stat = await fs.stat(codexHome);
-    if (stat.isDirectory()) {
-      args.push(mountArg({ source: codexHome, target: "/root/.codex" }));
+  if (codexHome) {
+    try {
+      const stat = await fs.stat(codexHome);
+      if (stat.isDirectory()) {
+        args.push(mountArg({ source: codexHome, target: "/root/.codex" }));
+      }
+    } catch {
+      // ignore if codex home missing
     }
-  } catch {
-    // ignore if codex home missing
   }
 
   args.push("--rootfs", rootfs);
   args.push("/bin/sh", "-lc", "sleep infinity");
 
-  logger.debug("codex project container: podman", argsJoin(args));
+  logger.debug("codex project container: podman", {
+    projectId,
+    name,
+    auth: redactCodexAuthRuntime(authRuntime),
+    cmd: redactPodmanArgs(args),
+  });
   await podman(args);
 
   return { name, rootfs, codexPath: containerPath, home };
@@ -168,11 +227,14 @@ async function ensureContainer(projectId: string): Promise<ContainerInfo> {
 
 export function initCodexProjectRunner(): void {
   setCodexProjectSpawner({
-    async spawnCodexExec({ projectId, args, cwd }) {
-      const release = await containerLeases.acquire(projectId);
+    async spawnCodexExec({ projectId, accountId, args, cwd, env: extraEnv }) {
+      const authRuntime = await resolveCodexAuthRuntime({ projectId, accountId });
+      logResolvedCodexAuthRuntime(projectId, accountId, authRuntime);
+      const key = leaseKey(projectId, authRuntime.contextId);
+      const release = await containerLeases.acquire(key);
       let info: ContainerInfo | undefined;
       try {
-        info = await ensureContainer(projectId);
+        info = await ensureContainer({ projectId, authRuntime, extraEnv });
       } catch (err) {
         await release();
         throw err;
@@ -194,11 +256,15 @@ export function initCodexProjectRunner(): void {
         cwd && cwd.startsWith("/") ? cwd : "/root",
         "-e",
         "HOME=/root",
+        ...Object.entries(authRuntime.env).flatMap(([key, val]) => [
+          "-e",
+          `${key}=${val}`,
+        ]),
         info.name,
         info.codexPath,
         ...(hasSandboxFlag ? args : ["--full-auto", ...args]),
       ];
-      logger.debug("codex project: podman exec", argsJoin(execArgs));
+      logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
       const proc = spawn("podman", execArgs, {
         stdio: ["pipe", "pipe", "pipe"],
       });

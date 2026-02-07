@@ -39,6 +39,11 @@ import {
   touchProjectLastEditedRunning,
 } from "../last-edited";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
+import {
+  startCodexDeviceAuth,
+  getCodexDeviceAuthStatus,
+  cancelCodexDeviceAuth,
+} from "../codex-device-auth";
 
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
@@ -372,6 +377,82 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     }
   }
 
+  async function codexDeviceAuthStart({
+    account_id,
+    project_id,
+  }: {
+    account_id?: string;
+    project_id: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+    return await startCodexDeviceAuth(account_id);
+  }
+
+  async function codexDeviceAuthStatus({
+    account_id,
+    project_id,
+    id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+    if (!isValidUUID(id)) {
+      throw Error("invalid id");
+    }
+    const status = getCodexDeviceAuthStatus(id);
+    if (!status || status.accountId !== account_id) {
+      throw Error("unknown device auth id");
+    }
+    return status;
+  }
+
+  async function codexDeviceAuthCancel({
+    account_id,
+    project_id,
+    id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+    if (!isValidUUID(id)) {
+      throw Error("invalid id");
+    }
+    const status = getCodexDeviceAuthStatus(id);
+    if (!status || status.accountId !== account_id) {
+      throw Error("unknown device auth id");
+    }
+    const canceled = cancelCodexDeviceAuth(id);
+    return { id, canceled };
+  }
+
   // Create a project locally and optionally start it.
   hubApi.projects.createProject = createProject;
   hubApi.projects.start = start;
@@ -389,6 +470,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.getBackups = getBackups;
   hubApi.projects.getBackupFiles = getBackupFiles;
   hubApi.projects.getBackupQuota = getBackupQuota;
+  hubApi.projects.codexDeviceAuthStart = codexDeviceAuthStart;
+  hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
+  hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
 }
 
 // Update managed SSH keys for a project without restarting it.
