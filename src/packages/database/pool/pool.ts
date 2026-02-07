@@ -357,14 +357,15 @@ export async function initEphemeralDatabase({
       stack: err.stack,
     });
   });
-  const { rows } = await db.query(
-    "SELECT COUNT(*) AS count FROM pg_catalog.pg_database WHERE datname = $1",
-    [TEST],
-  );
-  //await db.query(`DROP DATABASE IF EXISTS ${TEST}`);
-  const databaseExists = rows[0].count > 0;
-  if (!databaseExists) {
-    await db.query(`CREATE DATABASE ${TEST}`);
+  const escapedTestDb = TEST.replace(/"/g, '""');
+  let databaseExists = false;
+  try {
+    await db.query(`CREATE DATABASE "${escapedTestDb}"`);
+  } catch (err) {
+    if ((err as { code?: string })?.code !== "42P04") {
+      throw err;
+    }
+    databaseExists = true;
   }
   await db.end();
   // sync the schema
