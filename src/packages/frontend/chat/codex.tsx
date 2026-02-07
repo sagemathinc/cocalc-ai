@@ -16,6 +16,7 @@ import {
   React,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -96,6 +97,12 @@ type DeviceAuthStatus = {
   error?: string;
 };
 
+type UploadedAuthFileStatus = {
+  codexHome: string;
+  bytes: number;
+  uploadedAt: number;
+};
+
 type DeviceAuthRateLimitInfo = {
   limited: boolean;
   message?: string;
@@ -172,6 +179,11 @@ export function CodexConfigButton({
   const [deviceAuthError, setDeviceAuthError] = useState<string>("");
   const [deviceAuthActionPending, setDeviceAuthActionPending] =
     useState<boolean>(false);
+  const [authFileUploadPending, setAuthFileUploadPending] =
+    useState<boolean>(false);
+  const [uploadedAuthFileStatus, setUploadedAuthFileStatus] =
+    useState<UploadedAuthFileStatus | null>(null);
+  const authFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const initialModels = DEFAULT_CODEX_MODELS.map((m) => ({
@@ -390,6 +402,37 @@ export function CodexConfigButton({
     }
   };
 
+  const uploadAuthFile = async (file: File) => {
+    if (!projectId) {
+      setDeviceAuthError("No project selected.");
+      return;
+    }
+    setAuthFileUploadPending(true);
+    setDeviceAuthError("");
+    try {
+      const content = await file.text();
+      const result =
+        await webapp_client.conat_client.hub.projects.codexUploadAuthFile({
+          project_id: projectId,
+          filename: file.name,
+          content,
+        });
+      setUploadedAuthFileStatus({
+        codexHome: result.codexHome,
+        bytes: result.bytes,
+        uploadedAt: Date.now(),
+      });
+      void message.success("Auth file uploaded successfully");
+    } catch (err) {
+      setDeviceAuthError(getErrorMessage(err));
+    } finally {
+      setAuthFileUploadPending(false);
+      if (authFileInputRef.current) {
+        authFileInputRef.current.value = "";
+      }
+    }
+  };
+
   useEffect(() => {
     if (
       !open ||
@@ -573,6 +616,20 @@ export function CodexConfigButton({
               <Text type="secondary">
                 Connect a ChatGPT subscription to Codex using device login.
               </Text>
+              <Text type="secondary">
+                <a
+                  href="https://developers.openai.com/codex/auth/#fallback-authenticate-locally-and-copy-your-auth-cache"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Fallback
+                </a>
+                : authenticate locally and upload your
+                {" "}
+                <Text code>~/.codex/auth.json</Text>
+                {" "}
+                file.
+              </Text>
               {!projectId && (
                 <Alert
                   type="warning"
@@ -610,7 +667,34 @@ export function CodexConfigButton({
                 >
                   Cancel
                 </Button>
+                <Button
+                  onClick={() => authFileInputRef.current?.click()}
+                  loading={authFileUploadPending}
+                  disabled={!projectId || deviceAuthActionPending}
+                >
+                  Upload local auth.json
+                </Button>
               </Space>
+              <input
+                ref={authFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    void uploadAuthFile(file);
+                  }
+                }}
+              />
+              {uploadedAuthFileStatus ? (
+                <Alert
+                  type="success"
+                  showIcon
+                  message="Auth file uploaded"
+                  description={`Saved ${uploadedAuthFileStatus.bytes} bytes to ${uploadedAuthFileStatus.codexHome}`}
+                />
+              ) : null}
               {deviceAuthError ? (
                 <Alert type="error" showIcon message={deviceAuthError} />
               ) : null}

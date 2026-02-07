@@ -5,6 +5,7 @@ import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
 
 const logger = getLogger("project-host:codex-auth");
+const MAX_AUTH_UPLOAD_BYTES = 2_000_000;
 
 export type CodexAuthSource =
   | "subscription"
@@ -138,6 +139,43 @@ export async function ensureCodexCredentialsStoreFile(
   const updated = upsertCredentialStoreSetting(raw);
   if (updated === raw) return;
   await fs.writeFile(configPath, updated, { mode: 0o600 });
+}
+
+function validateUploadedAuthJson(raw: string): void {
+  if (!raw?.trim()) {
+    throw Error("uploaded file is empty");
+  }
+  if (Buffer.byteLength(raw, "utf8") > MAX_AUTH_UPLOAD_BYTES) {
+    throw Error("uploaded file is too large");
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw Error("uploaded file is not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw Error("uploaded file must contain a JSON object");
+  }
+}
+
+export async function uploadSubscriptionAuthFile({
+  accountId,
+  content,
+}: {
+  accountId: string;
+  content: string;
+}): Promise<{ codexHome: string; bytes: number }> {
+  validateUploadedAuthJson(content);
+  const codexHome = resolveSubscriptionCodexHome(accountId);
+  await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
+  const authPath = join(codexHome, "auth.json");
+  await fs.writeFile(authPath, content, { mode: 0o600 });
+  await ensureCodexCredentialsStoreFile(codexHome);
+  return {
+    codexHome,
+    bytes: Buffer.byteLength(content, "utf8"),
+  };
 }
 
 export async function resolveCodexAuthRuntime({
