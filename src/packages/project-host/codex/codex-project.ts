@@ -197,7 +197,16 @@ async function ensureContainer({
   }
   const mounts = getCoCalcMounts();
   for (const src in mounts) {
-    args.push(mountArg({ source: src, target: mounts[src], readOnly: true }));
+    try {
+      await fs.stat(src);
+      args.push(mountArg({ source: src, target: mounts[src], readOnly: true }));
+    } catch {
+      logger.debug("codex project: skipping missing optional mount", {
+        projectId,
+        source: src,
+        target: mounts[src],
+      });
+    }
   }
   args.push(mountArg({ source: mount, target: "/opt/codex/bin", readOnly: true }));
   if (codexHome) {
