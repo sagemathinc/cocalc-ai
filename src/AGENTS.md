@@ -108,6 +108,13 @@ CoCalc is organized as a monorepo with key packages:
   5. **Authentication**: Each conat request includes account_id and is subject to permission checks at the hub level
   6. **Subjects**: Messages are routed using hierarchical subjects like `hub.account.{uuid}.{service}` or `project.{uuid}.{service}`
 
+### Config And Paths Source Of Truth
+
+- Before adding a new env-var default or filesystem path, check `packages/backend/data.ts`.
+- If config is shared across packages (secrets paths, auth cache roots, data dirs), define/export a constant in `packages/backend/data.ts` and reuse it.
+- Prefer paths under `secrets` from `packages/backend/data.ts` for secret/auth-related storage.
+- Only use package-local hardcoded defaults when there is a clear package boundary reason; add a short comment when doing so.
+
 ### Key Technologies
 
 - **TypeScript**: Primary language for all new code
