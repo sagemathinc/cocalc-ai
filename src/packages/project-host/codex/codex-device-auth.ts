@@ -32,6 +32,28 @@ type DeviceAuthSession = {
 const MAX_OUTPUT_CHARS = 50_000;
 const sessions = new Map<string, DeviceAuthSession>();
 
+function classifyDeviceAuthFailure(output: string, code: number | null): string {
+  const text = output ?? "";
+  if (
+    /status\s*429/i.test(text) ||
+    /too many requests/i.test(text) ||
+    /rate[-\s]?limit/i.test(text)
+  ) {
+    return "OpenAI is currently rate-limiting device login requests from this host (HTTP 429). Please wait and try again.";
+  }
+  if (/workspace admin to enable device code authentication/i.test(text)) {
+    return "Device-code login is not enabled for this OpenAI workspace. Use another workspace/account or the auth-file upload fallback.";
+  }
+  return `codex login exited with code=${code} signal=null`;
+}
+
+function stripAnsi(text: string): string {
+  // Remove ANSI CSI/OSC escapes so parsed URLs/codes are clean for UI display.
+  return text
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g, "");
+}
+
 function trimOutput(text: string): string {
   if (text.length <= MAX_OUTPUT_CHARS) return text;
   return text.slice(text.length - MAX_OUTPUT_CHARS);
@@ -45,22 +67,28 @@ function updateParsedHints(session: DeviceAuthSession): void {
     }
   }
   if (!session.userCode) {
-    const codeLine = session.output.match(
-      /(?:one-time code|enter code|code)\s*[:\n ]+\s*([A-Z0-9-]{6,})/i,
+    // Prefer the code shown immediately after the "one-time code" instruction.
+    const explicit = session.output.match(
+      /one-time code[^\n]*\n\s*([A-Z0-9]{3,6}(?:-[A-Z0-9]{3,6}){1,2})\b/i,
     );
-    if (codeLine?.[1]) {
-      session.userCode = codeLine[1];
+    if (explicit?.[1]) {
+      session.userCode = explicit[1];
       return;
     }
-    const fallback = session.output.match(/\b[A-Z0-9-]{8,}\b/g);
-    if (fallback && fallback.length > 0) {
+
+    // Fallback: any code-shaped token (contains at least one hyphen).
+    const fallback = session.output.match(
+      /\b[A-Z0-9]{3,6}(?:-[A-Z0-9]{3,6}){1,2}\b/g,
+    );
+    if (fallback?.length) {
       session.userCode = fallback[fallback.length - 1];
     }
   }
 }
 
 function appendOutput(session: DeviceAuthSession, chunk: string): void {
-  session.output = trimOutput(`${session.output}${chunk}`);
+  const clean = stripAnsi(chunk);
+  session.output = trimOutput(`${session.output}${clean}`);
   session.updatedAt = Date.now();
   updateParsedHints(session);
 }
@@ -124,7 +152,11 @@ export async function startCodexDeviceAuth(
     } else {
       session.state = "failed";
       if (!session.error) {
-        session.error = `codex login exited with code=${code} signal=${signal}`;
+        // Promote common known failures to actionable user-facing errors.
+        session.error = classifyDeviceAuthFailure(session.output, code ?? null);
+        if (session.error.startsWith("codex login exited")) {
+          session.error = `codex login exited with code=${code} signal=${signal}`;
+        }
       }
     }
     logger.debug("codex device auth exited", {

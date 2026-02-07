@@ -35,6 +35,12 @@ type ContainerInfo = {
   home: string;
 };
 
+type OptionalBindMount = {
+  source: string;
+  target: string;
+  readOnly?: boolean;
+};
+
 function codexContainerName(projectId: string, contextId: string): string {
   return `codex-${projectId}-${contextId.slice(0, 12)}`;
 }
@@ -64,6 +70,34 @@ function redactPodmanArgs(args: string[]): string {
     }
   }
   return argsJoin(redacted);
+}
+
+async function getOptionalCertMounts(): Promise<{
+  mounts: OptionalBindMount[];
+  env: Record<string, string>;
+}> {
+  // Codex device auth uses TLS calls to auth.openai.com. Some project rootfs
+  // images are missing a CA bundle, so we bind host certs when available.
+  const certDir = "/etc/ssl/certs";
+  const certFile = join(certDir, "ca-certificates.crt");
+  try {
+    const [dirStat, fileStat] = await Promise.all([
+      fs.stat(certDir),
+      fs.stat(certFile),
+    ]);
+    if (dirStat.isDirectory() && fileStat.isFile()) {
+      return {
+        mounts: [{ source: certDir, target: certDir, readOnly: true }],
+        env: {
+          SSL_CERT_FILE: certFile,
+          SSL_CERT_DIR: certDir,
+        },
+      };
+    }
+  } catch {
+    // no host CA bundle found -- continue without extra mounts
+  }
+  return { mounts: [], env: {} };
 }
 
 async function podman(args: string[]): Promise<void> {
@@ -177,6 +211,17 @@ async function ensureContainer({
     HOME: "/root",
     image,
   });
+  if (!env.OPENAI_API_KEY?.trim()) {
+    // Avoid passing an empty OPENAI_API_KEY, which can force unauthenticated
+    // API mode and shadow valid file-based auth.
+    delete env.OPENAI_API_KEY;
+  }
+  const optionalCerts = await getOptionalCertMounts();
+  for (const key in optionalCerts.env) {
+    if (!env[key]) {
+      env[key] = optionalCerts.env[key];
+    }
+  }
   for (const key in authRuntime.env) {
     env[key] = authRuntime.env[key];
   }
@@ -218,6 +263,15 @@ async function ensureContainer({
     } catch {
       // ignore if codex home missing
     }
+  }
+  for (const mount of optionalCerts.mounts) {
+    args.push(
+      mountArg({
+        source: mount.source,
+        target: mount.target,
+        readOnly: mount.readOnly,
+      }),
+    );
   }
 
   args.push("--rootfs", rootfs);

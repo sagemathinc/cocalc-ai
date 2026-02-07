@@ -3,7 +3,7 @@ This is a very lightweight small subset of the hub's API for browser clients.
 */
 
 import getLogger from "@cocalc/backend/logger";
-import { type HubApi, transformArgs } from "@cocalc/conat/hub/api";
+import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
 import { account_id as ACCOUNT_ID, data } from "@cocalc/backend/data";
 import {
@@ -60,17 +60,27 @@ async function handleMessage(mesg) {
   const request = mesg.data ?? ({} as any);
   let resp, headers;
   try {
-    const { account_id, project_id } = {
-      account_id: ACCOUNT_ID,
-      project_id: undefined,
-    };
+    let account_id: string | undefined;
+    let project_id: string | undefined;
+    let host_id: string | undefined;
+    try {
+      ({ account_id, project_id, host_id } = getUserId(mesg.subject));
+    } catch {
+      // Keep legacy fallback behavior if subject parsing fails unexpectedly.
+      account_id = ACCOUNT_ID;
+      project_id = undefined;
+      host_id = undefined;
+    }
     const { name, args } = request as any;
     logger.debug("handling hub.api request:", {
       account_id,
       project_id,
+      host_id,
       name,
     });
-    resp = (await getResponse({ name, args, account_id, project_id })) ?? null;
+    resp =
+      (await getResponse({ name, args, account_id, project_id, host_id })) ??
+      null;
     headers = undefined;
   } catch (err) {
     resp = null;
@@ -149,7 +159,7 @@ export const hubApi: HubApi = {
   reflect,
 } as any;
 
-async function getResponse({ name, args, account_id, project_id }) {
+async function getResponse({ name, args, account_id, project_id, host_id }) {
   const [group, functionName] = name.split(".");
   if (functionName == "getSshKeys") {
     // no ssh keys in lite mode for now...
@@ -164,6 +174,7 @@ async function getResponse({ name, args, account_id, project_id }) {
     args,
     account_id,
     project_id,
+    host_id,
   });
   return await f(...args2);
 }
