@@ -49,10 +49,38 @@ This file provides guidance to Claude Code (claude.ai/code), Gemini CLI (https:/
 - To typecheck the frontend, it is best to run `cd packages/static && pnpm build` - this implicitly compiles the frontend and reports TypeScript errors
 - **IMPORTANT**: When modifying packages like `util` that other packages depend on, you must run `pnpm build` in the modified package before typechecking dependent packages
 
+### Dependency Management
+
+**Package versions must be uniform across all CoCalc packages in the monorepo.**
+
+When updating npm packages:
+
+- **ALWAYS update associated `@types/[name]` packages** when updating an npm package `[name]` if `@types/[name]` is installed
+- **Check all packages in the workspace** that depend on the package being updated
+- **Ensure version consistency** across all packages - the same package must use the same version everywhere
+- Run `pnpm version-check` from the root directory (`cocalc/src/`) to verify version consistency
+- Run `pnpm install` after updating dependencies in any package
+- Use `pnpm list [package]` to verify the installed version across the workspace
+- Example: When updating `pg` from `^8.7.1` to `^8.16.3`, also update `@types/pg` from `^8.6.1` to `^8.16.0` in **all packages** that use them
+
 ### Development
 
 - **IMPORTANT**: Always run `prettier -w [filename]` immediately after editing any .ts, .tsx, .md, or .json file to ensure consistent styling
 - After TypeScript or `*.tsx` changes, run `pnpm tsc --build` in the relevant package directory
+
+#### Modernizing Legacy Callback Code
+
+When working with legacy callback-based code (using `async.series`, `defaults()`, nested callbacks), follow the comprehensive modernization guide:
+
+**📖 See [dev/MODERNIZE_CODE.md](./dev/MODERNIZE_CODE.md)** for the complete step-by-step process to convert callback-based code to modern async/await TypeScript.
+
+This guide covers:
+
+- Converting `async.series`/`async.parallel` to native async/await
+- Replacing `defaults()` with TypeScript destructuring
+- Proper error handling with try/catch
+- Maintaining backwards compatibility
+- Updating callers to use direct async/await
 
 ## Architecture Overview
 
@@ -107,6 +135,13 @@ CoCalc is organized as a monorepo with key packages:
   4. **Message Flow**: Frontend calls like `hub.projects.setQuotas()` → ConatClient.callHub() → conat request to subject `hub.account.{account_id}.api` → Hub API dispatcher → actual service implementation
   5. **Authentication**: Each conat request includes account_id and is subject to permission checks at the hub level
   6. **Subjects**: Messages are routed using hierarchical subjects like `hub.account.{uuid}.{service}` or `project.{uuid}.{service}`
+
+### Config And Paths Source Of Truth
+
+- Before adding a new env-var default or filesystem path, check `packages/backend/data.ts`.
+- If config is shared across packages (secrets paths, auth cache roots, data dirs), define/export a constant in `packages/backend/data.ts` and reuse it.
+- Prefer paths under `secrets` from `packages/backend/data.ts` for secret/auth-related storage.
+- Only use package-local hardcoded defaults when there is a clear package boundary reason; add a short comment when doing so.
 
 ### Key Technologies
 

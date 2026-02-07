@@ -469,3 +469,46 @@ WHERE p.project_id = $1;
 
   return Array.from(new Set<string>(keys));
 }
+
+// This is intentionally not implemented in the central hub API yet.
+// Device auth must run on a specific project-host, selected by project_id.
+export async function codexDeviceAuthStart({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error(
+    "codex device auth is not implemented on central hub; call a project-host endpoint via project routing",
+  );
+}
+
+export async function codexDeviceAuthStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error(
+    "codex device auth is not implemented on central hub; call a project-host endpoint via project routing",
+  );
+}
+
+export async function codexDeviceAuthCancel({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error(
+    "codex device auth is not implemented on central hub; call a project-host endpoint via project routing",
+  );
+}

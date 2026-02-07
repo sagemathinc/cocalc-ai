@@ -6,6 +6,19 @@ import compression from "compression";
 
 const logger = getLogger("project-host:web");
 
+/*
+Routing contract for project-host:
+
+- Keep this HTTP surface tiny and mostly static. Treat HTTP request bodies/params
+  as untrusted hints only.
+- Do NOT add project/account scoped mutating APIs here (anything that depends on
+  who the user is, what projects they collaborate on, or account-level policy).
+- Implement those APIs via hub conat RPC in:
+    - src/packages/conat/hub/api/projects.ts (API + transform/auth mapping)
+    - src/packages/project-host/hub/projects.ts (host-local implementation)
+  so identity/project authorization flows through transformArgs and subject
+  routing instead of ad-hoc HTTP fields.
+*/
 const DEFAULT_CONFIGURATION = {
   lite: false,
   project_host: true,

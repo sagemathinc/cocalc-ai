@@ -83,6 +83,11 @@ const AGENT_PLAN_TIMEOUT = 10 * 60_000;
 const AGENT_RUN_TIMEOUT = 20 * 60_000;
 
 const DEBUG = false;
+const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
+  "projects.codexDeviceAuthStart",
+  "projects.codexDeviceAuthStatus",
+  "projects.codexDeviceAuthCancel",
+]);
 
 export class ConatClient extends EventEmitter {
   client: WebappClient;
@@ -90,6 +95,7 @@ export class ConatClient extends EventEmitter {
   public sessionId = randomId();
   private clientWithState: ClientWithState;
   private _conatClient: null | ReturnType<typeof connectToConat>;
+  private routedHubClients: { [address: string]: ReturnType<typeof connectToConat> } = {};
   public numConnectionAttempts = 0;
   private automaticallyReconnect;
   public address: string;
@@ -364,6 +370,14 @@ export class ConatClient extends EventEmitter {
   standby = () => {
     // @ts-ignore
     this.automaticallyReconnect = false;
+    for (const address in this.routedHubClients) {
+      try {
+        this.routedHubClients[address]?.close();
+      } catch (err) {
+        console.warn(`failed closing routed hub client for ${address}`, err);
+      }
+    }
+    this.routedHubClients = {};
     this._conatClient?.disconnect();
   };
 
@@ -438,15 +452,39 @@ export class ConatClient extends EventEmitter {
     service = "api",
     name,
     args = [],
+    project_id,
     timeout = DEFAULT_TIMEOUT,
   }: {
     service?: string;
     name: string;
     args: any[];
+    project_id?: string;
     timeout?: number;
   }) => {
-    const cn = this.conat();
     const subject = `hub.account.${this.client.account_id}.${service}`;
+    const routeToProjectHost =
+      !!project_id &&
+      PROJECT_HOST_ROUTED_HUB_METHODS.has(name) &&
+      isValidUUID(project_id);
+    let cn = this.conat();
+    if (routeToProjectHost) {
+      const address = this.getProjectHostAddress(project_id!);
+      if (!address) {
+        throw Error(
+          `unable to route '${name}' to project-host for project ${project_id}; host routing info unavailable (open the project first so host info is loaded)`,
+        );
+      }
+      if (address !== this.address) {
+        if (!this.routedHubClients[address]) {
+          this.routedHubClients[address] = connectToConat({
+            address,
+            inboxPrefix: inboxPrefix({ account_id: this.client.account_id }),
+            reconnection: false,
+          });
+        }
+        cn = this.routedHubClients[address];
+      }
+    }
     try {
       const data = { name, args };
       const resp = await cn.request(subject, data, { timeout });

@@ -99,7 +99,9 @@ export function ChatRoomThreadPanel({
   const shouldShowCodexConfig =
     selectedThread != null &&
     Boolean(selectedThread.rootMessage) &&
-    Boolean(actions?.isCodexThread?.(new Date(parseInt(selectedThread.key, 10))));
+    Boolean(
+      actions?.isCodexThread?.(new Date(parseInt(selectedThread.key, 10))),
+    );
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =
     selectedThread && "displayLabel" in selectedThread
@@ -121,16 +123,17 @@ export function ChatRoomThreadPanel({
       }}
     >
       {shouldShowCodexConfig && (
-          <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10 }}>
-            <Space size={6}>
-              <CodexConfigButton
-                threadKey={selectedThreadKey}
-                chatPath={path ?? ""}
-                actions={actions}
-              />
-            </Space>
-          </div>
-        )}
+        <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10 }}>
+          <Space size={6}>
+            <CodexConfigButton
+              threadKey={selectedThreadKey}
+              chatPath={path ?? ""}
+              projectId={project_id}
+              actions={actions}
+            />
+          </Space>
+        </div>
+      )}
       {variant === "compact" && compactThreadLabel && (
         <div
           style={{

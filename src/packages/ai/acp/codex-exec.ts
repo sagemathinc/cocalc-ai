@@ -129,6 +129,7 @@ export class CodexExecAgent implements AcpAgent {
     if (projectSpawner && projectId) {
       const spawned = await projectSpawner.spawnCodexExec({
         projectId,
+        accountId: request.account_id,
         args,
         cwd,
         env: this.opts.env,

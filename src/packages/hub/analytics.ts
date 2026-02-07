@@ -4,19 +4,10 @@
  */
 
 import { join } from "path";
+import * as fs from "fs";
 import ms from "ms";
 import { isEqual } from "lodash";
 import { Router, json } from "express";
-import {
-  analytics_cookie_name,
-  is_valid_uuid_string,
-  uuid,
-} from "@cocalc/util/misc";
-import type { PostgreSQL } from "@cocalc/database/postgres/types";
-import { get_server_settings } from "@cocalc/database/postgres/server-settings";
-import { pii_retention_to_future } from "@cocalc/database/postgres/pii";
-import * as fs from "fs";
-const UglifyJS = require("uglify-js");
 // express-js cors plugin:
 import cors from "cors";
 import {
@@ -25,6 +16,17 @@ import {
   ParseResultType,
   ParseResult,
 } from "parse-domain";
+const UglifyJS = require("uglify-js");
+
+import { pii_retention_to_future } from "@cocalc/database/postgres/account/pii";
+import { get_server_settings } from "@cocalc/database/postgres/settings/server-settings";
+import type { PostgreSQL } from "@cocalc/database/postgres/types";
+import {
+  analytics_cookie_name,
+  is_valid_uuid_string,
+  uuid,
+} from "@cocalc/util/misc";
+
 import { getLogger } from "./logger";
 
 // Minifying analytics-script.js.  Note

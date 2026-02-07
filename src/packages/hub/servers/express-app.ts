@@ -26,7 +26,7 @@ import initProjectHostBootstrap from "./app/project-host-bootstrap";
 import initSelfHostConnector from "./app/self-host-connector";
 import initRootfsManifest from "./app/rootfs-manifest";
 import initStats from "./app/stats";
-import { database } from "./database";
+import { getDatabase } from "./database";
 import initHttpServer from "./http";
 import initRobots from "./robots";
 import basePath from "@cocalc/backend/base-path";
@@ -68,7 +68,9 @@ export default async function init(opts: Options): Promise<{
   httpServer;
   router: express.Router;
 }> {
-  logger.info("creating express app");
+  const winston = getLogger("express-app");
+  winston.info("creating express app");
+  const database = getDatabase();
 
   // Create an express application
   const app = express();

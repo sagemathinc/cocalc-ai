@@ -26,6 +26,8 @@ out
 
 src/cocalc-testcafe/package-lock.json
 
+src/packages/database/coverage/
+
 src/tsconfig.tsbuildinfo
 
 src/static/
