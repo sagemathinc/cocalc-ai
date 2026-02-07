@@ -32,7 +32,7 @@ import { startMasterRegistration } from "./master";
 import { startReconciler } from "./reconcile";
 import { init as initAcp } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
-import { initCodexProjectRunner } from "./codex-project";
+import { initCodexProjectRunner } from "./codex/codex-project";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
