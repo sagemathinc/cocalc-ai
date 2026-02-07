@@ -33,6 +33,7 @@ FUSE           := $(shell [ -f sea.term ] && sed -n '1p' sea.term)
 help:
 	@echo "Targets:"
 	@echo "  make sea         # (optional) build & inject SEA into $(BIN)"
+	@echo "  make signed-tar  # build SEA and sign binary, then create tar.xz"
 	@echo "  make sign-bin    # sign SEA binary with hardened runtime + entitlements"
 	@echo "  make verify-bin  # local codesign + Gatekeeper checks"
 	@echo "  make pkg         # build unsigned pkg that installs $(BIN) to /usr/local/bin"
@@ -58,10 +59,23 @@ sea: clean-sea
 	@[ -s sea-prep.blob ] || (echo "sea-prep.blob missing" && exit 1)
 	@[ -s sea.term ] || (echo "sea.term missing (fuse) — ensure Node wrote it" && exit 1)
 	@echo "→ Inject SEA blob (Mach-O segment + sentinel fuse)"
-	npx -y postject@latest "$(BIN)" NODE_SEA_BLOB sea-prep.blob \
+	env -u npm_config_npm_globalconfig \
+	  -u npm_config_verify_deps_before_run \
+	  -u npm_config__jsr_registry \
+	  -u npm_config_enable_pre_post_scripts \
+	  -u npm_config_package_import_method \
+	  -u npm_config_git_checks \
+	  NPM_CONFIG_LOGLEVEL=error \
+	  npx -y postject "$(BIN)" NODE_SEA_BLOB sea-prep.blob \
 	  --sentinel-fuse "$(FUSE)" \
 	  --macho-segment-name NODE_SEA
 	@echo "SEA injection done: $(BIN)"
+
+signed-tar:
+	@echo "→ Build signed SEA tarball"
+	COCALC_PLUS_SIGN_ID="$(DEV_APP_ID)" \
+	COCALC_PLUS_ENTITLEMENTS="entitlements.plist" \
+	./build-sea.sh
 
 clean-sea:
 	rm -f sea-prep.blob sea.term

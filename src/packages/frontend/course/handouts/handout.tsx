@@ -294,7 +294,7 @@ export function Handout({
         type="warning"
         key={`${step}_confirm_to_all`}
         style={{ marginTop: "15px" }}
-        message={
+        title={
           <div>
             <div style={{ marginBottom: "15px" }}>
               {capitalize(step_verb(step))} this handout {step_direction(step)}{" "}
@@ -359,7 +359,7 @@ export function Handout({
         type="warning"
         key={`${step}_confirm_to_all_or_new`}
         style={{ marginTop: "15px" }}
-        message={
+        title={
           <div>
             <div style={{ marginBottom: "15px" }}>
               {capitalize(step_verb(step))} this handout {step_direction(step)}

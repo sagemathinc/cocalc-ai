@@ -130,7 +130,7 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     icon: "server",
     flyout: ServersFlyout,
     noAnonymous: false,
-    noLite: true,
+    noLite: false,
   },
   users: {
     label: labels.users,
@@ -212,6 +212,7 @@ export function FileTab(props: Readonly<Props>) {
   const actBar = getValidActivityBarOption(
     other_settings.get(ACTIVITY_BAR_KEY),
   );
+  const tabAccentMode = other_settings.get("file_tab_accent_mode") ?? "bright";
 
   // True if there is activity (e.g., active output) in this tab
   const has_activity = useRedux(
@@ -447,6 +448,7 @@ export function FileTab(props: Readonly<Props>) {
       style={{
         ...style,
         ...props.style,
+        position: "relative",
       }}
       cocalc-test={label}
       onClick={click}
@@ -462,6 +464,22 @@ export function FileTab(props: Readonly<Props>) {
       >
         {inner}
       </div>
+      {path != null && tabAccentMode !== "off" ? (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: -5,
+            height: 2,
+            backgroundColor: getTabAccentColor(
+              `${project_id}:${path}`,
+              tabAccentMode,
+            ),
+            opacity: 0.85,
+          }}
+        />
+      ) : null}
     </div>
   );
 
@@ -512,6 +530,51 @@ export function FileTab(props: Readonly<Props>) {
       {body}
     </Popover>
   );
+}
+
+const TAB_ACCENT_PALETTE_PASTEL = [
+  "#FFD8CC",
+  "#FFE8B0",
+  "#FFF3B0",
+  "#DFF5D8",
+  "#CFF4E9",
+  "#CDEBFF",
+  "#D8D9FF",
+  "#EBD0FF",
+  "#FFD6E7",
+  "#FFDBC7",
+  "#E6F7C9",
+  "#D1F0FF",
+];
+
+const TAB_ACCENT_PALETTE_BRIGHT = [
+  "#FF6B6B",
+  "#F7B32B",
+  "#F2E94E",
+  "#6BCB77",
+  "#4D96FF",
+  "#A66CFF",
+  "#FF7ED4",
+  "#FF8C42",
+  "#22C1C3",
+  "#00B4D8",
+  "#48CAE4",
+  "#90BE6D",
+];
+
+function hashStringToIndex(value: string, size: number): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  const index = Math.abs(hash) % size;
+  return index;
+}
+
+function getTabAccentColor(key: string, mode: string): string {
+  const palette =
+    mode === "bright" ? TAB_ACCENT_PALETTE_BRIGHT : TAB_ACCENT_PALETTE_PASTEL;
+  return palette[hashStringToIndex(key, palette.length)];
 }
 
 const LABEL_STYLE: CSS = {

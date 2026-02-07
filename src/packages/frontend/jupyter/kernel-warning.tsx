@@ -25,7 +25,7 @@ export default function KernelWarning({ name, actions }: Props) {
   return (
     <Alert
       banner
-      message={
+      title={
         <div>
           <A
             style={{ float: "right", marginLeft: "10px" }}

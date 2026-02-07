@@ -20,6 +20,8 @@ export type HostFieldId =
   | "zone"
   | "machine_type"
   | "gpu_type"
+  | "self_host_kind"
+  | "self_host_mode"
   | "size"
   | "gpu";
 
@@ -28,6 +30,8 @@ export const HOST_FIELDS: HostFieldId[] = [
   "zone",
   "machine_type",
   "gpu_type",
+  "self_host_kind",
+  "self_host_mode",
   "size",
   "gpu",
 ];
@@ -78,7 +82,9 @@ type NebiusImage = {
   updated_at?: string | null;
 };
 
-const getMachineTypeArchitecture = (machineType: string): "arm64" | "x86_64" => {
+const getMachineTypeArchitecture = (
+  machineType: string,
+): "arm64" | "x86_64" => {
   const parts = machineType.split("-");
   if (parts[0]?.endsWith("a")) {
     return "arm64";
@@ -113,6 +119,8 @@ export type ProviderSelection = {
   zone?: string;
   machine_type?: string;
   gpu_type?: string;
+  self_host_kind?: string;
+  self_host_mode?: string;
   size?: string;
   gpu?: string;
 };
@@ -156,7 +164,9 @@ export type HostProviderDescriptor = {
   supports: ProviderSupports;
   storage?: ProviderStorageSupport;
   fields: ProviderFieldSchema;
-  summarizeCatalog?: (catalog: HostCatalog) => ProviderCatalogSummary | undefined;
+  summarizeCatalog?: (
+    catalog: HostCatalog,
+  ) => ProviderCatalogSummary | undefined;
   getOptions: (
     catalog: HostCatalog | undefined,
     selection: ProviderSelection,
@@ -182,7 +192,7 @@ const emptyOptions = (): FieldOptionsMap => ({});
 const optionsFor = (field: HostFieldId, options: FieldOptionsMap) =>
   options[field] ?? [];
 
-const findOption = <T>(
+const findOption = <T,>(
   field: HostFieldId,
   value: string | undefined,
   options: FieldOptionsMap,
@@ -192,8 +202,10 @@ const findOption = <T>(
   return (match?.meta as T) ?? undefined;
 };
 
-const getDefaultRegion = (vals: Record<string, any>, options: FieldOptionsMap) =>
-  vals.region ?? optionsFor("region", options)[0]?.value;
+const getDefaultRegion = (
+  vals: Record<string, any>,
+  options: FieldOptionsMap,
+) => vals.region ?? optionsFor("region", options)[0]?.value;
 
 const buildBasePayload = (
   vals: Record<string, any>,
@@ -214,7 +226,8 @@ const buildBasePayload = (
     size: machine_type ?? vals.size ?? SIZES[0].value,
     gpu: wantsGpu,
     machine: {
-      cloud: vals.provider !== "none" ? (vals.provider as HostProvider) : undefined,
+      cloud:
+        vals.provider !== "none" ? (vals.provider as HostProvider) : undefined,
       storage_mode,
       disk_gb: vals.disk,
       disk_type: vals.disk_type,
@@ -251,10 +264,27 @@ type SelfHostConnector = {
   id: string;
   name?: string;
   last_seen?: string;
+  version?: string;
 };
 
-const formatConnectorLabel = (connector: SelfHostConnector) =>
-  connector.name || connector.id;
+type SelfHostMode = "local" | "cloudflare";
+
+type SelfHostKind = "multipass" | "direct";
+
+const SELF_HOST_MODE_LABELS: Record<SelfHostMode, string> = {
+  local: "Local network (SSH tunnel)",
+  cloudflare: "Cloudflare tunnel",
+};
+
+const SELF_HOST_KIND_LABELS: Record<SelfHostKind, string> = {
+  multipass: "Multipass VM (alpha)",
+  direct: "Direct",
+};
+
+const formatConnectorLabel = (connector: SelfHostConnector) => {
+  const base = connector.name || connector.id;
+  return connector.version ? `${base} (v${connector.version})` : base;
+};
 
 export const getSelfHostConnectorOptions = (
   catalog?: HostCatalog,
@@ -280,6 +310,34 @@ export const getSelfHostConnectors = (
     "connectors",
     "account",
   ) ?? [];
+
+export const getSelfHostModeOptions = (
+  catalog?: HostCatalog,
+): HostFieldOption[] => {
+  const modes = getCatalogEntryPayload<SelfHostMode[]>(
+    catalog,
+    "self_host_modes",
+    "account",
+  ) ?? ["local"];
+  return modes.map((mode) => ({
+    value: mode,
+    label: SELF_HOST_MODE_LABELS[mode] ?? mode,
+  }));
+};
+
+export const getSelfHostKindOptions = (
+  catalog?: HostCatalog,
+): HostFieldOption[] => {
+  const kinds = getCatalogEntryPayload<SelfHostKind[]>(
+    catalog,
+    "self_host_kinds",
+    "account",
+  ) ?? ["direct"];
+  return kinds.map((kind) => ({
+    value: kind,
+    label: SELF_HOST_KIND_LABELS[kind] ?? kind,
+  }));
+};
 
 const shouldIncludeField = (
   field: HostFieldId,
@@ -378,7 +436,9 @@ export const getGcpRegionOptions = (
       (z) => z.region === r.name && (z.location || z.lowC02),
     );
     const gpuType =
-      selectedGpuType && selectedGpuType !== "none" ? selectedGpuType : undefined;
+      selectedGpuType && selectedGpuType !== "none"
+        ? selectedGpuType
+        : undefined;
     const gpuPrefixes = gcpMachinePrefixesForGpuType(gpuType);
     let compatible = true;
     let compatibleZone: string | undefined;
@@ -469,7 +529,9 @@ const GCP_GPU_COMPATIBILITY = [
   { match: /t4/i, machinePrefixes: ["n1-"] },
 ];
 
-const gcpMachinePrefixesForGpuType = (gpuType?: string): string[] | undefined => {
+const gcpMachinePrefixesForGpuType = (
+  gpuType?: string,
+): string[] | undefined => {
   if (!gpuType || gpuType === "none") return [];
   if (!GCP_ACCELERATOR_TYPES.has(gpuType)) return [];
   for (const rule of GCP_GPU_COMPATIBILITY) {
@@ -495,7 +557,9 @@ export const getGcpMachineTypeOptions = (
     const name = mt.name ?? "";
     if (!name) return false;
     if (!selectedGpuType || selectedGpuType === "none") {
-      return !GCP_GPU_ONLY_MACHINE_PREFIXES.some((prefix) => name.startsWith(prefix));
+      return !GCP_GPU_ONLY_MACHINE_PREFIXES.some((prefix) =>
+        name.startsWith(prefix),
+      );
     }
     if (gpuPrefixes === undefined) return true;
     if (!gpuPrefixes.length) return false;
@@ -609,16 +673,11 @@ export const getGcpImageOptions = (
 };
 
 const summarizeGcpCatalog = (catalog: HostCatalog) => {
-  const regions = getCatalogEntryPayload<HostCatalogRegion[]>(
-    catalog,
-    "regions",
-    "global",
-  ) ?? [];
-  const zones = getCatalogEntryPayload<HostCatalogZone[]>(
-    catalog,
-    "zones",
-    "global",
-  ) ?? [];
+  const regions =
+    getCatalogEntryPayload<HostCatalogRegion[]>(catalog, "regions", "global") ??
+    [];
+  const zones =
+    getCatalogEntryPayload<HostCatalogZone[]>(catalog, "zones", "global") ?? [];
   const zonesByName = new Map(zones.map((z) => [z.name, z]));
   const images =
     getCatalogEntryPayload<
@@ -686,17 +745,19 @@ const summarizeGcpCatalog = (catalog: HostCatalog) => {
     architecture: img.architecture ?? undefined,
     gpuReady: img.gpuReady ?? undefined,
   }));
-  return { regions: normalizedRegions, region_groups: regionGroups, images: imagesSummary };
+  return {
+    regions: normalizedRegions,
+    region_groups: regionGroups,
+    images: imagesSummary,
+  };
 };
 
 export const getHyperstackRegionOptions = (
   catalog?: HostCatalog,
 ): HostFieldOption[] => {
-  const regions = getCatalogEntryPayload<{ name: string; description?: string | null }[]>(
-    catalog,
-    "regions",
-    "global",
-  );
+  const regions = getCatalogEntryPayload<
+    { name: string; description?: string | null }[]
+  >(catalog, "regions", "global");
   if (!regions?.length) return [];
   return regions.map((r) => ({
     value: r.name,
@@ -809,7 +870,9 @@ export const getLambdaRegionOptions = (
   return regions.map((name) => ({ value: name, label: name }));
 };
 
-export const getLambdaRegionsFromCatalog = (catalog?: HostCatalog): string[] => {
+export const getLambdaRegionsFromCatalog = (
+  catalog?: HostCatalog,
+): string[] => {
   if (!catalog) return [];
   const regions = getCatalogEntryPayload<{ name?: string }[]>(
     catalog,
@@ -919,7 +982,8 @@ const getNebiusPricingProductsByRegion = (
   const cpuProducts = new Set<string>();
   if (!region) return { gpu: gpuProducts, cpu: cpuProducts };
   const prices =
-    getCatalogEntryPayload<NebiusPriceItem[]>(catalog, "prices", "global") ?? [];
+    getCatalogEntryPayload<NebiusPriceItem[]>(catalog, "prices", "global") ??
+    [];
   for (const item of prices) {
     if (!item?.product || item.region !== region) continue;
     if (!/^(preemptible\s+)?(nvidia|non-gpu)\b/i.test(item.product)) continue;
@@ -1133,10 +1197,22 @@ const getHyperstackStocks = (
 
 const getHyperstackImages = (
   catalog: HostCatalog | undefined,
-): { name: string; region_name: string; typ: string; version: string; size: number }[] => {
+): {
+  name: string;
+  region_name: string;
+  typ: string;
+  version: string;
+  size: number;
+}[] => {
   const payload = getCatalogEntryPayload<any[]>(catalog, "images", "global");
   if (!payload?.length) return [];
-  const flat: { name: string; region_name: string; typ: string; version: string; size: number }[] = [];
+  const flat: {
+    name: string;
+    region_name: string;
+    typ: string;
+    version: string;
+    size: number;
+  }[] = [];
   for (const entry of payload) {
     const region = entry?.region_name;
     const images = entry?.images ?? [];
@@ -1167,11 +1243,8 @@ const getGcpZones = (catalog?: HostCatalog) =>
   getCatalogEntryPayload<HostCatalogZone[]>(catalog, "zones", "global") ?? [];
 
 const getGcpRegions = (catalog?: HostCatalog) =>
-  getCatalogEntryPayload<HostCatalogRegion[]>(
-    catalog,
-    "regions",
-    "global",
-  ) ?? [];
+  getCatalogEntryPayload<HostCatalogRegion[]>(catalog, "regions", "global") ??
+  [];
 
 const getGcpImages = (catalog?: HostCatalog) =>
   getCatalogEntryPayload<
@@ -1482,15 +1555,22 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
     getOptions: (catalog, selection) => ({
       ...emptyOptions(),
       region: getHyperstackRegionOptions(catalog),
-      size: getHyperstackFlavorOptions(catalog, selection.region).map((opt) => ({
-        value: opt.value,
-        label: opt.label,
-        meta: opt.flavor,
-      })),
+      size: getHyperstackFlavorOptions(catalog, selection.region).map(
+        (opt) => ({
+          value: opt.value,
+          label: opt.label,
+          meta: opt.flavor,
+        }),
+      ),
     }),
     buildCreatePayload: (vals, ctx) => {
-      const flavor = findOption<HyperstackFlavor>("size", vals.size, ctx.fieldOptions);
-      const hyperGpuType = flavor && flavor.gpu !== "none" ? flavor.gpu : undefined;
+      const flavor = findOption<HyperstackFlavor>(
+        "size",
+        vals.size,
+        ctx.fieldOptions,
+      );
+      const hyperGpuType =
+        flavor && flavor.gpu !== "none" ? flavor.gpu : undefined;
       const hyperGpuCount = flavor?.gpu_count || 0;
       const wantsGpu = hyperGpuCount > 0;
       return buildBasePayload(
@@ -1602,14 +1682,13 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
     storage: { supported: true, growable: true },
     getOptions: (catalog, selection) => ({
       ...emptyOptions(),
-      machine_type: getNebiusInstanceTypeOptions(
-        catalog,
-        selection.region,
-      ).map((opt) => ({
-        value: opt.value,
-        label: opt.label,
-        meta: opt.entry,
-      })),
+      machine_type: getNebiusInstanceTypeOptions(catalog, selection.region).map(
+        (opt) => ({
+          value: opt.value,
+          label: opt.label,
+          meta: opt.entry,
+        }),
+      ),
       region: getNebiusRegionOptions(catalog),
     }),
     buildCreatePayload: (vals, ctx) => {
@@ -1641,7 +1720,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
   },
   "self-host": {
     id: "self-host",
-    label: "Self-hosted (Multipass)",
+    label: "Self-hosted",
     supports: {
       region: false,
       zone: false,
@@ -1653,15 +1732,25 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       genericGpu: false,
     },
     fields: {
-      primary: [],
+      primary: ["self_host_kind", "self_host_mode"],
       advanced: [],
       labels: {
         size: "Size",
+        self_host_kind: "Host type",
+        self_host_mode: "Connectivity",
+      },
+      tooltips: {
+        self_host_kind:
+          "Run inside a managed Multipass VM or run directly on this machine.",
+        self_host_mode:
+          "Local network uses SSH tunnels to the hub; Cloudflare uses cloudflared + S3.",
       },
     },
     storage: { supported: true, growable: false },
-    getOptions: () => ({
+    getOptions: (catalog) => ({
       ...emptyOptions(),
+      self_host_kind: getSelfHostKindOptions(catalog),
+      self_host_mode: getSelfHostModeOptions(catalog),
     }),
     buildCreatePayload: (vals, _ctx) => {
       const cpu = Number(vals.cpu);
@@ -1669,6 +1758,13 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       const metadata: Record<string, any> = {};
       if (Number.isFinite(cpu) && cpu > 0) metadata.cpu = cpu;
       if (Number.isFinite(ram_gb) && ram_gb > 0) metadata.ram_gb = ram_gb;
+      if (vals.self_host_kind) metadata.self_host_kind = vals.self_host_kind;
+      if (vals.self_host_mode) metadata.self_host_mode = vals.self_host_mode;
+      if (vals.self_host_ssh_target) {
+        metadata.self_host_ssh_target = String(
+          vals.self_host_ssh_target,
+        ).trim();
+      }
       const storage_mode = vals.storage_mode || "persistent";
       return {
         name: vals.name ?? "My Host",
@@ -1694,6 +1790,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
     id: "none",
     label: "Local (manual setup)",
     localOnly: true,
+    featureFlagKey: "project_hosts_local_enabled",
     supports: {
       region: false,
       zone: false,
@@ -1745,18 +1842,35 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
 };
 
 export const getProviderEnablement = (opts: {
+  // customize is the "customize" redux store
   customize?: { get?: (key: string) => unknown };
   showLocal: boolean;
 }): HostProviderFlags => {
+  const readCustomizeFlag = (customize: any, key: string): unknown =>
+    customize?.get?.(key);
+  const normalizeFlag = (value: unknown): boolean => {
+    if (value === true) return true;
+    if (value === false || value == null) return false;
+    if (typeof value === "number") return value > 0;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      return (
+        normalized === "true" || normalized === "1" || normalized === "yes"
+      );
+    }
+    return false;
+  };
   const enabled = {} as Record<HostProvider, boolean>;
   for (const entry of Object.values(PROVIDER_REGISTRY)) {
     if (entry.localOnly) {
-      enabled[entry.id] = opts.showLocal;
+      const flag = entry.featureFlagKey
+        ? readCustomizeFlag(opts.customize, entry.featureFlagKey)
+        : undefined;
+      enabled[entry.id] =
+        opts.showLocal && (entry.featureFlagKey ? normalizeFlag(flag) : true);
     } else if (entry.featureFlagKey) {
-      const flag = opts.customize?.get?.(entry.featureFlagKey);
-      // Default to enabled when the customize store isn't ready or key is unset,
-      // so the UI doesn't end up with an empty provider list during load/dev.
-      enabled[entry.id] = flag === undefined ? true : !!flag;
+      const flag = readCustomizeFlag(opts.customize, entry.featureFlagKey);
+      enabled[entry.id] = normalizeFlag(flag);
     } else {
       enabled[entry.id] = true;
     }
@@ -1781,14 +1895,17 @@ export const getProviderStorageSupport = (
 ): ProviderStorageSupport => {
   const cap = caps?.[provider]?.persistentStorage;
   if (cap) return cap;
-  return PROVIDER_REGISTRY[provider].storage ?? { supported: true, growable: true };
+  return (
+    PROVIDER_REGISTRY[provider].storage ?? { supported: true, growable: true }
+  );
 };
 
 export const getProviderOptions = (
   provider: HostProvider,
   catalog: HostCatalog | undefined,
   selection: ProviderSelection,
-): FieldOptionsMap => PROVIDER_REGISTRY[provider].getOptions(catalog, selection);
+): FieldOptionsMap =>
+  PROVIDER_REGISTRY[provider].getOptions(catalog, selection);
 
 export const buildCreateHostPayload = (
   vals: Record<string, any>,

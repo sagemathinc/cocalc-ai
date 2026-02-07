@@ -59,7 +59,7 @@ export default function PayAsYouGoMinBalance({ account_id }) {
             setMinBalance(null);
             setLastSaved(null);
           }}
-          message={
+          title={
             <div>
               <span>Current Minimum Allowed Balance: </span>
               <span>{moneyToCurrency(lastSaved)}</span>

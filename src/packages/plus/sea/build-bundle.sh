@@ -7,7 +7,7 @@
 #
 # The script expects pnpm v8+ and Node 18+ (Node 24 for runtime).
 # It runs the package build for @cocalc/plus, bundles the entry point
-# packages/plus/bin/start.js (delegating to @cocalc/lite/main),
+# packages/plus/dist/bin/start.js (delegating to @cocalc/lite/main),
 # and copies the static frontend assets.
 #
 # Native addons copied by ncc (e.g. zeromq, node-pty) are preserved.
@@ -29,12 +29,16 @@ rm -rf "$OUT"/*
 
 cd "$ROOT"
 
+echo "- Build @cocalc/plus"
+pnpm --filter @cocalc/plus build
+
 echo "- Bundle entry point with @vercel/ncc"
-ncc build packages/plus/bin/start.js \
+ncc build packages/plus/dist/bin/start.js \
   -o "$OUT"/bundle \
   --source-map \
   --external bufferutil \
-  --external utf-8-validate
+  --external utf-8-validate \
+  --external reflect-sync
 
 # zeromq expects its build manifest next to the native addon; ncc copies the
 # compiled .node file but not the manifest.json, so copy it manually.
@@ -86,6 +90,96 @@ esac
 
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
+
+copy_js_pkg() {
+  local pkg="$1"
+  local dir
+  dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  if [ -n "$dir" ]; then
+    echo "- Copy js package ${pkg}"
+    mkdir -p "$OUT"/bundle/node_modules/"$pkg"
+    # Follow symlinks so pnpm store paths are materialized.
+    rsync -aL "$dir"/ "$OUT"/bundle/node_modules/"$pkg"/
+  else
+    echo "  (skipping ${pkg}; not found)"
+  fi
+}
+
+resolve_js_pkg_dir() {
+  local pkg="$1"
+  local base="$2"
+  node -e "const path=require('path');const {createRequire}=require('module');const r=createRequire(path.join(process.argv[1],'package.json'));const entry=r.resolve(process.argv[2]);console.log(path.dirname(path.dirname(entry)));" "$base" "$pkg" 2>/dev/null || true
+}
+
+copy_js_pkg_tree() {
+  local pkg="$1"
+  local base="$2"
+  local out="$3"
+  node -e '
+const fs = require("fs");
+const path = require("path");
+const { createRequire } = require("module");
+const base = process.argv[1];
+const rootPkg = process.argv[2];
+const rootReq = createRequire(path.join(base, "package.json"));
+const seen = new Set();
+function resolvePackageRoot(name, resolver) {
+  try {
+    const pkgJsonPath = resolver.resolve(`${name}/package.json`);
+    return { pkgJsonPath, dir: path.dirname(pkgJsonPath) };
+  } catch {}
+  let entry;
+  try {
+    entry = resolver.resolve(name);
+  } catch {
+    return null;
+  }
+  let dir = path.dirname(entry);
+  while (dir && dir !== path.dirname(dir)) {
+    const candidate = path.join(dir, "package.json");
+    if (fs.existsSync(candidate)) {
+      return { pkgJsonPath: candidate, dir };
+    }
+    dir = path.dirname(dir);
+  }
+  return null;
+}
+function add(name, resolver) {
+  if (seen.has(name)) return;
+  const resolved = resolvePackageRoot(name, resolver);
+  if (!resolved) {
+    return;
+  }
+  const { pkgJsonPath, dir } = resolved;
+  seen.add(name);
+  let pkgJson;
+  try {
+    pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+  } catch {
+    pkgJson = {};
+  }
+  const deps = pkgJson.dependencies || {};
+  const pkgReq = createRequire(path.join(dir, "package.json"));
+  for (const dep of Object.keys(deps)) add(dep, pkgReq);
+  process.stdout.write(`${name}\t${dir}\n`);
+}
+add(rootPkg, rootReq);
+' "$base" "$pkg" | while IFS=$'\t' read -r name dir; do
+    if [ -z "$name" ] || [ -z "$dir" ]; then
+      continue
+    fi
+    dest="$out/bundle/node_modules/$name"
+    mkdir -p "$(dirname "$dest")"
+    rsync -aL "$dir"/ "$dest"/
+  done
+}
+
+echo "- Copy reflect-sync + deps (from @cocalc/plus)"
+copy_js_pkg_tree "reflect-sync" "$ROOT/packages/plus" "$OUT"
+if [ ! -f "$OUT/bundle/node_modules/reflect-sync/dist/index.js" ]; then
+  echo "ERROR: reflect-sync not copied into bundle output"
+  exit 1
+fi
 
 echo "- Copy static frontend assets"
 mkdir -p "$OUT"/static

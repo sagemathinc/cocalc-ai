@@ -28,7 +28,7 @@ export function EditorLoadError(props: EditorLoadErrorProps): ReactElement {
   return (
     <AntdAlert
       type="error"
-      message="Editor Load Failed"
+      title="Editor Load Failed"
       description={
         <div style={{ marginTop: "12px" }}>
           <Paragraph>File: {path}</Paragraph>

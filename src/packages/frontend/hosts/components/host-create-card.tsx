@@ -1,8 +1,7 @@
-import { Alert, Button, Card, Divider, Form, Popconfirm, Select, Space, Typography, message } from "antd";
+import { Alert, Button, Card, Divider, Form, Popconfirm, Select, Space, Typography } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
-import { HostAiAssist } from "./host-ai-assist";
 import { HostCreateForm } from "./host-create-form";
 
 type HostCreateCardProps = {
@@ -10,7 +9,7 @@ type HostCreateCardProps = {
 };
 
 export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
-  const { permissions, form, provider, catalogRefresh, ai } = vm;
+  const { permissions, form, provider, catalogRefresh } = vm;
   const { isAdmin, canCreateHosts } = permissions;
   const {
     form: formInstance,
@@ -24,11 +23,11 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     refreshCatalog,
     catalogRefreshing,
   } = catalogRefresh;
+  const hasExternalProviders = refreshProviders.some(
+    (entry) => entry.value !== "self-host",
+  );
   const refreshCatalogAndNotify = async () => {
-    const ok = await refreshCatalog();
-    if (ok) {
-      message.success("Cloud catalog updated");
-    }
+    await refreshCatalog();
   };
   const confirmCreateHost = async () => {
     try {
@@ -70,7 +69,15 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     watchedGpuType,
     watchedZone,
   ]);
-  const createDisabled = !canCreateHosts || gcpRegionIncompatible || gcpZoneIncompatible;
+  const watchedSshTarget = Form.useWatch("self_host_ssh_target", formInstance);
+  const missingSelfHostTarget =
+    provider.selectedProvider === "self-host" &&
+    !(watchedSshTarget ?? "").trim();
+  const createDisabled =
+    !canCreateHosts ||
+    gcpRegionIncompatible ||
+    gcpZoneIncompatible ||
+    missingSelfHostTarget;
 
   return (
     <Card
@@ -84,26 +91,31 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
         <Alert
           type="info"
           showIcon
-          message="Your membership does not allow creating workspace hosts."
+          title="Your membership does not allow creating workspace hosts."
           style={{ marginBottom: 12 }}
         />
       )}
-      <HostAiAssist ai={ai} />
       <HostCreateForm
         form={formInstance}
         canCreateHosts={canCreateHosts}
         provider={provider}
       />
       <Divider style={{ margin: "8px 0" }} />
-      <Space direction="vertical" style={{ width: "100%" }} size="small">
-        <Typography.Text type="secondary">
-          Cost estimate (placeholder): updates with size/region
-        </Typography.Text>
+      <Space orientation="vertical" style={{ width: "100%" }} size="small">
+        {provider.selectedProvider !== "self-host" && (
+          <Typography.Text type="secondary">
+            Cost estimate (placeholder): updates with size/region
+          </Typography.Text>
+        )}
         <Popconfirm
           title={
             <div>
               <div>Create this host?</div>
-              <div>Provisioning may take a few minutes and can incur costs.</div>
+              <div>
+                {provider.selectedProvider === "self-host"
+                  ? "Setup may take a few minutes."
+                  : "Provisioning may take a few minutes and can incur costs."}
+              </div>
             </div>
           }
           okText="Create"
@@ -121,10 +133,10 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
           </Button>
         </Popconfirm>
       </Space>
-      {isAdmin && (
+      {isAdmin && hasExternalProviders && (
         <>
           <Divider style={{ margin: "12px 0" }} />
-          <Space direction="vertical" style={{ width: "100%" }} size="small">
+          <Space orientation="vertical" style={{ width: "100%" }} size="small">
             <Typography.Text type="secondary">Admin tools</Typography.Text>
             <Space size="small" wrap>
               <Select

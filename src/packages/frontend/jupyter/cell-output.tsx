@@ -197,7 +197,7 @@ function ControlColumn({ actions, cell, id }) {
         return (
           <Alert
             style={{ margin: "5px" }}
-            message="Malformed Output"
+            title="Malformed Output"
             description={`Notebook contains malformed output, i.e., the ipynb file is corrupt -- ${err}`}
             type="error"
             showIcon

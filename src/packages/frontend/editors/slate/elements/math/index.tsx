@@ -4,7 +4,7 @@
  */
 
 import React from "react";
-import { Element } from "slate";
+import { Element, Node } from "slate";
 import { register, RenderElementProps, SlateElement } from "../register";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import DefaultMath from "@cocalc/frontend/components/math/ssr";
@@ -12,15 +12,15 @@ import DefaultMath from "@cocalc/frontend/components/math/ssr";
 export interface DisplayMath extends SlateElement {
   type: "math_block";
   value: string;
-  isVoid: true;
+  isVoid?: boolean;
 }
 
 export interface InlineMath extends SlateElement {
   type: "math_inline";
   value: string;
   display?: boolean; // inline but acts as displayed math
-  isVoid: true;
   isInline: true;
+  isVoid?: boolean;
 }
 
 export const StaticElement: React.FC<RenderElementProps> = ({
@@ -32,15 +32,12 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     // type guard.
     throw Error("bug");
   }
+  const value = stripMathDelimiters(element.value ?? Node.string(element));
   const C = MathComponent ?? DefaultMath;
   return (
     <span {...attributes}>
       <C
-        data={wrap(
-          element.value,
-          element.type == "math_inline" && !element.display
-        )}
-        inMarkdown
+        data={wrap(value, element.type == "math_inline" && !element.display)}
       />
     </span>
   );
@@ -54,27 +51,50 @@ function wrap(math, isInline) {
   return math;
 }
 
+function stripMathDelimiters(s: string): string {
+  const trimmed = s.trim();
+  if (
+    trimmed.startsWith("$$") &&
+    trimmed.endsWith("$$") &&
+    trimmed.length >= 4
+  ) {
+    return trimmed.slice(2, -2).trim();
+  }
+  if (trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length >= 2) {
+    return trimmed.slice(1, -1).trim();
+  }
+  if (trimmed.startsWith("\\[") && trimmed.endsWith("\\]")) {
+    return trimmed.slice(2, -2).trim();
+  }
+  if (trimmed.startsWith("\\(") && trimmed.endsWith("\\)")) {
+    return trimmed.slice(2, -2).trim();
+  }
+  return s;
+}
+
 register({
   slateType: ["math_inline", "math_inline_double"],
   StaticElement,
   toSlate: ({ token }) => {
+    const value = stripMathDelimiters(stripMathEnvironment(token.content));
     return {
       type: "math_inline",
-      value: stripMathEnvironment(token.content),
-      isVoid: true,
+      value,
       isInline: true,
-      children: [{ text: "" }],
+      isVoid: true,
+      children: [{ text: value }],
       display: token.type == "math_inline_double",
     } as Element;
   },
 });
 
 export function toDisplayMath({ token }) {
+  const value = stripMathEnvironment(token.content).trim();
   return {
     type: "math_block",
-    value: stripMathEnvironment(token.content).trim(),
+    value,
     isVoid: true,
-    children: [{ text: "" }],
+    children: [{ text: value }],
   } as Element;
 }
 
@@ -91,7 +111,7 @@ export function stripMathEnvironment(s: string): string {
     if (s.startsWith(`\\begin{${env}}`)) {
       return s.slice(
         `\\begin{${env}}`.length,
-        s.length - `\\end{${env}}`.length
+        s.length - `\\end{${env}}`.length,
       );
     }
   }

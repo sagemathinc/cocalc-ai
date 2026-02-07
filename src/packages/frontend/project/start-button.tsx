@@ -156,7 +156,7 @@ export function StartButton({
         <VisibleMDLG>
           <Alert
             style={{ margin: "10px 20%" }}
-            message={
+            title={
               <span style={{ fontWeight: 500, fontSize: "14pt" }}>
                 <FormattedMessage
                   id="project.start-button.trial.message"
@@ -305,7 +305,7 @@ export function StartButton({
       <Alert
         banner={true}
         type="error"
-        message="Admin Workspace View"
+        title="Admin Workspace View"
         description={
           <>
             WARNING: You are viewing this project as an admin! (1) Some things
@@ -322,7 +322,7 @@ export function StartButton({
       <Alert
         banner={true}
         showIcon={false}
-        message={
+        title={
           <>
             <span
               style={{
@@ -351,7 +351,7 @@ export function StartButton({
 }
 
 function MoveProgressInline({ moveLro }: { moveLro: MoveLroState }) {
-  const message =
+  const phaseMessage =
     moveLro.summary?.progress_summary?.phase ??
     moveLro.last_progress?.phase ??
     moveLro.last_progress?.message ??
@@ -365,7 +365,9 @@ function MoveProgressInline({ moveLro }: { moveLro: MoveLroState }) {
 
   return (
     <Space size="small" align="center">
-      <span style={{ fontSize: "11px", color: COLORS.GRAY_M }}>{message}</span>
+      <span style={{ fontSize: "11px", color: COLORS.GRAY_M }}>
+        {phaseMessage}
+      </span>
       {percent == null ? (
         <Spin size="small" />
       ) : (

@@ -8,7 +8,6 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { SubmitMentionsFn } from "@cocalc/frontend/chat/types";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import MultiMarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
-import "@cocalc/frontend/editors/slate/elements/math/math-widget";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { len, trunc_middle } from "@cocalc/util/misc";

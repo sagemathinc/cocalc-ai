@@ -36,6 +36,7 @@ interface Props {
   input?: string;
   on_paste?: (e) => void;
   height?: string;
+  autoGrowMaxHeight?: number;
   submitMentionsRef?: SubmitMentionsRef;
   fontSize?: number;
   hideHelp?: boolean;
@@ -67,6 +68,7 @@ export default function ChatInput({
   submitMentionsRef,
   syncdb,
   moveCursorToEndOfLine,
+  autoGrowMaxHeight,
 }: Props) {
   const intl = useIntl();
   const onSendRef = useRef<Function>(on_send);
@@ -80,34 +82,23 @@ export default function ChatInput({
   );
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>("");
+  const isFocusedRef = useRef<boolean>(false);
+  const pendingRemoteInputRef = useRef<string | null>(null);
+  const pendingRemoteAtRef = useRef<number>(0);
+  const lastLocalEditAtRef = useRef<number>(0);
+  const allowFocusedUpdateRef = useRef<boolean>(false);
+  const clearPendingAtRef = useRef<number>(0);
+  const CLEAR_PENDING_MS = 5000;
 
-  const getDraftInput = useCallback(() => {
+  const getDraftRecord = useCallback(() => {
     const rec = syncdb?.get_one({
       event: "draft",
       sender_id,
       date,
     });
     if (rec == null) return undefined;
-    return (rec as any).input;
+    return rec as any;
   }, [syncdb, sender_id, date]);
-
-  useEffect(() => {
-    const dbInput = getDraftInput();
-    // take version from syncdb if it is there; otherwise, version from input prop.
-    // the db version is used when you refresh your browser while editing, or scroll up and down
-    // thus unmounting and remounting the currently editing message (due to virtualization).
-    // See https://github.com/sagemathinc/cocalc/issues/6415
-    const input = dbInput ?? propsInput;
-    setInput(input);
-    if (input?.trim() && moveCursorToEndOfLine) {
-      // have to wait until it's all rendered -- i hate code like this...
-      for (const n of [1, 10, 50]) {
-        setTimeout(() => {
-          controlRef.current?.moveCursorToEndOfLine();
-        }, n);
-      }
-    }
-  }, [date, sender_id, propsInput, getDraftInput]);
 
   const currentInputRef = useRef<string>(input);
   const saveOnUnmountRef = useRef<boolean>(true);
@@ -127,7 +118,7 @@ export default function ChatInput({
       // but definitely don't save (thus updating active) if
       // the input didn't really change, since we use active for
       // showing that a user is writing to other users.
-      const input0 = getDraftInput();
+      const input0 = getDraftRecord()?.input;
       if (input0 != input) {
         if (input0 == null && !input) {
           // DO NOT save if you haven't written a draft before, and
@@ -153,6 +144,64 @@ export default function ChatInput({
       trailing: true,
     },
   );
+
+  useEffect(() => {
+    const draft = getDraftRecord();
+    const dbInput = draft?.input;
+    const remoteActive = Number(draft?.active ?? 0);
+    // take version from syncdb if it is there; otherwise, version from input prop.
+    // the db version is used when you refresh your browser while editing, or scroll up and down
+    // thus unmounting and remounting the currently editing message (due to virtualization).
+    // See https://github.com/sagemathinc/cocalc/issues/6415
+    const input = (dbInput ?? propsInput) ?? "";
+    const current = currentInputRef.current ?? "";
+    if (clearPendingAtRef.current) {
+      if (input === "") {
+        clearPendingAtRef.current = 0;
+      } else if (Date.now() - clearPendingAtRef.current < CLEAR_PENDING_MS) {
+        return;
+      } else {
+        clearPendingAtRef.current = 0;
+      }
+    }
+    const isClearing = input === "" && current !== "";
+    if (isClearing) {
+      saveChat.cancel();
+      pendingRemoteInputRef.current = null;
+      pendingRemoteAtRef.current = 0;
+    }
+    const focused = isFocusedRef.current;
+    const shouldPrefill =
+      current.trim().length === 0 && input.trim().length > 0;
+    const shouldClear = input === "" && current !== "";
+    if (focused && input !== current && !shouldPrefill && !shouldClear) {
+      if (allowFocusedUpdateRef.current) {
+        allowFocusedUpdateRef.current = false;
+        controlRef.current?.allowNextValueUpdateWhileFocused?.();
+      } else {
+        if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
+          return;
+        }
+        pendingRemoteInputRef.current = input;
+        pendingRemoteAtRef.current = remoteActive || Date.now();
+        return;
+      }
+    }
+    if (focused && input !== current) {
+      controlRef.current?.allowNextValueUpdateWhileFocused?.();
+    }
+    setInput(input);
+    currentInputRef.current = input;
+    lastSavedRef.current = input;
+    if (input?.trim() && moveCursorToEndOfLine) {
+      // have to wait until it's all rendered -- i hate code like this...
+      for (const n of [1, 10, 50]) {
+        setTimeout(() => {
+          controlRef.current?.moveCursorToEndOfLine();
+        }, n);
+      }
+    }
+  }, [date, sender_id, propsInput, getDraftRecord, saveChat]);
 
   useEffect(() => {
     return () => {
@@ -202,6 +251,30 @@ export default function ChatInput({
         date,
       });
       const input = (x as any)?.input ?? "";
+      const remoteActive = Number((x as any)?.active ?? 0);
+      if (clearPendingAtRef.current) {
+        if (input === "") {
+          clearPendingAtRef.current = 0;
+        } else if (Date.now() - clearPendingAtRef.current < CLEAR_PENDING_MS) {
+          return;
+        } else {
+          clearPendingAtRef.current = 0;
+        }
+      }
+      if (isFocusedRef.current && input !== currentInputRef.current) {
+        if (allowFocusedUpdateRef.current) {
+          allowFocusedUpdateRef.current = false;
+          controlRef.current?.allowNextValueUpdateWhileFocused?.();
+        } else {
+          if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
+            return;
+          }
+          // Defer draft updates while focused to avoid overwriting local typing.
+          pendingRemoteInputRef.current = input;
+          pendingRemoteAtRef.current = remoteActive || Date.now();
+          return;
+        }
+      }
       if (input != lastSavedRef.current) {
         setInput(input);
         currentInputRef.current = input;
@@ -216,9 +289,9 @@ export default function ChatInput({
 
   function getPlaceholder(): string {
     if (placeholder != null) return placeholder;
-    const have_llm = redux
-      .getStore("projects")
-      .hasLanguageModelEnabled(project_id);
+    const have_llm =
+      project_id != null &&
+      redux.getStore("projects").hasLanguageModelEnabled(project_id);
     return intl.formatMessage(
       {
         id: "chat.input.placeholder",
@@ -229,7 +302,6 @@ export default function ChatInput({
       },
     );
   }
-  height;
 
   const hasInput = (input ?? "").trim().length > 0;
 
@@ -237,8 +309,28 @@ export default function ChatInput({
     <MarkdownInput
       autoFocus={autoFocus}
       saveDebounceMs={0}
-      onFocus={onFocus}
-      onBlur={onBlur}
+      onFocus={() => {
+        isFocusedRef.current = true;
+        onFocus?.();
+      }}
+      onBlur={() => {
+        isFocusedRef.current = false;
+        if (pendingRemoteInputRef.current != null) {
+          const pending = pendingRemoteInputRef.current;
+          const pendingAt = pendingRemoteAtRef.current;
+          pendingRemoteInputRef.current = null;
+          pendingRemoteAtRef.current = 0;
+          clearPendingAtRef.current = 0;
+          if (lastLocalEditAtRef.current > pendingAt) {
+            saveChat.flush?.();
+          } else if (pending !== currentInputRef.current) {
+            setInput(pending);
+            currentInputRef.current = pending;
+            lastSavedRef.current = pending;
+          }
+        }
+        onBlur?.();
+      }}
       cacheId={cacheId}
       value={input}
       controlRef={controlRef}
@@ -247,6 +339,7 @@ export default function ChatInput({
       submitMentionsRef={submitMentionsRef}
       onChange={(input) => {
         currentInputRef.current = input;
+        lastLocalEditAtRef.current = Date.now();
         /* BUG: in Markdown mode this stops getting
         called after you paste in an image.  It works
         fine in Slate/Text mode. See
@@ -256,21 +349,33 @@ export default function ChatInput({
         saveChat(input);
       }}
       onShiftEnter={(input) => {
+        saveChat.cancel();
+        controlRef.current?.allowNextValueUpdateWhileFocused?.();
         setInput("");
+        currentInputRef.current = "";
+        lastSavedRef.current = "";
+        lastLocalEditAtRef.current = Date.now();
+        pendingRemoteInputRef.current = null;
+        pendingRemoteAtRef.current = 0;
+        clearPendingAtRef.current = Date.now();
         saveChat("");
+        saveChat.flush?.();
         on_send(input);
       }}
       height={height}
+      autoGrowMaxHeight={autoGrowMaxHeight}
       placeholder={getPlaceholder()}
       fontSize={fontSize}
       hideHelp={hideHelp}
       style={style}
       onUndo={() => {
         saveChat.cancel();
+        allowFocusedUpdateRef.current = true;
         syncdb?.undo();
       }}
       onRedo={() => {
         saveChat.cancel();
+        allowFocusedUpdateRef.current = true;
         syncdb?.redo();
       }}
       editBarStyle={editBarStyle}

@@ -19,7 +19,7 @@ import { once } from "@cocalc/util/async-utils";
 import { PageState } from "./store";
 import { lite, project_id } from "@cocalc/frontend/lite";
 
-const LITE_TABS = new Set(["account", "admin"]);
+const LITE_TABS = new Set(["account", "admin", "ssh"]);
 
 export class PageActions extends Actions<PageState> {
   private session_manager?: any;
@@ -148,6 +148,13 @@ export class PageActions extends Actions<PageState> {
       if (!LITE_TABS.has(key)) {
         key = project_id;
       }
+      if (key === "ssh") {
+        const sshRemoteTarget =
+          redux.getStore("customize")?.get("ssh_remote_target") ?? "";
+        if (sshRemoteTarget) {
+          key = project_id;
+        }
+      }
     }
 
     const prev_key = this.redux.getStore("page").get("active_top_tab");
@@ -196,6 +203,12 @@ export class PageActions extends Actions<PageState> {
           set_url("/hosts");
         }
         set_window_title(`${projectLabel} Hosts`);
+        return;
+      case "ssh":
+        if (change_history) {
+          set_url("/ssh");
+        }
+        set_window_title("SSH Sessions");
         return;
       case "notifications":
         if (change_history) {

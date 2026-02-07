@@ -13,6 +13,7 @@ import {
 import getLogger from "@cocalc/backend/logger";
 import port0 from "@cocalc/backend/port";
 import { once } from "node:events";
+import { spawn } from "node:child_process";
 import { project_id } from "@cocalc/project/data";
 import { handleFileDownload } from "@cocalc/conat/files/file-download";
 import { join } from "node:path";
@@ -27,6 +28,7 @@ import fs from "node:fs";
 import { initAuth } from "./auth-token";
 import { getCustomizePayload } from "./hub/settings";
 import { getOrCreateSelfSigned } from "./tls";
+import { attachProxyServer } from "@cocalc/project/servers/proxy/proxy";
 
 const logger = getLogger("lite:static");
 
@@ -37,13 +39,16 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
   app: Application;
   port: number;
   isHttps: boolean;
+  hostname: string;
 }> {
   const app = express();
 
-  const port = port0 ?? (await getPort());
+  const requestedPort =
+    Number.isFinite(port0) && port0 > 0 ? port0 : await getPort();
   const hostEnv = process.env.HOST ?? "localhost";
   const { isHttps, hostname } = sanitizeHost(hostEnv);
   let httpServer: AnyServer;
+  let actualPort = requestedPort;
 
   if (isHttps) {
     const { key, cert, keyPath, certPath } = getOrCreateSelfSigned(hostname);
@@ -60,10 +65,14 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
       }
     });
 
-    httpServer.listen(port, hostname);
+    httpServer.listen(requestedPort, hostname);
     await once(httpServer, "listening");
 
-    showURL({ url: `https://${hostname}:${port}`, AUTH_TOKEN });
+    const addr = httpServer.address();
+    if (addr && typeof addr === "object" && addr.port) {
+      actualPort = addr.port;
+    }
+    showURL({ url: `https://${hostname}:${actualPort}`, AUTH_TOKEN });
     console.log(`TLS: key=${keyPath}\n     cert=${certPath}`);
   } else {
     httpServer = httpCreateServer(app);
@@ -79,9 +88,13 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
       }
     });
 
-    httpServer.listen(port, hostname);
+    httpServer.listen(requestedPort, hostname);
     await once(httpServer, "listening");
-    showURL({ url: `http://${hostname}:${port}`, AUTH_TOKEN });
+    const addr = httpServer.address();
+    if (addr && typeof addr === "object" && addr.port) {
+      actualPort = addr.port;
+    }
+    showURL({ url: `http://${hostname}:${actualPort}`, AUTH_TOKEN });
   }
 
   const info: any = {};
@@ -95,7 +108,8 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
     console.log(JSON.stringify(info, undefined, 2));
   }
   console.log("\n" + "*".repeat(60));
-  return { httpServer, app, port, isHttps };
+  initProjectProxy({ app, httpServer });
+  return { httpServer, app, port: actualPort, isHttps, hostname };
 }
 
 export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
@@ -126,6 +140,10 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
     "/webapp/favicon.ico",
     express.static(join(ASSET_PATH, "favicon.ico")),
   );
+  app.use(
+    "/webapp/serviceWorker.js",
+    express.static(join(ASSET_PATH, "serviceWorker.js")),
+  );
 
   app.get("/customize", async (_, res) => {
     const payload = await getCustomizePayload();
@@ -145,7 +163,63 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
   app.get("*", (req, res) => {
     if (req.url.endsWith("__webpack_hmr")) return;
     logger.debug("redirecting", req.url);
-    res.redirect("/static/app.html");
+    const target = mapLiteTarget(req.originalUrl || req.url || "");
+    if (!target) {
+      res.redirect("/static/app.html");
+      return;
+    }
+    const redirectUrl = new URL("http://host/static/app.html");
+    redirectUrl.searchParams.set("target", target);
+    res.redirect(redirectUrl.pathname + redirectUrl.search);
+  });
+}
+
+function mapLiteTarget(rawUrl: string): string {
+  const parsed = new URL(`http://host${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`);
+  const pathname = parsed.pathname;
+  let targetPath = "";
+  if (pathname.startsWith("/projects/")) {
+    targetPath = pathname.slice(1);
+  } else if (pathname.startsWith(`/${project_id}/`)) {
+    targetPath = `projects${pathname}`;
+  } else if (
+    pathname === "/files" ||
+    pathname.startsWith("/files/") ||
+    pathname === "/new" ||
+    pathname.startsWith("/new/") ||
+    pathname === "/search" ||
+    pathname.startsWith("/search/") ||
+    pathname === "/settings" ||
+    pathname.startsWith("/settings/") ||
+    pathname === "/log" ||
+    pathname.startsWith("/log/") ||
+    pathname === "/port" ||
+    pathname.startsWith("/port/") ||
+    pathname === "/raw" ||
+    pathname.startsWith("/raw/")
+  ) {
+    targetPath = `projects/${project_id}${pathname}`;
+  } else {
+    targetPath = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+  }
+  if (!targetPath || targetPath === "static/app.html") {
+    return "";
+  }
+  return `${targetPath}${parsed.search || ""}`;
+}
+
+function initProjectProxy({
+  app,
+  httpServer,
+}: {
+  app: Application;
+  httpServer: AnyServer;
+}) {
+  attachProxyServer({
+    app,
+    httpServer,
+    base_url: project_id,
+    host: "localhost",
   });
 }
 
@@ -169,4 +243,25 @@ function showURL({ url, AUTH_TOKEN }) {
     : "";
   console.log("*".repeat(60) + "\n");
   console.log(`CoCalc Lite Server:  ${url}${auth}`);
+  openUrlIfRequested(`${url}${auth}`);
+}
+
+function openUrlIfRequested(url: string) {
+  const flag = (process.env.COCALC_OPEN_BROWSER || "").toLowerCase();
+  if (flag !== "1" && flag !== "true" && flag !== "yes") return;
+  const platform = process.platform;
+  let cmd: string;
+  let args: string[];
+  if (platform === "darwin") {
+    cmd = "open";
+    args = [url];
+  } else {
+    cmd = "xdg-open";
+    args = [url];
+  }
+  try {
+    spawn(cmd, args, { stdio: "ignore", detached: true }).unref();
+  } catch {
+    // ignore failures (headless or missing opener)
+  }
 }

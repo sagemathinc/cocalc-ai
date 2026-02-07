@@ -36,11 +36,11 @@ export default function UserViaSearch({ query }: Props) {
   }
 
   if (error !== "") {
-    return <Alert message={error} type="error" />;
+    return <Alert title={error} type="error" />;
   }
 
   if (users.length === 0) {
-    return <Alert message="No results found" type="warning" />;
+    return <Alert title="No results found" type="warning" />;
   }
 
   const user = users[0] as any;

@@ -4,6 +4,8 @@
 // This works fine since a moment later this gets called with everything in sync again.
 // NOTE: we are also assuming fenced code blocks are at the top level always, which
 // is questionable.
+import { getCodeBlockText } from "./utils";
+
 export function getHistory(editor, element): string[] | null {
   const history: string[] = [];
   if (editor == null) return history;
@@ -16,7 +18,7 @@ export function getHistory(editor, element): string[] | null {
       elt.fence == true &&
       elt.info == element.info
     ) {
-      const value = elt.value?.trim();
+      const value = getCodeBlockText(elt)?.trim();
       if (value) {
         history.push(value);
       }

@@ -1,16 +1,20 @@
 // Electron entrypoint for CoCalc Launchpad (desktop). Spins up the Hub
 // control plane and opens a browser window pointed at the local server.
 const { app, BrowserWindow, Menu } = require("electron");
-const { applyLaunchpadDefaults, logLaunchpadConfig } = require("./lib/onprem-config");
+const {
+  applyLaunchpadDefaults,
+  logLaunchpadConfig,
+} = require("./lib/onprem-config");
 
 let port; // set after Launchpad starts
 
 function createWindow() {
+  const protocol = "http";
   const win = new BrowserWindow({
     width: 1000,
     height: 700,
   });
-  win.loadURL(`http://localhost:${port}`);
+  win.loadURL(`${protocol}://localhost:${port}`);
 }
 
 function buildMenu() {
@@ -92,7 +96,7 @@ function buildMenu() {
 async function main() {
   // Spin up CoCalc Launchpad and Electron
   applyLaunchpadDefaults();
-  logLaunchpadConfig();
+    logLaunchpadConfig();
 
   await app.whenReady();
   require("@cocalc/hub/hub");

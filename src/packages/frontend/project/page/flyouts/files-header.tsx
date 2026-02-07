@@ -343,7 +343,7 @@ export function FilesHeader({
   return (
     <>
       <Space
-        direction="vertical"
+        orientation="vertical"
         style={{
           flex: "0 0 auto",
           paddingBottom: FLYOUT_PADDING,
@@ -368,7 +368,7 @@ export function FilesHeader({
               {renderSortButton("time", "Time")}
               {renderSortButton("type", "Type")}
             </Radio.Group>
-            <Space.Compact direction="horizontal" size={"small"}>
+            <Space.Compact orientation="horizontal" size={"small"}>
               <Tooltip
                 title={intl.formatMessage(labels.upload_tooltip)}
                 placement="bottom"
@@ -418,7 +418,7 @@ export function FilesHeader({
             allowClear
             prefix={<Icon name="search" />}
           />
-          <Space.Compact direction="horizontal" size="small">
+          <Space.Compact orientation="horizontal" size="small">
             <BootstrapButton
               title={intl.formatMessage(labels.hidden_files, { hidden })}
               bsSize="xsmall"
@@ -428,7 +428,7 @@ export function FilesHeader({
               <Icon name={hidden ? "eye" : "eye-slash"} />
             </BootstrapButton>
           </Space.Compact>
-          <Space.Compact direction="horizontal" size="small">
+          <Space.Compact orientation="horizontal" size="small">
             {!lite ? (
               <Tooltip title="Recovery" placement="bottom">
                 <span>
@@ -438,7 +438,7 @@ export function FilesHeader({
                     items={[
                       {
                         key: "snapshots-open",
-                        label: "Open Snapshots",
+                        label: "Browse Snapshots",
                         onClick: () => {
                           actions?.open_directory(SNAPSHOTS);
                           track("snapshots", {
@@ -466,7 +466,7 @@ export function FilesHeader({
                       { type: "divider" },
                       {
                         key: "backups-open",
-                        label: "Open Backups",
+                        label: "Browse Backups",
                         onClick: () => {
                           actions?.open_directory(BACKUPS);
                           track("backups", {
@@ -505,7 +505,7 @@ export function FilesHeader({
         {renderFileControls()}
       </Space>
       <Space
-        direction="vertical"
+        orientation="vertical"
         style={{
           flex: "0 0 auto",
           borderBottom: FIX_BORDER,

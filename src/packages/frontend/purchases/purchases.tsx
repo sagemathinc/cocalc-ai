@@ -437,7 +437,7 @@ export function PurchasesTable({
                   style={{ margin: "-5px 0 0 15px" }}
                   showIcon
                   type="warning"
-                  message={`Showing ${filteredPurchases.length} matching ${plural(filteredPurchases.length, "purchase")} and hiding ${purchases.length - filteredPurchases.length} ${plural(purchases.length - filteredPurchases.length, "purchase")}.`}
+                  title={`Showing ${filteredPurchases.length} matching ${plural(filteredPurchases.length, "purchase")} and hiding ${purchases.length - filteredPurchases.length} ${plural(purchases.length - filteredPurchases.length, "purchase")}.`}
                 />
               )}
           </>
@@ -868,7 +868,7 @@ function PurchaseModal({ purchase, onClose, admin }) {
       onCancel={onClose}
       title={<>Purchase Id={purchase.id}</>}
     >
-      <Space direction="vertical">
+      <Space orientation="vertical">
         <PurchaseDescription {...purchase} admin={admin} />
         <div>
           Time: <TimeAgo date={purchase.text} />

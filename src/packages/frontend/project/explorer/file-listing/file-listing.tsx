@@ -14,7 +14,6 @@ import { VirtuosoHandle } from "react-virtuoso";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
-import { MainConfiguration } from "@cocalc/frontend/project_configuration";
 import { path_to_file, rowBackground } from "@cocalc/util/misc";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
@@ -34,7 +33,6 @@ interface Props {
   current_path: string;
   project_id: string;
   shiftIsDown: boolean;
-  configuration_main?: MainConfiguration;
   isRunning?: boolean; // true if this project is running
   publicFiles: Set<string>;
   sort_by: (column_name: string) => void;
@@ -48,7 +46,6 @@ export function FileListing({
   current_path,
   project_id,
   shiftIsDown,
-  configuration_main,
   file_search = "",
   publicFiles,
   sort_by,
@@ -141,12 +138,8 @@ export function FileListing({
 
     return (
       <NoFiles
-        name={name}
-        current_path={current_path}
-        actions={actions}
         file_search={file_search}
         project_id={project_id}
-        configuration_main={configuration_main}
       />
     );
   }
@@ -167,7 +160,7 @@ export function FileListing({
             style={{ marginBottom: 8 }}
             type="info"
             showIcon
-            message="Snapshots vs Backups"
+            title="Snapshots vs Backups"
             description={
               <>
                 Snapshots in this folder are fast local readonly filesystem
@@ -193,7 +186,7 @@ export function FileListing({
             style={{ marginBottom: 8 }}
             type="info"
             showIcon
-            message="Backups vs Snapshots"
+            title="Backups vs Snapshots"
             description={
               <>
                 Backups are durable, deduplicated archives stored separately,
@@ -212,8 +205,14 @@ export function FileListing({
             }
           />
         ) : null}
-        <ListingHeader active_file_sort={active_file_sort} sort_by={sort_by} />
-        {listing.length > 0 ? renderRows() : render_no_files()}
+        {listing.length > 0 ? (
+          <>
+            <ListingHeader active_file_sort={active_file_sort} sort_by={sort_by} />
+            {renderRows()}
+          </>
+        ) : (
+          render_no_files()
+        )}
       </div>
       {modal}
     </>

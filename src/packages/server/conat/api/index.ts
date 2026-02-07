@@ -12,13 +12,13 @@ your dev hub after doing the above.
 
 2. Run this script at the terminal:
 
-    echo "require('@cocalc/server/conat/api').initAPI()" | COCALC_MODE='single-user' DEBUG_CONSOLE=yes DEBUG=cocalc:* node
+    echo "require('@cocalc/server/conat/api').initAPI()" | COCALC_PRODUCT=launchpad DEBUG_CONSOLE=yes DEBUG=cocalc:* node
 
 
 3. Optional: start more servers -- requests get randomly routed to exactly one of them:
 
-    echo "require('@cocalc/server/conat').default()" | COCALC_MODE='single-user' DEBUG_CONSOLE=yes DEBUG=cocalc:* node
-    echo "require('@cocalc/server/conat').default()" | COCALC_MODE='single-user' DEBUG_CONSOLE=yes DEBUG=cocalc:* node
+    echo "require('@cocalc/server/conat').default()" | COCALC_PRODUCT=launchpad DEBUG_CONSOLE=yes DEBUG=cocalc:* node
+    echo "require('@cocalc/server/conat').default()" | COCALC_PRODUCT=launchpad DEBUG_CONSOLE=yes DEBUG=cocalc:* node
 
 
 To make use of this from a browser:
@@ -62,6 +62,9 @@ import { close as terminatePersistServer } from "@cocalc/backend/conat/persist";
 import * as Module from "module";
 import { delay } from "awaiting";
 
+const ssh = {} as any;
+const reflect = {} as any;
+
 export const hubApi: HubApi = {
   system,
   projects,
@@ -75,6 +78,8 @@ export const hubApi: HubApi = {
   software,
   controlAgent,
   lro,
+  ssh,
+  reflect,
 };
 
 const logger = getLogger("server:conat:api");

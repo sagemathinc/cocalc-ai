@@ -84,7 +84,7 @@ export default function LicenseEditor({
   const intl = useIntl();
   const projectsLabel = intl.formatMessage(labels.projects);
   if (info.type == "vouchers") {
-    return <Alert type="error" message="Editing vouchers is not allowed." />;
+    return <Alert type="error" title="Editing vouchers is not allowed." />;
   }
 
   const [start, setStart] = useState<dayjs.Dayjs | undefined>(
@@ -212,7 +212,7 @@ export default function LicenseEditor({
                 step={1}
                 value={info.quantity}
                 onChange={handleFieldChange("quantity")}
-                addonAfter={projectsLabel}
+                suffix={projectsLabel}
               />
             ),
           },
@@ -227,7 +227,7 @@ export default function LicenseEditor({
                 step={1}
                 value={info.custom_ram}
                 onChange={handleFieldChange("custom_ram")}
-                addonAfter={"GB"}
+                suffix={"GB"}
               />
             ),
           },
@@ -242,7 +242,7 @@ export default function LicenseEditor({
                 step={1}
                 value={info.custom_disk}
                 onChange={handleFieldChange("custom_disk")}
-                addonAfter={"GB"}
+                suffix={"GB"}
               />
             ),
           },
@@ -259,7 +259,7 @@ export default function LicenseEditor({
                     step={1}
                     value={info.custom_cpu}
                     onChange={handleFieldChange("custom_cpu")}
-                    addonAfter={"Shared vCPU"}
+                    suffix={"Shared vCPU"}
                   />
                 ),
               },

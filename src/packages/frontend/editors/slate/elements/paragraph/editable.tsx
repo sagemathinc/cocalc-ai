@@ -4,7 +4,7 @@
  */
 
 import { register } from "../register";
-import { useFocused, useSelected, useCollapsed } from "../hooks";
+import { useFocused, useSelected } from "../hooks";
 
 register({
   slateType: "paragraph",
@@ -12,38 +12,8 @@ register({
   Element: ({ attributes, children, element }) => {
     if (element.type != "paragraph") throw Error("bug");
 
-    // All this complexity is because we only show empty paragraphs
-    // when the cursor is in them, since we create them dynamically in
-    // order to work around a fundamental shortcoming in the design
-    // of slatejs wrt cursor navigation (e.g., you can't move the cursor
-    // between block voids or before various elements at the beginning
-    // of a document such as bulleted lists).
-    const focused = useFocused();
     const selected = useSelected();
-    const collapsed = useCollapsed();
-    const isEmpty =
-      element.children.length == 1 && element.children[0]["text"] == "";
-    const isBlank = element.blank === true;
-    if (isEmpty && !isBlank && !(collapsed && focused && selected)) {
-      // Only show empty paragraph if selection is collapsed, editor is
-      // focused, and para is selected.
-      return (
-        <span
-          {...attributes}
-          style={{
-            // Hide placeholder paragraphs without stealing clicks that
-            // should target visible blank lines.
-            position: "absolute",
-            width: 0,
-            height: 0,
-            overflow: "hidden",
-            pointerEvents: "none",
-          }}
-        >
-          {children}
-        </span>
-      );
-    }
+    const focused = useFocused();
 
     // Below the textIndent: 0 is needed due to task lists -- see slate/elements/list/list-item.tsx
 
@@ -55,6 +25,24 @@ register({
         <div {...attributes}>
           <span style={{ textIndent: 0 }}>{children}</span>
         </div>
+      );
+    }
+
+    if (element["spacer"] === true) {
+      const showFocus = selected && focused;
+      return (
+        <p
+          {...attributes}
+          style={{
+            margin: 0,
+            minHeight: 2,
+            lineHeight: "2px",
+            fontSize: 2,
+            background: showFocus ? "rgba(24, 144, 255, 0.45)" : "transparent",
+          }}
+        >
+          <span style={{ textIndent: 0 }}>{children}</span>
+        </p>
       );
     }
 
@@ -85,15 +73,30 @@ register({
   },
 
   fromSlate: ({ node, children, info }) => {
+    const preserveBlankLines = info.preserveBlankLines ?? true;
+    if (node["spacer"] === true && children.trim() === "") {
+      return "";
+    }
     if (children.trim() == "") {
       // We discard empty paragraphs entirely, unless they were explicitly
-      // encoded as blank lines in markdown.
-      return node["blank"] ? "\n" : "";
+      // encoded as blank lines in markdown and blank lines are preserved.
+      return node["blank"] && preserveBlankLines ? "\n" : "";
     }
 
     // trimLeft is because prettier (say) strips whitespace from beginning of paragraphs.
     const s = children.trimLeft() + "\n";
     if (info.lastChild || info.parent?.type == "list_item") return s;
+    if (preserveBlankLines) {
+      const parent = info.parent as { children?: any[] } | undefined;
+      const nextIndex = info.index != null ? info.index + 1 : undefined;
+      const next =
+        nextIndex != null ? parent?.children?.[nextIndex] : undefined;
+      if (next?.type === "paragraph" && next?.blank === true) {
+        // Avoid adding an extra separator if the next node is already
+        // a blank paragraph.
+        return s;
+      }
+    }
     return s + "\n";
   },
 });

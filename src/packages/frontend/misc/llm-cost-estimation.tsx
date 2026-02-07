@@ -186,7 +186,7 @@ export function LLMUsageStatus({
           {compactSingle ? (
             <CompactUsageBar label="5h" window={window5h} />
           ) : (
-            <Space direction="vertical" size={2} style={{ width: "100%" }}>
+            <Space orientation="vertical" size={2} style={{ width: "100%" }}>
               <div style={{ marginBottom: "-8px" }}>
                 <CompactUsageBar label="5h" window={window5h} />
               </div>

@@ -9,6 +9,7 @@ export type HostProvider =
 export type HostListViewMode = "grid" | "list";
 
 export type HostSortField =
+  | "starred"
   | "name"
   | "provider"
   | "region"

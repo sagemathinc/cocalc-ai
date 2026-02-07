@@ -208,7 +208,7 @@ export const UnknownEditor: React.FC<Props> = (props: Props) => {
     if (mime.startsWith("text/")) return;
     return (
       <Alert
-        message="Warning"
+        title="Warning"
         description="Opening binary files could possibly modify and hence damage them. If this happens, you can use Files → Backup to restore them."
         type="warning"
         showIcon
@@ -280,7 +280,7 @@ export const UnknownEditor: React.FC<Props> = (props: Props) => {
     <div style={{ overflow: "auto" }}>
       <div style={STYLE}>
         {err && (
-          <Alert type="error" message="Error" showIcon description={err} />
+          <Alert type="error" title="Error" showIcon description={err} />
         )}
         <Row gutter={[24, 24]}>{render()}</Row>
       </div>

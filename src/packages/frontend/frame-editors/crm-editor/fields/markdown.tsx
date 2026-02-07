@@ -45,7 +45,7 @@ render({ type: "markdown", editable: true }, ({ field, obj, viewOnly }) => {
   }
 
   return edit ? (
-    <Space direction="vertical" style={{ width: "100%" }}>
+    <Space orientation="vertical" style={{ width: "100%" }}>
       <Button type="primary" onClick={() => save(obj, valueRef.current())}>
         Save (shift+enter)
       </Button>

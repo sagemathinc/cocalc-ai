@@ -1,0 +1,14 @@
+id: tensorflow
+label: TensorFlow
+component_version: "2.16.1"
+image_name: tensorflow
+gpu: true
+arch: [amd64]
+priority: 85
+tags: [tensorflow, gpu]
+prepull: false
+description: TensorFlow with CUDA support.
+
+tests:
+  - name: python
+    cmd: "bash -lc 'python3 - <<EOF\nimport tensorflow as tf; print(tf.__version__)\nEOF'"

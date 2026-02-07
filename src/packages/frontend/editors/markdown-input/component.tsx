@@ -74,6 +74,7 @@ interface Props {
   submitMentionsRef?: SubmitMentionsRef;
   style?: CSSProperties;
   onShiftEnter?: (value: string) => void; // also ctrl/alt/cmd-enter call this; see https://github.com/sagemathinc/cocalc/issues/1914
+  onAltEnter?: (value: string, pos: { line: number; ch: number }) => void;
   onEscape?: () => void;
   onBlur?: (value: string) => void;
   onFocus?: () => void;
@@ -109,11 +110,13 @@ interface Props {
   // When true, grow/shrink the editor height up to a cap. Defaults to false to
   // preserve fixed-height consumers (e.g., task editor).
   autoGrow?: boolean;
+  autoGrowMaxHeight?: number; // px cap for autoGrow (defaults to 50vh behavior)
 }
 
 export function MarkdownInput(props: Props) {
   const {
     autoFocus,
+    autoGrowMaxHeight,
     cmOptions,
     compact,
     cursors,
@@ -135,6 +138,7 @@ export function MarkdownInput(props: Props) {
     onCursorTop,
     onEscape,
     onFocus,
+    onAltEnter,
     onRedo,
     onSave,
     onShiftEnter,
@@ -210,25 +214,22 @@ export function MarkdownInput(props: Props) {
   }, [height]);
 
   const [editorHeight, setEditorHeight] = useState<number>(initialMinHeight);
-  const maxHeightRef = useRef<number>(
-    Math.max(
-      initialMinHeight,
-      Math.round(
-        typeof window !== "undefined"
-          ? Math.max(window.innerHeight * 0.5, initialMinHeight * 2)
-          : initialMinHeight * 2,
-      ),
-    ),
-  );
+  const maxHeightRef = useRef<number>(initialMinHeight * 2);
 
   const refreshMaxHeight = useCallback(() => {
     if (typeof window === "undefined") return;
-    const next = Math.max(
+    if (autoGrowMaxHeight != null && Number.isFinite(autoGrowMaxHeight)) {
+      maxHeightRef.current = Math.max(
+        initialMinHeight,
+        Math.round(autoGrowMaxHeight),
+      );
+      return;
+    }
+    maxHeightRef.current = Math.max(
       initialMinHeight,
       Math.round(Math.max(window.innerHeight * 0.5, initialMinHeight * 2)),
     );
-    maxHeightRef.current = next;
-  }, [initialMinHeight]);
+  }, [autoGrowMaxHeight, initialMinHeight]);
 
   const adjustHeight = useCallback(() => {
     if (!isAutoGrow) return;
@@ -305,12 +306,26 @@ export function MarkdownInput(props: Props) {
       return;
     }
     const extraKeys: CodeMirror.KeyMap = {};
-    if (onShiftEnter != null) {
-      const f = (cm) => onShiftEnter(cm.getValue());
-      extraKeys["Shift-Enter"] = f;
-      extraKeys["Ctrl-Enter"] = f;
-      extraKeys["Alt-Enter"] = f;
-      extraKeys["Cmd-Enter"] = f;
+    const shiftEnterHandler =
+      onShiftEnter != null ? (cm) => onShiftEnter(cm.getValue()) : undefined;
+    const altEnterHandler =
+      onAltEnter != null
+        ? (cm) => {
+            const pos = cm.getCursor();
+            onAltEnter(cm.getValue(), pos);
+          }
+        : undefined;
+    if (shiftEnterHandler != null) {
+      extraKeys["Shift-Enter"] = shiftEnterHandler;
+      extraKeys["Ctrl-Enter"] = shiftEnterHandler;
+      if (altEnterHandler == null) {
+        extraKeys["Alt-Enter"] = shiftEnterHandler;
+        extraKeys["Cmd-Enter"] = shiftEnterHandler;
+      }
+    }
+    if (altEnterHandler != null) {
+      extraKeys["Alt-Enter"] = altEnterHandler;
+      extraKeys["Cmd-Enter"] = altEnterHandler;
     }
     if (onEscape != null) {
       extraKeys["Esc"] = () => {
@@ -376,10 +391,6 @@ export function MarkdownInput(props: Props) {
     // (window as any).cm = cm.current;
     cm.current.setValue(value ?? "");
     cm.current.on("change", saveValue);
-    if (isAutoGrow) {
-      cm.current.on("change", adjustHeight);
-    }
-
     if (dirtyRef != null) {
       cm.current.on("change", () => {
         dirtyRef.current = true;
@@ -572,9 +583,6 @@ export function MarkdownInput(props: Props) {
     return () => {
       if (cm.current == null) return;
       cm.current.off("change", saveValue);
-      if (isAutoGrow) {
-        cm.current.off("change", adjustHeight);
-      }
       cm.current.off("paste", handle_paste_event as any);
       if (onBlur) {
         cm.current.off("blur", onBlur as any);
@@ -587,6 +595,17 @@ export function MarkdownInput(props: Props) {
       cm.current = undefined;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isAutoGrow || cm.current == null) return;
+    const cmInstance = cm.current;
+    cmInstance.off("change", adjustHeight);
+    cmInstance.on("change", adjustHeight);
+    adjustHeight();
+    return () => {
+      cmInstance.off("change", adjustHeight);
+    };
+  }, [adjustHeight, isAutoGrow]);
 
   useEffect(() => {
     const bindings = editor_settings.get("bindings");

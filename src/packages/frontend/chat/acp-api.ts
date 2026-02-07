@@ -280,7 +280,7 @@ function buildAcpConfig({
   const opts: CodexSessionConfig = {
     workingDirectory,
   };
-  const defaultModel = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.2-codex";
+  const defaultModel = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.3-codex";
   const selectedModel = config?.model ?? model ?? defaultModel;
   if (selectedModel) {
     opts.model = selectedModel;

@@ -6,6 +6,7 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import ShowError from "@cocalc/frontend/components/error";
 import { HostPickerModal } from "@cocalc/frontend/hosts/pick-host";
 import { DEFAULT_R2_REGION } from "@cocalc/util/consts";
+import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 
 interface Props {
   project_id: string;
@@ -24,16 +25,13 @@ export default function MoveProject({
   const [error, setError] = useState<string>("");
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const actions = useActions("projects");
-  const host = useTypedRedux("projects", "project_map")
-    ?.getIn([project_id, "host"])
-    // @ts-ignore
-    ?.toJS();
-  const url = host?.public_url ?? host?.internal_url;
-  const hostName = host?.name ?? url ?? "Not Assigned";
   const currentHostId = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
     "host_id",
   ]) as string | undefined;
+  const hostInfo = useHostInfo(currentHostId);
+  const url = hostInfo?.get?.("connect_url");
+  const hostName = hostInfo?.get?.("name") ?? url ?? "Not Assigned";
   const projectRegion = String(
     useTypedRedux("projects", "project_map")?.getIn([project_id, "region"]) ??
       DEFAULT_R2_REGION,

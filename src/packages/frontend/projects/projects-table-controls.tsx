@@ -97,7 +97,7 @@ export function ProjectsTableControls({
   }
 
   return (
-    <Space style={CONTROLS_STYLE} direction="horizontal">
+    <Space style={CONTROLS_STYLE} orientation="horizontal">
       {/* Left section: Search and Hashtags */}
       <Space wrap ref={searchRef}>
         <Input.Search

@@ -105,7 +105,7 @@ export function NbgraderScores({
       return (
         <Alert
           type="error"
-          message={scores + "\n- try running nbgrader again."}
+          title={scores + "\n- try running nbgrader again."}
         />
       );
     }

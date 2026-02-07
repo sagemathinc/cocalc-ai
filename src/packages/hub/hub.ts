@@ -9,18 +9,19 @@
 
 import { callback } from "awaiting";
 import blocked from "blocked";
-import { spawn } from "child_process";
 import { program as commander } from "commander";
 import basePath from "@cocalc/backend/base-path";
 import {
   pgConcurrentWarn as DEFAULT_DB_CONCURRENT_WARN,
   hubHostname as DEFAULT_HUB_HOSTNAME,
   agentPort as DEFAULT_AGENT_PORT,
+  conatServer,
 } from "@cocalc/backend/data";
 import { trimLogFileSize } from "@cocalc/backend/logger";
 import port from "@cocalc/backend/port";
 import { init_start_always_running_projects } from "@cocalc/database/postgres/project/always-running";
 import { load_server_settings_from_env } from "@cocalc/database/settings/server-settings";
+import { ensureLocalPostgres } from "@cocalc/database/postgres/dev";
 import { init_passport } from "@cocalc/server/hub/auth";
 import { initialOnPremSetup } from "@cocalc/server/initial-onprem-setup";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
@@ -32,6 +33,12 @@ import initIdleTimeout from "@cocalc/server/projects/control/stop-idle-projects"
 import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
+import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
+import {
+  getCocalcProduct,
+  isLaunchpadProduct,
+  isRocketProduct,
+} from "@cocalc/server/launchpad/mode";
 import {
   cloudHostHandlers,
   startCloudCatalogWorker,
@@ -58,6 +65,7 @@ import { setConatClient } from "@cocalc/conat/client";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { createProjectHostProxyHandlers } from "./proxy/project-host";
 import { maybeStartEmbeddedProjectHost } from "./servers/project-host";
+import { ensureSelfHostReverseTunnelsOnStartup } from "@cocalc/server/self-host/ssh-target";
 
 // Logger tagged with 'hub' for this file.
 const logger = getLogger("hub");
@@ -102,6 +110,21 @@ async function initMetrics() {
   };
 }
 
+async function maybeInitOnPremTls(): Promise<void> {
+  if (!isLaunchpadProduct() && !isRocketProduct()) {
+    return;
+  }
+  if (!process.env.CONAT_SERVER) {
+    logger.info("local network conat server using default", {
+      address: conatServer,
+    });
+  } else {
+    logger.info("local network conat server using explicit CONAT_SERVER", {
+      address: process.env.CONAT_SERVER,
+    });
+  }
+}
+
 async function startServer(): Promise<void> {
   logger.info("start_server");
 
@@ -143,6 +166,9 @@ async function startServer(): Promise<void> {
 
   // set server settings based on environment variables
   await load_server_settings_from_env(getDatabase());
+  await maybeInitOnPremTls();
+  await maybeStartLaunchpadOnPremServices();
+  await ensureSelfHostReverseTunnelsOnStartup();
 
   if (program.agentPort) {
     logger.info("Configure agent port");
@@ -160,9 +186,6 @@ async function startServer(): Promise<void> {
   // Project control
   logger.info("initializing project control...");
   const projectControl = initProjectControl();
-  // used for nextjs hot module reloading dev server
-  process.env["COCALC_MODE"] = program.mode;
-
   if (program.mode != "kucalc" && program.conatServer) {
     // We handle idle timeout of projects.
     // This can be disabled via COCALC_NO_IDLE_TIMEOUT.
@@ -210,27 +233,6 @@ async function startServer(): Promise<void> {
   await maybeStartEmbeddedProjectHost();
 
   if (program.conatServer) {
-    if (program.mode == "single-user" && process.env.USER == "user") {
-      // Definitely in dev mode, probably on cocalc.com in a project, so we kill
-      // all the running projects when starting the hub:
-      // Whenever we start the dev server, we just assume
-      // all projects are stopped, since assuming they are
-      // running when they are not is bad.  Something similar
-      // is done in cocalc-docker.
-      logger.info("killing all projects...");
-      await callback2(getDatabase()._query, {
-        safety_check: false,
-        query: 'update projects set state=\'{"state":"opened"}\'',
-      });
-      await spawn("pkill", ["-f", "node_modules/.bin/cocalc-project"]);
-
-      // Also, unrelated to killing projects, for purposes of developing
-      // custom software images, we inject a couple of random nonsense entries
-      // into the table in the DB:
-      logger.info("inserting random nonsense compute images in database");
-      await callback2(getDatabase().insert_random_compute_images);
-    }
-
     if (program.mode != "kucalc") {
       await init_update_stats();
       // This is async but runs forever, so don't wait for it.
@@ -292,13 +294,7 @@ async function startServer(): Promise<void> {
 
     const bootstrapUrl = await ensureBootstrapAdminToken({ baseUrl: target });
     const displayUrl = bootstrapUrl ?? target;
-    const msg = `Started HUB!\n\n-----------\n\n The following URL *might* work: ${displayUrl}\n\n\nPORT=${port}\nBASE_PATH=${basePath}\nPROTOCOL=${protocol}\n\n${
-      basePath.length <= 1
-        ? ""
-        : "If you are developing cocalc inside of cocalc, take the URL of the host cocalc\nand append " +
-          basePath +
-          " to it."
-    }\n\n-----------\n\n`;
+    const msg = `PORT=${port}\nBASE_PATH=${basePath}\nPROTOCOL=${protocol}\n\n\n\nStarted HUB!\n\n-----------\n\n\n\n    ${displayUrl}\n\n\n\n-----------\n\n`;
     logger.info(msg);
     console.log(msg);
   }
@@ -326,11 +322,6 @@ async function main(): Promise<void> {
   commander
     .name("cocalc-hub-server")
     .usage("options")
-    .option(
-      "--mode <string>",
-      `REQUIRED mode in which to run CoCalc or set COCALC_MODE env var`,
-      "",
-    )
     .option(
       "--all",
       "runs all of the servers: websocket, proxy, next (so you don't have to pass all those opts separately), and also mentions updator and updates db schema on startup; use this in situations where there is a single hub that serves everything (instead of a microservice situation like kucalc)",
@@ -420,15 +411,7 @@ async function main(): Promise<void> {
   for (const name in opts) {
     program[name] = opts[name];
   }
-  if (!program.mode) {
-    program.mode = process.env.COCALC_MODE;
-    if (!program.mode) {
-      throw Error(
-        `the --mode option must be specified or the COCALC_MODE env var`,
-      );
-      process.exit(1);
-    }
-  }
+  program.mode = getCocalcProduct() === "rocket" ? "kucalc" : "launchpad";
   if (program.all) {
     program.conatServer =
       program.proxyServer =
@@ -444,6 +427,19 @@ async function main(): Promise<void> {
   //console.log("got opts", opts);
 
   try {
+    if (process.env.COCALC_LOCAL_POSTGRES === "1") {
+      const localPg = await ensureLocalPostgres({
+        enabled: true,
+        logExports: true,
+      });
+      if (localPg) {
+        program.databaseNodes = localPg.socketDir;
+        program.databaseUser = localPg.user;
+        process.env.PGHOST = localPg.socketDir;
+        process.env.PGUSER = localPg.user;
+        process.env.PGDATABASE ??= localPg.database;
+      }
+    }
     // Everything we do here requires the database to be initialized. Once
     // initDatabase returns, database is the initialized singleton.
     const database = initDatabase();

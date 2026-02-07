@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Set, fromJS } from "immutable";
+import { Map, Set, fromJS } from "immutable";
 import { Modal } from "antd";
 import { isEqual } from "lodash";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -17,6 +17,7 @@ import { allow_project_to_run } from "@cocalc/frontend/project/client-side-throt
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once } from "@cocalc/util/async-utils";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type { StudentProjectFunctionality } from "@cocalc/util/db-schema/projects";
 import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import {
@@ -37,6 +38,39 @@ export type { Datastore, EnvVars, EnvVarsRecord };
 
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
+  private static HOST_INFO_TTL_MS = 60_000;
+
+  ensure_host_info = reuseInFlight(async (host_id?: string) => {
+    if (!host_id) return;
+    const hostInfo = store.get("host_info");
+    const existing = hostInfo?.get(host_id);
+    const now = Date.now();
+    if (existing) {
+      const updatedAt = existing.get("updated_at");
+      if (typeof updatedAt === "number") {
+        if (now - updatedAt < ProjectsActions.HOST_INFO_TTL_MS) {
+          return existing;
+        }
+      }
+    }
+    try {
+      const info: HostConnectionInfo =
+        await webapp_client.conat_client.hub.hosts.resolveHostConnection({
+          host_id,
+        });
+      const next = (hostInfo ?? Map<string, any>()).set(
+        host_id,
+        fromJS({ ...info, updated_at: now }),
+      );
+      if (next) {
+        this.setState({ host_info: next } as ProjectsState);
+      }
+      return next?.get(host_id);
+    } catch (err) {
+      console.warn("ensure_host_info failed", { host_id, err: `${err}` });
+      return;
+    }
+  });
   private getProjectTable = async () => {
     const the_table = this.redux.getTable("projects");
     if (the_table == null) {
@@ -216,6 +250,35 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   };
 
+  set_project_settings = async (
+    project_id: string,
+    settings: object,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set settings -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    await this.projects_table_set(
+      { project_id, settings },
+      "deep",
+    );
+  };
+
+  set_project_launcher = async (
+    project_id: string,
+    launcher: object,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set launcher defaults -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    await this.projects_table_set({ project_id, launcher }, "shallow");
+  };
+
   setProjectColor = async (
     project_id: string,
     color: string,
@@ -393,6 +456,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     title?: string;
     description?: string;
     image?: string; // if given, sets the compute image (the ID string)
+    rootfs_image?: string; // if given, sets the rootfs image
     start?: boolean; // immediately start on create
     license?: string;
     host_id?: string;
@@ -404,6 +468,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       title: string;
       description: string;
       image?: string;
+      rootfs_image?: string;
       host_id?: string;
       region?: string;
       start: boolean;
@@ -412,6 +477,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       title: "No Title",
       description: "No Description",
       image,
+      rootfs_image: opts.rootfs_image,
       host_id: undefined,
       region: undefined,
       start: false,
@@ -420,6 +486,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (!opts2.image) {
       // make falseish same as not specified.
       delete opts2.image;
+    }
+    if (!opts2.rootfs_image) {
+      delete opts2.rootfs_image;
     }
 
     const project_id = await webapp_client.project_client.create(opts2);
@@ -465,6 +534,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
         // we have not yet loaded the full project list?
         await this.load_all_projects();
       }
+    }
+    const host_id = store.getIn(["project_map", opts.project_id, "host_id"]);
+    if (typeof host_id === "string") {
+      // Ensure host routing info is ready before any conat project API calls.
+      await this.ensure_host_info(host_id);
     }
     const project_actions = redux.getProjectActions(opts.project_id);
     let relation = store.get_my_group(opts.project_id);

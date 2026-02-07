@@ -3,9 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Input, Modal, Space, message as antdMessage } from "antd";
+import { Button, Input, Modal, Select, Space, message as antdMessage } from "antd";
 import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import { COLORS } from "@cocalc/util/theme";
+import { ColorButton } from "@cocalc/frontend/components/color-picker";
+import { Icon } from "@cocalc/frontend/components";
+import type { IconName } from "@cocalc/frontend/components/icon";
+import { capitalize } from "@cocalc/util/misc";
 import type { ChatActions } from "./actions";
 
 export interface ChatRoomModalHandlers {
@@ -13,6 +17,8 @@ export interface ChatRoomModalHandlers {
     threadKey: string,
     currentLabel: string,
     useCurrentLabel: boolean,
+    currentColor?: string,
+    currentIcon?: string,
   ) => void;
   openExportModal: (threadKey: string, label: string, isAI: boolean) => void;
   openForkModal: (threadKey: string, label: string, isAI: boolean) => void;
@@ -27,6 +33,8 @@ interface ChatRoomModalsProps {
 export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProps) {
   const [renamingThread, setRenamingThread] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
+  const [renameColor, setRenameColor] = useState<string | undefined>(undefined);
+  const [renameIcon, setRenameIcon] = useState<IconName | undefined>(undefined);
   const [exportThread, setExportThread] = useState<{
     key: string;
     label: string;
@@ -44,23 +52,33 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     threadKey: string,
     currentLabel: string,
     useCurrentLabel: boolean,
+    currentColor?: string,
+    currentIcon?: string,
   ) => {
     setRenamingThread(threadKey);
     setRenameValue(useCurrentLabel ? currentLabel : "");
+    setRenameColor(currentColor?.trim() || undefined);
+    setRenameIcon((currentIcon as IconName) || undefined);
   };
 
   const closeRenameModal = () => {
     setRenamingThread(null);
     setRenameValue("");
+    setRenameColor(undefined);
+    setRenameIcon(undefined);
   };
 
   const handleRenameSave = () => {
     if (!renamingThread) return;
-    if (actions?.renameThread == null) {
+    if (actions?.setThreadAppearance == null) {
       antdMessage.error("Renaming chats is not available.");
       return;
     }
-    const success = actions.renameThread(renamingThread, renameValue.trim());
+    const success = actions.setThreadAppearance(renamingThread, {
+      name: renameValue.trim(),
+      color: renameColor,
+      icon: renameIcon,
+    });
     if (!success) {
       antdMessage.error("Unable to rename chat.");
       return;
@@ -162,6 +180,11 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     setForkName(name);
   }, [forkThread]);
 
+  const iconOptions = THREAD_ICON_OPTIONS.map((icon) => ({
+    value: icon,
+    label: icon,
+  }));
+
   return (
     <>
       <Modal
@@ -174,9 +197,9 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         onCancel={closeExportModal}
         onOk={handleExportThread}
         okText="Export"
-        destroyOnClose
+        destroyOnHidden
       >
-        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               Filename
@@ -195,14 +218,63 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         onCancel={closeRenameModal}
         onOk={handleRenameSave}
         okText="Save"
-        destroyOnClose
+        destroyOnHidden
       >
-        <Input
-          placeholder="Chat name"
-          value={renameValue}
-          onChange={(e) => setRenameValue(e.target.value)}
-          onPressEnter={handleRenameSave}
-        />
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+          <div>
+            <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+              Chat name
+            </div>
+            <Input
+              placeholder="Chat name"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onPressEnter={handleRenameSave}
+            />
+          </div>
+          <div>
+            <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Icon</div>
+            <Select
+              allowClear
+              showSearch
+              value={renameIcon}
+              style={{ width: "100%" }}
+              options={iconOptions}
+              optionFilterProp="label"
+              placeholder="Select an icon"
+              onChange={(value) =>
+                setRenameIcon(value ? (value as IconName) : undefined)
+              }
+              optionRender={(option) => (
+                <Space>
+                  <Icon name={option.value as IconName} />
+                  <span>{capitalize(String(option.value))}</span>
+                </Space>
+              )}
+            />
+          </div>
+          <div>
+            <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>Color</div>
+            <Space>
+              <div
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: "50%",
+                  background: renameColor ?? COLORS.GRAY_L,
+                  border: `1px solid ${COLORS.GRAY_L}`,
+                }}
+              />
+              <ColorButton
+                onChange={(value) => setRenameColor(value)}
+                title="Select thread color"
+              />
+              <Button size="small" onClick={() => setRenameColor(undefined)}>
+                Clear
+              </Button>
+            </Space>
+          </div>
+        </Space>
       </Modal>
       <Modal
         title="Fork chat"
@@ -210,9 +282,9 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         onCancel={closeForkModal}
         onOk={handleForkThread}
         okText="Fork"
-        destroyOnClose
+        destroyOnHidden
       >
-        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        <Space orientation="vertical" size={10} style={{ width: "100%" }}>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               New chat name
@@ -233,6 +305,33 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     </>
   );
 }
+
+const THREAD_ICON_OPTIONS: IconName[] = [
+  "thumbs-up",
+  "thumbs-down",
+  "question-circle",
+  "heart",
+  "star",
+  "plus-one",
+  "jupyter",
+  "smile",
+  "frown",
+  "fire",
+  "sagemath",
+  "tex",
+  "bolt",
+  "graduation-cap",
+  "python",
+  "r",
+  "calculator",
+  "cocalc-ring",
+  "hand",
+  "exchange",
+  "exclamation-triangle",
+  "user",
+  "cube",
+  "dot-circle",
+];
 
 function buildThreadExportPath(
   chatPath: string | undefined,

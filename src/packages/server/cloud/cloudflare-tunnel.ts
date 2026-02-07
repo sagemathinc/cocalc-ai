@@ -19,6 +19,16 @@ type TunnelConfig = {
   accountId: string;
   token: string;
   dns: string;
+  prefix?: string;
+  hostSuffix?: string;
+};
+
+type HubTunnelConfig = {
+  accountId: string;
+  token: string;
+  zone: string;
+  hostname: string;
+  prefix?: string;
 };
 
 type CloudflareResponse<T> = {
@@ -53,6 +63,24 @@ function clean(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function normalizeHostname(value: unknown): string | undefined {
+  const raw = clean(value);
+  if (!raw) return undefined;
+  let host = raw;
+  if (host.startsWith("http://") || host.startsWith("https://")) {
+    try {
+      host = new URL(host).host;
+    } catch {
+      host = host.replace(/^https?:\/\//, "");
+    }
+  }
+  host = host.split("/")[0];
+  if (host.includes(":")) {
+    host = host.split(":")[0];
+  }
+  return host || undefined;
+}
+
 function isEnabled(value: unknown): boolean {
   if (value === true) return true;
   if (value == null) return false;
@@ -61,20 +89,87 @@ function isEnabled(value: unknown): boolean {
   return !["0", "false", "no", "off"].includes(lowered);
 }
 
+function normalizeCloudflareMode(
+  value: unknown,
+): "none" | "self" | "managed" | undefined {
+  const raw = clean(value)?.toLowerCase();
+  if (raw === "none" || raw === "self" || raw === "managed") {
+    return raw;
+  }
+  return undefined;
+}
+
+function cloudflareSelfMode(settings: any): boolean {
+  const mode = normalizeCloudflareMode(settings.cloudflare_mode);
+  const tunnelEnabled = isEnabled(
+    settings.project_hosts_cloudflare_tunnel_enabled,
+  );
+  if (mode === "self") return true;
+  if (mode === "managed") return false;
+  if (mode === "none") {
+    return tunnelEnabled;
+  }
+  return tunnelEnabled;
+}
+
+function normalizePrefix(value: unknown): string | undefined {
+  const raw = clean(value);
+  if (!raw) return undefined;
+  let prefix = raw.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+  prefix = prefix.replace(/^-+/, "").replace(/-+$/, "");
+  return prefix || undefined;
+}
+
+function normalizeHostSuffix(value: unknown): string | undefined {
+  const raw = clean(value);
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  const lead = trimmed[0];
+  const prefix = lead === "." || lead === "-" ? lead : "-";
+  const rest = prefix ? trimmed.slice(1) : trimmed;
+  const host = normalizeHostname(rest) ?? clean(rest);
+  if (!host) return undefined;
+  return `${prefix}${host}`;
+}
+
 async function getConfig(): Promise<TunnelConfig | undefined> {
   const settings = await getServerSettings();
-  if (!isEnabled(settings.project_hosts_cloudflare_tunnel_enabled)) {
+  if (!cloudflareSelfMode(settings)) {
     return undefined;
   }
   const dns = clean(settings.project_hosts_dns);
   const accountId = clean(settings.project_hosts_cloudflare_tunnel_account_id);
   const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
+  const prefix = normalizePrefix(settings.project_hosts_cloudflare_tunnel_prefix);
+  const externalDomain = normalizeHostname(settings.dns);
+  const defaultSuffix = externalDomain ? `-${externalDomain}` : undefined;
+  const hostSuffix =
+    normalizeHostSuffix(settings.project_hosts_cloudflare_tunnel_host_suffix) ??
+    normalizeHostSuffix(defaultSuffix);
   if (!dns || !accountId || !token) return undefined;
-  return { dns, accountId, token };
+  return { dns, accountId, token, prefix, hostSuffix };
+}
+
+async function getHubConfig(): Promise<HubTunnelConfig | undefined> {
+  const settings = await getServerSettings();
+  if (!cloudflareSelfMode(settings)) {
+    return undefined;
+  }
+  const accountId = clean(settings.project_hosts_cloudflare_tunnel_account_id);
+  const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
+  const zone = clean(settings.project_hosts_dns);
+  const hostname = normalizeHostname(settings.dns);
+  const prefix = normalizePrefix(settings.project_hosts_cloudflare_tunnel_prefix);
+  if (!accountId || !token || !zone || !hostname) return undefined;
+  return { accountId, token, zone, hostname, prefix };
 }
 
 export async function hasCloudflareTunnel(): Promise<boolean> {
   return !!(await getConfig());
+}
+
+export async function hasHubCloudflareTunnel(): Promise<boolean> {
+  return !!(await getHubConfig());
 }
 
 async function cloudflareRequest<T>(
@@ -140,9 +235,10 @@ function isConflictError(err: unknown): boolean {
   return message.includes("409") || message.includes("conflict");
 }
 
-let zoneId = "";
+const zoneIdCache = new Map<string, string>();
 async function getZoneId(token: string, dns: string) {
-  if (zoneId) return zoneId;
+  const cached = zoneIdCache.get(dns);
+  if (cached) return cached;
   const url = new URL("https://api.cloudflare.com/client/v4/zones");
   url.searchParams.set("name", dns);
   const response = await fetch(url.toString(), {
@@ -166,10 +262,25 @@ async function getZoneId(token: string, dns: string) {
   }
   const match = data.result?.find((zone) => zone.name === dns);
   if (match?.id) {
-    zoneId = match.id;
+    zoneIdCache.set(dns, match.id);
     return match.id;
   }
   throw new Error(`cloudflare zone not found for ${dns}`);
+}
+
+async function getZoneIdForHostname(token: string, hostname: string): Promise<string> {
+  const parts = hostname.split(".").filter(Boolean);
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const candidate = parts.slice(i).join(".");
+    try {
+      return await getZoneId(token, candidate);
+    } catch (err) {
+      if (!isNotFoundError(err)) {
+        throw err;
+      }
+    }
+  }
+  throw new Error(`cloudflare zone not found for ${hostname}`);
 }
 
 async function listDnsRecords(
@@ -422,18 +533,40 @@ export async function ensureCloudflareTunnelForHost(opts: {
 }): Promise<CloudflareTunnel | undefined> {
   const config = await getConfig();
   if (!config) return undefined;
-  const hostname = `host-${opts.host_id}.${config.dns}`;
+  const suffix = config.hostSuffix ?? `.${config.dns}`;
+  const hostname = `host-${opts.host_id}${suffix}`;
+  const prefix = config.prefix ? `${config.prefix}-` : "";
+  return await ensureCloudflareTunnel({
+    accountId: config.accountId,
+    token: config.token,
+    zone: config.dns,
+    hostname,
+    name: `${prefix}host-${opts.host_id}`,
+    existing: opts.existing,
+    logContext: { host_id: opts.host_id },
+  });
+}
+
+async function ensureCloudflareTunnel(opts: {
+  accountId: string;
+  token: string;
+  zone: string;
+  hostname: string;
+  name: string;
+  existing?: CloudflareTunnel;
+  logContext?: Record<string, unknown>;
+}): Promise<CloudflareTunnel> {
   let tunnelId = opts.existing?.id;
-  let tunnelName = opts.existing?.name;
+  let tunnelName = opts.existing?.name ?? opts.name;
   let tunnelSecret = opts.existing?.tunnel_secret;
   let created: TunnelResponse | undefined;
 
   if (tunnelId) {
     try {
-      const info = await fetchTunnel(config.accountId, config.token, tunnelId);
+      const info = await fetchTunnel(opts.accountId, opts.token, tunnelId);
       if (!info?.id) {
         tunnelId = undefined;
-        tunnelName = undefined;
+        tunnelName = opts.name;
         tunnelSecret = undefined;
       } else {
         tunnelName = info.name ?? tunnelName;
@@ -443,7 +576,7 @@ export async function ensureCloudflareTunnelForHost(opts: {
         throw err;
       }
       tunnelId = undefined;
-      tunnelName = undefined;
+      tunnelName = opts.name;
       tunnelSecret = undefined;
     }
   }
@@ -452,25 +585,24 @@ export async function ensureCloudflareTunnelForHost(opts: {
     const generatedSecret = crypto.randomBytes(32).toString("base64");
     try {
       created = await createTunnel(
-        config.accountId,
-        config.token,
-        tunnelName || `host-${opts.host_id}`,
+        opts.accountId,
+        opts.token,
+        tunnelName || opts.name,
         generatedSecret,
       );
     } catch (err) {
       if (!isConflictError(err)) {
         throw err;
       }
-      const name = tunnelName || `host-${opts.host_id}`;
       const existing = await listTunnelsByName(
-        config.accountId,
-        config.token,
-        name,
+        opts.accountId,
+        opts.token,
+        tunnelName || opts.name,
       );
       for (const tunnel of existing) {
         if (!tunnel.id) continue;
         try {
-          await deleteTunnel(config.accountId, config.token, tunnel.id);
+          await deleteTunnel(opts.accountId, opts.token, tunnel.id);
         } catch (deleteErr) {
           if (!isNotFoundError(deleteErr)) {
             throw deleteErr;
@@ -478,9 +610,9 @@ export async function ensureCloudflareTunnelForHost(opts: {
         }
       }
       created = await createTunnel(
-        config.accountId,
-        config.token,
-        name,
+        opts.accountId,
+        opts.token,
+        tunnelName || opts.name,
         generatedSecret,
       );
     }
@@ -490,19 +622,27 @@ export async function ensureCloudflareTunnelForHost(opts: {
       }
     }
     tunnelId = created.id;
-    tunnelName = created.name ?? tunnelName ?? `host-${opts.host_id}`;
+    tunnelName = created.name ?? tunnelName ?? opts.name;
     tunnelSecret = created.tunnel_secret ?? generatedSecret;
     logger.info("cloudflare tunnel created", {
-      host_id: opts.host_id,
       tunnel_id: tunnelId,
+      ...opts.logContext,
     });
   }
 
-  const zoneIdValue = await getZoneId(config.token, config.dns);
+  let zoneIdValue: string;
+  try {
+    zoneIdValue = await getZoneId(opts.token, opts.zone);
+  } catch (err) {
+    if (!isNotFoundError(err)) {
+      throw err;
+    }
+    zoneIdValue = await getZoneIdForHostname(opts.token, opts.hostname);
+  }
   const record_id = await ensureTunnelDns({
-    token: config.token,
+    token: opts.token,
     zoneId: zoneIdValue,
-    hostname,
+    hostname: opts.hostname,
     target: `${tunnelId}.cfargotunnel.com`,
     record_id: opts.existing?.record_id,
   });
@@ -510,21 +650,47 @@ export async function ensureCloudflareTunnelForHost(opts: {
     (typeof created?.token === "string" ? created.token : undefined) ?? undefined;
   if (!token) {
     try {
-      token = await getTunnelToken(config.accountId, config.token, tunnelId);
+      token = await getTunnelToken(opts.accountId, opts.token, tunnelId);
     } catch (err) {
-      logger.warn("cloudflare tunnel token fetch failed", { err });
+      logger.warn("cloudflare tunnel token fetch failed", {
+        err,
+        ...opts.logContext,
+      });
     }
   }
 
   return {
     id: tunnelId,
-    name: tunnelName ?? `host-${opts.host_id}`,
-    hostname,
+    name: tunnelName ?? opts.name,
+    hostname: opts.hostname,
     tunnel_secret: tunnelSecret,
-    account_id: config.accountId,
+    account_id: opts.accountId,
     record_id,
     token,
   };
+}
+
+export async function ensureCloudflareTunnelForHub(opts?: {
+  existing?: CloudflareTunnel;
+}): Promise<CloudflareTunnel | undefined> {
+  const config = await getHubConfig();
+  if (!config) return undefined;
+  if (!config.hostname.endsWith(config.zone)) {
+    throw new Error(
+      `External Domain Name must be within '${config.zone}' for Cloudflare tunnel automation.`,
+    );
+  }
+  const prefix = config.prefix ? `${config.prefix}-` : "";
+  const name = `${prefix}hub-${config.hostname.replace(/[^a-z0-9-]/g, "-")}`;
+  return await ensureCloudflareTunnel({
+    accountId: config.accountId,
+    token: config.token,
+    zone: config.zone,
+    hostname: config.hostname,
+    name,
+    existing: opts?.existing,
+    logContext: { hostname: config.hostname },
+  });
 }
 
 export async function deleteCloudflareTunnel(opts: {
@@ -536,9 +702,17 @@ export async function deleteCloudflareTunnel(opts: {
   const hostname =
     opts.tunnel?.hostname ??
     (opts.host_id ? `host-${opts.host_id}.${config.dns}` : undefined);
-  const zoneIdValue = await getZoneId(config.token, config.dns);
+  let zoneIdValue: string | undefined;
+  try {
+    zoneIdValue = await getZoneId(config.token, config.dns);
+  } catch (err) {
+    logger.warn("cloudflare tunnel zone lookup failed; skipping dns cleanup", {
+      err,
+      dns: config.dns,
+    });
+  }
 
-  if (opts.tunnel?.record_id) {
+  if (zoneIdValue && opts.tunnel?.record_id) {
     try {
       await cloudflareRequest(
         config.token,
@@ -550,7 +724,7 @@ export async function deleteCloudflareTunnel(opts: {
         logger.warn("cloudflare tunnel dns delete failed", { err });
       }
     }
-  } else if (hostname) {
+  } else if (zoneIdValue && hostname) {
     try {
       const records = await listDnsRecords(config.token, zoneIdValue, hostname);
       for (const record of records) {

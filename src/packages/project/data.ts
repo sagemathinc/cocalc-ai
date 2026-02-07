@@ -41,6 +41,17 @@ function getIDs() {
     // fallback generic project_id
     project_id = FALLBACK_PROJECT_UUID;
   }
+  // Legacy compute-server ids were sometimes encoded as "<uuid>.<server>".
+  // Normalize that here so downstream subjects don't include ".0".
+  if (!is_valid_uuid_string(project_id) && typeof project_id === "string") {
+    const base = project_id.split(".")[0];
+    if (is_valid_uuid_string(base)) {
+      console.warn(
+        `WARNING: normalized project_id '${project_id}' -> '${base}'`,
+      );
+      project_id = base;
+    }
+  }
   // Throw in some consistency checks:
   if (!is_valid_uuid_string(project_id)) {
     throw Error(`project_id=${project_id} is not a valid UUID`);

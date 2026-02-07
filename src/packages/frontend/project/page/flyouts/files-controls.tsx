@@ -387,7 +387,7 @@ export function FilesSelectedControls({
 
     return (
       <>
-        <Space direction="horizontal" wrap>
+        <Space orientation="horizontal" wrap>
           {err ? (
             <div style={{ color: "#c00" }}>{err?.message ?? `${err}`}</div>
           ) : null}
@@ -433,7 +433,7 @@ export function FilesSelectedControls({
             value={restoreMode}
             onChange={(e) => setRestoreMode(e.target.value)}
           >
-            <Space direction="vertical">
+            <Space orientation="vertical">
               <Radio value="original">
                 Restore to original location (overwrite)
               </Radio>
@@ -459,7 +459,7 @@ export function FilesSelectedControls({
     if (mode === "top" && checked_files.size === 0) return;
 
     return (
-      <Space direction="horizontal" wrap>
+      <Space orientation="horizontal" wrap>
         {checked_files.size > 0 ? renderOpenFile() : undefined}
         <FileActionsDropdown
           names={names}
@@ -476,7 +476,7 @@ export function FilesSelectedControls({
 
   return (
     <Space
-      direction="vertical"
+      orientation="vertical"
       size="small"
       style={mode === "top" ? PANEL_STYLE_TOP : PANEL_STYLE_BOTTOM}
     >

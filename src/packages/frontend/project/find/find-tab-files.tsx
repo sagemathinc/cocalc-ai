@@ -273,14 +273,14 @@ export function FilesTab({
         </Button>
       </Space>
       {error ? (
-        <Alert style={{ marginTop: "10px" }} type="error" message={error} />
+        <Alert style={{ marginTop: "10px" }} type="error" title={error} />
       ) : null}
       {loading ? <Loading /> : null}
       {!loading && lastQuery && resultCount === 0 ? (
         <Alert
           style={{ marginTop: "10px" }}
           type="warning"
-          message="No results."
+          title="No results."
         />
       ) : null}
       {resultCount > 0 || state.filter.trim() ? (

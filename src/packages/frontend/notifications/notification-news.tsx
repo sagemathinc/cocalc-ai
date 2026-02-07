@@ -117,7 +117,7 @@ export function NewsPanel(props: NewsPanelProps) {
     const mark_all = intl.formatMessage(MSGS.mark_all, { anyUnread });
 
     return (
-      <Space direction="horizontal">
+      <Space orientation="horizontal">
         <Button href={`${BASE_URL}/news`} target="_blank">
           <Icon name="file-alt" /> {read_all}
         </Button>

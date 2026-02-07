@@ -362,7 +362,7 @@ export function TestLLMAdmin() {
         key: "error",
         render: (error: string) =>
           error ? (
-            <Alert type="error" banner message={error} style={{ margin: 0 }} />
+            <Alert type="error" banner title={error} style={{ margin: 0 }} />
           ) : (
             <span style={{ color: COLORS.GRAY_M }}>-</span>
           ),

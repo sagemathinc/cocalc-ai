@@ -1,4 +1,4 @@
-import { Badge, Button } from "antd";
+import { Badge, Button, Space } from "antd";
 import LRU from "lru-cache";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { useState } from "react";
@@ -17,7 +17,7 @@ export default function Projects({ account_id }) {
   const [loading, setLoading] = useState<boolean>(false);
   return (
     <div>
-      <Button.Group>
+      <Space.Compact>
         <Button
           disabled={loading}
           type={recentProjects != null ? "primary" : undefined}
@@ -66,7 +66,7 @@ export default function Projects({ account_id }) {
             />
           )}
         </Button>
-      </Button.Group>
+      </Space.Compact>
       {recentProjects && (
         <div
           style={{

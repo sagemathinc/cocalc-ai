@@ -140,6 +140,7 @@ interface Props {
   docName: string;
   show: boolean;
   filename?: string;
+  initialPrompt?: string;
 }
 
 function AIGenerateDocument({
@@ -149,6 +150,7 @@ function AIGenerateDocument({
   ext,
   docName,
   filename: filename0,
+  initialPrompt,
 }: Props) {
   const intl = useIntl();
   const projectActions = useActions({ project_id });
@@ -159,6 +161,8 @@ function AIGenerateDocument({
   const [paperSize, setPaperSize] = useState<string | null>(null);
   // User's description of document they want to generate.
   const [prompt, setPrompt] = useState<string>("");
+  const lastInitialPromptRef = useRef<string | undefined>(undefined);
+  const lastShowRef = useRef<boolean>(false);
   const { prompts: historyPrompts, addPrompt } = useLLMHistory("generate");
   const [querying, setQuerying] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
@@ -171,6 +175,22 @@ function AIGenerateDocument({
   useEffect(() => {
     setFilename(ensureExtension(filename0 ?? "", ext));
   }, [filename0]);
+
+  useEffect(() => {
+    if (!show) return;
+    if (initialPrompt == null) return;
+    if (!lastShowRef.current || lastInitialPromptRef.current !== initialPrompt) {
+      setPrompt(initialPrompt);
+      lastInitialPromptRef.current = initialPrompt;
+    }
+    lastShowRef.current = true;
+  }, [show, initialPrompt]);
+
+  useEffect(() => {
+    if (!show) {
+      lastShowRef.current = false;
+    }
+  }, [show]);
 
   const promptRef = useRef<HTMLElement>(null);
 
@@ -978,7 +998,7 @@ function AIGenerateDocument({
                 banner
                 type={saving ? "info" : "warning"}
                 style={{ fontWeight: "bold" }}
-                message={message}
+                title={message}
               />
             ) : (
               <FormattedMessage
@@ -1077,7 +1097,7 @@ function AIGenerateDocument({
           }}
           showIcon
           type="error"
-          message="Error"
+          title="Error"
           description={<Markdown value={error} />}
         />
       ) : undefined}
@@ -1091,6 +1111,7 @@ export function AIGenerateDocumentModal({
   project_id,
   ext,
   filename,
+  initialPrompt,
 }: {
   show: boolean;
   setShow: (val: boolean) => void;
@@ -1098,6 +1119,7 @@ export function AIGenerateDocumentModal({
   style?: CSS;
   ext: Props["ext"];
   filename?: string;
+  initialPrompt?: string;
 }) {
   const ext2 = normalizeExt(ext) as string;
   const docName = file_options(`x.${ext2}`).name ?? `${capitalize(ext2)}`;
@@ -1126,6 +1148,7 @@ export function AIGenerateDocumentModal({
         ext={ext}
         docName={docName}
         filename={filename}
+        initialPrompt={initialPrompt}
       />
     </Modal>
   );

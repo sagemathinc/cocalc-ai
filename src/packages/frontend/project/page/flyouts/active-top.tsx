@@ -213,7 +213,7 @@ export function ActiveTop(props: Readonly<ActiveTopProps>) {
   function render2ndRowButtons() {
     return (
       <Space
-        direction="horizontal"
+        orientation="horizontal"
         size="small"
         style={{ flex: "1 0 auto", justifyContent: "flex-end" }}
       >

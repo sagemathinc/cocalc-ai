@@ -49,7 +49,7 @@ render({ type: "tags", editable: true }, ({ field, obj }) => {
   }
 
   return (
-    <Space direction="vertical" style={{ width: adding ? "100%" : undefined }}>
+    <Space orientation="vertical" style={{ width: adding ? "100%" : undefined }}>
       <Space>
         {tags != null && tags.length > 0 && (
           <DndContext onDragEnd={handleDragEnd}>

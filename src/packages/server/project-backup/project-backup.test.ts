@@ -58,6 +58,9 @@ describe("project-backup", () => {
       if (sql.includes("FROM project_moves")) {
         return { rows: [] };
       }
+      if (sql.includes("CREATE TABLE IF NOT EXISTS project_moves")) {
+        return { rows: [] };
+      }
       if (sql.includes("FROM server_settings")) {
         const key = params?.[0];
         return { rows: [{ value: settings[key] ?? null }] };

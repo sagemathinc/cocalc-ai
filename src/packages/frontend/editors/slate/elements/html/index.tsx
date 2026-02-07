@@ -6,18 +6,19 @@
 import { register, SlateElement } from "../register";
 import { toSlate as toSlateImage } from "../image";
 import HTML from "@cocalc/frontend/components/html-ssr";
+import { toCodeLines } from "../code-block/utils";
 
 export interface HtmlInline extends SlateElement {
   type: "html_inline";
   isInline: true;
-  isVoid: true;
+  isVoid: false;
   html: string;
 }
 
 export interface HtmlBlock extends SlateElement {
   type: "html_block";
   isInline: false;
-  isVoid: true;
+  isVoid: false;
   html: string;
 }
 
@@ -52,10 +53,11 @@ register({
     }
     return {
       type: token.type,
-      isVoid: true,
+      isVoid: false,
       isInline: token.type == "html_inline",
       html: token.content,
-      children,
+      children:
+        token.type == "html_block" ? toCodeLines(token.content) : children,
     };
   },
 

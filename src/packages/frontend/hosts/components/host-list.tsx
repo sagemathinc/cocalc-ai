@@ -6,6 +6,7 @@ import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import { HostCard } from "./host-card";
 import { STATUS_COLOR, getHostOnlineTooltip, getHostStatusTooltip, isHostOnline, isHostTransitioning } from "../constants";
 import type { ColumnsType } from "antd/es/table";
+import { COLORS } from "@cocalc/util/theme";
 import {
   getProviderDescriptor,
   isKnownProvider,
@@ -73,6 +74,26 @@ function getProviderLabel(host: Host): string {
   return cloud;
 }
 
+function getSelfHostDetail(host: Host): string | undefined {
+  if (host.machine?.cloud !== "self-host") return undefined;
+  const kind = host.machine?.metadata?.self_host_kind as string | undefined;
+  const mode = host.machine?.metadata?.self_host_mode as string | undefined;
+  const kindLabel =
+    kind === "direct"
+      ? "Direct"
+      : kind === "multipass"
+        ? "Multipass"
+        : undefined;
+  const modeLabel =
+    mode === "cloudflare"
+      ? "Cloudflare tunnel"
+      : mode === "local"
+        ? "Local network"
+        : undefined;
+  if (kindLabel && modeLabel) return `${kindLabel} / ${modeLabel}`;
+  return kindLabel ?? modeLabel ?? undefined;
+}
+
 function compareText(a?: string, b?: string): number {
   return (a ?? "").localeCompare(b ?? "", undefined, { sensitivity: "base" });
 }
@@ -98,6 +119,12 @@ function sortHosts(
   return [...hosts].sort((a, b) => {
     let result = 0;
     switch (field) {
+      case "starred":
+        result = compareNumber(
+          Number(b.starred ?? false),
+          Number(a.starred ?? false),
+        );
+        break;
       case "name":
         result = compareText(a.name, b.name);
         break;
@@ -153,6 +180,7 @@ type HostListViewModel = {
   onUpgrade?: (host: Host) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
+  onToggleStar: (host: Host) => void;
   selfHost?: {
     connectorMap: Map<string, { id: string; name?: string; last_seen?: string }>;
     isConnectorOnline: (connectorId?: string) => boolean;
@@ -189,6 +217,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     onUpgrade,
     onDetails,
     onEdit,
+    onToggleStar,
     selfHost,
     viewMode,
     setViewMode,
@@ -262,9 +291,11 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     if (!searchTerms.length) return hosts;
     return hosts.filter((host) => {
       const statusLabel = host.deleted ? "deleted" : host.status;
+      const selfHostDetail = getSelfHostDetail(host);
       const haystack = [
         host.name,
         getProviderLabel(host),
+        selfHostDetail,
         host.region,
         host.size,
         statusLabel,
@@ -452,6 +483,48 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
 
   const columns: ColumnsType<Host> = [
     {
+      title: (
+        <Icon
+          name="star-filled"
+          style={{ fontSize: 16, color: COLORS.YELL_LL }}
+        />
+      ),
+      dataIndex: "starred",
+      key: "starred",
+      width: 48,
+      align: "center",
+      sorter: true,
+      sortDirections: ["ascend", "descend"],
+      sortOrder:
+        sortField === "starred"
+          ? sortDirection === "asc"
+            ? "ascend"
+            : "descend"
+          : undefined,
+      onCell: () => ({
+        onClick: (event: React.MouseEvent) => {
+          event.stopPropagation();
+        },
+        style: { cursor: "pointer" },
+      }),
+      render: (starred: boolean, host: Host) => (
+        <span
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleStar(host);
+          }}
+          style={{ cursor: "pointer", fontSize: 18 }}
+        >
+          <Icon
+            name={starred ? "star-filled" : "star"}
+            style={{
+              color: starred ? COLORS.STAR : COLORS.GRAY_L,
+            }}
+          />
+        </span>
+      ),
+    },
+    {
       title: "Name",
       dataIndex: "name",
       key: "name",
@@ -464,7 +537,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             : "descend"
           : undefined,
       render: (_: string, host: Host) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           <Button type="link" onClick={() => onDetails(host)}>
             {host.name}
           </Button>
@@ -501,12 +574,17 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             ? "ascend"
             : "descend"
           : undefined,
-      render: (_: string, host: Host) =>
-        host.machine?.cloud
-          ? isKnownProvider(host.machine.cloud)
-            ? getProviderDescriptor(host.machine.cloud).label
-            : host.machine.cloud
-          : "n/a",
+      render: (_: string, host: Host) => {
+        const baseLabel = getProviderLabel(host);
+        const detail = getSelfHostDetail(host);
+        if (!detail) return baseLabel;
+        return (
+          <Space orientation="vertical" size={0}>
+            <span>{baseLabel}</span>
+            <Typography.Text type="secondary">{detail}</Typography.Text>
+          </Space>
+        );
+      },
     },
     {
       title: "Region",
@@ -562,7 +640,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const statusLabel = host.deleted ? "deleted" : host.status;
         const op = hostOps?.[host.id];
         return (
-          <Space direction="vertical" size={2}>
+          <Space orientation="vertical" size={2}>
             <Space size="small">
               <Tooltip
                 title={getHostStatusTooltip(
@@ -611,18 +689,21 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const op = hostOps?.[host.id];
         const hostOpActive = isHostOpActive(op);
         const isSelfHost = host.machine?.cloud === "self-host";
+        const hasSshTarget = !!String(
+          host.machine?.metadata?.self_host_ssh_target ?? "",
+        ).trim();
+        const autoSetup = isSelfHost && hasSshTarget;
         const connectorOnline =
           !isSelfHost ||
           !selfHost?.isConnectorOnline ||
           selfHost.isConnectorOnline(host.region);
-        const showConnectorSetup =
-          isSelfHost && !connectorOnline && host.status === "off";
+        const showConnectorSetup = isSelfHost && selfHost && !isDeleted;
         const startDisabled =
           isDeleted ||
           host.status === "running" ||
           host.status === "starting" ||
           host.status === "restarting" ||
-          !connectorOnline ||
+          (!connectorOnline && !autoSetup) ||
           hostOpActive;
         const startLabel =
           host.status === "starting"
@@ -682,7 +763,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               disabled={hostOpActive}
               onClick={() => selfHost.onSetup(host)}
             >
-              Setup
+              Setup / reconnect
             </Button>
           ) : null,
           allowStop ? (
@@ -788,6 +869,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   ];
 
   const sortOptions = [
+    { value: "starred", label: "Starred" },
     { value: "name", label: "Name" },
     { value: "provider", label: "Provider" },
     { value: "region", label: "Region" },
@@ -878,7 +960,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <Alert
       type="warning"
       showIcon
-      message={
+      title={
         visibleHosts.length === 0
           ? "No hosts match this filter."
           : `Showing ${visibleHosts.length} of ${hosts.length} hosts.`
@@ -1046,6 +1128,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 onCancelOp={onCancelOp}
                 onDetails={onDetails}
                 onEdit={onEdit}
+                onToggleStar={onToggleStar}
                 selfHost={selfHost}
                 providerCapabilities={providerCapabilities}
               />

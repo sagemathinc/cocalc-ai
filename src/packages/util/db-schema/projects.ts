@@ -76,7 +76,6 @@ Table({
           invite_requests: null, // who has requested to be invited
           deleted: null,
           host_id: null,
-          host: null,
           provisioned: null,
           provisioned_checked_at: null,
           region: null,
@@ -100,6 +99,7 @@ Table({
           // do NOT add avatar_image_full here or it will get included in changefeeds, which we don't want.
           // instead it gets its own virtual table.
           color: null,
+          launcher: null,
           pay_as_you_go_quotas: null,
           snapshots: null,
           backups: null,
@@ -131,6 +131,7 @@ Table({
           snapshots: true,
           backups: true,
           color: true,
+          launcher: true,
         },
         required_fields: {
           project_id: true,
@@ -270,11 +271,6 @@ Table({
     host_id: {
       type: "uuid",
       desc: "Id of the project-host currently assigned to run this project.",
-    },
-    host: {
-      type: "map",
-      desc: "This is a map {host:'hostname_of_server', assigned:timestamp of when assigned to that server}.",
-      date: ["assigned"],
     },
     provisioned: {
       type: "boolean",
@@ -421,6 +417,12 @@ Table({
       type: "string",
       desc: "Optional color associated with the project, used for visual identification (e.g., border color in project list).",
       render: { type: "text" },
+    },
+    launcher: {
+      title: "Launcher",
+      type: "map",
+      desc: "Project-wide launcher defaults (quick create + app defaults).",
+      render: { type: "json", editable: true },
     },
     pay_as_you_go_quotas: {
       type: "map",

@@ -20,12 +20,16 @@ import { scrollToHeading } from "@cocalc/frontend/editors/slate/control";
 import { SlateEditor } from "@cocalc/frontend/editors/slate/editable-markdown";
 import { formatAction as slateFormatAction } from "@cocalc/frontend/editors/slate/format";
 import {
+  findSlatePointNearMarkdownPosition,
   markdownPositionToSlatePoint,
+  nearestMarkdownPositionForSlatePoint,
   scrollIntoView as scrollSlateIntoView,
-  slatePointToMarkdownPosition,
 } from "@cocalc/frontend/editors/slate/sync";
+import { ReactEditor } from "@cocalc/frontend/editors/slate/slate-react";
+import { Transforms } from "slate";
 import { toggle_checkbox } from "@cocalc/frontend/editors/task-editor/desc-rendering";
 import { parseTableOfContents } from "@cocalc/frontend/markdown";
+import { parseHeader } from "@cocalc/frontend/markdown/header";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import { ExecuteCodeOutputAsync } from "@cocalc/util/types/execute-code";
 import {
@@ -43,10 +47,12 @@ interface MarkdownEditorState extends CodeEditorState {
   build_exit: number; // for Rmd
   job_info?: ExecuteCodeOutputAsync; // for Rmd streaming with stats
   contents?: TableOfContentsEntryList; // table of contents data.
+  show_slate_help?: boolean;
 }
 
 export class Actions extends CodeEditorActions<MarkdownEditorState> {
   private slateEditors: { [id: string]: SlateEditor } = {};
+  private blockEditorControls: { [id: string]: any } = {};
 
   _init2(): void {
     this._init_syncstring_value();
@@ -169,6 +175,18 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     this.slateEditors[id] = editor;
   }
 
+  public registerBlockEditorControl(id: string, control: any): void {
+    this.blockEditorControls[id] = control;
+  }
+
+  public unregisterBlockEditorControl(id: string): void {
+    delete this.blockEditorControls[id];
+  }
+
+  private getBlockEditorControl(id: string): any | undefined {
+    return this.blockEditorControls[id];
+  }
+
   public async show_table_of_contents(
     _id: string | undefined = undefined,
   ): Promise<void> {
@@ -205,6 +223,23 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
   public async scrollToHeading(entry: TableOfContentsEntry): Promise<void> {
     const id = this.show_focused_frame_of_type("slate");
     if (id == null) return;
+    const blockControl = this.getBlockEditorControl(id);
+    const rawLine =
+      entry?.extra != null && typeof entry.extra.line === "number"
+        ? entry.extra.line
+        : undefined;
+    const headerInfo = parseHeader(this._syncstring?.to_str?.() ?? "");
+    const headerLineOffset =
+      headerInfo.header == null
+        ? 0
+        : (headerInfo.header.length === 0
+            ? 0
+            : headerInfo.header.split("\n").length) + 2;
+    const line = rawLine == null ? undefined : rawLine + headerLineOffset;
+    if (blockControl?.setSelectionFromMarkdownPosition && line != null) {
+      const ok = blockControl.setSelectionFromMarkdownPosition({ line, ch: 0 });
+      if (ok) return;
+    }
     let editor = this.getSlateEditor(id);
     if (editor == null) {
       // if slate frame just created, have to wait until after it gets
@@ -241,7 +276,19 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
     if (cm == null) return;
     const slate_id = this.show_focused_frame_of_type("slate");
     if (slate_id == null) return;
-    this.set_active_id(id); // keep focus on the cm
+    // important to get markdown from cm and not syncstring to get latest version.
+    const markdown = cm.getValue();
+    const pos = cm.getDoc().getCursor();
+    let blockControl = this.getBlockEditorControl(slate_id);
+    if (!blockControl) {
+      await delay(1);
+      blockControl = this.getBlockEditorControl(slate_id);
+    }
+    if (blockControl?.setSelectionFromMarkdownPosition) {
+      blockControl.setSelectionFromMarkdownPosition(pos);
+      this.set_active_id(slate_id, true);
+      return;
+    }
     let editor = this.getSlateEditor(slate_id);
     if (editor == null) {
       // if slate frame just created, have to wait until after it gets
@@ -250,39 +297,68 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
       editor = this.getSlateEditor(slate_id);
     }
     if (editor == null) return;
-    // important to get markdown from cm and not syncstring to get latest version.
-    let point = markdownPositionToSlatePoint({
-      markdown: cm.getValue(),
-      pos: cm.getDoc().getCursor(),
-      editor,
-    });
+    let point =
+      markdownPositionToSlatePoint({
+        markdown,
+        pos,
+        editor,
+      }) ??
+      findSlatePointNearMarkdownPosition({
+        markdown,
+        pos,
+        editor,
+      });
     if (point == null) return;
     try {
+      Transforms.setSelection(editor, { anchor: point, focus: point });
+      ReactEditor.focus(editor);
       scrollSlateIntoView(editor, point);
+      this.set_active_id(slate_id, true);
     } catch (err) {
-      // This will happen sometimes.
-      // TODO: in fact, frequently due to inserting blank paragraphs
-      // to make navigation easier... :-(
       console.log("point not found", point);
     }
   }
 
   private sync_slate_to_cm(id: string) {
+    const blockControl = this.getBlockEditorControl(id);
+    if (blockControl?.getMarkdownPositionForSelection) {
+      const pos = blockControl.getMarkdownPositionForSelection();
+      if (pos != null) {
+        this.programmatically_goto_line(
+          pos.line + 1,
+          true,
+          true,
+          undefined,
+          pos.ch,
+        );
+        const cmId = this.show_recently_focused_frame_of_type("cm");
+        if (cmId != null) {
+          this.set_active_id(cmId, true);
+        }
+        return;
+      }
+    }
     const editor = this.getSlateEditor(id);
     if (editor == null) return;
     const point = editor.selection?.focus;
     if (point == null) {
       return;
     }
-    const pos = slatePointToMarkdownPosition(editor, point);
+    const pos = nearestMarkdownPositionForSlatePoint(editor, point);
     if (pos == null) return;
     this.programmatically_goto_line(
       pos.line + 1, // 1 based (TODO: could use codemirror option)
       true,
-      false,
+      true,
       undefined,
       pos.ch,
     );
+  }
+
+  altEnter(_value: string, id?: string): void {
+    const activeId = id ?? this._get_active_id();
+    if (!activeId) return;
+    void this.sync(activeId, this);
   }
 
   public async sync(id: string, editor_actions: Actions): Promise<void> {
@@ -300,6 +376,10 @@ export class Actions extends CodeEditorActions<MarkdownEditorState> {
 
   help(): void {
     open_new_tab("https://doc.cocalc.com/markdown.html");
+  }
+
+  slate_help(): void {
+    this.setState({ show_slate_help: true });
   }
 
   languageModelGetText(

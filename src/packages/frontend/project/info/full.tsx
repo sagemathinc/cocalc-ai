@@ -295,7 +295,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
         {show_long_loading && (
           <Alert
             type="info"
-            message={
+            title={
               <div>
                 <p>
                   If the Table of Processes does not load, the project might be
@@ -506,7 +506,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
     return (
       <Col md={12} mdOffset={0}>
         <Alert
-          message={msg}
+          title={msg}
           style={{ margin: "10px 0" }}
           type={"info"}
           closable
@@ -566,7 +566,7 @@ export function Full(props: Readonly<Props>): React.JSX.Element {
         <Alert
           type="warning"
           banner={true}
-          message={`${projectLabel} is not running.`}
+          title={`${projectLabel} is not running.`}
         />
       </Row>
     );

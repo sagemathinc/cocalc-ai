@@ -20,11 +20,13 @@ output:
 
 */
 
+import { Node, Transforms } from "slate";
 import { register } from "../register";
-import { useSlate } from "../hooks";
+import { useFocused, useSelected, useSlate } from "../hooks";
 import { A } from "@cocalc/frontend/components";
-import { useSetElement } from "../set-element";
-import { SlateCodeMirror } from "../codemirror";
+import { ReactEditor } from "../../slate-react";
+import { CodeBlockBody } from "../code-block/code-like";
+import { useEffect } from "react";
 
 register({
   slateType: "meta",
@@ -32,7 +34,21 @@ register({
   Element: ({ attributes, children, element }) => {
     if (element.type != "meta") throw Error("bug");
     const editor = useSlate();
-    const setElement = useSetElement(editor, element);
+    const focused = useFocused();
+    const selected = useSelected();
+    const isEditing = focused && selected;
+  // meta is always non-void to allow multiline editing like code blocks
+    const value = element.value ?? Node.string(element);
+
+    useEffect(() => {
+      if (!element.isVoid) return;
+      try {
+        const path = ReactEditor.findPath(editor as any, element as any);
+        Transforms.setNodes(editor, { isVoid: false } as any, { at: path });
+      } catch {
+        // ignore
+      }
+    }, [editor, element]);
 
     return (
       <div {...attributes}>
@@ -44,18 +60,31 @@ register({
             Header
           </span>
           <code>---</code>
-          <SlateCodeMirror
-            style={{ marginBottom: 0 }}
-            info="yml"
-            options={{ lineWrapping: true }}
-            value={element.value}
-            onChange={(value) => {
-              setElement({ value });
+        </div>
+        {!isEditing && (
+          <pre
+            contentEditable={false}
+            style={{ margin: 0, whiteSpace: "pre-wrap" }}
+          >
+            {value}
+          </pre>
+        )}
+        {isEditing && <CodeBlockBody>{children}</CodeBlockBody>}
+        {!isEditing && (
+          <div
+            style={{
+              position: "absolute",
+              left: "-10000px",
+              height: 0,
+              overflow: "hidden",
             }}
-          />
+          >
+            {children}
+          </div>
+        )}
+        <div contentEditable={false}>
           <code>---</code>
         </div>
-        {children}
       </div>
     );
   },

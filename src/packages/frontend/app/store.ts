@@ -19,7 +19,8 @@ type TopTab =
   | "project"
   | "projects"
   | "file-use"
-  | "notifications";
+  | "notifications"
+  | "ssh";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 

@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type {
   Host,
   HostBackupStatus,
+  HostConnectionInfo,
   HostMachine,
   HostStatus,
   HostCatalog,
@@ -12,7 +13,10 @@ import type {
   HostProjectRow,
   HostProjectsResponse,
 } from "@cocalc/conat/hub/api/hosts";
-import type { ProjectCopyRow, ProjectCopyState } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectCopyRow,
+  ProjectCopyState,
+} from "@cocalc/conat/hub/api/projects";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import {
@@ -58,12 +62,17 @@ import {
   createConnectorRecord,
   ensureConnectorRecord,
   revokeConnector,
+  createPairingTokenForHost,
 } from "@cocalc/server/self-host/connector-tokens";
+import {
+  ensureSelfHostReverseTunnel,
+  runConnectorInstallOverSsh,
+} from "@cocalc/server/self-host/ssh-target";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
-import { requireLaunchpadModeSelected } from "@cocalc/server/launchpad/mode";
+import { resolveOnPremHost } from "@cocalc/server/onprem";
 function pool() {
   return getPool();
 }
@@ -107,6 +116,7 @@ function parseRow(
     can_place?: boolean;
     reason_unavailable?: string;
     backup_status?: HostBackupStatus;
+    starred?: boolean;
   } = {},
 ): Host {
   const metadata = row.metadata ?? {};
@@ -114,7 +124,7 @@ function parseRow(
   const machine: HostMachine | undefined = metadata.machine;
   const rawStatus = String(row.status ?? "");
   const normalizedStatus =
-    rawStatus === "active" ? "running" : (rawStatus || "off");
+    rawStatus === "active" ? "running" : rawStatus || "off";
   return {
     id: row.id,
     name: row.name ?? "Host",
@@ -140,6 +150,7 @@ function parseRow(
     can_start: opts.can_start,
     can_place: opts.can_place,
     reason_unavailable: opts.reason_unavailable,
+    starred: opts.starred,
     last_action: metadata.last_action,
     last_action_at: metadata.last_action_at,
     last_action_status: metadata.last_action_status,
@@ -381,10 +392,7 @@ async function markHostDeprovisioned(row: any, action: string) {
   });
 }
 
-async function loadHostForView(
-  id: string,
-  account_id?: string,
-): Promise<any> {
+async function loadHostForView(id: string, account_id?: string): Promise<any> {
   const owner = requireAccount(account_id);
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1`,
@@ -423,7 +431,10 @@ function requireCreateHosts(entitlements: any) {
   }
 }
 
-export { getBackupConfig, recordProjectBackup } from "@cocalc/server/project-backup";
+export {
+  getBackupConfig,
+  recordProjectBackup,
+} from "@cocalc/server/project-backup";
 
 export async function touchProject({
   host_id,
@@ -516,7 +527,9 @@ export async function listHosts({
   const filters: string[] = [];
   const params: any[] = [];
   if (!admin_view) {
-    filters.push(`(metadata->>'owner' = $${params.length + 1} OR tier IS NOT NULL)`);
+    filters.push(
+      `(metadata->>'owner' = $${params.length + 1} OR tier IS NOT NULL)`,
+    );
     params.push(owner);
   }
   if (!include_deleted) {
@@ -541,6 +554,8 @@ export async function listHosts({
     const isCollab = collaborators.includes(owner);
     const tier = normalizeHostTier(row.tier);
     const shared = tier != null;
+    const starredBy = (row.starred_by ?? []) as string[];
+    const starred = starredBy.includes(owner);
 
     const scope: Host["scope"] = isOwner
       ? "owned"
@@ -572,10 +587,84 @@ export async function listHosts({
         can_start,
         reason_unavailable,
         backup_status: backupStatus.get(row.id),
+        starred,
       }),
     );
   }
   return result;
+}
+
+export async function resolveHostConnection({
+  account_id,
+  host_id,
+}: {
+  account_id?: string;
+  host_id: string;
+}): Promise<HostConnectionInfo> {
+  const owner = requireAccount(account_id);
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  const { rows } = await pool().query(
+    `SELECT id, name, public_url, internal_url, ssh_server, metadata, tier
+     FROM project_hosts
+     WHERE id=$1 AND deleted IS NULL`,
+    [host_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("host not found");
+  }
+  const metadata = row.metadata ?? {};
+  const rowOwner = metadata.owner ?? "";
+  const collaborators = (metadata.collaborators ?? []) as string[];
+  const isOwner = rowOwner === owner;
+  const isCollab = collaborators.includes(owner);
+  const isShared = row.tier != null;
+  if (!isOwner && !isCollab && !isShared) {
+    const { rows: projectRows } = await pool().query(
+      `SELECT 1
+       FROM projects
+       WHERE host_id=$1 AND users ? $2
+       LIMIT 1`,
+      [host_id, owner],
+    );
+    if (!projectRows.length) {
+      throw new Error("not authorized");
+    }
+  }
+  const machine = metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+
+  let connect_url: string | null = null;
+  let ssh_server: string | null = row.ssh_server ?? null;
+  let local_proxy = false;
+  let ready = false;
+  if (isLocalSelfHost) {
+    local_proxy = true;
+    ready = !!metadata?.self_host?.http_tunnel_port;
+    const sshPort = metadata?.self_host?.ssh_tunnel_port;
+    if (sshPort) {
+      const sshHost = resolveOnPremHost();
+      ssh_server = `${sshHost}:${sshPort}`;
+    }
+  } else {
+    connect_url = row.public_url ?? row.internal_url ?? null;
+    ready = !!connect_url;
+  }
+
+  return {
+    host_id: row.id,
+    name: row.name ?? null,
+    ssh_server,
+    connect_url,
+    local_proxy,
+    ready,
+  };
 }
 
 export async function listHostProjects({
@@ -677,14 +766,13 @@ export async function listHostProjects({
   }
 
   const summaryMap = await loadHostBackupStatus([id]);
-  const summary =
-    summaryMap.get(id) ?? {
-      total: 0,
-      provisioned: 0,
-      running: 0,
-      provisioned_up_to_date: 0,
-      provisioned_needs_backup: 0,
-    };
+  const summary = summaryMap.get(id) ?? {
+    total: 0,
+    provisioned: 0,
+    running: 0,
+    provisioned_up_to_date: 0,
+    provisioned_needs_backup: 0,
+  };
 
   const resultRows: HostProjectRow[] = trimmed.map((row) => ({
     project_id: row.project_id,
@@ -719,8 +807,9 @@ export async function getCatalog({
       connector_id: string;
       name: string | null;
       last_seen: Date | null;
+      metadata: any;
     }>(
-      `SELECT connector_id, name, last_seen
+      `SELECT connector_id, name, last_seen, metadata
          FROM self_host_connectors
         WHERE account_id=$1 AND revoked IS NOT TRUE
         ORDER BY created DESC`,
@@ -730,7 +819,17 @@ export async function getCatalog({
       id: row.connector_id,
       name: row.name ?? undefined,
       last_seen: row.last_seen ? row.last_seen.toISOString() : undefined,
+      version: row.metadata?.version,
     }));
+    const { project_hosts_self_host_alpha_enabled } =
+      await getServerSettings();
+    const modes = await hasCloudflareTunnel()
+      ? ["cloudflare", "local"]
+      : ["local"];
+    const kinds = ["direct"];
+    if (project_hosts_self_host_alpha_enabled) {
+      kinds.push("multipass");
+    }
     return {
       provider: cloud,
       entries: [
@@ -738,6 +837,16 @@ export async function getCatalog({
           kind: "connectors",
           scope: "account",
           payload: connectors,
+        },
+        {
+          kind: "self_host_modes",
+          scope: "account",
+          payload: modes,
+        },
+        {
+          kind: "self_host_kinds",
+          scope: "account",
+          payload: kinds,
         },
       ],
       provider_capabilities: Object.fromEntries(
@@ -838,7 +947,6 @@ export async function createHost({
   gpu?: boolean;
   machine?: Host["machine"];
 }): Promise<Host> {
-  await requireLaunchpadModeSelected();
   const owner = requireAccount(account_id);
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
@@ -847,6 +955,50 @@ export async function createHost({
   const machineCloud = normalizeProviderId(machine?.cloud);
   const isSelfHost = machineCloud === "self-host";
   const initialStatus = machineCloud && !isSelfHost ? "starting" : "off";
+  const rawSelfHostMode = machine?.metadata?.self_host_mode;
+  const selfHostMode =
+    rawSelfHostMode === "cloudflare" || rawSelfHostMode === "local"
+      ? rawSelfHostMode
+      : undefined;
+  if (isSelfHost && rawSelfHostMode && !selfHostMode) {
+    throw new Error(`invalid self_host_mode '${rawSelfHostMode}'`);
+  }
+  const rawSelfHostKind = machine?.metadata?.self_host_kind;
+  const selfHostKind =
+    rawSelfHostKind === "direct" || rawSelfHostKind === "multipass"
+      ? rawSelfHostKind
+      : undefined;
+  if (isSelfHost && rawSelfHostKind && !selfHostKind) {
+    throw new Error(`invalid self_host_kind '${rawSelfHostKind}'`);
+  }
+  const effectiveSelfHostKind = isSelfHost
+    ? (selfHostKind ?? "direct")
+    : undefined;
+  if (isSelfHost && selfHostMode === "cloudflare") {
+    if (!(await hasCloudflareTunnel())) {
+      throw new Error("cloudflare tunnel is not configured");
+    }
+  }
+  const {
+    project_hosts_bootstrap_channel,
+    project_hosts_bootstrap_version,
+  } = await getServerSettings();
+  const requestedBootstrapChannel =
+    typeof machine?.metadata?.bootstrap_channel === "string"
+      ? machine.metadata.bootstrap_channel.trim()
+      : "";
+  const requestedBootstrapVersion =
+    typeof machine?.metadata?.bootstrap_version === "string"
+      ? machine.metadata.bootstrap_version.trim()
+      : "";
+  const bootstrapChannel =
+    requestedBootstrapChannel ||
+    project_hosts_bootstrap_channel?.trim() ||
+    "latest";
+  const bootstrapVersion =
+    requestedBootstrapVersion ||
+    project_hosts_bootstrap_version?.trim() ||
+    "";
   let resolvedRegion = region;
   let connectorId: string | undefined;
   if (isSelfHost) {
@@ -860,16 +1012,20 @@ export async function createHost({
   }
   const normalizedMachine = normalizeMachineGpuInPlace(
     {
-    ...(machine ?? {}),
-    ...(machineCloud ? { cloud: machineCloud } : {}),
-    ...(connectorId
-      ? {
-          metadata: {
-            ...(machine?.metadata ?? {}),
-            connector_id: connectorId,
-          },
-        }
-      : {}),
+      ...(machine ?? {}),
+      ...(machineCloud ? { cloud: machineCloud } : {}),
+      ...(connectorId
+        ? {
+            metadata: {
+              ...(machine?.metadata ?? {}),
+              connector_id: connectorId,
+              ...(selfHostMode ? { self_host_mode: selfHostMode } : {}),
+              ...(effectiveSelfHostKind
+                ? { self_host_kind: effectiveSelfHostKind }
+                : {}),
+            },
+          }
+        : {}),
     },
     gpu,
   );
@@ -888,6 +1044,8 @@ export async function createHost({
         size,
         gpu: gpuEnabled,
         machine: normalizedMachine,
+        ...(bootstrapChannel ? { bootstrap_channel: bootstrapChannel } : {}),
+        ...(bootstrapVersion ? { bootstrap_version: bootstrapVersion } : {}),
       },
       now,
     ],
@@ -925,7 +1083,6 @@ async function createHostLro({
   input: any;
   dedupe_key?: string;
 }): Promise<HostLroResponse> {
-  await requireLaunchpadModeSelected();
   const op = await createLro({
     kind,
     scope_type: "host",
@@ -991,13 +1148,60 @@ export async function startHostInternal({
   const row = await loadHostForStartStop(id, account_id);
   const metadata = row.metadata ?? {};
   const owner = metadata.owner ?? account_id;
-  const nextMetadata = { ...metadata };
-  if (nextMetadata.bootstrap) {
-    // bootstrap should be idempotent and we bootstrap on EVERY start
-    delete nextMetadata.bootstrap;
-  }
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
+  if (machineCloud === "self-host" && sshTarget && owner) {
+    await ensureSelfHostReverseTunnel({
+      host_id: row.id,
+      ssh_target: sshTarget,
+    });
+    const { rows: connectorRows } = await pool().query<{
+      connector_id: string;
+      last_seen: Date | null;
+    }>(
+      `SELECT connector_id, last_seen
+         FROM self_host_connectors
+        WHERE host_id=$1 AND revoked IS NOT TRUE
+        ORDER BY last_seen DESC NULLS LAST
+        LIMIT 1`,
+      [row.id],
+    );
+    const connectorRow = connectorRows[0];
+    const lastSeen = connectorRow?.last_seen;
+    const connectorOnline =
+      !!lastSeen && Date.now() - lastSeen.getTime() < 2 * 60 * 1000;
+    if (!connectorOnline) {
+      const tokenInfo = await createPairingTokenForHost({
+        account_id: owner,
+        host_id: row.id,
+        ttlMs: 30 * 60 * 1000,
+      });
+      const { project_hosts_self_host_connector_version } =
+        await getServerSettings();
+      const connectorVersion =
+        project_hosts_self_host_connector_version?.trim() || undefined;
+      const { rows: metaRows } = await pool().query<{ metadata: any }>(
+        `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+        [row.id],
+      );
+      const updatedMetadata = metaRows[0]?.metadata ?? metadata;
+      const reversePort = Number(
+        updatedMetadata?.self_host?.ssh_reverse_port ?? 0,
+      );
+      if (!reversePort) {
+        throw new Error("self-host ssh reverse port missing");
+      }
+      await runConnectorInstallOverSsh({
+        host_id: row.id,
+        ssh_target: sshTarget,
+        pairing_token: tokenInfo.token,
+        name: row.name ?? undefined,
+        ssh_port: reversePort,
+        version: connectorVersion,
+      });
+    }
+  }
   if (machineCloud === "self-host" && row.region && owner) {
     await ensureConnectorRecord({
       connector_id: row.region,
@@ -1005,6 +1209,23 @@ export async function startHostInternal({
       host_id: row.id,
       name: row.name ?? undefined,
     });
+  }
+  const { rows: metaRowsFinal } = await pool().query<{ metadata: any }>(
+    `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+    [row.id],
+  );
+  const nextMetadata = metaRowsFinal[0]?.metadata ?? metadata;
+  if (nextMetadata?.self_host?.auto_start_pending) {
+    const nextSelfHost = {
+      ...(nextMetadata.self_host ?? {}),
+      auto_start_pending: false,
+      auto_start_cleared_at: new Date().toISOString(),
+    };
+    nextMetadata.self_host = nextSelfHost;
+  }
+  if (nextMetadata?.bootstrap) {
+    // bootstrap should be idempotent and we bootstrap on EVERY start
+    delete nextMetadata.bootstrap;
   }
   logStatusUpdate(id, "starting", "api");
   await pool().query(
@@ -1133,7 +1354,9 @@ export async function restartHostInternal({
   const caps = provider?.entry.capabilities;
   const wantsHard = mode === "hard";
   if (machineCloud && caps) {
-    const supported = wantsHard ? caps.supportsHardRestart : caps.supportsRestart;
+    const supported = wantsHard
+      ? caps.supportsHardRestart
+      : caps.supportsRestart;
     if (!supported) {
       throw new Error(
         wantsHard ? "hard reboot is not supported" : "reboot is not supported",
@@ -1160,7 +1383,10 @@ export async function restartHostInternal({
       [id, "running", new Date()],
     );
   } else {
-    await markHostActionPending(id, mode === "hard" ? "hard_restart" : "restart");
+    await markHostActionPending(
+      id,
+      mode === "hard" ? "hard_restart" : "restart",
+    );
     await enqueueCloudVmWork({
       vm_id: id,
       action: mode === "hard" ? "hard_restart" : "restart",
@@ -1290,6 +1516,51 @@ export async function renameHost({
   return parseRow(rows[0]);
 }
 
+export async function setHostStar({
+  account_id,
+  id,
+  starred,
+}: {
+  account_id?: string;
+  id: string;
+  starred: boolean;
+}): Promise<void> {
+  const owner = requireAccount(account_id);
+  const { rows } = await pool().query(
+    `SELECT id, metadata, tier, deleted, starred_by
+     FROM project_hosts
+     WHERE id=$1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row || row.deleted) {
+    throw new Error("host not found");
+  }
+  const metadata = row.metadata ?? {};
+  const rowOwner = metadata.owner ?? "";
+  const collaborators = (metadata.collaborators ?? []) as string[];
+  const isOwner = rowOwner === owner;
+  const isCollab = collaborators.includes(owner);
+  const shared = row.tier != null;
+  const isAdminUser = await isAdmin(owner);
+  if (!isOwner && !isCollab && !shared && !isAdminUser) {
+    throw new Error("not authorized");
+  }
+  const current = (row.starred_by ?? []) as string[];
+  const next = new Set(current);
+  if (starred) {
+    next.add(owner);
+  } else {
+    next.delete(owner);
+  }
+  await pool().query(
+    `UPDATE project_hosts
+     SET starred_by=$2, updated=NOW()
+     WHERE id=$1`,
+    [id, [...next]],
+  );
+}
+
 export async function updateHostMachine({
   account_id,
   id,
@@ -1304,6 +1575,7 @@ export async function updateHostMachine({
   storage_mode,
   region,
   zone,
+  self_host_ssh_target,
 }: {
   account_id?: string;
   id: string;
@@ -1318,6 +1590,7 @@ export async function updateHostMachine({
   storage_mode?: HostMachine["storage_mode"];
   region?: string;
   zone?: string;
+  self_host_ssh_target?: string;
 }): Promise<Host> {
   const row = await loadOwnedHost(id, account_id);
   const metadata = row.metadata ?? {};
@@ -1398,6 +1671,18 @@ export async function updateHostMachine({
     nextMachine.metadata = { ...(nextMachine.metadata ?? {}), ram_gb: nextRam };
     changed = true;
     nonDiskChange = true;
+  }
+  if (isSelfHost && typeof self_host_ssh_target === "string") {
+    const nextTarget = self_host_ssh_target.trim();
+    const currentTarget = String(machine.metadata?.self_host_ssh_target ?? "");
+    if (nextTarget !== currentTarget) {
+      nextMachine.metadata = {
+        ...(nextMachine.metadata ?? {}),
+        self_host_ssh_target: nextTarget || undefined,
+      };
+      changed = true;
+      nonDiskChange = true;
+    }
   }
   if (nextDisk != null) {
     const currentDisk = Number(machine.disk_gb);
@@ -1580,7 +1865,9 @@ export async function updateHostMachine({
     if (!runtime.instance_id) {
       throw new Error("host is not provisioned");
     }
-    const { entry, creds } = await getProviderContext(machineCloud);
+    const { entry, creds } = await getProviderContext(machineCloud, {
+      region: row.region,
+    });
     await entry.provider.resizeDisk(runtime, nextDisk, creds);
     if (row.status !== "off") {
       const client = createHostControlClient({
@@ -1658,6 +1945,54 @@ export async function upgradeHostSoftware({
   });
 }
 
+export async function upgradeHostConnector({
+  account_id,
+  id,
+  version,
+}: {
+  account_id?: string;
+  id: string;
+  version?: string;
+}): Promise<void> {
+  const row = await loadHostForStartStop(id, account_id);
+  const metadata = row.metadata ?? {};
+  const machine = metadata.machine ?? {};
+  if (machine.cloud !== "self-host") {
+    throw new Error("host is not self-hosted");
+  }
+  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
+  if (!sshTarget) {
+    throw new Error("missing self-host ssh target");
+  }
+  const owner = metadata.owner ?? account_id;
+  if (!owner) {
+    throw new Error("missing host owner");
+  }
+  const reversePort = await ensureSelfHostReverseTunnel({
+    host_id: row.id,
+    ssh_target: sshTarget,
+  });
+  const tokenInfo = await createPairingTokenForHost({
+    account_id: owner,
+    host_id: row.id,
+    ttlMs: 30 * 60 * 1000,
+  });
+  const { project_hosts_self_host_connector_version } =
+    await getServerSettings();
+  const connectorVersion =
+    version?.trim() ||
+    project_hosts_self_host_connector_version?.trim() ||
+    undefined;
+  await runConnectorInstallOverSsh({
+    host_id: row.id,
+    ssh_target: sshTarget,
+    pairing_token: tokenInfo.token,
+    name: row.name ?? undefined,
+    ssh_port: reversePort,
+    version: connectorVersion,
+  });
+}
+
 function assertHostRunningForUpgrade(row: any) {
   const status = String(row.status ?? "");
   if (status !== "active" && status !== "running") {
@@ -1665,7 +2000,9 @@ function assertHostRunningForUpgrade(row: any) {
   }
 }
 
-function mapUpgradeArtifact(artifact: string): "project_host" | "project_bundle" | "tools" | undefined {
+function mapUpgradeArtifact(
+  artifact: string,
+): "project_host" | "project_bundle" | "tools" | undefined {
   if (artifact === "project-host") return "project_host";
   if (artifact === "project" || artifact === "project-bundle") {
     return "project_bundle";
@@ -1752,6 +2089,7 @@ export async function deleteHostInternal({
   id: string;
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
+  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   if (row.status === "deprovisioned") {
     await pool().query(
       `UPDATE project_hosts SET deleted=NOW(), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
@@ -1759,9 +2097,6 @@ export async function deleteHostInternal({
     );
     return;
   }
-  const metadata = row.metadata ?? {};
-  const machine: HostMachine = metadata.machine ?? {};
-  const machineCloud = normalizeProviderId(machine.cloud);
   if (machineCloud) {
     await enqueueCloudVmWork({
       vm_id: id,

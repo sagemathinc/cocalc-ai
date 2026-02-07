@@ -14,5 +14,7 @@ import "./tab";
 import "./arrow-keys";
 import "./actions";
 import "./sync";
+import "./move-block";
 import "./toggle-collapse-sections";
 import "./find";
+import "./split-code-block";

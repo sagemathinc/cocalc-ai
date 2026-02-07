@@ -58,7 +58,7 @@ export function UserSearch({}) {
                 actions.setState({ limit });
               }
             }}
-            addonAfter="Limit"
+            suffix="Limit"
           />
         </Flex>
         {!!status && (

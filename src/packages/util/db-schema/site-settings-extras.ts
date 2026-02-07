@@ -81,6 +81,11 @@ const any_llm_enabled = (conf: SiteSettings) =>
   ollama_enabled(conf) ||
   mistral_enabled(conf);
 
+const cloudflare_mode = (conf: SiteSettings): string =>
+  `${conf.cloudflare_mode ?? "none"}`.trim().toLowerCase();
+const cloudflare_self_mode = (conf: SiteSettings): boolean =>
+  cloudflare_mode(conf) === "self";
+
 const project_hosts_nebius_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_nebius_enabled"]);
 const project_hosts_google_cloud_enabled = (conf: SiteSettings) =>
@@ -89,8 +94,14 @@ const project_hosts_hyperstack_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_hyperstack_enabled"]);
 const project_hosts_lambda_enabled = (conf: SiteSettings) =>
   to_bool(conf["project_hosts_lambda_enabled"]);
+export const project_hosts_local_enabled = (conf: SiteSettings) =>
+  to_bool(conf["project_hosts_local_enabled"]);
 const metrics_enabled = (conf: SiteSettings) =>
-  to_bool((conf as SiteSettings & { prometheus_metrics?: string })["prometheus_metrics"]);
+  to_bool(
+    (conf as SiteSettings & { prometheus_metrics?: string })[
+      "prometheus_metrics"
+    ],
+  );
 
 // Ollama and Custom OpenAI have the same schema
 function custom_llm_valid(value: string): boolean {
@@ -241,24 +252,22 @@ export type SiteSettingsExtrasKeys =
   | "pay_as_you_go_price_project_upgrades"
   | "lambda_cloud_api_key"
   | "project_hosts_lambda_prefix"
-  | "nebius_credentials_json"
-  | "nebius_parent_id"
-  | "nebius_subnet_id"
+  | "nebius_region_config_json"
   | "project_hosts_nebius_prefix"
   | "hyperstack_api_key"
   | "project_hosts_hyperstack_prefix"
-  | "hyperstack_balance_alert_thresh"
-  | "hyperstack_balance_alert_emails"
-  | "control_plane_ssh_private_key_path"
-  | "control_plane_ssh_private_key"
+  | "project_hosts_ssh_public_keys"
   | "google_cloud_service_account_json"
-  | "google_cloud_bigquery_billing_service_account_json"
-  | "google_cloud_bigquery_detailed_billing_table"
   | "project_hosts_google_prefix"
   | "project_hosts_software_base_url"
+  | "project_hosts_bootstrap_channel"
+  | "project_hosts_bootstrap_version"
+  | "project_hosts_self_host_connector_version"
   | "project_hosts_cloudflare_tunnel_enabled"
   | "project_hosts_cloudflare_tunnel_account_id"
   | "project_hosts_cloudflare_tunnel_api_token"
+  | "project_hosts_cloudflare_tunnel_prefix"
+  | "project_hosts_cloudflare_tunnel_host_suffix"
   | "software_license_token"
   | "software_license_server_url"
   | "software_license_instance_id"
@@ -277,6 +286,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat",
   },
   conat_password: {
     name: "Conat Password",
@@ -284,6 +295,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     password: true,
     tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat",
   },
   software_licenses_heading: {
     name: "Software Licensing",
@@ -291,6 +304,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["Licensing"],
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   software_license_private_key: {
     name: "Software Licensing: Private Signing Key (PEM)",
@@ -301,6 +316,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Licensing", "Security"],
     valid: () => true,
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   software_license_token: {
     name: "Software Licensing: License Token",
@@ -311,6 +328,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Licensing"],
     valid: () => true,
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   software_license_server_url: {
     name: "Software Licensing: Server URL",
@@ -319,6 +338,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Licensing"],
     valid: () => true,
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   software_license_instance_id: {
     name: "Software Licensing: Instance Id",
@@ -327,6 +348,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_trimmed_str,
     tags: ["Licensing"],
     valid: () => true,
+    group: "Payments & Billing",
+    subgroup: "Licensing",
   },
   openai_section: {
     name: "Language Model Configuration",
@@ -335,6 +358,8 @@ export const EXTRAS: SettingsExtras = {
     show: any_llm_enabled,
     type: "header",
     tags: ["AI LLM", "OpenAI"],
+    group: "AI & LLM",
+    subgroup: "Overview",
   },
   openai_api_key: {
     name: "OpenAI API Key",
@@ -343,6 +368,9 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: openai_enabled,
     tags: ["AI LLM", "OpenAI"],
+    required_when: [{ key: "openai_enabled", equals: "yes" }],
+    group: "AI & LLM",
+    subgroup: "OpenAI",
   },
   google_vertexai_key: {
     name: "Google Generative AI API Key",
@@ -351,6 +379,9 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: vertexai_enabled,
     tags: ["AI LLM", "OpenAI"],
+    required_when: [{ key: "google_vertexai_enabled", equals: "yes" }],
+    group: "AI & LLM",
+    subgroup: "Google AI",
   },
   mistral_api_key: {
     name: "Mistral AI API Key",
@@ -359,6 +390,9 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: mistral_enabled,
     tags: ["AI LLM"],
+    required_when: [{ key: "mistral_enabled", equals: "yes" }],
+    group: "AI & LLM",
+    subgroup: "Mistral",
   },
   anthropic_api_key: {
     name: "Anthropic API Key",
@@ -367,6 +401,9 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: anthropic_enabled,
     tags: ["AI LLM"],
+    required_when: [{ key: "anthropic_enabled", equals: "yes" }],
+    group: "AI & LLM",
+    subgroup: "Anthropic",
   },
   ollama_configuration: {
     name: "Ollama Configuration",
@@ -378,6 +415,8 @@ export const EXTRAS: SettingsExtras = {
     valid: custom_llm_valid,
     to_display: custom_llm_display,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Ollama",
   },
   // This is very similar to the ollama config, but there are small differences in the details.
   custom_openai_configuration: {
@@ -390,6 +429,8 @@ export const EXTRAS: SettingsExtras = {
     valid: custom_llm_valid,
     to_display: custom_llm_display,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Custom OpenAI",
   },
   salesloft_section: {
     name: "Salesloft Configuration",
@@ -431,6 +472,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     type: "header",
     tags: ["Stripe"],
+    group: "Payments & Billing",
+    subgroup: "Stripe",
   },
   stripe_publishable_key: {
     name: "Stripe Publishable",
@@ -439,6 +482,8 @@ export const EXTRAS: SettingsExtras = {
     password: false,
     show: only_commercial,
     tags: ["Stripe"],
+    group: "Payments & Billing",
+    subgroup: "Stripe",
   },
   stripe_secret_key: {
     name: "Stripe Secret",
@@ -447,6 +492,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     password: true,
     tags: ["Stripe"],
+    group: "Payments & Billing",
+    subgroup: "Stripe",
   },
   stripe_webhook_secret: {
     name: "Stripe Webhook Secret",
@@ -455,45 +502,80 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     password: true,
     tags: ["Stripe"],
+    group: "Payments & Billing",
+    subgroup: "Stripe",
   },
   r2_heading: {
     name: "Cloudflare R2 Backups",
     desc: "Credentials used to configure rustic backups in Cloudflare R2.",
     default: "",
     type: "header",
-    tags: ["Backups", "R2"],
+    tags: ["Backups", "Cloudflare"],
+    group: "Backups & Storage",
+    subgroup: "Cloudflare R2",
+    order: 10,
+    show: cloudflare_self_mode,
   },
   r2_account_id: {
-    name: "R2 Account ID",
+    name: "Cloudflare R2 Account ID",
     desc: "Cloudflare account ID used to build the R2 endpoint URL.",
     default: "",
-    tags: ["Backups", "R2"],
+    tags: ["Backups", "Cloudflare"],
+    group: "Backups & Storage",
+    subgroup: "Cloudflare R2",
+    order: 20,
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   r2_api_token: {
-    name: "R2 API Token",
+    name: "Cloudflare R2 API Token",
     desc: 'Cloudflare API token with "R2:Edit" permissions used to create region buckets automatically.',
     default: "",
     password: true,
-    tags: ["Backups", "R2"],
+    tags: ["Backups", "Cloudflare"],
+    group: "Backups & Storage",
+    subgroup: "Cloudflare R2",
+    order: 30,
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   r2_access_key_id: {
-    name: "R2 Access Key ID",
+    name: "Cloudflare R2 Access Key ID",
     desc: "Access key for the R2 S3-compatible API.",
     default: "",
-    tags: ["Backups", "R2"],
+    tags: ["Backups", "Cloudflare"],
+    group: "Backups & Storage",
+    subgroup: "Cloudflare R2",
+    order: 40,
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   r2_secret_access_key: {
-    name: "R2 Secret Access Key",
+    name: "Cloudflare R2 Secret Access Key",
     desc: "Secret key for the R2 S3-compatible API.",
     default: "",
     password: true,
-    tags: ["Backups", "R2"],
+    tags: ["Backups", "Cloudflare"],
+    group: "Backups & Storage",
+    subgroup: "Cloudflare R2",
+    order: 50,
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   r2_bucket_prefix: {
-    name: "R2 Bucket Prefix",
+    name: "Cloudflare R2 Bucket Prefix",
     desc: "Prefix for per-region backup buckets (e.g., cocalc).",
     default: "",
-    tags: ["Backups", "R2"],
+    tags: ["Backups", "Cloudflare"],
+    group: "Backups & Storage",
+    subgroup: "Cloudflare R2",
+    order: 60,
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   re_captcha_v3_heading: {
     // this is cosmetic, otherwise it looks weird.
@@ -503,6 +585,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     type: "header",
     tags: ["captcha"],
+    group: "Access & Identity",
+    subgroup: "Signup Security",
   },
   re_captcha_v3_publishable_key: {
     name: "reCaptcha v3 Site Key",
@@ -511,6 +595,8 @@ export const EXTRAS: SettingsExtras = {
     password: false,
     show: only_commercial,
     tags: ["captcha"],
+    group: "Access & Identity",
+    subgroup: "Signup Security",
   },
   re_captcha_v3_secret_key: {
     name: "reCaptcha v3 Secret Key",
@@ -519,6 +605,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     password: true,
     tags: ["captcha"],
+    group: "Access & Identity",
+    subgroup: "Signup Security",
   },
   zendesk_heading: {
     name: "Zendesk API Configuration",
@@ -526,6 +614,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["Zendesk", "Support"],
+    group: "Support / Integrations",
+    subgroup: "Zendesk",
   },
   zendesk_token: {
     name: "Zendesk Token",
@@ -534,6 +624,8 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: () => true,
     tags: ["Zendesk", "Support"],
+    group: "Support / Integrations",
+    subgroup: "Zendesk",
   },
   zendesk_username: {
     name: "Zendesk Username",
@@ -541,6 +633,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: () => true,
     tags: ["Zendesk", "Support"],
+    group: "Support / Integrations",
+    subgroup: "Zendesk",
   },
   zendesk_uri: {
     name: "Zendesk Subdomain",
@@ -548,6 +642,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: () => true,
     tags: ["Zendesk", "Support"],
+    group: "Support / Integrations",
+    subgroup: "Zendesk",
   },
   support_account_id: {
     name: "Support CoCalc Account ID",
@@ -555,6 +651,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     valid: isValidUUID,
     tags: ["Support"],
+    group: "Support / Integrations",
+    subgroup: "Support Messaging",
   },
   github_heading: {
     name: "GitHub API Configuration",
@@ -562,6 +660,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   github_project_id: {
     name: "GitHub Project ID",
@@ -569,6 +669,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     valid: isValidUUID,
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   github_username: {
     name: "GitHub Username",
@@ -576,6 +678,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: () => true,
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   github_token: {
     name: "GitHub Token",
@@ -584,6 +688,8 @@ export const EXTRAS: SettingsExtras = {
     password: true,
     show: () => true,
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   github_block: {
     name: "GitHub Abuse Block",
@@ -591,6 +697,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: () => true,
     tags: ["GitHub"],
+    group: "Support / Integrations",
+    subgroup: "GitHub",
   },
   email_section: {
     name: "Email Configuration",
@@ -598,6 +706,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     type: "header",
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Overview",
   },
   email_backend: {
     name: "Email backend type",
@@ -606,6 +716,9 @@ export const EXTRAS: SettingsExtras = {
     valid: ["none", "sendgrid", "smtp"],
     show: () => true,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Backend",
+    required_when: [{ key: "email_enabled", equals: "yes" }],
   },
   sendgrid_key: {
     name: "Sendgrid API key (for email)",
@@ -614,6 +727,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_sendgrid,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SendGrid",
+    required_when: [{ key: "email_backend", equals: "sendgrid" }],
   },
   email_smtp_server: {
     name: "SMTP server (for email)",
@@ -621,6 +737,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_from: {
     name: "SMTP server FROM (for email)",
@@ -629,6 +748,9 @@ export const EXTRAS: SettingsExtras = {
     valid: is_valid_email_address,
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_login: {
     name: "SMTP username (for email)",
@@ -636,6 +758,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_password: {
     name: "SMTP password (for email)",
@@ -644,6 +769,9 @@ export const EXTRAS: SettingsExtras = {
     show: only_for_smtp,
     password: true,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_port: {
     name: "SMTP port (for email)",
@@ -653,6 +781,9 @@ export const EXTRAS: SettingsExtras = {
     valid: only_nonneg_int,
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_secure: {
     name: "SMTP secure (for email)",
@@ -662,6 +793,9 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_bool,
     show: only_for_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "SMTP",
+    required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   // bad name, historic baggage, used in packages/hub/email.ts
   password_reset_override: {
@@ -671,6 +805,8 @@ export const EXTRAS: SettingsExtras = {
     valid: ["default", "smtp"],
     show: is_email_enabled,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
   },
   password_reset_smtp_server: {
     name: "Secondary SMTP server (for email)",
@@ -678,6 +814,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_from: {
     name: "Secondary SMTP FROM (for email)",
@@ -686,6 +825,9 @@ export const EXTRAS: SettingsExtras = {
     valid: is_valid_email_address,
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_login: {
     name: "Secondary SMTP username (for email)",
@@ -693,6 +835,9 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_password: {
     name: "Secondary SMTP password (for email)",
@@ -701,6 +846,9 @@ export const EXTRAS: SettingsExtras = {
     show: only_for_password_reset_smtp,
     password: true,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_port: {
     name: "Secondary SMTP port (for email)",
@@ -710,6 +858,9 @@ export const EXTRAS: SettingsExtras = {
     valid: only_nonneg_int,
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   password_reset_smtp_secure: {
     name: "Secondary SMTP secure (for email)",
@@ -719,6 +870,9 @@ export const EXTRAS: SettingsExtras = {
     to_val: to_bool,
     show: only_for_password_reset_smtp,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Secondary SMTP",
+    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   prometheus_metrics: {
     name: "Prometheus Metrics",
@@ -726,6 +880,8 @@ export const EXTRAS: SettingsExtras = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
+    group: "System / Advanced",
+    subgroup: "Metrics",
   },
   prometheus_metrics_allowlist: {
     name: "Prometheus Metrics Allowlist",
@@ -733,6 +889,8 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     to_val: to_trimmed_str,
     show: metrics_enabled,
+    group: "System / Advanced",
+    subgroup: "Metrics",
   },
   pay_as_you_go_section: {
     name: "Pay as you Go",
@@ -741,6 +899,8 @@ export const EXTRAS: SettingsExtras = {
     show: only_commercial,
     type: "header",
     tags: ["Pay as you Go"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   pay_as_you_go_min_payment: {
     name: "Pay As You Go - Minimum Payment",
@@ -750,6 +910,8 @@ export const EXTRAS: SettingsExtras = {
     to_val: toFloat,
     valid: onlyPosFloat,
     tags: ["Pay as you Go"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   pay_as_you_go_max_project_upgrades: {
     name: "Pay As You Go - Max Project Upgrade Quotas",
@@ -761,6 +923,8 @@ export const EXTRAS: SettingsExtras = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["Pay as you Go"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   pay_as_you_go_price_project_upgrades: {
     name: "Pay As You Go - Price for Project Upgrades",
@@ -771,6 +935,8 @@ export const EXTRAS: SettingsExtras = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["Pay as you Go"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   subscription_maintenance: {
     name: "Pay As You Go - Subscription Maintenance Parameters",
@@ -781,14 +947,8 @@ export const EXTRAS: SettingsExtras = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["Pay as you Go"],
-  },
-  hyperstack_api_key: {
-    name: "Project Hosts: Hyperstack - API Key",
-    desc: "Your [Hyperstack API Key](https://console.hyperstack.cloud/api-keys). This supports managing project hosts on the [Hyperstack Cloud](https://www.hyperstack.cloud/). REQUIRED or Hyperstack will not work.",
-    default: "",
-    password: true,
-    show: project_hosts_hyperstack_enabled,
-    tags: ["Project Hosts", "Hyperstack"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   project_hosts_hyperstack_prefix: {
     name: "Project Hosts: Hyperstack - Resource Prefix",
@@ -796,39 +956,31 @@ export const EXTRAS: SettingsExtras = {
     default: "cocalc",
     to_val: to_trimmed_str,
     show: project_hosts_hyperstack_enabled,
-    tags: ["Project Hosts", "Hyperstack"],
+    tags: ["Project Hosts", "Cloud", "Hyperstack"],
+    group: "Compute / Project Hosts",
+    subgroup: "Hyperstack",
   },
-  control_plane_ssh_private_key_path: {
-    name: "Control Plane: SSH Private Key Path",
-    desc: "Filesystem path to the control-plane SSH private key. When set, this overrides the database key. All hub processes must be able to read this file.",
-    default: "",
-    to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Security"],
-    valid: () => true,
-  },
-  control_plane_ssh_private_key: {
-    name: "Control Plane: SSH Private Key (DB fallback)",
-    desc: "Control-plane SSH private key stored in the database. This is used if no filesystem path is configured.",
+  hyperstack_api_key: {
+    name: "Project Hosts: Hyperstack - API Key",
+    desc: "Your [Hyperstack API Key](https://console.hyperstack.cloud/api-keys). This supports managing project hosts on the [Hyperstack Cloud](https://www.hyperstack.cloud/). REQUIRED or Hyperstack will not work.",
     default: "",
     password: true,
-    to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Security"],
-    valid: () => true,
-  },
-  hyperstack_balance_alert_thresh: {
-    name: "Project Hosts: Hyperstack - Balance Alert Threshold",
-    desc: "If your credit balance goes below this amount on the Hyperstack site, then you will be emailed (assuming email is configured).",
-    default: "25",
-    to_val: to_int,
     show: project_hosts_hyperstack_enabled,
-    tags: ["Project Hosts", "Hyperstack"],
+    tags: ["Project Hosts", "Cloud", "Hyperstack"],
+    group: "Compute / Project Hosts",
+    subgroup: "Hyperstack",
+    required_when: [{ key: "project_hosts_hyperstack_enabled", equals: "yes" }],
   },
-  hyperstack_balance_alert_emails: {
-    name: "(DEPRECATED) Project Hosts: Hyperstack - Balance Email Addresses",
-    desc: "If your credit balance goes below your configured threshold, then these email addresses will get an alert message.  Separate addresses by commas.",
+  project_hosts_ssh_public_keys: {
+    name: "Project Hosts: SSH Public Keys",
+    desc: "Optional SSH public keys to add to project hosts (one per line). These are installed for the ubuntu user so site admins can SSH if needed.",
     default: "",
-    show: project_hosts_hyperstack_enabled,
-    tags: ["Project Hosts", "Hyperstack"],
+    to_val: to_trimmed_str,
+    multiline: 4,
+    tags: ["Project Hosts", "Cloud", "SSH"],
+    valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Access",
   },
 
   lambda_cloud_api_key: {
@@ -837,7 +989,10 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     password: true,
     show: project_hosts_lambda_enabled,
-    tags: ["Project Hosts"],
+    tags: ["Project Hosts", "Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Lambda Cloud",
+    required_when: [{ key: "project_hosts_lambda_enabled", equals: "yes" }],
   },
   project_hosts_lambda_prefix: {
     name: "Project Hosts: Lambda Cloud - Resource Prefix",
@@ -845,37 +1000,26 @@ export const EXTRAS: SettingsExtras = {
     default: "cocalc-host",
     to_val: to_trimmed_str,
     show: project_hosts_lambda_enabled,
-    tags: ["Project Hosts"],
+    tags: ["Project Hosts", "Cloud"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Lambda Cloud",
   },
-  nebius_credentials_json: {
-    name: "Project Hosts: Nebius - Credentials JSON",
-    desc: "Nebius credentials.json content (subject-credentials). See https://chatgpt.com/s/t_6954b3d283648191aee1aa850c1c4634 or src/packages/cloud/nebius/credentials.md for the exact generation steps.",
+  nebius_region_config_json: {
+    name: "Project Hosts: Nebius - Region Config (JSON)",
+    desc: "Generated by the **Wizard**. Contains per-region Nebius credentials, project, and subnet ids.",
     default: "",
     to_val: to_trimmed_str,
     multiline: 6,
     password: true,
+    wizard: { name: "nebius-cli", label: "Wizard..." },
+    managed_by_wizard: true,
     show: project_hosts_nebius_enabled,
     tags: ["Project Hosts", "Cloud", "Nebius"],
     valid: (x) => !!x,
-  },
-  nebius_parent_id: {
-    name: "Project Hosts: Nebius - Parent ID",
-    desc: "Required Nebius parent id (project/tenant) used for resource creation. To figure this out go to the nebius web console and look at the URL in your browser, which will be of the form https://console.nebius.com/project-e00fnh2xxxx; the string 'project-e00fnh2xxxx' is what to put here.",
-    default: "",
-    to_val: to_trimmed_str,
-    show: project_hosts_nebius_enabled,
-    tags: ["Project Hosts", "Cloud", "Nebius"],
-    valid: (x) => !!x,
-  },
-  nebius_subnet_id: {
-    name: "Project Hosts: Nebius - Subnet ID",
-    desc: "Required Nebius subnet id to attach instances to.  It looks something like vpcsubnet-xxxx and you can find it in the network tab on the console.",
-    default: "",
-    to_val: to_trimmed_str,
-    show: project_hosts_nebius_enabled,
-    tags: ["Project Hosts", "Cloud", "Nebius"],
-    valid: (x) => !!x,
+    group: "Compute / Project Hosts",
+    subgroup: "Nebius",
+    required_when: [{ key: "project_hosts_nebius_enabled", equals: "yes" }],
   },
   project_hosts_nebius_prefix: {
     name: "Project Hosts: Nebius - Resource Prefix",
@@ -885,33 +1029,23 @@ export const EXTRAS: SettingsExtras = {
     show: project_hosts_nebius_enabled,
     tags: ["Project Hosts", "Cloud", "Nebius"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Nebius",
   },
   google_cloud_service_account_json: {
     name: "Project Hosts: Google Cloud - Service Account Json",
-    desc: 'A Google Cloud [Service Account](https://console.cloud.google.com/iam-admin/serviceaccounts) with the following IAM Roles: "Editor". This supports managing project hosts on Google Cloud, and you must [enable the Compute Engine API](https://console.cloud.google.com/apis/library/compute.googleapis.com) and [the Monitoring API](https://console.cloud.google.com/apis/library/monitoring.googleapis.com) for this Google Cloud project. This is a multiline json file that looks like\n\n```js\n{"type": "service_account",...,"universe_domain": "googleapis.com"}\n```',
+    desc: 'Use the **Wizard**, or paste the Service Account key JSON for a Google Cloud Service Account with the IAM Role: **Editor** (for compute servers). This supports managing compute servers on Google Cloud, and you must enable the Compute Engine API.\n\nExample format:\n```js\n{"type": "service_account",...,"universe_domain": "googleapis.com"}\n```',
     default: "",
     multiline: 5,
     password: true,
+    wizard: { name: "gcp-service-account-json", label: "Wizard..." },
     show: project_hosts_google_cloud_enabled,
-    tags: ["Project Hosts", "Google Cloud"],
-  },
-  google_cloud_bigquery_billing_service_account_json: {
-    name: "Project Hosts: Google Cloud BigQuery Service Account Json",
-    desc: "Another Google Cloud Service Account that has read access to the regularly updated detailed billing data. You have to [enable *detailed* billing export to BigQuery](https://cloud.google.com/billing/docs/how-to/export-data-bigquery), then provide a service account here that provides: 'BigQuery Data Viewer' and 'BigQuery Job User'. NOTE: When I setup detailed billing export for cocalc.com it took about 3 days (!) before I started seeing any detailed billing data!",
-    default: "",
-    multiline: 5,
-    password: true,
-    show: project_hosts_google_cloud_enabled,
-    tags: ["Project Hosts", "Google Cloud"],
-  },
-  google_cloud_bigquery_detailed_billing_table: {
-    name: "Project Hosts: Google Cloud Detailed Billing BigQuery Table Name",
-    desc: "The name of your BigQuery detailed billing exports table. See remarks about BigQuery Service Account above. This might look like 'sage-math-inc.detailed_billing.gcp_billing_export_resource_v1_00D083_5513BD_B6E72F'",
-    default: "",
-    to_val: to_trimmed_str,
-    valid: (x) => !x || x.includes(".detailed_billing."),
-    show: project_hosts_google_cloud_enabled,
-    tags: ["Project Hosts", "Google Cloud"],
+    tags: ["Project Hosts", "Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Google Cloud",
+    required_when: [
+      { key: "project_hosts_google-cloud_enabled", equals: "yes" },
+    ],
   },
   project_hosts_google_prefix: {
     name: "Project Hosts: Google Cloud - Resource Prefix",
@@ -919,16 +1053,50 @@ export const EXTRAS: SettingsExtras = {
     default: "cocalc-host",
     to_val: to_trimmed_str,
     show: project_hosts_google_cloud_enabled,
-    tags: ["Project Hosts", "Google Cloud"],
+    tags: ["Project Hosts", "Cloud"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Google Cloud",
   },
   project_hosts_software_base_url: {
     name: "Project Hosts: Software Base URL",
-    desc: "Base URL for project-host software artifacts. This must contain arch-specific manifests like `project-host/latest-linux-amd64.json`, `project/latest-linux-amd64.json`, and `tools/latest-linux-amd64.json` (e.g., https://software.cocalc.ai/software).",
+    desc: "Base URL for project-host software artifacts. This must contain manifests like `project-host/latest-linux.json`, `project/latest-linux.json`, and `tools/latest-linux-amd64.json` (e.g., https://software.cocalc.ai/software).",
     default: "https://software.cocalc.ai/software",
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
     valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Bootstrap",
+  },
+  project_hosts_bootstrap_channel: {
+    name: "Project Hosts: Bootstrap Channel",
+    desc: "Default bootstrap channel for new hosts (e.g., latest or test). Leave blank to use latest.",
+    default: "latest",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts"],
+    valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Bootstrap",
+  },
+  project_hosts_bootstrap_version: {
+    name: "Project Hosts: Bootstrap Version Pin",
+    desc: "Optional explicit bootstrap version to use for new hosts (overrides channel). Leave blank to use the channel.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts"],
+    valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "Bootstrap",
+  },
+  project_hosts_self_host_connector_version: {
+    name: "Project Hosts: Self-Host Connector Version",
+    desc: "Optional version pin for the self-host connector (leave blank to use latest).",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "On-Prem"],
+    valid: () => true,
+    group: "Compute / Project Hosts",
+    subgroup: "On-Prem",
   },
   project_hosts_cloudflare_tunnel_enabled: {
     name: "Project Hosts: Cloudflare Tunnel - Enable",
@@ -936,15 +1104,28 @@ export const EXTRAS: SettingsExtras = {
     default: "no",
     to_val: to_bool,
     valid: only_booleans,
-    tags: ["Project Hosts", "Cloud"],
+    wizard: { name: "cloudflare-config", label: "Wizard..." },
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
+    group: "Networking",
+    subgroup: "Cloudflare Tunnel",
+    order: 10,
+    hidden: true,
   },
   project_hosts_cloudflare_tunnel_account_id: {
     name: "Project Hosts: Cloudflare Tunnel - Account ID",
     desc: "Cloudflare account ID that owns the tunnel.",
     default: "",
     to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Cloud"],
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
     valid: () => true,
+    group: "Networking",
+    subgroup: "Cloudflare Tunnel",
+    order: 20,
+    required_when: [
+      { key: "cloudflare_mode", equals: "self" },
+    ],
+    show: cloudflare_self_mode,
+    hidden: true,
   },
   project_hosts_cloudflare_tunnel_api_token: {
     name: "Project Hosts: Cloudflare Tunnel - API Token",
@@ -952,6 +1133,40 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     password: true,
     to_val: to_trimmed_str,
-    tags: ["Project Hosts", "Cloud"],
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
+    group: "Networking",
+    subgroup: "Cloudflare Tunnel",
+    order: 30,
+    required_when: [
+      { key: "cloudflare_mode", equals: "self" },
+    ],
+    show: cloudflare_self_mode,
+    hidden: true,
+  },
+  project_hosts_cloudflare_tunnel_prefix: {
+    name: "Project Hosts: Cloudflare Tunnel - Name Prefix",
+    desc: "Optional prefix for Cloudflare Tunnel names (hub and project-host tunnels). Useful to distinguish tunnels between multiple installations.",
+    default: "cocalc",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
+    valid: () => true,
+    group: "Networking",
+    subgroup: "Cloudflare Tunnel",
+    order: 40,
+    show: cloudflare_self_mode,
+    hidden: true,
+  },
+  project_hosts_cloudflare_tunnel_host_suffix: {
+    name: "Project Hosts: Cloudflare Tunnel - Hostname Suffix",
+    desc: "Optional suffix for project-host tunnel hostnames. Defaults to `-` + External Domain Name if blank. Examples: -hosts.cocalc.ai or .dev.cocalc.ai. Note: nested subdomains like .dev.cocalc.ai require a certificate that covers that wildcard (e.g., Cloudflare Advanced Certificate Manager).",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Project Hosts", "Cloud", "Cloudflare"],
+    valid: () => true,
+    group: "Networking",
+    subgroup: "Cloudflare Tunnel",
+    order: 50,
+    show: cloudflare_self_mode,
+    hidden: true,
   },
 } as const;

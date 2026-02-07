@@ -355,7 +355,7 @@ export function StudentsPanel({
             fontSize: "12pt",
             maxWidth: "800px",
           }}
-          message={
+          title={
             <b>
               <a onClick={() => frameActions.setModal("add-students")}>
                 <FormattedMessage

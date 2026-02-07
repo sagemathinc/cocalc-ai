@@ -1,5 +1,5 @@
 import { Alert, Collapse, Form, Input, InputNumber, Modal, Select } from "antd";
-import { React } from "@cocalc/frontend/app-framework";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { HostProvider } from "../types";
 import { getDiskTypeOptions } from "../constants";
@@ -13,6 +13,7 @@ import {
   getProviderStorageSupport,
 } from "../providers/registry";
 import type { HostFieldId, ProviderSelection } from "../providers/registry";
+import { SshTargetLabel } from "./ssh-target-help";
 
 const NEBIUS_IO_M3_GB = 93;
 
@@ -38,6 +39,7 @@ type HostEditModalProps = {
       storage_mode?: string;
       region?: string;
       zone?: string;
+      self_host_ssh_target?: string;
     },
   ) => Promise<void> | void;
   onProviderChange?: (provider: HostProvider) => void;
@@ -76,10 +78,21 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedZone,
     selectedMachineType,
     selectedGpuType,
+    selectedSelfHostKind,
+    selectedSelfHostMode,
     selectedGpu,
     selectedSize,
     selectedStorageMode,
   } = useHostFormValues(form);
+  const selfHostKind =
+    (selectedSelfHostKind ??
+      host?.machine?.metadata?.self_host_kind ??
+      "direct") as string;
+  const isDirect = selfHostKind === "direct";
+  const selfHostAlphaEnabled = !!useTypedRedux(
+    "customize",
+    "project_hosts_self_host_alpha_enabled",
+  );
   const {
     fieldSchema: createFieldSchema,
     fieldOptions: createFieldOptions,
@@ -97,6 +110,8 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedZone,
     selectedMachineType,
     selectedGpuType,
+    selectedSelfHostKind,
+    selectedSelfHostMode,
     selectedSize,
     selectedGpu,
     selectedStorageMode,
@@ -151,6 +166,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedMachineType = Form.useWatch("machine_type", form);
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedSize = Form.useWatch("size", form);
+  const hideAdvanced = providerId === "self-host";
   const selection: ProviderSelection = {
     region: watchedRegion ?? host?.region ?? undefined,
     zone: watchedZone ?? host?.machine?.zone ?? undefined,
@@ -251,10 +267,9 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     [diskMinAdjusted, isNebiusIoM3],
   );
   const storageMode = host?.machine?.storage_mode ?? "persistent";
-  const showDiskFields =
-    isSelfHost ||
-    isDeprovisioned ||
-    (supportsDiskResize && storageMode !== "ephemeral");
+  const showDiskFields = isSelfHost
+    ? !isDirect
+    : isDeprovisioned || (supportsDiskResize && storageMode !== "ephemeral");
   const showAdvancedSection =
     isDeprovisioned &&
     ((providerDescriptor && fieldSchema.advanced.length > 0) ||
@@ -287,6 +302,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       size: host.machine?.machine_type ?? host.size ?? undefined,
       storage_mode: storageMode,
       disk_type: host.machine?.disk_type,
+      self_host_ssh_target: host.machine?.metadata?.self_host_ssh_target,
     });
   }, [
     currentCpu,
@@ -370,6 +386,13 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   }, [ensureFieldValue, isDeprovisioned, watchedGpuType]);
 
   const renderField = (field: HostFieldId) => {
+    if (
+      providerId === "self-host" &&
+      !selfHostAlphaEnabled &&
+      (field === "self_host_kind" || field === "self_host_mode")
+    ) {
+      return null;
+    }
     const fieldOpts = fieldOptions[field] ?? [];
     const label =
       fieldSchema.labels?.[field] ??
@@ -403,7 +426,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       confirmLoading={saving}
       okText="Save"
       okButtonProps={{ disabled: disableSave }}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form form={form} layout="vertical">
         {isDeprovisioned ? (
@@ -436,7 +459,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            message="Selected GPU isn't available in this region."
+            title="Selected GPU isn't available in this region."
             description={
               gcpCompatibilityWarning.compatibleRegions.length && !lockRegionZone ? (
                 <Select
@@ -467,7 +490,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            message="Selected GPU isn't available in this zone."
+            title="Selected GPU isn't available in this zone."
             description={
               gcpCompatibilityWarning.compatibleZones.length && !lockRegionZone ? (
                 <Select
@@ -490,7 +513,15 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             }
           />
         )}
-        {!isDeprovisioned && isSelfHost && (
+        {isSelfHost && (
+          <Form.Item
+            label={<SshTargetLabel label="SSH target (optional)" />}
+            name="self_host_ssh_target"
+          >
+            <Input placeholder="user@host[:port] or ssh-config name" />
+          </Form.Item>
+        )}
+        {!isDeprovisioned && isSelfHost && !isDirect && (
           <>
             <Form.Item
               label="vCPU"
@@ -547,7 +578,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             />
           </Form.Item>
         )}
-        {!isDeprovisioned && showAdvancedSection && (
+        {!isDeprovisioned && showAdvancedSection && !hideAdvanced && (
           <Collapse ghost style={{ marginBottom: 8 }}>
             <Collapse.Panel header="Advanced options" key="advanced">
               {providerDescriptor &&

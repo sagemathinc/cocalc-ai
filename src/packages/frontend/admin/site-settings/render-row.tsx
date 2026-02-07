@@ -4,10 +4,15 @@
  */
 
 import { Button, Popover } from "antd";
-import { CSSProperties } from "react";
+import { CSSProperties, useMemo } from "react";
 import { Icon, LabeledRow, Markdown } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
-import { Config, RowType, Tag } from "@cocalc/util/db-schema/site-defaults";
+import {
+  Config,
+  RowType,
+  Tag,
+  to_bool,
+} from "@cocalc/util/db-schema/site-defaults";
 import { COLORS } from "@cocalc/util/theme";
 import { Data, IsReadonly, IsSet } from "./types";
 import { RowEntry } from "./row-entry";
@@ -28,6 +33,9 @@ interface RenderRowProps {
   isHeader: boolean;
   saveSingleSetting: (name: string) => void;
   onClearSecret: (name: string) => void;
+  showHidden: boolean;
+  showAdvanced: boolean;
+  onOpenWizard?: (name: string) => void;
 }
 
 export function RenderRow({
@@ -46,9 +54,52 @@ export function RenderRow({
   isHeader,
   saveSingleSetting,
   onClearSecret,
+  showHidden,
+  showAdvanced,
+  onOpenWizard,
 }: RenderRowProps) {
   if (data == null) return null;
+  const rootfsManifestUrls = useMemo(
+    () =>
+      [data.project_rootfs_manifest_url, data.project_rootfs_manifest_url_extra]
+        .map((url) => `${url ?? ""}`.trim())
+        .filter((url) => url.length > 0),
+    [data.project_rootfs_manifest_url, data.project_rootfs_manifest_url_extra],
+  );
 
+  function matchesRequiredEquals(raw: any, equals: string | string[]) {
+    if (Array.isArray(equals)) {
+      return equals.some((value) => matchesRequiredEquals(raw, value));
+    }
+    if (
+      equals === "yes" ||
+      equals === "no" ||
+      equals === "true" ||
+      equals === "false"
+    ) {
+      return to_bool(raw) === to_bool(equals);
+    }
+    return raw === equals;
+  }
+
+  const requiredWhen = conf.required_when;
+  const requiredActive =
+    requiredWhen &&
+    requiredWhen.every((req) => {
+      const raw = data[req.key];
+      if (req.equals !== undefined) {
+        return matchesRequiredEquals(raw, req.equals);
+      }
+      if (req.present !== undefined) {
+        return req.present ? !!raw : !raw;
+      }
+      return !!raw;
+    });
+
+  if (conf.hidden && !showHidden) return null;
+  if (conf.advanced && !showAdvanced && !filterStr && !filterTag) {
+    return null;
+  }
   // if tags are used, we're strictly filtering by them
   if (filterTag) {
     if (!conf.tags) return null;
@@ -76,7 +127,8 @@ export function RenderRow({
     }
   }
   // don't show certain fields, i.e. where show evals to false
-  if (typeof conf.show == "function" && !conf.show(data)) {
+  const isHiddenByShow = typeof conf.show == "function" && !conf.show(data);
+  if (isHiddenByShow && !showHidden) {
     return null;
   }
 
@@ -84,21 +136,35 @@ export function RenderRow({
   const hasSecret = isSet?.[name] ?? false;
   const isCleared = isClearing?.[name] ?? false;
   const rowType: RowType = conf.type ?? "setting";
+  const missingValue = conf.password
+    ? !(hasSecret || rawValue)
+    : `${rawValue ?? ""}`.trim() === "";
+  const requiredMissing = requiredActive && missingValue;
 
   // fallbacks: to_display? → to_val? → undefined
   const parsed_value: string | undefined =
     typeof conf.to_display == "function"
       ? `${conf.to_display(rawValue)}`
       : typeof conf.to_val == "function"
-      ? `${conf.to_val(rawValue, data)}`
-      : undefined;
+        ? `${conf.to_val(rawValue, data)}`
+        : undefined;
 
   // not currently supported.
   // const clearable = conf.clearable ?? false;
 
   const label = (
     <div style={{ paddingRight: "15px" }}>
-      <strong>{conf.name}</strong> <RowHelp help={conf.help} />
+      <strong>{conf.name}</strong>{" "}
+      {isHiddenByShow && (
+        <span style={{ color: COLORS.GRAY_M, fontSize: "85%" }}>(hidden)</span>
+      )}{" "}
+      {requiredMissing && (
+        <span style={{ color: "#a00", fontSize: "85%" }}>(required)</span>
+      )}{" "}
+      {conf.managed_by_wizard && (
+        <span style={{ color: COLORS.GRAY_M, fontSize: "85%" }}>(wizard)</span>
+      )}{" "}
+      <RowHelp help={conf.help} />
       <br />
       <StaticMarkdown style={{ color: COLORS.GRAY_M }} value={conf.desc} />
     </div>
@@ -139,6 +205,21 @@ export function RenderRow({
       label_cols={6}
       extra={renderRowExtra()}
     >
+      {(() => {
+        const wizard = conf.wizard;
+        if (!wizard || !onOpenWizard) return null;
+        return (
+          <div style={{ marginBottom: "8px" }}>
+            <Button
+              size="middle"
+              icon={<Icon name="magic" />}
+              onClick={() => onOpenWizard(wizard.name)}
+            >
+              {wizard.label}
+            </Button>
+          </div>
+        );
+      })()}
       <RowEntry
         name={name}
         value={rawValue}
@@ -147,6 +228,7 @@ export function RenderRow({
         isClearing={isCleared}
         displayed_val={parsed_value}
         valid={conf.valid}
+        valid_labels={conf.valid_labels}
         hint={hint}
         rowType={rowType}
         multiline={conf.multiline}
@@ -156,6 +238,7 @@ export function RenderRow({
         clearable={conf.clearable}
         update={update}
         onClearSecret={onClearSecret}
+        rootfsManifestUrls={rootfsManifestUrls}
       />
     </LabeledRow>
   );

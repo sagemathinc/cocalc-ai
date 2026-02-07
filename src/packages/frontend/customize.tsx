@@ -82,6 +82,8 @@ for (const k in site_settings_conf) {
 const defaults: any = dict(defaultKeyVals);
 defaults.is_commercial = defaults.commercial;
 defaults._is_configured = false; // will be true after set via call to server
+defaults.ssh_remote_target = "";
+defaults.ssh_remote_url = "";
 
 // CustomizeState is maybe extension of what's in SiteSettings
 // so maybe there is a more clever way like this to do it than
@@ -97,6 +99,8 @@ export type SoftwareEnvironments = TypedMap<{
 export interface CustomizeState {
   time: number; // this will always get set once customize has loaded.
   is_commercial: boolean;
+  ssh_remote_target?: string;
+  ssh_remote_url?: string;
 
   openai_enabled: boolean;
   agent_openai_control_agent_enabled: boolean;
@@ -141,10 +145,20 @@ export interface CustomizeState {
   terms_of_service_url: string;
   theming: boolean;
   verify_emails: false;
+  launchpad_mode?: string;
   version_min_browser: number;
   version_min_project: number;
   version_recommended_browser: number;
   versions: string;
+  cocalc_product?: string;
+  is_launchpad?: boolean;
+  is_rocket?: boolean;
+  launchpad_cloudflare_tunnel_status?: {
+    enabled: boolean;
+    running: boolean;
+    hostname?: string;
+    error?: string | null;
+  };
   // extra setting, injected by the hub, not the DB
   // we expect this to follow "ISO 3166-1 Alpha 2" + K1 (Tor network) + XX (unknown)
   // use a lib like https://github.com/michaelwittig/node-i18n-iso-countries
@@ -153,7 +167,17 @@ export interface CustomizeState {
   software: SoftwareEnvironments;
   _is_configured: boolean;
   project_hosts_nebius_enabled?: boolean;
+  project_hosts_self_host_alpha_enabled?: boolean;
   project_hosts_dns?: string;
+  launcher_default_quick_create?: List<string>;
+  launcher_default_apps?: List<string>;
+  launcher_remove_quick_create?: List<string>;
+  launcher_remove_apps?: List<string>;
+  project_rootfs_manifest_url?: string;
+  project_rootfs_manifest_url_extra?: string;
+  project_rootfs_default_image?: string;
+  project_rootfs_default_image_gpu?: string;
+  project_rootfs_prepull_images?: string;
   "project_hosts_google-cloud_enabled"?: boolean;
   "project_hosts_hyperstack_enabled"?: boolean;
   "project_hosts_lambda_enabled"?: boolean;
@@ -630,6 +654,7 @@ function setup_cocalc_analytics(w) {
 
 async function init_analytics() {
   await store.until_configured();
+  if (store.get("lite")) return;
   if (!store.get("is_commercial")) return;
 
   let w: any;

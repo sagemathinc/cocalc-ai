@@ -1,0 +1,176 @@
+# RootFS Image Build System (GCP Spot + Artifact Registry)
+
+**License:** All code in `src/rootfs-images/` is MIT licensed. See [LICENSE](./LICENSE).
+
+This directory defines a greenfield, customer‑runnable pipeline to build and
+publish RootFS OCI images for CoCalc workspaces using GCP Spot instances and
+Artifact Registry (for SOC2 scanning).
+
+## Goals
+
+- Build curated RootFS images on cheap GCP Spot instances.
+- Run explicit functional tests for each image.
+- Push to Artifact Registry and **block** on High/Critical vulnerabilities.
+- Generate two manifests:
+  - `manifest.testing.json`
+  - `manifest.json` (promoted)
+- Provide a workflow that customers can fork and run themselves.
+
+## Directory layout
+
+```
+rootfs-images/
+  images/
+    <image-id>/
+      image.yaml
+      Dockerfile
+  tools/
+    build.py              # build/test/scan/publish an image
+    manifest.py           # generate manifest.testing.json
+    promote.py            # promote testing -> prod manifest
+    gcp-builder.sh        # optional spot VM runner
+  build-artifacts/        # per-image build metadata (digest, size, etc.)
+```
+
+## Image metadata (`image.yaml`)
+
+Example:
+
+```yaml
+id: pytorch
+label: PyTorch
+component_version: "2.4.1"
+image_name: pytorch
+gpu: true
+arch: [amd64]
+priority: 90
+tags: [pytorch, gpu]
+prepull: false
+description: PyTorch with CUDA support.
+
+tests:
+  - name: python
+    cmd: "bash -lc 'python3 - <<EOF\nimport torch; print(torch.__version__)\nEOF'"
+```
+
+## Development (local build & shell)
+
+For local iteration, you can build and run any image directly using standard
+docker/podman commands. Example for the minimal image:
+
+```sh
+cd images/minimal/
+podman build -t minimal .
+podman run --rm -it minimal bash
+```
+
+This is often the fastest way to iterate on a Dockerfile before running the
+full GCP spot build pipeline.
+
+## Tag format
+
+```
+<component_version>-YYYY.MM.DD[.N]
+```
+
+Examples:
+
+- `1.10.4-2026.02.02`
+- `2.4.1-2026.02.02.1`
+
+## Basic usage (local build)
+
+```sh
+export GCP_PROJECT="your-gcp-project-id"
+```
+
+```bash
+python3 tools/build.py --image minimal \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --project $GCP_PROJECT \
+  --arch amd64 \
+  --tool podman
+```
+
+This will:
+
+1) build (single‑arch)
+2) run tests
+3) push to Artifact Registry
+4) check scan results
+5) write build metadata to build-artifacts/
+
+To build multi‑arch images, run per‑arch builds, then merge:
+
+```bash
+python3 tools/build.py --image minimal \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --project $GCP_PROJECT \
+  --arch amd64 \
+  --tool podman
+
+python3 tools/build.py --image minimal \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --project $GCP_PROJECT \
+  --arch arm64 \
+  --tool podman
+
+python3 tools/manifest-merge.py \
+  --image minimal \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --project $GCP_PROJECT \
+  --tag 25.10-2026.02.03
+```
+
+## Generate testing manifest
+
+```bash
+python3 tools/manifest.py \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --out manifest.testing.json
+```
+
+## Promote manifest
+
+```bash
+python3 tools/promote.py \
+  --testing manifest.testing.json \
+  --out manifest.json
+```
+
+## Spot build on GCP (optional)
+
+```bash
+./tools/gcp-builder.sh \
+  --image minimal \
+  --project $GCP_PROJECT \
+  --zone us-central1-a \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs \
+  --arch amd64
+```
+
+This launches a spot VM, runs the build, uploads logs, then deletes the VM.
+
+## Parallel GCP builds (amd64 + arm64)
+
+```bash
+./tools/gcp-build-multi.sh \
+  --image minimal \
+  --project $GCP_PROJECT \
+  --zone us-central1-a \
+  --registry us-docker.pkg.dev/$GCP_PROJECT/rootfs
+```
+
+This runs native builds for amd64 and arm64 in parallel (for non‑GPU images), then
+merges them into a single multi‑arch tag.
+
+The wrapper performs a one‑time IAM/repo preflight to avoid concurrent
+`add-iam-policy-binding` conflicts, then disables those steps for the parallel
+builds.
+
+## Notes
+
+- GPU images are amd64 only.
+- CPU images are amd64 + arm64.
+- Scan gating blocks High/Critical vulnerabilities.
+- This is a greenfield system; no migration from old compute-server images.

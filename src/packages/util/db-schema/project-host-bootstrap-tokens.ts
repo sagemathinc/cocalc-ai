@@ -24,6 +24,10 @@ Table({
       type: "string",
       desc: "Hash of the secret portion of the bootstrap token.",
     },
+    ssh_key_seed: {
+      type: "string",
+      desc: "Deterministic seed used to derive the bootstrap SSH key.",
+    },
     purpose: {
       type: "string",
       pg_type: "varchar(64)",

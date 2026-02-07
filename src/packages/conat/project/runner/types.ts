@@ -2,8 +2,9 @@ export type LocalPathFunction = (opts: {
   project_id: string;
   // disk quota to set on the path (in bytes)
   disk?: number;
-  // if set, create scratch space of this size in bytes and return path
-  // to it as scratch.
+  // optional explicit scratch quota in bytes. Local btrfs runners may still
+  // provide /scratch when omitted by mirroring the main project quota.
+  // set to 0 to disable /scratch.
   scratch?: number;
   // if false, only resolve paths without creating volumes
   ensure?: boolean;

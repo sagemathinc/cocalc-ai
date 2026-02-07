@@ -38,6 +38,10 @@ Table({
       type: "string",
       desc: "Hash of the secret portion of the token.",
     },
+    pairing_key_seed: {
+      type: "string",
+      desc: "Deterministic seed used to derive the SSH pairing key.",
+    },
     purpose: {
       type: "string",
       pg_type: "varchar(64)",

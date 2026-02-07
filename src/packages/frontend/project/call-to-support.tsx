@@ -13,7 +13,7 @@ export function CallToSupport({ onClose }: { onClose? }) {
       banner
       type="warning"
       showIcon={false}
-      message={
+      title={
         <>
           <Paragraph strong>
             Please{" "}

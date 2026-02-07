@@ -115,20 +115,20 @@ export default function SignUpForm({ onNavigate }: SignUpProps) {
   const issueList = Object.values(issues).filter(Boolean);
 
   return (
-    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       {bootstrap && (
         <Alert
           type="info"
           showIcon
-          message="You are creating the initial admin account for this server."
+          title="You are creating the initial admin account for this server."
         />
       )}
-      {error && <Alert type="error" showIcon message={error} />}
+      {error && <Alert type="error" showIcon title={error} />}
       {issueList.length > 0 && (
         <Alert
           type="error"
           showIcon
-          message="Sign up failed"
+          title="Sign up failed"
           description={
             <ul style={{ margin: 0, paddingLeft: "18px" }}>
               {issueList.map((issue, idx) => (

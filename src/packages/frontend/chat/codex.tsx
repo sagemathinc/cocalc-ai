@@ -24,21 +24,11 @@ import {
   type CodexSessionMode,
 } from "@cocalc/util/ai/codex";
 import { COLORS } from "@cocalc/util/theme";
-import type { ChatMessageTyped } from "./types";
 import type { CodexThreadConfig } from "@cocalc/chat";
-import { toMsString } from "./utils";
-import { dateValue } from "./access";
 import type { ChatActions } from "./actions";
 
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
-
-// Remaining-context thresholds (percent left) before showing warnings.
-// for testing/dev uncomment these
-// export const CONTEXT_WARN_PCT = 95;
-// export const CONTEXT_CRITICAL_PCT = 93;
-export const CONTEXT_WARN_PCT = 30;
-export const CONTEXT_CRITICAL_PCT = 15;
 
 type ModeOption = {
   value: CodexSessionMode;
@@ -166,10 +156,6 @@ export function CodexConfigButton({
     Form.useWatch("reasoning", form) ?? value?.reasoning;
   const currentSessionMode =
     Form.useWatch("sessionMode", form) ?? value?.sessionMode;
-  const messageMap = actions?.getAllMessages();
-  const usageSummary = useMemo(() => {
-    return getCodexUsageSummary(threadKey, actions, messageMap);
-  }, [threadKey, actions, messageMap]);
   const reasoningOptions = useMemo(() => {
     const selected =
       models.find((m) => m.value === selectedModelValue) ?? models[0];
@@ -182,8 +168,11 @@ export function CodexConfigButton({
       })) ?? []
     );
   }, [models, selectedModelValue]);
+  const selectedReasoningLabel =
+    reasoningOptions.find((r) => r.value === selectedReasoningValue)?.label ??
+    "";
 
-  const saveConfig = (opts?: { compact?: boolean }) => {
+  const saveConfig = () => {
     const values = form.getFieldsValue();
     const sessionMode: CodexSessionMode =
       values.sessionMode ?? resolveCodexSessionMode(values);
@@ -193,10 +182,6 @@ export function CodexConfigButton({
       allowWrite: sessionMode !== "read-only",
     };
     actions?.setCodexConfig?.(threadKey, finalValues);
-
-    if (opts?.compact) {
-      actions?.runCodexCompact(threadKey);
-    }
     setTimeout(() => {
       setOpen(false);
     }, 1);
@@ -204,63 +189,75 @@ export function CodexConfigButton({
 
   const onSave = () => saveConfig();
 
-  const selectedModelLabel =
-    models.find((m) => m.value === selectedModelValue)?.label ??
-    DEFAULT_MODEL_NAME;
-  const selectedReasoningLabel =
-    reasoningOptions.find((r) => r.value === selectedReasoningValue)?.label ??
-    "";
+  const updateConfig = (patch: Partial<CodexThreadConfig>) => {
+    const base = value ?? form.getFieldsValue();
+    const next = { ...base, ...patch };
+    const sessionMode: CodexSessionMode =
+      next.sessionMode ?? resolveCodexSessionMode(next);
+    const finalValues = {
+      ...next,
+      sessionMode,
+      allowWrite: sessionMode !== "read-only",
+    };
+    actions?.setCodexConfig?.(threadKey, finalValues);
+    setValue(finalValues);
+    form.setFieldsValue(finalValues);
+  };
 
-  const contextWindow =
-    usageSummary?.contextWindow ?? getModelContextWindow(selectedModelValue);
-  const inputTokens = usageSummary?.latest?.input_tokens;
-  // codex exec reports *total* session usage. During compaction or context
-  // recovery, codex may emit a TokenCount event that "fills" totals to the full
-  // context window, so input_tokens can exceed the model window. When that
-  // happens, the percentage is meaningless; show "---" instead of a fake %.
-  // In codex-cli itself, in this case it just shows
-  //   "Context window:   100% left (0 used / 272K)  "
-  const remainingPercent =
-    contextWindow != null && inputTokens != null && inputTokens <= contextWindow
-      ? Math.max(
-          0,
-          Math.round(((contextWindow - inputTokens) / contextWindow) * 100),
-        )
-      : null;
-
-  const contextSummary =
-    contextWindow != null && inputTokens != null && inputTokens > contextWindow
-      ? "---"
-      : remainingPercent != null
-        ? `${remainingPercent}% context left`
-        : null;
-
-  const modeLabel = (() => {
-    const mode = resolveCodexSessionMode({ sessionMode: currentSessionMode });
-    switch (mode) {
-      case "read-only":
-        return "Codex Read Only";
-      case "full-access":
-        return "Codex Full Access";
-      default:
-        return "Codex";
-    }
-  })();
+  const modeOptions = MODE_OPTIONS.map((option) => ({
+    value: option.value,
+    label: option.label,
+  }));
 
   return (
     <>
-      <Button size="small" onClick={() => setOpen(true)}>
-        {modeLabel}
-        <div
-          style={{
-            fontSize: 11,
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 6px",
+          background: "white",
+          border: "1px solid #d9d9d9",
+          borderRadius: 6,
+        }}
+      >
+        <Button size="small" onClick={() => setOpen(true)}>
+          Codex
+        </Button>
+        <Select
+          size="small"
+          value={currentSessionMode}
+          options={modeOptions}
+          style={{ minWidth: 140 }}
+          onChange={(val) => {
+            updateConfig({ sessionMode: val as CodexSessionMode });
           }}
-        >
-          {selectedModelLabel}
-          {selectedReasoningLabel ? ` · ${selectedReasoningLabel}` : ""}
-          {contextSummary ? ` · ${contextSummary}` : ""}
-        </div>
-      </Button>
+        />
+        <Select
+          size="small"
+          value={selectedModelValue}
+          options={models}
+          style={{ minWidth: 160 }}
+          onChange={(val) => {
+            const nextReasoning = getReasoningForModel({
+              models,
+              modelValue: val,
+            });
+            updateConfig({ model: val, reasoning: nextReasoning });
+          }}
+        />
+        <Select
+          size="small"
+          value={selectedReasoningValue}
+          options={reasoningOptions}
+          style={{ minWidth: 140 }}
+          onChange={(val) => {
+            updateConfig({ reasoning: val });
+          }}
+          disabled={reasoningOptions.length === 0}
+        />
+      </div>
       <Modal
         open={open}
         title="Codex Session Configuration"
@@ -270,7 +267,7 @@ export function CodexConfigButton({
         width={560}
         bodyStyle={{ maxHeight: "75vh", overflowY: "auto" }}
       >
-        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+        <Space orientation="vertical" style={{ width: "100%" }} size={12}>
           <Form form={form} layout="vertical">
             <SectionTitle>Session basics</SectionTitle>
             <div style={gridTwoColStyle}>
@@ -299,7 +296,7 @@ export function CodexConfigButton({
             <div style={gridTwoColStyle}>
               <Form.Item label="Model" name="model" style={formItemStyle}>
                 <Select
-                  placeholder="e.g., gpt-5.2-codex"
+                  placeholder="e.g., gpt-5.3-codex"
                   options={models}
                   optionRender={(option) =>
                     renderOptionWithDescription({
@@ -382,7 +379,7 @@ export function CodexConfigButton({
               style={formItemStyle}
             >
               <Radio.Group style={{ width: "100%" }}>
-                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Space orientation="vertical" size={8} style={{ width: "100%" }}>
                   {MODE_OPTIONS.map((option) => {
                     const selected = currentSessionMode === option.value;
                     return (
@@ -435,119 +432,6 @@ export function CodexConfigButton({
 
 export default CodexConfigButton;
 
-type UsageSummary = {
-  latest?: any;
-  totalTokens: number;
-  usedTokens?: number;
-  contextWindow?: number;
-};
-
-function getCodexUsageSummary(
-  threadKey: string,
-  actions?: ChatActions,
-  messages?: any,
-): UsageSummary | undefined {
-  const map = messages ?? actions?.getAllMessages();
-  if (!map || !actions) return undefined;
-  const root = getMessageByKey(map, threadKey);
-  if (!root) return undefined;
-  const rootDate = dateValue(root);
-  const rootIso =
-    rootDate instanceof Date
-      ? rootDate.toISOString()
-      : rootDate != null
-        ? new Date(rootDate as any).toISOString()
-        : undefined;
-  if (!rootIso) return undefined;
-  const seq = actions.getMessagesInThread(rootIso);
-  if (!seq) return undefined;
-  const threadMessages: ChatMessageTyped[] = seq;
-  // Messages can arrive out of order from the SyncDB; normalize to chronological
-  // order so usage totals reflect the most recent turn.
-  const sortedMessages = threadMessages.sort((a, b) => {
-    const aDate = toMsSafe(dateValue(a));
-    const bDate = toMsSafe(dateValue(b));
-    return aDate - bDate;
-  });
-  let latest;
-  let totalTokens = 0;
-  let usedTokens: number | undefined;
-  let contextWindow: number | undefined;
-  let hasAggregate = false;
-  for (const entry of sortedMessages) {
-    const rawUsage: any = (entry as any).acp_usage;
-    const usage: any =
-      typeof rawUsage?.toJS === "function" ? rawUsage.toJS() : rawUsage;
-    if (!usage) continue;
-    const usageData = usage;
-    if (usageData?.total_tokens != null) {
-      totalTokens = usageData.total_tokens;
-      hasAggregate = true;
-    } else if (!hasAggregate) {
-      totalTokens +=
-        (usageData?.input_tokens ?? 0) + (usageData?.cached_input_tokens ?? 0);
-    }
-    if (usageData?.model_context_window != null) {
-      contextWindow = usageData.model_context_window;
-    }
-    const turnUsed = calcUsedTokens(usageData);
-    if (turnUsed != null) {
-      usedTokens = turnUsed;
-    }
-    latest = usageData;
-  }
-  if (!latest && totalTokens === 0) {
-    return undefined;
-  }
-  return { latest, totalTokens, usedTokens, contextWindow };
-}
-
-function getMessageByKey(
-  map: Map<string, ChatMessageTyped> | Record<string, any>,
-  key: string,
-): ChatMessageTyped | undefined {
-  if (!key) return undefined;
-  let candidates;
-  try {
-    candidates = [
-      key,
-      toMsString(key),
-      `${parseInt(key, 10)}`,
-      new Date(parseInt(key, 10)).toISOString(),
-    ];
-  } catch {
-    return undefined;
-  }
-  for (const k of candidates) {
-    if (!k) continue;
-    const msg =
-      typeof (map as any).get === "function"
-        ? (map as any).get(k)
-        : (map as any)[k];
-    if (msg != null) return msg;
-  }
-  return undefined;
-}
-
-function getModelContextWindow(model?: string): number | undefined {
-  if (!model) return DEFAULT_CONTEXT_WINDOW;
-  const entries = Object.entries(MODEL_CONTEXT_WINDOWS);
-  for (const [prefix, window] of entries) {
-    if (model.startsWith(prefix)) {
-      return window;
-    }
-  }
-  return DEFAULT_CONTEXT_WINDOW;
-}
-
-const DEFAULT_CONTEXT_WINDOW = 272_000;
-const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  "gpt-5.2-codex": 272_000,
-  "gpt-5.2": 272_000,
-  "gpt-5.1-codex-max": 272_000,
-  "gpt-5.1-codex-mini": 136_000,
-};
-
 function getReasoningForModel({
   models,
   modelValue,
@@ -583,41 +467,6 @@ function renderOptionWithDescription({
       ) : null}
     </div>
   );
-}
-
-function calcUsedTokens(usage: any): number | undefined {
-  if (!usage || typeof usage !== "object") return undefined;
-  const keys = [
-    "input_tokens",
-    "cached_input_tokens",
-    "output_tokens",
-    "reasoning_output_tokens",
-  ] as const;
-  let total = 0;
-  for (const key of keys) {
-    const value = usage[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      total += value;
-    }
-  }
-  return total > 0 ? total : undefined;
-}
-
-function toMsSafe(value: any): number {
-  if (value instanceof Date) {
-    const ms = value.valueOf();
-    return Number.isFinite(ms) ? ms : 0;
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : 0;
-  }
-  if (typeof value === "string") {
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) return parsed;
-    const num = Number(value);
-    if (Number.isFinite(num)) return num;
-  }
-  return 0;
 }
 
 function defaultWorkingDir(chatPath: string): string {

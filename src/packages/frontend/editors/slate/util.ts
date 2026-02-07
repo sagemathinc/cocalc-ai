@@ -343,7 +343,10 @@ export function string_to_style(style: string): any {
   return obj;
 }
 
-export const DEFAULT_CHILDREN = [{ text: "" }];
+export function defaultChildren(): { text: string }[] {
+  // Must return a fresh array to avoid sharing Slate nodes across trees.
+  return [{ text: "" }];
+}
 
 export function removeBlankLines(s: string): string {
   return s.replace(/^\s*\n/gm, "");

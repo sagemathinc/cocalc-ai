@@ -472,7 +472,7 @@ export function AccountSettings(props: Readonly<Props>) {
           <AntdAlert
             showIcon
             style={{ margin: "15px 0" }}
-            message={
+            title={
               <FormattedMessage
                 id="account.settings.username.info"
                 defaultMessage={`Setting a username provides optional nicer URL's for shared

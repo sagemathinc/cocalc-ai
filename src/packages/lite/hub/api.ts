@@ -13,16 +13,32 @@ import {
 import { callRemoteHub, hasRemote, project_id } from "../remote";
 import { join } from "node:path";
 import { controlAgentDev } from "./control-agent";
+import { setSshUi, ssh } from "./ssh";
+import { setReflectUi, reflect } from "./reflect";
 
 const logger = getLogger("lite:hub:api");
 
-export async function init({ client }) {
+export async function init({
+  client,
+  sshUi,
+  reflectUi,
+}: {
+  client;
+  sshUi?: any;
+  reflectUi?: any;
+}) {
   const subject = "hub.*.*.api";
   const filename = join(data, "hub.db");
   logger.debug(`init -- subject='${subject}', options=`, {
     queue: "0",
     filename,
   });
+  if (sshUi) {
+    setSshUi(sshUi);
+  }
+  if (reflectUi) {
+    setReflectUi(reflectUi);
+  }
   await initUserQuery({ filename });
   const api = await client.subscribe(subject, { queue: "0" });
   listen(api);
@@ -108,15 +124,29 @@ async function getNames(account_ids: string[]) {
   return { ...names, ...x };
 }
 
+async function logClientError(_opts?: { event?: string; error?: string }) {
+  // No-op in lite mode.
+}
+
+async function userTracking(_opts?: { event?: string; value?: object }) {
+  // No-op in lite mode.
+}
+
+async function webappError(_opts?: object) {
+  // No-op in lite mode.
+}
+
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add
 // host-specific implementations of hub APIs. Keep the defaults minimal here.
 export const hubApi: HubApi = {
-  system: { getNames },
+  system: { getNames, logClientError, userTracking, webappError },
   projects: {},
   db: { touch: () => {}, userQuery },
   purchases: {},
   jupyter: {},
   controlAgent: { controlAgentDev },
+  ssh,
+  reflect,
 } as any;
 
 async function getResponse({ name, args, account_id, project_id }) {

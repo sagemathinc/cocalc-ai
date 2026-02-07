@@ -13,6 +13,7 @@ import { ChildInfo } from "../element-to-markdown";
 
 export interface SlateElement {
   children: Descendant[];
+  type?: string;
 }
 
 export interface markdownToSlateOptions {
@@ -51,8 +52,8 @@ type childInfoHookFunction = (opts: {
   childInfo: ChildInfo;
 }) => void;
 
-// Rules of behavior for slate specific slate types.  This is used for
-// autoformat, e.g., type ```[space] and get a codemirror fenced code block editor.
+// Rules of behavior for slate specific slate types. This is used for
+// autoformat, e.g., type ```[space] and get a fenced code block editor.
 interface Rules {
   // autoFocus: if true, block element gets focused on creation in some cases.
   autoFocus?: boolean;

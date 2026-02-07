@@ -16,12 +16,13 @@ likely break this assumption and things will go to hell.  Be careful.""
 
 */
 
-import { Editor, Element, Path, Range, Text, Transforms } from "slate";
+import { Editor, Element, Node, Path, Range, Text, Transforms } from "slate";
 import { isEqual } from "lodash";
 
 import { getNodeAt } from "./slate-util";
-import { emptyParagraph } from "./padding";
+import { emptyParagraph, isWhitespaceParagraph } from "./padding";
 import { isListElement } from "./elements/list";
+import { getCodeBlockText, toCodeLines } from "./elements/code-block/utils";
 
 interface NormalizeInputs {
   editor?: Editor;
@@ -32,16 +33,29 @@ interface NormalizeInputs {
 type NormalizeFunction = (NormalizeInputs) => void;
 
 const NORMALIZERS: NormalizeFunction[] = [];
+const SKIP_ON_SELECTION = new WeakSet<NormalizeFunction>();
+
+function spacerParagraph(): Element {
+  return {
+    type: "paragraph",
+    spacer: true,
+    children: [{ text: "" }],
+  } as Element;
+}
 
 export const withNormalize = (editor) => {
   const { normalizeNode } = editor;
 
   editor.normalizeNode = (entry) => {
     const [node, path] = entry;
+    const ops = editor.operations;
+    const selectionOnly =
+      ops.length > 0 && ops.every((op) => op.type === "set_selection");
 
     for (const f of NORMALIZERS) {
       //const before = JSON.stringify(editor.children);
       const before = editor.children;
+      if (selectionOnly && SKIP_ON_SELECTION.has(f)) continue;
       f({ editor, node, path });
       if (before !== editor.children) {
         // changed so return; normalize will get called again by
@@ -125,12 +139,280 @@ NORMALIZERS.push(function ensureBlockHasChild({ editor, node, path }) {
   Transforms.insertNodes(editor, { text: "" }, { at: path.concat(0) });
 });
 
+// Normalize code blocks to use code_line children instead of legacy value.
+NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
+  if (!(Element.isElement(node) && node.type === "code_block")) return;
+  const children = node.children ?? [];
+  const hasOnlyCodeLines = children.every(
+    (child) => Element.isElement(child) && child.type === "code_line"
+  );
+  if (hasOnlyCodeLines && node.value == null) return;
+
+  const code = getCodeBlockText(node as any);
+  const nextLines = toCodeLines(code);
+  Transforms.removeNodes(editor, {
+    at: path,
+    match: (_n, p) => p.length === path.length + 1,
+  });
+  Transforms.insertNodes(editor, nextLines, { at: path.concat(0) });
+  Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
+});
+SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
+
+// Ensure each code_line is a single plain text node so Prism decorations
+// align with offsets (and don't get split across multiple leaves).
+NORMALIZERS.push(function normalizeCodeLineChildren({ editor, node, path }) {
+  if (!(Element.isElement(node) && node.type === "code_line")) return;
+  const children = node.children ?? [];
+  if (
+    children.length === 1 &&
+    Text.isText(children[0]) &&
+    Object.keys(children[0]).length === 1
+  ) {
+    return;
+  }
+  const text = Node.string(node);
+  Transforms.removeNodes(editor, {
+    at: path,
+    match: (_n, p) => p.length === path.length + 1,
+  });
+  Transforms.insertNodes(editor, { text }, { at: path.concat(0) });
+});
+SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
+
+const SPACER_BLOCK_TYPES = new Set<string>([
+  "code_block",
+  "blockquote",
+  "html_block",
+  "meta",
+  "math_block",
+  "bullet_list",
+  "ordered_list",
+]);
+
+function needsSpacerParagraph(editor: Editor, node: Element, _path?: Path): boolean {
+  if (SPACER_BLOCK_TYPES.has(node.type)) return true;
+  if (!Editor.isBlock(editor, node)) return false;
+  return Editor.isVoid(editor, node);
+}
+
+function shiftSelectionForInsert(
+  selection: Range | null | undefined,
+  atPath: Path,
+  shift: number
+): Range | null {
+  if (!selection) return null;
+  const shiftPoint = (point: Range["anchor"]): Range["anchor"] => {
+    const { path, offset } = point;
+    if (path.length < atPath.length) return point;
+    for (let i = 0; i < atPath.length - 1; i += 1) {
+      if (path[i] !== atPath[i]) return point;
+    }
+    const idx = atPath.length - 1;
+    if (path[idx] < atPath[idx]) return point;
+    const nextPath = [...path];
+    nextPath[idx] += shift;
+    return { path: nextPath, offset };
+  };
+  return {
+    anchor: shiftPoint(selection.anchor),
+    focus: shiftPoint(selection.focus),
+  };
+}
+
+// Ensure block void elements (and code blocks) are surrounded by spacer
+// paragraphs so navigation works like normal text paragraphs (no gap cursors).
+NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
+  if (!Element.isElement(node)) return;
+  if (!needsSpacerParagraph(editor, node, path)) return;
+  if (path.length === 0) return;
+  const index = path[path.length - 1];
+  let codePath = path;
+  const shiftAutoformatSelection = () => {
+    if (!(editor as any).__autoformatDidBlock) return;
+    const pending = (editor as any).__autoformatSelection;
+    if (!pending) return;
+    const shifted = shiftSelectionForInsert(pending, path, 1);
+    if (shifted) {
+      (editor as any).__autoformatSelection = shifted;
+    }
+  };
+  if (index > 0) {
+    const prevPath = Path.previous(path);
+    const prevNode = getNodeAt(editor, prevPath);
+    if (!(Element.isElement(prevNode) && prevNode.type === "paragraph")) {
+      const shifted = shiftSelectionForInsert(editor.selection, path, 1);
+      shiftAutoformatSelection();
+      Transforms.insertNodes(editor, spacerParagraph(), { at: path });
+      codePath = Path.next(path);
+      if ((editor as any).__autoformatDidBlock) {
+        const nextNode = getNodeAt(editor, codePath);
+        if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+          const focus = Editor.start(editor, codePath);
+          Transforms.setSelection(editor, { anchor: focus, focus });
+          (editor as any).__autoformatSelection = { anchor: focus, focus };
+        } else if (shifted) {
+          Transforms.setSelection(editor, shifted);
+        }
+      } else if (shifted) {
+        Transforms.setSelection(editor, shifted);
+      }
+    }
+  } else {
+    const shifted = shiftSelectionForInsert(editor.selection, path, 1);
+    shiftAutoformatSelection();
+    Transforms.insertNodes(editor, spacerParagraph(), { at: path });
+    codePath = Path.next(path);
+    if ((editor as any).__autoformatDidBlock) {
+      const nextNode = getNodeAt(editor, codePath);
+      if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+        const focus = Editor.start(editor, codePath);
+        Transforms.setSelection(editor, { anchor: focus, focus });
+        (editor as any).__autoformatSelection = { anchor: focus, focus };
+      } else if (shifted) {
+        Transforms.setSelection(editor, shifted);
+      }
+    } else if (shifted) {
+      Transforms.setSelection(editor, shifted);
+    }
+  }
+  const nextPath = Path.next(codePath);
+  const nextNode = getNodeAt(editor, nextPath);
+  if (!(Element.isElement(nextNode) && nextNode.type === "paragraph")) {
+    Transforms.insertNodes(editor, spacerParagraph(), { at: nextPath });
+  }
+  if ((editor as any).__autoformatDidBlock && node.type === "code_block") {
+    (editor as any).__autoformatDidBlock = false;
+  }
+});
+
+// Remove spacer flag once user types, and drop stray spacer paragraphs
+// that no longer neighbor a code block.
+NORMALIZERS.push(function normalizeSpacerParagraph({ editor, node, path }) {
+  if (!(Element.isElement(node) && node.type === "paragraph")) return;
+  if (node["spacer"] !== true) return;
+  if (!isWhitespaceParagraph(node)) {
+    Transforms.setNodes(editor, { spacer: false } as any, { at: path });
+    return;
+  }
+  if (path.length === 0) return;
+  const prevNode = path[path.length - 1] > 0 ? getNodeAt(editor, Path.previous(path)) : null;
+  const nextNode = getNodeAt(editor, Path.next(path));
+  const hasSpacerNeighbor =
+    (Element.isElement(prevNode) &&
+      needsSpacerParagraph(editor, prevNode, path && Path.previous(path))) ||
+    (Element.isElement(nextNode) &&
+      needsSpacerParagraph(editor, nextNode, path && Path.next(path)));
+  if (!hasSpacerNeighbor) {
+    Transforms.removeNodes(editor, { at: path });
+  }
+});
+
+// Keep math node value in sync with its editable text and ensure math nodes
+// are not treated as void.
+NORMALIZERS.push(function normalizeMathValue({ editor, node, path }) {
+  if (!Element.isElement(node)) return;
+  if (node.type !== "math_inline" && node.type !== "math_block") return;
+  const text = Node.string(node);
+  const stripped = stripMathDelimiters(text);
+  if (stripped !== text) {
+    Editor.withoutNormalizing(editor, () => {
+      // Replace children with the stripped text so math renders once.
+      while (node.children.length > 0) {
+        Transforms.removeNodes(editor, { at: path.concat(0) });
+      }
+      Transforms.insertNodes(editor, { text: stripped }, { at: path.concat(0) });
+      Transforms.setNodes(editor, { value: stripped } as any, { at: path });
+    });
+    return;
+  }
+  if (node.value !== stripped) {
+    Transforms.setNodes(editor, { value: stripped } as any, { at: path });
+    return;
+  }
+});
+
+// Keep html/meta node values in sync with their editable text.
+NORMALIZERS.push(function normalizeHtmlMetaValue({ editor, node, path }) {
+  if (!Element.isElement(node)) return;
+  if (
+    node.type !== "html_inline" &&
+    node.type !== "html_block" &&
+    node.type !== "meta"
+  ) {
+    return;
+  }
+  if ((node as any).isVoid) {
+    Transforms.setNodes(editor, { isVoid: false } as any, { at: path });
+  }
+  if ((node as any).isVoid !== false) return;
+  const text =
+    node.type === "meta"
+      ? ((node as any).value ?? "")
+      : ((node as any).html ?? "");
+  const hasOnlyCodeLines =
+    node.type !== "html_inline" &&
+    (node.children ?? []).every(
+      (child) => Element.isElement(child) && child.type === "code_line",
+    );
+  if (node.type !== "html_inline") {
+    if (!hasOnlyCodeLines) {
+      const desiredLines = toCodeLines(text);
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.removeNodes(editor, {
+          at: path,
+          match: (_n, p) => p.length === path.length + 1,
+        });
+        Transforms.insertNodes(editor, desiredLines, { at: path.concat(0) });
+      });
+      return;
+    }
+  }
+  const current =
+    node.type === "html_inline"
+      ? Node.string(node)
+      : getCodeBlockText(node as any);
+  if (node.type === "meta") {
+    const value = (node as any).value ?? "";
+    if (current !== value) {
+      Transforms.setNodes(editor, { value: current } as any, { at: path });
+    }
+    return;
+  }
+  const html = (node as any).html ?? "";
+  if (current !== html) {
+    Transforms.setNodes(editor, { html: current } as any, { at: path });
+  }
+});
+
+function stripMathDelimiters(s: string): string {
+  const trimmed = s.trim();
+  if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length >= 4) {
+    return trimmed.slice(2, -2).trim();
+  }
+  if (trimmed.startsWith("$") && trimmed.endsWith("$") && trimmed.length >= 2) {
+    return trimmed.slice(1, -1).trim();
+  }
+  if (trimmed.startsWith("\\[") && trimmed.endsWith("\\]")) {
+    return trimmed.slice(2, -2).trim();
+  }
+  if (trimmed.startsWith("\\(") && trimmed.endsWith("\\)")) {
+    return trimmed.slice(2, -2).trim();
+  }
+  return s;
+}
+
 /*
 Trim *all* whitespace from the beginning of blocks whose first child is Text,
 since markdown doesn't allow for it. (You can use &nbsp; of course.)
 */
 NORMALIZERS.push(function trimLeadingWhitespace({ editor, node, path }) {
-  if (Element.isElement(node) && Text.isText(node.children[0])) {
+  if (
+    Element.isElement(node) &&
+    node.type !== "code_line" &&
+    node.type !== "code_block" &&
+    Text.isText(node.children[0])
+  ) {
     const firstText = node.children[0].text;
     if (firstText != null) {
       // We actually get rid of spaces and tabs, but not ALL whitespace.  For example,
@@ -150,9 +432,7 @@ NORMALIZERS.push(function trimLeadingWhitespace({ editor, node, path }) {
         ) {
           const offset = Math.max(0, selection.focus.offset - i);
           const focus = { path: p, offset };
-          setTimeout(() =>
-            Transforms.setSelection(editor, { focus, anchor: focus })
-          );
+          Transforms.setSelection(editor, { focus, anchor: focus });
         }
       }
     }

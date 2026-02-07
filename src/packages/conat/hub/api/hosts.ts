@@ -167,6 +167,7 @@ export interface Host {
   can_start?: boolean;
   can_place?: boolean;
   reason_unavailable?: string;
+  starred?: boolean;
   last_action?: string;
   last_action_at?: string;
   last_action_status?: string;
@@ -174,6 +175,15 @@ export interface Host {
   provider_observed_at?: string;
   deleted?: string;
   backup_status?: HostBackupStatus;
+}
+
+export interface HostConnectionInfo {
+  host_id: string;
+  name?: string | null;
+  ssh_server?: string | null;
+  connect_url?: string | null;
+  local_proxy?: boolean;
+  ready?: boolean;
 }
 
 export interface HostLogEntry {
@@ -218,6 +228,7 @@ export interface HostSoftwareUpgradeResponse {
 export const hosts = {
   listHosts: authFirstRequireAccount,
   listHostProjects: authFirstRequireAccount,
+  resolveHostConnection: authFirstRequireAccount,
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
@@ -231,12 +242,19 @@ export const hosts = {
   updateHostMachine: authFirstRequireAccount,
   deleteHost: authFirstRequireAccount,
   upgradeHostSoftware: authFirstRequireAccount,
+  upgradeHostConnector: authFirstRequireAccount,
+  setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   updateCopyStatus: authFirstRequireHost,
 };
+
+export interface HostConnectorUpgradeRequest {
+  id: string;
+  version?: string;
+}
 
 export interface Hosts {
   listHosts: (opts: {
@@ -252,6 +270,10 @@ export interface Hosts {
     cursor?: string;
     risk_only?: boolean;
   }) => Promise<HostProjectsResponse>;
+  resolveHostConnection: (opts: {
+    account_id?: string;
+    host_id: string;
+  }) => Promise<HostConnectionInfo>;
   getCatalog: (opts: {
     account_id?: string;
     provider?: string;
@@ -328,6 +350,11 @@ export interface Hosts {
     id: string;
     name: string;
   }) => Promise<Host>;
+  setHostStar: (opts: {
+    account_id?: string;
+    id: string;
+    starred: boolean;
+  }) => Promise<void>;
   updateHostMachine: (opts: {
     account_id?: string;
     id: string;
@@ -341,6 +368,7 @@ export interface Hosts {
     gpu_count?: number;
     storage_mode?: HostMachine["storage_mode"];
     boot_disk_gb?: number;
+    self_host_ssh_target?: string;
     region?: string;
     zone?: string;
   }) => Promise<Host>;
@@ -350,6 +378,11 @@ export interface Hosts {
     targets: HostSoftwareUpgradeTarget[];
     base_url?: string;
   }) => Promise<HostLroResponse>;
+  upgradeHostConnector: (opts: {
+    account_id?: string;
+    id: string;
+    version?: string;
+  }) => Promise<void>;
   deleteHost: (opts: {
     account_id?: string;
     id: string;

@@ -279,7 +279,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
         if (!IS_TOUCH) setHovered(false);
       }}
     >
-      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={10} style={{ width: "100%" }}>
         {header}
         {entries.map((entry) => (
           <ActivityRow

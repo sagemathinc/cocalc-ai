@@ -222,7 +222,7 @@ export default function Compose({
   const saved = body == draft.body && subject == draft.subject;
 
   return (
-    <Space direction="vertical" style={{ width: "100%", ...style }}>
+    <Space orientation="vertical" style={{ width: "100%", ...style }}>
       <ShowError
         error={error}
         setError={setError}

@@ -3,12 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Flex, Input, Space, Tag } from "antd";
+import { Button, Flex, Input, Select, Space, Tag } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { default_filename } from "@cocalc/frontend/account";
 import {
   React,
+  redux,
   useActions,
   useEffect,
   useState,
@@ -21,27 +22,46 @@ import {
   IconName,
   Paragraph,
   SelectorInput,
-  Tip,
 } from "@cocalc/frontend/components";
 import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
 import { file_options } from "@cocalc/frontend/editor-tmp";
-import { labels } from "@cocalc/frontend/i18n";
-import { DELAY_SHOW_MS } from "@cocalc/frontend/project//new/consts";
+import { file_associations } from "@cocalc/frontend/file-associations";
 import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator";
-import { FileTypeSelector } from "@cocalc/frontend/project/new";
 import {
   NEW_FILETYPE_ICONS,
   isNewFiletypeIconName,
 } from "@cocalc/frontend/project/new/consts";
 import { NewFileButton } from "@cocalc/frontend/project/new/new-file-button";
 import { NewFileDropdown } from "@cocalc/frontend/project/new/new-file-dropdown";
+import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
+import {
+  LAUNCHER_GLOBAL_DEFAULTS,
+  LAUNCHER_SITE_REMOVE_APPS_KEY,
+  LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  LAUNCHER_SETTINGS_KEY,
+  getProjectLauncherDefaults,
+  getSiteLauncherDefaults,
+  getUserLauncherLayers,
+  mergeLauncherSettings,
+  updateUserLauncherPrefs,
+} from "@cocalc/frontend/project/new/launcher-preferences";
+import {
+  APP_CATALOG,
+  APP_MAP,
+  QUICK_CREATE_MAP,
+} from "@cocalc/frontend/project/new/launcher-catalog";
 import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
-import { separate_file_extension, trunc_middle } from "@cocalc/util/misc";
+import { keys, separate_file_extension, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../common";
 import { DEFAULT_EXT, FLYOUT_PADDING } from "./consts";
+import { NamedServerPanel } from "@cocalc/frontend/project/named-server-panel";
+import type { NamedServerName } from "@cocalc/util/types/servers";
 
 function getFileExtension(filename: string): string | null {
   if (filename.endsWith(".")) {
@@ -65,6 +85,37 @@ export function NewFlyout({
 }): React.JSX.Element {
   const intl = useIntl();
   const other_settings = useTypedRedux("account", "other_settings");
+  const account_id = useTypedRedux("account", "account_id");
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
+  const site_launcher_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
+  const site_remove_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  );
+  const site_remove_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_APPS_KEY,
+  );
+  const project_launcher = useTypedRedux(
+    "projects",
+    "project_map",
+  )?.getIn([project_id, "launcher"]);
+  const user_group = useTypedRedux("projects", "project_map")?.getIn([
+    project_id,
+    "users",
+    account_id,
+    "group",
+  ]);
+  const is_admin = useTypedRedux("account", "is_admin");
+  const can_edit_project_defaults = !!is_admin || user_group === "owner";
+  const student_project_functionality =
+    useStudentProjectFunctionality(project_id);
   const rfn = other_settings.get(NEW_FILENAMES);
   const selected = rfn ?? DEFAULT_NEW_FILENAMES;
   const actions = useActions({ project_id });
@@ -85,6 +136,136 @@ export function NewFlyout({
   const [manualExt, setManualExt] = useState<boolean>(false);
   // if true, creating a file is currently in progress
   const [creating, setCreating] = useState<boolean>(false);
+  const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
+  const [showServerPanel, setShowServerPanel] = useState<"" | NamedServerName>(
+    "",
+  );
+
+  const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
+  const siteLauncherDefaults = getSiteLauncherDefaults({
+    quickCreate: site_launcher_quick,
+    apps: site_launcher_apps,
+    hiddenQuickCreate: site_remove_quick,
+    hiddenApps: site_remove_apps,
+  });
+  const userLauncherLayers = getUserLauncherLayers(
+    other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
+    project_id,
+  );
+  const inheritedForProjectUser = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+    projectDefaults: projectLauncherDefaults,
+    accountUserPrefs: userLauncherLayers.account,
+  });
+  const inheritedForProjectDefaults = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+  });
+  const mergedLauncher = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+    projectDefaults: projectLauncherDefaults,
+    accountUserPrefs: userLauncherLayers.account,
+    projectUserPrefs: userLauncherLayers.project,
+  });
+
+  function saveUserLauncherPrefs(prefs: any | null) {
+    const next = updateUserLauncherPrefs(
+      other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
+      project_id,
+      prefs,
+    );
+    redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
+  }
+
+  async function saveProjectLauncherDefaults(prefs: any) {
+    await redux.getActions("projects").set_project_launcher(project_id, prefs);
+  }
+
+  function isQuickCreateAvailable(id: string): boolean {
+    switch (id) {
+      case "ipynb":
+        return availableFeatures.jupyter_notebook;
+      case "sage":
+        return availableFeatures.sage;
+      case "tex":
+        return availableFeatures.latex;
+      case "qmd":
+        return availableFeatures.qmd;
+      case "rmd":
+        return availableFeatures.rmd;
+      default:
+        return true;
+    }
+  }
+
+  function isAppVisible(id: NamedServerName): boolean {
+    switch (id) {
+      case "jupyterlab":
+        return !student_project_functionality.disableJupyterLabServer;
+      case "jupyter":
+        return !student_project_functionality.disableJupyterClassicServer;
+      case "code":
+        return !student_project_functionality.disableVSCodeServer;
+      case "pluto":
+        return !student_project_functionality.disablePlutoServer;
+      case "rserver":
+        return !student_project_functionality.disableRServer;
+      default:
+        return true;
+    }
+  }
+
+  const quickCreateSpecs = mergedLauncher.quickCreate
+    .filter((id) => id !== "sage")
+    .filter(isQuickCreateAvailable)
+    .map((id) => {
+      const spec = QUICK_CREATE_MAP[id];
+      if (spec) return spec;
+      const data = file_options(`x.${id}`);
+      return {
+        id,
+        ext: id,
+        label: data.name ?? id,
+        icon: data.icon ?? "file",
+      };
+    });
+  const moreFileTypeOptions = React.useMemo(() => {
+    const list = keys(file_associations).sort();
+    const seen = new Set<string>();
+    const options: { value: string; label: React.ReactNode }[] = [];
+    for (let ext of list) {
+      if (ext === "/" || ext === "sage") continue;
+      const data = file_associations[ext];
+      if (data?.exclude_from_menu) continue;
+      if (data?.name && seen.has(data.name)) continue;
+      if (data?.name) seen.add(data.name);
+      const value = data?.ext ?? ext;
+      if (!value || value === "sage") continue;
+      const info = file_options(`x.${value}`);
+      const icon = (info.icon ?? "file") as IconName;
+      options.push({
+        value,
+        label: (
+          <span>
+            <Icon name={icon} /> {info.name ?? value}{" "}
+            <span style={{ opacity: 0.6 }}>({value})</span>
+          </span>
+        ),
+      });
+    }
+    return options;
+  }, []);
+
+  const visibleAppsSeen = new Set<NamedServerName>();
+  const appSpecs = mergedLauncher.apps
+    .filter((id) => APP_CATALOG.find((app) => app.id === id))
+    .filter((id): id is NamedServerName => APP_MAP[id] != null)
+    .filter(isAppVisible)
+    .filter((id) => {
+      if (visibleAppsSeen.has(id)) return false;
+      visibleAppsSeen.add(id);
+      return true;
+    })
+    .map((id) => APP_MAP[id]);
 
   // generate a new filename on demand, depends on the selected extension, existing files in the current directory, etc.
   function getNewFilename(ext: string): string {
@@ -372,8 +553,8 @@ export function NewFlyout({
   function renderHead() {
     const padding = { padding: FLYOUT_PADDING };
     return (
-      <Space direction="vertical">
-        <Space direction="horizontal" style={padding}>
+      <Space orientation="vertical">
+        <Space orientation="horizontal" style={padding}>
           <FormattedMessage
             id="project.page.flyouts.new.header_location"
             defaultMessage={"Location:"}
@@ -419,66 +600,75 @@ export function NewFlyout({
     return (
       <Space
         style={{ width: "100%", overflowX: "hidden", padding: FLYOUT_PADDING }}
-        direction="vertical"
+        orientation="vertical"
       >
-        <FileTypeSelector
-          mode="flyout"
-          selectedExt={ext}
-          projectActions={actions}
-          create_file={handleOnClick}
-          availableFeatures={availableFeatures}
-          filename={filename}
-          filenameChanged={manual}
-          makeNewFilename={(ext: string) => setFilename(getNewFilename(ext))}
-        />
-        <Tag color={COLORS.ANTD_ORANGE}>Additional types</Tag>
-        <Tip
-          delayShow={DELAY_SHOW_MS}
-          title="Folder (directory)"
-          icon={"folder"}
-          tip={intl.formatMessage({
-            id: "project.page.flyouts.new.folder.tooltip",
-            defaultMessage:
-              "Creating a subdirectory in the current directory instead of a file.",
-            description: "A folder in a file-system",
-          })}
-        >
-          <NewFileButton
-            name={intl.formatMessage(labels.folder)}
-            on_click={handleOnClick}
-            ext="/"
-            size="small"
-            active={ext === "/"}
-          />
-        </Tip>
-        <Tip
-          delayShow={DELAY_SHOW_MS}
-          title={intl.formatMessage({
-            id: "project.page.flyouts.new.filename_without_ext.title",
-            defaultMessage: "No file extension",
-            description: "File without an extension in a file-system",
-          })}
-          icon={"file"}
-          tip={intl.formatMessage({
-            id: "project.page.flyouts.new.filename_without_ext.tooltip",
-            defaultMessage: `Create a file without a file extension,
-              for example a <code>Makefile</code>.
-              You can also type <code>filename.[space]</code> and backspace once.`,
-          })}
-        >
-          <NewFileButton
-            name={intl.formatMessage({
-              id: "project.page.flyouts.new.filename_without_ext.label",
-              defaultMessage: "Create file - no extension",
-              description: "File without an extension in a file-system",
-            })}
-            on_click={handleOnClick}
-            ext=""
-            size="small"
-            active={ext === ""}
-          />
-        </Tip>
-        <NewFileDropdown mode="flyout" create_file={handleOnClick} />
+        <Flex justify="space-between" align="center">
+          <Tag color="blue">Quick Create</Tag>
+          <Button size="small" onClick={() => setShowCustomizeModal(true)}>
+            Customize
+          </Button>
+        </Flex>
+        <Flex gap={6} wrap>
+          {quickCreateSpecs.map((spec) => (
+            <NewFileButton
+              key={`flyout-quick-${spec.id}`}
+              name={spec.label}
+              ext={spec.ext}
+              icon={spec.icon}
+              size="small"
+              mode="secondary"
+              on_click={handleOnClick}
+            />
+          ))}
+        </Flex>
+        <div style={{ marginTop: "8px" }}>
+          <div style={{ marginBottom: "6px", fontWeight: 500 }}>More file types</div>
+          <div style={{ display: "flex", gap: "8px", flexDirection: "column" }}>
+            <Select<string>
+              showSearch
+              allowClear
+              placeholder="Search file types..."
+              style={{ width: "100%" }}
+              value={undefined}
+              options={moreFileTypeOptions}
+              onSelect={(value: string) => handleOnClick(value)}
+            />
+            <Flex gap={8} wrap>
+              <Button
+                size="small"
+                onClick={() => handleOnClick("/")}
+                disabled={!filename.trim()}
+              >
+                <Icon name="folder" /> Create folder
+              </Button>
+              <Button
+                size="small"
+                onClick={() => handleOnClick("")}
+                disabled={!filename.trim() || filename.endsWith("/")}
+              >
+                <Icon name="file" /> File with no extension
+              </Button>
+            </Flex>
+          </div>
+        </div>
+        <Flex justify="space-between" align="center" style={{ marginTop: "4px" }}>
+          <Tag color="geekblue">Apps</Tag>
+        </Flex>
+        <Flex gap={6} wrap>
+          {appSpecs.map((app) => (
+            <NewFileButton
+              key={`flyout-app-${app.id}`}
+              name={app.label}
+              icon={app.icon}
+              size="small"
+              mode="secondary"
+              on_click={() => setShowServerPanel(app.id)}
+            />
+          ))}
+        </Flex>
+        {showServerPanel && (
+          <NamedServerPanel project_id={project_id} name={showServerPanel} />
+        )}
         <hr />
         <Tag color={COLORS.GRAY_L}>Filename generator</Tag>
         <SelectorInput
@@ -502,7 +692,7 @@ export function NewFlyout({
           padding: FLYOUT_PADDING,
           borderTop: FIX_BORDER,
         }}
-        direction="vertical"
+        orientation="vertical"
       >
         {renderCreateFileButton()}
       </Space>
@@ -514,6 +704,60 @@ export function NewFlyout({
       {renderHead()}
       {wrap(renderBody())}
       {renderBottom()}
+      <LauncherCustomizeModal
+        open={showCustomizeModal}
+        onClose={() => setShowCustomizeModal(false)}
+        initialQuickCreate={mergedLauncher.quickCreate}
+        initialApps={mergedLauncher.apps as NamedServerName[]}
+        userBaseQuickCreate={inheritedForProjectUser.quickCreate}
+        userBaseApps={inheritedForProjectUser.apps as NamedServerName[]}
+        projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
+        projectBaseApps={inheritedForProjectDefaults.apps as NamedServerName[]}
+        globalDefaults={siteLauncherDefaults}
+        onSaveUser={saveUserLauncherPrefs}
+        onSaveProject={saveProjectLauncherDefaults}
+        canEditProjectDefaults={can_edit_project_defaults}
+        contributions={[
+          {
+            key: "built-in",
+            title: "Built-in defaults",
+            quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+            appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
+          },
+          {
+            key: "site",
+            title: "Site defaults",
+            quickCreateAdd: siteLauncherDefaults.quickCreate,
+            quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
+            appsAdd: siteLauncherDefaults.apps,
+            appsRemove: siteLauncherDefaults.hiddenApps,
+          },
+          {
+            key: "project",
+            title: "Workspace defaults",
+            quickCreateAdd: projectLauncherDefaults.quickCreate,
+            quickCreateRemove: projectLauncherDefaults.hiddenQuickCreate,
+            appsAdd: projectLauncherDefaults.apps,
+            appsRemove: projectLauncherDefaults.hiddenApps,
+          },
+          {
+            key: "account",
+            title: "Your account overrides",
+            quickCreateAdd: userLauncherLayers.account.quickCreate,
+            quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
+            appsAdd: userLauncherLayers.account.apps,
+            appsRemove: userLauncherLayers.account.hiddenApps,
+          },
+          {
+            key: "workspace-user",
+            title: "This workspace overrides",
+            quickCreateAdd: userLauncherLayers.project.quickCreate,
+            quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
+            appsAdd: userLauncherLayers.project.apps,
+            appsRemove: userLauncherLayers.project.hiddenApps,
+          },
+        ]}
+      />
     </>
   );
 }

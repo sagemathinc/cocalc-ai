@@ -11,11 +11,10 @@
 // to codemirror.
 
 import { debounce } from "lodash";
-import * as CodeMirror from "codemirror";
 import { useCallback, useRef } from "react";
 import { Point } from "slate";
 import { ReactEditor } from "../slate-react";
-import { slatePointToMarkdownPosition } from "../sync";
+import { nearestMarkdownPositionForSlatePoint } from "../sync";
 
 // Cursor broadcast can be expensive since we convert the cursor
 // from slate coordinates to markdown coordinates each time,
@@ -33,13 +32,13 @@ export const useBroadcastCursors: (Options) => () => void = ({
   broadcastCursors,
 }) => {
   const focusPointRef = useRef<Point | undefined>(undefined);
-  const markdownPositionRef = useRef<CodeMirror.Position | undefined>(
-    undefined
-  );
+  const markdownPositionRef = useRef<
+    { line: number; ch: number } | undefined
+  >(undefined);
 
   const update = useCallback(
     debounce(() => {
-      markdownPositionRef.current = slatePointToMarkdownPosition(
+      markdownPositionRef.current = nearestMarkdownPositionForSlatePoint(
         editor,
         focusPointRef.current
       );

@@ -18,7 +18,6 @@ import {
 import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { Icon } from "@cocalc/frontend/components";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
-import "@cocalc/frontend/editors/slate/elements/math/math-widget";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
@@ -81,6 +80,7 @@ interface Props {
   fontSize?: number;
   height?: string; // css height and also "auto" is fully supported.
   autoGrow?: boolean; // enable dynamic growth (defaults off unless height === "auto")
+  autoGrowMaxHeight?: number; // px cap for autoGrow (defaults to 50vh behavior)
   style?: CSSProperties;
   modeSwitchStyle?: CSSProperties;
   autoFocus?: boolean; // note - this is broken on safari for the slate editor, but works on chrome and firefox.
@@ -138,11 +138,15 @@ interface Props {
   // refresh codemirror if this changes
   refresh?: any;
 
+  // opt out of block editor even when it would normally be used
+  disableBlockEditor?: boolean;
+
   overflowEllipsis?: boolean; // if true (the default!), show "..." button popping up all menu entries
 
   dirtyRef?: MutableRefObject<boolean>; // a boolean react ref that gets set to true whenever document changes for any reason (client should explicitly set this back to false).
 
   controlRef?: MutableRefObject<any>;
+  preserveBlankLines?: boolean;
 }
 
 export default function MultiMarkdownInput({
@@ -160,6 +164,7 @@ export default function MultiMarkdownInput({
   extraHelp,
   fixedMode,
   fontSize,
+  autoGrowMaxHeight,
   getValueRef,
   height = "auto",
   autoGrow,
@@ -192,6 +197,8 @@ export default function MultiMarkdownInput({
   unregisterEditor,
   value,
   controlRef,
+  preserveBlankLines = true,
+  disableBlockEditor = true,
 }: Props) {
   const {
     isFocused: isFocusedFrame,
@@ -216,6 +223,17 @@ export default function MultiMarkdownInput({
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
 
   const isAutoGrow = autoGrow ?? height === "auto";
+  const hasFixedHeight = height != null && height !== "auto";
+  const autoGrowMaxHeightStyle =
+    autoGrowMaxHeight != null
+      ? `${Math.max(autoGrowMaxHeight, MIN_INPUT_HEIGHT)}px`
+      : MAX_INPUT_HEIGHT;
+  const internalControlRef = useRef<any>(null);
+  const slateControlRef = controlRef ?? internalControlRef;
+  const pendingModeSelectionRef = useRef<{
+    to: Mode;
+    pos: { line: number; ch: number };
+  } | null>(null);
 
   const getKey = () => `${project_id}${path}:${cacheId}`;
 
@@ -259,6 +277,51 @@ export default function MultiMarkdownInput({
     getSelection: Function;
     setSelection: Function;
   } | null>(null);
+
+  const applyMarkdownSelection = (pos: { line: number; ch: number }) => {
+    const selection = selectionRef.current;
+    if (selection?.setSelection == null) return false;
+    selection.setSelection([{ anchor: pos, head: pos }]);
+    return true;
+  };
+
+  useEffect(() => {
+    const pending = pendingModeSelectionRef.current;
+    if (!pending || pending.to !== mode) return;
+    if (mode === "editor") {
+      let attempts = 0;
+      const tryApply = () => {
+        attempts += 1;
+        const applied =
+          slateControlRef.current?.setSelectionFromMarkdownPosition?.(
+            pending.pos,
+          ) ?? false;
+        if (applied) {
+          pendingModeSelectionRef.current = null;
+          return;
+        }
+        if (attempts < 5) {
+          setTimeout(tryApply, 30);
+        }
+      };
+      tryApply();
+      return;
+    }
+    if (mode === "markdown") {
+      let attempts = 0;
+      const tryApply = () => {
+        attempts += 1;
+        if (applyMarkdownSelection(pending.pos)) {
+          pendingModeSelectionRef.current = null;
+          return;
+        }
+        if (attempts < 5) {
+          setTimeout(tryApply, 30);
+        }
+      };
+      tryApply();
+    }
+  }, [mode, slateControlRef]);
 
   useEffect(() => {
     if (cacheId == null) {
@@ -433,11 +496,19 @@ export default function MultiMarkdownInput({
           onShiftEnter={(value) => {
             onShiftEnterRef.current?.(value);
           }}
+          onAltEnter={(value, pos) => {
+            onChangeRef.current?.(value);
+            if (pos) {
+              pendingModeSelectionRef.current = { to: "editor", pos };
+            }
+            setMode("editor");
+          }}
           placeholder={placeholder ?? "Type markdown..."}
           fontSize={fontSize}
           cmOptions={cmOptions}
           height={height}
           autoGrow={autoGrow ?? height === "auto"}
+          autoGrowMaxHeight={autoGrowMaxHeight}
           style={style}
           autoFocus={focused}
           submitMentionsRef={submitMentionsRef}
@@ -468,9 +539,9 @@ export default function MultiMarkdownInput({
       {mode === "editor" ? (
         <div
           style={{
-            height: isAutoGrow ? undefined : height,
+            height: hasFixedHeight ? height : undefined,
             minHeight: `${MIN_INPUT_HEIGHT}px`,
-            maxHeight: isAutoGrow ? MAX_INPUT_HEIGHT : height,
+            maxHeight: hasFixedHeight ? height : autoGrowMaxHeightStyle,
             overflowY: "auto",
             width: "100%",
             fontSize: "14px" /* otherwise button bar can be skewed */,
@@ -528,6 +599,11 @@ export default function MultiMarkdownInput({
               },
               altEnter: (value) => {
                 onChangeRef.current?.(value);
+                const pos =
+                  slateControlRef.current?.getMarkdownPositionForSelection?.();
+                if (pos) {
+                  pendingModeSelectionRef.current = { to: "markdown", pos };
+                }
                 setMode("markdown");
               },
               set_cursor_locs: onCursors,
@@ -554,11 +630,13 @@ export default function MultiMarkdownInput({
             isFocused={isFocused}
             registerEditor={registerEditor}
             unregisterEditor={unregisterEditor}
+            disableBlockEditor={disableBlockEditor}
             placeholder={placeholder ?? "Type text..."}
             submitMentionsRef={submitMentionsRef}
             editBar2={editBar2}
             dirtyRef={dirtyRef}
-            controlRef={controlRef}
+            controlRef={slateControlRef}
+            preserveBlankLines={preserveBlankLines}
           />
         </div>
       ) : undefined}

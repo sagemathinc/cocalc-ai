@@ -96,6 +96,20 @@ export interface HostProvisionedInventory {
   checked_at?: number;
 }
 
+export interface HostRegisterOnPremTunnelRequest {
+  host_id: string;
+  public_key: string;
+}
+
+export interface HostRegisterOnPremTunnelResponse {
+  sshd_host: string;
+  sshd_port: number;
+  ssh_user: string;
+  http_tunnel_port: number;
+  ssh_tunnel_port: number;
+  rest_port: number;
+}
+
 export type SoftwareArtifact =
   | "project-host"
   | "project"
@@ -135,6 +149,9 @@ export interface HostStatusApi {
   reportHostProvisionedInventory: (
     opts: HostProvisionedInventory,
   ) => Promise<{ delete_project_ids?: string[] } | void>;
+  registerOnPremTunnel: (
+    opts: HostRegisterOnPremTunnelRequest,
+  ) => Promise<HostRegisterOnPremTunnelResponse>;
 }
 
 export function createHostStatusClient({

@@ -5,7 +5,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,8 +24,13 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+	"os/user"
+
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 const (
@@ -31,6 +40,7 @@ const (
 	defaultStartupFastSeconds = 120
 	defaultTimeout            = 20 * time.Second
 	defaultImage              = "24.04"
+	defaultSshUser            = "ubuntu"
 )
 
 var version = "0.0.0"
@@ -41,6 +51,18 @@ type Config struct {
 	ConnectorToken      string `json:"connector_token,omitempty"`
 	PollIntervalSeconds int    `json:"poll_interval_seconds,omitempty"`
 	Name                string `json:"name,omitempty"`
+	InsecureSkipVerify  bool   `json:"insecure_skip_verify,omitempty"`
+	SshTunnel           *SshTunnelConfig `json:"ssh_tunnel,omitempty"`
+}
+
+type SshTunnelConfig struct {
+	Host                   string `json:"host"`
+	Port                   int    `json:"port,omitempty"`
+	User                   string `json:"user,omitempty"`
+	KeyPath                string `json:"key_path,omitempty"`
+	LocalPort              int    `json:"local_port,omitempty"`
+	RemotePort             int    `json:"remote_port,omitempty"`
+	NoStrictHostKeyChecking bool   `json:"no_strict_host_key_checking,omitempty"`
 }
 
 type CommandEnvelope struct {
@@ -60,6 +82,9 @@ type InstanceState struct {
 	CreatedAt string   `json:"created_at,omitempty"`
 	LastState string   `json:"last_state,omitempty"`
 	LastIPv4  []string `json:"last_ipv4,omitempty"`
+	SelfHostKind string `json:"self_host_kind,omitempty"`
+	SshUser   string   `json:"ssh_user,omitempty"`
+	DesiredState string `json:"desired_state,omitempty"`
 }
 
 type multipassResult struct {
@@ -83,6 +108,9 @@ func main() {
 		return
 	case "pair":
 		runPair(os.Args[2:])
+		return
+	case "pair-ssh":
+		runPairSSH(os.Args[2:])
 		return
 	case "run":
 		runLoopCmd(os.Args[2:])
@@ -112,6 +140,8 @@ func runPair(args []string) {
 	token := fs.String("token", "", "Pairing token")
 	name := fs.String("name", "", "Connector name")
 	replace := fs.Bool("replace", false, "Replace existing config if present")
+	insecure := fs.Bool("insecure", false, "Skip TLS certificate verification (self-signed on-prem)")
+	skipTLS := fs.Bool("skip-tls-verify", false, "Alias for --insecure")
 	cfgPath := fs.String("config", "", "Config path")
 	fs.Parse(args)
 
@@ -144,8 +174,9 @@ func runPair(args []string) {
 	if err != nil {
 		fail(fmt.Sprintf("pair payload: %v", err))
 	}
+	skipVerify := *insecure || *skipTLS || os.Getenv("COCALC_CONNECTOR_INSECURE") == "1"
 	endpoint := normalizeBaseURL(*baseURL) + "/self-host/pair"
-	respBody, status, err := httpRequest("POST", endpoint, "", "application/json", body)
+	respBody, status, err := httpRequest("POST", endpoint, "", "application/json", body, skipVerify)
 	if err != nil {
 		fail(fmt.Sprintf("pair request failed: %v", err))
 	}
@@ -166,11 +197,172 @@ func runPair(args []string) {
 		ConnectorToken:      resp.ConnectorToken,
 		PollIntervalSeconds: resp.PollIntervalSeconds,
 		Name:                *name,
+		InsecureSkipVerify:  skipVerify,
 	}
 	saveJSON(path, cfg)
 	logLine("paired connector", map[string]interface{}{
 		"connector_id": resp.ConnectorID,
 		"config":       path,
+		"version":      version,
+	})
+}
+
+func runPairSSH(args []string) {
+	fs := flag.NewFlagSet("pair-ssh", flag.ExitOnError)
+	sshHost := fs.String("ssh-host", "", "Hub SSH host (e.g. 192.168.1.10)")
+	sshPort := fs.Int("ssh-port", 0, "Hub SSH port (default 22)")
+	sshUser := fs.String("ssh-user", "", "Hub SSH username")
+	noStrict := fs.Bool("ssh-no-strict-host-key-checking", false, "Disable strict host key checking")
+	token := fs.String("token", "", "Pairing token")
+	name := fs.String("name", "", "Connector name")
+	replace := fs.Bool("replace", false, "Replace existing config if present")
+	cfgPath := fs.String("config", "", "Config path")
+	fs.Parse(args)
+
+	if *sshHost == "" || *token == "" {
+		fail("pair-ssh requires --ssh-host and --token")
+	}
+	path := configPath(*cfgPath)
+	if fileExists(path) && !*replace {
+		fail(fmt.Sprintf(
+			"connector config already exists at %s\n\nTo replace it, run:\n  cocalc-self-host-connector pair-ssh --replace --ssh-host %s --token <pairing_token>\n",
+			path,
+			*sshHost,
+		))
+	}
+	host, port := parseHostPort(*sshHost, *sshPort)
+	user := *sshUser
+	if user == "" {
+		user = os.Getenv("COCALC_SSHD_USER")
+	}
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	if user == "" {
+		user = "cocalc"
+	}
+	info := map[string]interface{}{
+		"name":         *name,
+		"version":      version,
+		"os":           runtime.GOOS,
+		"arch":         runtime.GOARCH,
+		"capabilities": map[string]bool{"multipass": true},
+	}
+	payload := map[string]interface{}{
+		"pairing_token":  *token,
+		"connector_info": info,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fail(fmt.Sprintf("pair payload: %v", err))
+	}
+
+	signer, err := signerFromToken(*token, "cocalc-ssh-pair:")
+	if err != nil {
+		fail(fmt.Sprintf("pair signer: %v", err))
+	}
+	hostKeyCallback, err := loadHostKeyCallback(*noStrict)
+	if err != nil {
+		fail(fmt.Sprintf("ssh host key: %v", err))
+	}
+	if port == 0 {
+		port = 22
+	}
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         defaultTimeout,
+	})
+	if err != nil {
+		fail(fmt.Sprintf("ssh connect failed: %v", err))
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		fail(fmt.Sprintf("ssh session failed: %v", err))
+	}
+	defer session.Close()
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		fail(fmt.Sprintf("ssh stdin: %v", err))
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		fail(fmt.Sprintf("ssh stdout: %v", err))
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		fail(fmt.Sprintf("ssh stderr: %v", err))
+	}
+	if err := session.Start("pair"); err != nil {
+		fail(fmt.Sprintf("ssh start failed: %v", err))
+	}
+	_, _ = stdin.Write(body)
+	_ = stdin.Close()
+	outBytes, _ := io.ReadAll(stdout)
+	errBytes, _ := io.ReadAll(stderr)
+	waitErr := session.Wait()
+	var resp struct {
+		ConnectorID         string `json:"connector_id"`
+		ConnectorToken      string `json:"connector_token"`
+		PollIntervalSeconds int    `json:"poll_interval_seconds"`
+		Launchpad           struct {
+			HttpPort  int `json:"http_port"`
+			HttpsPort int `json:"https_port"`
+		} `json:"launchpad"`
+		Error               string `json:"error"`
+	}
+	if waitErr != nil {
+		if err := json.Unmarshal(outBytes, &resp); err == nil && resp.Error != "" {
+			fail(fmt.Sprintf("pair failed: %s", resp.Error))
+		}
+		msg := strings.TrimSpace(string(errBytes))
+		if msg == "" {
+			msg = strings.TrimSpace(string(outBytes))
+		}
+		fail(fmt.Sprintf("ssh pair failed: %v (%s)", waitErr, msg))
+	}
+	if err := json.Unmarshal(outBytes, &resp); err != nil {
+		fail(fmt.Sprintf("pair response decode: %v", err))
+	}
+	if resp.Error != "" {
+		fail(fmt.Sprintf("pair failed: %s", resp.Error))
+	}
+	remotePort := resp.Launchpad.HttpPort
+	if remotePort == 0 {
+		remotePort = resp.Launchpad.HttpsPort
+	}
+	if remotePort == 0 {
+		remotePort = 80
+	}
+	if remotePort < 1024 {
+		fail("ssh tunnel port must be >= 1024; set the hub port to a non-privileged value (e.g. 9200)")
+	}
+	localPort := remotePort
+	cfg := Config{
+		BaseURL:             fmt.Sprintf("http://127.0.0.1:%d", localPort),
+		ConnectorID:         resp.ConnectorID,
+		ConnectorToken:      resp.ConnectorToken,
+		PollIntervalSeconds: resp.PollIntervalSeconds,
+		Name:                *name,
+		InsecureSkipVerify:  false,
+		SshTunnel: &SshTunnelConfig{
+			Host:                    host,
+			Port:                    port,
+			User:                    user,
+			LocalPort:               localPort,
+			RemotePort:              remotePort,
+			NoStrictHostKeyChecking: *noStrict,
+		},
+	}
+	saveJSON(path, cfg)
+	logLine("paired connector", map[string]interface{}{
+		"connector_id": resp.ConnectorID,
+		"config":       path,
+		"version":      version,
+		"ssh_host":     host,
+		"ssh_port":     port,
 	})
 }
 
@@ -187,10 +379,6 @@ func runLoopCmd(args []string) {
 		return
 	}
 	cfg := loadConfig(path)
-
-	if err := ensureMultipassAvailable(); err != nil {
-		fail(err.Error())
-	}
 	runLoop(cfg, path)
 }
 
@@ -217,7 +405,8 @@ func stopDaemonCmd(args []string) {
 
 func printHelp() {
 	fmt.Println(`Usage:
-  cocalc-self-host-connector pair --base-url <url> --token <pairing_token> [--name <name>] [--replace]
+  cocalc-self-host-connector pair --base-url <url> --token <pairing_token> [--name <name>] [--replace] [--insecure]
+  cocalc-self-host-connector pair-ssh --ssh-host <host> --token <pairing_token> [--ssh-user <user>] [--replace]
   cocalc-self-host-connector run [--config <path>] [--daemon]
   cocalc-self-host-connector stop [--config <path>]
   cocalc-self-host-connector once [--config <path>]
@@ -228,15 +417,36 @@ func configPath(override string) string {
 	if override != "" {
 		return override
 	}
+	newPath := filepath.Join(connectorBaseDir(), "config", "config.json")
+	if fileExists(newPath) {
+		return newPath
+	}
+	legacy := legacyConfigPath()
+	if legacy != "" && fileExists(legacy) {
+		_ = os.MkdirAll(filepath.Dir(newPath), 0o755)
+		_ = copyFile(legacy, newPath)
+		return newPath
+	}
+	return newPath
+}
+
+func statePathFromConfig(cfgPath string) string {
+	return filepath.Join(filepath.Dir(cfgPath), "state.json")
+}
+
+func connectorBaseDir() string {
+	if override := os.Getenv("COCALC_CONNECTOR_BASE_DIR"); override != "" {
+		return override
+	}
+	return filepath.Join(userHomeDir(), "cocalc-host")
+}
+
+func legacyConfigPath() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		base = filepath.Join(userHomeDir(), ".config")
 	}
 	return filepath.Join(base, "cocalc-connector", "config.json")
-}
-
-func statePathFromConfig(cfgPath string) string {
-	return filepath.Join(filepath.Dir(cfgPath), "state.json")
 }
 
 func startDaemon(cfgPath string) error {
@@ -348,6 +558,32 @@ func readJSON(path string, dest interface{}) bool {
 	return true
 }
 
+func readEnvFile(path string) map[string]string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]string{}
+	}
+	lines := strings.Split(string(data), "\n")
+	out := map[string]string{}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		value = strings.Trim(value, "\"'")
+		if key != "" {
+			out[key] = value
+		}
+	}
+	return out
+}
+
 func saveJSON(path string, data interface{}) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -365,6 +601,250 @@ func saveJSON(path string, data interface{}) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parseHostPort(raw string, fallbackPort int) (string, int) {
+	host := strings.TrimSpace(raw)
+	if host == "" {
+		return "", fallbackPort
+	}
+	if strings.Contains(host, ":") {
+		parts := strings.Split(host, ":")
+		if len(parts) == 2 {
+			port, err := strconv.Atoi(parts[1])
+			if err == nil {
+				return parts[0], port
+			}
+		}
+	}
+	return host, fallbackPort
+}
+
+func splitToken(token string) (string, string, error) {
+	parts := strings.SplitN(token, ".", 2)
+	if len(parts) != 2 {
+		return "", "", errors.New("invalid token format")
+	}
+	tokenID := strings.TrimSpace(parts[0])
+	secret := strings.TrimSpace(parts[1])
+	if tokenID == "" || secret == "" {
+		return "", "", errors.New("invalid token format")
+	}
+	return tokenID, secret, nil
+}
+
+func deriveSeed(prefix, secret string) ([]byte, error) {
+	if secret == "" {
+		return nil, errors.New("missing token secret")
+	}
+	hasher := sha256.New()
+	_, _ = hasher.Write([]byte(prefix))
+	_, _ = hasher.Write([]byte(secret))
+	seed := hasher.Sum(nil)
+	if len(seed) != ed25519.SeedSize {
+		return nil, errors.New("invalid seed length")
+	}
+	return seed, nil
+}
+
+func signerFromToken(token string, prefix string) (ssh.Signer, error) {
+	// We deterministically derive an ed25519 key from the token secret so
+	// pairing and SSH tunnels don't require pre-provisioned key files,
+	// which avoids unnecessary copy paste thus keeping the UX clean.
+	_, secret, err := splitToken(token)
+	if err != nil {
+		return nil, err
+	}
+	seed, err := deriveSeed(prefix, secret)
+	if err != nil {
+		return nil, err
+	}
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	return ssh.NewSignerFromSigner(privateKey)
+}
+
+func loadHostKeyCallback(noStrict bool) (ssh.HostKeyCallback, error) {
+	if noStrict {
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+	knownHostsPath := os.Getenv("COCALC_SSH_KNOWN_HOSTS")
+	if knownHostsPath == "" {
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			knownHostsPath = filepath.Join(home, ".ssh", "known_hosts")
+		}
+	}
+	if knownHostsPath == "" {
+		return nil, errors.New("known_hosts path not found (use --ssh-no-strict-host-key-checking)")
+	}
+	callback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		return nil, fmt.Errorf("known_hosts error (%s): %w", knownHostsPath, err)
+	}
+	return callback, nil
+}
+
+type SshTunnelHandle struct {
+	done  chan error
+	close func()
+}
+
+func (h *SshTunnelHandle) Close() {
+	if h == nil || h.close == nil {
+		return
+	}
+	h.close()
+}
+
+func (h *SshTunnelHandle) Wait() error {
+	if h == nil || h.done == nil {
+		return nil
+	}
+	return <-h.done
+}
+
+func startSshTunnel(cfg SshTunnelConfig, connectorToken string) (*SshTunnelHandle, error) {
+	if cfg.Host == "" {
+		return nil, errors.New("ssh tunnel host missing")
+	}
+	if cfg.LocalPort == 0 || cfg.RemotePort == 0 {
+		return nil, errors.New("ssh tunnel ports missing")
+	}
+	user := cfg.User
+	if user == "" {
+		user = os.Getenv("COCALC_SSHD_USER")
+	}
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	if user == "" {
+		user = "cocalc"
+	}
+	port := cfg.Port
+	if port == 0 {
+		port = 22
+	}
+	signer, err := signerFromToken(connectorToken, "cocalc-ssh-connector:")
+	if err != nil {
+		return nil, fmt.Errorf("ssh tunnel signer: %w", err)
+	}
+	hostKeyCallback, err := loadHostKeyCallback(cfg.NoStrictHostKeyChecking)
+	if err != nil {
+		return nil, err
+	}
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", cfg.Host, port), &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         defaultTimeout,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ssh tunnel connect: %w", err)
+	}
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", cfg.LocalPort))
+	if err != nil {
+		client.Close()
+		return nil, fmt.Errorf("ssh tunnel listen: %w", err)
+	}
+	done := make(chan error, 1)
+	var once sync.Once
+	signal := func(err error) {
+		once.Do(func() {
+			done <- err
+		})
+	}
+	closeFn := func() {
+		_ = listener.Close()
+		_ = client.Close()
+	}
+	remoteAddr := fmt.Sprintf("127.0.0.1:%d", cfg.RemotePort)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				signal(err)
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				remote, err := client.Dial("tcp", remoteAddr)
+				if err != nil {
+					return
+				}
+				defer remote.Close()
+				go io.Copy(remote, c)
+				_, _ = io.Copy(c, remote)
+			}(conn)
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
+			if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+				signal(err)
+				closeFn()
+				return
+			}
+		}
+	}()
+	logLine("ssh tunnel started", map[string]interface{}{
+		"host":        cfg.Host,
+		"port":        port,
+		"local_port":  cfg.LocalPort,
+		"remote_port": cfg.RemotePort,
+	})
+	return &SshTunnelHandle{done: done, close: closeFn}, nil
+}
+
+func maintainSshTunnel(cfg SshTunnelConfig, connectorToken string) {
+	go func() {
+		backoff := time.Second
+		maxBackoff := 30 * time.Second
+		for {
+			handle, err := startSshTunnel(cfg, connectorToken)
+			if err != nil {
+				logLine("ssh tunnel failed", map[string]interface{}{
+					"error": err.Error(),
+				})
+				time.Sleep(backoff)
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+			backoff = time.Second
+			if handle != nil {
+				if err := handle.Wait(); err != nil {
+					logLine("ssh tunnel exited", map[string]interface{}{"error": err.Error()})
+				} else {
+					logLine("ssh tunnel exited", map[string]interface{}{"status": "ok"})
+				}
+			}
+		}
+	}()
 }
 
 func parsePID(raw string) (int, error) {
@@ -387,6 +867,20 @@ func processAlive(pid int) bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
+func normalizeState(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	state := strings.ToLower(raw)
+	if state == "running" {
+		return "running"
+	}
+	if state == "stopped" {
+		return "stopped"
+	}
+	return state
+}
+
 func normalizeBaseURL(raw string) string {
 	return strings.TrimRight(raw, "/")
 }
@@ -399,7 +893,7 @@ func pollOnce(cfg Config, state State, statePath string) (bool, error) {
 	if cfg.ConnectorToken == "" {
 		return false, errors.New("connector_token missing in config")
 	}
-	body, status, err := httpRequest("GET", base+"/self-host/next", cfg.ConnectorToken, "", nil)
+	body, status, err := httpRequest("GET", base+"/self-host/next", cfg.ConnectorToken, "", nil, cfg.InsecureSkipVerify)
 	if err != nil {
 		return false, err
 	}
@@ -431,7 +925,21 @@ func pollOnce(cfg Config, state State, statePath string) (bool, error) {
 		"error":  errMsg,
 	}
 	ackBody, _ := json.Marshal(ackPayload)
-	_, ackStatus, _ := httpRequest("POST", base+"/self-host/ack", cfg.ConnectorToken, "application/json", ackBody)
+	_, ackStatus, _ := httpRequest("POST", base+"/self-host/ack", cfg.ConnectorToken, "application/json", ackBody, cfg.InsecureSkipVerify)
+	if cmd.Action == "delete" {
+		go func() {
+			// Give the hub time to process the ack before uninstalling.
+			time.Sleep(2 * time.Second)
+			sshUser := defaultSshUser
+			if cfg.SshTunnel != nil && cfg.SshTunnel.User != "" {
+				sshUser = cfg.SshTunnel.User
+			}
+			if err := cleanupDirectHost(sshUser, true); err != nil {
+				logLine("post-delete cleanup failed", map[string]interface{}{"error": err.Error()})
+			}
+			os.Exit(0)
+		}()
+	}
 	if ackStatus < 200 || ackStatus >= 300 {
 		logLine("ack failed", map[string]interface{}{"id": cmd.ID, "status": ackStatus})
 	}
@@ -442,8 +950,12 @@ func runLoop(cfg Config, cfgPath string) {
 	if cfg.BaseURL == "" || cfg.ConnectorToken == "" {
 		fail("connector config missing base_url or connector_token (run pair first)")
 	}
+	if cfg.SshTunnel != nil {
+		maintainSshTunnel(*cfg.SshTunnel, cfg.ConnectorToken)
+	}
 	statePath := statePathFromConfig(cfgPath)
 	state := loadState(statePath)
+	reconcileDesiredState(state, statePath)
 	baseInterval := cfg.PollIntervalSeconds
 	if baseInterval <= 0 {
 		baseInterval = defaultPollSeconds
@@ -458,6 +970,8 @@ func runLoop(cfg Config, cfgPath string) {
 	idlePolls := 0
 	lastNoCommandLog := time.Now()
 	logLine("connector started", map[string]interface{}{
+		"version":              version,
+		"mode":                 connectorMode(cfg),
 		"base_url":             cfg.BaseURL,
 		"poll_seconds":         baseInterval,
 		"fast_poll_seconds":    fastInterval,
@@ -491,20 +1005,78 @@ func runLoop(cfg Config, cfgPath string) {
 	}
 }
 
+func reconcileDesiredState(state State, statePath string) {
+	updated := false
+	for hostID, instance := range state.Instances {
+		if normalizeState(instance.DesiredState) != "running" {
+			continue
+		}
+		switch instance.SelfHostKind {
+		case "direct":
+			if directStatus() == "running" {
+				continue
+			}
+			if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
+				logLine("auto-start direct host failed", map[string]interface{}{
+					"host_id": hostID,
+					"error":   err.Error(),
+				})
+				continue
+			}
+			instance.LastState = "running"
+			state.Instances[hostID] = instance
+			updated = true
+		case "multipass":
+			if instance.Name == "" {
+				continue
+			}
+			info := multipassInfo(instance.Name)
+			if !info.Exists {
+				continue
+			}
+			if normalizeState(info.State) != "running" {
+				result := runMultipass([]string{"start", instance.Name})
+				if result.Code != 0 {
+					logLine("auto-start multipass host failed", map[string]interface{}{
+						"host_id": hostID,
+						"error":   strings.TrimSpace(result.Stderr),
+					})
+					continue
+				}
+				info = multipassInfo(instance.Name)
+			}
+			instance.LastState = normalizeState(info.State)
+			instance.LastIPv4 = info.IPv4
+			state.Instances[hostID] = instance
+			updated = true
+		}
+	}
+	if updated {
+		saveState(statePath, state)
+	}
+}
+
+func connectorMode(cfg Config) string {
+	if cfg.SshTunnel != nil {
+		return "ssh-tunnel"
+	}
+	return "http"
+}
+
 func executeCommand(cmd CommandEnvelope, state State, statePath string) (interface{}, error) {
 	switch cmd.Action {
 	case "create":
 		return handleCreate(cmd.Payload, state, statePath)
 	case "start":
-		return handleStart(cmd.Payload, state)
+		return handleStart(cmd.Payload, state, statePath)
 	case "stop":
-		return handleStop(cmd.Payload, state)
+		return handleStop(cmd.Payload, state, statePath)
 	case "restart":
-		return handleRestart(cmd.Payload, state)
+		return handleRestart(cmd.Payload, state, statePath)
 	case "hard_restart":
-		return handleHardRestart(cmd.Payload, state)
-	case "delete":
-		return handleDelete(cmd.Payload, state, statePath)
+		return handleHardRestart(cmd.Payload, state, statePath)
+    case "delete":
+        return handleDelete(cmd.Payload, state, statePath)
 	case "status":
 		return handleStatus(cmd.Payload, state, statePath)
 	case "resize":
@@ -537,14 +1109,85 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 	if cloudInit == nil {
 		cloudInit = payload["cloud_init_yaml"]
 	}
+	rawKind := strings.ToLower(toString(payload["self_host_kind"]))
+	if rawKind == "" {
+		rawKind = "multipass"
+	}
+	if rawKind != "multipass" && rawKind != "direct" {
+		return nil, errors.New("invalid self_host_kind")
+	}
+	sshUser := toString(payload["ssh_user"])
+	if sshUser == "" {
+		sshUser = defaultSshUser
+	}
+	if rawKind == "direct" {
+		if current, err := user.Current(); err == nil && current.Username != "" {
+			sshUser = current.Username
+		}
+	}
+
+	if rawKind == "direct" {
+		if existing, ok := state.Instances[hostID]; ok && existing.SelfHostKind == "direct" {
+			existing.DesiredState = "running"
+			state.Instances[hostID] = existing
+			saveState(statePath, state)
+			return map[string]interface{}{
+				"name":  existing.Name,
+				"state": "running",
+			}, nil
+		}
+		if cloudInit == nil {
+			return nil, errors.New("direct create requires cloud_init")
+		}
+		paths := createCloudInitPaths(hostID)
+		if err := os.MkdirAll(paths.InitDir, 0o700); err != nil {
+			return nil, fmt.Errorf("bootstrap mkdir: %v", err)
+		}
+		raw := toString(cloudInit)
+		if raw == "" {
+			return nil, errors.New("cloud_init is empty")
+		}
+		trimmed := strings.TrimLeft(raw, " \t\r\n")
+		if strings.HasPrefix(trimmed, "#cloud-config") {
+			return nil, errors.New("direct requires a shell bootstrap script")
+		}
+		if err := os.WriteFile(paths.InitPath, []byte(raw), 0o700); err != nil {
+			return nil, fmt.Errorf("bootstrap write: %v", err)
+		}
+		stat, _ := os.Stat(paths.InitPath)
+		logLine("bootstrap script written", map[string]interface{}{
+			"path": paths.InitPath,
+			"size": stat.Size(),
+			"mode": fmt.Sprintf("%o", stat.Mode().Perm()),
+		})
+		result := runCommand("sudo", []string{"-n", "bash", paths.InitPath})
+		if result.Code != 0 {
+			cleanupCloudInit(paths)
+			return nil, errors.New(strings.TrimSpace(result.Stderr))
+		}
+		cleanupCloudInit(paths)
+		state.Instances[hostID] = InstanceState{
+			Name:      name,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339),
+			LastState: "running",
+			SelfHostKind: "direct",
+			SshUser:   sshUser,
+			DesiredState: "running",
+		}
+		saveState(statePath, state)
+		return map[string]interface{}{"name": name, "state": "running"}, nil
+	}
 
 	info := multipassInfo(name)
 	if info.Exists {
+		normalizedState := normalizeState(info.State)
 		state.Instances[hostID] = InstanceState{
 			Name:      name,
 			Image:     image,
-			LastState: info.State,
+			LastState: normalizedState,
 			LastIPv4:  info.IPv4,
+			SelfHostKind: "multipass",
+			DesiredState: normalizedState,
 		}
 		saveState(statePath, state)
 		return map[string]interface{}{"name": name, "state": info.State, "ipv4": info.IPv4}, nil
@@ -605,18 +1248,140 @@ func handleCreate(payload map[string]interface{}, state State, statePath string)
 	}
 
 	info = multipassInfo(name)
+	normalizedState := normalizeState(info.State)
 	state.Instances[hostID] = InstanceState{
 		Name:      name,
 		Image:     image,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		LastState: info.State,
+		LastState: normalizedState,
 		LastIPv4:  info.IPv4,
+		SelfHostKind: "multipass",
+		DesiredState: normalizedState,
 	}
 	saveState(statePath, state)
 	return map[string]interface{}{"name": name, "state": info.State, "ipv4": info.IPv4}, nil
 }
 
-func handleRestart(payload map[string]interface{}, state State) (interface{}, error) {
+func loadDirectInstance(payload map[string]interface{}, state State) (InstanceState, bool) {
+	hostID := toString(payload["host_id"])
+	if hostID == "" {
+		return InstanceState{}, false
+	}
+	instance, ok := state.Instances[hostID]
+	if !ok || instance.SelfHostKind != "direct" {
+		return InstanceState{}, false
+	}
+	return instance, true
+}
+
+func projectHostBinary() string {
+	if value := os.Getenv("COCALC_PROJECT_HOST_BIN"); value != "" {
+		return value
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, "cocalc-host", "bin", "project-host")
+	}
+	return "/opt/cocalc/project-host/current/cocalc-project-host"
+}
+
+func resolveProjectHostDataDir() string {
+	if value := os.Getenv("COCALC_DATA"); value != "" {
+		return value
+	}
+	if value := os.Getenv("DATA"); value != "" {
+		return value
+	}
+	env := readEnvFile("/etc/cocalc/project-host.env")
+	if value := env["COCALC_DATA"]; value != "" {
+		return value
+	}
+	if value := env["DATA"]; value != "" {
+		return value
+	}
+	return "/btrfs/data"
+}
+
+func projectHostPidPath() string {
+	return filepath.Join(resolveProjectHostDataDir(), "daemon.pid")
+}
+
+func readProjectHostPid() int {
+	pidPath := projectHostPidPath()
+	contents, err := os.ReadFile(pidPath)
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(contents)))
+	return pid
+}
+
+func directStatus() string {
+	pid := readProjectHostPid()
+	if pid <= 0 {
+		return "stopped"
+	}
+	if processAlive(pid) {
+		return "running"
+	}
+	return "stopped"
+}
+
+func runProjectHostDaemon(action, sshUser string) error {
+  if sshUser == "" {
+    sshUser = defaultSshUser
+  }
+	cmd := projectHostBinary()
+	args := []string{"-n", "-u", sshUser, "-H", cmd, "daemon", action}
+	result := runCommand("sudo", args)
+	if result.Code != 0 {
+		return errors.New(strings.TrimSpace(result.Stderr))
+	}
+  return nil
+}
+
+func cleanupDirectHost(sshUser string, uninstallConnector bool) error {
+	if sshUser == "" {
+		sshUser = defaultSshUser
+	}
+	args := []string{"-n", "-u", sshUser, "-H", "bash", "-lc"}
+	script := []string{
+		"set -euo pipefail",
+		`SCRIPT="$HOME/cocalc-host/bin/deprovision.sh"`,
+		`if [ ! -x "$SCRIPT" ]; then`,
+		`  echo "missing deprovision script at $SCRIPT" >&2`,
+		`  exit 1`,
+		`fi`,
+		`ARGS="--force"`,
+	}
+	if uninstallConnector {
+		script = append(script, `ARGS="$ARGS --uninstall-connector"`)
+	}
+	script = append(script, `exec "$SCRIPT" $ARGS`)
+	args = append(args, strings.Join(script, "\n"))
+	result := runCommand("sudo", args)
+	if result.Code != 0 {
+		return errors.New(strings.TrimSpace(result.Stderr))
+	}
+	return nil
+}
+
+func handleRestart(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
+	if instance, ok := loadDirectInstance(payload, state); ok {
+		hostID := toString(payload["host_id"])
+		if err := runProjectHostDaemon("stop", instance.SshUser); err != nil {
+			return nil, err
+		}
+		if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
+			return nil, err
+		}
+		instance.DesiredState = "running"
+		instance.LastState = "running"
+		if hostID != "" {
+			state.Instances[hostID] = instance
+			saveState(statePath, state)
+		}
+		return map[string]interface{}{"name": instance.Name, "state": directStatus()}, nil
+	}
 	name := toString(payload["name"])
 	if name == "" {
 		return nil, errors.New("restart requires name")
@@ -628,12 +1393,25 @@ func handleRestart(payload map[string]interface{}, state State) (interface{}, er
 	return map[string]interface{}{"name": name}, nil
 }
 
-func handleHardRestart(payload map[string]interface{}, state State) (interface{}, error) {
+func handleHardRestart(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
 	// Multipass does not differentiate between soft and hard restart; use restart.
-	return handleRestart(payload, state)
+	return handleRestart(payload, state, statePath)
 }
 
-func handleStart(payload map[string]interface{}, state State) (interface{}, error) {
+func handleStart(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
+	if instance, ok := loadDirectInstance(payload, state); ok {
+		hostID := toString(payload["host_id"])
+		if err := runProjectHostDaemon("start", instance.SshUser); err != nil {
+			return nil, err
+		}
+		instance.DesiredState = "running"
+		instance.LastState = "running"
+		if hostID != "" {
+			state.Instances[hostID] = instance
+			saveState(statePath, state)
+		}
+		return map[string]interface{}{"name": instance.Name, "state": directStatus()}, nil
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -651,10 +1429,33 @@ func handleStart(payload map[string]interface{}, state State) (interface{}, erro
 		return nil, errors.New(strings.TrimSpace(result.Stderr))
 	}
 	ref := multipassInfo(name)
+	if hostID != "" {
+		instance := state.Instances[hostID]
+		instance.Name = name
+		instance.LastState = normalizeState(ref.State)
+		instance.LastIPv4 = ref.IPv4
+		instance.SelfHostKind = "multipass"
+		instance.DesiredState = "running"
+		state.Instances[hostID] = instance
+		saveState(statePath, state)
+	}
 	return map[string]interface{}{"name": name, "state": ref.State, "ipv4": ref.IPv4}, nil
 }
 
-func handleStop(payload map[string]interface{}, state State) (interface{}, error) {
+func handleStop(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
+	if instance, ok := loadDirectInstance(payload, state); ok {
+		hostID := toString(payload["host_id"])
+		if err := runProjectHostDaemon("stop", instance.SshUser); err != nil {
+			return nil, err
+		}
+		instance.DesiredState = "stopped"
+		instance.LastState = "stopped"
+		if hostID != "" {
+			state.Instances[hostID] = instance
+			saveState(statePath, state)
+		}
+		return map[string]interface{}{"name": instance.Name, "state": directStatus()}, nil
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -672,10 +1473,29 @@ func handleStop(payload map[string]interface{}, state State) (interface{}, error
 		return nil, errors.New(strings.TrimSpace(result.Stderr))
 	}
 	ref := multipassInfo(name)
+	if hostID != "" {
+		instance := state.Instances[hostID]
+		instance.Name = name
+		instance.LastState = normalizeState(ref.State)
+		instance.LastIPv4 = ref.IPv4
+		instance.SelfHostKind = "multipass"
+		instance.DesiredState = "stopped"
+		state.Instances[hostID] = instance
+		saveState(statePath, state)
+	}
 	return map[string]interface{}{"name": name, "state": ref.State, "ipv4": ref.IPv4}, nil
 }
 
 func handleDelete(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
+	if instance, ok := loadDirectInstance(payload, state); ok {
+		_ = runProjectHostDaemon("stop", instance.SshUser)
+		if err := cleanupDirectHost(instance.SshUser, false); err != nil {
+			return nil, err
+		}
+		delete(state.Instances, toString(payload["host_id"]))
+		saveState(statePath, state)
+		return map[string]interface{}{"name": instance.Name, "state": "deleted"}, nil
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -694,6 +1514,10 @@ func handleDelete(payload map[string]interface{}, state State, statePath string)
 }
 
 func handleStatus(payload map[string]interface{}, state State, statePath string) (interface{}, error) {
+	if instance, ok := loadDirectInstance(payload, state); ok {
+		status := directStatus()
+		return map[string]interface{}{"name": instance.Name, "state": status}, nil
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -707,17 +1531,23 @@ func handleStatus(payload map[string]interface{}, state State, statePath string)
 		return map[string]interface{}{"name": name, "state": "not_found"}, nil
 	}
 	if hostID != "" {
-		state.Instances[hostID] = InstanceState{
-			Name:      name,
-			LastState: info.State,
-			LastIPv4:  info.IPv4,
+		instance := state.Instances[hostID]
+		instance.Name = name
+		instance.LastState = normalizeState(info.State)
+		instance.LastIPv4 = info.IPv4
+		if instance.SelfHostKind == "" {
+			instance.SelfHostKind = "multipass"
 		}
+		state.Instances[hostID] = instance
 		saveState(statePath, state)
 	}
 	return map[string]interface{}{"name": name, "state": info.State, "ipv4": info.IPv4}, nil
 }
 
 func handleResize(payload map[string]interface{}, state State) (interface{}, error) {
+	if _, ok := loadDirectInstance(payload, state); ok {
+		return nil, errors.New("resize is not supported for direct hosts")
+	}
 	hostID := toString(payload["host_id"])
 	name := toString(payload["name"])
 	if name == "" && hostID != "" {
@@ -788,8 +1618,34 @@ func handleResize(payload map[string]interface{}, state State) (interface{}, err
 }
 
 func runMultipass(args []string) multipassResult {
+	if err := ensureMultipassAvailable(); err != nil {
+		return multipassResult{Stdout: "", Stderr: err.Error(), Code: 1}
+	}
 	logLine("multipass exec", map[string]interface{}{"command": formatCommand("multipass", args)})
 	cmd := exec.Command("multipass", args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		if exitErr := new(exec.ExitError); errors.As(err, &exitErr) {
+			code = exitErr.ExitCode()
+		} else {
+			code = 1
+		}
+	}
+	return multipassResult{
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
+		Code:   code,
+	}
+}
+
+func runCommand(exe string, args []string) multipassResult {
+	logLine("exec", map[string]interface{}{"command": formatCommand(exe, args)})
+	cmd := exec.Command(exe, args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -853,8 +1709,8 @@ func multipassInfo(name string) multipassInfoResult {
 }
 
 func ensureMultipassAvailable() error {
-	res := runMultipass([]string{"version"})
-	if res.Code != 0 {
+	cmd := exec.Command("multipass", "version")
+	if err := cmd.Run(); err != nil {
 		return errors.New("Ubuntu Multipass not found or not working; install multipass first:\n\n    https://canonical.com/multipass\n")
 	}
 	return nil
@@ -865,13 +1721,13 @@ func wrapCloudInitScript(script string) string {
 	indent := indentBlock(trimmed, 6)
 	return fmt.Sprintf(`#cloud-config
 write_files:
-  - path: /root/cocalc-bootstrap.sh
-    permissions: "0700"
+  - path: /root/cocalc-host/bootstrap/bootstrap.sh
+    permissions: "u=rwx,go="
     owner: root:root
     content: |
 %s
 runcmd:
-  - [ "/bin/bash", "/root/cocalc-bootstrap.sh" ]
+  - [ "/bin/bash", "/root/cocalc-host/bootstrap/bootstrap.sh" ]
 `, indent)
 }
 
@@ -931,12 +1787,16 @@ func cloudInitBaseDir() string {
 	if override := os.Getenv("COCALC_CONNECTOR_CLOUD_INIT_DIR"); override != "" {
 		return override
 	}
-	home := userHomeDir()
-	return filepath.Join(home, "cocalc-connector", "cloud-init")
+	return filepath.Join(connectorBaseDir(), "cloud-init")
 }
 
-func httpRequest(method, url, token, contentType string, body []byte) ([]byte, int, error) {
+func httpRequest(method, url, token, contentType string, body []byte, insecure bool) ([]byte, int, error) {
 	client := &http.Client{Timeout: defaultTimeout}
+	if insecure {
+		client.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -1016,6 +1876,25 @@ func toInt(val interface{}) (int, bool) {
 		return int(math.Floor(f)), true
 	}
 	return 0, false
+}
+
+func toBool(val interface{}) bool {
+	switch v := val.(type) {
+	case bool:
+		return v
+	case string:
+		s := strings.TrimSpace(strings.ToLower(v))
+		return s == "true" || s == "1" || s == "yes"
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case float64:
+		return v != 0
+	case float32:
+		return v != 0
+	}
+	return false
 }
 
 func toString(val interface{}) string {

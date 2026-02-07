@@ -50,8 +50,35 @@ export function resolveCodexSessionMode(
 
 export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
   {
-    name: "gpt-5.2-codex",
+    name: "gpt-5.3-codex",
     description: "Latest frontier agentic coding model.",
+    reasoning: [
+      {
+        id: "low",
+        label: "Low",
+        description: "Fast responses with lighter reasoning.",
+      },
+      {
+        id: "medium",
+        label: "Medium",
+        description: "Balances speed and reasoning depth for everyday tasks.",
+        default: true,
+      },
+      {
+        id: "high",
+        label: "High",
+        description: "Greater reasoning depth for complex problems.",
+      },
+      {
+        id: "extra_high",
+        label: "Extra high",
+        description: "Extra high reasoning depth for complex problems.",
+      },
+    ],
+  },
+  {
+    name: "gpt-5.2-codex",
+    description: "Frontier agentic coding model.",
     reasoning: [
       {
         id: "low",

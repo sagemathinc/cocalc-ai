@@ -7,12 +7,17 @@
 
 import { useMemo } from "react";
 import { Map } from "immutable";
-import { Editor, Node, Point, Text } from "slate";
+import { DecoratedRange, Editor, Element, Node, Point, Text } from "slate";
 import { getProfile } from "@cocalc/frontend/jupyter/cursors";
 import { redux } from "@cocalc/frontend/app-framework";
 import { markdownPositionToSlatePoint } from "../sync";
 import { SearchHook } from "../search";
 import { SlateEditor } from "../editable-markdown";
+import {
+  buildCodeBlockDecorations,
+  getPrismGrammar,
+} from "../elements/code-block/prism";
+import type { CodeBlock } from "../elements/code-block/types";
 
 interface OtherCursor {
   offset: number;
@@ -40,6 +45,10 @@ export const useCursorDecorate = ({
   // will get re-rendereded (forced by the decorate function changing identity).
   return useMemo(() => {
     const nodeToCursors: WeakMap<Node, OtherCursor[]> = new WeakMap();
+    const codeBlockCache: WeakMap<
+      Node,
+      { text: string; info: string; decorations: DecoratedRange[][] }
+    > = new WeakMap();
 
     const cursors0 = cursors?.toJS();
     if (cursors0 != null) {
@@ -75,17 +84,73 @@ export const useCursorDecorate = ({
     }
 
     return ([node, path]) => {
+      const ranges: {
+        anchor: Point;
+        focus: Point;
+        cursor?: { name: string; color: string; paddingText?: string };
+      }[] = [];
+
+      if (Text.isText(node)) {
+        const lineEntry = Editor.above(editor, {
+          at: path,
+          match: (n) => Element.isElement(n) && n.type === "code_line",
+        });
+        if (lineEntry) {
+          const blockEntry = Editor.above(editor, {
+            at: path,
+            match: (n) =>
+              Element.isElement(n) &&
+              (n.type === "code_block" ||
+                n.type === "html_block" ||
+                n.type === "meta"),
+          });
+          if (blockEntry) {
+            const [block, blockPath] = blockEntry as [Element, number[]];
+            const lineIndex = lineEntry[1][lineEntry[1].length - 1];
+            const cached = codeBlockCache.get(block);
+            const text = block.children.map((line) => Node.string(line)).join("\n");
+            const info =
+              block.type === "code_block"
+                ? (block as CodeBlock).info ?? ""
+                : block.type === "html_block"
+                  ? "html"
+                  : "yaml";
+            if (
+              !cached ||
+              cached.text !== text ||
+              cached.info !== info
+            ) {
+              if (getPrismGrammar(info, text)) {
+                codeBlockCache.set(block, {
+                  text,
+                  info,
+                  decorations: buildCodeBlockDecorations(
+                    block as CodeBlock,
+                    blockPath,
+                    info,
+                  ),
+                });
+              } else {
+                codeBlockCache.set(block, {
+                  text,
+                  info,
+                  decorations: [],
+                });
+              }
+            }
+            const decorations =
+              codeBlockCache.get(block)?.decorations?.[lineIndex] ?? [];
+            ranges.push(...decorations);
+          }
+        }
+      }
+
       // We do the search decorate and if there is no search,
       // then we do the cursor.  TODO: maybe combine, though if
       // you are searching, seeing cursors blocking search results
       // could be annoying.
       const s = search.decorate([node, path]);
-      if (s.length > 0) return s;
-      const ranges: {
-        anchor: Point;
-        focus: Point;
-        cursor: { name: string; color: string; paddingText?: string };
-      }[] = [];
+      if (s.length > 0) return ranges.concat(s);
       if (!Text.isText(node)) return ranges;
       const c = nodeToCursors.get(node);
       if (c == null) return ranges;

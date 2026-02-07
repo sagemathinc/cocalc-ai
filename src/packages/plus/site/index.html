@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CoCalc Plus (Alpha)</title>
+    <style>
+      :root {
+        --bg: #f7f8fb;
+        --panel: #ffffff;
+        --text: #1f2933;
+        --muted: #52606d;
+        --accent: #2563eb;
+        --accent-dark: #1d4ed8;
+        --border: #e5e7eb;
+        --mono: "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco,
+          Consolas, "Liberation Mono", "Courier New", monospace;
+        --sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: linear-gradient(160deg, #eef2ff 0%, #f7f8fb 60%);
+        color: var(--text);
+        font-family: var(--sans);
+      }
+
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 64px 24px 80px;
+      }
+
+      .hero {
+        margin-bottom: 32px;
+      }
+
+      h1 {
+        font-size: 2.4rem;
+        margin: 0 0 8px;
+      }
+
+      p {
+        margin: 0 0 16px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .card {
+        background: var(--panel);
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+        padding: 24px;
+        margin-bottom: 24px;
+      }
+
+      .command-box {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        border-radius: 12px;
+        border: 1px dashed var(--border);
+        background: #f8fafc;
+        padding: 16px;
+      }
+
+      code {
+        font-family: var(--mono);
+        font-size: 0.95rem;
+        color: #0f172a;
+        word-break: break-all;
+      }
+
+      button {
+        cursor: pointer;
+        border: none;
+        border-radius: 999px;
+        padding: 10px 16px;
+        font-weight: 600;
+        background: var(--accent);
+        color: white;
+        transition: background 0.15s ease;
+      }
+
+      button:hover {
+        background: var(--accent-dark);
+      }
+
+      .meta {
+        display: grid;
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .meta strong {
+        color: #0f172a;
+      }
+
+      ul {
+        margin: 12px 0 0 18px;
+        padding: 0;
+        color: var(--muted);
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .footer {
+        font-size: 0.9rem;
+        color: var(--muted);
+        text-align: center;
+        margin-top: 36px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <h1>CoCalc Plus (Alpha)</h1>
+        <p>
+          Install the CoCalc Plus single-file runtime and a small, curated tools
+          bundle (rg, fd, ouch) in one command. This is an early alpha intended
+          for fast testing.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Install</h2>
+        <p>Copy and run this in your terminal:</p>
+        <div class="command-box">
+          <code id="install-command">
+            curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash
+          </code>
+          <button id="copy-btn" type="button">Copy</button>
+        </div>
+        <div class="meta">
+          <p>
+            Direct link:
+            <a href="https://software.cocalc.ai/software/cocalc-plus/install.sh">
+              install.sh
+            </a>
+          </p>
+          <p>
+            Supported: Linux (x64/arm64), macOS (arm64). Requires curl.
+          </p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>What this does</h2>
+        <ul>
+          <li>Downloads the platform-specific SEA binary.</li>
+          <li>Downloads the minimal tools bundle (rg, fd, ouch).</li>
+          <li>Installs into <code>~/.local/share/cocalc-plus</code> (XDG aware).</li>
+          <li>
+            Creates <code>~/.local/bin/cocalc-plus</code> and adds it to PATH if
+            needed.
+          </li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Uninstall</h2>
+        <p>Remove the install directory and launcher:</p>
+        <div class="command-box">
+          <code>rm -rf ~/.local/share/cocalc-plus ~/.local/bin/cocalc-plus</code>
+          <button id="copy-uninstall" type="button">Copy</button>
+        </div>
+        <p style="margin-top: 12px;">
+          If the installer added PATH modifications, remove the line it appended
+          to your shell rc file (e.g. <code>~/.bashrc</code>,
+          <code>~/.zshrc</code>, or <code>~/.config/fish/config.fish</code>).
+        </p>
+      </section>
+
+      <div class="footer">
+        Questions? Reach out to the CoCalc team.
+      </div>
+    </main>
+
+    <script>
+      const copyText = async (text) => {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return;
+        }
+        const input = document.createElement("textarea");
+        input.value = text;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        document.body.removeChild(input);
+      };
+
+      const installCommand = document.getElementById("install-command").innerText.trim();
+      document.getElementById("copy-btn").addEventListener("click", () => {
+        copyText(installCommand);
+      });
+
+      const uninstallCommand =
+        "rm -rf ~/.local/share/cocalc-plus ~/.local/bin/cocalc-plus";
+      document.getElementById("copy-uninstall").addEventListener("click", () => {
+        copyText(uninstallCommand);
+      });
+    </script>
+  </body>
+</html>

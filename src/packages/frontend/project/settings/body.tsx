@@ -20,6 +20,7 @@ import { is_different } from "@cocalc/util/misc";
 import { NoNetworkProjectWarning } from "../warnings/no-network";
 import { NonMemberProjectWarning } from "../warnings/non-member";
 import { AboutBox } from "./about-box";
+import { LauncherDefaults } from "./launcher-defaults";
 import { ApiKeys } from "./api-keys";
 import { Datastore } from "./datastore";
 import { Environment } from "./environment";
@@ -99,6 +100,10 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
             created={project.get("created")}
             name={project.get("name")}
             actions={redux.getActions("projects")}
+          />
+          <LauncherDefaults
+            project_id={id}
+            project={project}
           />
           {!lite && (
             <HideDeleteBox

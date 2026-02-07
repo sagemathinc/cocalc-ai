@@ -39,7 +39,7 @@ export default function NBViewer({
     return (
       <div>
         <Alert
-          message="Error Parsing Jupyter Notebook"
+          title="Error Parsing Jupyter Notebook"
           description={`${cocalcJupyter}`}
           type="error"
         />

@@ -5,6 +5,7 @@
 
 import { useRef } from "react";
 import { Editor, Element, Transforms } from "slate";
+import { ReactEditor } from "../slate-react";
 import { rangeAll } from "../slate-util";
 
 export function setElement(
@@ -12,25 +13,79 @@ export function setElement(
   element: Element,
   obj: object
 ): Element | undefined {
+  const setAtPath = (path: number[]): Element | undefined => {
+    try {
+      Transforms.setNodes(editor, obj, { at: path });
+      return Editor.node(editor, path)[0] as Element;
+    } catch {
+      return undefined;
+    }
+  };
+
+  // Fast path: use the ReactEditor map to locate this element directly.
+  try {
+    const path = ReactEditor.findPath(editor as ReactEditor, element);
+    const updated = setAtPath(path as number[]);
+    if (updated) return updated;
+  } catch {
+    // ignore; fall back to node searches below
+  }
+
   // Usually when setElement is called, the element we are searching for is right
   // near the selection, so this first search finds it.
-  for (const [, path] of Editor.nodes(editor, {
-    match: (node) => node === element,
-  })) {
-    Transforms.setNodes(editor, obj, { at: path });
-    // We only want the first one (there are no others, but setNode doesn't have a short circuit option).
-    // Also, we return the transformed node, so have to find it:
-    return Editor.node(editor, path)[0] as Element;
+  try {
+    for (const [, path] of Editor.nodes(editor, {
+      match: (node) => node === element,
+    })) {
+      const updated = setAtPath(path);
+      if (updated) return updated;
+    }
+  } catch {
+    // ignore search failures
+  }
+
+  // Fallback: try the element that contains the current selection (common for inline elements).
+  if (editor.selection) {
+    try {
+      const entry = Editor.above(editor, {
+        at: editor.selection,
+        match: (node) => Element.isElement(node) && node.type === element.type,
+      });
+      if (entry) {
+        const [, path] = entry as [Element, number[]];
+        const updated = setAtPath(path);
+        if (updated) return updated;
+      }
+    } catch {
+      // ignore fallback failures
+    }
   }
 
   // Searching at the selection failed, so we try searching the entire document instead.
   // This has to work.
-  for (const [, path] of Editor.nodes(editor, {
-    match: (node) => node === element,
-    at: rangeAll(editor),
-  })) {
-    Transforms.setNodes(editor, obj, { at: path });
-    return Editor.node(editor, path)[0] as Element;
+  try {
+    for (const [, path] of Editor.nodes(editor, {
+      match: (node) => node === element,
+      at: rangeAll(editor),
+    })) {
+      const updated = setAtPath(path);
+      if (updated) return updated;
+    }
+  } catch {
+    // ignore search failures
+  }
+
+  // Last resort: match by type across the document.
+  try {
+    for (const [, path] of Editor.nodes(editor, {
+      match: (node) => Element.isElement(node) && node.type === element.type,
+      at: rangeAll(editor),
+    })) {
+      const updated = setAtPath(path);
+      if (updated) return updated;
+    }
+  } catch {
+    // ignore search failures
   }
 
   // This situation should never ever happen anymore (see big comment below):

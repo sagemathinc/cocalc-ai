@@ -368,7 +368,7 @@ export function ProjectsOperations({
     <Alert
       type={visible_projects.length === 0 ? "warning" : "info"}
       showIcon
-      message={
+      title={
         <div
           style={{
             display: "flex",

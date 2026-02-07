@@ -18,6 +18,7 @@ import { wait } from "@cocalc/util/async-wait";
 import { fromJS, Map } from "immutable";
 import type { JSONValue } from "@cocalc/util/types";
 import type { Configuration } from "@cocalc/conat/sync/core-stream";
+import { join } from "path";
 
 export class SyncTableKV extends EventEmitter {
   public readonly table;
@@ -110,13 +111,13 @@ export class SyncTableKV extends EventEmitter {
   // will melt away.
   private getName = () => {
     const spec = this.query[this.table][0];
-    if (spec.string_id) {
-      // special case -- the tables with a string_id never touch the database
-      // and are used with *different* spec at the same time to coordinate
-      // between browser and project, so we can't use the spec.
-      return `${this.table}:${spec.string_id}`;
+    if (!spec) {
+      throw Error("spec not defined");
     }
-    return `${this.table}:${jsonStableStringify(spec)}`;
+    if (spec.path) {
+      return join(this.table, spec.path);
+    }
+    return join(this.table, jsonStableStringify(spec)!);
   };
 
   init = async () => {

@@ -355,7 +355,7 @@ export function UserDefinedLLMComponent({ style, on_change }: Props) {
 
   function renderError() {
     if (!error) return null;
-    return <Alert message={error} type="error" closable />;
+    return <Alert title={error} type="error" closable />;
   }
 
   const title = intl.formatMessage({
@@ -374,7 +374,7 @@ export function UserDefinedLLMComponent({ style, on_change }: Props) {
         </>
       );
     } else {
-      return <Alert banner type="info" message="This feature is disabled." />;
+      return <Alert banner type="info" title="This feature is disabled." />;
     }
   }
 
@@ -458,7 +458,7 @@ function TestCustomLLM({ llm }: { llm: UserDefinedLLM }) {
 
   // TODO implement a button (or whatever) to query the backend and show the response in real time
   return (
-    <Space direction="vertical">
+    <Space orientation="vertical">
       <Flex vertical={false} align="center" gap={5}>
         <Flex>Prompt: </Flex>
         <Input
@@ -476,7 +476,7 @@ function TestCustomLLM({ llm }: { llm: UserDefinedLLM }) {
           <RawPrompt input={reply} />
         </>
       ) : null}
-      {error ? <Alert banner message={error} type="error" /> : null}
+      {error ? <Alert banner title={error} type="error" /> : null}
     </Space>
   );
 }

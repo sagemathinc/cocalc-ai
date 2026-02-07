@@ -74,7 +74,7 @@ export function PayBanner({
     <Alert
       type="warning"
       style={style}
-      message={
+      title={
         <div style={{ display: "flex" }}>
           <Icon name="exclamation-triangle" />
           <div style={{ flex: 1, textAlign: "center" }}>

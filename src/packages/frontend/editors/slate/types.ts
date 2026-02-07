@@ -23,6 +23,8 @@ export interface SlateEditor extends ReactEditor {
   windowedListRef: any;
   onCursorBottom?: () => void;
   onCursorTop?: () => void;
+  isComposing?: boolean;
+  preserveBlankLines?: boolean;
 }
 
 /*
@@ -31,6 +33,8 @@ One class that implements this is frame-tree/mmarkdown-editor/actions.ts
 */
 
 export interface Actions {
+  name?: string;
+  setState?: (state: any) => void;
   getSlateEditor?: (id?: string) => SlateEditor | undefined;
   registerSlateEditor?: (id: string, editor: SlateEditor) => void;
   ensure_syncstring_is_saved?: () => Promise<void>;
@@ -52,6 +56,8 @@ export interface Actions {
   undo?: (id: string) => void;
   redo?: (id: string) => void;
   shiftEnter?: (value: string) => void;
-  altEnter?: (value: string) => void;
+  altEnter?: (value: string, id?: string) => void;
+  registerBlockEditorControl?: (id: string, control: any) => void;
+  unregisterBlockEditorControl?: (id: string) => void;
   _syncstring?: any;
 }

@@ -275,7 +275,9 @@ async function checkProviderStatus({
     });
     return;
   }
-  const { entry, creds } = await getProviderContext(providerId);
+  const { entry, creds } = await getProviderContext(providerId, {
+    region: (snapshot as any)?.region,
+  });
   if (!entry.provider.getStatus) {
     logger.debug("smoke-runner provider status check skipped (no getStatus)", {
       host_id,

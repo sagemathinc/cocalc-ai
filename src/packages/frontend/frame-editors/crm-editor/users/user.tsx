@@ -46,7 +46,7 @@ export default function User({
         </>
       }
     >
-      <Space direction="vertical" style={{ width: "100%" }}>
+      <Space orientation="vertical" style={{ width: "100%" }}>
         <div>
           Last Active: {last_active ? <TimeAgo date={last_active} /> : "never"}
           {created && (

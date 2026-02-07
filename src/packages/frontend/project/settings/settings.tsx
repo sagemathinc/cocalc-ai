@@ -173,7 +173,7 @@ function AdminProjectSettingsWarning() {
     <Alert
       type="warning"
       style={{ margin: "10px" }}
-      message={
+      title={
         <>
           <strong>Warning:</strong> you are editing the {projectLabelLower}{" "}
           settings as an <strong>administrator</strong>. This is deprecated and

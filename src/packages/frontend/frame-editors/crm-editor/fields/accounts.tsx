@@ -74,7 +74,7 @@ function EditAccounts({ obj, field, account_ids }) {
           save={save}
         />
       )}
-      {saveError && <Alert message={saveError} type="error" />}
+      {saveError && <Alert title={saveError} type="error" />}
       {(adding || haveAccounts) && (
         <AccountList account_ids={account_ids ?? []} save={save} />
       )}
@@ -172,7 +172,7 @@ function AddAccount({
           }}
         />
       )}
-      {error && <Alert message={error} type="error" />}
+      {error && <Alert title={error} type="error" />}
       {users != null && (
         <Users
           users={users}

@@ -335,7 +335,7 @@ export default function View({
           <Alert
             style={{ margin: "30px 0" }}
             type="error"
-            message="Database Query Error"
+            title="Database Query Error"
             description={tableError}
             closable
             onClose={refresh}
@@ -345,7 +345,7 @@ export default function View({
           <Alert
             style={{ margin: "30px 0" }}
             type="error"
-            message="Error Creating New Record"
+            title="Error Creating New Record"
             description={addError}
             closable
             onClose={() => setAddError("")}

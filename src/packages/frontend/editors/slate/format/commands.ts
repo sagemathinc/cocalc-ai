@@ -26,6 +26,7 @@ import { SlateEditor } from "../editable-markdown";
 import { markdown_to_slate } from "../markdown-to-slate";
 import { emptyParagraph } from "../padding";
 import { ReactEditor } from "../slate-react";
+import { ensurePoint, ensureRange } from "../slate-util";
 import { removeBlankLines } from "../util";
 import { insertAIFormula } from "./insert-ai-formula";
 import { insertImage } from "./insert-image";
@@ -267,15 +268,7 @@ function findMarkedFragmentWithPrefix(
 // work on it.
 export function getFocus(editor: SlateEditor): Point {
   const focus = editor.selection?.focus ?? editor.lastSelection?.focus;
-  if (focus == null) {
-    return { path: [0, 0], offset: 0 };
-  }
-  try {
-    Editor.node(editor, focus);
-  } catch (_err) {
-    return { path: [0, 0], offset: 0 };
-  }
-  return focus;
+  return ensurePoint(editor, focus);
 }
 
 // Return a definitely valid selection which is most likely
@@ -284,24 +277,7 @@ export function getFocus(editor: SlateEditor): Point {
 // work on both ends.
 export function getSelection(editor: SlateEditor): Range {
   const selection = editor.selection ?? editor.lastSelection;
-  if (selection == null) {
-    return {
-      focus: { path: [0, 0], offset: 0 },
-      anchor: { path: [0, 0], offset: 0 },
-    };
-  }
-  try {
-    Editor.node(editor, selection.focus);
-    if (!Range.isCollapsed(selection)) {
-      Editor.node(editor, selection.anchor);
-    }
-  } catch (_err) {
-    return {
-      focus: { path: [0, 0], offset: 0 },
-      anchor: { path: [0, 0], offset: 0 },
-    };
-  }
-  return selection;
+  return ensureRange(editor, selection);
 }
 
 // get range that's the selection collapsed to the focus point.
@@ -310,9 +286,15 @@ export function getCollapsedSelection(editor: SlateEditor): Range {
   return { focus, anchor: focus };
 }
 
-export function setSelectionAndFocus(editor: ReactEditor, selection): void {
-  ReactEditor.focus(editor);
-  Transforms.setSelection(editor, selection);
+export function setSelectionAndFocus(
+  editor: ReactEditor,
+  selection,
+  options?: { force?: boolean },
+): void {
+  Transforms.setSelection(editor, ensureRange(editor, selection));
+  if (options?.force || !ReactEditor.isFocused(editor)) {
+    ReactEditor.focus(editor);
+  }
 }
 
 export function restoreSelectionAndFocus(editor: SlateEditor): void {
@@ -434,9 +416,9 @@ export async function formatAction(
       const node: Node = {
         type: "math_inline",
         value,
-        isVoid: true,
         isInline: true,
-        children: [{ text: "" }],
+        isVoid: true,
+        children: [{ text: value }],
       };
       Transforms.insertFragment(editor, [node]);
       return;
@@ -499,15 +481,15 @@ function transformToEquation(editor: Editor, display: boolean): void {
       type: "math_block",
       value,
       isVoid: true,
-      children: [{ text: "" }],
+      children: [{ text: value }],
     };
   } else {
     node = {
       type: "math_inline",
       value,
-      isVoid: true,
       isInline: true,
-      children: [{ text: "" }],
+      isVoid: true,
+      children: [{ text: value }],
     };
   }
   Transforms.insertFragment(editor, [node]);
@@ -519,7 +501,7 @@ function transformToComment(editor: Editor): void {
     {
       type: "html_block",
       html,
-      isVoid: true,
+      isVoid: false,
       isInline: false,
       children: [{ text: "" }],
     },

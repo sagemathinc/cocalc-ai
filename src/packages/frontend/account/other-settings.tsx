@@ -5,6 +5,8 @@
 
 // cSpell:ignore brandcolors codebar
 
+import { Button, Space, Tag } from "antd";
+import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { Panel, Switch } from "@cocalc/frontend/antd-bootstrap";
 import { redux, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -35,9 +37,28 @@ import {
   ACTIVITY_BAR_TOGGLE_LABELS_DESCRIPTION,
 } from "@cocalc/frontend/project/page/activity-bar-consts";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
+import {
+  APP_CATALOG,
+  QUICK_CREATE_MAP,
+} from "@cocalc/frontend/project/new/launcher-catalog";
+import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
+import {
+  LAUNCHER_GLOBAL_DEFAULTS,
+  LAUNCHER_SITE_REMOVE_APPS_KEY,
+  LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  getUserLauncherLayers,
+  LAUNCHER_SETTINGS_KEY,
+  getSiteLauncherDefaults,
+  mergeLauncherSettings,
+  updateUserLauncherPrefs,
+} from "@cocalc/frontend/project/new/launcher-preferences";
 import track from "@cocalc/frontend/user-tracking";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import { OTHER_SETTINGS_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
+import { file_options } from "@cocalc/frontend/editor-tmp";
+import type { NamedServerName } from "@cocalc/util/types/servers";
 
 import Tours from "./tours";
 import { useLanguageModelSetting } from "./useLanguageModelSetting";
@@ -64,6 +85,23 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   const { locale } = useLocalizationCtx();
   const isCoCalcCom = useTypedRedux("customize", "is_cocalc_com");
   const user_defined_llm = useTypedRedux("customize", "user_defined_llm");
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
+  const site_launcher_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
+  const site_remove_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  );
+  const site_remove_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_APPS_KEY,
+  );
+  const [showLauncherCustomize, setShowLauncherCustomize] = useState(false);
 
   const [model, setModel] = useLanguageModelSetting();
 
@@ -388,6 +426,38 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
     return <Loading />;
   }
 
+  const siteLauncherDefaults = getSiteLauncherDefaults({
+    quickCreate: site_launcher_quick,
+    apps: site_launcher_apps,
+    hiddenQuickCreate: site_remove_quick,
+    hiddenApps: site_remove_apps,
+  });
+  const userLauncherLayers = getUserLauncherLayers(
+    props.other_settings.get(LAUNCHER_SETTINGS_KEY),
+  );
+  const accountLauncher = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+    accountUserPrefs: userLauncherLayers.account,
+  });
+  const inheritedForAccount = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+  });
+  const accountQuickCreateSpecs = accountLauncher.quickCreate.map((id) => {
+    const spec = QUICK_CREATE_MAP[id];
+    if (spec) {
+      return { id, label: spec.label, icon: spec.icon };
+    }
+    const data = file_options(`x.${id}`);
+    return {
+      id,
+      label: data.name ?? id,
+      icon: (data.icon ?? "file") as IconName,
+    };
+  });
+  const accountAppSpecs = accountLauncher.apps
+    .map((id) => APP_CATALOG.find((app) => app.id === id))
+    .filter(Boolean) as { id: string; label: string; icon: IconName }[];
+
   const mode = props.mode ?? "full";
 
   if (mode === "ai") {
@@ -449,10 +519,85 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
           }
         >
           {render_vertical_fixed_bar_options()}
+          <LabeledRow
+            label={intl.formatMessage({
+              id: "account.other-settings.launcher_defaults.label",
+              defaultMessage: "Launcher defaults",
+            })}
+          >
+            <div>
+              <Paragraph type="secondary" style={{ marginBottom: "8px" }}>
+                <FormattedMessage
+                  id="account.other-settings.launcher_defaults.description"
+                  defaultMessage={`Set your personal default Quick Create buttons and Apps for all workspaces. You can still customize per-workspace from each +New page.`}
+                />
+              </Paragraph>
+              <Space wrap size={[8, 8]} style={{ marginBottom: "6px" }}>
+                {accountQuickCreateSpecs.map((spec) => (
+                  <Tag key={`acct-qc-${spec.id}`}>
+                    <Icon name={spec.icon} /> {spec.label}
+                  </Tag>
+                ))}
+              </Space>
+              <Space wrap size={[8, 8]} style={{ marginBottom: "8px" }}>
+                {accountAppSpecs.map((spec) => (
+                  <Tag key={`acct-app-${spec.id}`}>
+                    <Icon name={spec.icon} /> {spec.label}
+                  </Tag>
+                ))}
+              </Space>
+              <Button size="small" onClick={() => setShowLauncherCustomize(true)}>
+                Customize
+              </Button>
+            </div>
+          </LabeledRow>
         </Panel>
 
         {/* Tours at bottom */}
         <Tours />
+        <LauncherCustomizeModal
+          open={showLauncherCustomize}
+          onClose={() => setShowLauncherCustomize(false)}
+          initialQuickCreate={accountLauncher.quickCreate}
+          initialApps={accountLauncher.apps as NamedServerName[]}
+          userBaseQuickCreate={inheritedForAccount.quickCreate}
+          userBaseApps={inheritedForAccount.apps as NamedServerName[]}
+          globalDefaults={siteLauncherDefaults}
+          onSaveUser={(prefs) => {
+            on_change(
+              LAUNCHER_SETTINGS_KEY,
+              updateUserLauncherPrefs(
+                props.other_settings.get(LAUNCHER_SETTINGS_KEY),
+                undefined,
+                prefs,
+              ),
+            );
+          }}
+          contributions={[
+            {
+              key: "built-in",
+              title: "Built-in defaults",
+              quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+              appsAdd: LAUNCHER_GLOBAL_DEFAULTS.apps,
+            },
+            {
+              key: "site",
+              title: "Site defaults",
+              quickCreateAdd: siteLauncherDefaults.quickCreate,
+              quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
+              appsAdd: siteLauncherDefaults.apps,
+              appsRemove: siteLauncherDefaults.hiddenApps,
+            },
+            {
+              key: "account",
+              title: "Your account overrides",
+              quickCreateAdd: userLauncherLayers.account.quickCreate,
+              quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
+              appsAdd: userLauncherLayers.account.apps,
+              appsRemove: userLauncherLayers.account.hiddenApps,
+            },
+          ]}
+        />
       </>
     );
   }

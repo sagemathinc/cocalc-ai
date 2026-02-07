@@ -1,6 +1,7 @@
 import { Button, Card, Popconfirm, Space, Tag, Tooltip, Typography } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type { HostDeleteOptions, HostStopOptions } from "../types";
 import {
@@ -19,6 +20,7 @@ import { getHostOpPhase, HostOpProgress } from "./host-op-progress";
 import { HostBackupStatus } from "./host-backup-status";
 import { HostWorkspaceStatus } from "./host-workspace-status";
 import { confirmHostDeprovision, confirmHostStop } from "./host-confirm";
+import { COLORS } from "@cocalc/util/theme";
 
 type HostCardProps = {
   host: Host;
@@ -30,6 +32,7 @@ type HostCardProps = {
   onCancelOp?: (op_id: string) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
+  onToggleStar?: (host: Host) => void;
   providerCapabilities?: HostCatalog["provider_capabilities"];
   selfHost?: {
     isConnectorOnline: (connectorId?: string) => boolean;
@@ -47,17 +50,21 @@ export const HostCard: React.FC<HostCardProps> = ({
   onCancelOp,
   onDetails,
   onEdit,
+  onToggleStar,
   providerCapabilities,
   selfHost,
 }) => {
   const isDeleted = !!host.deleted;
   const isSelfHost = host.machine?.cloud === "self-host";
+  const hasSshTarget = !!String(
+    host.machine?.metadata?.self_host_ssh_target ?? "",
+  ).trim();
+  const autoSetup = isSelfHost && hasSshTarget;
   const connectorOnline =
     !isSelfHost ||
     !selfHost?.isConnectorOnline ||
     selfHost.isConnectorOnline(host.region);
-  const showConnectorSetup =
-    isSelfHost && !connectorOnline && host.status === "off";
+  const showConnectorSetup = isSelfHost && !isDeleted;
   const hostOnline = isHostOnline(host.last_seen);
   const showOnlineTag = host.status === "running" && hostOnline;
   const showStaleTag = host.status === "running" && !hostOnline;
@@ -69,7 +76,7 @@ export const HostCard: React.FC<HostCardProps> = ({
     host.status === "running" ||
     host.status === "starting" ||
     host.status === "restarting" ||
-    !connectorOnline ||
+    (!connectorOnline && !autoSetup) ||
     hostOpActive;
   const startLabel =
     host.status === "starting"
@@ -124,7 +131,7 @@ export const HostCard: React.FC<HostCardProps> = ({
         disabled={hostOpActive}
         onClick={() => selfHost.onSetup(host)}
       >
-        Setup
+        Setup / reconnect
       </Button>
     ) : null,
     allowStop ? (
@@ -217,6 +224,21 @@ export const HostCard: React.FC<HostCardProps> = ({
       title={host.name}
       extra={
         <Space size="small">
+          <Tooltip title={host.starred ? "Starred" : "Star host"}>
+            <span
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleStar?.(host);
+              }}
+              style={{
+                cursor: onToggleStar ? "pointer" : "default",
+                fontSize: 18,
+                color: host.starred ? COLORS.STAR : COLORS.GRAY_L,
+              }}
+            >
+              <Icon name={host.starred ? "star-filled" : "star"} />
+            </span>
+          </Tooltip>
           <Tooltip
             title={getHostStatusTooltip(
               host.status,
@@ -250,7 +272,7 @@ export const HostCard: React.FC<HostCardProps> = ({
       }
       actions={actions.filter(Boolean) as React.ReactNode[]}
     >
-      <Space direction="vertical" size="small">
+      <Space orientation="vertical" size="small">
         {host.reprovision_required && (
           <Tooltip title="Host config changed while stopped; will reprovision on next start.">
             <Tag color="orange">Reprovision on next start</Tag>

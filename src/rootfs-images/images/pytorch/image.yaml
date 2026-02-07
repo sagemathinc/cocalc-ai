@@ -1,0 +1,14 @@
+id: pytorch
+label: PyTorch
+component_version: "2.4.1"
+image_name: pytorch
+gpu: true
+arch: [amd64]
+priority: 90
+tags: [pytorch, gpu]
+prepull: false
+description: PyTorch with CUDA support.
+
+tests:
+  - name: python
+    cmd: "bash -lc 'python3 - <<EOF\nimport torch; print(torch.__version__)\nEOF'"

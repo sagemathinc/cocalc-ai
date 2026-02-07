@@ -141,7 +141,7 @@ ax.plot(x, y)
         showIcon
         style={{ margin: "15px" }}
         type="warning"
-        message={
+        title={
           actions != null && cell_id ? (
             <Button
               type="link"

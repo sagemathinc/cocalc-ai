@@ -190,6 +190,28 @@ function buildUserData(spec: HostSpec): string | undefined {
   return `#!/bin/bash\nset -e\ncurl -fsSL ${url} | bash`;
 }
 
+function normalizeSshKeys(
+  raw?: string[] | string,
+  fallback?: string,
+): string[] {
+  const items: string[] = [];
+  if (Array.isArray(raw)) {
+    items.push(...raw);
+  } else if (typeof raw === "string") {
+    items.push(...raw.split(/\r?\n|,/g));
+  }
+  if (fallback) items.push(fallback);
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const entry of items) {
+    const trimmed = entry.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    cleaned.push(trimmed);
+  }
+  return cleaned;
+}
+
 export type NebiusProviderCreds = NebiusCreds & {
   sshPublicKey: string;
   prefix?: string;
@@ -346,6 +368,10 @@ export class NebiusProvider implements CloudProvider {
     }
 
     const userData = buildUserData(spec) ?? "";
+    const sshKeys = normalizeSshKeys(
+      spec.metadata?.ssh_public_keys,
+      creds.sshPublicKey,
+    );
     const cloudInit = [
       "#cloud-config",
       "users:",
@@ -353,7 +379,7 @@ export class NebiusProvider implements CloudProvider {
       "    sudo: ALL=(ALL) NOPASSWD:ALL",
       "    shell: /bin/bash",
       "    ssh_authorized_keys:",
-      `      - ${creds.sshPublicKey}`,
+      ...sshKeys.map((key) => `      - ${key}`),
       userData ? "runcmd:" : "",
       userData ? `  - [ bash, -lc, ${JSON.stringify(userData)} ]` : "",
     ]

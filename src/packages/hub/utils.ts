@@ -6,10 +6,14 @@
 import { callback2 } from "@cocalc/util/async-utils";
 import type { PostgreSQL } from "@cocalc/database/postgres/types";
 import { PassportStrategyDB } from "@cocalc/database/settings/auth-sso-types";
+import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
 
 export async function have_active_registration_tokens(
   db: PostgreSQL,
 ): Promise<boolean> {
+  if (isLaunchpadProduct()) {
+    return true;
+  }
   const resp = await callback2(db._query, {
     query:
       "SELECT EXISTS(SELECT 1 FROM registration_tokens WHERE disabled IS NOT true) AS have_tokens",

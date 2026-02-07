@@ -95,7 +95,7 @@ export function useEditableContext<ValueType>(field: string): {
     error: error ? (
       <Alert
         type="error"
-        message={
+        title={
           <>
             {error}{" "}
             <Space>

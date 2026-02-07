@@ -15,10 +15,12 @@
  *
  * Algorithm:
  * - Track `last` as the reconciled baseline.
- * - If the live buffer equals `last`, adopt remote and bump `last`.
- * - If the live buffer diverged, compute a patch from `last → local`, apply it to
+ * - Track `pending` as the most recent locally-saved value that has not yet been
+ *   observed coming back from the remote source.
+ * - If the live buffer equals `last` (and there's no pending), adopt remote.
+ * - If there are local edits, compute a patch from `last → local`, apply it to
  *   `remote`, set `last` to the merged value, and only overwrite the buffer when
- *   it differs. No explicit echo suppression needed.
+ *   it differs.
  */
 import { applyPatch, makePatch } from "patchflow";
 
@@ -27,6 +29,7 @@ type Setter = (value: string) => void;
 
 export class SimpleInputMerge {
   private last: string;
+  private pending: string | null = null;
 
   constructor(initialValue: string) {
     this.last = initialValue ?? "";
@@ -36,12 +39,24 @@ export class SimpleInputMerge {
   public reset(value: string): void {
     // console.log("reset", { value });
     this.last = value ?? "";
+    this.pending = null;
   }
 
-  // Mark that the current value has been saved/committed.
+  // Mark that the current value has been saved/committed locally.
+  // We wait to advance `last` until the remote echoes this value.
   public noteSaved(value: string): void {
-    // console.log("noteSaved", { value });
-    this.last = value ?? this.last;
+    const next = value ?? "";
+    if (next === this.last) {
+      this.pending = null;
+      return;
+    }
+    this.pending = next;
+  }
+
+  // Mark that local and remote are known to be in sync.
+  public noteApplied(value: string): void {
+    this.last = value ?? "";
+    this.pending = null;
   }
 
   // Merge an incoming remote value with the current local buffer.
@@ -54,9 +69,15 @@ export class SimpleInputMerge {
     const local = opts.getLocal() ?? "";
     // console.log("handleRemote", { remote, local, last: this.last });
 
-    // No local edits since last baseline: adopt remote directly.
-    if (local === this.last) {
-      this.last = remote;
+    // Pending value has been echoed and local hasn't changed beyond it.
+    if (this.pending != null && remote === this.pending && local === this.pending) {
+      this.noteApplied(remote);
+      return;
+    }
+
+    // No local edits since last baseline and no pending: adopt remote directly.
+    if (local === this.last && this.pending == null) {
+      this.noteApplied(remote);
       if (remote !== local) {
         opts.applyMerged(remote);
       }
@@ -66,9 +87,30 @@ export class SimpleInputMerge {
     // Local diverged: rebase local delta onto remote.
     const delta = makePatch(this.last, local);
     const [merged] = applyPatch(delta, remote);
-    this.last = merged;
+    this.noteApplied(merged);
     if (merged !== local) {
       opts.applyMerged(merged);
     }
+  }
+
+  public previewMerge(opts: { remote: string; local: string }): {
+    merged: string;
+    changed: boolean;
+  } {
+    const remote = opts.remote ?? "";
+    const local = opts.local ?? "";
+
+    if (this.pending != null && remote === this.pending && local === this.pending) {
+      return { merged: remote, changed: false };
+    }
+
+    if (local === this.last && this.pending == null) {
+      const merged = remote;
+      return { merged, changed: merged !== local };
+    }
+
+    const delta = makePatch(this.last, local);
+    const [merged] = applyPatch(delta, remote);
+    return { merged, changed: merged !== local };
   }
 }

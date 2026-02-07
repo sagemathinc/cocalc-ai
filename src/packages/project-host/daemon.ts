@@ -210,7 +210,12 @@ function resolveExec(root: string): { command: string; args: string[] } {
     process.env.COCALC_PROJECT_HOST_DAEMON_EXEC ?? process.execPath;
   const args: string[] = [];
   if (path.basename(command) === "node") {
-    args.push(path.join(root, "dist/main.js"));
+    const bundledMain = path.join(root, "main", "index.js");
+    if (fs.existsSync(bundledMain)) {
+      args.push(bundledMain);
+    } else {
+      args.push(path.join(root, "dist/main.js"));
+    }
   }
   return { command, args };
 }
@@ -244,7 +249,9 @@ export function startDaemon(index = 0): void {
 export function stopDaemon(index = 0): void {
   const { pidPath } = resolveEnv(index);
   if (!fs.existsSync(pidPath)) {
-    throw new Error(`No pid file found at ${pidPath}; nothing to stop.`);
+    // Nothing to stop; treat as success for idempotent callers.
+    console.warn(`No pid file found at ${pidPath}; nothing to stop.`);
+    return;
   }
   const pid = Number(fs.readFileSync(pidPath, "utf8"));
   if (!pid || !isRunning(pid)) {

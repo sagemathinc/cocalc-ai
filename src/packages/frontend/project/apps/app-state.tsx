@@ -63,7 +63,7 @@ export default function AppState({
       <Button onClick={() => refresh()} style={{ float: "right" }}>
         Refresh
       </Button>
-      {status != null && <AppStatus status={status} />}
+      {status != null && <AppStatus status={status} name={name} />}
     </div>
   );
 }
