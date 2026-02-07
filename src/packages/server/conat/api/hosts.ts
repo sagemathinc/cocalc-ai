@@ -65,6 +65,11 @@ import {
   createPairingTokenForHost,
 } from "@cocalc/server/self-host/connector-tokens";
 import {
+  getExternalCredential as getExternalCredentialDb,
+  upsertExternalCredential as upsertExternalCredentialDb,
+  type ExternalCredentialScope,
+} from "@cocalc/server/external-credentials/store";
+import {
   ensureSelfHostReverseTunnel,
   runConnectorInstallOverSsh,
 } from "@cocalc/server/self-host/ssh-target";
@@ -507,6 +512,227 @@ export async function updateCopyStatus({
     status,
     last_error,
   });
+}
+
+async function assertHostCredentialProjectAccess({
+  host_id,
+  project_id,
+  owner_account_id,
+}: {
+  host_id: string;
+  project_id: string;
+  owner_account_id?: string;
+}): Promise<void> {
+  const { rowCount } = await pool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+        AND ($3::text IS NULL OR users ? $3::text)
+      LIMIT 1
+    `,
+    [project_id, host_id, owner_account_id ?? null],
+  );
+  if (!rowCount) {
+    throw new Error("host is not authorized for this credential project");
+  }
+}
+
+function normalizeExternalCredentialSelector({
+  provider,
+  kind,
+  scope,
+  owner_account_id,
+  project_id,
+  organization_id,
+}: {
+  provider: string;
+  kind: string;
+  scope: ExternalCredentialScope;
+  owner_account_id?: string;
+  project_id?: string;
+  organization_id?: string;
+}) {
+  const normalizedProvider = `${provider ?? ""}`.trim().toLowerCase();
+  const normalizedKind = `${kind ?? ""}`.trim().toLowerCase();
+  const normalizedScope = `${scope ?? ""}`.trim().toLowerCase() as ExternalCredentialScope;
+  if (!normalizedProvider) throw new Error("provider must be specified");
+  if (!normalizedKind) throw new Error("kind must be specified");
+  if (
+    normalizedScope !== "account" &&
+    normalizedScope !== "project" &&
+    normalizedScope !== "organization" &&
+    normalizedScope !== "site"
+  ) {
+    throw new Error(`unsupported scope '${scope}'`);
+  }
+  if (normalizedScope === "site") {
+    throw new Error("site scope is not writable via host API");
+  }
+  return {
+    provider: normalizedProvider,
+    kind: normalizedKind,
+    scope: normalizedScope,
+    owner_account_id,
+    project_id,
+    organization_id,
+  };
+}
+
+export async function upsertExternalCredential({
+  host_id,
+  project_id,
+  selector,
+  payload,
+  metadata,
+}: {
+  host_id?: string;
+  project_id: string;
+  selector: {
+    provider: string;
+    kind: string;
+    scope: ExternalCredentialScope;
+    owner_account_id?: string;
+    project_id?: string;
+    organization_id?: string;
+  };
+  payload: string;
+  metadata?: Record<string, any>;
+}): Promise<{ id: string; created: boolean }> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!selector) {
+    throw new Error("selector must be specified");
+  }
+
+  const normalized = normalizeExternalCredentialSelector(selector);
+  const selectorProjectId =
+    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+  if (normalized.scope === "account" && !normalized.owner_account_id) {
+    throw new Error("owner_account_id must be specified for account scope");
+  }
+  if (normalized.scope === "organization" && !normalized.organization_id) {
+    throw new Error("organization_id must be specified for organization scope");
+  }
+  if (normalized.scope === "project" && !selectorProjectId) {
+    throw new Error("project_id must be specified for project scope");
+  }
+
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: normalized.owner_account_id,
+  });
+  if (selectorProjectId && selectorProjectId !== project_id) {
+    await assertHostCredentialProjectAccess({
+      host_id,
+      project_id: selectorProjectId,
+      owner_account_id: normalized.owner_account_id,
+    });
+  }
+
+  return await upsertExternalCredentialDb({
+    selector: {
+      provider: normalized.provider,
+      kind: normalized.kind,
+      scope: normalized.scope,
+      owner_account_id: normalized.owner_account_id,
+      project_id: selectorProjectId,
+      organization_id: normalized.organization_id,
+    },
+    payload,
+    metadata: metadata ?? {},
+  });
+}
+
+export async function getExternalCredential({
+  host_id,
+  project_id,
+  selector,
+}: {
+  host_id?: string;
+  project_id: string;
+  selector: {
+    provider: string;
+    kind: string;
+    scope: ExternalCredentialScope;
+    owner_account_id?: string;
+    project_id?: string;
+    organization_id?: string;
+  };
+}): Promise<{
+  id: string;
+  payload: string;
+  metadata: Record<string, any>;
+  created: Date;
+  updated: Date;
+  revoked: Date | null;
+  last_used: Date | null;
+} | undefined> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!selector) {
+    throw new Error("selector must be specified");
+  }
+
+  const normalized = normalizeExternalCredentialSelector(selector);
+  const selectorProjectId =
+    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+  if (normalized.scope === "account" && !normalized.owner_account_id) {
+    throw new Error("owner_account_id must be specified for account scope");
+  }
+  if (normalized.scope === "organization" && !normalized.organization_id) {
+    throw new Error("organization_id must be specified for organization scope");
+  }
+  if (normalized.scope === "project" && !selectorProjectId) {
+    throw new Error("project_id must be specified for project scope");
+  }
+
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: normalized.owner_account_id,
+  });
+  if (selectorProjectId && selectorProjectId !== project_id) {
+    await assertHostCredentialProjectAccess({
+      host_id,
+      project_id: selectorProjectId,
+      owner_account_id: normalized.owner_account_id,
+    });
+  }
+
+  const result = await getExternalCredentialDb({
+    selector: {
+      provider: normalized.provider,
+      kind: normalized.kind,
+      scope: normalized.scope,
+      owner_account_id: normalized.owner_account_id,
+      project_id: selectorProjectId,
+      organization_id: normalized.organization_id,
+    },
+  });
+  if (!result) {
+    return undefined;
+  }
+  return {
+    id: result.id,
+    payload: result.payload,
+    metadata: result.metadata,
+    created: result.created,
+    updated: result.updated,
+    revoked: result.revoked,
+    last_used: result.last_used,
+  };
 }
 
 export async function listHosts({

@@ -225,6 +225,31 @@ export interface HostSoftwareUpgradeResponse {
   }>;
 }
 
+export type ExternalCredentialScope =
+  | "account"
+  | "project"
+  | "organization"
+  | "site";
+
+export interface ExternalCredentialSelector {
+  provider: string;
+  kind: string;
+  scope: ExternalCredentialScope;
+  owner_account_id?: string;
+  project_id?: string;
+  organization_id?: string;
+}
+
+export interface ExternalCredentialRecord {
+  id: string;
+  payload: string;
+  metadata: Record<string, any>;
+  created: Date;
+  updated: Date;
+  revoked: Date | null;
+  last_used: Date | null;
+}
+
 export const hosts = {
   listHosts: authFirstRequireAccount,
   listHostProjects: authFirstRequireAccount,
@@ -249,6 +274,8 @@ export const hosts = {
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   updateCopyStatus: authFirstRequireHost,
+  getExternalCredential: authFirstRequireHost,
+  upsertExternalCredential: authFirstRequireHost,
 };
 
 export interface HostConnectorUpgradeRequest {
@@ -316,6 +343,18 @@ export interface Hosts {
     status: ProjectCopyState;
     last_error?: string;
   }) => Promise<void>;
+  getExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<ExternalCredentialRecord | undefined>;
+  upsertExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+    payload: string;
+    metadata?: Record<string, any>;
+  }) => Promise<{ id: string; created: boolean }>;
 
   createHost: (opts: {
     account_id?: string;

@@ -6,6 +6,7 @@ import {
   resolveSubscriptionCodexHome,
   subscriptionRuntime,
 } from "./codex-auth";
+import { pushSubscriptionAuthToRegistry } from "./codex-auth-registry";
 import { spawnCodexInProjectContainer } from "./codex-project";
 
 const logger = getLogger("project-host:codex-device-auth");
@@ -27,6 +28,8 @@ type DeviceAuthSession = {
   output: string;
   verificationUrl?: string;
   userCode?: string;
+  syncedToRegistry?: boolean;
+  syncError?: string;
 };
 
 const MAX_OUTPUT_CHARS = 50_000;
@@ -149,6 +152,23 @@ export async function startCodexDeviceAuth(
     if (session.state === "canceled") return;
     if (code === 0) {
       session.state = "completed";
+      void pushSubscriptionAuthToRegistry({
+        projectId: session.projectId,
+        accountId: session.accountId,
+        codexHome: session.codexHome,
+      })
+        .then((result) => {
+          session.syncedToRegistry = result.ok;
+          session.syncError = result.ok
+            ? undefined
+            : "unable to sync credentials to central registry";
+          session.updatedAt = Date.now();
+        })
+        .catch((err) => {
+          session.syncedToRegistry = false;
+          session.syncError = `${err}`;
+          session.updatedAt = Date.now();
+        });
     } else {
       session.state = "failed";
       if (!session.error) {
@@ -187,6 +207,8 @@ function snapshot(session: DeviceAuthSession) {
     exitCode: session.exitCode,
     signal: session.signal,
     error: session.error,
+    syncedToRegistry: session.syncedToRegistry,
+    syncError: session.syncError,
   };
 }
 

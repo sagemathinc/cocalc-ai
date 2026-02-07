@@ -45,6 +45,7 @@ import {
   cancelCodexDeviceAuth,
 } from "../codex/codex-device-auth";
 import { uploadSubscriptionAuthFile } from "../codex/codex-auth";
+import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
 
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
@@ -489,7 +490,13 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       accountId: account_id,
       content,
     });
-    return { ok: true as const, ...result };
+    const synced = await pushSubscriptionAuthToRegistry({
+      projectId: project_id,
+      accountId: account_id,
+      codexHome: result.codexHome,
+      content,
+    });
+    return { ok: true as const, synced: synced.ok, ...result };
   }
 
   // Create a project locally and optionally start it.
