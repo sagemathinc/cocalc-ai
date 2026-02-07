@@ -72,6 +72,14 @@ export function transformArgs({
 }
 
 export function initHubApi(callHubApi): HubApi {
+  function extractProjectId(args: any[]): string | undefined {
+    const project_id = args?.[0]?.project_id;
+    if (typeof project_id === "string" && isValidUUID(project_id)) {
+      return project_id;
+    }
+    return undefined;
+  }
+
   const hubApi: any = {};
   for (const group in HubApiStructure) {
     if (hubApi[group] == null) {
@@ -83,6 +91,7 @@ export function initHubApi(callHubApi): HubApi {
           name: `${group}.${functionName}`,
           args,
           timeout: args[0]?.timeout,
+          project_id: extractProjectId(args),
         });
         return handleErrorMessage(resp);
       };
