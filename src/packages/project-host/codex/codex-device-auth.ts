@@ -70,11 +70,6 @@ export async function startCodexDeviceAuth(
   accountId: string,
 ): Promise<ReturnType<typeof snapshot>> {
   const codexHome = resolveSubscriptionCodexHome(accountId);
-  if (!codexHome) {
-    throw new Error(
-      "COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT must be set for device auth",
-    );
-  }
   await ensureCodexCredentialsStoreFile(codexHome);
   // Ensure we run in subscription auth mode (not key/shared-home fallback)
   // while performing device login.

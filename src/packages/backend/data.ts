@@ -303,6 +303,8 @@ export function setConatPassword(password: string) {
   conatPassword = password;
 }
 
+export const codexSubscriptionsPath = join(secrets, "codex-subscriptions");
+
 export let conatSocketioCount = parseInt(
   process.env.CONAT_SOCKETIO_COUNT ?? "1",
 );

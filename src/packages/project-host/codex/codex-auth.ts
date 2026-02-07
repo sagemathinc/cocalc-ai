@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { codexSubscriptionsPath } from "@cocalc/backend/data";
 
 const logger = getLogger("project-host:codex-auth");
 
@@ -84,9 +85,10 @@ function sharedHomeRuntime({
   };
 }
 
-export function resolveSubscriptionCodexHome(accountId: string): string | undefined {
-  const subscriptionRoot = process.env.COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT;
-  if (!subscriptionRoot) return undefined;
+export function resolveSubscriptionCodexHome(accountId: string): string {
+  const subscriptionRoot =
+    process.env.COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT ??
+    codexSubscriptionsPath;
   return join(subscriptionRoot, accountId);
 }
 
@@ -170,21 +172,19 @@ export async function resolveCodexAuthRuntime({
 
   if (accountId) {
     const codexHome = resolveSubscriptionCodexHome(accountId);
-    if (codexHome) {
-      const authFile = join(codexHome, "auth.json");
-      if (await pathExists(authFile)) {
-        try {
-          await ensureCodexCredentialsStoreFile(codexHome);
-        } catch (err) {
-          logger.warn("failed to ensure codex file credential store setting", {
-            projectId,
-            accountId,
-            codexHome,
-            err: `${err}`,
-          });
-        }
-        return subscriptionRuntime({ projectId, accountId, codexHome });
+    const authFile = join(codexHome, "auth.json");
+    if (await pathExists(authFile)) {
+      try {
+        await ensureCodexCredentialsStoreFile(codexHome);
+      } catch (err) {
+        logger.warn("failed to ensure codex file credential store setting", {
+          projectId,
+          accountId,
+          codexHome,
+          err: `${err}`,
+        });
       }
+      return subscriptionRuntime({ projectId, accountId, codexHome });
     }
   }
 
