@@ -7,7 +7,7 @@ export function getCodexPaymentSourceShortLabel(
 ): string {
   switch (source) {
     case "subscription":
-      return "Subscription";
+      return "ChatGPT Plan";
     case "project-api-key":
     case "account-api-key":
       return "API Key";
@@ -26,7 +26,7 @@ export function getCodexPaymentSourceLongLabel(
 ): string {
   switch (source) {
     case "subscription":
-      return "ChatGPT Subscription";
+      return "ChatGPT Plan";
     case "project-api-key":
       return "Workspace OpenAI API Key";
     case "account-api-key":
@@ -49,7 +49,7 @@ export function getCodexPaymentSourceTooltip(
   }
   const parts = [
     `Likely source for next turn: ${getCodexPaymentSourceLongLabel(paymentSource.source)}.`,
-    "Precedence: subscription → workspace API key → account API key → site API key.",
+    "Precedence: ChatGPT Plan → Workspace OpenAI API key → Account OpenAI API key → Site OpenAI API key.",
   ];
   if (paymentSource.hasSubscription) {
     parts.push("A ChatGPT subscription is connected.");
