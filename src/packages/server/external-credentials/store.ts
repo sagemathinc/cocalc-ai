@@ -337,6 +337,43 @@ LIMIT 1
   return !!rows[0];
 }
 
+export async function touchExternalCredential({
+  selector,
+}: {
+  selector: ExternalCredentialSelector;
+}): Promise<boolean> {
+  const normalized = normalizeSelector(selector);
+  const { rowCount } = await pool().query(
+    `
+WITH target AS (
+  SELECT id
+  FROM external_credentials
+  WHERE provider=$1
+    AND kind=$2
+    AND scope=$3
+    AND owner_account_id IS NOT DISTINCT FROM $4
+    AND project_id IS NOT DISTINCT FROM $5
+    AND organization_id IS NOT DISTINCT FROM $6
+    AND revoked IS NULL
+  ORDER BY updated DESC NULLS LAST, created DESC NULLS LAST
+  LIMIT 1
+)
+UPDATE external_credentials
+SET last_used=NOW()
+WHERE id IN (SELECT id FROM target)
+    `,
+    [
+      normalized.provider,
+      normalized.kind,
+      normalized.scope,
+      normalized.owner_account_id ?? null,
+      normalized.project_id ?? null,
+      normalized.organization_id ?? null,
+    ],
+  );
+  return !!rowCount;
+}
+
 export async function listExternalCredentials({
   owner_account_id,
   includeRevoked = false,

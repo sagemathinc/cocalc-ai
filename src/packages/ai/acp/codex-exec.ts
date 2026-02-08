@@ -117,7 +117,7 @@ export class CodexExecAgent implements AcpAgent {
     const cwd = this.resolveCwd(config);
     const resumeId = config?.sessionId ?? session_id;
     if (resumeId) {
-      await this.ensureSessionConfig(resumeId, cwd, config);
+      await this.tryEnsureSessionConfig(resumeId, cwd, config);
     }
     const preContentCache = this.createPreContentCache();
     void this.capturePreContentsFromText(prompt, cwd, preContentCache);
@@ -193,7 +193,7 @@ export class CodexExecAgent implements AcpAgent {
             cwd: session.cwd,
           });
           if (config) {
-            await this.ensureSessionConfig(evt.thread_id, cwd, config);
+            await this.tryEnsureSessionConfig(evt.thread_id, cwd, config);
           }
           await stream({ type: "status", state: "init" });
           break;
@@ -417,6 +417,22 @@ export class CodexExecAgent implements AcpAgent {
       maxBytes,
       keepCompactions: 2,
     });
+  }
+
+  private async tryEnsureSessionConfig(
+    sessionId: string,
+    cwd: string,
+    config?: CodexSessionConfig,
+  ): Promise<void> {
+    try {
+      await this.ensureSessionConfig(sessionId, cwd, config);
+    } catch (err) {
+      logger.warn("codex-exec: failed to update session metadata", {
+        sessionId,
+        cwd,
+        err: `${err}`,
+      });
+    }
   }
 
   private decoratePrompt(prompt: string): string {

@@ -6,6 +6,7 @@ import { codexSubscriptionsPath } from "@cocalc/backend/data";
 import {
   hasSubscriptionAuthInRegistry,
   pullSubscriptionAuthFromRegistry,
+  touchSubscriptionAuthInRegistry,
 } from "./codex-auth-registry";
 
 const logger = getLogger("project-host:codex-auth");
@@ -246,6 +247,8 @@ export async function resolveCodexAuthRuntime({
       }
     }
     if (await pathExists(authFile)) {
+      // Best-effort usage signal so account settings can show recent activity.
+      void touchSubscriptionAuthInRegistry({ projectId, accountId });
       try {
         await ensureCodexCredentialsStoreFile(codexHome);
       } catch (err) {

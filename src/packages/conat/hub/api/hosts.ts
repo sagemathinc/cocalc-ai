@@ -276,6 +276,7 @@ export const hosts = {
   updateCopyStatus: authFirstRequireHost,
   hasExternalCredential: authFirstRequireHost,
   getExternalCredential: authFirstRequireHost,
+  touchExternalCredential: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
 };
 
@@ -354,6 +355,11 @@ export interface Hosts {
     project_id: string;
     selector: ExternalCredentialSelector;
   }) => Promise<ExternalCredentialRecord | undefined>;
+  touchExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<boolean>;
   upsertExternalCredential: (opts: {
     host_id?: string;
     project_id: string;

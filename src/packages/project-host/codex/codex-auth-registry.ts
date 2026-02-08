@@ -141,6 +141,48 @@ export async function hasSubscriptionAuthInRegistry({
   }
 }
 
+export async function touchSubscriptionAuthInRegistry({
+  projectId,
+  accountId,
+}: {
+  projectId: string;
+  accountId: string;
+}): Promise<boolean> {
+  const caller = getHubCaller();
+  if (!caller) {
+    return false;
+  }
+  try {
+    const touched = await callHub({
+      ...caller,
+      name: "hosts.touchExternalCredential",
+      args: [
+        {
+          project_id: projectId,
+          selector: {
+            ...CREDENTIAL_SELECTOR,
+            owner_account_id: accountId,
+          },
+        },
+      ],
+      timeout: 10_000,
+    });
+    const has = !!touched;
+    if (has) {
+      const key = `${projectId}:${accountId}`;
+      existenceCache.set(key, { has: true, expires: Date.now() + EXISTENCE_CACHE_TTL_MS });
+    }
+    return has;
+  } catch (err) {
+    logger.debug("touchSubscriptionAuthInRegistry failed", {
+      projectId,
+      accountId,
+      err: `${err}`,
+    });
+    return false;
+  }
+}
+
 export async function pullSubscriptionAuthFromRegistry({
   projectId,
   accountId,
