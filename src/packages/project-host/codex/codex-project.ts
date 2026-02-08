@@ -190,7 +190,10 @@ async function ensureContainer({
   const rootfs = await mountRootFs({ project_id: projectId, home, config: { image } });
   const name = codexContainerName(projectId, authRuntime.contextId);
   const { containerPath, mount } = await resolveCodexBinary();
-  const codexHome = authRuntime.codexHome ?? resolveSharedCodexHome();
+  const codexHome =
+    authRuntime.codexHome ??
+    (authRuntime.source === "shared-home" ? resolveSharedCodexHome() : undefined);
+  const projectCodexHome = join(home, ".codex");
   const projectRow = getProject(projectId);
   const hasGpu =
     projectRow?.run_quota?.gpu === true ||
@@ -246,6 +249,11 @@ async function ensureContainer({
   }
 
   args.push(mountArg({ source: home, target: "/root" }));
+  try {
+    await fs.mkdir(projectCodexHome, { recursive: true, mode: 0o700 });
+  } catch {
+    // best effort: project home mount may already provide this path
+  }
   if (scratch) {
     args.push(mountArg({ source: scratch, target: "/scratch" }));
   }
@@ -263,7 +271,7 @@ async function ensureContainer({
     }
   }
   args.push(mountArg({ source: mount, target: "/opt/codex/bin", readOnly: true }));
-  if (codexHome) {
+  if (codexHome && authRuntime.source === "shared-home") {
     try {
       const stat = await fs.stat(codexHome);
       if (stat.isDirectory()) {
@@ -271,6 +279,39 @@ async function ensureContainer({
       }
     } catch {
       // ignore if codex home missing
+    }
+  }
+  if (codexHome && authRuntime.source === "subscription") {
+    // Subscription auth should not live in project storage. Mount only the auth
+    // files from secrets, while keeping /root/.codex/sessions in the project.
+    const authPath = join(codexHome, "auth.json");
+    const configPath = join(codexHome, "config.toml");
+    try {
+      const stat = await fs.stat(authPath);
+      if (stat.isFile()) {
+        args.push(
+          mountArg({
+            source: authPath,
+            target: "/root/.codex/auth.json",
+          }),
+        );
+      }
+    } catch {
+      // missing auth file -- runtime may fail auth, but do not fall back to
+      // workspace auth.json in launchpad mode.
+    }
+    try {
+      const stat = await fs.stat(configPath);
+      if (stat.isFile()) {
+        args.push(
+          mountArg({
+            source: configPath,
+            target: "/root/.codex/config.toml",
+          }),
+        );
+      }
+    } catch {
+      // optional
     }
   }
   for (const mount of optionalCerts.mounts) {

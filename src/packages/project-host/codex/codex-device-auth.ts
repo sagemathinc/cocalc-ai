@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type ChildProcess } from "node:child_process";
 import getLogger from "@cocalc/backend/logger";
 import {
+  ensureCodexAuthFileExists,
   ensureCodexCredentialsStoreFile,
   resolveSubscriptionCodexHome,
   subscriptionRuntime,
@@ -158,6 +159,7 @@ export async function startCodexDeviceAuth(
 
   const codexHome = resolveSubscriptionCodexHome(accountId);
   await ensureCodexCredentialsStoreFile(codexHome);
+  await ensureCodexAuthFileExists(codexHome);
   // Ensure we run in subscription auth mode (not key/shared-home fallback)
   // while performing device login.
   const authRuntime = subscriptionRuntime({

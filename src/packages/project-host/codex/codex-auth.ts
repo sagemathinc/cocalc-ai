@@ -30,8 +30,6 @@ export type CodexAuthRuntime = {
   env: Record<string, string>;
 };
 
-type SharedHomeMode = "fallback" | "prefer" | "always";
-
 function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -63,10 +61,17 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+type SharedHomeMode = "disabled" | "fallback" | "prefer" | "always";
+
 function resolveSharedHomeMode(): SharedHomeMode {
-  const mode = `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? "fallback"}`
+  const defaultMode =
+    `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad"
+      ? "disabled"
+      : "fallback";
+  const mode = `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? defaultMode}`
     .trim()
     .toLowerCase();
+  if (mode === "disabled") return "disabled";
   if (mode === "prefer" || mode === "always") return mode;
   return "fallback";
 }
@@ -150,6 +155,15 @@ export async function ensureCodexCredentialsStoreFile(
   await fs.writeFile(configPath, updated, { mode: 0o600 });
 }
 
+export async function ensureCodexAuthFileExists(codexHome: string): Promise<void> {
+  await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
+  const authPath = join(codexHome, "auth.json");
+  if (await pathExists(authPath)) return;
+  // Create a placeholder so we can bind-mount this file into the runtime
+  // without placing auth.json under the project workspace.
+  await fs.writeFile(authPath, "{}\n", { mode: 0o600 });
+}
+
 function validateUploadedAuthJson(raw: string): void {
   if (!raw?.trim()) {
     throw Error("uploaded file is empty");
@@ -199,7 +213,8 @@ export async function resolveCodexAuthRuntime({
 }): Promise<CodexAuthRuntime> {
   const sharedHome = resolveSharedCodexHome();
   const sharedHomeMode = resolveSharedHomeMode();
-  const hasSharedHomeAuth = await sharedHomeHasAuth(sharedHome);
+  const hasSharedHomeAuth =
+    sharedHomeMode === "disabled" ? false : await sharedHomeHasAuth(sharedHome);
   if (
     sharedHomeMode === "always" ||
     (sharedHomeMode === "prefer" && hasSharedHomeAuth)
@@ -335,7 +350,13 @@ export async function resolveCodexAuthRuntime({
     };
   }
 
-  return sharedHomeRuntime({ projectId, accountId, sharedHome });
+  if (sharedHomeMode !== "disabled") {
+    return sharedHomeRuntime({ projectId, accountId, sharedHome });
+  }
+
+  throw Error(
+    "No Codex auth source configured (shared-home auth is disabled on launchpad; configure a ChatGPT plan, OpenAI API key, or site key)",
+  );
 }
 
 export function resolveSharedCodexHome(): string | undefined {

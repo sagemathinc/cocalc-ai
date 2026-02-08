@@ -62,7 +62,7 @@ export interface CodexPaymentSourceInfo {
   hasProjectApiKey: boolean;
   hasAccountApiKey: boolean;
   hasSiteApiKey: boolean;
-  sharedHomeMode: "fallback" | "prefer" | "always";
+  sharedHomeMode: "disabled" | "fallback" | "prefer" | "always";
   project_id?: string;
 }
 

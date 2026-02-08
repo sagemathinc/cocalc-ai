@@ -280,10 +280,19 @@ function parseMap(raw?: string): Record<string, string> {
   }
 }
 
-function resolveSharedHomeMode(): "fallback" | "prefer" | "always" {
-  const mode = `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? "fallback"}`
+function resolveSharedHomeMode():
+  | "disabled"
+  | "fallback"
+  | "prefer"
+  | "always" {
+  const defaultMode =
+    `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad"
+      ? "disabled"
+      : "fallback";
+  const mode = `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? defaultMode}`
     .trim()
     .toLowerCase();
+  if (mode === "disabled") return "disabled";
   if (mode === "prefer" || mode === "always") return mode;
   return "fallback";
 }
