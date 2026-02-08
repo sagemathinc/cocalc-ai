@@ -345,10 +345,10 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     window.setTimeout(focusNow, 0);
   }, [editor, elementPath]);
 
-  const focusAtPathStart = useCallback(
+  const focusAtPathEnd = useCallback(
     (path: number[]) => {
       const focusNow = () => {
-        const point = Editor.start(editor, path);
+        const point = Editor.end(editor, path);
         Transforms.select(editor, { anchor: point, focus: point });
         ReactEditor.focus(editor);
       };
@@ -369,8 +369,8 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       Transforms.removeNodes(editor, { at: elementPath });
       Transforms.insertNodes(editor, doc as any, { at: elementPath });
     });
-    focusAtPathStart(insertPath);
-  }, [editor, codeValue, elementPath, focusAtPathStart]);
+    focusAtPathEnd(insertPath);
+  }, [editor, codeValue, elementPath, focusAtPathEnd]);
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -478,11 +478,19 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   marginTop: 6,
                   marginBottom: 6,
                 }}
-                onMouseDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => {
+                  // Prevent toolbar button clicks from stealing DOM focus from Slate.
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
               >
                 <Button
                   size="small"
                   type={preferRichText ? "primary" : "default"}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -494,6 +502,10 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                 <Button
                   size="small"
                   type={preferRichText ? "default" : "primary"}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -507,6 +519,10 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   <Button
                     size="small"
                     type="default"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
