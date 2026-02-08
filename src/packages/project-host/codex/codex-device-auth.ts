@@ -7,6 +7,7 @@ import {
   subscriptionRuntime,
 } from "./codex-auth";
 import { pushSubscriptionAuthToRegistry } from "./codex-auth-registry";
+import { touchSubscriptionCacheUsage } from "./codex-subscription-cache-gc";
 import { spawnCodexInProjectContainer } from "./codex-project";
 
 const logger = getLogger("project-host:codex-device-auth");
@@ -152,6 +153,14 @@ export async function startCodexDeviceAuth(
     if (session.state === "canceled") return;
     if (code === 0) {
       session.state = "completed";
+      void touchSubscriptionCacheUsage(session.codexHome).catch((err) => {
+        logger.warn("failed to touch local codex subscription cache marker", {
+          id,
+          projectId,
+          accountId,
+          err: `${err}`,
+        });
+      });
       void pushSubscriptionAuthToRegistry({
         projectId: session.projectId,
         accountId: session.accountId,

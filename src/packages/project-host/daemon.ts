@@ -223,7 +223,12 @@ function resolveExec(root: string): { command: string; args: string[] } {
 export function startDaemon(index = 0): void {
   const { env, dataDir, logPath, pidPath } = resolveEnv(index);
   ensureNotAlreadyRunning(pidPath);
-  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(dataDir, 0o700);
+  } catch {
+    // best effort
+  }
   try {
     if (fs.existsSync(logPath)) {
       fs.unlinkSync(logPath);
@@ -233,6 +238,11 @@ export function startDaemon(index = 0): void {
   }
   const stdout = fs.openSync(logPath, "a");
   const stderr = fs.openSync(logPath, "a");
+  try {
+    fs.chmodSync(logPath, 0o600);
+  } catch {
+    // best effort
+  }
   const root = path.join(__dirname, "..");
   const { command, args } = resolveExec(root);
   const child = spawn(command, args, {
@@ -243,6 +253,11 @@ export function startDaemon(index = 0): void {
   });
   child.unref();
   fs.writeFileSync(pidPath, String(child.pid));
+  try {
+    fs.chmodSync(pidPath, 0o600);
+  } catch {
+    // best effort
+  }
   console.log(`project-host started (pid ${child.pid}); log=${logPath}`);
 }
 

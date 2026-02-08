@@ -8,6 +8,7 @@ import {
   pullSubscriptionAuthFromRegistry,
   touchSubscriptionAuthInRegistry,
 } from "./codex-auth-registry";
+import { touchSubscriptionCacheUsage } from "./codex-subscription-cache-gc";
 
 const logger = getLogger("project-host:codex-auth");
 const MAX_AUTH_UPLOAD_BYTES = 2_000_000;
@@ -177,6 +178,7 @@ export async function uploadSubscriptionAuthFile({
   const authPath = join(codexHome, "auth.json");
   await fs.writeFile(authPath, content, { mode: 0o600 });
   await ensureCodexCredentialsStoreFile(codexHome);
+  await touchSubscriptionCacheUsage(codexHome);
   return {
     codexHome,
     bytes: Buffer.byteLength(content, "utf8"),
@@ -251,6 +253,7 @@ export async function resolveCodexAuthRuntime({
       void touchSubscriptionAuthInRegistry({ projectId, accountId });
       try {
         await ensureCodexCredentialsStoreFile(codexHome);
+        await touchSubscriptionCacheUsage(codexHome);
       } catch (err) {
         logger.warn("failed to ensure codex file credential store setting", {
           projectId,
