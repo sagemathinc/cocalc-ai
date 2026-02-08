@@ -3,21 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// NOTE: in this file we use {event:'draft', date:time in ms} as
-// primary key into the syncdb whereas in the main thread, we
-// use {event:'chat', date:iso string}. That's fine.
+// We keep chat draft text private in AKV via the shared draft controller.
+// Syncdb draft rows are still used for lightweight composing presence only,
+// so collaborators see "is writing..." without receiving draft content.
 
-import {
-  CSSProperties,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { useDebouncedCallback } from "use-debounce";
-import { CSS, redux, useIsMountedRef } from "@cocalc/frontend/app-framework";
+import { CSS, redux } from "@cocalc/frontend/app-framework";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
@@ -26,12 +19,8 @@ import { SubmitMentionsRef } from "./types";
 
 interface Props {
   on_send: (value: string) => void;
-  onChange: (string) => void;
+  onChange: (value: string) => void;
   syncdb: ImmerDB | undefined;
-  // date:
-  //   - ms since epoch of when this message was first sent
-  //   - set to 0 for editing new message
-  //   - set to -time (negative time) to respond to thread, where time is the time of ROOT message of the the thread.
   date: number;
   input?: string;
   on_paste?: (e) => void;
@@ -67,225 +56,62 @@ export default function ChatInput({
   style,
   submitMentionsRef,
   syncdb,
-  moveCursorToEndOfLine,
   autoGrowMaxHeight,
 }: Props) {
   const intl = useIntl();
-  const onSendRef = useRef<Function>(on_send);
-  useEffect(() => {
-    onSendRef.current = on_send;
-  }, [on_send]);
   const { project_id } = useFrameContext();
   const sender_id = useMemo(
     () => redux.getStore("account").get_account_id(),
     [],
   );
   const controlRef = useRef<any>(null);
-  const [input, setInput] = useState<string>("");
+  const [input, setInput] = useState<string>(propsInput ?? "");
   const isFocusedRef = useRef<boolean>(false);
-  const pendingRemoteInputRef = useRef<string | null>(null);
-  const pendingRemoteAtRef = useRef<number>(0);
-  const lastLocalEditAtRef = useRef<number>(0);
-  const allowFocusedUpdateRef = useRef<boolean>(false);
-  const clearPendingAtRef = useRef<number>(0);
-  const CLEAR_PENDING_MS = 5000;
-
-  const getDraftRecord = useCallback(() => {
-    const rec = syncdb?.get_one({
-      event: "draft",
-      sender_id,
-      date,
-    });
-    if (rec == null) return undefined;
-    return rec as any;
-  }, [syncdb, sender_id, date]);
-
-  const currentInputRef = useRef<string>(input);
-  const saveOnUnmountRef = useRef<boolean>(true);
-  const isMountedRef = useIsMountedRef();
-  const lastSavedRef = useRef<string>(input);
-  const saveChat = useDebouncedCallback(
-    (input) => {
-      if (
-        syncdb == null ||
-        (!isMountedRef.current && !saveOnUnmountRef.current)
-      ) {
-        return;
-      }
-      onChange(input);
-      lastSavedRef.current = input;
-      // also save to syncdb, so we have undo, etc.
-      // but definitely don't save (thus updating active) if
-      // the input didn't really change, since we use active for
-      // showing that a user is writing to other users.
-      const input0 = getDraftRecord()?.input;
-      if (input0 != input) {
-        if (input0 == null && !input) {
-          // DO NOT save if you haven't written a draft before, and
-          // the draft we would save here would be empty, since that
-          // would lead to what humans would consider false notifications.
-          return;
-        }
-        syncdb.set({
-          event: "draft",
-          sender_id,
-          input,
-          date,
-          // date is a primary key so can't use iots to represent when
-          // user last edited this; use other date for editing past chats.
-          active: Date.now(),
-        });
-        syncdb.commit();
-      }
-    },
-    SAVE_DEBOUNCE_MS,
-    {
-      leading: false,
-      trailing: true,
-    },
-  );
 
   useEffect(() => {
-    const draft = getDraftRecord();
-    const dbInput = draft?.input;
-    const remoteActive = Number(draft?.active ?? 0);
-    // take version from syncdb if it is there; otherwise, version from input prop.
-    // the db version is used when you refresh your browser while editing, or scroll up and down
-    // thus unmounting and remounting the currently editing message (due to virtualization).
-    // See https://github.com/sagemathinc/cocalc/issues/6415
-    const input = (dbInput ?? propsInput) ?? "";
-    const current = currentInputRef.current ?? "";
-    if (clearPendingAtRef.current) {
-      if (input === "") {
-        clearPendingAtRef.current = 0;
-      } else if (Date.now() - clearPendingAtRef.current < CLEAR_PENDING_MS) {
-        return;
-      } else {
-        clearPendingAtRef.current = 0;
-      }
+    const next = propsInput ?? "";
+    if (next !== input) {
+      setInput(next);
     }
-    const isClearing = input === "" && current !== "";
-    if (isClearing) {
-      saveChat.cancel();
-      pendingRemoteInputRef.current = null;
-      pendingRemoteAtRef.current = 0;
-    }
-    const focused = isFocusedRef.current;
-    const shouldPrefill =
-      current.trim().length === 0 && input.trim().length > 0;
-    const shouldClear = input === "" && current !== "";
-    if (focused && input !== current && !shouldPrefill && !shouldClear) {
-      if (allowFocusedUpdateRef.current) {
-        allowFocusedUpdateRef.current = false;
-        controlRef.current?.allowNextValueUpdateWhileFocused?.();
-      } else {
-        if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
-          return;
-        }
-        pendingRemoteInputRef.current = input;
-        pendingRemoteAtRef.current = remoteActive || Date.now();
-        return;
-      }
-    }
-    if (focused && input !== current) {
-      controlRef.current?.allowNextValueUpdateWhileFocused?.();
-    }
-    setInput(input);
-    currentInputRef.current = input;
-    lastSavedRef.current = input;
-    if (input?.trim() && moveCursorToEndOfLine) {
-      // have to wait until it's all rendered -- i hate code like this...
-      for (const n of [1, 10, 50]) {
-        setTimeout(() => {
-          controlRef.current?.moveCursorToEndOfLine();
-        }, n);
-      }
-    }
-  }, [date, sender_id, propsInput, getDraftRecord, saveChat]);
+  }, [propsInput, input]);
 
-  useEffect(() => {
-    return () => {
-      if (!isMountedRef.current && !saveOnUnmountRef.current) {
-        return;
-      }
-      // save before unmounting.  This is very important since if a new reply comes in,
-      // then the input component gets unmounted, then remounted BELOW the reply.
-      // Note: it is still slightly annoying, due to loss of focus... however, data
-      // loss is NOT ok, whereas loss of focus is.
-      const input = currentInputRef.current;
-      if (!input || syncdb == null) {
-        return;
-      }
-      try {
-        if (
-          syncdb.get_one({
-            event: "draft",
-            sender_id,
-            date,
-          }) == null
-        ) {
-          return;
-        }
-      } catch {
-        // sometimes syncdb.get_one throws
-        return;
-      }
+  const savePresence = useDebouncedCallback(
+    (value: string) => {
+      if (!syncdb) return;
+      const composing = value.trim().length > 0;
       syncdb.set({
         event: "draft",
         sender_id,
-        input,
         date,
-        active: Date.now(),
+        // keep content private; this row is for composing presence only.
+        input: "",
+        composing,
+        active: composing ? Date.now() : 0,
       });
       syncdb.commit();
-    };
-  }, [syncdb, sender_id, date]);
+    },
+    SAVE_DEBOUNCE_MS,
+    { leading: false, trailing: true },
+  );
 
   useEffect(() => {
-    if (syncdb == null) return;
-    const onSyncdbChange = () => {
-      const sender_id = redux.getStore("account").get_account_id();
-      const x = syncdb.get_one({
-        event: "draft",
-        sender_id,
-        date,
-      });
-      const input = (x as any)?.input ?? "";
-      const remoteActive = Number((x as any)?.active ?? 0);
-      if (clearPendingAtRef.current) {
-        if (input === "") {
-          clearPendingAtRef.current = 0;
-        } else if (Date.now() - clearPendingAtRef.current < CLEAR_PENDING_MS) {
-          return;
-        } else {
-          clearPendingAtRef.current = 0;
-        }
-      }
-      if (isFocusedRef.current && input !== currentInputRef.current) {
-        if (allowFocusedUpdateRef.current) {
-          allowFocusedUpdateRef.current = false;
-          controlRef.current?.allowNextValueUpdateWhileFocused?.();
-        } else {
-          if (remoteActive && remoteActive <= lastLocalEditAtRef.current) {
-            return;
-          }
-          // Defer draft updates while focused to avoid overwriting local typing.
-          pendingRemoteInputRef.current = input;
-          pendingRemoteAtRef.current = remoteActive || Date.now();
-          return;
-        }
-      }
-      if (input != lastSavedRef.current) {
-        setInput(input);
-        currentInputRef.current = input;
-        lastSavedRef.current = input;
-      }
-    };
-    syncdb.on("change", onSyncdbChange);
     return () => {
-      syncdb.removeListener("change", onSyncdbChange);
+      savePresence.cancel();
     };
-  }, [syncdb, sender_id, date]);
+  }, [savePresence]);
+
+  const publishNotComposing = () => {
+    if (!syncdb) return;
+    syncdb.set({
+      event: "draft",
+      sender_id,
+      date,
+      input: "",
+      composing: false,
+      active: 0,
+    });
+    syncdb.commit();
+  };
 
   function getPlaceholder(): string {
     if (placeholder != null) return placeholder;
@@ -297,9 +123,7 @@ export default function ChatInput({
         id: "chat.input.placeholder",
         defaultMessage: "Message (@mention)...",
       },
-      {
-        have_llm,
-      },
+      { have_llm },
     );
   }
 
@@ -315,20 +139,7 @@ export default function ChatInput({
       }}
       onBlur={() => {
         isFocusedRef.current = false;
-        if (pendingRemoteInputRef.current != null) {
-          const pending = pendingRemoteInputRef.current;
-          const pendingAt = pendingRemoteAtRef.current;
-          pendingRemoteInputRef.current = null;
-          pendingRemoteAtRef.current = 0;
-          clearPendingAtRef.current = 0;
-          if (lastLocalEditAtRef.current > pendingAt) {
-            saveChat.flush?.();
-          } else if (pending !== currentInputRef.current) {
-            setInput(pending);
-            currentInputRef.current = pending;
-            lastSavedRef.current = pending;
-          }
-        }
+        savePresence.flush?.();
         onBlur?.();
       }}
       cacheId={cacheId}
@@ -337,30 +148,18 @@ export default function ChatInput({
       enableUpload={true}
       enableMentions={true}
       submitMentionsRef={submitMentionsRef}
-      onChange={(input) => {
-        currentInputRef.current = input;
-        lastLocalEditAtRef.current = Date.now();
-        /* BUG: in Markdown mode this stops getting
-        called after you paste in an image.  It works
-        fine in Slate/Text mode. See
-        https://github.com/sagemathinc/cocalc/issues/7728
-        */
-        setInput(input);
-        saveChat(input);
+      onChange={(value) => {
+        setInput(value);
+        onChange(value);
+        savePresence(value);
       }}
-      onShiftEnter={(input) => {
-        saveChat.cancel();
+      onShiftEnter={(value) => {
+        savePresence.cancel();
         controlRef.current?.allowNextValueUpdateWhileFocused?.();
         setInput("");
-        currentInputRef.current = "";
-        lastSavedRef.current = "";
-        lastLocalEditAtRef.current = Date.now();
-        pendingRemoteInputRef.current = null;
-        pendingRemoteAtRef.current = 0;
-        clearPendingAtRef.current = Date.now();
-        saveChat("");
-        saveChat.flush?.();
-        on_send(input);
+        onChange("");
+        publishNotComposing();
+        on_send(value);
       }}
       height={height}
       autoGrowMaxHeight={autoGrowMaxHeight}
@@ -368,16 +167,6 @@ export default function ChatInput({
       fontSize={fontSize}
       hideHelp={hideHelp}
       style={style}
-      onUndo={() => {
-        saveChat.cancel();
-        allowFocusedUpdateRef.current = true;
-        syncdb?.undo();
-      }}
-      onRedo={() => {
-        saveChat.cancel();
-        allowFocusedUpdateRef.current = true;
-        syncdb?.redo();
-      }}
       editBarStyle={editBarStyle}
       overflowEllipsis={true}
       hideModeSwitch={!hasInput}
@@ -390,3 +179,4 @@ export default function ChatInput({
     />
   );
 }
+

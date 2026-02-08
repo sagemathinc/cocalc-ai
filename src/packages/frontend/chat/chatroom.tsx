@@ -31,6 +31,7 @@ import type { ThreadIndexEntry } from "./message-cache";
 import { markChatAsReadIfUnseen, toMsString } from "./utils";
 import { COMBINED_FEED_KEY, useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
+import { useChatComposerDraft } from "./use-chat-composer-draft";
 import * as immutable from "immutable";
 import { useChatThreadSelection } from "./thread-selection";
 import { dateValue } from "./access";
@@ -127,8 +128,6 @@ export function ChatPanel({
   if (IS_MOBILE) {
     variant = "compact";
   }
-  const [input, setInput] = useState("");
-  const hasInput = input.trim().length > 0;
   const scrollToIndex = getDescValue(desc, "data-scrollToIndex") ?? null;
   const scrollToDate = getDescValue(desc, "data-scrollToDate") ?? null;
   const fragmentId = getDescValue(desc, "data-fragmentId") ?? null;
@@ -200,6 +199,14 @@ export function ChatPanel({
     return 0;
   }, [singleThreadView, selectedThreadDate]);
 
+  const { input, setInput, clearInput } = useChatComposerDraft({
+    account_id,
+    project_id,
+    path,
+    composerDraftKey,
+  });
+  const hasInput = input.trim().length > 0;
+
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
 
   const combinedFeedIndex = useMemo(() => {
@@ -249,20 +256,6 @@ export function ChatPanel({
       setComposerTargetKey(threads[0].key);
     }
   }, [isCombinedFeedSelected, threads, composerTargetKey]);
-
-  useEffect(() => {
-    if (!actions?.syncdb || !account_id) return;
-    const fetchDraft = (date: number) =>
-      actions.syncdb
-        ?.get_one({
-          event: "draft",
-          sender_id: account_id,
-          date,
-        })
-        ?.get?.("input") ?? "";
-    let nextInput = fetchDraft(composerDraftKey);
-    setInput(nextInput);
-  }, [actions?.syncdb, account_id, composerDraftKey]);
 
   const mark_as_read = () => markChatAsReadIfUnseen(project_id, path);
 
@@ -348,7 +341,7 @@ export function ChatPanel({
       scrollToBottomRef.current?.(true);
     }, 100);
     actions.deleteDraft(composerDraftKey);
-    setInput("");
+    void clearInput();
   }
   function on_send(): void {
     sendMessage();

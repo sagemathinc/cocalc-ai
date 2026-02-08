@@ -26,8 +26,11 @@ export default function Composing({ projectId, path, accountId, userMap }) {
       continue;
     }
     const active = record?.get?.("active") ?? 0;
+    const composing = record?.get?.("composing");
     const input = record?.get?.("input") ?? "";
-    if (active < cutoff || !input?.trim()) {
+    const hasContent = typeof input === "string" && input.trim().length > 0;
+    const isComposing = composing === true || hasContent;
+    if (active < cutoff || !isComposing) {
       continue;
     }
     v.push(
