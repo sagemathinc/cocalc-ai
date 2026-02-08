@@ -331,14 +331,46 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     setElement({ markdownCandidate: undefined } as any);
   }, [setElement]);
 
+  const focusAfterCodeBlock = useCallback(() => {
+    const focusNow = () => {
+      const after = Editor.after(editor, elementPath);
+      const point = after ?? Editor.end(editor, elementPath);
+      Transforms.select(editor, { anchor: point, focus: point });
+      ReactEditor.focus(editor);
+    };
+    if (typeof window === "undefined") {
+      focusNow();
+      return;
+    }
+    window.setTimeout(focusNow, 0);
+  }, [editor, elementPath]);
+
+  const focusAtPathStart = useCallback(
+    (path: number[]) => {
+      const focusNow = () => {
+        const point = Editor.start(editor, path);
+        Transforms.select(editor, { anchor: point, focus: point });
+        ReactEditor.focus(editor);
+      };
+      if (typeof window === "undefined") {
+        focusNow();
+        return;
+      }
+      window.setTimeout(focusNow, 0);
+    },
+    [editor],
+  );
+
   const convertMarkdownCandidate = useCallback(() => {
     const markdown = codeValue ?? "";
     const doc = markdown_to_slate(markdown, true);
+    const insertPath = [...elementPath];
     Editor.withoutNormalizing(editor, () => {
       Transforms.removeNodes(editor, { at: elementPath });
       Transforms.insertNodes(editor, doc as any, { at: elementPath });
     });
-  }, [editor, codeValue, elementPath]);
+    focusAtPathStart(insertPath);
+  }, [editor, codeValue, elementPath, focusAtPathStart]);
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -466,6 +498,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                     e.preventDefault();
                     e.stopPropagation();
                     dismissMarkdownCandidate();
+                    focusAfterCodeBlock();
                   }}
                 >
                   Code Block
@@ -481,6 +514,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                       setInfo(info);
                       setElement({ info } as any);
                       dismissMarkdownCandidate();
+                      focusAfterCodeBlock();
                     }}
                   >
                     {popularGuess.label}
