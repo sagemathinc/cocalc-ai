@@ -48,6 +48,21 @@ const COMPRESS_THRESHOLD_BYTES = 64 * 1024;
 const FILE_LINK_GUIDANCE =
   "When referencing workspace files, output markdown links relative to the project root so they stay clickable in CoCalc, e.g., foo.py -> [foo.py](./foo.py) (no backticks around the link). For images use ![](./image.png).";
 
+function redactArgsForLog(args: string[]): string {
+  const out = [...args];
+  for (let i = 0; i < out.length - 1; i++) {
+    if (out[i] !== "-e") continue;
+    const raw = out[i + 1];
+    const j = raw.indexOf("=");
+    if (j === -1) continue;
+    const key = raw.slice(0, j);
+    if (/(KEY|TOKEN|SECRET|PASSWORD)/i.test(key)) {
+      out[i + 1] = `${key}=***`;
+    }
+  }
+  return argsJoin(out);
+}
+
 // JSONL event shapes from codex exec (--experimental-json)
 type ThreadEvent =
   | { type: "thread.started"; thread_id: string }
@@ -138,7 +153,7 @@ export class CodexExecAgent implements AcpAgent {
       cmd = spawned.cmd;
       logger.debug("codex-exec: spawning via project container", {
         cmd,
-        args: argsJoin(spawned.args),
+        args: redactArgsForLog(spawned.args),
         cwd: spawned.cwd ?? cwd,
       });
     } else {

@@ -26,6 +26,9 @@ export const system = {
   clearAdminAssignedMembership: authFirst,
   listExternalCredentials: authFirst,
   revokeExternalCredential: authFirst,
+  setOpenAiApiKey: authFirst,
+  deleteOpenAiApiKey: authFirst,
+  getOpenAiApiKeyStatus: authFirst,
   getCodexPaymentSource: authFirst,
 
   adminSalesloftSync: authFirst,
@@ -60,6 +63,12 @@ export interface CodexPaymentSourceInfo {
   hasAccountApiKey: boolean;
   hasSiteApiKey: boolean;
   sharedHomeMode: "fallback" | "prefer" | "always";
+  project_id?: string;
+}
+
+export interface OpenAiApiKeyStatus {
+  account?: ExternalCredentialInfo;
+  project?: ExternalCredentialInfo;
   project_id?: string;
 }
 
@@ -194,6 +203,31 @@ export interface System {
     account_id?: string;
     id: string;
   }) => Promise<{ revoked: boolean }>;
+
+  setOpenAiApiKey: (opts: {
+    account_id?: string;
+    api_key: string;
+    project_id?: string;
+  }) => Promise<{
+    id: string;
+    created: boolean;
+    scope: "account" | "project";
+    project_id?: string;
+  }>;
+
+  deleteOpenAiApiKey: (opts: {
+    account_id?: string;
+    project_id?: string;
+  }) => Promise<{
+    revoked: boolean;
+    scope: "account" | "project";
+    project_id?: string;
+  }>;
+
+  getOpenAiApiKeyStatus: (opts: {
+    account_id?: string;
+    project_id?: string;
+  }) => Promise<OpenAiApiKeyStatus>;
 
   getCodexPaymentSource: (opts: {
     account_id?: string;

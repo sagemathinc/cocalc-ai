@@ -4,6 +4,8 @@ import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
 import {
+  getAccountOpenAiApiKeyFromRegistry,
+  getProjectOpenAiApiKeyFromRegistry,
   hasSubscriptionAuthInRegistry,
   pullSubscriptionAuthFromRegistry,
   touchSubscriptionAuthInRegistry,
@@ -202,19 +204,6 @@ export async function resolveCodexAuthRuntime({
     return sharedHomeRuntime({ projectId, accountId, sharedHome });
   }
 
-  const projectKeys = parseMap(
-    process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEYS_JSON,
-  );
-  const accountKeys = parseMap(
-    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
-  );
-  const projectKey =
-    projectKeys[projectId] ?? process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY;
-  const accountKey =
-    (accountId ? accountKeys[accountId] : undefined) ??
-    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY;
-  const siteKey = process.env.COCALC_CODEX_AUTH_SITE_OPENAI_KEY;
-
   if (accountId) {
     const codexHome = resolveSubscriptionCodexHome(accountId);
     const authFile = join(codexHome, "auth.json");
@@ -265,6 +254,49 @@ export async function resolveCodexAuthRuntime({
       return subscriptionRuntime({ projectId, accountId, codexHome });
     }
   }
+
+  const projectRegistryKey = await getProjectOpenAiApiKeyFromRegistry({
+    projectId,
+  });
+  if (projectRegistryKey) {
+    return {
+      source: "project-api-key",
+      contextId: hashText(
+        `project-key:${projectId}:${hashText(projectRegistryKey)}`,
+      ).slice(0, 16),
+      env: { OPENAI_API_KEY: projectRegistryKey },
+    };
+  }
+
+  if (accountId) {
+    const accountRegistryKey = await getAccountOpenAiApiKeyFromRegistry({
+      projectId,
+      accountId,
+    });
+    if (accountRegistryKey) {
+      return {
+        source: "account-api-key",
+        contextId: hashText(
+          `account-key:${projectId}:${accountId}:${hashText(accountRegistryKey)}`,
+        ).slice(0, 16),
+        env: { OPENAI_API_KEY: accountRegistryKey },
+      };
+    }
+  }
+
+  // Backward compatibility: env-based account/project key injection.
+  const projectKeys = parseMap(
+    process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEYS_JSON,
+  );
+  const accountKeys = parseMap(
+    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
+  );
+  const projectKey =
+    projectKeys[projectId] ?? process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY;
+  const accountKey =
+    (accountId ? accountKeys[accountId] : undefined) ??
+    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY;
+  const siteKey = process.env.COCALC_CODEX_AUTH_SITE_OPENAI_KEY;
 
   if (projectKey) {
     return {

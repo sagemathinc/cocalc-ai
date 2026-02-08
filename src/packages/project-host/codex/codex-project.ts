@@ -41,6 +41,10 @@ type OptionalBindMount = {
   readOnly?: boolean;
 };
 
+const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
+const API_KEY_PROVIDER_CONFIG = `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false}`;
+const API_KEY_PROVIDER_SELECT = `model_provider="${API_KEY_PROVIDER_ID}"`;
+
 function codexContainerName(projectId: string, contextId: string): string {
   return `codex-${projectId}-${contextId.slice(0, 12)}`;
 }
@@ -228,7 +232,12 @@ async function ensureContainer({
   if (extraEnv) {
     for (const key in extraEnv) {
       if (typeof extraEnv[key] === "string") {
-        env[key] = `${extraEnv[key]}`;
+        const value = `${extraEnv[key]}`;
+        if (key === "OPENAI_API_KEY" && !value.trim()) {
+          // Do not let an empty per-turn env override a resolved auth key.
+          continue;
+        }
+        env[key] = value;
       }
     }
   }
@@ -329,6 +338,29 @@ export async function spawnCodexInProjectContainer({
 }: SpawnCodexInProjectContainerOptions): Promise<SpawnCodexInProjectContainerResult> {
   const authRuntime =
     explicitAuthRuntime ?? (await resolveCodexAuthRuntime({ projectId, accountId }));
+  let codexArgs = args;
+  if (
+    authRuntime.source === "project-api-key" ||
+    authRuntime.source === "account-api-key" ||
+    authRuntime.source === "site-api-key"
+  ) {
+    // Codex's built-in OpenAI provider expects auth from auth.json by default.
+    // For key-based auth in project-host, force a provider that reads
+    // OPENAI_API_KEY from env so turns can run without mutating user auth.json.
+    codexArgs = [
+      ...codexArgs,
+      "--config",
+      API_KEY_PROVIDER_CONFIG,
+      "--config",
+      API_KEY_PROVIDER_SELECT,
+    ];
+    logger.debug("codex project: forcing API-key provider config", {
+      projectId,
+      accountId,
+      source: authRuntime.source,
+      provider: API_KEY_PROVIDER_ID,
+    });
+  }
   if (explicitAuthRuntime) {
     logger.debug("using explicit codex auth runtime", {
       projectId,
@@ -357,10 +389,14 @@ export async function spawnCodexInProjectContainer({
     "HOME=/root",
   ];
   const execEnv = { ...authRuntime.env, ...toStringEnv(extraEnv) };
+  if (!execEnv.OPENAI_API_KEY?.trim()) {
+    // Avoid overriding runtime key selection with an empty per-turn value.
+    delete execEnv.OPENAI_API_KEY;
+  }
   for (const key in execEnv) {
     execArgs.push("-e", `${key}=${execEnv[key]}`);
   }
-  execArgs.push(info.name, info.codexPath, ...args);
+  execArgs.push(info.name, info.codexPath, ...codexArgs);
   logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
   const proc = spawn("podman", execArgs, {
     stdio: ["pipe", "pipe", "pipe"],

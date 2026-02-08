@@ -12,10 +12,13 @@ import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "@cocalc/backend/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
+  getExternalCredential,
   hasExternalCredential,
   listExternalCredentials as listExternalCredentialsStore,
   revokeExternalCredential as revokeExternalCredentialStore,
+  upsertExternalCredential,
 } from "@cocalc/server/external-credentials/store";
+import isCollaborator from "@cocalc/server/projects/is-collaborator";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -283,6 +286,40 @@ function resolveSharedHomeMode(): "fallback" | "prefer" | "always" {
   return "fallback";
 }
 
+const CODEX_SUBSCRIPTION_KIND = "codex-subscription-auth-json";
+const OPENAI_API_KEY_KIND = "openai-api-key";
+
+function toExternalCredentialInfo(
+  credential:
+    | Awaited<ReturnType<typeof getExternalCredential>>
+    | undefined,
+) {
+  if (!credential) return undefined;
+  return {
+    id: credential.id,
+    provider: credential.provider,
+    kind: credential.kind,
+    scope: credential.scope,
+    owner_account_id: credential.owner_account_id,
+    project_id: credential.project_id,
+    organization_id: credential.organization_id,
+    metadata: credential.metadata,
+    created: credential.created,
+    updated: credential.updated,
+    revoked: credential.revoked,
+    last_used: credential.last_used,
+  };
+}
+
+async function assertProjectCollaborator(
+  account_id: string,
+  project_id: string,
+): Promise<void> {
+  if (!(await isCollaborator({ account_id, project_id }))) {
+    throw Error("user must be a collaborator on project");
+  }
+}
+
 export async function listExternalCredentials({
   account_id,
   provider,
@@ -328,6 +365,151 @@ export async function revokeExternalCredential({
   return { revoked };
 }
 
+export async function setOpenAiApiKey({
+  account_id,
+  api_key,
+  project_id,
+}: {
+  account_id?: string;
+  api_key: string;
+  project_id?: string;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const key = `${api_key ?? ""}`.trim();
+  if (!key) {
+    throw Error("api_key must not be empty");
+  }
+
+  if (project_id) {
+    await assertProjectCollaborator(account_id, project_id);
+    const result = await upsertExternalCredential({
+      selector: {
+        provider: "openai",
+        kind: OPENAI_API_KEY_KIND,
+        scope: "project",
+        project_id,
+      },
+      payload: key,
+      metadata: {
+        source: "account-settings",
+        actor_account_id: account_id,
+      },
+    });
+    return { ...result, scope: "project" as const, project_id };
+  }
+
+  const result = await upsertExternalCredential({
+    selector: {
+      provider: "openai",
+      kind: OPENAI_API_KEY_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    payload: key,
+    metadata: {
+      source: "account-settings",
+      actor_account_id: account_id,
+    },
+  });
+  return { ...result, scope: "account" as const };
+}
+
+export async function deleteOpenAiApiKey({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id?: string;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+
+  if (project_id) {
+    await assertProjectCollaborator(account_id, project_id);
+    const existing = await getExternalCredential({
+      selector: {
+        provider: "openai",
+        kind: OPENAI_API_KEY_KIND,
+        scope: "project",
+        project_id,
+      },
+      touchLastUsed: false,
+    });
+    if (!existing) {
+      return { revoked: false, scope: "project" as const, project_id };
+    }
+    const revoked = await revokeExternalCredentialStore({
+      id: existing.id,
+    });
+    return { revoked, scope: "project" as const, project_id };
+  }
+
+  const existing = await getExternalCredential({
+    selector: {
+      provider: "openai",
+      kind: OPENAI_API_KEY_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    touchLastUsed: false,
+  });
+  if (!existing) {
+    return { revoked: false, scope: "account" as const };
+  }
+  const revoked = await revokeExternalCredentialStore({
+    id: existing.id,
+    owner_account_id: account_id,
+  });
+  return { revoked, scope: "account" as const };
+}
+
+export async function getOpenAiApiKeyStatus({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id?: string;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  if (project_id) {
+    await assertProjectCollaborator(account_id, project_id);
+  }
+
+  const [accountCredential, projectCredential] = await Promise.all([
+    getExternalCredential({
+      selector: {
+        provider: "openai",
+        kind: OPENAI_API_KEY_KIND,
+        scope: "account",
+        owner_account_id: account_id,
+      },
+      touchLastUsed: false,
+    }),
+    project_id
+      ? getExternalCredential({
+          selector: {
+            provider: "openai",
+            kind: OPENAI_API_KEY_KIND,
+            scope: "project",
+            project_id,
+          },
+          touchLastUsed: false,
+        })
+      : Promise.resolve(undefined),
+  ]);
+
+  return {
+    account: toExternalCredentialInfo(accountCredential),
+    project: toExternalCredentialInfo(projectCredential),
+    project_id,
+  };
+}
+
 export async function getCodexPaymentSource({
   account_id,
   project_id,
@@ -344,20 +526,49 @@ export async function getCodexPaymentSource({
   const accountKeys = parseMap(
     process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
   );
+  if (project_id) {
+    await assertProjectCollaborator(account_id, project_id);
+  }
+
+  const hasSiteApiKey = !!process.env.COCALC_CODEX_AUTH_SITE_OPENAI_KEY;
+  const [hasSubscription, hasProjectApiKeyStored, hasAccountApiKeyStored] =
+    await Promise.all([
+      hasExternalCredential({
+        selector: {
+          provider: "openai",
+          kind: CODEX_SUBSCRIPTION_KIND,
+          scope: "account",
+          owner_account_id: account_id,
+        },
+      }),
+      project_id
+        ? hasExternalCredential({
+            selector: {
+              provider: "openai",
+              kind: OPENAI_API_KEY_KIND,
+              scope: "project",
+              project_id,
+            },
+          })
+        : Promise.resolve(false),
+      hasExternalCredential({
+        selector: {
+          provider: "openai",
+          kind: OPENAI_API_KEY_KIND,
+          scope: "account",
+          owner_account_id: account_id,
+        },
+      }),
+    ]);
+
   const hasProjectApiKey =
+    hasProjectApiKeyStored ||
     !!(project_id && projectKeys[project_id]) ||
     !!(project_id && process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY);
   const hasAccountApiKey =
-    !!accountKeys[account_id] || !!process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY;
-  const hasSiteApiKey = !!process.env.COCALC_CODEX_AUTH_SITE_OPENAI_KEY;
-  const hasSubscription = await hasExternalCredential({
-    selector: {
-      provider: "openai",
-      kind: "codex-subscription-auth-json",
-      scope: "account",
-      owner_account_id: account_id,
-    },
-  });
+    hasAccountApiKeyStored ||
+    !!accountKeys[account_id] ||
+    !!process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY;
   const sharedHomeMode = resolveSharedHomeMode();
 
   let source:

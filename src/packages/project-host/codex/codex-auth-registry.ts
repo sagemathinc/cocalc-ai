@@ -7,11 +7,12 @@ import { getLocalHostId } from "../sqlite/hosts";
 import { ensureCodexCredentialsStoreFile } from "./codex-auth";
 
 const logger = getLogger("project-host:codex-auth-registry");
-const CREDENTIAL_SELECTOR = {
+const SUBSCRIPTION_CREDENTIAL_SELECTOR = {
   provider: "openai",
   kind: "codex-subscription-auth-json",
   scope: "account" as const,
 };
+const OPENAI_API_KEY_KIND = "openai-api-key";
 
 type PullResult = {
   pulled: boolean;
@@ -73,7 +74,7 @@ export async function pushSubscriptionAuthToRegistry({
         {
           project_id: projectId,
           selector: {
-            ...CREDENTIAL_SELECTOR,
+            ...SUBSCRIPTION_CREDENTIAL_SELECTOR,
             owner_account_id: accountId,
           },
           payload,
@@ -121,7 +122,7 @@ export async function hasSubscriptionAuthInRegistry({
         {
           project_id: projectId,
           selector: {
-            ...CREDENTIAL_SELECTOR,
+            ...SUBSCRIPTION_CREDENTIAL_SELECTOR,
             owner_account_id: accountId,
           },
         },
@@ -160,7 +161,7 @@ export async function touchSubscriptionAuthInRegistry({
         {
           project_id: projectId,
           selector: {
-            ...CREDENTIAL_SELECTOR,
+            ...SUBSCRIPTION_CREDENTIAL_SELECTOR,
             owner_account_id: accountId,
           },
         },
@@ -204,7 +205,7 @@ export async function pullSubscriptionAuthFromRegistry({
         {
           project_id: projectId,
           selector: {
-            ...CREDENTIAL_SELECTOR,
+            ...SUBSCRIPTION_CREDENTIAL_SELECTOR,
             owner_account_id: accountId,
           },
         },
@@ -232,4 +233,74 @@ export async function pullSubscriptionAuthFromRegistry({
     });
     return { pulled: false };
   }
+}
+
+async function getCredentialPayloadFromRegistry({
+  projectId,
+  selector,
+}: {
+  projectId: string;
+  selector: {
+    provider: string;
+    kind: string;
+    scope: "account" | "project";
+    owner_account_id?: string;
+    project_id?: string;
+  };
+}): Promise<string | undefined> {
+  const caller = getHubCaller();
+  if (!caller) return undefined;
+  try {
+    const result = await callHub({
+      ...caller,
+      name: "hosts.getExternalCredential",
+      args: [{ project_id: projectId, selector }],
+      timeout: 10_000,
+    });
+    const payload = result?.payload;
+    if (typeof payload !== "string") return undefined;
+    const trimmed = payload.trim();
+    return trimmed || undefined;
+  } catch (err) {
+    logger.debug("getCredentialPayloadFromRegistry failed", {
+      projectId,
+      selector,
+      err: `${err}`,
+    });
+    return undefined;
+  }
+}
+
+export async function getProjectOpenAiApiKeyFromRegistry({
+  projectId,
+}: {
+  projectId: string;
+}): Promise<string | undefined> {
+  return await getCredentialPayloadFromRegistry({
+    projectId,
+    selector: {
+      provider: "openai",
+      kind: OPENAI_API_KEY_KIND,
+      scope: "project",
+      project_id: projectId,
+    },
+  });
+}
+
+export async function getAccountOpenAiApiKeyFromRegistry({
+  projectId,
+  accountId,
+}: {
+  projectId: string;
+  accountId: string;
+}): Promise<string | undefined> {
+  return await getCredentialPayloadFromRegistry({
+    projectId,
+    selector: {
+      provider: "openai",
+      kind: OPENAI_API_KEY_KIND,
+      scope: "account",
+      owner_account_id: accountId,
+    },
+  });
 }
