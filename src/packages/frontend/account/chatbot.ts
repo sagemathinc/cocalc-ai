@@ -24,11 +24,19 @@ import {
   isUserDefinedModel,
 } from "@cocalc/util/db-schema/llm-utils";
 
+function isCodexModelId(account_id: string): boolean {
+  if (account_id === "codex-agent" || account_id === "openai-codex-agent") {
+    return true;
+  }
+  return account_id.includes("codex");
+}
+
 // we either check if the prefix is one of the known ones (used in some circumstances)
 // or if the account id is exactly one of the language models (more precise)
 export function isChatBot(account_id?: string): boolean {
   if (typeof account_id !== "string") return false;
   return (
+    isCodexModelId(account_id) ||
     LLM_USERNAMES[account_id] ||
     LANGUAGE_MODEL_PREFIXES.some((prefix) => account_id?.startsWith(prefix)) ||
     LANGUAGE_MODELS.some((model) => account_id === model) ||
@@ -40,6 +48,12 @@ export function isChatBot(account_id?: string): boolean {
 
 export function chatBotName(account_id?: string): string {
   if (typeof account_id !== "string") return "ChatBot";
+  if (isCodexModelId(account_id)) {
+    if (account_id === "codex-agent" || account_id === "openai-codex-agent") {
+      return "Codex Agent";
+    }
+    return `Codex Agent (${account_id})`;
+  }
   if (LLM_USERNAMES[account_id]) return LLM_USERNAMES[account_id];
   if (account_id.startsWith("chatgpt")) {
     return LLM_USERNAMES[account_id] ?? "ChatGPT";
