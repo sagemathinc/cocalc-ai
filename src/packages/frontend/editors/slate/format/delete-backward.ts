@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Range, Editor, Element, Path, Point, Text, Transforms } from "slate";
+import { Range, Editor, Element, Path, Point, Text, Transforms, Node } from "slate";
 import { isWhitespaceParagraph } from "../padding";
 
 const BACKWARD_DELETE_BLOCK_TYPES = new Set<string>([
@@ -36,15 +36,23 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
     mode: "lowest",
   });
   if (codeLineEntry != null) {
-    const [, linePath] = codeLineEntry;
+    const [lineNode, linePath] = codeLineEntry;
     const lineIndex = linePath[linePath.length - 1];
     if (selection.anchor.offset === 0) {
-      const lineText = Editor.string(editor, linePath);
-      if (lineText === "" && lineIndex > 0) {
+      if (lineIndex > 0) {
+        const lineText = Node.string(lineNode);
         const prevPath = Path.previous(linePath);
         Transforms.removeNodes(editor, { at: linePath });
         const prevEnd = Editor.end(editor, prevPath);
-        Transforms.select(editor, prevEnd);
+        if (lineText !== "") {
+          Transforms.insertText(editor, lineText, { at: prevEnd });
+        }
+        const nextPoint = {
+          path: prevEnd.path,
+          // Keep cursor at the join boundary (between old and inserted text).
+          offset: prevEnd.offset,
+        };
+        Transforms.select(editor, nextPoint);
         return true;
       }
     }
