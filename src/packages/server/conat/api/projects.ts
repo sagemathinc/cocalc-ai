@@ -512,3 +512,18 @@ export async function codexDeviceAuthCancel({
     "codex device auth is not implemented on central hub; call a project-host endpoint via project routing",
   );
 }
+
+export async function codexUploadAuthFile({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  filename?: string;
+  content: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error(
+    "codex auth-file upload is not implemented on central hub; call a project-host endpoint via project routing",
+  );
+}

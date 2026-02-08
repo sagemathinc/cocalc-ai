@@ -225,6 +225,31 @@ export interface HostSoftwareUpgradeResponse {
   }>;
 }
 
+export type ExternalCredentialScope =
+  | "account"
+  | "project"
+  | "organization"
+  | "site";
+
+export interface ExternalCredentialSelector {
+  provider: string;
+  kind: string;
+  scope: ExternalCredentialScope;
+  owner_account_id?: string;
+  project_id?: string;
+  organization_id?: string;
+}
+
+export interface ExternalCredentialRecord {
+  id: string;
+  payload: string;
+  metadata: Record<string, any>;
+  created: Date;
+  updated: Date;
+  revoked: Date | null;
+  last_used: Date | null;
+}
+
 export const hosts = {
   listHosts: authFirstRequireAccount,
   listHostProjects: authFirstRequireAccount,
@@ -249,6 +274,13 @@ export const hosts = {
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   updateCopyStatus: authFirstRequireHost,
+  hasExternalCredential: authFirstRequireHost,
+  getExternalCredential: authFirstRequireHost,
+  touchExternalCredential: authFirstRequireHost,
+  upsertExternalCredential: authFirstRequireHost,
+  getSiteOpenAiApiKey: authFirstRequireHost,
+  checkCodexSiteUsageAllowance: authFirstRequireHost,
+  recordCodexSiteUsage: authFirstRequireHost,
 };
 
 export interface HostConnectorUpgradeRequest {
@@ -316,6 +348,58 @@ export interface Hosts {
     status: ProjectCopyState;
     last_error?: string;
   }) => Promise<void>;
+  hasExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<boolean>;
+  getExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<ExternalCredentialRecord | undefined>;
+  touchExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<boolean>;
+  upsertExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+    payload: string;
+    metadata?: Record<string, any>;
+  }) => Promise<{ id: string; created: boolean }>;
+  getSiteOpenAiApiKey: (opts: {
+    host_id?: string;
+  }) => Promise<{
+    enabled: boolean;
+    has_api_key: boolean;
+    api_key?: string;
+  }>;
+  checkCodexSiteUsageAllowance: (opts: {
+    host_id?: string;
+    project_id: string;
+    account_id: string;
+    model?: string;
+  }) => Promise<{
+    allowed: boolean;
+    reason?: string;
+    window?: "5h" | "7d";
+    reset_in?: string;
+  }>;
+  recordCodexSiteUsage: (opts: {
+    host_id?: string;
+    project_id: string;
+    account_id: string;
+    model?: string;
+    path?: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_time_s: number;
+  }) => Promise<{
+    usage_units: number;
+  }>;
 
   createHost: (opts: {
     account_id?: string;

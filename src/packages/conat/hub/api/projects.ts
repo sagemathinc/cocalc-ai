@@ -88,6 +88,7 @@ export const projects = {
   codexDeviceAuthStart: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
+  codexUploadAuthFile: authFirstRequireAccount,
 };
 
 export type AddCollaborator =
@@ -443,4 +444,11 @@ export interface Projects {
     project_id: string;
     id: string;
   }) => Promise<{ id: string; canceled: boolean }>;
+
+  codexUploadAuthFile: (opts: {
+    account_id?: string;
+    project_id: string;
+    filename?: string;
+    content: string;
+  }) => Promise<{ ok: true; codexHome: string; bytes: number }>;
 }

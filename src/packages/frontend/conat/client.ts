@@ -73,6 +73,7 @@ const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.codexDeviceAuthStart",
   "projects.codexDeviceAuthStatus",
   "projects.codexDeviceAuthCancel",
+  "projects.codexUploadAuthFile",
 ]);
 
 export class ConatClient extends EventEmitter {

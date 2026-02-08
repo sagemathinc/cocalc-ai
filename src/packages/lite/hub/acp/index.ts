@@ -121,6 +121,7 @@ export class ChatStreamWriter {
   private threadId: string | null = null;
   private seq = 0;
   private finished = false;
+  private finishedBy?: "summary" | "error";
   private approverAccountId: string;
   private interruptedMessage?: string;
   private interruptNotified = false;
@@ -373,26 +374,29 @@ export class ChatStreamWriter {
       return;
     }
     if (payload.type === "summary") {
-      const latestMessage = getLatestMessageText(this.events);
-      const candidate =
-        (latestMessage && latestMessage.trim().length > 0
-          ? latestMessage
-          : payload.finalResponse) ??
-        this.interruptedMessage ??
-        this.content;
-      if (candidate != null) {
-        if (
-          this.content &&
-          this.content.length > 0 &&
-          candidate.length > 0 &&
-          candidate !== this.content &&
-          !candidate.startsWith(this.content)
-        ) {
-          // Multiple summaries can arrive; append new text if it doesn't already
-          // include the existing accumulated content.
-          this.content = `${this.content}${candidate}`;
-        } else {
-          this.content = candidate;
+      const finishedFromError = this.finishedBy === "error";
+      if (!finishedFromError) {
+        const latestMessage = getLatestMessageText(this.events);
+        const candidate =
+          (latestMessage && latestMessage.trim().length > 0
+            ? latestMessage
+            : payload.finalResponse) ??
+          this.interruptedMessage ??
+          this.content;
+        if (candidate != null) {
+          if (
+            this.content &&
+            this.content.length > 0 &&
+            candidate.length > 0 &&
+            candidate !== this.content &&
+            !candidate.startsWith(this.content)
+          ) {
+            // Multiple summaries can arrive; append new text if it doesn't already
+            // include the existing accumulated content.
+            this.content = `${this.content}${candidate}`;
+          } else {
+            this.content = candidate;
+          }
         }
       }
       if (payload.usage) {
@@ -405,6 +409,9 @@ export class ChatStreamWriter {
       }
       clearAcpPayloads(this.metadata);
       this.finished = true;
+      if (!finishedFromError) {
+        this.finishedBy = "summary";
+      }
       void this.timeTravel?.finalizeTurn(this.metadata.message_date);
       void this.persistLog();
       return;
@@ -413,6 +420,7 @@ export class ChatStreamWriter {
       this.content = `\n\n<span style='color:#b71c1c'>${payload.error}</span>\n\n`;
       clearAcpPayloads(this.metadata);
       this.finished = true;
+      this.finishedBy = "error";
       void this.timeTravel?.finalizeTurn(this.metadata.message_date);
       void this.persistLog();
     }

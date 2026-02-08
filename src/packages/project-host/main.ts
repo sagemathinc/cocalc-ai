@@ -11,7 +11,7 @@ import { URL } from "node:url";
 import express from "express";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
-import { account_id, setConatServer } from "@cocalc/backend/data";
+import { account_id, data as dataDir, setConatServer } from "@cocalc/backend/data";
 import {
   init as createConatServer,
   type ConatServer,
@@ -33,12 +33,15 @@ import { startReconciler } from "./reconcile";
 import { init as initAcp } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
+import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
+import { startCodexSubscriptionCacheGc } from "./codex/codex-subscription-cache-gc";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
 import { handleDaemonCli } from "./daemon";
 import { startCopyWorker } from "./pending-copies";
 import { startOnPremTunnel } from "./onprem-tunnel";
+import { startDataPermissionHardener } from "./data-permissions";
 
 const logger = getLogger("project-host:main");
 
@@ -170,6 +173,8 @@ export async function main(
     }),
   );
   initCodexProjectRunner();
+  initCodexSiteKeyGovernor();
+  const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   await initAcp(conatClient);
 
   // Minimal local persistence so DKV/state works (no external hub needed).
@@ -220,6 +225,7 @@ export async function main(
     port,
   });
   const stopReconciler = startReconciler();
+  const stopDataPermissionHardener = startDataPermissionHardener(dataDir);
 
   // file server must be started AFTER master registration, since it connects
   // to master to get rustic backup config.
@@ -242,6 +248,8 @@ export async function main(
     fsServer?.close?.();
     stopMasterRegistration?.();
     stopReconciler?.();
+    stopDataPermissionHardener?.();
+    stopCodexSubscriptionCacheGc?.();
     stopCopyWorker?.();
     stopOnPremTunnel?.();
   };

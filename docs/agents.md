@@ -1,80 +1,65 @@
 # Agent Architecture in CoCalc
 
-This document explains how AI agents (Codex/ACP-based) are wired into CoCalc in both single-user (cocalc-plus) and multiuser (project-host/podman) modes. It highlights communication flow, where containers are used, and how ACP is leveraged.
+This document explains the current Codex/ACP architecture used by CoCalc.
 
-## What ACP Is
+## Current Model
 
-Agent Client Protocol (ACP) is a JSON-RPC style protocol that lets an agent request tools such as terminal exec, file read/write, apply patches, and approvals. We embed our forked `codex-acp` as the agent runtime; CoCalc provides the tool adapters that enforce workspace scoping and auditing.
+CoCalc no longer runs a separate `codex-acp` runtime. We run upstream `codex` directly via `codex exec --experimental-json`, and stream events through the ACP chat pipeline.
 
 ## High-Level Flow
 
-user → frontend → ACP hub → agent process → tool adapters → workspace.
-
 ```mermaid
 flowchart TB
-    U(User) --> F[Frontend chat]
-    F --> C[Conat subject<br/>acp.project.<id>]
-    C --> H[ACP Hub<br/>project-host or plus]
-    H --> A[Agent codex-acp]
-    A -->|tool calls| T[Tool adapters]
-    T -->|files/exec| W[Workspace - local or podman]
-    T -->|approvals| P[Approval subjects]
-    H --> S[SyncDB, pub/sub chat log]
+    U[User] --> F[Frontend chat]
+    F --> C[Conat subject acp.project.<project_id>.api]
+    C --> H[ACP hub in lite/project-host]
+    H --> A[CodexExecAgent]
+    A --> X[upstream codex exec process]
+    X --> H
+    H --> S[SyncDB + ACP log store]
     S --> F
 ```
 
 ## Modes
 
-### cocalc-plus (local)
+### cocalc-plus (single-user)
 
-ACP hub and tools run inside the same process as the user. Exec runs on the host; files go through the hub’s adapters so every change is logged and diffed. Workspace roots are resolved against the user’s HOME.
+- ACP hub runs in-process.
+- `CodexExecAgent` can run codex on the local host environment.
+- Session persistence and chat logs are written through the same ACP/SyncDB pipeline.
 
-### Multiuser / podman (project-host)
+### launchpad / project-host (multi-user)
 
-ACP hub runs in project-host. Agents run inside a dedicated codex-acp container. Tool calls are proxied into the target project:
+- ACP hub runs on project-host.
+- `CodexExecAgent` uses project-host spawner hooks to run Codex in a podman runtime tied to the target workspace.
+- Each Codex runtime is keyed by project and auth context (subscription/project key/account key/site key/shared-home) to isolate collaborator auth state.
 
-- **Files**: go through `setContainerFileIO` (project-host/file-server) so only project-bound paths are accessible.
-- **Exec**: uses `sandboxExec` to spin up a lightweight podman container with the project rootfs mounted; runs even when the main project container is stopped, potentially with extra levels of sandboxing.
+## What ACP Handles
 
+ACP here is the request/streaming protocol between frontend and hub:
 
-```mermaid
-flowchart TD
-    U(User) --> F[Frontend chat]
-    F -->|acp.project.<id>| PH[Project-host ACP hub]
-    PH --> CA[Codex-acp container]
-    CA -->|tool| AD[Adapters]
-    AD -->|file| FS[Project file-server - bind/overlay]
-    AD -->|exec| SE[SandboxExec container run]
-    PH --> S[SyncDB/SQLite queue]
-    S --> F
-```
+- evaluate turns
+- stream status/output/errors/summary
+- interrupt requests
+- session fork and replay support
 
-## Containers for Agents
+It is not a `codex-acp` tool-call runtime in the current architecture.
 
-The agent acts as a sandboxed control plane with no direct access to project files or system configuration.
+## Transport and Persistence
 
+- Request transport: Conat API subjects (`acp.project.<project_id>.api`)
+- Streaming: incremental ACP payloads recorded to chat/AKV log stores
+- Replay/recovery: queued ACP payload support in lite sqlite
 
-- `codex-acp` runs in its own rootless podman container (image built via `src/packages/ai/acp/containers/codex.ts`).
-- Persistent state (sessions, auth tokens) is bind-mounted into the container.
-- Tool calls never touch host paths directly; all workspace access goes through adapters.
+## Security/Isolation Notes
 
-## Communication Details
-
-- **Transport:** Conat subjects (`acp.project.<project_id>.api` for requests; pub/sub for events).
-- **Approvals:** Per-account subjects; project-host forwards to codex-acp.
-- **Persistence:** Events are queued in SQLite/AKV and replayed after restarts; chat SyncDB stores the user-visible log.
-- **Concurrency:** API listeners process messages in parallel with a p-limit cap to avoid head-of-line blocking.
-
-## Security Notes
-
-- Workspace scoping is enforced in adapters (file IO via file-server; exec via sandboxExec). No direct filesystem access from the agent container.
-- Environment secrets: pass through controlled env/secret files; avoid exposing provider keys in process listings.
-- Optional dials (roadmap): read-only mounts, subset writable mounts, and network toggles for sandboxExec.
+- Users do not get direct shell access to the Codex runtime container.
+- Project-host resolves auth per turn and mounts only the selected Codex home/auth context.
+- OpenAI keys/subscription files are managed outside normal workspace file access paths.
 
 ## Quick References
 
-- ACP hub (lite/project-host): [src/packages/lite/hub/acp/index.ts](../packages/lite/hub/acp/index.ts)
-- Agent container builder: [src/packages/ai/acp/containers/codex.ts](../packages/ai/acp/containers/codex.ts)
-- Podman sandbox exec: [src/packages/project-runner/run/sandbox-exec.ts](../packages/project-runner/run/sandbox-exec.ts)
-- Conat ACP bridge: [src/packages/conat/ai/acp](../packages/conat/ai/acp)
-
+- ACP hub: [src/packages/lite/hub/acp/index.ts](../src/packages/lite/hub/acp/index.ts)
+- Codex exec agent: [src/packages/ai/acp/codex-exec.ts](../src/packages/ai/acp/codex-exec.ts)
+- Project-host codex spawner: [src/packages/project-host/codex/codex-project.ts](../src/packages/project-host/codex/codex-project.ts)
+- ACP Conat bridge/types: [src/packages/conat/ai/acp](../src/packages/conat/ai/acp)

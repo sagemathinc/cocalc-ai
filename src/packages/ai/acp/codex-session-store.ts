@@ -34,7 +34,16 @@ export function getSessionsRoot(): string | undefined {
 }
 
 async function walk(dir: string): Promise<string[]> {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err: any) {
+    // Fresh installs/new hosts often don't have any local codex session tree yet.
+    if (err?.code === "ENOENT" || err?.code === "ENOTDIR") {
+      return [];
+    }
+    throw err;
+  }
   const files: string[] = [];
   for (const entry of entries) {
     const full = path.join(dir, entry.name);

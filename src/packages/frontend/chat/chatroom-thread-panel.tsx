@@ -14,6 +14,7 @@ import type { ChatMessages } from "./types";
 import type * as immutable from "immutable";
 import type { ThreadIndexEntry } from "./message-cache";
 import type { ThreadListItem, ThreadMeta } from "./threads";
+import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -43,6 +44,9 @@ interface ChatRoomThreadPanelProps {
   onNewChat: () => void;
   composerTargetKey?: string | null;
   composerFocused?: boolean;
+  codexPaymentSource?: CodexPaymentSourceInfo;
+  codexPaymentSourceLoading?: boolean;
+  refreshCodexPaymentSource?: () => void;
 }
 
 export function ChatRoomThreadPanel({
@@ -65,6 +69,9 @@ export function ChatRoomThreadPanel({
   onNewChat,
   composerTargetKey,
   composerFocused,
+  codexPaymentSource,
+  codexPaymentSourceLoading,
+  refreshCodexPaymentSource,
 }: ChatRoomThreadPanelProps) {
   if (!selectedThreadKey) {
     return (
@@ -130,6 +137,9 @@ export function ChatRoomThreadPanel({
               chatPath={path ?? ""}
               projectId={project_id}
               actions={actions}
+              paymentSource={codexPaymentSource}
+              paymentSourceLoading={codexPaymentSourceLoading}
+              refreshPaymentSource={refreshCodexPaymentSource}
             />
           </Space>
         </div>
