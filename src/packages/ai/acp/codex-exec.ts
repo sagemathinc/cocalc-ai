@@ -107,6 +107,16 @@ function formatCodexError(errors: string[]): string {
   return normalized.join("\n\n");
 }
 
+function hasSiteKeyAuthFailure(errors: string[]): boolean {
+  const text = errors.join("\n");
+  return (
+    /Missing bearer(?: or basic)? authentication in header/i.test(text) ||
+    /invalid_api_key/i.test(text) ||
+    /Incorrect API key/i.test(text) ||
+    /401 Unauthorized/i.test(text)
+  );
+}
+
 // JSONL event shapes from codex exec (--experimental-json)
 type ThreadEvent =
   | { type: "thread.started"; thread_id: string }
@@ -181,172 +191,217 @@ export class CodexExecAgent implements AcpAgent {
     const preContentCache = this.createPreContentCache();
     void this.capturePreContentsFromText(prompt, cwd, preContentCache);
     const args = this.buildArgs(config, cwd);
-    let cmd = this.opts.binaryPath ?? "codex";
-    let proc: ReturnType<typeof spawn>;
     const projectSpawner = getCodexProjectSpawner();
     const projectId = request.chat?.project_id;
-    if (projectSpawner && projectId) {
-      const spawned = await projectSpawner.spawnCodexExec({
-        projectId,
-        accountId: request.account_id,
-        args,
-        cwd,
-        env: this.opts.env,
-      });
-      proc = spawned.proc;
-      cmd = spawned.cmd;
-      logger.debug("codex-exec: spawning via project container", {
-        cmd,
-        args: redactArgsForLog(spawned.args),
-        cwd: spawned.cwd ?? cwd,
-      });
-    } else {
-      logger.debug("codex-exec: spawning", {
-        cmd,
-        args: argsJoin(args),
-        cwd,
-        opts: this.opts,
-      });
-      const HOME = process.env.COCALC_ORIGINAL_HOME ?? process.env.HOME;
-      proc = spawn(cmd, args, {
-        cwd,
-        env: {
-          ...process.env,
-          ...this.opts.env,
-          ...(HOME ? { HOME } : {}),
-        },
-      });
-    }
-
-    if (LOG_OUTPUT) {
-      proc.stdout?.on("data", (chunk) => {
-        logger.debug("codex-exec: stdout", chunk.toString());
-      });
-      proc.stderr?.on("data", (chunk) => {
-        logger.debug("codex-exec: stderr", chunk.toString());
-      });
-    }
-
-    this.running.set(session.sessionId, {
-      proc,
-      stop: () => this.kill(proc),
-      interrupted: false,
-    });
-
-    // send prompt
-    proc.stdin?.write(this.decoratePrompt(prompt));
-    proc.stdin?.end();
-
-    const rl = createInterface({ input: proc.stdout as Readable });
-    const errors: string[] = [];
-    let finalResponse = "";
-    let latestUsage: Usage | undefined;
-    let threadId: string | undefined;
-
-    const handleEvent = async (evt: ThreadEvent) => {
-      switch (evt.type) {
-        case "thread.started": {
-          threadId = evt.thread_id;
-          this.sessions.set(evt.thread_id, {
-            sessionId: evt.thread_id,
-            cwd: session.cwd,
-          });
-          if (config) {
-            await this.tryEnsureSessionConfig(evt.thread_id, cwd, config);
-          }
-          await stream({ type: "status", state: "init" });
-          break;
-        }
-        case "turn.started":
-          await stream({ type: "status", state: "running" });
-          break;
-        case "turn.completed":
-          latestUsage = evt.usage;
-          break;
-        case "turn.failed":
-          errors.push(evt.error.message);
-          break;
-        case "item.completed":
-        case "item.started":
-        case "item.updated":
-          await this.handleItem(
-            evt.item,
-            stream,
-            cwd,
-            preContentCache,
-            (resp) => {
-              finalResponse = resp;
-            },
-          );
-          break;
-        case "error":
-          errors.push(evt.message);
-          break;
-        default:
-          break;
+    const executeAttempt = async (
+      {
+        forceRefreshSiteKey = false,
+      }: {
+        forceRefreshSiteKey?: boolean;
+      } = {},
+    ): Promise<{
+      errors: string[];
+      finalResponse: string;
+      latestUsage?: Usage;
+      threadId?: string;
+      authSource?: string;
+      interrupted: boolean;
+    }> => {
+      let cmd = this.opts.binaryPath ?? "codex";
+      let proc: ReturnType<typeof spawn>;
+      let authSource: string | undefined;
+      if (projectSpawner && projectId) {
+        const spawned = await projectSpawner.spawnCodexExec({
+          projectId,
+          accountId: request.account_id,
+          args,
+          cwd,
+          env: this.opts.env,
+          forceRefreshSiteKey,
+        });
+        proc = spawned.proc;
+        cmd = spawned.cmd;
+        authSource = spawned.authSource;
+        logger.debug("codex-exec: spawning via project container", {
+          cmd,
+          args: redactArgsForLog(spawned.args),
+          cwd: spawned.cwd ?? cwd,
+          authSource,
+          forceRefreshSiteKey,
+        });
+      } else {
+        logger.debug("codex-exec: spawning", {
+          cmd,
+          args: argsJoin(args),
+          cwd,
+          opts: this.opts,
+        });
+        const HOME = process.env.COCALC_ORIGINAL_HOME ?? process.env.HOME;
+        proc = spawn(cmd, args, {
+          cwd,
+          env: {
+            ...process.env,
+            ...this.opts.env,
+            ...(HOME ? { HOME } : {}),
+          },
+        });
       }
+
+      if (LOG_OUTPUT) {
+        proc.stdout?.on("data", (chunk) => {
+          logger.debug("codex-exec: stdout", chunk.toString());
+        });
+        proc.stderr?.on("data", (chunk) => {
+          logger.debug("codex-exec: stderr", chunk.toString());
+        });
+      }
+
+      this.running.set(session.sessionId, {
+        proc,
+        stop: () => this.kill(proc),
+        interrupted: false,
+      });
+
+      // send prompt
+      proc.stdin?.write(this.decoratePrompt(prompt));
+      proc.stdin?.end();
+
+      const rl = createInterface({ input: proc.stdout as Readable });
+      const errors: string[] = [];
+      let finalResponse = "";
+      let latestUsage: Usage | undefined;
+      let threadId: string | undefined;
+      let interrupted = false;
+
+      const handleEvent = async (evt: ThreadEvent) => {
+        switch (evt.type) {
+          case "thread.started": {
+            threadId = evt.thread_id;
+            this.sessions.set(evt.thread_id, {
+              sessionId: evt.thread_id,
+              cwd: session.cwd,
+            });
+            if (config) {
+              await this.tryEnsureSessionConfig(evt.thread_id, cwd, config);
+            }
+            await stream({ type: "status", state: "init" });
+            break;
+          }
+          case "turn.started":
+            await stream({ type: "status", state: "running" });
+            break;
+          case "turn.completed":
+            latestUsage = evt.usage;
+            break;
+          case "turn.failed":
+            errors.push(evt.error.message);
+            break;
+          case "item.completed":
+          case "item.started":
+          case "item.updated":
+            await this.handleItem(
+              evt.item,
+              stream,
+              cwd,
+              preContentCache,
+              (resp) => {
+                finalResponse = resp;
+              },
+            );
+            break;
+          case "error":
+            errors.push(evt.message);
+            break;
+          default:
+            break;
+        }
+      };
+
+      const linePromises: Promise<void>[] = [];
+      rl.on("line", (line) => {
+        if (!line.trim()) return;
+        try {
+          const evt = JSON.parse(line) as ThreadEvent;
+          linePromises.push(handleEvent(evt));
+        } catch (err) {
+          logger.warn("codex-exec: failed to parse JSONL", { line, err });
+        }
+      });
+
+      const stderrBuf: string[] = [];
+      proc.stderr?.on("data", (chunk) => stderrBuf.push(chunk.toString()));
+
+      const exitPromise = new Promise<void>((resolve) => {
+        proc.on("exit", (code, signal) => {
+          interrupted = !!this.running.get(session.sessionId)?.interrupted;
+          if (code !== 0 && !interrupted) {
+            const stderr = stderrBuf.join("");
+            if (errors.length === 0) {
+              const errMsg =
+                stderr ||
+                `codex exited with code ${code ?? "?"} signal ${signal ?? "?"}`;
+              errors.push(errMsg);
+            }
+            logger.warn("codex-exec: process exited with code", {
+              code,
+              signal,
+              stderr,
+              authSource,
+            });
+          } else if (interrupted) {
+            logger.debug("codex-exec: process exited after interrupt", {
+              code,
+              signal,
+              authSource,
+            });
+          }
+          resolve();
+        });
+        proc.on("error", (err) => {
+          errors.push(`spawn error: ${err}`);
+          logger.warn("codex-exec: spawn error", err);
+        });
+      });
+
+      await exitPromise;
+      await Promise.all(linePromises);
+      this.running.delete(session.sessionId);
+
+      return {
+        errors,
+        finalResponse,
+        latestUsage,
+        threadId,
+        authSource,
+        interrupted,
+      };
     };
 
-    const linePromises: Promise<void>[] = [];
-    rl.on("line", (line) => {
-      if (!line.trim()) return;
-      try {
-        const evt = JSON.parse(line) as ThreadEvent;
-        linePromises.push(handleEvent(evt));
-      } catch (err) {
-        logger.warn("codex-exec: failed to parse JSONL", { line, err });
-      }
-    });
-
-    const stderrBuf: string[] = [];
-    proc.stderr?.on("data", (chunk) => stderrBuf.push(chunk.toString()));
-
-    const exitPromise = new Promise<void>((resolve) => {
-      proc.on("exit", (code, signal) => {
-        const interrupted = this.running.get(session.sessionId)?.interrupted;
-        if (code !== 0 && !interrupted) {
-          const stderr = stderrBuf.join("");
-          if (errors.length === 0) {
-            const errMsg =
-              stderr ||
-              `codex exited with code ${code ?? "?"} signal ${signal ?? "?"}`;
-            errors.push(errMsg);
-          }
-          logger.warn("codex-exec: process exited with code", {
-            code,
-            signal,
-            stderr,
-          });
-        } else if (interrupted) {
-          logger.debug("codex-exec: process exited after interrupt", {
-            code,
-            signal,
-          });
-        }
-        resolve();
+    let result = await executeAttempt();
+    const shouldRetrySiteKey =
+      !result.interrupted &&
+      result.authSource === "site-api-key" &&
+      result.errors.length > 0 &&
+      hasSiteKeyAuthFailure(result.errors);
+    if (shouldRetrySiteKey) {
+      logger.info("codex-exec: retrying once after site-key auth failure", {
+        projectId,
+        authSource: result.authSource,
       });
-      proc.on("error", (err) => {
-        errors.push(`spawn error: ${err}`);
-        logger.warn("codex-exec: spawn error", err);
-      });
-    });
+      result = await executeAttempt({ forceRefreshSiteKey: true });
+    }
 
-    await exitPromise;
-    await Promise.all(linePromises);
-
-    const errorText = errors.length > 0 ? formatCodexError(errors) : "";
+    const errorText = result.errors.length > 0 ? formatCodexError(result.errors) : "";
     if (errorText) {
       await stream({ type: "error", error: errorText });
     }
     // emit summary even if errors to clear UI state
     await stream({
       type: "summary",
-      finalResponse,
-      usage: latestUsage ? { ...latestUsage } : undefined,
-      threadId,
+      finalResponse: result.finalResponse,
+      usage: result.latestUsage ? { ...result.latestUsage } : undefined,
+      threadId: result.threadId,
     });
-
-    this.running.delete(session.sessionId);
   }
 
   async dispose(): Promise<void> {

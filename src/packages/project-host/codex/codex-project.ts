@@ -316,6 +316,7 @@ export type SpawnCodexInProjectContainerOptions = {
   env?: NodeJS.ProcessEnv;
   authRuntime?: CodexAuthRuntime;
   touchReason?: string | false;
+  forceRefreshSiteKey?: boolean;
 };
 
 export type SpawnCodexInProjectContainerResult = {
@@ -335,9 +336,15 @@ export async function spawnCodexInProjectContainer({
   env: extraEnv,
   authRuntime: explicitAuthRuntime,
   touchReason = "codex",
+  forceRefreshSiteKey = false,
 }: SpawnCodexInProjectContainerOptions): Promise<SpawnCodexInProjectContainerResult> {
   const authRuntime =
-    explicitAuthRuntime ?? (await resolveCodexAuthRuntime({ projectId, accountId }));
+    explicitAuthRuntime ??
+    (await resolveCodexAuthRuntime({
+      projectId,
+      accountId,
+      forceRefreshSiteKey,
+    }));
   let codexArgs = args;
   if (
     authRuntime.source === "project-api-key" ||
@@ -422,7 +429,14 @@ export async function spawnCodexInProjectContainer({
 
 export function initCodexProjectRunner(): void {
   setCodexProjectSpawner({
-    async spawnCodexExec({ projectId, accountId, args, cwd, env: extraEnv }) {
+    async spawnCodexExec({
+      projectId,
+      accountId,
+      args,
+      cwd,
+      env: extraEnv,
+      forceRefreshSiteKey,
+    }) {
       const hasSandboxFlag =
         args.includes("--full-auto") ||
         args.includes("--dangerously-bypass-approvals-and-sandbox") ||
@@ -439,12 +453,14 @@ export function initCodexProjectRunner(): void {
         env: extraEnv,
         args: hasSandboxFlag ? args : ["--full-auto", ...args],
         touchReason: "codex",
+        forceRefreshSiteKey,
       });
       return {
         proc: spawned.proc,
         cmd: spawned.cmd,
         args: spawned.args,
         cwd: spawned.cwd,
+        authSource: spawned.authRuntime.source,
       };
     },
   });

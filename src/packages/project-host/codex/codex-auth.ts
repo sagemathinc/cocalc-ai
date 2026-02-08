@@ -191,9 +191,11 @@ export async function uploadSubscriptionAuthFile({
 export async function resolveCodexAuthRuntime({
   projectId,
   accountId,
+  forceRefreshSiteKey = false,
 }: {
   projectId: string;
   accountId?: string;
+  forceRefreshSiteKey?: boolean;
 }): Promise<CodexAuthRuntime> {
   const sharedHome = resolveSharedCodexHome();
   const sharedHomeMode = resolveSharedHomeMode();
@@ -297,7 +299,9 @@ export async function resolveCodexAuthRuntime({
   const accountKey =
     (accountId ? accountKeys[accountId] : undefined) ??
     process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY;
-  const siteKey = await getSiteOpenAiApiKeyFromHub();
+  const siteKey = await getSiteOpenAiApiKeyFromHub({
+    forceRefresh: forceRefreshSiteKey,
+  });
 
   if (projectKey) {
     return {

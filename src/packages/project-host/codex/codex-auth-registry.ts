@@ -26,18 +26,14 @@ const existenceCache = new Map<
 >();
 const EXISTENCE_CACHE_TTL_MS = 30_000;
 const SITE_OPENAI_KEY_CACHE_TTL_MS = Math.max(
-  10_000,
-  Number(process.env.COCALC_CODEX_SITE_KEY_CACHE_TTL_MS ?? 60_000),
+  60_000,
+  Number(process.env.COCALC_CODEX_SITE_KEY_CACHE_TTL_MS ?? 60 * 60_000),
 );
-const SITE_OPENAI_KEY_REFRESH_MS = Math.max(
+const SITE_OPENAI_KEY_MISSING_TTL_MS = Math.max(
   30_000,
-  Number(
-    process.env.COCALC_CODEX_SITE_KEY_REFRESH_MS ??
-      SITE_OPENAI_KEY_CACHE_TTL_MS,
-  ),
+  Number(process.env.COCALC_CODEX_SITE_KEY_MISSING_TTL_MS ?? 5 * 60_000),
 );
 
-let siteOpenAiRefreshTimer: NodeJS.Timeout | undefined;
 let siteOpenAiKeyCache: {
   enabled: boolean;
   has_api_key: boolean;
@@ -66,20 +62,15 @@ function siteKeyTtlMs(): number {
   return Math.max(10_000, Math.floor(SITE_OPENAI_KEY_CACHE_TTL_MS * jitter));
 }
 
-function ensureSiteOpenAiRefreshLoop(): void {
-  if (siteOpenAiRefreshTimer) return;
-  siteOpenAiRefreshTimer = setInterval(() => {
-    void refreshSiteOpenAiApiKeyFromHub({ background: true });
-  }, SITE_OPENAI_KEY_REFRESH_MS);
-  siteOpenAiRefreshTimer.unref?.();
+function siteKeyMissingTtlMs(): number {
+  const jitter = 0.85 + Math.random() * 0.3;
+  return Math.max(10_000, Math.floor(SITE_OPENAI_KEY_MISSING_TTL_MS * jitter));
 }
 
 async function refreshSiteOpenAiApiKeyFromHub({
   force = false,
-  background = false,
 }: {
   force?: boolean;
-  background?: boolean;
 } = {}): Promise<void> {
   const now = Date.now();
   if (!force && siteOpenAiKeyCache.expires > now) {
@@ -107,14 +98,14 @@ async function refreshSiteOpenAiApiKeyFromHub({
         enabled,
         has_api_key,
         api_key: api_key || undefined,
-        expires: Date.now() + siteKeyTtlMs(),
+        expires:
+          Date.now() +
+          (enabled && has_api_key ? siteKeyTtlMs() : siteKeyMissingTtlMs()),
       };
     } catch (err) {
-      if (!background) {
-        logger.debug("refreshSiteOpenAiApiKeyFromHub failed", {
-          err: `${err}`,
-        });
-      }
+      logger.debug("refreshSiteOpenAiApiKeyFromHub failed", {
+        err: `${err}`,
+      });
       // Keep current value but retry soon.
       siteOpenAiKeyCache = {
         ...siteOpenAiKeyCache,
@@ -404,9 +395,12 @@ export async function getAccountOpenAiApiKeyFromRegistry({
   });
 }
 
-export async function getSiteOpenAiApiKeyFromHub(): Promise<string | undefined> {
-  ensureSiteOpenAiRefreshLoop();
-  await refreshSiteOpenAiApiKeyFromHub();
+export async function getSiteOpenAiApiKeyFromHub({
+  forceRefresh = false,
+}: {
+  forceRefresh?: boolean;
+} = {}): Promise<string | undefined> {
+  await refreshSiteOpenAiApiKeyFromHub({ force: forceRefresh });
   if (!siteOpenAiKeyCache.enabled || !siteOpenAiKeyCache.has_api_key) {
     return undefined;
   }
