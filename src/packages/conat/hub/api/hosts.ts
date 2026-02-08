@@ -278,6 +278,7 @@ export const hosts = {
   getExternalCredential: authFirstRequireHost,
   touchExternalCredential: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
+  getSiteOpenAiApiKey: authFirstRequireHost,
 };
 
 export interface HostConnectorUpgradeRequest {
@@ -367,6 +368,13 @@ export interface Hosts {
     payload: string;
     metadata?: Record<string, any>;
   }) => Promise<{ id: string; created: boolean }>;
+  getSiteOpenAiApiKey: (opts: {
+    host_id?: string;
+  }) => Promise<{
+    enabled: boolean;
+    has_api_key: boolean;
+    api_key?: string;
+  }>;
 
   createHost: (opts: {
     account_id?: string;

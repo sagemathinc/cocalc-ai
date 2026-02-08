@@ -9,7 +9,7 @@ import {
   Typography,
 } from "antd";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
-import { useAsyncEffect, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { useAsyncEffect } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import Password from "@cocalc/frontend/components/password";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
@@ -40,7 +40,6 @@ function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
 }
 
 export function CodexCredentialsPanel() {
-  const openaiEnabled = !!useTypedRedux("customize", "openai_enabled");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
@@ -152,13 +151,6 @@ export function CodexCredentialsPanel() {
     ],
     [revokingId],
   );
-
-  const hasSiteApiKeyEffective =
-    !!paymentSource?.hasSiteApiKey || openaiEnabled;
-  const effectiveSource =
-    paymentSource?.source === "none" && hasSiteApiKeyEffective
-      ? "site-api-key"
-      : paymentSource?.source;
 
   return (
     <Panel
@@ -389,13 +381,13 @@ export function CodexCredentialsPanel() {
         {!loading && error && <Alert type="error" message={error} />}
         {!loading && !error && paymentSource && (
           <Alert
-            type={effectiveSource === "none" ? "warning" : "info"}
+            type={paymentSource.source === "none" ? "warning" : "info"}
             message={
               <Space>
                 <span>Current Codex payment source:</span>
-                <Tag color={effectiveSource === "none" ? "default" : "blue"}>
+                <Tag color={paymentSource.source === "none" ? "default" : "blue"}>
                   {sourceLabel(
-                    (effectiveSource ?? "none") as CodexPaymentSourceInfo["source"],
+                    paymentSource.source as CodexPaymentSourceInfo["source"],
                   )}
                 </Tag>
               </Space>
@@ -412,18 +404,11 @@ export function CodexCredentialsPanel() {
                   <Tag color={paymentSource.hasAccountApiKey ? "green" : "default"}>
                     account key
                   </Tag>
-                  <Tag color={hasSiteApiKeyEffective ? "green" : "default"}>
+                  <Tag color={paymentSource.hasSiteApiKey ? "green" : "default"}>
                     site key
                   </Tag>
                   <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
                 </Space>
-                {openaiEnabled && !paymentSource.hasSiteApiKey && (
-                  <div style={{ marginTop: 8 }}>
-                    <Text type="secondary">
-                      Site key availability inferred from OpenAI being enabled in site settings.
-                    </Text>
-                  </div>
-                )}
               </>
             }
           />

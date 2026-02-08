@@ -6,6 +6,7 @@ import { codexSubscriptionsPath } from "@cocalc/backend/data";
 import {
   getAccountOpenAiApiKeyFromRegistry,
   getProjectOpenAiApiKeyFromRegistry,
+  getSiteOpenAiApiKeyFromHub,
   hasSubscriptionAuthInRegistry,
   pullSubscriptionAuthFromRegistry,
   touchSubscriptionAuthInRegistry,
@@ -296,7 +297,7 @@ export async function resolveCodexAuthRuntime({
   const accountKey =
     (accountId ? accountKeys[accountId] : undefined) ??
     process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY;
-  const siteKey = process.env.COCALC_CODEX_AUTH_SITE_OPENAI_KEY;
+  const siteKey = await getSiteOpenAiApiKeyFromHub();
 
   if (projectKey) {
     return {

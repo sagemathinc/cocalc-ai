@@ -25,6 +25,30 @@ const existenceCache = new Map<
   { has: boolean; expires: number }
 >();
 const EXISTENCE_CACHE_TTL_MS = 30_000;
+const SITE_OPENAI_KEY_CACHE_TTL_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_CODEX_SITE_KEY_CACHE_TTL_MS ?? 60_000),
+);
+const SITE_OPENAI_KEY_REFRESH_MS = Math.max(
+  30_000,
+  Number(
+    process.env.COCALC_CODEX_SITE_KEY_REFRESH_MS ??
+      SITE_OPENAI_KEY_CACHE_TTL_MS,
+  ),
+);
+
+let siteOpenAiRefreshTimer: NodeJS.Timeout | undefined;
+let siteOpenAiKeyCache: {
+  enabled: boolean;
+  has_api_key: boolean;
+  api_key?: string;
+  expires: number;
+  refreshPromise?: Promise<void>;
+} = {
+  enabled: false,
+  has_api_key: false,
+  expires: 0,
+};
 
 function getHubCaller():
   | { client: NonNullable<ReturnType<typeof getMasterConatClient>>; host_id: string }
@@ -35,6 +59,81 @@ function getHubCaller():
     return;
   }
   return { client, host_id };
+}
+
+function siteKeyTtlMs(): number {
+  const jitter = 0.85 + Math.random() * 0.3;
+  return Math.max(10_000, Math.floor(SITE_OPENAI_KEY_CACHE_TTL_MS * jitter));
+}
+
+function ensureSiteOpenAiRefreshLoop(): void {
+  if (siteOpenAiRefreshTimer) return;
+  siteOpenAiRefreshTimer = setInterval(() => {
+    void refreshSiteOpenAiApiKeyFromHub({ background: true });
+  }, SITE_OPENAI_KEY_REFRESH_MS);
+  siteOpenAiRefreshTimer.unref?.();
+}
+
+async function refreshSiteOpenAiApiKeyFromHub({
+  force = false,
+  background = false,
+}: {
+  force?: boolean;
+  background?: boolean;
+} = {}): Promise<void> {
+  const now = Date.now();
+  if (!force && siteOpenAiKeyCache.expires > now) {
+    return;
+  }
+  if (siteOpenAiKeyCache.refreshPromise) {
+    return await siteOpenAiKeyCache.refreshPromise;
+  }
+  const caller = getHubCaller();
+  if (!caller) return;
+
+  const refreshPromise = (async () => {
+    try {
+      const result = await callHub({
+        ...caller,
+        name: "hosts.getSiteOpenAiApiKey",
+        args: [{}],
+        timeout: 10_000,
+      });
+      const enabled = !!result?.enabled;
+      const has_api_key = !!result?.has_api_key;
+      const api_key =
+        typeof result?.api_key === "string" ? result.api_key.trim() : undefined;
+      siteOpenAiKeyCache = {
+        enabled,
+        has_api_key,
+        api_key: api_key || undefined,
+        expires: Date.now() + siteKeyTtlMs(),
+      };
+    } catch (err) {
+      if (!background) {
+        logger.debug("refreshSiteOpenAiApiKeyFromHub failed", {
+          err: `${err}`,
+        });
+      }
+      // Keep current value but retry soon.
+      siteOpenAiKeyCache = {
+        ...siteOpenAiKeyCache,
+        expires: Date.now() + 15_000,
+      };
+    }
+  })().finally(() => {
+    if (siteOpenAiKeyCache.refreshPromise === refreshPromise) {
+      siteOpenAiKeyCache = {
+        ...siteOpenAiKeyCache,
+        refreshPromise: undefined,
+      };
+    }
+  });
+  siteOpenAiKeyCache = {
+    ...siteOpenAiKeyCache,
+    refreshPromise,
+  };
+  await refreshPromise;
 }
 
 async function readLocalAuth(codexHome: string): Promise<string | undefined> {
@@ -303,4 +402,14 @@ export async function getAccountOpenAiApiKeyFromRegistry({
       owner_account_id: accountId,
     },
   });
+}
+
+export async function getSiteOpenAiApiKeyFromHub(): Promise<string | undefined> {
+  ensureSiteOpenAiRefreshLoop();
+  await refreshSiteOpenAiApiKeyFromHub();
+  if (!siteOpenAiKeyCache.enabled || !siteOpenAiKeyCache.has_api_key) {
+    return undefined;
+  }
+  const key = siteOpenAiKeyCache.api_key?.trim();
+  return key ? key : undefined;
 }

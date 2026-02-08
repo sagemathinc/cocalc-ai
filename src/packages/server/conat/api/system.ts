@@ -19,6 +19,8 @@ import {
   upsertExternalCredential,
 } from "@cocalc/server/external-credentials/store";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -530,7 +532,10 @@ export async function getCodexPaymentSource({
     await assertProjectCollaborator(account_id, project_id);
   }
 
-  const hasSiteApiKey = !!process.env.COCALC_CODEX_AUTH_SITE_OPENAI_KEY;
+  const settings = await getServerSettings();
+  const hasSiteApiKey =
+    to_bool(settings.openai_enabled) &&
+    !!`${settings.openai_api_key ?? ""}`.trim();
   const [hasSubscription, hasProjectApiKeyStored, hasAccountApiKeyStored] =
     await Promise.all([
       hasExternalCredential({

@@ -80,6 +80,7 @@ import {
   hasCloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
+import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 function pool() {
   return getPool();
 }
@@ -863,6 +864,29 @@ export async function touchExternalCredential({
       organization_id: normalized.organization_id,
     },
   });
+}
+
+export async function getSiteOpenAiApiKey({
+  host_id,
+}: {
+  host_id?: string;
+}): Promise<{
+  enabled: boolean;
+  has_api_key: boolean;
+  api_key?: string;
+}> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  const settings = await getServerSettings();
+  const enabled = to_bool(settings.openai_enabled);
+  const apiKey = `${settings.openai_api_key ?? ""}`.trim();
+  const has_api_key = apiKey.length > 0;
+  return {
+    enabled,
+    has_api_key,
+    api_key: enabled && has_api_key ? apiKey : undefined,
+  };
 }
 
 export async function listHosts({
