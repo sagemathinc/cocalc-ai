@@ -13,7 +13,6 @@ This covers:
 
 This does not cover:
 
-- Full project-host websocket authz hardening
 - A site-key proxy architecture (possible future work)
 
 ## Current Auth Sources and Precedence
@@ -38,7 +37,7 @@ The central hub stores external credentials encrypted at rest, and exposes two A
 - Host-facing RPCs for project-hosts (`hub.hosts.*`)
 
 ```mermaid
-flowchart LR
+flowchart TD
   U[User in Browser] --> SYS[hub.system RPC]
   SYS --> DB[(external_credentials table)]
 

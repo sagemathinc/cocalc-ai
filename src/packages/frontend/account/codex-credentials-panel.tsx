@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
@@ -31,7 +31,7 @@ function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
     case "account-api-key":
       return "Account API key";
     case "site-api-key":
-      return "Site API key";
+      return "CoCalc Membership";
     case "shared-home":
       return "Shared home (~/.codex)";
     default:
@@ -39,11 +39,27 @@ function sourceLabel(source: CodexPaymentSourceInfo["source"]): string {
   }
 }
 
-export function CodexCredentialsPanel() {
+export function CodexCredentialsPanel(props: CodexCredentialsPanelProps = {}) {
+  return <CodexCredentialsPanelBody {...props} />;
+}
+
+export interface CodexCredentialsPanelProps {
+  embedded?: boolean;
+  defaultWorkspaceId?: string;
+  hidePanelChrome?: boolean;
+}
+
+function CodexCredentialsPanelBody({
+  embedded = false,
+  defaultWorkspaceId = "",
+  hidePanelChrome = false,
+}: CodexCredentialsPanelProps = {}) {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
-  const [workspaceId, setWorkspaceId] = useState<string>("");
+  const [workspaceId, setWorkspaceId] = useState<string>(
+    defaultWorkspaceId ?? "",
+  );
   const [paymentSource, setPaymentSource] = useState<
     CodexPaymentSourceInfo | undefined
   >(undefined);
@@ -60,6 +76,10 @@ export function CodexCredentialsPanel() {
   );
 
   const refresh = () => setRefreshToken((x) => x + 1);
+
+  useEffect(() => {
+    setWorkspaceId(defaultWorkspaceId ?? "");
+  }, [defaultWorkspaceId]);
 
   useAsyncEffect(
     async (isMounted) => {
@@ -152,20 +172,57 @@ export function CodexCredentialsPanel() {
     [revokingId],
   );
 
-  return (
-    <Panel
-      style={{ marginTop: "15px" }}
-      header={
-        <>
-          <Icon name="robot" /> OpenAI Credentials & Codex Payment Source
-        </>
-      }
-    >
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        <Text type="secondary">
-          OpenAI API keys are used for OpenAI-powered features in CoCalc,
-          including Codex.
-        </Text>
+  const content = (
+    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+      {!loading && !error && paymentSource && (
+        <Alert
+          type={paymentSource.source === "none" ? "warning" : "info"}
+          message={
+            <Space>
+              <span>Current Codex payment source:</span>
+              <Tag color={paymentSource.source === "none" ? "default" : "blue"}>
+                {sourceLabel(
+                  paymentSource.source as CodexPaymentSourceInfo["source"],
+                )}
+              </Tag>
+            </Space>
+          }
+          description={
+            <>
+              <Space wrap>
+                <Tag color={paymentSource.hasSubscription ? "green" : "default"}>
+                  subscription
+                </Tag>
+                <Tag color={paymentSource.hasProjectApiKey ? "green" : "default"}>
+                  workspace key
+                </Tag>
+                <Tag color={paymentSource.hasAccountApiKey ? "green" : "default"}>
+                  account key
+                </Tag>
+                <Tag color={paymentSource.hasSiteApiKey ? "green" : "default"}>
+                  site key
+                </Tag>
+                <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
+              </Space>
+              {paymentSource.hasSubscription ? (
+                <div style={{ marginTop: 8 }}>
+                  <a
+                    href="https://chatgpt.com/codex/settings/usage"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Check ChatGPT Codex usage
+                  </a>
+                </div>
+              ) : null}
+            </>
+          }
+        />
+      )}
+      <Text type="secondary">
+        OpenAI API keys are used for OpenAI-powered features in CoCalc,
+        including Codex.
+      </Text>
         <Text type="secondary">
           If you have linked your ChatGPT subscription, Codex will try to use it
           first. If it is unavailable, Codex falls back to workspace API key,
@@ -379,41 +436,6 @@ export function CodexCredentialsPanel() {
 
         {loading && <Loading />}
         {!loading && error && <Alert type="error" message={error} />}
-        {!loading && !error && paymentSource && (
-          <Alert
-            type={paymentSource.source === "none" ? "warning" : "info"}
-            message={
-              <Space>
-                <span>Current Codex payment source:</span>
-                <Tag color={paymentSource.source === "none" ? "default" : "blue"}>
-                  {sourceLabel(
-                    paymentSource.source as CodexPaymentSourceInfo["source"],
-                  )}
-                </Tag>
-              </Space>
-            }
-            description={
-              <>
-                <Space wrap>
-                  <Tag color={paymentSource.hasSubscription ? "green" : "default"}>
-                    subscription
-                  </Tag>
-                  <Tag color={paymentSource.hasProjectApiKey ? "green" : "default"}>
-                    workspace key
-                  </Tag>
-                  <Tag color={paymentSource.hasAccountApiKey ? "green" : "default"}>
-                    account key
-                  </Tag>
-                  <Tag color={paymentSource.hasSiteApiKey ? "green" : "default"}>
-                    site key
-                  </Tag>
-                  <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
-                </Space>
-              </>
-            }
-          />
-        )}
-
         <div>
           <div style={{ marginBottom: 6, fontWeight: 500 }}>
             Codex subscription credentials
@@ -428,6 +450,22 @@ export function CodexCredentialsPanel() {
           locale={{ emptyText: "No Codex subscription credentials saved." }}
         />
       </Space>
+  );
+
+  if (hidePanelChrome || embedded) {
+    return content;
+  }
+
+  return (
+    <Panel
+      style={{ marginTop: "15px" }}
+      header={
+        <>
+          <Icon name="robot" /> OpenAI Credentials & Codex Payment Source
+        </>
+      }
+    >
+      {content}
     </Panel>
   );
 }

@@ -10,6 +10,7 @@ import {
   Radio,
   Select,
   Space,
+  Tooltip,
   Typography,
 } from "antd";
 import {
@@ -21,6 +22,8 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credentials-panel";
+import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import {
   DEFAULT_CODEX_MODELS,
   resolveCodexSessionMode,
@@ -31,6 +34,10 @@ import {
 import { COLORS } from "@cocalc/util/theme";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { ChatActions } from "./actions";
+import {
+  getCodexPaymentSourceShortLabel,
+  getCodexPaymentSourceTooltip,
+} from "./use-codex-payment-source";
 
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODELS[0].name;
@@ -69,6 +76,9 @@ export interface CodexConfigButtonProps {
   chatPath: string;
   projectId?: string;
   actions?: ChatActions;
+  paymentSource?: CodexPaymentSourceInfo;
+  paymentSourceLoading?: boolean;
+  refreshPaymentSource?: () => void;
 }
 
 type ModelOption = {
@@ -170,8 +180,12 @@ export function CodexConfigButton({
   chatPath,
   projectId,
   actions,
+  paymentSource,
+  paymentSourceLoading = false,
+  refreshPaymentSource,
 }: CodexConfigButtonProps): React.ReactElement {
   const [open, setOpen] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
   const [form] = Form.useForm();
   const [models, setModels] = useState<ModelOption[]>([]);
   const [value, setValue] = useState<Partial<CodexThreadConfig> | null>(null);
@@ -271,6 +285,10 @@ export function CodexConfigButton({
     () => getPossibleThrottleInfo(deviceAuth),
     [deviceAuth],
   );
+  const sourceShortLabel = paymentSourceLoading
+    ? "Checking…"
+    : getCodexPaymentSourceShortLabel(paymentSource?.source);
+  const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
 
   const saveConfig = () => {
     const values = form.getFieldsValue();
@@ -362,6 +380,7 @@ export function CodexConfigButton({
           project_id: projectId,
         });
       setDeviceAuth(status as DeviceAuthStatus);
+      refreshPaymentSource?.();
     } catch (err) {
       setDeviceAuthError(getErrorMessage(err));
     } finally {
@@ -380,6 +399,9 @@ export function CodexConfigButton({
           id: authId,
         });
       setDeviceAuth(status as DeviceAuthStatus);
+      if ((status as DeviceAuthStatus).state === "completed") {
+        refreshPaymentSource?.();
+      }
     } catch (err) {
       setDeviceAuthError(getErrorMessage(err));
     }
@@ -422,6 +444,7 @@ export function CodexConfigButton({
         bytes: result.bytes,
         uploadedAt: Date.now(),
       });
+      refreshPaymentSource?.();
       void message.success("Auth file uploaded successfully");
     } catch (err) {
       setDeviceAuthError(getErrorMessage(err));
@@ -435,7 +458,7 @@ export function CodexConfigButton({
 
   useEffect(() => {
     if (
-      !open ||
+      !(open || paymentOpen) ||
       !projectId ||
       deviceAuth?.state !== "pending" ||
       !deviceAuth.id
@@ -446,7 +469,7 @@ export function CodexConfigButton({
       void refreshDeviceAuth(deviceAuth.id);
     }, 1500);
     return () => clearInterval(timer);
-  }, [open, projectId, deviceAuth?.id, deviceAuth?.state]);
+  }, [open, paymentOpen, projectId, deviceAuth?.id, deviceAuth?.state]);
 
   return (
     <>
@@ -464,6 +487,11 @@ export function CodexConfigButton({
         <Button size="small" onClick={() => setOpen(true)}>
           Codex
         </Button>
+        <Tooltip title={sourceTooltip}>
+          <Button size="small" onClick={() => setPaymentOpen(true)}>
+            {sourceShortLabel}
+          </Button>
+        </Tooltip>
         <Select
           size="small"
           value={currentSessionMode}
@@ -611,266 +639,6 @@ export function CodexConfigButton({
               </Collapse.Panel>
             </Collapse>
             <Divider style={{ margin: "12px 0" }} />
-            <SectionTitle>Authentication</SectionTitle>
-            <Space direction="vertical" style={{ width: "100%" }} size={8}>
-              <Text type="secondary">
-                Connect a ChatGPT subscription to Codex using device login.
-              </Text>
-              <Text type="secondary">
-                <a
-                  href="https://developers.openai.com/codex/auth/#fallback-authenticate-locally-and-copy-your-auth-cache"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Fallback
-                </a>
-                : authenticate locally and upload your
-                {" "}
-                <Text code>~/.codex/auth.json</Text>
-                {" "}
-                file.
-              </Text>
-              {!projectId && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="Project context required"
-                  description="Open this chat in a project before starting device login."
-                />
-              )}
-              <Space wrap>
-                <Button
-                  type="primary"
-                  onClick={() => void startDeviceAuth()}
-                  loading={deviceAuthActionPending}
-                  disabled={!projectId || deviceAuth?.state === "pending"}
-                >
-                  Start device login
-                </Button>
-                <Button
-                  onClick={() => void refreshDeviceAuth()}
-                  disabled={
-                    !projectId || !deviceAuth?.id || deviceAuthActionPending
-                  }
-                >
-                  Refresh
-                </Button>
-                <Button
-                  danger
-                  onClick={() => void cancelDeviceAuth()}
-                  loading={deviceAuthActionPending}
-                  disabled={
-                    !projectId ||
-                    !deviceAuth?.id ||
-                    deviceAuth?.state !== "pending"
-                  }
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={() => authFileInputRef.current?.click()}
-                  loading={authFileUploadPending}
-                  disabled={!projectId || deviceAuthActionPending}
-                >
-                  Upload local auth.json
-                </Button>
-              </Space>
-              <input
-                ref={authFileInputRef}
-                type="file"
-                accept="application/json,.json"
-                style={{ display: "none" }}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    void uploadAuthFile(file);
-                  }
-                }}
-              />
-              {uploadedAuthFileStatus ? (
-                <Alert
-                  type="success"
-                  showIcon
-                  message="Auth file uploaded"
-                  description={`Saved ${uploadedAuthFileStatus.bytes} bytes to ${uploadedAuthFileStatus.codexHome}`}
-                />
-              ) : null}
-              {deviceAuthError ? (
-                <Alert type="error" showIcon message={deviceAuthError} />
-              ) : null}
-              {rateLimitInfo.limited ? (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="Device auth is currently rate-limited (HTTP 429)"
-                  description={rateLimitInfo.message}
-                />
-              ) : null}
-              {possibleThrottleInfo ? (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="Device auth may be temporarily throttled"
-                  description={possibleThrottleInfo}
-                />
-              ) : null}
-              {deviceAuth ? (
-                deviceAuth.state === "completed" ? (
-                  <Alert
-                    type="success"
-                    showIcon
-                    style={{ borderWidth: 2, padding: 12 }}
-                    message={
-                      <span style={{ fontSize: 17, fontWeight: 700 }}>
-                        Device authentication complete
-                      </span>
-                    }
-                    description={
-                      <span style={{ fontSize: 14 }}>
-                        Your ChatGPT subscription is now connected for Codex on
-                        this project-host. You can close this dialog and run a
-                        Codex turn.
-                      </span>
-                    }
-                  />
-                ) : (
-                  <Alert
-                    type={DEVICE_AUTH_ALERT_TYPE[deviceAuth.state]}
-                    showIcon
-                    message={`Device auth status: ${deviceAuth.state}`}
-                    description={
-                      deviceAuth.state === "pending"
-                        ? "Polling status every 1.5 seconds while this dialog is open."
-                        : deviceAuth.error
-                          ? deviceAuth.error
-                          : undefined
-                    }
-                  />
-                )
-              ) : null}
-              {deviceAuth?.userCode && deviceAuth.state !== "completed" ? (
-                <div
-                  style={{
-                    border: "1px solid #d9d9d9",
-                    borderRadius: 8,
-                    padding: 12,
-                    background: "#fafafa",
-                  }}
-                >
-                  <Text type="secondary">1. Copy this one-time code</Text>
-                  {deviceCodeExpiresAt ? (
-                    <div style={{ marginTop: 4 }}>
-                      <Text type="secondary">
-                        Code expires <TimeAgo date={deviceCodeExpiresAt} />
-                      </Text>
-                    </div>
-                  ) : null}
-                  <div
-                    style={{
-                      marginTop: 8,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 28,
-                        lineHeight: "34px",
-                        fontWeight: 700,
-                        letterSpacing: "0.08em",
-                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {deviceAuth.userCode}
-                    </Text>
-                    <Button onClick={() => void copyDeviceCode()}>Copy code</Button>
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <Text type="secondary">
-                      Device codes are a common phishing target. Never share this code.
-                    </Text>
-                  </div>
-                </div>
-              ) : null}
-              {deviceAuth?.verificationUrl && deviceAuth.state !== "completed" ? (
-                <div
-                  style={{
-                    border: "1px solid #d9d9d9",
-                    borderRadius: 8,
-                    padding: 12,
-                    background: "#fafafa",
-                  }}
-                >
-                  <Text type="secondary">
-                    2.{" "}
-                    <a
-                      href={deviceAuth.verificationUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open this link
-                    </a>{" "}
-                    in your browser, sign in to your account, and paste the
-                    one-time code.
-                  </Text>
-                  <div
-                    style={{
-                      marginTop: 8,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 16,
-                        lineHeight: "22px",
-                        fontWeight: 600,
-                        wordBreak: "break-all",
-                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                      }}
-                    >
-                      {deviceAuth.verificationUrl}
-                    </Text>
-                    <Space>
-                      <Button
-                        onClick={() => void copyDeviceUrl()}
-                      >
-                        Copy URL
-                      </Button>
-                      <Button
-                        type="primary"
-                        href={deviceAuth.verificationUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open
-                      </Button>
-                    </Space>
-                  </div>
-                </div>
-              ) : null}
-              {deviceAuth?.output ? (
-                <Collapse size="small" bordered={false}>
-                  <Collapse.Panel
-                    key="device-auth-output"
-                    header="Show raw Codex output"
-                    style={{ border: "none", paddingInline: 0 }}
-                  >
-                    <Input.TextArea
-                      readOnly
-                      value={deviceAuth.output}
-                      autoSize={{ minRows: 3, maxRows: 10 }}
-                    />
-                  </Collapse.Panel>
-                </Collapse>
-              ) : null}
-            </Space>
-            <Divider style={{ margin: "12px 0" }} />
             <Form.Item
               label="Execution mode"
               name="sessionMode"
@@ -927,6 +695,300 @@ export function CodexConfigButton({
               </Radio.Group>
             </Form.Item>
           </Form>
+        </Space>
+      </Modal>
+      <Modal
+        open={paymentOpen}
+        title="Codex Payment & Credentials"
+        footer={null}
+        onCancel={() => setPaymentOpen(false)}
+        width={760}
+        bodyStyle={{ maxHeight: "75vh", overflowY: "auto" }}
+      >
+        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+          {paymentSource?.hasSubscription ? (
+            <Alert
+              type="info"
+              showIcon
+              message="ChatGPT subscription connected"
+              description={
+                <a
+                  href="https://chatgpt.com/codex/settings/usage"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Check ChatGPT Codex usage
+                </a>
+              }
+            />
+          ) : null}
+          <SectionTitle>Authentication</SectionTitle>
+          <Space direction="vertical" style={{ width: "100%" }} size={8}>
+            <Text type="secondary">
+              Connect a ChatGPT subscription to Codex using device login.
+            </Text>
+            <Text type="secondary">
+              <a
+                href="https://developers.openai.com/codex/auth/#fallback-authenticate-locally-and-copy-your-auth-cache"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Fallback
+              </a>
+              : authenticate locally and upload your
+              {" "}
+              <Text code>~/.codex/auth.json</Text>
+              {" "}
+              file.
+            </Text>
+            {!projectId && (
+              <Alert
+                type="warning"
+                showIcon
+                message="Project context required"
+                description="Open this chat in a project before starting device login."
+              />
+            )}
+            <Space wrap>
+              <Button
+                type="primary"
+                onClick={() => void startDeviceAuth()}
+                loading={deviceAuthActionPending}
+                disabled={!projectId || deviceAuth?.state === "pending"}
+              >
+                Start device login
+              </Button>
+              <Button
+                onClick={() => void refreshDeviceAuth()}
+                disabled={!projectId || !deviceAuth?.id || deviceAuthActionPending}
+              >
+                Refresh
+              </Button>
+              {refreshPaymentSource ? (
+                <Button
+                  onClick={() => refreshPaymentSource()}
+                  disabled={deviceAuthActionPending}
+                >
+                  Refresh payment source
+                </Button>
+              ) : null}
+              <Button
+                danger
+                onClick={() => void cancelDeviceAuth()}
+                loading={deviceAuthActionPending}
+                disabled={
+                  !projectId || !deviceAuth?.id || deviceAuth?.state !== "pending"
+                }
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => authFileInputRef.current?.click()}
+                loading={authFileUploadPending}
+                disabled={!projectId || deviceAuthActionPending}
+              >
+                Upload local auth.json
+              </Button>
+            </Space>
+            <input
+              ref={authFileInputRef}
+              type="file"
+              accept="application/json,.json"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  void uploadAuthFile(file);
+                }
+              }}
+            />
+            {uploadedAuthFileStatus ? (
+              <Alert
+                type="success"
+                showIcon
+                message="Auth file uploaded"
+                description={`Saved ${uploadedAuthFileStatus.bytes} bytes to ${uploadedAuthFileStatus.codexHome}`}
+              />
+            ) : null}
+            {deviceAuthError ? (
+              <Alert type="error" showIcon message={deviceAuthError} />
+            ) : null}
+            {rateLimitInfo.limited ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="Device auth is currently rate-limited (HTTP 429)"
+                description={rateLimitInfo.message}
+              />
+            ) : null}
+            {possibleThrottleInfo ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="Device auth may be temporarily throttled"
+                description={possibleThrottleInfo}
+              />
+            ) : null}
+            {deviceAuth ? (
+              deviceAuth.state === "completed" ? (
+                <Alert
+                  type="success"
+                  showIcon
+                  style={{ borderWidth: 2, padding: 12 }}
+                  message={
+                    <span style={{ fontSize: 17, fontWeight: 700 }}>
+                      Device authentication complete
+                    </span>
+                  }
+                  description={
+                    <span style={{ fontSize: 14 }}>
+                      Your ChatGPT subscription is now connected for Codex on
+                      this project-host. You can close this dialog and run a
+                      Codex turn.
+                    </span>
+                  }
+                />
+              ) : (
+                <Alert
+                  type={DEVICE_AUTH_ALERT_TYPE[deviceAuth.state]}
+                  showIcon
+                  message={`Device auth status: ${deviceAuth.state}`}
+                  description={
+                    deviceAuth.state === "pending"
+                      ? "Polling status every 1.5 seconds while this dialog is open."
+                      : deviceAuth.error
+                        ? deviceAuth.error
+                        : undefined
+                  }
+                />
+              )
+            ) : null}
+            {deviceAuth?.userCode && deviceAuth.state !== "completed" ? (
+              <div
+                style={{
+                  border: "1px solid #d9d9d9",
+                  borderRadius: 8,
+                  padding: 12,
+                  background: "#fafafa",
+                }}
+              >
+                <Text type="secondary">1. Copy this one-time code</Text>
+                {deviceCodeExpiresAt ? (
+                  <div style={{ marginTop: 4 }}>
+                    <Text type="secondary">
+                      Code expires <TimeAgo date={deviceCodeExpiresAt} />
+                    </Text>
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 28,
+                      lineHeight: "34px",
+                      fontWeight: 700,
+                      letterSpacing: "0.08em",
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {deviceAuth.userCode}
+                  </Text>
+                  <Button onClick={() => void copyDeviceCode()}>Copy code</Button>
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <Text type="secondary">
+                    Device codes are a common phishing target. Never share this code.
+                  </Text>
+                </div>
+              </div>
+            ) : null}
+            {deviceAuth?.verificationUrl && deviceAuth.state !== "completed" ? (
+              <div
+                style={{
+                  border: "1px solid #d9d9d9",
+                  borderRadius: 8,
+                  padding: 12,
+                  background: "#fafafa",
+                }}
+              >
+                <Text type="secondary">
+                  2.{" "}
+                  <a
+                    href={deviceAuth.verificationUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open this link
+                  </a>{" "}
+                  in your browser, sign in to your account, and paste the
+                  one-time code.
+                </Text>
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      lineHeight: "22px",
+                      fontWeight: 600,
+                      wordBreak: "break-all",
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    }}
+                  >
+                    {deviceAuth.verificationUrl}
+                  </Text>
+                  <Space>
+                    <Button onClick={() => void copyDeviceUrl()}>
+                      Copy URL
+                    </Button>
+                    <Button
+                      type="primary"
+                      href={deviceAuth.verificationUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open
+                    </Button>
+                  </Space>
+                </div>
+              </div>
+            ) : null}
+            {deviceAuth?.output ? (
+              <Collapse size="small" bordered={false}>
+                <Collapse.Panel
+                  key="device-auth-output"
+                  header="Show raw Codex output"
+                  style={{ border: "none", paddingInline: 0 }}
+                >
+                  <Input.TextArea
+                    readOnly
+                    value={deviceAuth.output}
+                    autoSize={{ minRows: 3, maxRows: 10 }}
+                  />
+                </Collapse.Panel>
+              </Collapse>
+            ) : null}
+          </Space>
+          <Divider style={{ margin: "8px 0" }} />
+          <CodexCredentialsPanel
+            embedded
+            hidePanelChrome
+            defaultWorkspaceId={projectId}
+          />
         </Space>
       </Modal>
     </>
