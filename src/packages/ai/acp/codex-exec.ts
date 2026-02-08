@@ -33,6 +33,7 @@ import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import type { AcpEvaluateRequest, AcpAgent, AcpStreamHandler } from "./types";
 import { getCodexProjectSpawner } from "./codex-project";
+import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
 import {
   findSessionFile,
   getSessionsRoot,
@@ -193,6 +194,9 @@ export class CodexExecAgent implements AcpAgent {
     const args = this.buildArgs(config, cwd);
     const projectSpawner = getCodexProjectSpawner();
     const projectId = request.chat?.project_id;
+    const accountId = request.account_id;
+    const model = config?.model;
+    const siteKeyGovernor = getCodexSiteKeyGovernor();
     const executeAttempt = async (
       {
         forceRefreshSiteKey = false,
@@ -210,10 +214,11 @@ export class CodexExecAgent implements AcpAgent {
       let cmd = this.opts.binaryPath ?? "codex";
       let proc: ReturnType<typeof spawn>;
       let authSource: string | undefined;
+      const attemptStartedAt = Date.now();
       if (projectSpawner && projectId) {
         const spawned = await projectSpawner.spawnCodexExec({
           projectId,
-          accountId: request.account_id,
+          accountId,
           args,
           cwd,
           env: this.opts.env,
@@ -262,16 +267,91 @@ export class CodexExecAgent implements AcpAgent {
         interrupted: false,
       });
 
-      // send prompt
-      proc.stdin?.write(this.decoratePrompt(prompt));
-      proc.stdin?.end();
-
-      const rl = createInterface({ input: proc.stdout as Readable });
       const errors: string[] = [];
       let finalResponse = "";
       let latestUsage: Usage | undefined;
       let threadId: string | undefined;
       let interrupted = false;
+      const siteKeyEnforced =
+        authSource === "site-api-key" &&
+        !!siteKeyGovernor &&
+        !!accountId &&
+        !!projectId;
+      let quotaPollTimer: NodeJS.Timeout | undefined;
+      let maxTurnTimer: NodeJS.Timeout | undefined;
+      let quotaCheckInFlight = false;
+      let quotaStopReason: string | undefined;
+
+      const stopForQuota = (message: string) => {
+        if (quotaStopReason) return;
+        quotaStopReason = message;
+        errors.push(message);
+        const running = this.running.get(session.sessionId);
+        if (running) {
+          running.interrupted = true;
+        }
+        this.kill(proc);
+      };
+
+      const checkQuota = async (phase: "start" | "poll") => {
+        if (!siteKeyEnforced || !siteKeyGovernor || !accountId || !projectId) {
+          return;
+        }
+        try {
+          const verdict = await siteKeyGovernor.checkAllowed({
+            accountId,
+            projectId,
+            model,
+            phase,
+          });
+          if (!verdict.allowed) {
+            const reason =
+              verdict.reason ??
+              "Stopped: you reached your CoCalc LLM usage limit for site-provided OpenAI access.";
+            stopForQuota(reason);
+          }
+        } catch (err) {
+          logger.warn("codex-exec: site-key quota check failed", {
+            phase,
+            accountId,
+            projectId,
+            err: `${err}`,
+          });
+        }
+      };
+
+      await checkQuota("start");
+
+      if (!this.running.get(session.sessionId)?.interrupted) {
+        // send prompt
+        proc.stdin?.write(this.decoratePrompt(prompt));
+      }
+      proc.stdin?.end();
+
+      if (siteKeyEnforced && siteKeyGovernor && accountId && projectId) {
+        const pollMs = Math.max(30_000, siteKeyGovernor.pollIntervalMs ?? 120_000);
+        quotaPollTimer = setInterval(() => {
+          if (quotaCheckInFlight || quotaStopReason) return;
+          quotaCheckInFlight = true;
+          void checkQuota("poll").finally(() => {
+            quotaCheckInFlight = false;
+          });
+        }, pollMs);
+        quotaPollTimer.unref?.();
+
+        const configuredMaxTurnMs = siteKeyGovernor.maxTurnMs;
+        if (configuredMaxTurnMs != null && configuredMaxTurnMs > 0) {
+          const maxTurnMs = Math.max(60_000, configuredMaxTurnMs);
+          maxTurnTimer = setTimeout(() => {
+            stopForQuota(
+              "Stopped: this Codex turn exceeded the maximum runtime for site-provided OpenAI access.",
+            );
+          }, maxTurnMs);
+          maxTurnTimer.unref?.();
+        }
+      }
+
+      const rl = createInterface({ input: proc.stdout as Readable });
 
       const handleEvent = async (evt: ThreadEvent) => {
         switch (evt.type) {
@@ -365,6 +445,46 @@ export class CodexExecAgent implements AcpAgent {
 
       await exitPromise;
       await Promise.all(linePromises);
+      if (quotaPollTimer) {
+        clearInterval(quotaPollTimer);
+      }
+      if (maxTurnTimer) {
+        clearTimeout(maxTurnTimer);
+      }
+      if (
+        siteKeyEnforced &&
+        siteKeyGovernor &&
+        accountId &&
+        projectId &&
+        latestUsage &&
+        !interrupted
+      ) {
+        try {
+          await siteKeyGovernor.reportUsage({
+            accountId,
+            projectId,
+            model,
+            usage: {
+              input_tokens: latestUsage.input_tokens,
+              cached_input_tokens: latestUsage.cached_input_tokens,
+              output_tokens: latestUsage.output_tokens,
+              total_tokens:
+                latestUsage.input_tokens +
+                latestUsage.cached_input_tokens +
+                latestUsage.output_tokens,
+            },
+            totalTimeS: Math.max(0, (Date.now() - attemptStartedAt) / 1000),
+            path: request.chat?.path,
+          });
+        } catch (err) {
+          logger.warn("codex-exec: failed to report site-key usage", {
+            accountId,
+            projectId,
+            model,
+            err: `${err}`,
+          });
+        }
+      }
       this.running.delete(session.sessionId);
 
       return {

@@ -81,6 +81,10 @@ import {
 } from "@cocalc/server/cloud/cloudflare-tunnel";
 import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
+import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
+import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
+import { saveResponse } from "@cocalc/server/llm/save-response";
+import { isCoreLanguageModel, type LanguageModelCore } from "@cocalc/util/db-schema/llm-utils";
 function pool() {
   return getPool();
 }
@@ -887,6 +891,177 @@ export async function getSiteOpenAiApiKey({
     has_api_key,
     api_key: enabled && has_api_key ? apiKey : undefined,
   };
+}
+
+function formatUsageLimitMessage({
+  window,
+  reset_in,
+}: {
+  window: "5h" | "7d";
+  reset_in?: string;
+}): string {
+  const label = window === "5h" ? "5-hour" : "7-day";
+  return `You have reached your ${label} LLM usage limit.${reset_in ? ` Limit resets in ${reset_in}.` : ""} Please try again later or upgrade your membership.`;
+}
+
+export async function checkCodexSiteUsageAllowance({
+  host_id,
+  project_id,
+  account_id,
+  model: _model,
+}: {
+  host_id?: string;
+  project_id: string;
+  account_id: string;
+  model?: string;
+}): Promise<{
+  allowed: boolean;
+  reason?: string;
+  window?: "5h" | "7d";
+  reset_in?: string;
+}> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!account_id) {
+    throw new Error("account_id must be specified");
+  }
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: account_id,
+  });
+
+  const status = await getLLMUsageStatus({ account_id });
+  for (const window of status.windows) {
+    const limit = window.limit;
+    if (limit == null) {
+      continue;
+    }
+    if (limit <= 0 || window.used > limit) {
+      return {
+        allowed: false,
+        reason: formatUsageLimitMessage({
+          window: window.window,
+          reset_in: window.reset_in,
+        }),
+        window: window.window,
+        reset_in: window.reset_in,
+      };
+    }
+  }
+
+  return { allowed: true };
+}
+
+function getCodexFallbackBillingModel(): LanguageModelCore {
+  const configured = (
+    process.env.COCALC_CODEX_SITE_USAGE_FALLBACK_MODEL ?? "gpt-5-mini"
+  ).trim();
+  if (isCoreLanguageModel(configured)) {
+    return configured;
+  }
+  return "gpt-5-mini";
+}
+
+async function computeCodexSiteUsageUnits({
+  model,
+  prompt_tokens,
+  completion_tokens,
+}: {
+  model?: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+}): Promise<{
+  usage_units: number;
+  billed_model: string;
+}> {
+  const normalized = `${model ?? ""}`.trim();
+  if (isCoreLanguageModel(normalized)) {
+    return {
+      usage_units: await computeUsageUnits({
+        model: normalized,
+        prompt_tokens,
+        completion_tokens,
+      }),
+      billed_model: normalized,
+    };
+  }
+  const fallback = getCodexFallbackBillingModel();
+  return {
+    usage_units: await computeUsageUnits({
+      model: fallback,
+      prompt_tokens,
+      completion_tokens,
+    }),
+    billed_model: fallback,
+  };
+}
+
+export async function recordCodexSiteUsage({
+  host_id,
+  project_id,
+  account_id,
+  model,
+  path,
+  prompt_tokens,
+  completion_tokens,
+  total_time_s,
+}: {
+  host_id?: string;
+  project_id: string;
+  account_id: string;
+  model?: string;
+  path?: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_time_s: number;
+}): Promise<{ usage_units: number }> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!account_id) {
+    throw new Error("account_id must be specified");
+  }
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: account_id,
+  });
+
+  const prompt = Math.max(0, Math.floor(prompt_tokens));
+  const completion = Math.max(0, Math.floor(completion_tokens));
+  const totalTokens = prompt + completion;
+  const { usage_units, billed_model } = await computeCodexSiteUsageUnits({
+    model,
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+  });
+
+  await saveResponse({
+    account_id,
+    analytics_cookie: undefined,
+    history: [],
+    input: `[codex-site-key] model=${model ?? "unknown"}`,
+    model: billed_model,
+    output: "",
+    path,
+    project_id,
+    prompt_tokens: prompt,
+    system: "",
+    tag: "codex-site-key",
+    total_time_s: Math.max(0, Number(total_time_s) || 0),
+    total_tokens: totalTokens,
+    usage_units,
+  });
+
+  return { usage_units };
 }
 
 export async function listHosts({

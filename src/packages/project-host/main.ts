@@ -33,6 +33,7 @@ import { startReconciler } from "./reconcile";
 import { init as initAcp } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
+import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { startCodexSubscriptionCacheGc } from "./codex/codex-subscription-cache-gc";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
@@ -172,6 +173,7 @@ export async function main(
     }),
   );
   initCodexProjectRunner();
+  initCodexSiteKeyGovernor();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   await initAcp(conatClient);
 

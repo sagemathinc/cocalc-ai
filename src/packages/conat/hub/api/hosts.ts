@@ -279,6 +279,8 @@ export const hosts = {
   touchExternalCredential: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
   getSiteOpenAiApiKey: authFirstRequireHost,
+  checkCodexSiteUsageAllowance: authFirstRequireHost,
+  recordCodexSiteUsage: authFirstRequireHost,
 };
 
 export interface HostConnectorUpgradeRequest {
@@ -374,6 +376,29 @@ export interface Hosts {
     enabled: boolean;
     has_api_key: boolean;
     api_key?: string;
+  }>;
+  checkCodexSiteUsageAllowance: (opts: {
+    host_id?: string;
+    project_id: string;
+    account_id: string;
+    model?: string;
+  }) => Promise<{
+    allowed: boolean;
+    reason?: string;
+    window?: "5h" | "7d";
+    reset_in?: string;
+  }>;
+  recordCodexSiteUsage: (opts: {
+    host_id?: string;
+    project_id: string;
+    account_id: string;
+    model?: string;
+    path?: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_time_s: number;
+  }) => Promise<{
+    usage_units: number;
   }>;
 
   createHost: (opts: {
