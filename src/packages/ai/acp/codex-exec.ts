@@ -47,6 +47,7 @@ const DEFAULT_PRECONTENT_MAX_FILE_MB = 2;
 const COMPRESS_THRESHOLD_BYTES = 64 * 1024;
 const FILE_LINK_GUIDANCE =
   "When referencing workspace files, output markdown links relative to the project root so they stay clickable in CoCalc, e.g., foo.py -> [foo.py](./foo.py) (no backticks around the link). For images use ![](./image.png).";
+const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
 
 function redactArgsForLog(args: string[]): string {
   const out = [...args];
@@ -61,6 +62,49 @@ function redactArgsForLog(args: string[]): string {
     }
   }
   return argsJoin(out);
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, "");
+}
+
+function extractModelNotFound(text: string): string | undefined {
+  const m = text.match(
+    /The requested model ['"]([^'"]+)['"] does not exist/i,
+  );
+  return m?.[1];
+}
+
+function normalizeErrorMessages(errors: string[]): string[] {
+  const uniq: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of errors) {
+    const value = stripAnsi(raw ?? "").trim();
+    if (!value) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    uniq.push(value);
+  }
+  return uniq.filter((msg, i, arr) => {
+    // Remove short duplicates that are fully contained in longer messages.
+    if (msg.length > 200) return true;
+    return !arr.some((other, j) => j !== i && other.includes(msg));
+  });
+}
+
+function formatCodexError(errors: string[]): string {
+  const normalized = normalizeErrorMessages(errors);
+  const merged = normalized.join("\n\n");
+  const model = extractModelNotFound(merged);
+  if (model) {
+    return [
+      `Codex request failed: model '${model}' is not available for this authentication method.`,
+      "Try connecting a ChatGPT subscription for this model, or choose a different model.",
+    ].join("\n");
+  }
+  if (normalized.length === 0) return "Codex request failed.";
+  if (normalized.length === 1) return normalized[0];
+  return normalized.join("\n\n");
 }
 
 // JSONL event shapes from codex exec (--experimental-json)
@@ -261,14 +305,17 @@ export class CodexExecAgent implements AcpAgent {
       proc.on("exit", (code, signal) => {
         const interrupted = this.running.get(session.sessionId)?.interrupted;
         if (code !== 0 && !interrupted) {
-          const errMsg =
-            stderrBuf.join("") ||
-            `codex exited with code ${code ?? "?"} signal ${signal ?? "?"}`;
-          errors.push(errMsg);
+          const stderr = stderrBuf.join("");
+          if (errors.length === 0) {
+            const errMsg =
+              stderr ||
+              `codex exited with code ${code ?? "?"} signal ${signal ?? "?"}`;
+            errors.push(errMsg);
+          }
           logger.warn("codex-exec: process exited with code", {
             code,
             signal,
-            stderr: stderrBuf.join(""),
+            stderr,
           });
         } else if (interrupted) {
           logger.debug("codex-exec: process exited after interrupt", {
@@ -287,14 +334,9 @@ export class CodexExecAgent implements AcpAgent {
     await exitPromise;
     await Promise.all(linePromises);
 
-    const errorText = errors.join("; ");
+    const errorText = errors.length > 0 ? formatCodexError(errors) : "";
     if (errorText) {
       await stream({ type: "error", error: errorText });
-      if (!finalResponse) {
-        finalResponse = errorText;
-      } else {
-        finalResponse = `${finalResponse}\n\nErrors: ${errorText}`;
-      }
     }
     // emit summary even if errors to clear UI state
     await stream({
