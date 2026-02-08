@@ -87,7 +87,7 @@ export default function ChatInput({
   ]);
   const historyIndexRef = useRef<number>(0);
   const applyingHistoryRef = useRef(false);
-  const ignoreStaleChangeUntilRef = useRef<number>(0);
+  const postSendGhostTextRef = useRef<string | null>(null);
   const suppressPropSyncAfterSendRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -101,6 +101,9 @@ export default function ChatInput({
       suppressPropSyncAfterSendRef.current = false;
     }
     if (next !== input) {
+      if (next === "" && input !== "") {
+        postSendGhostTextRef.current = input;
+      }
       setInput(next);
       historyRef.current = [{ value: next, at: Date.now() }];
       historyIndexRef.current = 0;
@@ -194,8 +197,14 @@ export default function ChatInput({
       enableMentions={true}
       submitMentionsRef={submitMentionsRef}
       onChange={(value) => {
-        if (Date.now() <= ignoreStaleChangeUntilRef.current) {
-          return;
+        const ghost = postSendGhostTextRef.current;
+        if (ghost != null) {
+          // After send, the editor can emit stale callbacks with the just-sent value.
+          // Ignore those until we see any different value.
+          if (input === "" && value === ghost) return;
+          if (value !== ghost) {
+            postSendGhostTextRef.current = null;
+          }
         }
         setInput(value);
         onChange(value);
@@ -230,8 +239,7 @@ export default function ChatInput({
         historyIndexRef.current = trimmed.length - 1;
       }}
       onShiftEnter={(value) => {
-        // Ignore stale post-send editor onChange events while the composer resets.
-        ignoreStaleChangeUntilRef.current = Date.now() + 1200;
+        postSendGhostTextRef.current = value;
         suppressPropSyncAfterSendRef.current = true;
         savePresence.cancel();
         controlRef.current?.allowNextValueUpdateWhileFocused?.();

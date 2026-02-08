@@ -105,4 +105,47 @@ describe("ChatInput send lifecycle regressions", () => {
 
     expect(lastMarkdownInputProps.value).toBe("");
   });
+
+  it("does not resurrect text after an external clear followed by stale onChange", () => {
+    const syncdb = {
+      set: jest.fn(),
+      commit: jest.fn(),
+    } as any;
+    let setValueRef: ((v: string) => void) | null = null;
+
+    function Harness() {
+      const [value, setValue] = useState("");
+      setValueRef = setValue;
+      return (
+        <ChatInput
+          input={value}
+          onChange={setValue}
+          on_send={() => undefined}
+          syncdb={syncdb}
+          date={0}
+        />
+      );
+    }
+
+    render(<Harness />);
+    expect(lastMarkdownInputProps).toBeTruthy();
+    expect(setValueRef).toBeTruthy();
+
+    act(() => {
+      lastMarkdownInputProps.onChange("hello");
+    });
+    expect(lastMarkdownInputProps.value).toBe("hello");
+
+    // Simulate send button / parent clear path.
+    act(() => {
+      setValueRef?.("");
+    });
+    expect(lastMarkdownInputProps.value).toBe("");
+
+    // A late stale callback with old text should be ignored.
+    act(() => {
+      lastMarkdownInputProps.onChange("hello");
+    });
+    expect(lastMarkdownInputProps.value).toBe("");
+  });
 });
