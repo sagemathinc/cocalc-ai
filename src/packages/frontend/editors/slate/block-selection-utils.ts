@@ -3,9 +3,27 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Descendant, Editor, Node, Point, Text } from "slate";
+import { Descendant, Node, Point, Text } from "slate";
 import type { SlateEditor } from "./types";
 import { pointAtPath } from "./slate-util";
+
+function pointAtDocEdge(
+  root: Node,
+  edge: "start" | "end",
+): { path: number[]; offset: number } {
+  let first: { path: number[]; offset: number } | null = null;
+  let last: { path: number[]; offset: number } | null = null;
+  for (const [node, path] of Node.texts(root)) {
+    if (first == null) {
+      first = { path, offset: 0 };
+    }
+    last = { path, offset: node.text.length };
+  }
+  if (edge === "start") {
+    return first ?? { path: [0, 0], offset: 0 };
+  }
+  return last ?? { path: [0, 0], offset: 0 };
+}
 
 export function pointFromOffsetInDoc(
   doc: Descendant[],
@@ -24,7 +42,7 @@ export function pointFromOffsetInDoc(
     curOffset += text.length;
   }
 
-  return Editor.start(root as any, [0]);
+  return pointAtDocEdge(root, "start");
 }
 
 export function blockSelectionPoint(
@@ -53,7 +71,7 @@ export function normalizePointForDoc(
     if (Text.isText(node)) {
       return point;
     }
-    return Editor[edge](root as any, point.path);
+    return pointAtDocEdge(root, edge);
   } catch {
     return null;
   }

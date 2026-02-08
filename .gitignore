@@ -199,6 +199,7 @@ g-cs
 g-cs2
 g-ssh-server
 g-bundle
+g-postgres
 g2
 g-lite
 g-*.sh
