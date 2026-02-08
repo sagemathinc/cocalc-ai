@@ -1033,7 +1033,7 @@ export default function Message({
     return (
       <Col key={1} xs={mainXS}>
         <div
-          style={{ display: "flex" }}
+          style={{ display: "flex", margin: "10px 0 -10px 0" }}
           onClick={() => {
             const d = dateValue(message);
             if (d != null) actions?.setFragment(d);
