@@ -18,7 +18,6 @@ Table({
       "organization_id",
       "revoked",
       "updated",
-      "(provider,kind,scope,owner_account_id,project_id,organization_id,revoked)",
     ],
   },
   fields: {

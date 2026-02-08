@@ -11,6 +11,11 @@ export { getNames } from "@cocalc/server/accounts/get-name";
 import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "@cocalc/backend/logger";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
+import {
+  hasExternalCredential,
+  listExternalCredentials as listExternalCredentialsStore,
+  revokeExternalCredential as revokeExternalCredentialStore,
+} from "@cocalc/server/external-credentials/store";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -251,3 +256,138 @@ export const userSalesloftSync = reuseInFlight(
     }
   },
 );
+
+function parseMap(raw?: string): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, string> = {};
+    for (const key in parsed) {
+      const value = parsed[key];
+      if (typeof value === "string" && value.trim()) {
+        out[key] = value.trim();
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function resolveSharedHomeMode(): "fallback" | "prefer" | "always" {
+  const mode = `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? "fallback"}`
+    .trim()
+    .toLowerCase();
+  if (mode === "prefer" || mode === "always") return mode;
+  return "fallback";
+}
+
+export async function listExternalCredentials({
+  account_id,
+  provider,
+  kind,
+  scope,
+  include_revoked,
+}: {
+  account_id?: string;
+  provider?: string;
+  kind?: string;
+  scope?: string;
+  include_revoked?: boolean;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  return await listExternalCredentialsStore({
+    owner_account_id: account_id,
+    provider,
+    kind,
+    scope: scope as any,
+    includeRevoked: !!include_revoked,
+  });
+}
+
+export async function revokeExternalCredential({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  if (!id) {
+    throw Error("id must be specified");
+  }
+  const revoked = await revokeExternalCredentialStore({
+    id,
+    owner_account_id: account_id,
+  });
+  return { revoked };
+}
+
+export async function getCodexPaymentSource({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id?: string;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  const projectKeys = parseMap(
+    process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEYS_JSON,
+  );
+  const accountKeys = parseMap(
+    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
+  );
+  const hasProjectApiKey =
+    !!(project_id && projectKeys[project_id]) ||
+    !!(project_id && process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY);
+  const hasAccountApiKey =
+    !!accountKeys[account_id] || !!process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY;
+  const hasSiteApiKey = !!process.env.COCALC_CODEX_AUTH_SITE_OPENAI_KEY;
+  const hasSubscription = await hasExternalCredential({
+    selector: {
+      provider: "openai",
+      kind: "codex-subscription-auth-json",
+      scope: "account",
+      owner_account_id: account_id,
+    },
+  });
+  const sharedHomeMode = resolveSharedHomeMode();
+
+  let source:
+    | "subscription"
+    | "project-api-key"
+    | "account-api-key"
+    | "site-api-key"
+    | "shared-home"
+    | "none";
+  if (hasSubscription) {
+    source = "subscription";
+  } else if (hasProjectApiKey) {
+    source = "project-api-key";
+  } else if (hasAccountApiKey) {
+    source = "account-api-key";
+  } else if (hasSiteApiKey) {
+    source = "site-api-key";
+  } else if (sharedHomeMode === "always") {
+    source = "shared-home";
+  } else {
+    source = "none";
+  }
+
+  return {
+    source,
+    hasSubscription,
+    hasProjectApiKey,
+    hasAccountApiKey,
+    hasSiteApiKey,
+    sharedHomeMode,
+    project_id,
+  };
+}

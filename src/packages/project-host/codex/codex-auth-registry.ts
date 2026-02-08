@@ -16,7 +16,14 @@ const CREDENTIAL_SELECTOR = {
 type PullResult = {
   pulled: boolean;
   source?: "registry";
+  missing?: boolean;
 };
+
+const existenceCache = new Map<
+  string,
+  { has: boolean; expires: number }
+>();
+const EXISTENCE_CACHE_TTL_MS = 30_000;
 
 function getHubCaller():
   | { client: NonNullable<ReturnType<typeof getMasterConatClient>>; host_id: string }
@@ -89,6 +96,51 @@ export async function pushSubscriptionAuthToRegistry({
   }
 }
 
+export async function hasSubscriptionAuthInRegistry({
+  projectId,
+  accountId,
+}: {
+  projectId: string;
+  accountId: string;
+}): Promise<boolean | undefined> {
+  const key = `${projectId}:${accountId}`;
+  const now = Date.now();
+  const cached = existenceCache.get(key);
+  if (cached && cached.expires > now) {
+    return cached.has;
+  }
+  const caller = getHubCaller();
+  if (!caller) {
+    return undefined;
+  }
+  try {
+    const has = await callHub({
+      ...caller,
+      name: "hosts.hasExternalCredential",
+      args: [
+        {
+          project_id: projectId,
+          selector: {
+            ...CREDENTIAL_SELECTOR,
+            owner_account_id: accountId,
+          },
+        },
+      ],
+      timeout: 10000,
+    });
+    const hasValue = !!has;
+    existenceCache.set(key, { has: hasValue, expires: now + EXISTENCE_CACHE_TTL_MS });
+    return hasValue;
+  } catch (err) {
+    logger.debug("hasSubscriptionAuthInRegistry failed", {
+      projectId,
+      accountId,
+      err: `${err}`,
+    });
+    return undefined;
+  }
+}
+
 export async function pullSubscriptionAuthFromRegistry({
   projectId,
   accountId,
@@ -119,8 +171,12 @@ export async function pullSubscriptionAuthFromRegistry({
     });
     const payload = result?.payload;
     if (typeof payload !== "string" || !payload.trim()) {
-      return { pulled: false };
+      const key = `${projectId}:${accountId}`;
+      existenceCache.set(key, { has: false, expires: Date.now() + EXISTENCE_CACHE_TTL_MS });
+      return { pulled: false, missing: true };
     }
+    const key = `${projectId}:${accountId}`;
+    existenceCache.set(key, { has: true, expires: Date.now() + EXISTENCE_CACHE_TTL_MS });
     await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
     const authPath = join(codexHome, "auth.json");
     await fs.writeFile(authPath, payload, { mode: 0o600 });

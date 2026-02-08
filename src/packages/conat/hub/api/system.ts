@@ -24,10 +24,44 @@ export const system = {
   getAdminAssignedMembership: authFirst,
   setAdminAssignedMembership: authFirst,
   clearAdminAssignedMembership: authFirst,
+  listExternalCredentials: authFirst,
+  revokeExternalCredential: authFirst,
+  getCodexPaymentSource: authFirst,
 
   adminSalesloftSync: authFirst,
   userSalesloftSync: authFirst,
 };
+
+export interface ExternalCredentialInfo {
+  id: string;
+  provider: string;
+  kind: string;
+  scope: string;
+  owner_account_id?: string;
+  project_id?: string;
+  organization_id?: string;
+  metadata?: Record<string, any>;
+  created: Date;
+  updated: Date;
+  revoked?: Date | null;
+  last_used?: Date | null;
+}
+
+export interface CodexPaymentSourceInfo {
+  source:
+    | "subscription"
+    | "project-api-key"
+    | "account-api-key"
+    | "site-api-key"
+    | "shared-home"
+    | "none";
+  hasSubscription: boolean;
+  hasProjectApiKey: boolean;
+  hasAccountApiKey: boolean;
+  hasSiteApiKey: boolean;
+  sharedHomeMode: "fallback" | "prefer" | "always";
+  project_id?: string;
+}
 
 export interface System {
   // get all or specific customize data
@@ -147,4 +181,22 @@ export interface System {
     account_id?: string;
     user_account_id: string;
   }) => Promise<void>;
+
+  listExternalCredentials: (opts: {
+    account_id?: string;
+    provider?: string;
+    kind?: string;
+    scope?: string;
+    include_revoked?: boolean;
+  }) => Promise<ExternalCredentialInfo[]>;
+
+  revokeExternalCredential: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<{ revoked: boolean }>;
+
+  getCodexPaymentSource: (opts: {
+    account_id?: string;
+    project_id?: string;
+  }) => Promise<CodexPaymentSourceInfo>;
 }

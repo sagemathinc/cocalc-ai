@@ -3,7 +3,10 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
-import { pullSubscriptionAuthFromRegistry } from "./codex-auth-registry";
+import {
+  hasSubscriptionAuthInRegistry,
+  pullSubscriptionAuthFromRegistry,
+} from "./codex-auth-registry";
 
 const logger = getLogger("project-host:codex-auth");
 const MAX_AUTH_UPLOAD_BYTES = 2_000_000;
@@ -212,6 +215,22 @@ export async function resolveCodexAuthRuntime({
   if (accountId) {
     const codexHome = resolveSubscriptionCodexHome(accountId);
     const authFile = join(codexHome, "auth.json");
+    if (await pathExists(authFile)) {
+      const hasInRegistry = await hasSubscriptionAuthInRegistry({
+        projectId,
+        accountId,
+      });
+      if (hasInRegistry === false) {
+        try {
+          await fs.unlink(authFile);
+        } catch {}
+        logger.debug("removed local subscription auth after central revoke", {
+          projectId,
+          accountId,
+          codexHome,
+        });
+      }
+    }
     if (!(await pathExists(authFile))) {
       const pulled = await pullSubscriptionAuthFromRegistry({
         projectId,

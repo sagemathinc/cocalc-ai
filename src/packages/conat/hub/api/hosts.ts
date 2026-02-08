@@ -274,6 +274,7 @@ export const hosts = {
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   updateCopyStatus: authFirstRequireHost,
+  hasExternalCredential: authFirstRequireHost,
   getExternalCredential: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
 };
@@ -343,6 +344,11 @@ export interface Hosts {
     status: ProjectCopyState;
     last_error?: string;
   }) => Promise<void>;
+  hasExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<boolean>;
   getExternalCredential: (opts: {
     host_id?: string;
     project_id: string;
