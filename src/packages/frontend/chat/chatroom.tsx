@@ -6,6 +6,7 @@
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
   React,
+  useCallback,
   useEditorRedux,
   useEffect,
   useMemo,
@@ -199,12 +200,28 @@ export function ChatPanel({
     return 0;
   }, [singleThreadView, selectedThreadDate]);
 
-  const { input, setInput, clearInput } = useChatComposerDraft({
+  const { input, setInput, clearInput, clearComposerDraft } = useChatComposerDraft({
     account_id,
     project_id,
     path,
     composerDraftKey,
   });
+  const suppressSentTextRef = useRef<{ text: string; until: number } | null>(
+    null,
+  );
+  const setComposerInput = useCallback(
+    (value: string) => {
+      const suppress = suppressSentTextRef.current;
+      if (suppress && Date.now() <= suppress.until && value === suppress.text) {
+        return;
+      }
+      if (suppress && Date.now() > suppress.until) {
+        suppressSentTextRef.current = null;
+      }
+      setInput(value);
+    },
+    [setInput],
+  );
   const hasInput = input.trim().length > 0;
 
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
@@ -305,6 +322,13 @@ export function ChatPanel({
     replyToOverride?: Date | null,
     extraInput?: string,
   ): void {
+    const sendingText = (extraInput ?? input ?? "").trim();
+    if (sendingText) {
+      suppressSentTextRef.current = {
+        text: sendingText,
+        until: Date.now() + 1500,
+      };
+    }
     let reply_to: Date | undefined;
     if (replyToOverride !== undefined) {
       reply_to = replyToOverride ?? undefined;
@@ -324,6 +348,10 @@ export function ChatPanel({
     } else if (isCombinedFeedSelected) {
       setAllowAutoSelectThread(false);
     }
+    // Clear current composer draft before send switches selected thread context.
+    actions.deleteDraft(composerDraftKey);
+    void clearInput();
+
     const timeStamp = actions.sendChat({
       submitMentionsRef,
       reply_to,
@@ -340,11 +368,19 @@ export function ChatPanel({
     setTimeout(() => {
       scrollToBottomRef.current?.(true);
     }, 100);
-    actions.deleteDraft(composerDraftKey);
-    void clearInput();
   }
-  function on_send(): void {
-    sendMessage();
+  function on_send(value?: string): void {
+    sendMessage(undefined, value);
+  }
+
+  function onNewChat(): void {
+    // Explicitly reset draft state for the global "new chat" composer bucket.
+    suppressSentTextRef.current = null;
+    setInput("");
+    actions.deleteDraft(0);
+    void clearComposerDraft(0);
+    setAllowAutoSelectThread(false);
+    setSelectedThreadKey(null);
   }
 
   const renderChatContent = () => (
@@ -367,8 +403,7 @@ export function ChatPanel({
         fragmentId={fragmentId}
         threadsCount={threads.length}
         onNewChat={() => {
-          setAllowAutoSelectThread(false);
-          setSelectedThreadKey(null);
+          onNewChat();
         }}
         composerTargetKey={composerTargetKey}
         composerFocused={composerFocused}
@@ -380,7 +415,7 @@ export function ChatPanel({
         fontSize={fontSize}
         composerDraftKey={composerDraftKey}
         input={input}
-        setInput={setInput}
+        setInput={setComposerInput}
         on_send={on_send}
         submitMentionsRef={submitMentionsRef}
         hasInput={hasInput}
@@ -446,8 +481,7 @@ export function ChatPanel({
         }
         chatContent={renderChatContent()}
         onNewChat={() => {
-          setAllowAutoSelectThread(false);
-          setSelectedThreadKey(null);
+          onNewChat();
         }}
         newChatSelected={!selectedThreadKey}
       />

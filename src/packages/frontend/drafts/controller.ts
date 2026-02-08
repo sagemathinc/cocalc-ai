@@ -121,17 +121,16 @@ export class DraftController {
   async clear(): Promise<void> {
     if (this.disposed) return;
     this.clearTimer();
-    this.enqueue(async () => {
-      await this.adapter.clear(this.key);
-    });
-    await this.saveChain;
-    if (this.disposed) return;
     this.state = {
       text: "",
       composing: false,
       updatedAt: this.now(),
     };
     this.emit();
+    this.enqueue(async () => {
+      await this.adapter.clear(this.key);
+    });
+    await this.saveChain;
   }
 
   async dispose({

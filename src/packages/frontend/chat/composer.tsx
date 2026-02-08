@@ -34,7 +34,7 @@ export interface ChatRoomComposerProps {
   composerDraftKey: number;
   input: string;
   setInput: (value: string) => void;
-  on_send: () => void;
+  on_send: (value?: string) => void;
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
   isSelectedThreadAI: boolean;
@@ -256,7 +256,7 @@ export function ChatRoomComposer({
       const effective =
         typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
-      on_send();
+      on_send(effective);
       if (isZenMode) {
         void toggleZenMode();
       }

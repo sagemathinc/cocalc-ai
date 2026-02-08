@@ -9,10 +9,16 @@ import {
   AkvDraftAdapter,
   DraftController,
 } from "@cocalc/frontend/drafts";
+import {
+  get_local_storage,
+  set_local_storage,
+  delete_local_storage,
+} from "@cocalc/frontend/misc";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const CHAT_DRAFT_STORE = "chat-composer-drafts-v1";
-const CHAT_DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const CHAT_DRAFT_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
+const MAX_LOCAL_DRAFT_CHARS = 200_000;
 
 interface UseChatComposerDraftOptions {
   account_id?: string;
@@ -26,6 +32,7 @@ interface UseChatComposerDraftResult {
   input: string;
   setInput: (value: string) => void;
   clearInput: () => Promise<void>;
+  clearComposerDraft: (draftKey: number) => Promise<void>;
 }
 
 export function useChatComposerDraft({
@@ -41,6 +48,10 @@ export function useChatComposerDraft({
   const storageKey = useMemo(
     () => `${project_id}:${path}:${composerDraftKey}`,
     [project_id, path, composerDraftKey],
+  );
+  const localStorageKey = useMemo(
+    () => `chat-composer-draft:${storageKey}`,
+    [storageKey],
   );
 
   const adapter = useMemo(() => {
@@ -67,13 +78,15 @@ export function useChatComposerDraft({
       setInputState("");
       return;
     }
+    const local = get_local_storage(localStorageKey);
+    const localText =
+      typeof local === "string" ? local : typeof local === "number" ? `${local}` : "";
     const controller = new DraftController({
       key: storageKey,
       adapter,
       debounceMs,
-      initialText: input,
-      initialUpdatedAt: Date.now(),
-      ttlMs: CHAT_DRAFT_TTL_MS,
+      initialText: localText,
+      initialUpdatedAt: 0,
       onError: (err) => console.warn("chat draft controller error", err),
     });
     controllerRef.current = controller;
@@ -91,9 +104,17 @@ export function useChatComposerDraft({
       }
       void controller.dispose({ flush: true });
     };
-  }, [adapter, storageKey, debounceMs]);
+  }, [adapter, storageKey, debounceMs, localStorageKey]);
 
   const setInput = useCallback((value: string) => {
+    if (value.trim().length === 0) {
+      delete_local_storage(localStorageKey);
+    } else if (value.length > MAX_LOCAL_DRAFT_CHARS) {
+      // Avoid unbounded localStorage growth; AKV still stores the full draft.
+      delete_local_storage(localStorageKey);
+    } else {
+      set_local_storage(localStorageKey, value);
+    }
     const controller = controllerRef.current;
     if (!controller) {
       setInputState(value);
@@ -101,17 +122,42 @@ export function useChatComposerDraft({
     }
     controller.setText(value);
     controller.setComposing(value.trim().length > 0);
-  }, []);
+  }, [localStorageKey]);
 
   const clearInput = useCallback(async () => {
+    delete_local_storage(localStorageKey);
     const controller = controllerRef.current;
     if (!controller) {
       setInputState("");
       return;
     }
     await controller.clear();
-  }, []);
+  }, [localStorageKey]);
 
-  return { input, setInput, clearInput };
+  const clearComposerDraft = useCallback(
+    async (draftKey: number) => {
+      const key = `${project_id}:${path}:${draftKey}`;
+      const localKey = `chat-composer-draft:${key}`;
+      delete_local_storage(localKey);
+      if (!adapter) {
+        if (draftKey === composerDraftKey) {
+          setInputState("");
+        }
+        return;
+      }
+      if (draftKey === composerDraftKey) {
+        const controller = controllerRef.current;
+        if (!controller) {
+          setInputState("");
+          return;
+        }
+        await controller.clear();
+        return;
+      }
+      await adapter.clear(key);
+    },
+    [adapter, composerDraftKey, path, project_id],
+  );
+
+  return { input, setInput, clearInput, clearComposerDraft };
 }
-

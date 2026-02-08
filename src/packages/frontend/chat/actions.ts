@@ -253,11 +253,13 @@ export class ChatActions extends Actions<ChatState> {
     }
     const time_stamp: Date = webapp_client.server_time();
     const time_stamp_str = time_stamp.toISOString();
-    if (submitMentionsRef?.current != null) {
-      input = submitMentionsRef.current?.({ chat: `${time_stamp.valueOf()}` });
-    }
-    if (extraInput) {
-      input = (input ?? "") + extraInput;
+    const mentionsInput =
+      submitMentionsRef?.current?.({ chat: `${time_stamp.valueOf()}` }) ?? "";
+    if (extraInput != null) {
+      // Prefer mention-processed content when available; otherwise use explicit input.
+      input = mentionsInput.trim().length > 0 ? mentionsInput : extraInput;
+    } else if (mentionsInput.trim().length > 0) {
+      input = mentionsInput;
     }
     input = input?.trim();
     if (!input) {

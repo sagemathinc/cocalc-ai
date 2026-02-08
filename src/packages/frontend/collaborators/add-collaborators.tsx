@@ -114,6 +114,7 @@ export const AddCollaborators: React.FC<Props> = ({
   // currently carrying out a search
   const [state, set_state] = useState<State>("input");
   const [focused, set_focused] = useState<boolean>(false);
+  const [select_open, set_select_open] = useState<boolean>(false);
   // display an error in case something went wrong doing a search
   const [err, set_err] = useState<string>("");
   // if set, adding user via email to this address
@@ -144,6 +145,7 @@ export const AddCollaborators: React.FC<Props> = ({
     set_email_body("");
     set_email_body_error("");
     set_email_body_editing(false);
+    set_select_open(false);
   }
 
   async function do_search(search: string): Promise<void> {
@@ -225,6 +227,7 @@ export const AddCollaborators: React.FC<Props> = ({
     set_err(err);
     set_results(search_results);
     set_email_to("");
+    set_select_open(true);
     select_ref.current?.focus();
   }
 
@@ -533,12 +536,35 @@ export const AddCollaborators: React.FC<Props> = ({
 
     return (
       <div style={{ marginBottom: "10px" }}>
+        <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+          <Input
+            autoFocus={autoFocus}
+            placeholder="Name or email address..."
+            value={search}
+            onChange={(e) => {
+              const value = (e.target as any).value ?? "";
+              search_ref.current = value;
+              set_search(value);
+            }}
+            onPressEnter={() => {
+              if (state !== ("searching" as State)) {
+                void do_search(search_ref.current);
+              }
+            }}
+          />
+          <Button
+            onClick={() => void do_search(search_ref.current)}
+            disabled={state === ("searching" as State) || !search.trim()}
+          >
+            Search
+          </Button>
+        </div>
         <Select
           ref={select_ref}
           mode="multiple"
           allowClear
-          autoFocus={autoFocus}
-          open={autoFocus ? true : undefined}
+          open={select_open}
+          showSearch={false}
           filterOption={(s, opt) => {
             if (s.indexOf(",") != -1) return true;
             return search_match(
@@ -564,26 +590,20 @@ export const AddCollaborators: React.FC<Props> = ({
           }}
           value={selected_entries}
           optionLabelProp="tag"
-          onInputKeyDown={(e) => {
-            if (e.keyCode == 27) {
-              reset();
-              e.preventDefault();
-              return;
-            }
-            if (
-              e.keyCode == 13 &&
-              state != ("searching" as State) &&
-              !hasMatches()
-            ) {
-              do_search(search_ref.current);
-              e.preventDefault();
-              return;
+          notFoundContent={null}
+          onFocus={() => {
+            set_focused(true);
+            if (state === ("searched" as State)) {
+              set_select_open(true);
             }
           }}
-          onSearch={(value) => (search_ref.current = value)}
-          notFoundContent={null}
-          onFocus={() => set_focused(true)}
-          onBlur={() => set_focused(false)}
+          onBlur={() => {
+            set_focused(false);
+            set_select_open(false);
+          }}
+          onDropdownVisibleChange={(open) => {
+            set_select_open(open);
+          }}
         >
           {render_options(users)}
         </Select>
@@ -605,18 +625,6 @@ export const AddCollaborators: React.FC<Props> = ({
         {state == "searched" && render_select_list_button()}
       </div>
     );
-  }
-
-  function hasMatches(): boolean {
-    const s = search_split(search_ref.current.toLowerCase());
-    if (s.length == 0) return true;
-    for (const r of results) {
-      if (r.label == null) continue;
-      if (search_match(r.label, s)) {
-        return true;
-      }
-    }
-    return false;
   }
 
   function render_select_list_button(): React.JSX.Element | undefined {

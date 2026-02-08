@@ -39,6 +39,21 @@ interface Props {
   moveCursorToEndOfLine?: boolean;
 }
 
+type HistoryEntry = {
+  value: string;
+  cursor?: { line: number; ch: number };
+  at: number;
+};
+
+const HISTORY_GROUP_MS = 250;
+
+function markdownEndPosition(value: string): { line: number; ch: number } {
+  const lines = value.split("\n");
+  const line = Math.max(0, lines.length - 1);
+  const ch = lines[line]?.length ?? 0;
+  return { line, ch };
+}
+
 export default function ChatInput({
   autoFocus,
   cacheId,
@@ -67,11 +82,28 @@ export default function ChatInput({
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
   const isFocusedRef = useRef<boolean>(false);
+  const historyRef = useRef<HistoryEntry[]>([
+    { value: propsInput ?? "", at: Date.now() },
+  ]);
+  const historyIndexRef = useRef<number>(0);
+  const applyingHistoryRef = useRef(false);
+  const ignoreStaleChangeUntilRef = useRef<number>(0);
+  const suppressPropSyncAfterSendRef = useRef<boolean>(false);
 
   useEffect(() => {
     const next = propsInput ?? "";
+    if (suppressPropSyncAfterSendRef.current) {
+      // Right after send, parent props can briefly lag with old text.
+      // Ignore those stale values until parent catches up to cleared state.
+      if (next !== "") {
+        return;
+      }
+      suppressPropSyncAfterSendRef.current = false;
+    }
     if (next !== input) {
       setInput(next);
+      historyRef.current = [{ value: next, at: Date.now() }];
+      historyIndexRef.current = 0;
     }
   }, [propsInput, input]);
 
@@ -129,6 +161,19 @@ export default function ChatInput({
 
   const hasInput = (input ?? "").trim().length > 0;
 
+  const applyHistoryValue = (entry: HistoryEntry) => {
+    applyingHistoryRef.current = true;
+    const value = entry.value;
+    setInput(value);
+    onChange(value);
+    savePresence(value);
+    const pos = entry.cursor ?? markdownEndPosition(value);
+    setTimeout(() => {
+      controlRef.current?.setSelectionFromMarkdownPosition?.(pos);
+    }, 0);
+    applyingHistoryRef.current = false;
+  };
+
   return (
     <MarkdownInput
       autoFocus={autoFocus}
@@ -149,17 +194,76 @@ export default function ChatInput({
       enableMentions={true}
       submitMentionsRef={submitMentionsRef}
       onChange={(value) => {
+        if (Date.now() <= ignoreStaleChangeUntilRef.current) {
+          return;
+        }
         setInput(value);
         onChange(value);
         savePresence(value);
+        if (applyingHistoryRef.current) return;
+        const history = historyRef.current;
+        const idx = historyIndexRef.current;
+        const current = history[idx]?.value ?? "";
+        if (current === value) {
+          history[idx] = {
+            ...(history[idx] ?? { value: current, at: Date.now() }),
+            cursor: controlRef.current?.getMarkdownPositionForSelection?.(),
+            at: Date.now(),
+          };
+          return;
+        }
+        const now = Date.now();
+        const cursor = controlRef.current?.getMarkdownPositionForSelection?.();
+        const trimmed = history.slice(0, idx + 1);
+        const last = trimmed[trimmed.length - 1];
+        // Group nearby edits into one undo step, rather than per-character.
+        if (last && now - last.at <= HISTORY_GROUP_MS) {
+          trimmed[trimmed.length - 1] = { value, cursor, at: now };
+        } else {
+          trimmed.push({ value, cursor, at: now });
+        }
+        const maxEntries = 200;
+        if (trimmed.length > maxEntries) {
+          trimmed.splice(0, trimmed.length - maxEntries);
+        }
+        historyRef.current = trimmed;
+        historyIndexRef.current = trimmed.length - 1;
       }}
       onShiftEnter={(value) => {
+        // Ignore stale post-send editor onChange events while the composer resets.
+        ignoreStaleChangeUntilRef.current = Date.now() + 1200;
+        suppressPropSyncAfterSendRef.current = true;
         savePresence.cancel();
         controlRef.current?.allowNextValueUpdateWhileFocused?.();
         setInput("");
         onChange("");
+        historyRef.current = [{ value: "", at: Date.now() }];
+        historyIndexRef.current = 0;
         publishNotComposing();
         on_send(value);
+      }}
+      onUndo={() => {
+        const idx = historyIndexRef.current;
+        if (idx <= 0) return;
+        historyIndexRef.current = idx - 1;
+        applyHistoryValue(
+          historyRef.current[historyIndexRef.current] ?? {
+            value: "",
+            at: Date.now(),
+          },
+        );
+      }}
+      onRedo={() => {
+        const history = historyRef.current;
+        const idx = historyIndexRef.current;
+        if (idx >= history.length - 1) return;
+        historyIndexRef.current = idx + 1;
+        applyHistoryValue(
+          history[idx + 1] ?? {
+            value: "",
+            at: Date.now(),
+          },
+        );
       }}
       height={height}
       autoGrowMaxHeight={autoGrowMaxHeight}
@@ -179,4 +283,3 @@ export default function ChatInput({
     />
   );
 }
-
