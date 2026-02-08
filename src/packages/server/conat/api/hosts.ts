@@ -941,7 +941,8 @@ export async function checkCodexSiteUsageAllowance({
     if (limit == null) {
       continue;
     }
-    if (limit <= 0 || window.used > limit) {
+    // Deny once usage reaches the configured limit (not only after exceeding).
+    if (limit <= 0 || window.used >= limit) {
       return {
         allowed: false,
         reason: formatUsageLimitMessage({

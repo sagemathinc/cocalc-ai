@@ -22,6 +22,11 @@ const SITE_KEY_POLL_MS = Math.max(
   Number(process.env.COCALC_CODEX_SITE_USAGE_POLL_MS ?? 2 * 60_000),
 );
 
+const SITE_KEY_FAIL_OPEN_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_CODEX_SITE_FAIL_OPEN_MS ?? 5 * 60_000),
+);
+
 function getConfiguredMaxTurnMs(): number | undefined {
   const raw = process.env.COCALC_CODEX_SITE_MAX_TURN_MS;
   if (raw == null || raw.trim() === "") return undefined;
@@ -32,6 +37,38 @@ function getConfiguredMaxTurnMs(): number | undefined {
 
 const SITE_KEY_MAX_TURN_MS = getConfiguredMaxTurnMs();
 
+let meteringHealth: {
+  failingSince?: number;
+  lastError?: string;
+} = {};
+
+function markMeteringSuccess() {
+  meteringHealth = {};
+}
+
+function markMeteringFailure(err: unknown): {
+  deny: boolean;
+  reason: string;
+} {
+  const now = Date.now();
+  if (!meteringHealth.failingSince) {
+    meteringHealth.failingSince = now;
+  }
+  meteringHealth.lastError = `${err}`;
+  const failingFor = now - meteringHealth.failingSince;
+  if (failingFor <= SITE_KEY_FAIL_OPEN_MS) {
+    return {
+      deny: false,
+      reason: "",
+    };
+  }
+  return {
+    deny: true,
+    reason:
+      "Site usage checks are temporarily unavailable, so CoCalc Membership Codex access is paused. Please retry shortly.",
+  };
+}
+
 export function initCodexSiteKeyGovernor(): void {
   setCodexSiteKeyGovernor({
     pollIntervalMs: SITE_KEY_POLL_MS,
@@ -39,6 +76,10 @@ export function initCodexSiteKeyGovernor(): void {
     async checkAllowed({ accountId, projectId, model }) {
       const caller = getHubCaller();
       if (!caller) {
+        const verdict = markMeteringFailure("missing hub caller");
+        if (verdict.deny) {
+          return { allowed: false, reason: verdict.reason };
+        }
         return { allowed: true };
       }
       try {
@@ -54,6 +95,7 @@ export function initCodexSiteKeyGovernor(): void {
           ],
           timeout: 15_000,
         });
+        markMeteringSuccess();
         return {
           allowed: !!result?.allowed,
           reason: result?.reason,
@@ -67,7 +109,12 @@ export function initCodexSiteKeyGovernor(): void {
           model,
           err: `${err}`,
         });
-        // If central usage checks are unavailable, fail open so Codex stays usable.
+        const verdict = markMeteringFailure(err);
+        // Intentional: fail open briefly for transient hub/network failures so
+        // user turns are not disrupted, then fail closed if outage persists.
+        if (verdict.deny) {
+          return { allowed: false, reason: verdict.reason };
+        }
         return { allowed: true };
       }
     },

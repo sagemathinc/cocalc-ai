@@ -35,6 +35,54 @@ type DeviceAuthSession = {
 
 const MAX_OUTPUT_CHARS = 50_000;
 const sessions = new Map<string, DeviceAuthSession>();
+const DEVICE_AUTH_MAX_SESSIONS = Math.max(
+  10,
+  Number(process.env.COCALC_CODEX_DEVICE_AUTH_MAX_SESSIONS ?? 200),
+);
+const DEVICE_AUTH_TERMINAL_RETENTION_MS = Math.max(
+  60_000,
+  Number(
+    process.env.COCALC_CODEX_DEVICE_AUTH_TERMINAL_RETENTION_MS ??
+      6 * 60 * 60 * 1000,
+  ),
+);
+const DEVICE_AUTH_PRUNE_INTERVAL_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_CODEX_DEVICE_AUTH_PRUNE_INTERVAL_MS ?? 5 * 60_000),
+);
+
+function isTerminal(state: DeviceAuthState): boolean {
+  return state === "completed" || state === "failed" || state === "canceled";
+}
+
+function pruneSessions(now: number = Date.now()): void {
+  // First pass: drop old terminal sessions.
+  for (const [id, session] of sessions) {
+    if (!isTerminal(session.state)) continue;
+    if (now - session.updatedAt > DEVICE_AUTH_TERMINAL_RETENTION_MS) {
+      sessions.delete(id);
+    }
+  }
+
+  if (sessions.size < DEVICE_AUTH_MAX_SESSIONS) return;
+
+  // Second pass: while above cap, evict oldest terminal sessions first.
+  const candidates = [...sessions.values()]
+    .filter((s) => isTerminal(s.state))
+    .sort((a, b) => a.updatedAt - b.updatedAt);
+  for (const session of candidates) {
+    if (sessions.size < DEVICE_AUTH_MAX_SESSIONS) break;
+    sessions.delete(session.id);
+  }
+}
+
+setInterval(() => {
+  try {
+    pruneSessions();
+  } catch (err) {
+    logger.debug("codex device auth prune failed", { err: `${err}` });
+  }
+}, DEVICE_AUTH_PRUNE_INTERVAL_MS).unref();
 
 function classifyDeviceAuthFailure(output: string, code: number | null): string {
   const text = output ?? "";
@@ -101,6 +149,13 @@ export async function startCodexDeviceAuth(
   projectId: string,
   accountId: string,
 ): Promise<ReturnType<typeof snapshot>> {
+  pruneSessions();
+  if (sessions.size >= DEVICE_AUTH_MAX_SESSIONS) {
+    throw new Error(
+      "Too many codex device-auth sessions are active on this host; please retry shortly.",
+    );
+  }
+
   const codexHome = resolveSubscriptionCodexHome(accountId);
   await ensureCodexCredentialsStoreFile(codexHome);
   // Ensure we run in subscription auth mode (not key/shared-home fallback)
@@ -224,6 +279,7 @@ function snapshot(session: DeviceAuthSession) {
 export function getCodexDeviceAuthStatus(id: string):
   | ReturnType<typeof snapshot>
   | undefined {
+  pruneSessions();
   const session = sessions.get(id);
   if (!session) return undefined;
   return snapshot(session);
