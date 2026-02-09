@@ -52,6 +52,13 @@ const MAX_INPUT_HEIGHT = "50vh";
 const Modes = ["markdown", "editor"] as const;
 export type Mode = (typeof Modes)[number];
 
+function debugComposerMultimode(type: string, data?: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.log(`[multimode] ${type}`, data ?? {});
+}
+
 const LOCAL_STORAGE_KEY = "markdown-editor-mode";
 
 function getLocalStorageMode(): Mode | undefined {
@@ -219,6 +226,7 @@ export default function MultiMarkdownInput({
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+  const activeCacheIdRef = useRef<string | undefined>(cacheId);
 
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
 
@@ -250,6 +258,27 @@ export default function MultiMarkdownInput({
   );
 
   const [editBarPopover, setEditBarPopover] = useState<boolean>(false);
+
+  useEffect(() => {
+    activeCacheIdRef.current = cacheId;
+  }, [cacheId]);
+
+  function isActiveCallback(
+    sourceCacheId: string | undefined,
+    sourceMode: Mode,
+  ): boolean {
+    const activeCacheId = activeCacheIdRef.current;
+    if (sourceCacheId !== activeCacheId || sourceMode !== mode) {
+      debugComposerMultimode("stale-callback:ignored", {
+        sourceCacheId,
+        activeCacheId,
+        sourceMode,
+        activeMode: mode,
+      });
+      return false;
+    }
+    return true;
+  }
 
   useEffect(() => {
     onModeChange?.(mode);
@@ -483,6 +512,12 @@ export default function MultiMarkdownInput({
           selectionRef={selectionRef}
           value={value}
           onChange={(value) => {
+            if (!isActiveCallback(cacheId, "markdown")) return;
+            debugComposerMultimode("markdown:onChange", {
+              value,
+              mode,
+              cacheId,
+            });
             onChangeRef.current?.(value);
           }}
           saveDebounceMs={saveDebounceMs}
@@ -494,6 +529,7 @@ export default function MultiMarkdownInput({
           onUploadEnd={onUploadEnd}
           enableMentions={enableMentions}
           onShiftEnter={(value) => {
+            if (!isActiveCallback(cacheId, "markdown")) return;
             onShiftEnterRef.current?.(value);
           }}
           onAltEnter={(value, pos) => {
@@ -591,9 +627,21 @@ export default function MultiMarkdownInput({
             getValueRef={getValueRef}
             actions={{
               set_value: (value) => {
+                if (!isActiveCallback(cacheId, "editor")) return;
+                debugComposerMultimode("editor:set_value", {
+                  value,
+                  mode,
+                  cacheId,
+                });
                 onChangeRef.current?.(value);
               },
               shiftEnter: (value) => {
+                if (!isActiveCallback(cacheId, "editor")) return;
+                debugComposerMultimode("editor:shiftEnter", {
+                  value,
+                  mode,
+                  cacheId,
+                });
                 onChangeRef.current?.(value);
                 onShiftEnterRef.current?.(value);
               },
