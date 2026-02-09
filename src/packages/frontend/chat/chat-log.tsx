@@ -277,6 +277,7 @@ export function ChatLog({
         }}
       />
       <Composing
+        actions={actions}
         projectId={project_id}
         path={path}
         accountId={account_id}

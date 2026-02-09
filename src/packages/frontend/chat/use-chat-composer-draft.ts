@@ -1,7 +1,6 @@
 /*
  * Hook for chat composer drafts using the shared draft controller architecture.
- * Draft text is private/account-scoped in AKV and survives refreshes, while
- * syncdb draft records are reserved for lightweight "is composing" presence.
+ * Draft text is private/account-scoped in AKV and survives refreshes.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

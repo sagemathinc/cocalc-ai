@@ -3,17 +3,25 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// We keep chat draft text private in AKV via the shared draft controller.
-// Syncdb draft rows are still used for lightweight composing presence only,
-// so collaborators see "is writing..." without receiving draft content.
+// Chat draft text is private in AKV via the shared draft controller.
+// For main composer input (date===0), composing presence is published with
+// syncdoc cursors, so it is ephemeral and doesn't spam chat rows.
 
-import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useIntl } from "react-intl";
 import { useDebouncedCallback } from "use-debounce";
 import { CSS, redux } from "@cocalc/frontend/app-framework";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
+import { lite } from "@cocalc/frontend/lite";
 import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import { SubmitMentionsRef } from "./types";
 
@@ -127,10 +135,14 @@ export default function ChatInput({
     }
   }, [propsInput, input]);
 
-  const savePresence = useDebouncedCallback(
-    (value: string) => {
+  const setComposingPresence = useCallback(
+    (value: string): void => {
       if (!syncdb) return;
       const composing = value.trim().length > 0;
+      if (!lite && date === 0) {
+        syncdb.set_cursor_locs([{ chat_composing: composing }]);
+        return;
+      }
       syncdb.set({
         event: "draft",
         sender_id,
@@ -142,9 +154,13 @@ export default function ChatInput({
       });
       syncdb.commit();
     },
-    SAVE_DEBOUNCE_MS,
-    { leading: false, trailing: true },
+    [date, sender_id, syncdb],
   );
+
+  const savePresence = useDebouncedCallback(setComposingPresence, SAVE_DEBOUNCE_MS, {
+    leading: false,
+    trailing: true,
+  });
 
   useEffect(() => {
     return () => {
@@ -154,6 +170,10 @@ export default function ChatInput({
 
   const publishNotComposing = () => {
     if (!syncdb) return;
+    if (!lite && date === 0) {
+      syncdb.set_cursor_locs([{ chat_composing: false }]);
+      return;
+    }
     syncdb.set({
       event: "draft",
       sender_id,
