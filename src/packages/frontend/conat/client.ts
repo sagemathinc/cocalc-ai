@@ -640,6 +640,74 @@ export class ConatClient extends EventEmitter {
     }
   };
 
+  // Debug helper for manually validating project-host subject ACL from browser devtools.
+  // Example:
+  //   await cc.conat._testPublishToProjectHost({
+  //     project_id: "<project-id>",
+  //     subject: "hub.account.<account-id>.api",
+  //     mesg: { ping: 1 },
+  //   });
+  _testPublishToProjectHost = async ({
+    project_id,
+    subject,
+    mesg = { test: true, ts: Date.now() },
+    timeout = DEFAULT_TIMEOUT,
+    waitForInterest = false,
+  }: {
+    project_id: string;
+    subject: string;
+    mesg?: any;
+    timeout?: number;
+    waitForInterest?: boolean;
+  }): Promise<{
+    ok: boolean;
+    host_id?: string;
+    address?: string;
+    subject: string;
+    bytes?: number;
+    count?: number;
+    error?: string;
+    code?: string | number;
+  }> => {
+    if (!isValidUUID(project_id)) {
+      throw Error(`project_id='${project_id}' must be a valid uuid`);
+    }
+    const routing = this.getProjectRoutingInfo(project_id);
+    if (!routing) {
+      throw Error(
+        `unable to route publish to project-host for project ${project_id}; host routing info unavailable`,
+      );
+    }
+    const cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });
+    try {
+      const { bytes, count } = await cn.publish(subject, mesg, {
+        timeout,
+        waitForInterest,
+      });
+      return {
+        ok: true,
+        host_id: routing.host_id,
+        address: routing.address,
+        subject,
+        bytes,
+        count,
+      };
+    } catch (err: any) {
+      if (this.isProjectHostAuthError(err)) {
+        this.invalidateProjectHostToken(routing.host_id);
+        this.removeRoutedHubClient(routing.host_id);
+      }
+      return {
+        ok: false,
+        host_id: routing.host_id,
+        address: routing.address,
+        subject,
+        error: `${err?.message ?? err}`,
+        code: err?.code,
+      };
+    }
+  };
+
   // Returns api for RPC calls to the project with typescript support!
   projectApi = ({
     project_id,
