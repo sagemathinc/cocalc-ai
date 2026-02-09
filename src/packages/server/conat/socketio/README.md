@@ -31,7 +31,7 @@ Central hub and project-host differ in where collaborator checks come from:
 ## Main Components
 
 ```mermaid
-flowchart LR
+flowchart TD
   Browser[Web Browser / Account]
   Hub[Central Hub]
   PH[Project-Host]
@@ -53,7 +53,7 @@ flowchart LR
 
 - Keep shared policy in `conat/auth/subject-policy.ts` authoritative where possible.
 - If adding a new subject namespace, update both adapters and tests together.
-- Subject auth is capability auth. Accidentally broad patterns can grant large access quickly.
+- **Subject auth is capability auth.** Accidentally broad patterns can grant large access quickly.
 - Frontend routing can send hub RPC traffic directly to project-host for selected methods; auth rules must still be strict on project-host.
 - Avoid coupling policy to transient transport details (addresses, websocket ids). Prefer stable identity + subject checks.
 
