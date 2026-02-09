@@ -52,3 +52,10 @@ export function toCodeLines(value: string): Descendant[] {
     children: [{ text: line }],
   })) as Descendant[];
 }
+
+export function isElementOfType(x: any, type: string | string[]): boolean {
+  if (x == null) return false;
+  const t = x.type;
+  if (Array.isArray(type)) return type.includes(t);
+  return t === type;
+}
