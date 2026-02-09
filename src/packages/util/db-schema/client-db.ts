@@ -17,6 +17,8 @@ class ClientDB {
     this.sha1 = this.sha1.bind(this);
     this._user_set_query_project_users =
       this._user_set_query_project_users.bind(this);
+    this._user_set_query_project_manage_users_owner_only =
+      this._user_set_query_project_manage_users_owner_only.bind(this);
     this._user_set_query_project_change_after =
       this._user_set_query_project_change_after.bind(this);
     this._user_set_query_project_change_before =
@@ -43,6 +45,20 @@ class ClientDB {
   _user_set_query_project_users(obj) {
     // client allows anything; server may be more stringent
     return obj.users;
+  }
+
+  _user_set_query_project_manage_users_owner_only(obj) {
+    const value =
+      obj != null && typeof obj.get === "function"
+        ? obj.get("manage_users_owner_only")
+        : obj?.manage_users_owner_only;
+    if (value == null) {
+      return undefined;
+    }
+    if (typeof value !== "boolean") {
+      throw Error("manage_users_owner_only must be a boolean");
+    }
+    return value;
   }
 
   _user_set_query_project_change_after(_obj, _old_val, _new_val, cb) {
