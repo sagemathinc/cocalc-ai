@@ -2021,6 +2021,46 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
         );
       });
 
+      test("should forward changes to updated callback reference", (done) => {
+        const restore = setSchema("test_changefeed_cb_swap", {
+          anonymous: true,
+          fields: { id: { type: "uuid" } },
+        });
+        const oldCb = jest.fn();
+        const newCb = jest.fn();
+        const changes = {
+          id: "12345678-1234-1234-1234-123456789012",
+          cb: oldCb,
+        };
+        const feed = new EventEmitter();
+
+        db.changefeed = jest.fn((opts) => opts.cb(null, feed));
+
+        db._user_get_query_changefeed(
+          changes,
+          "test_changefeed_cb_swap",
+          ["id"],
+          { id: "1" },
+          [],
+          {},
+          "test-account",
+          { get: { fields: { id: null } } },
+          "test_changefeed_cb_swap",
+          (err) => {
+            expect(err).toBeFalsy();
+            changes.cb = newCb;
+            feed.emit("change", { action: "insert", new_val: { id: "1" } });
+            expect(newCb).toHaveBeenCalledWith(undefined, {
+              action: "insert",
+              new_val: { id: "1" },
+            });
+            expect(oldCb).not.toHaveBeenCalled();
+            restore();
+            done();
+          },
+        );
+      });
+
       test("should handle 'projects' changefeed type", (done) => {
         const restore = setSchema("test_projects_feed", {
           anonymous: false,
