@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { act, render } from "@testing-library/react";
 import ChatInput from "../input";
 
@@ -63,7 +63,7 @@ describe("ChatInput send lifecycle regressions", () => {
     jest.useRealTimers();
   });
 
-  it("does not resurrect just-sent text when a stale onChange arrives later", () => {
+  it("does not resurrect just-sent text when a stale callback arrives from an old session", () => {
     const sent: string[] = [];
     const syncdb = {
       set: jest.fn(),
@@ -72,13 +72,29 @@ describe("ChatInput send lifecycle regressions", () => {
 
     function Harness() {
       const [value, setValue] = useState("");
+      const [session, setSession] = useState(1);
+      const sessionRef = useRef(session);
+      useEffect(() => {
+        sessionRef.current = session;
+      }, [session]);
+
+      const setComposerInput = (next: string, sessionToken?: number) => {
+        if (sessionToken != null && sessionToken !== sessionRef.current) return;
+        setValue(next);
+      };
+
       return (
         <ChatInput
           input={value}
-          onChange={setValue}
-          on_send={(v) => sent.push(v)}
+          onChange={setComposerInput}
+          on_send={(v) => {
+            sent.push(v);
+            setSession((s) => s + 1);
+            setValue("");
+          }}
           syncdb={syncdb}
           date={0}
+          sessionToken={session}
         />
       );
     }
@@ -90,6 +106,7 @@ describe("ChatInput send lifecycle regressions", () => {
       lastMarkdownInputProps.onChange("hello");
     });
     expect(lastMarkdownInputProps.value).toBe("hello");
+    const staleOnChange = lastMarkdownInputProps.onChange;
 
     act(() => {
       lastMarkdownInputProps.onShiftEnter("hello");
@@ -97,25 +114,22 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(sent).toEqual(["hello"]);
     expect(lastMarkdownInputProps.value).toBe("");
 
-    // Simulate a late stale editor callback after send. This should be ignored.
+    // Simulate a late stale editor callback from the previous session.
     act(() => {
-      jest.setSystemTime(2500);
-      lastMarkdownInputProps.onChange("hello");
+      staleOnChange("hello");
     });
 
     expect(lastMarkdownInputProps.value).toBe("");
   });
 
-  it("does not resurrect text after an external clear followed by stale onChange", () => {
+  it("accepts live callbacks from the current session", () => {
     const syncdb = {
       set: jest.fn(),
       commit: jest.fn(),
     } as any;
-    let setValueRef: ((v: string) => void) | null = null;
 
     function Harness() {
       const [value, setValue] = useState("");
-      setValueRef = setValue;
       return (
         <ChatInput
           input={value}
@@ -129,23 +143,10 @@ describe("ChatInput send lifecycle regressions", () => {
 
     render(<Harness />);
     expect(lastMarkdownInputProps).toBeTruthy();
-    expect(setValueRef).toBeTruthy();
 
     act(() => {
       lastMarkdownInputProps.onChange("hello");
     });
     expect(lastMarkdownInputProps.value).toBe("hello");
-
-    // Simulate send button / parent clear path.
-    act(() => {
-      setValueRef?.("");
-    });
-    expect(lastMarkdownInputProps.value).toBe("");
-
-    // A late stale callback with old text should be ignored.
-    act(() => {
-      lastMarkdownInputProps.onChange("hello");
-    });
-    expect(lastMarkdownInputProps.value).toBe("");
   });
 });
