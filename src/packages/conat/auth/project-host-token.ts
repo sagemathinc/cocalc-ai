@@ -103,7 +103,13 @@ function normalizeTtlSeconds(ttl_seconds?: number): number {
   return Math.max(MIN_TTL_SECONDS, Math.min(MAX_TTL_SECONDS, Math.floor(ttl)));
 }
 
-function ensureValidInputs({ account_id, host_id }: { account_id: string; host_id: string }) {
+function ensureValidInputs({
+  account_id,
+  host_id,
+}: {
+  account_id: string;
+  host_id: string;
+}) {
   if (!isValidUUID(account_id)) {
     throw new Error("invalid account_id");
   }
@@ -215,7 +221,6 @@ export function verifyProjectHostAuthToken({
   if (!isValidUUID(claims?.jti)) {
     throw new Error("invalid token jti");
   }
-
   const nowSec = Math.floor(now_ms / 1000);
   if (typeof claims.iat !== "number" || claims.iat > nowSec + CLOCK_TOLERANCE_SECONDS) {
     throw new Error("token not yet valid");

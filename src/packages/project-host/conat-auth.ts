@@ -90,6 +90,10 @@ function clearAuthCaches() {
   collaboratorCache.clear();
 }
 
+export function clearProjectHostConatAuthCaches() {
+  clearAuthCaches();
+}
+
 export function createProjectHostConatAuth({
   host_id,
 }: {

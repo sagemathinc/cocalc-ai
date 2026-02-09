@@ -87,6 +87,7 @@ import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
 import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
 import { saveResponse } from "@cocalc/server/llm/save-response";
 import { isCoreLanguageModel, type LanguageModelCore } from "@cocalc/util/db-schema/llm-utils";
+import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 function pool() {
   return getPool();
 }
@@ -641,6 +642,14 @@ export async function issueProjectHostAuthToken({
     host_id,
     project_id,
   });
+  if (project_id) {
+    // Keep project-host local ACL up to date before issuing browser token.
+    // This is best-effort fast path for grant/revoke propagation.
+    await syncProjectUsersOnHost({
+      project_id,
+      expected_host_id: host_id,
+    });
+  }
 
   const { token, expires_at } = issueProjectHostAuthTokenJwt({
     account_id: owner,

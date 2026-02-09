@@ -2,6 +2,12 @@
 
 Branch scope: implement robust browser -> project-host Conat authentication and subject authorization.
 
+DO NOT FORGET:
+
+- [ ] Implement conat auth for projects running on project-host
+- [ ] Make project control work for starting projects on project-host from browser.
+- [ ] Make sure that the project-hosts no longer get the central hub's conat_password as part of their bootstrap and initialization steps.  More generally, audit how that conat_password is used.
+
 ## Principles
 
 - Authenticate once per websocket connection using short-lived host-scoped token.
@@ -31,11 +37,11 @@ Branch scope: implement robust browser -> project-host Conat authentication and 
 
 ### ACL data plane
 
-- [ ] Implement project-host in-memory ACL indexes for collaborator checks.
+- [x] Implement project-host in-memory ACL indexes for collaborator checks.
 - [ ] Add hub -> host collaborator delta stream and handlers.
-- [ ] Ensure fast grant propagation path (seconds target).
+- [x] Ensure fast grant propagation path (seconds target).
 - [ ] Add bounded periodic reconcile (recently modified + active projects only).
-- [ ] Add on-demand single-project ACL refresh for unknown project checks.
+- [x] Add on-demand single-project ACL refresh for unknown project checks.
 
 ### Authorization behavior
 
@@ -47,7 +53,7 @@ Branch scope: implement robust browser -> project-host Conat authentication and 
 ### Caching and performance
 
 - [x] Share/port auth decision LRU cache logic for repeated checks.
-- [ ] Add TTL and invalidation strategy tied to ACL updates.
+- [x] Add TTL and invalidation strategy tied to ACL updates.
 - [ ] Validate memory footprint under high project counts.
 
 ### Observability and ops

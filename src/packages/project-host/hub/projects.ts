@@ -46,6 +46,7 @@ import {
 } from "../codex/codex-device-auth";
 import { uploadSubscriptionAuthFile } from "../codex/codex-auth";
 import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
+import { clearProjectHostConatAuthCaches } from "../conat-auth";
 
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
@@ -552,6 +553,22 @@ export async function updateAuthorizedKeys({
     throw Error("invalid project_id");
   }
   await refreshAuthorizedKeys(project_id, authorized_keys ?? "");
+}
+
+export async function updateProjectUsers({
+  project_id,
+  users,
+}: {
+  project_id: string;
+  users?: any;
+}) {
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  // Store collaborator map in the generic sqlite row mirror used by conat auth.
+  // This is separate from the concrete projects SQL table schema.
+  upsertProject({ project_id, users });
+  clearProjectHostConatAuthCaches();
 }
 
 export async function getSshKeys({

@@ -33,7 +33,14 @@ function serializeRunQuota(run_quota?: any): string | null {
 }
 
 // Local cache of project metadata on a project-host. This mirrors the
-// minimal information we need when the master is unreachable. Fields:
+// minimal information we need when the master is unreachable.
+//
+// NOTE:
+// - The concrete sqlite `projects` table stores runtime/project fields only.
+// - Collaborator `users` is stored in the generic `data` mirror row via
+//   `upsertRow("projects", ...)`, and read by conat auth from there.
+//
+// Fields:
 // - project_id: primary key
 // - title: human-friendly project title
 // - state: latest known run state (e.g. running/stopped)
@@ -43,7 +50,7 @@ function serializeRunQuota(run_quota?: any): string | null {
 // - scratch: scratch quota (bytes)
 // - last_seen: timestamp (ms) when we last touched the project locally
 // - updated_at: timestamp (ms) of last local change
-// - users: optional map of users/groups for the project
+// - users: optional map of users/groups for the project (generic `data` mirror only)
 // - http_port / ssh_port: host-exposed ports for the project container (if running)
 // - authorized_keys: concatenated SSH keys from master (account + project keys); the project’s own
 //   ~/.ssh/authorized_keys is read directly from the filesystem at auth time.
@@ -67,6 +74,8 @@ export interface ProjectRow {
 
 function ensureProjectsTable() {
   const db = initDatabase();
+  // Intentionally no `users` column here; collaborator state lives in the
+  // generic `data` table mirror (see upsertProject).
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       project_id TEXT PRIMARY KEY,

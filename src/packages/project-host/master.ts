@@ -8,7 +8,7 @@ import { account_id } from "@cocalc/backend/data";
 import { setMasterStatusClient } from "./master-status";
 import { setSshpiperdPublicKey } from "./ssh/host-keys";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
-import { updateAuthorizedKeys } from "./hub/projects";
+import { updateAuthorizedKeys, updateProjectUsers } from "./hub/projects";
 import { deleteVolume } from "./file-server";
 import { getSoftwareVersions } from "./software";
 import { upgradeSoftware } from "./upgrade";
@@ -161,6 +161,12 @@ export async function startMasterRegistration({
         await updateAuthorizedKeys({
           project_id,
           authorized_keys,
+        });
+      },
+      async updateProjectUsers({ project_id, users }) {
+        await updateProjectUsers({
+          project_id,
+          users,
         });
       },
       async deleteProjectData({ project_id }) {
