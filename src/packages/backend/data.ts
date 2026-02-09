@@ -303,6 +303,15 @@ export function setConatPassword(password: string) {
   conatPassword = password;
 }
 
+// Project-host browser auth tokens are signed by the central hub and verified
+// by each project-host. By default we reuse conatPassword for compatibility,
+// but this can be decoupled immediately by setting
+// COCALC_PROJECT_HOST_AUTH_TOKEN_SECRET.
+export function getProjectHostAuthTokenSecret(): string {
+  const secret = process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_SECRET?.trim();
+  return secret || conatPassword;
+}
+
 export const codexSubscriptionsPath = join(secrets, "codex-subscriptions");
 
 export let conatSocketioCount = parseInt(

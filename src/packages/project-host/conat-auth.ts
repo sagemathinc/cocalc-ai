@@ -1,4 +1,8 @@
 import type { AllowFunction, UserFunction } from "@cocalc/conat/core/server";
+// Project-host auth adapter. Central hub has a sibling adapter at
+// src/packages/server/conat/socketio/auth.ts.
+// Both adapters share subject-level policy via
+// src/packages/conat/auth/subject-policy.ts.
 import {
   checkCommonPermissions,
   extractProjectSubject,
@@ -9,7 +13,7 @@ import {
   type CoCalcUser,
 } from "@cocalc/conat/auth/subject-policy";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
-import { conatPassword } from "@cocalc/backend/data";
+import { getProjectHostAuthTokenSecret } from "@cocalc/backend/data";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
 
@@ -108,7 +112,7 @@ export function createProjectHostConatAuth({
     const claims = verifyProjectHostAuthToken({
       token,
       host_id,
-      secret: conatPassword,
+      secret: getProjectHostAuthTokenSecret(),
     });
     return { account_id: claims.sub } satisfies CoCalcUser;
   };

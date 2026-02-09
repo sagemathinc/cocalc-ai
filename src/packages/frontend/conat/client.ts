@@ -316,6 +316,11 @@ export class ConatClient extends EventEmitter {
     return await request.then(({ token }) => token);
   };
 
+  // Project-host routing + auth design:
+  // - docs/project-host-auth.md
+  // - src/packages/server/conat/socketio/README.md
+  // This creates/reuses a direct browser->project-host Conat client and
+  // supplies short-lived host-scoped bearer tokens via socket.io auth.
   private getOrCreateRoutedHubClient = ({
     host_id,
     address,
@@ -583,7 +588,8 @@ export class ConatClient extends EventEmitter {
     project_id?: string;
     timeout?: number;
   }) => {
-cc    const routeToProjectHost =
+    const subject = `hub.account.${this.client.account_id}.${service}`;
+    const routeToProjectHost =
       !!project_id &&
       PROJECT_HOST_ROUTED_HUB_METHODS.has(name) &&
       isValidUUID(project_id);

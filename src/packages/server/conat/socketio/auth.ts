@@ -1,4 +1,8 @@
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
+// Central-hub auth adapter. Project-host has a sibling adapter at
+// src/packages/project-host/conat-auth.ts.
+// Both adapters intentionally share subject-policy logic from
+// src/packages/conat/auth/subject-policy.ts.
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import { parse } from "cookie";
 import { getRememberMeHashFromCookieValue } from "@cocalc/server/auth/remember-me";

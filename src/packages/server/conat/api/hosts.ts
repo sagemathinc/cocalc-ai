@@ -19,7 +19,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
 import getLogger from "@cocalc/backend/logger";
-import { conatPassword } from "@cocalc/backend/data";
+import { getProjectHostAuthTokenSecret } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import {
   computePlacementPermission,
@@ -646,7 +646,7 @@ export async function issueProjectHostAuthToken({
     account_id: owner,
     host_id,
     ttl_seconds,
-    secret: conatPassword,
+    secret: getProjectHostAuthTokenSecret(),
   });
   return { host_id, token, expires_at };
 }

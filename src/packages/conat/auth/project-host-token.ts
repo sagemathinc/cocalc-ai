@@ -1,6 +1,29 @@
 import { createHash, createHmac, timingSafeEqual, randomUUID } from "crypto";
 import { isValidUUID } from "@cocalc/util/misc";
 
+/*
+Project-host auth token protocol (overview):
+
+- Token format: compact JWT-style token with 3 base64url parts
+  (header.payload.signature).
+- Signature algorithm: HMAC-SHA256 (HS256), keyed with a shared secret.
+- Issuer/trust model:
+  - Central hub signs tokens for a specific host audience.
+  - Project-host verifies signature + issuer + audience + expiry.
+  - Browser presents token during socket.io websocket auth.
+- Claims enforced:
+  - sub = account_id (who the browser is acting as)
+  - aud = project-host:<host_id> (where token is valid)
+  - iat/exp (short TTL)
+  - jti (unique id), v (protocol version)
+
+Keying/rotation notes:
+- The signing key is derived from a deployment secret via SHA-256 namespacing.
+- Current code supports one active symmetric secret at a time.
+- Planned key rotation can be added by introducing `kid` and a verifier key ring
+  that accepts current+previous keys during rollout.
+*/
+
 const TOKEN_TYPE = "JWT";
 const TOKEN_ALG = "HS256";
 const TOKEN_VERSION = "phat-v1";
