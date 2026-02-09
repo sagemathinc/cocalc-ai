@@ -152,7 +152,10 @@ export async function main(
   logger.info("Local sqlite + changefeeds for UI data");
   initSqlite();
   const hostId = resolveProjectHostId(_config.hostId);
-  const conatAuth = createProjectHostConatAuth({ host_id: hostId });
+  const conatAuth = createProjectHostConatAuth({
+    host_id: hostId,
+    upstreamHubPassword: upstreamHubConatPassword,
+  });
 
   // 1) HTTP + conat server
   const { app, httpServer, isHttps } = await startHttpServer(port, host, tls);
