@@ -228,6 +228,7 @@ export default function MultiMarkdownInput({
   }, [onChange]);
   const activeCacheIdRef = useRef<string | undefined>(cacheId);
   const activeModeRef = useRef<Mode>("markdown");
+  const mountedRef = useRef<boolean>(true);
 
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
 
@@ -260,6 +261,13 @@ export default function MultiMarkdownInput({
 
   const [editBarPopover, setEditBarPopover] = useState<boolean>(false);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // Keep active callback identity synchronous with render. If we wait for
   // useEffect, stale editor callbacks can fire in-between and pass guards.
   activeCacheIdRef.current = cacheId;
@@ -269,6 +277,9 @@ export default function MultiMarkdownInput({
     sourceCacheId: string | undefined,
     sourceMode: Mode,
   ): boolean {
+    if (!mountedRef.current) {
+      return false;
+    }
     const activeCacheId = activeCacheIdRef.current;
     const activeMode = activeModeRef.current;
     if (sourceCacheId !== activeCacheId || sourceMode !== activeMode) {

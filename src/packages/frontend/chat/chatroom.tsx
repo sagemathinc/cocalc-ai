@@ -247,17 +247,6 @@ export function ChatPanel({
         currentSession: composerSessionRef.current,
         currentInput: inputRef.current,
       });
-      if (
-        sessionToken != null &&
-        sessionToken !== composerSessionRef.current
-      ) {
-        debugChatComposer("setComposerInput:ignored-stale-session", {
-          value,
-          sessionToken,
-          currentSession: composerSessionRef.current,
-        });
-        return;
-      }
       inputRef.current = value;
       setInput(value);
       debugChatComposer("setComposerInput:applied", {

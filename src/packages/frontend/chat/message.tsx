@@ -143,6 +143,17 @@ interface Props {
   dim?: boolean;
 }
 
+export function resolveEditedMessageForSave(
+  mentionSubstituted: string | undefined,
+  submittedValue: string | undefined,
+  editedValue: string,
+): string {
+  const fallback = submittedValue ?? editedValue;
+  return typeof mentionSubstituted === "string" && mentionSubstituted !== ""
+    ? mentionSubstituted
+    : fallback;
+}
+
 export default function Message({
   index,
   actions,
@@ -1086,10 +1097,11 @@ export default function Message({
 
   function saveEditedMessage(submittedValue?: string): void {
     if (actions == null) return;
-    const mesg = (
-      submitMentionsRef.current?.({ chat: `${date}` }) ??
-      submittedValue ??
-      edited_message_ref.current
+    const mentionSubstituted = submitMentionsRef.current?.({ chat: `${date}` });
+    const mesg = resolveEditedMessageForSave(
+      mentionSubstituted,
+      submittedValue,
+      edited_message_ref.current,
     );
     const value = newest_content(message);
     if (mesg !== value) {

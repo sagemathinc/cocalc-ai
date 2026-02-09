@@ -196,4 +196,54 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps.cacheId).toBe("draft-1");
     expect(lastMarkdownInputProps.value).toBe("");
   });
+
+  it("ignores stale callbacks from prior cacheId epoch within same mounted input", () => {
+    const syncdb = {
+      set: jest.fn(),
+      commit: jest.fn(),
+    } as any;
+    let setDraftKeyRef: ((n: number) => void) | null = null;
+    const sends: string[] = [];
+
+    function Harness() {
+      const [value, setValue] = useState("");
+      const [draftKey, setDraftKey] = useState(0);
+      useEffect(() => {
+        setDraftKeyRef = setDraftKey;
+      }, [setDraftKey]);
+      return (
+        <ChatInput
+          cacheId={`draft-${draftKey}`}
+          input={value}
+          onChange={setValue}
+          on_send={(v) => sends.push(v)}
+          syncdb={syncdb}
+          date={draftKey}
+          sessionToken={1}
+        />
+      );
+    }
+
+    render(<Harness />);
+    expect(lastMarkdownInputProps).toBeTruthy();
+    const staleOnChange = lastMarkdownInputProps.onChange;
+    const staleOnShiftEnter = lastMarkdownInputProps.onShiftEnter;
+
+    act(() => {
+      setDraftKeyRef?.(1);
+    });
+    expect(lastMarkdownInputProps).toBeTruthy();
+    expect(lastMarkdownInputProps.cacheId).toBe("draft-1");
+    expect(lastMarkdownInputProps.value).toBe("");
+
+    // These callbacks are from the old cacheId epoch and must be ignored.
+    act(() => {
+      staleOnChange("ghost");
+      staleOnShiftEnter("ghost");
+    });
+
+    expect(lastMarkdownInputProps.cacheId).toBe("draft-1");
+    expect(lastMarkdownInputProps.value).toBe("");
+    expect(sends).toEqual([]);
+  });
 });
