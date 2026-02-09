@@ -43,6 +43,13 @@ async function typeInCodeMirror(page, text: string) {
   await page.keyboard.type(text);
 }
 
+async function typeInSlate(page, text: string) {
+  const editor = page.locator("[data-slate-editor='true']").first();
+  await expect(editor).toHaveCount(1);
+  await editor.click();
+  await page.keyboard.type(text);
+}
+
 test("new-thread shift+enter send clears and stays cleared", async ({ page }) => {
   await page.goto("/");
   await waitForHarness(page);
@@ -116,6 +123,43 @@ test("composer mode: shift+enter sends and clears without blur", async ({ page }
   await waitForHarness(page);
 
   await typeInCodeMirror(page, "quick-send");
+  await expectComposerInput(page, "quick-send");
+  await page.keyboard.press("Shift+Enter");
+
+  await expectComposerInput(page, "");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSends?.().length ?? 0);
+    })
+    .toBeGreaterThan(0);
+  await expectHarnessHealthy(page);
+});
+
+test("composer editor mode: send button appears while typing", async ({ page }) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await typeInSlate(page, "hello");
+  await expectComposerInput(page, "hello");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
+    })
+    .toBe(false);
+  await expectHarnessHealthy(page);
+});
+
+test("composer editor mode: shift+enter sends and clears", async ({ page }) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await typeInSlate(page, "quick-send");
   await expectComposerInput(page, "quick-send");
   await page.keyboard.press("Shift+Enter");
 

@@ -26,12 +26,18 @@ export const useRef = React.useRef;
 export const useMemo = React.useMemo;
 export const useState = React.useState;
 export const useIsMountedRef = () => ({ current: true });
-export const useRedux = () =>
-  ({
+export const useRedux = (...args: any[]) => {
+  if (args.length >= 2) {
+    // Selector-style usage, e.g. useRedux(storeName, "show_slate_help")
+    // should behave like "not set" in harness.
+    return undefined as any;
+  }
+  return {
     get: (_key: string, def?: any) => def,
     getIn: (_path: any, def?: any) => def,
     has: () => false,
-  }) as any;
+  } as any;
+};
 export const useTypedRedux = (store: string, key: string) => {
   if (store === "account" && key === "font_size") return 14;
   if (store === "account" && key === "account_id")

@@ -1,9 +1,5 @@
-// Minimal re-export of the registry helpers without pulling in elements/types.
-export * from "../elements/register";
+// Ensure registrations run in the harness, then re-export registry helpers.
+import "./elements-types-shim";
 
-export function isElementOfType(x: any, type: string | string[]): boolean {
-  if (x == null) return false;
-  const t = x.type;
-  if (Array.isArray(type)) return type.includes(t);
-  return t === type;
-}
+export * from "../elements/register";
+export { isElementOfType } from "./elements-types-shim";

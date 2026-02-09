@@ -18,8 +18,10 @@ export const Title = (props: any) => React.createElement("h3", props, props?.chi
 export const Avatar = (_props: any) => null;
 export const LanguageModelVendorAvatar = (_props: any) => null;
 export const LLMModelPrice = (_props: any) => null;
+export const LLMUsageStatus = (_props: any) => null;
 export const Cursors = (_props: any) => null;
 export const CursorsType = {};
+export const avatar_fontcolor = (_name?: string) => "#666";
 
 export const useFileContext = () => ({});
 export const FileContext = React.createContext({});
@@ -49,7 +51,7 @@ export const redux = {
     get: () => null,
   }),
 };
-export const useRedux = () => ({} as any);
+export const useRedux = () => undefined as any;
 export const useIsMountedRef = () => ({ current: true });
 export const useEffect = React.useEffect;
 export const useMemo = React.useMemo;

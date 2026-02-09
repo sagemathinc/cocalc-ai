@@ -6,6 +6,7 @@
 
 import type { Descendant } from "slate";
 import { register } from "../elements/register";
+import "../elements/types-ssr";
 import "../elements/generic";
 import "../elements/paragraph/editable";
 import "../elements/list/editable-list";
