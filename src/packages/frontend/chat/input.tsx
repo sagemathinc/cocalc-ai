@@ -19,7 +19,7 @@ import { SubmitMentionsRef } from "./types";
 
 interface Props {
   on_send: (value: string) => void;
-  onChange: (value: string) => void;
+  onChange: (value: string, sessionToken?: number) => void;
   syncdb: ImmerDB | undefined;
   date: number;
   input?: string;
@@ -37,6 +37,8 @@ interface Props {
   placeholder?: string;
   autoFocus?: boolean;
   moveCursorToEndOfLine?: boolean;
+  sessionToken?: number;
+  fixedMode?: "markdown" | "editor";
 }
 
 type HistoryEntry = {
@@ -46,6 +48,12 @@ type HistoryEntry = {
 };
 
 const HISTORY_GROUP_MS = 250;
+
+function debugComposerInput(...args: any[]): void {
+  if (typeof window === "undefined") return;
+  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
+  console.log("[chat-input]", ...args);
+}
 
 function markdownEndPosition(value: string): { line: number; ch: number } {
   const lines = value.split("\n");
@@ -72,6 +80,8 @@ export default function ChatInput({
   submitMentionsRef,
   syncdb,
   autoGrowMaxHeight,
+  sessionToken,
+  fixedMode,
 }: Props) {
   const intl = useIntl();
   const { project_id } = useFrameContext();
@@ -87,26 +97,25 @@ export default function ChatInput({
   ]);
   const historyIndexRef = useRef<number>(0);
   const applyingHistoryRef = useRef(false);
-  const postSendGhostTextRef = useRef<string | null>(null);
-  const suppressPropSyncAfterSendRef = useRef<boolean>(false);
 
   useEffect(() => {
     const next = propsInput ?? "";
-    if (suppressPropSyncAfterSendRef.current) {
-      // Right after send, parent props can briefly lag with old text.
-      // Ignore those stale values until parent catches up to cleared state.
-      if (next !== "") {
-        return;
-      }
-      suppressPropSyncAfterSendRef.current = false;
-    }
+    debugComposerInput("prop-sync:start", {
+      cacheId,
+      next,
+      local: input,
+      sessionToken,
+    });
     if (next !== input) {
-      if (next === "" && input !== "") {
-        postSendGhostTextRef.current = input;
-      }
       setInput(next);
       historyRef.current = [{ value: next, at: Date.now() }];
       historyIndexRef.current = 0;
+      debugComposerInput("prop-sync:applied", {
+        cacheId,
+        next,
+        prevLocal: input,
+        sessionToken,
+      });
     }
   }, [propsInput, input]);
 
@@ -168,7 +177,7 @@ export default function ChatInput({
     applyingHistoryRef.current = true;
     const value = entry.value;
     setInput(value);
-    onChange(value);
+    onChange(value, sessionToken);
     savePresence(value);
     const pos = entry.cursor ?? markdownEndPosition(value);
     setTimeout(() => {
@@ -179,6 +188,7 @@ export default function ChatInput({
 
   return (
     <MarkdownInput
+      fixedMode={fixedMode}
       autoFocus={autoFocus}
       saveDebounceMs={0}
       onFocus={() => {
@@ -197,17 +207,14 @@ export default function ChatInput({
       enableMentions={true}
       submitMentionsRef={submitMentionsRef}
       onChange={(value) => {
-        const ghost = postSendGhostTextRef.current;
-        if (ghost != null) {
-          // After send, the editor can emit stale callbacks with the just-sent value.
-          // Ignore those until we see any different value.
-          if (input === "" && value === ghost) return;
-          if (value !== ghost) {
-            postSendGhostTextRef.current = null;
-          }
-        }
+        debugComposerInput("onChange:recv", {
+          cacheId,
+          value,
+          local: input,
+          sessionToken,
+        });
         setInput(value);
-        onChange(value);
+        onChange(value, sessionToken);
         savePresence(value);
         if (applyingHistoryRef.current) return;
         const history = historyRef.current;
@@ -239,12 +246,17 @@ export default function ChatInput({
         historyIndexRef.current = trimmed.length - 1;
       }}
       onShiftEnter={(value) => {
-        postSendGhostTextRef.current = value;
-        suppressPropSyncAfterSendRef.current = true;
+        debugComposerInput("onShiftEnter", {
+          cacheId,
+          value,
+          local: input,
+          sessionToken,
+        });
         savePresence.cancel();
         controlRef.current?.allowNextValueUpdateWhileFocused?.();
+        controlRef.current?.setValueNow?.("");
         setInput("");
-        onChange("");
+        onChange("", sessionToken);
         historyRef.current = [{ value: "", at: Date.now() }];
         historyIndexRef.current = 0;
         publishNotComposing();

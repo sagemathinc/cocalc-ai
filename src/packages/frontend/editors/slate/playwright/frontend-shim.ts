@@ -12,9 +12,37 @@ export const Popover = (_props: any) => null;
 export const DropdownMenu = (_props: any) => null;
 export const ColorButton = (_props: any) => null;
 export const A = (props: any) => React.createElement("a", props);
+export const Paragraph = (props: any) => React.createElement("p", props, props?.children);
+export const Text = (props: any) => React.createElement("span", props, props?.children);
+export const Title = (props: any) => React.createElement("h3", props, props?.children);
+export const Avatar = (_props: any) => null;
+export const LanguageModelVendorAvatar = (_props: any) => null;
+export const LLMModelPrice = (_props: any) => null;
+export const Cursors = (_props: any) => null;
+export const CursorsType = {};
 
 export const useFileContext = () => ({});
 export const FileContext = React.createContext({});
+export const useLanguageModelSetting = () => null;
+export const useUserDefinedLLM = () => [];
+export const useProjectContext = () => ({ project_id: "project-1", path: "chat-harness.chat" });
+export const useProjectHasInternetAccess = () => true;
+export const webapp_client = {
+  server_time: () => Date.now(),
+  conat_client: {
+    conat: () => ({
+      sync: {
+        akv: () => ({
+          get: async () => null,
+          set: async () => undefined,
+          del: async () => undefined,
+          on: () => undefined,
+          off: () => undefined,
+        }),
+      },
+    }),
+  },
+};
 
 export const redux = {
   getStore: () => ({
