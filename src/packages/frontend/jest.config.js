@@ -36,6 +36,9 @@ module.exports = {
     "\\.txt$": "<rootDir>/test/mocks/text.js",
   },
   testMatch: ["**/?(*.)+(spec|test).ts?(x)"],
-  testPathIgnorePatterns: ["<rootDir>/editors/slate/playwright/"],
+  testPathIgnorePatterns: [
+    "<rootDir>/editors/slate/playwright/",
+    "<rootDir>/chat/playwright/",
+  ],
   setupFilesAfterEnv: ["./test/setup.js"],
 };
