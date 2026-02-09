@@ -281,6 +281,7 @@ export const hosts = {
   getSiteOpenAiApiKey: authFirstRequireHost,
   checkCodexSiteUsageAllowance: authFirstRequireHost,
   recordCodexSiteUsage: authFirstRequireHost,
+  issueProjectHostAuthToken: authFirstRequireAccount,
 };
 
 export interface HostConnectorUpgradeRequest {
@@ -399,6 +400,16 @@ export interface Hosts {
     total_time_s: number;
   }) => Promise<{
     usage_units: number;
+  }>;
+  issueProjectHostAuthToken: (opts: {
+    account_id?: string;
+    host_id: string;
+    project_id?: string;
+    ttl_seconds?: number;
+  }) => Promise<{
+    host_id: string;
+    token: string;
+    expires_at: number;
   }>;
 
   createHost: (opts: {

@@ -1,5 +1,3 @@
-import { inboxPrefix } from "@cocalc/conat/names";
-import { isValidUUID } from "@cocalc/util/misc";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import { parse } from "cookie";
@@ -17,6 +15,18 @@ import { getAccountWithApiKey } from "@cocalc/server/api/manage";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
 import getPool from "@cocalc/database/pool";
+import {
+  type CoCalcUser,
+  type CoCalcUserType,
+  getCoCalcUserId,
+  getCoCalcUserType,
+  checkCommonPermissions,
+  extractHostSubject,
+  extractProjectSubject,
+  isAccountAllowed as isAccountSubjectAllowed,
+  isHostAllowed as isHostSubjectAllowed,
+  isProjectAllowed as isProjectSubjectAllowed,
+} from "@cocalc/conat/auth/subject-policy";
 
 const COOKIES = `'${HUB_PASSWORD_COOKIE_NAME}', '${REMEMBER_ME_COOKIE_NAME}', ${API_COOKIE_NAME}, '${PROJECT_SECRET_COOKIE_NAME}' or '${PROJECT_ID_COOKIE_NAME}'`;
 
@@ -135,97 +145,16 @@ export async function isAllowed({
   if (common != null) {
     allowed = common;
   } else if (userType == "project") {
-    allowed = isProjectAllowed({ project_id: userId, subject, type });
+    allowed = isProjectSubjectAllowed({ project_id: userId, subject });
   } else if (userType == "account") {
     allowed = await isAccountAllowed({ account_id: userId, subject, type });
   } else if (userType == "host") {
-    allowed = await isHostAllowed({ host_id: userId, subject, type });
+    allowed = isHostSubjectAllowed({ host_id: userId, subject });
   } else {
     allowed = false;
   }
   isAllowedCache.set(key, allowed);
   return allowed;
-}
-
-export function checkCommonPermissions({
-  user,
-  userType,
-  userId,
-  subject,
-  type,
-}: {
-  user: CoCalcUser;
-  userType: "account" | "project" | "host";
-  userId: string;
-  subject: string;
-  type: "sub" | "pub";
-}): null | boolean {
-  // can publish as *this user* to the hub's api's
-  if (subject.startsWith(`hub.${userType}.${userId}.`)) {
-    return type == "pub";
-  }
-
-  // everyone can publish to all inboxes.  This seems like a major
-  //  security risk, but with request/reply, the reply subject under
-  // _INBOX is a long random code that is only known for a moment
-  // by the sender and the service, so it is NOT a security risk.
-  if (type == "pub" && subject.startsWith("_INBOX.")) {
-    return true;
-  }
-  // custom inbox only for this user -- important for security, so we
-  // can only listen to messages for us, and not for anybody else.
-  if (type == "sub" && subject.startsWith(inboxPrefix(user))) {
-    return true;
-  }
-
-  if (type == "sub" && subject.startsWith("public.")) {
-    return true;
-  }
-
-  // no decision yet
-  return null;
-}
-
-function isProjectAllowed({
-  project_id,
-  subject,
-}: {
-  project_id: string;
-  subject: string;
-  type: "sub" | "pub";
-}): boolean {
-  // pub and sub are the same
-
-  if (subject.startsWith(`project.${project_id}.`)) {
-    return true;
-  }
-  // *.project-${project_id}.>
-  if (subject.split(".")[1] == `project-${project_id}`) {
-    return true;
-  }
-
-  return false;
-}
-
-function isHostAllowed({
-  host_id,
-  subject,
-}: {
-  host_id: string;
-  subject: string;
-  type: "sub" | "pub";
-}): boolean {
-  // pub and sub are the same
-
-  if (subject.startsWith(`host.${host_id}.`)) {
-    return true;
-  }
-  // *.host-${host_id}.>
-  if (subject.split(".")[1] == `host-${host_id}`) {
-    return true;
-  }
-
-  return false;
 }
 
 async function isAccountAllowed({
@@ -237,16 +166,11 @@ async function isAccountAllowed({
   type: "sub" | "pub";
 }): Promise<boolean> {
   // pub and sub are the same
-  if (subject.startsWith(`account.${account_id}.`)) {
+  if (isAccountSubjectAllowed({ account_id, subject })) {
     return true;
   }
 
   const v = subject.split(".");
-  // *.account-${account_id}.>
-  if (v[1] == `account-${account_id}`) {
-    return true;
-  }
-
   if (v[0] == "sys") {
     return (await getAdmins()).has(account_id);
   }
@@ -262,23 +186,6 @@ async function isAccountAllowed({
     return false;
   }
   return await isCollaborator({ account_id, project_id });
-}
-
-function extractHostSubject(subject: string): string {
-  const parts = subject.split(".");
-  if (parts[1] === "host") {
-    const host_id = parts[2];
-    if (isValidUUID(host_id)) {
-      return host_id;
-    }
-  }
-  if (parts[1].startsWith("host-")) {
-    const host_id = parts[1].slice("host-".length, "host-".length + 36);
-    if (isValidUUID(host_id)) {
-      return host_id;
-    }
-  }
-  return "";
 }
 
 async function isHostOwnerOrCollaborator({
@@ -299,134 +206,5 @@ async function isHostOwnerOrCollaborator({
   return collabs.includes(account_id);
 }
 
-function extractProjectSubject(subject: string): string {
-  if (subject.startsWith("project.")) {
-    const project_id = subject.split(".")[1];
-    if (isValidUUID(project_id)) {
-      return project_id;
-    }
-    return "";
-  }
-  const v = subject.split(".");
-  if (v[1]?.startsWith("project-")) {
-    const project_id = v[1].slice("project-".length);
-    if (isValidUUID(project_id)) {
-      return project_id;
-    }
-  }
-  return "";
-}
-
-// A CoCalc User is (so far): a project or account or a hub
-export type CoCalcUser =
-  | {
-      account_id: string;
-      project_id?: string;
-      hub_id?: string;
-      host_id?: string;
-      error?: string;
-    }
-  | {
-      account_id?: string;
-      project_id?: string;
-      hub_id: string;
-      host_id?: string;
-      error?: string;
-    }
-  | {
-      account_id?: string;
-      project_id: string;
-      hub_id?: string;
-      host_id?: string;
-      error?: string;
-    }
-  | {
-      account_id?: string;
-      project_id?: string;
-      hub_id?: string;
-      host_id: string;
-      error?: string;
-    }
-  | {
-      account_id?: string;
-      project_id?: string;
-      hub_id?: string;
-      host_id?: string;
-      error: string;
-    };
-
-export function getCoCalcUserType({
-  account_id,
-  project_id,
-  hub_id,
-  host_id,
-}: CoCalcUser): "account" | "project" | "hub" | "host" {
-  if (account_id) {
-    if (project_id || hub_id || host_id) {
-      throw Error(
-        "exactly one of account_id or project_id or hub_id d or host_id must be specified",
-      );
-    }
-    return "account";
-  }
-  if (project_id) {
-    if (hub_id || host_id) {
-      throw Error(
-        "exactly one of account_id or project_id or hub_id or host_id must be specified",
-      );
-    }
-    return "project";
-  }
-  if (hub_id) {
-    if (host_id) {
-      throw Error(
-        "exactly one of account_id or project_id or hub_id or host_id must be specified",
-      );
-    }
-    return "hub";
-  }
-  if (host_id) {
-    return "host";
-  }
-  throw Error(
-    "account_id or project_id or hub_id or host_id must be specified in User",
-  );
-}
-
-export function getCoCalcUserId({
-  account_id,
-  project_id,
-  hub_id,
-  host_id,
-}: CoCalcUser): string {
-  if (account_id) {
-    if (project_id || hub_id || host_id) {
-      throw Error(
-        "exactly one of account_id or project_id or hub_id d or host_id must be specified",
-      );
-    }
-    return account_id;
-  }
-  if (project_id) {
-    if (hub_id || host_id) {
-      throw Error(
-        "exactly one of account_id or project_id or hub_id or host_id must be specified",
-      );
-    }
-    return project_id;
-  }
-  if (hub_id) {
-    if (host_id) {
-      throw Error(
-        "exactly one of account_id or project_id or hub_id or host_id must be specified",
-      );
-    }
-    return hub_id;
-  }
-  if (host_id) {
-    return host_id;
-  }
-  throw Error(
-    "account_id or project_id or hub_id or host_id must be specified in User",
-  );
-}
+export type { CoCalcUser, CoCalcUserType };
+export { getCoCalcUserType, getCoCalcUserId, checkCommonPermissions };

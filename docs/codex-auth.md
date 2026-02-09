@@ -201,6 +201,28 @@ Current intent:
 - Mid-turn exact token cutoffs are coarse because upstream `codex exec --experimental-json` reports usage at turn completion.
 - Strong end-to-end project-host websocket authz is still a separate hardening project.
 
+## Fast Ban / Kill-Switch Approach
+
+When an account must be disabled quickly (abuse, ToS violations, security response), we use a layered approach:
+
+### Current behavior
+
+- **New site-key turns can be blocked immediately** by denying allowance in host RPC checks (`hosts.checkCodexSiteUsageAllowance`).
+- **Running site-key turns are cut off on the next governor check** (periodic allowance polling in the Codex site-key governor).
+- **Credential-backed turns (ChatGPT plan / user API key) are not billed to CoCalc**, so the immediate financial risk is lower, but account-level enforcement still depends on connection/session auth controls.
+
+### Intended end state (with project-host auth hardening)
+
+- Central hub marks account as banned and stops issuing/refreshing project-host auth leases.
+- Hub pushes a **kick event** to project-hosts to disconnect live sockets for that account.
+- Project-host closes active Codex sessions/streams for the banned account.
+- Reconnect and token refresh attempts fail, so access does not resume.
+
+This gives both:
+
+- low-friction long-lived sessions for legitimate users, and
+- fast forced eviction for abuse cases without waiting for long token expiry windows.
+
 ## Quick Debug Checklist
 
 If a turn uses the wrong auth source or fails unexpectedly:

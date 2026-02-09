@@ -11,7 +11,11 @@ import { URL } from "node:url";
 import express from "express";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
-import { account_id, data as dataDir, setConatServer } from "@cocalc/backend/data";
+import {
+  conatPassword,
+  data as dataDir,
+  setConatServer,
+} from "@cocalc/backend/data";
 import {
   init as createConatServer,
   type ConatServer,
@@ -42,6 +46,8 @@ import { handleDaemonCli } from "./daemon";
 import { startCopyWorker } from "./pending-copies";
 import { startOnPremTunnel } from "./onprem-tunnel";
 import { startDataPermissionHardener } from "./data-permissions";
+import { resolveProjectHostId } from "./host-id";
+import { createProjectHostConatAuth } from "./conat-auth";
 
 const logger = getLogger("project-host:main");
 
@@ -136,26 +142,34 @@ export async function main(
     `starting project-host on ${scheme}://${host}:${port} (runner=${runnerId})`,
   );
 
+  logger.info("Local sqlite + changefeeds for UI data");
+  initSqlite();
+  const hostId = resolveProjectHostId(_config.hostId);
+  const conatAuth = createProjectHostConatAuth({ host_id: hostId });
+
   // 1) HTTP + conat server
   const { app, httpServer, isHttps } = await startHttpServer(port, host, tls);
   const conatServer: ConatServer = createConatServer({
     httpServer,
     ssl: isHttps,
     port,
-    getUser: async () => ({ account_id }),
+    getUser: conatAuth.getUser,
+    isAllowed: conatAuth.isAllowed,
+    systemAccountPassword: conatPassword,
   });
   if (conatServer.state !== "ready") {
     await once(conatServer, "ready");
   }
-  const conatClient = conatServer.client({ path: "/" });
+  const conatClient = conatServer.client({
+    path: "/",
+    systemAccountPassword: conatPassword,
+  });
   setConatServer(conatServer.address());
   setConatClient({
     conat: () => conatClient,
     getLogger,
   });
 
-  logger.info("Local sqlite + changefeeds for UI data");
-  initSqlite();
   initChangefeeds({ client: conatClient });
   await initHubApi({ client: conatClient });
 
@@ -219,7 +233,7 @@ export async function main(
 
   logger.info("start Master Registration");
   const stopMasterRegistration = await startMasterRegistration({
-    hostId: _config.hostId ?? process.env.PROJECT_HOST_ID,
+    hostId,
     runnerId,
     host,
     port,

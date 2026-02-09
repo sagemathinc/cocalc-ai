@@ -17,7 +17,9 @@ import type {
   ProjectCopyRow,
   ProjectCopyState,
 } from "@cocalc/conat/hub/api/projects";
+import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
 import getLogger from "@cocalc/backend/logger";
+import { conatPassword } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import {
   computePlacementPermission,
@@ -545,6 +547,108 @@ async function assertHostCredentialProjectAccess({
   if (!rowCount) {
     throw new Error("host is not authorized for this credential project");
   }
+}
+
+async function assertAccountCanIssueProjectHostToken({
+  account_id,
+  host_id,
+  project_id,
+}: {
+  account_id: string;
+  host_id: string;
+  project_id?: string;
+}): Promise<void> {
+  if (await isAdmin(account_id)) {
+    return;
+  }
+
+  // If project_id is supplied, require collaborator access and verify placement.
+  if (project_id) {
+    const { rows } = await pool().query<{
+      host_id: string | null;
+      group: string | null;
+    }>(
+      `
+      SELECT
+        host_id,
+        users -> $2::text ->> 'group' AS "group"
+      FROM projects
+      WHERE project_id=$1
+        AND deleted IS NOT true
+      LIMIT 1
+    `,
+      [project_id, account_id],
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new Error("project not found");
+    }
+    if (row.host_id !== host_id) {
+      throw new Error("project is not assigned to the requested host");
+    }
+    if (row.group === "owner" || row.group === "collaborator") {
+      return;
+    }
+  }
+
+  // Host owner/collaborator controls are also valid authorization paths.
+  try {
+    await loadHostForListing(host_id, account_id);
+    return;
+  } catch {
+    // continue to project-based fallback check
+  }
+
+  // Fallback: allow if this account collaborates on any project hosted here.
+  const { rowCount } = await pool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE host_id=$1
+        AND deleted IS NOT true
+        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')
+      LIMIT 1
+    `,
+    [host_id, account_id],
+  );
+  if (!rowCount) {
+    throw new Error("not authorized for project-host access token");
+  }
+}
+
+export async function issueProjectHostAuthToken({
+  account_id,
+  host_id,
+  project_id,
+  ttl_seconds,
+}: {
+  account_id?: string;
+  host_id: string;
+  project_id?: string;
+  ttl_seconds?: number;
+}): Promise<{
+  host_id: string;
+  token: string;
+  expires_at: number;
+}> {
+  const owner = requireAccount(account_id);
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+
+  await assertAccountCanIssueProjectHostToken({
+    account_id: owner,
+    host_id,
+    project_id,
+  });
+
+  const { token, expires_at } = issueProjectHostAuthTokenJwt({
+    account_id: owner,
+    host_id,
+    ttl_seconds,
+    secret: conatPassword,
+  });
+  return { host_id, token, expires_at };
 }
 
 function normalizeExternalCredentialSelector({
