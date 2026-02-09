@@ -15,6 +15,7 @@ import { getSoftwareVersions } from "./software";
 import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { deleteProjectLocal } from "./sqlite/projects";
+import { setProjectHostAuthPublicKey } from "./auth-public-key";
 
 const logger = getLogger("project-host:master");
 
@@ -28,6 +29,7 @@ interface HostRegistration {
   internal_url?: string;
   ssh_server?: string;
   sshpiperd_public_key?: string;
+  project_host_auth_public_key?: string;
   status?: string;
   version?: string;
   capacity?: any;
@@ -93,6 +95,9 @@ export async function startMasterRegistration({
   const registry = createServiceClient<{
     register: (info: HostRegistration) => Promise<void>;
     heartbeat: (info: HostRegistration) => Promise<void>;
+    getProjectHostAuthPublicKey: () => Promise<{
+      project_host_auth_public_key: string;
+    }>;
   }>({
     service: SUBJECT,
     subject: `${SUBJECT}.api`,
@@ -215,10 +220,24 @@ export async function startMasterRegistration({
     }
   };
 
-  await send("register");
-  const timer = setInterval(() => void send("heartbeat"), 30_000);
+  const refreshProjectHostAuthPublicKey = async (reason: string) => {
+    try {
+      const resp = await registry.getProjectHostAuthPublicKey();
+      if (resp?.project_host_auth_public_key) {
+        setProjectHostAuthPublicKey(resp.project_host_auth_public_key);
+        logger.debug("updated project-host auth public key", {
+          reason,
+        });
+      }
+    } catch (err) {
+      logger.warn("failed to refresh project-host auth public key", {
+        reason,
+        err,
+      });
+    }
+  };
 
-  // Subscribe to host key updates from master and cache them locally.
+  // Subscribe early to avoid missing a publish that could happen during register().
   (async () => {
     try {
       const sub = await client.subscribe(`${SUBJECT}.keys`);
@@ -228,12 +247,19 @@ export async function startMasterRegistration({
           if (data.sshpiperd_public_key) {
             setSshpiperdPublicKey(data.id, data.sshpiperd_public_key);
           }
+          if (data.project_host_auth_public_key) {
+            setProjectHostAuthPublicKey(data.project_host_auth_public_key);
+          }
         }
       }
     } catch (err) {
       logger.warn("host key subscription failed", { err });
     }
   })();
+
+  await refreshProjectHostAuthPublicKey("startup");
+  await send("register");
+  const timer = setInterval(() => void send("heartbeat"), 30_000);
 
   const stop = () => {
     clearInterval(timer);

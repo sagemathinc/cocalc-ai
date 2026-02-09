@@ -13,9 +13,9 @@ import {
   type CoCalcUser,
 } from "@cocalc/conat/auth/subject-policy";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
-import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
+import { getProjectHostAuthPublicKey } from "./auth-public-key";
 
 const authDecisionCache = new TTL<string, boolean>({
   max: 20_000,
@@ -113,7 +113,7 @@ export function createProjectHostConatAuth({
       token,
       host_id,
       // Verify-only key: project-host does not get signing capability.
-      public_key: getProjectHostAuthTokenPublicKey(),
+      public_key: getProjectHostAuthPublicKey(),
     });
     return { account_id: claims.sub } satisfies CoCalcUser;
   };

@@ -5,6 +5,7 @@ import {
   type ProjectHostRecord,
 } from "@cocalc/database/postgres/project-hosts";
 import { conat } from "@cocalc/backend/conat";
+import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 
 const logger = getLogger("server:conat:host-registry");
@@ -12,11 +13,15 @@ const pool = () => getPool();
 
 export interface HostRegistration extends ProjectHostRecord {
   sshpiperd_public_key?: string;
+  project_host_auth_public_key?: string;
 }
 
 export interface HostRegistryApi {
   register: (info: HostRegistration) => Promise<void>;
   heartbeat: (info: HostRegistration) => Promise<void>;
+  getProjectHostAuthPublicKey: () => Promise<{
+    project_host_auth_public_key: string;
+  }>;
 }
 
 const SUBJECT = "project-hosts";
@@ -62,6 +67,7 @@ export async function initHostRegistryService() {
       await client.publish(`${SUBJECT}.keys`, {
         id: info.id,
         sshpiperd_public_key: info.sshpiperd_public_key,
+        project_host_auth_public_key: getProjectHostAuthTokenPublicKey(),
       });
     } catch (err) {
       logger.warn("failed to publish host ssh key", { err, id: info.id });
@@ -135,6 +141,11 @@ export async function initHostRegistryService() {
           last_seen: new Date(),
         });
         await publishKey(info);
+      },
+      async getProjectHostAuthPublicKey() {
+        return {
+          project_host_auth_public_key: getProjectHostAuthTokenPublicKey(),
+        };
       },
     },
   });
