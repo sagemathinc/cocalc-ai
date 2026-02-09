@@ -83,6 +83,7 @@ function InputHarness({ fixedMode = "markdown" }: { fixedMode?: "markdown" | "ed
       ({
         set: () => undefined,
         commit: () => undefined,
+        set_cursor_locs: () => undefined,
       }) as any,
     [],
   );
@@ -126,7 +127,7 @@ function InputHarness({ fixedMode = "markdown" }: { fixedMode?: "markdown" | "ed
 }
 
 type FakeActions = {
-  syncdb: { set: () => void; commit: () => void };
+  syncdb: { set: () => void; commit: () => void; set_cursor_locs: () => void };
   deleteDraft: (_draftKey: number) => void;
 };
 
@@ -176,6 +177,7 @@ function ComposerHarness(): React.JSX.Element {
       syncdb: {
         set: () => undefined,
         commit: () => undefined,
+        set_cursor_locs: () => undefined,
       },
       deleteDraft: () => undefined,
     }),

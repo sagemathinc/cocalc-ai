@@ -68,6 +68,7 @@ describe("ChatInput send lifecycle regressions", () => {
     const syncdb = {
       set: jest.fn(),
       commit: jest.fn(),
+      set_cursor_locs: jest.fn(),
     } as any;
 
     function Harness() {
@@ -126,6 +127,7 @@ describe("ChatInput send lifecycle regressions", () => {
     const syncdb = {
       set: jest.fn(),
       commit: jest.fn(),
+      set_cursor_locs: jest.fn(),
     } as any;
 
     function Harness() {
@@ -154,6 +156,7 @@ describe("ChatInput send lifecycle regressions", () => {
     const syncdb = {
       set: jest.fn(),
       commit: jest.fn(),
+      set_cursor_locs: jest.fn(),
     } as any;
     let setDraftKeyRef: ((n: number) => void) | null = null;
 
