@@ -91,12 +91,20 @@ export default function ChatInput({
   );
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
+  const mountedRef = useRef<boolean>(true);
   const isFocusedRef = useRef<boolean>(false);
   const historyRef = useRef<HistoryEntry[]>([
     { value: propsInput ?? "", at: Date.now() },
   ]);
   const historyIndexRef = useRef<number>(0);
   const applyingHistoryRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const next = propsInput ?? "";
@@ -207,6 +215,7 @@ export default function ChatInput({
       enableMentions={true}
       submitMentionsRef={submitMentionsRef}
       onChange={(value) => {
+        if (!mountedRef.current) return;
         debugComposerInput("onChange:recv", {
           cacheId,
           value,
@@ -246,6 +255,7 @@ export default function ChatInput({
         historyIndexRef.current = trimmed.length - 1;
       }}
       onShiftEnter={(value) => {
+        if (!mountedRef.current) return;
         debugComposerInput("onShiftEnter", {
           cacheId,
           value,

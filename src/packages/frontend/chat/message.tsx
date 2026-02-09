@@ -465,7 +465,7 @@ export default function Message({
           <span style={{ margin: "10px 10px 0 10px", display: "inline-block" }}>
             <Button onClick={on_cancel}>Cancel</Button>
             <Gap />
-            <Button onClick={saveEditedMessage} type="primary">
+            <Button onClick={() => saveEditedMessage()} type="primary">
               Save (shift+enter)
             </Button>
           </span>
@@ -1084,11 +1084,13 @@ export default function Message({
     );
   }
 
-  function saveEditedMessage(): void {
+  function saveEditedMessage(submittedValue?: string): void {
     if (actions == null) return;
-    const mesg =
+    const mesg = (
       submitMentionsRef.current?.({ chat: `${date}` }) ??
-      edited_message_ref.current;
+      submittedValue ??
+      edited_message_ref.current
+    );
     const value = newest_content(message);
     if (mesg !== value) {
       set_edited_message(mesg);
@@ -1119,7 +1121,7 @@ export default function Message({
           cacheId={`${path}${project_id}${date}`}
           input={edited_message}
           submitMentionsRef={submitMentionsRef}
-          on_send={saveEditedMessage}
+          on_send={(value) => saveEditedMessage(value)}
           height={"auto"}
           syncdb={actions.syncdb}
           date={date}
@@ -1138,7 +1140,7 @@ export default function Message({
           >
             {intl.formatMessage(labels.cancel)}
           </Button>
-          <Button type="primary" onClick={saveEditedMessage}>
+          <Button type="primary" onClick={() => saveEditedMessage()}>
             <Icon name="save" /> Save Edited Message
           </Button>
         </div>

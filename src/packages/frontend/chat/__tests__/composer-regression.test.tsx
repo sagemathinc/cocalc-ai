@@ -149,4 +149,51 @@ describe("ChatInput send lifecycle regressions", () => {
     });
     expect(lastMarkdownInputProps.value).toBe("hello");
   });
+
+  it("ignores stale callbacks from an unmounted input instance", () => {
+    const syncdb = {
+      set: jest.fn(),
+      commit: jest.fn(),
+    } as any;
+    let setDraftKeyRef: ((n: number) => void) | null = null;
+
+    function Harness() {
+      const [value, setValue] = useState("");
+      const [draftKey, setDraftKey] = useState(0);
+      useEffect(() => {
+        setDraftKeyRef = setDraftKey;
+      }, [setDraftKey]);
+      return (
+        <ChatInput
+          key={`draft-${draftKey}`}
+          cacheId={`draft-${draftKey}`}
+          input={value}
+          onChange={setValue}
+          on_send={() => undefined}
+          syncdb={syncdb}
+          date={draftKey}
+          sessionToken={1}
+        />
+      );
+    }
+
+    render(<Harness />);
+    expect(lastMarkdownInputProps).toBeTruthy();
+    const staleOnChange = lastMarkdownInputProps.onChange;
+
+    act(() => {
+      setDraftKeyRef?.(1);
+    });
+    expect(lastMarkdownInputProps).toBeTruthy();
+    expect(lastMarkdownInputProps.cacheId).toBe("draft-1");
+    expect(lastMarkdownInputProps.value).toBe("");
+
+    // Late callback from unmounted previous editor instance.
+    act(() => {
+      staleOnChange("ghost");
+    });
+
+    expect(lastMarkdownInputProps.cacheId).toBe("draft-1");
+    expect(lastMarkdownInputProps.value).toBe("");
+  });
 });
