@@ -7,6 +7,10 @@ import {
 import { conat } from "@cocalc/backend/conat";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
+import {
+  createBootstrapToken,
+  verifyBootstrapToken,
+} from "@cocalc/server/project-host/bootstrap-token";
 
 const logger = getLogger("server:conat:host-registry");
 const pool = () => getPool();
@@ -22,6 +26,11 @@ export interface HostRegistryApi {
   getProjectHostAuthPublicKey: () => Promise<{
     project_host_auth_public_key: string;
   }>;
+  rotateMasterConatToken: (opts: {
+    host_id: string;
+    current_token?: string;
+    bootstrap_token?: string;
+  }) => Promise<{ master_conat_token: string }>;
 }
 
 const SUBJECT = "project-hosts";
@@ -146,6 +155,34 @@ export async function initHostRegistryService() {
         return {
           project_host_auth_public_key: getProjectHostAuthTokenPublicKey(),
         };
+      },
+      async rotateMasterConatToken(opts) {
+        const host_id = `${opts?.host_id ?? ""}`.trim();
+        if (!host_id) {
+          throw Error("rotateMasterConatToken: host_id is required");
+        }
+        const currentToken = `${opts?.current_token ?? ""}`.trim();
+        const bootstrapToken = `${opts?.bootstrap_token ?? ""}`.trim();
+        if (!currentToken && !bootstrapToken) {
+          throw Error(
+            "rotateMasterConatToken: current_token or bootstrap_token is required",
+          );
+        }
+        const currentInfo = currentToken
+          ? await verifyBootstrapToken(currentToken, { purpose: "master-conat" })
+          : null;
+        const bootstrapInfo = bootstrapToken
+          ? await verifyBootstrapToken(bootstrapToken, { purpose: "bootstrap" })
+          : null;
+        const info = currentInfo ?? bootstrapInfo;
+        if (!info || info.host_id !== host_id) {
+          throw Error("rotateMasterConatToken: token is invalid for host");
+        }
+        const issued = await createBootstrapToken(host_id, {
+          purpose: "master-conat",
+          ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
+        });
+        return { master_conat_token: issued.token };
       },
     },
   });

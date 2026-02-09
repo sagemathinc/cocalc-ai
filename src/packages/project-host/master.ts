@@ -16,6 +16,12 @@ import { executeCode } from "@cocalc/backend/execute-code";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
+import {
+  getProjectHostBootstrapToken,
+  getProjectHostMasterConatToken,
+  getProjectHostMasterConatTokenPath,
+  writeProjectHostMasterConatToken,
+} from "./master-conat-token";
 
 const logger = getLogger("project-host:master");
 
@@ -86,7 +92,8 @@ export async function startMasterRegistration({
   }
 
   logger.info("registering with master", { masterAddress, id, public_url });
-  if (!masterConatToken) {
+  let currentMasterConatToken = `${masterConatToken ?? ""}`.trim();
+  if (!currentMasterConatToken) {
     logger.warn(
       "master conat token is missing; registration/control connection may fail",
       { expectedPath: "/btrfs/data/secrets/master-conat-token" },
@@ -95,7 +102,13 @@ export async function startMasterRegistration({
 
   const client = connectToConat({
     address: masterAddress,
-    auth: masterConatToken ? (cb) => cb({ bearer: masterConatToken }) : undefined,
+    auth: (cb) => {
+      if (currentMasterConatToken) {
+        cb({ bearer: currentMasterConatToken });
+      } else {
+        cb({});
+      }
+    },
   });
 
   // Stable sshpiperd keypair for inbound SSH ingress.
@@ -107,6 +120,13 @@ export async function startMasterRegistration({
     heartbeat: (info: HostRegistration) => Promise<void>;
     getProjectHostAuthPublicKey: () => Promise<{
       project_host_auth_public_key: string;
+    }>;
+    rotateMasterConatToken: (opts: {
+      host_id: string;
+      current_token?: string;
+      bootstrap_token?: string;
+    }) => Promise<{
+      master_conat_token: string;
     }>;
   }>({
     service: SUBJECT,
@@ -236,6 +256,74 @@ export async function startMasterRegistration({
     }
   };
 
+  const rotateMasterConatTokenIfMissing = async (reason: string) => {
+    // If the token is injected via env, external orchestration owns rotation.
+    if (`${process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN ?? ""}`.trim()) {
+      return;
+    }
+    const onDisk = getProjectHostMasterConatToken();
+    if (onDisk) {
+      // Keep in-memory value aligned with current on-disk value.
+      currentMasterConatToken = onDisk;
+      return;
+    }
+    if (!currentMasterConatToken) {
+      const bootstrapToken = getProjectHostBootstrapToken();
+      if (!bootstrapToken) {
+        logger.warn("master conat token file missing and no bootstrap fallback token", {
+          reason,
+          token_path: getProjectHostMasterConatTokenPath(),
+        });
+        return;
+      }
+      try {
+        const rotated = await registry.rotateMasterConatToken({
+          host_id: id,
+          bootstrap_token: bootstrapToken,
+        });
+        const next = `${rotated?.master_conat_token ?? ""}`.trim();
+        if (!next) {
+          throw new Error("empty token returned by rotateMasterConatToken");
+        }
+        writeProjectHostMasterConatToken(next);
+        currentMasterConatToken = next;
+        logger.info("recovered missing master conat token via bootstrap token", {
+          reason,
+          token_path: getProjectHostMasterConatTokenPath(),
+        });
+      } catch (err) {
+        logger.warn("failed recovering master conat token via bootstrap token", {
+          reason,
+          token_path: getProjectHostMasterConatTokenPath(),
+          err,
+        });
+      }
+      return;
+    }
+    try {
+      const rotated = await registry.rotateMasterConatToken({
+        host_id: id,
+        current_token: currentMasterConatToken,
+      });
+      const next = `${rotated?.master_conat_token ?? ""}`.trim();
+      if (!next) {
+        throw new Error("empty token returned by rotateMasterConatToken");
+      }
+      writeProjectHostMasterConatToken(next);
+      currentMasterConatToken = next;
+      logger.info("rotated master conat token after missing local file", {
+        reason,
+        token_path: getProjectHostMasterConatTokenPath(),
+      });
+    } catch (err) {
+      logger.warn("failed rotating missing master conat token", {
+        reason,
+        token_path: getProjectHostMasterConatTokenPath(),
+        err,
+      });
+    }
+  };
+
   const refreshProjectHostAuthPublicKey = async (reason: string) => {
     try {
       const resp = await registry.getProjectHostAuthPublicKey();
@@ -274,11 +362,18 @@ export async function startMasterRegistration({
   })();
 
   await refreshProjectHostAuthPublicKey("startup");
+  await rotateMasterConatTokenIfMissing("startup");
   await send("register");
   const timer = setInterval(() => void send("heartbeat"), 30_000);
+  const tokenRefreshTimer = setInterval(
+    () => void rotateMasterConatTokenIfMissing("periodic"),
+    30_000,
+  );
+  tokenRefreshTimer.unref?.();
 
   const stop = () => {
     clearInterval(timer);
+    clearInterval(tokenRefreshTimer);
     client.close?.();
     controlService?.close?.();
   };

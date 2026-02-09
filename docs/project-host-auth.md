@@ -203,6 +203,73 @@ Analogy to SSH Ed25519:
 - Conceptually similar to placing a public key in `authorized_keys`: the verifier (project-host) trusts signatures from a specific private key holder (hub).
 - Difference from SSH in our design: we use short-lived signed bearer tokens (with audience and expiry claims), not a single long-lived static presented secret.
 
+## Master Conat Token Lifecycle (Hub <-> Host Control Channel)
+
+This section is about the host bootstrap/control credential used by a project-host to authenticate to the central hub conat path.
+
+Current model (as implemented now):
+
+- A short-lived bootstrap token (`purpose=bootstrap`) is used only during host bootstrap.
+  - Default TTL: 24 hours.
+- During bootstrap, host fetches a separate `master-conat` token from hub (`/project-host/bootstrap/conat`) and stores it locally at:
+  - `/btrfs/data/secrets/master-conat-token`
+- The project-host then uses that `master-conat` token as a bearer credential for its outbound hub control connection.
+- `master-conat` token TTL is currently long (about 1 year), and bootstrap code currently does not continuously refresh it once present.
+
+Why this matters:
+
+- Without rotation, very long-lived hosts can eventually fail when this token expires.
+- In large fleets, expiry without automated renewal can cause many hosts to break around the same window.
+
+### Automatic Rotation Plan
+
+Goal: fully automatic renewal with no manual intervention and no fleet-wide expiry surprises.
+
+Planned behavior:
+
+1. Background renewal loop on each host.
+   - Periodically check `master-conat` token expiry.
+   - If token is within renewal window (for example 30 days before expiry), renew.
+2. Renewal should not require rerunning full bootstrap.
+   - Add/keep a dedicated renewal endpoint/path that accepts valid host bootstrap identity and issues a fresh `master-conat` token.
+   - Host writes token atomically to `/btrfs/data/secrets/master-conat-token` with mode `0600`.
+3. Existing connections continue; new connections use fresh token.
+   - No immediate disconnect required solely due to token refresh.
+4. On renewal failure:
+   - Retry with exponential backoff + jitter.
+   - Emit clear logs/metrics (`days_to_expiry`, renewal failures, next retry).
+5. Emergency fallback:
+   - If token is expired and renewal still fails, host marks control channel degraded and keeps retrying until success.
+
+6. Missing-token auto-recovery:
+   - If `/btrfs/data/secrets/master-conat-token` is missing while host is running, host immediately asks hub for a rotated `master-conat` token using its currently-authenticated host channel and rewrites the file.
+   - This gives a deterministic/manual rotation trigger.
+   - If host starts and file is missing, host also attempts a bootstrap-token fallback (if available and still valid) to recover automatically.
+
+Operator action:
+
+- You can force immediate token renewal on a running host by moving/removing:
+  - `/btrfs/data/secrets/master-conat-token`
+- Host should recreate it automatically within the periodic check window (about 30s).
+
+Recommended default parameters (initial):
+
+- Check interval: every 6-12 hours.
+- Renewal window: 30 days before expiration.
+- Retry backoff: 1m -> 5m -> 15m -> 1h (with jitter).
+
+Security properties of this plan:
+
+- No long-term static shared secret required for hub control auth.
+- Token compromise impact remains bounded by expiration.
+- Rotation is automatic and distributed, avoiding synchronized manual maintenance events.
+
+Revocation timing when a new token is issued:
+
+- Previous `master-conat` tokens for that host/purpose are revoked in the hub database immediately.
+- New authentication attempts with the old token fail right away.
+- Already-established websocket sessions may remain alive until they reconnect (standard websocket auth behavior).
+
 ## Code Organization Direction
 
 To reduce policy drift and surprises, common conat auth policy logic should be shared.
@@ -229,3 +296,4 @@ Track and expose metrics/logs for:
 
 - Existing Codex auth and credentials architecture: [docs/codex-auth.md](./codex-auth.md)
 - This document is specifically about websocket auth/authz between browser and project-host Conat.
+

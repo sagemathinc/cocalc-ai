@@ -9,6 +9,7 @@ DO NOT FORGET:
 - [x] Make sure that the project-hosts no longer get the central hub's conat_password as part of their bootstrap and initialization steps.  More generally, audit how that conat_password is used.
   - [x] In particular, project-host should receive host-specific token for hub --&gt; project-host auth.
 - [ ] do direct browser-&gt;host project control 
+- [ ] audit: make sure all key/token/secret lifecycles have a clear key rotation story; there must never be anything where manual intervention on a particular day is required by design.
 
 ## Principles
 
