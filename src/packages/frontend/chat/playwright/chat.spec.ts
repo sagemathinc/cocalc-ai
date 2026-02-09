@@ -171,3 +171,25 @@ test("composer editor mode: shift+enter sends and clears", async ({ page }) => {
     .toBeGreaterThan(0);
   await expectHarnessHealthy(page);
 });
+
+test("composer editor mode: shift+enter stays cleared across draft-key oscillation", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__chatComposerTest?.setOscillationEnabled?.(true);
+  });
+
+  await typeInSlate(page, "x");
+  await expectComposerInput(page, "x");
+  await page.keyboard.press("Shift+Enter");
+
+  await expectComposerInput(page, "");
+  await expectHarnessHealthy(page);
+
+  await page.waitForTimeout(3500);
+  await expectComposerInput(page, "");
+  await expectHarnessHealthy(page);
+});
