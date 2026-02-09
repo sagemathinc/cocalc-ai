@@ -9,6 +9,7 @@ import {
   getCoCalcUserId,
   getCoCalcUserType,
   isAccountAllowed as isAccountSubjectAllowed,
+  isProjectAllowed as isProjectSubjectAllowed,
   isProjectCollaboratorGroup,
   type CoCalcUser,
 } from "@cocalc/conat/auth/subject-policy";
@@ -16,8 +17,14 @@ import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-toke
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
-import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
+import {
+  HUB_PASSWORD_COOKIE_NAME,
+  PROJECT_ID_COOKIE_NAME,
+  PROJECT_SECRET_COOKIE_NAME,
+} from "@cocalc/backend/auth/cookie-names";
 import { conatPassword } from "@cocalc/backend/data";
+import { isValidUUID } from "@cocalc/util/misc";
+import { getProject } from "./sqlite/projects";
 
 const authDecisionCache = new TTL<string, boolean>({
   max: 20_000,
@@ -127,6 +134,20 @@ export function createProjectHostConatAuth({
     ) {
       return { hub_id: "system" };
     }
+    if (cookies?.[PROJECT_SECRET_COOKIE_NAME] != null) {
+      const project_id = cookies?.[PROJECT_ID_COOKIE_NAME];
+      if (!project_id || !isValidUUID(project_id)) {
+        throw new Error("invalid or missing project_id for project auth");
+      }
+      const row = getProject(project_id);
+      if (!row?.secret_token) {
+        throw new Error("project secret token not configured");
+      }
+      if (cookies[PROJECT_SECRET_COOKIE_NAME] !== row.secret_token) {
+        throw new Error("invalid secret token for project");
+      }
+      return { project_id };
+    }
     const token = readBearerToken(socket);
     const claims = verifyProjectHostAuthToken({
       token,
@@ -147,8 +168,7 @@ export function createProjectHostConatAuth({
       // Local internal services authenticate using the system account.
       return true;
     }
-    if (userType !== "account") {
-      // Project-host websocket auth currently only allows account identities.
+    if (userType !== "account" && userType !== "project") {
       return false;
     }
 
@@ -168,6 +188,8 @@ export function createProjectHostConatAuth({
     let allowed = false;
     if (common != null) {
       allowed = common;
+    } else if (userType === "project") {
+      allowed = isProjectSubjectAllowed({ project_id: userId, subject });
     } else if (isAccountSubjectAllowed({ account_id: userId, subject })) {
       allowed = true;
     } else {

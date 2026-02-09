@@ -1,7 +1,11 @@
 import { hubApi } from "@cocalc/lite/hub/api";
 import { account_id } from "@cocalc/backend/data";
 import { uuid, isValidUUID } from "@cocalc/util/misc";
-import { getProject, upsertProject } from "../sqlite/projects";
+import {
+  getProject,
+  getOrCreateProjectLocalSecretToken,
+  upsertProject,
+} from "../sqlite/projects";
 import {
   type CreateProjectOptions,
   type SnapshotCounts,
@@ -228,8 +232,10 @@ async function getRunnerConfig(
   const disk = limits.disk ?? existing?.disk;
   const scratch = limits.scratch ?? existing?.scratch;
   const ssh_proxy_public_key = await getSshProxyPublicKey();
+  const secret = getOrCreateProjectLocalSecretToken(project_id);
   return {
     image: normalizeImage(opts?.image ?? existing?.image),
+    secret,
     authorized_keys,
     ssh_proxy_public_key,
     run_quota,

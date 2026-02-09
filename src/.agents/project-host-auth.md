@@ -4,9 +4,10 @@ Branch scope: implement robust browser -> project-host Conat authentication and 
 
 DO NOT FORGET:
 
-- [ ] Implement conat auth for projects running on project-host
+- [x] Implement conat auth for projects running on project-host
 - [ ] Make project control work for starting projects on project-host from browser.
 - [ ] Make sure that the project-hosts no longer get the central hub's conat_password as part of their bootstrap and initialization steps.  More generally, audit how that conat_password is used.
+- [ ]  do direct browser-&gt;host project control 
 
 ## Principles
 
