@@ -8,8 +8,8 @@ import { conat } from "@cocalc/backend/conat";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import {
-  createBootstrapToken,
-  verifyBootstrapToken,
+  createProjectHostMasterConatToken,
+  verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 
 const logger = getLogger("server:conat:host-registry");
@@ -26,6 +26,10 @@ export interface HostRegistryApi {
   getProjectHostAuthPublicKey: () => Promise<{
     project_host_auth_public_key: string;
   }>;
+  getMasterConatTokenStatus: (opts: {
+    host_id: string;
+    current_token: string;
+  }) => Promise<{ expires_at: string }>;
   rotateMasterConatToken: (opts: {
     host_id: string;
     current_token?: string;
@@ -156,6 +160,26 @@ export async function initHostRegistryService() {
           project_host_auth_public_key: getProjectHostAuthTokenPublicKey(),
         };
       },
+      async getMasterConatTokenStatus(opts) {
+        const host_id = `${opts?.host_id ?? ""}`.trim();
+        const currentToken = `${opts?.current_token ?? ""}`.trim();
+        if (!host_id || !currentToken) {
+          throw Error(
+            "getMasterConatTokenStatus: host_id and current_token are required",
+          );
+        }
+        const info = await verifyProjectHostToken(currentToken, {
+          purpose: "master-conat",
+        });
+        if (!info || info.host_id !== host_id) {
+          throw Error(
+            "getMasterConatTokenStatus: token is invalid for this host",
+          );
+        }
+        return {
+          expires_at: info.expires.toISOString(),
+        };
+      },
       async rotateMasterConatToken(opts) {
         const host_id = `${opts?.host_id ?? ""}`.trim();
         if (!host_id) {
@@ -169,17 +193,20 @@ export async function initHostRegistryService() {
           );
         }
         const currentInfo = currentToken
-          ? await verifyBootstrapToken(currentToken, { purpose: "master-conat" })
+          ? await verifyProjectHostToken(currentToken, {
+              purpose: "master-conat",
+            })
           : null;
         const bootstrapInfo = bootstrapToken
-          ? await verifyBootstrapToken(bootstrapToken, { purpose: "bootstrap" })
+          ? await verifyProjectHostToken(bootstrapToken, {
+              purpose: "bootstrap",
+            })
           : null;
         const info = currentInfo ?? bootstrapInfo;
         if (!info || info.host_id !== host_id) {
           throw Error("rotateMasterConatToken: token is invalid for host");
         }
-        const issued = await createBootstrapToken(host_id, {
-          purpose: "master-conat",
+        const issued = await createProjectHostMasterConatToken(host_id, {
           ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
         });
         return { master_conat_token: issued.token };

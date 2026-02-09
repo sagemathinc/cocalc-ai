@@ -19,7 +19,7 @@ import { getAccountWithApiKey } from "@cocalc/server/api/manage";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
 import getPool from "@cocalc/database/pool";
-import { verifyBootstrapToken } from "@cocalc/server/project-host/bootstrap-token";
+import { verifyProjectHostToken } from "@cocalc/server/project-host/bootstrap-token";
 import {
   type CoCalcUser,
   type CoCalcUserType,
@@ -41,7 +41,7 @@ export async function getUser(
 ): Promise<CoCalcUser> {
   const bearerToken = getBearerToken(socket);
   if (bearerToken) {
-    const hostToken = await verifyBootstrapToken(bearerToken, {
+    const hostToken = await verifyProjectHostToken(bearerToken, {
       purpose: "master-conat",
     });
     if (!hostToken) {

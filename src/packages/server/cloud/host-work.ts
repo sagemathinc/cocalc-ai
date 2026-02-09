@@ -16,8 +16,8 @@ import { bumpReconcile, DEFAULT_INTERVALS } from "./reconcile";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "./provider-context";
 import {
-  createBootstrapToken,
-  revokeBootstrapTokensForHost,
+  createProjectHostBootstrapToken,
+  revokeProjectHostTokensForHost,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
@@ -352,9 +352,7 @@ async function handleProvision(row: any) {
   if (providerId) {
     try {
       const { baseUrl } = await resolveLaunchpadBootstrapUrl();
-      const token = await createBootstrapToken(row.id, {
-        purpose: "bootstrap",
-      });
+      const token = await createProjectHostBootstrapToken(row.id);
       startupScript = await buildCloudInitStartupScript(
         row,
         token.token,
@@ -624,8 +622,8 @@ async function handleStop(row: any) {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
-  await revokeBootstrapTokensForHost(row.id, { purpose: "bootstrap" });
-  await revokeBootstrapTokensForHost(row.id, { purpose: "master-conat" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
   let supportsStop = true;
   let stopConfirmed = false;
   if (providerId && runtime?.instance_id) {
@@ -820,8 +818,8 @@ async function handleDelete(row: any) {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
-  await revokeBootstrapTokensForHost(row.id, { purpose: "bootstrap" });
-  await revokeBootstrapTokensForHost(row.id, { purpose: "master-conat" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
   if (providerId && runtime?.instance_id) {
     const { entry, creds } = await getProviderContext(providerId, {
       region: row.region,

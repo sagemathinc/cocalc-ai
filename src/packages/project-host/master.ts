@@ -17,7 +17,8 @@ import { deleteProjectLocal } from "./sqlite/projects";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
 import {
-  getProjectHostBootstrapToken,
+  fetchMasterConatTokenViaBootstrap,
+  getProjectHostBootstrapConatSource,
   getProjectHostMasterConatToken,
   getProjectHostMasterConatTokenPath,
   writeProjectHostMasterConatToken,
@@ -26,6 +27,22 @@ import {
 const logger = getLogger("project-host:master");
 
 const SUBJECT = "project-hosts";
+const MASTER_CONAT_CHECK_MS = Math.max(
+  60_000,
+  Number(process.env.COCALC_MASTER_CONAT_TOKEN_CHECK_MS ?? 6 * 60 * 60 * 1000),
+);
+const MASTER_CONAT_ROTATE_WINDOW_MS = Math.max(
+  60_000,
+  Number(
+    process.env.COCALC_MASTER_CONAT_TOKEN_ROTATE_WINDOW_MS ??
+      30 * 24 * 60 * 60 * 1000,
+  ),
+);
+const MASTER_CONAT_RETRY_STEPS_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
+const MASTER_CONAT_MISSING_PROBE_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_MASTER_CONAT_TOKEN_MISSING_PROBE_MS ?? 30_000),
+);
 
 interface HostRegistration {
   id: string;
@@ -120,6 +137,12 @@ export async function startMasterRegistration({
     heartbeat: (info: HostRegistration) => Promise<void>;
     getProjectHostAuthPublicKey: () => Promise<{
       project_host_auth_public_key: string;
+    }>;
+    getMasterConatTokenStatus: (opts: {
+      host_id: string;
+      current_token: string;
+    }) => Promise<{
+      expires_at: string;
     }>;
     rotateMasterConatToken: (opts: {
       host_id: string;
@@ -256,49 +279,77 @@ export async function startMasterRegistration({
     }
   };
 
-  const rotateMasterConatTokenIfMissing = async (reason: string) => {
-    // If the token is injected via env, external orchestration owns rotation.
+  const recoverMasterConatTokenViaBootstrap = async (
+    reason: string,
+  ): Promise<boolean> => {
+    const source = getProjectHostBootstrapConatSource();
+    if (!source) {
+      logger.warn("missing master conat token and no bootstrap source", {
+        reason,
+        token_path: getProjectHostMasterConatTokenPath(),
+      });
+      return false;
+    }
+    try {
+      const next = await fetchMasterConatTokenViaBootstrap(source);
+      writeProjectHostMasterConatToken(next);
+      currentMasterConatToken = next;
+      logger.info("recovered master conat token via bootstrap endpoint", {
+        reason,
+        token_path: getProjectHostMasterConatTokenPath(),
+      });
+      return true;
+    } catch (err) {
+      logger.warn("failed recovering master conat token via bootstrap endpoint", {
+        reason,
+        token_path: getProjectHostMasterConatTokenPath(),
+        err,
+      });
+      return false;
+    }
+  };
+
+  const ensureMasterConatToken = async (reason: string): Promise<boolean> => {
+    // If token is injected via env, external orchestration owns rotation.
     if (`${process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN ?? ""}`.trim()) {
-      return;
+      return true;
     }
     const onDisk = getProjectHostMasterConatToken();
+    const missingOnDisk = !onDisk;
     if (onDisk) {
-      // Keep in-memory value aligned with current on-disk value.
       currentMasterConatToken = onDisk;
-      return;
     }
     if (!currentMasterConatToken) {
-      const bootstrapToken = getProjectHostBootstrapToken();
-      if (!bootstrapToken) {
-        logger.warn("master conat token file missing and no bootstrap fallback token", {
-          reason,
-          token_path: getProjectHostMasterConatTokenPath(),
-        });
-        return;
+      return await recoverMasterConatTokenViaBootstrap(reason);
+    }
+
+    let shouldRotate = missingOnDisk;
+    try {
+      const status = await registry.getMasterConatTokenStatus({
+        host_id: id,
+        current_token: currentMasterConatToken,
+      });
+      const expiresAt = new Date(status.expires_at).getTime();
+      const msRemaining = expiresAt - Date.now();
+      if (msRemaining <= MASTER_CONAT_ROTATE_WINDOW_MS) {
+        shouldRotate = true;
       }
-      try {
-        const rotated = await registry.rotateMasterConatToken({
-          host_id: id,
-          bootstrap_token: bootstrapToken,
-        });
-        const next = `${rotated?.master_conat_token ?? ""}`.trim();
-        if (!next) {
-          throw new Error("empty token returned by rotateMasterConatToken");
-        }
-        writeProjectHostMasterConatToken(next);
-        currentMasterConatToken = next;
-        logger.info("recovered missing master conat token via bootstrap token", {
-          reason,
-          token_path: getProjectHostMasterConatTokenPath(),
-        });
-      } catch (err) {
-        logger.warn("failed recovering master conat token via bootstrap token", {
-          reason,
-          token_path: getProjectHostMasterConatTokenPath(),
-          err,
-        });
-      }
-      return;
+      logger.debug("master conat token status", {
+        reason,
+        expires_at: status.expires_at,
+        ms_remaining: msRemaining,
+        rotate_window_ms: MASTER_CONAT_ROTATE_WINDOW_MS,
+        missing_on_disk: missingOnDisk,
+      });
+    } catch (err) {
+      logger.warn("failed checking master conat token status", { reason, err });
+      return await recoverMasterConatTokenViaBootstrap(
+        `${reason}:status-check-failed`,
+      );
+    }
+
+    if (!shouldRotate) {
+      return true;
     }
     try {
       const rotated = await registry.rotateMasterConatToken({
@@ -311,16 +362,19 @@ export async function startMasterRegistration({
       }
       writeProjectHostMasterConatToken(next);
       currentMasterConatToken = next;
-      logger.info("rotated master conat token after missing local file", {
+      logger.info("rotated master conat token", {
         reason,
         token_path: getProjectHostMasterConatTokenPath(),
+        missing_on_disk: missingOnDisk,
       });
+      return true;
     } catch (err) {
-      logger.warn("failed rotating missing master conat token", {
+      logger.warn("failed rotating master conat token", {
         reason,
         token_path: getProjectHostMasterConatTokenPath(),
         err,
       });
+      return false;
     }
   };
 
@@ -361,19 +415,68 @@ export async function startMasterRegistration({
     }
   })();
 
+  let ensureInFlight: Promise<boolean> | undefined;
+  const runEnsureMasterConatToken = async (reason: string): Promise<boolean> => {
+    if (ensureInFlight) {
+      return await ensureInFlight;
+    }
+    ensureInFlight = ensureMasterConatToken(reason);
+    try {
+      return await ensureInFlight;
+    } finally {
+      ensureInFlight = undefined;
+    }
+  };
+
   await refreshProjectHostAuthPublicKey("startup");
-  await rotateMasterConatTokenIfMissing("startup");
+  await runEnsureMasterConatToken("startup");
   await send("register");
   const timer = setInterval(() => void send("heartbeat"), 30_000);
-  const tokenRefreshTimer = setInterval(
-    () => void rotateMasterConatTokenIfMissing("periodic"),
-    30_000,
-  );
-  tokenRefreshTimer.unref?.();
+  let tokenRotationRetryStep = 0;
+  let tokenRotationTimer: NodeJS.Timeout | undefined;
+  const scheduleTokenRotation = (delayMs: number) => {
+    if (tokenRotationTimer) {
+      clearTimeout(tokenRotationTimer);
+    }
+    tokenRotationTimer = setTimeout(async () => {
+      const ok = await runEnsureMasterConatToken("periodic");
+      if (ok) {
+        tokenRotationRetryStep = 0;
+        scheduleTokenRotation(MASTER_CONAT_CHECK_MS);
+      } else {
+        const base =
+          MASTER_CONAT_RETRY_STEPS_MS[
+            Math.min(
+              tokenRotationRetryStep,
+              MASTER_CONAT_RETRY_STEPS_MS.length - 1,
+            )
+          ];
+        tokenRotationRetryStep += 1;
+        const jitter = Math.floor(base * 0.2 * Math.random());
+        scheduleTokenRotation(base + jitter);
+      }
+    }, delayMs);
+    tokenRotationTimer.unref?.();
+  };
+  scheduleTokenRotation(MASTER_CONAT_CHECK_MS);
+  const missingTokenProbe = setInterval(() => {
+    if (`${process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN ?? ""}`.trim()) {
+      return;
+    }
+    if (getProjectHostMasterConatToken()) {
+      return;
+    }
+    void runEnsureMasterConatToken("missing-file-probe");
+  }, MASTER_CONAT_MISSING_PROBE_MS);
+  missingTokenProbe.unref?.();
 
   const stop = () => {
     clearInterval(timer);
-    clearInterval(tokenRefreshTimer);
+    clearInterval(missingTokenProbe);
+    if (tokenRotationTimer) {
+      clearTimeout(tokenRotationTimer);
+      tokenRotationTimer = undefined;
+    }
     client.close?.();
     controlService?.close?.();
   };

@@ -7,8 +7,8 @@ import basePath from "@cocalc/backend/base-path";
 import { buildBootstrapScriptWithStatus } from "@cocalc/server/cloud/bootstrap-host";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import {
-  createBootstrapToken,
-  verifyBootstrapToken,
+  createProjectHostMasterConatToken,
+  verifyProjectHostToken,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
@@ -126,7 +126,7 @@ export default function init(router: Router) {
         res.status(401).send("missing bootstrap token");
         return;
       }
-      const tokenInfo = await verifyBootstrapToken(token, {
+      const tokenInfo = await verifyProjectHostToken(token, {
         purpose: "bootstrap",
       });
       if (!tokenInfo) {
@@ -183,7 +183,7 @@ export default function init(router: Router) {
         res.status(401).send("missing bootstrap token");
         return;
       }
-      const tokenInfo = await verifyBootstrapToken(token, {
+      const tokenInfo = await verifyProjectHostToken(token, {
         purpose: "bootstrap",
       });
       if (!tokenInfo) {
@@ -235,7 +235,7 @@ export default function init(router: Router) {
         res.status(401).send("missing bootstrap token");
         return;
       }
-      const tokenInfo = await verifyBootstrapToken(token, {
+      const tokenInfo = await verifyProjectHostToken(token, {
         purpose: "bootstrap",
       });
       if (!tokenInfo) {
@@ -263,17 +263,19 @@ export default function init(router: Router) {
         res.status(401).send("missing bootstrap token");
         return;
       }
-      const tokenInfo = await verifyBootstrapToken(token, {
+      const tokenInfo = await verifyProjectHostToken(token, {
         purpose: "bootstrap",
       });
       if (!tokenInfo) {
         res.status(401).send("invalid bootstrap token");
         return;
       }
-      const issued = await createBootstrapToken(tokenInfo.host_id, {
-        purpose: "master-conat",
+      const issued = await createProjectHostMasterConatToken(
+        tokenInfo.host_id,
+        {
         ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
-      });
+        },
+      );
       res.type("text/plain").send(issued.token);
     } catch (err) {
       logger.warn("bootstrap conat token failed", err);

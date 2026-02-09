@@ -47,7 +47,7 @@ import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { revokeBootstrapTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
+import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
 import {
   claimPendingCopies as claimPendingCopiesDb,
   updateCopyStatus as updateCopyStatusDb,
@@ -371,8 +371,8 @@ async function markHostDeprovisioned(row: any, action: string) {
   delete nextMetadata.cloudflare_tunnel;
 
   logStatusUpdate(row.id, "deprovisioned", "api");
-  await revokeBootstrapTokensForHost(row.id, { purpose: "bootstrap" });
-  await revokeBootstrapTokensForHost(row.id, { purpose: "master-conat" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
   try {
     if (await hasCloudflareTunnel()) {
       await deleteCloudflareTunnel({

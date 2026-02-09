@@ -221,17 +221,18 @@ Why this matters:
 - Without rotation, very long-lived hosts can eventually fail when this token expires.
 - In large fleets, expiry without automated renewal can cause many hosts to break around the same window.
 
-### Automatic Rotation Plan
+### Automatic Rotation (Implemented)
 
 Goal: fully automatic renewal with no manual intervention and no fleet-wide expiry surprises.
 
-Planned behavior:
+Implemented behavior:
 
 1. Background renewal loop on each host.
    - Periodically check `master-conat` token expiry.
    - If token is within renewal window (for example 30 days before expiry), renew.
-2. Renewal should not require rerunning full bootstrap.
-   - Add/keep a dedicated renewal endpoint/path that accepts valid host bootstrap identity and issues a fresh `master-conat` token.
+2. Renewal does not require rerunning full bootstrap.
+   - Host asks hub `project-hosts.api.rotateMasterConatToken(...)` for a new token.
+   - Hub verifies host identity token and returns a fresh `master-conat` token.
    - Host writes token atomically to `/btrfs/data/secrets/master-conat-token` with mode `0600`.
 3. Existing connections continue; new connections use fresh token.
    - No immediate disconnect required solely due to token refresh.
@@ -239,24 +240,26 @@ Planned behavior:
    - Retry with exponential backoff + jitter.
    - Emit clear logs/metrics (`days_to_expiry`, renewal failures, next retry).
 5. Emergency fallback:
-   - If token is expired and renewal still fails, host marks control channel degraded and keeps retrying until success.
+   - If token is missing or status checks fail, host attempts bootstrap-endpoint recovery using bootstrap config (`bootstrap_token` + `conat_url`) and rewrites the token file.
+   - This also covers host restart with missing token file, as long as bootstrap credential is still valid.
 
 6. Missing-token auto-recovery:
-   - If `/btrfs/data/secrets/master-conat-token` is missing while host is running, host immediately asks hub for a rotated `master-conat` token using its currently-authenticated host channel and rewrites the file.
+   - If `/btrfs/data/secrets/master-conat-token` is missing while host is running, host detects this on a short probe interval and asks hub for a rotated `master-conat` token using its currently-authenticated host channel.
    - This gives a deterministic/manual rotation trigger.
-   - If host starts and file is missing, host also attempts a bootstrap-token fallback (if available and still valid) to recover automatically.
+   - If host starts and file is missing, host attempts bootstrap-token fallback (if available and still valid) to recover automatically.
 
 Operator action:
 
 - You can force immediate token renewal on a running host by moving/removing:
   - `/btrfs/data/secrets/master-conat-token`
-- Host should recreate it automatically within the periodic check window (about 30s).
+- Host should recreate it automatically within the missing-token probe window (default about 30s).
 
-Recommended default parameters (initial):
+Default parameters:
 
 - Check interval: every 6-12 hours.
 - Renewal window: 30 days before expiration.
 - Retry backoff: 1m -> 5m -> 15m -> 1h (with jitter).
+- Missing-token probe: every ~30s.
 
 Security properties of this plan:
 
@@ -296,4 +299,3 @@ Track and expose metrics/logs for:
 
 - Existing Codex auth and credentials architecture: [docs/codex-auth.md](./codex-auth.md)
 - This document is specifically about websocket auth/authz between browser and project-host Conat.
-
