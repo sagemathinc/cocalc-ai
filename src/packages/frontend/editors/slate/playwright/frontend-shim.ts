@@ -77,8 +77,10 @@ export const CodeMirrorStatic = (_props: any) => null;
 export const RunButton = (_props: any) => null;
 export const Cursor = (_props: any) => null;
 export const Complete = (_props: any) => null;
-export const Dropzone = (_props: any) => null;
-export const BlobUpload = (_props: any) => null;
+export const Dropzone = (props: any) =>
+  props?.children ? React.createElement(React.Fragment, null, props.children) : null;
+export const BlobUpload = (props: any) =>
+  props?.children ? React.createElement(React.Fragment, null, props.children) : null;
 export const getProfile = () => ({});
 export const useMentionableUsers = () => [];
 export const submit_mentions = () => undefined;

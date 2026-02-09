@@ -16,7 +16,6 @@ const appFrameworkShim = path.join(rootDir, "app-framework-shim.ts");
 const miscShim = path.join(rootDir, "misc-shim.ts");
 const featureShim = path.join(rootDir, "feature-shim.ts");
 const intlShim = path.join(rootDir, "intl-shim.tsx");
-const markdownComponentShim = path.join(rootDir, "component-shim.tsx");
 const mentionableUsersShim = path.join(rootDir, "mentionable-users-shim.ts");
 const mentionsShim = path.join(rootDir, "mentions-shim.ts");
 
@@ -77,14 +76,6 @@ const shimPlugin = {
       { filter: /^@cocalc\/frontend\/editors\/markdown-input\/mentions$/ },
       () => ({ path: mentionsShim }),
     );
-    build.onResolve({ filter: /component$/ }, (args) => {
-      if (
-        args.importer.includes(`${path.sep}editors${path.sep}markdown-input${path.sep}multimode.tsx`) &&
-        args.path.startsWith(".")
-      ) {
-        return { path: markdownComponentShim };
-      }
-    });
     build.onResolve(
       { filter: /mentionable-users$/ },
       (args) => {

@@ -10,7 +10,8 @@ test("new-thread shift+enter send clears and stays cleared", async ({ page }) =>
   await page.goto("/");
   await waitForHarness(page);
 
-  const editor = page.locator("[data-testid='markdown-input-shim']");
+  const editor = page.locator(".CodeMirror");
+  await expect(editor).toHaveCount(1);
   await editor.click();
   await page.keyboard.type("x");
   await page.keyboard.press("Shift+Enter");
@@ -31,7 +32,8 @@ test("second new-thread send also stays cleared after New Chat", async ({ page }
   await page.goto("/");
   await waitForHarness(page);
 
-  const editor = page.locator("[data-testid='markdown-input-shim']");
+  const editor = page.locator(".CodeMirror");
+  await expect(editor).toHaveCount(1);
 
   await editor.click();
   await page.keyboard.type("first");
