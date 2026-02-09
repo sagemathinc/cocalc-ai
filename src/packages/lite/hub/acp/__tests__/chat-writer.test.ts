@@ -255,6 +255,39 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("does not overwrite error content when summary arrives afterward", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "error",
+      error: "failed",
+      seq: 0,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "duplicate failure text",
+      threadId: "thread-after-error",
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect((writer as any).content).toContain("failed");
+    expect((writer as any).content).not.toContain("duplicate failure text");
+    expect((writer as any).getKnownThreadIds()).toContain("thread-after-error");
+    expect(sets.some((row) => row.generating === false)).toBe(true);
+    (writer as any).dispose?.(true);
+  });
+
   it("addLocalEvent writes an in-flight commit", async () => {
     const { syncdb, sets } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({

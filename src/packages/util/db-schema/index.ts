@@ -35,6 +35,7 @@ import "./collaborators";
 import "./compute-images";
 import "./crm";
 import "./email-counter";
+import "./external-credentials";
 import "./file-access-log";
 import "./file-use";
 import "./groups";

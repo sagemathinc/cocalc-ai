@@ -3,8 +3,18 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
+import {
+  getAccountOpenAiApiKeyFromRegistry,
+  getProjectOpenAiApiKeyFromRegistry,
+  getSiteOpenAiApiKeyFromHub,
+  hasSubscriptionAuthInRegistry,
+  pullSubscriptionAuthFromRegistry,
+  touchSubscriptionAuthInRegistry,
+} from "./codex-auth-registry";
+import { touchSubscriptionCacheUsage } from "./codex-subscription-cache-gc";
 
 const logger = getLogger("project-host:codex-auth");
+const MAX_AUTH_UPLOAD_BYTES = 2_000_000;
 
 export type CodexAuthSource =
   | "subscription"
@@ -19,8 +29,6 @@ export type CodexAuthRuntime = {
   codexHome?: string;
   env: Record<string, string>;
 };
-
-type SharedHomeMode = "fallback" | "prefer" | "always";
 
 function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -53,10 +61,17 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+type SharedHomeMode = "disabled" | "fallback" | "prefer" | "always";
+
 function resolveSharedHomeMode(): SharedHomeMode {
-  const mode = `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? "fallback"}`
+  const defaultMode =
+    `${process.env.COCALC_PRODUCT ?? ""}`.trim().toLowerCase() === "launchpad"
+      ? "disabled"
+      : "fallback";
+  const mode = `${process.env.COCALC_CODEX_AUTH_SHARED_HOME_MODE ?? defaultMode}`
     .trim()
     .toLowerCase();
+  if (mode === "disabled") return "disabled";
   if (mode === "prefer" || mode === "always") return mode;
   return "fallback";
 }
@@ -140,16 +155,66 @@ export async function ensureCodexCredentialsStoreFile(
   await fs.writeFile(configPath, updated, { mode: 0o600 });
 }
 
+export async function ensureCodexAuthFileExists(codexHome: string): Promise<void> {
+  await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
+  const authPath = join(codexHome, "auth.json");
+  if (await pathExists(authPath)) return;
+  // Create a placeholder so we can bind-mount this file into the runtime
+  // without placing auth.json under the project workspace.
+  await fs.writeFile(authPath, "{}\n", { mode: 0o600 });
+}
+
+function validateUploadedAuthJson(raw: string): void {
+  if (!raw?.trim()) {
+    throw Error("uploaded file is empty");
+  }
+  if (Buffer.byteLength(raw, "utf8") > MAX_AUTH_UPLOAD_BYTES) {
+    throw Error("uploaded file is too large");
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw Error("uploaded file is not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw Error("uploaded file must contain a JSON object");
+  }
+}
+
+export async function uploadSubscriptionAuthFile({
+  accountId,
+  content,
+}: {
+  accountId: string;
+  content: string;
+}): Promise<{ codexHome: string; bytes: number }> {
+  validateUploadedAuthJson(content);
+  const codexHome = resolveSubscriptionCodexHome(accountId);
+  await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
+  const authPath = join(codexHome, "auth.json");
+  await fs.writeFile(authPath, content, { mode: 0o600 });
+  await ensureCodexCredentialsStoreFile(codexHome);
+  await touchSubscriptionCacheUsage(codexHome);
+  return {
+    codexHome,
+    bytes: Buffer.byteLength(content, "utf8"),
+  };
+}
+
 export async function resolveCodexAuthRuntime({
   projectId,
   accountId,
+  forceRefreshSiteKey = false,
 }: {
   projectId: string;
   accountId?: string;
+  forceRefreshSiteKey?: boolean;
 }): Promise<CodexAuthRuntime> {
   const sharedHome = resolveSharedCodexHome();
   const sharedHomeMode = resolveSharedHomeMode();
-  const hasSharedHomeAuth = await sharedHomeHasAuth(sharedHome);
+  const hasSharedHomeAuth =
+    sharedHomeMode === "disabled" ? false : await sharedHomeHasAuth(sharedHome);
   if (
     sharedHomeMode === "always" ||
     (sharedHomeMode === "prefer" && hasSharedHomeAuth)
@@ -157,25 +222,45 @@ export async function resolveCodexAuthRuntime({
     return sharedHomeRuntime({ projectId, accountId, sharedHome });
   }
 
-  const projectKeys = parseMap(
-    process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEYS_JSON,
-  );
-  const accountKeys = parseMap(
-    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
-  );
-  const projectKey =
-    projectKeys[projectId] ?? process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY;
-  const accountKey =
-    (accountId ? accountKeys[accountId] : undefined) ??
-    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY;
-  const siteKey = process.env.COCALC_CODEX_AUTH_SITE_OPENAI_KEY;
-
   if (accountId) {
     const codexHome = resolveSubscriptionCodexHome(accountId);
     const authFile = join(codexHome, "auth.json");
     if (await pathExists(authFile)) {
+      const hasInRegistry = await hasSubscriptionAuthInRegistry({
+        projectId,
+        accountId,
+      });
+      if (hasInRegistry === false) {
+        try {
+          await fs.unlink(authFile);
+        } catch {}
+        logger.debug("removed local subscription auth after central revoke", {
+          projectId,
+          accountId,
+          codexHome,
+        });
+      }
+    }
+    if (!(await pathExists(authFile))) {
+      const pulled = await pullSubscriptionAuthFromRegistry({
+        projectId,
+        accountId,
+        codexHome,
+      });
+      if (pulled.pulled) {
+        logger.debug("loaded subscription auth from central registry", {
+          projectId,
+          accountId,
+          codexHome,
+        });
+      }
+    }
+    if (await pathExists(authFile)) {
+      // Best-effort usage signal so account settings can show recent activity.
+      void touchSubscriptionAuthInRegistry({ projectId, accountId });
       try {
         await ensureCodexCredentialsStoreFile(codexHome);
+        await touchSubscriptionCacheUsage(codexHome);
       } catch (err) {
         logger.warn("failed to ensure codex file credential store setting", {
           projectId,
@@ -187,6 +272,51 @@ export async function resolveCodexAuthRuntime({
       return subscriptionRuntime({ projectId, accountId, codexHome });
     }
   }
+
+  const projectRegistryKey = await getProjectOpenAiApiKeyFromRegistry({
+    projectId,
+  });
+  if (projectRegistryKey) {
+    return {
+      source: "project-api-key",
+      contextId: hashText(
+        `project-key:${projectId}:${hashText(projectRegistryKey)}`,
+      ).slice(0, 16),
+      env: { OPENAI_API_KEY: projectRegistryKey },
+    };
+  }
+
+  if (accountId) {
+    const accountRegistryKey = await getAccountOpenAiApiKeyFromRegistry({
+      projectId,
+      accountId,
+    });
+    if (accountRegistryKey) {
+      return {
+        source: "account-api-key",
+        contextId: hashText(
+          `account-key:${projectId}:${accountId}:${hashText(accountRegistryKey)}`,
+        ).slice(0, 16),
+        env: { OPENAI_API_KEY: accountRegistryKey },
+      };
+    }
+  }
+
+  // Backward compatibility: env-based account/project key injection.
+  const projectKeys = parseMap(
+    process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEYS_JSON,
+  );
+  const accountKeys = parseMap(
+    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
+  );
+  const projectKey =
+    projectKeys[projectId] ?? process.env.COCALC_CODEX_AUTH_PROJECT_OPENAI_KEY;
+  const accountKey =
+    (accountId ? accountKeys[accountId] : undefined) ??
+    process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEY;
+  const siteKey = await getSiteOpenAiApiKeyFromHub({
+    forceRefresh: forceRefreshSiteKey,
+  });
 
   if (projectKey) {
     return {
@@ -220,7 +350,13 @@ export async function resolveCodexAuthRuntime({
     };
   }
 
-  return sharedHomeRuntime({ projectId, accountId, sharedHome });
+  if (sharedHomeMode !== "disabled") {
+    return sharedHomeRuntime({ projectId, accountId, sharedHome });
+  }
+
+  throw Error(
+    "No Codex auth source configured (shared-home auth is disabled on launchpad; configure a ChatGPT plan, OpenAI API key, or site key)",
+  );
 }
 
 export function resolveSharedCodexHome(): string | undefined {

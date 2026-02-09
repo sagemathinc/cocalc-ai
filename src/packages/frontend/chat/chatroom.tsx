@@ -36,6 +36,7 @@ import { useChatComposerDraft } from "./use-chat-composer-draft";
 import * as immutable from "immutable";
 import { useChatThreadSelection } from "./thread-selection";
 import { dateValue } from "./access";
+import { useCodexPaymentSource } from "./use-codex-payment-source";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -260,6 +261,14 @@ export function ChatPanel({
   const hasInput = input.trim().length > 0;
 
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
+  const {
+    paymentSource: codexPaymentSource,
+    loading: codexPaymentSourceLoading,
+    refresh: refreshCodexPaymentSource,
+  } = useCodexPaymentSource({
+    projectId: project_id,
+    enabled: isSelectedThreadAI,
+  });
 
   const combinedFeedIndex = useMemo(() => {
     if (!threadIndex || !combinedThread) return undefined;
@@ -461,6 +470,9 @@ export function ChatPanel({
         }}
         composerTargetKey={composerTargetKey}
         composerFocused={composerFocused}
+        codexPaymentSource={codexPaymentSource}
+        codexPaymentSourceLoading={codexPaymentSourceLoading}
+        refreshCodexPaymentSource={refreshCodexPaymentSource}
       />
       <ChatRoomComposer
         actions={actions}
@@ -481,6 +493,8 @@ export function ChatPanel({
         selectedThread={selectedThread}
         onComposerTargetChange={setComposerTargetKey}
         onComposerFocusChange={setComposerFocused}
+        codexPaymentSource={codexPaymentSource}
+        codexPaymentSourceLoading={codexPaymentSourceLoading}
       />
     </div>
   );

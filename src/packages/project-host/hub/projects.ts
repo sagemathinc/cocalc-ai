@@ -44,6 +44,8 @@ import {
   getCodexDeviceAuthStatus,
   cancelCodexDeviceAuth,
 } from "../codex/codex-device-auth";
+import { uploadSubscriptionAuthFile } from "../codex/codex-auth";
+import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
 
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
@@ -461,6 +463,42 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     return { id, canceled };
   }
 
+  async function codexUploadAuthFile({
+    account_id,
+    project_id,
+    filename,
+    content,
+  }: {
+    account_id?: string;
+    project_id: string;
+    filename?: string;
+    content: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+    if (filename && !/auth\.json$/i.test(filename.trim())) {
+      throw Error("only auth.json uploads are supported");
+    }
+    const result = await uploadSubscriptionAuthFile({
+      accountId: account_id,
+      content,
+    });
+    const synced = await pushSubscriptionAuthToRegistry({
+      projectId: project_id,
+      accountId: account_id,
+      codexHome: result.codexHome,
+      content,
+    });
+    return { ok: true as const, synced: synced.ok, ...result };
+  }
+
   // Create a project locally and optionally start it.
   hubApi.projects.createProject = createProject;
   hubApi.projects.start = start;
@@ -481,6 +519,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.codexDeviceAuthStart = codexDeviceAuthStart;
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
+  hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;
 }
 
 // Update managed SSH keys for a project without restarting it.

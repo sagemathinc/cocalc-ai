@@ -25,6 +25,11 @@ import type { SubmitMentionsFn } from "./types";
 import { INPUT_HEIGHT } from "./utils";
 import type { ThreadMeta } from "./threads";
 import { ThreadBadge } from "./thread-badge";
+import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
+import {
+  getCodexPaymentSourceLongLabel,
+  getCodexPaymentSourceShortLabel,
+} from "./use-codex-payment-source";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -45,6 +50,8 @@ export interface ChatRoomComposerProps {
   selectedThread?: ThreadMeta | null;
   onComposerTargetChange: (key: string | null) => void;
   onComposerFocusChange: (focused: boolean) => void;
+  codexPaymentSource?: CodexPaymentSourceInfo;
+  codexPaymentSourceLoading?: boolean;
 }
 
 export function ChatRoomComposer({
@@ -66,6 +73,8 @@ export function ChatRoomComposer({
   selectedThread,
   onComposerTargetChange,
   onComposerFocusChange,
+  codexPaymentSource,
+  codexPaymentSourceLoading = false,
 }: ChatRoomComposerProps) {
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -277,6 +286,14 @@ export function ChatRoomComposer({
     boxSizing: "border-box",
   };
 
+  const codexSourceShortLabel = codexPaymentSourceLoading
+    ? "Checking…"
+    : getCodexPaymentSourceShortLabel(codexPaymentSource?.source);
+  const codexSourceLongLabel = getCodexPaymentSourceLongLabel(
+    codexPaymentSource?.source,
+  );
+  const showSiteUsage = codexPaymentSource?.source === "site-api-key";
+
   return (
     <div ref={zenContainerRef} style={composerStyle}>
       <div
@@ -393,11 +410,27 @@ export function ChatRoomComposer({
               marginBottom: "5px",
             }}
           >
-            <LLMUsageStatus
-              variant="compact"
-              showHelp={false}
-              compactWidth={115}
-            />
+            {showSiteUsage ? (
+              <LLMUsageStatus
+                variant="compact"
+                showHelp={false}
+                compactWidth={115}
+              />
+            ) : (
+              <Tooltip title={`Likely source: ${codexSourceLongLabel}`}>
+                <Button
+                  size="small"
+                  style={{
+                    height: "auto",
+                    padding: "4px 6px",
+                    fontSize: "11px",
+                    minWidth: "115px",
+                  }}
+                >
+                  {codexSourceShortLabel}
+                </Button>
+              </Tooltip>
+            )}
           </div>
         )}
         {hasInput && (
@@ -410,11 +443,27 @@ export function ChatRoomComposer({
                   alignItems: "center",
                 }}
               >
-                <LLMUsageStatus
-                  variant="compact"
-                  showHelp={false}
-                  compactWidth={115}
-                />
+                {showSiteUsage ? (
+                  <LLMUsageStatus
+                    variant="compact"
+                    showHelp={false}
+                    compactWidth={115}
+                  />
+                ) : (
+                  <Tooltip title={`Likely source: ${codexSourceLongLabel}`}>
+                    <Button
+                      size="small"
+                      style={{
+                        height: "auto",
+                        padding: "4px 6px",
+                        fontSize: "11px",
+                        minWidth: "115px",
+                      }}
+                    >
+                      {codexSourceShortLabel}
+                    </Button>
+                  </Tooltip>
+                )}
               </div>
             ) : (
               <div />
