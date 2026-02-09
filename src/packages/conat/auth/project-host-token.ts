@@ -1,4 +1,10 @@
-import { createHash, createHmac, timingSafeEqual, randomUUID } from "crypto";
+import {
+  createPrivateKey,
+  createPublicKey,
+  sign as cryptoSign,
+  verify as cryptoVerify,
+  randomUUID,
+} from "crypto";
 import { isValidUUID } from "@cocalc/util/misc";
 
 /*
@@ -6,10 +12,11 @@ Project-host auth token protocol (overview):
 
 - Token format: compact JWT-style token with 3 base64url parts
   (header.payload.signature).
-- Signature algorithm: HMAC-SHA256 (HS256), keyed with a shared secret.
+- Signature algorithm: Ed25519 (`alg=EdDSA`).
 - Issuer/trust model:
-  - Central hub signs tokens for a specific host audience.
-  - Project-host verifies signature + issuer + audience + expiry.
+  - Central hub signs tokens with an Ed25519 private key.
+  - Project-host verifies signatures with the corresponding public key.
+  - Project-host does not possess signing capability.
   - Browser presents token during socket.io websocket auth.
 - Claims enforced:
   - sub = account_id (who the browser is acting as)
@@ -18,14 +25,13 @@ Project-host auth token protocol (overview):
   - jti (unique id), v (protocol version)
 
 Keying/rotation notes:
-- The signing key is derived from a deployment secret via SHA-256 namespacing.
-- Current code supports one active symmetric secret at a time.
+- Current code verifies one active public key.
 - Planned key rotation can be added by introducing `kid` and a verifier key ring
-  that accepts current+previous keys during rollout.
+  that accepts current+previous public keys during rollout.
 */
 
 const TOKEN_TYPE = "JWT";
-const TOKEN_ALG = "HS256";
+const TOKEN_ALG = "EdDSA";
 const TOKEN_VERSION = "phat-v1";
 const DEFAULT_TTL_SECONDS = 10 * 60;
 const MAX_TTL_SECONDS = 30 * 60;
@@ -45,7 +51,7 @@ export interface ProjectHostAuthClaims {
 export interface IssueProjectHostTokenOptions {
   account_id: string;
   host_id: string;
-  secret: string;
+  private_key: string;
   ttl_seconds?: number;
   issuer?: string;
   now_ms?: number;
@@ -54,7 +60,7 @@ export interface IssueProjectHostTokenOptions {
 export interface VerifyProjectHostTokenOptions {
   token: string;
   host_id: string;
-  secret: string;
+  public_key: string;
   issuer?: string;
   now_ms?: number;
 }
@@ -75,14 +81,20 @@ function base64UrlDecode(input: string): Buffer {
   return Buffer.from(padded, "base64");
 }
 
-function deriveSigningKey(secret: string): Buffer {
-  const s = `${secret ?? ""}`.trim();
-  if (!s) {
-    throw new Error("project-host auth signing secret is not configured");
+function getPrivateKey(private_key: string) {
+  const value = `${private_key ?? ""}`.trim();
+  if (!value) {
+    throw new Error("project-host auth signing private key is not configured");
   }
-  return createHash("sha256")
-    .update(`cocalc-project-host-auth:${s}`)
-    .digest();
+  return createPrivateKey(value);
+}
+
+function getPublicKey(public_key: string) {
+  const value = `${public_key ?? ""}`.trim();
+  if (!value) {
+    throw new Error("project-host auth verification public key is not configured");
+  }
+  return createPublicKey(value);
 }
 
 function normalizeTtlSeconds(ttl_seconds?: number): number {
@@ -103,7 +115,7 @@ function ensureValidInputs({ account_id, host_id }: { account_id: string; host_i
 export function issueProjectHostAuthToken({
   account_id,
   host_id,
-  secret,
+  private_key,
   ttl_seconds,
   issuer = "cocalc-hub",
   now_ms = Date.now(),
@@ -113,7 +125,7 @@ export function issueProjectHostAuthToken({
   claims: ProjectHostAuthClaims;
 } {
   ensureValidInputs({ account_id, host_id });
-  const key = deriveSigningKey(secret);
+  const key = getPrivateKey(private_key);
   const iat = Math.floor(now_ms / 1000);
   const exp = iat + normalizeTtlSeconds(ttl_seconds);
   const claims: ProjectHostAuthClaims = {
@@ -134,7 +146,7 @@ export function issueProjectHostAuthToken({
   const encHeader = base64UrlEncode(JSON.stringify(header));
   const encClaims = base64UrlEncode(JSON.stringify(claims));
   const signingInput = `${encHeader}.${encClaims}`;
-  const sig = createHmac("sha256", key).update(signingInput).digest();
+  const sig = cryptoSign(null, Buffer.from(signingInput), key);
   const encSig = base64UrlEncode(sig);
 
   return {
@@ -167,25 +179,27 @@ function parseClaims(token: string): {
 export function verifyProjectHostAuthToken({
   token,
   host_id,
-  secret,
+  public_key,
   issuer = "cocalc-hub",
   now_ms = Date.now(),
 }: VerifyProjectHostTokenOptions): ProjectHostAuthClaims {
   if (!isValidUUID(host_id)) {
     throw new Error("invalid host_id");
   }
-  const key = deriveSigningKey(secret);
+  const key = getPublicKey(public_key);
   const { header, claims, signingInput, signature } = parseClaims(token);
 
   if (header?.typ !== TOKEN_TYPE || header?.alg !== TOKEN_ALG) {
     throw new Error("invalid token header");
   }
 
-  const expectedSig = createHmac("sha256", key).update(signingInput).digest();
-  if (
-    expectedSig.length !== signature.length ||
-    !timingSafeEqual(expectedSig, signature)
-  ) {
+  const ok = cryptoVerify(
+    null,
+    Buffer.from(signingInput),
+    key,
+    signature,
+  );
+  if (!ok) {
     throw new Error("invalid token signature");
   }
 

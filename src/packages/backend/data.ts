@@ -27,6 +27,7 @@ const DEFINITION = `CoCalc Environment Variables:
 import { join, resolve } from "path";
 import { ConnectionOptions } from "node:tls";
 import { existsSync, mkdirSync, readFileSync } from "fs";
+import { createPrivateKey, createPublicKey } from "crypto";
 import { isEmpty } from "lodash";
 import basePath from "@cocalc/backend/base-path";
 import port from "@cocalc/backend/port";
@@ -303,13 +304,73 @@ export function setConatPassword(password: string) {
   conatPassword = password;
 }
 
-// Project-host browser auth tokens are signed by the central hub and verified
-// by each project-host. By default we reuse conatPassword for compatibility,
-// but this can be decoupled immediately by setting
-// COCALC_PROJECT_HOST_AUTH_TOKEN_SECRET.
-export function getProjectHostAuthTokenSecret(): string {
-  const secret = process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_SECRET?.trim();
-  return secret || conatPassword;
+function normalizePem(value?: string): string | undefined {
+  const v = value?.trim();
+  if (!v) return;
+  return v.includes("\\n") ? v.replace(/\\n/g, "\n").trim() : v;
+}
+
+function maybeReadPem(path?: string): string | undefined {
+  if (!path) return;
+  try {
+    const v = readFileSync(path).toString().trim();
+    if (!v) return;
+    return v;
+  } catch {
+    return;
+  }
+}
+
+// Ed25519 keypair for project-host auth tokens:
+// - hub signs using PRIVATE key
+// - project-host verifies using PUBLIC key
+//
+// Defaults:
+//   ${secrets}/project-host-auth-ed25519-private.pem
+//   ${secrets}/project-host-auth-ed25519-public.pem
+//
+// Env overrides:
+//   COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY
+//   COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY
+//   COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY_PATH
+//   COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY_PATH
+export const projectHostAuthTokenPrivateKeyPath =
+  process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY_PATH ??
+  join(secrets, "project-host-auth-ed25519-private.pem");
+export const projectHostAuthTokenPublicKeyPath =
+  process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY_PATH ??
+  join(secrets, "project-host-auth-ed25519-public.pem");
+
+export function getProjectHostAuthTokenPrivateKey(): string {
+  const fromEnv = normalizePem(
+    process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY,
+  );
+  const fromFile = maybeReadPem(projectHostAuthTokenPrivateKeyPath);
+  const key = fromEnv ?? fromFile;
+  if (!key) {
+    throw new Error(
+      "missing project-host auth private key; set COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY or provide " +
+        projectHostAuthTokenPrivateKeyPath,
+    );
+  }
+  return key;
+}
+
+export function getProjectHostAuthTokenPublicKey(): string {
+  const fromEnv = normalizePem(
+    process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY,
+  );
+  const fromFile = maybeReadPem(projectHostAuthTokenPublicKeyPath);
+  if (fromEnv ?? fromFile) {
+    return fromEnv ?? fromFile!;
+  }
+  // Convenience fallback: derive public key from private if only private is available.
+  const privateKey = getProjectHostAuthTokenPrivateKey();
+  const pub = createPublicKey(createPrivateKey(privateKey)).export({
+    type: "spki",
+    format: "pem",
+  });
+  return `${pub}`.trim();
 }
 
 export const codexSubscriptionsPath = join(secrets, "codex-subscriptions");

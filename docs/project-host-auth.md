@@ -55,6 +55,13 @@ sequenceDiagram
 
 Project-host auth token is identity-only and host-scoped.
 
+Signature model:
+
+- `alg=EdDSA` (Ed25519)
+- Hub signs with private key.
+- Project-host verifies with public key only.
+- A project-host cannot mint valid hub tokens (no signing key).
+
 Suggested claims:
 
 - `sub`: account id
@@ -67,6 +74,13 @@ Important:
 
 - Token does not include full project list claims.
 - Authorization decisions are done using project-host local ACL state.
+
+Key distribution:
+
+- Hub needs `COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY` (or private key file path).
+- Project-host needs `COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY` (or public key file path).
+- If public key is omitted but private key is present, public key is derived from private key for convenience.
+- Recommended production posture is private key only on hub, public key only on project-hosts.
 
 ## Authorization Model on Project-Host
 

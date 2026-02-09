@@ -13,7 +13,7 @@ import {
   type CoCalcUser,
 } from "@cocalc/conat/auth/subject-policy";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
-import { getProjectHostAuthTokenSecret } from "@cocalc/backend/data";
+import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
 
@@ -112,7 +112,8 @@ export function createProjectHostConatAuth({
     const claims = verifyProjectHostAuthToken({
       token,
       host_id,
-      secret: getProjectHostAuthTokenSecret(),
+      // Verify-only key: project-host does not get signing capability.
+      public_key: getProjectHostAuthTokenPublicKey(),
     });
     return { account_id: claims.sub } satisfies CoCalcUser;
   };

@@ -11,6 +11,9 @@ The same policy model is used in two places:
 
 To avoid policy drift, shared rule helpers live in [src/packages/conat/auth/subject-policy.ts](../../../conat/auth/subject-policy.ts).
 
+Project-host browser auth tokens are signed centrally using Ed25519 private key
+and verified on project-hosts using only the public key.
+
 ## What Rules Are Enforced
 
 At a high level:
