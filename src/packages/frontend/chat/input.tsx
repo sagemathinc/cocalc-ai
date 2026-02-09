@@ -92,13 +92,6 @@ export default function ChatInput({
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
   const mountedRef = useRef<boolean>(true);
-  const cacheEpochRef = useRef<number>(0);
-  const prevCacheIdRef = useRef<string | undefined>(cacheId);
-  if (prevCacheIdRef.current !== cacheId) {
-    cacheEpochRef.current += 1;
-    prevCacheIdRef.current = cacheId;
-  }
-  const handlerEpoch = cacheEpochRef.current;
   const isFocusedRef = useRef<boolean>(false);
   const historyRef = useRef<HistoryEntry[]>([
     { value: propsInput ?? "", at: Date.now() },
@@ -223,15 +216,6 @@ export default function ChatInput({
       submitMentionsRef={submitMentionsRef}
       onChange={(value) => {
         if (!mountedRef.current) return;
-        if (handlerEpoch !== cacheEpochRef.current) {
-          debugComposerInput("onChange:ignored-stale-cache-epoch", {
-            cacheId,
-            value,
-            handlerEpoch,
-            currentEpoch: cacheEpochRef.current,
-          });
-          return;
-        }
         debugComposerInput("onChange:recv", {
           cacheId,
           value,
@@ -272,15 +256,6 @@ export default function ChatInput({
       }}
       onShiftEnter={(value) => {
         if (!mountedRef.current) return;
-        if (handlerEpoch !== cacheEpochRef.current) {
-          debugComposerInput("onShiftEnter:ignored-stale-cache-epoch", {
-            cacheId,
-            value,
-            handlerEpoch,
-            currentEpoch: cacheEpochRef.current,
-          });
-          return;
-        }
         debugComposerInput("onShiftEnter", {
           cacheId,
           value,

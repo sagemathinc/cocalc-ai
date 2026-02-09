@@ -353,6 +353,7 @@ export function ChatRoomComposer({
         )}
         <div ref={inputContainerRef}>
           <ChatInput
+            key={`${path}${project_id}-draft-${composerDraftKey}`}
             fontSize={fontSize}
             autoFocus
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}

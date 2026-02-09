@@ -193,3 +193,38 @@ test("composer editor mode: shift+enter stays cleared across draft-key oscillati
   await expectComposerInput(page, "");
   await expectHarnessHealthy(page);
 });
+
+test("composer editor mode: follow-up after first send shows Send and clears on shift+enter", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__chatComposerTest?.setOscillationEnabled?.(true);
+  });
+
+  await typeInSlate(page, "x");
+  await expectComposerInput(page, "x");
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  // Let draft-key oscillation settle before follow-up typing.
+  await page.waitForTimeout(600);
+
+  await typeInSlate(page, "y");
+  await expectComposerInput(page, "y");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+    })
+    .toBe(true);
+
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await page.waitForTimeout(2500);
+  await expectComposerInput(page, "");
+  await expectHarnessHealthy(page);
+});
