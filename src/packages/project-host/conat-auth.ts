@@ -161,6 +161,9 @@ export function createProjectHostConatAuth({
       // Verify-only key: project-host does not get signing capability.
       public_key: getProjectHostAuthPublicKey(),
     });
+    if (claims.act === "hub") {
+      return { hub_id: claims.sub || "hub" };
+    }
     return { account_id: claims.sub } satisfies CoCalcUser;
   };
 

@@ -87,6 +87,33 @@ Key distribution:
 - In rocket/k8s deployments, keys should be provisioned by deployment (e.g. Kubernetes secret mount), not generated at runtime.
 - Recommended production posture is private key only on hub, public key only on project-hosts.
 
+## Key Rotation
+
+Current implementation uses a single active verification key on each project-host.
+There is no multi-key (`kid`) verification ring yet.
+
+What this means in practice:
+
+- Rotating the hub signing key is a hard cutover.
+- After a host receives the new public key, it will reject tokens signed by the old private key.
+- Existing websocket sessions may continue until reconnect, but new/reconnecting auth must use newly signed tokens.
+
+Operational expectation:
+
+- Small, temporary disruption is expected during rotation (typically minutes, not hours).
+- This is acceptable for now to keep protocol and implementation simpler.
+
+Current rotation playbook:
+
+1. Deploy/update hub with the new private key.
+2. Distribute/refresh the matching public key to project-hosts (startup pull + key update push path).
+3. Allow short-lived token caches to refresh naturally.
+4. Verify new browser -> host and hub -> host connections.
+
+Future improvement (deferred):
+
+- Add `kid` plus dual-key acceptance window (old + new) for seamless/no-downtime rotation.
+
 ## Authorization Model on Project-Host
 
 Project-host applies central-like subject policy, but scoped to locally hosted projects and authenticated account identity.
@@ -144,6 +171,37 @@ Because authorization is ACL-based (not project-list claims inside JWT), revocat
 - Project-host websocket endpoints are expected to be served from DNS domains distinct from the central hub domain; authentication must therefore be explicit (token-based), not cookie/domain-implicit.
 - No requirement for per-message central introspection (keeps latency low and reduces control-plane dependency).
 - Fast-grant behavior depends on reliable hub -> host collaborator delta delivery.
+
+## Hub -> Project-Host Routed Control Auth
+
+In addition to browser -> host auth, we also authenticate routed control traffic from the central hub to project-hosts (for example, project control paths that still go through hub routing).
+
+What this solves:
+
+- The hub can open routed conat connections to any project-host it manages without using a long-lived shared password for that path.
+- Each host accepts hub traffic only when the hub presents a valid, signed, host-scoped bearer token.
+
+How it works:
+
+- Hub mints short-lived JWTs (`act=hub`, `aud=project-host:<host_id>`) signed with hub Ed25519 private key.
+- Hub presents this token as `auth.bearer` when connecting to that host.
+- Project-host verifies signature + audience + expiry using the distributed hub public key, then treats that connection as hub identity.
+
+Trust assumptions for this path:
+
+1. The project-host can register to / communicate with the hub using the host registration trust model.
+2. The project-host has the correct hub public key for signature verification.
+
+Security properties versus long-lived random host tokens:
+
+- No signing secret is shared to hosts (hosts only get verify key).
+- Token replay window is bounded by short TTL.
+- Compromising one host does not give capability to mint hub tokens.
+
+Analogy to SSH Ed25519:
+
+- Conceptually similar to placing a public key in `authorized_keys`: the verifier (project-host) trusts signatures from a specific private key holder (hub).
+- Difference from SSH in our design: we use short-lived signed bearer tokens (with audience and expiry claims), not a single long-lived static presented secret.
 
 ## Code Organization Direction
 

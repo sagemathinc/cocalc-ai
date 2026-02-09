@@ -19,7 +19,8 @@ Project-host auth token protocol (overview):
   - Project-host does not possess signing capability.
   - Browser presents token during socket.io websocket auth.
 - Claims enforced:
-  - sub = account_id (who the browser is acting as)
+  - act = account|hub
+  - sub = account_id (browser actor) or hub principal id (hub actor)
   - aud = project-host:<host_id> (where token is valid)
   - iat/exp (short TTL)
   - jti (unique id), v (protocol version)
@@ -37,24 +38,29 @@ const DEFAULT_TTL_SECONDS = 10 * 60;
 const MAX_TTL_SECONDS = 30 * 60;
 const MIN_TTL_SECONDS = 60;
 const CLOCK_TOLERANCE_SECONDS = 30;
+export type ProjectHostAuthActor = "account" | "hub";
+const DEFAULT_HUB_SUBJECT = "hub";
 
 export interface ProjectHostAuthClaims {
   iss: string;
-  sub: string; // account_id
+  sub: string; // account_id or hub principal
   aud: string; // project-host:<host_id>
   iat: number;
   exp: number;
   jti: string;
   v: string;
+  act?: ProjectHostAuthActor;
 }
 
 export interface IssueProjectHostTokenOptions {
-  account_id: string;
   host_id: string;
   private_key: string;
   ttl_seconds?: number;
   issuer?: string;
   now_ms?: number;
+  actor?: ProjectHostAuthActor;
+  account_id?: string;
+  hub_id?: string;
 }
 
 export interface VerifyProjectHostTokenOptions {
@@ -103,45 +109,63 @@ function normalizeTtlSeconds(ttl_seconds?: number): number {
   return Math.max(MIN_TTL_SECONDS, Math.min(MAX_TTL_SECONDS, Math.floor(ttl)));
 }
 
-function ensureValidInputs({
-  account_id,
-  host_id,
-}: {
-  account_id: string;
-  host_id: string;
-}) {
-  if (!isValidUUID(account_id)) {
-    throw new Error("invalid account_id");
-  }
+function ensureValidHostId(host_id: string) {
   if (!isValidUUID(host_id)) {
     throw new Error("invalid host_id");
   }
 }
 
-export function issueProjectHostAuthToken({
+function getActorAndSubject({
+  actor,
   account_id,
+  hub_id,
+}: {
+  actor?: ProjectHostAuthActor;
+  account_id?: string;
+  hub_id?: string;
+}): { actor: ProjectHostAuthActor; subject: string } {
+  const normalizedActor = actor ?? "account";
+  if (normalizedActor === "account") {
+    if (!isValidUUID(account_id)) {
+      throw new Error("invalid account_id");
+    }
+    return { actor: normalizedActor, subject: account_id as string };
+  }
+  const subject = `${hub_id ?? DEFAULT_HUB_SUBJECT}`.trim();
+  if (!subject) {
+    throw new Error("invalid hub_id");
+  }
+  return { actor: normalizedActor, subject };
+}
+
+export function issueProjectHostAuthToken({
   host_id,
   private_key,
   ttl_seconds,
   issuer = "cocalc-hub",
   now_ms = Date.now(),
+  actor,
+  account_id,
+  hub_id,
 }: IssueProjectHostTokenOptions): {
   token: string;
   expires_at: number;
   claims: ProjectHostAuthClaims;
 } {
-  ensureValidInputs({ account_id, host_id });
+  ensureValidHostId(host_id);
+  const identity = getActorAndSubject({ actor, account_id, hub_id });
   const key = getPrivateKey(private_key);
   const iat = Math.floor(now_ms / 1000);
   const exp = iat + normalizeTtlSeconds(ttl_seconds);
   const claims: ProjectHostAuthClaims = {
     iss: issuer,
-    sub: account_id,
+    sub: identity.subject,
     aud: `project-host:${host_id}`,
     iat,
     exp,
     jti: randomUUID(),
     v: TOKEN_VERSION,
+    act: identity.actor,
   };
 
   const header = {
@@ -189,9 +213,7 @@ export function verifyProjectHostAuthToken({
   issuer = "cocalc-hub",
   now_ms = Date.now(),
 }: VerifyProjectHostTokenOptions): ProjectHostAuthClaims {
-  if (!isValidUUID(host_id)) {
-    throw new Error("invalid host_id");
-  }
+  ensureValidHostId(host_id);
   const key = getPublicKey(public_key);
   const { header, claims, signingInput, signature } = parseClaims(token);
 
@@ -215,9 +237,6 @@ export function verifyProjectHostAuthToken({
   if (claims?.iss !== issuer) {
     throw new Error("invalid token issuer");
   }
-  if (!isValidUUID(claims?.sub)) {
-    throw new Error("invalid token subject");
-  }
   if (!isValidUUID(claims?.jti)) {
     throw new Error("invalid token jti");
   }
@@ -232,6 +251,18 @@ export function verifyProjectHostAuthToken({
   const expectedAud = `project-host:${host_id}`;
   if (claims.aud !== expectedAud) {
     throw new Error("invalid token audience");
+  }
+
+  const actor = claims?.act ?? "account";
+  if (actor !== "account" && actor !== "hub") {
+    throw new Error("invalid token actor");
+  }
+  if (actor === "account") {
+    if (!isValidUUID(claims?.sub)) {
+      throw new Error("invalid token subject");
+    }
+  } else if (`${claims?.sub ?? ""}`.trim().length === 0) {
+    throw new Error("invalid token subject");
   }
 
   return claims;
