@@ -12,7 +12,6 @@ import express from "express";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
 import {
-  conatPassword,
   data as dataDir,
   setConatServer,
   setConatPassword,
@@ -50,6 +49,7 @@ import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
 import { createProjectHostConatAuth } from "./conat-auth";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
+import { getProjectHostMasterConatToken } from "./master-conat-token";
 
 const logger = getLogger("project-host:main");
 
@@ -138,10 +138,9 @@ export async function main(
   const host = _config.host ?? process.env.HOST ?? "0.0.0.0";
   const port = _config.port ?? (Number(process.env.PORT) || (await getPort()));
   const tls = resolveTlsConfig(host, port);
-  // Keep any bootstrap/shared hub auth value for master registration only.
-  const upstreamHubConatPassword = conatPassword;
   // Project-host internal conat auth is always local and host-specific.
   const localConatPassword = getOrCreateProjectHostConatPassword();
+  const masterConatToken = getProjectHostMasterConatToken();
   setConatPassword(localConatPassword);
 
   const scheme = tls.enabled ? "https" : "http";
@@ -152,10 +151,7 @@ export async function main(
   logger.info("Local sqlite + changefeeds for UI data");
   initSqlite();
   const hostId = resolveProjectHostId(_config.hostId);
-  const conatAuth = createProjectHostConatAuth({
-    host_id: hostId,
-    upstreamHubPassword: upstreamHubConatPassword,
-  });
+  const conatAuth = createProjectHostConatAuth({ host_id: hostId });
 
   // 1) HTTP + conat server
   const { app, httpServer, isHttps } = await startHttpServer(port, host, tls);
@@ -247,7 +243,7 @@ export async function main(
     runnerId,
     host,
     port,
-    masterConatPassword: upstreamHubConatPassword,
+    masterConatToken,
   });
   const stopReconciler = startReconciler();
   const stopDataPermissionHardener = startDataPermissionHardener(dataDir);

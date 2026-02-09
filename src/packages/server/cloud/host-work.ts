@@ -625,6 +625,7 @@ async function handleStop(row: any) {
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
   await revokeBootstrapTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeBootstrapTokensForHost(row.id, { purpose: "master-conat" });
   let supportsStop = true;
   let stopConfirmed = false;
   if (providerId && runtime?.instance_id) {
@@ -820,6 +821,7 @@ async function handleDelete(row: any) {
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
   await revokeBootstrapTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeBootstrapTokensForHost(row.id, { purpose: "master-conat" });
   if (providerId && runtime?.instance_id) {
     const { entry, creds } = await getProviderContext(providerId, {
       region: row.region,

@@ -16,7 +16,6 @@ import { executeCode } from "@cocalc/backend/execute-code";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
-import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 
 const logger = getLogger("project-host:master");
 
@@ -42,13 +41,13 @@ export async function startMasterRegistration({
   runnerId,
   host,
   port,
-  masterConatPassword,
+  masterConatToken,
 }: {
   hostId?: string;
   runnerId: string;
   host: string;
   port: number;
-  masterConatPassword?: string;
+  masterConatToken?: string;
 }) {
   const masterAddress =
     process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER;
@@ -87,14 +86,16 @@ export async function startMasterRegistration({
   }
 
   logger.info("registering with master", { masterAddress, id, public_url });
+  if (!masterConatToken) {
+    logger.warn(
+      "master conat token is missing; registration/control connection may fail",
+      { expectedPath: "/btrfs/data/secrets/master-conat-token" },
+    );
+  }
 
   const client = connectToConat({
     address: masterAddress,
-    extraHeaders: masterConatPassword
-      ? {
-          Cookie: `${HUB_PASSWORD_COOKIE_NAME}=${masterConatPassword}`,
-        }
-      : undefined,
+    auth: masterConatToken ? (cb) => cb({ bearer: masterConatToken }) : undefined,
   });
 
   // Stable sshpiperd keypair for inbound SSH ingress.

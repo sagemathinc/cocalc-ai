@@ -372,6 +372,7 @@ async function markHostDeprovisioned(row: any, action: string) {
 
   logStatusUpdate(row.id, "deprovisioned", "api");
   await revokeBootstrapTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeBootstrapTokensForHost(row.id, { purpose: "master-conat" });
   try {
     if (await hasCloudflareTunnel()) {
       await deleteCloudflareTunnel({

@@ -616,27 +616,27 @@ def upsert_env(path: str, key: str, value: str) -> None:
     Path(path).write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
-def setup_conat_password(cfg: BootstrapConfig) -> None:
+def setup_master_conat_token(cfg: BootstrapConfig) -> None:
     if not cfg.conat_url or not cfg.bootstrap_token:
         return
-    path = Path("/btrfs/data/secrets/conat-password")
+    path = Path("/btrfs/data/secrets/master-conat-token")
     if path.exists():
-        log_line(cfg, "bootstrap: conat password already present")
+        log_line(cfg, "bootstrap: master conat token already present")
         if cfg.ssh_user and cfg.ssh_user != "root":
             run_best_effort(
                 cfg,
                 ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(path)],
-                "chown conat password",
+                "chown master conat token",
             )
         try:
             os.chmod(path, 0o600)
         except Exception:
             pass
         return
-    log_line(cfg, "bootstrap: fetching conat password")
+    log_line(cfg, "bootstrap: fetching master conat token")
     headers = {
         "Authorization": f"Bearer {cfg.bootstrap_token}",
-        "User-Agent": "cocalc-bootstrap/1.0 (conat)",
+        "User-Agent": "cocalc-bootstrap/1.0 (master-conat-token)",
         "Accept": "text/plain,*/*",
     }
     context = None
@@ -651,7 +651,7 @@ def setup_conat_password(cfg: BootstrapConfig) -> None:
             data = resp.read()
         path.write_bytes(data)
     except Exception as err:
-        log_line(cfg, f"bootstrap: conat fetch failed via urllib ({err}); trying curl")
+        log_line(cfg, f"bootstrap: master-conat-token fetch failed via urllib ({err}); trying curl")
         if shutil.which("curl") is None:
             raise
         run_cmd(
@@ -664,19 +664,19 @@ def setup_conat_password(cfg: BootstrapConfig) -> None:
                 "-H",
                 f"Authorization: Bearer {cfg.bootstrap_token}",
                 "-H",
-                "User-Agent: cocalc-bootstrap/1.0 (conat)",
+                "User-Agent: cocalc-bootstrap/1.0 (master-conat-token)",
                 "-H",
                 "Accept: text/plain,*/*",
                 cfg.conat_url,
             ],
-            "fetch conat password via curl",
+            "fetch master conat token via curl",
         )
     os.chmod(path, 0o600)
     if cfg.ssh_user and cfg.ssh_user != "root":
         run_best_effort(
             cfg,
             ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(path)],
-            "chown conat password",
+            "chown master conat token",
         )
 
 
@@ -1074,7 +1074,7 @@ def main(argv: list[str]) -> int:
         ensure_btrfs_data(cfg)
         configure_podman(cfg)
         write_env(cfg, image_size_gb)
-        setup_conat_password(cfg)
+        setup_master_conat_token(cfg)
         extract_bundle(cfg, cfg.project_host_bundle)
         extract_bundle(cfg, cfg.project_bundle)
         extract_bundle(cfg, cfg.tools_bundle)

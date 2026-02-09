@@ -572,12 +572,12 @@ CURL_CACERT_ARG="--cacert $BOOTSTRAP_CACERT_PATH"
     : `BOOTSTRAP_CACERT_PATH=""
 CURL_CACERT_ARG=""`;
   const conatPasswordCommand = `
-if [ -f /btrfs/data/secrets/conat-password ]; then
-  echo "bootstrap: conat password already present"
+if [ -f /btrfs/data/secrets/master-conat-token ]; then
+  echo "bootstrap: master conat token already present"
 else
-  echo "bootstrap: fetching conat password"
-  curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$CONAT_URL" | sudo tee /btrfs/data/secrets/conat-password >/dev/null
-  sudo chmod 600 /btrfs/data/secrets/conat-password
+  echo "bootstrap: fetching master conat token"
+  curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$CONAT_URL" | sudo tee /btrfs/data/secrets/master-conat-token >/dev/null
+  sudo chmod 600 /btrfs/data/secrets/master-conat-token
 fi
 `;
   const scripts = await buildBootstrapScripts(row, {

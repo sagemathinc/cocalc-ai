@@ -19,6 +19,7 @@ import { getAccountWithApiKey } from "@cocalc/server/api/manage";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
 import getPool from "@cocalc/database/pool";
+import { verifyBootstrapToken } from "@cocalc/server/project-host/bootstrap-token";
 import {
   type CoCalcUser,
   type CoCalcUserType,
@@ -38,6 +39,17 @@ export async function getUser(
   socket,
   systemAccounts?: { [cookieName: string]: { password: string; user: any } },
 ): Promise<CoCalcUser> {
+  const bearerToken = getBearerToken(socket);
+  if (bearerToken) {
+    const hostToken = await verifyBootstrapToken(bearerToken, {
+      purpose: "master-conat",
+    });
+    if (!hostToken) {
+      throw Error("invalid master host auth token");
+    }
+    return { host_id: hostToken.host_id };
+  }
+
   if (!socket.handshake.headers.cookie) {
     throw Error(`no auth cookie set; set one of ${COOKIES}`);
   }
@@ -109,6 +121,21 @@ export async function getUser(
   return { account_id };
 }
 
+function getBearerToken(socket): string | undefined {
+  const fromAuth = socket?.handshake?.auth?.bearer;
+  if (typeof fromAuth === "string" && fromAuth.trim()) {
+    return fromAuth.trim();
+  }
+  const authHeader = socket?.handshake?.headers?.authorization;
+  if (typeof authHeader === "string") {
+    const m = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (m?.[1]) {
+      return m[1].trim();
+    }
+  }
+  return undefined;
+}
+
 const isAllowedCache = new LRU<string, boolean>({
   max: 10000,
   ttl: 1000 * 60, // 1 minute
@@ -154,11 +181,38 @@ export async function isAllowed({
     allowed = await isAccountAllowed({ account_id: userId, subject, type });
   } else if (userType == "host") {
     allowed = isHostSubjectAllowed({ host_id: userId, subject });
+    if (!allowed) {
+      allowed = isHostServiceAllowed({ host_id: userId, subject, type });
+    }
   } else {
     allowed = false;
   }
   isAllowedCache.set(key, allowed);
   return allowed;
+}
+
+function isHostServiceAllowed({
+  host_id,
+  subject,
+  type,
+}: {
+  host_id: string;
+  subject: string;
+  type: "sub" | "pub";
+}): boolean {
+  if (subject === "project-hosts.api") {
+    return type === "pub";
+  }
+  if (subject === "project-hosts.status") {
+    return type === "pub";
+  }
+  if (subject === "project-hosts.keys") {
+    return type === "sub";
+  }
+  if (subject === `project-host.${host_id}.api`) {
+    return type === "sub";
+  }
+  return false;
 }
 
 async function isAccountAllowed({

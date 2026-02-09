@@ -103,12 +103,8 @@ export function clearProjectHostConatAuthCaches() {
 
 export function createProjectHostConatAuth({
   host_id,
-  upstreamHubPassword,
 }: {
   host_id: string;
-  // Temporary compatibility path so hub-internal routed clients can authenticate
-  // until full host-to-hub service-account auth is implemented.
-  upstreamHubPassword?: string;
 }): {
   getUser: UserFunction;
   isAllowed: AllowFunction;
@@ -134,9 +130,7 @@ export function createProjectHostConatAuth({
     // a host-local secret (not the central hub secret).
     if (
       cookies?.[HUB_PASSWORD_COOKIE_NAME] &&
-      (cookies[HUB_PASSWORD_COOKIE_NAME] === conatPassword ||
-        (upstreamHubPassword &&
-          cookies[HUB_PASSWORD_COOKIE_NAME] === upstreamHubPassword))
+      cookies[HUB_PASSWORD_COOKIE_NAME] === conatPassword
     ) {
       return { hub_id: "system" };
     }
