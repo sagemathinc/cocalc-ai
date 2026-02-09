@@ -80,6 +80,8 @@ Key distribution:
 - Hub needs `COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY` (or private key file path).
 - Project-host needs `COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY` (or public key file path).
 - If public key is omitted but private key is present, public key is derived from private key for convenience.
+- In launchpad mode (`COCALC_PRODUCT=launchpad`), if no private key is provided, CoCalc auto-generates an Ed25519 keypair under the secrets directory and reuses it thereafter.
+- In rocket/k8s deployments, keys should be provisioned by deployment (e.g. Kubernetes secret mount), not generated at runtime.
 - Recommended production posture is private key only on hub, public key only on project-hosts.
 
 ## Authorization Model on Project-Host
