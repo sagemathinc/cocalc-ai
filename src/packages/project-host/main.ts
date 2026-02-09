@@ -15,6 +15,7 @@ import {
   conatPassword,
   data as dataDir,
   setConatServer,
+  setConatPassword,
 } from "@cocalc/backend/data";
 import {
   init as createConatServer,
@@ -48,6 +49,7 @@ import { startOnPremTunnel } from "./onprem-tunnel";
 import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
 import { createProjectHostConatAuth } from "./conat-auth";
+import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 
 const logger = getLogger("project-host:main");
 
@@ -136,6 +138,11 @@ export async function main(
   const host = _config.host ?? process.env.HOST ?? "0.0.0.0";
   const port = _config.port ?? (Number(process.env.PORT) || (await getPort()));
   const tls = resolveTlsConfig(host, port);
+  // Keep any bootstrap/shared hub auth value for master registration only.
+  const upstreamHubConatPassword = conatPassword;
+  // Project-host internal conat auth is always local and host-specific.
+  const localConatPassword = getOrCreateProjectHostConatPassword();
+  setConatPassword(localConatPassword);
 
   const scheme = tls.enabled ? "https" : "http";
   logger.info(
@@ -155,14 +162,14 @@ export async function main(
     port,
     getUser: conatAuth.getUser,
     isAllowed: conatAuth.isAllowed,
-    systemAccountPassword: conatPassword,
+    systemAccountPassword: localConatPassword,
   });
   if (conatServer.state !== "ready") {
     await once(conatServer, "ready");
   }
   const conatClient = conatServer.client({
     path: "/",
-    systemAccountPassword: conatPassword,
+    systemAccountPassword: localConatPassword,
   });
   setConatServer(conatServer.address());
   setConatClient({
@@ -237,6 +244,7 @@ export async function main(
     runnerId,
     host,
     port,
+    masterConatPassword: upstreamHubConatPassword,
   });
   const stopReconciler = startReconciler();
   const stopDataPermissionHardener = startDataPermissionHardener(dataDir);

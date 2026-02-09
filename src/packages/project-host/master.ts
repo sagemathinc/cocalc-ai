@@ -1,4 +1,3 @@
-import { conat } from "@cocalc/backend/conat";
 import { createServiceClient } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
 import { randomUUID } from "crypto";
@@ -16,6 +15,8 @@ import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
+import { connect as connectToConat } from "@cocalc/conat/core/client";
+import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 
 const logger = getLogger("project-host:master");
 
@@ -41,11 +42,13 @@ export async function startMasterRegistration({
   runnerId,
   host,
   port,
+  masterConatPassword,
 }: {
   hostId?: string;
   runnerId: string;
   host: string;
   port: number;
+  masterConatPassword?: string;
 }) {
   const masterAddress =
     process.env.MASTER_CONAT_SERVER ?? process.env.COCALC_MASTER_CONAT_SERVER;
@@ -85,8 +88,14 @@ export async function startMasterRegistration({
 
   logger.info("registering with master", { masterAddress, id, public_url });
 
-  // [ ] TODO: will have to worry about auth secret
-  const client = conat({ address: masterAddress });
+  const client = connectToConat({
+    address: masterAddress,
+    extraHeaders: masterConatPassword
+      ? {
+          Cookie: `${HUB_PASSWORD_COOKIE_NAME}=${masterConatPassword}`,
+        }
+      : undefined,
+  });
 
   // Stable sshpiperd keypair for inbound SSH ingress.
   const sshpiperdKey = ensureSshpiperdKey(id);

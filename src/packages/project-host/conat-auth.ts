@@ -16,6 +16,8 @@ import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-toke
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import TTL from "@isaacs/ttlcache";
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
+import { HUB_PASSWORD_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
+import { conatPassword } from "@cocalc/backend/data";
 
 const authDecisionCache = new TTL<string, boolean>({
   max: 20_000,
@@ -75,7 +77,9 @@ function isProjectCollaboratorLocal({
     return collaboratorCache.get(key)!;
   }
   const row = getRow("projects", JSON.stringify({ project_id }));
-  const group = row?.users?.[account_id]?.group;
+  const userEntry = row?.users?.[account_id];
+  const group =
+    typeof userEntry === "string" ? userEntry : userEntry?.group;
   const allowed = isProjectCollaboratorGroup(group);
   collaboratorCache.set(key, allowed);
   return allowed;
@@ -96,10 +100,12 @@ export function createProjectHostConatAuth({
   clearCaches: () => void;
 } {
   const getUser: UserFunction = async (socket, systemAccounts) => {
-    if (systemAccounts && socket?.handshake?.headers?.cookie) {
-      const cookies = parseCookies(socket.handshake.headers.cookie);
+    const cookies = socket?.handshake?.headers?.cookie
+      ? parseCookies(socket.handshake.headers.cookie)
+      : undefined;
+    if (systemAccounts && cookies) {
       for (const cookieName in systemAccounts) {
-        if (cookies[cookieName] !== undefined) {
+        if (cookies?.[cookieName] !== undefined) {
           const expected = systemAccounts[cookieName];
           if (cookies[cookieName] === expected.password) {
             return expected.user;
@@ -107,6 +113,15 @@ export function createProjectHostConatAuth({
           throw new Error("invalid system account password");
         }
       }
+    }
+    // Compatibility path: some internal project-host clients authenticate using
+    // the shared hub-password cookie name. In project-host runtime this value is
+    // a host-local secret (not the central hub secret).
+    if (
+      cookies?.[HUB_PASSWORD_COOKIE_NAME] &&
+      cookies[HUB_PASSWORD_COOKIE_NAME] === conatPassword
+    ) {
+      return { hub_id: "system" };
     }
     const token = readBearerToken(socket);
     const claims = verifyProjectHostAuthToken({
