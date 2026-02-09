@@ -51,6 +51,12 @@ const COMBINED_FEED_MAX_PER_THREAD = 5;
 
 type MessageKeyWithTime = { key: string; time: number };
 
+function debugChatComposer(...args: any[]): void {
+  if (typeof window === "undefined") return;
+  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
+  console.log("[chat-composer]", ...args);
+}
+
 function pickNewestMessageKeys(
   entry: ThreadIndexEntry,
   messages: ChatMessages | undefined,
@@ -188,6 +194,7 @@ export function ChatPanel({
 
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
+  const [composerSession, setComposerSession] = useState(0);
 
   const composerDraftKey = useMemo(() => {
     if (
@@ -200,25 +207,64 @@ export function ChatPanel({
     return 0;
   }, [singleThreadView, selectedThreadDate]);
 
+  useEffect(() => {
+    debugChatComposer("composer-context", {
+      selectedThreadKey,
+      selectedThreadDate: selectedThreadDate?.toISOString?.() ?? null,
+      singleThreadView,
+      combinedFeedSelected: isCombinedFeedSelected,
+      composerDraftKey,
+      composerTargetKey,
+    });
+  }, [
+    selectedThreadKey,
+    selectedThreadDate,
+    singleThreadView,
+    isCombinedFeedSelected,
+    composerDraftKey,
+    composerTargetKey,
+  ]);
+
   const { input, setInput, clearInput, clearComposerDraft } = useChatComposerDraft({
     account_id,
     project_id,
     path,
     composerDraftKey,
   });
-  const suppressSentTextRef = useRef<{ text: string; until: number } | null>(
-    null,
-  );
+  const inputRef = useRef<string>(input);
+  const composerSessionRef = useRef<number>(composerSession);
+  useEffect(() => {
+    inputRef.current = input;
+  }, [input]);
+  useEffect(() => {
+    composerSessionRef.current = composerSession;
+  }, [composerSession]);
   const setComposerInput = useCallback(
-    (value: string) => {
-      const suppress = suppressSentTextRef.current;
-      if (suppress && Date.now() <= suppress.until && value === suppress.text) {
+    (value: string, sessionToken?: number) => {
+      debugChatComposer("setComposerInput:recv", {
+        value,
+        sessionToken,
+        currentSession: composerSessionRef.current,
+        currentInput: inputRef.current,
+      });
+      if (
+        sessionToken != null &&
+        sessionToken !== composerSessionRef.current
+      ) {
+        debugChatComposer("setComposerInput:ignored-stale-session", {
+          value,
+          sessionToken,
+          currentSession: composerSessionRef.current,
+        });
         return;
       }
-      if (suppress && Date.now() > suppress.until) {
-        suppressSentTextRef.current = null;
-      }
+      inputRef.current = value;
       setInput(value);
+      debugChatComposer("setComposerInput:applied", {
+        value,
+        sessionToken,
+        currentSession: composerSessionRef.current,
+      });
     },
     [setInput],
   );
@@ -322,13 +368,19 @@ export function ChatPanel({
     replyToOverride?: Date | null,
     extraInput?: string,
   ): void {
-    const sendingText = (extraInput ?? input ?? "").trim();
-    if (sendingText) {
-      suppressSentTextRef.current = {
-        text: sendingText,
-        until: Date.now() + 1500,
-      };
-    }
+    const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
+    const sendingText = rawSendingText.trim();
+    debugChatComposer("sendMessage:start", {
+      rawSendingText,
+      sendingText,
+      replyToOverride: replyToOverride?.toISOString?.() ?? replyToOverride ?? null,
+      composerDraftKey,
+      currentSession: composerSessionRef.current,
+    });
+    if (sendingText.length === 0) return;
+    const nextSession = composerSessionRef.current + 1;
+    composerSessionRef.current = nextSession;
+    setComposerSession(nextSession);
     let reply_to: Date | undefined;
     if (replyToOverride !== undefined) {
       reply_to = replyToOverride ?? undefined;
@@ -348,9 +400,15 @@ export function ChatPanel({
     } else if (isCombinedFeedSelected) {
       setAllowAutoSelectThread(false);
     }
+    // Keep local guard state coherent immediately, before async state/render.
+    inputRef.current = "";
     // Clear current composer draft before send switches selected thread context.
     actions.deleteDraft(composerDraftKey);
     void clearInput();
+    debugChatComposer("sendMessage:cleared", {
+      nextSession,
+      composerDraftKey,
+    });
 
     const timeStamp = actions.sendChat({
       submitMentionsRef,
@@ -375,7 +433,14 @@ export function ChatPanel({
 
   function onNewChat(): void {
     // Explicitly reset draft state for the global "new chat" composer bucket.
-    suppressSentTextRef.current = null;
+    const nextSession = composerSessionRef.current + 1;
+    composerSessionRef.current = nextSession;
+    setComposerSession(nextSession);
+    debugChatComposer("onNewChat", {
+      nextSession,
+      composerDraftKey,
+    });
+    inputRef.current = "";
     setInput("");
     actions.deleteDraft(0);
     void clearComposerDraft(0);
@@ -414,6 +479,7 @@ export function ChatPanel({
         path={path}
         fontSize={fontSize}
         composerDraftKey={composerDraftKey}
+        composerSession={composerSession}
         input={input}
         setInput={setComposerInput}
         on_send={on_send}

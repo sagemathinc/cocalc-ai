@@ -193,7 +193,7 @@ export default function Message({
 
   const new_changes = useMemo(
     () => edited_message !== newest_content(message),
-    [message] /* note -- edited_message is a function of message */,
+    [edited_message, message],
   );
 
   // date as ms since epoch or 0
@@ -265,6 +265,13 @@ export default function Message({
   );
   const isCodexThread =
     typeof isLLMThread === "string" && isLLMThread.includes("codex");
+
+  useEffect(() => {
+    if (isEditing) return;
+    const latest = newest_content(message);
+    set_edited_message(latest);
+    edited_message_ref.current = latest;
+  }, [isEditing, message]);
 
   useEffect(() => {
     if (generating === true && date > 0) {
@@ -473,6 +480,9 @@ export default function Message({
       return;
     }
     actions.setEditing(message, true);
+    const latest = newest_content(message);
+    set_edited_message(latest);
+    edited_message_ref.current = latest;
     setAutoFocusEdit(true);
     scroll_into_view?.();
   }
@@ -1107,13 +1117,14 @@ export default function Message({
           fontSize={font_size}
           autoFocus={autoFocusEdit}
           cacheId={`${path}${project_id}${date}`}
-          input={newest_content(message)}
+          input={edited_message}
           submitMentionsRef={submitMentionsRef}
           on_send={saveEditedMessage}
           height={"auto"}
           syncdb={actions.syncdb}
           date={date}
           onChange={(value) => {
+            set_edited_message(value);
             edited_message_ref.current = value;
           }}
         />

@@ -32,8 +32,9 @@ export interface ChatRoomComposerProps {
   path: string;
   fontSize: number;
   composerDraftKey: number;
+  composerSession: number;
   input: string;
-  setInput: (value: string) => void;
+  setInput: (value: string, sessionToken?: number) => void;
   on_send: (value?: string) => void;
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
@@ -52,6 +53,7 @@ export function ChatRoomComposer({
   path,
   fontSize,
   composerDraftKey,
+  composerSession,
   input,
   setInput,
   on_send,
@@ -359,13 +361,14 @@ export function ChatRoomComposer({
             height={chatInputHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             onChange={(value) => {
-              setInput(value);
+              setInput(value, composerSession);
             }}
             onFocus={() => onComposerFocusChange(true)}
             onBlur={() => onComposerFocusChange(false)}
             submitMentionsRef={submitMentionsRef}
             syncdb={actions.syncdb}
             date={composerDraftKey}
+            sessionToken={composerSession}
             editBarStyle={{ overflow: "auto" }}
           />
         </div>
