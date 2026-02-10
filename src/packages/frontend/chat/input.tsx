@@ -242,7 +242,7 @@ export default function ChatInput({
     <MarkdownInput
       fixedMode={fixedMode}
       autoFocus={autoFocus}
-      saveDebounceMs={lite ? 0 : CHAT_INPUT_SAVE_DEBOUNCE_MS}
+      saveDebounceMs={CHAT_INPUT_SAVE_DEBOUNCE_MS}
       onFocus={() => {
         isFocusedRef.current = true;
         onFocus?.();
