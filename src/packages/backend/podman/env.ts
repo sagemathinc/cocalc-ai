@@ -1,10 +1,18 @@
 import { accessSync, constants, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
-function isUsableDir(dir: string): boolean {
+function isDirectory(dir: string): boolean {
   try {
     const stat = statSync(dir);
-    if (!stat.isDirectory()) return false;
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isUsableDirForCurrentUser(dir: string): boolean {
+  try {
+    if (!isDirectory(dir)) return false;
     accessSync(dir, constants.W_OK);
     return true;
   } catch {
@@ -29,10 +37,27 @@ function userRuntimeDir(user: string): string | undefined {
   }
 }
 
+function userUid(user: string): number | undefined {
+  try {
+    const uid = execFileSync("id", ["-u", user], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (!uid) return undefined;
+    const n = Number(uid);
+    return Number.isFinite(n) ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function podmanEnv(opts: PodmanEnvOptions = {}): NodeJS.ProcessEnv {
   const env = { ...process.env };
   const runAsUser = opts.runAsUser ?? env.COCALC_PODMAN_RUN_AS_USER;
   const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  const runAsUid = runAsUser ? userUid(runAsUser) : undefined;
+  const checkingAsOtherUser =
+    typeof uid === "number" && typeof runAsUid === "number" && uid !== runAsUid;
   const configured = env.COCALC_PODMAN_RUNTIME_DIR || env.XDG_RUNTIME_DIR;
   const userRun = runAsUser
     ? userRuntimeDir(runAsUser)
@@ -42,8 +67,18 @@ export function podmanEnv(opts: PodmanEnvOptions = {}): NodeJS.ProcessEnv {
   // Podman (especially with crun) expects XDG_RUNTIME_DIR to exist and be writable.
   // On fresh boot, /run/user/<uid> only appears after a user login session, so we
   // rely on systemd linger to ensure it exists, otherwise we fail loudly.
-  let runtimeDir = configured && isUsableDir(configured) ? configured : undefined;
-  if (!runtimeDir && userRun && isUsableDir(userRun)) {
+  const canUseConfigured = configured
+    ? checkingAsOtherUser
+      ? isDirectory(configured)
+      : isUsableDirForCurrentUser(configured)
+    : false;
+  let runtimeDir = canUseConfigured ? configured : undefined;
+  const canUseUserRun = userRun
+    ? checkingAsOtherUser
+      ? isDirectory(userRun)
+      : isUsableDirForCurrentUser(userRun)
+    : false;
+  if (!runtimeDir && canUseUserRun) {
     runtimeDir = userRun;
   }
   if (!runtimeDir) {
