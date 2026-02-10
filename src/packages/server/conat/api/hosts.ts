@@ -36,6 +36,7 @@ import {
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import isBanned from "@cocalc/server/accounts/is-banned";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import {
   gcpSafeName,
@@ -636,6 +637,9 @@ export async function issueProjectHostAuthToken({
   const owner = requireAccount(account_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
+  }
+  if (await isBanned(owner)) {
+    throw new Error("account is banned");
   }
 
   await assertAccountCanIssueProjectHostToken({

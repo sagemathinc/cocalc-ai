@@ -12,6 +12,7 @@ import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-toke
 import { getProjectHostAuthPublicKey } from "./auth-public-key";
 import { isProjectCollaboratorGroup } from "@cocalc/conat/auth/subject-policy";
 import { conatPassword } from "@cocalc/backend/data";
+import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
 
 const collaboratorCache = new TTL<string, boolean>({
   max: 50_000,
@@ -20,7 +21,7 @@ const collaboratorCache = new TTL<string, boolean>({
 const PROJECT_HOST_HTTP_SESSION_COOKIE_NAME = "cocalc_project_host_http_session";
 const HTTP_SESSION_TTL_SECONDS = Math.max(
   300,
-  Number(process.env.COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS ?? 7 * 24 * 60 * 60),
+  Number(process.env.COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS ?? 30 * 24 * 60 * 60),
 );
 
 class HttpAuthError extends Error {
@@ -91,6 +92,7 @@ function createSessionToken({
 }): string {
   const payload = JSON.stringify({
     account_id,
+    iat: Math.floor(now_ms / 1000),
     exp: Math.floor(now_ms / 1000) + HTTP_SESSION_TTL_SECONDS,
     nonce: randomBytes(12).toString("hex"),
   });
@@ -99,7 +101,16 @@ function createSessionToken({
   return `${encoded}.${sig}`;
 }
 
-function verifySessionToken(token: string, now_ms = Date.now()): string | undefined {
+function verifySessionToken(
+  token: string,
+  now_ms = Date.now(),
+):
+  | {
+      account_id: string;
+      iat_s: number;
+      exp_s: number;
+    }
+  | undefined {
   const [encoded, sig] = token.split(".");
   if (!encoded || !sig) return;
   const expected = sessionSignature(encoded);
@@ -118,11 +129,13 @@ function verifySessionToken(token: string, now_ms = Date.now()): string | undefi
     return;
   }
   const account_id = `${payload?.account_id ?? ""}`;
+  const iat = Number(payload?.iat ?? 0);
   const exp = Number(payload?.exp ?? 0);
   if (!isValidUUID(account_id)) return;
+  if (!Number.isFinite(iat)) return;
   if (!Number.isFinite(exp)) return;
   if (exp < Math.floor(now_ms / 1000)) return;
-  return account_id;
+  return { account_id, iat_s: iat, exp_s: exp };
 }
 
 function isSecureRequest(req: IncomingMessage): boolean {
@@ -171,6 +184,19 @@ function stripQueryToken(req: IncomingMessage): void {
   }
 }
 
+function urlWithoutQueryToken(req: IncomingMessage): string | undefined {
+  try {
+    const u = new URL(req.url ?? "/", "http://project-host.local");
+    if (!u.searchParams.has(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM)) {
+      return;
+    }
+    u.searchParams.delete(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM);
+    return `${u.pathname}${u.search}${u.hash}` || "/";
+  } catch {
+    return;
+  }
+}
+
 function isProjectCollaboratorLocal({
   account_id,
   project_id,
@@ -214,12 +240,10 @@ export function createProjectHostHttpProxyAuth({
   ) => Promise<void>;
   clearCaches: () => void;
 } {
-  const verifyTokenAndGetAccountId = (token: string): string => {
-    const claims = verifyProjectHostAuthToken({
-      token,
-      host_id,
-      public_key: getProjectHostAuthPublicKey(),
-    });
+  const verifyClaimsAndGetAccountId = (claims: {
+    sub: string;
+    act?: string;
+  }): string => {
     if ((claims.act ?? "account") !== "account") {
       throw new HttpAuthError(403, "invalid actor for project-host HTTP auth");
     }
@@ -229,11 +253,37 @@ export function createProjectHostHttpProxyAuth({
     return claims.sub;
   };
 
-  const sessionAccountId = (req: IncomingMessage): string | undefined => {
+  const verifyBearerClaims = (token: string) => {
+    try {
+      return verifyProjectHostAuthToken({
+        token,
+        host_id,
+        public_key: getProjectHostAuthPublicKey(),
+      });
+    } catch (err: any) {
+      throw new HttpAuthError(401, err?.message ?? "invalid auth token");
+    }
+  };
+
+  const sessionAccountId = (
+    req: IncomingMessage,
+  ):
+    | {
+        account_id: string;
+        iat_s: number;
+      }
+    | undefined => {
     const cookies = parseCookies(req.headers.cookie as string | undefined);
     const token = `${cookies[PROJECT_HOST_HTTP_SESSION_COOKIE_NAME] ?? ""}`.trim();
     if (!token) return;
     return verifySessionToken(token);
+  };
+
+  const clearSessionCookie = (res: ServerResponse) => {
+    appendSetCookie(
+      res,
+      `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
+    );
   };
 
   const setSessionCookie = (req: IncomingMessage, res: ServerResponse, account_id: string) => {
@@ -266,6 +316,20 @@ export function createProjectHostHttpProxyAuth({
     }
   };
 
+  const assertNotRevoked = ({
+    account_id,
+    issued_at_s,
+  }: {
+    account_id: string;
+    issued_at_s: number;
+  }) => {
+    const revokedBeforeMs = getAccountRevokedBeforeMs(account_id);
+    if (revokedBeforeMs == null) return;
+    if (issued_at_s * 1000 <= revokedBeforeMs) {
+      throw new HttpAuthError(401, "session revoked");
+    }
+  };
+
   const authorizeHttpRequest = async (
     req: IncomingMessage,
     res: ServerResponse,
@@ -273,18 +337,39 @@ export function createProjectHostHttpProxyAuth({
   ) => {
     const accountFromSession = sessionAccountId(req);
     if (accountFromSession) {
-      authorizeAccountForProject({ account_id: accountFromSession, project_id });
+      try {
+        assertNotRevoked({
+          account_id: accountFromSession.account_id,
+          issued_at_s: accountFromSession.iat_s,
+        });
+      } catch (err) {
+        clearSessionCookie(res);
+        throw err;
+      }
+      authorizeAccountForProject({
+        account_id: accountFromSession.account_id,
+        project_id,
+      });
       return;
     }
     const { token, fromQuery } = readBearerToken(req);
     if (!token) {
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
-    const account_id = verifyTokenAndGetAccountId(token);
+    const claims = verifyBearerClaims(token);
+    const account_id = verifyClaimsAndGetAccountId(claims);
+    assertNotRevoked({ account_id, issued_at_s: claims.iat });
     authorizeAccountForProject({ account_id, project_id });
     setSessionCookie(req, res, account_id);
     if (fromQuery) {
-      // Avoid forwarding a bearer query parameter to project apps.
+      // Clean the browser URL and avoid forwarding a bearer query parameter.
+      const cleaned = urlWithoutQueryToken(req);
+      if (cleaned && /^(GET|HEAD)$/i.test(req.method ?? "GET")) {
+        res.statusCode = 302;
+        res.setHeader("Location", cleaned);
+        res.end("");
+        return;
+      }
       stripQueryToken(req);
     }
   };
@@ -295,14 +380,23 @@ export function createProjectHostHttpProxyAuth({
   ) => {
     const accountFromSession = sessionAccountId(req);
     if (accountFromSession) {
-      authorizeAccountForProject({ account_id: accountFromSession, project_id });
+      assertNotRevoked({
+        account_id: accountFromSession.account_id,
+        issued_at_s: accountFromSession.iat_s,
+      });
+      authorizeAccountForProject({
+        account_id: accountFromSession.account_id,
+        project_id,
+      });
       return;
     }
     const { token } = readBearerToken(req);
     if (!token) {
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
-    const account_id = verifyTokenAndGetAccountId(token);
+    const claims = verifyBearerClaims(token);
+    const account_id = verifyClaimsAndGetAccountId(claims);
+    assertNotRevoked({ account_id, issued_at_s: claims.iat });
     authorizeAccountForProject({ account_id, project_id });
   };
 

@@ -401,8 +401,10 @@ Flow:
 3. Project-host proxy verifies token signature/audience/expiry, extracts
    `account_id`, verifies collaborator access against local `projects.users`,
    then mints a host-local HttpOnly session cookie
-   (`cocalc_project_host_http_session`) and removes the query token from
-   forwarded request path.
+   (`cocalc_project_host_http_session`) and removes the query token.
+   For GET/HEAD requests, project-host issues a redirect to the same URL
+   without `cocalc_project_host_token`, so the browser address bar/history no
+   longer contains the bearer.
 4. Subsequent HTTP and websocket requests for that project rely on the cookie,
    and are collaborator-checked on each request.
 
@@ -410,6 +412,25 @@ Notes:
 
 - This closes the gap where direct host app URLs could bypass hub HTTP proxy checks.
 - Hub local-proxy paths still perform their own collaborator checks in hub proxy code.
+- Default HTTP proxy session TTL is 30 days
+  (`COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS` override).
+
+## HTTP Session Revocation
+
+To support fast revocation without forcing short cookie lifetimes:
+
+- Session cookies carry both `iat` and `exp`.
+- Hub stores per-account revocation watermark (`revoked_before`) in Postgres.
+- Revocation watermark is advanced for:
+  - account ban
+  - "Sign out everywhere"
+- Project-host periodically pulls revocation updates from hub over the existing
+  host-status channel and persists them locally (with cursor replay state).
+- On every HTTP/WS proxy request, project-host rejects session/bearer auth if
+  token `iat <= revoked_before(account_id)`.
+
+This gives long-lived session UX while still allowing fast global invalidation
+across hosts once hub<->host communication is healthy again.
 
 ## Observability
 

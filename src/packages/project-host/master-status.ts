@@ -20,6 +20,11 @@ import {
   setProjectProvisioned,
   deleteProjectProvisioning,
 } from "./sqlite/provisioning";
+import {
+  getRevocationSyncCursor,
+  setRevocationSyncCursor,
+  upsertAccountRevocation,
+} from "./sqlite/account-revocations";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { deleteVolume } from "./file-server";
 
@@ -202,6 +207,7 @@ async function reportPendingStates() {
     }
   }
   await reportPendingProvisioning();
+  await syncAccountRevocationsFromMaster();
 }
 
 async function reportPendingProvisioning() {
@@ -230,4 +236,58 @@ async function reportPendingProvisioning() {
     }
   }
   await reportProvisionedInventory();
+}
+
+async function syncAccountRevocationsFromMaster() {
+  if (!statusClient || !hostInfo) return;
+  let cursor = getRevocationSyncCursor() ?? { updated_ms: 0, account_id: "" };
+  // Bound loop so one invocation cannot run forever.
+  for (let i = 0; i < 20; i++) {
+    let response:
+      | {
+          rows?: Array<{
+            account_id: string;
+            revoked_before_ms: number;
+            updated_ms: number;
+          }>;
+          next_cursor_updated_ms?: number;
+          next_cursor_account_id?: string;
+        }
+      | undefined;
+    try {
+      response = await statusClient.syncAccountRevocations({
+        host_id: hostInfo.host_id,
+        cursor_updated_ms: cursor.updated_ms,
+        cursor_account_id: cursor.account_id,
+        limit: 500,
+      });
+    } catch (err) {
+      logger.debug("syncAccountRevocationsFromMaster failed", { err });
+      return;
+    }
+    const rows = response?.rows ?? [];
+    if (!rows.length) {
+      return;
+    }
+    for (const row of rows) {
+      upsertAccountRevocation({
+        account_id: row.account_id,
+        revoked_before_ms: row.revoked_before_ms,
+        updated_ms: row.updated_ms,
+      });
+    }
+    const nextUpdatedMs = Number(response?.next_cursor_updated_ms);
+    const nextAccountId = `${response?.next_cursor_account_id ?? ""}`;
+    if (!Number.isFinite(nextUpdatedMs) || nextUpdatedMs < 0) {
+      return;
+    }
+    cursor = {
+      updated_ms: Math.floor(nextUpdatedMs),
+      account_id: nextAccountId,
+    };
+    setRevocationSyncCursor(cursor);
+    if (rows.length < 500) {
+      return;
+    }
+  }
 }

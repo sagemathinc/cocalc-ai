@@ -113,6 +113,7 @@ export function createProxyHandlers({
   ) => {
     try {
       const { target, handled } = await resolveTarget(req, res);
+      if (handled && !target) return;
       if (!handled || !target) throw new Error("not matched");
       proxy.web(req, res, { target, prependPath: false });
     } catch (err: any) {
@@ -188,6 +189,7 @@ export function attachProjectProxy({
     try {
       const { target, handled } = await resolveTarget(req, res);
       logger.debug("resolveTarget", { url: req.url, handled, target });
+      if (handled && !target) return;
       if (!handled || !target) return next();
       proxy.web(req, res, { target, prependPath: false });
     } catch (err) {

@@ -227,6 +227,9 @@ export async function main(
       if (!project_id) return { handled: false };
       if (res) {
         await httpProxyAuth.authorizeHttpRequest(req, res, project_id);
+        if (res.writableEnded) {
+          return { handled: true };
+        }
       } else {
         await httpProxyAuth.authorizeUpgradeRequest(req, project_id);
       }
