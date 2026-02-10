@@ -975,19 +975,35 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   ) : null;
 
   const header = (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-      <Space size="large" align="center">
-        <Space size="middle" align="center">
-          <Space size="small" align="center">
-            <Typography.Title level={5} style={{ margin: 0 }}>
-              Workspace Hosts
-            </Typography.Title>
-            {onToggleCreatePanel && !createPanelOpen && (
-              <Button size="small" type="primary" onClick={onToggleCreatePanel}>
-                Create
-              </Button>
-            )}
-          </Space>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        marginBottom: 8,
+      }}
+    >
+      <Space size="small" align="center" wrap>
+        <Typography.Title level={5} style={{ margin: 0, whiteSpace: "nowrap" }}>
+          Workspace Hosts
+        </Typography.Title>
+        {onToggleCreatePanel && !createPanelOpen && (
+          <Button size="small" type="primary" onClick={onToggleCreatePanel}>
+            Create
+          </Button>
+        )}
+      </Space>
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <Space size="middle" align="center" wrap>
           <Input.Search
             allowClear
             size="small"
@@ -996,8 +1012,10 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             placeholder="Filter hosts..."
             style={{ width: 220 }}
           />
-          <Space size="small" align="center">
-            <Typography.Text>Sort by</Typography.Text>
+          <Space size="small" align="center" wrap>
+            <Typography.Text style={{ whiteSpace: "nowrap" }}>
+              Sort by
+            </Typography.Text>
             <Select
               size="small"
               value={sortField}
@@ -1010,10 +1028,16 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             </Button>
           </Space>
           {isDynamicSort && (
-            <Space size="small" align="center">
-              <Switch size="small" checked={autoResort} onChange={setAutoResort} />
+            <Space size="small" align="center" wrap>
+              <Switch
+                size="small"
+                checked={autoResort}
+                onChange={setAutoResort}
+              />
               {autoResort ? (
-                <Typography.Text>Auto-resort</Typography.Text>
+                <Typography.Text style={{ whiteSpace: "nowrap" }}>
+                  Auto-resort
+                </Typography.Text>
               ) : (
                 <Button size="small" type="link" onClick={resortNow}>
                   Auto-resort
@@ -1021,36 +1045,39 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               )}
             </Space>
           )}
-        </Space>
-        <Space size="middle" align="center">
           {isAdmin && (
-            <Space size="small" align="center">
+            <Space size="small" align="center" wrap>
               <Switch size="small" checked={showAdmin} onChange={setShowAdmin} />
-              <Typography.Text>All (Admin)</Typography.Text>
+              <Typography.Text style={{ whiteSpace: "nowrap" }}>
+                All (Admin)
+              </Typography.Text>
             </Space>
           )}
-          <Space size="small" align="center">
+          <Space size="small" align="center" wrap>
             <Switch size="small" checked={showDeleted} onChange={setShowDeleted} />
-            <Typography.Text>Deleted</Typography.Text>
+            <Typography.Text style={{ whiteSpace: "nowrap" }}>
+              Deleted
+            </Typography.Text>
           </Space>
         </Space>
-      </Space>
-      <Space size="small" align="center">
-        <Button size="small" icon={<SyncOutlined />} onClick={onRefresh}>
-          Refresh
-        </Button>
-        <Radio.Group
-          value={viewMode}
-          onChange={(event) =>
-            setViewMode(event.target.value as HostListViewMode)
-          }
-          optionType="button"
-          buttonStyle="solid"
-        >
-          <Radio.Button value="grid">Cards</Radio.Button>
-          <Radio.Button value="list">List</Radio.Button>
-        </Radio.Group>
-      </Space>
+
+        <Space size="small" align="center" wrap>
+          <Button size="small" icon={<SyncOutlined />} onClick={onRefresh}>
+            Refresh
+          </Button>
+          <Radio.Group
+            value={viewMode}
+            onChange={(event) =>
+              setViewMode(event.target.value as HostListViewMode)
+            }
+            optionType="button"
+            buttonStyle="solid"
+          >
+            <Radio.Button value="grid">Cards</Radio.Button>
+            <Radio.Button value="list">List</Radio.Button>
+          </Radio.Group>
+        </Space>
+      </div>
     </div>
   );
 
