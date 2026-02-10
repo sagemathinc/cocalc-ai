@@ -283,10 +283,9 @@ export const useHostsPageViewModel = () => {
     selectedStorageMode,
   } = useHostFormValues(form);
 
-  const { catalog, catalogError, catalogRefreshing, refreshCatalog } =
+  const { catalog, catalogError, catalogLoading, catalogRefreshing, refreshCatalog } =
     useHostCatalog(hub, {
       provider: catalogProvider,
-      refreshProvider,
       onError: (text) => console.warn(text),
     });
   const hasSelfHostHosts = React.useMemo(
@@ -622,6 +621,7 @@ export const useHostsPageViewModel = () => {
         persistentGrowable,
         showDiskFields,
       },
+      catalogLoading,
       catalogError,
     },
     catalogRefresh: {

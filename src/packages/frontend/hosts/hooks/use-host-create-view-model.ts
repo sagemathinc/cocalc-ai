@@ -33,13 +33,14 @@ export type HostCreateViewModel = {
       persistentGrowable: boolean;
       showDiskFields: boolean;
     };
+    catalogLoading?: boolean;
     catalogError?: string;
   };
   catalogRefresh: {
     refreshProviders: Array<{ value: HostProvider; label: string }>;
     refreshProvider: HostProvider;
     setRefreshProvider: (value: HostProvider) => void;
-    refreshCatalog: () => Promise<boolean>;
+    refreshCatalog: (provider?: HostProvider) => Promise<boolean>;
     catalogRefreshing: boolean;
   };
   ai: {
