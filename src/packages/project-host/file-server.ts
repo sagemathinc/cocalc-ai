@@ -150,7 +150,10 @@ export async function ensureVolume(project_id: string, scratch?: boolean) {
   return vol;
 }
 
-export async function deleteVolume(project_id: string) {
+export async function deleteVolume(
+  project_id: string,
+  opts: { reportProvisioned?: boolean } = {},
+) {
   if (fs == null) {
     throw Error("file server not initialized");
   }
@@ -182,7 +185,9 @@ export async function deleteVolume(project_id: string) {
 
   await deleteIfExists({ name: volName(project_id), clearSnapshots: true });
   await deleteIfExists({ name: scratchVolName(project_id) });
-  queueProjectProvisioned(project_id, false);
+  if (opts.reportProvisioned !== false) {
+    queueProjectProvisioned(project_id, false);
+  }
   await deleteBackupIndexCache(project_id);
 }
 

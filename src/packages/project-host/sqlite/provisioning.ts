@@ -33,9 +33,24 @@ function ensureProvisioningTable() {
 export function setProjectProvisioned(
   project_id: string,
   provisioned: boolean,
-) {
+): boolean {
   ensureProvisioningTable();
   const db = getDatabase();
+  const existing = db
+    .prepare(
+      "SELECT provisioned, provisioned_reported FROM project_provisioning WHERE project_id=?",
+    )
+    .get(project_id) as
+    | { provisioned?: number; provisioned_reported?: number }
+    | undefined;
+  if (
+    existing &&
+    !!existing.provisioned === provisioned &&
+    existing.provisioned_reported === 1
+  ) {
+    // Nothing changed and master already acknowledged this value.
+    return false;
+  }
   const now = Date.now();
   db.prepare(
     `
@@ -52,6 +67,7 @@ export function setProjectProvisioned(
       updated_at=excluded.updated_at
   `,
   ).run(project_id, provisioned ? 1 : 0, 0, now);
+  return true;
 }
 
 export function listUnreportedProvisioning(): ProvisioningRow[] {
@@ -73,4 +89,12 @@ export function markProjectProvisionedReported(project_id: string) {
   db.prepare(
     "UPDATE project_provisioning SET provisioned_reported=1 WHERE project_id=?",
   ).run(project_id);
+}
+
+export function deleteProjectProvisioning(project_id: string) {
+  ensureProvisioningTable();
+  const db = getDatabase();
+  db.prepare("DELETE FROM project_provisioning WHERE project_id=?").run(
+    project_id,
+  );
 }
