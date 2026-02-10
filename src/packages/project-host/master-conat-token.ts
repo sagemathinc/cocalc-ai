@@ -98,9 +98,12 @@ function readBootstrapConfig():
   return undefined;
 }
 
-export function getProjectHostBootstrapConatSource():
+export function getProjectHostBootstrapConatSource(opts?: {
+  fallbackConatUrl?: string;
+}):
   | ProjectHostBootstrapConatSource
   | undefined {
+  const fallbackConatUrl = `${opts?.fallbackConatUrl ?? ""}`.trim();
   const fromEnvToken = `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_TOKEN ?? ""}`.trim();
   const fromEnvConatUrl = `${
     process.env.COCALC_PROJECT_HOST_BOOTSTRAP_CONAT_URL ??
@@ -108,10 +111,10 @@ export function getProjectHostBootstrapConatSource():
     ""
   }`.trim();
   const fromEnvCaPath = `${process.env.COCALC_PROJECT_HOST_BOOTSTRAP_CA_CERT_PATH ?? ""}`.trim();
-  if (fromEnvToken && fromEnvConatUrl) {
+  if (fromEnvToken && (fromEnvConatUrl || fallbackConatUrl)) {
     return {
       bootstrap_token: fromEnvToken,
-      conat_url: fromEnvConatUrl,
+      conat_url: fromEnvConatUrl || fallbackConatUrl,
       ...(fromEnvCaPath ? { ca_cert_path: fromEnvCaPath } : {}),
     };
   }
@@ -119,10 +122,10 @@ export function getProjectHostBootstrapConatSource():
   const bootstrap_token = `${parsed?.bootstrap_token ?? ""}`.trim();
   const conat_url = `${parsed?.conat_url ?? ""}`.trim();
   const ca_cert_path = `${parsed?.ca_cert_path ?? ""}`.trim();
-  if (!bootstrap_token || !conat_url) return undefined;
+  if (!bootstrap_token || (!conat_url && !fallbackConatUrl)) return undefined;
   return {
     bootstrap_token,
-    conat_url,
+    conat_url: conat_url || fallbackConatUrl,
     ...(ca_cert_path ? { ca_cert_path } : {}),
   };
 }

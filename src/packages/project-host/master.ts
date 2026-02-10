@@ -16,6 +16,7 @@ import { executeCode } from "@cocalc/backend/execute-code";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
+import { inboxPrefix } from "@cocalc/conat/names";
 import {
   fetchMasterConatTokenViaBootstrap,
   getProjectHostBootstrapConatSource,
@@ -111,14 +112,45 @@ export async function startMasterRegistration({
   logger.info("registering with master", { masterAddress, id, public_url });
   let currentMasterConatToken = `${masterConatToken ?? ""}`.trim();
   if (!currentMasterConatToken) {
+    const bootstrapSource = getProjectHostBootstrapConatSource({
+      fallbackConatUrl: masterAddress,
+    });
+    if (bootstrapSource) {
+      try {
+        const next = await fetchMasterConatTokenViaBootstrap(bootstrapSource);
+        writeProjectHostMasterConatToken(next);
+        currentMasterConatToken = next;
+        logger.info("loaded master conat token via bootstrap endpoint", {
+          reason: "startup-preflight",
+          token_path: getProjectHostMasterConatTokenPath(),
+        });
+      } catch (err) {
+        logger.warn(
+          "failed loading master conat token via bootstrap endpoint during startup",
+          {
+            reason: "startup-preflight",
+            token_path: getProjectHostMasterConatTokenPath(),
+            err,
+          },
+        );
+      }
+    }
+  }
+  if (!currentMasterConatToken) {
     logger.warn(
       "master conat token is missing; registration/control connection may fail",
       { expectedPath: "/btrfs/data/secrets/master-conat-token" },
     );
+    logger.warn(
+      "master registration is disabled until a valid master conat token is available",
+      { expectedPath: "/btrfs/data/secrets/master-conat-token" },
+    );
+    return;
   }
 
   const client = connectToConat({
     address: masterAddress,
+    inboxPrefix: inboxPrefix({ host_id: id }),
     auth: (cb) => {
       if (currentMasterConatToken) {
         cb({ bearer: currentMasterConatToken });
@@ -282,7 +314,9 @@ export async function startMasterRegistration({
   const recoverMasterConatTokenViaBootstrap = async (
     reason: string,
   ): Promise<boolean> => {
-    const source = getProjectHostBootstrapConatSource();
+    const source = getProjectHostBootstrapConatSource({
+      fallbackConatUrl: masterAddress,
+    });
     if (!source) {
       logger.warn("missing master conat token and no bootstrap source", {
         reason,
