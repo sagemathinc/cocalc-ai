@@ -85,7 +85,9 @@ export const Dropzone = (props: any) =>
 export const BlobUpload = (props: any) =>
   props?.children ? React.createElement(React.Fragment, null, props.children) : null;
 export const getProfile = () => ({});
-export const useMentionableUsers = () => [];
+export const useMentionableUsers = () => {
+  return () => [];
+};
 export const submit_mentions = () => undefined;
 export const markdown_to_html = async (_value: string) => "";
 
