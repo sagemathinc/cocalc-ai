@@ -612,6 +612,7 @@ def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
             Path("/btrfs/data").mkdir(parents=True, exist_ok=True)
     Path("/btrfs/data/secrets").mkdir(parents=True, exist_ok=True)
     Path("/btrfs/data/tmp").mkdir(parents=True, exist_ok=True)
+    Path("/btrfs/data/project-roots").mkdir(parents=True, exist_ok=True)
     Path("/btrfs/data/containers").mkdir(parents=True, exist_ok=True)
     Path("/btrfs/data/containers/rootless").mkdir(parents=True, exist_ok=True)
     run_best_effort(
@@ -624,6 +625,7 @@ def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["chmod", "711", "/btrfs/data"], "chmod /btrfs/data")
     run_best_effort(cfg, ["chmod", "700", "/btrfs/data/secrets"], "chmod /btrfs/data/secrets")
     run_best_effort(cfg, ["chmod", "1777", "/btrfs/data/tmp"], "chmod /btrfs/data/tmp")
+    run_best_effort(cfg, ["chmod", "711", "/btrfs/data/project-roots"], "chmod /btrfs/data/project-roots")
     run_best_effort(cfg, ["chmod", "711", "/btrfs/data/containers"], "chmod /btrfs/data/containers")
     run_best_effort(
         cfg,

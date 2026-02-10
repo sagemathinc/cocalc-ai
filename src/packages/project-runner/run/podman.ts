@@ -680,6 +680,7 @@ export async function start({
 
     return { state: "running", ssh_port, http_port };
   } catch (err) {
+    logger.warn("start failed", { project_id, err: `${err}` });
     report({ type: "start-project", error: err });
     throw err;
   } finally {

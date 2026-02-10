@@ -25,8 +25,18 @@ const UNMOUNT_DELAY_MS = Number(
   process.env.COCALC_SANDBOX_UNMOUNT_DELAY_MS ?? 30_000,
 );
 
+function splitRunnerMode(): boolean {
+  const runner =
+    `${process.env.COCALC_PODMAN_RUN_AS_USER ?? process.env.COCALC_PROJECT_RUNNER_USER ?? ""}`.trim();
+  if (!runner) return false;
+  const current =
+    `${process.env.COCALC_PROJECT_HOST_USER ?? process.env.USER ?? process.env.LOGNAME ?? ""}`.trim();
+  return !!current && runner !== current;
+}
+
 const PROJECT_ROOTS =
-  process.env.COCALC_PROJECT_ROOTS ?? join(data, "cache", "project-roots");
+  process.env.COCALC_PROJECT_ROOTS ??
+  (splitRunnerMode() ? join(data, "project-roots") : join(data, "cache", "project-roots"));
 
 function getMergedPath(project_id) {
   return join(PROJECT_ROOTS, project_id);

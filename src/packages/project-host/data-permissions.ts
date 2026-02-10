@@ -47,6 +47,7 @@ async function hardenDataPermissions(dataDir: string): Promise<void> {
   // In split runner mode, the runner user must traverse dataDir to reach
   // rootless podman runtime/storage under dataDir.
   await chmodIfExists(dataDir, split ? 0o711 : 0o700);
+  await chmodIfExists(join(dataDir, "project-roots"), split ? 0o711 : 0o700);
   if (split) {
     await chmodIfExists(dirname(dataDir), 0o711);
     await chmodIfExists(join(dataDir, "containers"), 0o711);
