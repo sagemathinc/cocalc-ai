@@ -600,6 +600,7 @@ btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
 
 def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: ensuring /btrfs/data subvolume")
+    run_best_effort(cfg, ["chmod", "711", "/btrfs"], "chmod /btrfs")
     try:
         run_cmd(cfg, ["btrfs", "subvolume", "show", "/btrfs/data"], "btrfs subvolume show", check=False)
     except Exception:
