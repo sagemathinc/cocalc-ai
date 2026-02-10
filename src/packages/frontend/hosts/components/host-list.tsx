@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Col, Input, Modal, Popconfirm, Popover, Radio, Row, Select, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Card, Col, Input, Modal, Popconfirm, Popover, Radio, Row, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -168,6 +168,9 @@ function sortHosts(
 
 type HostListViewModel = {
   hosts: Host[];
+  hostsLoading?: boolean;
+  hostsLoaded?: boolean;
+  hostsError?: string | null;
   hostOps?: Record<string, HostLroState>;
   createPanelOpen?: boolean;
   onStart: (id: string) => void;
@@ -205,6 +208,9 @@ type HostListViewModel = {
 export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   const {
     hosts,
+    hostsLoading = false,
+    hostsLoaded = true,
+    hostsError = null,
     hostOps,
     createPanelOpen,
     onStart,
@@ -1080,6 +1086,43 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       </div>
     </div>
   );
+
+  const showInitialLoading = hosts.length === 0 && (!hostsLoaded || hostsLoading);
+  const showLoadError =
+    hosts.length === 0 && !!hostsError && !showInitialLoading;
+
+  if (showInitialLoading) {
+    return (
+      <div>
+        {header}
+        <Card style={{ maxWidth: 720, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+            <Spin tip="Loading workspace hosts..." />
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (showLoadError) {
+    return (
+      <div>
+        {header}
+        <Alert
+          type="error"
+          showIcon
+          message="Unable to load workspace hosts"
+          description={hostsError}
+          action={
+            <Button size="small" onClick={onRefresh}>
+              Retry
+            </Button>
+          }
+          style={{ marginBottom: 12 }}
+        />
+      </div>
+    );
+  }
 
   if (hosts.length === 0) {
     return (

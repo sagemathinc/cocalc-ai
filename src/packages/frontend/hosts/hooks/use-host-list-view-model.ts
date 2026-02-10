@@ -11,6 +11,9 @@ import type { HostLroState } from "./use-host-ops";
 
 type UseHostListViewModelArgs = {
   hosts: Host[];
+  hostsLoading?: boolean;
+  hostsLoaded?: boolean;
+  hostsError?: string | null;
   hostOps?: Record<string, HostLroState>;
   onStart: (id: string) => void;
   onStop: (id: string, opts?: HostStopOptions) => void;
@@ -45,6 +48,9 @@ type UseHostListViewModelArgs = {
 
 export const useHostListViewModel = ({
   hosts,
+  hostsLoading,
+  hostsLoaded,
+  hostsError,
   hostOps,
   onStart,
   onStop,
@@ -74,6 +80,9 @@ export const useHostListViewModel = ({
 }: UseHostListViewModelArgs) => {
   return {
     hosts,
+    hostsLoading,
+    hostsLoaded,
+    hostsError,
     hostOps,
     onStart,
     onStop,
