@@ -611,11 +611,23 @@ def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
             Path("/btrfs/data").mkdir(parents=True, exist_ok=True)
     Path("/btrfs/data/secrets").mkdir(parents=True, exist_ok=True)
     Path("/btrfs/data/tmp").mkdir(parents=True, exist_ok=True)
-    os.chmod("/btrfs/data/tmp", 0o1777)
+    Path("/btrfs/data/containers").mkdir(parents=True, exist_ok=True)
+    Path("/btrfs/data/containers/rootless").mkdir(parents=True, exist_ok=True)
     run_best_effort(
         cfg,
         ["chown", "-R", f"{cfg.host_user}:{cfg.host_user}", "/btrfs/data"],
         "chown btrfs data",
+    )
+    # Keep data mostly private to host user but allow runner user traversal
+    # to shared runtime/storage subtrees used by rootless podman.
+    run_best_effort(cfg, ["chmod", "711", "/btrfs/data"], "chmod /btrfs/data")
+    run_best_effort(cfg, ["chmod", "700", "/btrfs/data/secrets"], "chmod /btrfs/data/secrets")
+    run_best_effort(cfg, ["chmod", "1777", "/btrfs/data/tmp"], "chmod /btrfs/data/tmp")
+    run_best_effort(cfg, ["chmod", "711", "/btrfs/data/containers"], "chmod /btrfs/data/containers")
+    run_best_effort(
+        cfg,
+        ["chmod", "711", "/btrfs/data/containers/rootless"],
+        "chmod /btrfs/data/containers/rootless",
     )
 
 
@@ -635,6 +647,8 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         runner_home = Path(pwd.getpwnam(cfg.runner_user).pw_dir)
         user_config_root = runner_home / ".config"
         user_config = user_config_root / "containers"
+        rootless_base = Path("/btrfs/data/containers/rootless")
+        runner_rootless = rootless_base / cfg.runner_user
         user_config_root.mkdir(parents=True, exist_ok=True)
         run_best_effort(
             cfg,
@@ -642,17 +656,32 @@ def configure_podman(cfg: BootstrapConfig) -> None:
             "chown user config",
         )
         user_config.mkdir(parents=True, exist_ok=True)
-        Path(f"/btrfs/data/containers/rootless/{cfg.runner_user}/storage").mkdir(parents=True, exist_ok=True)
-        Path(f"/btrfs/data/containers/rootless/{cfg.runner_user}/run").mkdir(parents=True, exist_ok=True)
+        (runner_rootless / "storage").mkdir(parents=True, exist_ok=True)
+        (runner_rootless / "run").mkdir(parents=True, exist_ok=True)
+        run_best_effort(
+            cfg,
+            ["chmod", "711", str(rootless_base)],
+            "chmod rootless base",
+        )
         run_best_effort(
             cfg,
             [
                 "chown",
                 "-R",
                 f"{cfg.runner_user}:{cfg.runner_user}",
-                f"/btrfs/data/containers/rootless/{cfg.runner_user}",
+                str(runner_rootless),
             ],
             "chown rootless storage",
+        )
+        run_best_effort(
+            cfg,
+            ["chmod", "700", str(runner_rootless)],
+            "chmod runner rootless dir",
+        )
+        run_best_effort(
+            cfg,
+            ["chmod", "700", str(runner_rootless / "storage"), str(runner_rootless / "run")],
+            "chmod runner rootless storage/run",
         )
         (user_config / "storage.conf").write_text(
             '[storage]\n'
