@@ -31,6 +31,13 @@ import {
   getCodexPaymentSourceShortLabel,
 } from "./use-codex-payment-source";
 
+function debugChatComposerUI(type: string, data?: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.log(`[chat-composer-ui] ${type}`, data ?? {});
+}
+
 export interface ChatRoomComposerProps {
   actions: ChatActions;
   project_id: string;
@@ -270,15 +277,23 @@ export function ChatRoomComposer({
 
   const handleSend = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
+      const source = typeof value === "string" ? "shift-enter" : "button";
       const effective =
         typeof value === "string" ? value : input;
+      debugChatComposerUI("handleSend:start", {
+        source,
+        effectiveLength: effective?.length ?? 0,
+        hasTrimmedContent: !!effective?.trim(),
+        inputLength: input?.length ?? 0,
+        composerDraftKey,
+      });
       if (!effective || !effective.trim()) return;
       on_send(effective);
       if (isZenMode) {
         void toggleZenMode();
       }
     },
-    [input, isZenMode, on_send, toggleZenMode],
+    [composerDraftKey, input, isZenMode, on_send, toggleZenMode],
   );
 
   const composerStyle: CSSProperties = {

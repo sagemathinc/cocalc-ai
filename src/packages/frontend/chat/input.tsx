@@ -103,6 +103,7 @@ export default function ChatInput({
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
   const mountedRef = useRef<boolean>(true);
+  const currentSessionTokenRef = useRef<number | undefined>(sessionToken);
   const isFocusedRef = useRef<boolean>(false);
   const historyRef = useRef<HistoryEntry[]>([
     { value: propsInput ?? "", at: Date.now() },
@@ -116,6 +117,18 @@ export default function ChatInput({
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    currentSessionTokenRef.current = sessionToken;
+  }, [sessionToken]);
+
+  const isStaleSessionCallback = useCallback(
+    (token?: number): boolean => {
+      const current = currentSessionTokenRef.current;
+      return token != null && current != null && token !== current;
+    },
+    [],
+  );
 
   useEffect(() => {
     const next = propsInput ?? "";
@@ -260,6 +273,15 @@ export default function ChatInput({
       submitMentionsRef={submitMentionsRef}
       onChange={(value) => {
         if (!mountedRef.current) return;
+        if (isStaleSessionCallback(sessionToken)) {
+          debugComposerInput("onChange:ignored-stale-session", {
+            cacheId,
+            value,
+            callbackSessionToken: sessionToken,
+            currentSessionToken: currentSessionTokenRef.current,
+          });
+          return;
+        }
         debugComposerInput("onChange:recv", {
           cacheId,
           value,
@@ -300,6 +322,15 @@ export default function ChatInput({
       }}
       onShiftEnter={(value) => {
         if (!mountedRef.current) return;
+        if (isStaleSessionCallback(sessionToken)) {
+          debugComposerInput("onShiftEnter:ignored-stale-session", {
+            cacheId,
+            value,
+            callbackSessionToken: sessionToken,
+            currentSessionToken: currentSessionTokenRef.current,
+          });
+          return;
+        }
         debugComposerInput("onShiftEnter", {
           cacheId,
           value,
@@ -307,12 +338,7 @@ export default function ChatInput({
           sessionToken,
         });
         savePresence.cancel();
-        controlRef.current?.allowNextValueUpdateWhileFocused?.();
-        controlRef.current?.setValueNow?.("");
-        setInput("");
-        onChange("", sessionToken);
-        historyRef.current = [{ value: "", at: Date.now() }];
-        historyIndexRef.current = 0;
+        controlRef.current?.cancelPendingUploads?.();
         publishNotComposing();
         on_send(value);
       }}
