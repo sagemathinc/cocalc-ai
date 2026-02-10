@@ -34,6 +34,15 @@ import LRUCache from "lru-cache";
 import { until } from "@cocalc/util/async-utils";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 type PatchId = string;
+interface GitCommitEntry {
+  hash: string;
+  name: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  timestampMs: number;
+  version: number;
+}
 
 const EXTENSION = ".time-travel";
 
@@ -82,15 +91,9 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   syncdoc?: SyncDoc;
   private first_load: boolean = true;
   ambient_actions?: CodeEditorActions;
-  private gitLog: {
-    [t: number]: {
-      hash: string;
-      name: string;
-      subject: string;
-      authorName: string;
-      authorEmail: string;
-    };
-  } = {};
+  private gitCommits: GitCommitEntry[] = [];
+  private gitCommitByVersion: { [version: number]: GitCommitEntry } = {};
+  private gitCommitByHash: { [hash: string]: GitCommitEntry } = {};
 
   _init2(): void {
     const { head, tail } = path_split(this.path);
@@ -378,48 +381,79 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     );
   };
 
+  private gitEntryForVersion = (
+    version: number | string | undefined,
+  ): GitCommitEntry | undefined => {
+    if (version == null) return;
+    const n = typeof version === "number" ? version : Number(version);
+    if (!Number.isFinite(n)) return;
+    return this.gitCommitByVersion[n];
+  };
+
+  private resetGitCommits = (): void => {
+    this.gitCommits = [];
+    this.gitCommitByVersion = {};
+    this.gitCommitByHash = {};
+  };
+
   updateGitVersions = async () => {
     // log("updateGitVersions");
     // versions is an ordered list of Date objects, one for each commit that involves this file.
     try {
       const { stdout } = await this.gitCommand([
         "log",
-        `--format="%at %H %an <%ae> %s"`,
+        "--format=%at%x00%H%x00%an%x00%ae%x00%s",
         "--",
       ]);
-      this.gitLog = {};
-      const versions: Date[] = [];
+      this.resetGitCommits();
+      const parsed: Array<Omit<GitCommitEntry, "version">> = [];
       for (const x of stdout.split("\n")) {
-        const y = x.slice(1, -1);
-        const i = y.indexOf(" ");
-        if (i == -1) continue;
-        const t0 = y.slice(0, i);
-        const j = y.indexOf(" ", i + 1);
-        if (j == -1) continue;
-        const hash = y.slice(i + 1, j).trim();
-        const k = y.indexOf("> ", j + 1);
-        const name = y.slice(j + 1, k + 1).trim();
-        const lt = name.lastIndexOf("<");
-        const authorName = lt == -1 ? name : name.slice(0, lt).trim();
-        const authorEmail = lt == -1 ? "" : name.slice(lt + 1, -1).trim();
-        const subject = y.slice(k + 1).trim();
-        if (!x || !t0 || !hash) {
+        if (!x) continue;
+        const parts = x.split("\x00");
+        if (parts.length < 5) continue;
+        const [t0, hashRaw, authorNameRaw, authorEmailRaw, ...subjectParts] =
+          parts;
+        const hash = (hashRaw ?? "").trim();
+        const authorName = (authorNameRaw ?? "").trim();
+        const authorEmail = (authorEmailRaw ?? "").trim();
+        const subject = subjectParts.join("\x00").trim();
+        const name = authorEmail
+          ? `${authorName} <${authorEmail}>`
+          : authorName;
+        if (!t0 || !hash) {
           continue;
         }
-        const t = parseInt(t0) * 1000;
-        this.gitLog[t] = {
+        const t = parseInt(t0, 10) * 1000;
+        if (!Number.isFinite(t)) continue;
+        parsed.push({
           hash,
           name,
           subject,
           authorName,
           authorEmail,
-        };
-        versions.push(new Date(t));
+          timestampMs: t,
+        });
       }
-      versions.reverse();
-      const git_versions = List<number>(versions.map((x) => x.valueOf()));
+
+      // git log output is newest->oldest; TimeTravel sliders are oldest->newest.
+      parsed.reverse();
+      const usedVersions = new Set<number>();
+      for (const entry of parsed) {
+        let version = entry.timestampMs;
+        // Preserve all commits even when two commits share the same second timestamp.
+        while (usedVersions.has(version)) {
+          version += 1;
+        }
+        usedVersions.add(version);
+        const commit: GitCommitEntry = { ...entry, version };
+        this.gitCommits.push(commit);
+        this.gitCommitByVersion[version] = commit;
+        this.gitCommitByHash[commit.hash] = commit;
+      }
+
+      const git_versions = List<number>(this.gitCommits.map((x) => x.version));
       this.setState({
-        git: versions.length > 0,
+        git: this.gitCommits.length > 0,
         git_versions,
       });
       return git_versions;
@@ -433,16 +467,16 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
 
   private gitShow = async (version: number): Promise<string | undefined> => {
     // log("gitShow", { version });
-    const h = this.gitLog[version]?.hash;
-    if (h == null) {
+    const entry = this.gitEntryForVersion(version);
+    if (entry == null) {
       return;
     }
-    const key = `${h}:${this.docpath}`;
+    const key = `${entry.hash}:${this.docpath}`;
     if (gitShowCache.has(key)) {
       return gitShowCache.get(key);
     }
     try {
-      const { stdout } = await this.gitCommand(["show"], h);
+      const { stdout } = await this.gitCommand(["show"], entry.hash);
       gitShowCache.set(key, stdout);
       return stdout;
     } catch (err) {
@@ -457,25 +491,26 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
       return [];
     }
     if (v0 == v1) {
-      const d = this.gitLog[`${v0}`];
+      const d = this.gitEntryForVersion(v0);
       if (d) {
         return [d.name];
       } else {
         return [];
       }
     }
+    const lo = Math.min(v0, v1);
+    const hi = Math.max(v0, v1);
     const names: string[] = [];
-    for (const t in this.gitLog) {
-      const t0 = parseInt(t);
-      if (v0 < t0 && t0 <= v1) {
-        names.push(this.gitLog[t].name);
+    for (const commit of this.gitCommits) {
+      if (lo < commit.version && commit.version <= hi) {
+        names.push(commit.name);
       }
     }
     return names;
   };
 
   gitSubject = (version: number): string | undefined => {
-    return this.gitLog[version]?.subject;
+    return this.gitEntryForVersion(version)?.subject;
   };
 
   gitCommit = (
@@ -490,10 +525,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
         timestampMs: number;
       }
     | undefined => {
-    if (version == null) return;
-    const timestampMs = typeof version === "number" ? version : Number(version);
-    if (!Number.isFinite(timestampMs)) return;
-    const entry = this.gitLog[timestampMs];
+    const entry = this.gitEntryForVersion(version);
     if (entry == null) return;
     return {
       hash: entry.hash,
@@ -501,7 +533,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
       subject: entry.subject,
       authorName: entry.authorName,
       authorEmail: entry.authorEmail,
-      timestampMs,
+      timestampMs: entry.timestampMs,
     };
   };
 
@@ -530,12 +562,11 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
       authorEmail: string;
       timestampMs: number;
     }> = [];
-    for (const t of Object.keys(this.gitLog)) {
-      const timestampMs = Number(t);
-      if (!Number.isFinite(timestampMs) || timestampMs < lo || timestampMs > hi) {
+    for (const entry of this.gitCommits) {
+      if (entry.version < lo || entry.version > hi) {
         continue;
       }
-      const commit = this.gitCommit(timestampMs);
+      const commit = this.gitCommit(entry.version);
       if (commit != null) {
         commits.push(commit);
       }
