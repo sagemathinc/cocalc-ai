@@ -139,7 +139,7 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
     env.PROJECT_RUNNER_NAME = String(index);
   }
   if (!env.HOST) {
-    env.HOST = "0.0.0.0";
+    env.HOST = "127.0.0.1";
   }
   if (!env.PORT) {
     env.PORT = String(9002 + index);

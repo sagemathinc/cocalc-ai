@@ -50,6 +50,10 @@ import { resolveProjectHostId } from "./host-id";
 import { createProjectHostConatAuth } from "./conat-auth";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
+import {
+  assertLocalBindOrInsecure,
+  assertSecureUrlOrLocal,
+} from "@cocalc/backend/network/policy";
 
 const logger = getLogger("project-host:main");
 
@@ -135,8 +139,20 @@ export async function main(
   _config: ProjectHostConfig = {},
 ): Promise<ProjectHostContext> {
   const runnerId = process.env.PROJECT_RUNNER_NAME || "project-host";
-  const host = _config.host ?? process.env.HOST ?? "0.0.0.0";
+  const host = _config.host ?? process.env.HOST ?? "127.0.0.1";
   const port = _config.port ?? (Number(process.env.PORT) || (await getPort()));
+  assertLocalBindOrInsecure({
+    bindHost: host,
+    serviceName: "project-host http listener",
+  });
+  assertSecureUrlOrLocal({
+    url: process.env.PROJECT_HOST_PUBLIC_URL ?? "",
+    urlName: "PROJECT_HOST_PUBLIC_URL",
+  });
+  assertSecureUrlOrLocal({
+    url: process.env.PROJECT_HOST_INTERNAL_URL ?? "",
+    urlName: "PROJECT_HOST_INTERNAL_URL",
+  });
   const tls = resolveTlsConfig(host, port);
   // Project-host internal conat auth is always local and host-specific.
   const localConatPassword = getOrCreateProjectHostConatPassword();

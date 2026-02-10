@@ -24,6 +24,7 @@ import {
   getProjectHostMasterConatTokenPath,
   writeProjectHostMasterConatToken,
 } from "./master-conat-token";
+import { assertSecureUrlOrLocal } from "@cocalc/backend/network/policy";
 
 const logger = getLogger("project-host:master");
 
@@ -109,6 +110,10 @@ export async function startMasterRegistration({
     logger.debug("no master conat server configured; skipping registration");
     return;
   }
+  assertSecureUrlOrLocal({
+    url: masterAddress,
+    urlName: "MASTER_CONAT_SERVER",
+  });
   logger.debug("startMasterRegistration", { masterAddress });
 
   const stored = getRow("project-host", "host-id")?.hostId as
