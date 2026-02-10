@@ -7,6 +7,29 @@ export let nodePath = process.execPath;
 export const COCALC_BIN = "/opt/cocalc/bin";
 export const COCALC_BIN2 = "/opt/cocalc/bin2";
 export const COCALC_SRC = "/opt/cocalc/src";
+
+function splitRunnerMode(): boolean {
+  const runner =
+    `${process.env.COCALC_PODMAN_RUN_AS_USER ?? process.env.COCALC_PROJECT_RUNNER_USER ?? ""}`.trim();
+  if (!runner) return false;
+  const host =
+    `${process.env.COCALC_PROJECT_HOST_USER ?? process.env.USER ?? process.env.LOGNAME ?? ""}`.trim();
+  return !!host && runner !== host;
+}
+
+function resolveNodeBinSource(): string {
+  const processBin = dirname(process.execPath);
+  const tools = `${process.env.COCALC_PROJECT_TOOLS ?? ""}`.trim();
+  if (
+    splitRunnerMode() &&
+    (processBin.includes("/.nvm/") || processBin.startsWith("/home/"))
+  ) {
+    if (tools) return tools;
+    return "/usr/bin";
+  }
+  return processBin;
+}
+
 export function getCoCalcMounts() {
   // NODEJS_SEA_PATH is where we mount the directory containing the nodejs SEA binary,
   // which we *also* use for running the project itself.
@@ -18,7 +41,7 @@ export function getCoCalcMounts() {
     // COCALC_SRC is where the project's Javascript code is located, which is what the project
     // container runs at startup.
     [join(dirname(root), "src")]: COCALC_SRC,
-    [dirname(process.execPath)]: COCALC_BIN,
+    [resolveNodeBinSource()]: COCALC_BIN,
   };
 
   const tools = process.env.COCALC_PROJECT_TOOLS;

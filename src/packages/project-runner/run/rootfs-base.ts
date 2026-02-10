@@ -27,6 +27,15 @@ export const IMAGE_CACHE =
 const IMAGE_CACHE_METADATA =
   process.env.COCALC_IMAGE_CACHE_METADATA ?? join(data, "cache", "images-meta");
 
+function splitRunnerMode(): boolean {
+  const runner =
+    `${process.env.COCALC_PODMAN_RUN_AS_USER ?? process.env.COCALC_PROJECT_RUNNER_USER ?? ""}`.trim();
+  if (!runner) return false;
+  const host =
+    `${process.env.COCALC_PROJECT_HOST_USER ?? process.env.USER ?? process.env.LOGNAME ?? ""}`.trim();
+  return !!host && runner !== host;
+}
+
 type ProgressFunction = (opts: { progress: number; desc: string }) => void;
 
 // This is a bit complicated because extractBaseImage uses reuseInFlight,
@@ -84,10 +93,10 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
   try {
     const baseImagePath = join(IMAGE_CACHE, image);
     reportProgress({ progress: 0, desc: `checking for ${image}...` });
-    if (
-      (await exists(inspectFile(image))) &&
-      (await exists(join(IMAGE_CACHE, image)))
-    ) {
+    const hasInspect = await exists(inspectFile(image));
+    // In split-runner mode, IMAGE_CACHE may be runner-owned and not traversable
+    // by the host service user, so rely on inspect metadata as the success marker.
+    if (hasInspect && (splitRunnerMode() || (await exists(join(IMAGE_CACHE, image))))) {
       // already exist
       reportProgress({ progress: 100, desc: `${image} available` });
       return baseImagePath;
