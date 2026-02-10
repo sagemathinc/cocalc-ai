@@ -125,11 +125,6 @@ export default function Header(props: Props) {
             </a>
           </Tooltip>
         )}
-        {enabledPages?.store && (
-          <A href="/store" style={page === "store" ? SelectedStyle : LinkStyle}>
-            Store
-          </A>
-        )}
         {enabledPages?.features && (
           <A
             href="/features/"

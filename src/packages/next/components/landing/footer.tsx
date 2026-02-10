@@ -70,11 +70,6 @@ export default function Footer() {
       header: "Product",
       links: [
         {
-          text: "Store",
-          url: "/store",
-          hide: !enabledPages?.store,
-        },
-        {
           text: "Features",
           url: "/features",
           hide: !enabledPages?.features,

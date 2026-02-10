@@ -178,7 +178,6 @@ export default function AccountNavTab({ style }: Props) {
     ret.push(signedIn);
     ret.push(docs);
     if (isCommercial) {
-      ret.push(menuItem("store", <A href="/store">Store</A>, "shopping-cart"));
     }
     ret.push(DIVIDER);
     ret.push(configuration);

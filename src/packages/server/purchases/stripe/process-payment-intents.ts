@@ -4,18 +4,14 @@ import getLogger from "@cocalc/backend/logger";
 import createCredit from "@cocalc/server/purchases/create-credit";
 import { LineItem } from "@cocalc/util/stripe/types";
 import { stripeToDecimal } from "@cocalc/util/stripe/calc";
-import {
-  shoppingCartCheckout,
-  shoppingCartPutItemsBack,
-} from "@cocalc/server/purchases/shopping-cart-checkout";
 import studentPay from "@cocalc/server/purchases/student-pay";
 import {
   AUTO_CREDIT,
-  SHOPPING_CART_CHECKOUT,
   STUDENT_PAY,
   SUBSCRIPTION_RENEWAL,
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
+  VOUCHER_PURCHASE,
 } from "@cocalc/util/db-schema/purchases";
 import {
   processSubscriptionRenewal,
@@ -29,8 +25,9 @@ import adminAlert from "@cocalc/server/messages/admin-alert";
 import { moneyRound2Down, moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
-import getPool from "@cocalc/database/pool";
+import getPool, { getTransactionClient } from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
+import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
 
@@ -222,19 +219,7 @@ customer.  So we don't know what to do with this.  Please manually investigate.
 
       let result = "we did NOT add credit to your account";
       try {
-        if (paymentIntent.metadata.purpose == SHOPPING_CART_CHECKOUT) {
-          result = "the items you were buying were put back in your cart";
-          // free up the items so they can be purchased again.
-          // The purpose of this payment was to buy certain items from the store.  We use the credit we just got above
-          // to provision each of those items.
-          const cart_ids =
-            paymentIntent.metadata.cart_ids != null
-              ? JSON.parse(paymentIntent.metadata.cart_ids)
-              : undefined;
-          if (cart_ids != null) {
-            await shoppingCartPutItemsBack({ cart_ids });
-          }
-        } else if (paymentIntent.metadata.purpose == STUDENT_PAY) {
+        if (paymentIntent.metadata.purpose == STUDENT_PAY) {
           // Student pay for a course
           result = `the course (project_id=${paymentIntent.metadata.project_id}) was not paid for`;
           // nothing further to do if it fails, since when student tries again,
@@ -252,6 +237,8 @@ customer.  So we don't know what to do with this.  Please manually investigate.
           });
         } else if (paymentIntent.metadata.purpose == MEMBERSHIP_CHANGE) {
           result = `the membership change to ${paymentIntent.metadata.membership_class} was not applied`;
+        } else if (paymentIntent.metadata.purpose == VOUCHER_PURCHASE) {
+          result = "the voucher purchase was not completed";
         } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
           const statement_id = parseInt(
             paymentIntent.metadata.purpose.split("-")[1],
@@ -345,21 +332,7 @@ ${await support()}`;
 
     let reason = "add credit to your account";
     try {
-      if (paymentIntent.metadata.purpose == SHOPPING_CART_CHECKOUT) {
-        reason = "purchase items in your shopping cart";
-        // The purpose of this payment was to buy certain items from the store.
-        // We use the credit we just got above to provision each of those items.
-        await shoppingCartCheckout({
-          account_id,
-          payment_intent: paymentIntent.id,
-          amount,
-          credit_id,
-          cart_ids:
-            paymentIntent.metadata.cart_ids != null
-              ? JSON.parse(paymentIntent.metadata.cart_ids)
-              : undefined,
-        });
-      } else if (paymentIntent.metadata.purpose == STUDENT_PAY) {
+      if (paymentIntent.metadata.purpose == STUDENT_PAY) {
         reason = `pay for a course (project_id=${paymentIntent.metadata.project_id})`;
         // Student pay for a course
         await studentPay({
@@ -384,6 +357,42 @@ ${await support()}`;
           allowDowngrade: paymentIntent.metadata.allow_downgrade === "true",
           storeVisibleOnly: true,
         });
+      } else if (paymentIntent.metadata.purpose == VOUCHER_PURCHASE) {
+        const numVouchers = parseInt(
+          paymentIntent.metadata.voucher_count ?? "",
+        );
+        const amount = parseFloat(
+          paymentIntent.metadata.voucher_amount ?? "",
+        );
+        const title = paymentIntent.metadata.voucher_title ?? "CoCalc voucher";
+        if (!Number.isFinite(numVouchers) || numVouchers <= 0) {
+          throw Error("invalid voucher count");
+        }
+        if (!Number.isFinite(amount) || amount <= 0) {
+          throw Error("invalid voucher amount");
+        }
+        reason = "purchase vouchers";
+        const client = await getTransactionClient();
+        try {
+          await createVouchers({
+            account_id,
+            client,
+            whenPay: "now",
+            numVouchers,
+            amount,
+            title,
+            active: null,
+            expire: null,
+            cancelBy: null,
+            credit_id,
+          });
+          await client.query("COMMIT");
+        } catch (err) {
+          await client.query("ROLLBACK");
+          throw err;
+        } finally {
+          client.release();
+        }
       } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
         const statement_id = parseInt(
           paymentIntent.metadata.purpose.split("-")[1],

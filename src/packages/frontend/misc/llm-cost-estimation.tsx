@@ -1,8 +1,8 @@
 import { Button, Popover, Progress, Space } from "antd";
 import { BaseType } from "antd/es/typography/Base";
 
-import { CSS } from "@cocalc/frontend/app-framework";
-import { A, HelpIcon, Paragraph, Text } from "@cocalc/frontend/components";
+import { CSS, redux } from "@cocalc/frontend/app-framework";
+import { HelpIcon, Paragraph, Text } from "@cocalc/frontend/components";
 import type {
   LLMUsageStatus as LLMUsageStatusResponse,
   LLMUsageWindowStatus,
@@ -89,6 +89,11 @@ export function calcMinMaxEstimation(
 }
 
 export function LLMUsageHelpContent() {
+  const openStore = () => {
+    redux.getActions("page").set_active_tab("account");
+    redux.getActions("account").set_active_tab("store");
+    redux.getActions("account").push_state("/store");
+  };
   return (
     <>
       <Paragraph>
@@ -97,7 +102,10 @@ export function LLMUsageHelpContent() {
       </Paragraph>
       <Paragraph>
         Upgrade your membership for higher limits.{" "}
-        <A href="/store/membership">View membership tiers</A>.
+        <Button type="link" onClick={openStore} style={{ padding: 0 }}>
+          View membership tiers
+        </Button>
+        .
       </Paragraph>
     </>
   );

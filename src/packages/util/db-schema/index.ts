@@ -68,7 +68,6 @@ import "./server-settings";
 import "./self-host-commands";
 import "./self-host-connector-tokens";
 import "./self-host-connectors";
-import "./shopping-cart-items";
 import "./site-settings";
 import "./site-whitelabeling";
 import "./software-licenses";
