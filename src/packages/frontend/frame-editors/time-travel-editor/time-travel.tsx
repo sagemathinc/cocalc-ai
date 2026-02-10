@@ -80,6 +80,7 @@ export function TimeTravel(props: Props) {
     !!props.desc?.get("changesMode"),
   );
   const [showCommitRange, setShowCommitRange] = useState<boolean>(false);
+  const [gitChangedFiles, setGitChangedFiles] = useState<string[]>([]);
   const [version, setVersion] = useState<number | string | undefined>(
     props.desc?.get("version"),
   );
@@ -253,6 +254,15 @@ export function TimeTravel(props: Props) {
     versions,
     gitVersions,
   ]);
+
+  useAsyncEffect(async () => {
+    if (!gitMode || changesMode || version == null) {
+      setGitChangedFiles([]);
+      return;
+    }
+    const files = await props.actions.gitChangedFiles(version);
+    setGitChangedFiles(files);
+  }, [props.actions, gitMode, changesMode, version]);
 
   const renderVersion = () => {
     const v = gitMode ? gitVersions : versions;
@@ -615,6 +625,7 @@ export function TimeTravel(props: Props) {
           {renderExport()}
         </Space.Compact>
         {(versions?.size ?? 0) > 0 && renderRevisionMeta()}
+        {renderGitChangedFiles()}
       </div>
     );
   };
@@ -653,6 +664,40 @@ export function TimeTravel(props: Props) {
       <>
         {versionMeta} · {authorMeta}
       </>
+    );
+  };
+
+  const renderGitChangedFiles = () => {
+    if (!gitMode || changesMode || version == null || docpath == null) {
+      return null;
+    }
+    const commit = props.actions.gitCommit(version);
+    if (commit == null) {
+      return null;
+    }
+    const files = gitChangedFiles.filter((x) => x !== docpath);
+    if (files.length === 0) {
+      return null;
+    }
+    return (
+      <div style={{ marginTop: "3px", fontSize: "12px", color: "#666" }}>
+        Also changed:{" "}
+        {files.map((file, i) => (
+          <span key={file}>
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() =>
+                void props.actions.openGitCommitFile(file, commit.hash)
+              }
+            >
+              {file}
+            </Button>
+            {i < files.length - 1 ? ", " : ""}
+          </span>
+        ))}
+      </div>
     );
   };
 

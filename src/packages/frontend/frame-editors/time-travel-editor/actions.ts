@@ -19,7 +19,7 @@ the old viewer, which is a convenient fallback if somebody needs it for some rea
 import { debounce } from "lodash";
 import { List } from "immutable";
 import { once } from "@cocalc/util/async-utils";
-import { filename_extension, path_split } from "@cocalc/util/misc";
+import { filename_extension, history_path, path_split } from "@cocalc/util/misc";
 import { SyncDoc } from "@cocalc/sync/editor/generic/sync-doc";
 import { exec } from "@cocalc/frontend/frame-editors/generic/client";
 import { ViewDocument } from "./view-document";
@@ -94,6 +94,8 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   private gitCommits: GitCommitEntry[] = [];
   private gitCommitByVersion: { [version: number]: GitCommitEntry } = {};
   private gitCommitByHash: { [hash: string]: GitCommitEntry } = {};
+  private gitFilesByHash: { [hash: string]: string[] } = {};
+  private gitProjectPathPrefix?: string;
 
   _init2(): void {
     const { head, tail } = path_split(this.path);
@@ -381,6 +383,20 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     );
   };
 
+  private gitRepoCommand = async (args: string[]) => {
+    const { head } = path_split(this.docpath);
+    return await exec(
+      {
+        command: "git",
+        args,
+        path: head,
+        project_id: this.project_id,
+        err_on_exit: true,
+      },
+      this.path,
+    );
+  };
+
   private gitEntryForVersion = (
     version: number | string | undefined,
   ): GitCommitEntry | undefined => {
@@ -394,6 +410,8 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     this.gitCommits = [];
     this.gitCommitByVersion = {};
     this.gitCommitByHash = {};
+    this.gitFilesByHash = {};
+    this.gitProjectPathPrefix = undefined;
   };
 
   updateGitVersions = async () => {
@@ -573,6 +591,116 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     }
     commits.sort((a, b) => a.timestampMs - b.timestampMs);
     return commits;
+  };
+
+  gitVersionForHash = (hash: string | undefined): number | undefined => {
+    if (hash == null || hash === "") return;
+    return this.gitCommitByHash[hash]?.version;
+  };
+
+  private async gitProjectPrefix(): Promise<string> {
+    if (this.gitProjectPathPrefix != null) {
+      return this.gitProjectPathPrefix;
+    }
+    try {
+      const { head, tail } = path_split(this.docpath);
+      const { stdout } = await exec(
+        {
+          command: "git",
+          args: ["ls-files", "--full-name", "--", tail],
+          path: head,
+          project_id: this.project_id,
+          err_on_exit: true,
+        },
+        this.path,
+      );
+      const repoRelativeCurrent = (stdout.split("\n")[0] ?? "").trim();
+      if (
+        repoRelativeCurrent !== "" &&
+        this.docpath.endsWith(repoRelativeCurrent)
+      ) {
+        this.gitProjectPathPrefix = this.docpath.slice(
+          0,
+          this.docpath.length - repoRelativeCurrent.length,
+        );
+      } else {
+        this.gitProjectPathPrefix = "";
+      }
+    } catch (_err) {
+      this.gitProjectPathPrefix = "";
+    }
+    return this.gitProjectPathPrefix;
+  }
+
+  gitChangedFiles = async (
+    version: number | string | undefined,
+  ): Promise<string[]> => {
+    const entry = this.gitEntryForVersion(version);
+    if (entry == null) {
+      return [];
+    }
+    const cached = this.gitFilesByHash[entry.hash];
+    if (cached != null) {
+      return cached;
+    }
+    try {
+      const { stdout } = await this.gitRepoCommand([
+        "show",
+        "--name-only",
+        "--pretty=format:",
+        "--no-color",
+        entry.hash,
+      ]);
+      const prefix = await this.gitProjectPrefix();
+      const files = stdout
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .map((x) => (prefix ? `${prefix}${x}` : x))
+        .map((x) => x.replace(/^\.\/+/, ""));
+      const unique = Array.from(new Set(files));
+      this.gitFilesByHash[entry.hash] = unique;
+      return unique;
+    } catch (_err) {
+      this.gitFilesByHash[entry.hash] = [];
+      return [];
+    }
+  };
+
+  openGitCommitFile = async (
+    path: string,
+    hash: string,
+  ): Promise<void> => {
+    const projectActions = this.redux.getProjectActions(this.project_id);
+    const ttPath = history_path(path);
+    await projectActions.open_file({ path: ttPath, foreground: true });
+    await until(
+      async () => {
+        const target: any = this.redux.getEditorActions(this.project_id, ttPath);
+        if (target == null) {
+          return false;
+        }
+        if (typeof target.updateGitVersions === "function") {
+          await target.updateGitVersions();
+        }
+        const targetVersion =
+          typeof target.gitVersionForHash === "function"
+            ? target.gitVersionForHash(hash)
+            : undefined;
+        const id = typeof target._active_id === "function" ? target._active_id() : undefined;
+        if (targetVersion == null || id == null) {
+          return false;
+        }
+        target.set_frame_tree({
+          id,
+          gitMode: true,
+          changesMode: false,
+          version: targetVersion,
+        });
+        return true;
+      },
+      { timeout: 7000, start: 100, max: 400, min: 50 },
+    );
   };
 
   gitDoc = async (version: number): Promise<ViewDocument | undefined> => {
