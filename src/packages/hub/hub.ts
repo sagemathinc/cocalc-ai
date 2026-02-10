@@ -66,6 +66,7 @@ import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { createProjectHostProxyHandlers } from "./proxy/project-host";
 import { maybeStartEmbeddedProjectHost } from "./servers/project-host";
 import { ensureSelfHostReverseTunnelsOnStartup } from "@cocalc/server/self-host/ssh-target";
+import { assertLocalBindOrInsecure } from "@cocalc/backend/network/policy";
 
 // Logger tagged with 'hub' for this file.
 const logger = getLogger("hub");
@@ -127,6 +128,11 @@ async function maybeInitOnPremTls(): Promise<void> {
 
 async function startServer(): Promise<void> {
   logger.info("start_server");
+
+  assertLocalBindOrInsecure({
+    bindHost: program.hostname,
+    serviceName: "hub http listener",
+  });
 
   logger.info(`basePath='${basePath}'`);
   logger.info("database: using env configuration");
