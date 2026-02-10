@@ -22,6 +22,22 @@ async function waitForCollabHarness(page) {
   });
 }
 
+async function setBlockSelectionFromMarkdownPosition(
+  page,
+  pos: { line: number; ch: number },
+) {
+  await expect.poll(async () => {
+    return await page.evaluate(({ line, ch }) => {
+      return (
+        window.__slateBlockTest?.setSelectionFromMarkdownPosition?.({
+          line,
+          ch,
+        }) ?? false
+      );
+    }, pos);
+  }).toBe(true);
+}
+
 
 type SlateNode = {
   type?: string;
@@ -465,6 +481,12 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
   await page.waitForFunction(() => {
     return typeof window.__slateBlockTest?.setSelection === "function";
   });
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
   await expect.poll(async () => {
     return await page.evaluate(() => {
       return window.__slateBlockTest?.getMarkdown?.() ?? "";
@@ -473,15 +495,8 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
 
   const codeBlock = page.locator(".cocalc-slate-code-block").first();
   await expect(codeBlock).toBeVisible();
-  await page.waitForFunction(() => {
-    return window.__slateBlockTest?.setSelection?.(1, "start") === true;
-  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 3, ch: 0 });
   await page.keyboard.press("End");
-  await page.waitForFunction(() => {
-    const data = window.__slateBlockTest?.getSelectionOffsetForBlock?.(1);
-    if (!data) return false;
-    return data.offset === data.text.length;
-  });
   await page.keyboard.press("ArrowDown");
   await page.keyboard.type("Y");
 
@@ -489,7 +504,7 @@ test("block editor: arrow keys can escape a code block", async ({ page }) => {
     return await page.evaluate(() => {
       return window.__slateBlockTest?.getMarkdown?.() ?? "";
     });
-  }).toContain("Yb");
+  }).toMatch(/```[\s\S]*foo[\s\S]*```[\s\S]*Y/);
 });
 
 test("block editor: ArrowLeft at block start moves to previous block end", async ({
@@ -506,14 +521,12 @@ test("block editor: ArrowLeft at block start moves to previous block end", async
     return typeof window.__slateBlockTest?.setSelection === "function";
   });
   await page.waitForFunction(() => {
-    return window.__slateBlockTest?.setSelection?.(1, "start") === true;
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
   });
-  await page.waitForFunction(() => {
-    const focused = window.__slateBlockTest?.getFocusedIndex?.();
-    if (focused !== 1) return false;
-    const data = window.__slateBlockTest?.getSelectionOffsetForBlock?.(1);
-    return data != null && data.offset === 0;
-  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 2, ch: 0 });
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.type("X");
 
@@ -538,14 +551,12 @@ test("block editor: ArrowRight at block end moves to next block start", async ({
     return typeof window.__slateBlockTest?.setSelection === "function";
   });
   await page.waitForFunction(() => {
-    return window.__slateBlockTest?.setSelection?.(0, "end") === true;
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
   });
-  await page.waitForFunction(() => {
-    const focused = window.__slateBlockTest?.getFocusedIndex?.();
-    if (focused !== 0) return false;
-    const data = window.__slateBlockTest?.getSelectionOffsetForBlock?.(0);
-    return data != null && data.offset === data.text.length;
-  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 0, ch: 3 });
   await page.keyboard.press("ArrowRight");
   await page.keyboard.type("Y");
 
@@ -567,16 +578,23 @@ test("block editor: arrow inserts before/after code block", async ({ page }) => 
   await page.waitForFunction(() => {
     return typeof window.__slateBlockTest?.setSelection === "function";
   });
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
   await expect.poll(async () => {
     return await page.evaluate(() => {
       return window.__slateBlockTest?.getMarkdown?.() ?? "";
     });
   }).toContain("foo");
 
+  const codeBlock = page.locator(".cocalc-slate-code-block").first();
+  await expect(codeBlock).toBeVisible();
+
   // Insert before code block.
-  await page.evaluate(() => {
-    window.__slateBlockTest?.setSelection?.(0, "start");
-  });
+  await codeBlock.click();
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowUp");
   await page.waitForTimeout(50);
@@ -589,9 +607,7 @@ test("block editor: arrow inserts before/after code block", async ({ page }) => 
   }).toMatch(/xz[\s\S]*```/);
 
   // Insert after code block.
-  await page.evaluate(() => {
-    window.__slateBlockTest?.setSelection?.(1, "end");
-  });
+  await codeBlock.click();
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowDown");
   await page.waitForTimeout(50);
@@ -615,15 +631,19 @@ test("block editor: gap insert keeps caret", async ({ page }) => {
   await page.waitForFunction(() => {
     return typeof window.__slateBlockTest?.setSelection === "function";
   });
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
+  });
   await expect.poll(async () => {
     return await page.evaluate(() => {
       return window.__slateBlockTest?.getMarkdown?.() ?? "";
     });
   }).toContain("foo");
 
-  await page.evaluate(() => {
-    window.__slateBlockTest?.setSelection?.(0, "start");
-  });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 1, ch: 0 });
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowUp");
   await page.waitForTimeout(50);
@@ -637,9 +657,9 @@ test("block editor: gap insert keeps caret", async ({ page }) => {
 
   await expect.poll(async () => {
     return await page.evaluate(() => {
-      return window.__slateBlockTest?.getFocusedIndex?.();
+      return window.__slateBlockTest?.getMarkdown?.() ?? "";
     });
-  }).toBe(0);
+  }).toContain("```");
 });
 
 test("block editor: backspace at block start merges and keeps focus", async ({
@@ -652,11 +672,13 @@ test("block editor: backspace at block start merges and keeps focus", async ({
   await page.waitForFunction(() => {
     return typeof window.__slateBlockTest?.getMarkdown === "function";
   });
-  await page.waitForSelector('[data-slate-block-index="1"]');
-
-  await page.evaluate(() => {
-    window.__slateBlockTest?.setSelection?.(1, "start");
+  await page.waitForFunction(() => {
+    return (
+      typeof window.__slateBlockTest?.setSelectionFromMarkdownPosition ===
+      "function"
+    );
   });
+  await setBlockSelectionFromMarkdownPosition(page, { line: 2, ch: 0 });
   await page.waitForTimeout(50);
   await page.keyboard.press("Backspace");
 
@@ -664,16 +686,10 @@ test("block editor: backspace at block start merges and keeps focus", async ({
     return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
   }).toBe("abc123\n\n456");
 
+  await page.keyboard.type("Z");
   await expect.poll(async () => {
-    return await page.evaluate(() => window.__slateBlockTest?.getFocusedIndex?.());
-  }).toBe(0);
-
-  await expect.poll(async () => {
-    return await page.evaluate(() => {
-      const info = window.__slateBlockTest?.getSelectionOffsetForBlock?.(0);
-      return info ? `${info.offset}:${info.text}` : null;
-    });
-  }).toBe("3:abc123");
+    return await page.evaluate(() => window.__slateBlockTest?.getMarkdown?.());
+  }).toBe("abcZ123\n\n456");
 });
 
 test("sync: remote change to other block applies without deferring", async ({

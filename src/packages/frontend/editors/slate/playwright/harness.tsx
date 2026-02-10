@@ -49,6 +49,10 @@ declare global {
       getMarkdown: () => string;
       setMarkdown?: (value: string) => void;
       setSelection?: (index: number, position?: "start" | "end") => boolean;
+      setSelectionFromMarkdownPosition?: (pos: {
+        line: number;
+        ch: number;
+      }) => boolean;
       getSelection?: () => { index: number; selection: Range } | null;
       getSelectionForBlock?: (index: number) => { index: number; selection: Range } | null;
       getSelectionOffsetForBlock?: (index: number) => { offset: number; text: string } | null;
@@ -225,6 +229,14 @@ function Harness(): React.JSX.Element {
         },
         getFocusedIndex: () => {
           return controlRef.current?.getFocusedIndex?.() ?? null;
+        },
+        setSelectionFromMarkdownPosition: (pos: {
+          line: number;
+          ch: number;
+        }) => {
+          return (
+            controlRef.current?.setSelectionFromMarkdownPosition?.(pos) ?? false
+          );
         },
       };
       window.__slateBlockTest = api;
