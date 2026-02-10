@@ -253,7 +253,15 @@ async function startBackupConfigInvalidation(client: ConatClient) {
   const hostId = getLocalHostId();
   if (!hostId) return;
   const subject = `project-host.${hostId}.backup.invalidate`;
-  backupConfigInvalidationSub = await client.subscribe(subject);
+  try {
+    backupConfigInvalidationSub = await client.subscribe(subject);
+  } catch (err) {
+    logger.warn("backup config invalidation subscribe failed", {
+      subject,
+      err: String(err),
+    });
+    return;
+  }
   (async () => {
     for await (const _msg of backupConfigInvalidationSub) {
       backupConfigCache.clear();
