@@ -197,12 +197,12 @@ export async function initHostRegistryService() {
             SELECT
               project_id,
               COALESCE(users, '{}'::jsonb) AS users,
-              FLOOR(EXTRACT(EPOCH FROM COALESCE(updated_at, NOW())) * 1000)::bigint AS updated_ms
+              FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS updated_ms
             FROM projects
             WHERE host_id=$1
               AND deleted IS NOT TRUE
-              AND FLOOR(EXTRACT(EPOCH FROM COALESCE(updated_at, NOW())) * 1000)::bigint > $2
-            ORDER BY COALESCE(updated_at, NOW()) ASC
+              AND FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint > $2
+            ORDER BY COALESCE(last_edited, created, to_timestamp(0)) ASC
             LIMIT $3
           `,
           [host_id, since_ms, limit],
@@ -239,7 +239,7 @@ export async function initHostRegistryService() {
             SELECT
               project_id,
               COALESCE(users, '{}'::jsonb) AS users,
-              FLOOR(EXTRACT(EPOCH FROM COALESCE(updated_at, NOW())) * 1000)::bigint AS updated_ms
+              FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS updated_ms
             FROM projects
             WHERE host_id=$1
               AND deleted IS NOT TRUE
@@ -247,7 +247,7 @@ export async function initHostRegistryService() {
                 COALESCE(state ->> 'state', '') IN ('running', 'starting')
                 OR COALESCE(last_edited, to_timestamp(0)) > NOW() - ($2 || ' days')::interval
               )
-            ORDER BY COALESCE(updated_at, NOW()) DESC
+            ORDER BY COALESCE(last_edited, created, to_timestamp(0)) DESC
             LIMIT $3
           `,
           [host_id, `${recent_days}`, limit],
