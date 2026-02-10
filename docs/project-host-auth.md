@@ -26,6 +26,91 @@ In short: the browser gets a short-lived, host-scoped identity token from the ce
 - Project-host: verifies token locally and enforces per-subject authorization.
 - Project-host ACL cache: collaborator/project membership data for hosted projects.
 
+## System Auth Topology
+
+```mermaid
+flowchart LR
+  subgraph Browser["Web Browsers"]
+    B1["Browser UI"]
+  end
+
+  subgraph Hub["Central Hub"]
+    H1["Conat API / auth RPC"]
+    H2["Persist / DB-backed state"]
+    H3["Host Registry / token issuer"]
+  end
+
+  subgraph Host["Project Host"]
+    PH1["Conat Server (socket.io)"]
+    PH2["ACL Cache / subject authz"]
+    PH3["Project Manager / control services"]
+  end
+
+  subgraph Projects["Projects"]
+    P1["Project runtime service(s)"]
+  end
+
+  B1 -->|"Session cookie auth (hub domain)\n+ account authz"| H1
+  H3 -->|"Issue short-lived Ed25519 JWT\n(aud=project-host:<host_id>)"| B1
+  B1 -->|"auth.bearer = host-scoped JWT\n(verified with hub public key)"| PH1
+
+  H3 -->|"Hub->host routed bearer JWT\n(act=hub, short TTL, Ed25519)"| PH1
+  PH1 -->|"Per-subject allow/deny\n(shared policy + local ACL)"| PH2
+  PH2 -->|"Authorization decision"| PH1
+
+  H2 -->|"Collaborator deltas + bounded reconcile\n(host-assigned projects)"| PH2
+  PH3 -->|"Ephemeral project-local bearer token\n(host-generated, local trust)"| P1
+  P1 -->|"auth.bearer project token\n(local conat connect)"| PH1
+```
+
+Notes:
+
+- Browser and hub are on one domain trust boundary; browser and project-host are cross-domain and always token-authenticated.
+- JWTs establish identity (who/which host), while project/resource access is enforced by subject-level ACL checks on project-host.
+- Hub services and host services are split in the diagram to show where authentication happens vs where ACL state originates.
+
+## Trust Boundaries
+
+```mermaid
+flowchart TB
+  subgraph TB1["Trust Boundary A: Browser (untrusted client)"]
+    B["Browser"]
+  end
+
+  subgraph TB2["Trust Boundary B: Central Hub domain"]
+    HAPI["Hub API / session auth"]
+    HAUTH["Hub token issuer\n(Ed25519 private key)"]
+    HDB["Hub DB + collaborator truth"]
+  end
+
+  subgraph TB3["Trust Boundary C: Project-host node/domain"]
+    PH["Project-host conat server"]
+    PACL["Local ACL cache + policy engine"]
+    PM["Project manager services"]
+  end
+
+  subgraph TB4["Trust Boundary D: Project runtime sandbox"]
+    PR["Project process"]
+  end
+
+  B -->|"Hub session cookie + account auth"| HAPI
+  HAUTH -->|"Issue host-scoped JWT\n(aud=project-host:<host_id>, short TTL)"| B
+  B -->|"Cross-domain websocket\nauth.bearer JWT"| PH
+
+  HAUTH -->|"Hub->host routed JWT\n(act=hub, short TTL)"| PH
+  HDB -->|"Collaborator deltas + reconcile snapshot"| PACL
+  PH -->|"Subject authorization checks"| PACL
+  PM -->|"Project local bearer token\n(host-generated, ephemeral)"| PR
+  PR -->|"Local websocket\nauth.bearer project token"| PH
+```
+
+Boundary-crossing summary:
+
+- `Browser -> Hub`: cookie/session auth on hub domain.
+- `Browser -> Project-host`: explicit bearer JWT (never cookie-trust).
+- `Hub -> Project-host`: explicit bearer JWT signed by hub key.
+- `Project runtime -> Project-host`: host-local ephemeral bearer token.
+
 ## High-Level Protocol
 
 ```mermaid
