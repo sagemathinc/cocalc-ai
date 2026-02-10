@@ -475,6 +475,51 @@ Default timing expectation:
 - So practical default target is usually under ~45s once hub<->host
   communication is healthy.
 
+## Project-To-Project Isolation On A Single Project-Host
+
+Threat model:
+
+- Multiple untrusted projects run on one project-host.
+- Each project may run unauthenticated app servers (JupyterLab, VSCode, etc.)
+  behind the project-host proxy.
+- A malicious project must not be able to reach another project's app endpoint
+  directly, even if it can discover host-local published ports.
+
+Defense-in-depth strategy:
+
+1. Application-layer auth boundary at project-host proxy.
+   - Browser access to project apps is authenticated and collaborator-checked by
+     project-host HTTP/WS proxy auth.
+2. Internal host->project hop authentication (implemented).
+   - Project-host now adds a per-project secret header on the upstream
+     proxy hop to the in-project proxy server.
+   - In-project proxy rejects requests/upgrades without that secret.
+   - Result: direct container access to published host ports is denied unless
+     caller has that project's host-local secret.
+3. Conat auth boundary (already in place).
+   - Project sockets and browser sockets are independently authenticated and
+     subject-authorized; this remains separate from app-proxy auth.
+
+Networking hardening plan (next layer):
+
+- Keep project-host external/public listeners localhost-only by default.
+- Use Podman `pasta` (default supported path) as the networking baseline.
+- Limit project container->host reachability to only required services
+  (primarily Conat), not arbitrary host loopback ports.
+- Prevent cross-project lateral movement over host-published app ports,
+  including when ports are discovered.
+- Add explicit manual/automated verification tests for:
+  - project A cannot connect to project B app port,
+  - project can still reach required host control endpoints,
+  - project-host can still proxy to project apps.
+
+Operational status:
+
+- The internal proxy-hop secret check closes the known breakout where one
+  container could directly hit another project's published app port.
+- Networking isolation remains an additional hardening layer to reduce blast
+  radius if any application-layer control regresses in the future.
+
 ## Observability
 
 Track and expose metrics/logs for:
