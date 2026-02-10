@@ -19,6 +19,7 @@ const CHAT_DRAFT_STORE = "chat-composer-drafts-v1";
 const CHAT_DRAFT_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 const MAX_LOCAL_DRAFT_CHARS = 200_000;
 const MAX_SHADOW_ENTRIES = 500;
+const LOCAL_WRITE_DEBOUNCE_MS = 350;
 
 type ShadowState = {
   text: string;
@@ -72,6 +73,10 @@ export function useChatComposerDraft({
 }: UseChatComposerDraftOptions): UseChatComposerDraftResult {
   const [input, setInputState] = useState("");
   const controllerRef = useRef<DraftController | null>(null);
+  const pendingLocalWriteRef = useRef<{
+    timer?: ReturnType<typeof setTimeout>;
+    value: string;
+  }>({ value: "" });
 
   const storageKey = useMemo(
     () => `${project_id}:${path}:${composerDraftKey}`,
@@ -157,6 +162,41 @@ export function useChatComposerDraft({
     };
   }, [adapter, storageKey, debounceMs, localStorageKey]);
 
+  const cancelPendingLocalWrite = useCallback(() => {
+    const pending = pendingLocalWriteRef.current;
+    if (pending.timer != null) {
+      clearTimeout(pending.timer);
+      pending.timer = undefined;
+    }
+  }, []);
+
+  const scheduleLocalWrite = useCallback(
+    (value: string) => {
+      cancelPendingLocalWrite();
+      if (value.trim().length === 0 || value.length > MAX_LOCAL_DRAFT_CHARS) {
+        delete_local_storage(localStorageKey);
+        return;
+      }
+      pendingLocalWriteRef.current.value = value;
+      pendingLocalWriteRef.current.timer = setTimeout(() => {
+        const text = pendingLocalWriteRef.current.value;
+        if (text.trim().length === 0 || text.length > MAX_LOCAL_DRAFT_CHARS) {
+          delete_local_storage(localStorageKey);
+        } else {
+          set_local_storage(localStorageKey, text);
+        }
+        pendingLocalWriteRef.current.timer = undefined;
+      }, LOCAL_WRITE_DEBOUNCE_MS);
+    },
+    [cancelPendingLocalWrite, localStorageKey],
+  );
+
+  useEffect(() => {
+    return () => {
+      cancelPendingLocalWrite();
+    };
+  }, [cancelPendingLocalWrite, localStorageKey]);
+
   const setInput = useCallback((value: string) => {
     const now = Date.now();
     debugChatDraft("setInput", {
@@ -165,14 +205,7 @@ export function useChatComposerDraft({
       sessionTime: now,
     });
     setShadow(storageKey, { text: value, updatedAt: now });
-    if (value.trim().length === 0) {
-      delete_local_storage(localStorageKey);
-    } else if (value.length > MAX_LOCAL_DRAFT_CHARS) {
-      // Avoid unbounded localStorage growth; AKV still stores the full draft.
-      delete_local_storage(localStorageKey);
-    } else {
-      set_local_storage(localStorageKey, value);
-    }
+    scheduleLocalWrite(value);
     const controller = controllerRef.current;
     if (!controller) {
       setInputState(value);
@@ -180,7 +213,7 @@ export function useChatComposerDraft({
     }
     controller.setText(value);
     controller.setComposing(value.trim().length > 0);
-  }, [localStorageKey, storageKey]);
+  }, [scheduleLocalWrite, storageKey]);
 
   const clearInput = useCallback(async () => {
     const now = Date.now();
@@ -189,6 +222,7 @@ export function useChatComposerDraft({
       localStorageKey,
       sessionTime: now,
     });
+    cancelPendingLocalWrite();
     setShadow(storageKey, { text: "", updatedAt: now });
     delete_local_storage(localStorageKey);
     const controller = controllerRef.current;
@@ -221,7 +255,7 @@ export function useChatComposerDraft({
         { ttlMs: CHAT_DRAFT_TTL_MS },
       );
     }
-  }, [adapter, localStorageKey, storageKey]);
+  }, [adapter, cancelPendingLocalWrite, localStorageKey, storageKey]);
 
   const clearComposerDraft = useCallback(
     async (draftKey: number) => {
@@ -235,6 +269,7 @@ export function useChatComposerDraft({
         currentDraftKey: composerDraftKey,
         sessionTime: now,
       });
+      cancelPendingLocalWrite();
       setShadow(key, { text: "", updatedAt: now });
       delete_local_storage(localKey);
       if (!adapter) {
@@ -263,7 +298,7 @@ export function useChatComposerDraft({
         { ttlMs: CHAT_DRAFT_TTL_MS },
       );
     },
-    [adapter, composerDraftKey, path, project_id],
+    [adapter, cancelPendingLocalWrite, composerDraftKey, path, project_id],
   );
 
   return { input, setInput, clearInput, clearComposerDraft };
