@@ -57,6 +57,7 @@ type HistoryEntry = {
 };
 
 const HISTORY_GROUP_MS = 250;
+const CHAT_INPUT_SAVE_DEBOUNCE_MS = 120;
 
 function debugComposerInput(...args: any[]): void {
   if (typeof window === "undefined") return;
@@ -241,7 +242,7 @@ export default function ChatInput({
     <MarkdownInput
       fixedMode={fixedMode}
       autoFocus={autoFocus}
-      saveDebounceMs={0}
+      saveDebounceMs={lite ? 0 : CHAT_INPUT_SAVE_DEBOUNCE_MS}
       onFocus={() => {
         isFocusedRef.current = true;
         onFocus?.();
