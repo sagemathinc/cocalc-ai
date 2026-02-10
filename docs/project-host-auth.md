@@ -257,6 +257,22 @@ Because authorization is ACL-based (not project-list claims inside JWT), revocat
 - No requirement for per-message central introspection (keeps latency low and reduces control-plane dependency).
 - Fast-grant behavior depends on reliable hub -> host collaborator delta delivery.
 
+## Embedded Dev Host Exception
+
+The hub has a dev-only embedded project-host mode (`COCALC_EMBEDDED_PROJECT_HOST=1`).
+That path is intentionally not production-hardened and is now explicitly gated.
+
+Why this is different:
+
+- Project containers connect back to host conat via `host.containers.internal` (podman slirp4netns path), not plain loopback.
+- In current dev wiring, that requires embedded project-host bind host `HOST=0.0.0.0` so container -> host conat works reliably.
+
+Enforcement:
+
+- Embedded mode now fails fast unless `COCALC_ALLOW_INSECURE_HTTP_MODE=true`.
+- This keeps insecure bind behavior opt-in and explicit for local development.
+- Production project-host deployments should not rely on this dev exception.
+
 ## Hub -> Project-Host Routed Control Auth
 
 In addition to browser -> host auth, we also authenticate routed control traffic from the central hub to project-hosts (for example, project control paths that still go through hub routing).
@@ -369,6 +385,31 @@ Recommended layout:
 - project-host adapter in project-host package
 
 Adapters provide environment-specific functions (for example collaborator lookup and host/project metadata access), while subject-policy and cache mechanics are shared.
+
+## HTTP App Proxy Auth (Project Ports)
+
+In addition to Conat websocket auth, direct browser access to project app ports
+(JupyterLab, VSCode, etc.) on project-host is now authenticated at the
+project-host proxy layer.
+
+Flow:
+
+1. Frontend asks hub for a short-lived host-scoped bearer (same JWT family used
+   for browser -> project-host Conat auth).
+2. Frontend app link URL includes that token once as query parameter
+   (`cocalc_project_host_token`) when opening the project-host app URL.
+3. Project-host proxy verifies token signature/audience/expiry, extracts
+   `account_id`, verifies collaborator access against local `projects.users`,
+   then mints a host-local HttpOnly session cookie
+   (`cocalc_project_host_http_session`) and removes the query token from
+   forwarded request path.
+4. Subsequent HTTP and websocket requests for that project rely on the cookie,
+   and are collaborator-checked on each request.
+
+Notes:
+
+- This closes the gap where direct host app URLs could bypass hub HTTP proxy checks.
+- Hub local-proxy paths still perform their own collaborator checks in hub proxy code.
 
 ## Observability
 

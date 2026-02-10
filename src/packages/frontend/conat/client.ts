@@ -46,6 +46,7 @@ import {
   deleteRememberMe,
   setRememberMe,
 } from "@cocalc/frontend/misc/remember-me";
+import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import {
   get as getLroStream,
   waitForCompletion as waitForLroCompletion,
@@ -314,6 +315,39 @@ export class ConatClient extends EventEmitter {
         }
       });
     return await request.then(({ token }) => token);
+  };
+
+  public addProjectHostAuthToUrl = async ({
+    project_id,
+    url,
+  }: {
+    project_id: string;
+    url: string;
+  }): Promise<string> => {
+    if (!url) return url;
+    const routing = this.getProjectRoutingInfo(project_id);
+    if (!routing) return url;
+    // Local proxy path continues to be authenticated by the hub proxy path.
+    if (
+      typeof window !== "undefined" &&
+      routing.address.startsWith(window.location.origin)
+    ) {
+      return url;
+    }
+    const token = await this.getProjectHostToken({
+      host_id: routing.host_id,
+      project_id,
+    });
+    const isAbsolute = /^https?:\/\//i.test(url);
+    const parsed = new URL(
+      url,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost",
+    );
+    parsed.searchParams.set(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM, token);
+    if (isAbsolute) {
+      return parsed.toString();
+    }
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
   };
 
   // Project-host routing + auth design:

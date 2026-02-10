@@ -54,6 +54,7 @@ import {
   assertLocalBindOrInsecure,
   assertSecureUrlOrLocal,
 } from "@cocalc/backend/network/policy";
+import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
 
 const logger = getLogger("project-host:main");
 
@@ -217,12 +218,18 @@ export async function main(
   const persistServer = createPersistServer({ client: conatClient });
 
   logger.info("Proxy HTTP/WS traffic to running project containers.");
+  const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
   attachProjectProxy({
     httpServer,
     app,
-    resolveTarget: (req) => {
+    resolveTarget: async (req, res) => {
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
+      if (res) {
+        await httpProxyAuth.authorizeHttpRequest(req, res, project_id);
+      } else {
+        await httpProxyAuth.authorizeUpgradeRequest(req, project_id);
+      }
       const { http_port } = getProjectPorts(project_id);
       if (!http_port) {
         throw new Error(`no http_port recorded for project ${project_id}`);
