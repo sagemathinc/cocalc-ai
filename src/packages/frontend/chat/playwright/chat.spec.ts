@@ -36,6 +36,12 @@ async function expectHarnessHealthy(page) {
     .toEqual({ bootError: null, rootChildren: 1 });
 }
 
+async function setInputRaw(page, value: string) {
+  await page.evaluate((next) => {
+    window.__chatComposerTest?.setInputRaw?.(next);
+  }, value);
+}
+
 async function typeInCodeMirror(page, text: string) {
   const editor = page.locator(".CodeMirror-code[contenteditable='true']").first();
   await expect(editor).toHaveCount(1);
@@ -226,5 +232,91 @@ test("composer editor mode: follow-up after first send shows Send and clears on 
 
   await page.waitForTimeout(2500);
   await expectComposerInput(page, "");
+  await expectHarnessHealthy(page);
+});
+
+test("composer editor mode: repeated follow-up shift+enter sends always show Send and clear", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__chatComposerTest?.setOscillationEnabled?.(true);
+  });
+
+  await typeInSlate(page, "x");
+  await expectComposerInput(page, "x");
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await page.waitForTimeout(600);
+
+  await typeInSlate(page, "y");
+  await expectComposerInput(page, "y");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
+    })
+    .toBe(false);
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await page.waitForTimeout(600);
+
+  await typeInSlate(page, "z");
+  await expectComposerInput(page, "z");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
+    })
+    .toBe(false);
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSends?.() ?? []);
+    })
+    .toEqual(["x", "y", "z"]);
+  await expectHarnessHealthy(page);
+});
+
+test("composer editor mode: image-markdown-only shift+enter clears on repeated sends", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  const image1 =
+    "![](http://127.0.0.1:30004/blobs/test-image-1?uuid=11111111-1111-4111-8111-111111111111)\n";
+  const image2 =
+    "![](http://127.0.0.1:30004/blobs/test-image-2?uuid=22222222-2222-4222-8222-222222222222)\n";
+
+  await setInputRaw(page, image1);
+  await expectComposerInput(page, image1);
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await setInputRaw(page, image2);
+  await expectComposerInput(page, image2);
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSends?.().length ?? 0);
+    })
+    .toBe(2);
   await expectHarnessHealthy(page);
 });

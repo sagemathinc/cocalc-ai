@@ -29,6 +29,7 @@ export const useLanguageModelSetting = () => null;
 export const useUserDefinedLLM = () => [];
 export const useProjectContext = () => ({ project_id: "project-1", path: "chat-harness.chat" });
 export const useProjectHasInternetAccess = () => true;
+export const lite = false;
 export const webapp_client = {
   server_time: () => Date.now(),
   conat_client: {

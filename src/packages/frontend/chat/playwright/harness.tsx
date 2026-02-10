@@ -11,6 +11,7 @@ declare global {
     __chatComposerTest?: {
       getInput: () => string;
       getSends: () => string[];
+      setInputRaw: (value: string) => void;
       newChat: () => void;
       setOscillationEnabled: (enabled: boolean) => void;
       getSendButtonVisible: () => boolean;
@@ -65,6 +66,9 @@ function InputHarness({ fixedMode = "markdown" }: { fixedMode?: "markdown" | "ed
     window.__chatComposerTest = {
       getInput: () => input,
       getSends: () => sends,
+      setInputRaw: (value: string) => {
+        setInput(value);
+      },
       newChat: () => {
         clearAndAdvanceSession();
         setComposerDraftKey(0);
@@ -191,6 +195,9 @@ function ComposerHarness(): React.JSX.Element {
     window.__chatComposerTest = {
       getInput: () => input,
       getSends: () => sends,
+      setInputRaw: (value: string) => {
+        setInput(value);
+      },
       newChat: () => {
         clearAndAdvanceSession();
         setComposerDraftKey(0);
