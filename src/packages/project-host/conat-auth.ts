@@ -25,6 +25,7 @@ import {
 import { conatPassword } from "@cocalc/backend/data";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
+import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
 
 const authDecisionCache = new TTL<string, boolean>({
   max: 20_000,
@@ -97,6 +98,28 @@ function clearAuthCaches() {
   collaboratorCache.clear();
 }
 
+function getAccountIssuedAtSeconds(user: any): number {
+  const iat = Number(user?.auth_iat_s);
+  if (Number.isFinite(iat) && iat > 0) {
+    return Math.floor(iat);
+  }
+  return 0;
+}
+
+export function isAccountSessionRevoked({
+  account_id,
+  issued_at_s,
+}: {
+  account_id: string;
+  issued_at_s: number;
+}): boolean {
+  const revokedBeforeMs = getAccountRevokedBeforeMs(account_id);
+  if (revokedBeforeMs == null) {
+    return false;
+  }
+  return issued_at_s * 1000 <= revokedBeforeMs;
+}
+
 export function clearProjectHostConatAuthCaches() {
   clearAuthCaches();
 }
@@ -158,7 +181,18 @@ export function createProjectHostConatAuth({
     if (claims.act === "hub") {
       return { hub_id: claims.sub || "hub" };
     }
-    return { account_id: claims.sub } satisfies CoCalcUser;
+    if (
+      isAccountSessionRevoked({
+        account_id: claims.sub,
+        issued_at_s: claims.iat,
+      })
+    ) {
+      throw new Error("session revoked");
+    }
+    return {
+      account_id: claims.sub,
+      auth_iat_s: claims.iat,
+    } satisfies CoCalcUser;
   };
 
   const isAllowed: AllowFunction = async ({ user, subject, type }) => {
@@ -176,6 +210,15 @@ export function createProjectHostConatAuth({
     }
 
     const userId = getCoCalcUserId(user);
+    if (
+      userType === "account" &&
+      isAccountSessionRevoked({
+        account_id: userId,
+        issued_at_s: getAccountIssuedAtSeconds(user),
+      })
+    ) {
+      return false;
+    }
     const cacheKey = `${userType}:${userId}:${type}:${subject}`;
     if (authDecisionCache.has(cacheKey)) {
       return authDecisionCache.get(cacheKey)!;

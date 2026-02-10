@@ -8,6 +8,7 @@ export type CoCalcUser =
       hub_id?: string;
       host_id?: string;
       error?: string;
+      auth_iat_s?: number;
     }
   | {
       account_id?: string;
@@ -15,6 +16,7 @@ export type CoCalcUser =
       hub_id: string;
       host_id?: string;
       error?: string;
+      auth_iat_s?: number;
     }
   | {
       account_id?: string;
@@ -22,6 +24,7 @@ export type CoCalcUser =
       hub_id?: string;
       host_id?: string;
       error?: string;
+      auth_iat_s?: number;
     }
   | {
       account_id?: string;
@@ -29,6 +32,7 @@ export type CoCalcUser =
       hub_id?: string;
       host_id: string;
       error?: string;
+      auth_iat_s?: number;
     }
   | {
       account_id?: string;
@@ -36,6 +40,7 @@ export type CoCalcUser =
       hub_id?: string;
       host_id?: string;
       error: string;
+      auth_iat_s?: number;
     };
 
 export type CoCalcUserType = "account" | "project" | "hub" | "host";

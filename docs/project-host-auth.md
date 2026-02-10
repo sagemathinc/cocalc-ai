@@ -432,6 +432,38 @@ To support fast revocation without forcing short cookie lifetimes:
 This gives long-lived session UX while still allowing fast global invalidation
 across hosts once hub<->host communication is healthy again.
 
+## What Happens When A User Is Banned Or Clicks "Sign Out Everywhere"?
+
+Both actions advance the same per-account revocation watermark in the hub.
+Project-hosts consume that watermark feed and apply it to both HTTP proxy
+sessions and Conat websocket auth.
+
+HTTP app-proxy behavior:
+
+- Existing `cocalc_project_host_http_session` cookies are checked against
+  revocation on every request.
+- If `session.iat <= revoked_before(account_id)`, request is rejected and the
+  session cookie is cleared.
+- Browser links that still have a bootstrap query token are also rejected if
+  the token is revoked by watermark.
+
+Conat websocket behavior:
+
+- New browser->project-host Conat bearer auth is rejected at connect time if
+  `token.iat <= revoked_before(account_id)`.
+- Existing connected Conat sessions are denied on subsequent pub/sub checks
+  once the watermark is known.
+- Project-host also runs an active disconnect sweep and force-kicks revoked
+  account sockets (`COCALC_PROJECT_HOST_CONAT_REVOKE_SWEEP_MS`, default 30s).
+
+Default timing expectation:
+
+- Revocation reaches host: driven by host-status sync loop (default 15s retry).
+- Active Conat kick: within one sweep period after host receives revocation
+  (default <= 30s).
+- So practical default target is usually under ~45s once hub<->host
+  communication is healthy.
+
 ## Observability
 
 Track and expose metrics/logs for:

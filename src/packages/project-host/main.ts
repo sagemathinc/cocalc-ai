@@ -48,6 +48,7 @@ import { startOnPremTunnel } from "./onprem-tunnel";
 import { startDataPermissionHardener } from "./data-permissions";
 import { resolveProjectHostId } from "./host-id";
 import { createProjectHostConatAuth } from "./conat-auth";
+import { startConatRevocationKickLoop } from "./conat-revocation-kick";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import {
@@ -192,6 +193,9 @@ export async function main(
     conat: () => conatClient,
     getLogger,
   });
+  const stopConatRevocationKickLoop = startConatRevocationKickLoop({
+    client: conatClient,
+  });
 
   initChangefeeds({ client: conatClient });
   await initHubApi({ client: conatClient });
@@ -296,6 +300,7 @@ export async function main(
     stopMasterRegistration?.();
     stopReconciler?.();
     stopDataPermissionHardener?.();
+    stopConatRevocationKickLoop?.();
     stopCodexSubscriptionCacheGc?.();
     stopCopyWorker?.();
     stopOnPremTunnel?.();
