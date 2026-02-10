@@ -3,7 +3,7 @@ import { data } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { buildPodmanCommand, podman } from "@cocalc/backend/podman";
 import { spawn } from "node:child_process";
-import { readFile, rm, writeFile } from "fs/promises";
+import { mkdir, readFile, rm, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import pullImage from "./pull-image";
 import { shiftProgress } from "@cocalc/conat/lro/progress";
@@ -23,6 +23,9 @@ export const IMAGE_CACHE =
       "runner",
     "image-cache",
   );
+
+const IMAGE_CACHE_METADATA =
+  process.env.COCALC_IMAGE_CACHE_METADATA ?? join(data, "cache", "images-meta");
 
 type ProgressFunction = (opts: { progress: number; desc: string }) => void;
 
@@ -47,7 +50,11 @@ function inspectFile(image) {
   //     E.g., .foo.json cna't be the name of an image, because image names
   //      can't start with separate characters and '.' is one -- see
   //      https://stackoverflow.com/questions/43091075/docker-restrictions-regarding-naming-image
-  return join(IMAGE_CACHE, dirname(image), "." + basename(image) + ".json");
+  return join(
+    IMAGE_CACHE_METADATA,
+    dirname(image),
+    "." + basename(image) + ".json",
+  );
 }
 
 // this should error if the image isn't available and extracted.  I.e., it should always
@@ -182,7 +189,9 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
     // success -- write out "podman image inspect" in json format to:
     //   (1) signal success, and (2) it is useful for getting information about
     // the image (environment, sha256, etc.), without having to download it again.
-    await writeFile(inspectFile(image), inspect);
+    const inspectPath = inspectFile(image);
+    await mkdir(dirname(inspectPath), { recursive: true });
+    await writeFile(inspectPath, inspect);
     // remove the image to save space, in case it isn't used by
     // anything else.  we will not need it again, since we already
     // have a copy of it.
