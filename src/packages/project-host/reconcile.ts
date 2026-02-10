@@ -58,6 +58,7 @@ export async function getContainerStates(): Promise<
     ]);
     const child = spawn(spec.command, spec.args, {
       env: spec.env,
+      cwd: spec.cwd,
     });
     let stdout = "";
     let stderr = "";

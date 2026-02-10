@@ -146,6 +146,7 @@ export async function sandboxExec({
         spec.args,
         {
           env: spec.env,
+          cwd: spec.cwd,
           timeout: timeoutMs,
           maxBuffer: 10 * 1024 * 1024,
           killSignal: "SIGKILL",

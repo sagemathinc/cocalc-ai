@@ -131,7 +131,10 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
       ];
       logger.debug(`extracting ${image}...`);
       const spec = buildPodmanCommand(args);
-      const child = spawn(spec.command, spec.args, { env: spec.env });
+      const child = spawn(spec.command, spec.args, {
+        env: spec.env,
+        cwd: spec.cwd,
+      });
       await rsyncProgressReporter({
         child,
         progress: ({ progress, speed, eta }) => {

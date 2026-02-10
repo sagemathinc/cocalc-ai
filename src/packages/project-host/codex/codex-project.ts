@@ -107,7 +107,7 @@ async function getOptionalCertMounts(): Promise<{
 async function podman(args: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const spec = buildPodmanCommand(args);
-    execFile(spec.command, spec.args, { env: spec.env }, (err) => {
+    execFile(spec.command, spec.args, { env: spec.env, cwd: spec.cwd }, (err) => {
       if (err) reject(err);
       else resolve();
     });
@@ -450,6 +450,7 @@ export async function spawnCodexInProjectContainer({
   const execSpec = buildPodmanCommand(execArgs);
   const proc = spawn(execSpec.command, execSpec.args, {
     env: execSpec.env,
+    cwd: execSpec.cwd,
     stdio: ["pipe", "pipe", "pipe"],
   });
   proc.on("exit", async () => {

@@ -64,7 +64,7 @@ export default async function podmanPullWithProgressPTY({
     name: "xterm",
     cols,
     rows,
-    cwd: process.cwd(),
+    cwd: spec.cwd ?? process.cwd(),
     env: childEnv,
   });
 

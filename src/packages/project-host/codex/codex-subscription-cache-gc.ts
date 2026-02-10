@@ -35,7 +35,7 @@ function execPodman(args: string[]): Promise<string> {
     execFile(
       spec.command,
       spec.args,
-      { encoding: "utf8", env: spec.env },
+      { encoding: "utf8", env: spec.env, cwd: spec.cwd },
       (err, stdout) => {
       if (err) reject(err);
       else resolve(stdout ?? "");

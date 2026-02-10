@@ -30,11 +30,13 @@ export default async function rsyncProgress({
   const args1: string[] = [];
   let command;
   let env: NodeJS.ProcessEnv | undefined;
+  let cwd: string | undefined;
   if (name) {
     const containerArgs = ["exec", name, "rsync", ...PROGRESS_ARGS, ...args];
     const spec = buildPodmanCommand(containerArgs);
     command = spec.command;
     env = spec.env;
+    cwd = spec.cwd;
     args1.push(...spec.args);
   } else {
     command = "rsync";
@@ -44,7 +46,7 @@ export default async function rsyncProgress({
     "rsyncProgress:",
     `"${command} ${args1.join(" ")}"`,
   );
-  await rsyncProgressRunner({ command, args: args1, progress, env });
+  await rsyncProgressRunner({ command, args: args1, progress, env, cwd });
 }
 
 // we also use this for other commands that have the exact rsync output when they run...
@@ -53,14 +55,16 @@ export async function rsyncProgressRunner({
   args,
   progress,
   env,
+  cwd,
 }: {
   command: string;
   args: string[];
   progress: (event) => void;
   env?: NodeJS.ProcessEnv;
+  cwd?: string;
 }) {
   logger.debug(`${command} ${args.join(" ")}`);
-  const child = spawn(command, args, { env });
+  const child = spawn(command, args, { env, cwd });
   await rsyncProgressReporter({ child, progress });
 }
 
