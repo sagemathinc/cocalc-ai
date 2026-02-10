@@ -10,7 +10,6 @@ import Whiteboard from "@cocalc/frontend/frame-editors/whiteboard-editor/time-tr
 import { HistoryViewer as JupyterHistoryViewer } from "@cocalc/frontend/jupyter/history-viewer";
 import type { Document } from "@cocalc/sync/editor/generic/types";
 import { TextDocument } from "./document";
-import { isObjectDoc } from "./view-document";
 
 export const HAS_SPECIAL_VIEWER = new Set([
   "tasks",
@@ -48,7 +47,7 @@ export function Viewer({
       <TextDocument
         value={() => doc()?.to_str() ?? "unknown version"}
         id={id}
-        path={isObjectDoc(path) ? "a.js" : path}
+        path={path}
         project_id={project_id}
         font_size={font_size}
         editor_settings={editor_settings}

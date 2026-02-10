@@ -118,6 +118,15 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
   useEffect(cm_update_font_size, [props.font_size]);
 
   useEffect(() => {
+    if (cmRef.current == null || props.value == null) return;
+    const value =
+      typeof props.value == "function" ? props.value() ?? "" : props.value;
+    if (cmRef.current.getValue() !== value) {
+      cmRef.current.setValue(value);
+    }
+  }, [props.value]);
+
+  useEffect(() => {
     if (cmRef.current != null) {
       cmRef.current.setOption("readOnly", props.read_only);
     }
@@ -290,12 +299,18 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     if (cm == null) return;
     (cm as any)._actions = editor_actions();
 
-    if (!has_doc(props.project_id, props.path)) {
-      // save it to cache so can be used by other components/editors
-      set_doc(props.project_id, props.path, cm);
+    if (props.value == null) {
+      if (!has_doc(props.project_id, props.path)) {
+        // save it to cache so can be used by other components/editors
+        set_doc(props.project_id, props.path, cm);
+      } else {
+        // has it already, so use that.
+        cm.swapDoc(get_linked_doc(props.project_id, props.path));
+      }
     } else {
-      // has it already, so use that.
-      cm.swapDoc(get_linked_doc(props.project_id, props.path));
+      const value =
+        typeof props.value == "function" ? props.value() ?? "" : props.value;
+      cm.setValue(value);
     }
 
     const throttled_save_editor_state = throttle(save_editor_state, 150);
