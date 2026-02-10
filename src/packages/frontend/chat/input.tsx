@@ -4,8 +4,8 @@
  */
 
 // Chat draft text is private in AKV via the shared draft controller.
-// For main composer input (date===0), composing presence is published with
-// syncdoc cursors, so it is ephemeral and doesn't spam chat rows.
+// Composer presence (date<=0) is published with syncdoc cursors, so it is
+// ephemeral and doesn't spam chat rows.
 
 import {
   CSSProperties,
@@ -138,8 +138,10 @@ export default function ChatInput({
   const setComposingPresence = useCallback(
     (value: string): void => {
       if (!syncdb) return;
+      // In lite mode there is only one user, so cross-user presence is useless.
+      if (lite) return;
       const composing = value.trim().length > 0;
-      if (!lite && date === 0) {
+      if (date <= 0) {
         syncdb.set_cursor_locs([{ chat_composing: composing }]);
         return;
       }
@@ -170,7 +172,8 @@ export default function ChatInput({
 
   const publishNotComposing = () => {
     if (!syncdb) return;
-    if (!lite && date === 0) {
+    if (lite) return;
+    if (date <= 0) {
       syncdb.set_cursor_locs([{ chat_composing: false }]);
       return;
     }
