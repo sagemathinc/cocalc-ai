@@ -311,7 +311,16 @@ export function TimeTravel(props: Props) {
         if (commit == null) return null;
         return (
           <span style={{ whiteSpace: "nowrap" }}>
-            <b>{commit.subject}</b> · <code>{commit.shortHash}</code> ·{" "}
+            <b>{commit.subject}</b> ·{" "}
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() => void copyHash(commit.hash)}
+            >
+              {commit.shortHash}
+            </Button>{" "}
+            ·{" "}
             {commit.authorName} ·{" "}
             <TimeAgo
               date={new Date(commit.timestampMs)}
