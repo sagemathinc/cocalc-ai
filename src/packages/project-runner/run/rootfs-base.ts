@@ -1,7 +1,7 @@
 import { basename, dirname, join } from "node:path";
 import { data } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
-import { executeCode } from "@cocalc/backend/execute-code";
+import { buildPodmanCommand, podman } from "@cocalc/backend/podman";
 import { spawn } from "node:child_process";
 import { readFile, rm, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
@@ -99,12 +99,13 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
     }
 
     reportProgress({ progress: 55, desc: `inspecting ${image}...` });
-    const { stdout: inspect } = await executeCode({
-      err_on_exit: true,
-      verbose: true,
-      command: "podman",
-      args: ["image", "inspect", image, "--format", "{{json .}}"],
-    });
+    const { stdout: inspect } = await podman([
+      "image",
+      "inspect",
+      image,
+      "--format",
+      "{{json .}}",
+    ]);
 
     reportProgress({ progress: 60, desc: `extracting ${image}...` });
 
@@ -129,7 +130,8 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
 `,
       ];
       logger.debug(`extracting ${image}...`);
-      const child = spawn("podman", args);
+      const spec = buildPodmanCommand(args);
+      const child = spawn(spec.command, spec.args, { env: spec.env });
       await rsyncProgressReporter({
         child,
         progress: ({ progress, speed, eta }) => {
@@ -160,7 +162,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
           recursive: true,
           maxRetries: 3,
         });
-        await executeCode({ command: "podman", args: ["image", "rm", image] });
+        await podman(["image", "rm", image]);
       } catch {}
       reportProgress({ progress: 100, desc: `extracting ${image} failed` });
       throw err;
@@ -172,7 +174,7 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
     // remove the image to save space, in case it isn't used by
     // anything else.  we will not need it again, since we already
     // have a copy of it.
-    await executeCode({ command: "podman", args: ["image", "rm", image] });
+    await podman(["image", "rm", image]);
     reportProgress({ progress: 100, desc: `pulled and extracted ${image}` });
     return baseImagePath;
   } finally {

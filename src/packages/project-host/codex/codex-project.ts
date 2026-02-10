@@ -10,7 +10,7 @@ import { which } from "@cocalc/backend/which";
 import { localPath } from "@cocalc/project-runner/run/filesystem";
 import { getImageNamePath, mount as mountRootFs, unmount } from "@cocalc/project-runner/run/rootfs";
 import { networkArgument } from "@cocalc/project-runner/run/podman";
-import { mountArg } from "@cocalc/backend/podman";
+import { buildPodmanCommand, mountArg } from "@cocalc/backend/podman";
 import { getEnvironment } from "@cocalc/project-runner/run/env";
 import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
 import { getProject } from "../sqlite/projects";
@@ -106,7 +106,8 @@ async function getOptionalCertMounts(): Promise<{
 
 async function podman(args: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    execFile("podman", args, (err) => {
+    const spec = buildPodmanCommand(args);
+    execFile(spec.command, spec.args, { env: spec.env }, (err) => {
       if (err) reject(err);
       else resolve();
     });
@@ -446,7 +447,9 @@ export async function spawnCodexInProjectContainer({
   }
   execArgs.push(info.name, info.codexPath, ...codexArgs);
   logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
-  const proc = spawn("podman", execArgs, {
+  const execSpec = buildPodmanCommand(execArgs);
+  const proc = spawn(execSpec.command, execSpec.args, {
+    env: execSpec.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
   proc.on("exit", async () => {
@@ -460,8 +463,8 @@ export async function spawnCodexInProjectContainer({
   });
   return {
     proc,
-    cmd: "podman",
-    args: execArgs,
+    cmd: execSpec.command,
+    args: execSpec.args,
     cwd,
     authRuntime,
     containerName: info.name,

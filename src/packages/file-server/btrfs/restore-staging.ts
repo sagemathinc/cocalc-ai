@@ -5,6 +5,7 @@ import { readdir, rm, stat, writeFile } from "node:fs/promises";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { isBtrfsSubvolume } from "@cocalc/file-server/btrfs/subvolume";
+import { applyProjectAccessAcl } from "@cocalc/file-server/btrfs/access";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   type RestoreMode,
@@ -54,6 +55,7 @@ async function ensureStagingRoot(stagingRoot: string) {
       args: [`${owner.uid}:${owner.gid}`, stagingRoot],
     }).catch(() => {});
   }
+  await applyProjectAccessAcl(stagingRoot);
 }
 
 async function isMarkerFresh(markerPath: string): Promise<boolean> {
@@ -195,6 +197,7 @@ export async function ensureRestoreStaging(
       args: [`${owner.uid}:${owner.gid}`, stagingPath],
     }).catch(() => {});
   }
+  await applyProjectAccessAcl(stagingPath);
   logger.info("restore staging ready", { project_id });
 }
 
@@ -211,6 +214,7 @@ export async function finalizeRestoreStaging(
   const homeExists = await exists(home);
   if (homeExists) {
     await ensureHomeSubvolume(home);
+    await applyProjectAccessAcl(home);
     const oldPath = `${home}.restore_old.${Date.now()}`;
     await sudo({ command: "mv", args: [home, oldPath] });
     await sudo({ command: "mv", args: [stagingPath, home] });

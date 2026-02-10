@@ -11,6 +11,7 @@ import { SubvolumeRustic } from "./subvolume-rustic";
 import { SubvolumeSnapshots } from "./subvolume-snapshots";
 import { SubvolumeQuota } from "./subvolume-quota";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import { applyProjectAccessAcl } from "./access";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { btrfs, sudo } from "./util";
 
@@ -61,6 +62,7 @@ export class Subvolume {
       });
       await this.chown(this.path);
     }
+    await applyProjectAccessAcl(this.path);
     await this.ensureQgroup();
     await this.ensureSnapshotsDir();
   };

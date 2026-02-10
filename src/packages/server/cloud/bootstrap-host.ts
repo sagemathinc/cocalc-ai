@@ -219,6 +219,8 @@ export type BootstrapScripts = {
   internalUrl: string;
   sshServer: string;
   sshUser: string;
+  hostUser: string;
+  runnerUser: string;
   hasGpu: boolean;
   imageSizeGb: string;
   dataDiskDevices: string;
@@ -277,6 +279,12 @@ export async function buildBootstrapScripts(
   const sshUser = isSelfHostDirect
     ? "\${BOOTSTRAP_USER}"
     : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+  const hostUser = sshUser;
+  const runnerUser =
+    runtime?.metadata?.runner_user ??
+    machine.metadata?.runner_user ??
+    process.env.COCALC_PROJECT_RUNNER_USER ??
+    "cocalc-runner";
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
     isSelfHost && (!rawSelfHostMode || rawSelfHostMode === "local")
@@ -462,6 +470,9 @@ export async function buildBootstrapScripts(
     `PROJECT_HOST_INTERNAL_URL=${internalUrl}`,
     `PROJECT_HOST_SSH_SERVER=${sshServer}`,
     `PROJECT_RUNNER_NAME=0`,
+    `COCALC_PROJECT_HOST_USER=${hostUser}`,
+    `COCALC_PROJECT_RUNNER_USER=${runnerUser}`,
+    `COCALC_PODMAN_RUN_AS_USER=${runnerUser}`,
     `COCALC_FILE_SERVER_MOUNTPOINT=/btrfs`,
     `DATA=${dataDir}`,
     `COCALC_DATA=${dataDir}`,
@@ -533,6 +544,8 @@ export async function buildBootstrapScripts(
     internalUrl,
     sshServer,
     sshUser,
+    hostUser,
+    runnerUser,
     hasGpu,
     imageSizeGb,
     dataDiskDevices,
@@ -607,6 +620,7 @@ fi
     "passt",
     "catatonit",
     "fuse-overlayfs",
+    "acl",
     "curl",
     "xz-utils",
     "rsync",
@@ -618,7 +632,7 @@ fi
   const envLinesJson = JSON.stringify(scripts.envLines);
   const cloudflaredJson = JSON.stringify(scripts.cloudflaredConfig ?? { enabled: false });
   const preferredBootstrapUser =
-    scripts.sshUser && scripts.sshUser !== "root" ? scripts.sshUser : "";
+    scripts.hostUser && scripts.hostUser !== "root" ? scripts.hostUser : "";
   return `#!/bin/bash
 set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
@@ -710,6 +724,8 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   "apt_packages": ${aptPackagesJson},
   "has_gpu": ${scripts.hasGpu ? "true" : "false"},
   "ssh_user": "${scripts.sshUser}",
+  "host_user": "${scripts.hostUser}",
+  "runner_user": "${scripts.runnerUser}",
   "env_file": "${scripts.envFile}",
   "env_lines": ${envLinesJson},
   "node_version": "${scripts.nodeVersion}",
@@ -827,21 +843,22 @@ if [ "$force" -ne 1 ]; then
     *) echo "aborted"; exit 1 ;;
   esac
 fi
-SSH_USER="${scripts.sshUser}"
-SSH_UID="$(id -u "$SSH_USER" 2>/dev/null || echo "")"
+SSH_USER="${scripts.hostUser}"
+RUNNER_USER="${scripts.runnerUser}"
+RUNNER_UID="$(id -u "$RUNNER_USER" 2>/dev/null || echo "")"
 TARGET_HOME="$(getent passwd "$SSH_USER" | cut -d: -f6 || true)"
 if [ -z "$TARGET_HOME" ]; then
   TARGET_HOME="$HOME"
 fi
-if [ -n "$SSH_UID" ]; then
-  export XDG_RUNTIME_DIR="/run/user/$SSH_UID"
+if [ -n "$RUNNER_UID" ]; then
+  export XDG_RUNTIME_DIR="/run/user/$RUNNER_UID"
 fi
-ids="$(sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman ps -a --filter "label=role=project" -q 2>/dev/null || true)"
+ids="$(sudo -n -u "$RUNNER_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman ps -a --filter "label=role=project" -q 2>/dev/null || true)"
 if [ -n "$ids" ]; then
   if command -v timeout >/dev/null 2>&1; then
-    timeout 30s sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
+    timeout 30s sudo -n -u "$RUNNER_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
   else
-    sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
+    sudo -n -u "$RUNNER_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
   fi
 fi
 pkill -f /opt/cocalc/bin/node || true
@@ -877,19 +894,23 @@ if [ "$uninstall_connector" -eq 1 ]; then
   fi
   rm -rf "$TARGET_HOME/cocalc-host" || true
 fi
+if [ -n "$RUNNER_USER" ] && [ "$RUNNER_USER" != "$SSH_USER" ]; then
+  pkill -u "$RUNNER_USER" >/dev/null 2>&1 || true
+  userdel -r "$RUNNER_USER" >/dev/null 2>&1 || userdel "$RUNNER_USER" >/dev/null 2>&1 || true
+fi
 EOF_COCALC_DEPROVISION
 sudo chmod +x "$BOOTSTRAP_ROOT/bin/deprovision.sh"
-sudo chown ${scripts.sshUser}:${scripts.sshUser} "$BOOTSTRAP_ROOT/bin/deprovision.sh"
-SSH_UID=""
+sudo chown ${scripts.hostUser}:${scripts.hostUser} "$BOOTSTRAP_ROOT/bin/deprovision.sh"
+RUNNER_UID=""
 RUNTIME_DIR=""
 ENV_FILE="/etc/cocalc/project-host.env"
 if [ -f "$ENV_FILE" ]; then
   RUNTIME_DIR="$(grep '^COCALC_PODMAN_RUNTIME_DIR=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)"
 fi
-if [ -z "$RUNTIME_DIR" ] && [ -n "$BOOTSTRAP_USER" ]; then
-  SSH_UID="$(id -u "$BOOTSTRAP_USER" 2>/dev/null || true)"
-  if [ -n "$SSH_UID" ]; then
-    RUNTIME_DIR="/btrfs/data/tmp/cocalc-podman-runtime-$SSH_UID"
+if [ -z "$RUNTIME_DIR" ] && [ -n "${scripts.runnerUser}" ]; then
+  RUNNER_UID="$(id -u "${scripts.runnerUser}" 2>/dev/null || true)"
+  if [ -n "$RUNNER_UID" ]; then
+    RUNTIME_DIR="/btrfs/data/tmp/cocalc-podman-runtime-$RUNNER_UID"
   fi
 fi
 if [ -n "$RUNTIME_DIR" ]; then
@@ -902,7 +923,7 @@ export COCALC_PODMAN_RUNTIME_DIR="$RUNTIME_DIR"
 export CONTAINERS_CGROUP_MANAGER="cgroupfs"
 EOF_COCALC_ENV
   sudo chmod +x "$HOST_DIR/env.sh"
-  sudo chown ${scripts.sshUser}:${scripts.sshUser} "$HOST_DIR/env.sh"
+  sudo chown ${scripts.hostUser}:${scripts.hostUser} "$HOST_DIR/env.sh"
 fi
 cat <<'EOF_COCALC_README' > "$BOOTSTRAP_ROOT/README.md"
 CoCalc Project Host (Direct) Layout
@@ -936,7 +957,7 @@ Notes:
   - /btrfs holds project data and snapshots.
   - /etc/cocalc/project-host.env contains runtime settings.
 EOF_COCALC_README
-sudo chown ${scripts.sshUser}:${scripts.sshUser} "$BOOTSTRAP_ROOT/README.md"
+sudo chown ${scripts.hostUser}:${scripts.hostUser} "$BOOTSTRAP_ROOT/README.md"
 `;
 }
 

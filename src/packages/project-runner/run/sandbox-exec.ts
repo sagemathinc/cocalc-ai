@@ -5,7 +5,7 @@ import { localPath } from "./filesystem";
 import { getImageNamePath, mount as mountRootFs, unmount } from "./rootfs";
 import { readFile } from "fs/promises";
 import { networkArgument } from "./podman";
-import { mountArg } from "@cocalc/backend/podman";
+import { buildPodmanCommand, mountArg } from "@cocalc/backend/podman";
 import { getEnvironment } from "./env";
 import { join } from "node:path";
 import { getCoCalcMounts } from "./mounts";
@@ -140,10 +140,12 @@ export async function sandboxExec({
     logger.debug("podman", argsJoin(args));
 
     return await new Promise((resolve) => {
+      const spec = buildPodmanCommand(args);
       execFile(
-        "podman",
-        args,
+        spec.command,
+        spec.args,
         {
+          env: spec.env,
           timeout: timeoutMs,
           maxBuffer: 10 * 1024 * 1024,
           killSignal: "SIGKILL",

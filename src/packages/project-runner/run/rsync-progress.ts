@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { split, trunc_middle } from "@cocalc/util/misc";
 import { once } from "events";
 import getLogger from "@cocalc/backend/logger";
+import { buildPodmanCommand } from "@cocalc/backend/podman";
 
 const logger = getLogger("project-runner:run:rsync-progress");
 
@@ -28,24 +29,38 @@ export default async function rsyncProgress({
   progress({ progress: 0 });
   const args1: string[] = [];
   let command;
+  let env: NodeJS.ProcessEnv | undefined;
   if (name) {
-    command = "podman";
-    args1.push("exec", name, "rsync");
+    const containerArgs = ["exec", name, "rsync", ...PROGRESS_ARGS, ...args];
+    const spec = buildPodmanCommand(containerArgs);
+    command = spec.command;
+    env = spec.env;
+    args1.push(...spec.args);
   } else {
     command = "rsync";
+    args1.push(...PROGRESS_ARGS, ...args);
   }
-  args1.push(...PROGRESS_ARGS);
   logger.debug(
     "rsyncProgress:",
-    `"${command} ${args1.concat(args).join(" ")}"`,
+    `"${command} ${args1.join(" ")}"`,
   );
-  await rsyncProgressRunner({ command, args: args1.concat(args), progress });
+  await rsyncProgressRunner({ command, args: args1, progress, env });
 }
 
 // we also use this for other commands that have the exact rsync output when they run...
-export async function rsyncProgressRunner({ command, args, progress }) {
+export async function rsyncProgressRunner({
+  command,
+  args,
+  progress,
+  env,
+}: {
+  command: string;
+  args: string[];
+  progress: (event) => void;
+  env?: NodeJS.ProcessEnv;
+}) {
   logger.debug(`${command} ${args.join(" ")}`);
-  const child = spawn(command, args);
+  const child = spawn(command, args, { env });
   await rsyncProgressReporter({ child, progress });
 }
 

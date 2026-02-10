@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { buildPodmanCommand } from "@cocalc/backend/podman";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
 
 const logger = getLogger("project-host:codex-subscription-cache-gc");
@@ -30,10 +31,16 @@ function parsePositiveInt(
 
 function execPodman(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("podman", args, { encoding: "utf8" }, (err, stdout) => {
+    const spec = buildPodmanCommand(args);
+    execFile(
+      spec.command,
+      spec.args,
+      { encoding: "utf8", env: spec.env },
+      (err, stdout) => {
       if (err) reject(err);
       else resolve(stdout ?? "");
-    });
+      },
+    );
   });
 }
 

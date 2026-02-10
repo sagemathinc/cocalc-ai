@@ -1,5 +1,5 @@
 import mountArg from "./mount-arg";
 export { mountArg };
 
-import podman from "./command";
-export { podman };
+import podman, { buildPodmanCommand } from "./command";
+export { podman, buildPodmanCommand };

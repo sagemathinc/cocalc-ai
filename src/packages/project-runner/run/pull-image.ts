@@ -1,6 +1,7 @@
 // PTY-based Podman pull with progress parsing.
 import { spawn } from "@lydell/node-pty";
 import getLogger from "@cocalc/backend/logger";
+import { buildPodmanCommand } from "@cocalc/backend/podman";
 
 const logger = getLogger("project-runner:pull-image");
 
@@ -44,9 +45,11 @@ export default async function podmanPullWithProgressPTY({
   }
   args.push("pull", image, ...extraArgs);
 
+  const spec = buildPodmanCommand(args);
+
   // Ensure a deterministic, UTF-8 locale and a reasonable terminal.
   const childEnv = {
-    ...process.env,
+    ...spec.env,
     LC_ALL: "C.UTF-8",
     LANG: "C.UTF-8",
     TERM: "xterm",
@@ -57,8 +60,7 @@ export default async function podmanPullWithProgressPTY({
   };
 
   // node-pty merges stdout/stderr into a single "data" stream (like a real TTY).
-  const cmd = "podman";
-  const p = spawn(cmd, args, {
+  const p = spawn(spec.command, spec.args, {
     name: "xterm",
     cols,
     rows,

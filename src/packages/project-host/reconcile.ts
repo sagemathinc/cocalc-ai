@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
+import { buildPodmanCommand } from "@cocalc/backend/podman";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
 import { listProjects, upsertProject } from "./sqlite/projects";
 import {
@@ -49,12 +50,15 @@ export async function getContainerStates(): Promise<
 > {
   return await new Promise<Map<string, ContainerState>>((resolve) => {
     const states = new Map<string, ContainerState>();
-    const child = spawn("podman", [
+    const spec = buildPodmanCommand([
       "ps",
       "-a",
       "--format",
       "{{.Names}}|{{.State}}|{{.Ports}}",
     ]);
+    const child = spawn(spec.command, spec.args, {
+      env: spec.env,
+    });
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (d) => {
