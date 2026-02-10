@@ -405,7 +405,24 @@ async function resolveProjectScript(): Promise<ScriptResolution> {
 }
 
 export function networkArgument() {
-  return "--network=slirp4netns";
+  // Allow explicit override when debugging networking behavior.
+  const explicit = `${process.env.COCALC_PROJECT_RUNNER_NETWORK ?? ""}`.trim();
+  if (explicit) {
+    return `--network=${explicit}`;
+  }
+  // Rootless pods need host loopback access so project containers can reach
+  // host-local conat (mapped as host.containers.internal in env.ts).
+  const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
+    .trim()
+    .toLowerCase();
+  const allowHostLoopback = !(
+    allowHostLoopbackRaw === "0" ||
+    allowHostLoopbackRaw === "false" ||
+    allowHostLoopbackRaw === "no"
+  );
+  return allowHostLoopback
+    ? "--network=slirp4netns:allow_host_loopback=true"
+    : "--network=slirp4netns";
 }
 
 export async function start({

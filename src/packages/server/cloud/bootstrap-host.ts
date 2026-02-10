@@ -447,6 +447,12 @@ export async function buildBootstrapScripts(
   const projectHostCurrent = `${bootstrapRoot}/bundle`;
   const projectHostBin = `${bootstrapRoot}/bin/project-host`;
 
+  const bindHost = useOnPremSettings ? onPremBindHost : "0.0.0.0";
+  const isLoopbackBindHost =
+    bindHost === "localhost" ||
+    bindHost === "::1" ||
+    bindHost.startsWith("127.");
+
   const envLines = [
     `MASTER_CONAT_SERVER=${masterAddress}`,
     `PROJECT_HOST_ID=${row.id}`,
@@ -473,12 +479,17 @@ export async function buildBootstrapScripts(
     `TMP=/btrfs/data/tmp`,
     `TEMP=/btrfs/data/tmp`,
     `COCALC_PROJECT_HOST_HTTPS=${tlsEnabled ? "1" : "0"}`,
-    `HOST=${useOnPremSettings ? onPremBindHost : "0.0.0.0"}`,
+    `HOST=${bindHost}`,
     `PORT=${port}`,
     `DEBUG=cocalc:*`,
     `DEBUG_CONSOLE=yes`,
     `COCALC_SSH_SERVER=0.0.0.0:${sshPort}`,
   ];
+  if (!isLoopbackBindHost) {
+    // Current project-host cloud bootstrap defaults to non-loopback binding.
+    // Keep startup explicit and deterministic under network policy guard.
+    envLines.push(`COCALC_ALLOW_INSECURE_HTTP_MODE=true`);
+  }
   if (isSelfHost) {
     envLines.push(`COCALC_SELF_HOST_MODE=${effectiveSelfHostMode ?? "local"}`);
   }

@@ -16,10 +16,22 @@ import { getLogger } from "../logger";
 
 const logger = getLogger("hub:embedded-project-host");
 
+function isTrue(value: string | undefined): boolean {
+  const v = `${value ?? ""}`.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 export async function maybeStartEmbeddedProjectHost() {
   const flag = process.env.COCALC_EMBEDDED_PROJECT_HOST;
   if (!flag || flag === "0") {
     return;
+  }
+  if (!isTrue(process.env.COCALC_ALLOW_INSECURE_HTTP_MODE)) {
+    throw new Error(
+      "embedded project-host requires COCALC_ALLOW_INSECURE_HTTP_MODE=true " +
+        "because project containers connect back to host conat via " +
+        "host.containers.internal and this currently requires HOST=0.0.0.0 in dev mode",
+    );
   }
   logger.info("starting embedded project-host (dev mode)");
   const env: any = { ...process.env };
