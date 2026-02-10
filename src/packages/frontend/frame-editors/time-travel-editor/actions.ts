@@ -674,33 +674,45 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     const projectActions = this.redux.getProjectActions(this.project_id);
     const ttPath = history_path(path);
     await projectActions.open_file({ path: ttPath, foreground: true });
-    await until(
-      async () => {
-        const target: any = this.redux.getEditorActions(this.project_id, ttPath);
-        if (target == null) {
-          return false;
-        }
-        if (typeof target.updateGitVersions === "function") {
-          await target.updateGitVersions();
-        }
-        const targetVersion =
-          typeof target.gitVersionForHash === "function"
-            ? target.gitVersionForHash(hash)
-            : undefined;
-        const id = typeof target._active_id === "function" ? target._active_id() : undefined;
-        if (targetVersion == null || id == null) {
-          return false;
-        }
-        target.set_frame_tree({
-          id,
-          gitMode: true,
-          changesMode: false,
-          version: targetVersion,
-        });
-        return true;
-      },
-      { timeout: 7000, start: 100, max: 400, min: 50 },
-    );
+    let refreshed = false;
+    try {
+      await until(
+        async () => {
+          const target: any = this.redux.getEditorActions(
+            this.project_id,
+            ttPath,
+          );
+          if (target == null) {
+            return false;
+          }
+          if (!refreshed && typeof target.updateGitVersions === "function") {
+            await target.updateGitVersions();
+            refreshed = true;
+          }
+          const targetVersion =
+            typeof target.gitVersionForHash === "function"
+              ? target.gitVersionForHash(hash)
+              : undefined;
+          const id =
+            typeof target._active_id === "function"
+              ? target._active_id()
+              : undefined;
+          if (targetVersion == null || id == null) {
+            return false;
+          }
+          target.set_frame_tree({
+            id,
+            gitMode: true,
+            changesMode: false,
+            version: targetVersion,
+          });
+          return true;
+        },
+        { timeout: 7000, start: 100, max: 400, min: 50 },
+      );
+    } catch (_err) {
+      this.set_error("Unable to open selected file at that commit.");
+    }
   };
 
   gitDoc = async (version: number): Promise<ViewDocument | undefined> => {
