@@ -5,7 +5,7 @@
 
 // Time travel editor react component
 
-import { Button, Checkbox, Space, Tooltip } from "antd";
+import { Button, Modal, Select, Space, Tooltip, message } from "antd";
 import { Map, List } from "immutable";
 import { debounce } from "lodash";
 import { useEffect, useMemo, useState } from "react";
@@ -22,7 +22,6 @@ import json_stable from "json-stable-stringify";
 import { to_ipynb } from "../../jupyter/history-viewer";
 import { TimeTravelActions, TimeTravelState } from "./actions";
 import { GitAuthors, TimeTravelAuthors } from "./authors";
-import { ChangesMode } from "./changes-mode";
 import { Diff } from "./diff";
 import { Export } from "./export";
 import { LoadMoreHistory } from "./load-more-history";
@@ -80,6 +79,7 @@ export function TimeTravel(props: Props) {
   const [changesMode, setChangesMode] = useState<boolean>(
     !!props.desc?.get("changesMode"),
   );
+  const [showCommitRange, setShowCommitRange] = useState<boolean>(false);
   const [version, setVersion] = useState<number | string | undefined>(
     props.desc?.get("version"),
   );
@@ -178,6 +178,11 @@ export function TimeTravel(props: Props) {
 
   const toPatchId = (v?: number | string) =>
     v == null ? undefined : (`${v}` as string);
+
+  const gitRangeCommits = useMemo(() => {
+    if (!gitMode || !changesMode) return [];
+    return props.actions.gitCommitRange(version0, version1);
+  }, [props.actions, gitMode, changesMode, version0, version1]);
 
   useEffect(() => {
     saveState(props.actions, {
@@ -453,11 +458,61 @@ export function TimeTravel(props: Props) {
   const renderChangesMode = () => {
     const size = (gitMode ? gitVersions : versions)?.size ?? 0;
     return (
-      <ChangesMode
-        disabled={size <= 1}
-        changesMode={changesMode}
-        setChangesMode={setChangesMode}
+      <Select
+        size="small"
+        style={{ width: 170 }}
+        value={changesMode ? "compare" : "single"}
+        onChange={(value) => setChangesMode(value === "compare")}
+        options={[
+          { value: "single", label: "Single Version" },
+          { value: "compare", label: "Compare Changes", disabled: size <= 1 },
+        ]}
       />
+    );
+  };
+
+  const renderModeSelectors = () => {
+    const showTextToggle = !changesMode && HAS_SPECIAL_VIEWER.has(docext ?? "");
+    const sourceOptions = [
+      { value: "timetravel", label: "TimeTravel" },
+      { value: "git", label: "Git", disabled: !git },
+      { value: "snapshots", label: "Snapshots", disabled: true },
+      { value: "backups", label: "Backups", disabled: true },
+    ];
+    return (
+      <>
+        <Select
+          size="small"
+          style={{ width: 150 }}
+          value={gitMode ? "git" : "timetravel"}
+          options={sourceOptions}
+          onChange={(value) => {
+            setGitMode(value === "git");
+          }}
+        />
+        <Select
+          size="small"
+          style={{ width: 125 }}
+          value={textMode ? "source" : "rendered"}
+          disabled={!showTextToggle}
+          options={[
+            { value: "rendered", label: "Rendered" },
+            { value: "source", label: "Source" },
+          ]}
+          onChange={(value) => setTextMode(value === "source")}
+        />
+        {renderChangesMode()}
+        <Select
+          size="small"
+          style={{ width: 155 }}
+          value={marks ? "timestamp" : "revision"}
+          options={[
+            { value: "revision", label: "Slider: Revision #" },
+            { value: "timestamp", label: "Slider: Timestamp" },
+          ]}
+          onChange={(value) => setMarks(value === "timestamp")}
+        />
+      </>
     );
   };
 
@@ -469,6 +524,63 @@ export function TimeTravel(props: Props) {
     return <Export actions={props.actions} />;
   };
 
+  const copyHash = async (hash: string) => {
+    try {
+      await navigator.clipboard.writeText(hash);
+      message.success("Copied full commit hash");
+    } catch (_err) {
+      message.error("Unable to copy commit hash");
+    }
+  };
+
+  const renderCommitsInRangeButton = () => {
+    if (!gitMode || !changesMode) return null;
+    return (
+      <Button size="small" onClick={() => setShowCommitRange(true)}>
+        Show Commits In Range
+      </Button>
+    );
+  };
+
+  const renderCommitRangeModal = () => {
+    if (!gitMode || !changesMode) return null;
+    return (
+      <Modal
+        open={showCommitRange}
+        title="Commits in selected range"
+        onCancel={() => setShowCommitRange(false)}
+        footer={null}
+      >
+        {gitRangeCommits.length === 0 ? (
+          <div>No commits found for this range.</div>
+        ) : (
+          <div>
+            {gitRangeCommits.map((commit) => (
+              <div key={commit.hash} style={{ marginBottom: "8px" }}>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, marginRight: "6px" }}
+                  onClick={() => void copyHash(commit.hash)}
+                >
+                  {commit.shortHash}
+                </Button>
+                <span>{commit.subject}</span>
+                <div style={{ color: "#666", fontSize: "12px" }}>
+                  {commit.authorName} ·{" "}
+                  <TimeAgo
+                    date={new Date(commit.timestampMs)}
+                    time_ago_absolute
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+    );
+  };
+
   const renderControls = () => {
     return (
       <div
@@ -478,51 +590,23 @@ export function TimeTravel(props: Props) {
           padding: "5px",
         }}
       >
-        {renderChangesMode()}
-        {!changesMode && HAS_SPECIAL_VIEWER.has(docext ?? "") && (
-          <Tooltip title="Display underlying file as text">
-            <Checkbox
-              defaultChecked={textMode}
-              onChange={(e) => setTextMode(e.target.checked)}
+        <Space.Compact style={{ marginRight: "5px" }}>
+          {renderModeSelectors()}
+        </Space.Compact>
+        {renderCommitsInRangeButton()}
+        {gitMode && (
+          <Tooltip title="Scan local Git repository for new revisions to this file">
+            <Button
+              size="small"
+              style={{ marginLeft: "5px", marginRight: "5px" }}
+              onClick={() => {
+                props.actions.updateGitVersions();
+              }}
             >
-              Text
-            </Checkbox>
+              Refresh
+            </Button>
           </Tooltip>
         )}
-        {git && (
-          <>
-            <Tooltip title="Show Git history instead of CoCalc edit history">
-              <Checkbox
-                defaultChecked={gitMode}
-                onChange={(e) => setGitMode(e.target.checked)}
-              >
-                Git
-              </Checkbox>
-            </Tooltip>
-            {gitMode && (
-              <Tooltip title="Scan local Git repository for new revisions to this file">
-                <Button
-                  size="small"
-                  style={{ marginRight: "5px" }}
-                  onClick={() => {
-                    props.actions.updateGitVersions();
-                  }}
-                >
-                  Refresh
-                </Button>
-              </Tooltip>
-            )}
-          </>
-        )}
-
-        <Tooltip title="Display slider marks according to timestamp when they happened">
-          <Checkbox
-            defaultChecked={marks}
-            onChange={(e) => setMarks(e.target.checked)}
-          >
-            Marks
-          </Checkbox>
-        </Tooltip>
         {renderNavigationButtons()}
         <Space.Compact style={{ margin: "0 5px" }}>
           {renderOpenFile()}
@@ -598,6 +682,7 @@ export function TimeTravel(props: Props) {
   return (
     <div className="smc-vfill">
       {renderControls()}
+      {renderCommitRangeModal()}
       {renderTimeSelect()}
       <ShowError
         style={{ margin: "5px 15px" }}

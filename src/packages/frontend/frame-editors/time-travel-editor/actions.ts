@@ -505,6 +505,45 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     };
   };
 
+  gitCommitRange = (
+    v0: number | string | undefined,
+    v1: number | string | undefined,
+  ): Array<{
+    hash: string;
+    shortHash: string;
+    subject: string;
+    authorName: string;
+    authorEmail: string;
+    timestampMs: number;
+  }> => {
+    if (v0 == null || v1 == null) return [];
+    const t0 = typeof v0 === "number" ? v0 : Number(v0);
+    const t1 = typeof v1 === "number" ? v1 : Number(v1);
+    if (!Number.isFinite(t0) || !Number.isFinite(t1)) return [];
+    const lo = Math.min(t0, t1);
+    const hi = Math.max(t0, t1);
+    const commits: Array<{
+      hash: string;
+      shortHash: string;
+      subject: string;
+      authorName: string;
+      authorEmail: string;
+      timestampMs: number;
+    }> = [];
+    for (const t of Object.keys(this.gitLog)) {
+      const timestampMs = Number(t);
+      if (!Number.isFinite(timestampMs) || timestampMs < lo || timestampMs > hi) {
+        continue;
+      }
+      const commit = this.gitCommit(timestampMs);
+      if (commit != null) {
+        commits.push(commit);
+      }
+    }
+    commits.sort((a, b) => a.timestampMs - b.timestampMs);
+    return commits;
+  };
+
   gitDoc = async (version: number): Promise<ViewDocument | undefined> => {
     // log("gitDoc", { version });
     const str = await this.gitShow(version);
