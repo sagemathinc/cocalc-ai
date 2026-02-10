@@ -13,7 +13,16 @@ import getLogger from "@cocalc/backend/logger";
 const logger = getLogger("project-runner:rootfs-base");
 
 export const IMAGE_CACHE =
-  process.env.COCALC_IMAGE_CACHE ?? join(data, "cache", "images");
+  process.env.COCALC_IMAGE_CACHE ??
+  join(
+    data,
+    "containers",
+    "rootless",
+    process.env.COCALC_PODMAN_RUN_AS_USER ??
+      process.env.COCALC_PROJECT_RUNNER_USER ??
+      "runner",
+    "image-cache",
+  );
 
 type ProgressFunction = (opts: { progress: number; desc: string }) => void;
 

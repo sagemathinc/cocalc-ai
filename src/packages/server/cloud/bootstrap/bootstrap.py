@@ -659,6 +659,7 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         user_config.mkdir(parents=True, exist_ok=True)
         (runner_rootless / "storage").mkdir(parents=True, exist_ok=True)
         (runner_rootless / "run").mkdir(parents=True, exist_ok=True)
+        (runner_rootless / "image-cache").mkdir(parents=True, exist_ok=True)
         run_best_effort(
             cfg,
             ["chmod", "711", str(rootless_base)],
@@ -681,8 +682,14 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         )
         run_best_effort(
             cfg,
-            ["chmod", "700", str(runner_rootless / "storage"), str(runner_rootless / "run")],
-            "chmod runner rootless storage/run",
+            [
+                "chmod",
+                "700",
+                str(runner_rootless / "storage"),
+                str(runner_rootless / "run"),
+                str(runner_rootless / "image-cache"),
+            ],
+            "chmod runner rootless storage/run/image-cache",
         )
         (user_config / "storage.conf").write_text(
             '[storage]\n'

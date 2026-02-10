@@ -473,6 +473,7 @@ export async function buildBootstrapScripts(
     `COCALC_PROJECT_HOST_USER=${hostUser}`,
     `COCALC_PROJECT_RUNNER_USER=${runnerUser}`,
     `COCALC_PODMAN_RUN_AS_USER=${runnerUser}`,
+    `COCALC_IMAGE_CACHE=/btrfs/data/containers/rootless/${runnerUser}/image-cache`,
     `COCALC_FILE_SERVER_MOUNTPOINT=/btrfs`,
     `DATA=${dataDir}`,
     `COCALC_DATA=${dataDir}`,
