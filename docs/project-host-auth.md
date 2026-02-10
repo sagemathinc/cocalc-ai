@@ -520,6 +520,148 @@ Operational status:
 - Networking isolation remains an additional hardening layer to reduce blast
   radius if any application-layer control regresses in the future.
 
+## Host Linux User Model
+
+This section describes the planned host-level privilege separation model for
+project-host runtime. It is defense in depth and does not claim VM-grade
+isolation.
+
+Threat model objective:
+
+- If a project escapes container isolation into host userland, limit blast
+  radius so that attacker does not immediately gain project-host control-plane
+  privileges and secrets.
+
+Planned users/ownership model:
+
+1. `root` (bootstrap/admin only)
+   - Used for initial provisioning, service setup, mounts, and OS-level tasks.
+   - Not used for routine project execution paths.
+2. `cocalc-host` (control-plane user)
+   - Runs project-host services (conat/auth/proxy/control loops).
+   - Owns hub/control credentials and host control state.
+   - Owns `/btrfs/data/secrets` with strict permissions.
+3. `cocalc-runner` (data-plane/container runtime user)
+   - Runs rootless Podman containers for projects.
+   - Owns Podman runtime/storage paths and container process tree.
+   - Must not read control-plane secrets.
+
+Execution/privilege boundaries:
+
+- Project-host process (`cocalc-host`) invokes Podman as `cocalc-runner` only
+  (minimal allowlisted `sudo -u cocalc-runner podman ...` or equivalent
+  wrapper).
+- Bootstrap installs only narrowly scoped sudoers entries needed for host
+  operations (for example selected btrfs/overlay/mount management commands),
+  not broad shell/root access.
+- `cocalc-runner` has no general sudo and no write access to host control
+  config/secrets.
+- Project containers run under `cocalc-runner` runtime context; host compromise
+  as runner user should not imply compromise of control-plane identity.
+
+Data and secret ownership plan:
+
+- `/btrfs/data/secrets`: owner `cocalc-host`, mode `0700` directory,
+  `0600` files.
+- Podman runtime dirs (`XDG_RUNTIME_DIR`, container storage, etc.): owner
+  `cocalc-runner`.
+- Shared data paths (if needed) should be explicit and minimal; default deny.
+
+Security implications and caveats:
+
+- This materially reduces impact for common container-escape-to-userland
+  failures.
+- If an attacker gains `cocalc-runner`, the obvious immediate damage is access
+  to other projects on that same host (read/write project files, interfere with
+  running containers, inspect project-local data reachable by runner), but not
+  automatic access to hub control-plane secrets or other project-host machines.
+- By design, a `cocalc-runner` compromise should also not directly allow
+  deleting/restamping historical btrfs snapshots for other projects, since
+  snapshot lifecycle operations require control-plane/root-managed host
+  privileges. This assumption depends on keeping sudo/mount rules narrowly
+  scoped and not granting runner broad filesystem admin capabilities.
+- Current runtime posture is intentionally "normal rootless Podman" rather than
+  `--privileged` containers: projects run as root *inside* the container
+  (`--user 0:0`) but under rootless Podman on the host. Escaping this boundary
+  should require a serious Podman/kernel/container-runtime vulnerability or
+  host misconfiguration, and is treated as a high-severity platform bug.
+- This does **not** defend against full host root/kernel compromise.
+- Projects on one host are not separate VMs; this is not equivalent to
+  Firecracker-per-project isolation.
+- For stronger isolation needs, users can run trusted workloads on dedicated
+  project-hosts (single-tenant blast radius).
+- This model is especially relevant for AI-agent workloads, where lightweight
+  execution is required but compromise containment is still important.
+
+Lifecycle/deprovision requirements:
+
+- Deprovision must remove users/groups created by provisioning for this model
+  (for example `cocalc-host`, `cocalc-runner`) after services stop.
+- Deprovision must also remove project-host-specific sudoers snippets/rules
+  added for mount/runtime operations, to avoid leaving privilege artifacts on
+  recycled hosts.
+
+```mermaid
+flowchart TD
+  subgraph VM["Project-Host Linux VM"]
+    subgraph U["Linux Users"]
+      ROOT["root"]
+      HOST["cocalc-host (control-plane user)"]
+      RUNNER["cocalc-runner (podman runner)"]
+    end
+
+    subgraph P["Processes"]
+      PH["project-host daemon / conat / proxy"]
+      PODMAN["podman runtime"]
+      C1["project container A"]
+      C2["project container B"]
+    end
+
+    subgraph S["Sensitive Assets"]
+      HK["Hub auth keys/tokens"]
+      BK["Backup credentials/profiles"]
+      DB["Host sqlite/state"]
+      PF["Project files (all projects on this host)"]
+    end
+  end
+
+  ROOT -->|owns system setup, users, sudo policy| HOST
+  HOST -->|runs| PH
+  RUNNER -->|runs| PODMAN
+  PODMAN --> C1
+  PODMAN --> C2
+
+  PH -->|read/write  -required| DB
+  PH -->|read - required| HK
+  PH -->|read/write - required| BK
+  PH -->|mount/proxy| PF
+
+  C1 -.->|denied by policy| C2
+  C1 -.->|denied by policy| HK
+  C1 -.->|denied by policy| DB
+  C1 -.->|denied by policy| BK
+
+  C1 -->|if container escape -> RUNNER user| RUNNER
+  RUNNER -->|worst-case blast radius| PF
+  RUNNER -.->|must NOT imply| HK
+```
+
+```mermaid
+flowchart LR
+  subgraph Normal["Normal Flow"]
+    A1["Project container code"] --> A2["cocalc-runner podman runtime"]
+    A2 --> A3["project-host proxy/conat checks"]
+    A3 --> A4["Allowed only for authorized project/account access"]
+  end
+
+  subgraph Escape["Escape Flow (defense in depth)"]
+    E1["Container escape exploit"] --> E2["Host user: cocalc-runner"]
+    E2 --> E3["Can impact projects on this host"]
+    E2 -.-> E4["Must NOT reach<br/>hub/private host secrets"]
+    E2 -.-> E5["Should NOT directly<br/>delete btrfs snapshots<br/>or rustic backups"]
+  end
+```
+
 ## Observability
 
 Track and expose metrics/logs for:
