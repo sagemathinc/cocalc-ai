@@ -50,6 +50,11 @@ export function FileListing({
   publicFiles,
   sort_by,
 }: Props) {
+  const isSnapshotsPath =
+    current_path === SNAPSHOTS || current_path.startsWith(`${SNAPSHOTS}/`);
+  const isBackupsPath =
+    current_path === BACKUPS || current_path.startsWith(`${BACKUPS}/`);
+  const isReadonlyVirtualPath = isSnapshotsPath || isBackupsPath;
   const selected_file_index =
     useTypedRedux({ project_id }, "selected_file_index") ?? 0;
   const name = actions.name;
@@ -135,6 +140,20 @@ export function FileListing({
     if (file_search[0] === TERM_MODE_CHAR) {
       return;
     }
+    if (isReadonlyVirtualPath) {
+      return (
+        <Alert
+          type="info"
+          showIcon
+          style={{ margin: "8px 16px 0 16px" }}
+          message={
+            file_search.trim()
+              ? "No files or folders match the current filter."
+              : "No files or folders to display."
+          }
+        />
+      );
+    }
 
     return (
       <NoFiles
@@ -154,8 +173,7 @@ export function FileListing({
           flexDirection: "column",
         }}
       >
-        {current_path === SNAPSHOTS ||
-        current_path.startsWith(SNAPSHOTS + "/") ? (
+        {isSnapshotsPath ? (
           <Alert
             style={{ marginBottom: 8 }}
             type="info"
@@ -180,8 +198,7 @@ export function FileListing({
               </Button>
             }
           />
-        ) : current_path === BACKUPS ||
-          current_path.startsWith(BACKUPS + "/") ? (
+        ) : isBackupsPath ? (
           <Alert
             style={{ marginBottom: 8 }}
             type="info"
