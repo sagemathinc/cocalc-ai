@@ -1,1 +1,0 @@
-The only thing likely to be at all useful and not totally out of date in here is the dev/ subdirectory.
