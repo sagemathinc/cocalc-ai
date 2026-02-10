@@ -6,7 +6,6 @@ import { ChatRoomComposer } from "../composer";
 
 declare global {
   interface Window {
-    __CHAT_COMPOSER_DEBUG?: boolean;
     __chatHarnessBootError?: string;
     __chatComposerTest?: {
       getInput: () => string;
@@ -62,7 +61,6 @@ function InputHarness({ fixedMode = "markdown" }: { fixedMode?: "markdown" | "ed
   };
 
   useEffect(() => {
-    window.__CHAT_COMPOSER_DEBUG = true;
     window.__chatComposerTest = {
       getInput: () => input,
       getSends: () => sends,
@@ -191,7 +189,6 @@ function ComposerHarness(): React.JSX.Element {
   const hasInput = input.trim().length > 0;
 
   useEffect(() => {
-    window.__CHAT_COMPOSER_DEBUG = true;
     window.__chatComposerTest = {
       getInput: () => input,
       getSends: () => sends,
