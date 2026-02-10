@@ -18,6 +18,7 @@ export type PodmanCommandSpec = {
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv | undefined;
+  cwd?: string;
 };
 
 function currentUserName(): string | undefined {
@@ -61,7 +62,7 @@ export function buildPodmanCommand(
       "podman",
       ...args,
     ];
-    return { command: "sudo", args: sudoArgs, env };
+    return { command: "sudo", args: sudoArgs, env, cwd: "/" };
   }
 
   if (requestedUser && requestedUser !== current) {
@@ -74,7 +75,7 @@ export function buildPodmanCommand(
       "podman",
       ...args,
     ];
-    return { command: "sudo", args: sudoArgs, env };
+    return { command: "sudo", args: sudoArgs, env, cwd: "/" };
   }
 
   return { command: "podman", args, env };
@@ -91,6 +92,7 @@ export default async function podman(args: string[], opts: PodmanOpts = {}) {
       command: spec.command,
       args: spec.args,
       env: spec.env,
+      path: spec.cwd,
       err_on_exit: true,
       timeout: timeout ?? 30 * 60 * 1000,
     });
