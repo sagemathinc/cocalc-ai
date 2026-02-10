@@ -4,6 +4,7 @@
  * and exposes a simple subscription API for React integration.
  */
 
+import debounce from "lodash/debounce";
 import type { DraftControllerOptions, DraftSnapshot } from "./types";
 
 type DraftListener = (snapshot: DraftSnapshot) => void;
@@ -17,9 +18,9 @@ export class DraftController {
   private readonly onError?: (error: unknown) => void;
   private readonly ttlMs?: number;
   private readonly adapter: DraftControllerOptions["adapter"];
+  private readonly debouncedPersist: ReturnType<typeof debounce>;
   private state: DraftSnapshot;
   private listeners = new Set<DraftListener>();
-  private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private saveChain: Promise<void> = Promise.resolve();
   private initialized = false;
   private disposed = false;
@@ -31,6 +32,9 @@ export class DraftController {
     this.now = options.now ?? Date.now;
     this.ttlMs = options.ttlMs;
     this.onError = options.onError;
+    this.debouncedPersist = debounce(() => {
+      void this.persist(this.getSnapshot());
+    }, this.debounceMs);
     this.state = {
       text: options.initialText ?? "",
       updatedAt: options.initialUpdatedAt ?? 0,
@@ -114,13 +118,13 @@ export class DraftController {
 
   async flush(): Promise<void> {
     if (this.disposed) return;
-    this.clearTimer();
+    this.debouncedPersist.cancel();
     await this.persist(this.getSnapshot());
   }
 
   async clear(): Promise<void> {
     if (this.disposed) return;
-    this.clearTimer();
+    this.debouncedPersist.cancel();
     this.state = {
       text: "",
       composing: false,
@@ -142,7 +146,7 @@ export class DraftController {
     if (flush) {
       await this.flush();
     } else {
-      this.clearTimer();
+      this.debouncedPersist.cancel();
     }
     this.disposed = true;
     this.listeners.clear();
@@ -155,18 +159,8 @@ export class DraftController {
     }
   }
 
-  private clearTimer(): void {
-    if (this.saveTimer != null) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = undefined;
-    }
-  }
-
   private scheduleSave(): void {
-    this.clearTimer();
-    this.saveTimer = setTimeout(() => {
-      void this.flush();
-    }, this.debounceMs);
+    this.debouncedPersist();
   }
 
   private async persist(snapshot: DraftSnapshot): Promise<void> {
