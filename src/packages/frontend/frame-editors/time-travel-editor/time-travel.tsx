@@ -15,7 +15,7 @@ import {
   useAsyncEffect,
   useEditorRedux,
 } from "@cocalc/frontend/app-framework";
-import { Loading } from "@cocalc/frontend/components";
+import { Loading, TimeAgo } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import type { Document } from "@cocalc/sync/editor/generic/types";
 import json_stable from "json-stable-stringify";
@@ -255,6 +255,16 @@ export function TimeTravel(props: Props) {
       return null;
     }
     if (changesMode) {
+      if (gitMode) {
+        const c0 = props.actions.gitCommit(version0);
+        const c1 = props.actions.gitCommit(version1);
+        if (c0 == null || c1 == null) return null;
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            Commits <b>{c0.shortHash}</b> to <b>{c1.shortHash}</b>
+          </span>
+        );
+      }
       if (version0 == null || version1 == null) {
         return null;
       }
@@ -280,6 +290,20 @@ export function TimeTravel(props: Props) {
     } else {
       if (version == null) {
         return null;
+      }
+      if (gitMode) {
+        const commit = props.actions.gitCommit(version);
+        if (commit == null) return null;
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            <b>{commit.subject}</b> · <code>{commit.shortHash}</code> ·{" "}
+            {commit.authorName} ·{" "}
+            <TimeAgo
+              date={new Date(commit.timestampMs)}
+              time_ago_absolute
+            />
+          </span>
+        );
       }
       const i = v.indexOf(version);
       if (i == -1) {
@@ -377,21 +401,16 @@ export function TimeTravel(props: Props) {
     if (!changesMode && version == null) {
       return;
     }
+    if (gitMode && !changesMode) {
+      return null;
+    }
     const opts = changesMode
       ? { actions: props.actions, version0, version1 }
       : { actions: props.actions, version0: version, version1: version };
     if (gitMode) {
-      return (
-        <>
-          , <GitAuthors {...opts} />
-        </>
-      );
+      return <GitAuthors {...opts} />;
     } else {
-      return (
-        <>
-          , <TimeTravelAuthors {...opts} />
-        </>
-      );
+      return <TimeTravelAuthors {...opts} />;
     }
   };
 
@@ -418,12 +437,11 @@ export function TimeTravel(props: Props) {
   };
 
   const renderRevertFile = () => {
-    if (doc == null) {
+    if (doc == null || changesMode) {
       return;
     }
     return (
       <RevertFile
-        changesMode={changesMode}
         gitMode={gitMode}
         actions={props.actions}
         version={version}
@@ -512,12 +530,7 @@ export function TimeTravel(props: Props) {
           {renderOpenSnapshots()}
           {renderExport()}
         </Space.Compact>
-        {(versions?.size ?? 0) > 0 && (
-          <>
-            {renderVersion()}
-            {renderAuthor()}
-          </>
-        )}
+        {(versions?.size ?? 0) > 0 && renderRevisionMeta()}
       </div>
     );
   };
@@ -546,23 +559,16 @@ export function TimeTravel(props: Props) {
     return <Loading theme={"medium"} />;
   };
 
-  const renderGitSubject = () => {
-    if (version == null) return;
-    const subject = props.actions.gitSubject(
-      typeof version === "number" ? version : Number(version),
-    );
-    if (!subject) return;
+  const renderRevisionMeta = () => {
+    const versionMeta = renderVersion();
+    const authorMeta = renderAuthor();
+    if (versionMeta == null && authorMeta == null) return null;
+    if (versionMeta == null) return authorMeta;
+    if (authorMeta == null) return versionMeta;
     return (
-      <div
-        style={{
-          padding: "5px 0 5px 15px",
-          borderTop: "1px solid #ddd",
-          background: "#fafafa",
-          marginLeft: "5px",
-        }}
-      >
-        {subject}
-      </div>
+      <>
+        {versionMeta} · {authorMeta}
+      </>
     );
   };
 
@@ -593,7 +599,6 @@ export function TimeTravel(props: Props) {
     <div className="smc-vfill">
       {renderControls()}
       {renderTimeSelect()}
-      {gitMode && !changesMode && renderGitSubject()}
       <ShowError
         style={{ margin: "5px 15px" }}
         error={error}

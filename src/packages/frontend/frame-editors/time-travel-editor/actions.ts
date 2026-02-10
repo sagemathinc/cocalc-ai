@@ -83,7 +83,13 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   private first_load: boolean = true;
   ambient_actions?: CodeEditorActions;
   private gitLog: {
-    [t: number]: { hash: string; name: string; subject: string };
+    [t: number]: {
+      hash: string;
+      name: string;
+      subject: string;
+      authorName: string;
+      authorEmail: string;
+    };
   } = {};
 
   _init2(): void {
@@ -393,12 +399,21 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
         const hash = y.slice(i + 1, j).trim();
         const k = y.indexOf("> ", j + 1);
         const name = y.slice(j + 1, k + 1).trim();
+        const lt = name.lastIndexOf("<");
+        const authorName = lt == -1 ? name : name.slice(0, lt).trim();
+        const authorEmail = lt == -1 ? "" : name.slice(lt + 1, -1).trim();
         const subject = y.slice(k + 1).trim();
         if (!x || !t0 || !hash) {
           continue;
         }
         const t = parseInt(t0) * 1000;
-        this.gitLog[t] = { hash, name, subject };
+        this.gitLog[t] = {
+          hash,
+          name,
+          subject,
+          authorName,
+          authorEmail,
+        };
         versions.push(new Date(t));
       }
       versions.reverse();
@@ -461,6 +476,33 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
 
   gitSubject = (version: number): string | undefined => {
     return this.gitLog[version]?.subject;
+  };
+
+  gitCommit = (
+    version: number | string | undefined,
+  ):
+    | {
+        hash: string;
+        shortHash: string;
+        subject: string;
+        authorName: string;
+        authorEmail: string;
+        timestampMs: number;
+      }
+    | undefined => {
+    if (version == null) return;
+    const timestampMs = typeof version === "number" ? version : Number(version);
+    if (!Number.isFinite(timestampMs)) return;
+    const entry = this.gitLog[timestampMs];
+    if (entry == null) return;
+    return {
+      hash: entry.hash,
+      shortHash: entry.hash.slice(0, 7),
+      subject: entry.subject,
+      authorName: entry.authorName,
+      authorEmail: entry.authorEmail,
+      timestampMs,
+    };
   };
 
   gitDoc = async (version: number): Promise<ViewDocument | undefined> => {

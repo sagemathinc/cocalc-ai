@@ -12,7 +12,6 @@ interface Props {
   actions: TimeTravelActions;
   version: number | string | undefined;
   doc: () => Document | undefined;
-  changesMode?: boolean;
   gitMode?: boolean;
 }
 
@@ -20,14 +19,13 @@ export function RevertFile({
   actions,
   version,
   doc,
-  changesMode,
   gitMode,
 }: Props) {
   return (
     <Tooltip
-      title={`Revert file to the displayed version (this makes a new version, so nothing is lost). ${
-        changesMode ? "In changes mode, this uses newer version." : ""
-      }`}
+      title={
+        "Restore the file to the displayed version (this creates a new version, so nothing is lost)."
+      }
     >
       <Button
         onClick={() => {
@@ -42,7 +40,7 @@ export function RevertFile({
         }}
         disabled={version == null || actions.syncdoc?.is_read_only()}
       >
-        <Icon name="undo" /> Revert
+        <Icon name="undo" /> Restore This Version
       </Button>
     </Tooltip>
   );
