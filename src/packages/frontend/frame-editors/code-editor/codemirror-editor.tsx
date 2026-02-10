@@ -51,6 +51,8 @@ export interface Props {
   id: string;
   actions: any;
   path: string;
+  // Optional path used only for syntax highlighting mode detection.
+  mode_path?: string;
   project_id: string;
   font_size: number;
   cursors?: Map<string, any>;
@@ -223,7 +225,7 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     }
 
     const options: any = cm_options(
-      props.path,
+      props.mode_path ?? props.path,
       props.editor_settings,
       props.gutters,
       editor_actions(),
@@ -396,7 +398,7 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     if (cmRef.current == null) return;
     if (!options) {
       options = cm_options(
-        props.path,
+        props.mode_path ?? props.path,
         props.editor_settings,
         props.gutters,
         editor_actions(),
