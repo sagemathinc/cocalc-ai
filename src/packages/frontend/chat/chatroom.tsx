@@ -224,6 +224,9 @@ export function ChatPanel({
       ) {
         return;
       }
+      if (value === inputRef.current) {
+        return;
+      }
       inputRef.current = value;
       setInput(value);
     },
@@ -333,6 +336,24 @@ export function ChatPanel({
     [threadSections],
   );
 
+  const advanceComposerSession = useCallback((): number => {
+    const nextSession = composerSessionRef.current + 1;
+    composerSessionRef.current = nextSession;
+    setComposerSession(nextSession);
+    return nextSession;
+  }, []);
+
+  const clearComposerNow = useCallback(
+    (draftKey: number) => {
+      // Keep local guard state coherent immediately, before async state/render.
+      inputRef.current = "";
+      // Clear current composer draft before send switches selected thread context.
+      actions.deleteDraft(draftKey);
+      void clearInput();
+    },
+    [actions, clearInput],
+  );
+
   function sendMessage(
     replyToOverride?: Date | null,
     extraInput?: string,
@@ -340,9 +361,7 @@ export function ChatPanel({
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
-    const nextSession = composerSessionRef.current + 1;
-    composerSessionRef.current = nextSession;
-    setComposerSession(nextSession);
+    advanceComposerSession();
     let reply_to: Date | undefined;
     if (replyToOverride !== undefined) {
       reply_to = replyToOverride ?? undefined;
@@ -362,11 +381,7 @@ export function ChatPanel({
     } else if (isCombinedFeedSelected) {
       setAllowAutoSelectThread(false);
     }
-    // Keep local guard state coherent immediately, before async state/render.
-    inputRef.current = "";
-    // Clear current composer draft before send switches selected thread context.
-    actions.deleteDraft(composerDraftKey);
-    void clearInput();
+    clearComposerNow(composerDraftKey);
 
     const timeStamp = actions.sendChat({
       submitMentionsRef,
@@ -391,9 +406,7 @@ export function ChatPanel({
 
   function onNewChat(): void {
     // Explicitly reset draft state for the global "new chat" composer bucket.
-    const nextSession = composerSessionRef.current + 1;
-    composerSessionRef.current = nextSession;
-    setComposerSession(nextSession);
+    advanceComposerSession();
     inputRef.current = "";
     setInput("");
     actions.deleteDraft(0);

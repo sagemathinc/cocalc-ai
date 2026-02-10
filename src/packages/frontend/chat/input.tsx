@@ -11,6 +11,7 @@ import {
   CSSProperties,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -93,7 +94,6 @@ export default function ChatInput({
   const [input, setInput] = useState<string>(propsInput ?? "");
   const mountedRef = useRef<boolean>(true);
   const currentSessionTokenRef = useRef<number | undefined>(sessionToken);
-  const isFocusedRef = useRef<boolean>(false);
   const historyRef = useRef<HistoryEntry[]>([
     { value: propsInput ?? "", at: Date.now() },
   ]);
@@ -128,30 +128,30 @@ export default function ChatInput({
     }
   }, [propsInput, input]);
 
+  const resolvedPresenceThreadKey = useMemo((): string | null | undefined => {
+    if (presenceThreadKey === undefined) return undefined;
+    if (presenceThreadKey != null) return presenceThreadKey;
+    if (date < 0) return `${-date}`;
+    if (date > 0) return `${date}`;
+    return null;
+  }, [presenceThreadKey, date]);
+
   const setComposingPresence = useCallback(
     (value: string): void => {
       if (!syncdb) return;
       // In lite mode there is only one user, so cross-user presence is useless.
       if (lite) return;
       // Presence is only for the shared chat composer, not edit/reply inputs.
-      if (presenceThreadKey === undefined) return;
+      if (resolvedPresenceThreadKey === undefined) return;
       const composing = value.trim().length > 0;
-      const threadKey =
-        presenceThreadKey != null
-          ? presenceThreadKey
-          : date < 0
-            ? `${-date}`
-            : date > 0
-              ? `${date}`
-              : null;
       syncdb.set_cursor_locs([
         {
           chat_composing: composing,
-          chat_thread_key: threadKey,
+          chat_thread_key: resolvedPresenceThreadKey,
         },
       ]);
     },
-    [presenceThreadKey, syncdb],
+    [resolvedPresenceThreadKey, syncdb],
   );
 
   const savePresence = useDebouncedCallback(setComposingPresence, SAVE_DEBOUNCE_MS, {
@@ -168,19 +168,11 @@ export default function ChatInput({
   const publishNotComposing = () => {
     if (!syncdb) return;
     if (lite) return;
-    if (presenceThreadKey === undefined) return;
-    const threadKey =
-      presenceThreadKey != null
-        ? presenceThreadKey
-        : date < 0
-          ? `${-date}`
-          : date > 0
-            ? `${date}`
-            : null;
+    if (resolvedPresenceThreadKey === undefined) return;
     syncdb.set_cursor_locs([
       {
         chat_composing: false,
-        chat_thread_key: threadKey,
+        chat_thread_key: resolvedPresenceThreadKey,
       },
     ]);
   };
@@ -220,11 +212,9 @@ export default function ChatInput({
       autoFocus={autoFocus}
       saveDebounceMs={CHAT_INPUT_SAVE_DEBOUNCE_MS}
       onFocus={() => {
-        isFocusedRef.current = true;
         onFocus?.();
       }}
       onBlur={() => {
-        isFocusedRef.current = false;
         savePresence.flush?.();
         onBlur?.();
       }}

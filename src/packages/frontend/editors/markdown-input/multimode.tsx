@@ -266,16 +266,13 @@ export default function MultiMarkdownInput({
   activeCacheIdRef.current = cacheId;
   activeModeRef.current = mode;
 
-  function isActiveCallback(
-    sourceCacheId: string | undefined,
-    sourceMode: Mode,
-  ): boolean {
+  function isActiveCallback(sourceMode: Mode): boolean {
     if (!mountedRef.current) {
       return false;
     }
     const activeCacheId = activeCacheIdRef.current;
     const activeMode = activeModeRef.current;
-    if (sourceCacheId !== activeCacheId || sourceMode !== activeMode) {
+    if (cacheId !== activeCacheId || sourceMode !== activeMode) {
       return false;
     }
     return true;
@@ -513,7 +510,7 @@ export default function MultiMarkdownInput({
           selectionRef={selectionRef}
           value={value}
           onChange={(value) => {
-            if (!isActiveCallback(cacheId, "markdown")) return;
+            if (!isActiveCallback("markdown")) return;
             onChangeRef.current?.(value);
           }}
           saveDebounceMs={saveDebounceMs}
@@ -525,7 +522,7 @@ export default function MultiMarkdownInput({
           onUploadEnd={onUploadEnd}
           enableMentions={enableMentions}
           onShiftEnter={(value) => {
-            if (!isActiveCallback(cacheId, "markdown")) return;
+            if (!isActiveCallback("markdown")) return;
             onShiftEnterRef.current?.(value);
           }}
           onAltEnter={(value, pos) => {
@@ -623,11 +620,11 @@ export default function MultiMarkdownInput({
             getValueRef={getValueRef}
             actions={{
               set_value: (value) => {
-                if (!isActiveCallback(cacheId, "editor")) return;
+                if (!isActiveCallback("editor")) return;
                 onChangeRef.current?.(value);
               },
               shiftEnter: (value) => {
-                if (!isActiveCallback(cacheId, "editor")) return;
+                if (!isActiveCallback("editor")) return;
                 onChangeRef.current?.(value);
                 onShiftEnterRef.current?.(value);
               },
