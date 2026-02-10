@@ -56,6 +56,13 @@ async function typeInSlate(page, text: string) {
   await page.keyboard.type(text);
 }
 
+async function clickSendButton(page) {
+  const send = page.getByRole("button", { name: "Send" }).first();
+  await expect(send).toBeVisible();
+  await expect(send).toBeEnabled();
+  await send.click();
+}
+
 test("new-thread shift+enter send clears and stays cleared", async ({ page }) => {
   await page.goto("/");
   await waitForHarness(page);
@@ -289,6 +296,101 @@ test("composer editor mode: repeated follow-up shift+enter sends always show Sen
       return await page.evaluate(() => window.__chatComposerTest?.getSends?.() ?? []);
     })
     .toEqual(["x", "y", "z"]);
+  await expectHarnessHealthy(page);
+});
+
+test("composer editor mode: mixed text/image sends clear for both shift+enter and button", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__chatComposerTest?.setOscillationEnabled?.(true);
+  });
+
+  const image1 =
+    "![](http://127.0.0.1:30004/blobs/mixed-image-1?uuid=33333333-3333-4333-8333-333333333333)\n";
+  const image2 =
+    "![](http://127.0.0.1:30004/blobs/mixed-image-2?uuid=44444444-4444-4444-8444-444444444444)\n";
+
+  await typeInSlate(page, "alpha");
+  await expectComposerInput(page, "alpha");
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await page.waitForTimeout(600);
+
+  await setInputRaw(page, image1);
+  await expectComposerInput(page, image1);
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await page.waitForTimeout(600);
+
+  await setInputRaw(page, image2);
+  await expectComposerInput(page, image2);
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+    })
+    .toBe(true);
+  await clickSendButton(page);
+  await expectComposerInput(page, "");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSends?.() ?? []);
+    })
+    .toEqual(["alpha", image1.trim(), image2.trim()]);
+  await expectHarnessHealthy(page);
+});
+
+test("composer editor mode: after mixed sends, another follow-up still shows Send and clears", async ({
+  page,
+}) => {
+  await page.goto("/?mode=composer&editorMode=editor");
+  await waitForHarness(page);
+
+  await page.evaluate(() => {
+    window.__chatComposerTest?.setOscillationEnabled?.(true);
+  });
+
+  const image =
+    "![](http://127.0.0.1:30004/blobs/mixed-image-3?uuid=55555555-5555-4555-8555-555555555555)\n";
+
+  await typeInSlate(page, "x");
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await page.waitForTimeout(600);
+
+  await setInputRaw(page, image);
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await page.waitForTimeout(600);
+
+  await typeInSlate(page, "y");
+  await expectComposerInput(page, "y");
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonVisible?.());
+    })
+    .toBe(true);
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSendButtonDisabled?.());
+    })
+    .toBe(false);
+  await page.keyboard.press("Shift+Enter");
+  await expectComposerInput(page, "");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() => window.__chatComposerTest?.getSends?.() ?? []);
+    })
+    .toEqual(["x", image.trim(), "y"]);
   await expectHarnessHealthy(page);
 });
 
