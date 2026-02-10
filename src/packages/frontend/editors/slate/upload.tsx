@@ -10,6 +10,13 @@ import { Dropzone, BlobUpload } from "@cocalc/frontend/file-upload";
 import { getFocus } from "./format/commands";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 
+function debugSlateUpload(type: string, data?: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
+  // eslint-disable-next-line no-console
+  console.log(`[slate-upload] ${type}`, data ?? {});
+}
+
 export default function useUpload(
   editor: SlateEditor,
   body: React.JSX.Element,
@@ -41,9 +48,15 @@ export default function useUpload(
           const file = item.getAsFile();
           if (file != null) {
             const blob = file.slice(0, -1, item.type);
-            dropzoneRef?.current?.addFile(
-              new File([blob], `paste-${Math.random()}`, { type: item.type }),
-            );
+            const uploadFile = new File([blob], `paste-${Math.random()}`, {
+              type: item.type,
+            });
+            (uploadFile as any)._slateUploadGeneration =
+              (editor as any).__uploadGeneration ?? 0;
+            debugSlateUpload("insertData:addFile", {
+              uploadGeneration: (uploadFile as any)._slateUploadGeneration,
+            });
+            dropzoneRef?.current?.addFile(uploadFile);
           }
           return; // what if more than one ?
         }
@@ -75,6 +88,26 @@ export default function useUpload(
           // probably an error
           return;
         }
+        const uploadGeneration = file?.upload?.chunks?.[0]?.file?._slateUploadGeneration;
+        const currentUploadGeneration = (editor as any).__uploadGeneration ?? 0;
+        if (
+          uploadGeneration != null &&
+          uploadGeneration !== currentUploadGeneration
+        ) {
+          debugSlateUpload("complete:ignore-stale-upload", {
+            uploadGeneration,
+            currentUploadGeneration,
+            url,
+          });
+          return;
+        }
+        debugSlateUpload("complete:insert-upload", {
+          uploadGeneration,
+          currentUploadGeneration,
+          url,
+          hasImageHeight: !!file?.height,
+          mimeType: file?.upload?.chunks?.[0]?.file?.type,
+        });
         let node;
         const { height, upload } = file;
         const type = upload.chunks[0]?.file.type;
