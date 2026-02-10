@@ -41,9 +41,9 @@ DO NOT FORGET:
 ### ACL data plane
 
 - [x] Implement project-host in-memory ACL indexes for collaborator checks.
-- [ ] Add hub -> host collaborator delta stream and handlers.
+- [x] Add hub -> host collaborator delta stream and handlers.
 - [x] Ensure fast grant propagation path (seconds target).
-- [ ] Add bounded periodic reconcile (recently modified + active projects only).
+- [x] Add bounded periodic reconcile (recently modified + active projects only).
 - [x] Add on-demand single-project ACL refresh for unknown project checks.
 
 ### Authorization behavior

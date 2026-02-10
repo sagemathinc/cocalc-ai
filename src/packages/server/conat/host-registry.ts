@@ -26,6 +26,24 @@ export interface HostRegistryApi {
   getProjectHostAuthPublicKey: () => Promise<{
     project_host_auth_public_key: string;
   }>;
+  listProjectUserDeltas: (opts: {
+    host_id: string;
+    since_ms?: number;
+    limit?: number;
+  }) => Promise<{
+    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+    next_since_ms: number;
+    has_more: boolean;
+  }>;
+  listProjectUserReconcile: (opts: {
+    host_id: string;
+    limit?: number;
+    recent_days?: number;
+  }) => Promise<{
+    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+    as_of_ms: number;
+    has_more: boolean;
+  }>;
   getMasterConatTokenStatus: (opts: {
     host_id: string;
     current_token: string;
@@ -158,6 +176,86 @@ export async function initHostRegistryService() {
       async getProjectHostAuthPublicKey() {
         return {
           project_host_auth_public_key: getProjectHostAuthTokenPublicKey(),
+        };
+      },
+      async listProjectUserDeltas(opts) {
+        const host_id = `${opts?.host_id ?? ""}`.trim();
+        if (!host_id) {
+          throw Error("listProjectUserDeltas: host_id is required");
+        }
+        const since_ms = Math.max(0, Number(opts?.since_ms ?? 0));
+        const limit = Math.max(
+          1,
+          Math.min(2000, Number(opts?.limit ?? 500) || 500),
+        );
+        const { rows } = await pool().query<{
+          project_id: string;
+          users: any;
+          updated_ms: number;
+        }>(
+          `
+            SELECT
+              project_id,
+              COALESCE(users, '{}'::jsonb) AS users,
+              FLOOR(EXTRACT(EPOCH FROM COALESCE(updated_at, NOW())) * 1000)::bigint AS updated_ms
+            FROM projects
+            WHERE host_id=$1
+              AND deleted IS NOT TRUE
+              AND FLOOR(EXTRACT(EPOCH FROM COALESCE(updated_at, NOW())) * 1000)::bigint > $2
+            ORDER BY COALESCE(updated_at, NOW()) ASC
+            LIMIT $3
+          `,
+          [host_id, since_ms, limit],
+        );
+        let next_since_ms = since_ms;
+        for (const row of rows) {
+          next_since_ms = Math.max(next_since_ms, Number(row.updated_ms || 0));
+        }
+        return {
+          rows,
+          next_since_ms,
+          has_more: rows.length >= limit,
+        };
+      },
+      async listProjectUserReconcile(opts) {
+        const host_id = `${opts?.host_id ?? ""}`.trim();
+        if (!host_id) {
+          throw Error("listProjectUserReconcile: host_id is required");
+        }
+        const limit = Math.max(
+          1,
+          Math.min(5000, Number(opts?.limit ?? 2000) || 2000),
+        );
+        const recent_days = Math.max(
+          1,
+          Math.min(90, Number(opts?.recent_days ?? 7) || 7),
+        );
+        const { rows } = await pool().query<{
+          project_id: string;
+          users: any;
+          updated_ms: number;
+        }>(
+          `
+            SELECT
+              project_id,
+              COALESCE(users, '{}'::jsonb) AS users,
+              FLOOR(EXTRACT(EPOCH FROM COALESCE(updated_at, NOW())) * 1000)::bigint AS updated_ms
+            FROM projects
+            WHERE host_id=$1
+              AND deleted IS NOT TRUE
+              AND (
+                COALESCE(state ->> 'state', '') IN ('running', 'starting')
+                OR COALESCE(last_edited, to_timestamp(0)) > NOW() - ($2 || ' days')::interval
+              )
+            ORDER BY COALESCE(updated_at, NOW()) DESC
+            LIMIT $3
+          `,
+          [host_id, `${recent_days}`, limit],
+        );
+        return {
+          rows,
+          as_of_ms: Date.now(),
+          has_more: rows.length >= limit,
         };
       },
       async getMasterConatTokenStatus(opts) {

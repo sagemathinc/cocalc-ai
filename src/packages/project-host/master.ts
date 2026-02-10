@@ -44,6 +44,36 @@ const MASTER_CONAT_MISSING_PROBE_MS = Math.max(
   5_000,
   Number(process.env.COCALC_MASTER_CONAT_TOKEN_MISSING_PROBE_MS ?? 30_000),
 );
+const USER_DELTA_SYNC_MS = Math.max(
+  2_000,
+  Number(process.env.COCALC_PROJECT_HOST_USER_DELTA_SYNC_MS ?? 10_000),
+);
+const USER_RECONCILE_MS = Math.max(
+  60_000,
+  Number(process.env.COCALC_PROJECT_HOST_USER_RECONCILE_MS ?? 5 * 60_000),
+);
+const USER_DELTA_BATCH_LIMIT = Math.max(
+  50,
+  Math.min(
+    2_000,
+    Number(process.env.COCALC_PROJECT_HOST_USER_DELTA_BATCH_LIMIT ?? 500),
+  ),
+);
+const USER_RECONCILE_LIMIT = Math.max(
+  100,
+  Math.min(
+    5_000,
+    Number(process.env.COCALC_PROJECT_HOST_USER_RECONCILE_LIMIT ?? 2_000),
+  ),
+);
+const USER_RECONCILE_RECENT_DAYS = Math.max(
+  1,
+  Math.min(
+    90,
+    Number(process.env.COCALC_PROJECT_HOST_USER_RECONCILE_RECENT_DAYS ?? 7),
+  ),
+);
+const USER_DELTA_CURSOR_KEY = "users-delta-cursor";
 
 interface HostRegistration {
   id: string;
@@ -169,6 +199,24 @@ export async function startMasterRegistration({
     heartbeat: (info: HostRegistration) => Promise<void>;
     getProjectHostAuthPublicKey: () => Promise<{
       project_host_auth_public_key: string;
+    }>;
+    listProjectUserDeltas: (opts: {
+      host_id: string;
+      since_ms?: number;
+      limit?: number;
+    }) => Promise<{
+      rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+      next_since_ms: number;
+      has_more: boolean;
+    }>;
+    listProjectUserReconcile: (opts: {
+      host_id: string;
+      limit?: number;
+      recent_days?: number;
+    }) => Promise<{
+      rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+      as_of_ms: number;
+      has_more: boolean;
     }>;
     getMasterConatTokenStatus: (opts: {
       host_id: string;
@@ -309,6 +357,93 @@ export async function startMasterRegistration({
     } catch (err) {
       logger.warn(`failed to ${fn} host`, { err });
     }
+  };
+
+  const getUserDeltaCursor = (): number => {
+    const row = getRow("project-host", USER_DELTA_CURSOR_KEY);
+    const value = Number((row as any)?.cursor_ms ?? 0);
+    return Number.isFinite(value) && value >= 0 ? value : 0;
+  };
+
+  const setUserDeltaCursor = (cursor_ms: number) => {
+    upsertRow("project-host", USER_DELTA_CURSOR_KEY, {
+      cursor_ms: Math.max(0, Math.floor(cursor_ms)),
+      updated_at: Date.now(),
+    });
+  };
+
+  const applyUserRows = async (
+    rows: Array<{ project_id: string; users: any; updated_ms: number }>,
+  ): Promise<number> => {
+    let applied = 0;
+    for (const row of rows) {
+      const project_id = `${row?.project_id ?? ""}`.trim();
+      if (!project_id) continue;
+      try {
+        await updateProjectUsers({
+          project_id,
+          users: row?.users ?? {},
+        });
+        applied += 1;
+      } catch (err) {
+        logger.debug("failed applying project users delta", {
+          project_id,
+          err,
+        });
+      }
+    }
+    return applied;
+  };
+
+  const syncUserDeltas = async (reason: string): Promise<void> => {
+    let cursor = getUserDeltaCursor();
+    let totalApplied = 0;
+    let batches = 0;
+    while (batches < 5) {
+      const resp = await registry.listProjectUserDeltas({
+        host_id: id,
+        since_ms: cursor,
+        limit: USER_DELTA_BATCH_LIMIT,
+      });
+      batches += 1;
+      const rows = resp?.rows ?? [];
+      totalApplied += await applyUserRows(rows);
+      cursor = Math.max(cursor, Number(resp?.next_since_ms ?? cursor));
+      if (!resp?.has_more || rows.length === 0) {
+        break;
+      }
+    }
+    setUserDeltaCursor(cursor);
+    if (totalApplied > 0) {
+      logger.debug("applied project user deltas", {
+        reason,
+        applied: totalApplied,
+        cursor_ms: cursor,
+      });
+    }
+  };
+
+  const reconcileUsers = async (reason: string): Promise<void> => {
+    const resp = await registry.listProjectUserReconcile({
+      host_id: id,
+      limit: USER_RECONCILE_LIMIT,
+      recent_days: USER_RECONCILE_RECENT_DAYS,
+    });
+    const rows = resp?.rows ?? [];
+    const applied = await applyUserRows(rows);
+    const cursorCandidate = rows.reduce(
+      (m, row) => Math.max(m, Number(row?.updated_ms ?? 0)),
+      0,
+    );
+    if (cursorCandidate > 0) {
+      setUserDeltaCursor(Math.max(getUserDeltaCursor(), cursorCandidate));
+    }
+    logger.debug("project user reconcile completed", {
+      reason,
+      returned: rows.length,
+      applied,
+      truncated: !!resp?.has_more,
+    });
   };
 
   const recoverMasterConatTokenViaBootstrap = async (
@@ -465,7 +600,25 @@ export async function startMasterRegistration({
   await refreshProjectHostAuthPublicKey("startup");
   await runEnsureMasterConatToken("startup");
   await send("register");
+  try {
+    await syncUserDeltas("startup");
+    await reconcileUsers("startup");
+  } catch (err) {
+    logger.warn("initial project user sync failed", { err });
+  }
   const timer = setInterval(() => void send("heartbeat"), 30_000);
+  const deltaTimer = setInterval(() => {
+    void syncUserDeltas("interval").catch((err) =>
+      logger.debug("project user delta sync failed", { err }),
+    );
+  }, USER_DELTA_SYNC_MS);
+  deltaTimer.unref?.();
+  const reconcileTimer = setInterval(() => {
+    void reconcileUsers("interval").catch((err) =>
+      logger.debug("project user reconcile failed", { err }),
+    );
+  }, USER_RECONCILE_MS);
+  reconcileTimer.unref?.();
   let tokenRotationRetryStep = 0;
   let tokenRotationTimer: NodeJS.Timeout | undefined;
   const scheduleTokenRotation = (delayMs: number) => {
@@ -506,6 +659,8 @@ export async function startMasterRegistration({
 
   const stop = () => {
     clearInterval(timer);
+    clearInterval(deltaTimer);
+    clearInterval(reconcileTimer);
     clearInterval(missingTokenProbe);
     if (tokenRotationTimer) {
       clearTimeout(tokenRotationTimer);
