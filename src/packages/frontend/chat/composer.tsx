@@ -37,9 +37,10 @@ export interface ChatRoomComposerProps {
   path: string;
   fontSize: number;
   composerDraftKey: number;
+  composerSession: number;
   input: string;
-  setInput: (value: string) => void;
-  on_send: () => void;
+  setInput: (value: string, sessionToken?: number) => void;
+  on_send: (value?: string) => void;
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
   isSelectedThreadAI: boolean;
@@ -59,6 +60,7 @@ export function ChatRoomComposer({
   path,
   fontSize,
   composerDraftKey,
+  composerSession,
   input,
   setInput,
   on_send,
@@ -95,6 +97,12 @@ export function ChatRoomComposer({
   const threadColor = selectedThread?.threadColor;
   const threadIcon = selectedThread?.threadIcon;
   const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
+  const presenceThreadKey = useMemo(() => {
+    if (combinedFeedSelected) {
+      return composerTargetKey ?? null;
+    }
+    return selectedThread?.key ?? null;
+  }, [combinedFeedSelected, composerTargetKey, selectedThread?.key]);
 
   const [viewportHeight, setViewportHeight] = useState<number>(() => {
     if (typeof window === "undefined") return 900;
@@ -265,7 +273,7 @@ export function ChatRoomComposer({
       const effective =
         typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
-      on_send();
+      on_send(effective);
       if (isZenMode) {
         void toggleZenMode();
       }
@@ -368,21 +376,24 @@ export function ChatRoomComposer({
         )}
         <div ref={inputContainerRef}>
           <ChatInput
+            key={`${path}${project_id}-draft-${composerDraftKey}`}
             fontSize={fontSize}
             autoFocus
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
             input={input}
+            presenceThreadKey={presenceThreadKey}
             on_send={handleSend}
             height={chatInputHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             onChange={(value) => {
-              setInput(value);
+              setInput(value, composerSession);
             }}
             onFocus={() => onComposerFocusChange(true)}
             onBlur={() => onComposerFocusChange(false)}
             submitMentionsRef={submitMentionsRef}
             syncdb={actions.syncdb}
             date={composerDraftKey}
+            sessionToken={composerSession}
             editBarStyle={{ overflow: "auto" }}
           />
         </div>

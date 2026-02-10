@@ -5,6 +5,7 @@
 
 import { alert_message } from "@cocalc/frontend/alerts";
 import { redux, redux_name } from "@cocalc/frontend/app-framework";
+import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { path_split, startswith } from "@cocalc/util/misc";
 import { ChatActions } from "./actions";
@@ -32,6 +33,7 @@ export function initChat(project_id: string, path: string): ChatActions {
     project_id,
     path,
     primary_keys: ["date", "sender_id", "event"],
+    cursors: !lite,
     // used only for drafts, since store lots of versions as user types:
     string_cols: ["input"],
     ignoreInitialChanges: true,

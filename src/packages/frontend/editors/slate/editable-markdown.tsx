@@ -196,6 +196,8 @@ interface Props {
   controlRef?: MutableRefObject<{
     moveCursorToEndOfLine: () => void;
     allowNextValueUpdateWhileFocused?: () => void;
+    setValueNow?: (value: string) => void;
+    cancelPendingUploads?: () => void;
     setSelectionFromMarkdownPosition?: (
       pos: { line: number; ch: number } | undefined,
     ) => boolean;
@@ -390,6 +392,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         allowNextValueUpdateWhileFocused: () => {
           allowFocusedValueUpdateRef.current = true;
         },
+        setValueNow: (nextValue: string) => {
+          allowFocusedValueUpdateRef.current = true;
+          setEditorToValue(nextValue ?? "");
+        },
+        cancelPendingUploads: () => {
+          ed.cancelPendingUploads?.();
+        },
         setSelectionFromMarkdownPosition: (
           pos: { line: number; ch: number } | undefined,
         ) => {
@@ -425,6 +434,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     ed.onCursorBottom = onCursorBottom;
     ed.onCursorTop = onCursorTop;
     ed.preserveBlankLines = preserveBlankLines;
+    let uploadGeneration = 0;
+    ed.cancelPendingUploads = () => {
+      uploadGeneration += 1;
+      (ed as any).__uploadGeneration = uploadGeneration;
+    };
+    (ed as any).__uploadGeneration = uploadGeneration;
 
     return ed as SlateEditor;
   }, []);
@@ -1045,6 +1060,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const debugLogEnabled =
     typeof window !== "undefined" && Boolean((window as any).__slateDebugLog);
   const blockPatchDebugEnabled = isBlockPatchDebugEnabled() || debugLogEnabled;
+  const forceDirectSetForClear = normalizedValue.length === 0;
   debugSyncLog("value-normalized", {
     focused: isMergeFocused(),
     blockPatchEnabled,
@@ -1052,11 +1068,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     sameAsLastSet: lastSetValueRef.current == normalizedValue,
     sameAsEditor: normalizedValue == editor.getMarkdownValue(),
     valueLength: normalizedValue.length,
+    forceDirectSetForClear,
   });
   const activeBlockIndex = editor.selection?.anchor?.path?.[0];
   const recentlyTyped =
     Date.now() - lastLocalEditAtRef.current < mergeIdleMsRef.current;
     const shouldDirectSet =
+      forceDirectSetForClear ||
       previousEditorValue.length <= 1 &&
       nextEditorValue.length >= 40 &&
       !ReactEditor.isFocused(editor);
@@ -1190,6 +1208,19 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           }
           preserveScrollPosition(editor, operations);
           applyOperations(editor, operations);
+          // If the op-based transform fails to converge (which can happen with
+          // some focused void-node states), force a direct value reset.
+          const appliedMarkdown = slate_to_markdown(editor.children, {
+            cache: editor.syncCache,
+            preserveBlankLines,
+          });
+          if (appliedMarkdown !== normalizedValue) {
+            debugSyncLog("value-apply:mismatch-fallback", {
+              appliedLength: appliedMarkdown.length,
+              targetLength: normalizedValue.length,
+            });
+            onChange(nextEditorValue);
+          }
           // console.log("time to set via diff", new Date() - t);
         }
       } finally {

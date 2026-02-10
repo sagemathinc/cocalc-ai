@@ -12,16 +12,47 @@ export const Popover = (_props: any) => null;
 export const DropdownMenu = (_props: any) => null;
 export const ColorButton = (_props: any) => null;
 export const A = (props: any) => React.createElement("a", props);
+export const Paragraph = (props: any) => React.createElement("p", props, props?.children);
+export const Text = (props: any) => React.createElement("span", props, props?.children);
+export const Title = (props: any) => React.createElement("h3", props, props?.children);
+export const Avatar = (_props: any) => null;
+export const LanguageModelVendorAvatar = (_props: any) => null;
+export const LLMModelPrice = (_props: any) => null;
+export const LLMUsageStatus = (_props: any) => null;
+export const Cursors = (_props: any) => null;
+export const CursorsType = {};
+export const avatar_fontcolor = (_name?: string) => "#666";
 
 export const useFileContext = () => ({});
 export const FileContext = React.createContext({});
+export const useLanguageModelSetting = () => null;
+export const useUserDefinedLLM = () => [];
+export const useProjectContext = () => ({ project_id: "project-1", path: "chat-harness.chat" });
+export const useProjectHasInternetAccess = () => true;
+export const lite = false;
+export const webapp_client = {
+  server_time: () => Date.now(),
+  conat_client: {
+    conat: () => ({
+      sync: {
+        akv: () => ({
+          get: async () => null,
+          set: async () => undefined,
+          del: async () => undefined,
+          on: () => undefined,
+          off: () => undefined,
+        }),
+      },
+    }),
+  },
+};
 
 export const redux = {
   getStore: () => ({
     get: () => null,
   }),
 };
-export const useRedux = () => ({} as any);
+export const useRedux = () => undefined as any;
 export const useIsMountedRef = () => ({ current: true });
 export const useEffect = React.useEffect;
 export const useMemo = React.useMemo;
@@ -49,8 +80,10 @@ export const CodeMirrorStatic = (_props: any) => null;
 export const RunButton = (_props: any) => null;
 export const Cursor = (_props: any) => null;
 export const Complete = (_props: any) => null;
-export const Dropzone = (_props: any) => null;
-export const BlobUpload = (_props: any) => null;
+export const Dropzone = (props: any) =>
+  props?.children ? React.createElement(React.Fragment, null, props.children) : null;
+export const BlobUpload = (props: any) =>
+  props?.children ? React.createElement(React.Fragment, null, props.children) : null;
 export const getProfile = () => ({});
 export const useMentionableUsers = () => [];
 export const submit_mentions = () => undefined;

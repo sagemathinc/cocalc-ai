@@ -16,19 +16,19 @@ type HubClient = {
 
 type UseHostCatalogOptions = {
   provider?: HostProvider;
-  refreshProvider?: HostProvider;
   onError?: (message: string) => void;
   pollMs?: number;
 };
 
 export const useHostCatalog = (
   hub: HubClient,
-  { provider, refreshProvider, onError, pollMs }: UseHostCatalogOptions,
+  { provider, onError, pollMs }: UseHostCatalogOptions,
 ) => {
   const [catalog, setCatalog] = useState<HostCatalog | undefined>(undefined);
   const [catalogError, setCatalogError] = useState<string | undefined>(
     undefined,
   );
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const onErrorRef = useRef(onError);
 
@@ -36,11 +36,15 @@ export const useHostCatalog = (
     onErrorRef.current = onError;
   }, [onError]);
 
-  const fetchCatalog = useCallback(async () => {
+  const fetchCatalog = useCallback(async ({ background = false } = {}) => {
     if (!provider) {
       setCatalog(undefined);
       setCatalogError(undefined);
+      setCatalogLoading(false);
       return;
+    }
+    if (!background) {
+      setCatalogLoading(true);
     }
     try {
       const data = await hub.hosts.getCatalog({ provider });
@@ -53,12 +57,16 @@ export const useHostCatalog = (
       setCatalog(undefined);
       setCatalogError(message);
       onErrorRef.current?.(message);
+    } finally {
+      if (!background) {
+        setCatalogLoading(false);
+      }
     }
   }, [provider, hub]);
 
   useEffect(() => {
     (async () => {
-      await fetchCatalog();
+      await fetchCatalog({ background: false });
     })();
     return () => undefined;
   }, [fetchCatalog]);
@@ -66,19 +74,23 @@ export const useHostCatalog = (
   useEffect(() => {
     if (!pollMs || !provider) return;
     const timer = setInterval(() => {
-      fetchCatalog().catch(() => undefined);
+      fetchCatalog({ background: true }).catch(() => undefined);
     }, pollMs);
     return () => clearInterval(timer);
   }, [pollMs, provider, fetchCatalog]);
 
-  const refreshCatalog = async (): Promise<boolean> => {
-    if (!refreshProvider || catalogRefreshing) return false;
+  const refreshCatalogForProvider = async (
+    providerOverride?: HostProvider,
+  ): Promise<boolean> => {
+    if (!providerOverride || providerOverride === "none" || catalogRefreshing) {
+      return false;
+    }
     setCatalogRefreshing(true);
     let success = true;
     try {
-      await hub.hosts.updateCloudCatalog({ provider: refreshProvider });
-      if (refreshProvider === provider) {
-        const data = await hub.hosts.getCatalog({ provider: refreshProvider });
+      await hub.hosts.updateCloudCatalog({ provider: providerOverride });
+      if (providerOverride === provider) {
+        const data = await hub.hosts.getCatalog({ provider: providerOverride });
         setCatalog(data);
         setCatalogError(undefined);
       }
@@ -95,7 +107,8 @@ export const useHostCatalog = (
   return {
     catalog,
     catalogError,
+    catalogLoading,
     catalogRefreshing,
-    refreshCatalog,
+    refreshCatalog: refreshCatalogForProvider,
   };
 };

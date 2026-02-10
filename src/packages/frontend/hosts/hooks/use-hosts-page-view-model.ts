@@ -135,7 +135,15 @@ export const useHostsPageViewModel = () => {
 
   const [fastPoll, setFastPoll] = React.useState(false);
   const [setupOpen, setSetupOpen] = React.useState(false);
-  const { hosts, setHosts, refresh, canCreateHosts } = useHosts(hub, {
+  const {
+    hosts,
+    setHosts,
+    refresh,
+    canCreateHosts,
+    loading: hostsLoading,
+    loaded: hostsLoaded,
+    error: hostsError,
+  } = useHosts(hub, {
     onError: () => console.warn("Unable to load hosts"),
     adminView: isAdmin && showAdmin,
     includeDeleted: showDeleted,
@@ -275,10 +283,9 @@ export const useHostsPageViewModel = () => {
     selectedStorageMode,
   } = useHostFormValues(form);
 
-  const { catalog, catalogError, catalogRefreshing, refreshCatalog } =
+  const { catalog, catalogError, catalogLoading, catalogRefreshing, refreshCatalog } =
     useHostCatalog(hub, {
       provider: catalogProvider,
-      refreshProvider,
       onError: (text) => console.warn(text),
     });
   const hasSelfHostHosts = React.useMemo(
@@ -614,6 +621,7 @@ export const useHostsPageViewModel = () => {
         persistentGrowable,
         showDiskFields,
       },
+      catalogLoading,
       catalogError,
     },
     catalogRefresh: {
@@ -676,6 +684,9 @@ export const useHostsPageViewModel = () => {
 
   const hostListVm = useHostListViewModel({
     hosts,
+    hostsLoading,
+    hostsLoaded,
+    hostsError,
     hostOps,
     onStart: (id: string) => setStatus(id, "start"),
     onStop: (id: string, opts) => setStatus(id, "stop", opts),

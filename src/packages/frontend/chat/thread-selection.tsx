@@ -70,6 +70,15 @@ export function useChatThreadSelection({
       setAllowAutoSelectThread(true);
       return;
     }
+    // If a concrete thread key is selected, don't immediately force a fallback
+    // when thread metadata is transiently stale. This happens right after send:
+    // selection moves to the new root before threadIndex has caught up.
+    if (
+      selectedThreadKey != null &&
+      selectedThreadKey !== COMBINED_FEED_KEY
+    ) {
+      return;
+    }
     const exists = threads.some((thread) => thread.key === selectedThreadKey);
     if (!exists && allowAutoSelectThread) {
       setSelectedThreadKey(COMBINED_FEED_KEY);

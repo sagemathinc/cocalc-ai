@@ -6,6 +6,7 @@
 
 import type { Descendant } from "slate";
 import { register } from "../elements/register";
+import "../elements/types-ssr";
 import "../elements/generic";
 import "../elements/paragraph/editable";
 import "../elements/list/editable-list";
@@ -50,4 +51,11 @@ export function toCodeLines(value: string): Descendant[] {
     type: "code_line",
     children: [{ text: line }],
   })) as Descendant[];
+}
+
+export function isElementOfType(x: any, type: string | string[]): boolean {
+  if (x == null) return false;
+  const t = x.type;
+  if (Array.isArray(type)) return type.includes(t);
+  return t === type;
 }

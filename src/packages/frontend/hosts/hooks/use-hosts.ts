@@ -24,6 +24,12 @@ type UseHostsOptions = {
 
 const MEMBERSHIP_REFRESH_MS = 5 * 60_000;
 
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string" && err.trim()) return err;
+  return "Unable to load hosts.";
+}
+
 export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
   const {
     onError,
@@ -33,6 +39,9 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
   } = options;
   const [hosts, setHosts] = useState<Host[]>([]);
   const [canCreateHosts, setCanCreateHosts] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [loaded, setLoaded] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
   const onErrorRef = useRef(onError);
   const lastMembershipRef = useRef(0);
 
@@ -58,13 +67,24 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
   }, [hub]);
 
   const refresh = useCallback(async () => {
-    const list = await hub.hosts.listHosts({
-      admin_view: adminView ? true : undefined,
-      include_deleted: includeDeleted ? true : undefined,
-    });
-    setHosts(list);
-    void refreshMembership();
-    return list;
+    setLoading(true);
+    setError(null);
+    try {
+      const list = await hub.hosts.listHosts({
+        admin_view: adminView ? true : undefined,
+        include_deleted: includeDeleted ? true : undefined,
+      });
+      setHosts(list);
+      setLoaded(true);
+      void refreshMembership();
+      return list;
+    } catch (err) {
+      setError(getErrorMessage(err));
+      setLoaded(true);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
   }, [hub, adminView, includeDeleted, refreshMembership]);
 
   useEffect(() => {
@@ -91,5 +111,5 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
     return () => clearInterval(timer);
   }, [refresh, pollMs]);
 
-  return { hosts, setHosts, refresh, canCreateHosts };
+  return { hosts, setHosts, refresh, canCreateHosts, loading, loaded, error };
 };
