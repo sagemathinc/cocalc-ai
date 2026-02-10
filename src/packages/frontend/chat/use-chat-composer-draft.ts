@@ -26,13 +26,6 @@ type ShadowState = {
   updatedAt: number;
 };
 
-function debugChatDraft(type: string, data?: Record<string, unknown>): void {
-  if (typeof window === "undefined") return;
-  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
-  // eslint-disable-next-line no-console
-  console.log(`[chat-draft] ${type}`, data ?? {});
-}
-
 // Process-local optimistic draft state, used to defeat stale remote reads when
 // switching composer keys quickly (e.g., send in new thread then "New Chat").
 const shadowDraftState = new Map<string, ShadowState>();
@@ -120,13 +113,6 @@ export function useChatComposerDraft({
       localText = shadow.text;
       localUpdatedAt = shadow.updatedAt;
     }
-    debugChatDraft("controller:init", {
-      storageKey,
-      localStorageKey,
-      localLength: localText.length,
-      localUpdatedAt,
-      hasShadow: shadow != null,
-    });
     const controller = new DraftController({
       key: storageKey,
       adapter,
@@ -138,12 +124,6 @@ export function useChatComposerDraft({
     controllerRef.current = controller;
     const unsub = controller.subscribe((snapshot) => {
       if (!closed) {
-        debugChatDraft("controller:subscribe", {
-          storageKey,
-          textLength: snapshot.text.length,
-          composing: snapshot.composing,
-          updatedAt: snapshot.updatedAt,
-        });
         setShadow(storageKey, {
           text: snapshot.text,
           updatedAt: snapshot.updatedAt,
@@ -199,11 +179,6 @@ export function useChatComposerDraft({
 
   const setInput = useCallback((value: string) => {
     const now = Date.now();
-    debugChatDraft("setInput", {
-      storageKey,
-      valueLength: value.length,
-      sessionTime: now,
-    });
     setShadow(storageKey, { text: value, updatedAt: now });
     scheduleLocalWrite(value);
     const controller = controllerRef.current;
@@ -217,11 +192,6 @@ export function useChatComposerDraft({
 
   const clearInput = useCallback(async () => {
     const now = Date.now();
-    debugChatDraft("clearInput:start", {
-      storageKey,
-      localStorageKey,
-      sessionTime: now,
-    });
     cancelPendingLocalWrite();
     setShadow(storageKey, { text: "", updatedAt: now });
     delete_local_storage(localStorageKey);
@@ -229,10 +199,6 @@ export function useChatComposerDraft({
     if (!controller) {
       setInputState("");
       if (adapter) {
-        debugChatDraft("clearInput:save-empty-no-controller", {
-          storageKey,
-          sessionTime: now,
-        });
         await adapter.save(
           storageKey,
           { text: "", updatedAt: now, composing: false },
@@ -245,10 +211,6 @@ export function useChatComposerDraft({
     if (adapter) {
       // Write an explicit empty snapshot so key switches do not reload stale
       // remote text due async clear races.
-      debugChatDraft("clearInput:save-empty", {
-        storageKey,
-        sessionTime: now,
-      });
       await adapter.save(
         storageKey,
         { text: "", updatedAt: now, composing: false },
@@ -262,13 +224,6 @@ export function useChatComposerDraft({
       const key = `${project_id}:${path}:${draftKey}`;
       const localKey = `chat-composer-draft:${key}`;
       const now = Date.now();
-      debugChatDraft("clearComposerDraft:start", {
-        storageKey: key,
-        localStorageKey: localKey,
-        draftKey,
-        currentDraftKey: composerDraftKey,
-        sessionTime: now,
-      });
       cancelPendingLocalWrite();
       setShadow(key, { text: "", updatedAt: now });
       delete_local_storage(localKey);

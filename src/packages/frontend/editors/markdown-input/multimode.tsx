@@ -52,13 +52,6 @@ const MAX_INPUT_HEIGHT = "50vh";
 const Modes = ["markdown", "editor"] as const;
 export type Mode = (typeof Modes)[number];
 
-function debugComposerMultimode(type: string, data?: Record<string, unknown>): void {
-  if (typeof window === "undefined") return;
-  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
-  // eslint-disable-next-line no-console
-  console.log(`[multimode] ${type}`, data ?? {});
-}
-
 const LOCAL_STORAGE_KEY = "markdown-editor-mode";
 
 function getLocalStorageMode(): Mode | undefined {
@@ -283,12 +276,6 @@ export default function MultiMarkdownInput({
     const activeCacheId = activeCacheIdRef.current;
     const activeMode = activeModeRef.current;
     if (sourceCacheId !== activeCacheId || sourceMode !== activeMode) {
-      debugComposerMultimode("stale-callback:ignored", {
-        sourceCacheId,
-        activeCacheId,
-        sourceMode,
-        activeMode,
-      });
       return false;
     }
     return true;
@@ -527,11 +514,6 @@ export default function MultiMarkdownInput({
           value={value}
           onChange={(value) => {
             if (!isActiveCallback(cacheId, "markdown")) return;
-            debugComposerMultimode("markdown:onChange", {
-              value,
-              mode,
-              cacheId,
-            });
             onChangeRef.current?.(value);
           }}
           saveDebounceMs={saveDebounceMs}
@@ -642,20 +624,10 @@ export default function MultiMarkdownInput({
             actions={{
               set_value: (value) => {
                 if (!isActiveCallback(cacheId, "editor")) return;
-                debugComposerMultimode("editor:set_value", {
-                  value,
-                  mode,
-                  cacheId,
-                });
                 onChangeRef.current?.(value);
               },
               shiftEnter: (value) => {
                 if (!isActiveCallback(cacheId, "editor")) return;
-                debugComposerMultimode("editor:shiftEnter", {
-                  value,
-                  mode,
-                  cacheId,
-                });
                 onChangeRef.current?.(value);
                 onShiftEnterRef.current?.(value);
               },

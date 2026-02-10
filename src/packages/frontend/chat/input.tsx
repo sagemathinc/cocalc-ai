@@ -4,14 +4,13 @@
  */
 
 // Chat draft text is private in AKV via the shared draft controller.
-// Composer presence (date<=0) is published with syncdoc cursors, so it is
-// ephemeral and doesn't spam chat rows.
+// Composer presence is published with syncdoc cursors, so it is ephemeral
+// and doesn't spam chat rows.
 
 import {
   CSSProperties,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -59,12 +58,6 @@ type HistoryEntry = {
 const HISTORY_GROUP_MS = 250;
 const CHAT_INPUT_SAVE_DEBOUNCE_MS = 120;
 
-function debugComposerInput(...args: any[]): void {
-  if (typeof window === "undefined") return;
-  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
-  console.log("[chat-input]", ...args);
-}
-
 function markdownEndPosition(value: string): { line: number; ch: number } {
   const lines = value.split("\n");
   const line = Math.max(0, lines.length - 1);
@@ -96,10 +89,6 @@ export default function ChatInput({
 }: Props) {
   const intl = useIntl();
   const { project_id } = useFrameContext();
-  const sender_id = useMemo(
-    () => redux.getStore("account").get_account_id(),
-    [],
-  );
   const controlRef = useRef<any>(null);
   const [input, setInput] = useState<string>(propsInput ?? "");
   const mountedRef = useRef<boolean>(true);
@@ -132,22 +121,10 @@ export default function ChatInput({
 
   useEffect(() => {
     const next = propsInput ?? "";
-    debugComposerInput("prop-sync:start", {
-      cacheId,
-      next,
-      local: input,
-      sessionToken,
-    });
     if (next !== input) {
       setInput(next);
       historyRef.current = [{ value: next, at: Date.now() }];
       historyIndexRef.current = 0;
-      debugComposerInput("prop-sync:applied", {
-        cacheId,
-        next,
-        prevLocal: input,
-        sessionToken,
-      });
     }
   }, [propsInput, input]);
 
@@ -156,34 +133,25 @@ export default function ChatInput({
       if (!syncdb) return;
       // In lite mode there is only one user, so cross-user presence is useless.
       if (lite) return;
+      // Presence is only for the shared chat composer, not edit/reply inputs.
+      if (presenceThreadKey === undefined) return;
       const composing = value.trim().length > 0;
-      if (date <= 0) {
-        const threadKey =
-          presenceThreadKey != null
-            ? presenceThreadKey
-            : date < 0
-              ? `${-date}`
+      const threadKey =
+        presenceThreadKey != null
+          ? presenceThreadKey
+          : date < 0
+            ? `${-date}`
+            : date > 0
+              ? `${date}`
               : null;
-        syncdb.set_cursor_locs([
-          {
-            chat_composing: composing,
-            chat_thread_key: threadKey,
-          },
-        ]);
-        return;
-      }
-      syncdb.set({
-        event: "draft",
-        sender_id,
-        date,
-        // keep content private; this row is for composing presence only.
-        input: "",
-        composing,
-        active: composing ? Date.now() : 0,
-      });
-      syncdb.commit();
+      syncdb.set_cursor_locs([
+        {
+          chat_composing: composing,
+          chat_thread_key: threadKey,
+        },
+      ]);
     },
-    [date, presenceThreadKey, sender_id, syncdb],
+    [presenceThreadKey, syncdb],
   );
 
   const savePresence = useDebouncedCallback(setComposingPresence, SAVE_DEBOUNCE_MS, {
@@ -200,26 +168,21 @@ export default function ChatInput({
   const publishNotComposing = () => {
     if (!syncdb) return;
     if (lite) return;
-    if (date <= 0) {
-      const threadKey =
-        presenceThreadKey != null ? presenceThreadKey : date < 0 ? `${-date}` : null;
-      syncdb.set_cursor_locs([
-        {
-          chat_composing: false,
-          chat_thread_key: threadKey,
-        },
-      ]);
-      return;
-    }
-    syncdb.set({
-      event: "draft",
-      sender_id,
-      date,
-      input: "",
-      composing: false,
-      active: 0,
-    });
-    syncdb.commit();
+    if (presenceThreadKey === undefined) return;
+    const threadKey =
+      presenceThreadKey != null
+        ? presenceThreadKey
+        : date < 0
+          ? `${-date}`
+          : date > 0
+            ? `${date}`
+            : null;
+    syncdb.set_cursor_locs([
+      {
+        chat_composing: false,
+        chat_thread_key: threadKey,
+      },
+    ]);
   };
 
   function getPlaceholder(): string {
@@ -274,20 +237,8 @@ export default function ChatInput({
       onChange={(value) => {
         if (!mountedRef.current) return;
         if (isStaleSessionCallback(sessionToken)) {
-          debugComposerInput("onChange:ignored-stale-session", {
-            cacheId,
-            value,
-            callbackSessionToken: sessionToken,
-            currentSessionToken: currentSessionTokenRef.current,
-          });
           return;
         }
-        debugComposerInput("onChange:recv", {
-          cacheId,
-          value,
-          local: input,
-          sessionToken,
-        });
         setInput(value);
         onChange(value, sessionToken);
         savePresence(value);
@@ -323,20 +274,8 @@ export default function ChatInput({
       onShiftEnter={(value) => {
         if (!mountedRef.current) return;
         if (isStaleSessionCallback(sessionToken)) {
-          debugComposerInput("onShiftEnter:ignored-stale-session", {
-            cacheId,
-            value,
-            callbackSessionToken: sessionToken,
-            currentSessionToken: currentSessionTokenRef.current,
-          });
           return;
         }
-        debugComposerInput("onShiftEnter", {
-          cacheId,
-          value,
-          local: input,
-          sessionToken,
-        });
         savePresence.cancel();
         controlRef.current?.cancelPendingUploads?.();
         publishNotComposing();

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { useRedux } from "@cocalc/frontend/app-framework";
 import { lite } from "@cocalc/frontend/lite";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
@@ -43,12 +42,9 @@ function getCursorThreadKey(cursor: any): string | null {
 
 export default function Composing({
   actions,
-  projectId,
-  path,
   accountId,
   userMap,
 }: Props) {
-  const drafts = useRedux(["drafts"], projectId, path);
   const [cursorTick, setCursorTick] = useState(0);
 
   useEffect(() => {
@@ -121,44 +117,5 @@ export default function Composing({
   if (cursorElements.length > 0) {
     return <div>{cursorElements}</div>;
   }
-
-  // Backward-compat fallback for older clients still writing draft presence.
-  if (!drafts || drafts.size == 0) {
-    return null;
-  }
-
-  const v: React.JSX.Element[] = [];
-  const cutoff = Date.now() - 1000 * 30; // 30s
-  for (const [key] of drafts) {
-    const record = drafts.get(key);
-    const senderId: string =
-      record?.get?.("sender_id") ?? `${key}`.split(":")[0] ?? "";
-    if (!senderId || accountId === senderId) continue;
-    if (record?.get?.("date") != 0) continue;
-    const active = record?.get?.("active") ?? 0;
-    const composing = record?.get?.("composing");
-    const input = record?.get?.("input") ?? "";
-    const hasContent = typeof input === "string" && input.trim().length > 0;
-    const isComposing = composing === true || hasContent;
-    if (active < cutoff || !isComposing) continue;
-    v.push(
-      <div
-        key={`draft-${key}`}
-        style={{ margin: "5px", color: "#666", textAlign: "center" }}
-      >
-        <Avatar size={20} account_id={senderId} />
-        <span style={{ marginLeft: "15px" }}>
-          {getUserName(userMap, senderId)} is writing a message...
-        </span>
-        {senderId?.startsWith("chatgpt") && (
-          <ProgressEstimate
-            style={{ marginLeft: "15px", maxWidth: "600px" }}
-            seconds={5}
-          />
-        )}
-      </div>,
-    );
-  }
-  if (v.length == 0) return null;
-  return <div>{v}</div>;
+  return null;
 }

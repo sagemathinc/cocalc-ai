@@ -152,13 +152,6 @@ function debugSyncLog(type: string, data?: Record<string, unknown>): void {
   console.log(`[slate-sync] ${type}`, data ?? {});
 }
 
-function debugComposerSlate(type: string, data?: Record<string, unknown>): void {
-  if (typeof window === "undefined") return;
-  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
-  // eslint-disable-next-line no-console
-  console.log(`[slate-composer] ${type}`, data ?? {});
-}
-
 interface Props {
   value?: string;
   placeholder?: string;
@@ -397,11 +390,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         ...(controlRef.current ?? {}),
         moveCursorToEndOfLine: () => control.moveCursorToEndOfLine(ed),
         allowNextValueUpdateWhileFocused: () => {
-          debugComposerSlate("allowNextValueUpdateWhileFocused", {
-            focused: isMergeFocused(),
-            valueProp: value,
-            editorValue: ed.getMarkdownValue?.(),
-          });
           allowFocusedValueUpdateRef.current = true;
         },
         setValueNow: (nextValue: string) => {
@@ -450,7 +438,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     ed.cancelPendingUploads = () => {
       uploadGeneration += 1;
       (ed as any).__uploadGeneration = uploadGeneration;
-      debugComposerSlate("cancelPendingUploads", { uploadGeneration });
     };
     (ed as any).__uploadGeneration = uploadGeneration;
 
@@ -862,13 +849,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   useEffect(() => {
     if (actions._syncstring == null) {
       const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
-      debugComposerSlate("value-effect:start", {
-        valueProp: value,
-        editorValue: editor.getMarkdownValue(),
-        focused: isMergeFocused(),
-        ignoreRemoteWhileFocused,
-        allowFocusedValueUpdate,
-      });
       if (
         ignoreRemoteWhileFocused &&
         isMergeFocused() &&
@@ -876,23 +856,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         value !== editor.getMarkdownValue() &&
         !allowFocusedValueUpdate
       ) {
-        debugComposerSlate("value-effect:defer-focused-remote", {
-          valueProp: value,
-          editorValue: editor.getMarkdownValue(),
-        });
         updatePendingRemoteIndicator(value, editor.getMarkdownValue());
         return;
       }
       allowFocusedValueUpdateRef.current = false;
-      debugComposerSlate("value-effect:apply", {
-        valueProp: value,
-        editorValueBefore: editor.getMarkdownValue(),
-      });
       setEditorToValue(value);
-      debugComposerSlate("value-effect:applied", {
-        valueProp: value,
-        editorValueAfter: editor.getMarkdownValue(),
-      });
     }
     if (value != "Loading...") {
       restoreScroll();
@@ -1248,10 +1216,6 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           });
           if (appliedMarkdown !== normalizedValue) {
             debugSyncLog("value-apply:mismatch-fallback", {
-              appliedLength: appliedMarkdown.length,
-              targetLength: normalizedValue.length,
-            });
-            debugComposerSlate("value-apply:mismatch-fallback", {
               appliedLength: appliedMarkdown.length,
               targetLength: normalizedValue.length,
             });

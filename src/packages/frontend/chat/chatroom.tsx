@@ -52,12 +52,6 @@ const COMBINED_FEED_MAX_PER_THREAD = 5;
 
 type MessageKeyWithTime = { key: string; time: number };
 
-function debugChatComposer(...args: any[]): void {
-  if (typeof window === "undefined") return;
-  if (!(window as any).__CHAT_COMPOSER_DEBUG) return;
-  console.log("[chat-composer]", ...args);
-}
-
 function pickNewestMessageKeys(
   entry: ThreadIndexEntry,
   messages: ChatMessages | undefined,
@@ -208,24 +202,6 @@ export function ChatPanel({
     return 0;
   }, [singleThreadView, selectedThreadDate]);
 
-  useEffect(() => {
-    debugChatComposer("composer-context", {
-      selectedThreadKey,
-      selectedThreadDate: selectedThreadDate?.toISOString?.() ?? null,
-      singleThreadView,
-      combinedFeedSelected: isCombinedFeedSelected,
-      composerDraftKey,
-      composerTargetKey,
-    });
-  }, [
-    selectedThreadKey,
-    selectedThreadDate,
-    singleThreadView,
-    isCombinedFeedSelected,
-    composerDraftKey,
-    composerTargetKey,
-  ]);
-
   const { input, setInput, clearInput, clearComposerDraft } = useChatComposerDraft({
     account_id,
     project_id,
@@ -242,30 +218,14 @@ export function ChatPanel({
   }, [composerSession]);
   const setComposerInput = useCallback(
     (value: string, sessionToken?: number) => {
-      debugChatComposer("setComposerInput:recv", {
-        value,
-        sessionToken,
-        currentSession: composerSessionRef.current,
-        currentInput: inputRef.current,
-      });
       if (
         sessionToken != null &&
         sessionToken !== composerSessionRef.current
       ) {
-        debugChatComposer("setComposerInput:ignored-stale-session", {
-          value,
-          sessionToken,
-          currentSession: composerSessionRef.current,
-        });
         return;
       }
       inputRef.current = value;
       setInput(value);
-      debugChatComposer("setComposerInput:applied", {
-        value,
-        sessionToken,
-        currentSession: composerSessionRef.current,
-      });
     },
     [setInput],
   );
@@ -379,13 +339,6 @@ export function ChatPanel({
   ): void {
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const sendingText = rawSendingText.trim();
-    debugChatComposer("sendMessage:start", {
-      rawSendingText,
-      sendingText,
-      replyToOverride: replyToOverride?.toISOString?.() ?? replyToOverride ?? null,
-      composerDraftKey,
-      currentSession: composerSessionRef.current,
-    });
     if (sendingText.length === 0) return;
     const nextSession = composerSessionRef.current + 1;
     composerSessionRef.current = nextSession;
@@ -414,10 +367,6 @@ export function ChatPanel({
     // Clear current composer draft before send switches selected thread context.
     actions.deleteDraft(composerDraftKey);
     void clearInput();
-    debugChatComposer("sendMessage:cleared", {
-      nextSession,
-      composerDraftKey,
-    });
 
     const timeStamp = actions.sendChat({
       submitMentionsRef,
@@ -445,10 +394,6 @@ export function ChatPanel({
     const nextSession = composerSessionRef.current + 1;
     composerSessionRef.current = nextSession;
     setComposerSession(nextSession);
-    debugChatComposer("onNewChat", {
-      nextSession,
-      composerDraftKey,
-    });
     inputRef.current = "";
     setInput("");
     actions.deleteDraft(0);
