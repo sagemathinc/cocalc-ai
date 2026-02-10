@@ -1,5 +1,5 @@
 import { chmod, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("project-host:data-permissions");
@@ -11,6 +11,15 @@ const PRIVATE_DIRS = ["secrets", "cache", "sync", "rustic", "backup-index"];
 const PRIVATE_FILES = ["log", "daemon.pid"];
 const SQLITE_PATTERN =
   /^(sqlite\.db|sync-fs\.sqlite)(?:-(?:wal|shm))?$/;
+
+function splitRunnerMode(): boolean {
+  const runner =
+    `${process.env.COCALC_PODMAN_RUN_AS_USER ?? process.env.COCALC_PROJECT_RUNNER_USER ?? ""}`.trim();
+  if (!runner) return false;
+  const current =
+    `${process.env.COCALC_PROJECT_HOST_USER ?? process.env.USER ?? process.env.LOGNAME ?? ""}`.trim();
+  return !!current && runner !== current;
+}
 
 function enabled(): boolean {
   const raw = `${process.env.COCALC_HARDEN_DATA_PERMISSIONS ?? "yes"}`
@@ -34,7 +43,15 @@ async function chmodIfExists(path: string, mode: number): Promise<void> {
 }
 
 async function hardenDataPermissions(dataDir: string): Promise<void> {
-  await chmodIfExists(dataDir, 0o700);
+  const split = splitRunnerMode();
+  // In split runner mode, the runner user must traverse dataDir to reach
+  // rootless podman runtime/storage under dataDir.
+  await chmodIfExists(dataDir, split ? 0o711 : 0o700);
+  if (split) {
+    await chmodIfExists(dirname(dataDir), 0o711);
+    await chmodIfExists(join(dataDir, "containers"), 0o711);
+    await chmodIfExists(join(dataDir, "containers", "rootless"), 0o711);
+  }
   for (const dir of PRIVATE_DIRS) {
     await chmodIfExists(join(dataDir, dir), 0o700);
   }
@@ -86,4 +103,3 @@ export function startDataPermissionHardener(dataDir: string): () => void {
 
   return () => clearInterval(interval);
 }
-
