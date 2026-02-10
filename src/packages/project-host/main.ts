@@ -223,9 +223,13 @@ export async function main(
 
   logger.info("Proxy HTTP/WS traffic to running project containers.");
   const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
+  const stopHttpProxyRevocationKickLoop =
+    httpProxyAuth.startUpgradeRevocationKickLoop();
   attachProjectProxy({
     httpServer,
     app,
+    onUpgradeAuthorized: (req, socket) =>
+      httpProxyAuth.trackUpgradedSocket(req, socket),
     resolveTarget: async (req, res) => {
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
@@ -304,6 +308,7 @@ export async function main(
     stopCodexSubscriptionCacheGc?.();
     stopCopyWorker?.();
     stopOnPremTunnel?.();
+    stopHttpProxyRevocationKickLoop?.();
   };
   process.once("exit", close);
   ["SIGINT", "SIGTERM", "SIGQUIT"].forEach((sig) => process.once(sig, close));

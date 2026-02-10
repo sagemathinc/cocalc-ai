@@ -408,6 +408,12 @@ Flow:
 4. Subsequent HTTP and websocket requests for that project rely on the cookie,
    and are collaborator-checked on each request.
 
+One-time bootstrap token redemption:
+
+- Query bootstrap tokens are one-time-use on each host.
+- Reusing the same query token after first successful redemption is rejected.
+- This limits replay risk from URL leaks/history/logs within token TTL.
+
 Notes:
 
 - This closes the gap where direct host app URLs could bypass hub HTTP proxy checks.
@@ -446,6 +452,9 @@ HTTP app-proxy behavior:
   session cookie is cleared.
 - Browser links that still have a bootstrap query token are also rejected if
   the token is revoked by watermark.
+- Existing upgraded app websocket sessions are actively swept and disconnected
+  if their auth context becomes revoked
+  (`COCALC_PROJECT_HOST_HTTP_REVOKE_SWEEP_MS`, default 30s).
 
 Conat websocket behavior:
 

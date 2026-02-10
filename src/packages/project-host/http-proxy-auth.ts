@@ -1,7 +1,10 @@
 import { URL } from "node:url";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import TTL from "@isaacs/ttlcache";
+import getLogger from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getRow } from "@cocalc/lite/hub/sqlite/database";
 import {
@@ -18,10 +21,26 @@ const collaboratorCache = new TTL<string, boolean>({
   max: 50_000,
   ttl: 30_000,
 });
+const logger = getLogger("project-host:http-proxy-auth");
 const PROJECT_HOST_HTTP_SESSION_COOKIE_NAME = "cocalc_project_host_http_session";
+const PROJECT_HOST_HTTP_AUTH_CONTEXT = Symbol(
+  "cocalc-project-host-http-auth-context",
+);
+function envNumber(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) ? n : fallback;
+}
 const HTTP_SESSION_TTL_SECONDS = Math.max(
   300,
-  Number(process.env.COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS ?? 30 * 24 * 60 * 60),
+  envNumber(
+    "COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS",
+    30 * 24 * 60 * 60,
+  ),
+);
+const QUERY_TOKEN_REDEEM_TTL_MS = 2 * 60 * 60 * 1000;
+const HTTP_UPGRADE_REVOKE_SWEEP_MS = Math.max(
+  5_000,
+  envNumber("COCALC_PROJECT_HOST_HTTP_REVOKE_SWEEP_MS", 30_000),
 );
 
 class HttpAuthError extends Error {
@@ -48,6 +67,24 @@ function parseCookies(header: string | undefined): Record<string, string> {
     }
   }
   return out;
+}
+
+type AuthorizedAccountContext = {
+  account_id: string;
+  issued_at_s: number;
+};
+
+function setAuthContext(
+  req: IncomingMessage,
+  context: AuthorizedAccountContext,
+): void {
+  (req as any)[PROJECT_HOST_HTTP_AUTH_CONTEXT] = context;
+}
+
+function getAuthContext(
+  req: IncomingMessage,
+): AuthorizedAccountContext | undefined {
+  return (req as any)[PROJECT_HOST_HTTP_AUTH_CONTEXT];
 }
 
 function appendSetCookie(res: ServerResponse, cookie: string): void {
@@ -237,9 +274,21 @@ export function createProjectHostHttpProxyAuth({
   authorizeUpgradeRequest: (
     req: IncomingMessage,
     project_id: string,
-  ) => Promise<void>;
+  ) => Promise<AuthorizedAccountContext>;
+  trackUpgradedSocket: (req: IncomingMessage, socket: Socket | Duplex) => void;
+  startUpgradeRevocationKickLoop: () => () => void;
   clearCaches: () => void;
 } {
+  const redeemedQueryTokenJti = new TTL<string, true>({
+    max: 100_000,
+    ttl: QUERY_TOKEN_REDEEM_TTL_MS,
+  });
+  const trackedUpgradeSockets = new Set<{
+    socket: Socket | Duplex;
+    account_id: string;
+    issued_at_s: number;
+  }>();
+
   const verifyClaimsAndGetAccountId = (claims: {
     sub: string;
     act?: string;
@@ -350,6 +399,10 @@ export function createProjectHostHttpProxyAuth({
         account_id: accountFromSession.account_id,
         project_id,
       });
+      setAuthContext(req, {
+        account_id: accountFromSession.account_id,
+        issued_at_s: accountFromSession.iat_s,
+      });
       return;
     }
     const { token, fromQuery } = readBearerToken(req);
@@ -357,11 +410,19 @@ export function createProjectHostHttpProxyAuth({
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
+    if (fromQuery && redeemedQueryTokenJti.has(claims.jti)) {
+      throw new HttpAuthError(401, "auth token already used");
+    }
     const account_id = verifyClaimsAndGetAccountId(claims);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
     authorizeAccountForProject({ account_id, project_id });
+    setAuthContext(req, {
+      account_id,
+      issued_at_s: claims.iat,
+    });
     setSessionCookie(req, res, account_id);
     if (fromQuery) {
+      redeemedQueryTokenJti.set(claims.jti, true);
       // Clean the browser URL and avoid forwarding a bearer query parameter.
       const cleaned = urlWithoutQueryToken(req);
       if (cleaned && /^(GET|HEAD)$/i.test(req.method ?? "GET")) {
@@ -377,7 +438,7 @@ export function createProjectHostHttpProxyAuth({
   const authorizeUpgradeRequest = async (
     req: IncomingMessage,
     project_id: string,
-  ) => {
+  ): Promise<AuthorizedAccountContext> => {
     const accountFromSession = sessionAccountId(req);
     if (accountFromSession) {
       assertNotRevoked({
@@ -388,21 +449,97 @@ export function createProjectHostHttpProxyAuth({
         account_id: accountFromSession.account_id,
         project_id,
       });
-      return;
+      const context = {
+        account_id: accountFromSession.account_id,
+        issued_at_s: accountFromSession.iat_s,
+      };
+      setAuthContext(req, context);
+      return context;
     }
-    const { token } = readBearerToken(req);
+    const { token, fromQuery } = readBearerToken(req);
     if (!token) {
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
+    if (fromQuery && redeemedQueryTokenJti.has(claims.jti)) {
+      throw new HttpAuthError(401, "auth token already used");
+    }
     const account_id = verifyClaimsAndGetAccountId(claims);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
     authorizeAccountForProject({ account_id, project_id });
+    if (fromQuery) {
+      redeemedQueryTokenJti.set(claims.jti, true);
+    }
+    const context = {
+      account_id,
+      issued_at_s: claims.iat,
+    };
+    setAuthContext(req, context);
+    return context;
+  };
+
+  const trackUpgradedSocket = (
+    req: IncomingMessage,
+    socket: Socket | Duplex,
+  ) => {
+    const context = getAuthContext(req);
+    if (!context) {
+      return;
+    }
+    const entry = {
+      socket,
+      account_id: context.account_id,
+      issued_at_s: context.issued_at_s,
+    };
+    trackedUpgradeSockets.add(entry);
+    const remove = () => trackedUpgradeSockets.delete(entry);
+    socket.once("close", remove);
+    socket.once("error", remove);
+    socket.once("end", remove);
+  };
+
+  const sweepRevokedUpgradeSockets = () => {
+    let kicked = 0;
+    for (const entry of trackedUpgradeSockets) {
+      if (entry.socket.destroyed) {
+        trackedUpgradeSockets.delete(entry);
+        continue;
+      }
+      try {
+        assertNotRevoked({
+          account_id: entry.account_id,
+          issued_at_s: entry.issued_at_s,
+        });
+      } catch {
+        kicked += 1;
+        trackedUpgradeSockets.delete(entry);
+        entry.socket.destroy();
+      }
+    }
+    return kicked;
+  };
+
+  const startUpgradeRevocationKickLoop = () => {
+    const run = () => {
+      const kicked = sweepRevokedUpgradeSockets();
+      if (kicked > 0) {
+        logger.info("revoked websocket sessions disconnected", { kicked });
+      }
+    };
+    const timer = setInterval(run, HTTP_UPGRADE_REVOKE_SWEEP_MS);
+    timer.unref();
+    run();
+    return () => clearInterval(timer);
   };
 
   return {
     authorizeHttpRequest,
     authorizeUpgradeRequest,
-    clearCaches: clearProjectHostHttpProxyAuthCaches,
+    trackUpgradedSocket,
+    startUpgradeRevocationKickLoop,
+    clearCaches: () => {
+      clearProjectHostHttpProxyAuthCaches();
+      redeemedQueryTokenJti.clear();
+    },
   };
 }

@@ -1,5 +1,6 @@
 import * as http from "node:http";
 import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import httpProxy from "http-proxy-3";
 import type express from "express";
 import { getLogger } from "@cocalc/backend/logger";
@@ -29,6 +30,10 @@ interface StartOptions {
   port?: number; // default 8080
   host?: string; // default 127.0.0.1
   resolveTarget?: ResolveFn;
+  onUpgradeAuthorized?: (
+    req: http.IncomingMessage,
+    socket: Socket | Duplex,
+  ) => void;
 }
 
 function parseProjectId(url: string | undefined): string | null {
@@ -62,11 +67,13 @@ export async function startProxyServer({
   port = 8080,
   host = "127.0.0.1",
   resolveTarget = defaultResolveTarget,
+  onUpgradeAuthorized,
 }: StartOptions = {}) {
   logger.debug("startProxyServer", { port, host });
 
   const { handleRequest, handleUpgrade } = createProxyHandlers({
     resolveTarget,
+    onUpgradeAuthorized,
   });
 
   const proxyServer = http.createServer(handleRequest);
@@ -84,7 +91,14 @@ export async function startProxyServer({
 
 export function createProxyHandlers({
   resolveTarget = defaultResolveTarget,
-}: { resolveTarget?: ResolveFn } = {}) {
+  onUpgradeAuthorized,
+}: {
+  resolveTarget?: ResolveFn;
+  onUpgradeAuthorized?: (
+    req: http.IncomingMessage,
+    socket: Socket | Duplex,
+  ) => void;
+} = {}) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
     ws: true,
@@ -134,6 +148,7 @@ export function createProxyHandlers({
       if (!handled || !target) {
         throw new Error("not matched");
       }
+      onUpgradeAuthorized?.(req, socket);
       logger.debug("upgrade", { url: req.url, target });
       proxy.ws(req, socket, head, { target, prependPath: false });
     } catch (err: any) {
@@ -161,10 +176,15 @@ export function attachProjectProxy({
   httpServer,
   app,
   resolveTarget = defaultResolveTarget,
+  onUpgradeAuthorized,
 }: {
   httpServer: http.Server;
   app: express.Application;
   resolveTarget?: ResolveFn;
+  onUpgradeAuthorized?: (
+    req: http.IncomingMessage,
+    socket: Socket | Duplex,
+  ) => void;
 }) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -213,6 +233,7 @@ export function attachProjectProxy({
       if (!handled || !target) {
         return;
       }
+      onUpgradeAuthorized?.(req, socket);
       proxy.ws(req, socket, head, { target, prependPath: false });
     } catch (err: any) {
       const statusCode =
