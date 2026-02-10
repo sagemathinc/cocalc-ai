@@ -5,6 +5,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import ProgressEstimate from "@cocalc/frontend/components/progress-estimate";
 import type { ChatActions } from "./actions";
 import { getUserName } from "./chat-log";
+import { deriveThreadLabel } from "./threads";
 
 interface Props {
   actions: ChatActions;
@@ -27,6 +28,17 @@ function isCursorComposing(cursor: any): boolean {
   const immutableValue = loc0?.get?.("chat_composing");
   if (immutableValue != null) return immutableValue === true;
   return loc0?.chat_composing === true;
+}
+
+function getCursorThreadKey(cursor: any): string | null {
+  const loc0 = getLoc0(cursor?.get?.("locs") ?? cursor?.locs);
+  if (!loc0) return null;
+  const immutableValue = loc0?.get?.("chat_thread_key");
+  if (immutableValue == null) {
+    const raw = loc0?.chat_thread_key;
+    return raw == null ? null : `${raw}`;
+  }
+  return `${immutableValue}`;
 }
 
 export default function Composing({
@@ -57,6 +69,12 @@ export default function Composing({
     if (lite) return [] as React.JSX.Element[];
     const syncdb = actions?.syncdb;
     if (!syncdb || !syncdb.isReady()) return [] as React.JSX.Element[];
+    const threadLabels = new Map<string, string>();
+    for (const entry of actions?.getThreadIndex?.()?.values?.() ?? []) {
+      const key = `${entry.key}`;
+      if (!key) continue;
+      threadLabels.set(key, deriveThreadLabel(entry.rootMessage, key));
+    }
     let cursors: any;
     try {
       cursors = syncdb.get_cursors({
@@ -72,6 +90,11 @@ export default function Composing({
       const senderId = `${key}`;
       if (!senderId || senderId === accountId) continue;
       if (!isCursorComposing(value)) continue;
+      const threadKey = getCursorThreadKey(value);
+      const threadLabel =
+        threadKey == null || threadKey === "null"
+          ? null
+          : threadLabels.get(threadKey) ?? null;
       items.push(
         <div
           key={`cursor-${senderId}`}
@@ -79,7 +102,9 @@ export default function Composing({
         >
           <Avatar size={20} account_id={senderId} />
           <span style={{ marginLeft: "15px" }}>
-            {getUserName(userMap, senderId)} is writing a message...
+            {getUserName(userMap, senderId)} is writing a message
+            {threadLabel ? ` in "${threadLabel}"` : ""}
+            ...
           </span>
           {senderId?.startsWith("chatgpt") && (
             <ProgressEstimate

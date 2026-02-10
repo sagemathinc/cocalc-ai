@@ -30,6 +30,7 @@ interface Props {
   onChange: (value: string, sessionToken?: number) => void;
   syncdb: ImmerDB | undefined;
   date: number;
+  presenceThreadKey?: string | null;
   input?: string;
   on_paste?: (e) => void;
   height?: string;
@@ -74,6 +75,7 @@ export default function ChatInput({
   autoFocus,
   cacheId,
   date,
+  presenceThreadKey,
   editBarStyle,
   fontSize,
   height,
@@ -142,7 +144,18 @@ export default function ChatInput({
       if (lite) return;
       const composing = value.trim().length > 0;
       if (date <= 0) {
-        syncdb.set_cursor_locs([{ chat_composing: composing }]);
+        const threadKey =
+          presenceThreadKey != null
+            ? presenceThreadKey
+            : date < 0
+              ? `${-date}`
+              : null;
+        syncdb.set_cursor_locs([
+          {
+            chat_composing: composing,
+            chat_thread_key: threadKey,
+          },
+        ]);
         return;
       }
       syncdb.set({
@@ -156,7 +169,7 @@ export default function ChatInput({
       });
       syncdb.commit();
     },
-    [date, sender_id, syncdb],
+    [date, presenceThreadKey, sender_id, syncdb],
   );
 
   const savePresence = useDebouncedCallback(setComposingPresence, SAVE_DEBOUNCE_MS, {
@@ -174,7 +187,14 @@ export default function ChatInput({
     if (!syncdb) return;
     if (lite) return;
     if (date <= 0) {
-      syncdb.set_cursor_locs([{ chat_composing: false }]);
+      const threadKey =
+        presenceThreadKey != null ? presenceThreadKey : date < 0 ? `${-date}` : null;
+      syncdb.set_cursor_locs([
+        {
+          chat_composing: false,
+          chat_thread_key: threadKey,
+        },
+      ]);
       return;
     }
     syncdb.set({

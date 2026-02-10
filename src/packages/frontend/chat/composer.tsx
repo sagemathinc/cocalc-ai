@@ -97,6 +97,12 @@ export function ChatRoomComposer({
   const threadColor = selectedThread?.threadColor;
   const threadIcon = selectedThread?.threadIcon;
   const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
+  const presenceThreadKey = useMemo(() => {
+    if (combinedFeedSelected) {
+      return composerTargetKey ?? null;
+    }
+    return selectedThread?.key ?? null;
+  }, [combinedFeedSelected, composerTargetKey, selectedThread?.key]);
 
   const [viewportHeight, setViewportHeight] = useState<number>(() => {
     if (typeof window === "undefined") return 900;
@@ -375,6 +381,7 @@ export function ChatRoomComposer({
             autoFocus
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
             input={input}
+            presenceThreadKey={presenceThreadKey}
             on_send={handleSend}
             height={chatInputHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
