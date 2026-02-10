@@ -29,13 +29,24 @@ export function startConatRevocationKickLoop({
   client: Client;
   sweepIntervalMs?: number;
 }): () => void {
-  const api = sysApi(client);
+  let api: ReturnType<typeof sysApi> | undefined;
   let running = false;
 
   const sweep = async () => {
     if (running) return;
     running = true;
     try {
+      if (!client.isSignedIn()) {
+        try {
+          await client.waitUntilSignedIn({ timeout: 5000 });
+        } catch {
+          return;
+        }
+      }
+      if (!client.isSignedIn()) {
+        return;
+      }
+      api = api ?? sysApi(client);
       const statsByServer = await api.stats();
       const ids = new Set<string>();
       for (const socketStatsById of Object.values(statsByServer ?? {})) {

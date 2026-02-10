@@ -1,6 +1,6 @@
 import { createPublicKey } from "crypto";
 import getLogger from "@cocalc/backend/logger";
-import { getProjectHostAuthTokenPublicKey as getDefaultPublicKey } from "@cocalc/backend/data";
+import { getConfiguredProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 
 const logger = getLogger("project-host:auth-public-key");
 
@@ -30,6 +30,11 @@ export function getProjectHostAuthPublicKey(): string {
   if (distributedPublicKey) {
     return distributedPublicKey;
   }
-  return getDefaultPublicKey();
+  const configured = getConfiguredProjectHostAuthTokenPublicKey();
+  if (configured) {
+    return normalizePublicKey(configured);
+  }
+  throw new Error(
+    "project-host auth public key is not loaded yet; wait for master registration to supply project_host_auth_public_key or set COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY",
+  );
 }
-

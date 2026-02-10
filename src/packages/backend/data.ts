@@ -394,13 +394,20 @@ export function getProjectHostAuthTokenPrivateKey(): string {
   return key;
 }
 
-export function getProjectHostAuthTokenPublicKey(): string {
+export function getConfiguredProjectHostAuthTokenPublicKey():
+  | string
+  | undefined {
   const fromEnv = normalizePem(
     process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY,
   );
   const fromFile = maybeReadPem(projectHostAuthTokenPublicKeyPath);
-  if (fromEnv ?? fromFile) {
-    return fromEnv ?? fromFile!;
+  return fromEnv ?? fromFile;
+}
+
+export function getProjectHostAuthTokenPublicKey(): string {
+  const configured = getConfiguredProjectHostAuthTokenPublicKey();
+  if (configured) {
+    return configured;
   }
   // Convenience fallback: derive public key from private if only private is available.
   const privateKey = getProjectHostAuthTokenPrivateKey();
@@ -409,7 +416,7 @@ export function getProjectHostAuthTokenPublicKey(): string {
     format: "pem",
   });
   const derived = `${pub}`.trim();
-  if (!fromEnv && !fromFile && isLaunchpadProduct()) {
+  if (isLaunchpadProduct()) {
     try {
       mkdirSync(dirname(projectHostAuthTokenPublicKeyPath), {
         recursive: true,

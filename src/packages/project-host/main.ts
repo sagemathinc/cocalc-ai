@@ -27,7 +27,11 @@ import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run"
 import { initFileServer, initFsServer } from "./file-server";
 import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
-import { getProjectPorts } from "./sqlite/projects";
+import {
+  getOrCreateProjectLocalSecretToken,
+  getProjectPorts,
+} from "./sqlite/projects";
+import { PROJECT_PROXY_AUTH_HEADER } from "@cocalc/backend/auth/project-proxy-auth";
 import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
 import { init as initHubApi } from "@cocalc/lite/hub/api";
@@ -241,6 +245,8 @@ export async function main(
       } else {
         await httpProxyAuth.authorizeUpgradeRequest(req, project_id);
       }
+      const upstreamSecret = getOrCreateProjectLocalSecretToken(project_id);
+      req.headers[PROJECT_PROXY_AUTH_HEADER] = upstreamSecret;
       const { http_port } = getProjectPorts(project_id);
       if (!http_port) {
         throw new Error(`no http_port recorded for project ${project_id}`);

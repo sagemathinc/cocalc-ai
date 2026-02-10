@@ -6,6 +6,8 @@ It documents protocol and runtime behavior, not implementation task sequencing.
 
 In short: the browser gets a short-lived, host-scoped identity token from the central hub, uses that token to connect directly to the target project-host websocket, and the project-host then authorizes each publish/subscribe request using a local collaborator ACL cache (kept fresh via hub deltas plus bounded reconcile). In production, project-hosts are expected to be on DNS domains distinct from the central hub domain, so cross-origin direct connectivity is a first-class part of the design. This gives low-latency local traffic while keeping access control centralized in policy and quickly updateable when collaborators change.
 
+Current assessment: for the outer authentication/authorization layer (Conat websocket auth plus project-host HTTP/WS proxy auth), we believe we have addressed all major quick-revocation issues we could identify, including deny-on-new-auth after revoke, active disconnect of already-connected sessions, and host-wide revocation replay after reconnect. We still expect ongoing defense-in-depth improvements, but this baseline is intended to provide clear and operationally reliable ban/sign-out behavior on short timelines.
+
 ## Goals
 
 - Strong user authentication for direct browser -> project-host websocket traffic.
