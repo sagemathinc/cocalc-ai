@@ -520,6 +520,134 @@ Operational status:
 - Networking isolation remains an additional hardening layer to reduce blast
   radius if any application-layer control regresses in the future.
 
+## User Model Redesign (Planned)
+
+Objective:
+
+- Replace the unstable multi-runtime-user experiments with a clearer and
+  maintainable model:
+  - one setup/admin user for bootstrap and emergency ops,
+  - one runtime user (`cocalc-host`) for project-host daemon, file-server
+    operations, and rootless Podman.
+- Keep security gains from least privilege while preserving operational
+  reliability and startup performance.
+
+Target runtime identity model:
+
+- `setup/admin user` (for example `ubuntu`):
+  - used for VM provisioning/bootstrap and human admin SSH access,
+  - may have broad sudo access,
+  - does not run steady-state project-host services.
+- `cocalc-host` (runtime service account):
+  - runs project-host daemon and all project file operations,
+  - runs rootless Podman for project containers,
+  - owns runtime paths needed for steady operation.
+
+This intentionally avoids a second runtime account for filesystem access.
+Project files, file-server RPC paths, and Podman-managed project runtime stay
+under one runtime uid/gid to prevent mixed ownership drift and stop/start
+regressions.
+
+Filesystem ownership plan:
+
+- Runtime-owned (`cocalc-host`):
+  - project homes and snapshots metadata paths used at runtime,
+  - podman rootless storage,
+  - project-host writable state under data dir,
+  - logs and temp paths required by running services.
+- Root-only or admin-only:
+  - deployment artifacts and bootstrap control paths not needed for steady
+    runtime mutation,
+  - private credentials that must not be readable by projects if path exposure
+    occurs.
+- Bundle/install readability:
+  - project-host bundle code must be readable/executable by `cocalc-host`,
+    writable only by setup/root path.
+
+Sudo policy redesign:
+
+- `cocalc-host` gets a strict command whitelist only for operations that cannot
+  be done rootless:
+  - specific `btrfs` subvolume/snapshot operations,
+  - specific mount/umount operations needed for project root setup/teardown,
+  - any required networking rule helper commands (if adopted).
+- No broad shell sudo and no wildcard command escalation.
+- Prefer root-owned wrapper scripts with fixed argument validation over direct
+  sudo to complex binaries.
+- Deprovision path must remove runtime users/groups created by bootstrap when
+  host is being torn down.
+
+Podman hardening plan (after user model stabilization):
+
+1. Network baseline:
+   - standardize on rootless Podman default backend (`pasta`) unless a
+     measured blocker appears.
+   - keep required host reachability for control paths, but minimize general
+     host surface.
+2. Port exposure policy:
+   - keep project published ports loopback-only on host side where possible.
+   - preserve mandatory app-proxy enforcement and in-project proxy shared-secret
+     checks as auth boundary.
+3. Lateral movement controls:
+   - ensure project container A cannot directly reach project container B app
+     endpoints through host-published ports.
+   - verify with explicit adversarial connectivity tests.
+4. Runtime restrictions:
+   - prohibit privileged container modes in project lifecycle paths,
+   - keep default seccomp/apparmor/capability-drop posture and tighten where
+     compatibility allows,
+   - forbid host namespace escapes in run arguments.
+5. Supply-chain and patch posture:
+   - pin/update base images and runtime packages on a defined cadence,
+   - ensure host OS and Podman receive unattended security updates with audit
+     visibility.
+
+Implementation phases:
+
+Phase 1: runtime user baseline (`cocalc-host`)
+
+- Provision `cocalc-host`.
+- Run project-host daemon, file-server/fs APIs, and rootless Podman as
+  `cocalc-host`.
+- Remove runtime use of extra runner users.
+- Fix bundle/runtime path permissions so restart/upgrade/start-stop loops are
+  stable.
+
+Phase 2: sudo minimization
+
+- Introduce audited wrapper scripts for required privileged operations.
+- Replace ad-hoc sudo calls with whitelist entries mapped to wrappers.
+- Add tests that assert denied sudo for non-whitelisted commands.
+
+Phase 3: podman/network hardening
+
+- Apply chosen network mode and host reachability constraints.
+- Add enforcement for forbidden Podman flags.
+- Add automated negative tests for project-to-project connectivity attempts.
+
+Phase 4: operations hardening
+
+- Add patch/update automation checks for host OS and Podman.
+- Add runtime conformance checks at daemon start (ownership/permissions/sudo
+  policy drift detection).
+- Add incident-oriented logs/metrics for denied escalations and policy misses.
+
+Acceptance criteria for this redesign:
+
+- Project create/start/stop/restart works repeatedly with no ownership drift.
+- File-server operations (list/read/write/find/compress) remain fully functional.
+- Podman lifecycle and exec operations are stable under runtime user.
+- Project-host bundle upgrade path works without manual chmod/chown intervention.
+- Existing auth and revocation behavior remains unchanged.
+- Security regression tests show blocked cross-project direct app access.
+
+Rollback strategy:
+
+- Keep a feature flag or deployment switch for reverting to last-known-stable
+  runtime behavior while retaining already-shipped auth controls.
+- Document exact rollback commit/environment knobs in release notes for each
+  rollout step.
+
 ## Observability
 
 Track and expose metrics/logs for:
