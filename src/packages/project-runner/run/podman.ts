@@ -425,6 +425,26 @@ export function networkArgument() {
     : "--network=slirp4netns";
 }
 
+export function publishHost(): string {
+  const value = `${process.env.COCALC_PROJECT_RUNNER_PUBLISH_HOST ?? "127.0.0.1"}`
+    .trim()
+    .toLowerCase();
+  if (!value) return "127.0.0.1";
+  if (
+    value === "127.0.0.1" ||
+    value === "localhost" ||
+    value === "0.0.0.0" ||
+    value === "::1" ||
+    value === "::"
+  ) {
+    return value === "localhost" ? "127.0.0.1" : value;
+  }
+  logger.warn("ignoring invalid COCALC_PROJECT_RUNNER_PUBLISH_HOST override", {
+    value,
+  });
+  return "127.0.0.1";
+}
+
 export async function start({
   project_id,
   config = {},
@@ -618,8 +638,9 @@ export async function start({
     args.push("--rm");
     args.push("--replace");
     args.push(networkArgument());
-    args.push("-p", `${ssh_port}:22`);
-    args.push("-p", `${http_port}:80`);
+    const publishHostValue = publishHost();
+    args.push("-p", `${publishHostValue}:${ssh_port}:22`);
+    args.push("-p", `${publishHostValue}:${http_port}:80`);
     if (config.gpu) {
       args.push("--device", "nvidia.com/gpu=all");
       args.push("--security-opt", "label=disable");
