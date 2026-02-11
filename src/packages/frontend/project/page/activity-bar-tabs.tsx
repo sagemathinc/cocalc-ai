@@ -419,16 +419,15 @@ function ChatIndicatorTab({ activeTab, project_id }): React.JSX.Element | null {
 }
 
 function ShareIndicatorTab({ activeTab, project_id }) {
-  const currentPathLegacy = useTypedRedux({ project_id }, "current_path");
   const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
-  const currentPath = currentPathAbs ?? currentPathLegacy;
+  const currentPath = currentPathAbs ?? "/";
 
   const path = activeTab === "files" ? currentPath : tab_to_path(activeTab);
   if (path == null) {
     // nothing specifically to share
     return null;
   }
-  if (path === "" || path === "/") {
+  if (path === "/") {
     // sharing whole project not implemented
     return null;
   }

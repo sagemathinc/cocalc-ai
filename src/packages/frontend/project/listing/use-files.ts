@@ -179,7 +179,7 @@ async function cacheNeighbors({
   if (path) {
     let parent = dirname(path);
     if (parent == ".") {
-      parent = "";
+      parent = "/";
     }
     const k = key(cacheId, parent);
     if (!cache.has(k) && !failed.has(k)) {

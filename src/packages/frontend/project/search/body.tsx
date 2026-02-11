@@ -52,8 +52,7 @@ export const ProjectSearchBody: React.FC<{
 }> = ({ mode = "project", pathOverride, showPathHint = true }) => {
   const { project_id } = useProjectContext();
   const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
-  const currentPathLegacy = useTypedRedux({ project_id }, "current_path");
-  const currentPath = currentPathAbs ?? currentPathLegacy ?? "";
+  const currentPath = currentPathAbs ?? "/";
   const path = pathOverride ?? currentPath;
   const search = useTypedRedux({ project_id }, "search_page"); // updates on change
   const currentSearch = useMemo(() => {

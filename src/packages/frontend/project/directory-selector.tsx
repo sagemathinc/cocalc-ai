@@ -20,7 +20,7 @@ import {
   useState,
 } from "react";
 import { Icon, Loading } from "@cocalc/frontend/components";
-import { path_split } from "@cocalc/util/misc";
+import { path_split, path_to_file } from "@cocalc/util/misc";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { redux } from "@cocalc/frontend/app-framework";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
@@ -438,7 +438,7 @@ function CreateDirectory({
     if (!open) {
       return;
     }
-    const target = path + (path != "" ? "/" : "") + value;
+    const target = path_to_file(path || "/", value);
     (async () => {
       try {
         const path1 = await getValidPath(project_id, target);

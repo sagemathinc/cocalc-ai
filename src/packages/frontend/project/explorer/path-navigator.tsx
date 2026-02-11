@@ -35,9 +35,7 @@ export const PathNavigator: React.FC<Props> = React.memo(
     mode = "files",
   }: Readonly<Props>) => {
     const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
-    const currentPathLegacy = useTypedRedux({ project_id }, "current_path");
     const historyPathAbs = useTypedRedux({ project_id }, "history_path_abs");
-    const historyPathLegacy = useTypedRedux({ project_id }, "history_path");
     const availableFeatures = useTypedRedux({ project_id }, "available_features");
     const liteHome = availableFeatures?.get("homeDirectory");
     const homePath =
@@ -51,10 +49,10 @@ export const PathNavigator: React.FC<Props> = React.memo(
     };
 
     const currentPath = normalizePathForNav(
-      currentPathAbs ?? currentPathLegacy ?? homePath,
+      currentPathAbs ?? homePath,
     );
     const historyPath = normalizePathForNav(
-      historyPathAbs ?? historyPathLegacy ?? currentPath,
+      historyPathAbs ?? currentPath,
     );
     const actions = useActions({ project_id });
 

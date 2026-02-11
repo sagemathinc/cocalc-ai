@@ -816,7 +816,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "files":
         if (opts.change_history) {
           this.set_url_to_path(
-            store.get("current_path_abs") ?? store.get("current_path") ?? "/",
+            store.get("current_path_abs") ?? "/",
             "",
           );
         }
@@ -826,7 +826,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         change.file_creation_error = undefined;
         if (opts.change_history) {
           const pathSuffix = this.toTabPathSuffix(
-            store.get("current_path_abs") ?? store.get("current_path") ?? "/",
+            store.get("current_path_abs") ?? "/",
           );
           this.push_state(
             pathSuffix.length > 0 ? `new/${pathSuffix}` : "new/",
@@ -846,7 +846,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "search":
         if (opts.change_history) {
           const pathSuffix = this.toTabPathSuffix(
-            store.get("current_path_abs") ?? store.get("current_path") ?? "/",
+            store.get("current_path_abs") ?? "/",
           );
           this.push_state(
             pathSuffix.length > 0 ? `search/${pathSuffix}` : "search/",
@@ -1656,7 +1656,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (change_history) {
       // i.e. regardless of show_files is true or false, we might want to record this in the history
       this.set_url_to_path(
-        store.get("current_path_abs") ?? store.get("current_path") ?? "/",
+        store.get("current_path_abs") ?? "/",
         "",
       );
     }

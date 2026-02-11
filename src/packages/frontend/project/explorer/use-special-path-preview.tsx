@@ -36,7 +36,7 @@ export function useSpecialPathPreview({
   const backupIdRef = useRef<string | null>(null);
   const backupNameRef = useRef<string | null>(null);
 
-  const path = current_path ?? "";
+  const path = current_path ?? "/";
 
   const specialContext = useMemo(() => {
     if (path === SNAPSHOTS || path.startsWith(`${SNAPSHOTS}/`)) {

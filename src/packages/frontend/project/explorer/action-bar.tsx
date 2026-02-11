@@ -67,9 +67,9 @@ export function ActionBar({
   refreshBackups,
 }: Props) {
   const intl = useIntl();
-  const currentParts = (current_path ?? "").split("/").filter(Boolean);
+  const currentParts = (current_path ?? "/").split("/").filter(Boolean);
   const inBackups =
-    current_path != null && isBackupsPath(current_path ?? "") ? true : false;
+    current_path != null && isBackupsPath(current_path ?? "/") ? true : false;
   const student_project_functionality = useStudentProjectFunctionality(
     actions.project_id,
   );
@@ -134,7 +134,7 @@ export function ActionBar({
         }
       }
       message.success("Restore started");
-      actions?.open_directory?.(current_path, false);
+      actions?.open_directory?.(current_path ?? "/", false);
       setRestoreOpen(false);
     } catch (err) {
       setRestoreError(err);
@@ -238,7 +238,7 @@ export function ActionBar({
   function check_all_click_handler(): void {
     if (checked_files.size === 0) {
       actions.set_file_list_checked(
-        listing.map((file) => misc.path_to_file(current_path ?? "", file.name)),
+        listing.map((file) => misc.path_to_file(current_path ?? "/", file.name)),
       );
     } else {
       clear_selection();
@@ -482,7 +482,7 @@ export function ActionBar({
       let isDir;
       const item = checked_files.first();
       for (const file of listing) {
-        if (misc.path_to_file(current_path ?? "", file.name) === item) {
+        if (misc.path_to_file(current_path ?? "/", file.name) === item) {
           ({ isDir } = file);
         }
       }
