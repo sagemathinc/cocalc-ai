@@ -5,7 +5,7 @@
 
 // Time travel editor react component
 
-import { Button, Modal, Select, Space, Tooltip, message } from "antd";
+import { Button, Modal, Radio, Select, Space, Tooltip, message } from "antd";
 import { Map, List } from "immutable";
 import { debounce } from "lodash";
 import { useEffect, useMemo, useState } from "react";
@@ -103,7 +103,10 @@ export function TimeTravel(props: Props) {
   );
   const [showCommitRange, setShowCommitRange] = useState<boolean>(false);
   const [showChangedFiles, setShowChangedFiles] = useState<boolean>(false);
-  const [logMode, setLogMode] = useState<boolean>(!!props.desc?.get("logMode"));
+  const [logMode, setLogMode] = useState<boolean>(() => {
+    const saved = props.desc?.get("logMode");
+    return saved == null ? true : !!saved;
+  });
   const [gitChangedFiles, setGitChangedFiles] = useState<string[]>([]);
   const [version, setVersion] = useState<number | string | undefined>(
     props.desc?.get("version"),
@@ -622,7 +625,7 @@ export function TimeTravel(props: Props) {
   };
 
   const renderRevertFile = () => {
-    if (doc == null || changesMode) {
+    if (doc == null || changesMode || logMode) {
       return;
     }
     return (
@@ -681,7 +684,6 @@ export function TimeTravel(props: Props) {
               setVersion1(undefined);
               setShowChangedFiles(false);
               setShowCommitRange(false);
-              setLogMode(false);
               setSource(value);
             }
           }}
@@ -793,7 +795,6 @@ export function TimeTravel(props: Props) {
     return (
       <Button
         size="small"
-        style={{ marginLeft: "5px" }}
         onClick={() => setShowChangedFiles(true)}
       >
         Also changed ({files.length})
@@ -859,12 +860,20 @@ export function TimeTravel(props: Props) {
             gap: "6px",
           }}
         >
+          <Radio.Group
+            size="small"
+            value={logMode ? "log" : "document"}
+            onChange={(e) => setLogMode(e.target.value === "log")}
+            optionType="button"
+            buttonStyle="solid"
+            options={[
+              { label: "Log", value: "log" },
+              { label: "Document", value: "document" },
+            ]}
+          />
           <Space.Compact>{renderModeSelectors()}</Space.Compact>
           {renderCommitsInRangeButton()}
           {renderGitChangedFilesButton()}
-          <Button size="small" onClick={() => setLogMode(!logMode)}>
-            {logMode ? "Document" : "Log"}
-          </Button>
           {(gitMode || snapshotsMode || backupsMode) && (
             <Tooltip
               title={
@@ -899,7 +908,7 @@ export function TimeTravel(props: Props) {
             {renderExport()}
           </Space.Compact>
         </div>
-        {activeVersionCount > 0 && (
+        {!logMode && activeVersionCount > 0 && (
           <div style={{ marginTop: "6px", fontSize: "12px", color: "#666" }}>
             {renderRevisionMeta()}
           </div>
