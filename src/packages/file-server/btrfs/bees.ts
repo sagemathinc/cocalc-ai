@@ -56,8 +56,8 @@ export default async function bees(
     args.push("-g", `${loadavgTarget}`);
   }
   args.push(mountpoint);
-  logger.debug(`Running 'sudo ${STORAGE_WRAPPER} ${args.join(" ")}'`);
-  const child = spawn("sudo", [STORAGE_WRAPPER, ...args], {
+  logger.debug(`Running 'sudo -n ${STORAGE_WRAPPER} ${args.join(" ")}'`);
+  const child = spawn("sudo", ["-n", STORAGE_WRAPPER, ...args], {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
   });

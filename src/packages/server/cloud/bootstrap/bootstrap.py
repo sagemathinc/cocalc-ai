@@ -745,6 +745,17 @@ case "$cmd" in
     fi
     exec /bin/bees "$@"
     ;;
+  grow-btrfs)
+    if [ "$#" -gt 1 ]; then
+      echo "cocalc-runtime-storage: grow-btrfs accepts at most one numeric argument" >&2
+      exit 2
+    fi
+    if [ "$#" -eq 1 ] && ! echo "$1" | grep -Eq '^[0-9]+$'; then
+      echo "cocalc-runtime-storage: grow-btrfs argument must be numeric" >&2
+      exit 2
+    fi
+    exec /usr/local/sbin/cocalc-grow-btrfs "$@"
+    ;;
   sync)
     exec /bin/sync "$@"
     ;;
@@ -1114,8 +1125,8 @@ RUNTIME_ROOT="__RUNTIME_ROOT__"
 CTL="$RUNTIME_ROOT/bin/ctl"
 for attempt in $(seq 1 60); do
   if mountpoint -q /mnt/cocalc; then
-    if [ -x /usr/local/sbin/cocalc-grow-btrfs ]; then
-      sudo -n /usr/local/sbin/cocalc-grow-btrfs || true
+    if [ -x /usr/local/sbin/cocalc-runtime-storage ]; then
+      sudo -n /usr/local/sbin/cocalc-runtime-storage grow-btrfs || true
     fi
     exec "$CTL" start
   fi
@@ -1263,8 +1274,8 @@ def configure_runtime_sudoers(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: configuring sudoers whitelist for {user}")
     rules = f"""Defaults:{user} !requiretty
 Defaults:{user} secure_path=/usr/sbin:/usr/bin:/sbin:/bin
-Cmnd_Alias COCALC_RUNTIME_STORAGE = /usr/local/sbin/cocalc-runtime-storage, /usr/local/sbin/cocalc-runtime-storage *, /usr/local/sbin/cocalc-grow-btrfs, /usr/local/sbin/cocalc-grow-btrfs *
-Cmnd_Alias COCALC_RUNTIME_CLOUD = /usr/local/sbin/cocalc-cloudflared-ctl, /usr/local/sbin/cocalc-cloudflared-ctl *, /usr/local/sbin/cocalc-cloudflared-logs, /usr/local/sbin/cocalc-cloudflared-logs *, /usr/local/sbin/cocalc-mount-data
+Cmnd_Alias COCALC_RUNTIME_STORAGE = /usr/local/sbin/cocalc-runtime-storage
+Cmnd_Alias COCALC_RUNTIME_CLOUD = /usr/local/sbin/cocalc-cloudflared-ctl, /usr/local/sbin/cocalc-cloudflared-logs, /usr/local/sbin/cocalc-mount-data
 {user} ALL=(root) NOPASSWD: COCALC_RUNTIME_STORAGE, COCALC_RUNTIME_CLOUD
 """
     path = Path("/etc/sudoers.d/cocalc-project-host-runtime")
@@ -1275,6 +1286,30 @@ Cmnd_Alias COCALC_RUNTIME_CLOUD = /usr/local/sbin/cocalc-cloudflared-ctl, /usr/l
             cfg,
             ["visudo", "-c", "-f", str(path)],
             "validate runtime sudoers",
+        )
+
+
+def verify_runtime_sudoers(cfg: BootstrapConfig) -> None:
+    user = cfg.ssh_user
+    if not user or user == "root":
+        return
+    log_line(cfg, f"bootstrap: verifying sudo whitelist behavior for {user}")
+    run_cmd(
+        cfg,
+        ["sudo", "-n", "/usr/local/sbin/cocalc-runtime-storage", "sync"],
+        "runtime sudo allowlist check",
+        as_user=user,
+    )
+    denied = run_cmd(
+        cfg,
+        ["sudo", "-n", "/bin/true"],
+        "runtime sudo denylist check",
+        as_user=user,
+        check=False,
+    )
+    if denied.returncode == 0:
+        raise RuntimeError(
+            "runtime sudo policy too broad: non-whitelisted command /bin/true was allowed"
         )
 
 
@@ -1483,6 +1518,7 @@ def main(argv: list[str]) -> int:
         write_wrapper(cfg)
         write_helpers(cfg)
         configure_runtime_sudoers(cfg)
+        verify_runtime_sudoers(cfg)
         configure_cloudflared(cfg)
         configure_autostart(cfg)
         start_project_host(cfg)

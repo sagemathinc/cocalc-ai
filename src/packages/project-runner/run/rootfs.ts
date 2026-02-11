@@ -64,7 +64,7 @@ const leases = new RefcountLeaseManager<string>({
         verbose: true,
         err_on_exit: true,
         command: "sudo",
-        args: [STORAGE_WRAPPER, "umount", "-l", mountpoint],
+        args: ["-n", STORAGE_WRAPPER, "umount", "-l", mountpoint],
       });
     } catch (err) {
       const e = `${err}`;
@@ -242,6 +242,7 @@ async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
     err_on_exit: true,
     command: "sudo",
     args: [
+      "-n",
       STORAGE_WRAPPER,
       "mount",
       "-t",

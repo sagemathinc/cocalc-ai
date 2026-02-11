@@ -22,20 +22,17 @@ export async function sudo(
   if (opts.verbose !== false && opts.desc) {
     logger.debug("exec", opts.desc);
   }
-  let command, args;
-  if (opts.bash) {
-    command = `sudo ${opts.command}`;
-    args = undefined;
-  } else {
-    command = "sudo";
-    args = [STORAGE_WRAPPER, opts.command, ...(opts.args ?? [])];
+  if ((opts as any).bash) {
+    throw new Error(
+      "file-server:btrfs sudo bash mode is disabled; use wrapper command args",
+    );
   }
   return await executeCode({
     verbose: true,
     timeout: DEFAULT_EXEC_TIMEOUT_MS / 1000,
     ...opts,
-    command,
-    args,
+    command: "sudo",
+    args: ["-n", STORAGE_WRAPPER, opts.command, ...(opts.args ?? [])],
     // LC_ALL, etc. so that btrfs output we parse is not in a different language!
     env: { ...process.env, LC_ALL: "C.UTF-8", LANG: "C.UTF-8" },
   });

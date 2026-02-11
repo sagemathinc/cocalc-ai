@@ -75,6 +75,7 @@ const USER_RECONCILE_RECENT_DAYS = Math.max(
   ),
 );
 const USER_DELTA_CURSOR_KEY = "users-delta-cursor";
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 interface HostRegistration {
   id: string;
@@ -363,7 +364,7 @@ export async function startMasterRegistration({
       },
       upgradeSoftware,
       async growBtrfs({ disk_gb }) {
-        const args = ["/usr/local/sbin/cocalc-grow-btrfs"];
+        const args = ["-n", STORAGE_WRAPPER, "grow-btrfs"];
         if (disk_gb != null) args.push(String(disk_gb));
         const { stdout, stderr, exit_code } = await executeCode({
           command: "sudo",
