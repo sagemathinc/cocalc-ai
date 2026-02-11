@@ -645,30 +645,59 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
   };
 
-  private toUrlDirectoryPath = (path: string): string => {
+  private getPathRoute = (
+    path: string,
+  ): { source: "files" | "home"; relativePath: string } => {
     const normalized = normalize(path);
-    if (normalized === "/") {
-      return "/";
-    }
-    if (normalized === "" || normalized === ".") {
-      return "";
-    }
     if (this.isVirtualListingPath(normalized)) {
-      return normalized.replace(/\/+$/, "");
+      return {
+        source: "files",
+        relativePath: normalized.replace(/^\/+/, "").replace(/\/+$/, ""),
+      };
     }
-    const absolute = normalizeAbsolutePath(
-      normalized,
-      this.getHomeDirectoryForPaths(),
-    );
-    return absolute.slice(1);
+    if (normalized === "/") {
+      return { source: "files", relativePath: "" };
+    }
+    const home = this.getHomeDirectoryForPaths();
+    const absolute = normalizeAbsolutePath(normalized, home);
+    if (
+      home !== "/" &&
+      (absolute === home || absolute.startsWith(`${home}/`))
+    ) {
+      return {
+        source: "home",
+        relativePath: absolute === home ? "" : absolute.slice(home.length + 1),
+      };
+    }
+    return {
+      source: "files",
+      relativePath: absolute === "/" ? "" : absolute.slice(1),
+    };
   };
 
-  private fromUrlDirectoryPath = (path: string): string => {
-    const normalized = normalize(path);
-    if (normalized === "" || normalized === ".") {
-      return this.getHomeDirectoryForPaths();
+  private toUrlPath = (path: string, isDirectory: boolean): string => {
+    const { source, relativePath } = this.getPathRoute(path);
+    if (relativePath.length === 0) {
+      return `${source}/`;
     }
-    if (normalized === "/") {
+    return `${source}/${relativePath}${isDirectory ? "/" : ""}`;
+  };
+
+  private fromUrlDirectoryPath = (
+    path: string,
+    source: "files" | "home" = "files",
+  ): string => {
+    const normalized = normalize(path);
+    if (source === "home") {
+      if (normalized === "" || normalized === "." || normalized === "/") {
+        return this.getHomeDirectoryForPaths();
+      }
+      if (this.isVirtualListingPath(normalized)) {
+        return normalized;
+      }
+      return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
+    }
+    if (normalized === "" || normalized === "." || normalized === "/") {
       return "/";
     }
     if (this.isVirtualListingPath(normalized)) {
@@ -678,12 +707,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   set_url_to_path(current_path, hash?: string): void {
-    const urlPath = this.toUrlDirectoryPath(current_path);
-    let localUrl = "files/";
-    if (urlPath.length > 0) {
-      localUrl += misc.endswith(urlPath, "/") ? urlPath : `${urlPath}/`;
-    }
-    this.push_state(localUrl, hash);
+    this.push_state(this.toUrlPath(current_path, true), hash);
   }
 
   _url_in_project(local_url): string {
@@ -863,7 +887,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           .getActions("file_use")
           ?.mark_file(this.project_id, path, "open");
         if (opts.change_history) {
-          this.push_state(`files/${path}`);
+          this.push_state(this.toUrlPath(path, false));
         }
         this.set_current_path(misc.path_split(path).head);
 
@@ -1178,7 +1202,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   public open_in_new_browser_window(path: string, fullscreen = "kiosk"): void {
-    let url = join(appBasePath, this._url_in_project(`files/${path}`));
+    let url = join(appBasePath, this._url_in_project(this.toUrlPath(path, false)));
     url += "?session=";
     if (fullscreen) {
       url += `&fullscreen=${fullscreen}`;
@@ -2748,44 +2772,47 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     fragmentId?: FragmentId,
   ): Promise<void> => {
     const segments = target.split("/");
-    const full_path = this.fromUrlDirectoryPath(segments.slice(1).join("/"));
+    const main_segment = segments[0] as FixedTab | "home";
+    const isHomeFileRoute = main_segment === "home" && segments.length > 1;
+    const fileRouteSource: "files" | "home" = isHomeFileRoute ? "home" : "files";
+    const full_path = this.fromUrlDirectoryPath(
+      segments.slice(1).join("/"),
+      fileRouteSource,
+    );
     const parent_path = this.fromUrlDirectoryPath(
       segments.slice(1, segments.length - 1).join("/"),
+      fileRouteSource,
     );
-    const main_segment = segments[0] as FixedTab | "home";
+    if (main_segment === "files" || isHomeFileRoute) {
+      if (target.endsWith("/") || full_path === "") {
+        this.open_directory(parent_path, change_history);
+        return;
+      }
+      const store = this.get_store();
+      if (store == null) {
+        return; // project closed already
+      }
+      const isDir = await this.isDir(full_path);
+      if (isDir) {
+        this.open_directory(full_path, change_history);
+      } else {
+        this.open_file({
+          path: full_path,
+          foreground,
+          foreground_project: foreground,
+          ignore_kiosk,
+          change_history,
+          fragmentId,
+        });
+      }
+      return;
+    }
     switch (main_segment) {
       case "active":
         console.warn(
           "there is no 'active files' page – those are the tabs in the projec",
         );
         return;
-
-      case "files":
-        if (target.endsWith("/") || full_path === "") {
-          //if DEBUG then console.log("ProjectStore::load_target → open_directory", parent_path)
-          this.open_directory(parent_path, change_history);
-          return;
-        }
-        const store = this.get_store();
-        if (store == null) {
-          return; // project closed already
-        }
-
-        // We check whether the path is a directory or not:
-        const isDir = await this.isDir(full_path);
-        if (isDir) {
-          this.open_directory(full_path, change_history);
-        } else {
-          this.open_file({
-            path: full_path,
-            foreground,
-            foreground_project: foreground,
-            ignore_kiosk,
-            change_history,
-            fragmentId,
-          });
-        }
-        break;
 
       case "new": // ignore foreground for these and below, since would be nonsense
         this.set_current_path(full_path);
