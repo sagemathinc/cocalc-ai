@@ -706,6 +706,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return normalizeAbsolutePath(`/${normalized}`);
   };
 
+  private toTabPathSuffix = (path: string): string => {
+    const normalized = normalize(path);
+    if (normalized === "/" || normalized === "" || normalized === ".") {
+      return "";
+    }
+    return normalized.replace(/^\/+/, "");
+  };
+
   set_url_to_path(current_path, hash?: string): void {
     this.push_state(this.toUrlPath(current_path, true), hash);
   }
@@ -808,7 +816,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "files":
         if (opts.change_history) {
           this.set_url_to_path(
-            store.get("current_path_abs") ?? store.get("current_path") ?? "",
+            store.get("current_path_abs") ?? store.get("current_path") ?? "/",
             "",
           );
         }
@@ -817,8 +825,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "new":
         change.file_creation_error = undefined;
         if (opts.change_history) {
+          const pathSuffix = this.toTabPathSuffix(
+            store.get("current_path_abs") ?? store.get("current_path") ?? "/",
+          );
           this.push_state(
-            `new/${store.get("current_path_abs") ?? store.get("current_path")}`,
+            pathSuffix.length > 0 ? `new/${pathSuffix}` : "new/",
             "",
           );
         }
@@ -834,8 +845,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "search":
         if (opts.change_history) {
+          const pathSuffix = this.toTabPathSuffix(
+            store.get("current_path_abs") ?? store.get("current_path") ?? "/",
+          );
           this.push_state(
-            `search/${store.get("current_path_abs") ?? store.get("current_path")}`,
+            pathSuffix.length > 0 ? `search/${pathSuffix}` : "search/",
             "",
           );
         }
@@ -1591,7 +1605,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (change_history) {
       // i.e. regardless of show_files is true or false, we might want to record this in the history
       this.set_url_to_path(
-        store.get("current_path_abs") ?? store.get("current_path") ?? "",
+        store.get("current_path_abs") ?? store.get("current_path") ?? "/",
         "",
       );
     }
@@ -1601,13 +1615,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // ONLY updates current path
   // Does not push to URL, browser history, or add to analytics
   // Use internally or for updating current path in background
-  set_current_path = (path: string = ""): void => {
+  set_current_path = (path: string = "/"): void => {
     path = normalize(path);
     if (Number.isNaN(path as any)) {
-      path = "";
+      path = "/";
     }
     if (typeof path !== "string") {
       throw Error("Current path should be a string");
+    }
+    if (path === "") {
+      path = "/";
     }
     const pathAbs = this.toAbsoluteCurrentPath(path);
     // Set the current path for this project. path is either a string or array of segments.
@@ -1615,7 +1632,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    let history_path = store.get("history_path") || "";
+    let history_path = store.get("history_path") || "/";
     const is_adjacent =
       path.length > 0 && !(history_path + "/").startsWith(path + "/");
     // given is_adjacent is false, this tests if it is a subdirectory
@@ -2473,7 +2490,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       current_path ??
       store?.get("current_path_abs") ??
       store?.get("current_path") ??
-      "";
+      "/";
     let s = misc.path_to_file(this.toAbsoluteCurrentPath(basePath), name);
     if (ext != null && misc.filename_extension(s) !== ext) {
       s = `${s}.${ext}`;
@@ -2496,7 +2513,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       current_path ??
         store?.get("current_path_abs") ??
         store?.get("current_path") ??
-        "",
+        "/",
     );
     const path = join(basePath, name);
     const fs = this.fs();
@@ -2536,7 +2553,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         current_path ??
           store?.get("current_path_abs") ??
           store?.get("current_path") ??
-          "",
+          "/",
       );
       this.new_file_from_web(name, basePath);
       return;
@@ -2559,7 +2576,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       current_path ??
         store?.get("current_path_abs") ??
         store?.get("current_path") ??
-        "",
+        "/",
     );
     let path = join(basePath, name);
     if (ext) {

@@ -47,7 +47,7 @@ export default function CreateArchive({ clear }) {
     try {
       setLoading(true);
       const files = checked_files.toArray();
-      const path = store.get("current_path");
+      const path = store.get("current_path_abs") ?? store.get("current_path") ?? "/";
       await createArchive({ path, files, target, format, actions });
       clear();
     } catch (err) {

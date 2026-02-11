@@ -38,7 +38,7 @@ export default function HomePageButton({ project_id, active, width }) {
         const pureFlyoutMode = getValidActivityBarOption(actBar) === "flyout";
         actions?.set_active_tab(pureFlyoutMode ? "home" : "files");
 
-        actions?.set_current_path("");
+        actions?.set_current_path("/");
         actions?.setFlyoutExpanded("files", false, false);
         actions?.set_file_search("");
 

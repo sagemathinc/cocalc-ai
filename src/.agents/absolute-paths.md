@@ -408,7 +408,7 @@ Mitigation:
       - `fromUrlDirectoryPath(...)`
       so absolute paths no longer produce malformed `files//...` URLs and
       virtual listing paths remain preserved.
-    - Root (`/`) is encoded distinctly from home in URL form (`files//` vs `files/`).
+    - Root/home URL split now uses explicit route prefixes (`files/...` vs `home/...`) instead of `files//` encoding.
     - Create/download-new-file flows now derive paths from absolute state.
     - Explorer and files flyout now prefer `current_path_abs` for core listing, create/open, and sorting flows.
     - Flyout controls/header/bottom/active groups and terminal now use effective absolute path state.
@@ -416,6 +416,12 @@ Mitigation:
     - Explorer file action box no longer rejects absolute destinations for move/copy.
     - `path_to_file("/", name)` now returns `"/name"` (instead of `"//name"`), with tests.
     - Root-path edge cases handled in backups selection helpers (`/` prefix comparisons no longer use `"//"`).
+    - Removed remaining empty-string path defaults from store/actions:
+      - `current_path` and `history_path` now initialize to `/`.
+      - `set_current_path` normalizes empty input to `/`.
+      - Home tab button resets path to `/` (not `""`).
+      - Archive creation now uses absolute current path.
+    - `new/...` and `search/...` URL pushes now avoid `//` by using normalized path suffixes.
   - Remaining:
     - Remove empty-string semantics in active UI path model.
     - Convert explorer/flyout consumers to treat absolute as primary.
