@@ -21,7 +21,6 @@ import { nbconvert as jupyter_nbconvert } from "../jupyter/convert";
 import { jupyter_strip_notebook } from "@cocalc/jupyter/nbgrader/jupyter-parse";
 import { jupyter_run_notebook } from "@cocalc/jupyter/nbgrader/jupyter-run";
 import { x11_channel } from "../x11/server";
-import { canonical_paths } from "./canonical-path";
 import { eval_code } from "./eval-code";
 import { realpath } from "./realpath";
 import query from "./query";
@@ -83,8 +82,6 @@ export async function handleApiCall({
   switch (data.cmd) {
     case "version":
       return version;
-    case "canonical_paths":
-      return await canonical_paths(data.paths);
     case "configuration":
       return await get_configuration(data.aspect, data.no_cache);
     case "formatter_string":

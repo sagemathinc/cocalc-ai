@@ -13,7 +13,7 @@ export function key({ project_id, path }: { project_id: string; path: string }) 
 
 export default async function dust({
   project_id,
-  path = "",
+  path = "/",
   cache = true,
 }: {
   project_id: string;

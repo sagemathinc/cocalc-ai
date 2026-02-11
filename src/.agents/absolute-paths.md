@@ -360,9 +360,11 @@ Mitigation:
     - Explorer and flyout paths now mostly use `current_path_abs`.
     - Core listing/create/open/sort flows are absolute-first.
     - Most URL edge cases (`files//...`) have been removed via explicit route parsing.
+    - Explorer path segment links and explorer config keys now default to `/` (not `""`).
+    - Files flyout terminal directory switching no longer has `"."` special handling.
+    - Disk usage hooks now default to `/` (not `""`).
   - Remaining:
-    - Remove last `""`/ `"."` path semantics in explorer/flyout code.
-    - Normalize terminal/flyout path defaults to `/` only.
+    - Final sweep for straggling `""` path defaults in project/explorer/flyout helpers.
     - Final pass on absolute-first path joins and parent nav behavior.
 - Ticket 5: Completed.
   - Done:
@@ -373,6 +375,20 @@ Mitigation:
     - Wired project-host file server to pass rootfs mountpoint:
       - [src/packages/project-host/file-server.ts](./src/packages/project-host/file-server.ts)
       - [src/packages/project-runner/run/rootfs.ts](./src/packages/project-runner/run/rootfs.ts)
+- Ticket 12: Completed.
+  - Done:
+    - Retired frontend LaTeX editor usage of websocket `canonical_paths` / `canonical_path`.
+    - LaTeX dependency/source path resolution now uses absolute normalization + `realpath` fallback.
+    - Removed unused `canonical_path(s)` wrapper methods from:
+      - [src/packages/frontend/project/websocket/api.ts](./src/packages/frontend/project/websocket/api.ts)
+    - Removed `canonicalPaths` from CONAT project system API contracts:
+      - [src/packages/conat/project/api/system.ts](./src/packages/conat/project/api/system.ts)
+      - [src/packages/project/conat/api/system.ts](./src/packages/project/conat/api/system.ts)
+    - Removed legacy websocket `canonical_paths` command and type branch:
+      - [src/packages/comm/websocket/types.ts](./src/packages/comm/websocket/types.ts)
+      - [src/packages/project/browser-websocket/api.ts](./src/packages/project/browser-websocket/api.ts)
+    - Deleted obsolete canonical-path implementation:
+      - [src/packages/project/browser-websocket/canonical-path.ts](./src/packages/project/browser-websocket/canonical-path.ts)
 
 ### Ticket 1: Path Model Module + Tests
 - Priority: P1

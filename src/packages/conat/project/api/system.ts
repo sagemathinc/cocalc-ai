@@ -17,7 +17,6 @@ export const system = {
   moveFiles: true,
   renameFile: true,
   realpath: true,
-  canonicalPaths: true,
 
   // these should be deprecated -- the new streaming writeFile and readFile in conat/files are  better.
   writeTextFileToProject: true,
@@ -52,7 +51,6 @@ export interface System {
   moveFiles: (opts: { paths: string[]; dest: string }) => Promise<void>;
   renameFile: (opts: { src: string; dest: string }) => Promise<void>;
   realpath: (path: string) => Promise<string>;
-  canonicalPaths: (paths: string[]) => Promise<string[]>;
 
   writeTextFileToProject: (opts: {
     path: string;

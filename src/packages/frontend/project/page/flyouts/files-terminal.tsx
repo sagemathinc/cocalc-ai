@@ -242,11 +242,9 @@ export function TerminalFlyout({
     const nextPath = effective_current_path;
     // start with a space to avoid recording in history
     const cmd =
-      nextPath === "."
-        ? ` cd "$HOME"`
-        : nextPath.startsWith("/")
-          ? ` cd "${escapeBashChangeDirPath(nextPath)}"`
-          : ` cd "$HOME/${escapeBashChangeDirPath(nextPath)}"`;
+      nextPath.startsWith("/")
+        ? ` cd "${escapeBashChangeDirPath(nextPath)}"`
+        : ` cd "$HOME/${escapeBashChangeDirPath(nextPath)}"`;
     // this will end up in a write buffer, hence it should be ok to do right at the beginning
     terminalRef.current.conn_write(`${clean}${cmd}\n`);
   }, [effective_current_path, syncPath, sync, terminalExists]);

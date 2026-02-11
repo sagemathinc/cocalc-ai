@@ -27,7 +27,7 @@ interface Location {
 
 function key({
   project_id,
-  path = "",
+  path = "/",
 }: Location) {
   return `${project_id}-${path}`;
 }
