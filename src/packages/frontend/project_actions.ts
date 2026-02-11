@@ -1674,7 +1674,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (typeof path !== "string") {
       throw Error("Current path should be a string");
     }
-    if (path === "") {
+    if (path === "" || path === ".") {
       path = "/";
     }
     const pathAbs = this.toAbsoluteCurrentPath(path);
@@ -2312,7 +2312,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // using listings cache, attempt to tell if path is a directory;
   // undefined if no data about path in the cache.
   isDirViaCache = (path: string): boolean | undefined => {
-    if (!path) {
+    if (!path || path === "." || path === "/") {
       return true;
     }
     const { head: dir, tail: base } = misc.path_split(path);
@@ -2329,7 +2329,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // error if doesn't exist or can't find out.
   // Use isDirViaCache for more of a fast hint.
   isDir = async (path: string): Promise<boolean> => {
-    if (path === "" || path === "/") return true; // easy special case
+    if (path === "" || path === "." || path === "/") return true; // easy special case
     const stats = await this.fs().stat(path);
     return stats.isDirectory();
   };

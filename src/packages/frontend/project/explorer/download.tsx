@@ -83,7 +83,7 @@ export default function Download({ clear }) {
       const files = checked_files.toArray();
       let dest;
       if (archiveMode) {
-        const path = store.get("current_path_abs") ?? store.get("current_path");
+        const path = store.get("current_path_abs") ?? "/";
         dest = join(path, target + "." + format);
         await createArchive({ path, files, target, format, actions });
       } else {
