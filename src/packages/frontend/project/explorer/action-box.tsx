@@ -70,10 +70,10 @@ export function ActionBox({
   const runQuota = useRunQuota(project_id, null);
   const get_user_type: () => string = useRedux("account", "get_user_type");
   const [copy_destination_directory, set_copy_destination_directory] =
-    useState<string>("");
+    useState<string>(current_path);
   const [copy_destination_project_id, set_copy_destination_project_id] =
     useState<string>(project_id);
-  const [move_destination, set_move_destination] = useState<string>("");
+  const [move_destination, set_move_destination] = useState<string>(current_path);
   const [show_different_project, set_show_different_project] =
     useState<boolean>(false);
   const [overwrite, set_overwrite] = useState<boolean>(true);
@@ -214,7 +214,7 @@ export function ActionBox({
     if (misc.contains(dest, "//")) {
       return false;
     }
-    if (dest.charAt(dest.length - 1) === "/") {
+    if (dest.length > 1 && dest.charAt(dest.length - 1) === "/") {
       dest = dest.slice(0, dest.length - 1);
     }
     return dest !== current_path;
@@ -240,10 +240,10 @@ export function ActionBox({
             </Space>
           </Col>
           <Col sm={5} style={{ color: COLORS.GRAY_M, marginBottom: "15px" }}>
-            <h4>
-              Destination:{" "}
-              {move_destination == "" ? "Home directory" : move_destination}
-            </h4>
+              <h4>
+                Destination:{" "}
+              {move_destination}
+              </h4>
             <DirectorySelector
               title="Select Move Destination Folder"
               key="move_destination"
@@ -430,9 +430,7 @@ export function ActionBox({
                 }
               >
                 Destination:{" "}
-                {copy_destination_directory == ""
-                  ? "Home Directory"
-                  : copy_destination_directory}
+                {copy_destination_directory}
               </h4>
               <DirectorySelector
                 title={"Destination"}
