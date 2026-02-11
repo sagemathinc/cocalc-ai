@@ -749,14 +749,20 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     switch (key) {
       case "files":
         if (opts.change_history) {
-          this.set_url_to_path(store.get("current_path") ?? "", "");
+          this.set_url_to_path(
+            store.get("current_path_abs") ?? store.get("current_path") ?? "",
+            "",
+          );
         }
         break;
 
       case "new":
         change.file_creation_error = undefined;
         if (opts.change_history) {
-          this.push_state(`new/${store.get("current_path")}`, "");
+          this.push_state(
+            `new/${store.get("current_path_abs") ?? store.get("current_path")}`,
+            "",
+          );
         }
         const new_fn = default_filename(opts.new_ext, this.project_id);
         this.set_next_default_filename(new_fn);
@@ -770,7 +776,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "search":
         if (opts.change_history) {
-          this.push_state(`search/${store.get("current_path")}`, "");
+          this.push_state(
+            `search/${store.get("current_path_abs") ?? store.get("current_path")}`,
+            "",
+          );
         }
         break;
 
@@ -1523,7 +1532,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     if (change_history) {
       // i.e. regardless of show_files is true or false, we might want to record this in the history
-      this.set_url_to_path(store.get("current_path") ?? "", "");
+      this.set_url_to_path(
+        store.get("current_path_abs") ?? store.get("current_path") ?? "",
+        "",
+      );
     }
     this.set_all_files_unchecked();
   };
@@ -2685,6 +2697,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         return;
 
       case "files":
+        if (full_path === "/") {
+          this.open_directory("/", change_history);
+          return;
+        }
         if (target.endsWith("/") || full_path === "") {
           //if DEBUG then console.log("ProjectStore::load_target → open_directory", parent_path)
           this.open_directory(parent_path, change_history);
@@ -2983,7 +2999,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       this.setState(x);
     };
-    const path = opts?.path ?? store.get("current_path");
+    const path =
+      opts?.path ??
+      store.get("current_path_abs") ??
+      store.get("current_path");
     const options = getSearch({
       project_id: this.project_id,
       path,
