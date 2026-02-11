@@ -5,7 +5,7 @@ Automate running BEES on the btrfs pool.
 import { spawn } from "node:child_process";
 import { delay } from "awaiting";
 import getLogger from "@cocalc/backend/logger";
-import { sudo } from "./util";
+import { sudo, STORAGE_WRAPPER } from "./util";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { join } from "node:path";
 
@@ -49,8 +49,8 @@ export default async function bees(
     args.push("-g", `${loadavgTarget}`);
   }
   args.push(mountpoint);
-  logger.debug(`Running 'sudo ${args.join(" ")}'`);
-  const child = spawn("sudo", args, {
+  logger.debug(`Running 'sudo ${STORAGE_WRAPPER} ${args.join(" ")}'`);
+  const child = spawn("sudo", [STORAGE_WRAPPER, ...args], {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -735,6 +735,16 @@ case "$cmd" in
     check_args "$@"
     exec /bin/df "$@"
     ;;
+  bees)
+    check_args "$@"
+    if [ -x /opt/cocalc/tools/current/bees ]; then
+      exec /opt/cocalc/tools/current/bees "$@"
+    fi
+    if command -v /usr/bin/bees >/dev/null 2>&1; then
+      exec /usr/bin/bees "$@"
+    fi
+    exec /bin/bees "$@"
+    ;;
   sync)
     exec /bin/sync "$@"
     ;;
