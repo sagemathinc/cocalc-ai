@@ -1725,8 +1725,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       range = [file];
     } else {
       // get the range of files
-      const current_path =
-        store.get("current_path_abs") ?? store.get("current_path");
+      const current_path = store.get("current_path_abs") ?? "/";
       const names = listing.map(({ name }) =>
         misc.path_to_file(current_path, name),
       );
@@ -2242,10 +2241,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return null;
     }
-    const path = store.get("current_path_abs") ?? store.get("current_path");
-    if (path == null) {
-      return null;
-    }
+    const path = store.get("current_path_abs") ?? "/";
     return this.getFilesCache(path);
   };
 
@@ -2489,7 +2485,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const basePath =
       current_path ??
       store?.get("current_path_abs") ??
-      store?.get("current_path") ??
       "/";
     let s = misc.path_to_file(this.toAbsoluteCurrentPath(basePath), name);
     if (ext != null && misc.filename_extension(s) !== ext) {
@@ -2512,7 +2507,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const basePath = this.toAbsoluteCurrentPath(
       current_path ??
         store?.get("current_path_abs") ??
-        store?.get("current_path") ??
         "/",
     );
     const path = join(basePath, name);
@@ -2552,7 +2546,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       const basePath = this.toAbsoluteCurrentPath(
         current_path ??
           store?.get("current_path_abs") ??
-          store?.get("current_path") ??
           "/",
       );
       this.new_file_from_web(name, basePath);
@@ -2575,7 +2568,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const basePath = this.toAbsoluteCurrentPath(
       current_path ??
         store?.get("current_path_abs") ??
-        store?.get("current_path") ??
         "/",
     );
     let path = join(basePath, name);
@@ -3106,7 +3098,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const path =
       opts?.path ??
       store.get("current_path_abs") ??
-      store.get("current_path");
+      "/";
     const options = getSearch({
       project_id: this.project_id,
       path,
