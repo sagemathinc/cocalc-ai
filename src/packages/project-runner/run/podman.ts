@@ -433,7 +433,14 @@ export function networkArgument() {
     return "--network=none";
   }
   if (defaultNetwork === "pasta") {
-    return "--network=pasta";
+    const pastaOptionsRaw = `${
+      process.env.COCALC_PROJECT_RUNNER_PASTA_OPTIONS ??
+      "--map-gw,--map-guest-addr,169.254.1.2"
+    }`.trim();
+    if (!pastaOptionsRaw) {
+      return "--network=pasta";
+    }
+    return `--network=pasta:${pastaOptionsRaw}`;
   }
   // Rootless pods need host loopback access so project containers can reach
   // host-local conat (mapped as host.containers.internal in env.ts).
@@ -473,40 +480,6 @@ function slirpNetworkArgument(): string {
   return allowHostLoopback
     ? "--network=slirp4netns:allow_host_loopback=true"
     : "--network=slirp4netns";
-}
-
-async function probeTcpFromContainer({
-  containerName,
-  host,
-  port,
-}: {
-  containerName: string;
-  host: string;
-  port: number;
-}): Promise<boolean> {
-  // Use mounted node so we don't depend on image-specific tools.
-  const script = [
-    "const net=require('net');",
-    `const host=${JSON.stringify(host)};`,
-    `const port=${JSON.stringify(port)};`,
-    "const s=net.createConnection({host,port});",
-    "const done=(code)=>{try{s.destroy()}catch{};process.exit(code)};",
-    "const t=setTimeout(()=>done(2),2000);",
-    "s.on('connect',()=>{clearTimeout(t);done(0)});",
-    "s.on('error',()=>{clearTimeout(t);done(1)});",
-  ].join("");
-  try {
-    await podman(["exec", containerName, "/opt/cocalc/bin/node", "-e", script]);
-    return true;
-  } catch (err) {
-    logger.debug("tcp probe from container failed", {
-      containerName,
-      host,
-      port,
-      err: `${err}`,
-    });
-    return false;
-  }
 }
 
 export function publishHost(): string {
@@ -724,6 +697,19 @@ export async function start({
     args.push("--replace");
     const selectedNetwork = networkArgument();
     args.push(selectedNetwork);
+    if (selectedNetwork.startsWith("--network=pasta")) {
+      const pastaHostAliasAddr = `${
+        process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ??
+        "169.254.1.2"
+      }`.trim();
+      if (pastaHostAliasAddr) {
+        // Ensure a stable host alias for conat under pasta.
+        args.push(
+          "--add-host",
+          `host.containers.internal:${pastaHostAliasAddr}`,
+        );
+      }
+    }
     const publishHostValue = publishHost();
     args.push("-p", `${publishHostValue}:${ssh_port}:22`);
     args.push("-p", `${publishHostValue}:${http_port}:80`);
@@ -783,7 +769,6 @@ export async function start({
         args.push(networkArg);
       }
     };
-    let activeNetwork = selectedNetwork;
 
     try {
       await podman(args);
@@ -801,46 +786,7 @@ export async function start({
         },
       );
       setNetworkArg(fallbackNetwork);
-      activeNetwork = fallbackNetwork;
       await podman(args);
-    }
-
-    // Some podman+pasta combinations start successfully but still cannot
-    // reach host.containers.internal. Probe and fallback once automatically.
-    if (canFallback && activeNetwork.startsWith("--network=pasta")) {
-      try {
-        const conatUrl = new URL(env.CONAT_SERVER);
-        const host = conatUrl.hostname;
-        const port = Number(
-          conatUrl.port || (conatUrl.protocol === "https:" ? 443 : 80),
-        );
-        const reachable = await probeTcpFromContainer({
-          containerName: name,
-          host,
-          port,
-        });
-        if (!reachable) {
-          logger.warn(
-            "pasta launch succeeded but conat host is unreachable; retrying with slirp4netns fallback",
-            {
-              project_id,
-              host,
-              port,
-              selectedNetwork,
-              fallbackNetwork,
-            },
-          );
-          await podman(["rm", "-f", "-t", "0", name]);
-          setNetworkArg(fallbackNetwork);
-          activeNetwork = fallbackNetwork;
-          await podman(args);
-        }
-      } catch (err) {
-        logger.warn("pasta connectivity probe failed unexpectedly", {
-          project_id,
-          err: `${err}`,
-        });
-      }
     }
 
     report({
