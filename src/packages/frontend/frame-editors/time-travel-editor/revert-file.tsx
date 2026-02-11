@@ -28,6 +28,7 @@ export function RevertFile({
       }
     >
       <Button
+        size="small"
         onClick={() => {
           if (version != null) {
             const v =

@@ -414,6 +414,7 @@ export function TimeTravel(props: Props) {
         setVersion0={setVersion0}
         version1={version1}
         setVersion1={setVersion1}
+        wallTime={wallTime}
         marks={marks}
       />
     );
@@ -661,6 +662,7 @@ export function TimeTravel(props: Props) {
   };
 
   const renderControls = () => {
+    const activeVersionCount = (gitMode ? gitVersions : versions)?.size ?? 0;
     return (
       <div
         style={{
@@ -669,32 +671,42 @@ export function TimeTravel(props: Props) {
           padding: "5px",
         }}
       >
-        <Space.Compact style={{ marginRight: "5px" }}>
-          {renderModeSelectors()}
-        </Space.Compact>
-        {renderCommitsInRangeButton()}
-        {renderGitChangedFilesButton()}
-        {gitMode && (
-          <Tooltip title="Scan local Git repository for new revisions to this file">
-            <Button
-              size="small"
-              style={{ marginLeft: "5px", marginRight: "5px" }}
-              onClick={() => {
-                props.actions.updateGitVersions();
-              }}
-            >
-              Refresh
-            </Button>
-          </Tooltip>
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: "6px",
+          }}
+        >
+          <Space.Compact>{renderModeSelectors()}</Space.Compact>
+          {renderCommitsInRangeButton()}
+          {renderGitChangedFilesButton()}
+          {gitMode && (
+            <Tooltip title="Scan local Git repository for new revisions to this file">
+              <Button
+                size="small"
+                onClick={() => {
+                  props.actions.updateGitVersions();
+                }}
+              >
+                Refresh
+              </Button>
+            </Tooltip>
+          )}
+          {renderNavigationButtons()}
+          <Space.Compact>
+            {renderOpenFile()}
+            {renderRevertFile()}
+            {renderOpenSnapshots()}
+            {renderExport()}
+          </Space.Compact>
+        </div>
+        {activeVersionCount > 0 && (
+          <div style={{ marginTop: "6px", fontSize: "12px", color: "#666" }}>
+            {renderRevisionMeta()}
+          </div>
         )}
-        {renderNavigationButtons()}
-        <Space.Compact style={{ margin: "0 5px" }}>
-          {renderOpenFile()}
-          {renderRevertFile()}
-          {renderOpenSnapshots()}
-          {renderExport()}
-        </Space.Compact>
-        {(versions?.size ?? 0) > 0 && renderRevisionMeta()}
       </div>
     );
   };

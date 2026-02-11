@@ -19,7 +19,7 @@ interface Props {
 export function Export({ actions }: Props) {
   return (
     <Tooltip title={"Export information about edit history to a JSON file"}>
-      <Button onClick={() => actions.exportEditHistory()}>
+      <Button size="small" onClick={() => actions.exportEditHistory()}>
         <Icon name={"file-export"} /> Export
       </Button>
     </Tooltip>

@@ -17,6 +17,7 @@ import track from "@cocalc/frontend/user-tracking";
 export function OpenSnapshots({ actions }) {
   return (
     <Button
+      size="small"
       onClick={() => {
         actions.open_snapshots();
         track("snapshots", { action: "open", where: "time-travel" });
