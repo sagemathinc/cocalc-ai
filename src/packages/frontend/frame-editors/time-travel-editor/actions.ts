@@ -19,7 +19,11 @@ the old viewer, which is a convenient fallback if somebody needs it for some rea
 import { debounce } from "lodash";
 import { List } from "immutable";
 import { once } from "@cocalc/util/async-utils";
-import { filename_extension, history_path, path_split } from "@cocalc/util/misc";
+import {
+  filename_extension,
+  history_path,
+  path_split,
+} from "@cocalc/util/misc";
 import { SyncDoc } from "@cocalc/sync/editor/generic/sync-doc";
 import { exec } from "@cocalc/frontend/frame-editors/generic/client";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -73,6 +77,7 @@ export interface TimeTravelState extends CodeEditorState {
   versions: List<PatchId>;
   git_versions: List<number>;
   snapshot_versions: List<string>;
+  backup_versions: List<string>;
   loading: boolean;
   has_full_history: boolean;
   docpath: string;
@@ -98,6 +103,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   private gitCommitByHash: { [hash: string]: GitCommitEntry } = {};
   private gitFilesByHash: { [hash: string]: string[] } = {};
   private gitProjectPathPrefix?: string;
+  private backupTimeById: { [id: string]: number } = {};
 
   _init2(): void {
     const { head, tail } = path_split(this.path);
@@ -110,6 +116,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     this.setState({
       versions: List([]),
       snapshot_versions: List([]),
+      backup_versions: List([]),
       loading: true,
       has_full_history: false,
       docpath: this.docpath,
@@ -496,13 +503,88 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   ): Promise<ViewDocument | undefined> => {
     if (version == null) return;
     try {
-      const resp = await webapp_client.conat_client.hub.projects.getSnapshotFileText(
-        {
+      const resp =
+        await webapp_client.conat_client.hub.projects.getSnapshotFileText({
           project_id: this.project_id,
           snapshot: `${version}`,
           path: this.docpath,
+        });
+      return new ViewDocument(this.docpath, resp.content);
+    } catch (err) {
+      this.set_error(`${err}`);
+      return;
+    }
+  };
+
+  updateBackupVersions = async (): Promise<List<string>> => {
+    try {
+      // Use indexed backup search in one RPC with exact path match.
+      const raw = await webapp_client.conat_client.hub.projects.findBackupFiles(
+        {
+          project_id: this.project_id,
+          glob: [this.docpath],
         },
       );
+      const rows = raw
+        .filter((x) => !x.isDir && x.path === this.docpath)
+        .map((x) => {
+          const t = new Date(x.time as any).getTime();
+          return {
+            id: x.id,
+            timeMs: Number.isFinite(t) ? t : 0,
+            mtime: x.mtime ?? 0,
+            size: x.size ?? 0,
+          };
+        })
+        .sort((a, b) =>
+          a.timeMs !== b.timeMs
+            ? a.timeMs - b.timeMs
+            : a.id.localeCompare(b.id),
+        );
+      // Keep only versions where file mtime/size changed, similar to git log per-file behavior.
+      const filteredIds: string[] = [];
+      const backup_times: { [id: string]: number } = {};
+      let lastSig: string | undefined = undefined;
+      for (const row of rows) {
+        const sig = `${row.mtime}:${row.size}`;
+        if (sig === lastSig) continue;
+        lastSig = sig;
+        filteredIds.push(row.id);
+        backup_times[row.id] = row.timeMs;
+      }
+      const backup_versions = List<string>(filteredIds);
+      this.backupTimeById = backup_times;
+      this.setState({ backup_versions });
+      return backup_versions;
+    } catch (_err) {
+      const backup_versions = List<string>([]);
+      this.backupTimeById = {};
+      this.setState({ backup_versions });
+      return backup_versions;
+    }
+  };
+
+  backupWallTime = (
+    version: number | string | undefined,
+  ): number | undefined => {
+    if (version == null) return;
+    const id = `${version}`;
+    const t = this.backupTimeById[id];
+    if (t == null || !Number.isFinite(t)) return;
+    return t;
+  };
+
+  backupDoc = async (
+    version: number | string | undefined,
+  ): Promise<ViewDocument | undefined> => {
+    if (version == null) return;
+    try {
+      const resp =
+        await webapp_client.conat_client.hub.projects.getBackupFileText({
+          project_id: this.project_id,
+          id: `${version}`,
+          path: this.docpath,
+        });
       return new ViewDocument(this.docpath, resp.content);
     } catch (err) {
       this.set_error(`${err}`);
@@ -763,10 +845,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     }
   };
 
-  openGitCommitFile = async (
-    path: string,
-    hash: string,
-  ): Promise<void> => {
+  openGitCommitFile = async (path: string, hash: string): Promise<void> => {
     const projectActions = this.redux.getProjectActions(this.project_id);
     const ttPath = history_path(path);
     await projectActions.open_file({ path: ttPath, foreground: true });

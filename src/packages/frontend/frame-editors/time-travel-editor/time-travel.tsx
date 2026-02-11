@@ -62,6 +62,9 @@ export function TimeTravel(props: Props) {
   const snapshotVersions =
     (useEditor("snapshot_versions") as List<string> | undefined) ??
     List<string>();
+  const backupVersions =
+    (useEditor("backup_versions") as List<string> | undefined) ??
+    List<string>();
   const hasFullHistory = useEditor("has_full_history");
   const loading = useEditor("loading");
   const docpath = useEditor("docpath");
@@ -111,14 +114,25 @@ export function TimeTravel(props: Props) {
   );
   const gitMode = source === "git";
   const snapshotsMode = source === "snapshots";
+  const backupsMode = source === "backups";
   const activeVersions = useMemo(
     () =>
       gitMode
         ? gitVersions
-        : snapshotsMode
+        : backupsMode
+          ? backupVersions
+          : snapshotsMode
           ? snapshotVersions
           : versions,
-    [gitMode, snapshotsMode, gitVersions, snapshotVersions, versions],
+    [
+      gitMode,
+      snapshotsMode,
+      backupsMode,
+      gitVersions,
+      snapshotVersions,
+      backupVersions,
+      versions,
+    ],
   );
 
   const versionToNumber = (
@@ -126,6 +140,9 @@ export function TimeTravel(props: Props) {
   ): number | undefined => {
     if (v == null) return undefined;
     if (typeof v === "number") return v;
+    if (backupsMode) {
+      return props.actions.backupWallTime(v) ?? undefined;
+    }
     if (snapshotsMode) {
       return props.actions.snapshotWallTime(v) ?? undefined;
     }
@@ -194,6 +211,7 @@ export function TimeTravel(props: Props) {
     source,
     marks,
     snapshotsMode,
+    backupsMode,
   ]);
 
   useEffect(() => {
@@ -212,15 +230,21 @@ export function TimeTravel(props: Props) {
       await props.actions.updateSnapshotVersions();
       return;
     }
+    if (backupsMode) {
+      await props.actions.updateBackupVersions();
+      return;
+    }
   }, [props.actions, source]);
 
   const wallTime = useMemo(() => {
     return gitMode
       ? (version: number | string) => Number(version)
-      : snapshotsMode
+      : backupsMode
+        ? (v: number | string) => props.actions.backupWallTime(v)
+        : snapshotsMode
         ? (v: number | string) => props.actions.snapshotWallTime(v)
         : (v: number | string) => props.actions.wallTime(v as string);
-  }, [gitMode, snapshotsMode, props.actions]);
+  }, [gitMode, snapshotsMode, backupsMode, props.actions]);
 
   const toPatchId = (v?: number | string) =>
     v == null ? undefined : (`${v}` as string);
@@ -240,10 +264,21 @@ export function TimeTravel(props: Props) {
       gitMode,
       source,
       snapshotsMode,
+      backupsMode,
       textMode,
       marks,
     });
-  }, [version, version0, version1, changesMode, gitMode, snapshotsMode, textMode, source]);
+  }, [
+    version,
+    version0,
+    version1,
+    changesMode,
+    gitMode,
+    snapshotsMode,
+    backupsMode,
+    textMode,
+    source,
+  ]);
 
   const getDoc = async (
     version?: number | string,
@@ -258,6 +293,10 @@ export function TimeTravel(props: Props) {
     }
     if (snapshotsMode) {
       const x = await props.actions.snapshotDoc(version);
+      return () => x!;
+    }
+    if (backupsMode) {
+      const x = await props.actions.backupDoc(version);
       return () => x!;
     }
     if (typeof version == "number") {
@@ -344,6 +383,20 @@ export function TimeTravel(props: Props) {
           </span>
         );
       }
+      if (backupsMode) {
+        if (version0 == null || version1 == null) return null;
+        const t0 = props.actions.backupWallTime(version0);
+        const t1 = props.actions.backupWallTime(version1);
+        const label0 =
+          t0 == null ? `${version0}` : new Date(t0).toLocaleString();
+        const label1 =
+          t1 == null ? `${version1}` : new Date(t1).toLocaleString();
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            Backups <b>{label0}</b> to <b>{label1}</b>
+          </span>
+        );
+      }
       if (version0 == null || version1 == null) {
         return null;
       }
@@ -398,6 +451,20 @@ export function TimeTravel(props: Props) {
         return (
           <span style={{ whiteSpace: "nowrap" }}>
             Snapshot <b>{`${version}`}</b>
+            {t != null && (
+              <>
+                {" "}·{" "}
+                <TimeAgo date={new Date(t)} time_ago_absolute />
+              </>
+            )}
+          </span>
+        );
+      }
+      if (backupsMode) {
+        const t = props.actions.backupWallTime(version);
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            Backup <b>{`${version}`.slice(0, 8)}</b>
             {t != null && (
               <>
                 {" "}·{" "}
@@ -504,7 +571,7 @@ export function TimeTravel(props: Props) {
     if (!changesMode && version == null) {
       return;
     }
-    if ((gitMode || snapshotsMode) && !changesMode) {
+    if ((gitMode || snapshotsMode || backupsMode) && !changesMode) {
       return null;
     }
     const opts = changesMode
@@ -512,7 +579,7 @@ export function TimeTravel(props: Props) {
       : { actions: props.actions, version0: version, version1: version };
     if (gitMode) {
       return <GitAuthors {...opts} />;
-    } else if (snapshotsMode) {
+    } else if (snapshotsMode || backupsMode) {
       return null;
     } else {
       return <TimeTravelAuthors {...opts} />;
@@ -520,7 +587,7 @@ export function TimeTravel(props: Props) {
   };
 
   const renderLoadMoreHistory = () => {
-    if (gitMode || snapshotsMode) {
+    if (gitMode || snapshotsMode || backupsMode) {
       return;
     }
     return (
@@ -547,7 +614,7 @@ export function TimeTravel(props: Props) {
     }
     return (
       <RevertFile
-        gitMode={gitMode || snapshotsMode}
+        gitMode={gitMode || snapshotsMode || backupsMode}
         actions={props.actions}
         version={version}
         doc={doc}
@@ -577,7 +644,7 @@ export function TimeTravel(props: Props) {
       { value: "timetravel", label: "TimeTravel" },
       { value: "git", label: "Git", disabled: !git },
       { value: "snapshots", label: "Snapshots", disabled: lite },
-      { value: "backups", label: "Backups", disabled: true },
+      { value: "backups", label: "Backups", disabled: lite },
     ];
     return (
       <>
@@ -632,6 +699,7 @@ export function TimeTravel(props: Props) {
     if (
       gitMode ||
       snapshotsMode ||
+      backupsMode ||
       redux.getStore("page").get("fullscreen") == "kiosk"
     ) {
       // doesn't make sense in kiosk mode.
@@ -777,12 +845,14 @@ export function TimeTravel(props: Props) {
           <Space.Compact>{renderModeSelectors()}</Space.Compact>
           {renderCommitsInRangeButton()}
           {renderGitChangedFilesButton()}
-          {(gitMode || snapshotsMode) && (
+          {(gitMode || snapshotsMode || backupsMode) && (
             <Tooltip
               title={
                 gitMode
                   ? "Scan local Git repository for new revisions to this file"
-                  : "Scan project snapshots for revisions of this file"
+                  : snapshotsMode
+                    ? "Scan project snapshots for revisions of this file"
+                    : "Scan project backups for revisions of this file"
               }
             >
               <Button
@@ -792,6 +862,8 @@ export function TimeTravel(props: Props) {
                     props.actions.updateGitVersions();
                   } else if (snapshotsMode) {
                     props.actions.updateSnapshotVersions();
+                  } else if (backupsMode) {
+                    props.actions.updateBackupVersions();
                   }
                 }}
               >
