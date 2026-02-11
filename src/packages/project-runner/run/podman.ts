@@ -20,6 +20,7 @@ import { nodePath } from "./mounts";
 import { isValidUUID } from "@cocalc/util/misc";
 import { ensureConfFilesExists, setupDataPath, writeSecretToken } from "./util";
 import { getEnvironment } from "./env";
+import { executeCode } from "@cocalc/backend/execute-code";
 import {
   mkdir,
   readFile,
@@ -264,6 +265,44 @@ function getErrorCode(err: unknown): string | undefined {
     }
   }
   return undefined;
+}
+
+function hostUserName(): string {
+  return (
+    `${process.env.COCALC_PROJECT_HOST_USER ?? process.env.USER ?? process.env.LOGNAME ?? ""}`.trim() ||
+    "root"
+  );
+}
+
+function runnerUserName(): string {
+  return `${process.env.COCALC_PODMAN_RUN_AS_USER ?? process.env.COCALC_PROJECT_RUNNER_USER ?? ""}`.trim();
+}
+
+function splitRunnerMode(): boolean {
+  const runner = runnerUserName();
+  if (!runner) return false;
+  return runner !== hostUserName();
+}
+
+async function ensureRunnerOwnsPaths(paths: string[]): Promise<void> {
+  if (!splitRunnerMode()) return;
+  const runner = runnerUserName();
+  if (!runner || runner === "root") return;
+  const existing: string[] = [];
+  for (const path of paths) {
+    try {
+      await stat(path);
+      existing.push(path);
+    } catch {
+      // ignore missing paths
+    }
+  }
+  if (existing.length === 0) return;
+  await executeCode({
+    command: "sudo",
+    args: ["-n", "chown", "-R", `${runner}:${runner}`, ...existing],
+    err_on_exit: true,
+  });
 }
 
 async function resolveProjectScript(): Promise<ScriptResolution> {
@@ -588,6 +627,12 @@ export async function start({
       await writeSecretToken(home, config.secret!);
       logger.debug("start: wrote secret", { project_id });
     }
+    await ensureRunnerOwnsPaths([
+      join(home, ".ssh"),
+      join(home, ".cache"),
+      join(home, ".bashrc"),
+      join(home, ".bash_profile"),
+    ]);
 
     if (config.disk) {
       // TODO: maybe this should be done in parallel with other things
