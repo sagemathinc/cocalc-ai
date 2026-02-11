@@ -935,10 +935,10 @@ bootstrap/
   bootstrap.log      - output from bootstrap.sh
 
 bin/
-  ctl                     - start/stop/status helper (wrapper)
-  logs [lines]            - tail project-host log (wrapper)
-  logs-cf                 - tail cloudflared logs (if enabled; wrapper)
-  ctl-cf                  - cloudflared {start|stop|restart|status} (wrapper)
+  ctl                     - start/stop/status helper (runs as runtime user)
+  logs [lines]            - tail project-host log (runs as runtime user)
+  logs-cf                 - tail cloudflared logs (if enabled; runtime user)
+  ctl-cf                  - cloudflared {start|stop|restart|status} (runtime user)
   fetch-project-bundle.sh - refresh project bundle from software endpoint
   fetch-project-host.sh   - refresh project-host bundle from software endpoint
   fetch-tools.sh          - refresh tools bundle from software endpoint
@@ -946,7 +946,7 @@ bin/
 
 Runtime scripts (owned by runtime user):
   /opt/cocalc/project-host/bin/*
-  (wrappers in this directory exec those runtime scripts)
+  (wrappers in this directory exec those runtime scripts as runtime user)
 
 Logs and status:
   - Project-host logs:  $HOME/cocalc-host/bin/logs

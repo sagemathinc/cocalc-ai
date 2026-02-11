@@ -1084,7 +1084,12 @@ exec python3 "{bootstrap_py}" --config "{config_path}" --only tools_bundle
             script = (
                 "#!/usr/bin/env bash\n"
                 "set -euo pipefail\n"
-                f'exec "{runtime_root / "bin" / name}" "$@"\n'
+                f'RUNTIME_USER="{cfg.ssh_user}"\n'
+                f'RUNTIME_SCRIPT="{runtime_root / "bin" / name}"\n'
+                'if [ "$(id -un)" = "$RUNTIME_USER" ]; then\n'
+                '  exec "$RUNTIME_SCRIPT" "$@"\n'
+                "fi\n"
+                'exec sudo -n -u "$RUNTIME_USER" -H "$RUNTIME_SCRIPT" "$@"\n'
             )
             target = admin_bin / name
             target.write_text(script, encoding="utf-8")
