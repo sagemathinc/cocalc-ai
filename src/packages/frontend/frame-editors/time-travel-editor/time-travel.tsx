@@ -80,6 +80,7 @@ export function TimeTravel(props: Props) {
     !!props.desc?.get("changesMode"),
   );
   const [showCommitRange, setShowCommitRange] = useState<boolean>(false);
+  const [showChangedFiles, setShowChangedFiles] = useState<boolean>(false);
   const [gitChangedFiles, setGitChangedFiles] = useState<string[]>([]);
   const [version, setVersion] = useState<number | string | undefined>(
     props.desc?.get("version"),
@@ -600,6 +601,65 @@ export function TimeTravel(props: Props) {
     );
   };
 
+  const renderGitChangedFilesButton = () => {
+    if (!gitMode || changesMode || version == null || docpath == null) {
+      return null;
+    }
+    const files = gitChangedFiles.filter((x) => x !== docpath);
+    if (files.length === 0) {
+      return null;
+    }
+    return (
+      <Button
+        size="small"
+        style={{ marginLeft: "5px" }}
+        onClick={() => setShowChangedFiles(true)}
+      >
+        Also changed ({files.length})
+      </Button>
+    );
+  };
+
+  const renderGitChangedFilesModal = () => {
+    if (!gitMode || changesMode || version == null || docpath == null) {
+      return null;
+    }
+    const commit = props.actions.gitCommit(version);
+    if (commit == null) {
+      return null;
+    }
+    const files = gitChangedFiles.filter((x) => x !== docpath);
+    return (
+      <Modal
+        open={showChangedFiles}
+        title={`Also changed in ${commit.shortHash}`}
+        onCancel={() => setShowChangedFiles(false)}
+        footer={null}
+      >
+        <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
+          {files.length === 0 ? (
+            <div>No additional files changed in this commit.</div>
+          ) : (
+            files.map((file) => (
+              <div key={file} style={{ marginBottom: "6px" }}>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, height: "auto" }}
+                  onClick={() =>
+                    void props.actions.openGitCommitFile(file, commit.hash)
+                  }
+                >
+                  {file}
+                </Button>
+              </div>
+            ))
+          )}
+        </div>
+      </Modal>
+    );
+  };
+
   const renderControls = () => {
     return (
       <div
@@ -613,6 +673,7 @@ export function TimeTravel(props: Props) {
           {renderModeSelectors()}
         </Space.Compact>
         {renderCommitsInRangeButton()}
+        {renderGitChangedFilesButton()}
         {gitMode && (
           <Tooltip title="Scan local Git repository for new revisions to this file">
             <Button
@@ -634,7 +695,6 @@ export function TimeTravel(props: Props) {
           {renderExport()}
         </Space.Compact>
         {(versions?.size ?? 0) > 0 && renderRevisionMeta()}
-        {renderGitChangedFiles()}
       </div>
     );
   };
@@ -676,40 +736,6 @@ export function TimeTravel(props: Props) {
     );
   };
 
-  const renderGitChangedFiles = () => {
-    if (!gitMode || changesMode || version == null || docpath == null) {
-      return null;
-    }
-    const commit = props.actions.gitCommit(version);
-    if (commit == null) {
-      return null;
-    }
-    const files = gitChangedFiles.filter((x) => x !== docpath);
-    if (files.length === 0) {
-      return null;
-    }
-    return (
-      <div style={{ marginTop: "3px", fontSize: "12px", color: "#666" }}>
-        Also changed:{" "}
-        {files.map((file, i) => (
-          <span key={file}>
-            <Button
-              type="link"
-              size="small"
-              style={{ padding: 0, height: "auto" }}
-              onClick={() =>
-                void props.actions.openGitCommitFile(file, commit.hash)
-              }
-            >
-              {file}
-            </Button>
-            {i < files.length - 1 ? ", " : ""}
-          </span>
-        ))}
-      </div>
-    );
-  };
-
   if (loading) {
     return renderLoading();
   }
@@ -737,6 +763,7 @@ export function TimeTravel(props: Props) {
     <div className="smc-vfill">
       {renderControls()}
       {renderCommitRangeModal()}
+      {renderGitChangedFilesModal()}
       {renderTimeSelect()}
       <ShowError
         style={{ margin: "5px 15px" }}
