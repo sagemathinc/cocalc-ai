@@ -21,7 +21,9 @@ set -ev
 
 mkdir -p /etc/dropbear
 
-chmod og-rwx -R /root/.ssh
+# Do not recursively chmod /root/.ssh here. In split-runner mode, host and
+# runner ACLs are applied on managed SSH paths and recursive chmod can clobber
+# ACL masks, causing restart-time permission failures.
 
 dropbear -p \${COCALC_SSHD_PORT:=22} -e -s -a -R -D /root/${SSHD_CONFIG}
 

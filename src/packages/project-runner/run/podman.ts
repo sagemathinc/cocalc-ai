@@ -284,27 +284,54 @@ function splitRunnerMode(): boolean {
   return runner !== hostUserName();
 }
 
-async function ensureRunnerOwnsPaths(paths: string[]): Promise<void> {
+async function ensureRunnerAclPaths(paths: string[]): Promise<void> {
   if (!splitRunnerMode()) return;
   const runner = runnerUserName();
   if (!runner || runner === "root") return;
+  const host = hostUserName();
+  if (!host || host === "root") return;
   const existing: string[] = [];
+  const existingDirs: string[] = [];
   for (const path of paths) {
     try {
-      await stat(path);
+      const s = await stat(path);
       existing.push(path);
+      if (s.isDirectory()) {
+        existingDirs.push(path);
+      }
     } catch {
       // ignore missing paths
     }
   }
   if (existing.length === 0) return;
-  // Intentional: do NOT recurse here. Recursive chown over large trees
-  // (e.g. caches) can be extremely expensive and hurt startup latency.
+  // Keep project files owned by host user; grant runner access via ACL for the
+  // small managed SSH subtree only. This avoids recursive chown startup costs
+  // and avoids long-term mixed ownership drift across general project files.
   await executeCode({
     command: "sudo",
-    args: ["-n", "chown", `${runner}:${runner}`, ...existing],
+    args: [
+      "-n",
+      "setfacl",
+      "-m",
+      `u:${host}:rwx,u:${runner}:rwx`,
+      ...existing,
+    ],
     err_on_exit: true,
   });
+  if (existingDirs.length > 0) {
+    await executeCode({
+      command: "sudo",
+      args: [
+        "-n",
+        "setfacl",
+        "-d",
+        "-m",
+        `u:${host}:rwx,u:${runner}:rwx`,
+        ...existingDirs,
+      ],
+      err_on_exit: true,
+    });
+  }
 }
 
 async function resolveProjectScript(): Promise<ScriptResolution> {
@@ -482,8 +509,24 @@ export async function start({
   }
   logger.debug("start", { project_id, config: { ...config, secret: "xxx" } });
 
-  if (starting.has(project_id) || stopping.has(project_id)) {
-    logger.debug("starting/stopping -- already running");
+  if (stopping.has(project_id)) {
+    logger.debug("start requested while stop is in-flight; waiting", {
+      project_id,
+    });
+    const t0 = Date.now();
+    while (stopping.has(project_id) && Date.now() - t0 < 30_000) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    if (stopping.has(project_id)) {
+      logger.debug("stop still in-flight after wait; deferring start", {
+        project_id,
+      });
+      return { state: "opened", ssh_port: 0, http_port: 0 };
+    }
+  }
+
+  if (starting.has(project_id)) {
+    logger.debug("start already in-flight", { project_id });
     return { state: "starting", ssh_port: 0, http_port: 0 };
   }
 
@@ -600,6 +643,19 @@ export async function start({
     });
     logger.debug("start: created conf files", { project_id });
 
+    const managedSshPaths = [
+      join(home, INTERNAL_SSH_CONFIG),
+      join(home, SSHD_CONFIG),
+      join(home, START_PROJECT_SSH),
+      join(home, SSHD_CONFIG, "authorized_keys"),
+      join(home, INTERNAL_SSH_CONFIG, "authorized_keys"),
+    ];
+    const managedSshDirs = [
+      join(home, ".ssh"),
+      join(home, INTERNAL_SSH_CONFIG),
+      join(home, SSHD_CONFIG),
+    ];
+
     await writeStartupScripts(home);
     logger.debug("start: wrote startup scripts", { project_id });
 
@@ -629,16 +685,7 @@ export async function start({
       await writeSecretToken(home, config.secret!);
       logger.debug("start: wrote secret", { project_id });
     }
-    await ensureRunnerOwnsPaths([
-      join(home, ".ssh"),
-      join(home, INTERNAL_SSH_CONFIG),
-      join(home, SSHD_CONFIG),
-      join(home, START_PROJECT_SSH),
-      join(home, SSHD_CONFIG, "authorized_keys"),
-      join(home, INTERNAL_SSH_CONFIG, "authorized_keys"),
-      join(home, ".bashrc"),
-      join(home, ".bash_profile"),
-    ]);
+    await ensureRunnerAclPaths([...managedSshDirs, ...managedSshPaths]);
 
     if (config.disk) {
       // TODO: maybe this should be done in parallel with other things
