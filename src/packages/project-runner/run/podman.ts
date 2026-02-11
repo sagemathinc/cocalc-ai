@@ -435,7 +435,7 @@ export function networkArgument() {
   if (defaultNetwork === "pasta") {
     const pastaOptionsRaw = `${
       process.env.COCALC_PROJECT_RUNNER_PASTA_OPTIONS ??
-      "--map-gw"
+      "--map-gw,--map-guest-addr,169.254.1.2"
     }`.trim();
     if (!pastaOptionsRaw) {
       return "--network=pasta";
@@ -482,10 +482,17 @@ function slirpNetworkArgument(): string {
     : "--network=slirp4netns";
 }
 
-function pastaConatHost(): string {
-  const host = `${process.env.COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST ?? "10.168.0.1"}`
+function pastaConatHost(): string | undefined {
+  const host = `${process.env.COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST ?? ""}`
     .trim();
-  return host || "10.168.0.1";
+  return host || undefined;
+}
+
+function pastaHostAliasDefaultAddr(): string | undefined {
+  const addr = `${
+    process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ?? "169.254.1.2"
+  }`.trim();
+  return addr || undefined;
 }
 
 export function publishHost(): string {
@@ -721,10 +728,14 @@ export async function start({
     args.push(selectedNetwork);
     let pastaHostAliasArgIndex: number | undefined;
     if (selectedNetwork.startsWith("--network=pasta")) {
+      const explicitPastaConatHost = pastaConatHost();
       try {
         const url = new URL(originalConatServer);
-        if (url.hostname === "host.containers.internal") {
-          url.hostname = pastaConatHost();
+        if (
+          explicitPastaConatHost &&
+          url.hostname === "host.containers.internal"
+        ) {
+          url.hostname = explicitPastaConatHost;
           env.CONAT_SERVER = url.toString();
           logger.debug("using pasta conat host override", {
             project_id,
@@ -734,9 +745,7 @@ export async function start({
       } catch {
         // Keep original conat server on parse failure.
       }
-      const pastaHostAliasAddr = `${
-        process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ?? ""
-      }`.trim();
+      const pastaHostAliasAddr = pastaHostAliasDefaultAddr();
       if (pastaHostAliasAddr) {
         // Ensure a stable host alias for conat under pasta.
         pastaHostAliasArgIndex = args.length;
@@ -747,7 +756,7 @@ export async function start({
       }
 
       // Startup assumption check: with pasta, we expect a host path that can
-      // reach conat without relying on host.containers.internal DNS behavior.
+      // reliably reach conat.
       const hasNoMapGw = selectedNetwork.includes("--no-map-gw");
       let conatHost = "";
       let conatPort: number | undefined;
@@ -758,9 +767,12 @@ export async function start({
       } catch {
         // keep defaults on parse failure
       }
-      const expectedPastaHost = pastaConatHost();
+      const expectedPastaHost =
+        explicitPastaConatHost ?? "host.containers.internal";
       const assumptionsOk =
-        !hasNoMapGw && !!conatHost && conatHost === expectedPastaHost;
+        !!conatHost &&
+        conatHost === expectedPastaHost &&
+        (!explicitPastaConatHost || !hasNoMapGw);
       logger.info("pasta startup assumptions", {
         project_id,
         ok: assumptionsOk,
@@ -769,6 +781,8 @@ export async function start({
         conatPort,
         expectedPastaHost,
         hasNoMapGw,
+        pastaHostAliasAddr,
+        explicitPastaConatHost,
       });
       if (!assumptionsOk) {
         logger.warn(
@@ -779,6 +793,8 @@ export async function start({
             conat_server: env.CONAT_SERVER,
             expectedPastaHost,
             hasNoMapGw,
+            pastaHostAliasAddr,
+            explicitPastaConatHost,
           },
         );
       }
