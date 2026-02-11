@@ -622,6 +622,57 @@ btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
     helper_path.chmod(0o755)
 
 
+def install_privileged_wrappers(cfg: BootstrapConfig) -> None:
+    mount_wrapper = """#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  echo "cocalc-mount-data must run as root" >&2
+  exit 1
+fi
+exec /bin/mount /mnt/cocalc
+"""
+    cloud_ctl_wrapper = """#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  echo "cocalc-cloudflared-ctl must run as root" >&2
+  exit 1
+fi
+cmd="${1:-status}"
+service="cocalc-cloudflared.service"
+case "$cmd" in
+  start|stop|restart|status)
+    exec /bin/systemctl "$cmd" "$service"
+    ;;
+  *)
+    echo "usage: ${0} {start|stop|restart|status}" >&2
+    exit 2
+    ;;
+esac
+"""
+    cloud_logs_wrapper = """#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  echo "cocalc-cloudflared-logs must run as root" >&2
+  exit 1
+fi
+service="cocalc-cloudflared.service"
+lines="${1:-200}"
+if ! echo "$lines" | grep -Eq '^[0-9]+$'; then
+  lines="200"
+fi
+exec /bin/journalctl -u "$service" -o cat -f -n "$lines"
+"""
+    wrappers = {
+        "/usr/local/sbin/cocalc-mount-data": mount_wrapper,
+        "/usr/local/sbin/cocalc-cloudflared-ctl": cloud_ctl_wrapper,
+        "/usr/local/sbin/cocalc-cloudflared-logs": cloud_logs_wrapper,
+    }
+    for path, content in wrappers.items():
+        p = Path(path)
+        p.write_text(content, encoding="utf-8")
+        p.chmod(0o755)
+
+
 def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: ensuring /mnt/cocalc/data subvolume")
     try:
@@ -931,7 +982,7 @@ for attempt in $(seq 1 60); do
     exec "$CTL" start
   fi
   echo "waiting for /mnt/cocalc mount (attempt $attempt/60)"
-  sudo -n mount /mnt/cocalc || true
+  sudo -n /usr/local/sbin/cocalc-mount-data || true
   sleep 5
 done
 echo "timeout waiting for /mnt/cocalc mount"
@@ -954,11 +1005,11 @@ if ! command -v journalctl >/dev/null 2>&1; then
   echo "journalctl not found" >&2
   exit 1
 fi
-if ! sudo -n systemctl status "$service" >/dev/null 2>&1; then
+if ! sudo -n /usr/local/sbin/cocalc-cloudflared-ctl status >/dev/null 2>&1; then
   echo "cloudflared service not enabled on this host ($service)" >&2
   exit 1
 fi
-exec sudo -n journalctl -u "$service" -o cat -f -n 200
+exec sudo -n /usr/local/sbin/cocalc-cloudflared-logs 200
 """
     ctl_cf_script = """#!/usr/bin/env bash
 set -euo pipefail
@@ -966,7 +1017,7 @@ cmd="${1:-status}"
 service="cocalc-cloudflared.service"
 case "$cmd" in
   start|stop|restart|status)
-    exec sudo -n systemctl "$cmd" "$service"
+    exec sudo -n /usr/local/sbin/cocalc-cloudflared-ctl "$cmd"
     ;;
   *)
     echo "usage: ${0} {start|stop|restart|status}" >&2
@@ -1063,7 +1114,7 @@ def configure_runtime_sudoers(cfg: BootstrapConfig) -> None:
     rules = f"""Defaults:{user} !requiretty
 Defaults:{user} secure_path=/usr/sbin:/usr/bin:/sbin:/bin
 Cmnd_Alias COCALC_RUNTIME_STORAGE = /usr/local/sbin/cocalc-grow-btrfs *, /usr/local/sbin/cocalc-grow-btrfs, /usr/bin/btrfs *, /sbin/btrfs *, /usr/bin/mkfs.btrfs *, /sbin/mkfs.btrfs *, /bin/mount *, /usr/bin/mount *, /bin/umount *, /usr/bin/umount *, /usr/sbin/losetup *, /sbin/losetup *, /usr/bin/mknod *, /bin/mknod *, /usr/bin/chown *, /bin/chown *, /usr/bin/chmod *, /bin/chmod *, /usr/bin/chattr *, /bin/chattr *, /usr/bin/truncate *, /bin/truncate *, /usr/bin/mkdir *, /bin/mkdir *, /usr/bin/mv *, /bin/mv *, /usr/bin/rm *, /bin/rm *, /usr/bin/df *, /bin/df *
-Cmnd_Alias COCALC_RUNTIME_CLOUD = /bin/systemctl * cocalc-cloudflared*, /usr/bin/systemctl * cocalc-cloudflared*, /bin/journalctl * cocalc-cloudflared*, /usr/bin/journalctl * cocalc-cloudflared*
+Cmnd_Alias COCALC_RUNTIME_CLOUD = /usr/local/sbin/cocalc-cloudflared-ctl, /usr/local/sbin/cocalc-cloudflared-ctl *, /usr/local/sbin/cocalc-cloudflared-logs, /usr/local/sbin/cocalc-cloudflared-logs *, /usr/local/sbin/cocalc-mount-data
 {user} ALL=(root) NOPASSWD: COCALC_RUNTIME_STORAGE, COCALC_RUNTIME_CLOUD
 """
     path = Path("/etc/sudoers.d/cocalc-project-host-runtime")
@@ -1270,6 +1321,7 @@ def main(argv: list[str]) -> int:
         prepare_dirs(cfg)
         setup_btrfs(cfg, image_size_gb)
         install_btrfs_helper(cfg)
+        install_privileged_wrappers(cfg)
         ensure_btrfs_data(cfg)
         configure_podman(cfg)
         write_env(cfg, image_size_gb)
