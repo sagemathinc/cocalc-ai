@@ -32,6 +32,10 @@ function getMergedPath(project_id) {
   return join(PROJECT_ROOTS, project_id);
 }
 
+export function getRootfsMountpoint(project_id: string): string {
+  return getMergedPath(project_id);
+}
+
 export function getImageNamePath(home): string {
   return join(home, PROJECT_IMAGE_PATH, "current-image.txt");
 }
