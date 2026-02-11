@@ -21,11 +21,18 @@ interface Options {
 }
 
 const children: any[] = [];
+
+function beesDisabledByEnv(): boolean {
+  const value = `${process.env.COCALC_DISABLE_BEES ?? ""}`.trim().toLowerCase();
+  if (!value) return false;
+  return !["0", "false", "no", "off"].includes(value);
+}
+
 export default async function bees(
   mountpoint: string,
   { loadavgTarget = 1, verbose = 1, size = "1G" }: Options = {},
 ) {
-  if (process.env.COCALC_DISABLE_BEES) {
+  if (beesDisabledByEnv()) {
     logger.debug(
       "bees: COCALC_DISABLE_BEES is set to not running bees",
       mountpoint,

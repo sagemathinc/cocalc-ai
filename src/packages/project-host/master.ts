@@ -146,29 +146,30 @@ export async function startMasterRegistration({
 
   logger.info("registering with master", { masterAddress, id, public_url });
   let currentMasterConatToken = `${masterConatToken ?? ""}`.trim();
-  if (!currentMasterConatToken) {
-    const bootstrapSource = getProjectHostBootstrapConatSource({
-      fallbackConatUrl: masterAddress,
-    });
-    if (bootstrapSource) {
-      try {
-        const next = await fetchMasterConatTokenViaBootstrap(bootstrapSource);
+  const pinnedMasterConatToken = `${process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN ?? ""}`.trim();
+  const bootstrapSource = getProjectHostBootstrapConatSource({
+    fallbackConatUrl: masterAddress,
+  });
+  if (!pinnedMasterConatToken && bootstrapSource) {
+    try {
+      const next = await fetchMasterConatTokenViaBootstrap(bootstrapSource);
+      if (next && next !== currentMasterConatToken) {
         writeProjectHostMasterConatToken(next);
         currentMasterConatToken = next;
-        logger.info("loaded master conat token via bootstrap endpoint", {
+        logger.info("refreshed master conat token via bootstrap endpoint", {
           reason: "startup-preflight",
           token_path: getProjectHostMasterConatTokenPath(),
         });
-      } catch (err) {
-        logger.warn(
-          "failed loading master conat token via bootstrap endpoint during startup",
-          {
-            reason: "startup-preflight",
-            token_path: getProjectHostMasterConatTokenPath(),
-            err,
-          },
-        );
       }
+    } catch (err) {
+      logger.warn(
+        "failed loading master conat token via bootstrap endpoint during startup",
+        {
+          reason: "startup-preflight",
+          token_path: getProjectHostMasterConatTokenPath(),
+          err,
+        },
+      );
     }
   }
   if (!currentMasterConatToken) {

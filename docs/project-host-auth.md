@@ -631,6 +631,18 @@ Phase 4: operations hardening
 - Add runtime conformance checks at daemon start (ownership/permissions/sudo
   policy drift detection).
 - Add incident-oriented logs/metrics for denied escalations and policy misses.
+- Add BEES operational checks (enabled by default, process liveness visible,
+  and alert/log when dedup is unexpectedly not running).
+
+Phase 5: developer/runtime simplification
+
+- Remove embedded project-host runtime path (dev-only mode) from the main
+  production code path.
+- Standardize on VM-owned project-host deployment (local VM acceptable for
+  dev) so security wrappers and privileged operations are only maintained in
+  one runtime model.
+- Improve bundle/tool iteration loop for development without relying on
+  hand-managed external publish scripts.
 
 Acceptance criteria for this redesign:
 
