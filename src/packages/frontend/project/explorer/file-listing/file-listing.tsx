@@ -15,8 +15,11 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
 import { path_to_file, rowBackground } from "@cocalc/util/misc";
-import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
+import { isBackupsPath, BACKUPS } from "@cocalc/util/consts/backups";
+import {
+  SNAPSHOTS,
+  isSnapshotsPath,
+} from "@cocalc/util/consts/snapshots";
 import { FileRow } from "./file-row";
 import { ListingHeader } from "./listing-header";
 import NoFiles from "./no-files";
@@ -50,11 +53,9 @@ export function FileListing({
   publicFiles,
   sort_by,
 }: Props) {
-  const isSnapshotsPath =
-    current_path === SNAPSHOTS || current_path.startsWith(`${SNAPSHOTS}/`);
-  const isBackupsPath =
-    current_path === BACKUPS || current_path.startsWith(`${BACKUPS}/`);
-  const isReadonlyVirtualPath = isSnapshotsPath || isBackupsPath;
+  const isSnapshotsVirtualPath = isSnapshotsPath(current_path);
+  const isBackupsVirtualPath = isBackupsPath(current_path);
+  const isReadonlyVirtualPath = isSnapshotsVirtualPath || isBackupsVirtualPath;
   const selected_file_index =
     useTypedRedux({ project_id }, "selected_file_index") ?? 0;
   const name = actions.name;
@@ -173,7 +174,7 @@ export function FileListing({
           flexDirection: "column",
         }}
       >
-        {isSnapshotsPath ? (
+        {isSnapshotsVirtualPath ? (
           <Alert
             style={{ marginBottom: 8 }}
             type="info"
@@ -192,13 +193,13 @@ export function FileListing({
             action={
               <Button
                 size="small"
-                onClick={() => actions.open_directory(".backups")}
+                onClick={() => actions.open_directory(BACKUPS)}
               >
                 Open Backups
               </Button>
             }
           />
-        ) : isBackupsPath ? (
+        ) : isBackupsVirtualPath ? (
           <Alert
             style={{ marginBottom: 8 }}
             type="info"

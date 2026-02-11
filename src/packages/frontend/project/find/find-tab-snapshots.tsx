@@ -6,11 +6,13 @@ import { useActions } from "@cocalc/frontend/app-framework";
 import { Loading, SearchInput } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { BACKUPS } from "@cocalc/util/consts/backups";
 import {
   path_to_file,
   search_match,
   search_split,
 } from "@cocalc/util/misc";
+import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { search as runRipgrepSearch } from "@cocalc/frontend/project/search/run";
 import { FindSnapshotRow, type SnapshotResult } from "./rows";
 import { FindResultsGrid } from "./result-grid";
@@ -170,7 +172,7 @@ export function SnapshotsTab({
       try {
         if (activeMode === "files") {
           const normalized = normalizeGlobQuery(q);
-          const { stdout, stderr } = await fs.fd(".snapshots", {
+          const { stdout, stderr } = await fs.fd(SNAPSHOTS, {
             pattern: normalized,
             options: [
               "-g",
@@ -191,7 +193,7 @@ export function SnapshotsTab({
           const contentResults: SnapshotResult[] = [];
           await runRipgrepSearch({
             query: q,
-            path: ".snapshots",
+            path: SNAPSHOTS,
             fs,
             options: {
               case_sensitive: state.caseSensitive,
@@ -269,7 +271,7 @@ export function SnapshotsTab({
           if (statsMap[key] != null) continue;
           try {
             const fullPath = join(
-              ".snapshots",
+              SNAPSHOTS,
               result.snapshot,
               result.path,
             );
@@ -401,7 +403,7 @@ export function SnapshotsTab({
   const buildSnapshotPaths = useCallback(
     (result: SnapshotResult) => {
       const relative = path_to_file(scopePath, result.path);
-      const snapshotPath = join(".snapshots", result.snapshot, relative);
+      const snapshotPath = join(SNAPSHOTS, result.snapshot, relative);
       return { relative, snapshotPath };
     },
     [scopePath],
@@ -441,26 +443,26 @@ export function SnapshotsTab({
     if (!restoreTarget || !actions) return;
     const { relative } = buildSnapshotPaths(restoreTarget);
     const dir = relative.includes("/") ? posix.dirname(relative) : "";
-    const target = join(".snapshots", restoreTarget.snapshot, dir);
+    const target = join(SNAPSHOTS, restoreTarget.snapshot, dir);
     actions.open_directory(target, true, true);
     setRestoreTarget(null);
   }, [actions, buildSnapshotPaths, restoreTarget]);
 
   const openSnapshotsDir = useCallback(() => {
-    actions?.open_directory(".snapshots");
+    actions?.open_directory(SNAPSHOTS);
   }, [actions]);
 
   const openBackupsDir = useCallback(() => {
-    actions?.open_directory(".backups");
+    actions?.open_directory(BACKUPS);
   }, [actions]);
 
   const openSnapshotSchedule = useCallback(() => {
-    actions?.open_directory(".snapshots");
+    actions?.open_directory(SNAPSHOTS);
     actions?.setState({ open_snapshot_schedule: true });
   }, [actions]);
 
   const openBackupSchedule = useCallback(() => {
-    actions?.open_directory(".backups");
+    actions?.open_directory(BACKUPS);
     actions?.setState({ open_backup_schedule: true });
   }, [actions]);
 

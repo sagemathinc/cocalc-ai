@@ -52,7 +52,9 @@ import { FilesHeader } from "./files-header";
 import { fileItemStyle } from "./utils";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
-import useBackupsListing from "@cocalc/frontend/project/listing/use-backups";
+import useBackupsListing, {
+  isBackupsPath,
+} from "@cocalc/frontend/project/listing/use-backups";
 import ShowError from "@cocalc/frontend/components/error";
 import { getSort } from "@cocalc/frontend/project/explorer/config";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
@@ -142,16 +144,14 @@ export function FilesFlyout({
     }
   }, [checked_files]);
 
-  const isBackupsPath =
-    effective_current_path === ".backups" ||
-    effective_current_path?.startsWith(".backups/");
+  const inBackupsPath = isBackupsPath(effective_current_path);
   const fs = useFs({ project_id });
   const {
     listing: directoryListing,
     error: listingError,
     refresh,
   } = useListing({
-    fs: isBackupsPath ? null : fs,
+    fs: inBackupsPath ? null : fs,
     path: effective_current_path,
   });
   const {
@@ -190,9 +190,9 @@ export function FilesFlyout({
       refreshBackups();
     }
   }, [backupOps, refreshBackups]);
-  const effectiveListing = isBackupsPath ? backupsListing : directoryListing;
-  const effectiveError = isBackupsPath ? backupsError : listingError;
-  const effectiveRefresh = isBackupsPath ? refreshBackups : refresh;
+  const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
+  const effectiveError = inBackupsPath ? backupsError : listingError;
+  const effectiveRefresh = inBackupsPath ? refreshBackups : refresh;
 
   // active file: current editor is the file in the listing
   // empty: either no files, or just the ".." for the parent dir

@@ -1,4 +1,4 @@
-import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 
 export const ACTION_BUTTONS_DIR = [
   "download",
@@ -37,5 +37,5 @@ export function isDisabledSnapshots(name: string) {
 }
 
 export function isSnapshotPath(path?: string) {
-  return path == SNAPSHOTS || path?.startsWith(SNAPSHOTS + "/");
+  return isSnapshotsPath(path);
 }

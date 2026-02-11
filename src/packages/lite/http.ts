@@ -185,6 +185,8 @@ function mapLiteTarget(rawUrl: string): string {
   } else if (
     pathname === "/files" ||
     pathname.startsWith("/files/") ||
+    pathname === "/home" ||
+    pathname.startsWith("/home/") ||
     pathname === "/new" ||
     pathname.startsWith("/new/") ||
     pathname === "/search" ||

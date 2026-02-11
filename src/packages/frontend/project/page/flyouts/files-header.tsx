@@ -43,7 +43,7 @@ import { FlyoutClearFilter, FlyoutFilterWarning } from "./filter-warning";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { setSort } from "@cocalc/frontend/project/explorer/config";
-import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
+import { BACKUPS } from "@cocalc/util/consts/backups";
 import { lite } from "@cocalc/frontend/lite";
 import { dirname } from "path";
 
@@ -182,9 +182,10 @@ export function FilesHeader({
     // left arrow key: go up a directory
     else if (e.code === "ArrowLeft") {
       if (effective_current_path !== "/") {
-        if (effective_current_path.startsWith(".")) {
+        const normalizedPath = effective_current_path.replace(/^\/+/, "");
+        if (normalizedPath.startsWith(".")) {
           actions?.set_current_path(
-            effective_current_path.split("/").slice(0, -1).join("/"),
+            normalizedPath.split("/").slice(0, -1).join("/"),
           );
         } else {
           actions?.set_current_path(dirname(effective_current_path));

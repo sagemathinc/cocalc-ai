@@ -42,7 +42,9 @@ import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing, {
   type SortField,
 } from "@cocalc/frontend/project/listing/use-listing";
-import useBackupsListing from "@cocalc/frontend/project/listing/use-backups";
+import useBackupsListing, {
+  isBackupsPath,
+} from "@cocalc/frontend/project/listing/use-backups";
 import filterListing from "@cocalc/frontend/project/listing/filter-listing";
 import ShowError from "@cocalc/frontend/components/error";
 import {
@@ -147,15 +149,13 @@ export function Explorer() {
   );
 
   const fs = useFs({ project_id });
-  const isBackupsPath =
-    effective_current_path === ".backups" ||
-    effective_current_path?.startsWith(".backups/");
+  const inBackupsPath = isBackupsPath(effective_current_path);
   let {
     refresh,
     listing,
     error: listingError,
   } = useListing({
-    fs: isBackupsPath ? null : fs,
+    fs: inBackupsPath ? null : fs,
     path: effective_current_path,
     ...sortDesc(active_file_sort),
     cacheId: actions?.getCacheId(),
@@ -198,7 +198,7 @@ export function Explorer() {
       refreshBackups();
     }
   }, [backupOps, refreshBackups]);
-  if (isBackupsPath) {
+  if (inBackupsPath) {
     listing = backupsListing;
     listingError = backupsError;
     refresh = refreshBackups;

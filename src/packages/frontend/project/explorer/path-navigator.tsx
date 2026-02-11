@@ -14,6 +14,8 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
+import { isBackupsPath } from "@cocalc/util/consts/backups";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { trunc_middle } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { lite } from "@cocalc/frontend/lite";
@@ -44,7 +46,17 @@ export const PathNavigator: React.FC<Props> = React.memo(
         : "/root";
 
     const normalizePathForNav = (path: string): string => {
-      if (path.startsWith(".")) return path;
+      const normalized = path.replace(/^\/+/, "");
+      const isTrashPath =
+        normalized === ".trash" || normalized.startsWith(".trash/");
+      if (
+        path.startsWith(".") ||
+        isBackupsPath(path) ||
+        isSnapshotsPath(path) ||
+        isTrashPath
+      ) {
+        return normalized;
+      }
       return normalizeAbsolutePath(path, homePath);
     };
 

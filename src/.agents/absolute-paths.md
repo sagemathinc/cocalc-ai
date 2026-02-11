@@ -364,6 +364,18 @@ Mitigation:
     - Files flyout terminal directory switching no longer has `"."` special handling.
     - Disk usage hooks now default to `/` (not `""`).
     - Path navigator “go up” now resolves virtual parents to `/` (no `"."` fallback), with root-accurate disabled tooltip text.
+    - Added shared virtual-path helpers with leading-slash tolerance:
+      - `isBackupsPath(...)` in [src/packages/util/consts/backups.ts](./src/packages/util/consts/backups.ts)
+      - `isSnapshotsPath(...)` in [src/packages/util/consts/snapshots.ts](./src/packages/util/consts/snapshots.ts)
+    - Replaced literal `.backups`/`.snapshots` checks in core explorer/flyout/find/action paths with helper-based checks and constants.
+    - Moved backup virtual-path constant/helper into `@cocalc/util` and shifted frontend callsites away from hook-module constant coupling.
+    - Hardened virtual-path parent navigation for optional leading-slash forms in:
+      - [src/packages/frontend/project/explorer/path-navigator.tsx](./src/packages/frontend/project/explorer/path-navigator.tsx)
+      - [src/packages/frontend/project/page/flyouts/files-header.tsx](./src/packages/frontend/project/page/flyouts/files-header.tsx)
+    - Hardened cached-directory and `isDir` checks to treat virtual listing paths as directory roots:
+      - [src/packages/frontend/project_actions.ts](./src/packages/frontend/project_actions.ts)
+    - Added helper tests:
+      - [src/packages/util/consts/virtual-paths.test.ts](./src/packages/util/consts/virtual-paths.test.ts)
   - Remaining:
     - Final sweep for straggling `""` path defaults in project/explorer/flyout helpers.
     - Final pass on absolute-first path joins and parent nav behavior.

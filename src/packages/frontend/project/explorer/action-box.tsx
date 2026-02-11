@@ -35,7 +35,7 @@ import CreateArchive from "./create-archive";
 import Download from "./download";
 import RenameFile from "./rename-file";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
+import { BACKUPS } from "@cocalc/util/consts/backups";
 
 export const PRE_STYLE = {
   marginBottom: "15px",

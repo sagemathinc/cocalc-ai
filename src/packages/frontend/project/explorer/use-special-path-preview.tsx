@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
+import { BACKUPS } from "@cocalc/util/consts/backups";
 import FindRestoreModal from "@cocalc/frontend/project/find/restore-modal";
 
 type RestoreTarget = {

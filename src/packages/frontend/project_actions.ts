@@ -103,10 +103,12 @@ import { RestoreOpsManager } from "@cocalc/frontend/project/restore-ops";
 import { MoveOpsManager } from "@cocalc/frontend/project/move-ops";
 import { StartOpsManager } from "@cocalc/frontend/project/start-ops";
 import { getFileTemplate } from "./project/templates";
-import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import { isBackupsPath } from "@cocalc/util/consts/backups";
 import {
+  SNAPSHOTS,
   DEFAULT_SNAPSHOT_COUNTS,
   DEFAULT_BACKUP_COUNTS,
+  isSnapshotsPath,
 } from "@cocalc/util/consts/snapshots";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
@@ -628,12 +630,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // absolute filesystem paths. Keep those untouched until Ticket 11.
   private isVirtualListingPath = (path: string): boolean => {
     return (
-      path === SNAPSHOTS ||
-      path.startsWith(`${SNAPSHOTS}/`) ||
-      path === ".backups" ||
-      path.startsWith(".backups/") ||
+      isSnapshotsPath(path) ||
+      isBackupsPath(path) ||
       path === ".trash" ||
-      path.startsWith(".trash/")
+      path.startsWith(".trash/") ||
+      path === "/.trash" ||
+      path.startsWith("/.trash/")
     );
   };
 
@@ -687,15 +689,37 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     path: string,
     source: "files" | "home" = "files",
   ): string => {
-    const normalized = normalize(path);
+    let normalized = normalize(path);
+    const stripSourcePrefix = (
+      value: string,
+      prefix: "files" | "home",
+    ): string => {
+      const trimmed = value.replace(/^\/+/, "");
+      if (trimmed === prefix) return "";
+      if (trimmed.startsWith(`${prefix}/`)) {
+        return trimmed.slice(prefix.length + 1);
+      }
+      return value;
+    };
+    normalized = stripSourcePrefix(normalized, source);
     if (source === "home") {
+      const home = this.getHomeDirectoryForPaths();
       if (normalized === "" || normalized === "." || normalized === "/") {
-        return this.getHomeDirectoryForPaths();
+        return home;
       }
       if (this.isVirtualListingPath(normalized)) {
         return normalized;
       }
-      return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
+      // Defensive decode for URLs that accidentally encoded absolute /home/*
+      // paths as /home/<home-tail>/..., which would otherwise duplicate.
+      const homeTail = home.startsWith("/home/") ? home.slice("/home/".length) : "";
+      if (
+        homeTail.length > 0 &&
+        (normalized === homeTail || normalized.startsWith(`${homeTail}/`))
+      ) {
+        return normalizeAbsolutePath(`/home/${normalized}`);
+      }
+      return normalizeAbsolutePath(normalized, home);
     }
     if (normalized === "" || normalized === "." || normalized === "/") {
       return "/";
@@ -871,7 +895,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "home":
         if (opts.change_history) {
-          this.push_state("home", "");
+          this.push_state("project-home", "");
         }
         break;
 
@@ -1623,6 +1647,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   open_directory = async (path, change_history = true, show_files = true) => {
     path = normalize(path);
+    // Be forgiving if a route-like path is passed here.
+    if (path === "files") {
+      path = "/";
+    } else if (path.startsWith("files/")) {
+      const rel = path.replace(/^files\/+/, "");
+      path = rel.length === 0 ? "/" : `/${rel}`;
+    } else if (path === "home") {
+      path = this.getHomeDirectoryForPaths();
+    } else if (path.startsWith("home/")) {
+      const rel = path.replace(/^home\/+/, "");
+      path = normalizeAbsolutePath(rel, this.getHomeDirectoryForPaths());
+    }
     try {
       await this.ensureProjectIsOpen();
     } catch (err) {
@@ -1637,8 +1673,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (path !== "/" && path[path.length - 1] === "/") {
       path = path.slice(0, -1);
     }
+    const nextPathAbs = this.toAbsoluteCurrentPath(path);
     this.foreground_project(change_history);
-    this.set_current_path(path);
+    this.set_current_path(nextPathAbs);
     const store = this.get_store();
     if (store == undefined) {
       return;
@@ -1651,10 +1688,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     if (change_history) {
       // i.e. regardless of show_files is true or false, we might want to record this in the history
-      this.set_url_to_path(
-        store.get("current_path_abs") ?? "/",
-        "",
-      );
+      this.set_url_to_path(nextPathAbs, "");
     }
     this.set_all_files_unchecked();
   };
@@ -2284,16 +2318,24 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   private getFilesCache = (path: string): Files | null => {
+    if (this.isVirtualListingPath(path)) {
+      return getFiles({
+        cacheId: this.getCacheId(),
+        path: path.replace(/^\/+/, ""),
+      });
+    }
+    const normalizedPath =
+      path === "" || path === "." ? "/" : normalizeAbsolutePath(path);
     return getFiles({
       cacheId: this.getCacheId(),
-      path: path == "." ? "/" : path,
+      path: normalizedPath,
     });
   };
 
   // using listings cache, attempt to tell if path is a directory;
   // undefined if no data about path in the cache.
   isDirViaCache = (path: string): boolean | undefined => {
-    if (!path || path === "." || path === "/") {
+    if (!path || path === "." || path === "/" || this.isVirtualListingPath(path)) {
       return true;
     }
     const { head: dir, tail: base } = misc.path_split(path);
@@ -2310,7 +2352,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // error if doesn't exist or can't find out.
   // Use isDirViaCache for more of a fast hint.
   isDir = async (path: string): Promise<boolean> => {
-    if (path === "" || path === "." || path === "/") return true; // easy special case
+    if (
+      path === "" ||
+      path === "." ||
+      path === "/" ||
+      this.isVirtualListingPath(path)
+    ) {
+      return true; // easy special case
+    }
     const stats = await this.fs().stat(path);
     return stats.isDirectory();
   };
@@ -2810,15 +2859,31 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     fragmentId?: FragmentId,
   ): Promise<void> => {
     const segments = target.split("/");
-    const main_segment = segments[0] as FixedTab | "home";
+    const main_segment = segments[0] as FixedTab | "home" | "project-home";
     const hasScopedPathSource =
       (main_segment === "new" || main_segment === "search") &&
       (segments[1] === "home" || segments[1] === "files");
     const scopedPathSource: "files" | "home" =
       hasScopedPathSource && segments[1] === "home" ? "home" : "files";
     const scopedPathIndex = hasScopedPathSource ? 2 : 1;
-    const isHomeFileRoute = main_segment === "home" && segments.length > 1;
+    // Reserve /home for filesystem routes. Project home tab lives at /project-home.
+    const isHomeFileRoute = main_segment === "home";
     const fileRouteSource: "files" | "home" = isHomeFileRoute ? "home" : "files";
+
+    // In lite mode, /home/* URL resolution depends on homeDirectory capability.
+    // Ensure configuration is loaded before mapping home-scoped routes.
+    if (lite && (fileRouteSource === "home" || scopedPathSource === "home")) {
+      const store = this.get_store();
+      const homeDirectory = store?.get("available_features")?.get("homeDirectory");
+      if (typeof homeDirectory !== "string" || homeDirectory.length === 0) {
+        try {
+          await this.init_configuration("main");
+        } catch (err) {
+          console.warn("project/load_target: unable to preload configuration", err);
+        }
+      }
+    }
+
     const full_path = this.fromUrlDirectoryPath(
       segments.slice(1).join("/"),
       fileRouteSource,
@@ -2835,6 +2900,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       const store = this.get_store();
       if (store == null) {
         return; // project closed already
+      }
+      // Provisional directory context to avoid flashing "/" while stat is in flight.
+      // If this turns out to be a file, open_file will set the correct active tab/path.
+      if (this.isDirViaCache(full_path) !== false) {
+        this.set_current_path(full_path);
+        this.set_active_tab("files", {
+          update_file_listing: false,
+          change_history: false,
+        });
       }
       const isDir = await this.isDir(full_path);
       if (isDir) {
@@ -2872,7 +2946,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         this.set_active_tab("log", { change_history: change_history });
         break;
 
-      case "home":
+      case "project-home":
         this.set_active_tab("home", { change_history: change_history });
         break;
 

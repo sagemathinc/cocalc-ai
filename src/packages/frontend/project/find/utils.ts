@@ -1,4 +1,6 @@
 import { type FindScopeContext } from "./types";
+import { isBackupsPath } from "@cocalc/util/consts/backups";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 
 export function normalizeGlobQuery(query: string): string {
   if (/[\*\?\[]/.test(query)) return query;
@@ -108,7 +110,7 @@ export function parseSnapshotContentResults(
 
 export function getScopeContext(scopePath: string): FindScopeContext {
   const clean = stripDotSlash(scopePath);
-  if (clean === ".backups" || clean.startsWith(".backups/")) {
+  if (isBackupsPath(clean)) {
     const rest = clean.split("/").slice(1);
     const backupName = rest.length > 0 ? rest[0] : undefined;
     const innerPath = rest.length > 1 ? rest.slice(1).join("/") : "";
@@ -119,7 +121,7 @@ export function getScopeContext(scopePath: string): FindScopeContext {
       homePath: innerPath,
     };
   }
-  if (clean === ".snapshots" || clean.startsWith(".snapshots/")) {
+  if (isSnapshotsPath(clean)) {
     const rest = clean.split("/").slice(1);
     const snapshotName = rest.length > 0 ? rest[0] : undefined;
     const innerPath = rest.length > 1 ? rest.slice(1).join("/") : "";
