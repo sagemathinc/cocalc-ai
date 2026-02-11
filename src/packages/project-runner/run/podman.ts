@@ -482,6 +482,12 @@ function slirpNetworkArgument(): string {
     : "--network=slirp4netns";
 }
 
+function pastaConatHost(): string {
+  const host = `${process.env.COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST ?? "10.168.0.1"}`
+    .trim();
+  return host || "10.168.0.1";
+}
+
 export function publishHost(): string {
   const value = `${process.env.COCALC_PROJECT_RUNNER_PUBLISH_HOST ?? "127.0.0.1"}`
     .trim()
@@ -695,14 +701,30 @@ export async function start({
     args.push("--label", `project_id=${project_id}`, "--label", `role=project`);
     args.push("--rm");
     args.push("--replace");
+    const originalConatServer = env.CONAT_SERVER;
     const selectedNetwork = networkArgument();
     args.push(selectedNetwork);
+    let pastaHostAliasArgIndex: number | undefined;
     if (selectedNetwork.startsWith("--network=pasta")) {
+      try {
+        const url = new URL(originalConatServer);
+        if (url.hostname === "host.containers.internal") {
+          url.hostname = pastaConatHost();
+          env.CONAT_SERVER = url.toString();
+          logger.debug("using pasta conat host override", {
+            project_id,
+            conat_server: env.CONAT_SERVER,
+          });
+        }
+      } catch {
+        // Keep original conat server on parse failure.
+      }
       const pastaHostAliasAddr = `${
         process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ?? ""
       }`.trim();
       if (pastaHostAliasAddr) {
         // Ensure a stable host alias for conat under pasta.
+        pastaHostAliasArgIndex = args.length;
         args.push(
           "--add-host",
           `host.containers.internal:${pastaHostAliasAddr}`,
@@ -740,8 +762,12 @@ export async function start({
       args.push(mountArg({ source: join(scratch, "tmp"), target: "/tmp" }));
     }
 
+    let conatServerArgIndex: number | undefined;
     for (const key in env) {
       args.push("-e", `${key}=${env[key]}`);
+      if (key === "CONAT_SERVER") {
+        conatServerArgIndex = args.length - 1;
+      }
     }
 
     args.push(...(await podmanLimits(config)));
@@ -784,6 +810,12 @@ export async function start({
           err: `${err}`,
         },
       );
+      if (pastaHostAliasArgIndex != null) {
+        args.splice(pastaHostAliasArgIndex, 2);
+      }
+      if (conatServerArgIndex != null) {
+        args[conatServerArgIndex] = `CONAT_SERVER=${originalConatServer}`;
+      }
       setNetworkArg(fallbackNetwork);
       await podman(args);
     }
