@@ -435,7 +435,7 @@ export function networkArgument() {
   if (defaultNetwork === "pasta") {
     const pastaOptionsRaw = `${
       process.env.COCALC_PROJECT_RUNNER_PASTA_OPTIONS ??
-      "--map-gw,--map-guest-addr,169.254.1.2"
+      "--map-gw"
     }`.trim();
     if (!pastaOptionsRaw) {
       return "--network=pasta";
@@ -699,8 +699,7 @@ export async function start({
     args.push(selectedNetwork);
     if (selectedNetwork.startsWith("--network=pasta")) {
       const pastaHostAliasAddr = `${
-        process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ??
-        "169.254.1.2"
+        process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ?? ""
       }`.trim();
       if (pastaHostAliasAddr) {
         // Ensure a stable host alias for conat under pasta.
