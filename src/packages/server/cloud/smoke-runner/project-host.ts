@@ -466,6 +466,10 @@ async function loadHostConnectionHints(
   const public_ip = runtime.public_ip ?? machine.metadata?.public_ip;
   const ssh_user =
     runtime.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+  const bootstrap_log_path =
+    ssh_user === "root"
+      ? "/root/cocalc-host/bootstrap/bootstrap.log"
+      : `/home/${ssh_user}/cocalc-host/bootstrap/bootstrap.log`;
   const ssh_target =
     public_ip && ssh_user ? `${ssh_user}@${public_ip}` : undefined;
   const host_url =
@@ -478,13 +482,13 @@ async function loadHostConnectionHints(
     ssh_target,
     public_ip,
     ssh_user,
-    host_log_path: "/btrfs/data/log",
-    bootstrap_log_path: "/home/ubuntu/cocalc-host/bootstrap/bootstrap.log",
+    host_log_path: "/mnt/cocalc/data/log",
+    bootstrap_log_path,
     ssh_tail_log: ssh_target
-      ? `ssh ${ssh_target} 'tail -n 300 /btrfs/data/log'`
+      ? `ssh ${ssh_target} 'tail -n 300 /mnt/cocalc/data/log'`
       : undefined,
     scp_log: ssh_target
-      ? `scp ${ssh_target}:/btrfs/data/log ./host.log`
+      ? `scp ${ssh_target}:/mnt/cocalc/data/log ./host.log`
       : undefined,
   };
 }
@@ -1016,7 +1020,7 @@ async function runSmokeSteps({
             host_url: debugHints.host_url,
           }
         : {
-            host_log_path: "/btrfs/data/log",
+            host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path: "/home/ubuntu/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,
@@ -1041,7 +1045,7 @@ async function runSmokeSteps({
             host_url: debugHints.host_url,
           }
         : {
-            host_log_path: "/btrfs/data/log",
+            host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path: "/home/ubuntu/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,

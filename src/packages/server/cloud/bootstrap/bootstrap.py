@@ -7,7 +7,7 @@ and driven by a JSON config written by bootstrap-host.ts.
 High-level responsibilities:
   1) Sanity checks (OS/arch, required tools) and logging bootstrap state.
   2) APT setup: update + install base packages with retries/timeouts.
-  3) Storage: configure /btrfs (disk or loopback), helpers, and /btrfs/data.
+  3) Storage: configure /mnt/cocalc (disk or loopback), helpers, and /mnt/cocalc/data.
   4) Podman storage config (rootful + rootless) and runtime dir.
   5) Project-host env file (including public IP substitution if needed).
   6) Fetch + verify bundles/tools and unpack them into cocalc-host paths.
@@ -379,9 +379,27 @@ def enable_linger(cfg: BootstrapConfig) -> None:
 
 def prepare_dirs(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: preparing cocalc directories")
-    for path in ["/opt/cocalc", "/var/lib/cocalc", "/etc/cocalc", "/btrfs"]:
+    for path in ["/opt/cocalc", "/var/lib/cocalc", "/etc/cocalc", "/mnt/cocalc"]:
         Path(path).mkdir(parents=True, exist_ok=True)
     run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", "/opt/cocalc", "/var/lib/cocalc"], "chown cocalc dirs")
+
+
+def ensure_legacy_btrfs_link(cfg: BootstrapConfig) -> None:
+    legacy = Path("/btrfs")
+    target = "/mnt/cocalc"
+    try:
+        if legacy.is_symlink():
+            if os.readlink(legacy) == target:
+                return
+            legacy.unlink()
+            legacy.symlink_to(target, target_is_directory=True)
+            return
+        if legacy.exists():
+            # Leave existing non-symlink legacy path untouched.
+            return
+        legacy.symlink_to(target, target_is_directory=True)
+    except Exception as err:
+        log_line(cfg, f"bootstrap: could not create legacy /btrfs symlink: {err}")
 
 
 def runtime_home(cfg: BootstrapConfig) -> str:
@@ -462,7 +480,7 @@ def pick_data_disk(cfg: BootstrapConfig, devices: list[str]) -> str | None:
         except Exception:
             mountpoints = []
         mountpoints = [m for m in mountpoints if m]
-        if mountpoints and "/btrfs" in mountpoints:
+        if mountpoints and "/mnt/cocalc" in mountpoints:
             return dev
         if mountpoints:
             log_line(cfg, f"bootstrap: skipping {dev} (mounted at {mountpoints})")
@@ -483,6 +501,13 @@ def pick_data_disk(cfg: BootstrapConfig, devices: list[str]) -> str | None:
 
 
 def setup_btrfs(cfg: BootstrapConfig, image_size_gb: int) -> None:
+    legacy_mount = Path("/btrfs")
+    if legacy_mount.is_mount() and not Path("/mnt/cocalc").is_mount():
+        run_best_effort(
+            cfg,
+            ["mount", "--bind", "/btrfs", "/mnt/cocalc"],
+            "bind legacy /btrfs mount at /mnt/cocalc",
+        )
     data_disk_devices = [d for d in cfg.data_disk_devices.split() if d]
     data_disk = None
     if data_disk_devices:
@@ -500,28 +525,39 @@ def setup_btrfs(cfg: BootstrapConfig, image_size_gb: int) -> None:
             run_cmd(cfg, ["mkfs.btrfs", "-f", data_disk], "mkfs.btrfs")
         elif fstype != "btrfs":
             raise RuntimeError(f"refusing to format {data_disk} (filesystem={fstype})")
-        if not Path("/btrfs").is_mount():
-            run_cmd(cfg, ["mount", data_disk, "/btrfs"], "mount data disk")
+        if not Path("/mnt/cocalc").is_mount():
+            run_cmd(cfg, ["mount", data_disk, "/mnt/cocalc"], "mount data disk")
         uuid = subprocess.check_output(["blkid", "-s", "UUID", "-o", "value", data_disk], text=True).strip()
-        fstab_line = f"UUID={uuid} /btrfs btrfs defaults,nofail 0 0"
+        fstab_line = f"UUID={uuid} /mnt/cocalc btrfs defaults,nofail 0 0"
         update_fstab(fstab_line)
+        ensure_legacy_btrfs_link(cfg)
         return
     log_line(cfg, "bootstrap: no data disk found; using loopback image")
-    image_path = Path("/var/lib/cocalc/btrfs.img")
+    image_path = Path("/var/lib/cocalc/cocalc.img")
+    legacy_image_path = Path("/var/lib/cocalc/btrfs.img")
+    if not image_path.exists() and legacy_image_path.exists():
+        image_path = legacy_image_path
     image_path.parent.mkdir(parents=True, exist_ok=True)
     if not image_path.exists():
         run_cmd(cfg, ["truncate", "-s", f"{image_size_gb}G", str(image_path)], "truncate btrfs image")
         run_cmd(cfg, ["mkfs.btrfs", "-f", str(image_path)], "mkfs.btrfs image")
-    if not Path("/btrfs").is_mount():
-        run_cmd(cfg, ["mount", "-o", "loop", str(image_path), "/btrfs"], "mount btrfs image")
-    fstab_line = f"{image_path} /btrfs btrfs loop,defaults,nofail 0 0 # cocalc-btrfs"
+    if not Path("/mnt/cocalc").is_mount():
+        run_cmd(cfg, ["mount", "-o", "loop", str(image_path), "/mnt/cocalc"], "mount btrfs image")
+    fstab_line = f"{image_path} /mnt/cocalc btrfs loop,defaults,nofail 0 0 # cocalc-btrfs"
     update_fstab(fstab_line)
+    ensure_legacy_btrfs_link(cfg)
 
 
 def update_fstab(line: str) -> None:
     fstab = Path("/etc/fstab")
     existing = fstab.read_text(encoding="utf-8") if fstab.exists() else ""
-    lines = [l for l in existing.splitlines() if "cocalc-btrfs" not in l]
+    lines = [
+        l
+        for l in existing.splitlines()
+        if "cocalc-btrfs" not in l
+        and " /btrfs " not in l
+        and " /mnt/cocalc " not in l
+    ]
     lines.append(line)
     fstab.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -534,8 +570,13 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 TARGET_GB="${1:-}"
-IMAGE="/var/lib/cocalc/btrfs.img"
-MOUNTPOINT="/btrfs"
+IMAGE_NEW="/var/lib/cocalc/cocalc.img"
+IMAGE_OLD="/var/lib/cocalc/btrfs.img"
+IMAGE="$IMAGE_NEW"
+if [ ! -f "$IMAGE" ] && [ -f "$IMAGE_OLD" ]; then
+  IMAGE="$IMAGE_OLD"
+fi
+MOUNTPOINT="/mnt/cocalc"
 ENV_FILE="/etc/cocalc/project-host.env"
 if [ -n "$TARGET_GB" ]; then
   TARGET_GB="${TARGET_GB%%[!0-9]*}"
@@ -582,32 +623,32 @@ btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
 
 
 def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
-    log_line(cfg, "bootstrap: ensuring /btrfs/data subvolume")
+    log_line(cfg, "bootstrap: ensuring /mnt/cocalc/data subvolume")
     try:
-        run_cmd(cfg, ["btrfs", "subvolume", "show", "/btrfs/data"], "btrfs subvolume show", check=False)
+        run_cmd(cfg, ["btrfs", "subvolume", "show", "/mnt/cocalc/data"], "btrfs subvolume show", check=False)
     except Exception:
         pass
-    if not Path("/btrfs/data").exists():
+    if not Path("/mnt/cocalc/data").exists():
         try:
-            run_cmd(cfg, ["btrfs", "subvolume", "create", "/btrfs/data"], "btrfs subvolume create", check=False)
+            run_cmd(cfg, ["btrfs", "subvolume", "create", "/mnt/cocalc/data"], "btrfs subvolume create", check=False)
         except Exception:
-            Path("/btrfs/data").mkdir(parents=True, exist_ok=True)
-    Path("/btrfs/data/secrets").mkdir(parents=True, exist_ok=True)
-    Path("/btrfs/data/tmp").mkdir(parents=True, exist_ok=True)
-    os.chmod("/btrfs/data/tmp", 0o1777)
-    run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", "/btrfs/data"], "chown btrfs data")
+            Path("/mnt/cocalc/data").mkdir(parents=True, exist_ok=True)
+    Path("/mnt/cocalc/data/secrets").mkdir(parents=True, exist_ok=True)
+    Path("/mnt/cocalc/data/tmp").mkdir(parents=True, exist_ok=True)
+    os.chmod("/mnt/cocalc/data/tmp", 0o1777)
+    run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", "/mnt/cocalc/data"], "chown btrfs data")
 
 
 def configure_podman(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: configuring podman storage")
-    Path("/btrfs/data/containers/root/storage").mkdir(parents=True, exist_ok=True)
-    Path("/btrfs/data/containers/root/run").mkdir(parents=True, exist_ok=True)
+    Path("/mnt/cocalc/data/containers/root/storage").mkdir(parents=True, exist_ok=True)
+    Path("/mnt/cocalc/data/containers/root/run").mkdir(parents=True, exist_ok=True)
     Path("/etc/containers").mkdir(parents=True, exist_ok=True)
     Path("/etc/containers/storage.conf").write_text(
         '[storage]\n'
         'driver = "overlay"\n'
-        'runroot = "/btrfs/data/containers/root/run"\n'
-        'graphroot = "/btrfs/data/containers/root/storage"\n',
+        'runroot = "/mnt/cocalc/data/containers/root/run"\n'
+        'graphroot = "/mnt/cocalc/data/containers/root/storage"\n',
         encoding="utf-8",
     )
     if cfg.ssh_user != "root":
@@ -620,14 +661,14 @@ def configure_podman(cfg: BootstrapConfig) -> None:
             "chown user config",
         )
         user_config.mkdir(parents=True, exist_ok=True)
-        Path(f"/btrfs/data/containers/rootless/{cfg.ssh_user}/storage").mkdir(parents=True, exist_ok=True)
-        Path(f"/btrfs/data/containers/rootless/{cfg.ssh_user}/run").mkdir(parents=True, exist_ok=True)
-        run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", f"/btrfs/data/containers/rootless/{cfg.ssh_user}"], "chown rootless storage")
+        Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/storage").mkdir(parents=True, exist_ok=True)
+        Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/run").mkdir(parents=True, exist_ok=True)
+        run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}"], "chown rootless storage")
         (user_config / "storage.conf").write_text(
             '[storage]\n'
             'driver = "overlay"\n'
-            f'runroot = "/btrfs/data/containers/rootless/{cfg.ssh_user}/run"\n'
-            f'graphroot = "/btrfs/data/containers/rootless/{cfg.ssh_user}/storage"\n',
+            f'runroot = "/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/run"\n'
+            f'graphroot = "/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}/storage"\n',
             encoding="utf-8",
         )
         run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config / "storage.conf")], "chown storage.conf")
@@ -640,7 +681,7 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
     Path(cfg.env_file).write_text("\n".join(cfg.env_lines) + "\n", encoding="utf-8")
     uid = pwd.getpwnam(cfg.ssh_user).pw_uid if cfg.ssh_user else None
     if uid is not None:
-        runtime_dir = f"/btrfs/data/tmp/cocalc-podman-runtime-{uid}"
+        runtime_dir = f"/mnt/cocalc/data/tmp/cocalc-podman-runtime-{uid}"
         Path(runtime_dir).mkdir(parents=True, exist_ok=True)
         run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", runtime_dir], "chown runtime dir")
         upsert_env(cfg.env_file, "COCALC_PODMAN_RUNTIME_DIR", runtime_dir)
@@ -668,7 +709,7 @@ def upsert_env(path: str, key: str, value: str) -> None:
 def setup_master_conat_token(cfg: BootstrapConfig) -> None:
     if not cfg.conat_url or not cfg.bootstrap_token:
         return
-    path = Path("/btrfs/data/secrets/master-conat-token")
+    path = Path("/mnt/cocalc/data/secrets/master-conat-token")
     if path.exists():
         log_line(cfg, "bootstrap: master conat token already present")
         if cfg.ssh_user and cfg.ssh_user != "root":
@@ -854,7 +895,7 @@ set -euo pipefail
 cmd="${1:-status}"
 RUNTIME_ROOT="__RUNTIME_ROOT__"
 bin="$RUNTIME_ROOT/bin/project-host"
-pid_file="/btrfs/data/daemon.pid"
+pid_file="/mnt/cocalc/data/daemon.pid"
 case "${cmd}" in
   start|stop)
     "${bin}" daemon "${cmd}"
@@ -883,25 +924,25 @@ set -euo pipefail
 RUNTIME_ROOT="__RUNTIME_ROOT__"
 CTL="$RUNTIME_ROOT/bin/ctl"
 for attempt in $(seq 1 60); do
-  if mountpoint -q /btrfs; then
+  if mountpoint -q /mnt/cocalc; then
     if [ -x /usr/local/sbin/cocalc-grow-btrfs ]; then
-      /usr/local/sbin/cocalc-grow-btrfs || true
+      sudo -n /usr/local/sbin/cocalc-grow-btrfs || true
     fi
     exec "$CTL" start
   fi
-  echo "waiting for /btrfs mount (attempt $attempt/60)"
-  mount /btrfs || true
+  echo "waiting for /mnt/cocalc mount (attempt $attempt/60)"
+  sudo -n mount /mnt/cocalc || true
   sleep 5
 done
-echo "timeout waiting for /btrfs mount"
+echo "timeout waiting for /mnt/cocalc mount"
 exit 1
 """
     start_ph = start_ph.replace("__RUNTIME_ROOT__", str(runtime_root))
     (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
     (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
-    (bin_dir / "logs").write_text("tail -n 200 /btrfs/data/log -f\n", encoding="utf-8")
-    (bin_dir / "logs-cf").write_text("sudo journalctl -u cocalc-cloudflared.service -o cat -f -n 200\n", encoding="utf-8")
-    (bin_dir / "ctl-cf").write_text("sudo systemctl ${1-status} cocalc-cloudflared\n", encoding="utf-8")
+    (bin_dir / "logs").write_text("tail -n 200 /mnt/cocalc/data/log -f\n", encoding="utf-8")
+    (bin_dir / "logs-cf").write_text("sudo -n journalctl -u cocalc-cloudflared.service -o cat -f -n 200\n", encoding="utf-8")
+    (bin_dir / "ctl-cf").write_text("sudo -n systemctl ${1-status} cocalc-cloudflared\n", encoding="utf-8")
     for name in ["ctl", "start-project-host", "logs", "logs-cf", "ctl-cf"]:
         (bin_dir / name).chmod(0o755)
     if cfg.ssh_user and cfg.ssh_user != "root":
@@ -975,6 +1016,28 @@ def configure_autostart(cfg: BootstrapConfig) -> None:
     Path("/etc/cron.d/cocalc-project-host").write_text(cron_line + "\n", encoding="utf-8")
     os.chmod("/etc/cron.d/cocalc-project-host", 0o644)
     run_best_effort(cfg, ["systemctl", "enable", "--now", "cron"], "enable cron")
+
+
+def configure_runtime_sudoers(cfg: BootstrapConfig) -> None:
+    user = cfg.ssh_user
+    if not user or user == "root":
+        return
+    log_line(cfg, f"bootstrap: configuring sudoers whitelist for {user}")
+    rules = f"""Defaults:{user} !requiretty
+Defaults:{user} secure_path=/usr/sbin:/usr/bin:/sbin:/bin
+Cmnd_Alias COCALC_RUNTIME_STORAGE = /usr/local/sbin/cocalc-grow-btrfs *, /usr/local/sbin/cocalc-grow-btrfs, /usr/bin/btrfs *, /sbin/btrfs *, /usr/bin/mkfs.btrfs *, /sbin/mkfs.btrfs *, /bin/mount *, /usr/bin/mount *, /bin/umount *, /usr/bin/umount *, /usr/sbin/losetup *, /sbin/losetup *, /usr/bin/mknod *, /bin/mknod *, /usr/bin/chown *, /bin/chown *, /usr/bin/chmod *, /bin/chmod *, /usr/bin/chattr *, /bin/chattr *, /usr/bin/truncate *, /bin/truncate *, /usr/bin/mkdir *, /bin/mkdir *, /usr/bin/mv *, /bin/mv *, /usr/bin/rm *, /bin/rm *, /usr/bin/df *, /bin/df *
+Cmnd_Alias COCALC_RUNTIME_CLOUD = /bin/systemctl * cocalc-cloudflared*, /usr/bin/systemctl * cocalc-cloudflared*, /bin/journalctl * cocalc-cloudflared*, /usr/bin/journalctl * cocalc-cloudflared*
+{user} ALL=(root) NOPASSWD: COCALC_RUNTIME_STORAGE, COCALC_RUNTIME_CLOUD
+"""
+    path = Path("/etc/sudoers.d/cocalc-project-host-runtime")
+    path.write_text(rules, encoding="utf-8")
+    os.chmod(path, 0o440)
+    if shutil.which("visudo"):
+        run_cmd(
+            cfg,
+            ["visudo", "-c", "-f", str(path)],
+            "validate runtime sudoers",
+        )
 
 
 def configure_cloudflared(cfg: BootstrapConfig) -> None:
@@ -1180,6 +1243,7 @@ def main(argv: list[str]) -> int:
         install_node(cfg)
         write_wrapper(cfg)
         write_helpers(cfg)
+        configure_runtime_sudoers(cfg)
         configure_cloudflared(cfg)
         configure_autostart(cfg)
         start_project_host(cfg)
