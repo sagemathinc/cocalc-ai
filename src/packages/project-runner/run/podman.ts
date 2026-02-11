@@ -408,7 +408,17 @@ export function networkArgument() {
   // Allow explicit override when debugging networking behavior.
   const explicit = `${process.env.COCALC_PROJECT_RUNNER_NETWORK ?? ""}`.trim();
   if (explicit) {
-    return `--network=${explicit}`;
+    const lowered = explicit.toLowerCase();
+    const allowed =
+      lowered === "none" ||
+      lowered.startsWith("slirp4netns") ||
+      lowered.startsWith("pasta");
+    if (allowed) {
+      return `--network=${explicit}`;
+    }
+    logger.warn("ignoring unsupported COCALC_PROJECT_RUNNER_NETWORK override", {
+      explicit,
+    });
   }
   // Rootless pods need host loopback access so project containers can reach
   // host-local conat (mapped as host.containers.internal in env.ts).
