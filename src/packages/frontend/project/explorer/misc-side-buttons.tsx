@@ -43,9 +43,8 @@ const OPEN_MSG = defineMessage({
 export function MiscSideButtons() {
   const { actions, project_id } = useProjectContext();
   const show_hidden = useTypedRedux({ project_id }, "show_hidden");
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path ?? "";
+  const effective_current_path = current_path_abs ?? "/";
   const available_features = useTypedRedux(
     { project_id },
     "available_features",

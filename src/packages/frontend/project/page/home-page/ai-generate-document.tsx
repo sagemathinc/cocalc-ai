@@ -154,9 +154,8 @@ function AIGenerateDocument({
 }: Props) {
   const intl = useIntl();
   const projectActions = useActions({ project_id });
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path ?? "";
+  const effective_current_path = current_path_abs ?? "/";
 
   const [model, setModel] = useLanguageModelSetting(project_id);
   const [tokens, setTokens] = useState<number>(0);

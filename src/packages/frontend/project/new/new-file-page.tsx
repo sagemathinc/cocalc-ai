@@ -125,9 +125,8 @@ export default function NewFilePage(props: Props) {
   const can_edit_project_defaults =
     !!is_admin || user_group === "owner";
   const [extensionWarning, setExtensionWarning] = useState<boolean>(false);
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const filename0 = useTypedRedux({ project_id }, "default_filename");
   const fallbackFilename = filename0
     ? filename0

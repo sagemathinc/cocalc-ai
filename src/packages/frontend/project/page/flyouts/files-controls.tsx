@@ -69,9 +69,8 @@ export function FilesSelectedControls({
   publicFiles,
   refreshBackups,
 }: FilesSelectedControlsProps) {
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const actions = useActions({ project_id });
   const inBackups = isBackupsPath(effective_current_path ?? "");
 

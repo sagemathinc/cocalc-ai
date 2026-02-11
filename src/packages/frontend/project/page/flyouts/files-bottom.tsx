@@ -84,9 +84,8 @@ export function FilesBottom({
   refreshBackups,
 }: FilesBottomProps) {
   const [mode, setMode] = modeState;
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const actions = useActions({ project_id });
   const [activeKeys, setActiveKeys] = useState<PanelKey[]>([]);
   const [resize, setResize] = useState<number>(0);

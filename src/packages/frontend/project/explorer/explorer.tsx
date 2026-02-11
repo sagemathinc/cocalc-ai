@@ -110,9 +110,8 @@ export function Explorer() {
   )?.toJS();
   const checked_files = useTypedRedux({ project_id }, "checked_files");
   const configuration = useTypedRedux({ project_id }, "configuration");
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const error = useTypedRedux({ project_id }, "error");
   const ext_selection = useTypedRedux({ project_id }, "ext_selection");
   const file_action = useTypedRedux({ project_id }, "file_action");

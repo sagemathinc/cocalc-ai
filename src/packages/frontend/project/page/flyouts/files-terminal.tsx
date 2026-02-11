@@ -53,9 +53,8 @@ export function TerminalFlyout({
   sync,
 }: TerminalFlyoutProps) {
   const actions = useActions({ project_id });
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const currentPathRef = useRef<string>(effective_current_path ?? "");
   const account_id = useTypedRedux("account", "account_id");
   const terminal = useTypedRedux("account", "terminal");

@@ -21,9 +21,8 @@ export default function Download({ clear }) {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const project_id = actions?.project_id ?? "";
-  const current_path = useRedux(["current_path"], project_id);
   const current_path_abs = useRedux(["current_path_abs"], project_id);
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const checked_files = useRedux(["checked_files"], project_id);
   const [target, setTarget] = useState<string>(() => {
     if (checked_files?.size == 1) {

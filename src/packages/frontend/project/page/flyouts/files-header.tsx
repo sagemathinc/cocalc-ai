@@ -127,9 +127,8 @@ export function FilesHeader({
     { project_id },
     "file_creation_error",
   );
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const isReadonlyVirtualPath =
     effective_current_path === SNAPSHOTS ||
     effective_current_path?.startsWith(`${SNAPSHOTS}/`) ||

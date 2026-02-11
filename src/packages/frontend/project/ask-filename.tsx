@@ -25,9 +25,8 @@ interface Props {
 export default function AskNewFilename({ project_id }: Props) {
   const actions = useActions({ project_id });
   const ext_selection = useTypedRedux({ project_id }, "ext_selection");
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const other_settings = useTypedRedux("account", "other_settings");
   const new_filename = useTypedRedux({ project_id }, "new_filename");
   const rfn = other_settings.get(NEW_FILENAMES);

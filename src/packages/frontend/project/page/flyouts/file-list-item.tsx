@@ -177,9 +177,8 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
   const showPublish = mode === "files";
   const intl = useIntl();
   const { project_id } = useProjectContext();
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const actions = useActions({ project_id });
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);

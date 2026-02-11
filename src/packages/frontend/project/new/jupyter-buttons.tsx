@@ -83,9 +83,8 @@ export function JupyterNotebookButtons({
   const [sm, md] = grid;
 
   const { project_id, actions } = useProjectContext();
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const { error, kernel_selection, kernels_by_name } = useJupyterKernelsInfo();
 
   if (!availableFeatures.jupyter_notebook) {

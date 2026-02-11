@@ -91,9 +91,8 @@ export function FilesFlyout({
   const [showCheckboxIndex, setShowCheckboxIndex] = useState<number | null>(
     null,
   );
-  const current_path = useTypedRedux({ project_id }, "current_path");
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
-  const effective_current_path = current_path_abs ?? current_path;
+  const effective_current_path = current_path_abs ?? "/";
   const { onOpenSpecial, modal } = useSpecialPathPreview({
     project_id,
     actions,
