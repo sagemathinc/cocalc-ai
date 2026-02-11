@@ -937,12 +937,49 @@ done
 echo "timeout waiting for /mnt/cocalc mount"
 exit 1
 """
+    logs_script = """#!/usr/bin/env bash
+set -euo pipefail
+lines="${1:-200}"
+log_file="/mnt/cocalc/data/log"
+if [ ! -f "$log_file" ]; then
+  echo "project-host log not found at $log_file" >&2
+  exit 1
+fi
+exec tail -n "$lines" -f "$log_file"
+"""
+    logs_cf_script = """#!/usr/bin/env bash
+set -euo pipefail
+service="cocalc-cloudflared.service"
+if ! command -v journalctl >/dev/null 2>&1; then
+  echo "journalctl not found" >&2
+  exit 1
+fi
+if ! sudo -n systemctl status "$service" >/dev/null 2>&1; then
+  echo "cloudflared service not enabled on this host ($service)" >&2
+  exit 1
+fi
+exec sudo -n journalctl -u "$service" -o cat -f -n 200
+"""
+    ctl_cf_script = """#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-status}"
+service="cocalc-cloudflared.service"
+case "$cmd" in
+  start|stop|restart|status)
+    exec sudo -n systemctl "$cmd" "$service"
+    ;;
+  *)
+    echo "usage: ${0} {start|stop|restart|status}" >&2
+    exit 2
+    ;;
+esac
+"""
     start_ph = start_ph.replace("__RUNTIME_ROOT__", str(runtime_root))
     (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
     (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
-    (bin_dir / "logs").write_text("tail -n 200 /mnt/cocalc/data/log -f\n", encoding="utf-8")
-    (bin_dir / "logs-cf").write_text("sudo -n journalctl -u cocalc-cloudflared.service -o cat -f -n 200\n", encoding="utf-8")
-    (bin_dir / "ctl-cf").write_text("sudo -n systemctl ${1-status} cocalc-cloudflared\n", encoding="utf-8")
+    (bin_dir / "logs").write_text(logs_script, encoding="utf-8")
+    (bin_dir / "logs-cf").write_text(logs_cf_script, encoding="utf-8")
+    (bin_dir / "ctl-cf").write_text(ctl_cf_script, encoding="utf-8")
     for name in ["ctl", "start-project-host", "logs", "logs-cf", "ctl-cf"]:
         (bin_dir / name).chmod(0o755)
     if cfg.ssh_user and cfg.ssh_user != "root":

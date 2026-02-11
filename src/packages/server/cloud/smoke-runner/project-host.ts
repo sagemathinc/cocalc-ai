@@ -1021,7 +1021,7 @@ async function runSmokeSteps({
           }
         : {
             host_log_path: "/mnt/cocalc/data/log",
-            bootstrap_log_path: "/home/ubuntu/cocalc-host/bootstrap/bootstrap.log",
+            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,
     };
@@ -1046,7 +1046,7 @@ async function runSmokeSteps({
           }
         : {
             host_log_path: "/mnt/cocalc/data/log",
-            bootstrap_log_path: "/home/ubuntu/cocalc-host/bootstrap/bootstrap.log",
+            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
       steps,
     };

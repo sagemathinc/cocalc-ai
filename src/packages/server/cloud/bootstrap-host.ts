@@ -28,7 +28,7 @@
  *   - project-host bundle
  *   - project bundle
  *   - tools bundle
- * - Writes helper scripts in ~/cocalc-host/bootstrap (ctl/logs/logs-cf, etc.).
+ * - Writes helper scripts in ~/cocalc-host/bin (wrappers to runtime scripts).
  * - Installs /usr/local/sbin/cocalc-grow-btrfs and runs it on boot.
  * - Sets cron @reboot hook to start project-host without re-running bootstrap.
  * - Installs and enables cloudflared (if Cloudflare tunnel is enabled).
@@ -935,13 +935,21 @@ bootstrap/
   bootstrap.log      - output from bootstrap.sh
 
 bin/
-  ctl                - start/stop/status helpers for project-host
-  logs               - tail /mnt/cocalc/data/log
-  logs-cf            - cloudflared logs (if enabled)
-  deprovision.sh     - full teardown (use --force)
+  ctl                     - start/stop/status helper (wrapper)
+  logs [lines]            - tail project-host log (wrapper)
+  logs-cf                 - tail cloudflared logs (if enabled; wrapper)
+  ctl-cf                  - cloudflared {start|stop|restart|status} (wrapper)
+  fetch-project-bundle.sh - refresh project bundle from software endpoint
+  fetch-project-host.sh   - refresh project-host bundle from software endpoint
+  fetch-tools.sh          - refresh tools bundle from software endpoint
+  deprovision.sh          - full teardown (use --force)
+
+Runtime scripts (owned by runtime user):
+  /opt/cocalc/project-host/bin/*
+  (wrappers in this directory exec those runtime scripts)
 
 Logs and status:
-  - Project-host logs:  tail -n 200 /mnt/cocalc/data/log -f
+  - Project-host logs:  $HOME/cocalc-host/bin/logs
   - Connector logs:     journalctl --user -u cocalc-self-host-connector.service -f
   - Cloudflared logs:   $HOME/cocalc-host/bin/logs-cf
 
