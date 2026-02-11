@@ -133,7 +133,7 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
     env.PROJECT_HOST_SSH_SERVER = `localhost:${2222 + index}`;
   }
   if (!env.COCALC_FILE_SERVER_MOUNTPOINT) {
-    env.COCALC_FILE_SERVER_MOUNTPOINT = "/btrfs";
+    env.COCALC_FILE_SERVER_MOUNTPOINT = "/mnt/cocalc";
   }
   if (!env.PROJECT_RUNNER_NAME) {
     env.PROJECT_RUNNER_NAME = String(index);

@@ -62,7 +62,7 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 function resolveDataDir(): string {
-  return process.env.COCALC_DATA ?? process.env.DATA ?? "/btrfs/data";
+  return process.env.COCALC_DATA ?? process.env.DATA ?? "/mnt/cocalc/data";
 }
 
 function isLocalSelfHost(): boolean {

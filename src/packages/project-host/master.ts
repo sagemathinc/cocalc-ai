@@ -172,13 +172,14 @@ export async function startMasterRegistration({
     }
   }
   if (!currentMasterConatToken) {
+    const expectedTokenPath = getProjectHostMasterConatTokenPath();
     logger.warn(
       "master conat token is missing; registration/control connection may fail",
-      { expectedPath: "/btrfs/data/secrets/master-conat-token" },
+      { expectedPath: expectedTokenPath },
     );
     logger.warn(
       "master registration is disabled until a valid master conat token is available",
-      { expectedPath: "/btrfs/data/secrets/master-conat-token" },
+      { expectedPath: expectedTokenPath },
     );
     return;
   }

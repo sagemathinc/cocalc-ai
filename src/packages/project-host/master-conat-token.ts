@@ -1,17 +1,26 @@
-import { readFileSync, writeFileSync, readdirSync } from "fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
 import { dirname } from "path";
 import { mkdirSync } from "fs";
 import { request as httpRequest } from "http";
 import { request as httpsRequest } from "https";
 import { URL } from "url";
 
-const DEFAULT_MASTER_CONAT_TOKEN_PATH = "/btrfs/data/secrets/master-conat-token";
+const DEFAULT_MASTER_CONAT_TOKEN_PATH =
+  "/mnt/cocalc/data/secrets/master-conat-token";
+const LEGACY_MASTER_CONAT_TOKEN_PATH = "/btrfs/data/secrets/master-conat-token";
 
 export function getProjectHostMasterConatTokenPath(): string {
-  return (
-    process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN_PATH ??
-    DEFAULT_MASTER_CONAT_TOKEN_PATH
-  ).trim();
+  const configured = `${
+    process.env.COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN_PATH ?? ""
+  }`.trim();
+  if (configured) return configured;
+  if (
+    !existsSync(DEFAULT_MASTER_CONAT_TOKEN_PATH) &&
+    existsSync(LEGACY_MASTER_CONAT_TOKEN_PATH)
+  ) {
+    return LEGACY_MASTER_CONAT_TOKEN_PATH;
+  }
+  return DEFAULT_MASTER_CONAT_TOKEN_PATH;
 }
 
 export function getProjectHostMasterConatToken(): string | undefined {
