@@ -201,7 +201,9 @@ async function ensureWritableDir(dir: string): Promise<void> {
   const user = os.userInfo().username;
   logger.warn("upgrade: fixing permissions with sudo", { dir, user });
   await runCommand("sudo", ["-n", "mkdir", "-p", dir]);
-  await runCommand("sudo", ["-n", "chown", "-R", `${user}:${user}`, dir]);
+  // Only ownership of the directory itself is needed here; avoid recursive
+  // chown to keep upgrades fast on large trees.
+  await runCommand("sudo", ["-n", "chown", `${user}:${user}`, dir]);
   await fs.promises.mkdir(dir, { recursive: true });
 }
 

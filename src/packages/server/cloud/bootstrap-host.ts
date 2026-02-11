@@ -1006,7 +1006,7 @@ if [ -n "$SSH_KEYS" ]; then
       echo "$key" >> "$AUTH_KEYS"
     fi
   done <<< "$SSH_KEYS"
-  chown -R "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_HOME/.ssh"
+  chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_HOME/.ssh" "$AUTH_KEYS"
 fi
 `
     : "";

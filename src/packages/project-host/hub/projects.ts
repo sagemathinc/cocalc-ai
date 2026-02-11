@@ -311,6 +311,48 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     stream_name: string;
   }> {
     const op_id = lro_op_id ?? uuid();
+    // Idempotency guard: create/start flows can race and issue duplicate start
+    // requests. If the container is already up (or already starting), do not
+    // clobber local state back to "starting" and do not restart again.
+    let currentStatus:
+      | { state?: string; http_port?: number; ssh_port?: number }
+      | undefined;
+    try {
+      currentStatus = (await runnerApi.status({ project_id })) as any;
+    } catch (err) {
+      logger.debug("start status preflight failed", { project_id, err: `${err}` });
+    }
+    if (currentStatus?.state === "running") {
+      ensureProjectRow({
+        project_id,
+        opts: { authorized_keys, run_quota, image },
+        state: "running",
+        http_port: currentStatus.http_port,
+        ssh_port: currentStatus.ssh_port,
+      });
+      await refreshAuthorizedKeys(project_id, authorized_keys);
+      return {
+        op_id,
+        scope_type: "project",
+        scope_id: project_id,
+        service: PERSIST_SERVICE,
+        stream_name: lroStreamName(op_id),
+      };
+    }
+    if (currentStatus?.state === "starting") {
+      ensureProjectRow({
+        project_id,
+        opts: { authorized_keys, run_quota, image },
+        state: "starting",
+      });
+      return {
+        op_id,
+        scope_type: "project",
+        scope_id: project_id,
+        service: PERSIST_SERVICE,
+        stream_name: lroStreamName(op_id),
+      };
+    }
     // Mark as starting immediately so hub/clients see progress even if image pulls are slow.
     ensureProjectRow({
       project_id,

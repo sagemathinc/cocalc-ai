@@ -298,9 +298,11 @@ async function ensureRunnerOwnsPaths(paths: string[]): Promise<void> {
     }
   }
   if (existing.length === 0) return;
+  // Intentional: do NOT recurse here. Recursive chown over large trees
+  // (e.g. caches) can be extremely expensive and hurt startup latency.
   await executeCode({
     command: "sudo",
-    args: ["-n", "chown", "-R", `${runner}:${runner}`, ...existing],
+    args: ["-n", "chown", `${runner}:${runner}`, ...existing],
     err_on_exit: true,
   });
 }
@@ -629,7 +631,11 @@ export async function start({
     }
     await ensureRunnerOwnsPaths([
       join(home, ".ssh"),
-      join(home, ".cache"),
+      join(home, INTERNAL_SSH_CONFIG),
+      join(home, SSHD_CONFIG),
+      join(home, START_PROJECT_SSH),
+      join(home, SSHD_CONFIG, "authorized_keys"),
+      join(home, INTERNAL_SSH_CONFIG, "authorized_keys"),
       join(home, ".bashrc"),
       join(home, ".bash_profile"),
     ]);
