@@ -1,5 +1,5 @@
 import { terminalServer, type Options } from "@cocalc/conat/project/terminal";
-import { spawn } from "@lydell/node-pty";
+import { spawn } from "node-pty";
 import { getIdentity } from "./connection";
 import { readlink, realpath } from "node:fs/promises";
 import { getLogger } from "@cocalc/project/logger";
