@@ -97,6 +97,7 @@ export async function sandboxExec({
 
       // Build a one-off container run.
       args.push("run", "--runtime", "/usr/bin/crun", "--rm", "-i");
+      args.push("--security-opt", "no-new-privileges");
       // execFile timeout still applies; podman itself doesn't have a timeout flag.
       if (!noNetwork) {
         args.push(networkArgument());

@@ -631,6 +631,7 @@ export async function start({
     const args: string[] = [];
     args.push("run");
     args.push("--runtime", "/usr/bin/crun");
+    args.push("--security-opt", "no-new-privileges");
     //args.push("--user", "1000:1000");
     args.push("--user", "0:0");
     args.push("--detach");
