@@ -381,7 +381,17 @@ export function terminalServer({
         case "resize":
           const { rows, cols } = data;
           if (pty != null) {
-            pty.resize(cols, rows);
+            try {
+              pty.resize(cols, rows);
+            } catch (err) {
+              // Some node-pty/native combinations (seen with newer Node runtimes)
+              // require xPixel/yPixel arguments in addition to cols/rows.
+              try {
+                pty.resize(cols, rows, 0, 0);
+              } catch {
+                logger.debug("terminal resize failed", { rows, cols, err });
+              }
+            }
             pty.emit("broadcast", "resize", { rows, cols });
           }
           return;
