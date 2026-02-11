@@ -390,6 +390,25 @@ Mitigation:
 
 ## Implementation Ticket Sequence
 
+### Status Snapshot (Current Branch)
+- Ticket 1: Completed.
+- Ticket 2: In progress.
+  - Done:
+    - Added transitional absolute path state in project store:
+      - `current_path_abs`
+      - `history_path_abs`
+    - `set_current_path` now synchronizes legacy + absolute state.
+    - Added mode-aware HOME baseline for absolute normalization:
+      - launchpad: `/root`
+      - lite: `available_features.homeDirectory` fallback.
+    - URL/history/search paths now prefer absolute state.
+    - Root route handling improved in `load_target` (`/` special case).
+    - Create/download-new-file flows now derive paths from absolute state.
+  - Remaining:
+    - Remove empty-string semantics in active UI path model.
+    - Convert explorer/flyout consumers to treat absolute as primary.
+    - Finish URL behavior consistency for root/home aliases.
+
 ### Ticket 1: Path Model Module + Tests
 - Priority: P1
 - Effort: Easy
