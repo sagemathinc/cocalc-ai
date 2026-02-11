@@ -348,7 +348,7 @@ export const Datastore: React.FC<Props> = React.memo((props: Props) => {
   }
 
   function open(record) {
-    project_actions?.open_directory(`.smc/root/data/${record.name}/`);
+    project_actions?.open_directory(`/data/${record.name}/`);
   }
 
   function render_instructions() {

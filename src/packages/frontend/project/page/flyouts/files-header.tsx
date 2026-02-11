@@ -181,10 +181,7 @@ export function FilesHeader({
 
     // left arrow key: go up a directory
     else if (e.code === "ArrowLeft") {
-      if (
-        effective_current_path != null &&
-        effective_current_path !== "/"
-      ) {
+      if (effective_current_path !== "/") {
         if (effective_current_path.startsWith(".")) {
           actions?.set_current_path(
             effective_current_path.split("/").slice(0, -1).join("/"),

@@ -280,10 +280,7 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
     const isOpen = openFiles.includes(path);
 
     // if it is a directory, remove the trailing slash
-    // and if it starts with ".smc/root/", replace that by a "/"
-    const display = isDir
-      ? path.slice(0, -1).replace(/^\.smc\/root\//, "/")
-      : undefined;
+    const display = isDir ? path.slice(0, -1) : undefined;
 
     return (
       <FileListItem

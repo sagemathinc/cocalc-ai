@@ -318,10 +318,7 @@ export function FilesFlyout({
     // we reset the checked files as well. This should probably be somewhere in the actions, though.
     // The edge case is when more than one editor in different directories is open,
     // and you switch between the two. Checked files are not reset in that case.
-    if (
-      prev_current_path != null &&
-      prev_current_path !== effective_current_path
-    ) {
+    if (prev_current_path !== effective_current_path) {
       actions?.set_all_files_unchecked();
     }
 

@@ -8,7 +8,6 @@ import { Map } from "immutable";
 import { Ansi, toText } from "./ansi";
 import { TRACEBACK_STYLE } from "./style";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
-import { HOME_ROOT } from "@cocalc/util/consts/files";
 
 interface TracebackProps {
   message: Map<string, any>;
@@ -78,11 +77,7 @@ function parseFile(x: string): {
   const rest = x.slice(i);
   const v = a.split(":");
   const file = v[0];
-  let target = file;
-  if (target[0] === "/") {
-    // absolute path to the root
-    target = '~/' + HOME_ROOT + target; // use root symlink
-  }
+  const target = file;
 
   const line = parseInt(v[1]);
   return { rest, file, target, line };
