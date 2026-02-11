@@ -17,6 +17,7 @@
     "jupyter/output-messages/__test__",
     "misc/__test__",
     "components/__tests__",
+    "eslint.config.js",
     "test-mocha",
     "test",
     "editors/slate/playwright/dist",

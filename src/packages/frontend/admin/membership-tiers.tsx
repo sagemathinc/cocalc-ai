@@ -83,7 +83,7 @@ function parseJsonField(
   }
 }
 
-function use_membership_tiers() {
+function useMembershipTiers() {
   const [data, set_data] = React.useState<{ [key: string]: Tier }>({});
   const [editing, set_editing] = React.useState<Tier | null>(null);
   const [saving, set_saving] = React.useState<boolean>(false);
@@ -317,7 +317,7 @@ export function MembershipTiers() {
     edit_new_tier,
     save,
     load,
-  } = use_membership_tiers();
+  } = useMembershipTiers();
   const [jsonErrors, setJsonErrors] = React.useState<Record<string, string>>(
     {},
   );

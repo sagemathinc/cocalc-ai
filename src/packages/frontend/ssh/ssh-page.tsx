@@ -376,36 +376,34 @@ export const SshPage: React.FC = React.memo(() => {
     </div>
   );
 
-  if (sshRemoteTarget) {
-    return (
-      <div style={PAGE_STYLE}>
-        <Space style={TITLE_STYLE} size={12} align="center">
-          {lite && (
-            <Button
-              size="small"
-              onClick={() => {
-                redux.getActions("page").set_active_tab(project_id);
-              }}
-            >
-              Back
-            </Button>
-          )}
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            Remote SSH Session
-          </Typography.Title>
-        </Space>
-        <Typography.Paragraph>
-          SSH session management is disabled in this remote instance.
-        </Typography.Paragraph>
-        <Typography.Paragraph>
-          Target:{" "}
-          <Typography.Text code copyable={{ text: sshRemoteTarget }}>
-            {sshRemoteTarget}
-          </Typography.Text>
-        </Typography.Paragraph>
-      </div>
-    );
-  }
+  const remoteSshDisabledView = (
+    <div style={PAGE_STYLE}>
+      <Space style={TITLE_STYLE} size={12} align="center">
+        {lite && (
+          <Button
+            size="small"
+            onClick={() => {
+              redux.getActions("page").set_active_tab(project_id);
+            }}
+          >
+            Back
+          </Button>
+        )}
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          Remote SSH Session
+        </Typography.Title>
+      </Space>
+      <Typography.Paragraph>
+        SSH session management is disabled in this remote instance.
+      </Typography.Paragraph>
+      <Typography.Paragraph>
+        Target:{" "}
+        <Typography.Text code copyable={{ text: sshRemoteTarget }}>
+          {sshRemoteTarget}
+        </Typography.Text>
+      </Typography.Paragraph>
+    </div>
+  );
 
   const ensureReflectState = (target: string): ReflectTargetState => {
     return (
@@ -1161,7 +1159,9 @@ export const SshPage: React.FC = React.memo(() => {
           return (
             <Tooltip
               title={
-                <div style={{ maxWidth: 900, whiteSpace: "pre-wrap" }}>{text}</div>
+                <div style={{ maxWidth: 900, whiteSpace: "pre-wrap" }}>
+                  {text}
+                </div>
               }
             >
               <Typography.Text
@@ -1984,6 +1984,10 @@ export const SshPage: React.FC = React.memo(() => {
     }
   };
 
+  if (sshRemoteTarget) {
+    return remoteSshDisabledView;
+  }
+
   return (
     <div style={PAGE_STYLE}>
       <Space style={TITLE_STYLE} size={12} align="center">
@@ -2174,7 +2178,11 @@ export const SshPage: React.FC = React.memo(() => {
         }}
         okText="Create"
       >
-        <Form form={targetForm} layout="vertical" initialValues={{ autoStart: true }}>
+        <Form
+          form={targetForm}
+          layout="vertical"
+          initialValues={{ autoStart: true }}
+        >
           <Form.Item
             label="SSH target"
             name="target"
@@ -2185,7 +2193,11 @@ export const SshPage: React.FC = React.memo(() => {
           >
             <Input placeholder="user@host:22" />
           </Form.Item>
-          <Form.Item name="autoStart" valuePropName="checked" style={{ marginBottom: 0 }}>
+          <Form.Item
+            name="autoStart"
+            valuePropName="checked"
+            style={{ marginBottom: 0 }}
+          >
             <Checkbox>Start session immediately</Checkbox>
           </Form.Item>
         </Form>

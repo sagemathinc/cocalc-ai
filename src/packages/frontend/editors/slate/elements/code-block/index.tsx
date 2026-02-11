@@ -164,12 +164,26 @@ export const StaticElement: React.FC<RenderElementProps> = ({
   children,
 }) => {
   if (element.type === "code_line") {
-    return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
+    return (
+      <CodeLineElement attributes={attributes}>{children}</CodeLineElement>
+    );
   }
   if (element.type != "code_block") {
     throw Error("bug");
   }
 
+  return (
+    <StaticCodeBlockElement
+      attributes={attributes}
+      children={children}
+      element={element}
+    />
+  );
+};
+
+const StaticCodeBlockElement: React.FC<
+  RenderElementProps & { element: any }
+> = ({ attributes, element }) => {
   const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar, project_id } = useFileContext();
 
@@ -377,7 +391,10 @@ export const StaticElement: React.FC<RenderElementProps> = ({
           className="cocalc-slate-code-block"
           style={{ margin: 0 }}
           dangerouslySetInnerHTML={{
-            __html: highlightCodeHtml(renderedValue, temporaryInfo ?? element.info),
+            __html: highlightCodeHtml(
+              renderedValue,
+              temporaryInfo ?? element.info,
+            ),
           }}
         />
       )}

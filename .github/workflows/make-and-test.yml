@@ -70,6 +70,9 @@ jobs:
       - name: build
         run: cd src && pnpm build-dev
 
+      - name: lint frontend
+        run: cd src && pnpm -C packages/frontend run lint
+
       - name: test
         timeout-minutes: 15
         run: source venv/bin/activate && cd src && pnpm test

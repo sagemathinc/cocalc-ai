@@ -59,7 +59,7 @@ interface Token {
   };
 }
 
-function use_registration_tokens() {
+function useRegistrationTokens() {
   const [data, set_data] = React.useState<{ [key: string]: Token }>({});
   const [no_or_all_inactive, set_no_or_all_inactive] =
     React.useState<boolean>(false);
@@ -276,7 +276,7 @@ export function RegistrationToken() {
     save,
     load,
     loading,
-  } = use_registration_tokens();
+  } = useRegistrationTokens();
 
   function render_edit(): Rendered {
     const layout = {
@@ -431,10 +431,7 @@ export function RegistrationToken() {
             defaultSortOrder={"ascend"}
             sorter={(a, b) => a.token.localeCompare(b.token)}
           />
-          <Table.Column<Token>
-            title="Description"
-            dataIndex="descr"
-          />
+          <Table.Column<Token> title="Description" dataIndex="descr" />
           <Table.Column<Token>
             title="Uses"
             dataIndex="counter"

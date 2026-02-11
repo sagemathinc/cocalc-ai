@@ -95,7 +95,10 @@ import type { SlateEditor } from "./types";
 import { Actions } from "./types";
 import useUpload from "./upload";
 import { ChangeContext } from "./use-change";
-import { buildCodeBlockDecorations, getPrismGrammar } from "./elements/code-block/prism";
+import {
+  buildCodeBlockDecorations,
+  getPrismGrammar,
+} from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
 
 export type { SlateEditor };
@@ -201,9 +204,7 @@ interface Props {
     setSelectionFromMarkdownPosition?: (
       pos: { line: number; ch: number } | undefined,
     ) => boolean;
-    getMarkdownPositionForSelection?: () =>
-      | { line: number; ch: number }
-      | null;
+    getMarkdownPositionForSelection?: () => { line: number; ch: number } | null;
   } | null>;
   showEditBar?: boolean;
   preserveBlankLines?: boolean;
@@ -257,10 +258,9 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const actions = actions0 ?? {};
   const storeName = actions0?.name ?? "";
   const [localHelpOpen, setLocalHelpOpen] = useState(false);
-  const reduxHelpOpen = useRedux(
-    storeName,
-    "show_slate_help",
-  ) as boolean | undefined;
+  const reduxHelpOpen = useRedux(storeName, "show_slate_help") as
+    | boolean
+    | undefined;
   const showHelpModal = reduxHelpOpen ?? localHelpOpen;
   const font_size = font_size0 ?? desc?.get("font_size") ?? DEFAULT_FONT_SIZE; // so possible to use without specifying this.  TODO: should be from account settings
   const preserveBlankLines = preserveBlankLinesProp ?? false;
@@ -274,7 +274,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
   const ignoreRemoteWhileFocused = false;
   const mergeIdleMs =
-    remoteMergeConfig.idleMs ?? remoteMergeIdleMs ?? saveDebounceMs ?? SAVE_DEBOUNCE_MS;
+    remoteMergeConfig.idleMs ??
+    remoteMergeIdleMs ??
+    saveDebounceMs ??
+    SAVE_DEBOUNCE_MS;
 
   // Defer remote merges while typing/composing to avoid cursor jumps.
   const lastLocalEditAtRef = useRef<number>(0);
@@ -462,13 +465,13 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   const updatePendingRemoteIndicator = useCallback(
     (remote: string, local: string) => {
-    const preview = mergeHelperRef.current.previewMerge({ remote, local });
-    if (!preview.changed) {
-      pendingRemoteRef.current = null;
-      mergeHelperRef.current.noteApplied(preview.merged);
-    } else {
-      pendingRemoteRef.current = remote;
-    }
+      const preview = mergeHelperRef.current.previewMerge({ remote, local });
+      if (!preview.changed) {
+        pendingRemoteRef.current = null;
+        mergeHelperRef.current.noteApplied(preview.merged);
+      } else {
+        pendingRemoteRef.current = remote;
+      }
       setPendingRemoteIndicator((prev) =>
         prev === preview.changed ? prev : preview.changed,
       );
@@ -769,7 +772,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       const text = block.children.map((line) => Node.string(line)).join("\n");
       const info =
         block.type === "code_block"
-          ? (block as CodeBlock).info ?? ""
+          ? ((block as CodeBlock).info ?? "")
           : block.type === "html_block"
             ? "html"
             : "yaml";
@@ -865,7 +868,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (value != "Loading...") {
       restoreScroll();
     }
-  }, [value, ignoreRemoteWhileFocused, updatePendingRemoteIndicator, isMergeFocused]);
+  }, [
+    value,
+    ignoreRemoteWhileFocused,
+    updatePendingRemoteIndicator,
+    isMergeFocused,
+  ]);
 
   const lastSetValueRef = useRef<string | null>(null);
 
@@ -903,17 +911,15 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   // especially if the document is large. By debouncing, we only do this when
   // the user pauses typing for a moment. Also, this avoids making too many commits.
   // For tiny documents, user can make this small or even 0 to not debounce.
-  const saveValueDebounce =
-    saveDebounceMs != null && !saveDebounceMs
-      ? () => editor.saveValue()
-      : useMemo(
-          () =>
-            debounce(
-              () => editor.saveValue(),
-              saveDebounceMs ?? SAVE_DEBOUNCE_MS,
-            ),
-          [],
-        );
+  const saveValueDebounce = useMemo(() => {
+    if (saveDebounceMs != null && !saveDebounceMs) {
+      return () => editor.saveValue();
+    }
+    return debounce(
+      () => editor.saveValue(),
+      saveDebounceMs ?? SAVE_DEBOUNCE_MS,
+    );
+  }, [editor, saveDebounceMs]);
 
   function onKeyDown(e) {
     if (read_only) {
@@ -1056,28 +1062,29 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
-  const blockPatchEnabled = isBlockPatchEnabled() && isMergeFocused();
-  const debugLogEnabled =
-    typeof window !== "undefined" && Boolean((window as any).__slateDebugLog);
-  const blockPatchDebugEnabled = isBlockPatchDebugEnabled() || debugLogEnabled;
-  const forceDirectSetForClear = normalizedValue.length === 0;
-  debugSyncLog("value-normalized", {
-    focused: isMergeFocused(),
-    blockPatchEnabled,
-    blockPatchDebugEnabled,
-    sameAsLastSet: lastSetValueRef.current == normalizedValue,
-    sameAsEditor: normalizedValue == editor.getMarkdownValue(),
-    valueLength: normalizedValue.length,
-    forceDirectSetForClear,
-  });
-  const activeBlockIndex = editor.selection?.anchor?.path?.[0];
-  const recentlyTyped =
-    Date.now() - lastLocalEditAtRef.current < mergeIdleMsRef.current;
+    const blockPatchEnabled = isBlockPatchEnabled() && isMergeFocused();
+    const debugLogEnabled =
+      typeof window !== "undefined" && Boolean((window as any).__slateDebugLog);
+    const blockPatchDebugEnabled =
+      isBlockPatchDebugEnabled() || debugLogEnabled;
+    const forceDirectSetForClear = normalizedValue.length === 0;
+    debugSyncLog("value-normalized", {
+      focused: isMergeFocused(),
+      blockPatchEnabled,
+      blockPatchDebugEnabled,
+      sameAsLastSet: lastSetValueRef.current == normalizedValue,
+      sameAsEditor: normalizedValue == editor.getMarkdownValue(),
+      valueLength: normalizedValue.length,
+      forceDirectSetForClear,
+    });
+    const activeBlockIndex = editor.selection?.anchor?.path?.[0];
+    const recentlyTyped =
+      Date.now() - lastLocalEditAtRef.current < mergeIdleMsRef.current;
     const shouldDirectSet =
       forceDirectSetForClear ||
-      previousEditorValue.length <= 1 &&
-      nextEditorValue.length >= 40 &&
-      !ReactEditor.isFocused(editor);
+      (previousEditorValue.length <= 1 &&
+        nextEditorValue.length >= 40 &&
+        !ReactEditor.isFocused(editor));
     let operations: ReturnType<typeof slateDiff> | null = null;
     if (!blockPatchEnabled) {
       operations = shouldDirectSet
@@ -1090,7 +1097,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     }
     if (blockPatchEnabled) {
       const chunks = diffBlockSignatures(previousEditorValue, nextEditorValue);
-      const defer = shouldDeferBlockPatch(chunks, activeBlockIndex, recentlyTyped);
+      const defer = shouldDeferBlockPatch(
+        chunks,
+        activeBlockIndex,
+        recentlyTyped,
+      );
       if (defer) {
         debugSyncLog("block-patch:defer-active", {
           activeBlockIndex,
@@ -1510,7 +1521,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [],
   );
 
-  const useWindowing = !disableWindowing && ReactEditor.isUsingWindowing(editor);
+  const useWindowing =
+    !disableWindowing && ReactEditor.isUsingWindowing(editor);
   const showPendingRemoteIndicator =
     ignoreRemoteWhileFocused && pendingRemoteIndicator;
 
@@ -1560,9 +1572,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         <Editable
           placeholder={placeholder}
           autoFocus={autoFocus}
-          className={
-            useWindowing && height != "auto" ? "smc-vfill" : undefined
-          }
+          className={useWindowing && height != "auto" ? "smc-vfill" : undefined}
           readOnly={read_only}
           renderElement={renderElement}
           renderLeaf={Leaf}

@@ -14,15 +14,33 @@
  * CSS/font loaders that are not configured here. If you need behavior for
  * a test, implement a tiny local helper in this file instead.
  */
+/* eslint-disable react-hooks/rules-of-hooks */
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ReactDOM from "react-dom/client";
-import { createEditor, Descendant, Editor, Node, Range, Transforms } from "slate";
+import {
+  createEditor,
+  Descendant,
+  Editor,
+  Node,
+  Range,
+  Transforms,
+} from "slate";
 
 import { Editable, Slate, withReact, ReactEditor } from "../slate-react";
 import BlockMarkdownEditor from "../block-markdown-editor-core";
 import { EditableMarkdown } from "../editable-markdown";
-import { FrameContext, defaultFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
+import {
+  FrameContext,
+  defaultFrameContext,
+} from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import "./elements-types-shim";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
 import { withInsertText } from "../format/insert-text";
@@ -54,8 +72,12 @@ declare global {
         ch: number;
       }) => boolean;
       getSelection?: () => { index: number; selection: Range } | null;
-      getSelectionForBlock?: (index: number) => { index: number; selection: Range } | null;
-      getSelectionOffsetForBlock?: (index: number) => { offset: number; text: string } | null;
+      getSelectionForBlock?: (
+        index: number,
+      ) => { index: number; selection: Range } | null;
+      getSelectionOffsetForBlock?: (
+        index: number,
+      ) => { offset: number; text: string } | null;
       getBlocks?: () => string[];
       getFocusedIndex?: () => number | null;
     };
@@ -71,8 +93,14 @@ declare global {
         range: Range | number,
         position?: "start" | "end",
       ) => boolean | void;
-      setSelectionFromMarkdownA?: (pos: { line: number; ch: number }) => boolean;
-      setSelectionFromMarkdownB?: (pos: { line: number; ch: number }) => boolean;
+      setSelectionFromMarkdownA?: (pos: {
+        line: number;
+        ch: number;
+      }) => boolean;
+      setSelectionFromMarkdownB?: (pos: {
+        line: number;
+        ch: number;
+      }) => boolean;
       getBlocksA?: () => string[];
       getBlocksB?: () => string[];
       getSelectionA: () => Range | null;
@@ -86,7 +114,7 @@ const initialValue: Descendant[] = [
 ];
 
 // Provide lightweight polyfills so block-mode virtualization can mount in tests.
-  if (typeof window !== "undefined") {
+if (typeof window !== "undefined") {
   if (!("ResizeObserver" in window)) {
     class ResizeObserver {
       observe() {}
@@ -222,7 +250,9 @@ function Harness(): React.JSX.Element {
           return controlRef.current?.getSelectionForBlock?.(index);
         },
         getSelectionOffsetForBlock: (index: number) => {
-          return controlRef.current?.getSelectionOffsetForBlock?.(index) ?? null;
+          return (
+            controlRef.current?.getSelectionOffsetForBlock?.(index) ?? null
+          );
         },
         getBlocks: () => {
           return controlRef.current?.getBlocks?.() ?? [];
@@ -293,7 +323,9 @@ function Harness(): React.JSX.Element {
       }
     }
 
-    const [markdown, setMarkdown] = useState<string>("alpha\n\nbeta\n\ncharlie\n");
+    const [markdown, setMarkdown] = useState<string>(
+      "alpha\n\nbeta\n\ncharlie\n",
+    );
     const syncRef = useRef(new FakeSyncstring(markdown));
     const getValueRefA = useRef<() => string>(() => "");
     const getValueRefB = useRef<() => string>(() => "");
@@ -308,15 +340,21 @@ function Harness(): React.JSX.Element {
           syncRef.current.set(value);
         },
         setSelectionA: (index, position = "start") => {
-          return controlRefA.current?.setSelectionInBlock?.(index, position) ?? false;
+          return (
+            controlRefA.current?.setSelectionInBlock?.(index, position) ?? false
+          );
         },
         setSelectionB: (index, position = "start") => {
-          return controlRefB.current?.setSelectionInBlock?.(index, position) ?? false;
+          return (
+            controlRefB.current?.setSelectionInBlock?.(index, position) ?? false
+          );
         },
         getBlocksA: () => controlRefA.current?.getBlocks?.() ?? [],
         getBlocksB: () => controlRefB.current?.getBlocks?.() ?? [],
-        getSelectionA: () => controlRefA.current?.getSelectionInBlock?.()?.selection ?? null,
-        getSelectionB: () => controlRefB.current?.getSelectionInBlock?.()?.selection ?? null,
+        getSelectionA: () =>
+          controlRefA.current?.getSelectionInBlock?.()?.selection ?? null,
+        getSelectionB: () =>
+          controlRefB.current?.getSelectionInBlock?.()?.selection ?? null,
       };
     }, []);
 
@@ -332,7 +370,15 @@ function Harness(): React.JSX.Element {
     return (
       <HarnessErrorBoundary>
         <FrameContext.Provider value={defaultFrameContext}>
-          <div style={{ padding: 16, width: 640, height: 360, display: "flex", gap: 16 }}>
+          <div
+            style={{
+              padding: 16,
+              width: 640,
+              height: 360,
+              display: "flex",
+              gap: 16,
+            }}
+          >
             <div style={{ width: 300 }} data-testid="collab-editor-a">
               <BlockMarkdownEditor
                 value={markdown}
@@ -399,7 +445,9 @@ function Harness(): React.JSX.Element {
       }
     }
 
-    const [markdown, setMarkdown] = useState<string>("alpha\n\nbeta\n\ncharlie\n");
+    const [markdown, setMarkdown] = useState<string>(
+      "alpha\n\nbeta\n\ncharlie\n",
+    );
     const syncRef = useRef(new FakeSyncstring(markdown));
     const getValueRefA = useRef<() => string>(() => "");
     const getValueRefB = useRef<() => string>(() => "");
@@ -432,10 +480,16 @@ function Harness(): React.JSX.Element {
           return true;
         },
         setSelectionFromMarkdownA: (pos) => {
-          return controlRefA.current?.setSelectionFromMarkdownPosition?.(pos) ?? false;
+          return (
+            controlRefA.current?.setSelectionFromMarkdownPosition?.(pos) ??
+            false
+          );
         },
         setSelectionFromMarkdownB: (pos) => {
-          return controlRefB.current?.setSelectionFromMarkdownPosition?.(pos) ?? false;
+          return (
+            controlRefB.current?.setSelectionFromMarkdownPosition?.(pos) ??
+            false
+          );
         },
         getSelectionA: () => selectionRefA.current?.getSelection() ?? null,
         getSelectionB: () => selectionRefB.current?.getSelection() ?? null,
@@ -454,7 +508,15 @@ function Harness(): React.JSX.Element {
     return (
       <HarnessErrorBoundary>
         <FrameContext.Provider value={defaultFrameContext}>
-          <div style={{ padding: 16, width: 640, height: 320, display: "flex", gap: 16 }}>
+          <div
+            style={{
+              padding: 16,
+              width: 640,
+              height: 320,
+              display: "flex",
+              gap: 16,
+            }}
+          >
             <div style={{ width: 300 }} data-testid="collab-editor-a">
               <EditableMarkdown
                 value={markdown}
@@ -525,7 +587,10 @@ function Harness(): React.JSX.Element {
       }
       const handler = getHandler(event);
       if (handler) {
-        const handled = handler({ editor: editor as any, extra: { actions: {}, id: "", search: {} as any } });
+        const handled = handler({
+          editor: editor as any,
+          extra: { actions: {}, id: "", search: {} as any },
+        });
         if (handled) {
           event.preventDefault();
         }
@@ -540,7 +605,8 @@ function Harness(): React.JSX.Element {
         style={{
           width: 400,
           fontSize: 16,
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
           lineHeight: 1.3,
           padding: 16,
           border: "1px solid #ddd",
@@ -596,9 +662,14 @@ function Harness(): React.JSX.Element {
                         e.stopPropagation();
                         const doc = markdownToSlateForHarness(codeValue ?? "");
                         Editor.withoutNormalizing(editor, () => {
-                          const path = ReactEditor.findPath(editor, codeElement);
+                          const path = ReactEditor.findPath(
+                            editor,
+                            codeElement,
+                          );
                           Transforms.removeNodes(editor, { at: path });
-                          Transforms.insertNodes(editor, doc as any, { at: path });
+                          Transforms.insertNodes(editor, doc as any, {
+                            at: path,
+                          });
                         });
                       }}
                     >
@@ -640,13 +711,8 @@ class HarnessErrorBoundary extends React.Component<
 
   render(): React.ReactNode {
     if (this.state.error) {
-      const message =
-        this.state.error?.message ?? String(this.state.error);
-      return (
-        <pre data-testid="harness-error">
-          {message}
-        </pre>
-      );
+      const message = this.state.error?.message ?? String(this.state.error);
+      return <pre data-testid="harness-error">{message}</pre>;
     }
     return this.props.children;
   }
@@ -712,7 +778,7 @@ function inlineAutoformatAtCursor(editor: Editor): void {
     return;
   }
 
-  const replacement = codeMatch ? codeMatch[1] : boldMatch?.[1] ?? "";
+  const replacement = codeMatch ? codeMatch[1] : (boldMatch?.[1] ?? "");
   const newText =
     beforeNoSpace.replace(/(`[^`]+`|\*\*[^*]+\*\*)$/, replacement) +
     " " +

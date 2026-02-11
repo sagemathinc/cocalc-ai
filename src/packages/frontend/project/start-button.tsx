@@ -12,8 +12,7 @@ It's really more than just that button, since it gives info as starting/stopping
 happens, and also when the system is heavily loaded.
 */
 
-import { Alert, Button, Progress, Space, Spin, Tooltip } from "antd";
-import type { ButtonProps } from "antd";
+import { Alert, Button, Space, Tooltip } from "antd";
 import { CSSProperties, useRef } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -21,19 +20,13 @@ import {
   A,
   Icon,
   ProjectState,
-  TimeElapsed,
   VisibleMDLG,
 } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
-import { capitalize, server_seconds_ago } from "@cocalc/util/misc";
+import { server_seconds_ago } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { useAllowedFreeProjectToRun } from "./client-side-throttle";
 import { useProjectContext } from "./context";
 import { DOC_TRIAL } from "./project-banner";
-import { lite } from "@cocalc/frontend/lite";
-import Bootlog from "./bootlog";
-import type { StartLroState } from "./start-ops";
-import type { MoveLroState } from "./move-ops";
 
 const STYLE: CSSProperties = {
   fontSize: "40px",
@@ -41,64 +34,29 @@ const STYLE: CSSProperties = {
   color: COLORS.GRAY_M,
 } as const;
 
-function toTimestamp(value?: Date | string | null): number | undefined {
-  if (!value) return undefined;
-  const date = new Date(value as any);
-  const ts = date.getTime();
-  return Number.isFinite(ts) ? ts : undefined;
+interface StartButtonProps {
+  project_id?: string;
+  minimal?: boolean;
+  style?: CSSProperties;
+  size?: "small" | "middle" | "large";
+  danger?: boolean;
+  disabled?: boolean;
 }
 
 export function StartButton({
+  project_id: projectIdProp,
   minimal,
   style,
-  project_id: projectIdProp,
   size,
   danger,
   disabled,
-}: {
-  minimal?: boolean;
-  style?: CSSProperties;
-  project_id?: string;
-  size?: ButtonProps["size"];
-  danger?: boolean;
-  disabled?: boolean;
-}) {
+}: StartButtonProps) {
   const intl = useIntl();
-  const projectLabel = intl.formatMessage(labels.project);
-  const projectsLabel = intl.formatMessage(labels.projects);
   const { project_id: contextProjectId } = useProjectContext();
   const project_id = projectIdProp ?? contextProjectId;
-  if (!project_id) {
-    return null;
-  }
   const project_map = useTypedRedux("projects", "project_map");
   const lastNotRunningRef = useRef<null | number>(null);
-  const allowed = useAllowedFreeProjectToRun(project_id);
-  const startLro = redux.useProjectStore(
-    (store) => store?.get("start_lro")?.toJS() as StartLroState | undefined,
-    project_id,
-  );
-  const moveLro = redux.useProjectStore(
-    (store) => store?.get("move_lro")?.toJS() as MoveLroState | undefined,
-    project_id,
-  );
-  const startLroActive =
-    startLro != null &&
-    (!startLro.summary ||
-      startLro.summary.status === "queued" ||
-      startLro.summary.status === "running");
-  const startLroSummary = startLro?.summary;
-  const startLroStatus = startLroSummary?.status
-    ? capitalize(startLroSummary.status)
-    : undefined;
-  const startLroStartTs = startLroSummary
-    ? toTimestamp(startLroSummary.started_at ?? startLroSummary.created_at)
-    : undefined;
-  const moveActive =
-    moveLro != null &&
-    (!moveLro.summary ||
-      moveLro.summary.status === "queued" ||
-      moveLro.summary.status === "running");
+  const allowed = useAllowedFreeProjectToRun(project_id ?? "");
 
   const state = useMemo(() => {
     const state = project_map?.get(project_id)?.get("state");
@@ -114,9 +72,6 @@ export function StartButton({
   // Making the UI depend on this instead of *just* the state
   // makes things feel more responsive.
   const starting = useMemo(() => {
-    if (startLroActive) {
-      return true;
-    }
     if (state?.get("state") === "starting" || state?.get("state") === "opening")
       return true;
     if (state?.get("state") === "running") return false;
@@ -141,11 +96,13 @@ export function StartButton({
     // action is start and it didn't quite get taken care of yet by backend server,
     // but keep disabled so the user doesn't keep making the request.
     return true;
-  }, [project_map, startLroActive]);
+  }, [project_map]);
 
-  // in lite mode cocalc *is* being served directly from the project so it makes no sense
-  // to start or stop the project.
-  if (lite || state?.get("state") === "running") {
+  if (!project_id) {
+    return null;
+  }
+
+  if (state?.get("state") === "running") {
     return null;
   }
 
@@ -156,12 +113,11 @@ export function StartButton({
         <VisibleMDLG>
           <Alert
             style={{ margin: "10px 20%" }}
-            title={
+            message={
               <span style={{ fontWeight: 500, fontSize: "14pt" }}>
                 <FormattedMessage
                   id="project.start-button.trial.message"
-                  defaultMessage={"Too Many Free Trial {projectsLabel}"}
-                  values={{ projectsLabel }}
+                  defaultMessage={"Too Many Free Trial Projects"}
                 />
               </span>
             }
@@ -170,14 +126,12 @@ export function StartButton({
               <span style={{ fontSize: "12pt" }}>
                 <FormattedMessage
                   id="project.start-button.trial.description"
-                  defaultMessage={`There is no more capacity for <A>Free Trial {projectsLabel}</A> on CoCalc right now.
+                  defaultMessage={`There is no more capacity for <A>Free Trial projects</A>on CoCalc right now.
                   {br}
-                  <A2>Upgrade your {projectLabel}</A2> with a membership.
+                  <A2>Upgrade your project</A2> using <A3>a license</A3> or {A4}.
                   `}
                   values={{
                     br: <br />,
-                    projectsLabel: projectsLabel.toLowerCase(),
-                    projectLabel: projectLabel.toLowerCase(),
                     A: (c) => <A href={DOC_TRIAL}>{c}</A>,
                     A2: (c) => (
                       <a
@@ -189,6 +143,14 @@ export function StartButton({
                       >
                         {c}
                       </a>
+                    ),
+                    A3: (c) => (
+                      <A href="https://doc.cocalc.com/licenses.html">{c}</A>
+                    ),
+                    A4: (
+                      <A href="https://doc.cocalc.com/paygo.html">
+                        pay as you go
+                      </A>
                     ),
                   }}
                 />
@@ -204,93 +166,48 @@ export function StartButton({
       state == null ||
       !state?.get("state") ||
       (allowed &&
-        ["opened", "closed", "archived"].includes(
-          state?.get("state"),
-        ));
+        ["opened", "closed", "archived"].includes(state?.get("state")));
 
     const txt = intl.formatMessage(
       {
         id: "project.start-button.button.txt",
-        defaultMessage: `{starting, select, true {Starting {projectLabel}} other {Start {projectLabel}}}`,
+        defaultMessage: `{starting, select, true {Starting Project} other {Start Project}}`,
         description:
           "Label on a button, either to start the project or indicating the project is currently starting.",
       },
-      { starting, projectLabel },
+      { starting },
     );
 
-    const membership_hint = `This ${projectLabel.toLowerCase()} will start with the upgrades that your membership level provides.`;
-
     return (
-      <Space size="small" align="center">
-        <Tooltip
-          title={
-            <div>
-              <ProjectState state={state} show_desc={allowed} />
-              <div style={{ fontSize: "12px", color: "#fff" }}>
-                {membership_hint}
-              </div>
-              {render_not_allowed()}
-              {starting && (
-                <div style={{ background: "white" }}>
-                  {startLroSummary && (
-                    <div style={{ fontSize: "12px", color: COLORS.GRAY_M }}>
-                      LRO: {startLroStatus ?? "Unknown"}
-                      {startLroStartTs != null && (
-                        <>
-                          {" "}
-                          &middot;{" "}
-                          <TimeElapsed
-                            start_ts={startLroStartTs}
-                            longform={false}
-                          />
-                        </>
-                      )}
-                    </div>
-                  )}
-                  <Bootlog
-                    style={{
-                      border: "1px solid #ddd",
-                      padding: "15px",
-                      boxShadow: "5px 5px 5px grey",
-                    }}
-                    lro={
-                      startLroSummary
-                        ? {
-                            op_id: startLroSummary.op_id,
-                            scope_type: startLroSummary.scope_type,
-                            scope_id: startLroSummary.scope_id,
-                          }
-                        : undefined
-                    }
-                  />
-                </div>
-              )}
-            </div>
-          }
+      <Tooltip
+        title={
+          <div>
+            <ProjectState state={state} show_desc={allowed} />
+            {render_not_allowed()}
+          </div>
+        }
+      >
+        <Button
+          type="primary"
+          size={size ?? (minimal ? undefined : "large")}
+          style={minimal ? style : undefined}
+          disabled={disabled || !enabled}
+          danger={danger}
+          onClick={async () => {
+            try {
+              await redux.getActions("projects").start_project(project_id);
+            } catch (err) {
+              // maybe ui should show this some other way
+              console.warn("WARNING -- issue starting project ", err);
+            }
+          }}
         >
-          <Button
-            type="primary"
-            size={size ?? (minimal ? undefined : "large")}
-            style={minimal ? style : undefined}
-            danger={danger}
-            disabled={!enabled || disabled}
-            onClick={async () => {
-              try {
-                await redux.getActions("projects").start_project(project_id);
-              } catch (err) {
-                // maybe ui should show this some other way
-                console.warn("WARNING -- issue starting project ", err);
-              }
-            }}
-          >
-            <Space>
-              {starting ? <Icon name="cocalc-ring" spin /> : <Icon name="play" />}
-              {txt}
-            </Space>
-          </Button>
-        </Tooltip>
-        {moveActive && moveLro && <MoveProgressInline moveLro={moveLro} />}
-      </Space>
+          <Space>
+            {starting ? <Icon name="cocalc-ring" spin /> : <Icon name="play" />}
+            {txt}
+          </Space>
+        </Button>
+      </Tooltip>
     );
   }
 
@@ -305,7 +222,7 @@ export function StartButton({
       <Alert
         banner={true}
         type="error"
-        title="Admin Workspace View"
+        message="Admin Project View"
         description={
           <>
             WARNING: You are viewing this project as an admin! (1) Some things
@@ -322,7 +239,7 @@ export function StartButton({
       <Alert
         banner={true}
         showIcon={false}
-        title={
+        message={
           <>
             <span
               style={{
@@ -347,44 +264,5 @@ export function StartButton({
         ? render_admin_view()
         : render_normal_view()}
     </div>
-  );
-}
-
-function MoveProgressInline({ moveLro }: { moveLro: MoveLroState }) {
-  const phaseMessage =
-    moveLro.summary?.progress_summary?.phase ??
-    moveLro.last_progress?.phase ??
-    moveLro.last_progress?.message ??
-    "Moving workspace";
-  const progress = moveLro.last_progress?.progress;
-  const percent =
-    progress == null
-      ? undefined
-      : Math.max(0, Math.min(100, Math.round(progress)));
-  const status = moveLro.summary?.status;
-
-  return (
-    <Space size="small" align="center">
-      <span style={{ fontSize: "11px", color: COLORS.GRAY_M }}>
-        {phaseMessage}
-      </span>
-      {percent == null ? (
-        <Spin size="small" />
-      ) : (
-        <Progress
-          percent={percent}
-          size="small"
-          showInfo={false}
-          status={
-            status === "failed" || status === "canceled" || status === "expired"
-              ? "exception"
-              : status === "succeeded"
-                ? "success"
-                : "active"
-          }
-          style={{ width: "120px" }}
-        />
-      )}
-    </Space>
   );
 }

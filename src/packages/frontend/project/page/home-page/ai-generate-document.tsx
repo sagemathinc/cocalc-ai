@@ -179,7 +179,10 @@ function AIGenerateDocument({
   useEffect(() => {
     if (!show) return;
     if (initialPrompt == null) return;
-    if (!lastShowRef.current || lastInitialPromptRef.current !== initialPrompt) {
+    if (
+      !lastShowRef.current ||
+      lastInitialPromptRef.current !== initialPrompt
+    ) {
       setPrompt(initialPrompt);
       lastInitialPromptRef.current = initialPrompt;
     }
@@ -638,9 +641,9 @@ function AIGenerateDocument({
     llmStream.emit("start");
   }
 
-  if (!redux.getStore("projects").hasLanguageModelEnabled(project_id)) {
-    return null;
-  }
+  const hasLanguageModelEnabled = redux
+    .getStore("projects")
+    .hasLanguageModelEnabled(project_id);
 
   const fullPrompt = createPrompt();
 
@@ -655,9 +658,8 @@ function AIGenerateDocument({
         const { input, history, system } = fullPrompt;
 
         // do not import until needed -- it is HUGE!
-        const { getMaxTokens, numTokensUpperBound } = await import(
-          "@cocalc/frontend/misc/llm"
-        );
+        const { getMaxTokens, numTokensUpperBound } =
+          await import("@cocalc/frontend/misc/llm");
 
         const all = [
           input,
@@ -673,6 +675,10 @@ function AIGenerateDocument({
     ),
     [fullPrompt],
   );
+
+  if (!hasLanguageModelEnabled) {
+    return null;
+  }
 
   function renderExamples() {
     if (isEmpty(DOCUMENT[ext])) return;
