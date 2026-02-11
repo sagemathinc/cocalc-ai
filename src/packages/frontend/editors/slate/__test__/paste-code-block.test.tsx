@@ -51,7 +51,7 @@ test("multiline paste always offers convert-to-rich-text option", () => {
   expect(code.markdownCandidate).toBe(true);
 });
 
-test("single-line plain text paste offers convert-to-rich-text option", () => {
+test("single-line plain text paste inserts plain text", () => {
   const editor = withAutoFormat(withReact(createEditor()));
   editor.children = [{ type: "paragraph", children: [{ text: "" }] }] as Descendant[];
   editor.selection = {
@@ -67,12 +67,8 @@ test("single-line plain text paste offers convert-to-rich-text option", () => {
 
   editor.insertData(data as any);
 
-  const code = editor.children.find(
-    (node: any) => node.type === "code_block",
-  ) as any;
-  expect(code).toBeTruthy();
-  expect(getCodeBlockText(code)).toBe("solo");
-  expect(code.markdownCandidate).toBe(true);
+  expect(editor.children.find((n: any) => n.type === "code_block")).toBeFalsy();
+  expect((editor.children[0] as any).children[0].text).toBe("solo");
 });
 
 test("single-line url paste inserts plain text", () => {
