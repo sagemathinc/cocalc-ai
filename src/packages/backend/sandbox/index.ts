@@ -123,6 +123,9 @@ interface Options {
   unsafeMode?: boolean;
   // readonly -- only allow operations that don't change files
   readonly?: boolean;
+  // optional path to treat as "/" when mounted/available.
+  // if unavailable, we fall back to `path`.
+  root?: string;
   host?: string;
   rusticRepo?: string;
 }
@@ -136,6 +139,8 @@ const INTERNAL_METHODS = new Set([
   "path",
   "unsafeMode",
   "readonly",
+  "root",
+  "rootEnabled",
   "assertWritable",
   "rusticRepo",
   "host",
@@ -148,6 +153,8 @@ const INTERNAL_METHODS = new Set([
 export class SandboxedFilesystem {
   public readonly unsafeMode: boolean;
   public readonly readonly: boolean;
+  public readonly root?: string;
+  private rootEnabled = false;
   public rusticRepo: string;
   private host?: string;
   private lastOnDisk = new LRU<string, string>({
@@ -165,12 +172,14 @@ export class SandboxedFilesystem {
     {
       unsafeMode = false,
       readonly = false,
+      root,
       host = "global",
       rusticRepo: repo,
     }: Options = {},
   ) {
     this.unsafeMode = !!unsafeMode;
     this.readonly = !!readonly;
+    this.root = root;
     this.host = host;
     this.rusticRepo = repo ?? rusticRepo;
     for (const f in this) {
@@ -184,14 +193,59 @@ export class SandboxedFilesystem {
           // @ts-ignore
           return await orig(...args);
         } catch (err) {
-          if (err.path) {
-            err.path = err.path.slice(this.path.length + 1);
+          const sandboxBasePath = await this.resolveSandboxBasePath();
+          if (typeof err?.path == "string") {
+            if (
+              err.path == sandboxBasePath ||
+              err.path.startsWith(sandboxBasePath + "/")
+            ) {
+              err.path = this.toSandboxRelativePath(err.path, sandboxBasePath);
+            } else if (
+              err.path == this.path ||
+              err.path.startsWith(this.path + "/")
+            ) {
+              err.path = err.path.slice(this.path.length + 1);
+            }
           }
-          err.message = replace_all(err.message, this.path + "/", "");
+          if (typeof err?.message == "string") {
+            err.message = replace_all(err.message, sandboxBasePath + "/", "");
+            if (sandboxBasePath != this.path) {
+              err.message = replace_all(err.message, this.path + "/", "");
+            }
+          }
           throw err;
         }
       };
     }
+  }
+
+  private async resolveSandboxBasePath(): Promise<string> {
+    if (!this.root) {
+      return this.path;
+    }
+    if (this.rootEnabled) {
+      return this.root;
+    }
+    try {
+      if ((await stat(this.root)).isDirectory()) {
+        this.rootEnabled = true;
+        return this.root;
+      }
+    } catch {
+      // root path not available yet -- fall back to path
+    }
+    return this.path;
+  }
+
+  private toSandboxRelativePath(absPath: string, basePath: string): string {
+    if (absPath == basePath) {
+      return basePath == this.path ? "" : "/";
+    }
+    if (!absPath.startsWith(basePath + "/")) {
+      return absPath;
+    }
+    const rel = absPath.slice(basePath.length + 1);
+    return basePath == this.path ? rel : `/${rel}`;
   }
 
   private assertWritable = (path: string) => {
@@ -213,8 +267,9 @@ export class SandboxedFilesystem {
     if (typeof path != "string") {
       throw Error(`path must be a string but is of type ${typeof path}`);
     }
+    const sandboxBasePath = await this.resolveSandboxBasePath();
     // pathInSandbox is *definitely* a path in the sandbox:
-    const pathInSandbox = join(this.path, resolve("/", path));
+    const pathInSandbox = join(sandboxBasePath, resolve("/", path));
     if (this.unsafeMode) {
       // not secure -- just convenient.
       return pathInSandbox;
@@ -224,7 +279,7 @@ export class SandboxedFilesystem {
     // we resolve to the realpath:
     try {
       const p = await realpath(pathInSandbox);
-      if (p != this.path && !p.startsWith(this.path + "/")) {
+      if (p != sandboxBasePath && !p.startsWith(sandboxBasePath + "/")) {
         throw Error(
           `realpath of '${path}' resolves to a path outside of sandbox`,
         );
@@ -268,7 +323,8 @@ export class SandboxedFilesystem {
     // do this but for cocalc this is very convenient and saves some network
     // round trips.
     const destDir = dirname(dest);
-    if (destDir != this.path && !(await exists(destDir))) {
+    const sandboxBasePath = await this.resolveSandboxBasePath();
+    if (destDir != sandboxBasePath && !(await exists(destDir))) {
       await mkdir(destDir, { recursive: true });
     }
 
@@ -439,16 +495,26 @@ export class SandboxedFilesystem {
   readdir = async (path: string, options?) => {
     const x = (await readdir(await this.safeAbsPath(path), options)) as any[];
     if (options?.withFileTypes) {
+      const sandboxBasePath = await this.resolveSandboxBasePath();
       // each entry in x has a name and parentPath field, which refers to the
       // absolute paths to the directory that contains x or the target of x (if
       // it is a link).  This is an absolute path on the fileserver, which we try
       // not to expose from the sandbox, hence we modify them all if possible.
       for (const a of x) {
-        if (a.name.startsWith(this.path)) {
-          a.name = a.name.slice(this.path.length + 1);
+        if (
+          a.name == sandboxBasePath ||
+          a.name.startsWith(sandboxBasePath + "/")
+        ) {
+          a.name = this.toSandboxRelativePath(a.name, sandboxBasePath);
         }
-        if (a.parentPath.startsWith(this.path)) {
-          a.parentPath = a.parentPath.slice(this.path.length + 1);
+        if (
+          a.parentPath == sandboxBasePath ||
+          a.parentPath.startsWith(sandboxBasePath + "/")
+        ) {
+          a.parentPath = this.toSandboxRelativePath(
+            a.parentPath,
+            sandboxBasePath,
+          );
         }
       }
     }
@@ -461,8 +527,9 @@ export class SandboxedFilesystem {
   };
 
   realpath = async (path: string): Promise<string> => {
+    const sandboxBasePath = await this.resolveSandboxBasePath();
     const x = await realpath(await this.safeAbsPath(path));
-    return x.slice(this.path.length + 1);
+    return this.toSandboxRelativePath(x, sandboxBasePath);
   };
 
   rename = async (oldPath: string, newPath: string) => {

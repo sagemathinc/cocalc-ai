@@ -307,6 +307,46 @@ describe("read only sandbox", () => {
   });
 });
 
+describe("root option sandbox", () => {
+  let fs;
+  let home: string;
+  let root: string;
+
+  it("falls back to home path when root is missing", async () => {
+    home = join(tempDir, "test-root-home");
+    root = join(tempDir, "test-root-missing");
+    await mkdir(home);
+    fs = new SandboxedFilesystem(home, { root });
+    await fs.writeFile("/alpha.txt", "from-home");
+    expect(await fs.readFile("/alpha.txt", "utf8")).toBe("from-home");
+    expect(await readFile(join(home, "alpha.txt"), "utf8")).toBe("from-home");
+  });
+
+  it("switches to root path once root exists", async () => {
+    await mkdir(root, { recursive: true });
+    await fs.mkdir("/tmp");
+    await fs.writeFile("/tmp/from-root.txt", "from-root");
+    expect(await fs.readFile("/tmp/from-root.txt", "utf8")).toBe("from-root");
+    expect(await readFile(join(root, "tmp", "from-root.txt"), "utf8")).toBe(
+      "from-root",
+    );
+    await expect(readFile(join(home, "tmp", "from-root.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("realpath returns absolute style paths when root mode is active", async () => {
+    expect(await fs.realpath("/tmp/from-root.txt")).toBe("/tmp/from-root.txt");
+  });
+
+  it("safe mode still blocks symlink escape outside root", async () => {
+    await writeFile(join(tempDir, "root-secret.txt"), "s3cr3t");
+    await symlink(join(tempDir, "root-secret.txt"), join(root, "danger-link"));
+    await expect(fs.readFile("/danger-link", "utf8")).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+
+});
+
 afterAll(async () => {
   await rm(tempDir, { force: true, recursive: true });
 });
