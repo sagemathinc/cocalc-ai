@@ -22,6 +22,7 @@ import { once } from "@cocalc/util/async-utils";
 import { filename_extension, history_path, path_split } from "@cocalc/util/misc";
 import { SyncDoc } from "@cocalc/sync/editor/generic/sync-doc";
 import { exec } from "@cocalc/frontend/frame-editors/generic/client";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ViewDocument } from "./view-document";
 import {
   BaseEditorActions as CodeEditorActions,
@@ -71,6 +72,7 @@ const gitShowCache = new LRUCache<string, string>({
 export interface TimeTravelState extends CodeEditorState {
   versions: List<PatchId>;
   git_versions: List<number>;
+  snapshot_versions: List<string>;
   loading: boolean;
   has_full_history: boolean;
   docpath: string;
@@ -107,6 +109,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     this.docext = filename_extension(this.docpath);
     this.setState({
       versions: List([]),
+      snapshot_versions: List([]),
       loading: true,
       has_full_history: false,
       docpath: this.docpath,
@@ -414,6 +417,99 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     this.gitProjectPathPrefix = undefined;
   };
 
+  updateSnapshotVersions = async (): Promise<List<string>> => {
+    try {
+      const fs = webapp_client.conat_client.conat().fs({
+        project_id: this.project_id,
+      });
+      const { tail } = path_split(this.docpath);
+      const docDepth = this.docpath.split("/").filter(Boolean).length + 1;
+      // Find candidate files in one RPC, then exact-match relative path in JS.
+      // This avoids tricky glob escaping and N per-snapshot stat calls.
+      const { stdout } = await fs.find(SNAPSHOTS, {
+        options: [
+          "-mindepth",
+          `${docDepth}`,
+          "-maxdepth",
+          `${docDepth}`,
+          "-type",
+          "f",
+          "-name",
+          tail,
+          "-printf",
+          "%T@\t%P\n",
+        ],
+      });
+      const existingBySnapshot = new Map<string, number>();
+      for (const row of Buffer.from(stdout).toString().split("\n")) {
+        if (!row) continue;
+        const i = row.indexOf("\t");
+        if (i <= 0) continue;
+        const mtime = Number(row.slice(0, i));
+        if (!Number.isFinite(mtime)) continue;
+        const rel = row.slice(i + 1);
+        const j = rel.indexOf("/");
+        if (j <= 0) continue;
+        const snapshot = rel.slice(0, j).trim();
+        const docpath = rel.slice(j + 1);
+        if (!snapshot || docpath !== this.docpath) continue;
+        const mtimeMs = Math.round(mtime * 1000);
+        const prev = existingBySnapshot.get(snapshot);
+        if (prev == null || mtimeMs > prev) {
+          existingBySnapshot.set(snapshot, mtimeMs);
+        }
+      }
+      const existing = Array.from(existingBySnapshot.entries())
+        .map(([snapshot, mtimeMs]) => ({ snapshot, mtimeMs }))
+        .sort((a, b) => a.snapshot.localeCompare(b.snapshot));
+      // Keep only versions where file timestamp changes; this matches "git log <file>"
+      // behavior better by eliding runs of snapshots with unchanged file content timestamp.
+      const filtered: string[] = [];
+      let lastMtimeMs: number | undefined = undefined;
+      for (const { snapshot, mtimeMs } of existing) {
+        if (lastMtimeMs !== mtimeMs) {
+          filtered.push(snapshot);
+          lastMtimeMs = mtimeMs;
+        }
+      }
+      const snapshot_versions = List<string>(filtered);
+      this.setState({ snapshot_versions });
+      return snapshot_versions;
+    } catch (_err) {
+      const snapshot_versions = List<string>([]);
+      this.setState({ snapshot_versions });
+      return snapshot_versions;
+    }
+  };
+
+  snapshotWallTime = (
+    version: number | string | undefined,
+  ): number | undefined => {
+    if (version == null) return;
+    const t = Date.parse(`${version}`);
+    if (!Number.isFinite(t)) return;
+    return t;
+  };
+
+  snapshotDoc = async (
+    version: number | string | undefined,
+  ): Promise<ViewDocument | undefined> => {
+    if (version == null) return;
+    try {
+      const resp = await webapp_client.conat_client.hub.projects.getSnapshotFileText(
+        {
+          project_id: this.project_id,
+          snapshot: `${version}`,
+          path: this.docpath,
+        },
+      );
+      return new ViewDocument(this.docpath, resp.content);
+    } catch (err) {
+      this.set_error(`${err}`);
+      return;
+    }
+  };
+
   updateGitVersions = async () => {
     // log("updateGitVersions");
     // versions is an ordered list of Date objects, one for each commit that involves this file.
@@ -702,6 +798,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
           }
           target.set_frame_tree({
             id,
+            source: "git",
             gitMode: true,
             changesMode: false,
             version: targetVersion,
