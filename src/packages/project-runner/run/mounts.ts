@@ -18,13 +18,17 @@ function splitRunnerMode(): boolean {
 }
 
 function resolveNodeBinSource(): string {
+  const projectNodeBin = `${process.env.COCALC_PROJECT_NODE_BIN ?? ""}`.trim();
+  if (projectNodeBin) {
+    return projectNodeBin;
+  }
   const processBin = dirname(process.execPath);
   const tools = `${process.env.COCALC_PROJECT_TOOLS ?? ""}`.trim();
   if (
     splitRunnerMode() &&
     (processBin.includes("/.nvm/") || processBin.startsWith("/home/"))
   ) {
-    if (tools) return tools;
+    if (tools) return join(tools, "bin");
     return "/usr/bin";
   }
   return processBin;

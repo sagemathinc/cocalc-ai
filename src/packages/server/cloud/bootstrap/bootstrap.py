@@ -897,7 +897,7 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> None:
 
 
 def install_node(cfg: BootstrapConfig) -> None:
-    log_line(cfg, "bootstrap: installing node via nvm")
+    log_line(cfg, "bootstrap: installing node via nvm and publishing shared runtime")
     nvm_dir = f"{cfg.bootstrap_home}/.nvm"
     install_cmd = (
         f'export NVM_DIR="{nvm_dir}"; '
@@ -909,6 +909,62 @@ def install_node(cfg: BootstrapConfig) -> None:
         f'nvm alias default {cfg.node_version}'
     )
     run_cmd(cfg, ["bash", "-lc", install_cmd], "install node", as_user=cfg.host_user)
+    which_cmd = (
+        f'export NVM_DIR="{nvm_dir}"; '
+        f'. "$NVM_DIR/nvm.sh"; '
+        f'nvm which {cfg.node_version}'
+    )
+    which_result = run_cmd(
+        cfg,
+        ["bash", "-lc", which_cmd],
+        "resolve installed node path",
+        as_user=cfg.host_user,
+    )
+    node_path = ""
+    for line in reversed(which_result.stdout.splitlines()):
+        text = line.strip()
+        if text:
+            node_path = text
+            break
+    if not node_path or not node_path.startswith("/"):
+        raise RuntimeError(f"unable to resolve installed node path from nvm output: {node_path!r}")
+    node_binary = Path(node_path)
+    node_tree = node_binary.parent.parent
+    if not node_binary.exists():
+        raise RuntimeError(f"resolved node binary does not exist: {node_binary}")
+    if not node_tree.exists():
+        raise RuntimeError(f"resolved node runtime does not exist: {node_tree}")
+    shared_root = Path("/opt/cocalc/node")
+    shared_version = shared_root / node_tree.name
+    shared_current = shared_root / "current"
+    shared_root.mkdir(parents=True, exist_ok=True)
+    if shared_version.exists():
+        if shared_version.is_symlink() or shared_version.is_file():
+            shared_version.unlink()
+        else:
+            shutil.rmtree(shared_version)
+    run_cmd(
+        cfg,
+        ["cp", "-a", str(node_tree), str(shared_version)],
+        "copy node runtime to /opt/cocalc/node",
+    )
+    if shared_current.is_symlink() or shared_current.is_file():
+        shared_current.unlink()
+    elif shared_current.exists():
+        shutil.rmtree(shared_current)
+    shared_current.symlink_to(shared_version, target_is_directory=True)
+    run_best_effort(
+        cfg,
+        ["chmod", "-R", "a+rX", str(shared_root)],
+        "chmod shared node runtime",
+    )
+    if cfg.host_user and cfg.host_user != "root":
+        run_best_effort(
+            cfg,
+            ["chown", "-R", f"{cfg.host_user}:{cfg.host_user}", str(shared_root)],
+            "chown shared node runtime",
+        )
+    upsert_env(cfg.env_file, "COCALC_PROJECT_NODE_BIN", "/opt/cocalc/node/current/bin")
 
 
 def write_wrapper(cfg: BootstrapConfig) -> None:
@@ -921,11 +977,19 @@ def write_wrapper(cfg: BootstrapConfig) -> None:
     bundle_entry = f"{bundle_root}/bundle/index.js"
     wrapper = f"""#!/usr/bin/env bash
 set -euo pipefail
-export NVM_DIR="$HOME/.nvm"
-if [ -s "$NVM_DIR/nvm.sh" ]; then
-  . "$NVM_DIR/nvm.sh"
+NODE_BIN="/opt/cocalc/node/current/bin/node"
+if [ ! -x "$NODE_BIN" ]; then
+  export NVM_DIR="$HOME/.nvm"
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    . "$NVM_DIR/nvm.sh"
+  fi
+  NODE_BIN="$(command -v node || true)"
 fi
-node "{bundle_entry}" "$@"
+if [ -z "${{NODE_BIN:-}}" ] || [ ! -x "$NODE_BIN" ]; then
+  echo "project-host wrapper: node runtime missing" >&2
+  exit 1
+fi
+exec "$NODE_BIN" "{bundle_entry}" "$@"
 """
     wrapper_path = bin_dir / "project-host"
     wrapper_path.write_text(wrapper, encoding="utf-8")

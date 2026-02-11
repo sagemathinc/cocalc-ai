@@ -369,6 +369,9 @@ export async function buildBootstrapScripts(
   const toolsRoot = "/opt/cocalc/tools";
   const toolsDir = `${toolsRoot}/${toolsVersion}`;
   const toolsRemote = `${bootstrapRoot}/tmp/tools.tar.xz`;
+  const nodeRoot = "/opt/cocalc/node";
+  const nodeCurrent = `${nodeRoot}/current`;
+  const nodeBin = `${nodeCurrent}/bin`;
   const nodeVersion = process.env.COCALC_PROJECT_HOST_NODE_VERSION || "24";
   if (!projectHostBundleUrl) {
     throw new Error("project host bundle URL could not be resolved");
@@ -482,6 +485,7 @@ export async function buildBootstrapScripts(
     `COCALC_PROJECT_BUNDLES=${projectBundlesRoot}`,
     `COCALC_PROJECT_TOOLS=${toolsRoot}/current`,
     `COCALC_BIN_PATH=${toolsRoot}/current`,
+    `COCALC_PROJECT_NODE_BIN=${nodeBin}`,
     `COCALC_SYNC_PROJECTS=/btrfs/project-[project_id]/.local/share/cocalc/persist`,
     `COCALC_BTRFS_IMAGE_GB=${imageSizeGb}`,
     `COCALC_PROJECT_HOST_SOFTWARE_BASE_URL=${softwareBaseUrl}`,
