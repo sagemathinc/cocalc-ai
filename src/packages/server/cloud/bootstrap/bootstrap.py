@@ -1078,8 +1078,14 @@ case "${cmd}" in
     "${bin}" daemon start
     ;;
   status)
-    if [ -f "${pid_file}" ] && kill -0 "$(cat "${pid_file}")" 2>/dev/null; then
-      echo "project-host running (pid $(cat "${pid_file}"))"
+    pid=""
+    if [ -r "${pid_file}" ]; then
+      pid="$(cat "${pid_file}" 2>/dev/null || true)"
+    elif command -v sudo >/dev/null 2>&1; then
+      pid="$(sudo -n cat "${pid_file}" 2>/dev/null || true)"
+    fi
+    if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+      echo "project-host running (pid ${pid})"
     else
       echo "project-host not running"
       exit 1
@@ -1114,11 +1120,18 @@ exit 1
 set -euo pipefail
 lines="${1:-200}"
 log_file="/mnt/cocalc/data/log"
-if [ ! -f "$log_file" ]; then
-  echo "project-host log not found at $log_file" >&2
-  exit 1
+if [ -r "$log_file" ]; then
+  exec tail -n "$lines" -f "$log_file"
 fi
-exec tail -n "$lines" -f "$log_file"
+if command -v sudo >/dev/null 2>&1 && sudo -n test -r "$log_file" >/dev/null 2>&1; then
+  exec sudo -n tail -n "$lines" -f "$log_file"
+fi
+if [ -e "$log_file" ]; then
+  echo "project-host log exists but is not readable: $log_file" >&2
+else
+  echo "project-host log not found at $log_file" >&2
+fi
+exit 1
 """
     logs_cf_script = """#!/usr/bin/env bash
 set -euo pipefail
