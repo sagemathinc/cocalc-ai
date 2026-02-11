@@ -426,6 +426,23 @@ Mitigation:
     - Remove empty-string semantics in active UI path model.
     - Convert explorer/flyout consumers to treat absolute as primary.
     - Finish URL behavior consistency for root/home aliases.
+- Ticket 5: In progress.
+  - Done:
+    - Added frontend filesystem routing model:
+      - [src/packages/frontend/project/fs-router.ts](./src/packages/frontend/project/fs-router.ts)
+      - `selectFsService(path, { lite, projectRunning, homeDirectory })`
+      - route reasons (`lite-mode`, `launchpad-stopped-home`, `launchpad-running-home`, `launchpad-running-non-home`).
+    - Added `ProjectActions.fsForPath(path)` and routing context wiring.
+    - Added separate backend/runtime fs client placeholders in `ProjectActions`:
+      - `fsBackend()`
+      - `fsProjectRuntime()` (currently same service; TODO remains).
+    - Routed path-sensitive project actions through `fsForPath(...)`:
+      copy/rename/move/delete/mkdir/write/search/stat.
+    - Updated listing/find hooks to use path-aware `useFs({ project_id, path })`.
+  - Remaining:
+    - Wire `project_runtime` to a distinct in-project fs service in launchpad mode.
+    - Add watcher ownership/handoff implementation (Ticket 6).
+    - Add integration tests for HOME vs non-HOME routing behavior.
 
 ### Ticket 1: Path Model Module + Tests
 - Priority: P1
