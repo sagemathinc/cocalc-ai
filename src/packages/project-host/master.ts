@@ -179,10 +179,67 @@ export async function startMasterRegistration({
       { expectedPath: expectedTokenPath },
     );
     logger.warn(
-      "master registration is disabled until a valid master conat token is available",
+      "master registration is waiting for a valid master conat token",
       { expectedPath: expectedTokenPath },
     );
-    return;
+    let stopped = false;
+    let inFlight = false;
+    let delegatedStop: (() => void) | undefined;
+
+    const tryStartOnceTokenAvailable = async (reason: string) => {
+      if (stopped || delegatedStop || inFlight) return;
+      inFlight = true;
+      try {
+        const source = getProjectHostBootstrapConatSource({
+          fallbackConatUrl: masterAddress,
+        });
+        if (!source) {
+          logger.warn(
+            "master token recovery source unavailable; waiting for bootstrap source",
+            { reason, expectedPath: expectedTokenPath },
+          );
+          return;
+        }
+        const next = await fetchMasterConatTokenViaBootstrap(source);
+        writeProjectHostMasterConatToken(next);
+        logger.info("recovered master conat token before registration", {
+          reason,
+          token_path: expectedTokenPath,
+        });
+        delegatedStop = await startMasterRegistration({
+          hostId: id,
+          runnerId,
+          host,
+          port,
+          masterConatToken: next,
+        });
+      } catch (err) {
+        logger.warn("failed recovering master conat token before registration", {
+          reason,
+          expectedPath: expectedTokenPath,
+          err,
+        });
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const retryTimer = setInterval(
+      () => void tryStartOnceTokenAvailable("startup-retry"),
+      MASTER_CONAT_MISSING_PROBE_MS,
+    );
+    retryTimer.unref?.();
+    void tryStartOnceTokenAvailable("startup");
+
+    const stopPendingStartup = () => {
+      stopped = true;
+      clearInterval(retryTimer);
+      delegatedStop?.();
+    };
+    ["SIGINT", "SIGTERM", "SIGQUIT", "exit"].forEach((sig) =>
+      process.once(sig as any, stopPendingStartup),
+    );
+    return stopPendingStartup;
   }
 
   const client = connectToConat({
