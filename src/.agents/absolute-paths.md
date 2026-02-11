@@ -318,10 +318,10 @@ Mitigation:
 - Ticket 1: Completed.
 - Ticket 2: In progress.
   - Done:
-    - Added transitional absolute path state in project store:
+    - Migrated project store path state to absolute-only fields:
       - `current_path_abs`
       - `history_path_abs`
-    - `set_current_path` now synchronizes legacy + absolute state.
+    - `set_current_path` now updates only absolute path history/state.
     - Added mode-aware HOME baseline for absolute normalization:
       - launchpad: `/root`
       - lite: `available_features.homeDirectory` fallback.

@@ -1663,15 +1663,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // Does not push to URL, browser history, or add to analytics
   // Use internally or for updating current path in background
   set_current_path = (path: string = "/"): void => {
-    path = normalize(path);
     if (Number.isNaN(path as any)) {
       path = "/";
     }
     if (typeof path !== "string") {
       throw Error("Current path should be a string");
-    }
-    if (path === "" || path === ".") {
-      path = "/";
     }
     const pathAbs = this.toAbsoluteCurrentPath(path);
     // Set the current path for this project. path is either a string or array of segments.
@@ -1679,16 +1675,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    let history_path = store.get("history_path") || "/";
-    const is_adjacent =
-      path.length > 0 && !(history_path + "/").startsWith(path + "/");
-    // given is_adjacent is false, this tests if it is a subdirectory
-    const is_nested = path.length > history_path.length;
-    if (is_adjacent || is_nested) {
-      history_path = path;
-    }
-    let history_path_abs =
-      store.get("history_path_abs") || this.toAbsoluteCurrentPath(history_path);
+    let history_path_abs = store.get("history_path_abs") || "/";
     const is_adjacent_abs =
       pathAbs.length > 0 &&
       !(history_path_abs + "/").startsWith(pathAbs + "/");
@@ -1696,13 +1683,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (is_adjacent_abs || is_nested_abs) {
       history_path_abs = pathAbs;
     }
-    if (store.get("current_path") != path) {
+    if (store.get("current_path_abs") != pathAbs) {
       this.clear_file_listing_scroll();
       this.clear_selected_file_index();
     }
     this.setState({
-      current_path: path,
-      history_path,
       current_path_abs: pathAbs,
       history_path_abs,
       most_recent_file_click: undefined,
