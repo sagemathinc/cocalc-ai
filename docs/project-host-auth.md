@@ -622,8 +622,10 @@ Phase 2: sudo minimization
 Phase 3: podman/network hardening
 
 - Apply chosen network mode and host reachability constraints.
-  - `COCALC_PROJECT_RUNNER_NETWORK_DEFAULT` controls baseline (`slirp4netns`
-    default today, `pasta` opt-in for rollout testing).
+  - `COCALC_PROJECT_RUNNER_NETWORK_DEFAULT` controls baseline (`pasta` default
+    now, `slirp4netns`/`none` available).
+  - `COCALC_PROJECT_RUNNER_NETWORK_FALLBACK=true` allows automatic fallback to
+    `slirp4netns` if `pasta` fails at runtime.
 - Add enforcement for forbidden Podman flags.
 - Add automated negative tests for project-to-project connectivity attempts.
 

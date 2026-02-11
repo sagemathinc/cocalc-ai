@@ -421,7 +421,7 @@ export function networkArgument() {
     });
   }
   const defaultNetworkRaw = `${
-    process.env.COCALC_PROJECT_RUNNER_NETWORK_DEFAULT ?? "slirp4netns"
+    process.env.COCALC_PROJECT_RUNNER_NETWORK_DEFAULT ?? "pasta"
   }`
     .trim()
     .toLowerCase();
@@ -437,6 +437,31 @@ export function networkArgument() {
   }
   // Rootless pods need host loopback access so project containers can reach
   // host-local conat (mapped as host.containers.internal in env.ts).
+  const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
+    .trim()
+    .toLowerCase();
+  const allowHostLoopback = !(
+    allowHostLoopbackRaw === "0" ||
+    allowHostLoopbackRaw === "false" ||
+    allowHostLoopbackRaw === "no"
+  );
+  return allowHostLoopback
+    ? "--network=slirp4netns:allow_host_loopback=true"
+    : "--network=slirp4netns";
+}
+
+function hasExplicitNetworkOverride(): boolean {
+  return !!`${process.env.COCALC_PROJECT_RUNNER_NETWORK ?? ""}`.trim();
+}
+
+function allowNetworkFallback(): boolean {
+  const raw = `${process.env.COCALC_PROJECT_RUNNER_NETWORK_FALLBACK ?? "true"}`
+    .trim()
+    .toLowerCase();
+  return !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
+}
+
+function slirpNetworkArgument(): string {
   const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
     .trim()
     .toLowerCase();
@@ -663,7 +688,8 @@ export async function start({
     args.push("--label", `project_id=${project_id}`, "--label", `role=project`);
     args.push("--rm");
     args.push("--replace");
-    args.push(networkArgument());
+    const selectedNetwork = networkArgument();
+    args.push(selectedNetwork);
     const publishHostValue = publishHost();
     args.push("-p", `${publishHostValue}:${ssh_port}:22`);
     args.push("-p", `${publishHostValue}:${http_port}:80`);
@@ -710,7 +736,34 @@ export async function start({
 
     logger.debug("start: launching container - ", name);
 
-    await podman(args);
+    try {
+      await podman(args);
+    } catch (err) {
+      // Start with pasta by default, but retry with slirp4netns automatically
+      // when runtime doesn't support pasta yet.
+      const canFallback =
+        !hasExplicitNetworkOverride() &&
+        allowNetworkFallback() &&
+        selectedNetwork.startsWith("--network=pasta");
+      if (!canFallback) throw err;
+      const fallbackNetwork = slirpNetworkArgument();
+      logger.warn(
+        "podman run failed with pasta; retrying with slirp4netns fallback",
+        {
+          project_id,
+          selectedNetwork,
+          fallbackNetwork,
+          err: `${err}`,
+        },
+      );
+      const networkArgIndex = args.findIndex((x) => x === selectedNetwork);
+      if (networkArgIndex !== -1) {
+        args[networkArgIndex] = fallbackNetwork;
+      } else {
+        args.push(fallbackNetwork);
+      }
+      await podman(args);
+    }
 
     report({
       type: "start-project",
