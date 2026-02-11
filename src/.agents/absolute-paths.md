@@ -354,7 +354,6 @@ Mitigation:
       - Archive creation now uses absolute current path.
     - `new/...` and `search/...` URL pushes now avoid `//` by using normalized path suffixes.
   - Remaining:
-    - Final audit for residual legacy path assumptions in non-core helper components.
     - Final manual verification pass on URL routes (`files`, `home`, `new/home`, `search/home`) across history/back/forward navigation.
 - Ticket 4: In progress.
   - Done:
@@ -518,3 +517,10 @@ Mitigation:
 - Acceptance criteria:
   - Performance checks pass for directory navigation and file open/edit workflows.
   - Temporary migration shims are removed or explicitly documented.
+- Ticket 3: In progress.
+  - Done:
+    - File open flow stores both display path and sync path.
+    - Sync path now canonicalizes resolved paths through editor-specific sync identity mapping (ipynb/term) after `realpath`.
+  - Remaining:
+    - Verify editor/tab metadata consumers consistently use display path in UI and sync path for realtime identity.
+    - Add focused regression coverage for symlink alias flows.

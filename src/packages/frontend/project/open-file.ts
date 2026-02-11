@@ -159,6 +159,9 @@ export async function open_file(
   } catch (_) {
     // TODO: old projects will not have the new realpath api call -- can delete this try/catch at some point.
   }
+  // Map resolved paths to canonical sync identities used by specific editors
+  // (e.g. ipynb syncdb path, terminal path key).
+  syncPath = canonicalPath(syncPath);
   if (!tabIsOpened()) {
     return;
   }
@@ -391,10 +394,11 @@ function get_side_chat_state(
 }
 
 export function canonicalPath(path: string) {
-  if (path.endsWith(".ipynb")) {
+  const ext = filename_extension(path).toLowerCase();
+  if (ext === "ipynb") {
     return ipynbSyncdbPath(path);
   }
-  if (path.endsWith("term") && path[0] != ".") {
+  if (ext === "term" && !path_split(path).tail.startsWith(".")) {
     return termPath({ path, cmd: "", number: 0 });
   }
   return path;
