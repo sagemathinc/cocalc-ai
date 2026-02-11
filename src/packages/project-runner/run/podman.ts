@@ -475,6 +475,40 @@ function slirpNetworkArgument(): string {
     : "--network=slirp4netns";
 }
 
+async function probeTcpFromContainer({
+  containerName,
+  host,
+  port,
+}: {
+  containerName: string;
+  host: string;
+  port: number;
+}): Promise<boolean> {
+  // Use mounted node so we don't depend on image-specific tools.
+  const script = [
+    "const net=require('net');",
+    `const host=${JSON.stringify(host)};`,
+    `const port=${JSON.stringify(port)};`,
+    "const s=net.createConnection({host,port});",
+    "const done=(code)=>{try{s.destroy()}catch{};process.exit(code)};",
+    "const t=setTimeout(()=>done(2),2000);",
+    "s.on('connect',()=>{clearTimeout(t);done(0)});",
+    "s.on('error',()=>{clearTimeout(t);done(1)});",
+  ].join("");
+  try {
+    await podman(["exec", containerName, "/opt/cocalc/bin/node", "-e", script]);
+    return true;
+  } catch (err) {
+    logger.debug("tcp probe from container failed", {
+      containerName,
+      host,
+      port,
+      err: `${err}`,
+    });
+    return false;
+  }
+}
+
 export function publishHost(): string {
   const value = `${process.env.COCALC_PROJECT_RUNNER_PUBLISH_HOST ?? "127.0.0.1"}`
     .trim()
@@ -736,17 +770,27 @@ export async function start({
 
     logger.debug("start: launching container - ", name);
 
+    const canFallback =
+      !hasExplicitNetworkOverride() &&
+      allowNetworkFallback() &&
+      selectedNetwork.startsWith("--network=pasta");
+    const fallbackNetwork = slirpNetworkArgument();
+    const networkArgIndex = args.findIndex((x) => x === selectedNetwork);
+    const setNetworkArg = (networkArg: string) => {
+      if (networkArgIndex !== -1) {
+        args[networkArgIndex] = networkArg;
+      } else {
+        args.push(networkArg);
+      }
+    };
+    let activeNetwork = selectedNetwork;
+
     try {
       await podman(args);
     } catch (err) {
       // Start with pasta by default, but retry with slirp4netns automatically
       // when runtime doesn't support pasta yet.
-      const canFallback =
-        !hasExplicitNetworkOverride() &&
-        allowNetworkFallback() &&
-        selectedNetwork.startsWith("--network=pasta");
       if (!canFallback) throw err;
-      const fallbackNetwork = slirpNetworkArgument();
       logger.warn(
         "podman run failed with pasta; retrying with slirp4netns fallback",
         {
@@ -756,13 +800,47 @@ export async function start({
           err: `${err}`,
         },
       );
-      const networkArgIndex = args.findIndex((x) => x === selectedNetwork);
-      if (networkArgIndex !== -1) {
-        args[networkArgIndex] = fallbackNetwork;
-      } else {
-        args.push(fallbackNetwork);
-      }
+      setNetworkArg(fallbackNetwork);
+      activeNetwork = fallbackNetwork;
       await podman(args);
+    }
+
+    // Some podman+pasta combinations start successfully but still cannot
+    // reach host.containers.internal. Probe and fallback once automatically.
+    if (canFallback && activeNetwork.startsWith("--network=pasta")) {
+      try {
+        const conatUrl = new URL(env.CONAT_SERVER);
+        const host = conatUrl.hostname;
+        const port = Number(
+          conatUrl.port || (conatUrl.protocol === "https:" ? 443 : 80),
+        );
+        const reachable = await probeTcpFromContainer({
+          containerName: name,
+          host,
+          port,
+        });
+        if (!reachable) {
+          logger.warn(
+            "pasta launch succeeded but conat host is unreachable; retrying with slirp4netns fallback",
+            {
+              project_id,
+              host,
+              port,
+              selectedNetwork,
+              fallbackNetwork,
+            },
+          );
+          await podman(["rm", "-f", "-t", "0", name]);
+          setNetworkArg(fallbackNetwork);
+          activeNetwork = fallbackNetwork;
+          await podman(args);
+        }
+      } catch (err) {
+        logger.warn("pasta connectivity probe failed unexpectedly", {
+          project_id,
+          err: `${err}`,
+        });
+      }
     }
 
     report({
