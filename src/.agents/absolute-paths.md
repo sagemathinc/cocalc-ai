@@ -363,6 +363,7 @@ Mitigation:
     - Explorer path segment links and explorer config keys now default to `/` (not `""`).
     - Files flyout terminal directory switching no longer has `"."` special handling.
     - Disk usage hooks now default to `/` (not `""`).
+    - Path navigator “go up” now resolves virtual parents to `/` (no `"."` fallback), with root-accurate disabled tooltip text.
   - Remaining:
     - Final sweep for straggling `""` path defaults in project/explorer/flyout helpers.
     - Final pass on absolute-first path joins and parent nav behavior.

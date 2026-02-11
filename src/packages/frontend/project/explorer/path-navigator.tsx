@@ -157,11 +157,11 @@ export const PathNavigator: React.FC<Props> = React.memo(
             const parent = currentPath.startsWith(".")
               ? currentPath.split("/").slice(0, -1).join("/")
               : dirname(currentPath);
-            const parentPath = parent === "." ? homePath : parent;
+            const parentPath = parent.length === 0 ? "/" : parent;
             actions?.open_directory(parentPath, true, false);
           }}
           disabled={!canGoUp}
-          title={canGoUp ? "Go up one directory" : "Already at home directory"}
+          title={canGoUp ? "Go up one directory" : "Already at root directory"}
         />
       );
     }
