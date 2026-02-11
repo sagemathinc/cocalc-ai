@@ -6,6 +6,7 @@ import { useActions } from "@cocalc/frontend/app-framework";
 import { Loading, SearchInput } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import useFs from "@cocalc/frontend/project/listing/use-fs";
 import {
   path_to_file,
   search_match,
@@ -75,10 +76,7 @@ export function SnapshotsTab({
   const fieldWidth = mode === "flyout" ? "100%" : "50%";
   const { project_id } = useProjectContext();
   const actions = useActions({ project_id });
-  const fs = useMemo(
-    () => webapp_client.conat_client.conat().fs({ project_id }),
-    [project_id],
-  );
+  const fs = useFs({ project_id, path: scopePath });
   const [state, setState] = useFindTabState(
     project_id,
     "find_snapshots_state",

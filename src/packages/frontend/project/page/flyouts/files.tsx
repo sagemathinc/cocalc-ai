@@ -145,7 +145,7 @@ export function FilesFlyout({
   const isBackupsPath =
     effective_current_path === ".backups" ||
     effective_current_path?.startsWith(".backups/");
-  const fs = useFs({ project_id });
+  const fs = useFs({ project_id, path: effective_current_path });
   const {
     listing: directoryListing,
     error: listingError,

@@ -363,7 +363,7 @@ function Subdirs(props) {
     style,
     toggleSelection,
   } = props;
-  const fs = useFs({ project_id });
+  const fs = useFs({ project_id, path });
   const cacheId = getCacheId({
     project_id,
   });

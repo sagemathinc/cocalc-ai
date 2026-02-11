@@ -475,7 +475,7 @@ export function FilesSelectedControls({
         {checked_files.size > 0 ? renderOpenFile() : undefined}
         <FileActionsDropdown
           names={names}
-          current_path={effective_current_path ?? ""}
+          current_path={effective_current_path}
           actions={actions}
           label="Actions"
           size="small"
