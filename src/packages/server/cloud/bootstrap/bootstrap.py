@@ -615,6 +615,9 @@ def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
     Path("/btrfs/data/project-roots").mkdir(parents=True, exist_ok=True)
     Path("/btrfs/data/containers").mkdir(parents=True, exist_ok=True)
     Path("/btrfs/data/containers/rootless").mkdir(parents=True, exist_ok=True)
+    Path("/btrfs/data/runner-fs-service").mkdir(parents=True, exist_ok=True)
+    Path("/btrfs/data/runner-fs-service/secrets").mkdir(parents=True, exist_ok=True)
+    Path("/btrfs/data/runner-fs-service/tmp").mkdir(parents=True, exist_ok=True)
     run_best_effort(
         cfg,
         ["chown", "-R", f"{cfg.host_user}:{cfg.host_user}", "/btrfs/data"],
@@ -631,6 +634,23 @@ def ensure_btrfs_data(cfg: BootstrapConfig) -> None:
         cfg,
         ["chmod", "711", "/btrfs/data/containers/rootless"],
         "chmod /btrfs/data/containers/rootless",
+    )
+    if cfg.runner_user and cfg.runner_user != "root":
+        run_best_effort(
+            cfg,
+            ["chown", "-R", f"{cfg.runner_user}:{cfg.runner_user}", "/btrfs/data/runner-fs-service"],
+            "chown runner fs-service data dir",
+        )
+    run_best_effort(cfg, ["chmod", "700", "/btrfs/data/runner-fs-service"], "chmod runner fs-service data dir")
+    run_best_effort(
+        cfg,
+        ["chmod", "700", "/btrfs/data/runner-fs-service/secrets"],
+        "chmod runner fs-service secrets dir",
+    )
+    run_best_effort(
+        cfg,
+        ["chmod", "700", "/btrfs/data/runner-fs-service/tmp"],
+        "chmod runner fs-service tmp dir",
     )
 
 
@@ -700,10 +720,20 @@ def configure_podman(cfg: BootstrapConfig) -> None:
             f'graphroot = "/btrfs/data/containers/rootless/{cfg.runner_user}/storage"\n',
             encoding="utf-8",
         )
+        (user_config / "containers.conf").write_text(
+            "[engine]\n"
+            'cgroup_manager = "cgroupfs"\n',
+            encoding="utf-8",
+        )
         run_best_effort(
             cfg,
-            ["chown", f"{cfg.runner_user}:{cfg.runner_user}", str(user_config / "storage.conf")],
-            "chown storage.conf",
+            [
+                "chown",
+                f"{cfg.runner_user}:{cfg.runner_user}",
+                str(user_config / "storage.conf"),
+                str(user_config / "containers.conf"),
+            ],
+            "chown podman user config",
         )
 
 
@@ -715,7 +745,7 @@ def configure_runner_sudoers(cfg: BootstrapConfig) -> None:
     path = Path("/etc/sudoers.d/cocalc-project-host-podman")
     content = (
         f"{cfg.host_user} ALL=({cfg.runner_user}) NOPASSWD: /usr/bin/podman\n"
-        f"Defaults:{cfg.host_user} env_keep += \"XDG_RUNTIME_DIR CONTAINERS_CGROUP_MANAGER\"\n"
+        f"Defaults:{cfg.host_user} env_keep += \"XDG_RUNTIME_DIR COCALC_PODMAN_RUNTIME_DIR CONTAINERS_CGROUP_MANAGER\"\n"
     )
     path.write_text(content, encoding="utf-8")
     os.chmod(path, 0o440)
@@ -739,6 +769,75 @@ def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
         upsert_env(cfg.env_file, "COCALC_PODMAN_RUNTIME_DIR", runtime_dir)
     if cfg.image_size_gb_raw == "auto":
         upsert_env(cfg.env_file, "COCALC_BTRFS_IMAGE_GB", str(image_size_gb))
+
+
+def _upsert_profile_block(path: Path, marker: str, block_lines: list[str]) -> None:
+    start = f"# >>> {marker} >>>"
+    end = f"# <<< {marker} <<<"
+    content = ""
+    if path.exists():
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception:
+            content = ""
+    lines = content.splitlines()
+    out: list[str] = []
+    i = 0
+    changed = False
+    while i < len(lines):
+        if lines[i].strip() == start:
+            changed = True
+            i += 1
+            while i < len(lines) and lines[i].strip() != end:
+                i += 1
+            if i < len(lines) and lines[i].strip() == end:
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    if out and out[-1].strip():
+        out.append("")
+    out.append(start)
+    out.extend(block_lines)
+    out.append(end)
+    out.append("")
+    new_content = "\n".join(out)
+    if changed or new_content != content:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(new_content, encoding="utf-8")
+
+
+def configure_runner_shell_env(cfg: BootstrapConfig) -> None:
+    if not cfg.runner_user or cfg.runner_user == "root":
+        return
+    try:
+        runner_pwd = pwd.getpwnam(cfg.runner_user)
+    except Exception:
+        return
+    runtime_dir = ""
+    if Path(cfg.env_file).exists():
+        for raw in Path(cfg.env_file).read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if line.startswith("COCALC_PODMAN_RUNTIME_DIR="):
+                runtime_dir = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+    if not runtime_dir:
+        runtime_dir = f"/btrfs/data/tmp/cocalc-podman-runtime-{runner_pwd.pw_uid}"
+    block = [
+        f'export COCALC_PODMAN_RUNTIME_DIR="{runtime_dir}"',
+        'export XDG_RUNTIME_DIR="$COCALC_PODMAN_RUNTIME_DIR"',
+        'export CONTAINERS_CGROUP_MANAGER="cgroupfs"',
+    ]
+    runner_home = Path(runner_pwd.pw_dir)
+    bashrc = runner_home / ".bashrc"
+    profile = runner_home / ".profile"
+    _upsert_profile_block(bashrc, "cocalc runner podman env", block)
+    _upsert_profile_block(profile, "cocalc runner podman env", block)
+    run_best_effort(
+        cfg,
+        ["chown", f"{cfg.runner_user}:{cfg.runner_user}", str(bashrc), str(profile)],
+        "chown runner shell env",
+    )
 
 
 def upsert_env(path: str, key: str, value: str) -> None:
@@ -887,6 +986,13 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> None:
             ["chown", "-R", f"{cfg.host_user}:{cfg.host_user}", bundle.root],
             f"chown {bundle.root}",
         )
+    # Keep installed software artifacts readable/executable for non-owner users
+    # (e.g. split runner mode where cocalc-runner must execute project-host code).
+    run_best_effort(
+        cfg,
+        ["chmod", "-R", "a+rX", bundle.root],
+        f"chmod {bundle.root}",
+    )
     current_path = Path(bundle.current)
     if current_path.is_symlink() or current_path.exists():
         if current_path.is_dir() and not current_path.is_symlink():
@@ -1260,6 +1366,7 @@ def main(argv: list[str]) -> int:
                 extract_bundle(cfg, cfg.project_host_bundle)
                 write_wrapper(cfg)
                 write_helpers(cfg)
+                configure_runner_shell_env(cfg)
             if "project_bundle" in only:
                 extract_bundle(cfg, cfg.project_bundle)
             if "tools_bundle" in only:
@@ -1282,6 +1389,7 @@ def main(argv: list[str]) -> int:
         configure_podman(cfg)
         configure_runner_sudoers(cfg)
         write_env(cfg, image_size_gb)
+        configure_runner_shell_env(cfg)
         setup_master_conat_token(cfg)
         extract_bundle(cfg, cfg.project_host_bundle)
         extract_bundle(cfg, cfg.project_bundle)

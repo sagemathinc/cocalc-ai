@@ -6,7 +6,10 @@
  */
 import { createServer as createHttpServer } from "http";
 import { createServer as createHttpsServer } from "https";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { accessSync, constants, existsSync, mkdirSync, chmodSync } from "node:fs";
+import { basename, join } from "node:path";
 import { URL } from "node:url";
 import express from "express";
 import getPort from "@cocalc/backend/get-port";
@@ -20,11 +23,13 @@ import {
   init as createConatServer,
   type ConatServer,
 } from "@cocalc/conat/core/server";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { setConatClient } from "@cocalc/conat/client";
 import { server as createPersistServer } from "@cocalc/backend/conat/persist";
 import { init as initRunner } from "@cocalc/project-runner/run";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import { initFileServer, initFsServer } from "./file-server";
+import { DEFAULT_FILE_SERVICE } from "@cocalc/conat/files/fs";
 import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
 import {
@@ -60,6 +65,7 @@ import {
   assertSecureUrlOrLocal,
 } from "@cocalc/backend/network/policy";
 import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
+import { runFsServiceFromEnv } from "./fs-service";
 
 const logger = getLogger("project-host:main");
 
@@ -78,6 +84,8 @@ type TlsConfig = {
   enabled: boolean;
   hostname: string;
 };
+
+type FsServiceHandle = { close: () => void };
 
 function resolveTlsConfig(host: string, port: number): TlsConfig {
   const httpsEnv = process.env.COCALC_PROJECT_HOST_HTTPS;
@@ -117,6 +125,288 @@ function resolveTlsConfig(host: string, port: number): TlsConfig {
     hostname = host;
   }
   return { enabled, hostname };
+}
+
+function hostUserName(): string {
+  return (
+    `${process.env.COCALC_PROJECT_HOST_USER ?? process.env.USER ?? process.env.LOGNAME ?? ""}`.trim() ||
+    "root"
+  );
+}
+
+function runnerUserName(): string {
+  return `${process.env.COCALC_PODMAN_RUN_AS_USER ?? process.env.COCALC_PROJECT_RUNNER_USER ?? ""}`.trim();
+}
+
+function splitRunnerMode(): boolean {
+  const runner = runnerUserName();
+  if (!runner) return false;
+  return runner !== hostUserName();
+}
+
+function fsServiceModeFromEnv(): boolean {
+  const value = `${process.env.COCALC_PROJECT_HOST_FS_INPROCESS ?? "no"}`
+    .trim()
+    .toLowerCase();
+  return !["1", "true", "yes", "on"].includes(value);
+}
+
+function fsServiceFallbackEnabled(): boolean {
+  const value = `${process.env.COCALC_PROJECT_HOST_FS_FALLBACK_INPROCESS ?? "yes"}`
+    .trim()
+    .toLowerCase();
+  return !["0", "false", "no", "off"].includes(value);
+}
+
+function resolveNodeExecForRunner(nodeExec: string): string {
+  if (!nodeExec.startsWith("/home/")) {
+    return nodeExec;
+  }
+  const nodeBinRoot = `${process.env.COCALC_PROJECT_NODE_BIN ?? ""}`.trim();
+  if (!nodeBinRoot) {
+    return nodeExec;
+  }
+  const candidate = join(nodeBinRoot, "node");
+  return existsSync(candidate) ? candidate : nodeExec;
+}
+
+function resolveFsServiceDataRoot(): string {
+  const configured = `${process.env.COCALC_PROJECT_HOST_FS_DATA ?? ""}`.trim();
+  if (configured) return configured;
+  const hostData = `${
+    process.env.COCALC_DATA_DIR ?? process.env.COCALC_DATA ?? process.env.DATA ?? ""
+  }`.trim();
+  if (hostData) return join(hostData, "runner-fs-service");
+  return "/btrfs/data/runner-fs-service";
+}
+
+function runSudoCommand(args: string[]): void {
+  const result = spawnSync("sudo", ["-n", ...args], {
+    cwd: "/",
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.trim() || `sudo ${args.join(" ")} failed`);
+  }
+}
+
+function ensureFsServiceDataPaths(fsDataRoot: string, runner: string): void {
+  const dirs = [fsDataRoot, join(fsDataRoot, "secrets"), join(fsDataRoot, "tmp")];
+  try {
+    for (const dir of dirs) {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      chmodSync(dir, 0o700);
+    }
+    return;
+  } catch {
+    // fallback below
+  }
+  runSudoCommand(["mkdir", "-p", ...dirs]);
+  runSudoCommand(["chown", "-R", `${runner}:${runner}`, fsDataRoot]);
+  runSudoCommand(["chmod", "700", ...dirs]);
+}
+
+function firstReadableFile(candidates: string[]): string | null {
+  for (const candidate of candidates) {
+    const path = `${candidate ?? ""}`.trim();
+    if (!path) continue;
+    try {
+      accessSync(path, constants.R_OK);
+      return path;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+function resolveFsServiceScriptPath(): string {
+  const currentRoot = `${process.env.COCALC_PROJECT_HOST_CURRENT ?? ""}`.trim();
+  const currentCandidates = currentRoot
+    ? [
+        join(currentRoot, "bundle", "index.js"),
+        join(currentRoot, "main", "index.js"),
+        join(currentRoot, "dist", "main.js"),
+      ]
+    : [];
+  const explicit = `${process.env.COCALC_PROJECT_HOST_FS_SERVICE_SCRIPT ?? ""}`.trim();
+  return (
+    firstReadableFile([
+      explicit,
+      ...currentCandidates,
+      __filename,
+      `${process.argv[1] ?? ""}`.trim(),
+    ]) ?? __filename
+  );
+}
+
+function resolveFsServiceExec(): { command: string; args: string[] } {
+  let command =
+    `${process.env.COCALC_PROJECT_HOST_FS_SERVICE_EXEC ?? ""}`.trim() ||
+    process.execPath;
+  const base = basename(command);
+  if (base === "node" || base.startsWith("node")) {
+    command = resolveNodeExecForRunner(command);
+    // Prefer a readable entrypoint under COCALC_PROJECT_HOST_CURRENT, then
+    // fall back to current module/argv path for dev/local runs.
+    const script = resolveFsServiceScriptPath();
+    return {
+      command,
+      args: [script, "--fs-service"],
+    };
+  }
+  return { command, args: ["--fs-service"] };
+}
+
+async function startFsService({
+  client,
+  conatServerAddress,
+  systemAccountPassword,
+}: {
+  client: ConatClient;
+  conatServerAddress: string;
+  systemAccountPassword: string;
+}): Promise<FsServiceHandle> {
+  const startInProcess = async (): Promise<FsServiceHandle> => {
+    logger.info("starting fs service in-process");
+    const server = await initFsServer({
+      client,
+      service: DEFAULT_FILE_SERVICE,
+    });
+    return {
+      close: () => {
+        server?.close?.();
+      },
+    };
+  };
+
+  const enableSubprocess = splitRunnerMode() && fsServiceModeFromEnv();
+  if (!enableSubprocess) {
+    return await startInProcess();
+  }
+
+  const runner = runnerUserName();
+  if (!runner) {
+    throw new Error("split runner mode requires COCALC_PROJECT_RUNNER_USER");
+  }
+  const { command, args } = resolveFsServiceExec();
+  const fsDataRoot = resolveFsServiceDataRoot();
+  const fsTmpDir = join(fsDataRoot, "tmp");
+  const fsLogFile = join(fsDataRoot, "log");
+  ensureFsServiceDataPaths(fsDataRoot, runner);
+  const preserveVars = [
+    "COCALC_PROJECT_HOST_MODE",
+    "COCALC_FS_SERVICE_CONAT_SERVER",
+    "COCALC_FS_SERVICE_SYSTEM_PASSWORD",
+    "COCALC_FS_SERVICE_NAME",
+    "COCALC_PROJECT_HOST_FS_DATA",
+    "COCALC_FILE_SERVER_MOUNTPOINT",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "CONAT_SERVER",
+    "DEBUG",
+    "DEBUG_CONSOLE",
+    "DEBUG_FILE",
+    "NODE_OPTIONS",
+    "COCALC_PROJECT_NODE_BIN",
+    "COCALC_PROJECT_HOST_CURRENT",
+    "COCALC_PROJECT_HOST_FS_SERVICE_SCRIPT",
+  ];
+  const env = {
+    ...process.env,
+    COCALC_PROJECT_HOST_FS_DATA: fsDataRoot,
+    COCALC_DATA_DIR: fsDataRoot,
+    COCALC_DATA: fsDataRoot,
+    DATA: fsDataRoot,
+    SECRETS: join(fsDataRoot, "secrets"),
+    TMPDIR: fsTmpDir,
+    TMP: fsTmpDir,
+    TEMP: fsTmpDir,
+    DEBUG_FILE: fsLogFile,
+    COCALC_PROJECT_HOST_MODE: "fs-service",
+    COCALC_FS_SERVICE_CONAT_SERVER: conatServerAddress,
+    COCALC_FS_SERVICE_SYSTEM_PASSWORD: systemAccountPassword,
+    COCALC_FS_SERVICE_NAME: DEFAULT_FILE_SERVICE,
+    CONAT_SERVER: conatServerAddress,
+  };
+  const sudoArgs = [
+    "-n",
+    "-u",
+    runner,
+    "-H",
+    `--preserve-env=${preserveVars.join(",")}`,
+    command,
+    ...args,
+  ];
+  logger.info("starting fs service subprocess", {
+    runner,
+    command,
+    args,
+    cwd: "/",
+  });
+  const child: ChildProcess = spawn("sudo", sudoArgs, {
+    cwd: "/",
+    env,
+    stdio: "inherit",
+  });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let done = false;
+      const earlyExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        if (done) return;
+        done = true;
+        reject(
+          new Error(
+            `runner fs service exited during startup (code=${code ?? "null"}, signal=${signal ?? "null"})`,
+          ),
+        );
+      };
+      child.once("exit", earlyExit);
+      setTimeout(() => {
+        if (done) return;
+        done = true;
+        child.off("exit", earlyExit);
+        resolve();
+      }, 500);
+    });
+  } catch (err) {
+    if (!fsServiceFallbackEnabled()) {
+      throw err;
+    }
+    logger.warn(
+      "runner fs service subprocess failed; falling back to in-process fs service",
+      { err: `${err}` },
+    );
+    try {
+      child.kill("SIGKILL");
+    } catch {}
+    return await startInProcess();
+  }
+
+  let stopping = false;
+  child.on("exit", (code, signal) => {
+    if (stopping) return;
+    logger.error("runner fs service exited unexpectedly", {
+      code,
+      signal,
+    });
+  });
+
+  return {
+    close: () => {
+      if (stopping) return;
+      stopping = true;
+      if (child.killed || child.exitCode != null) return;
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (child.killed || child.exitCode != null) return;
+        child.kill("SIGKILL");
+      }, 2000);
+    },
+  };
 }
 
 async function startHttpServer(
@@ -258,7 +548,11 @@ export async function main(
   logger.info(
     "Serve per-project files via the fs.* conat service, mounting from the local file-server.",
   );
-  const fsServer = await initFsServer({ client: conatClient });
+  const fsService = await startFsService({
+    client: conatClient,
+    conatServerAddress: conatServer.address(),
+    systemAccountPassword: localConatPassword,
+  });
 
   logger.info("HTTP static + customize + API wiring");
   await initHttp({ app, conatClient });
@@ -306,7 +600,7 @@ export async function main(
 
   const close = () => {
     persistServer?.close?.();
-    fsServer?.close?.();
+    fsService?.close?.();
     stopMasterRegistration?.();
     stopReconciler?.();
     stopDataPermissionHardener?.();
@@ -324,16 +618,26 @@ export async function main(
 
 // Allow running directly via `node dist/main.js`.
 if (require.main === module) {
-  try {
-    if (handleDaemonCli(process.argv.slice(2))) {
-      process.exit(0);
+  const fsServiceMode =
+    process.argv.includes("--fs-service") ||
+    process.env.COCALC_PROJECT_HOST_MODE === "fs-service";
+  if (fsServiceMode) {
+    runFsServiceFromEnv().catch((err) => {
+      console.error("project-host fs-service failed:", err);
+      process.exitCode = 1;
+    });
+  } else {
+    try {
+      if (handleDaemonCli(process.argv.slice(2))) {
+        process.exit(0);
+      }
+    } catch (err) {
+      console.error(`${err}`);
+      process.exit(1);
     }
-  } catch (err) {
-    console.error(`${err}`);
-    process.exit(1);
+    main().catch((err) => {
+      console.error("project-host failed to start:", err);
+      process.exitCode = 1;
+    });
   }
-  main().catch((err) => {
-    console.error("project-host failed to start:", err);
-    process.exitCode = 1;
-  });
 }

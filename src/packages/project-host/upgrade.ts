@@ -220,17 +220,33 @@ async function safeRemove(dir: string): Promise<void> {
 async function replaceSymlink(linkPath: string, target: string) {
   const tmp = `${linkPath}.tmp-${Date.now()}`;
   try {
-    const stat = await fs.promises.lstat(linkPath);
-    if (stat.isSymbolicLink() || stat.isFile()) {
-      await fs.promises.unlink(linkPath);
-    } else if (stat.isDirectory()) {
-      await fs.promises.rm(linkPath, { recursive: true, force: true });
+    try {
+      const stat = await fs.promises.lstat(linkPath);
+      if (stat.isSymbolicLink() || stat.isFile()) {
+        await fs.promises.unlink(linkPath);
+      } else if (stat.isDirectory()) {
+        await fs.promises.rm(linkPath, { recursive: true, force: true });
+      }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
+    await fs.promises.symlink(target, tmp);
+    await fs.promises.rename(tmp, linkPath);
+    return;
+  } catch (err: any) {
+    try {
+      await fs.promises.unlink(tmp);
+    } catch {
+      // ignore
+    }
+    if (err?.code !== "EACCES") {
+      throw err;
+    }
   }
-  await fs.promises.symlink(target, tmp);
-  await fs.promises.rename(tmp, linkPath);
+  logger.warn("upgrade: replacing symlink with sudo", { linkPath, target });
+  await runCommand("sudo", ["-n", "mkdir", "-p", path.dirname(linkPath)]);
+  await runCommand("sudo", ["-n", "rm", "-rf", linkPath]);
+  await runCommand("sudo", ["-n", "ln", "-s", target, linkPath]);
 }
 
 async function resolveArtifact(
@@ -346,6 +362,7 @@ async function downloadAndInstall(
     };
   }
   await ensureWritableDir(resolved.root);
+  await ensureWritableDir(path.dirname(resolved.currentLink));
   const downloadsRoot = resolveDownloadsRoot();
   const archivePath = path.join(
     downloadsRoot,
@@ -389,6 +406,10 @@ async function downloadAndInstall(
     "-C",
     resolved.versionDir,
   ]);
+  if (resolved.canonicalArtifact === "project-host") {
+    // Runner subprocesses may need to execute/read this bundle path.
+    await runCommand("chmod", ["-R", "a+rX", resolved.versionDir]);
+  }
   logger.info("upgrade: extracted artifact", {
     artifact: resolved.artifact,
     version: resolved.version,

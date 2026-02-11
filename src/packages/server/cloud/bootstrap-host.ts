@@ -453,9 +453,10 @@ export async function buildBootstrapScripts(
     }
   }
 
-  const projectHostBundlesRoot = `${bootstrapRoot}/bundles`;
+  const projectHostInstallRoot = "/opt/cocalc/project-host";
+  const projectHostBundlesRoot = `${projectHostInstallRoot}/bundles`;
   const projectHostBundleDir = `${projectHostBundlesRoot}/${projectHostVersion}`;
-  const projectHostCurrent = `${bootstrapRoot}/bundle`;
+  const projectHostCurrent = `${projectHostInstallRoot}/current`;
   const projectHostBin = `${bootstrapRoot}/bin/project-host`;
 
   const bindHost = useOnPremSettings ? onPremBindHost : "0.0.0.0";
@@ -486,6 +487,7 @@ export async function buildBootstrapScripts(
     `COCALC_PROJECT_TOOLS=${toolsRoot}/current`,
     `COCALC_BIN_PATH=${toolsRoot}/current`,
     `COCALC_PROJECT_NODE_BIN=${nodeBin}`,
+    `COCALC_PROJECT_HOST_FS_DATA=/btrfs/data/runner-fs-service`,
     `COCALC_SYNC_PROJECTS=/btrfs/project-[project_id]/.local/share/cocalc/persist`,
     `COCALC_BTRFS_IMAGE_GB=${imageSizeGb}`,
     `COCALC_PROJECT_HOST_SOFTWARE_BASE_URL=${softwareBaseUrl}`,
