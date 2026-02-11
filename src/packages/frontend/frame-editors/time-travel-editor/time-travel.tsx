@@ -26,6 +26,7 @@ import { GitAuthors, TimeTravelAuthors } from "./authors";
 import { Diff } from "./diff";
 import { Export } from "./export";
 import { LoadMoreHistory } from "./load-more-history";
+import { LogView } from "./log-view";
 import { NavigationButtons } from "./navigation-buttons";
 import { NavigationSlider } from "./navigation-slider";
 import { OpenFile } from "./open-file";
@@ -102,6 +103,7 @@ export function TimeTravel(props: Props) {
   );
   const [showCommitRange, setShowCommitRange] = useState<boolean>(false);
   const [showChangedFiles, setShowChangedFiles] = useState<boolean>(false);
+  const [logMode, setLogMode] = useState<boolean>(!!props.desc?.get("logMode"));
   const [gitChangedFiles, setGitChangedFiles] = useState<string[]>([]);
   const [version, setVersion] = useState<number | string | undefined>(
     props.desc?.get("version"),
@@ -267,6 +269,7 @@ export function TimeTravel(props: Props) {
       backupsMode,
       textMode,
       marks,
+      logMode,
     });
   }, [
     version,
@@ -277,6 +280,7 @@ export function TimeTravel(props: Props) {
     snapshotsMode,
     backupsMode,
     textMode,
+    logMode,
     source,
   ]);
 
@@ -515,6 +519,9 @@ export function TimeTravel(props: Props) {
   };
 
   const renderNavigationButtons = () => {
+    if (logMode) {
+      return;
+    }
     if (changesMode && (version0 == null || version1 == null)) {
       return;
     }
@@ -533,6 +540,9 @@ export function TimeTravel(props: Props) {
   };
 
   const renderNavigationSlider = () => {
+    if (logMode) {
+      return;
+    }
     if (changesMode) {
       return;
     }
@@ -548,6 +558,9 @@ export function TimeTravel(props: Props) {
   };
 
   const renderRangeSlider = () => {
+    if (logMode) {
+      return;
+    }
     if (!changesMode) {
       return;
     }
@@ -623,6 +636,9 @@ export function TimeTravel(props: Props) {
   };
 
   const renderChangesMode = () => {
+    if (logMode) {
+      return null;
+    }
     const size = activeVersions?.size ?? 0;
     return (
       <Select
@@ -665,6 +681,7 @@ export function TimeTravel(props: Props) {
               setVersion1(undefined);
               setShowChangedFiles(false);
               setShowCommitRange(false);
+              setLogMode(false);
               setSource(value);
             }
           }}
@@ -845,6 +862,9 @@ export function TimeTravel(props: Props) {
           <Space.Compact>{renderModeSelectors()}</Space.Compact>
           {renderCommitsInRangeButton()}
           {renderGitChangedFilesButton()}
+          <Button size="small" onClick={() => setLogMode(!logMode)}>
+            {logMode ? "Document" : "Log"}
+          </Button>
           {(gitMode || snapshotsMode || backupsMode) && (
             <Tooltip
               title={
@@ -889,6 +909,9 @@ export function TimeTravel(props: Props) {
   };
 
   const renderTimeSelect = () => {
+    if (logMode) {
+      return null;
+    }
     return (
       <div style={{ display: "flex" }}>
         <div
@@ -930,7 +953,22 @@ export function TimeTravel(props: Props) {
   }
 
   let body;
-  if (doc != null && docpath != null && docext != null && !changesMode) {
+  if (logMode) {
+    body = (
+      <LogView
+        actions={props.actions}
+        source={source}
+        versions={activeVersions}
+        currentVersion={version}
+        firstVersion={firstVersion}
+        onSelectVersion={(selected) => {
+          setVersion(selected);
+          setChangesMode(false);
+          setLogMode(false);
+        }}
+      />
+    );
+  } else if (doc != null && docpath != null && docext != null && !changesMode) {
     body = (
       <Viewer
         ext={docext}
