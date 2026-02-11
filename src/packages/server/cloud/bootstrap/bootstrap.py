@@ -350,6 +350,21 @@ def enable_userns(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["sysctl", "-w", "kernel.unprivileged_userns_clone=1"], "sysctl userns")
 
 
+def ensure_runtime_user(cfg: BootstrapConfig) -> None:
+    user = cfg.ssh_user
+    if not user or user == "root":
+        return
+    try:
+        pw = pwd.getpwnam(user)
+    except KeyError:
+        log_line(cfg, f"bootstrap: creating runtime user {user}")
+        run_cmd(cfg, ["useradd", "-m", "-s", "/bin/bash", user], "create runtime user")
+        pw = pwd.getpwnam(user)
+    home = pw.pw_dir or f"/home/{user}"
+    Path(home).mkdir(parents=True, exist_ok=True)
+    run_best_effort(cfg, ["chown", "-R", f"{user}:{user}", home], "chown runtime home")
+
+
 def ensure_subuids(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: ensuring subuid/subgid ranges for {cfg.ssh_user}")
     run_best_effort(cfg, ["usermod", "--add-subuids", "100000-165535", "--add-subgids", "100000-165535", cfg.ssh_user], "usermod subuids")
@@ -369,19 +384,53 @@ def prepare_dirs(cfg: BootstrapConfig) -> None:
     run_best_effort(cfg, ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", "/opt/cocalc", "/var/lib/cocalc"], "chown cocalc dirs")
 
 
+def runtime_home(cfg: BootstrapConfig) -> str:
+    try:
+        return pwd.getpwnam(cfg.ssh_user).pw_dir
+    except Exception:
+        return cfg.bootstrap_home
+
+
+def project_host_runtime_root(cfg: BootstrapConfig) -> Path:
+    root = Path(cfg.project_host_bundle.root)
+    if root.name == "bundles":
+        return root.parent
+    return Path(cfg.bootstrap_root)
+
+
 def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     Path(cfg.bootstrap_root).mkdir(parents=True, exist_ok=True)
     Path(cfg.bootstrap_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.bootstrap_tmp).mkdir(parents=True, exist_ok=True)
     Path(cfg.log_file).parent.mkdir(parents=True, exist_ok=True)
+    if cfg.bootstrap_user and cfg.bootstrap_user != "root":
+        owner_paths = [
+            cfg.bootstrap_root,
+            cfg.bootstrap_dir,
+            cfg.bootstrap_tmp,
+            str(Path(cfg.log_file).parent),
+        ]
+        if os.geteuid() == 0:
+            run_best_effort(
+                cfg,
+                ["chown", "-R", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", *owner_paths],
+                "chown bootstrap-owner dirs",
+            )
+        else:
+            run_best_effort(
+                cfg,
+                [
+                    "sudo",
+                    "chown",
+                    "-R",
+                    f"{cfg.bootstrap_user}:{cfg.bootstrap_user}",
+                    *owner_paths,
+                ],
+                "sudo chown bootstrap-owner dirs",
+            )
     if not cfg.ssh_user or cfg.ssh_user == "root":
         return
-    # Ensure bootstrap directories are writable by the ssh user.
-    paths = [
-        cfg.bootstrap_root,
-        cfg.bootstrap_dir,
-        cfg.bootstrap_tmp,
-        str(Path(cfg.log_file).parent),
+    runtime_paths = [
         cfg.project_host_bundle.root,
         cfg.project_bundle.root,
         cfg.tools_bundle.root,
@@ -389,14 +438,14 @@ def ensure_bootstrap_paths(cfg: BootstrapConfig) -> None:
     if os.geteuid() == 0:
         run_best_effort(
             cfg,
-            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *paths],
-            "chown bootstrap dirs",
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
+            "chown runtime dirs",
         )
     else:
         run_best_effort(
             cfg,
-            ["sudo", "chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *paths],
-            "sudo chown bootstrap dirs",
+            ["sudo", "chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *runtime_paths],
+            "sudo chown runtime dirs",
         )
 
 
@@ -562,7 +611,7 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         encoding="utf-8",
     )
     if cfg.ssh_user != "root":
-        user_config_root = Path(cfg.bootstrap_home) / ".config"
+        user_config_root = Path(runtime_home(cfg)) / ".config"
         user_config = user_config_root / "containers"
         user_config_root.mkdir(parents=True, exist_ok=True)
         run_best_effort(
@@ -756,7 +805,7 @@ def extract_bundle(cfg: BootstrapConfig, bundle: BundleSpec) -> None:
 
 def install_node(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: installing node via nvm")
-    nvm_dir = f"{cfg.bootstrap_home}/.nvm"
+    nvm_dir = f"{runtime_home(cfg)}/.nvm"
     install_cmd = (
         f'export NVM_DIR="{nvm_dir}"; '
         f'if [ ! -s "$NVM_DIR/nvm.sh" ]; then '
@@ -770,7 +819,7 @@ def install_node(cfg: BootstrapConfig) -> None:
 
 
 def write_wrapper(cfg: BootstrapConfig) -> None:
-    host_dir = Path(cfg.bootstrap_root)
+    host_dir = project_host_runtime_root(cfg)
     bin_dir = host_dir / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     bundle_root = cfg.project_host_bundle.current
@@ -788,17 +837,23 @@ node "{bundle_entry}" "$@"
     wrapper_path = bin_dir / "project-host"
     wrapper_path.write_text(wrapper, encoding="utf-8")
     wrapper_path.chmod(0o755)
+    if cfg.ssh_user and cfg.ssh_user != "root":
+        run_best_effort(
+            cfg,
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(host_dir)],
+            "chown project-host runtime root",
+        )
 
 
 def write_helpers(cfg: BootstrapConfig) -> None:
-    bin_dir = Path(cfg.bootstrap_root) / "bin"
+    runtime_root = project_host_runtime_root(cfg)
+    bin_dir = runtime_root / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     ctl = """#!/usr/bin/env bash
 set -euo pipefail
 cmd="${1:-status}"
-BOOTSTRAP_HOME="${BOOTSTRAP_HOME:-$HOME}"
-BOOTSTRAP_ROOT="${BOOTSTRAP_HOME}/cocalc-host"
-bin="$BOOTSTRAP_ROOT/bin/project-host"
+RUNTIME_ROOT="__RUNTIME_ROOT__"
+bin="$RUNTIME_ROOT/bin/project-host"
 pid_file="/btrfs/data/daemon.pid"
 case "${cmd}" in
   start|stop)
@@ -822,25 +877,26 @@ case "${cmd}" in
     ;;
 esac
 """
+    ctl = ctl.replace("__RUNTIME_ROOT__", str(runtime_root))
     start_ph = """#!/usr/bin/env bash
 set -euo pipefail
-BOOTSTRAP_HOME="${BOOTSTRAP_HOME:-$HOME}"
-BOOTSTRAP_ROOT="${BOOTSTRAP_HOME}/cocalc-host"
-CTL="$BOOTSTRAP_ROOT/bin/ctl"
+RUNTIME_ROOT="__RUNTIME_ROOT__"
+CTL="$RUNTIME_ROOT/bin/ctl"
 for attempt in $(seq 1 60); do
   if mountpoint -q /btrfs; then
     if [ -x /usr/local/sbin/cocalc-grow-btrfs ]; then
-      sudo /usr/local/sbin/cocalc-grow-btrfs || true
+      /usr/local/sbin/cocalc-grow-btrfs || true
     fi
     exec "$CTL" start
   fi
   echo "waiting for /btrfs mount (attempt $attempt/60)"
-  sudo mount /btrfs || true
+  mount /btrfs || true
   sleep 5
 done
 echo "timeout waiting for /btrfs mount"
 exit 1
 """
+    start_ph = start_ph.replace("__RUNTIME_ROOT__", str(runtime_root))
     (bin_dir / "ctl").write_text(ctl, encoding="utf-8")
     (bin_dir / "start-project-host").write_text(start_ph, encoding="utf-8")
     (bin_dir / "logs").write_text("tail -n 200 /btrfs/data/log -f\n", encoding="utf-8")
@@ -848,6 +904,12 @@ exit 1
     (bin_dir / "ctl-cf").write_text("sudo systemctl ${1-status} cocalc-cloudflared\n", encoding="utf-8")
     for name in ["ctl", "start-project-host", "logs", "logs-cf", "ctl-cf"]:
         (bin_dir / name).chmod(0o755)
+    if cfg.ssh_user and cfg.ssh_user != "root":
+        run_best_effort(
+            cfg,
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir)],
+            "chown runtime helper scripts",
+        )
 
     bootstrap_dir = Path(cfg.bootstrap_dir)
     config_path = bootstrap_dir / "bootstrap-config.json"
@@ -869,11 +931,47 @@ exec python3 "{bootstrap_py}" --config "{config_path}" --only tools_bundle
     (bin_dir / "fetch-tools.sh").write_text(fetch_tools, encoding="utf-8")
     for name in ["fetch-project-bundle.sh", "fetch-project-host.sh", "fetch-tools.sh"]:
         (bin_dir / name).chmod(0o755)
+    if cfg.ssh_user and cfg.ssh_user != "root":
+        run_best_effort(
+            cfg,
+            ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", str(bin_dir)],
+            "chown runtime fetch helpers",
+        )
+
+    admin_root = Path(cfg.bootstrap_root)
+    if admin_root != runtime_root:
+        admin_bin = admin_root / "bin"
+        admin_bin.mkdir(parents=True, exist_ok=True)
+        for name in [
+            "ctl",
+            "start-project-host",
+            "logs",
+            "logs-cf",
+            "ctl-cf",
+            "fetch-project-bundle.sh",
+            "fetch-project-host.sh",
+            "fetch-tools.sh",
+        ]:
+            script = (
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f'exec "{runtime_root / "bin" / name}" "$@"\n'
+            )
+            target = admin_bin / name
+            target.write_text(script, encoding="utf-8")
+            target.chmod(0o755)
+        if cfg.bootstrap_user and cfg.bootstrap_user != "root":
+            run_best_effort(
+                cfg,
+                ["chown", "-R", f"{cfg.bootstrap_user}:{cfg.bootstrap_user}", str(admin_bin)],
+                "chown admin helper scripts",
+            )
 
 
 def configure_autostart(cfg: BootstrapConfig) -> None:
     log_line(cfg, "bootstrap: configuring project-host autostart")
-    cron_line = f"@reboot {cfg.ssh_user} /bin/bash -lc '$HOME/cocalc-host/bin/start-project-host'"
+    runtime_root = project_host_runtime_root(cfg)
+    cron_line = f"@reboot {cfg.ssh_user} /bin/bash -lc '{runtime_root}/bin/start-project-host'"
     Path("/etc/cron.d/cocalc-project-host").write_text(cron_line + "\n", encoding="utf-8")
     os.chmod("/etc/cron.d/cocalc-project-host", 0o644)
     run_best_effort(cfg, ["systemctl", "enable", "--now", "cron"], "enable cron")
@@ -989,7 +1087,7 @@ exit 0
 
 
 def start_project_host(cfg: BootstrapConfig) -> None:
-    bin_path = f"{cfg.bootstrap_root}/bin/project-host"
+    bin_path = str(project_host_runtime_root(cfg) / "bin" / "project-host")
     # Sanity check: bundle must contain a compiled entrypoint.
     bundle_candidates = [
         Path(cfg.project_host_bundle.current) if cfg.project_host_bundle.current else None,
@@ -1066,6 +1164,7 @@ def main(argv: list[str]) -> int:
         install_gpu_support(cfg)
         configure_chrony(cfg)
         enable_userns(cfg)
+        ensure_runtime_user(cfg)
         ensure_subuids(cfg)
         enable_linger(cfg)
         prepare_dirs(cfg)

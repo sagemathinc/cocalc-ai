@@ -218,7 +218,8 @@ export type BootstrapScripts = {
   publicUrl: string;
   internalUrl: string;
   sshServer: string;
-  sshUser: string;
+  bootstrapUser: string;
+  runtimeUser: string;
   hasGpu: boolean;
   imageSizeGb: string;
   dataDiskDevices: string;
@@ -274,9 +275,13 @@ export async function buildBootstrapScripts(
   const hasGpu = machineHasGpu(machine);
   const selfHostKind = machine.metadata?.self_host_kind;
   const isSelfHostDirect = isSelfHost && selfHostKind === "direct";
-  const sshUser = isSelfHostDirect
+  const bootstrapUser = isSelfHostDirect
     ? "\${BOOTSTRAP_USER}"
     : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+  const runtimeUser = isSelfHostDirect
+    ? bootstrapUser
+    : `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
+      "cocalc-host";
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
     isSelfHost && (!rawSelfHostMode || rawSelfHostMode === "local")
@@ -347,9 +352,9 @@ export async function buildBootstrapScripts(
     extractArtifactVersion(projectBundleUrl, "project") || "latest";
   const bootstrapHome = isSelfHostDirect
     ? "${BOOTSTRAP_HOME}"
-    : sshUser === "root"
+    : bootstrapUser === "root"
       ? "/root"
-      : `/home/${sshUser}`;
+      : `/home/${bootstrapUser}`;
   const bootstrapRoot = `${bootstrapHome}/cocalc-host`;
   const projectBundlesRoot = "/opt/cocalc/project-bundles";
   const projectBundleDir = `${projectBundlesRoot}/${projectBundleVersion}`;
@@ -442,10 +447,11 @@ export async function buildBootstrapScripts(
     }
   }
 
-  const projectHostBundlesRoot = `${bootstrapRoot}/bundles`;
+  const projectHostRoot = "/opt/cocalc/project-host";
+  const projectHostBundlesRoot = `${projectHostRoot}/bundles`;
   const projectHostBundleDir = `${projectHostBundlesRoot}/${projectHostVersion}`;
-  const projectHostCurrent = `${bootstrapRoot}/bundle`;
-  const projectHostBin = `${bootstrapRoot}/bin/project-host`;
+  const projectHostCurrent = `${projectHostRoot}/current`;
+  const projectHostBin = `${projectHostRoot}/bin/project-host`;
 
   const bindHost = useOnPremSettings ? onPremBindHost : "0.0.0.0";
   const isLoopbackBindHost =
@@ -475,6 +481,7 @@ export async function buildBootstrapScripts(
     `COCALC_PROJECT_HOST_BUNDLE_ROOT=${projectHostBundlesRoot}`,
     `COCALC_PROJECT_HOST_CURRENT=${projectHostCurrent}`,
     `COCALC_PROJECT_HOST_BIN=${projectHostBin}`,
+    `COCALC_PROJECT_HOST_RUNTIME_USER=${runtimeUser}`,
     `TMPDIR=/btrfs/data/tmp`,
     `TMP=/btrfs/data/tmp`,
     `TEMP=/btrfs/data/tmp`,
@@ -532,7 +539,8 @@ export async function buildBootstrapScripts(
     publicUrl,
     internalUrl,
     sshServer,
-    sshUser,
+    bootstrapUser,
+    runtimeUser,
     hasGpu,
     imageSizeGb,
     dataDiskDevices,
@@ -618,7 +626,9 @@ fi
   const envLinesJson = JSON.stringify(scripts.envLines);
   const cloudflaredJson = JSON.stringify(scripts.cloudflaredConfig ?? { enabled: false });
   const preferredBootstrapUser =
-    scripts.sshUser && scripts.sshUser !== "root" ? scripts.sshUser : "";
+    scripts.bootstrapUser && scripts.bootstrapUser !== "root"
+      ? scripts.bootstrapUser
+      : "";
   return `#!/bin/bash
 set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
@@ -709,7 +719,7 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   "data_disk_candidates": "${scripts.dataDiskCandidates}",
   "apt_packages": ${aptPackagesJson},
   "has_gpu": ${scripts.hasGpu ? "true" : "false"},
-  "ssh_user": "${scripts.sshUser}",
+  "ssh_user": "${scripts.runtimeUser}",
   "env_file": "${scripts.envFile}",
   "env_lines": ${envLinesJson},
   "node_version": "${scripts.nodeVersion}",
@@ -827,7 +837,7 @@ if [ "$force" -ne 1 ]; then
     *) echo "aborted"; exit 1 ;;
   esac
 fi
-SSH_USER="${scripts.sshUser}"
+SSH_USER="${scripts.runtimeUser}"
 SSH_UID="$(id -u "$SSH_USER" 2>/dev/null || echo "")"
 TARGET_HOME="$(getent passwd "$SSH_USER" | cut -d: -f6 || true)"
 if [ -z "$TARGET_HOME" ]; then
@@ -879,7 +889,7 @@ if [ "$uninstall_connector" -eq 1 ]; then
 fi
 EOF_COCALC_DEPROVISION
 sudo chmod +x "$BOOTSTRAP_ROOT/bin/deprovision.sh"
-sudo chown ${scripts.sshUser}:${scripts.sshUser} "$BOOTSTRAP_ROOT/bin/deprovision.sh"
+sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/bin/deprovision.sh"
 SSH_UID=""
 RUNTIME_DIR=""
 ENV_FILE="/etc/cocalc/project-host.env"
@@ -902,7 +912,7 @@ export COCALC_PODMAN_RUNTIME_DIR="$RUNTIME_DIR"
 export CONTAINERS_CGROUP_MANAGER="cgroupfs"
 EOF_COCALC_ENV
   sudo chmod +x "$HOST_DIR/env.sh"
-  sudo chown ${scripts.sshUser}:${scripts.sshUser} "$HOST_DIR/env.sh"
+  sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$HOST_DIR/env.sh"
 fi
 cat <<'EOF_COCALC_README' > "$BOOTSTRAP_ROOT/README.md"
 CoCalc Project Host (Direct) Layout
@@ -936,7 +946,7 @@ Notes:
   - /btrfs holds project data and snapshots.
   - /etc/cocalc/project-host.env contains runtime settings.
 EOF_COCALC_README
-sudo chown ${scripts.sshUser}:${scripts.sshUser} "$BOOTSTRAP_ROOT/README.md"
+sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/README.md"
 `;
 }
 
