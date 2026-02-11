@@ -106,6 +106,78 @@ This blocks clean access to `/tmp`, `/`, and general non-HOME paths.
 - Future simplification option:
   - once stable, consider moving all fs operations to in-project service when running, with backend fallback only when stopped.
 
+### Filesystem Router Interface (Draft)
+Add a small routing layer used by project actions/hooks before every filesystem call.
+
+```ts
+type FsServiceKind = "backend_home" | "project_runtime";
+
+interface FsRoutingContext {
+  lite: boolean;
+  projectRunning: boolean;
+  homeDirectory: string; // absolute + normalized
+}
+
+interface FsRouteDecision {
+  kind: FsServiceKind;
+  reason:
+    | "lite-mode"
+    | "launchpad-stopped-home"
+    | "launchpad-running-home"
+    | "launchpad-running-non-home";
+}
+
+function selectFsService(path: string, ctx: FsRoutingContext): FsRouteDecision;
+```
+
+Resolution rules:
+- if `ctx.lite`: always `project_runtime` (permissive).
+- else if `!ctx.projectRunning`: `backend_home` (HOME-only policy; non-HOME should fail fast with actionable error).
+- else (`launchpad running`):
+  - if `path` is in HOME: `backend_home`,
+  - else: `project_runtime`.
+
+Implementation notes:
+- normalize path once at call boundary before routing.
+- expose a debug trace hook (`[fs-router] path -> decision`) behind debug flag.
+- route by path **prefix containment** against normalized HOME (not string contains).
+
+### Watch Ownership State Machine (Draft)
+The router decides service for API calls; watchers need stronger guarantees so two services do not emit overlapping updates.
+
+Ownership key:
+- `watchKey = { project_id, syncPath }` (or a coarser prefix key if batching by directory).
+
+States:
+- `NONE` (no active watcher)
+- `BACKEND` (owned by backend_home service)
+- `PROJECT` (owned by project_runtime service)
+- `TRANSITIONING` (temporary handoff state with strict sequencing)
+
+Events:
+- `OPEN(syncPath)`
+- `CLOSE(syncPath)`
+- `PROJECT_STARTED`
+- `PROJECT_STOPPED`
+- `PATH_RECLASSIFIED` (e.g. HOME/non-HOME boundary or mode change)
+- `WATCH_ERROR(kind)`
+
+Transitions:
+- `NONE -> BACKEND` or `NONE -> PROJECT` on first `OPEN` per router decision.
+- `BACKEND -> PROJECT` when router decision flips:
+  1. register on PROJECT,
+  2. wait for ack/ready marker,
+  3. unregister BACKEND,
+  4. emit ownership-changed debug event.
+- `PROJECT -> BACKEND` symmetric.
+- `* -> NONE` when last subscriber closes.
+- On `WATCH_ERROR`, retry same owner with bounded backoff; only failover owner if policy explicitly allows.
+
+Invariants:
+- At most one active owner (`BACKEND` xor `PROJECT`) per `watchKey`.
+- During `TRANSITIONING`, both owners may briefly exist but only one is allowed to emit patches to clients.
+- Handoff must not reset editor content or duplicate patch application.
+
 ## Proposed Migration Strategy (Phased)
 
 ## Phase 0: Guardrails and Observability (Easy)
@@ -364,6 +436,7 @@ Mitigation:
     - runtime mode (`lite` vs launchpad),
     - project running state,
     - path prefix (HOME vs non-HOME in launchpad mode).
+  - Implement `selectFsService(path, ctx)` contract and wire through project actions + listing hooks.
 - Acceptance criteria:
   - Lite mode can browse/open/edit all paths using permissive routing.
   - Launchpad mode routes HOME and non-HOME paths according to policy.
@@ -376,9 +449,11 @@ Mitigation:
 - Scope:
   - Ensure only one service owns watchers for a given path/session stream.
   - Implement safe handoff rules when project starts/stops.
+  - Implement explicit ownership state machine (`NONE|BACKEND|PROJECT|TRANSITIONING`) per `watchKey`.
 - Acceptance criteria:
   - No duplicate patch streams from backend + in-project services.
   - No missed updates during ownership transitions.
+  - Transition logs confirm deterministic handoff order (register new owner before dropping old owner).
 
 ### Ticket 7: Sync/Watch Identity by SyncPath
 - Priority: P2
