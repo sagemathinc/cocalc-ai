@@ -420,6 +420,21 @@ export function networkArgument() {
       explicit,
     });
   }
+  const defaultNetworkRaw = `${
+    process.env.COCALC_PROJECT_RUNNER_NETWORK_DEFAULT ?? "slirp4netns"
+  }`
+    .trim()
+    .toLowerCase();
+  const defaultNetwork =
+    defaultNetworkRaw === "pasta" || defaultNetworkRaw === "none"
+      ? defaultNetworkRaw
+      : "slirp4netns";
+  if (defaultNetwork === "none") {
+    return "--network=none";
+  }
+  if (defaultNetwork === "pasta") {
+    return "--network=pasta";
+  }
   // Rootless pods need host loopback access so project containers can reach
   // host-local conat (mapped as host.containers.internal in env.ts).
   const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`

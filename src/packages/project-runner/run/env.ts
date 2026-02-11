@@ -92,8 +92,8 @@ export async function getEnvironment({
     COCALC_EXTRA_ENV: extra_env,
     PATH,
     // Project containers connect to host-local conat through podman networking.
-    // We use host.containers.internal (not a hardcoded IP) and pair this with
-    // slirp4netns allow_host_loopback=true (see run/podman.ts).
+    // We use host.containers.internal (not a hardcoded IP), and networking mode
+    // is selected in run/podman.ts.
     CONAT_SERVER: conatServer.replace("localhost", "host.containers.internal"),
     COCALC_SECRET_TOKEN: secretTokenPath(HOME),
     BASE_PATH: base_path,
