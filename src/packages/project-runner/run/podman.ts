@@ -493,14 +493,29 @@ export function publishHost(): string {
     .trim()
     .toLowerCase();
   if (!value) return "127.0.0.1";
-  if (
-    value === "127.0.0.1" ||
-    value === "localhost" ||
-    value === "0.0.0.0" ||
-    value === "::1" ||
-    value === "::"
-  ) {
+  if (value === "127.0.0.1" || value === "localhost" || value === "::1") {
     return value === "localhost" ? "127.0.0.1" : value;
+  }
+  if (value === "0.0.0.0" || value === "::") {
+    const allowInsecurePublishHostRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_INSECURE_PUBLISH_HOST ?? "false"}`
+      .trim()
+      .toLowerCase();
+    const allowInsecurePublishHost =
+      allowInsecurePublishHostRaw === "1" ||
+      allowInsecurePublishHostRaw === "true" ||
+      allowInsecurePublishHostRaw === "yes" ||
+      allowInsecurePublishHostRaw === "on";
+    if (allowInsecurePublishHost) {
+      return value;
+    }
+    logger.warn(
+      "refusing insecure non-loopback publish host without explicit override",
+      {
+        value,
+        overrideVar: "COCALC_PROJECT_RUNNER_ALLOW_INSECURE_PUBLISH_HOST",
+      },
+    );
+    return "127.0.0.1";
   }
   logger.warn("ignoring invalid COCALC_PROJECT_RUNNER_PUBLISH_HOST override", {
     value,
@@ -728,6 +743,43 @@ export async function start({
         args.push(
           "--add-host",
           `host.containers.internal:${pastaHostAliasAddr}`,
+        );
+      }
+
+      // Startup assumption check: with pasta, we expect a host path that can
+      // reach conat without relying on host.containers.internal DNS behavior.
+      const hasNoMapGw = selectedNetwork.includes("--no-map-gw");
+      let conatHost = "";
+      let conatPort: number | undefined;
+      try {
+        const url = new URL(env.CONAT_SERVER);
+        conatHost = url.hostname;
+        conatPort = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+      } catch {
+        // keep defaults on parse failure
+      }
+      const expectedPastaHost = pastaConatHost();
+      const assumptionsOk =
+        !hasNoMapGw && !!conatHost && conatHost === expectedPastaHost;
+      logger.info("pasta startup assumptions", {
+        project_id,
+        ok: assumptionsOk,
+        selectedNetwork,
+        conatHost,
+        conatPort,
+        expectedPastaHost,
+        hasNoMapGw,
+      });
+      if (!assumptionsOk) {
+        logger.warn(
+          "pasta startup assumptions not met; connectivity to conat may fail",
+          {
+            project_id,
+            selectedNetwork,
+            conat_server: env.CONAT_SERVER,
+            expectedPastaHost,
+            hasNoMapGw,
+          },
         );
       }
     }

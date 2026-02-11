@@ -626,6 +626,13 @@ Phase 3: podman/network hardening
     now, `slirp4netns`/`none` available).
   - `COCALC_PROJECT_RUNNER_NETWORK_FALLBACK=true` allows automatic fallback to
     `slirp4netns` if `pasta` fails at runtime.
+  - In `pasta` mode, conat host defaults to gateway-based routing
+    (`COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST`, default `10.168.0.1`), and
+    startup logs include a "pasta startup assumptions" record.
+- Keep project published ports loopback-only by default.
+  - `COCALC_PROJECT_RUNNER_PUBLISH_HOST` defaults to `127.0.0.1`.
+  - Non-loopback bind values (`0.0.0.0`, `::`) now require explicit opt-in via
+    `COCALC_PROJECT_RUNNER_ALLOW_INSECURE_PUBLISH_HOST=true`.
 - Add enforcement for forbidden Podman flags.
 - Add automated negative tests for project-to-project connectivity attempts.
 
