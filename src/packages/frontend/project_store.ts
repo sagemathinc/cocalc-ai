@@ -64,6 +64,11 @@ export interface ProjectStoreState {
   // Shared
   current_path: string;
   history_path: string;
+  // Transitional absolute-path state (Ticket 2):
+  // these stay synchronized with legacy current_path/history_path until
+  // explorer and flyout code fully migrates.
+  current_path_abs: string;
+  history_path_abs: string;
   open_files: immutable.Map<string, immutable.Map<string, any>>;
   open_files_order: immutable.List<string>;
   just_closed_files: immutable.List<string>;
@@ -272,6 +277,8 @@ export class ProjectStore extends Store<ProjectStoreState> {
       // Shared
       current_path: "",
       history_path: "",
+      current_path_abs: "/",
+      history_path_abs: "/",
       open_files: immutable.Map<immutable.Map<string, any>>({}),
       open_files_order: immutable.List([]),
       just_closed_files: immutable.List([]),

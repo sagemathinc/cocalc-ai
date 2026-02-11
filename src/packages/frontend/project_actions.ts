@@ -112,6 +112,7 @@ import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { EditorLoadError } from "./file-editors-error";
 import { lite } from "@cocalc/frontend/lite";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 const { defaults, required } = misc;
 
@@ -608,6 +609,41 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       acc_table.set({ other_settings: { [NEW_FILENAMES]: family } });
     }
   }
+
+  // In launchpad mode HOME is currently stable (/root), while in lite mode it
+  // depends on runtime environment and should come from available_features.
+  private getHomeDirectoryForPaths = (): string => {
+    if (!lite) {
+      return "/root";
+    }
+    const store = this.get_store();
+    const homeDirectory = store?.get("available_features")?.get("homeDirectory");
+    if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
+      return normalizeAbsolutePath(homeDirectory);
+    }
+    return "/";
+  };
+
+  // Snapshots/backups/trash currently use virtual listing paths that are not
+  // absolute filesystem paths. Keep those untouched until Ticket 11.
+  private isVirtualListingPath = (path: string): boolean => {
+    return (
+      path === SNAPSHOTS ||
+      path.startsWith(`${SNAPSHOTS}/`) ||
+      path === ".backups" ||
+      path.startsWith(".backups/") ||
+      path === ".trash" ||
+      path.startsWith(".trash/")
+    );
+  };
+
+  private toAbsoluteCurrentPath = (path: string): string => {
+    const normalized = normalize(path);
+    if (this.isVirtualListingPath(normalized)) {
+      return normalized;
+    }
+    return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
+  };
 
   set_url_to_path(current_path, hash?: string): void {
     if (current_path.length > 0 && !misc.endswith(current_path, "/")) {
@@ -1503,6 +1539,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (typeof path !== "string") {
       throw Error("Current path should be a string");
     }
+    const pathAbs = this.toAbsoluteCurrentPath(path);
     // Set the current path for this project. path is either a string or array of segments.
     const store = this.get_store();
     if (store == undefined) {
@@ -1516,6 +1553,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (is_adjacent || is_nested) {
       history_path = path;
     }
+    let history_path_abs =
+      store.get("history_path_abs") || this.toAbsoluteCurrentPath(history_path);
+    const is_adjacent_abs =
+      pathAbs.length > 0 &&
+      !(history_path_abs + "/").startsWith(pathAbs + "/");
+    const is_nested_abs = pathAbs.length > history_path_abs.length;
+    if (is_adjacent_abs || is_nested_abs) {
+      history_path_abs = pathAbs;
+    }
     if (store.get("current_path") != path) {
       this.clear_file_listing_scroll();
       this.clear_selected_file_index();
@@ -1523,6 +1569,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.setState({
       current_path: path,
       history_path,
+      current_path_abs: pathAbs,
+      history_path_abs,
       most_recent_file_click: undefined,
     });
   };
