@@ -1,10 +1,10 @@
 import { Alert, Button, Input, Modal, Select, Space, Tooltip } from "antd";
 import { dirname, join } from "path";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { type FilesystemClient } from "@cocalc/conat/files/fs";
-import useFs from "@cocalc/frontend/project/listing/use-fs";
 import { type FindScopeMode } from "./types";
 
 export function FindScopeBar({
@@ -31,7 +31,10 @@ export function FindScopeBar({
   onScopePinnedChange: (next: boolean) => void;
 }) {
   const size = mode === "flyout" ? "small" : "middle";
-  const fs = useFs({ project_id, path: currentPath || "/" });
+  const fs = useMemo(
+    () => webapp_client.conat_client.conat().fs({ project_id }),
+    [project_id],
+  );
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [pendingPath, setPendingPath] = useState(scopePath);
   const [draftPath, setDraftPath] = useState(scopePath);

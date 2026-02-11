@@ -146,7 +146,7 @@ export function Explorer() {
     [sort, effective_current_path, project_id],
   );
 
-  const fs = useFs({ project_id, path: effective_current_path });
+  const fs = useFs({ project_id });
   const isBackupsPath =
     effective_current_path === ".backups" ||
     effective_current_path?.startsWith(".backups/");

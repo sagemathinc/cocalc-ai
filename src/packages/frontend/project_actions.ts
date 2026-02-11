@@ -113,7 +113,6 @@ import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { EditorLoadError } from "./file-editors-error";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
-import { selectFsService } from "@cocalc/frontend/project/fs-router";
 
 const { defaults, required } = misc;
 
@@ -507,8 +506,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.open_files?.close();
     delete this.open_files;
     this.state = "closed";
-    this.filesystemBackend = undefined;
-    this.filesystemProjectRuntime = undefined;
+    this.filesystem = undefined;
   };
 
   private save_session(): void {
@@ -1680,15 +1678,21 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       path = "/";
     }
     const pathAbs = this.toAbsoluteCurrentPath(path);
-    const pathState = pathAbs;
     // Set the current path for this project. path is either a string or array of segments.
     const store = this.get_store();
     if (store == undefined) {
       return;
     }
+    let history_path = store.get("history_path") || "/";
+    const is_adjacent =
+      path.length > 0 && !(history_path + "/").startsWith(path + "/");
+    // given is_adjacent is false, this tests if it is a subdirectory
+    const is_nested = path.length > history_path.length;
+    if (is_adjacent || is_nested) {
+      history_path = path;
+    }
     let history_path_abs =
-      store.get("history_path_abs") ??
-      this.toAbsoluteCurrentPath(store.get("history_path") || "/");
+      store.get("history_path_abs") || this.toAbsoluteCurrentPath(history_path);
     const is_adjacent_abs =
       pathAbs.length > 0 &&
       !(history_path_abs + "/").startsWith(pathAbs + "/");
@@ -1696,13 +1700,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (is_adjacent_abs || is_nested_abs) {
       history_path_abs = pathAbs;
     }
-    if (store.get("current_path_abs") != pathAbs) {
+    if (store.get("current_path") != path) {
       this.clear_file_listing_scroll();
       this.clear_selected_file_index();
     }
     this.setState({
-      current_path: pathState,
-      history_path: history_path_abs,
+      current_path: path,
+      history_path,
       current_path_abs: pathAbs,
       history_path_abs,
       most_recent_file_click: undefined,
@@ -2193,7 +2197,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       )} to ${dest}`,
     });
 
-    const fs = this.fsForPath(dest);
+    const fs = this.fs();
     try {
       await fs.cp(src, dest, { recursive: true, reflink: true });
       this._finish_exec(id)();
@@ -2251,7 +2255,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const status = `Renaming ${src} to ${dest}`;
     this.set_activity({ id, status });
     try {
-      const fs = this.fsForPath(dest);
+      const fs = this.fs();
       await fs.rename(src, dest);
       this.log({
         event: "file_action",
@@ -2268,61 +2272,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   // note: there is no need to explicitly close or await what is returned by
   // fs(...) since it's just a lightweight wrapper object to format appropriate RPC calls.
-  private filesystemBackend?: FilesystemClient;
-  private filesystemProjectRuntime?: FilesystemClient;
-
-  private isProjectRunningForFs = (): boolean => {
-    if (lite) {
-      return true;
-    }
-    const projectsStore = this.redux.getStore("projects") as any;
-    return projectsStore?.get_state?.(this.project_id) === "running";
-  };
-
-  private fsRoutingDebugEnabled = (): boolean => {
-    return !!window?.__COCALC_FS_ROUTER_DEBUG;
-  };
-
-  private getFsRoutingContext = () => {
-    return {
-      lite,
-      projectRunning: this.isProjectRunningForFs(),
-      homeDirectory: this.getHomeDirectoryForPaths(),
-    };
-  };
-
-  fsBackend = (): FilesystemClient => {
-    this.filesystemBackend ??= webapp_client.conat_client
-      .conat()
-      .fs({ project_id: this.project_id });
-    return this.filesystemBackend;
-  };
-
-  fsProjectRuntime = (): FilesystemClient => {
-    // TODO: Ticket 5/6 -- in launchpad mode this should route to the
-    // in-project permissive fs service for non-HOME paths.
-    this.filesystemProjectRuntime ??= webapp_client.conat_client
-      .conat()
-      .fs({ project_id: this.project_id });
-    return this.filesystemProjectRuntime;
-  };
-
-  fsForPath = (path: string): FilesystemClient => {
-    const decision = selectFsService(path, this.getFsRoutingContext());
-    if (this.fsRoutingDebugEnabled()) {
-      console.log("[fs-router] route", {
-        project_id: this.project_id,
-        path,
-        decision,
-      });
-    }
-    return decision.kind === "project_runtime"
-      ? this.fsProjectRuntime()
-      : this.fsBackend();
-  };
-
+  private filesystem?: FilesystemClient;
   fs = (): FilesystemClient => {
-    return this.fsBackend();
+    this.filesystem ??= webapp_client.conat_client
+      .conat()
+      .fs({ project_id: this.project_id });
+    return this.filesystem;
   };
 
   dust = async (path: string) => {
@@ -2375,7 +2330,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // Use isDirViaCache for more of a fast hint.
   isDir = async (path: string): Promise<boolean> => {
     if (path === "" || path === "/") return true; // easy special case
-    const stats = await this.fsForPath(path).stat(path);
+    const stats = await this.fs().stat(path);
     return stats.isDirectory();
   };
 
@@ -2394,7 +2349,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.set_activity({ id, status });
     let error: any = undefined;
     try {
-      const fs = this.fsForPath(dest);
+      const fs = this.fs();
       await Promise.all(
         src.map(async (path) =>
           fs.move(path, join(dest, basename(path)), { overwrite: true }),
@@ -2453,7 +2408,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
       }
       if (nonSnapshotPaths.length > 0) {
-        const fs = this.fsForPath(nonSnapshotPaths[0] ?? "/");
+        const fs = this.fs();
         await fs.rm(nonSnapshotPaths, { force: true, recursive: true });
       }
 
@@ -2490,7 +2445,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     filter: (path: string) => boolean;
     recursive?: boolean;
   }): Promise<string[]> => {
-    const fs = this.fsForPath(path);
+    const fs = this.fs();
     const options: string[] = ["-H", "-I"];
     if (!recursive) {
       options.push("-d", "1");
@@ -2606,7 +2561,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         "/",
     );
     const path = join(basePath, name);
-    const fs = this.fsForPath(path);
+    const fs = this.fs();
     try {
       await fs.mkdir(path, { recursive: true });
     } catch (err) {
@@ -2691,7 +2646,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     const content = getFileTemplate(ext);
     await this.ensureContainingDirectoryExists(path);
-    const fs = this.fsForPath(path);
+    const fs = this.fs();
     try {
       await fs.writeFile(path, content);
     } catch (err) {
@@ -3047,7 +3002,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     // create it -- just make it and if it already exists, not an error
     // (this avoids race conditions and is the right way)
-    const fs = this.fsForPath(path);
+    const fs = this.fs();
     try {
       await fs.mkdir(path, { recursive: true });
     } catch (err) {
@@ -3202,7 +3157,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     try {
       await search({
         setState,
-        fs: this.fsForPath(path),
+        fs: this.fs(),
         query: store.get("user_input").trim(),
         path,
         options,
