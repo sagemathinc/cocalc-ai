@@ -43,7 +43,7 @@ interface Props {
   project_id?: string;
   checked_files: immutable.Set<string>;
   listing: DirectoryListingEntry[];
-  current_path?: string;
+  current_path: string;
   project_map?;
   images?: ComputeImages;
   actions: ProjectActions;
@@ -67,9 +67,8 @@ export function ActionBar({
   refreshBackups,
 }: Props) {
   const intl = useIntl();
-  const currentParts = (current_path ?? "/").split("/").filter(Boolean);
-  const inBackups =
-    current_path != null && isBackupsPath(current_path ?? "/") ? true : false;
+  const currentParts = current_path.split("/").filter(Boolean);
+  const inBackups = isBackupsPath(current_path);
   const student_project_functionality = useStudentProjectFunctionality(
     actions.project_id,
   );
@@ -134,7 +133,7 @@ export function ActionBar({
         }
       }
       message.success("Restore started");
-      actions?.open_directory?.(current_path ?? "/", false);
+      actions?.open_directory?.(current_path, false);
       setRestoreOpen(false);
     } catch (err) {
       setRestoreError(err);
@@ -186,13 +185,12 @@ export function ActionBar({
     }
     const subpath = currentParts.slice(2).join("/");
     const startsWithCurrentPath = (candidate: string): boolean => {
-      if (current_path == null) return false;
       if (candidate === current_path) return true;
       if (current_path === "/") return candidate.startsWith("/");
       return candidate.startsWith(`${current_path}/`);
     };
     const relativeToCurrentPath = (candidate: string): string => {
-      if (current_path == null || candidate === current_path) {
+      if (candidate === current_path) {
         return "";
       }
       if (current_path === "/") {
@@ -238,7 +236,7 @@ export function ActionBar({
   function check_all_click_handler(): void {
     if (checked_files.size === 0) {
       actions.set_file_list_checked(
-        listing.map((file) => misc.path_to_file(current_path ?? "/", file.name)),
+        listing.map((file) => misc.path_to_file(current_path, file.name)),
       );
     } else {
       clear_selection();
@@ -482,7 +480,7 @@ export function ActionBar({
       let isDir;
       const item = checked_files.first();
       for (const file of listing) {
-        if (misc.path_to_file(current_path ?? "/", file.name) === item) {
+        if (misc.path_to_file(current_path, file.name) === item) {
           ({ isDir } = file);
         }
       }

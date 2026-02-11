@@ -333,11 +333,14 @@ Mitigation:
       so absolute paths no longer produce malformed `files//...` URLs and
       virtual listing paths remain preserved.
     - Root/home URL split now uses explicit route prefixes (`files/...` vs `home/...`) instead of `files//` encoding.
+    - New/search tab URLs now preserve home-path context (`new/home/...`, `search/home/...`) and load/parse these routes explicitly.
     - Create/download-new-file flows now derive paths from absolute state.
     - Explorer and files flyout now prefer `current_path_abs` for core listing, create/open, and sorting flows.
     - Flyout controls/header/bottom/active groups and terminal now use effective absolute path state.
     - Activity/share tabs, explorer side buttons, download flow, and AI document generation now prefer absolute current path state.
     - Explorer file action box no longer rejects absolute destinations for move/copy.
+    - Active flyout folder grouping now uses `/` as the root key (no empty-string root semantics).
+    - Explorer `ActionBar`, `SearchBar`, `FileActionsDropdown`, and `useSpecialPathPreview` now require absolute `current_path` (no nullable path fallbacks).
     - `path_to_file("/", name)` now returns `"/name"` (instead of `"//name"`), with tests.
     - Root-path edge cases handled in backups selection helpers (`/` prefix comparisons no longer use `"//"`).
     - Removed remaining empty-string path defaults from store/actions:
@@ -347,9 +350,8 @@ Mitigation:
       - Archive creation now uses absolute current path.
     - `new/...` and `search/...` URL pushes now avoid `//` by using normalized path suffixes.
   - Remaining:
-    - Remove empty-string semantics in active UI path model.
-    - Convert explorer/flyout consumers to treat absolute as primary.
-    - Finish URL behavior consistency for root/home aliases.
+    - Final audit for residual nullable/legacy path assumptions in non-core helper components.
+    - Final manual verification pass on URL routes (`files`, `home`, `new/home`, `search/home`) across history/back/forward navigation.
 - Ticket 4: In progress.
   - Done:
     - Explorer and flyout paths now mostly use `current_path_abs`.

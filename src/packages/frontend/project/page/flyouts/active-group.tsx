@@ -27,7 +27,7 @@ interface GroupProps {
   starred: string[];
   setStarredPath: (path: string, next: boolean) => void;
   showStarred: boolean;
-  isLast?: boolean; // if group is empty, it is also the last one in the group
+  isLast?: boolean;
   dimFileExtensions: boolean;
 }
 
@@ -53,7 +53,7 @@ export function Group({
     ...components.slice(0, -2).map(() => "•"), // &bull;
     ...components.slice(-2).map((x) => trunc_middle(x, 15)),
   ];
-  const displayed = group === "" ? "Home" : parts.join("/");
+  const displayed = parts.join("/");
 
   const col = deterministicColor(group);
 
@@ -85,7 +85,8 @@ export function Group({
 
   switch (mode) {
     case "folder":
-      const isHome = group === "";
+      const directoryPath = group;
+      const starPath = directoryPath === "/" ? "/" : `${directoryPath}/`;
       const isOpen = openFilesGrouped[group].some((path) =>
         openFiles.includes(path),
       );
@@ -95,19 +96,17 @@ export function Group({
           style={style}
           mode="active"
           item={{
-            name: group,
+            name: directoryPath,
             isDir: true,
             isOpen,
-            isActive: effective_current_path === group && activeTab === "files",
+            isActive:
+              effective_current_path === directoryPath && activeTab === "files",
           }}
           multiline={false}
           displayedNameOverride={displayed}
-          iconNameOverride={isHome ? "home" : undefined}
-          isStarred={
-            isHome || !showStarred ? undefined : starred.includes(`${group}/`)
-          }
+          isStarred={!showStarred ? undefined : starred.includes(starPath)}
           onStar={(next) => {
-            setStarredPath(`${group}/`, next);
+            setStarredPath(starPath, next);
           }}
           onClose={(e: React.MouseEvent) => {
             e.stopPropagation();
@@ -124,11 +123,15 @@ export function Group({
           onClick={(e) => {
             track("open-file", {
               project_id,
-              group,
+              group: directoryPath,
               how: "flyout-active-directory-open",
             });
             // trailing slash indicates to open a directory
-            handleFileEntryClick(e, `${group}/`, project_id);
+            handleFileEntryClick(
+              e,
+              directoryPath === "/" ? "/" : `${directoryPath}/`,
+              project_id,
+            );
           }}
           dimFileExtensions={dimFileExtensions}
         />

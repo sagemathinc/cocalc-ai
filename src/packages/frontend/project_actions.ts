@@ -706,12 +706,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return normalizeAbsolutePath(`/${normalized}`);
   };
 
-  private toTabPathSuffix = (path: string): string => {
-    const normalized = normalize(path);
-    if (normalized === "/" || normalized === "" || normalized === ".") {
-      return "";
+  private toAuxTabPath = (tab: "new" | "search", path: string): string => {
+    const { source, relativePath } = this.getPathRoute(path);
+    if (source === "home") {
+      return relativePath.length === 0
+        ? `${tab}/home/`
+        : `${tab}/home/${relativePath}`;
     }
-    return normalized.replace(/^\/+/, "");
+    return relativePath.length === 0 ? `${tab}/` : `${tab}/${relativePath}`;
   };
 
   set_url_to_path(current_path, hash?: string): void {
@@ -825,11 +827,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       case "new":
         change.file_creation_error = undefined;
         if (opts.change_history) {
-          const pathSuffix = this.toTabPathSuffix(
-            store.get("current_path_abs") ?? "/",
-          );
           this.push_state(
-            pathSuffix.length > 0 ? `new/${pathSuffix}` : "new/",
+            this.toAuxTabPath("new", store.get("current_path_abs") ?? "/"),
             "",
           );
         }
@@ -845,11 +844,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "search":
         if (opts.change_history) {
-          const pathSuffix = this.toTabPathSuffix(
-            store.get("current_path_abs") ?? "/",
-          );
           this.push_state(
-            pathSuffix.length > 0 ? `search/${pathSuffix}` : "search/",
+            this.toAuxTabPath("search", store.get("current_path_abs") ?? "/"),
             "",
           );
         }
@@ -2830,6 +2826,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   ): Promise<void> => {
     const segments = target.split("/");
     const main_segment = segments[0] as FixedTab | "home";
+    const hasScopedPathSource =
+      (main_segment === "new" || main_segment === "search") &&
+      (segments[1] === "home" || segments[1] === "files");
+    const scopedPathSource: "files" | "home" =
+      hasScopedPathSource && segments[1] === "home" ? "home" : "files";
+    const scopedPathIndex = hasScopedPathSource ? 2 : 1;
     const isHomeFileRoute = main_segment === "home" && segments.length > 1;
     const fileRouteSource: "files" | "home" = isHomeFileRoute ? "home" : "files";
     const full_path = this.fromUrlDirectoryPath(
@@ -2872,7 +2874,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         return;
 
       case "new": // ignore foreground for these and below, since would be nonsense
-        this.set_current_path(full_path);
+        this.set_current_path(
+          this.fromUrlDirectoryPath(
+            segments.slice(scopedPathIndex).join("/"),
+            scopedPathSource,
+          ),
+        );
         this.set_active_tab("new", { change_history: change_history });
         break;
 
@@ -2893,7 +2900,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         break;
 
       case "search":
-        this.set_current_path(full_path);
+        this.set_current_path(
+          this.fromUrlDirectoryPath(
+            segments.slice(scopedPathIndex).join("/"),
+            scopedPathSource,
+          ),
+        );
         this.set_active_tab("search", { change_history: change_history });
         break;
 
