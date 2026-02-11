@@ -645,11 +645,45 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
   };
 
-  set_url_to_path(current_path, hash?: string): void {
-    if (current_path.length > 0 && !misc.endswith(current_path, "/")) {
-      current_path += "/";
+  private toUrlDirectoryPath = (path: string): string => {
+    const normalized = normalize(path);
+    if (normalized === "/") {
+      return "/";
     }
-    this.push_state(`files/${current_path}`, hash);
+    if (normalized === "" || normalized === ".") {
+      return "";
+    }
+    if (this.isVirtualListingPath(normalized)) {
+      return normalized.replace(/\/+$/, "");
+    }
+    const absolute = normalizeAbsolutePath(
+      normalized,
+      this.getHomeDirectoryForPaths(),
+    );
+    return absolute.slice(1);
+  };
+
+  private fromUrlDirectoryPath = (path: string): string => {
+    const normalized = normalize(path);
+    if (normalized === "" || normalized === ".") {
+      return this.getHomeDirectoryForPaths();
+    }
+    if (normalized === "/") {
+      return "/";
+    }
+    if (this.isVirtualListingPath(normalized)) {
+      return normalized;
+    }
+    return normalizeAbsolutePath(`/${normalized}`);
+  };
+
+  set_url_to_path(current_path, hash?: string): void {
+    const urlPath = this.toUrlDirectoryPath(current_path);
+    let localUrl = "files/";
+    if (urlPath.length > 0) {
+      localUrl += misc.endswith(urlPath, "/") ? urlPath : `${urlPath}/`;
+    }
+    this.push_state(localUrl, hash);
   }
 
   _url_in_project(local_url): string {
@@ -1515,7 +1549,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       );
       return;
     }
-    if (path[path.length - 1] === "/") {
+    if (path !== "/" && path[path.length - 1] === "/") {
       path = path.slice(0, -1);
     }
     this.foreground_project(change_history);
@@ -1650,7 +1684,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       range = [file];
     } else {
       // get the range of files
-      const current_path = store.get("current_path");
+      const current_path =
+        store.get("current_path_abs") ?? store.get("current_path");
       const names = listing.map(({ name }) =>
         misc.path_to_file(current_path, name),
       );
@@ -2166,7 +2201,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return null;
     }
-    const path = store.get("current_path");
+    const path = store.get("current_path_abs") ?? store.get("current_path");
     if (path == null) {
       return null;
     }
@@ -2206,7 +2241,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // error if doesn't exist or can't find out.
   // Use isDirViaCache for more of a fast hint.
   isDir = async (path: string): Promise<boolean> => {
-    if (path == "") return true; // easy special case
+    if (path === "" || path === "/") return true; // easy special case
     const stats = await this.fs().stat(path);
     return stats.isDirectory();
   };
@@ -2556,8 +2591,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     current_path: string,
   ): Promise<void> => {
     let d = current_path;
-    if (d === "") {
-      d = "root directory of project";
+    if (d === "" || d === "/") {
+      d = "/";
     }
     const id = misc.uuid();
     this.setState({ downloading_file: true });
@@ -2713,8 +2748,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     fragmentId?: FragmentId,
   ): Promise<void> => {
     const segments = target.split("/");
-    const full_path = segments.slice(1).join("/");
-    const parent_path = segments.slice(1, segments.length - 1).join("/");
+    const full_path = this.fromUrlDirectoryPath(segments.slice(1).join("/"));
+    const parent_path = this.fromUrlDirectoryPath(
+      segments.slice(1, segments.length - 1).join("/"),
+    );
     const main_segment = segments[0] as FixedTab | "home";
     switch (main_segment) {
       case "active":
@@ -2724,10 +2761,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         return;
 
       case "files":
-        if (full_path === "/") {
-          this.open_directory("/", change_history);
-          return;
-        }
         if (target.endsWith("/") || full_path === "") {
           //if DEBUG then console.log("ProjectStore::load_target → open_directory", parent_path)
           this.open_directory(parent_path, change_history);

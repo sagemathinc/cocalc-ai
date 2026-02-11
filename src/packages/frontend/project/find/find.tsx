@@ -23,7 +23,9 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
 }) => {
   const { project_id } = useProjectContext();
   const actions = useActions({ project_id });
-  const currentPath = useTypedRedux({ project_id }, "current_path") ?? "";
+  const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
+  const currentPathLegacy = useTypedRedux({ project_id }, "current_path");
+  const currentPath = currentPathAbs ?? currentPathLegacy ?? "";
   const storedTab = useTypedRedux({ project_id }, "find_tab") as
     | FindTab
     | undefined;

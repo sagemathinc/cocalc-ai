@@ -185,15 +185,26 @@ export function ActionBar({
       };
     }
     const subpath = currentParts.slice(2).join("/");
+    const startsWithCurrentPath = (candidate: string): boolean => {
+      if (current_path == null) return false;
+      if (candidate === current_path) return true;
+      if (current_path === "/") return candidate.startsWith("/");
+      return candidate.startsWith(`${current_path}/`);
+    };
+    const relativeToCurrentPath = (candidate: string): string => {
+      if (current_path == null || candidate === current_path) {
+        return "";
+      }
+      if (current_path === "/") {
+        return candidate.replace(/^\/+/, "");
+      }
+      return candidate
+        .slice(current_path.length + 1)
+        .replace(/^\/+/, "");
+    };
     const selected = Array.from(checked_files)
-      .filter(
-        (p) => p === current_path || p.startsWith(`${current_path ?? ""}/`),
-      )
-      .map((p) =>
-        p === current_path
-          ? ""
-          : p.slice((current_path?.length ?? 0) + 1).replace(/^\/+/, ""),
-      )
+      .filter(startsWithCurrentPath)
+      .map(relativeToCurrentPath)
       .filter(Boolean);
     const paths =
       selected.length === 0

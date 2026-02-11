@@ -45,6 +45,7 @@ import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { setSort } from "@cocalc/frontend/project/explorer/config";
 import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
 import { lite } from "@cocalc/frontend/lite";
+import { dirname } from "path";
 
 function searchToFilename(search: string): string {
   if (search.endsWith(" ")) {
@@ -127,11 +128,13 @@ export function FilesHeader({
     "file_creation_error",
   );
   const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? current_path;
   const isReadonlyVirtualPath =
-    current_path === SNAPSHOTS ||
-    current_path?.startsWith(`${SNAPSHOTS}/`) ||
-    current_path === BACKUPS ||
-    current_path?.startsWith(`${BACKUPS}/`);
+    effective_current_path === SNAPSHOTS ||
+    effective_current_path?.startsWith(`${SNAPSHOTS}/`) ||
+    effective_current_path === BACKUPS ||
+    effective_current_path?.startsWith(`${BACKUPS}/`);
 
   const [highlighNothingFound, setHighlighNothingFound] = React.useState(false);
   const file_search_prev = usePrevious(file_search);
@@ -166,7 +169,7 @@ export function FilesHeader({
     const fn = searchToFilename(file_search);
     await actions?.createFile({
       name: fn,
-      current_path,
+      current_path: effective_current_path,
     });
   }
 
@@ -179,10 +182,17 @@ export function FilesHeader({
 
     // left arrow key: go up a directory
     else if (e.code === "ArrowLeft") {
-      if (current_path != "") {
-        actions?.set_current_path(
-          current_path.split("/").slice(0, -1).join("/"),
-        );
+      if (
+        effective_current_path != null &&
+        effective_current_path !== "/"
+      ) {
+        if (effective_current_path.startsWith(".")) {
+          actions?.set_current_path(
+            effective_current_path.split("/").slice(0, -1).join("/"),
+          );
+        } else {
+          actions?.set_current_path(dirname(effective_current_path));
+        }
       }
     }
 
@@ -220,7 +230,7 @@ export function FilesHeader({
     return (
       <FileUploadWrapper
         project_id={project_id}
-        dest_path={current_path}
+        dest_path={effective_current_path}
         config={{ clickable: `.${uploadClassName}` }}
         className="smc-vfill"
       >
@@ -246,7 +256,7 @@ export function FilesHeader({
           setSort({
             column_name: name,
             project_id,
-            path: current_path,
+            path: effective_current_path,
           })
         }
       >

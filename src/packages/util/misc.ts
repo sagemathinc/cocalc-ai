@@ -1343,6 +1343,9 @@ export function path_to_file(path: string = "", file: string): string {
   if (path === "") {
     return file;
   }
+  if (path === "/") {
+    return "/" + file;
+  }
   return path + "/" + file;
 }
 

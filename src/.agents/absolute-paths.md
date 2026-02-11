@@ -403,7 +403,19 @@ Mitigation:
       - lite: `available_features.homeDirectory` fallback.
     - URL/history/search paths now prefer absolute state.
     - Root route handling improved in `load_target` (`/` special case).
+    - URL path serialization/parsing now has explicit helpers:
+      - `toUrlDirectoryPath(...)`
+      - `fromUrlDirectoryPath(...)`
+      so absolute paths no longer produce malformed `files//...` URLs and
+      virtual listing paths remain preserved.
+    - Root (`/`) is encoded distinctly from home in URL form (`files//` vs `files/`).
     - Create/download-new-file flows now derive paths from absolute state.
+    - Explorer and files flyout now prefer `current_path_abs` for core listing, create/open, and sorting flows.
+    - Flyout controls/header/bottom/active groups and terminal now use effective absolute path state.
+    - Activity/share tabs, explorer side buttons, download flow, and AI document generation now prefer absolute current path state.
+    - Explorer file action box no longer rejects absolute destinations for move/copy.
+    - `path_to_file("/", name)` now returns `"/name"` (instead of `"//name"`), with tests.
+    - Root-path edge cases handled in backups selection helpers (`/` prefix comparisons no longer use `"//"`).
   - Remaining:
     - Remove empty-string semantics in active UI path model.
     - Convert explorer/flyout consumers to treat absolute as primary.

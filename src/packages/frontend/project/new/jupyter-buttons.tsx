@@ -84,6 +84,8 @@ export function JupyterNotebookButtons({
 
   const { project_id, actions } = useProjectContext();
   const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? current_path;
   const { error, kernel_selection, kernels_by_name } = useJupyterKernelsInfo();
 
   if (!availableFeatures.jupyter_notebook) {
@@ -106,7 +108,7 @@ export function JupyterNotebookButtons({
     // this ensures the file will have the extension ".ipynb"
     const path = actions.construct_absolute_path(
       filename,
-      current_path,
+      effective_current_path,
       "ipynb",
     );
     if (

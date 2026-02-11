@@ -5,6 +5,7 @@
 
 import { HomeOutlined } from "@ant-design/icons";
 import { Breadcrumb, Button, Flex, Tooltip } from "antd";
+import { dirname } from "path";
 
 import {
   CSS,
@@ -14,6 +15,8 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { trunc_middle } from "@cocalc/util/misc";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { lite } from "@cocalc/frontend/lite";
 import { createPathSegmentLink } from "./path-segment-link";
 
 interface Props {
@@ -31,17 +34,52 @@ export const PathNavigator: React.FC<Props> = React.memo(
     className = "cc-path-navigator",
     mode = "files",
   }: Readonly<Props>) => {
-    const currentPath = useTypedRedux({ project_id }, "current_path");
-    const historyPath = useTypedRedux({ project_id }, "history_path");
+    const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
+    const currentPathLegacy = useTypedRedux({ project_id }, "current_path");
+    const historyPathAbs = useTypedRedux({ project_id }, "history_path_abs");
+    const historyPathLegacy = useTypedRedux({ project_id }, "history_path");
+    const availableFeatures = useTypedRedux({ project_id }, "available_features");
+    const liteHome = availableFeatures?.get("homeDirectory");
+    const homePath =
+      lite && typeof liteHome === "string" && liteHome.length > 0
+        ? normalizeAbsolutePath(liteHome)
+        : "/root";
+
+    const normalizePathForNav = (path: string): string => {
+      if (path.startsWith(".")) return path;
+      return normalizeAbsolutePath(path, homePath);
+    };
+
+    const currentPath = normalizePathForNav(
+      currentPathAbs ?? currentPathLegacy ?? homePath,
+    );
+    const historyPath = normalizePathForNav(
+      historyPathAbs ?? historyPathLegacy ?? currentPath,
+    );
     const actions = useActions({ project_id });
 
     function make_path() {
       const v: any[] = [];
 
-      const currentPathDepth =
-        (currentPath == "" ? 0 : currentPath.split("/").length) - 1;
-      const historySegments = historyPath.split("/");
-      const isRoot = currentPath[0] === "/";
+      const currentPathInHome =
+        currentPath === homePath || currentPath.startsWith(`${homePath}/`);
+      const historyPathInHome =
+        historyPath === homePath || historyPath.startsWith(`${homePath}/`);
+      const currentSegments = (
+        currentPathInHome && homePath !== "/"
+          ? currentPath.slice(homePath.length)
+          : currentPath
+      )
+        .split("/")
+        .filter(Boolean);
+      const historySegments = (
+        historyPathInHome && homePath !== "/"
+          ? historyPath.slice(homePath.length)
+          : historyPath
+      )
+        .split("/")
+        .filter(Boolean);
+      const currentPathDepth = currentSegments.length - 1;
 
       const homeStyle: CSS = {
         fontSize: style?.fontSize,
@@ -60,14 +98,14 @@ export const PathNavigator: React.FC<Props> = React.memo(
 
       v.push(
         createPathSegmentLink({
-          path: "",
+          path: homePath,
           display: (
             <Tooltip title="Go to home directory">{homeDisplay}</Tooltip>
           ),
-          full_name: "",
+          full_name: homePath,
           key: 0,
-          on_click: () => actions?.open_directory("", true, false),
-          active: currentPathDepth === -1,
+          on_click: () => actions?.open_directory(homePath, true, false),
+          active: currentPath === homePath,
         }),
       );
 
@@ -75,9 +113,17 @@ export const PathNavigator: React.FC<Props> = React.memo(
       const condense = mode === "flyout";
 
       historySegments.forEach((segment, i) => {
-        if (isRoot && i === 0) return;
         const is_current = i === currentPathDepth;
         const is_history = i > currentPathDepth;
+        const relativePath = historySegments
+          .slice(0, i + 1 || undefined)
+          .join("/");
+        const path =
+          historyPathInHome && homePath !== "/"
+            ? normalizeAbsolutePath(relativePath, homePath)
+            : historyPath.startsWith("/")
+              ? `/${relativePath}`
+              : relativePath;
 
         // don't show too much in flyout mode
         const hide =
@@ -88,7 +134,7 @@ export const PathNavigator: React.FC<Props> = React.memo(
         v.push(
           // yes, must be called as a normal function.
           createPathSegmentLink({
-            path: historySegments.slice(0, i + 1 || undefined).join("/"),
+            path,
             display: hide ? <>&bull;</> : trunc_middle(segment, 15),
             full_name: segment,
             key: i + 1,
@@ -102,7 +148,7 @@ export const PathNavigator: React.FC<Props> = React.memo(
     }
 
     function renderUP() {
-      const canGoUp = currentPath !== "";
+      const canGoUp = currentPath !== "/";
 
       return (
         <Button
@@ -110,9 +156,10 @@ export const PathNavigator: React.FC<Props> = React.memo(
           type="text"
           onClick={() => {
             if (!canGoUp) return;
-            const pathSegments = currentPath.split("/");
-            pathSegments.pop();
-            const parentPath = pathSegments.join("/");
+            const parent = currentPath.startsWith(".")
+              ? currentPath.split("/").slice(0, -1).join("/")
+              : dirname(currentPath);
+            const parentPath = parent === "." ? homePath : parent;
             actions?.open_directory(parentPath, true, false);
           }}
           disabled={!canGoUp}

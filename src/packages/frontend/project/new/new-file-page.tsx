@@ -126,6 +126,8 @@ export default function NewFilePage(props: Props) {
     !!is_admin || user_group === "owner";
   const [extensionWarning, setExtensionWarning] = useState<boolean>(false);
   const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? current_path;
   const filename0 = useTypedRedux({ project_id }, "default_filename");
   const fallbackFilename = filename0
     ? filename0
@@ -316,7 +318,7 @@ export default function NewFilePage(props: Props) {
       await getActions().createFile({
         name,
         ext,
-        current_path,
+        current_path: effective_current_path,
       });
     } finally {
       setCreatingFile("");
@@ -373,7 +375,7 @@ export default function NewFilePage(props: Props) {
   function createFolder() {
     getActions().createFolder({
       name: filename,
-      current_path,
+      current_path: effective_current_path,
       switch_over: true,
     });
   }
@@ -784,7 +786,7 @@ export default function NewFilePage(props: Props) {
       >
         <FileUpload
           project_id={project_id}
-          current_path={current_path}
+          current_path={effective_current_path}
           show_header={false}
         />
       </Modal>

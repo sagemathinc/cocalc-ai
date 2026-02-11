@@ -155,6 +155,8 @@ function AIGenerateDocument({
   const intl = useIntl();
   const projectActions = useActions({ project_id });
   const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? current_path ?? "";
 
   const [model, setModel] = useLanguageModelSetting(project_id);
   const [tokens, setTokens] = useState<number>(0);
@@ -359,7 +361,7 @@ function AIGenerateDocument({
         history,
         system,
         project_id,
-        path: current_path, // mainly for analytics / metadata -- can't put the actual document path since the model outputs that.
+        path: effective_current_path, // mainly for analytics / metadata -- can't put the actual document path since the model outputs that.
         tag: TAG,
         model,
       });
@@ -374,7 +376,12 @@ function AIGenerateDocument({
   }
 
   async function createDocument(preview: string): Promise<string> {
-    const prefix = current_path ? `${current_path}/` : "";
+    const prefix =
+      effective_current_path === "/"
+        ? "/"
+        : effective_current_path
+          ? `${effective_current_path}/`
+          : "";
     const path = `${prefix}${filename}`;
 
     track(TAG, { project_id, path, ext });

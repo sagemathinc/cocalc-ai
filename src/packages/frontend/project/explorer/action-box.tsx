@@ -211,7 +211,7 @@ export function ActionBox({
     if (dest === src_path) {
       return false;
     }
-    if (misc.contains(dest, "//") || misc.startswith(dest, "/")) {
+    if (misc.contains(dest, "//")) {
       return false;
     }
     if (dest.charAt(dest.length - 1) === "/") {
@@ -341,9 +341,6 @@ export function ActionBox({
       input === current_path &&
       project_id === copy_destination_project_id
     ) {
-      return false;
-    }
-    if (misc.startswith(input, "/")) {
       return false;
     }
     return true;

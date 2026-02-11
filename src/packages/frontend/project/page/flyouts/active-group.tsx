@@ -45,6 +45,8 @@ export function Group({
   const actions = useActions({ project_id });
   const openFiles = useTypedRedux({ project_id }, "open_files_order");
   const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? current_path;
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
 
   const components = group.replace(/^\.smc\/root\//, "/").split("/");
@@ -97,7 +99,7 @@ export function Group({
             name: group,
             isDir: true,
             isOpen,
-            isActive: current_path === group && activeTab === "files",
+            isActive: effective_current_path === group && activeTab === "files",
           }}
           multiline={false}
           displayedNameOverride={displayed}

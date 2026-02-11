@@ -178,6 +178,8 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
   const intl = useIntl();
   const { project_id } = useProjectContext();
   const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? current_path;
   const actions = useActions({ project_id });
   const student_project_functionality =
     useStudentProjectFunctionality(project_id);
@@ -439,7 +441,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
       if (key === "download" && !item.isDir) continue;
       const disabled =
         isDisabledSnapshots(key) &&
-        (current_path?.startsWith(SNAPSHOTS) ?? false);
+        (effective_current_path?.startsWith(SNAPSHOTS) ?? false);
 
       const { name, icon, hideFlyout } = FILE_ACTIONS[key];
       if (hideFlyout) return;
@@ -457,7 +459,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
             } else {
               // if there is no handler for checking a file, only check this file (e.g. "flyout/Log")
               if (fileName === "..") return;
-              const pathFn = path_to_file(current_path, fileName);
+              const pathFn = path_to_file(effective_current_path, fileName);
               actions?.set_all_files_unchecked();
               actions?.set_file_list_checked([pathFn]);
             }
@@ -520,7 +522,7 @@ export const FileListItem = React.memo((props: Readonly<FileListItemProps>) => {
     // view/download buttons at the bottom
     const showDownload = !student_project_functionality.disableActions;
     if (name !== ".." && !isDir && showDownload && !multiple) {
-      const full_path = path_to_file(current_path, name);
+      const full_path = path_to_file(effective_current_path, name);
       const ext = (filename_extension(name) ?? "").toLowerCase();
       const showView = VIEWABLE_FILE_EXT.includes(ext);
       const url = url_href(project_id, full_path);
