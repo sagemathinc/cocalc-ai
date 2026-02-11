@@ -1,5 +1,8 @@
 import { List } from "immutable";
+import { useState } from "react";
+import { Button, Tooltip } from "antd";
 import { TimeAgo } from "@cocalc/frontend/components";
+import { Icon } from "@cocalc/frontend/components/icon";
 import type { TimeTravelActions } from "./actions";
 
 interface Props {
@@ -8,7 +11,10 @@ interface Props {
   versions: List<string | number>;
   currentVersion?: string | number;
   firstVersion: number;
-  onSelectVersion: (version: string | number) => void;
+  onSelectVersion: (
+    version: string | number,
+    opts?: { open?: boolean; shiftKey?: boolean; compareToPrevious?: boolean },
+  ) => void;
 }
 
 interface Row {
@@ -27,9 +33,14 @@ export function LogView({
   firstVersion,
   onSelectVersion,
 }: Props) {
+  const [hoveredTitleKey, setHoveredTitleKey] = useState<string | null>(null);
   const rows = buildRows({ actions, source, versions, firstVersion });
   return (
     <div style={{ padding: "10px 15px", overflowY: "auto", height: "100%" }}>
+      <div style={{ color: "#666", fontSize: "12px", marginBottom: "8px" }}>
+        Click a title to compare with the previous version. Shift+click another
+        row to compare with selected.
+      </div>
       {rows.length === 0 ? (
         <div style={{ color: "#666" }}>No versions found.</div>
       ) : (
@@ -38,9 +49,11 @@ export function LogView({
           return (
             <div
               key={row.key}
-              onClick={() => onSelectVersion(row.version)}
+              onClick={(e) =>
+                onSelectVersion(row.version, { shiftKey: e.shiftKey })
+              }
               style={{
-                cursor: "pointer",
+                cursor: "default",
                 padding: "8px 10px",
                 borderRadius: "6px",
                 marginBottom: "6px",
@@ -48,7 +61,44 @@ export function LogView({
                 background: selected ? "#f0f6ff" : "white",
               }}
             >
-              <div style={{ fontWeight: 600 }}>{row.title}</div>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                }}
+              >
+                <div
+                  style={{
+                    fontWeight: 600,
+                    display: "inline",
+                    cursor: "pointer",
+                    textDecoration:
+                      hoveredTitleKey === row.key ? "underline" : "none",
+                  }}
+                  onMouseEnter={() => setHoveredTitleKey(row.key)}
+                  onMouseLeave={() => setHoveredTitleKey(null)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectVersion(row.version, { compareToPrevious: true });
+                  }}
+                >
+                  {row.title}
+                </div>
+                <Tooltip title="View file at this point">
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0, height: "auto", whiteSpace: "nowrap" }}
+                    icon={<Icon name="file" />}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectVersion(row.version, { open: true });
+                    }}
+                  />
+                </Tooltip>
+              </div>
               <div style={{ color: "#666", fontSize: "12px" }}>
                 {row.subtitle ?? ""}
                 {row.timeMs != null && (
@@ -135,4 +185,3 @@ function toLetterCode(user?: number): string {
   if (user == null) return "";
   return String.fromCharCode(97 + (user % 26));
 }
-

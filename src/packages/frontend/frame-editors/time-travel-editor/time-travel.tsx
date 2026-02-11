@@ -8,7 +8,7 @@
 import { Button, Modal, Radio, Select, Space, Tooltip, message } from "antd";
 import { Map, List } from "immutable";
 import { debounce } from "lodash";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AccountState } from "@cocalc/frontend/account/types";
 import {
   redux,
@@ -107,6 +107,9 @@ export function TimeTravel(props: Props) {
     const saved = props.desc?.get("logMode");
     return saved == null ? true : !!saved;
   });
+  const [metaTitleHover, setMetaTitleHover] = useState<boolean>(false);
+  const [logCompareHintShown, setLogCompareHintShown] =
+    useState<boolean>(false);
   const [gitChangedFiles, setGitChangedFiles] = useState<string[]>([]);
   const [version, setVersion] = useState<number | string | undefined>(
     props.desc?.get("version"),
@@ -361,6 +364,19 @@ export function TimeTravel(props: Props) {
   }, [props.actions, gitMode, changesMode, version]);
 
   const renderVersion = () => {
+    const logTitleLink = (content: ReactNode) => (
+      <span
+        style={{
+          cursor: "pointer",
+          textDecoration: metaTitleHover ? "underline" : "none",
+        }}
+        onMouseEnter={() => setMetaTitleHover(true)}
+        onMouseLeave={() => setMetaTitleHover(false)}
+        onClick={() => setLogMode(true)}
+      >
+        {content}
+      </span>
+    );
     const v = activeVersions;
     if (v == null || v.size == 0) {
       return null;
@@ -435,7 +451,7 @@ export function TimeTravel(props: Props) {
         if (commit == null) return null;
         return (
           <span style={{ whiteSpace: "nowrap" }}>
-            <b>{commit.subject}</b> ·{" "}
+            {logTitleLink(<b>{commit.subject}</b>)} ·{" "}
             <Button
               type="link"
               size="small"
@@ -457,7 +473,11 @@ export function TimeTravel(props: Props) {
         const t = props.actions.snapshotWallTime(version);
         return (
           <span style={{ whiteSpace: "nowrap" }}>
-            Snapshot <b>{`${version}`}</b>
+            {logTitleLink(
+              <>
+                Snapshot <b>{`${version}`}</b>
+              </>,
+            )}
             {t != null && (
               <>
                 {" "}·{" "}
@@ -471,7 +491,11 @@ export function TimeTravel(props: Props) {
         const t = props.actions.backupWallTime(version);
         return (
           <span style={{ whiteSpace: "nowrap" }}>
-            Backup <b>{`${version}`.slice(0, 8)}</b>
+            {logTitleLink(
+              <>
+                Backup <b>{`${version}`.slice(0, 8)}</b>
+              </>,
+            )}
             {t != null && (
               <>
                 {" "}·{" "}
@@ -491,14 +515,210 @@ export function TimeTravel(props: Props) {
       if (t == null) {
         return null;
       }
-      return (
+      return logTitleLink(
         <Version
           date={new Date(t)}
           number={props.actions.versionNumber(id) ?? i + firstVersion}
           user={props.actions.getUser(id)}
-        />
+        />,
       );
     }
+  };
+
+  const getSelectedVersionMeta = (
+    selected: string | number | undefined,
+  ): {
+    title: ReactNode;
+    subtitle?: ReactNode;
+    timeMs?: number;
+  } | null => {
+    if (selected == null) return null;
+    if (gitMode) {
+      const commit = props.actions.gitCommit(selected);
+      if (commit == null) return null;
+      return {
+        title: (
+          <span
+            style={{ cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => setLogMode(true)}
+          >
+            {commit.subject}
+          </span>
+        ),
+        subtitle: (
+          <>
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() => void copyHash(commit.hash)}
+            >
+              {commit.shortHash}
+            </Button>{" "}
+            · {commit.authorName}
+          </>
+        ),
+        timeMs: commit.timestampMs,
+      };
+    }
+    if (snapshotsMode) {
+      const t = props.actions.snapshotWallTime(selected);
+      return {
+        title: (
+          <span
+            style={{ cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => setLogMode(true)}
+          >
+            Snapshot {`${selected}`}
+          </span>
+        ),
+        timeMs: t,
+      };
+    }
+    if (backupsMode) {
+      const t = props.actions.backupWallTime(selected);
+      const id = `${selected}`;
+      return {
+        title: (
+          <span
+            style={{ cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => setLogMode(true)}
+          >
+            Backup {id.slice(0, 8)}
+          </span>
+        ),
+        subtitle: id,
+        timeMs: t,
+      };
+    }
+    const id = `${selected}`;
+    const i = activeVersions.indexOf(selected);
+    const number = props.actions.versionNumber(id) ?? i + firstVersion;
+    const t = props.actions.wallTime(id);
+    const user = props.actions.getUser(id);
+    return {
+      title: (
+        <span
+          style={{ cursor: "pointer", textDecoration: "underline" }}
+          onClick={() => setLogMode(true)}
+        >
+          Revision {number}
+          {toLetterCode(user)}
+        </span>
+      ),
+      timeMs: t ?? undefined,
+    };
+  };
+
+  const canStepRangeEdge = (
+    edge: "start" | "end",
+    delta: -1 | 1,
+  ): boolean => {
+    if (!changesMode) return false;
+    const selected = edge === "start" ? version0 : version1;
+    const other = edge === "start" ? version1 : version0;
+    if (selected == null || other == null) return false;
+    const i = activeVersions.indexOf(selected);
+    const j = activeVersions.indexOf(other);
+    if (i === -1 || j === -1) return false;
+    const target = i + delta;
+    if (target < 0 || target >= activeVersions.size) return false;
+    if (edge === "start") return target < j;
+    return target > j;
+  };
+
+  const stepRangeEdge = (edge: "start" | "end", delta: -1 | 1): void => {
+    if (!canStepRangeEdge(edge, delta)) return;
+    const selected = edge === "start" ? version0 : version1;
+    if (selected == null) return;
+    const i = activeVersions.indexOf(selected);
+    if (i === -1) return;
+    const next = activeVersions.get(i + delta);
+    if (next == null) return;
+    if (edge === "start") {
+      setVersion0(next);
+    } else {
+      setVersion1(next);
+    }
+  };
+
+  const renderChangesSelectionRows = () => {
+    if (logMode || !changesMode || version0 == null || version1 == null) {
+      return null;
+    }
+    const start = getSelectedVersionMeta(version0);
+    const end = getSelectedVersionMeta(version1);
+    const renderRow = (
+      label: string,
+      meta: { title: ReactNode; subtitle?: ReactNode; timeMs?: number } | null,
+      edge: "start" | "end",
+    ) => (
+      <div
+        style={{
+          border: "1px solid #e6e6e6",
+          borderRadius: "6px",
+          padding: "6px 8px",
+          minWidth: "320px",
+          flex: "1 1 320px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "4px",
+          }}
+        >
+          <b>{label}</b>
+          <Space.Compact>
+            <Button
+              size="small"
+              disabled={!canStepRangeEdge(edge, -1)}
+              onClick={() => stepRangeEdge(edge, -1)}
+            >
+              ◀
+            </Button>
+            <Button
+              size="small"
+              disabled={!canStepRangeEdge(edge, 1)}
+              onClick={() => stepRangeEdge(edge, 1)}
+            >
+              ▶
+            </Button>
+          </Space.Compact>
+        </div>
+        {meta == null ? (
+          <div style={{ color: "#666", fontSize: "12px" }}>Unknown version</div>
+        ) : (
+          <>
+            <div style={{ fontWeight: 600 }}>{meta.title}</div>
+            <div style={{ color: "#666", fontSize: "12px" }}>
+              {meta.subtitle ?? ""}
+              {meta.timeMs != null && (
+                <>
+                  {meta.subtitle ? " · " : ""}
+                  <TimeAgo date={new Date(meta.timeMs)} time_ago_absolute />
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+    return (
+      <div
+        style={{
+          marginTop: "6px",
+          display: "flex",
+          gap: "8px",
+          flexWrap: "wrap",
+        }}
+      >
+        {renderRow("From", start, "start")}
+        {renderRow("To", end, "end")}
+      </div>
+    );
   };
 
   const renderDiff = () => {
@@ -700,16 +920,18 @@ export function TimeTravel(props: Props) {
           onChange={(value) => setTextMode(value === "source")}
         />
         {renderChangesMode()}
-        <Select
-          size="small"
-          style={{ width: 155 }}
-          value={marks ? "timestamp" : "revision"}
-          options={[
-            { value: "revision", label: "Slider: Revision #" },
-            { value: "timestamp", label: "Slider: Timestamp" },
-          ]}
-          onChange={(value) => setMarks(value === "timestamp")}
-        />
+        {!logMode && (
+          <Select
+            size="small"
+            style={{ width: 155 }}
+            value={marks ? "timestamp" : "revision"}
+            options={[
+              { value: "revision", label: "Slider: Revision #" },
+              { value: "timestamp", label: "Slider: Timestamp" },
+            ]}
+            onChange={(value) => setMarks(value === "timestamp")}
+          />
+        )}
       </>
     );
   };
@@ -737,7 +959,7 @@ export function TimeTravel(props: Props) {
   };
 
   const renderCommitsInRangeButton = () => {
-    if (!gitMode || !changesMode) return null;
+    if (logMode || !gitMode || !changesMode) return null;
     return (
       <Button size="small" onClick={() => setShowCommitRange(true)}>
         Show Commits In Range
@@ -868,7 +1090,7 @@ export function TimeTravel(props: Props) {
             buttonStyle="solid"
             options={[
               { label: "Log", value: "log" },
-              { label: "Document", value: "document" },
+              { label: "File", value: "document" },
             ]}
           />
           <Space.Compact>{renderModeSelectors()}</Space.Compact>
@@ -913,6 +1135,7 @@ export function TimeTravel(props: Props) {
             {renderRevisionMeta()}
           </div>
         )}
+        {renderChangesSelectionRows()}
       </div>
     );
   };
@@ -945,6 +1168,7 @@ export function TimeTravel(props: Props) {
   };
 
   const renderRevisionMeta = () => {
+    if (changesMode) return null;
     const versionMeta = renderVersion();
     const authorMeta = renderAuthor();
     if (versionMeta == null && authorMeta == null) return null;
@@ -970,10 +1194,57 @@ export function TimeTravel(props: Props) {
         versions={activeVersions}
         currentVersion={version}
         firstVersion={firstVersion}
-        onSelectVersion={(selected) => {
+        onSelectVersion={(selected, opts) => {
+          if (opts?.compareToPrevious) {
+            const idx = activeVersions.indexOf(selected);
+            if (idx > 0) {
+              const older = activeVersions.get(idx - 1);
+              if (older != null) {
+                setVersion(selected);
+                setVersion0(older);
+                setVersion1(selected);
+                setChangesMode(true);
+                setLogMode(false);
+                return;
+              }
+            }
+            setVersion(selected);
+            setChangesMode(false);
+            setLogMode(false);
+            message.info("No earlier version to compare against.");
+            return;
+          }
+          if (opts?.open) {
+            setVersion(selected);
+            setChangesMode(false);
+            setLogMode(false);
+            return;
+          }
+          if (
+            opts?.shiftKey &&
+            version != null &&
+            selected !== version &&
+            activeVersions.indexOf(version) !== -1 &&
+            activeVersions.indexOf(selected) !== -1
+          ) {
+            const i0 = activeVersions.indexOf(version);
+            const i1 = activeVersions.indexOf(selected);
+            const older = i0 <= i1 ? version : selected;
+            const newer = i0 <= i1 ? selected : version;
+            setVersion(older);
+            setVersion0(older);
+            setVersion1(newer);
+            setChangesMode(true);
+            setLogMode(false);
+            if (!logCompareHintShown) {
+              message.info(
+                "Showing changes between selected versions (Shift+click from log).",
+              );
+              setLogCompareHintShown(true);
+            }
+            return;
+          }
           setVersion(selected);
-          setChangesMode(false);
-          setLogMode(false);
         }}
       />
     );
@@ -1009,6 +1280,11 @@ export function TimeTravel(props: Props) {
       {body}
     </div>
   );
+}
+
+function toLetterCode(user?: number): string {
+  if (user == null) return "";
+  return String.fromCharCode(97 + (user % 26));
 }
 
 const saveState = debounce((actions, obj) => {
