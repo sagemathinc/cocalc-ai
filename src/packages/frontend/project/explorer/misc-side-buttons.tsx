@@ -4,7 +4,6 @@
  */
 
 import { Space } from "antd";
-import { join } from "path";
 import { defineMessage, useIntl } from "react-intl";
 import { Button } from "@cocalc/frontend/antd-bootstrap";
 import {
@@ -30,6 +29,7 @@ import {
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
 import { lite } from "@cocalc/frontend/lite";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import TourButton from "./tour/button";
 import CloneProject from "./clone";
 
@@ -153,7 +153,7 @@ export function MiscSideButtons() {
     if (!available_features) return;
     const { vscode, homeDirectory } = available_features;
     if (!vscode || !homeDirectory) return;
-    const absPath = join(homeDirectory, current_path ?? "");
+    const absPath = normalizeAbsolutePath(current_path ?? "", homeDirectory);
     // setting ?folder= tells VS Code to open that directory
     const url = `${serverURL(project_id, "code")}?folder=${absPath}`;
     const values = { name: SPEC.code.longName };

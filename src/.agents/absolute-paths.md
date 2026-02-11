@@ -26,6 +26,9 @@ This blocks clean access to `/tmp`, `/`, and general non-HOME paths.
 - Runtime mode matters:
   - **lite mode** can run permissive filesystem access for all paths,
   - **launchpad mode** currently has backend sandbox constraints (HOME when project is not running).
+- HOME lookup strategy differs by mode:
+  - in launchpad mode, treat HOME as stable (`/root`) for routing decisions,
+  - in lite mode, HOME is deployment/runtime dependent and must be discovered/cached dynamically.
 
 ### Principles
 1. **One canonical path representation in app state**: absolute normalized path.
@@ -141,6 +144,9 @@ Implementation notes:
 - normalize path once at call boundary before routing.
 - expose a debug trace hook (`[fs-router] path -> decision`) behind debug flag.
 - route by path **prefix containment** against normalized HOME (not string contains).
+- optimize HOME handling:
+  - launchpad: avoid per-project HOME RPC and use `/root` constant in router context,
+  - lite: resolve HOME once and cache (invalidate only on explicit environment change/reconnect).
 
 ### Watch Ownership State Machine (Draft)
 The router decides service for API calls; watchers need stronger guarantees so two services do not emit overlapping updates.
@@ -437,10 +443,14 @@ Mitigation:
     - project running state,
     - path prefix (HOME vs non-HOME in launchpad mode).
   - Implement `selectFsService(path, ctx)` contract and wire through project actions + listing hooks.
+  - Implement HOME strategy optimization:
+    - launchpad uses stable `/root`,
+    - lite uses discovered/cached HOME.
 - Acceptance criteria:
   - Lite mode can browse/open/edit all paths using permissive routing.
   - Launchpad mode routes HOME and non-HOME paths according to policy.
   - Routing decisions are observable in debug telemetry.
+  - No repeated HOME lookup RPCs in launchpad mode.
 
 ### Ticket 6: Watch Ownership + Start/Stop Handoff
 - Priority: P2
