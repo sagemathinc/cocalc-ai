@@ -35,7 +35,7 @@
     "@cocalc/file-server": "workspace:*",
     "@cocalc/project-runner": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "@lydell/node-pty": "^1.1.0"
+    "@lydell/node-pty": "1.2.0-beta.10"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

@@ -382,12 +382,12 @@ export function terminalServer({
           const { rows, cols } = data;
           if (pty != null) {
             try {
-              pty.resize(cols, rows);
+              // Preferred upstream API: optional pixel dimensions as an object.
+              pty.resize(cols, rows, { width: 0, height: 0 });
             } catch (err) {
-              // Some node-pty/native combinations (seen with newer Node runtimes)
-              // require xPixel/yPixel arguments in addition to cols/rows.
+              // Backward compatibility with older node-pty shims.
               try {
-                pty.resize(cols, rows, 0, 0);
+                pty.resize(cols, rows);
               } catch {
                 logger.debug("terminal resize failed", { rows, cols, err });
               }
