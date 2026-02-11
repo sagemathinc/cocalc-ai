@@ -246,7 +246,7 @@ export function Explorer() {
         if (e.key == "ArrowUp") {
           if (e.shiftKey || e.ctrlKey || e.metaKey) {
             const path = dirname(effective_current_path);
-            actions.open_directory(path == "." ? "" : path);
+            actions.open_directory(path == "." ? "/" : path);
           } else {
             actions.decrement_selected_file_index();
           }

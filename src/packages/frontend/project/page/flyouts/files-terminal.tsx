@@ -55,7 +55,7 @@ export function TerminalFlyout({
   const actions = useActions({ project_id });
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
-  const currentPathRef = useRef<string>(effective_current_path ?? "");
+  const currentPathRef = useRef<string>(effective_current_path);
   const account_id = useTypedRedux("account", "account_id");
   const terminal = useTypedRedux("account", "terminal");
   const terminalRef = useRef<Terminal | undefined>(undefined);
@@ -69,7 +69,7 @@ export function TerminalFlyout({
   const syncRef = useRef<boolean>(sync);
 
   useEffect(() => {
-    currentPathRef.current = effective_current_path ?? "";
+    currentPathRef.current = effective_current_path;
   }, [effective_current_path]);
 
   useEffect(() => {
@@ -239,10 +239,10 @@ export function TerminalFlyout({
     // this "line reset" is from the terminal guide,
     // see frame-editors/terminal-editor/actions::run_command
     const clean = "\x05\x15"; // move cursor to end of line, then clear line
-    const nextPath = effective_current_path ?? "";
+    const nextPath = effective_current_path;
     // start with a space to avoid recording in history
     const cmd =
-      nextPath === "" || nextPath === "."
+      nextPath === "."
         ? ` cd "$HOME"`
         : nextPath.startsWith("/")
           ? ` cd "${escapeBashChangeDirPath(nextPath)}"`

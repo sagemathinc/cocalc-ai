@@ -25,7 +25,7 @@ This blocks clean access to `/tmp`, `/`, and general non-HOME paths.
 - `realpath` only works for existing paths.
 - Runtime mode matters:
   - **lite mode** can run permissive filesystem access for all paths,
-  - **launchpad mode** currently has backend sandbox constraints (HOME when project is not running).
+  - **launchpad mode** can run with HOME-scoped fallback until project rootfs is mounted.
 - HOME lookup strategy differs by mode:
   - in launchpad mode, treat HOME as stable (`/root`) for routing decisions,
   - in lite mode, HOME is deployment/runtime dependent and must be discovered/cached dynamically.
@@ -90,99 +90,29 @@ This blocks clean access to `/tmp`, `/`, and general non-HOME paths.
 - Restore/revert/save operations operate on SyncPath, while navigation/back-button semantics continue to use DisplayPath.
 - If symlink target changes during session, refresh SyncPath at safe boundaries (reopen/refocus/save conflict paths), not on every keystroke.
 
-### Filesystem Service Routing Contract (Mode-Aware)
-- We need explicit routing for filesystem operations and watch ownership:
-  - **Lite mode (`lite=true`)**
-    - Use permissive filesystem service for all paths.
-    - No HOME-only restriction.
-  - **Launchpad mode (`lite=false`)**
-    - When project is **not running**:
-      - backend filesystem service remains HOME-scoped/sandboxed.
-    - When project is **running**:
-      - use in-project permissive filesystem service for non-HOME paths,
-      - keep backend HOME service for HOME paths (or clearly designate one owner per prefix).
-- Critical invariant:
-  - At any moment, exactly one watcher owner for a given path prefix/session stream to avoid duplicated or conflicting updates.
-- Recommended routing rule in launchpad mode:
-  - `path in HOME` -> backend fs service (existing watcher path),
-  - `path outside HOME` -> in-project fs service.
-- Future simplification option:
-  - once stable, consider moving all fs operations to in-project service when running, with backend fallback only when stopped.
+### Backend Sandbox Contract (Mode-Aware)
+We now use a **single filesystem service** with backend-enforced path policy.
 
-### Filesystem Router Interface (Draft)
-Add a small routing layer used by project actions/hooks before every filesystem call.
-
-```ts
-type FsServiceKind = "backend_home" | "project_runtime";
-
-interface FsRoutingContext {
-  lite: boolean;
-  projectRunning: boolean;
-  homeDirectory: string; // absolute + normalized
-}
-
-interface FsRouteDecision {
-  kind: FsServiceKind;
-  reason:
-    | "lite-mode"
-    | "launchpad-stopped-home"
-    | "launchpad-running-home"
-    | "launchpad-running-non-home";
-}
-
-function selectFsService(path: string, ctx: FsRoutingContext): FsRouteDecision;
-```
-
-Resolution rules:
-- if `ctx.lite`: always `project_runtime` (permissive).
-- else if `!ctx.projectRunning`: `backend_home` (HOME-only policy; non-HOME should fail fast with actionable error).
-- else (`launchpad running`):
-  - if `path` is in HOME: `backend_home`,
-  - else: `project_runtime`.
+- `SandboxedFilesystem(path, { root? })`:
+  - `path` remains the HOME-scoped base (current behavior).
+  - `root` is an optional absolute mountpoint treated as `/` when available.
+  - if `root` is unavailable/unmounted, sandbox automatically falls back to `path`.
+- This eliminates frontend dual-routing and watcher handoff complexity.
+- Behavior by mode:
+  - **lite mode**: permissive operation can be enabled directly (unsafe mode), so all paths are available.
+  - **launchpad mode**:
+    - when project rootfs is unavailable, access is effectively HOME-scoped,
+    - when project rootfs is mounted, absolute paths under `/` are available through the same backend service.
 
 Implementation notes:
-- normalize path once at call boundary before routing.
-- expose a debug trace hook (`[fs-router] path -> decision`) behind debug flag.
-- route by path **prefix containment** against normalized HOME (not string contains).
-- optimize HOME handling:
-  - launchpad: avoid per-project HOME RPC and use `/root` constant in router context,
-  - lite: resolve HOME once and cache (invalidate only on explicit environment change/reconnect).
+- Frontend should use one fs client.
+- Backend sandbox remains the source of truth for containment and path safety.
+- We still need explicit tests around rootfs availability transitions under a single-service model.
 
-### Watch Ownership State Machine (Draft)
-The router decides service for API calls; watchers need stronger guarantees so two services do not emit overlapping updates.
-
-Ownership key:
-- `watchKey = { project_id, syncPath }` (or a coarser prefix key if batching by directory).
-
-States:
-- `NONE` (no active watcher)
-- `BACKEND` (owned by backend_home service)
-- `PROJECT` (owned by project_runtime service)
-- `TRANSITIONING` (temporary handoff state with strict sequencing)
-
-Events:
-- `OPEN(syncPath)`
-- `CLOSE(syncPath)`
-- `PROJECT_STARTED`
-- `PROJECT_STOPPED`
-- `PATH_RECLASSIFIED` (e.g. HOME/non-HOME boundary or mode change)
-- `WATCH_ERROR(kind)`
-
-Transitions:
-- `NONE -> BACKEND` or `NONE -> PROJECT` on first `OPEN` per router decision.
-- `BACKEND -> PROJECT` when router decision flips:
-  1. register on PROJECT,
-  2. wait for ack/ready marker,
-  3. unregister BACKEND,
-  4. emit ownership-changed debug event.
-- `PROJECT -> BACKEND` symmetric.
-- `* -> NONE` when last subscriber closes.
-- On `WATCH_ERROR`, retry same owner with bounded backoff; only failover owner if policy explicitly allows.
-
-Invariants:
-- At most one active owner (`BACKEND` xor `PROJECT`) per `watchKey`.
-- During `TRANSITIONING`, both owners may briefly exist but only one is allowed to emit patches to clients.
-- Handoff must not reset editor content or duplicate patch application.
+Implementation status:
+- Implemented backend `root` support in [src/packages/backend/sandbox/index.ts](./src/packages/backend/sandbox/index.ts).
+- Implemented backend tests in [src/packages/backend/sandbox/sandbox.test.ts](./src/packages/backend/sandbox/sandbox.test.ts).
+- Wired project-host fs server root mountpoint in [src/packages/project-host/file-server.ts](./src/packages/project-host/file-server.ts) using helper from [src/packages/project-runner/run/rootfs.ts](./src/packages/project-runner/run/rootfs.ts).
 
 ## Proposed Migration Strategy (Phased)
 
@@ -266,14 +196,12 @@ Deliverable: explicit, low-chatter canonicalization boundary.
 - Keep mapping `display_path -> sync_path` in frontend tab/editor state.
 - Filesystem watch and patch routing should target `sync_path` to avoid split sessions across symlink aliases.
 
-### Filesystem Routing + Watch Ownership Hardening (part of Phase 4)
-- Add a filesystem router abstraction in frontend project actions/hooks:
-  - chooses backend fs vs in-project fs based on mode + project status + path prefix.
-- Enforce single watch owner policy:
-  - no dual registration for the same path/session from both services.
-- Add explicit handoff behavior when project starts/stops:
-  - rebind only required watchers,
-  - avoid emitting duplicate initial patches.
+### Backend Rootfs Availability Hardening (part of Phase 4)
+- Validate behavior when rootfs is unavailable:
+  - HOME-scoped fallback remains correct.
+- Validate behavior when rootfs is mounted:
+  - absolute paths under `/` are available.
+- Ensure transitions are deterministic and test-covered.
 
 ## Phase 5: Legacy Cleanup (Medium)
 Remove/retire HOME-relative assumptions in active code paths:
@@ -328,10 +256,8 @@ Because `realpath` fails on non-existing targets:
   - retarget between opens updates SyncPath on next boundary operation.
 - Mode/routing behavior:
   - lite mode can browse/open/edit outside HOME without fallback hacks.
-  - launchpad mode when stopped is HOME-scoped.
-  - launchpad mode when running routes non-HOME paths through in-project fs service.
-- Watch ownership behavior:
-  - no duplicate patch streams when switching service ownership at project start/stop.
+  - launchpad mode with rootfs unavailable is HOME-scoped.
+  - launchpad mode with rootfs mounted supports absolute paths.
 
 ## Performance checks
 - Measure `realpath` RPC count before/after for common flows.
@@ -343,8 +269,7 @@ Because `realpath` fails on non-existing targets:
 - Medium: snapshot/backups pseudo-path mode leakage into absolute model.
 - Medium: legacy external links/bookmarks that encode relative paths.
 - Medium: dual-path bugs where DisplayPath and SyncPath diverge incorrectly.
-- High: backend and in-project fs services both watching same path stream (stomp/duplication risk).
-- Medium: project start/stop handoff races causing missed or duplicated updates.
+- Medium: rootfs mount/unmount transition races causing fallback-vs-root path surprises.
 
 Mitigation:
 - phased rollout with feature flag,
@@ -361,11 +286,10 @@ Mitigation:
 
 ### P2 (API and UX consolidation)
 5. Add/standardize canonicalization RPC boundary for non-existing targets. *(Medium)*
-6. Add mode-aware filesystem router (lite vs launchpad, HOME vs non-HOME). *(Hard)*
-7. Enforce watcher ownership and start/stop handoff policy. *(Hard)*
-8. PathNavigator root/home redesign (clickable root selector scaffold). *(Medium)*
-9. Remove `.smc/root` assumptions from active frontend flows. *(Medium)*
-10. Route sync/watch/session identity through SyncPath while preserving DisplayPath in UX. *(Hard)*
+6. Validate backend sandbox `root` transitions (mounted/unmounted) with integration tests. *(Medium)*
+7. PathNavigator root/home redesign (clickable root selector scaffold). *(Medium)*
+8. Remove `.smc/root` assumptions from active frontend flows. *(Medium)*
+9. Route sync/watch/session identity through SyncPath while preserving DisplayPath in UX. *(Hard)*
 
 ### P3 (cleanup and polish)
 11. Convert snapshot/backups to explicit path-context model instead of string hacks. *(Hard)*
@@ -376,7 +300,7 @@ Mitigation:
 1. Land helpers + tests.
 2. Land ProjectActions/store absolute migration behind a feature flag.
 3. Migrate explorer and open-file flows.
-4. Land mode-aware fs router + watcher handoff policy.
+4. Validate rootfs mounted/unmounted transition behavior in launchpad mode.
 5. Enable by default in cocalc-lite4.
 6. Remove legacy shims.
 
@@ -386,7 +310,7 @@ Mitigation:
 - No `.smc/root` dependency for normal workflows.
 - `realpath` calls are limited to boundary operations and not in hot UI loops.
 - Symlink aliases remain visible to users, while collaboration correctness is guaranteed via shared SyncPath.
-- Launchpad/lite routing is deterministic, and watcher ownership is single-source for any given path stream.
+- Launchpad/lite path behavior is deterministic with backend rootfs fallback.
 
 ## Implementation Ticket Sequence
 
@@ -426,23 +350,24 @@ Mitigation:
     - Remove empty-string semantics in active UI path model.
     - Convert explorer/flyout consumers to treat absolute as primary.
     - Finish URL behavior consistency for root/home aliases.
-- Ticket 5: In progress.
+- Ticket 4: In progress.
   - Done:
-    - Added frontend filesystem routing model:
-      - [src/packages/frontend/project/fs-router.ts](./src/packages/frontend/project/fs-router.ts)
-      - `selectFsService(path, { lite, projectRunning, homeDirectory })`
-      - route reasons (`lite-mode`, `launchpad-stopped-home`, `launchpad-running-home`, `launchpad-running-non-home`).
-    - Added `ProjectActions.fsForPath(path)` and routing context wiring.
-    - Added separate backend/runtime fs client placeholders in `ProjectActions`:
-      - `fsBackend()`
-      - `fsProjectRuntime()` (currently same service; TODO remains).
-    - Routed path-sensitive project actions through `fsForPath(...)`:
-      copy/rename/move/delete/mkdir/write/search/stat.
-    - Updated listing/find hooks to use path-aware `useFs({ project_id, path })`.
+    - Explorer and flyout paths now mostly use `current_path_abs`.
+    - Core listing/create/open/sort flows are absolute-first.
+    - Most URL edge cases (`files//...`) have been removed via explicit route parsing.
   - Remaining:
-    - Wire `project_runtime` to a distinct in-project fs service in launchpad mode.
-    - Add watcher ownership/handoff implementation (Ticket 6).
-    - Add integration tests for HOME vs non-HOME routing behavior.
+    - Remove last `""`/ `"."` path semantics in explorer/flyout code.
+    - Normalize terminal/flyout path defaults to `/` only.
+    - Final pass on absolute-first path joins and parent nav behavior.
+- Ticket 5: Completed.
+  - Done:
+    - Added backend optional `root` mode to sandbox:
+      - [src/packages/backend/sandbox/index.ts](./src/packages/backend/sandbox/index.ts)
+    - Added Jest coverage for root-mode behavior:
+      - [src/packages/backend/sandbox/sandbox.test.ts](./src/packages/backend/sandbox/sandbox.test.ts)
+    - Wired project-host file server to pass rootfs mountpoint:
+      - [src/packages/project-host/file-server.ts](./src/packages/project-host/file-server.ts)
+      - [src/packages/project-runner/run/rootfs.ts](./src/packages/project-runner/run/rootfs.ts)
 
 ### Ticket 1: Path Model Module + Tests
 - Priority: P1
@@ -487,37 +412,31 @@ Mitigation:
   - File operations from explorer/flyout work under `/tmp` and root paths.
   - No regressions in snapshots/backups entry points.
 
-### Ticket 5: Mode-Aware Filesystem Router
+### Ticket 5: Backend Sandbox Root Mode
 - Priority: P2
-- Effort: Hard
+- Effort: Medium
 - Depends on: Ticket 2
 - Scope:
-  - Add a frontend fs routing layer that selects backend fs vs in-project fs by:
-    - runtime mode (`lite` vs launchpad),
-    - project running state,
-    - path prefix (HOME vs non-HOME in launchpad mode).
-  - Implement `selectFsService(path, ctx)` contract and wire through project actions + listing hooks.
-  - Implement HOME strategy optimization:
-    - launchpad uses stable `/root`,
-    - lite uses discovered/cached HOME.
+  - Extend backend sandbox with optional `root` mountpoint.
+  - Resolve absolute paths against `root` when mounted.
+  - Fallback to HOME-scoped `path` when `root` is unavailable.
+  - Wire root mountpoint into project-host fs server initialization.
 - Acceptance criteria:
-  - Lite mode can browse/open/edit all paths using permissive routing.
-  - Launchpad mode routes HOME and non-HOME paths according to policy.
-  - Routing decisions are observable in debug telemetry.
-  - No repeated HOME lookup RPCs in launchpad mode.
+  - Lite mode can browse/open/edit all paths using permissive mode.
+  - Launchpad mode supports absolute paths when rootfs is mounted.
+  - Behavior falls back to HOME cleanly when rootfs is unavailable.
 
-### Ticket 6: Watch Ownership + Start/Stop Handoff
+### Ticket 6: Rootfs Transition Validation
 - Priority: P2
-- Effort: Hard
+- Effort: Medium
 - Depends on: Ticket 5
 - Scope:
-  - Ensure only one service owns watchers for a given path/session stream.
-  - Implement safe handoff rules when project starts/stops.
-  - Implement explicit ownership state machine (`NONE|BACKEND|PROJECT|TRANSITIONING`) per `watchKey`.
+  - Add tests for mounted/unmounted rootfs behavior.
+  - Validate path and error redaction behavior in both modes.
+  - Validate filesystem operations and browsing behavior for fallback transitions.
 - Acceptance criteria:
-  - No duplicate patch streams from backend + in-project services.
-  - No missed updates during ownership transitions.
-  - Transition logs confirm deterministic handoff order (register new owner before dropping old owner).
+  - Transition behavior is deterministic and test-covered.
+  - No regressions in HOME-scoped fallback mode.
 
 ### Ticket 7: Sync/Watch Identity by SyncPath
 - Priority: P2

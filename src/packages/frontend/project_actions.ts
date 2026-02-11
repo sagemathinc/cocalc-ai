@@ -2305,7 +2305,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   private getFilesCache = (path: string): Files | null => {
     return getFiles({
       cacheId: this.getCacheId(),
-      path: path == "." ? "" : path,
+      path: path == "." ? "/" : path,
     });
   };
 
@@ -2674,10 +2674,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     url: string,
     current_path: string,
   ): Promise<void> => {
-    let d = current_path;
-    if (d === "" || d === "/") {
-      d = "/";
-    }
+    const d = current_path;
     const id = misc.uuid();
     this.setState({ downloading_file: true });
     this.set_activity({
@@ -2844,7 +2841,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       fileRouteSource,
     );
     if (main_segment === "files" || isHomeFileRoute) {
-      if (target.endsWith("/") || full_path === "") {
+      if (target.endsWith("/")) {
         this.open_directory(parent_path, change_history);
         return;
       }

@@ -72,7 +72,7 @@ export function FilesSelectedControls({
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
   const actions = useActions({ project_id });
-  const inBackups = isBackupsPath(effective_current_path ?? "");
+  const inBackups = isBackupsPath(effective_current_path);
 
   const singleFile = useSingleFile({
     checked_files,
@@ -130,7 +130,7 @@ export function FilesSelectedControls({
     if (!backupsMeta)
       return { mode: "loading" as const, entries: [] as BackupSelection[] };
 
-    const parts = (effective_current_path ?? "").split("/").filter(Boolean);
+    const parts = effective_current_path.split("/").filter(Boolean);
     if (parts.length === 0 || parts[0] !== BACKUPS) {
       return { mode: "none" as const, entries: [] as BackupSelection[] };
     }
@@ -166,13 +166,12 @@ export function FilesSelectedControls({
     }
     const subpath = parts.slice(2).join("/");
     const startsWithCurrentPath = (candidate: string): boolean => {
-      if (effective_current_path == null) return false;
       if (candidate === effective_current_path) return true;
       if (effective_current_path === "/") return candidate.startsWith("/");
       return candidate.startsWith(`${effective_current_path}/`);
     };
     const relativeToCurrentPath = (candidate: string): string => {
-      if (effective_current_path == null || candidate === effective_current_path) {
+      if (candidate === effective_current_path) {
         return "";
       }
       if (effective_current_path === "/") {
@@ -475,7 +474,7 @@ export function FilesSelectedControls({
         {checked_files.size > 0 ? renderOpenFile() : undefined}
         <FileActionsDropdown
           names={names}
-          current_path={effective_current_path ?? ""}
+          current_path={effective_current_path}
           actions={actions}
           label="Actions"
           size="small"
