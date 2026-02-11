@@ -928,8 +928,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           // of file.
           (async () => {
             try {
+              const syncPath = this.get_sync_path(path);
               const { name, Editor } = await this.init_file_react_redux(
-                path,
+                syncPath,
                 this.open_files?.get(path, "ext"),
               );
               if (this.open_files == null) return;
@@ -1300,6 +1301,41 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return { name, Editor };
   };
 
+  private get_sync_path(path: string): string {
+    const sync_path = this.open_files?.get(path, "sync_path");
+    if (typeof sync_path === "string" && sync_path.length > 0) {
+      return sync_path;
+    }
+    return path;
+  }
+
+  private has_display_path_for_sync_path(
+    sync_path: string,
+    except_path?: string,
+  ): boolean {
+    const store = this.get_store();
+    const open_files = store?.get("open_files");
+    if (open_files == null) {
+      return false;
+    }
+    let found = false;
+    open_files.forEach((_obj, display_path) => {
+      if (found || display_path === except_path) {
+        return;
+      }
+      const other_sync_path = open_files.getIn([display_path, "sync_path"]);
+      if (typeof other_sync_path === "string") {
+        if (other_sync_path === sync_path) {
+          found = true;
+        }
+      } else if (display_path === sync_path) {
+        // Backward-compatible fallback for tabs opened before sync_path existed.
+        found = true;
+      }
+    });
+    return found;
+  }
+
   get_scroll_saver_for = (path: string) => {
     if (path != null) {
       return (scroll_position) => {
@@ -1329,7 +1365,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       console.warn(`gotoFragment -- invalid fragmentId: "${fragmentId}"`);
       return;
     }
-    const actions: any = redux.getEditorActions(this.project_id, path);
+    const sync_path = this.get_sync_path(path);
+    const actions: any = redux.getEditorActions(this.project_id, sync_path);
     const store = this.get_store();
     // We ONLY actually goto the fragment if the file is the active one
     // in the active project and the actions for that file have been created.
@@ -1374,13 +1411,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // If the given path is open, and editor supports going to line,
   // moves to the given line.  Otherwise, does nothing.
   public goto_line(path, line, cursor?: boolean, focus?: boolean): void {
-    const actions: any = redux.getEditorActions(this.project_id, path);
+    const sync_path = this.get_sync_path(path);
+    const actions: any = redux.getEditorActions(this.project_id, sync_path);
     actions?.programmatical_goto_line?.(line, cursor, focus);
   }
 
   // Called when a file tab is shown.
   private show_file(path): void {
-    const a: any = redux.getEditorActions(this.project_id, path);
+    const sync_path = this.get_sync_path(path);
+    const a: any = redux.getEditorActions(this.project_id, sync_path);
     a?.show?.();
     const fragmentId = this.open_files?.get(path, "fragmentId");
     if (fragmentId) {
@@ -1395,7 +1434,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // Called when a file tab is put in the background due to
   // another tab being made active.
   private hide_file(path): void {
-    const a: any = redux.getEditorActions(this.project_id, path);
+    const sync_path = this.get_sync_path(path);
+    const a: any = redux.getEditorActions(this.project_id, sync_path);
     if (typeof a?.hide === "function") {
       a.hide();
     }
@@ -1421,14 +1461,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return;
     }
     //  not null for modern editors.
-    const editorActions = redux.getEditorActions(this.project_id, path);
+    const sync_path = this.get_sync_path(path);
+    const editorActions = redux.getEditorActions(this.project_id, sync_path);
     if (editorActions?.["show_focused_frame_of_type"] != null) {
       // @ts-ignore -- todo will go away when everything is a frame editor
       editorActions.show_focused_frame_of_type("chat", "col", false, width);
       this.set_chat_state(path, "internal");
     } else {
       // First create the chat actions:
-      initChat(this.project_id, misc.meta_file(path, "chat"));
+      initChat(this.project_id, misc.meta_file(sync_path, "chat"));
       // Only then set state to say that the chat is opened!
       // Otherwise when the opened chat is rendered actions is
       // randomly not defined, and things break.
@@ -1440,7 +1481,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // NOTE: for frame tree if there are no chat frames, this instead opens
   // a chat frame.
   close_chat({ path }: { path: string }): void {
-    const editorActions = redux.getEditorActions(this.project_id, path);
+    const sync_path = this.get_sync_path(path);
+    const editorActions = redux.getEditorActions(this.project_id, sync_path);
     if (editorActions?.["close_recently_focused_frame_of_type"] != null) {
       let n = 0;
       // @ts-ignore -- todo will go away when everything is a frame editor
@@ -1534,8 +1576,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return;
     }
     const file_paths = store.get("open_files");
+    const removed_sync_paths = new Set<string>();
     file_paths.map((_obj, path) => {
-      project_file.remove(path, this.redux, this.project_id);
+      const sync_path = this.get_sync_path(path);
+      if (removed_sync_paths.has(sync_path)) {
+        return;
+      }
+      removed_sync_paths.add(sync_path);
+      project_file.remove(sync_path, this.redux, this.project_id);
     });
 
     this.open_files?.close_all();
@@ -1552,8 +1600,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const open_files = store.get("open_files");
     const component_data = open_files.getIn([path, "component"]) as any;
     if (component_data == null) return; // nothing to do since already closed.
+    const sync_path = this.get_sync_path(path);
     this.open_files?.delete(path);
-    project_file.remove(path, this.redux, this.project_id);
+    if (!this.has_display_path_for_sync_path(sync_path, path)) {
+      project_file.remove(sync_path, this.redux, this.project_id);
+    }
     this.save_session();
   };
 
