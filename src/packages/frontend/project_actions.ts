@@ -2409,7 +2409,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         throw Error(`Cannot use '${bad_char}' in a filename`);
       }
     }
-    let s = misc.path_to_file(current_path, name);
+    const store = this.get_store();
+    const basePath =
+      current_path ??
+      store?.get("current_path_abs") ??
+      store?.get("current_path") ??
+      "";
+    let s = misc.path_to_file(this.toAbsoluteCurrentPath(basePath), name);
     if (ext != null && misc.filename_extension(s) !== ext) {
       s = `${s}.${ext}`;
     }
@@ -2426,7 +2432,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     // Whether or not to switch to the new folder (default: true)
     switch_over?: boolean;
   }): Promise<void> => {
-    const path = current_path ? join(current_path, name) : name;
+    const store = this.get_store();
+    const basePath = this.toAbsoluteCurrentPath(
+      current_path ??
+        store?.get("current_path_abs") ??
+        store?.get("current_path") ??
+        "",
+    );
+    const path = join(basePath, name);
     const fs = this.fs();
     try {
       await fs.mkdir(path, { recursive: true });
@@ -2459,7 +2472,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return;
     }
     if (misc.is_only_downloadable(name)) {
-      this.new_file_from_web(name, current_path ?? "");
+      const store = this.get_store();
+      const basePath = this.toAbsoluteCurrentPath(
+        current_path ??
+          store?.get("current_path_abs") ??
+          store?.get("current_path") ??
+          "",
+      );
+      this.new_file_from_web(name, basePath);
       return;
     }
 
@@ -2475,7 +2495,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
     }
 
-    let path = current_path ? join(current_path, name) : name;
+    const store = this.get_store();
+    const basePath = this.toAbsoluteCurrentPath(
+      current_path ??
+        store?.get("current_path_abs") ??
+        store?.get("current_path") ??
+        "",
+    );
+    let path = join(basePath, name);
     if (ext) {
       path += "." + ext;
     }
