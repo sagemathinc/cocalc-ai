@@ -21,6 +21,7 @@ const DEFAULT_BASE_URL = "https://software.cocalc.ai/software";
 const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_ROOT = "/opt/cocalc/tools";
 const PROJECT_HOST_ROOT = "/opt/cocalc/project-host";
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 type CanonicalArtifact = "project-host" | "project" | "tools";
 
@@ -200,8 +201,15 @@ async function ensureWritableDir(dir: string): Promise<void> {
   }
   const user = os.userInfo().username;
   logger.warn("upgrade: fixing permissions with sudo", { dir, user });
-  await runCommand("sudo", ["-n", "mkdir", "-p", dir]);
-  await runCommand("sudo", ["-n", "chown", "-R", `${user}:${user}`, dir]);
+  await runCommand("sudo", ["-n", STORAGE_WRAPPER, "mkdir", "-p", dir]);
+  await runCommand("sudo", [
+    "-n",
+    STORAGE_WRAPPER,
+    "chown",
+    "-R",
+    `${user}:${user}`,
+    dir,
+  ]);
   await fs.promises.mkdir(dir, { recursive: true });
 }
 
@@ -211,7 +219,7 @@ async function safeRemove(dir: string): Promise<void> {
   } catch (err: any) {
     if (err?.code !== "EACCES") throw err;
     logger.warn("upgrade: removing with sudo", { dir });
-    await runCommand("sudo", ["-n", "rm", "-rf", dir]);
+    await runCommand("sudo", ["-n", STORAGE_WRAPPER, "rm", "-rf", dir]);
   }
 }
 

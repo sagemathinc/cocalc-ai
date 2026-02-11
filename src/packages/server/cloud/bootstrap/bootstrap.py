@@ -623,6 +623,127 @@ btrfs filesystem resize max "$MOUNTPOINT" >/dev/null 2>&1 || true
 
 
 def install_privileged_wrappers(cfg: BootstrapConfig) -> None:
+    storage_wrapper = """#!/usr/bin/env bash
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then
+  echo "cocalc-runtime-storage must run as root" >&2
+  exit 1
+fi
+if [ "$#" -lt 1 ]; then
+  echo "usage: cocalc-runtime-storage <command> [args...]" >&2
+  exit 2
+fi
+cmd="$1"
+shift
+
+allow_path() {
+  local path="${1//\\\\:/:}"
+  case "$path" in
+    /mnt/cocalc|/mnt/cocalc/*|/btrfs|/btrfs/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+check_args() {
+  local arg value
+  for arg in "$@"; do
+    if [[ "$arg" == /* ]]; then
+      if ! allow_path "$arg"; then
+        echo "cocalc-runtime-storage: path not allowed: $arg" >&2
+        exit 2
+      fi
+      continue
+    fi
+    if [[ "$arg" == *=/* ]]; then
+      value="${arg#*=}"
+      IFS=':' read -r -a _parts <<< "$value"
+      for _part in "${_parts[@]}"; do
+        [ -z "$_part" ] && continue
+        if [[ "$_part" == /* ]] && ! allow_path "$_part"; then
+          echo "cocalc-runtime-storage: path not allowed: $_part" >&2
+          exit 2
+        fi
+      done
+    fi
+  done
+}
+
+case "$cmd" in
+  btrfs)
+    check_args "$@"
+    exec /usr/bin/btrfs "$@"
+    ;;
+  mkfs.btrfs)
+    check_args "$@"
+    if command -v /usr/sbin/mkfs.btrfs >/dev/null 2>&1; then
+      exec /usr/sbin/mkfs.btrfs "$@"
+    fi
+    exec /sbin/mkfs.btrfs "$@"
+    ;;
+  mount)
+    check_args "$@"
+    exec /bin/mount "$@"
+    ;;
+  umount)
+    check_args "$@"
+    exec /bin/umount "$@"
+    ;;
+  losetup)
+    check_args "$@"
+    if command -v /usr/sbin/losetup >/dev/null 2>&1; then
+      exec /usr/sbin/losetup "$@"
+    fi
+    exec /sbin/losetup "$@"
+    ;;
+  mknod)
+    check_args "$@"
+    exec /usr/bin/mknod "$@"
+    ;;
+  chown)
+    check_args "$@"
+    exec /bin/chown "$@"
+    ;;
+  chmod)
+    check_args "$@"
+    exec /bin/chmod "$@"
+    ;;
+  chattr)
+    check_args "$@"
+    exec /usr/bin/chattr "$@"
+    ;;
+  truncate)
+    check_args "$@"
+    exec /usr/bin/truncate "$@"
+    ;;
+  mkdir)
+    check_args "$@"
+    exec /bin/mkdir "$@"
+    ;;
+  mv)
+    check_args "$@"
+    exec /bin/mv "$@"
+    ;;
+  rm)
+    check_args "$@"
+    exec /bin/rm "$@"
+    ;;
+  df)
+    check_args "$@"
+    exec /bin/df "$@"
+    ;;
+  sync)
+    exec /bin/sync "$@"
+    ;;
+  *)
+    echo "cocalc-runtime-storage: unsupported command: $cmd" >&2
+    exit 2
+    ;;
+esac
+"""
     mount_wrapper = """#!/usr/bin/env bash
 set -euo pipefail
 if [ "$(id -u)" -ne 0 ]; then
@@ -663,6 +784,7 @@ fi
 exec /bin/journalctl -u "$service" -o cat -f -n "$lines"
 """
     wrappers = {
+        "/usr/local/sbin/cocalc-runtime-storage": storage_wrapper,
         "/usr/local/sbin/cocalc-mount-data": mount_wrapper,
         "/usr/local/sbin/cocalc-cloudflared-ctl": cloud_ctl_wrapper,
         "/usr/local/sbin/cocalc-cloudflared-logs": cloud_logs_wrapper,
@@ -1118,7 +1240,7 @@ def configure_runtime_sudoers(cfg: BootstrapConfig) -> None:
     log_line(cfg, f"bootstrap: configuring sudoers whitelist for {user}")
     rules = f"""Defaults:{user} !requiretty
 Defaults:{user} secure_path=/usr/sbin:/usr/bin:/sbin:/bin
-Cmnd_Alias COCALC_RUNTIME_STORAGE = /usr/local/sbin/cocalc-grow-btrfs *, /usr/local/sbin/cocalc-grow-btrfs, /usr/bin/btrfs *, /sbin/btrfs *, /usr/bin/mkfs.btrfs *, /sbin/mkfs.btrfs *, /bin/mount *, /usr/bin/mount *, /bin/umount *, /usr/bin/umount *, /usr/sbin/losetup *, /sbin/losetup *, /usr/bin/mknod *, /bin/mknod *, /usr/bin/chown *, /bin/chown *, /usr/bin/chmod *, /bin/chmod *, /usr/bin/chattr *, /bin/chattr *, /usr/bin/truncate *, /bin/truncate *, /usr/bin/mkdir *, /bin/mkdir *, /usr/bin/mv *, /bin/mv *, /usr/bin/rm *, /bin/rm *, /usr/bin/df *, /bin/df *
+Cmnd_Alias COCALC_RUNTIME_STORAGE = /usr/local/sbin/cocalc-runtime-storage, /usr/local/sbin/cocalc-runtime-storage *, /usr/local/sbin/cocalc-grow-btrfs, /usr/local/sbin/cocalc-grow-btrfs *
 Cmnd_Alias COCALC_RUNTIME_CLOUD = /usr/local/sbin/cocalc-cloudflared-ctl, /usr/local/sbin/cocalc-cloudflared-ctl *, /usr/local/sbin/cocalc-cloudflared-logs, /usr/local/sbin/cocalc-cloudflared-logs *, /usr/local/sbin/cocalc-mount-data
 {user} ALL=(root) NOPASSWD: COCALC_RUNTIME_STORAGE, COCALC_RUNTIME_CLOUD
 """

@@ -9,6 +9,7 @@ import { stat } from "node:fs/promises";
 const logger = getLogger("file-server:storage:util");
 
 const DEFAULT_EXEC_TIMEOUT_MS = 60 * 1000;
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 export async function mkdirp(paths: string[]) {
   if (paths.length == 0) return;
@@ -27,7 +28,7 @@ export async function sudo(
     args = undefined;
   } else {
     command = "sudo";
-    args = [opts.command, ...(opts.args ?? [])];
+    args = [STORAGE_WRAPPER, opts.command, ...(opts.args ?? [])];
   }
   return await executeCode({
     verbose: true,

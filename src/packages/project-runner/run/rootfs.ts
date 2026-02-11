@@ -21,6 +21,7 @@ import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("project-runner:overlay");
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const UNMOUNT_DELAY_MS = Number(
   process.env.COCALC_SANDBOX_UNMOUNT_DELAY_MS ?? 30_000,
 );
@@ -63,7 +64,7 @@ const leases = new RefcountLeaseManager<string>({
         verbose: true,
         err_on_exit: true,
         command: "sudo",
-        args: ["umount", "-l", mountpoint],
+        args: [STORAGE_WRAPPER, "umount", "-l", mountpoint],
       });
     } catch (err) {
       const e = `${err}`;
@@ -241,6 +242,7 @@ async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
     err_on_exit: true,
     command: "sudo",
     args: [
+      STORAGE_WRAPPER,
       "mount",
       "-t",
       "overlay",
