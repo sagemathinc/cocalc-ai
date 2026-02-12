@@ -3,7 +3,7 @@ import { data } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { spawn } from "node:child_process";
-import { copyFile, readFile, rm, symlink, writeFile } from "fs/promises";
+import { readFile, rm, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import pullImage from "./pull-image";
 import { shiftProgress } from "@cocalc/conat/lro/progress";
@@ -44,50 +44,12 @@ function inspectFile(image: string): string {
   return join(IMAGE_CACHE, `.${imagePathComponent(image)}.json`);
 }
 
-function legacyInspectFile(image: string): string {
-  const idx = image.lastIndexOf("/");
-  if (idx === -1) return join(IMAGE_CACHE, `.${image}.json`);
-  const dir = image.slice(0, idx);
-  const base = image.slice(idx + 1);
-  return join(IMAGE_CACHE, dir, `.${base}.json`);
-}
-
-async function ensureLegacyCacheAlias(image: string): Promise<void> {
-  const legacyBaseImagePath = join(IMAGE_CACHE, image);
-  const modernBaseImagePath = imageCachePath(image);
-  if (!(await exists(legacyBaseImagePath)) || (await exists(modernBaseImagePath))) {
-    return;
-  }
-  try {
-    await symlink(legacyBaseImagePath, modernBaseImagePath, "dir");
-  } catch {
-    // best effort: if this fails we'll just re-extract the image below.
-  }
-}
-
-async function ensureLegacyInspectAlias(image: string): Promise<void> {
-  const legacy = legacyInspectFile(image);
-  const modern = inspectFile(image);
-  if (!(await exists(legacy)) || (await exists(modern))) {
-    return;
-  }
-  try {
-    await copyFile(legacy, modern);
-  } catch {
-    // best effort only; we can regenerate via podman inspect.
-  }
-}
-
 // this should error if the image isn't available and extracted.  I.e., it should always
 // be either very fast or throw an error.  Clients that use it should make sure to do
 // extractBaseImage before using this.  The reason is to ensure that users have visibility
 // into all long running steps.
 export async function inspect(image: string) {
-  const modern = inspectFile(image);
-  if (await exists(modern)) {
-    return JSON.parse(await readFile(modern, "utf8"));
-  }
-  return JSON.parse(await readFile(legacyInspectFile(image), "utf8"));
+  return JSON.parse(await readFile(inspectFile(image), "utf8"));
 }
 
 export const extractBaseImage = reuseInFlight(async (image: string) => {
@@ -109,8 +71,6 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
   try {
     const baseImagePath = imageCachePath(image);
     reportProgress({ progress: 0, desc: `checking for ${image}...` });
-    await ensureLegacyCacheAlias(image);
-    await ensureLegacyInspectAlias(image);
     if ((await exists(inspectFile(image))) && (await exists(baseImagePath))) {
       // already exist
       reportProgress({ progress: 100, desc: `${image} available` });
