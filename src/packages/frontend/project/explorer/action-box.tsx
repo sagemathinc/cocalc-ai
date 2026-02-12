@@ -253,6 +253,7 @@ export function ActionBox({
               }
               project_id={project_id}
               startingPath={current_path}
+              allowAbsolutePaths
               isExcluded={(path) => checked_files.has(path)}
               style={{ width: "100%" }}
               bodyStyle={{ maxHeight: "250px" }}
@@ -458,6 +459,7 @@ export function ActionBox({
                   key="copy_destination_directory"
                   startingPath={current_path}
                   project_id={copy_destination_project_id ?? project_id}
+                  allowAbsolutePaths
                   style={{ width: "100%" }}
                   bodyStyle={{ maxHeight: "250px" }}
                 />
