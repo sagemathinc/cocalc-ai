@@ -18,6 +18,16 @@ beforeAll(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cocalc"));
 });
 
+async function expectRejectsWithError(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (err) {
+    if (err instanceof Error) return err;
+    throw err;
+  }
+  throw new Error("Expected promise to reject with Error");
+}
+
 describe("test using the filesystem sandbox to do a few standard things", () => {
   let fs;
   it("creates and reads file", async () => {
@@ -318,10 +328,7 @@ describe("rootfs option sandbox", () => {
     rootfs = join(tempDir, "test-rootfs-missing");
     await mkdir(home);
     fs = new SandboxedFilesystem(home, { rootfs });
-    const err = await fs
-      .writeFile("/alpha.txt", "from-home")
-      .catch((e) => e as Error);
-    expect(err).toBeInstanceOf(Error);
+    const err = await expectRejectsWithError(fs.writeFile("/alpha.txt", "from-home"));
     expect(err.message).toContain(
       "rootfs is not mounted; cannot access absolute path '/alpha.txt'. Start the workspace and try again.",
     );
@@ -338,10 +345,9 @@ describe("rootfs option sandbox", () => {
       rootfs,
       scratch: secretScratchPath,
     });
-    const err = await fsMissingScratch
-      .writeFile("/scratch/blocked.txt", "blocked")
-      .catch((e) => e as Error);
-    expect(err).toBeInstanceOf(Error);
+    const err = await expectRejectsWithError(
+      fsMissingScratch.writeFile("/scratch/blocked.txt", "blocked"),
+    );
     expect(err.message).toContain(
       "scratch is not mounted; cannot access absolute path '/scratch/blocked.txt'. Start the workspace and try again.",
     );
