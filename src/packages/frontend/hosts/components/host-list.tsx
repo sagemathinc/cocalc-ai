@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Col, Input, Modal, Popconfirm, Popover, Radio, Row, Select, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Card, Col, Input, Modal, Popconfirm, Popover, Radio, Row, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -168,6 +168,9 @@ function sortHosts(
 
 type HostListViewModel = {
   hosts: Host[];
+  hostsLoading?: boolean;
+  hostsLoaded?: boolean;
+  hostsError?: string | null;
   hostOps?: Record<string, HostLroState>;
   createPanelOpen?: boolean;
   onStart: (id: string) => void;
@@ -178,6 +181,7 @@ type HostListViewModel = {
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
   onUpgrade?: (host: Host) => void;
+  onUpgradeFromHub?: (host: Host) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
   onToggleStar: (host: Host) => void;
@@ -205,6 +209,9 @@ type HostListViewModel = {
 export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   const {
     hosts,
+    hostsLoading = false,
+    hostsLoaded = true,
+    hostsError = null,
     hostOps,
     createPanelOpen,
     onStart,
@@ -215,6 +222,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     onRefresh,
     onCancelOp,
     onUpgrade,
+    onUpgradeFromHub,
     onDetails,
     onEdit,
     onToggleStar,
@@ -920,6 +928,22 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               Upgrade ({upgradeTargets.length})
             </Button>
           )}
+          {onUpgradeFromHub && (
+            <Button
+              size="small"
+              onClick={() =>
+                runBulkAction(
+                  "Upgrade (hub source)",
+                  upgradeTargets,
+                  onUpgradeFromHub,
+                  { notice: upgradeNotice },
+                )
+              }
+              disabled={!upgradeTargets.length}
+            >
+              Upgrade from hub ({upgradeTargets.length})
+            </Button>
+          )}
           <Button
             size="small"
             danger
@@ -975,19 +999,35 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   ) : null;
 
   const header = (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-      <Space size="large" align="center">
-        <Space size="middle" align="center">
-          <Space size="small" align="center">
-            <Typography.Title level={5} style={{ margin: 0 }}>
-              Workspace Hosts
-            </Typography.Title>
-            {onToggleCreatePanel && !createPanelOpen && (
-              <Button size="small" type="primary" onClick={onToggleCreatePanel}>
-                Create
-              </Button>
-            )}
-          </Space>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        marginBottom: 8,
+      }}
+    >
+      <Space size="small" align="center" wrap>
+        <Typography.Title level={5} style={{ margin: 0, whiteSpace: "nowrap" }}>
+          Workspace Hosts
+        </Typography.Title>
+        {onToggleCreatePanel && !createPanelOpen && (
+          <Button size="small" type="primary" onClick={onToggleCreatePanel}>
+            Create
+          </Button>
+        )}
+      </Space>
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <Space size="middle" align="center" wrap>
           <Input.Search
             allowClear
             size="small"
@@ -996,8 +1036,10 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             placeholder="Filter hosts..."
             style={{ width: 220 }}
           />
-          <Space size="small" align="center">
-            <Typography.Text>Sort by</Typography.Text>
+          <Space size="small" align="center" wrap>
+            <Typography.Text style={{ whiteSpace: "nowrap" }}>
+              Sort by
+            </Typography.Text>
             <Select
               size="small"
               value={sortField}
@@ -1010,10 +1052,16 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             </Button>
           </Space>
           {isDynamicSort && (
-            <Space size="small" align="center">
-              <Switch size="small" checked={autoResort} onChange={setAutoResort} />
+            <Space size="small" align="center" wrap>
+              <Switch
+                size="small"
+                checked={autoResort}
+                onChange={setAutoResort}
+              />
               {autoResort ? (
-                <Typography.Text>Auto-resort</Typography.Text>
+                <Typography.Text style={{ whiteSpace: "nowrap" }}>
+                  Auto-resort
+                </Typography.Text>
               ) : (
                 <Button size="small" type="link" onClick={resortNow}>
                   Auto-resort
@@ -1021,38 +1069,78 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               )}
             </Space>
           )}
-        </Space>
-        <Space size="middle" align="center">
           {isAdmin && (
-            <Space size="small" align="center">
+            <Space size="small" align="center" wrap>
               <Switch size="small" checked={showAdmin} onChange={setShowAdmin} />
-              <Typography.Text>All (Admin)</Typography.Text>
+              <Typography.Text style={{ whiteSpace: "nowrap" }}>
+                All (Admin)
+              </Typography.Text>
             </Space>
           )}
-          <Space size="small" align="center">
+          <Space size="small" align="center" wrap>
             <Switch size="small" checked={showDeleted} onChange={setShowDeleted} />
-            <Typography.Text>Deleted</Typography.Text>
+            <Typography.Text style={{ whiteSpace: "nowrap" }}>
+              Deleted
+            </Typography.Text>
           </Space>
         </Space>
-      </Space>
-      <Space size="small" align="center">
-        <Button size="small" icon={<SyncOutlined />} onClick={onRefresh}>
-          Refresh
-        </Button>
-        <Radio.Group
-          value={viewMode}
-          onChange={(event) =>
-            setViewMode(event.target.value as HostListViewMode)
-          }
-          optionType="button"
-          buttonStyle="solid"
-        >
-          <Radio.Button value="grid">Cards</Radio.Button>
-          <Radio.Button value="list">List</Radio.Button>
-        </Radio.Group>
-      </Space>
+
+        <Space size="small" align="center" wrap>
+          <Button size="small" icon={<SyncOutlined />} onClick={onRefresh}>
+            Refresh
+          </Button>
+          <Radio.Group
+            value={viewMode}
+            onChange={(event) =>
+              setViewMode(event.target.value as HostListViewMode)
+            }
+            optionType="button"
+            buttonStyle="solid"
+          >
+            <Radio.Button value="grid">Cards</Radio.Button>
+            <Radio.Button value="list">List</Radio.Button>
+          </Radio.Group>
+        </Space>
+      </div>
     </div>
   );
+
+  const showInitialLoading = hosts.length === 0 && (!hostsLoaded || hostsLoading);
+  const showLoadError =
+    hosts.length === 0 && !!hostsError && !showInitialLoading;
+
+  if (showInitialLoading) {
+    return (
+      <div>
+        {header}
+        <Card style={{ maxWidth: 720, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+            <Spin tip="Loading workspace hosts..." />
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (showLoadError) {
+    return (
+      <div>
+        {header}
+        <Alert
+          type="error"
+          showIcon
+          message="Unable to load workspace hosts"
+          description={hostsError}
+          action={
+            <Button size="small" onClick={onRefresh}>
+              Retry
+            </Button>
+          }
+          style={{ marginBottom: 12 }}
+        />
+      </div>
+    );
+  }
 
   if (hosts.length === 0) {
     return (

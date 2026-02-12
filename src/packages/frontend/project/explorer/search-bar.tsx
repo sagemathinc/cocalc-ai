@@ -97,7 +97,7 @@ export const outputMinitermStyle: CSSProperties = {
 
 interface Props {
   file_search: string;
-  current_path?: string;
+  current_path: string;
   actions: ProjectActions;
   create_file: (a, b) => void;
   create_folder: (a) => void;
@@ -307,9 +307,6 @@ export const SearchBar = memo(
       value: string,
       { ctrl_down, shift_down }: { ctrl_down: boolean; shift_down: boolean },
     ): void {
-      if (current_path == null) {
-        return;
-      }
       const prefill = parseFindPrefill(value);
       if (prefill && actions) {
         const nextState: any = {

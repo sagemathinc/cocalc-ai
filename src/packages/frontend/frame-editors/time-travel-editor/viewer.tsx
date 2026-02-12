@@ -48,7 +48,8 @@ export function Viewer({
       <TextDocument
         value={() => doc()?.to_str() ?? "unknown version"}
         id={id}
-        path={isObjectDoc(path) ? "a.js" : path}
+        path={path}
+        syntaxHighlightExtension={isObjectDoc(path) ? "js" : undefined}
         project_id={project_id}
         font_size={font_size}
         editor_settings={editor_settings}

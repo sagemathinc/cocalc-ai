@@ -1,9 +1,6 @@
 /*
-Privileges: This uses sudo to do an overlayfs mount.
-
-    wstein ALL=(ALL) NOPASSWD: /bin/mount -t overlay *, /bin/umount *
-
-where obviously wstein is replaced by the user running this server.
+Privileges: This uses sudo with the root-owned runtime wrapper for overlayfs
+mount lifecycle operations only.
 */
 
 import { join } from "path";
@@ -11,16 +8,21 @@ import { data } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { mkdir, rm, writeFile, readFile } from "fs/promises";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
-import { replace_all } from "@cocalc/util/misc";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import { getImage } from "./podman";
-import { extractBaseImage, IMAGE_CACHE, registerProgress } from "./rootfs-base";
+import {
+  extractBaseImage,
+  imageCachePath,
+  imagePathComponent,
+  registerProgress,
+} from "./rootfs-base";
 import { lroProgress } from "@cocalc/conat/lro/progress";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
 
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("project-runner:overlay");
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 const UNMOUNT_DELAY_MS = Number(
   process.env.COCALC_SANDBOX_UNMOUNT_DELAY_MS ?? 30_000,
 );
@@ -30,6 +32,10 @@ const PROJECT_ROOTS =
 
 function getMergedPath(project_id) {
   return join(PROJECT_ROOTS, project_id);
+}
+
+export function getRootfsMountpoint(project_id: string): string {
+  return getMergedPath(project_id);
 }
 
 export function getImageNamePath(home): string {
@@ -43,13 +49,19 @@ export function getPaths({ home, image, project_id }): {
   merged: string;
   imageName: string;
 } {
-  const userOverlays = join(home, PROJECT_IMAGE_PATH, image);
+  const userOverlays = join(home, PROJECT_IMAGE_PATH, imagePathComponent(image));
   const upperdir = join(userOverlays, "upperdir");
   const workdir = join(userOverlays, "workdir");
   const merged = getMergedPath(project_id);
-  const lowerdir = join(IMAGE_CACHE, image);
+  const lowerdir = imageCachePath(image);
   const imageName = getImageNamePath(home);
-  return { lowerdir, upperdir, workdir, merged, imageName };
+  return {
+    lowerdir,
+    upperdir,
+    workdir,
+    merged,
+    imageName,
+  };
 }
 
 // Track mount reference counts so multiple users (e.g., project container +
@@ -63,7 +75,7 @@ const leases = new RefcountLeaseManager<string>({
         verbose: true,
         err_on_exit: true,
         command: "sudo",
-        args: ["umount", "-l", mountpoint],
+        args: ["-n", STORAGE_WRAPPER, "umount-overlay-project", mountpoint],
       });
     } catch (err) {
       const e = `${err}`;
@@ -173,7 +185,12 @@ export async function mount({
       progress: 70,
       desc: "extracted base image",
     });
-    const { upperdir, workdir, merged, imageName } = getPaths({
+    const {
+      upperdir,
+      workdir,
+      merged,
+      imageName,
+    } = getPaths({
       home,
       image,
       project_id,
@@ -231,27 +248,20 @@ export async function unmount(project_id: string) {
   await release();
 }
 
-export function escape(path) {
-  return replace_all(path, ":", `\\:`);
-}
-
 async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
   await executeCode({
     verbose: true,
     err_on_exit: true,
     command: "sudo",
     args: [
-      "mount",
-      "-t",
-      "overlay",
-      "overlay",
-      "-o",
-      // CRITICAL: using xino=off,metacopy=off,redirect_dir=off disables all use of xattrs,
-      // so we can rsync rootfs in a purely rootless context.  It is much LESS efficient
-      // if users are modifying big base layer file metadata or deleting a lot of base
-      // image directories... but that's not at all the likely use case of our overlay filesystem.
-      // Much more likely is that users place data and new software installs in the rootfs.
-      `lowerdir=${escape(lowerdir)},upperdir=${escape(upperdir)},workdir=${escape(workdir)},xino=off,metacopy=off,redirect_dir=off`,
+      "-n",
+      STORAGE_WRAPPER,
+      "mount-overlay-project",
+      // CRITICAL: wrapper hardcodes xino=off,metacopy=off,redirect_dir=off to
+      // disable xattr-dependent overlay behaviors in this rootless workflow.
+      lowerdir,
+      upperdir,
+      workdir,
       merged,
     ],
   });

@@ -16,6 +16,7 @@ export async function localPathFileserver({
   client,
   project_id,
   unsafeMode,
+  rootfs,
   onMutation,
 }: {
   service?: string;
@@ -28,6 +29,7 @@ export async function localPathFileserver({
   // - if path not given, connect to the file-server service on the conat network.
   path?: string;
   unsafeMode?: boolean;
+  rootfs?: string;
   onMutation?: (opts: { subject: string; op: string; path?: string }) => void | Promise<void>;
 } = {}) {
   logger.debug("localPathFileserver", {
@@ -35,6 +37,7 @@ export async function localPathFileserver({
     project_id,
     unsafeMode,
     path,
+    rootfs,
   });
   client ??= conat();
   logger.debug("localPathFileserver: got client");
@@ -69,6 +72,9 @@ export async function localPathFileserver({
       return new SandboxedFilesystem(await getPath(project_id), {
         unsafeMode,
         host: project_id,
+        // In unsafe mode (e.g. lite / local dev), default to true absolute
+        // path resolution from filesystem root unless explicitly overridden.
+        rootfs: rootfs ?? (unsafeMode ? "/" : undefined),
       });
     },
     onMutation,

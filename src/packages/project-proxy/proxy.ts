@@ -1,5 +1,6 @@
 import * as http from "node:http";
 import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import httpProxy from "http-proxy-3";
 import type express from "express";
 import { getLogger } from "@cocalc/backend/logger";
@@ -22,12 +23,17 @@ type ResolveResult = { target?: Target; handled: boolean };
 
 type ResolveFn = (
   req: http.IncomingMessage,
+  res?: http.ServerResponse,
 ) => Promise<ResolveResult> | ResolveResult;
 
 interface StartOptions {
   port?: number; // default 8080
   host?: string; // default 127.0.0.1
   resolveTarget?: ResolveFn;
+  onUpgradeAuthorized?: (
+    req: http.IncomingMessage,
+    socket: Socket | Duplex,
+  ) => void;
 }
 
 function parseProjectId(url: string | undefined): string | null {
@@ -61,11 +67,13 @@ export async function startProxyServer({
   port = 8080,
   host = "127.0.0.1",
   resolveTarget = defaultResolveTarget,
+  onUpgradeAuthorized,
 }: StartOptions = {}) {
   logger.debug("startProxyServer", { port, host });
 
   const { handleRequest, handleUpgrade } = createProxyHandlers({
     resolveTarget,
+    onUpgradeAuthorized,
   });
 
   const proxyServer = http.createServer(handleRequest);
@@ -83,7 +91,14 @@ export async function startProxyServer({
 
 export function createProxyHandlers({
   resolveTarget = defaultResolveTarget,
-}: { resolveTarget?: ResolveFn } = {}) {
+  onUpgradeAuthorized,
+}: {
+  resolveTarget?: ResolveFn;
+  onUpgradeAuthorized?: (
+    req: http.IncomingMessage,
+    socket: Socket | Duplex,
+  ) => void;
+} = {}) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
     ws: true,
@@ -111,12 +126,15 @@ export function createProxyHandlers({
     res: http.ServerResponse,
   ) => {
     try {
-      const { target, handled } = await resolveTarget(req);
+      const { target, handled } = await resolveTarget(req, res);
+      if (handled && !target) return;
       if (!handled || !target) throw new Error("not matched");
       proxy.web(req, res, { target, prependPath: false });
-    } catch {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("Not found\n");
+    } catch (err: any) {
+      const statusCode =
+        Number.isInteger(err?.statusCode) ? err.statusCode : 404;
+      res.writeHead(statusCode, { "Content-Type": "text/plain" });
+      res.end(`${err?.message ?? "Not found"}\n`);
     }
   };
 
@@ -130,10 +148,21 @@ export function createProxyHandlers({
       if (!handled || !target) {
         throw new Error("not matched");
       }
+      onUpgradeAuthorized?.(req, socket);
       logger.debug("upgrade", { url: req.url, target });
       proxy.ws(req, socket, head, { target, prependPath: false });
-    } catch {
-      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    } catch (err: any) {
+      const statusCode =
+        Number.isInteger(err?.statusCode) ? err.statusCode : 404;
+      const statusText =
+        statusCode === 401
+          ? "Unauthorized"
+          : statusCode === 403
+            ? "Forbidden"
+            : "Not Found";
+      socket.write(
+        `HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\n\r\n`,
+      );
       socket.destroy();
       return;
     }
@@ -147,10 +176,15 @@ export function attachProjectProxy({
   httpServer,
   app,
   resolveTarget = defaultResolveTarget,
+  onUpgradeAuthorized,
 }: {
   httpServer: http.Server;
   app: express.Application;
   resolveTarget?: ResolveFn;
+  onUpgradeAuthorized?: (
+    req: http.IncomingMessage,
+    socket: Socket | Duplex,
+  ) => void;
 }) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -173,16 +207,21 @@ export function attachProjectProxy({
     // Only proxy URLs that start with a project UUID segment.
     if (!parseProjectId(req.url)) return next();
     try {
-      const { target, handled } = await resolveTarget(req);
+      const { target, handled } = await resolveTarget(req, res);
       logger.debug("resolveTarget", { url: req.url, handled, target });
+      if (handled && !target) return;
       if (!handled || !target) return next();
       proxy.web(req, res, { target, prependPath: false });
     } catch (err) {
       logger.debug("proxy request failed", { err: `${err}`, url: req.url });
       if (!res.headersSent) {
-        res.writeHead(502, { "Content-Type": "text/plain" });
+        const statusCode =
+          Number.isInteger((err as any)?.statusCode)
+            ? (err as any).statusCode
+            : 502;
+        res.writeHead(statusCode, { "Content-Type": "text/plain" });
       }
-      res.end("Bad Gateway\n");
+      res.end(`${(err as any)?.message ?? "Bad Gateway"}\n`);
     }
   });
 
@@ -194,9 +233,20 @@ export function attachProjectProxy({
       if (!handled || !target) {
         return;
       }
+      onUpgradeAuthorized?.(req, socket);
       proxy.ws(req, socket, head, { target, prependPath: false });
-    } catch {
-      socket.write("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+    } catch (err: any) {
+      const statusCode =
+        Number.isInteger(err?.statusCode) ? err.statusCode : 502;
+      const statusText =
+        statusCode === 401
+          ? "Unauthorized"
+          : statusCode === 403
+            ? "Forbidden"
+            : "Bad Gateway";
+      socket.write(
+        `HTTP/1.1 ${statusCode} ${statusText}\r\nConnection: close\r\n\r\n`,
+      );
       socket.destroy();
     }
   });

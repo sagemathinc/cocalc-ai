@@ -27,6 +27,7 @@ import {
 import { ProjectsState, store } from "./store";
 import { load_all_projects, switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
+import { defaultOpenProjectTarget } from "./open-project-default";
 
 import type {
   CourseInfo,
@@ -545,25 +546,31 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (relation == null || ["public", "admin"].includes(relation)) {
       this.fetch_public_project_title(opts.project_id);
     }
-    if (opts.switch_to) {
-      redux
-        .getActions("page")
-        .set_active_tab(opts.project_id, opts.change_history);
-    }
     if (!this.isProjectOpen(opts.project_id)) {
       this.setProjectOpen(opts.project_id);
       if (opts.restore_session) {
         redux.getActions("page").restore_session(opts.project_id);
       }
     }
+    const pstore = project_actions.get_store();
+    const activeProjectTab = pstore?.get("active_project_tab");
+    opts.target = defaultOpenProjectTarget({
+      target: opts.target,
+      activeProjectTab,
+    });
     if (opts.target != null) {
-      project_actions.load_target(
+      await project_actions.load_target(
         opts.target,
         opts.switch_to,
         opts.ignore_kiosk,
         opts.change_history,
         opts.fragmentId,
       );
+    }
+    if (opts.switch_to) {
+      redux
+        .getActions("page")
+        .set_active_tab(opts.project_id, opts.change_history);
     }
     // initialize project
     project_actions.init();

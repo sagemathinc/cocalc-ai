@@ -32,6 +32,7 @@ import type { CodeBlock } from "./types";
 import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
 import { CodeBlockBody, CodeLineElement } from "./code-like";
 import { guessPopularLanguage } from "@cocalc/frontend/misc/detect-language";
+import { pointAtPath } from "../../slate-util";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -331,14 +332,173 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     setElement({ markdownCandidate: undefined } as any);
   }, [setElement]);
 
+  const focusAfterCodeBlock = useCallback(() => {
+    const focusNow = () => {
+      const after = Editor.after(editor, elementPath);
+      const point = after ?? Editor.end(editor, elementPath);
+      Transforms.select(editor, { anchor: point, focus: point });
+      ReactEditor.focus(editor);
+    };
+    if (typeof window === "undefined") {
+      focusNow();
+      return;
+    }
+    window.setTimeout(focusNow, 0);
+  }, [editor, elementPath]);
+
+  const focusAtPathEnd = useCallback(
+    (path: number[]) => {
+      const focusNow = () => {
+        const point = pointAtPath(editor, path, undefined, "end");
+        Transforms.select(editor, { anchor: point, focus: point });
+        ReactEditor.focus(editor);
+      };
+      if (typeof window === "undefined") {
+        focusNow();
+        return;
+      }
+      window.setTimeout(focusNow, 0);
+    },
+    [editor],
+  );
+
+  const focusAtInlineBoundary = useCallback(
+    (paragraphPath: number[], childIndex: number | null) => {
+      const focusNow = () => {
+        const point =
+          childIndex == null
+            ? pointAtPath(editor, paragraphPath, undefined, "end")
+            : pointAtPath(
+                editor,
+                paragraphPath.concat(childIndex),
+                0,
+                "start",
+              );
+        Transforms.select(editor, { anchor: point, focus: point });
+        ReactEditor.focus(editor);
+      };
+      if (typeof window === "undefined") {
+        focusNow();
+        return;
+      }
+      window.setTimeout(focusNow, 0);
+    },
+    [editor],
+  );
+
+  const convertMarkdownCandidateInline = useCallback(
+    (doc: any[]): boolean => {
+      if (
+        doc.length !== 1 ||
+        doc[0]?.type !== "paragraph" ||
+        !Array.isArray(doc[0]?.children)
+      ) {
+        return false;
+      }
+      const inlineChildrenRaw = doc[0].children;
+      if (inlineChildrenRaw.length === 0) return false;
+      const inlineChildren =
+        typeof structuredClone === "function"
+          ? structuredClone(inlineChildrenRaw)
+          : JSON.parse(JSON.stringify(inlineChildrenRaw));
+      const parentPath = elementPath.slice(0, -1);
+      const codeIndex = elementPath[elementPath.length - 1];
+      let parentChildren: any[] | undefined;
+      try {
+        const [parentNode] = Editor.node(editor, parentPath);
+        parentChildren = (parentNode as any)?.children;
+      } catch {
+        return false;
+      }
+      if (!Array.isArray(parentChildren)) return false;
+      const prev = parentChildren[codeIndex - 1];
+      const next = parentChildren[codeIndex + 1];
+      const afterSpacer = parentChildren[codeIndex + 2];
+      const isParagraph = (node: any) =>
+        node != null && typeof node === "object" && node.type === "paragraph";
+      const isSpacerParagraph = (node: any) =>
+        isParagraph(node) && node.spacer === true;
+      const newChildren = [...parentChildren];
+      let focusParagraphPath: number[] | null = null;
+      let focusChildIndex: number | null = null;
+
+      // Most common case when pasting in the middle of a paragraph:
+      // [paragraph-before, code-block, spacer, paragraph-after]
+      if (isParagraph(prev) && isSpacerParagraph(next) && isParagraph(afterSpacer)) {
+        const prevLen = Array.isArray(prev.children) ? prev.children.length : 0;
+        const merged = {
+          ...prev,
+          children: [...(prev.children ?? []), ...inlineChildren, ...(afterSpacer.children ?? [])],
+        };
+        newChildren.splice(codeIndex - 1, 4, merged);
+        focusParagraphPath = parentPath.concat(codeIndex - 1);
+        const boundary = prevLen + inlineChildren.length;
+        focusChildIndex = boundary < merged.children.length ? boundary : null;
+      } else if (isParagraph(prev) && isSpacerParagraph(next)) {
+        const merged = {
+          ...prev,
+          children: [...(prev.children ?? []), ...inlineChildren],
+        };
+        newChildren.splice(codeIndex - 1, 3, merged);
+        focusParagraphPath = parentPath.concat(codeIndex - 1);
+        focusChildIndex = null;
+      } else if (isSpacerParagraph(next) && isParagraph(afterSpacer)) {
+        const merged = {
+          ...afterSpacer,
+          spacer: undefined,
+          children: [...inlineChildren, ...(afterSpacer.children ?? [])],
+        };
+        newChildren.splice(codeIndex, 3, merged);
+        focusParagraphPath = parentPath.concat(codeIndex);
+        focusChildIndex =
+          inlineChildren.length < merged.children.length
+            ? inlineChildren.length
+            : null;
+      } else if (isSpacerParagraph(next)) {
+        const merged = {
+          type: "paragraph",
+          children: inlineChildren,
+        };
+        newChildren.splice(codeIndex, 2, merged);
+        focusParagraphPath = parentPath.concat(codeIndex);
+        focusChildIndex = null;
+      } else {
+        return false;
+      }
+
+      Editor.withoutNormalizing(editor, () => {
+        for (let i = parentChildren.length - 1; i >= 0; i--) {
+          Transforms.removeNodes(editor, { at: parentPath.concat(i) });
+        }
+        Transforms.insertNodes(editor, newChildren as any, { at: parentPath.concat(0) });
+      });
+      if (focusParagraphPath != null) {
+        focusAtInlineBoundary(focusParagraphPath, focusChildIndex);
+      }
+      return true;
+    },
+    [editor, elementPath, focusAtInlineBoundary],
+  );
+
   const convertMarkdownCandidate = useCallback(() => {
     const markdown = codeValue ?? "";
     const doc = markdown_to_slate(markdown, true);
+    if (convertMarkdownCandidateInline(doc as any[])) {
+      return;
+    }
+    const insertPath = [...elementPath];
     Editor.withoutNormalizing(editor, () => {
       Transforms.removeNodes(editor, { at: elementPath });
       Transforms.insertNodes(editor, doc as any, { at: elementPath });
     });
-  }, [editor, codeValue, elementPath]);
+    focusAtPathEnd(insertPath);
+  }, [
+    editor,
+    codeValue,
+    elementPath,
+    focusAtPathEnd,
+    convertMarkdownCandidateInline,
+  ]);
 
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -446,11 +606,19 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   marginTop: 6,
                   marginBottom: 6,
                 }}
-                onMouseDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => {
+                  // Prevent toolbar button clicks from stealing DOM focus from Slate.
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
               >
                 <Button
                   size="small"
                   type={preferRichText ? "primary" : "default"}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -462,10 +630,15 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                 <Button
                   size="small"
                   type={preferRichText ? "default" : "primary"}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     dismissMarkdownCandidate();
+                    focusAfterCodeBlock();
                   }}
                 >
                   Code Block
@@ -474,6 +647,10 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   <Button
                     size="small"
                     type="default"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -481,6 +658,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                       setInfo(info);
                       setElement({ info } as any);
                       dismissMarkdownCandidate();
+                      focusAfterCodeBlock();
                     }}
                   >
                     {popularGuess.label}

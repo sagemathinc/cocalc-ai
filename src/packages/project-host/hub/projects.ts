@@ -1,7 +1,11 @@
 import { hubApi } from "@cocalc/lite/hub/api";
 import { account_id } from "@cocalc/backend/data";
 import { uuid, isValidUUID } from "@cocalc/util/misc";
-import { getProject, upsertProject } from "../sqlite/projects";
+import {
+  getProject,
+  getOrCreateProjectLocalSecretToken,
+  upsertProject,
+} from "../sqlite/projects";
 import {
   type CreateProjectOptions,
   type SnapshotCounts,
@@ -44,6 +48,9 @@ import {
   getCodexDeviceAuthStatus,
   cancelCodexDeviceAuth,
 } from "../codex/codex-device-auth";
+import { uploadSubscriptionAuthFile } from "../codex/codex-auth";
+import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
+import { clearProjectHostConatAuthCaches } from "../conat-auth";
 
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
@@ -225,8 +232,10 @@ async function getRunnerConfig(
   const disk = limits.disk ?? existing?.disk;
   const scratch = limits.scratch ?? existing?.scratch;
   const ssh_proxy_public_key = await getSshProxyPublicKey();
+  const secret = getOrCreateProjectLocalSecretToken(project_id);
   return {
     image: normalizeImage(opts?.image ?? existing?.image),
+    secret,
     authorized_keys,
     ssh_proxy_public_key,
     run_quota,
@@ -461,6 +470,42 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     return { id, canceled };
   }
 
+  async function codexUploadAuthFile({
+    account_id,
+    project_id,
+    filename,
+    content,
+  }: {
+    account_id?: string;
+    project_id: string;
+    filename?: string;
+    content: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+    if (filename && !/auth\.json$/i.test(filename.trim())) {
+      throw Error("only auth.json uploads are supported");
+    }
+    const result = await uploadSubscriptionAuthFile({
+      accountId: account_id,
+      content,
+    });
+    const synced = await pushSubscriptionAuthToRegistry({
+      projectId: project_id,
+      accountId: account_id,
+      codexHome: result.codexHome,
+      content,
+    });
+    return { ok: true as const, synced: synced.ok, ...result };
+  }
+
   // Create a project locally and optionally start it.
   hubApi.projects.createProject = createProject;
   hubApi.projects.start = start;
@@ -481,6 +526,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.codexDeviceAuthStart = codexDeviceAuthStart;
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
+  hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;
 }
 
 // Update managed SSH keys for a project without restarting it.
@@ -513,6 +559,22 @@ export async function updateAuthorizedKeys({
     throw Error("invalid project_id");
   }
   await refreshAuthorizedKeys(project_id, authorized_keys ?? "");
+}
+
+export async function updateProjectUsers({
+  project_id,
+  users,
+}: {
+  project_id: string;
+  users?: any;
+}) {
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  // Store collaborator map in the generic sqlite row mirror used by conat auth.
+  // This is separate from the concrete projects SQL table schema.
+  upsertProject({ project_id, users });
+  clearProjectHostConatAuthCaches();
 }
 
 export async function getSshKeys({

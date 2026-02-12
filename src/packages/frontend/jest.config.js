@@ -35,7 +35,11 @@ module.exports = {
     "\\.(css|less|sass|scss)$": "<rootDir>/test/mocks/style.js",
     "\\.txt$": "<rootDir>/test/mocks/text.js",
   },
-  testMatch: ["**/?(*.)+(spec|test).ts?(x)"],
-  testPathIgnorePatterns: ["<rootDir>/editors/slate/playwright/"],
+  testMatch: ["**/?(*.)+(spec|test).ts?(x)", "!**/playwright/**"],
+  testPathIgnorePatterns: [
+    "<rootDir>/editors/slate/playwright/",
+    "<rootDir>/chat/playwright/",
+    "/playwright/",
+  ],
   setupFilesAfterEnv: ["./test/setup.js"],
 };

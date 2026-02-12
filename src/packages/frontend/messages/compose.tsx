@@ -8,9 +8,10 @@ to the database or something...
 
 import { Button, Flex, Input, Modal, Slider, Space, Spin, Tooltip } from "antd";
 import { isEqual } from "lodash";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useAsyncEffect } from "use-async-effect";
+import { useDebouncedCallback } from "use-debounce";
 import {
   redux,
   useActions,
@@ -96,9 +97,11 @@ export default function Compose({
   }>({ to_ids, subject, body });
 
   const [error, setError] = useState<string>("");
-  const [state, setState] = useState<"compose" | "saving" | "sending" | "sent">(
+  const [state, setState] = useState<"compose" | "sending" | "sent">(
     "compose",
   );
+  const [manualSaveInProgress, setManualSaveInProgress] = useState(false);
+  const creatingDraftPromiseRef = useRef<Promise<number> | null>(null);
 
   const discardDraft = async () => {
     if (draftId.current == null) {
@@ -120,81 +123,122 @@ export default function Compose({
     } catch (_err) {}
   };
 
-  const saveQueueRef = useRef<{ subject: string; body: string } | null>(null);
-  const saveDraft = async (y: {
-    subject?: string;
-    body?: string;
-    to_ids?: string[];
-  }) => {
+  const ensureDraftId = async (x: {
+    subject: string;
+    body: string;
+    to_ids: string[];
+  }): Promise<number | null> => {
+    if (draftId.current != null && draftId.current > 0) {
+      return draftId.current;
+    }
+    if (draftId.current === 0 && creatingDraftPromiseRef.current != null) {
+      try {
+        return await creatingDraftPromiseRef.current;
+      } catch {
+        return null;
+      }
+    }
+    const thread_id = message?.thread_id;
+    draftId.current = 0;
+    creatingDraftPromiseRef.current = actions
+      .createDraft({
+        thread_id,
+        ...x,
+      })
+      .then((id) => {
+        draftId.current = id;
+        return id;
+      })
+      .catch((err) => {
+        draftId.current = null;
+        throw err;
+      })
+      .finally(() => {
+        creatingDraftPromiseRef.current = null;
+      });
+    try {
+      return await creatingDraftPromiseRef.current;
+    } catch {
+      return null;
+    }
+  };
+
+  const saveDraft = async (
+    y: {
+      subject?: string;
+      body?: string;
+      to_ids?: string[];
+    },
+    opts: { debounceSave?: boolean; force?: boolean } = {},
+  ) => {
     const x = {
       subject: y.subject ?? subject,
       body: y.body ?? body,
       to_ids: y.to_ids ?? to_ids,
     };
-    if (draftId.current === 0) {
-      // it's very important not to just discard this, in case user
-      // quickly closes their draft
-      saveQueueRef.current = x;
-      // currently creating draft
+    const force = opts.force ?? false;
+    if (state == "sending" || state == "sent") {
+      return;
+    }
+    if (!force && x.to_ids.length == 0) {
       return;
     }
     if (
-      state == "sending" ||
-      state == "sent" ||
-      to_ids.length == 0 ||
-      (isEqual(draft.to_ids, x.to_ids) &&
-        draft.subject == x.subject &&
-        draft.body == x.body)
+      !force &&
+      isEqual(draft.to_ids, x.to_ids) &&
+      draft.subject == x.subject &&
+      draft.body == x.body
     ) {
       return;
     }
     try {
       setError("");
-      setState("saving");
+      const id = await ensureDraftId(x);
+      if (id == null) return;
       const thread_id = message?.thread_id;
-      if (draftId.current == null) {
-        draftId.current = 0;
-        const id = await actions.createDraft({
-          thread_id,
-          ...x,
-        });
-        draftId.current = id;
-        if (saveQueueRef.current != null) {
-          actions.updateDraft({
-            id,
-            thread_id,
-            ...saveQueueRef.current,
-            debounceSave: true,
-          });
-          saveQueueRef.current = null;
-        }
-      } else {
-        actions.updateDraft({
-          id: draftId.current,
-          debounceSave: true,
-          thread_id,
-          ...x,
-        });
-      }
+      await actions.updateDraft({
+        id,
+        thread_id,
+        ...x,
+        debounceSave: opts.debounceSave ?? true,
+      });
       setDraft(x);
     } catch (err) {
       setError(`${err}`);
-    } finally {
-      if (draftId.current === 0) {
-        // failed to create
-        draftId.current = null;
-      }
-      setState("compose");
     }
   };
 
+  const queueSaveDraft = useDebouncedCallback(
+    (next: { subject?: string; body?: string; to_ids?: string[] }) => {
+      void saveDraft(next, { debounceSave: true });
+    },
+    SAVE_DEBOUNCE_MS,
+    { maxWait: SAVE_DEBOUNCE_MS * 4 },
+  );
+
+  useEffect(() => {
+    return () => {
+      queueSaveDraft.cancel();
+    };
+  }, [queueSaveDraft]);
+
   const send = async (body0?: string) => {
+    const nextBody = body0 ?? body;
     const thread_id =
       (message?.subject?.trim() ?? "") == subject.trim()
         ? message.thread_id
         : 0;
     try {
       setError("");
+      queueSaveDraft.cancel();
+      await saveDraft(
+        {
+          to_ids,
+          subject,
+          body: nextBody,
+        },
+        { debounceSave: false, force: true },
+      );
       setState("sending");
       if (!draftId.current) {
         throw Error("no draft message to send");
@@ -204,7 +248,7 @@ export default function Compose({
         to_ids,
         thread_id,
         subject,
-        body: body0 ?? body,
+        body: nextBody,
         sent: webapp_client.server_time(),
       });
       // we have obviously read a message we wrote.
@@ -249,7 +293,7 @@ export default function Compose({
           })}
           onChange={(account_ids) => {
             setToIds(account_ids);
-            saveDraft({ to_ids: account_ids });
+            queueSaveDraft({ to_ids: account_ids });
           }}
           defaultValue={draftId.current ? to_ids : undefined}
         />
@@ -277,7 +321,7 @@ export default function Compose({
             onChange={(e) => {
               const subject = e.target.value;
               setSubject(subject);
-              saveDraft({ body, subject });
+              queueSaveDraft({ body, subject });
             }}
           />
         </Flex>
@@ -295,7 +339,7 @@ export default function Compose({
                     ?.to_str();
                   if (body != null) {
                     setBody(body);
-                    saveDraft({ subject, body });
+                    queueSaveDraft({ subject, body });
                   }
                 }
               }}
@@ -319,9 +363,20 @@ export default function Compose({
           )}
         >
           <Button
-            onClick={() => saveDraft({ subject, body })}
+            onClick={async () => {
+              try {
+                setManualSaveInProgress(true);
+                queueSaveDraft.cancel();
+                await saveDraft(
+                  { subject, body, to_ids },
+                  { debounceSave: false, force: true },
+                );
+              } finally {
+                setManualSaveInProgress(false);
+              }
+            }}
             style={{ marginLeft: "15px" }}
-            disabled={saved || state == "saving"}
+            disabled={saved || manualSaveInProgress}
           >
             <Icon name="save" />{" "}
             {intl.formatMessage(
@@ -331,7 +386,7 @@ export default function Compose({
               },
               { saved },
             )}
-            {state === "saving" && (
+            {manualSaveInProgress && (
               <Spin style={{ marginLeft: "15px" }} delay={1000} />
             )}
           </Button>
@@ -360,7 +415,7 @@ export default function Compose({
               setVersion(versions.length - 1);
             }
             setBody(body);
-            saveDraft({ body, subject });
+            queueSaveDraft({ body, subject });
           }}
           placeholder={`${intl.formatMessage(labels.messages_body)}...`}
           autoFocus={message != null && to_ids.length > 0}
@@ -435,7 +490,7 @@ export default function Compose({
                 Sending <Spin />
               </>
             )}
-            {(state == "saving" || state == "compose") && (
+            {(manualSaveInProgress || state == "compose") && (
               <>
                 <FormattedMessage
                   id="messages.send.label"

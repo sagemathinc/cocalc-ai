@@ -219,6 +219,9 @@ export default function MultiMarkdownInput({
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+  const activeCacheIdRef = useRef<string | undefined>(cacheId);
+  const activeModeRef = useRef<Mode>("markdown");
+  const mountedRef = useRef<boolean>(true);
 
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
 
@@ -250,6 +253,30 @@ export default function MultiMarkdownInput({
   );
 
   const [editBarPopover, setEditBarPopover] = useState<boolean>(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Keep active callback identity synchronous with render. If we wait for
+  // useEffect, stale editor callbacks can fire in-between and pass guards.
+  activeCacheIdRef.current = cacheId;
+  activeModeRef.current = mode;
+
+  function isActiveCallback(sourceMode: Mode): boolean {
+    if (!mountedRef.current) {
+      return false;
+    }
+    const activeCacheId = activeCacheIdRef.current;
+    const activeMode = activeModeRef.current;
+    if (cacheId !== activeCacheId || sourceMode !== activeMode) {
+      return false;
+    }
+    return true;
+  }
 
   useEffect(() => {
     onModeChange?.(mode);
@@ -483,6 +510,7 @@ export default function MultiMarkdownInput({
           selectionRef={selectionRef}
           value={value}
           onChange={(value) => {
+            if (!isActiveCallback("markdown")) return;
             onChangeRef.current?.(value);
           }}
           saveDebounceMs={saveDebounceMs}
@@ -494,6 +522,7 @@ export default function MultiMarkdownInput({
           onUploadEnd={onUploadEnd}
           enableMentions={enableMentions}
           onShiftEnter={(value) => {
+            if (!isActiveCallback("markdown")) return;
             onShiftEnterRef.current?.(value);
           }}
           onAltEnter={(value, pos) => {
@@ -591,9 +620,11 @@ export default function MultiMarkdownInput({
             getValueRef={getValueRef}
             actions={{
               set_value: (value) => {
+                if (!isActiveCallback("editor")) return;
                 onChangeRef.current?.(value);
               },
               shiftEnter: (value) => {
+                if (!isActiveCallback("editor")) return;
                 onChangeRef.current?.(value);
                 onShiftEnterRef.current?.(value);
               },

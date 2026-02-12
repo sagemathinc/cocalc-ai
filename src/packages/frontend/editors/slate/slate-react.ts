@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from "react";
-import type { BaseEditor, Descendant, Path, Range } from "slate";
+import { Editor } from "slate";
+import type { BaseEditor, Descendant, Path, Point, Range } from "slate";
 import {
   Editable as UpstreamEditable,
   Slate as UpstreamSlate,
@@ -86,6 +87,36 @@ const ensureEditorExtras = (editor: UpstreamReactEditor): ReactEditor => {
   }
   return e;
 };
+
+function samePoint(a: Point, b: Point): boolean {
+  if (a.offset !== b.offset) return false;
+  if (a.path.length !== b.path.length) return false;
+  for (let i = 0; i < a.path.length; i += 1) {
+    if (a.path[i] !== b.path[i]) return false;
+  }
+  return true;
+}
+
+function sameRange(a: Range, b: Range): boolean {
+  return samePoint(a.anchor, b.anchor) && samePoint(a.focus, b.focus);
+}
+
+function normalizeEditorSelection(editor: ReactEditor): void {
+  if (editor.selection == null) return;
+  const normalized = ensureRange(editor, editor.selection);
+  if (!sameRange(editor.selection, normalized)) {
+    editor.selection = normalized;
+    return;
+  }
+  // Keep upstream Editable from crashing if paths became stale mid-update.
+  try {
+    Editor.node(editor, normalized.anchor);
+    Editor.node(editor, normalized.focus);
+  } catch {
+    const fallback = ensureRange(editor, null);
+    editor.selection = fallback;
+  }
+}
 
 export const ReactEditor = Object.assign(UpstreamReactEditor, {
   toSlatePoint(
@@ -177,6 +208,7 @@ export const Slate = (props: SlateProps) => {
 
   const editorWithExtras = ensureEditorExtras(editor);
   editorWithExtras.children = value;
+  normalizeEditorSelection(editorWithExtras);
   editorWithExtras.ticks = ticks;
   editorWithExtras.forceUpdate = () => {
     setTicks((prev) => prev + 1);
@@ -207,6 +239,8 @@ export const Editable = React.forwardRef<HTMLDivElement, EditableProps>(
       ...rest
     } = props;
     const ref = divref ?? forwardedRef;
+    const editor = useSlateStatic() as ReactEditor;
+    normalizeEditorSelection(editor);
 
     const shouldIgnoreSlateClipboard = useCallback(
       (event: React.ClipboardEvent<HTMLDivElement>): boolean => {

@@ -595,6 +595,11 @@ const FULLPATH_LABEL_STYLE: CSS = {
 } as const;
 
 function DisplayedLabel({ path, label, inline = true }) {
+  const isFullPathLabel = typeof label === "string" && label.includes("/");
+  const displayLabel =
+    isFullPathLabel && typeof label === "string"
+      ? label.replace(/^\/+/, "")
+      : label;
   const otherSettings = useTypedRedux("account", "other_settings");
   const dimFileExtensions = !!otherSettings?.get("dim_file_extensions");
   if (path == null) {
@@ -619,10 +624,12 @@ function DisplayedLabel({ path, label, inline = true }) {
     );
   }
 
-  let ext = filename_extension(label);
+  let ext = filename_extension(displayLabel);
   if (ext) {
     ext = "." + ext;
-    label = label.slice(0, -ext.length);
+    label = displayLabel.slice(0, -ext.length);
+  } else {
+    label = displayLabel;
   }
   // The "ltr" below is needed because of the direction 'rtl' in label_style, which
   // we have to compensate for in some situations, e.g., a file name "this is a file!"

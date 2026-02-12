@@ -93,6 +93,8 @@ flowchart TD
   - **Project\-host**: connected to the central network \(register, receive control RPCs\) and runs its own conat server for project traffic.
   - **Clients \(browser/CLI\)**: primarily connect to the host’s conat server for project traffic; the hub can proxy WebSocket/conat if direct access is not possible.
 - Conat client routing \(routeSubject\) dispatches `project-<id>` subjects to the correct host conat connection; other subjects stay on the central network.
+- For browser calls using `hub.projects.*` that must execute on project-host, frontend also uses an explicit routing whitelist in
+  `src/packages/frontend/conat/client.ts` (`PROJECT_HOST_ROUTED_HUB_METHODS`). Add new host-routed methods there.
 
 ```mermaid
 flowchart TB

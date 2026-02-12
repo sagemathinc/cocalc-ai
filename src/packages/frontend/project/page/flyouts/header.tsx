@@ -173,6 +173,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
                 style={{ flex: 1 }}
                 mode={"flyout"}
                 project_id={project_id}
+                showSourceSelector
                 className={"cc-project-flyout-path-navigator"}
               />
               {!lite && (

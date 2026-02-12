@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import { type ChildProcess } from "node:child_process";
 import getLogger from "@cocalc/backend/logger";
 import {
+  ensureCodexAuthFileExists,
   ensureCodexCredentialsStoreFile,
   resolveSubscriptionCodexHome,
   subscriptionRuntime,
 } from "./codex-auth";
+import { pushSubscriptionAuthToRegistry } from "./codex-auth-registry";
+import { touchSubscriptionCacheUsage } from "./codex-subscription-cache-gc";
 import { spawnCodexInProjectContainer } from "./codex-project";
 
 const logger = getLogger("project-host:codex-device-auth");
@@ -27,10 +30,60 @@ type DeviceAuthSession = {
   output: string;
   verificationUrl?: string;
   userCode?: string;
+  syncedToRegistry?: boolean;
+  syncError?: string;
 };
 
 const MAX_OUTPUT_CHARS = 50_000;
 const sessions = new Map<string, DeviceAuthSession>();
+const DEVICE_AUTH_MAX_SESSIONS = Math.max(
+  10,
+  Number(process.env.COCALC_CODEX_DEVICE_AUTH_MAX_SESSIONS ?? 200),
+);
+const DEVICE_AUTH_TERMINAL_RETENTION_MS = Math.max(
+  60_000,
+  Number(
+    process.env.COCALC_CODEX_DEVICE_AUTH_TERMINAL_RETENTION_MS ??
+      6 * 60 * 60 * 1000,
+  ),
+);
+const DEVICE_AUTH_PRUNE_INTERVAL_MS = Math.max(
+  10_000,
+  Number(process.env.COCALC_CODEX_DEVICE_AUTH_PRUNE_INTERVAL_MS ?? 5 * 60_000),
+);
+
+function isTerminal(state: DeviceAuthState): boolean {
+  return state === "completed" || state === "failed" || state === "canceled";
+}
+
+function pruneSessions(now: number = Date.now()): void {
+  // First pass: drop old terminal sessions.
+  for (const [id, session] of sessions) {
+    if (!isTerminal(session.state)) continue;
+    if (now - session.updatedAt > DEVICE_AUTH_TERMINAL_RETENTION_MS) {
+      sessions.delete(id);
+    }
+  }
+
+  if (sessions.size < DEVICE_AUTH_MAX_SESSIONS) return;
+
+  // Second pass: while above cap, evict oldest terminal sessions first.
+  const candidates = [...sessions.values()]
+    .filter((s) => isTerminal(s.state))
+    .sort((a, b) => a.updatedAt - b.updatedAt);
+  for (const session of candidates) {
+    if (sessions.size < DEVICE_AUTH_MAX_SESSIONS) break;
+    sessions.delete(session.id);
+  }
+}
+
+setInterval(() => {
+  try {
+    pruneSessions();
+  } catch (err) {
+    logger.debug("codex device auth prune failed", { err: `${err}` });
+  }
+}, DEVICE_AUTH_PRUNE_INTERVAL_MS).unref();
 
 function classifyDeviceAuthFailure(output: string, code: number | null): string {
   const text = output ?? "";
@@ -97,8 +150,16 @@ export async function startCodexDeviceAuth(
   projectId: string,
   accountId: string,
 ): Promise<ReturnType<typeof snapshot>> {
+  pruneSessions();
+  if (sessions.size >= DEVICE_AUTH_MAX_SESSIONS) {
+    throw new Error(
+      "Too many codex device-auth sessions are active on this host; please retry shortly.",
+    );
+  }
+
   const codexHome = resolveSubscriptionCodexHome(accountId);
   await ensureCodexCredentialsStoreFile(codexHome);
+  await ensureCodexAuthFileExists(codexHome);
   // Ensure we run in subscription auth mode (not key/shared-home fallback)
   // while performing device login.
   const authRuntime = subscriptionRuntime({
@@ -149,6 +210,31 @@ export async function startCodexDeviceAuth(
     if (session.state === "canceled") return;
     if (code === 0) {
       session.state = "completed";
+      void touchSubscriptionCacheUsage(session.codexHome).catch((err) => {
+        logger.warn("failed to touch local codex subscription cache marker", {
+          id,
+          projectId,
+          accountId,
+          err: `${err}`,
+        });
+      });
+      void pushSubscriptionAuthToRegistry({
+        projectId: session.projectId,
+        accountId: session.accountId,
+        codexHome: session.codexHome,
+      })
+        .then((result) => {
+          session.syncedToRegistry = result.ok;
+          session.syncError = result.ok
+            ? undefined
+            : "unable to sync credentials to central registry";
+          session.updatedAt = Date.now();
+        })
+        .catch((err) => {
+          session.syncedToRegistry = false;
+          session.syncError = `${err}`;
+          session.updatedAt = Date.now();
+        });
     } else {
       session.state = "failed";
       if (!session.error) {
@@ -187,12 +273,15 @@ function snapshot(session: DeviceAuthSession) {
     exitCode: session.exitCode,
     signal: session.signal,
     error: session.error,
+    syncedToRegistry: session.syncedToRegistry,
+    syncError: session.syncError,
   };
 }
 
 export function getCodexDeviceAuthStatus(id: string):
   | ReturnType<typeof snapshot>
   | undefined {
+  pruneSessions();
   const session = sessions.get(id);
   if (!session) return undefined;
   return snapshot(session);

@@ -73,11 +73,6 @@ interface MesgRenameFile {
   dest: string;
 }
 
-interface MesgCanonicalPaths {
-  cmd: "canonical_paths";
-  paths: string[];
-}
-
 interface MesgConfiguration {
   cmd: "configuration";
   aspect: ConfigurationAspect;
@@ -162,7 +157,6 @@ export type Mesg =
   | MesgListing
   | MesgMoveFiles
   | MesgRenameFile
-  | MesgCanonicalPaths
   | MesgConfiguration
   | MesgJupyter
   | MesgJupyterStripNotebook

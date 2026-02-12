@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import AppStatus from "./app-status";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 export default function AppState({
   name,
@@ -32,11 +33,31 @@ export default function AppState({
   }, [name, autoStart]);
 
   useEffect(() => {
-    const url =
-      status?.state == "running" && status?.ready === true && status?.url
-        ? withProjectHostBase(project_id, status.url)
-        : undefined;
-    setUrl(url);
+    let canceled = false;
+    void (async () => {
+      const rawUrl =
+        status?.state == "running" && status?.ready === true && status?.url
+          ? withProjectHostBase(project_id, status.url)
+          : undefined;
+      if (!rawUrl) {
+        if (!canceled) setUrl(undefined);
+        return;
+      }
+      const authedUrl = await webapp_client.conat_client.addProjectHostAuthToUrl({
+        project_id,
+        url: rawUrl,
+      });
+      if (!canceled) {
+        setUrl(authedUrl);
+      }
+    })().catch((_err) => {
+      if (!canceled) {
+        setUrl(undefined);
+      }
+    });
+    return () => {
+      canceled = true;
+    };
   }, [project_id, status, setUrl]);
 
   useEffect(() => {

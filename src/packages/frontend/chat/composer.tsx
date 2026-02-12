@@ -25,6 +25,11 @@ import type { SubmitMentionsFn } from "./types";
 import { INPUT_HEIGHT } from "./utils";
 import type { ThreadMeta } from "./threads";
 import { ThreadBadge } from "./thread-badge";
+import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
+import {
+  getCodexPaymentSourceLongLabel,
+  getCodexPaymentSourceShortLabel,
+} from "./use-codex-payment-source";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -32,9 +37,10 @@ export interface ChatRoomComposerProps {
   path: string;
   fontSize: number;
   composerDraftKey: number;
+  composerSession: number;
   input: string;
-  setInput: (value: string) => void;
-  on_send: () => void;
+  setInput: (value: string, sessionToken?: number) => void;
+  on_send: (value?: string) => void;
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
   isSelectedThreadAI: boolean;
@@ -44,6 +50,8 @@ export interface ChatRoomComposerProps {
   selectedThread?: ThreadMeta | null;
   onComposerTargetChange: (key: string | null) => void;
   onComposerFocusChange: (focused: boolean) => void;
+  codexPaymentSource?: CodexPaymentSourceInfo;
+  codexPaymentSourceLoading?: boolean;
 }
 
 export function ChatRoomComposer({
@@ -52,6 +60,7 @@ export function ChatRoomComposer({
   path,
   fontSize,
   composerDraftKey,
+  composerSession,
   input,
   setInput,
   on_send,
@@ -64,6 +73,8 @@ export function ChatRoomComposer({
   selectedThread,
   onComposerTargetChange,
   onComposerFocusChange,
+  codexPaymentSource,
+  codexPaymentSourceLoading = false,
 }: ChatRoomComposerProps) {
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -86,6 +97,12 @@ export function ChatRoomComposer({
   const threadColor = selectedThread?.threadColor;
   const threadIcon = selectedThread?.threadIcon;
   const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
+  const presenceThreadKey = useMemo(() => {
+    if (combinedFeedSelected) {
+      return composerTargetKey ?? null;
+    }
+    return selectedThread?.key ?? null;
+  }, [combinedFeedSelected, composerTargetKey, selectedThread?.key]);
 
   const [viewportHeight, setViewportHeight] = useState<number>(() => {
     if (typeof window === "undefined") return 900;
@@ -256,7 +273,7 @@ export function ChatRoomComposer({
       const effective =
         typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
-      on_send();
+      on_send(effective);
       if (isZenMode) {
         void toggleZenMode();
       }
@@ -274,6 +291,14 @@ export function ChatRoomComposer({
     background: isZenMode && isFullscreen ? "white" : undefined,
     boxSizing: "border-box",
   };
+
+  const codexSourceShortLabel = codexPaymentSourceLoading
+    ? "Checking…"
+    : getCodexPaymentSourceShortLabel(codexPaymentSource?.source);
+  const codexSourceLongLabel = getCodexPaymentSourceLongLabel(
+    codexPaymentSource?.source,
+  );
+  const showSiteUsage = codexPaymentSource?.source === "site-api-key";
 
   return (
     <div ref={zenContainerRef} style={composerStyle}>
@@ -351,21 +376,24 @@ export function ChatRoomComposer({
         )}
         <div ref={inputContainerRef}>
           <ChatInput
+            key={`${path}${project_id}-draft-${composerDraftKey}`}
             fontSize={fontSize}
             autoFocus
             cacheId={`${path}${project_id}-draft-${composerDraftKey}`}
             input={input}
+            presenceThreadKey={presenceThreadKey}
             on_send={handleSend}
             height={chatInputHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
             onChange={(value) => {
-              setInput(value);
+              setInput(value, composerSession);
             }}
             onFocus={() => onComposerFocusChange(true)}
             onBlur={() => onComposerFocusChange(false)}
             submitMentionsRef={submitMentionsRef}
             syncdb={actions.syncdb}
             date={composerDraftKey}
+            sessionToken={composerSession}
             editBarStyle={{ overflow: "auto" }}
           />
         </div>
@@ -389,11 +417,27 @@ export function ChatRoomComposer({
               marginBottom: "5px",
             }}
           >
-            <LLMUsageStatus
-              variant="compact"
-              showHelp={false}
-              compactWidth={115}
-            />
+            {showSiteUsage ? (
+              <LLMUsageStatus
+                variant="compact"
+                showHelp={false}
+                compactWidth={115}
+              />
+            ) : (
+              <Tooltip title={`Likely source: ${codexSourceLongLabel}`}>
+                <Button
+                  size="small"
+                  style={{
+                    height: "auto",
+                    padding: "4px 6px",
+                    fontSize: "11px",
+                    minWidth: "115px",
+                  }}
+                >
+                  {codexSourceShortLabel}
+                </Button>
+              </Tooltip>
+            )}
           </div>
         )}
         {hasInput && (
@@ -406,11 +450,27 @@ export function ChatRoomComposer({
                   alignItems: "center",
                 }}
               >
-                <LLMUsageStatus
-                  variant="compact"
-                  showHelp={false}
-                  compactWidth={115}
-                />
+                {showSiteUsage ? (
+                  <LLMUsageStatus
+                    variant="compact"
+                    showHelp={false}
+                    compactWidth={115}
+                  />
+                ) : (
+                  <Tooltip title={`Likely source: ${codexSourceLongLabel}`}>
+                    <Button
+                      size="small"
+                      style={{
+                        height: "auto",
+                        padding: "4px 6px",
+                        fontSize: "11px",
+                        minWidth: "115px",
+                      }}
+                    >
+                      {codexSourceShortLabel}
+                    </Button>
+                  </Tooltip>
+                )}
               </div>
             ) : (
               <div />

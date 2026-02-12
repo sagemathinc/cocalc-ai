@@ -11,7 +11,11 @@ import { URL } from "node:url";
 import express from "express";
 import getPort from "@cocalc/backend/get-port";
 import getLogger from "@cocalc/backend/logger";
-import { account_id, setConatServer } from "@cocalc/backend/data";
+import {
+  data as dataDir,
+  setConatServer,
+  setConatPassword,
+} from "@cocalc/backend/data";
 import {
   init as createConatServer,
   type ConatServer,
@@ -23,7 +27,11 @@ import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run"
 import { initFileServer, initFsServer } from "./file-server";
 import { initHttp, addCatchAll } from "./web";
 import { initSqlite } from "./sqlite/init";
-import { getProjectPorts } from "./sqlite/projects";
+import {
+  getOrCreateProjectLocalSecretToken,
+  getProjectPorts,
+} from "./sqlite/projects";
+import { PROJECT_PROXY_AUTH_HEADER } from "@cocalc/backend/auth/project-proxy-auth";
 import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
 import { init as initHubApi } from "@cocalc/lite/hub/api";
@@ -33,12 +41,30 @@ import { startReconciler } from "./reconcile";
 import { init as initAcp } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
+import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
+import { startCodexSubscriptionCacheGc } from "./codex/codex-subscription-cache-gc";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import { getOrCreateSelfSigned } from "@cocalc/lite/tls";
 import { handleDaemonCli } from "./daemon";
 import { startCopyWorker } from "./pending-copies";
 import { startOnPremTunnel } from "./onprem-tunnel";
+import { startDataPermissionHardener } from "./data-permissions";
+import { resolveProjectHostId } from "./host-id";
+import { createProjectHostConatAuth } from "./conat-auth";
+import { startConatRevocationKickLoop } from "./conat-revocation-kick";
+import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
+import { getProjectHostMasterConatToken } from "./master-conat-token";
+import {
+  runRuntimeConformanceStartupChecks,
+  startRuntimeConformanceMonitor,
+} from "./runtime-conformance";
+import { startRuntimePostureMonitor } from "./runtime-posture";
+import {
+  assertLocalBindOrInsecure,
+  assertSecureUrlOrLocal,
+} from "@cocalc/backend/network/policy";
+import { createProjectHostHttpProxyAuth } from "./http-proxy-auth";
 
 const logger = getLogger("project-host:main");
 
@@ -124,14 +150,37 @@ export async function main(
   _config: ProjectHostConfig = {},
 ): Promise<ProjectHostContext> {
   const runnerId = process.env.PROJECT_RUNNER_NAME || "project-host";
-  const host = _config.host ?? process.env.HOST ?? "0.0.0.0";
+  const host = _config.host ?? process.env.HOST ?? "127.0.0.1";
   const port = _config.port ?? (Number(process.env.PORT) || (await getPort()));
+  assertLocalBindOrInsecure({
+    bindHost: host,
+    serviceName: "project-host http listener",
+  });
+  assertSecureUrlOrLocal({
+    url: process.env.PROJECT_HOST_PUBLIC_URL ?? "",
+    urlName: "PROJECT_HOST_PUBLIC_URL",
+  });
+  assertSecureUrlOrLocal({
+    url: process.env.PROJECT_HOST_INTERNAL_URL ?? "",
+    urlName: "PROJECT_HOST_INTERNAL_URL",
+  });
+  await runRuntimeConformanceStartupChecks();
+  const stopRuntimeConformanceMonitor = startRuntimeConformanceMonitor();
   const tls = resolveTlsConfig(host, port);
+  // Project-host internal conat auth is always local and host-specific.
+  const localConatPassword = getOrCreateProjectHostConatPassword();
+  const masterConatToken = getProjectHostMasterConatToken();
+  setConatPassword(localConatPassword);
 
   const scheme = tls.enabled ? "https" : "http";
   logger.info(
     `starting project-host on ${scheme}://${host}:${port} (runner=${runnerId})`,
   );
+
+  logger.info("Local sqlite + changefeeds for UI data");
+  initSqlite();
+  const hostId = resolveProjectHostId(_config.hostId);
+  const conatAuth = createProjectHostConatAuth({ host_id: hostId });
 
   // 1) HTTP + conat server
   const { app, httpServer, isHttps } = await startHttpServer(port, host, tls);
@@ -139,20 +188,26 @@ export async function main(
     httpServer,
     ssl: isHttps,
     port,
-    getUser: async () => ({ account_id }),
+    getUser: conatAuth.getUser,
+    isAllowed: conatAuth.isAllowed,
+    systemAccountPassword: localConatPassword,
   });
   if (conatServer.state !== "ready") {
     await once(conatServer, "ready");
   }
-  const conatClient = conatServer.client({ path: "/" });
+  const conatClient = conatServer.client({
+    path: "/",
+    systemAccountPassword: localConatPassword,
+  });
   setConatServer(conatServer.address());
   setConatClient({
     conat: () => conatClient,
     getLogger,
   });
+  const stopConatRevocationKickLoop = startConatRevocationKickLoop({
+    client: conatClient,
+  });
 
-  logger.info("Local sqlite + changefeeds for UI data");
-  initSqlite();
   initChangefeeds({ client: conatClient });
   await initHubApi({ client: conatClient });
 
@@ -170,18 +225,35 @@ export async function main(
     }),
   );
   initCodexProjectRunner();
+  initCodexSiteKeyGovernor();
+  const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   await initAcp(conatClient);
 
   // Minimal local persistence so DKV/state works (no external hub needed).
   const persistServer = createPersistServer({ client: conatClient });
 
   logger.info("Proxy HTTP/WS traffic to running project containers.");
+  const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
+  const stopHttpProxyRevocationKickLoop =
+    httpProxyAuth.startUpgradeRevocationKickLoop();
   attachProjectProxy({
     httpServer,
     app,
-    resolveTarget: (req) => {
+    onUpgradeAuthorized: (req, socket) =>
+      httpProxyAuth.trackUpgradedSocket(req, socket),
+    resolveTarget: async (req, res) => {
       const project_id = req.url?.split("/")[1];
       if (!project_id) return { handled: false };
+      if (res) {
+        await httpProxyAuth.authorizeHttpRequest(req, res, project_id);
+        if (res.writableEnded) {
+          return { handled: true };
+        }
+      } else {
+        await httpProxyAuth.authorizeUpgradeRequest(req, project_id);
+      }
+      const upstreamSecret = getOrCreateProjectLocalSecretToken(project_id);
+      req.headers[PROJECT_PROXY_AUTH_HEADER] = upstreamSecret;
       const { http_port } = getProjectPorts(project_id);
       if (!http_port) {
         throw new Error(`no http_port recorded for project ${project_id}`);
@@ -214,20 +286,24 @@ export async function main(
 
   logger.info("start Master Registration");
   const stopMasterRegistration = await startMasterRegistration({
-    hostId: _config.hostId ?? process.env.PROJECT_HOST_ID,
+    hostId,
     runnerId,
     host,
     port,
+    masterConatToken,
   });
   const stopReconciler = startReconciler();
+  const stopDataPermissionHardener = startDataPermissionHardener(dataDir);
 
   // file server must be started AFTER master registration, since it connects
   // to master to get rustic backup config.
   logger.info("File-server (local btrfs + optional ssh proxy if enabled)");
   let stopOnPremTunnel: (() => void) | undefined;
+  let stopRuntimePostureMonitor: () => void = () => {};
   try {
     await initFileServer({ client: conatClient });
     stopOnPremTunnel = await startOnPremTunnel({ localHttpPort: port });
+    stopRuntimePostureMonitor = startRuntimePostureMonitor();
   } catch (err) {
     logger.error("FATAL: Failed to init file server", err);
     process.exit(1);
@@ -242,8 +318,14 @@ export async function main(
     fsServer?.close?.();
     stopMasterRegistration?.();
     stopReconciler?.();
+    stopDataPermissionHardener?.();
+    stopRuntimeConformanceMonitor?.();
+    stopRuntimePostureMonitor?.();
+    stopConatRevocationKickLoop?.();
+    stopCodexSubscriptionCacheGc?.();
     stopCopyWorker?.();
     stopOnPremTunnel?.();
+    stopHttpProxyRevocationKickLoop?.();
   };
   process.once("exit", close);
   ["SIGINT", "SIGTERM", "SIGQUIT"].forEach((sig) => process.once(sig, close));

@@ -7,7 +7,7 @@ import { useRef, useState } from "react";
 
 export default function useDiskUsage({
   project_id,
-  path = "",
+  path = "/",
 }: {
   project_id: string;
   path?: string;

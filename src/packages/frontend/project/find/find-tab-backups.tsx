@@ -2,11 +2,15 @@ import { Alert, Button, Input, Radio, Space, Tooltip, message } from "antd";
 import { join, posix } from "path";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type VirtuosoGridHandle } from "react-virtuoso";
-import { useActions } from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading, SearchInput } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { BACKUPS } from "@cocalc/util/consts/backups";
+import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { search_match, search_split } from "@cocalc/util/misc";
+import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { FindBackupRow, type BackupResult } from "./rows";
 import { FindResultsGrid } from "./result-grid";
 import { useFindTabState } from "./state";
@@ -84,6 +88,28 @@ export function BackupsTab({
   const fieldWidth = mode === "flyout" ? "100%" : "50%";
   const { project_id } = useProjectContext();
   const actions = useActions({ project_id });
+  const available_features = useTypedRedux({ project_id }, "available_features");
+  const homeFromFeatures =
+    (available_features as any)?.homeDirectory ??
+    (available_features as any)?.get?.("homeDirectory");
+  const homeDirectory = useMemo(() => {
+    if (lite && typeof homeFromFeatures === "string") {
+      return normalizeAbsolutePath(homeFromFeatures);
+    }
+    return "/root";
+  }, [homeFromFeatures]);
+  const backupScopePath = useMemo(() => {
+    if (!scopePath) return "";
+    if (!isAbsolutePath(scopePath)) return stripDotSlash(scopePath);
+    const abs = normalizeAbsolutePath(scopePath, homeDirectory);
+    if (homeDirectory === "/") return stripDotSlash(abs);
+    if (abs === homeDirectory) return "";
+    if (abs.startsWith(`${homeDirectory}/`)) {
+      return stripDotSlash(abs.slice(homeDirectory.length + 1));
+    }
+    return null;
+  }, [homeDirectory, scopePath]);
+  const scopeOutsideHome = backupScopePath == null;
   const [state, setState] = useFindTabState(
     project_id,
     "find_backups_state",
@@ -194,6 +220,11 @@ export function BackupsTab({
         setError(null);
         return;
       }
+      if (scopeOutsideHome) {
+        setResults([]);
+        setError("Backups only include files under HOME.");
+        return;
+      }
       if (backupName && backupIds === undefined) {
         setResults([]);
         setError(null);
@@ -231,7 +262,7 @@ export function BackupsTab({
               filter: `${item.path} ${item.id} ${timeIso}`,
             };
           })
-          .filter((item) => matchesScope(item.path, scopePath))
+          .filter((item) => matchesScope(item.path, backupScopePath ?? ""))
           .filter((item) => state.hidden || !isHiddenPath(item.path));
         filtered.sort((a, b) => {
           const aTime = timeMs(a.time);
@@ -255,6 +286,8 @@ export function BackupsTab({
       backupName,
       project_id,
       scopePath,
+      backupScopePath,
+      scopeOutsideHome,
     ],
   );
 
@@ -389,26 +422,26 @@ export function BackupsTab({
     const dir = restoreTarget.path.includes("/")
       ? posix.dirname(restoreTarget.path)
       : "";
-    const target = join(".backups", backupName, dir);
+    const target = join(BACKUPS, backupName, dir);
     actions.open_directory(target, true, true);
     setRestoreTarget(null);
   }, [actions, restoreTarget]);
 
   const openSnapshotsDir = useCallback(() => {
-    actions?.open_directory(".snapshots");
+    actions?.open_directory(SNAPSHOTS);
   }, [actions]);
 
   const openBackupsDir = useCallback(() => {
-    actions?.open_directory(".backups");
+    actions?.open_directory(BACKUPS);
   }, [actions]);
 
   const openSnapshotSchedule = useCallback(() => {
-    actions?.open_directory(".snapshots");
+    actions?.open_directory(SNAPSHOTS);
     actions?.setState({ open_snapshot_schedule: true });
   }, [actions]);
 
   const openBackupSchedule = useCallback(() => {
-    actions?.open_directory(".backups");
+    actions?.open_directory(BACKUPS);
     actions?.setState({ open_backup_schedule: true });
   }, [actions]);
 

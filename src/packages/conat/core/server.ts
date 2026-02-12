@@ -88,6 +88,24 @@ const DEFAULT_FORGET_CLUSTER_NODE_INTERVAL = 30 * 60_000; // 30 minutes by defau
 
 const DEBUG = false;
 
+function envNumber(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+const AUTH_FAIL_WINDOW_MS = Math.max(
+  5_000,
+  envNumber("COCALC_CONAT_AUTH_FAIL_WINDOW_MS", 60_000),
+);
+const AUTH_FAIL_LIMIT = Math.max(
+  1,
+  envNumber("COCALC_CONAT_AUTH_FAIL_LIMIT", 20),
+);
+const AUTH_FAIL_BLOCK_MS = Math.max(
+  5_000,
+  envNumber("COCALC_CONAT_AUTH_FAIL_BLOCK_MS", 5 * 60_000),
+);
+
 export interface InterestUpdate {
   op: "add" | "delete";
   subject: string;
@@ -167,6 +185,11 @@ export class ConatServer extends EventEmitter {
   private stats: { [id: string]: ConnectionStats } = {};
   private usage: UsageMonitor;
   public state: State = "init";
+
+  private authFailuresByAddress: Map<
+    string,
+    { windowStart: number; count: number; blockedUntil: number }
+  > = new Map();
 
   private subscriptions: { [socketId: string]: Set<string> } = {};
   public interest: Interest = new Patterns();
@@ -347,6 +370,7 @@ export class ConatServer extends EventEmitter {
     this.subscriptions = {};
     this.stats = {};
     this.sockets = {};
+    this.authFailuresByAddress.clear();
   };
 
   private info = (): ServerInfo => {
@@ -359,6 +383,45 @@ export class ConatServer extends EventEmitter {
 
   private log = (...args) => {
     logger.debug("id", this.id, ":", ...args);
+  };
+
+  private pruneAuthFailures = (now = Date.now()) => {
+    for (const [address, rec] of this.authFailuresByAddress) {
+      if (rec.blockedUntil > now) continue;
+      if (now - rec.windowStart <= AUTH_FAIL_WINDOW_MS) continue;
+      this.authFailuresByAddress.delete(address);
+    }
+  };
+
+  private isAddressAuthBlocked = (address: string, now = Date.now()): boolean => {
+    const rec = this.authFailuresByAddress.get(address);
+    if (!rec) return false;
+    if (rec.blockedUntil > now) return true;
+    if (now - rec.windowStart > AUTH_FAIL_WINDOW_MS) {
+      this.authFailuresByAddress.delete(address);
+      return false;
+    }
+    return false;
+  };
+
+  private recordAuthFailure = (address: string, now = Date.now()) => {
+    const rec = this.authFailuresByAddress.get(address);
+    if (!rec || now - rec.windowStart > AUTH_FAIL_WINDOW_MS) {
+      this.authFailuresByAddress.set(address, {
+        windowStart: now,
+        count: 1,
+        blockedUntil: 0,
+      });
+      return;
+    }
+    rec.count += 1;
+    if (rec.count >= AUTH_FAIL_LIMIT) {
+      rec.blockedUntil = now + AUTH_FAIL_BLOCK_MS;
+    }
+  };
+
+  private clearAuthFailures = (address: string) => {
+    this.authFailuresByAddress.delete(address);
   };
 
   private unsubscribe = async ({ socket, subject }) => {
@@ -734,17 +797,32 @@ export class ConatServer extends EventEmitter {
       connected: Date.now(),
       address: getAddress(socket),
     };
+    const address = this.stats[socket.id].address
+      ? `ip:${this.stats[socket.id].address}`
+      : `socket:${socket.id}`;
+    this.pruneAuthFailures();
     let user: any = null;
     let added = false;
     try {
+      if (this.isAddressAuthBlocked(address)) {
+        const rec = this.authFailuresByAddress.get(address);
+        const waitMs = Math.max(1_000, (rec?.blockedUntil ?? Date.now()) - Date.now());
+        const waitSec = Math.ceil(waitMs / 1000);
+        throw new ConatError(
+          `too many authentication failures from ${address}; retry in about ${waitSec}s`,
+          { code: 429 },
+        );
+      }
       user = await this.getUser(socket);
       this.usage.add(user);
       added = true;
+      this.clearAuthFailures(address);
     } catch (err) {
       // getUser is supposed to throw an error if authentication fails
       // for any reason
       // Also, if the connection limit is hit they still connect, but as
       // the error user who can't do anything (hence not waste resources).
+      this.recordAuthFailure(address);
       user = { error: `${err}`, code: err.code };
     }
     this.stats[socket.id].user = user;
@@ -1329,6 +1407,11 @@ export class ConatServer extends EventEmitter {
     let count = 0;
 
     const f = async (client) => {
+      // Guard against race condition: client may be closed during scan
+      const address = client?.options?.address;
+      if (!address) {
+        return;
+      }
       try {
         const sys = sysApi(client);
         const knownByRemoteNode = new Set(
@@ -1337,22 +1420,18 @@ export class ConatServer extends EventEmitter {
         if (this.isClosed()) return;
         logger.debug(
           "scan: remote",
-          client.options.address,
+          address,
           "knows about ",
           knownByRemoteNode,
         );
-        for (const address of knownByRemoteNode) {
-          if (!knownByUs.has(address)) {
-            unknownToUs.add(address);
+        for (const addr of knownByRemoteNode) {
+          if (!knownByUs.has(addr)) {
+            unknownToUs.add(addr);
           }
         }
         if (!knownByRemoteNode.has(this.address())) {
           // we know about them, but they don't know about us, so ask them to link to us.
-          logger.debug(
-            "scan: asking remote ",
-            client.options.address,
-            " to link to us",
-          );
+          logger.debug("scan: asking remote ", address, " to link to us");
           await sys.join(this.address());
           if (this.isClosed()) return;
           count += 1;
@@ -1360,7 +1439,7 @@ export class ConatServer extends EventEmitter {
       } catch (err) {
         errors.push({
           err,
-          desc: `requesting remote ${client.options.address} join us`,
+          desc: `requesting remote ${address} join us`,
         });
       }
     };

@@ -29,6 +29,7 @@ import { initAuth } from "./auth-token";
 import { getCustomizePayload } from "./hub/settings";
 import { getOrCreateSelfSigned } from "./tls";
 import { attachProxyServer } from "@cocalc/project/servers/proxy/proxy";
+import { assertLocalBindOrInsecure } from "@cocalc/backend/network/policy";
 
 const logger = getLogger("lite:static");
 
@@ -47,6 +48,10 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
     Number.isFinite(port0) && port0 > 0 ? port0 : await getPort();
   const hostEnv = process.env.HOST ?? "localhost";
   const { isHttps, hostname } = sanitizeHost(hostEnv);
+  assertLocalBindOrInsecure({
+    bindHost: hostname,
+    serviceName: "lite http listener",
+  });
   let httpServer: AnyServer;
   let actualPort = requestedPort;
 
@@ -185,6 +190,8 @@ function mapLiteTarget(rawUrl: string): string {
   } else if (
     pathname === "/files" ||
     pathname.startsWith("/files/") ||
+    pathname === "/home" ||
+    pathname.startsWith("/home/") ||
     pathname === "/new" ||
     pathname.startsWith("/new/") ||
     pathname === "/search" ||

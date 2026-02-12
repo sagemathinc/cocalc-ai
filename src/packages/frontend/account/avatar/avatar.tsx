@@ -53,9 +53,13 @@ interface Props {
 
 export function Avatar(props) {
   if (isChatBot(props.account_id)) {
+    const model =
+      typeof props.account_id === "string" && props.account_id.includes("codex")
+        ? "codex-agent"
+        : service2model(props.account_id);
     return (
       <LanguageModelVendorAvatar
-        model={service2model(props.account_id)}
+        model={model}
         size={props.size ?? 30}
         style={props.style}
       />

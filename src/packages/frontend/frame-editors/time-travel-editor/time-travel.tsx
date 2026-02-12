@@ -5,27 +5,28 @@
 
 // Time travel editor react component
 
-import { Button, Checkbox, Space, Tooltip } from "antd";
+import { Button, Modal, Radio, Select, Space, Tooltip, message } from "antd";
 import { Map, List } from "immutable";
 import { debounce } from "lodash";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AccountState } from "@cocalc/frontend/account/types";
 import {
   redux,
   useAsyncEffect,
   useEditorRedux,
 } from "@cocalc/frontend/app-framework";
-import { Loading } from "@cocalc/frontend/components";
+import { Loading, TimeAgo } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import { lite } from "@cocalc/frontend/lite";
 import type { Document } from "@cocalc/sync/editor/generic/types";
 import json_stable from "json-stable-stringify";
 import { to_ipynb } from "../../jupyter/history-viewer";
 import { TimeTravelActions, TimeTravelState } from "./actions";
 import { GitAuthors, TimeTravelAuthors } from "./authors";
-import { ChangesMode } from "./changes-mode";
 import { Diff } from "./diff";
 import { Export } from "./export";
 import { LoadMoreHistory } from "./load-more-history";
+import { LogView } from "./log-view";
 import { NavigationButtons } from "./navigation-buttons";
 import { NavigationSlider } from "./navigation-slider";
 import { OpenFile } from "./open-file";
@@ -59,6 +60,12 @@ export function TimeTravel(props: Props) {
   const firstVersion = useEditor("first_version") ?? 0;
   const gitVersions =
     (useEditor("git_versions") as List<number> | undefined) ?? List<number>();
+  const snapshotVersions =
+    (useEditor("snapshot_versions") as List<string> | undefined) ??
+    List<string>();
+  const backupVersions =
+    (useEditor("backup_versions") as List<string> | undefined) ??
+    List<string>();
   const hasFullHistory = useEditor("has_full_history");
   const loading = useEditor("loading");
   const docpath = useEditor("docpath");
@@ -73,13 +80,37 @@ export function TimeTravel(props: Props) {
   const [useJson, setUseJson] = useState<boolean>(false);
 
   const [marks, setMarks] = useState<boolean>(!!props.desc?.get("marks"));
-  const [gitMode, setGitMode] = useState<boolean>(!!props.desc?.get("gitMode"));
+  const [source, setSource] = useState<
+    "timetravel" | "git" | "snapshots" | "backups"
+  >(() => {
+    const s = props.desc?.get("source");
+    if (s === "git" || s === "timetravel" || s === "snapshots" || s === "backups") {
+      return s;
+    }
+    if (props.desc?.get("gitMode")) {
+      return "git";
+    }
+    if (props.desc?.get("snapshotsMode")) {
+      return "snapshots";
+    }
+    return "timetravel";
+  });
   const [textMode, setTextMode] = useState<boolean>(
     !!props.desc?.get("textMode"),
   );
   const [changesMode, setChangesMode] = useState<boolean>(
     !!props.desc?.get("changesMode"),
   );
+  const [showCommitRange, setShowCommitRange] = useState<boolean>(false);
+  const [showChangedFiles, setShowChangedFiles] = useState<boolean>(false);
+  const [logMode, setLogMode] = useState<boolean>(() => {
+    const saved = props.desc?.get("logMode");
+    return saved == null ? true : !!saved;
+  });
+  const [metaTitleHover, setMetaTitleHover] = useState<boolean>(false);
+  const [logCompareHintShown, setLogCompareHintShown] =
+    useState<boolean>(false);
+  const [gitChangedFiles, setGitChangedFiles] = useState<string[]>([]);
   const [version, setVersion] = useState<number | string | undefined>(
     props.desc?.get("version"),
   );
@@ -89,18 +120,46 @@ export function TimeTravel(props: Props) {
   const [version1, setVersion1] = useState<number | string | undefined>(
     props.desc?.get("version1"),
   );
+  const gitMode = source === "git";
+  const snapshotsMode = source === "snapshots";
+  const backupsMode = source === "backups";
+  const activeVersions = useMemo(
+    () =>
+      gitMode
+        ? gitVersions
+        : backupsMode
+          ? backupVersions
+          : snapshotsMode
+          ? snapshotVersions
+          : versions,
+    [
+      gitMode,
+      snapshotsMode,
+      backupsMode,
+      gitVersions,
+      snapshotVersions,
+      backupVersions,
+      versions,
+    ],
+  );
 
   const versionToNumber = (
     v: string | number | undefined,
   ): number | undefined => {
     if (v == null) return undefined;
     if (typeof v === "number") return v;
+    if (backupsMode) {
+      return props.actions.backupWallTime(v) ?? undefined;
+    }
+    if (snapshotsMode) {
+      return props.actions.snapshotWallTime(v) ?? undefined;
+    }
     return props.actions.patchTime(v) ?? undefined;
   };
 
   // ensure version consistency
   useEffect(() => {
-    const v = gitMode ? gitVersions : versions;
+    const v = activeVersions;
     if (v == null || v.size == 0) {
       return;
     }
@@ -155,12 +214,12 @@ export function TimeTravel(props: Props) {
     version,
     version0,
     version1,
-    versions,
+    activeVersions,
     changesMode,
-    gitMode,
+    source,
     marks,
-    versions,
-    gitVersions,
+    snapshotsMode,
+    backupsMode,
   ]);
 
   useEffect(() => {
@@ -168,16 +227,40 @@ export function TimeTravel(props: Props) {
       //clear error on version list change
       props.actions.set_error("");
     }
-  }, [version, version0, version1, gitMode, changesMode]);
+  }, [version, version0, version1, source, changesMode]);
+
+  useAsyncEffect(async () => {
+    if (gitMode) {
+      await props.actions.updateGitVersions();
+      return;
+    }
+    if (snapshotsMode) {
+      await props.actions.updateSnapshotVersions();
+      return;
+    }
+    if (backupsMode) {
+      await props.actions.updateBackupVersions();
+      return;
+    }
+  }, [props.actions, source]);
 
   const wallTime = useMemo(() => {
     return gitMode
       ? (version: number | string) => Number(version)
-      : (v: number | string) => props.actions.wallTime(v as string);
-  }, [gitMode, props.actions]);
+      : backupsMode
+        ? (v: number | string) => props.actions.backupWallTime(v)
+        : snapshotsMode
+        ? (v: number | string) => props.actions.snapshotWallTime(v)
+        : (v: number | string) => props.actions.wallTime(v as string);
+  }, [gitMode, snapshotsMode, backupsMode, props.actions]);
 
   const toPatchId = (v?: number | string) =>
     v == null ? undefined : (`${v}` as string);
+
+  const gitRangeCommits = useMemo(() => {
+    if (!gitMode || !changesMode) return [];
+    return props.actions.gitCommitRange(version0, version1);
+  }, [props.actions, gitMode, changesMode, version0, version1]);
 
   useEffect(() => {
     saveState(props.actions, {
@@ -187,10 +270,25 @@ export function TimeTravel(props: Props) {
       version1,
       changesMode,
       gitMode,
+      source,
+      snapshotsMode,
+      backupsMode,
       textMode,
       marks,
+      logMode,
     });
-  }, [version, version0, version1, changesMode, gitMode, textMode]);
+  }, [
+    version,
+    version0,
+    version1,
+    changesMode,
+    gitMode,
+    snapshotsMode,
+    backupsMode,
+    textMode,
+    logMode,
+    source,
+  ]);
 
   const getDoc = async (
     version?: number | string,
@@ -201,6 +299,14 @@ export function TimeTravel(props: Props) {
     if (gitMode) {
       const v = typeof version === "number" ? version : Number(`${version}`);
       const x = await props.actions.gitDoc(v);
+      return () => x!;
+    }
+    if (snapshotsMode) {
+      const x = await props.actions.snapshotDoc(version);
+      return () => x!;
+    }
+    if (backupsMode) {
+      const x = await props.actions.backupDoc(version);
       return () => x!;
     }
     if (typeof version == "number") {
@@ -244,17 +350,76 @@ export function TimeTravel(props: Props) {
     version0,
     version1,
     changesMode,
-    gitMode,
-    versions,
-    gitVersions,
+    source,
+    activeVersions,
   ]);
 
+  useAsyncEffect(async () => {
+    if (!gitMode || changesMode || version == null) {
+      setGitChangedFiles([]);
+      return;
+    }
+    const files = await props.actions.gitChangedFiles(version);
+    setGitChangedFiles(files);
+  }, [props.actions, gitMode, changesMode, version]);
+
   const renderVersion = () => {
-    const v = gitMode ? gitVersions : versions;
+    const logTitleLink = (content: ReactNode) => (
+      <span
+        style={{
+          cursor: "pointer",
+          textDecoration: metaTitleHover ? "underline" : "none",
+        }}
+        onMouseEnter={() => setMetaTitleHover(true)}
+        onMouseLeave={() => setMetaTitleHover(false)}
+        onClick={() => setLogMode(true)}
+      >
+        {content}
+      </span>
+    );
+    const v = activeVersions;
     if (v == null || v.size == 0) {
       return null;
     }
     if (changesMode) {
+      if (gitMode) {
+        const c0 = props.actions.gitCommit(version0);
+        const c1 = props.actions.gitCommit(version1);
+        if (c0 == null || c1 == null) return null;
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            Commits <b>{c0.shortHash}</b> to <b>{c1.shortHash}</b>
+          </span>
+        );
+      }
+      if (snapshotsMode) {
+        if (version0 == null || version1 == null) return null;
+        const t0 = props.actions.snapshotWallTime(version0);
+        const t1 = props.actions.snapshotWallTime(version1);
+        const label0 =
+          t0 == null ? `${version0}` : new Date(t0).toLocaleString();
+        const label1 =
+          t1 == null ? `${version1}` : new Date(t1).toLocaleString();
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            Snapshots <b>{label0}</b> to <b>{label1}</b>
+          </span>
+        );
+      }
+      if (backupsMode) {
+        if (version0 == null || version1 == null) return null;
+        const t0 = props.actions.backupWallTime(version0);
+        const t1 = props.actions.backupWallTime(version1);
+        const label0 =
+          t0 == null ? `${version0}` : new Date(t0).toLocaleString();
+        const label1 =
+          t1 == null ? `${version1}` : new Date(t1).toLocaleString();
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            Backups <b>{label0}</b> to <b>{label1}</b>
+          </span>
+        );
+      }
       if (version0 == null || version1 == null) {
         return null;
       }
@@ -281,6 +446,65 @@ export function TimeTravel(props: Props) {
       if (version == null) {
         return null;
       }
+      if (gitMode) {
+        const commit = props.actions.gitCommit(version);
+        if (commit == null) return null;
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            {logTitleLink(<b>{commit.subject}</b>)} ·{" "}
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() => void copyHash(commit.hash)}
+            >
+              {commit.shortHash}
+            </Button>{" "}
+            ·{" "}
+            {commit.authorName} ·{" "}
+            <TimeAgo
+              date={new Date(commit.timestampMs)}
+              time_ago_absolute
+            />
+          </span>
+        );
+      }
+      if (snapshotsMode) {
+        const t = props.actions.snapshotWallTime(version);
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            {logTitleLink(
+              <>
+                Snapshot <b>{`${version}`}</b>
+              </>,
+            )}
+            {t != null && (
+              <>
+                {" "}·{" "}
+                <TimeAgo date={new Date(t)} time_ago_absolute />
+              </>
+            )}
+          </span>
+        );
+      }
+      if (backupsMode) {
+        const t = props.actions.backupWallTime(version);
+        return (
+          <span style={{ whiteSpace: "nowrap" }}>
+            {logTitleLink(
+              <>
+                Backup <b>{`${version}`.slice(0, 8)}</b>
+              </>,
+            )}
+            {t != null && (
+              <>
+                {" "}·{" "}
+                <TimeAgo date={new Date(t)} time_ago_absolute />
+              </>
+            )}
+          </span>
+        );
+      }
       const i = v.indexOf(version);
       if (i == -1) {
         return null;
@@ -291,14 +515,210 @@ export function TimeTravel(props: Props) {
       if (t == null) {
         return null;
       }
-      return (
+      return logTitleLink(
         <Version
           date={new Date(t)}
           number={props.actions.versionNumber(id) ?? i + firstVersion}
           user={props.actions.getUser(id)}
-        />
+        />,
       );
     }
+  };
+
+  const getSelectedVersionMeta = (
+    selected: string | number | undefined,
+  ): {
+    title: ReactNode;
+    subtitle?: ReactNode;
+    timeMs?: number;
+  } | null => {
+    if (selected == null) return null;
+    if (gitMode) {
+      const commit = props.actions.gitCommit(selected);
+      if (commit == null) return null;
+      return {
+        title: (
+          <span
+            style={{ cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => setLogMode(true)}
+          >
+            {commit.subject}
+          </span>
+        ),
+        subtitle: (
+          <>
+            <Button
+              type="link"
+              size="small"
+              style={{ padding: 0, height: "auto" }}
+              onClick={() => void copyHash(commit.hash)}
+            >
+              {commit.shortHash}
+            </Button>{" "}
+            · {commit.authorName}
+          </>
+        ),
+        timeMs: commit.timestampMs,
+      };
+    }
+    if (snapshotsMode) {
+      const t = props.actions.snapshotWallTime(selected);
+      return {
+        title: (
+          <span
+            style={{ cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => setLogMode(true)}
+          >
+            Snapshot {`${selected}`}
+          </span>
+        ),
+        timeMs: t,
+      };
+    }
+    if (backupsMode) {
+      const t = props.actions.backupWallTime(selected);
+      const id = `${selected}`;
+      return {
+        title: (
+          <span
+            style={{ cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => setLogMode(true)}
+          >
+            Backup {id.slice(0, 8)}
+          </span>
+        ),
+        subtitle: id,
+        timeMs: t,
+      };
+    }
+    const id = `${selected}`;
+    const i = activeVersions.indexOf(selected);
+    const number = props.actions.versionNumber(id) ?? i + firstVersion;
+    const t = props.actions.wallTime(id);
+    const user = props.actions.getUser(id);
+    return {
+      title: (
+        <span
+          style={{ cursor: "pointer", textDecoration: "underline" }}
+          onClick={() => setLogMode(true)}
+        >
+          Revision {number}
+          {toLetterCode(user)}
+        </span>
+      ),
+      timeMs: t ?? undefined,
+    };
+  };
+
+  const canStepRangeEdge = (
+    edge: "start" | "end",
+    delta: -1 | 1,
+  ): boolean => {
+    if (!changesMode) return false;
+    const selected = edge === "start" ? version0 : version1;
+    const other = edge === "start" ? version1 : version0;
+    if (selected == null || other == null) return false;
+    const i = activeVersions.indexOf(selected);
+    const j = activeVersions.indexOf(other);
+    if (i === -1 || j === -1) return false;
+    const target = i + delta;
+    if (target < 0 || target >= activeVersions.size) return false;
+    if (edge === "start") return target < j;
+    return target > j;
+  };
+
+  const stepRangeEdge = (edge: "start" | "end", delta: -1 | 1): void => {
+    if (!canStepRangeEdge(edge, delta)) return;
+    const selected = edge === "start" ? version0 : version1;
+    if (selected == null) return;
+    const i = activeVersions.indexOf(selected);
+    if (i === -1) return;
+    const next = activeVersions.get(i + delta);
+    if (next == null) return;
+    if (edge === "start") {
+      setVersion0(next);
+    } else {
+      setVersion1(next);
+    }
+  };
+
+  const renderChangesSelectionRows = () => {
+    if (logMode || !changesMode || version0 == null || version1 == null) {
+      return null;
+    }
+    const start = getSelectedVersionMeta(version0);
+    const end = getSelectedVersionMeta(version1);
+    const renderRow = (
+      label: string,
+      meta: { title: ReactNode; subtitle?: ReactNode; timeMs?: number } | null,
+      edge: "start" | "end",
+    ) => (
+      <div
+        style={{
+          border: "1px solid #e6e6e6",
+          borderRadius: "6px",
+          padding: "6px 8px",
+          minWidth: "320px",
+          flex: "1 1 320px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: "4px",
+          }}
+        >
+          <b>{label}</b>
+          <Space.Compact>
+            <Button
+              size="small"
+              disabled={!canStepRangeEdge(edge, -1)}
+              onClick={() => stepRangeEdge(edge, -1)}
+            >
+              ◀
+            </Button>
+            <Button
+              size="small"
+              disabled={!canStepRangeEdge(edge, 1)}
+              onClick={() => stepRangeEdge(edge, 1)}
+            >
+              ▶
+            </Button>
+          </Space.Compact>
+        </div>
+        {meta == null ? (
+          <div style={{ color: "#666", fontSize: "12px" }}>Unknown version</div>
+        ) : (
+          <>
+            <div style={{ fontWeight: 600 }}>{meta.title}</div>
+            <div style={{ color: "#666", fontSize: "12px" }}>
+              {meta.subtitle ?? ""}
+              {meta.timeMs != null && (
+                <>
+                  {meta.subtitle ? " · " : ""}
+                  <TimeAgo date={new Date(meta.timeMs)} time_ago_absolute />
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+    return (
+      <div
+        style={{
+          marginTop: "6px",
+          display: "flex",
+          gap: "8px",
+          flexWrap: "wrap",
+        }}
+      >
+        {renderRow("From", start, "start")}
+        {renderRow("To", end, "end")}
+      </div>
+    );
   };
 
   const renderDiff = () => {
@@ -322,13 +742,16 @@ export function TimeTravel(props: Props) {
   };
 
   const renderNavigationButtons = () => {
+    if (logMode) {
+      return;
+    }
     if (changesMode && (version0 == null || version1 == null)) {
       return;
     }
     return (
       <NavigationButtons
         changesMode={changesMode}
-        versions={gitMode ? gitVersions : versions}
+        versions={activeVersions}
         version={version}
         setVersion={setVersion}
         version0={version0}
@@ -340,6 +763,9 @@ export function TimeTravel(props: Props) {
   };
 
   const renderNavigationSlider = () => {
+    if (logMode) {
+      return;
+    }
     if (changesMode) {
       return;
     }
@@ -347,7 +773,7 @@ export function TimeTravel(props: Props) {
       <NavigationSlider
         version={version}
         setVersion={setVersion}
-        versions={gitMode ? gitVersions : versions}
+        versions={activeVersions}
         marks={marks}
         wallTime={wallTime}
       />
@@ -355,16 +781,20 @@ export function TimeTravel(props: Props) {
   };
 
   const renderRangeSlider = () => {
+    if (logMode) {
+      return;
+    }
     if (!changesMode) {
       return;
     }
     return (
       <RangeSlider
-        versions={gitMode ? gitVersions : versions}
+        versions={activeVersions}
         version0={version0}
         setVersion0={setVersion0}
         version1={version1}
         setVersion1={setVersion1}
+        wallTime={wallTime}
         marks={marks}
       />
     );
@@ -377,26 +807,23 @@ export function TimeTravel(props: Props) {
     if (!changesMode && version == null) {
       return;
     }
+    if ((gitMode || snapshotsMode || backupsMode) && !changesMode) {
+      return null;
+    }
     const opts = changesMode
       ? { actions: props.actions, version0, version1 }
       : { actions: props.actions, version0: version, version1: version };
     if (gitMode) {
-      return (
-        <>
-          , <GitAuthors {...opts} />
-        </>
-      );
+      return <GitAuthors {...opts} />;
+    } else if (snapshotsMode || backupsMode) {
+      return null;
     } else {
-      return (
-        <>
-          , <TimeTravelAuthors {...opts} />
-        </>
-      );
+      return <TimeTravelAuthors {...opts} />;
     }
   };
 
   const renderLoadMoreHistory = () => {
-    if (gitMode) {
+    if (gitMode || snapshotsMode || backupsMode) {
       return;
     }
     return (
@@ -418,13 +845,12 @@ export function TimeTravel(props: Props) {
   };
 
   const renderRevertFile = () => {
-    if (doc == null) {
+    if (doc == null || changesMode || logMode) {
       return;
     }
     return (
       <RevertFile
-        changesMode={changesMode}
-        gitMode={gitMode}
+        gitMode={gitMode || snapshotsMode || backupsMode}
         actions={props.actions}
         version={version}
         doc={doc}
@@ -433,25 +859,213 @@ export function TimeTravel(props: Props) {
   };
 
   const renderChangesMode = () => {
-    const size = (gitMode ? gitVersions : versions)?.size ?? 0;
+    if (logMode) {
+      return null;
+    }
+    const size = activeVersions?.size ?? 0;
     return (
-      <ChangesMode
-        disabled={size <= 1}
-        changesMode={changesMode}
-        setChangesMode={setChangesMode}
+      <Select
+        size="small"
+        style={{ width: 170 }}
+        value={changesMode ? "compare" : "single"}
+        onChange={(value) => setChangesMode(value === "compare")}
+        options={[
+          { value: "single", label: "Single Version" },
+          { value: "compare", label: "Compare Changes", disabled: size <= 1 },
+        ]}
       />
     );
   };
 
+  const renderModeSelectors = () => {
+    const showTextToggle = !changesMode && HAS_SPECIAL_VIEWER.has(docext ?? "");
+    const sourceOptions = [
+      { value: "timetravel", label: "TimeTravel" },
+      { value: "git", label: "Git", disabled: !git },
+      { value: "snapshots", label: "Snapshots", disabled: lite },
+      { value: "backups", label: "Backups", disabled: lite },
+    ];
+    return (
+      <>
+        <Select
+          size="small"
+          style={{ width: 150 }}
+          value={source}
+          options={sourceOptions}
+          onChange={(value) => {
+            if (
+              value === "timetravel" ||
+              value === "git" ||
+              value === "snapshots" ||
+              value === "backups"
+            ) {
+              setVersion(undefined);
+              setVersion0(undefined);
+              setVersion1(undefined);
+              setShowChangedFiles(false);
+              setShowCommitRange(false);
+              setSource(value);
+            }
+          }}
+        />
+        <Select
+          size="small"
+          style={{ width: 125 }}
+          value={textMode ? "source" : "rendered"}
+          disabled={!showTextToggle}
+          options={[
+            { value: "rendered", label: "Rendered" },
+            { value: "source", label: "Source" },
+          ]}
+          onChange={(value) => setTextMode(value === "source")}
+        />
+        {renderChangesMode()}
+        {!logMode && (
+          <Select
+            size="small"
+            style={{ width: 155 }}
+            value={marks ? "timestamp" : "revision"}
+            options={[
+              { value: "revision", label: "Slider: Revision #" },
+              { value: "timestamp", label: "Slider: Timestamp" },
+            ]}
+            onChange={(value) => setMarks(value === "timestamp")}
+          />
+        )}
+      </>
+    );
+  };
+
   const renderExport = () => {
-    if (gitMode || redux.getStore("page").get("fullscreen") == "kiosk") {
+    if (
+      gitMode ||
+      snapshotsMode ||
+      backupsMode ||
+      redux.getStore("page").get("fullscreen") == "kiosk"
+    ) {
       // doesn't make sense in kiosk mode.
       return;
     }
     return <Export actions={props.actions} />;
   };
 
+  const copyHash = async (hash: string) => {
+    try {
+      await navigator.clipboard.writeText(hash);
+      message.success("Copied full commit hash");
+    } catch (_err) {
+      message.error("Unable to copy commit hash");
+    }
+  };
+
+  const renderCommitsInRangeButton = () => {
+    if (logMode || !gitMode || !changesMode) return null;
+    return (
+      <Button size="small" onClick={() => setShowCommitRange(true)}>
+        Show Commits In Range
+      </Button>
+    );
+  };
+
+  const renderCommitRangeModal = () => {
+    if (!gitMode || !changesMode) return null;
+    return (
+      <Modal
+        open={showCommitRange}
+        title="Commits in selected range"
+        onCancel={() => setShowCommitRange(false)}
+        footer={null}
+      >
+        {gitRangeCommits.length === 0 ? (
+          <div>No commits found for this range.</div>
+        ) : (
+          <div>
+            {gitRangeCommits.map((commit) => (
+              <div key={commit.hash} style={{ marginBottom: "8px" }}>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, marginRight: "6px" }}
+                  onClick={() => void copyHash(commit.hash)}
+                >
+                  {commit.shortHash}
+                </Button>
+                <span>{commit.subject}</span>
+                <div style={{ color: "#666", fontSize: "12px" }}>
+                  {commit.authorName} ·{" "}
+                  <TimeAgo
+                    date={new Date(commit.timestampMs)}
+                    time_ago_absolute
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
+    );
+  };
+
+  const renderGitChangedFilesButton = () => {
+    if (!gitMode || changesMode || version == null || docpath == null) {
+      return null;
+    }
+    const files = gitChangedFiles.filter((x) => x !== docpath);
+    if (files.length === 0) {
+      return null;
+    }
+    return (
+      <Button
+        size="small"
+        onClick={() => setShowChangedFiles(true)}
+      >
+        Also changed ({files.length})
+      </Button>
+    );
+  };
+
+  const renderGitChangedFilesModal = () => {
+    if (!gitMode || changesMode || version == null || docpath == null) {
+      return null;
+    }
+    const commit = props.actions.gitCommit(version);
+    if (commit == null) {
+      return null;
+    }
+    const files = gitChangedFiles.filter((x) => x !== docpath);
+    return (
+      <Modal
+        open={showChangedFiles}
+        title={`Also changed in ${commit.shortHash}`}
+        onCancel={() => setShowChangedFiles(false)}
+        footer={null}
+      >
+        <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
+          {files.length === 0 ? (
+            <div>No additional files changed in this commit.</div>
+          ) : (
+            files.map((file) => (
+              <div key={file} style={{ marginBottom: "6px" }}>
+                <Button
+                  type="link"
+                  size="small"
+                  style={{ padding: 0, height: "auto" }}
+                  onClick={() =>
+                    void props.actions.openGitCommitFile(file, commit.hash)
+                  }
+                >
+                  {file}
+                </Button>
+              </div>
+            ))
+          )}
+        </div>
+      </Modal>
+    );
+  };
+
   const renderControls = () => {
+    const activeVersionCount = activeVersions?.size ?? 0;
     return (
       <div
         style={{
@@ -460,69 +1074,76 @@ export function TimeTravel(props: Props) {
           padding: "5px",
         }}
       >
-        {renderChangesMode()}
-        {!changesMode && HAS_SPECIAL_VIEWER.has(docext ?? "") && (
-          <Tooltip title="Display underlying file as text">
-            <Checkbox
-              defaultChecked={textMode}
-              onChange={(e) => setTextMode(e.target.checked)}
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: "6px",
+          }}
+        >
+          <Radio.Group
+            size="small"
+            value={logMode ? "log" : "document"}
+            onChange={(e) => setLogMode(e.target.value === "log")}
+            optionType="button"
+            buttonStyle="solid"
+            options={[
+              { label: "Log", value: "log" },
+              { label: "File", value: "document" },
+            ]}
+          />
+          <Space.Compact>{renderModeSelectors()}</Space.Compact>
+          {renderCommitsInRangeButton()}
+          {renderGitChangedFilesButton()}
+          {(gitMode || snapshotsMode || backupsMode) && (
+            <Tooltip
+              title={
+                gitMode
+                  ? "Scan local Git repository for new revisions to this file"
+                  : snapshotsMode
+                    ? "Scan project snapshots for revisions of this file"
+                    : "Scan project backups for revisions of this file"
+              }
             >
-              Text
-            </Checkbox>
-          </Tooltip>
-        )}
-        {git && (
-          <>
-            <Tooltip title="Show Git history instead of CoCalc edit history">
-              <Checkbox
-                defaultChecked={gitMode}
-                onChange={(e) => setGitMode(e.target.checked)}
-              >
-                Git
-              </Checkbox>
-            </Tooltip>
-            {gitMode && (
-              <Tooltip title="Scan local Git repository for new revisions to this file">
-                <Button
-                  size="small"
-                  style={{ marginRight: "5px" }}
-                  onClick={() => {
+              <Button
+                size="small"
+                onClick={() => {
+                  if (gitMode) {
                     props.actions.updateGitVersions();
-                  }}
-                >
-                  Refresh
-                </Button>
-              </Tooltip>
-            )}
-          </>
+                  } else if (snapshotsMode) {
+                    props.actions.updateSnapshotVersions();
+                  } else if (backupsMode) {
+                    props.actions.updateBackupVersions();
+                  }
+                }}
+              >
+                Refresh
+              </Button>
+            </Tooltip>
+          )}
+          {renderNavigationButtons()}
+          <Space.Compact>
+            {renderOpenFile()}
+            {renderRevertFile()}
+            {renderOpenSnapshots()}
+            {renderExport()}
+          </Space.Compact>
+        </div>
+        {!logMode && activeVersionCount > 0 && (
+          <div style={{ marginTop: "6px", fontSize: "12px", color: "#666" }}>
+            {renderRevisionMeta()}
+          </div>
         )}
-
-        <Tooltip title="Display slider marks according to timestamp when they happened">
-          <Checkbox
-            defaultChecked={marks}
-            onChange={(e) => setMarks(e.target.checked)}
-          >
-            Marks
-          </Checkbox>
-        </Tooltip>
-        {renderNavigationButtons()}
-        <Space.Compact style={{ margin: "0 5px" }}>
-          {renderOpenFile()}
-          {renderRevertFile()}
-          {renderOpenSnapshots()}
-          {renderExport()}
-        </Space.Compact>
-        {(versions?.size ?? 0) > 0 && (
-          <>
-            {renderVersion()}
-            {renderAuthor()}
-          </>
-        )}
+        {renderChangesSelectionRows()}
       </div>
     );
   };
 
   const renderTimeSelect = () => {
+    if (logMode) {
+      return null;
+    }
     return (
       <div style={{ display: "flex" }}>
         <div
@@ -546,23 +1167,17 @@ export function TimeTravel(props: Props) {
     return <Loading theme={"medium"} />;
   };
 
-  const renderGitSubject = () => {
-    if (version == null) return;
-    const subject = props.actions.gitSubject(
-      typeof version === "number" ? version : Number(version),
-    );
-    if (!subject) return;
+  const renderRevisionMeta = () => {
+    if (changesMode) return null;
+    const versionMeta = renderVersion();
+    const authorMeta = renderAuthor();
+    if (versionMeta == null && authorMeta == null) return null;
+    if (versionMeta == null) return authorMeta;
+    if (authorMeta == null) return versionMeta;
     return (
-      <div
-        style={{
-          padding: "5px 0 5px 15px",
-          borderTop: "1px solid #ddd",
-          background: "#fafafa",
-          marginLeft: "5px",
-        }}
-      >
-        {subject}
-      </div>
+      <>
+        {versionMeta} · {authorMeta}
+      </>
     );
   };
 
@@ -571,7 +1186,69 @@ export function TimeTravel(props: Props) {
   }
 
   let body;
-  if (doc != null && docpath != null && docext != null && !changesMode) {
+  if (logMode) {
+    body = (
+      <LogView
+        actions={props.actions}
+        source={source}
+        versions={activeVersions}
+        currentVersion={version}
+        firstVersion={firstVersion}
+        onSelectVersion={(selected, opts) => {
+          if (opts?.compareToPrevious) {
+            const idx = activeVersions.indexOf(selected);
+            if (idx > 0) {
+              const older = activeVersions.get(idx - 1);
+              if (older != null) {
+                setVersion(selected);
+                setVersion0(older);
+                setVersion1(selected);
+                setChangesMode(true);
+                setLogMode(false);
+                return;
+              }
+            }
+            setVersion(selected);
+            setChangesMode(false);
+            setLogMode(false);
+            message.info("No earlier version to compare against.");
+            return;
+          }
+          if (opts?.open) {
+            setVersion(selected);
+            setChangesMode(false);
+            setLogMode(false);
+            return;
+          }
+          if (
+            opts?.shiftKey &&
+            version != null &&
+            selected !== version &&
+            activeVersions.indexOf(version) !== -1 &&
+            activeVersions.indexOf(selected) !== -1
+          ) {
+            const i0 = activeVersions.indexOf(version);
+            const i1 = activeVersions.indexOf(selected);
+            const older = i0 <= i1 ? version : selected;
+            const newer = i0 <= i1 ? selected : version;
+            setVersion(older);
+            setVersion0(older);
+            setVersion1(newer);
+            setChangesMode(true);
+            setLogMode(false);
+            if (!logCompareHintShown) {
+              message.info(
+                "Showing changes between selected versions (Shift+click from log).",
+              );
+              setLogCompareHintShown(true);
+            }
+            return;
+          }
+          setVersion(selected);
+        }}
+      />
+    );
+  } else if (doc != null && docpath != null && docext != null && !changesMode) {
     body = (
       <Viewer
         ext={docext}
@@ -592,8 +1269,9 @@ export function TimeTravel(props: Props) {
   return (
     <div className="smc-vfill">
       {renderControls()}
+      {renderCommitRangeModal()}
+      {renderGitChangedFilesModal()}
       {renderTimeSelect()}
-      {gitMode && !changesMode && renderGitSubject()}
       <ShowError
         style={{ margin: "5px 15px" }}
         error={error}
@@ -602,6 +1280,11 @@ export function TimeTravel(props: Props) {
       {body}
     </div>
   );
+}
+
+function toLetterCode(user?: number): string {
+  if (user == null) return "";
+  return String.fromCharCode(97 + (user % 26));
 }
 
 const saveState = debounce((actions, obj) => {

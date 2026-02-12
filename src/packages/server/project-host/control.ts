@@ -289,6 +289,42 @@ export async function updateAuthorizedKeysOnHost(
   }
 }
 
+export async function syncProjectUsersOnHost({
+  project_id,
+  expected_host_id,
+}: {
+  project_id: string;
+  expected_host_id?: string;
+}): Promise<void> {
+  const meta = await loadProject(project_id);
+  const host_id = meta.host_id;
+  if (!host_id) {
+    return;
+  }
+  if (expected_host_id && expected_host_id !== host_id) {
+    throw Error(
+      `project ${project_id} is assigned to host ${host_id}, not ${expected_host_id}`,
+    );
+  }
+  const client = createHostControlClient({
+    host_id,
+    client: conatWithProjectRouting(),
+  });
+  try {
+    await client.updateProjectUsers({
+      project_id,
+      users: meta.users ?? {},
+    });
+  } catch (err) {
+    log.warn("syncProjectUsersOnHost failed", {
+      project_id,
+      host_id,
+      err,
+    });
+    throw err;
+  }
+}
+
 export async function deleteProjectDataOnHost({
   project_id,
   host_id,

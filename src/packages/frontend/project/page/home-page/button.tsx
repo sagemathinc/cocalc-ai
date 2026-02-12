@@ -5,10 +5,8 @@
 
 import { Button } from "antd";
 
-import { redux, useActions } from "@cocalc/frontend/app-framework";
+import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
-import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
-import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
 import track from "@cocalc/frontend/user-tracking";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -29,16 +27,8 @@ export default function HomePageButton({ project_id, active, width }) {
         background: "#fafafa",
       }}
       onClick={() => {
-        // Showing homepage in flyout only mode, otherwise the files as usual
-        const account_store = redux.getStore("account") as any;
-        const actBar = account_store?.getIn([
-          "other_settings",
-          ACTIVITY_BAR_KEY,
-        ]);
-        const pureFlyoutMode = getValidActivityBarOption(actBar) === "flyout";
-        actions?.set_active_tab(pureFlyoutMode ? "home" : "files");
-
-        actions?.set_current_path("");
+        // Home button should consistently open the project overview page.
+        actions?.set_active_tab("home");
         actions?.setFlyoutExpanded("files", false, false);
         actions?.set_file_search("");
 

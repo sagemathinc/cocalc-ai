@@ -250,6 +250,9 @@ Table({
     },
     manage_users_owner_only: {
       type: "boolean",
+      // WARNING: This is currently an unfinished work in progress.
+      // It does not yet enforce collaborator-management security by itself.
+      // Do not rely on this flag as a security control.
       desc: "If true, only project owners can add or remove collaborators. Collaborators can still remove themselves. Disabled by default (undefined or false means current behavior where collaborators can manage other collaborators).",
       render: { type: "boolean", editable: true },
     },

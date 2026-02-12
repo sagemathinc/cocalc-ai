@@ -123,9 +123,17 @@ interface Options {
   unsafeMode?: boolean;
   // readonly -- only allow operations that don't change files
   readonly?: boolean;
+  // optional path to treat as "/" when mounted/available.
+  // if set but unavailable, operations fail.
+  rootfs?: string;
+  // optional path to treat as /scratch when mounted/available.
+  // if /scratch is requested but this is unavailable, operations fail.
+  scratch?: string;
   host?: string;
   rusticRepo?: string;
 }
+
+const HOME_ROOT = "/root";
 
 // If you add any methods below that are NOT for the public api
 // be sure to exclude them here!
@@ -136,6 +144,10 @@ const INTERNAL_METHODS = new Set([
   "path",
   "unsafeMode",
   "readonly",
+  "rootfs",
+  "rootfsEnabled",
+  "scratch",
+  "scratchEnabled",
   "assertWritable",
   "rusticRepo",
   "host",
@@ -148,6 +160,10 @@ const INTERNAL_METHODS = new Set([
 export class SandboxedFilesystem {
   public readonly unsafeMode: boolean;
   public readonly readonly: boolean;
+  public readonly rootfs?: string;
+  private rootfsEnabled = false;
+  public readonly scratch?: string;
+  private scratchEnabled = false;
   public rusticRepo: string;
   private host?: string;
   private lastOnDisk = new LRU<string, string>({
@@ -165,12 +181,16 @@ export class SandboxedFilesystem {
     {
       unsafeMode = false,
       readonly = false,
+      rootfs,
+      scratch,
       host = "global",
       rusticRepo: repo,
     }: Options = {},
   ) {
     this.unsafeMode = !!unsafeMode;
     this.readonly = !!readonly;
+    this.rootfs = rootfs;
+    this.scratch = scratch;
     this.host = host;
     this.rusticRepo = repo ?? rusticRepo;
     for (const f in this) {
@@ -184,14 +204,165 @@ export class SandboxedFilesystem {
           // @ts-ignore
           return await orig(...args);
         } catch (err) {
-          if (err.path) {
-            err.path = err.path.slice(this.path.length + 1);
+          let sandboxBasePath = this.path;
+          try {
+            if (typeof args?.[0] === "string") {
+              sandboxBasePath = (
+                await this.resolvePathInSandbox(args[0])
+              ).sandboxBasePath;
+            } else {
+              sandboxBasePath = await this.resolveSandboxBasePath();
+            }
+          } catch {
+            // keep original error, and best-effort sanitize with home path
           }
-          err.message = replace_all(err.message, this.path + "/", "");
+          if (typeof err?.path == "string") {
+            if (
+              err.path == sandboxBasePath ||
+              err.path.startsWith(sandboxBasePath + "/")
+            ) {
+              err.path = this.toSandboxRelativePath(err.path, sandboxBasePath);
+            } else if (
+              err.path == this.path ||
+              err.path.startsWith(this.path + "/")
+            ) {
+              err.path = err.path.slice(this.path.length + 1);
+            }
+          }
+          if (typeof err?.message == "string") {
+            err.message = replace_all(err.message, sandboxBasePath + "/", "");
+            if (sandboxBasePath != this.path) {
+              err.message = replace_all(err.message, this.path + "/", "");
+            }
+          }
           throw err;
         }
       };
     }
+  }
+
+  private async resolveSandboxBasePath(): Promise<string> {
+    if (this.rootfsEnabled && this.rootfs) {
+      return this.rootfs;
+    }
+    return this.path;
+  }
+
+  private async requireRootfsForAbsolutePath(
+    requestedAbsolutePath: string,
+  ): Promise<string> {
+    if (!this.rootfs) {
+      // Backward-compatible mode when no rootfs is configured.
+      return this.path;
+    }
+    if (this.rootfsEnabled) {
+      return this.rootfs;
+    }
+    try {
+      const st = await stat(this.rootfs);
+      if (st.isDirectory()) {
+        this.rootfsEnabled = true;
+        return this.rootfs;
+      }
+    } catch {
+      // handled below
+    }
+    throw new Error(
+      `rootfs is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
+    );
+  }
+
+  private async requireScratchForAbsolutePath(
+    requestedAbsolutePath: string,
+  ): Promise<string> {
+    if (!this.scratch) {
+      throw new Error(
+        `scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
+      );
+    }
+    if (this.scratchEnabled) {
+      return this.scratch;
+    }
+    try {
+      const st = await stat(this.scratch);
+      if (st.isDirectory()) {
+        this.scratchEnabled = true;
+        return this.scratch;
+      }
+    } catch {
+      // handled below
+    }
+    throw new Error(
+      `scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
+    );
+  }
+
+  private async resolvePathInSandbox(path: string): Promise<{
+    pathInSandbox: string;
+    sandboxBasePath: string;
+    absoluteHomeAlias: boolean;
+    absoluteScratchAlias: boolean;
+  }> {
+    const resolvedInput = resolve("/", path);
+    const isAbsoluteInput = path.startsWith("/");
+    const isAbsoluteHomeAlias =
+      isAbsoluteInput &&
+      (resolvedInput == HOME_ROOT || resolvedInput.startsWith(`${HOME_ROOT}/`));
+    const isAbsoluteScratchAlias =
+      isAbsoluteInput &&
+      (resolvedInput == "/scratch" || resolvedInput.startsWith("/scratch/"));
+
+    // Relative paths (and absolute /root paths) are always interpreted relative
+    // to the project home mount `path`, even when rootfs mode is enabled.
+    if (!isAbsoluteInput || isAbsoluteHomeAlias) {
+      const rel =
+        isAbsoluteHomeAlias
+          ? resolvedInput == HOME_ROOT
+            ? ""
+            : resolvedInput.slice(HOME_ROOT.length + 1)
+          : resolvedInput.slice(1);
+      return {
+        pathInSandbox: join(this.path, rel),
+        sandboxBasePath: this.path,
+        absoluteHomeAlias: isAbsoluteHomeAlias,
+        absoluteScratchAlias: false,
+      };
+    }
+
+    if (isAbsoluteScratchAlias) {
+      const scratchBase = await this.requireScratchForAbsolutePath(resolvedInput);
+      const rel =
+        resolvedInput == "/scratch"
+          ? ""
+          : resolvedInput.slice("/scratch".length + 1);
+      return {
+        pathInSandbox: join(scratchBase, rel),
+        sandboxBasePath: scratchBase,
+        absoluteHomeAlias: false,
+        absoluteScratchAlias: true,
+      };
+    }
+
+    const rootBase = await this.requireRootfsForAbsolutePath(resolvedInput);
+
+    // Other absolute paths are interpreted from rootfs mount.
+    return {
+      pathInSandbox: join(rootBase, resolvedInput),
+      sandboxBasePath: rootBase,
+      absoluteHomeAlias: false,
+      absoluteScratchAlias: false,
+    };
+  }
+
+  private toSandboxRelativePath(absPath: string, basePath: string): string {
+    if (absPath == basePath) {
+      return basePath == this.path ? "" : "/";
+    }
+    if (!absPath.startsWith(basePath + "/")) {
+      return absPath;
+    }
+    const rel = absPath.slice(basePath.length + 1);
+    return basePath == this.path ? rel : `/${rel}`;
   }
 
   private assertWritable = (path: string) => {
@@ -213,8 +384,8 @@ export class SandboxedFilesystem {
     if (typeof path != "string") {
       throw Error(`path must be a string but is of type ${typeof path}`);
     }
-    // pathInSandbox is *definitely* a path in the sandbox:
-    const pathInSandbox = join(this.path, resolve("/", path));
+    const { sandboxBasePath, pathInSandbox } =
+      await this.resolvePathInSandbox(path);
     if (this.unsafeMode) {
       // not secure -- just convenient.
       return pathInSandbox;
@@ -224,7 +395,7 @@ export class SandboxedFilesystem {
     // we resolve to the realpath:
     try {
       const p = await realpath(pathInSandbox);
-      if (p != this.path && !p.startsWith(this.path + "/")) {
+      if (p != sandboxBasePath && !p.startsWith(sandboxBasePath + "/")) {
         throw Error(
           `realpath of '${path}' resolves to a path outside of sandbox`,
         );
@@ -268,7 +439,8 @@ export class SandboxedFilesystem {
     // do this but for cocalc this is very convenient and saves some network
     // round trips.
     const destDir = dirname(dest);
-    if (destDir != this.path && !(await exists(destDir))) {
+    const sandboxBasePath = await this.resolveSandboxBasePath();
+    if (destDir != sandboxBasePath && !(await exists(destDir))) {
       await mkdir(destDir, { recursive: true });
     }
 
@@ -439,16 +611,38 @@ export class SandboxedFilesystem {
   readdir = async (path: string, options?) => {
     const x = (await readdir(await this.safeAbsPath(path), options)) as any[];
     if (options?.withFileTypes) {
+      const sandboxBasePath = await this.resolveSandboxBasePath();
       // each entry in x has a name and parentPath field, which refers to the
       // absolute paths to the directory that contains x or the target of x (if
       // it is a link).  This is an absolute path on the fileserver, which we try
       // not to expose from the sandbox, hence we modify them all if possible.
       for (const a of x) {
-        if (a.name.startsWith(this.path)) {
-          a.name = a.name.slice(this.path.length + 1);
+        if (
+          a.name == sandboxBasePath ||
+          a.name.startsWith(sandboxBasePath + "/")
+        ) {
+          a.name = this.toSandboxRelativePath(a.name, sandboxBasePath);
         }
-        if (a.parentPath.startsWith(this.path)) {
-          a.parentPath = a.parentPath.slice(this.path.length + 1);
+        if (
+          a.parentPath == sandboxBasePath ||
+          a.parentPath.startsWith(sandboxBasePath + "/")
+        ) {
+          a.parentPath = this.toSandboxRelativePath(
+            a.parentPath,
+            sandboxBasePath,
+          );
+        }
+        if (
+          a.name == this.path ||
+          a.name.startsWith(this.path + "/")
+        ) {
+          a.name = this.toSandboxRelativePath(a.name, this.path);
+        }
+        if (
+          a.parentPath == this.path ||
+          a.parentPath.startsWith(this.path + "/")
+        ) {
+          a.parentPath = this.toSandboxRelativePath(a.parentPath, this.path);
         }
       }
     }
@@ -461,8 +655,28 @@ export class SandboxedFilesystem {
   };
 
   realpath = async (path: string): Promise<string> => {
-    const x = await realpath(await this.safeAbsPath(path));
-    return x.slice(this.path.length + 1);
+    const {
+      pathInSandbox,
+      sandboxBasePath,
+      absoluteHomeAlias,
+      absoluteScratchAlias,
+    } =
+      await this.resolvePathInSandbox(path);
+    const x = await realpath(pathInSandbox);
+    const rel = this.toSandboxRelativePath(x, sandboxBasePath);
+    if (absoluteHomeAlias) {
+      if (rel === "") {
+        return HOME_ROOT;
+      }
+      return `${HOME_ROOT}/${rel}`;
+    }
+    if (absoluteScratchAlias) {
+      if (rel === "" || rel === "/") {
+        return "/scratch";
+      }
+      return `/scratch/${rel}`;
+    }
+    return rel;
   };
 
   rename = async (oldPath: string, newPath: string) => {

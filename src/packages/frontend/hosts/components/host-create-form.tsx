@@ -12,6 +12,7 @@ type HostCreateFormProps = {
   provider: HostCreateViewModel["provider"];
   onProviderChange?: (value: string) => void;
   wrapForm?: boolean;
+  showOnlyProviderSelect?: boolean;
 };
 
 export const HostCreateForm: React.FC<HostCreateFormProps> = ({
@@ -20,6 +21,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   provider,
   onProviderChange,
   wrapForm = true,
+  showOnlyProviderSelect = false,
 }) => {
   const isSelfHost = provider.selectedProvider === "self-host";
   const hideAdvanced = isSelfHost;
@@ -48,61 +50,71 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
       form.setFieldsValue({ name: nextName });
     }
   }, [form, simpleSelfHost, watchedSshTarget]);
+  const providerField = (
+    <Form.Item
+      name="provider"
+      label="Provider"
+      initialValue={provider.providerOptions[0]?.value ?? "none"}
+    >
+      <Select options={provider.providerOptions} onChange={onProviderChange} />
+    </Form.Item>
+  );
+
   const content = (
     <>
-      <Form.Item
-        name="provider"
-        label="Provider"
-        initialValue={provider.providerOptions[0]?.value ?? "none"}
-      >
-        <Select options={provider.providerOptions} onChange={onProviderChange} />
-      </Form.Item>
-      {simpleSelfHost ? (
-        <>
-          <Form.Item name="name" hidden>
-            <Input />
-          </Form.Item>
-          <Form.Item name="self_host_kind" hidden>
-            <Input />
-          </Form.Item>
-          <Form.Item name="self_host_mode" hidden>
-            <Input />
-          </Form.Item>
-          <Form.Item name="disk" hidden>
-            <Input />
-          </Form.Item>
-          <Form.Item
-            name="self_host_ssh_target"
-            label={<SshTargetLabel label="Host" />}
-            rules={[
-              {
-                required: true,
-                message: "Please enter a host (user@host[:port]).",
-              },
-            ]}
-          >
-            <Input placeholder="user@host[:port] or ssh-config name" />
-          </Form.Item>
-        </>
-      ) : (
-        <>
-          <Form.Item name="name" label="Name" initialValue="My host">
-            <Input placeholder="My host" />
-          </Form.Item>
-          <HostCreateProviderFields
-            provider={provider}
-            onProviderChange={onProviderChange}
-            hideProviderSelect
-          />
-        </>
-      )}
-      {!hideAdvanced && (
-        <Collapse ghost style={{ marginBottom: 8 }}>
-          <Collapse.Panel header="Advanced options" key="adv">
-            <HostCreateAdvancedFields provider={provider} />
-          </Collapse.Panel>
-        </Collapse>
-      )}
+      {providerField}
+      {showOnlyProviderSelect
+        ? null
+        : (
+            <>
+              {simpleSelfHost ? (
+                <>
+                  <Form.Item name="name" hidden>
+                    <Input />
+                  </Form.Item>
+                  <Form.Item name="self_host_kind" hidden>
+                    <Input />
+                  </Form.Item>
+                  <Form.Item name="self_host_mode" hidden>
+                    <Input />
+                  </Form.Item>
+                  <Form.Item name="disk" hidden>
+                    <Input />
+                  </Form.Item>
+                  <Form.Item
+                    name="self_host_ssh_target"
+                    label={<SshTargetLabel label="Host" />}
+                    rules={[
+                      {
+                        required: true,
+                        message: "Please enter a host (user@host[:port]).",
+                      },
+                    ]}
+                  >
+                    <Input placeholder="user@host[:port] or ssh-config name" />
+                  </Form.Item>
+                </>
+              ) : (
+                <>
+                  <Form.Item name="name" label="Name" initialValue="My host">
+                    <Input placeholder="My host" />
+                  </Form.Item>
+                  <HostCreateProviderFields
+                    provider={provider}
+                    onProviderChange={onProviderChange}
+                    hideProviderSelect
+                  />
+                </>
+              )}
+              {!hideAdvanced && (
+                <Collapse ghost style={{ marginBottom: 8 }}>
+                  <Collapse.Panel header="Advanced options" key="adv">
+                    <HostCreateAdvancedFields provider={provider} />
+                  </Collapse.Panel>
+                </Collapse>
+              )}
+            </>
+          )}
     </>
   );
   if (!wrapForm) return content;

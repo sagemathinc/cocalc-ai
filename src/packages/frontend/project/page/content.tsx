@@ -148,12 +148,13 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
       // a tab changed to not be visible, so let it know, so it can
       // remove its keyboard handler.
       if (tab_name.startsWith("editor-")) {
+        const syncPath = (open_files.getIn([path, "sync_path"]) as string) ?? path;
         // if the actions are defined and there is a blur method, call it.
-        redux.getEditorActions(project_id, path)?.["blur"]?.();
+        redux.getEditorActions(project_id, syncPath)?.["blur"]?.();
       }
     }
     lastIsVisibleRef.current = is_visible;
-  }, [is_visible]);
+  }, [is_visible, open_files, path, project_id, tab_name]);
 
   // show the kiosk mode banner instead of anything besides a file editor
   if (fullscreen === "kiosk" && !tab_name.startsWith("editor-")) {

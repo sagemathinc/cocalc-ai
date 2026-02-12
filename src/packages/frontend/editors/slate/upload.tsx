@@ -41,9 +41,12 @@ export default function useUpload(
           const file = item.getAsFile();
           if (file != null) {
             const blob = file.slice(0, -1, item.type);
-            dropzoneRef?.current?.addFile(
-              new File([blob], `paste-${Math.random()}`, { type: item.type }),
-            );
+            const uploadFile = new File([blob], `paste-${Math.random()}`, {
+              type: item.type,
+            });
+            (uploadFile as any)._slateUploadGeneration =
+              (editor as any).__uploadGeneration ?? 0;
+            dropzoneRef?.current?.addFile(uploadFile);
           }
           return; // what if more than one ?
         }
@@ -73,6 +76,14 @@ export default function useUpload(
         const { url } = file;
         if (!url) {
           // probably an error
+          return;
+        }
+        const uploadGeneration = file?.upload?.chunks?.[0]?.file?._slateUploadGeneration;
+        const currentUploadGeneration = (editor as any).__uploadGeneration ?? 0;
+        if (
+          uploadGeneration != null &&
+          uploadGeneration !== currentUploadGeneration
+        ) {
           return;
         }
         let node;

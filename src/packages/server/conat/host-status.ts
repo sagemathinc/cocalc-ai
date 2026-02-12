@@ -9,6 +9,7 @@ import {
   getLaunchpadRestPort,
   registerSelfHostTunnelKey,
 } from "@cocalc/server/launchpad/onprem-sshd";
+import { listAccountRevocationsSince } from "@cocalc/server/accounts/revocation";
 
 const logger = getLogger("server:conat:host-status");
 
@@ -192,6 +193,36 @@ export async function initHostStatusService() {
           [host_id, project_ids, checkedAt],
         );
         return { delete_project_ids };
+      },
+      async syncAccountRevocations({
+        host_id,
+        cursor_updated_ms,
+        cursor_account_id,
+        limit,
+      }) {
+        if (!host_id) {
+          throw Error("host_id is required");
+        }
+        const hostRows = (
+          await getPool().query<{ id: string }>(
+            `SELECT id FROM project_hosts WHERE id=$1 AND deleted IS NULL LIMIT 1`,
+            [host_id],
+          )
+        ).rows;
+        if (!hostRows.length) {
+          throw Error("host not found");
+        }
+        const rows = await listAccountRevocationsSince({
+          cursor_updated_ms,
+          cursor_account_id,
+          limit,
+        });
+        const last = rows[rows.length - 1];
+        return {
+          rows,
+          next_cursor_updated_ms: last?.updated_ms,
+          next_cursor_account_id: last?.account_id,
+        };
       },
     },
   });

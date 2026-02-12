@@ -2206,7 +2206,12 @@ export async function _user_get_query_changefeed(
     cb("FATAL: changes.cb must be a function");
     return;
   }
-  const changes_cb = changes.cb as CB;
+  const emit_change = (...args: any[]) => {
+    const cb = changes.cb;
+    if (typeof cb === "function") {
+      cb(...args);
+    }
+  };
   for (var primary_key of primary_keys) {
     if (user_query[primary_key] == null && user_query[primary_key] !== null) {
       cb(
@@ -2311,7 +2316,7 @@ export async function _user_get_query_changefeed(
 
         // Any tracker error means this changefeed is now broken and
         // has to be recreated.
-        tracker_error = () => changes_cb("tracker error - ${err}");
+        tracker_error = (err) => emit_change(`tracker error - ${err}`);
 
         pg_changefeed = (db, account_id) => {
           return {
@@ -2411,7 +2416,7 @@ export async function _user_get_query_changefeed(
         }
         tracker_add = (collab_id) => feed?.insert({ account_id: collab_id });
         tracker_remove = (collab_id) => feed?.delete({ account_id: collab_id });
-        tracker_error = () => changes_cb("tracker error - ${err}");
+        tracker_error = (err) => emit_change(`tracker error - ${err}`);
         pg_changefeed = function (_db, account_id) {
           let shared_tracker: any;
           return {
@@ -2475,10 +2480,10 @@ export async function _user_get_query_changefeed(
     });
     feed.on("change", function (x) {
       process(x);
-      return changes_cb(undefined, x);
+      return emit_change(undefined, x);
     });
     feed.on("close", function () {
-      changes_cb(undefined, { action: "close" });
+      emit_change(undefined, { action: "close" });
       dbg("feed close");
       if (tracker != null && free_tracker != null) {
         dbg("free_tracker");
@@ -2487,7 +2492,7 @@ export async function _user_get_query_changefeed(
         return dbg("do NOT free_tracker");
       }
     });
-    feed.on("error", (err) => changes_cb(`feed error - ${err}`));
+    feed.on("error", (err) => emit_change(`feed error - ${err}`));
     this._changefeeds ??= {};
     this._changefeeds[changes.id] = feed;
     if (typeof init_tracker === "function") {

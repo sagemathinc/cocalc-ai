@@ -9,6 +9,7 @@ type UseHostDrawerViewModelArgs = {
   onClose: () => void;
   onEdit: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
+  onUpgradeFromHub?: (host: Host) => void;
   canUpgrade?: boolean;
   onCancelOp?: (op_id: string) => void;
   hostLog: HostLogEntry[];
@@ -29,6 +30,7 @@ export const useHostDrawerViewModel = ({
   onClose,
   onEdit,
   onUpgrade,
+  onUpgradeFromHub,
   canUpgrade,
   onCancelOp,
   hostLog,
@@ -42,6 +44,7 @@ export const useHostDrawerViewModel = ({
     onClose,
     onEdit,
     onUpgrade,
+    onUpgradeFromHub,
     canUpgrade,
     onCancelOp,
     hostLog,

@@ -111,24 +111,6 @@ export class API {
     return await api.system.listing({ path, hidden });
   };
 
-  /* Normalize the given paths relative to the HOME directory.
-     This takes any old weird looking mess of a path and makes
-     it one that can be opened properly with our file editor,
-     and the path appears to be to a file *in* the HOME directory.
-  */
-  canonical_path = async (path: string): Promise<string> => {
-    const v = await this.canonical_paths([path]);
-    const x = v[0];
-    if (typeof x != "string") {
-      throw Error("bug in canonical_path");
-    }
-    return x;
-  };
-  canonical_paths = async (paths: string[]): Promise<string[]> => {
-    const api = this.getApi();
-    return await api.system.canonicalPaths(paths);
-  };
-
   configuration = async (
     aspect: ConfigurationAspect,
     no_cache = false,

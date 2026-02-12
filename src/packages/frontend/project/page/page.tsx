@@ -96,6 +96,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const fullscreen = useTypedRedux("page", "fullscreen");
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const modal = useTypedRedux({ project_id }, "modal");
+  const open_files = useTypedRedux({ project_id }, "open_files");
   const open_files_order = useTypedRedux({ project_id }, "open_files_order");
   const active_project_tab = useTypedRedux(
     { project_id },
@@ -184,6 +185,11 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       if (!path) {
         return;
       }
+      const syncPathValue = open_files?.getIn([path, "sync_path"]);
+      const syncPath =
+        typeof syncPathValue === "string" && syncPathValue.length > 0
+          ? syncPathValue
+          : path;
       const tab_name = path_to_tab(path);
       return v.push(
         <FrameContext.Provider
@@ -192,7 +198,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
             ...defaultFrameContext,
             project_id,
             path,
-            actions: redux.getEditorActions(project_id, path) as any,
+            actions: redux.getEditorActions(project_id, syncPath) as any,
             isFocused: active_project_tab === tab_name,
             isVisible: active_project_tab === tab_name,
             redux,

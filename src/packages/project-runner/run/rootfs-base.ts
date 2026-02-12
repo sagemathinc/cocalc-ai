@@ -1,4 +1,4 @@
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import { data } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { executeCode } from "@cocalc/backend/execute-code";
@@ -15,6 +15,16 @@ const logger = getLogger("project-runner:rootfs-base");
 export const IMAGE_CACHE =
   process.env.COCALC_IMAGE_CACHE ?? join(data, "cache", "images");
 
+export function imagePathComponent(image: string): string {
+  // overlayfs option parsing can break on ":" inside paths; use an encoded
+  // path component for all on-disk image directories.
+  return encodeURIComponent(image);
+}
+
+export function imageCachePath(image: string): string {
+  return join(IMAGE_CACHE, imagePathComponent(image));
+}
+
 type ProgressFunction = (opts: { progress: number; desc: string }) => void;
 
 // This is a bit complicated because extractBaseImage uses reuseInFlight,
@@ -30,15 +40,8 @@ export function registerProgress(image: string, f: ProgressFunction) {
   }
 }
 
-function inspectFile(image) {
-  // we use the following format so that:
-  //   - the json files with the inspect info are hidden
-  //   - they start with a '.' so there is no way that one of these files
-  //     can also be the name of an OCI image that we're downloading
-  //     E.g., .foo.json cna't be the name of an image, because image names
-  //      can't start with separate characters and '.' is one -- see
-  //      https://stackoverflow.com/questions/43091075/docker-restrictions-regarding-naming-image
-  return join(IMAGE_CACHE, dirname(image), "." + basename(image) + ".json");
+function inspectFile(image: string): string {
+  return join(IMAGE_CACHE, `.${imagePathComponent(image)}.json`);
 }
 
 // this should error if the image isn't available and extracted.  I.e., it should always
@@ -66,12 +69,9 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
   };
 
   try {
-    const baseImagePath = join(IMAGE_CACHE, image);
+    const baseImagePath = imageCachePath(image);
     reportProgress({ progress: 0, desc: `checking for ${image}...` });
-    if (
-      (await exists(inspectFile(image))) &&
-      (await exists(join(IMAGE_CACHE, image)))
-    ) {
+    if ((await exists(inspectFile(image))) && (await exists(baseImagePath))) {
       // already exist
       reportProgress({ progress: 100, desc: `${image} available` });
       return baseImagePath;

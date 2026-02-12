@@ -52,10 +52,15 @@ import { FilesHeader } from "./files-header";
 import { fileItemStyle } from "./utils";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing from "@cocalc/frontend/project/listing/use-listing";
-import useBackupsListing from "@cocalc/frontend/project/listing/use-backups";
+import useBackupsListing, {
+  isBackupsPath,
+} from "@cocalc/frontend/project/listing/use-backups";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import ShowError from "@cocalc/frontend/components/error";
 import { getSort } from "@cocalc/frontend/project/explorer/config";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
+import { lite } from "@cocalc/frontend/lite";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -91,11 +96,16 @@ export function FilesFlyout({
   const [showCheckboxIndex, setShowCheckboxIndex] = useState<number | null>(
     null,
   );
-  const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
+  const available_features = useTypedRedux(
+    { project_id },
+    "available_features",
+  )?.toJS();
   const { onOpenSpecial, modal } = useSpecialPathPreview({
     project_id,
     actions,
-    current_path,
+    current_path: effective_current_path,
   });
   const strippedPublicPaths = useStrippedPublicPaths(project_id);
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
@@ -105,9 +115,9 @@ export function FilesFlyout({
     () =>
       getSort({
         project_id,
-        path: current_path,
+        path: effective_current_path,
       }),
-    [sort, current_path, project_id],
+    [sort, effective_current_path, project_id],
   );
 
   const file_search = useTypedRedux({ project_id }, "file_search") ?? "";
@@ -141,16 +151,24 @@ export function FilesFlyout({
     }
   }, [checked_files]);
 
-  const isBackupsPath =
-    current_path === ".backups" || current_path?.startsWith(".backups/");
+  const inBackupsPath = isBackupsPath(effective_current_path);
+  const inSnapshotsPath = isSnapshotsPath(effective_current_path);
+  const homePath =
+    lite && typeof available_features?.homeDirectory === "string"
+      ? normalizeAbsolutePath(available_features.homeDirectory)
+      : "/root";
+  const listingPath =
+    inSnapshotsPath && !effective_current_path.startsWith("/")
+      ? normalizeAbsolutePath(effective_current_path, homePath)
+      : effective_current_path;
   const fs = useFs({ project_id });
   const {
     listing: directoryListing,
     error: listingError,
     refresh,
   } = useListing({
-    fs: isBackupsPath ? null : fs,
-    path: current_path,
+    fs: inBackupsPath ? null : fs,
+    path: listingPath,
   });
   const {
     listing: backupsListing,
@@ -158,7 +176,7 @@ export function FilesFlyout({
     refresh: refreshBackups,
   } = useBackupsListing({
     project_id,
-    path: current_path,
+    path: effective_current_path,
   });
   const backupOps = useTypedRedux({ project_id }, "backup_ops");
   const prevBackupStatuses = useRef<Map<string, string>>(new Map());
@@ -188,9 +206,9 @@ export function FilesFlyout({
       refreshBackups();
     }
   }, [backupOps, refreshBackups]);
-  const effectiveListing = isBackupsPath ? backupsListing : directoryListing;
-  const effectiveError = isBackupsPath ? backupsError : listingError;
-  const effectiveRefresh = isBackupsPath ? refreshBackups : refresh;
+  const effectiveListing = inBackupsPath ? backupsListing : directoryListing;
+  const effectiveError = inBackupsPath ? backupsError : listingError;
+  const effectiveRefresh = inBackupsPath ? refreshBackups : refresh;
 
   // active file: current editor is the file in the listing
   // empty: either no files, or just the ".." for the parent dir
@@ -241,8 +259,8 @@ export function FilesFlyout({
           const bExt = b.name.split(".").pop() ?? "";
           return aExt.localeCompare(bExt);
         case "starred":
-          const pathA = path_to_file(current_path, a.name);
-          const pathB = path_to_file(current_path, b.name);
+          const pathA = path_to_file(effective_current_path, a.name);
+          const pathB = path_to_file(effective_current_path, b.name);
           const starPathA = a.isDir ? `${pathA}/` : pathA;
           const starPathB = b.isDir ? `${pathB}/` : pathB;
           const starredA = manageStarredFiles.starred.includes(starPathA);
@@ -269,7 +287,10 @@ export function FilesFlyout({
 
     // the ".." dir does not change the isEmpty state
     // hide ".." if there is a search -- https://github.com/sagemathinc/cocalc/issues/6877
-    if (file_search === "" && current_path != "") {
+    if (
+      file_search === "" &&
+      effective_current_path !== "/"
+    ) {
       processedFiles.unshift({
         name: "..",
         isDir: true,
@@ -288,21 +309,22 @@ export function FilesFlyout({
     hidden,
     file_search,
     show_masked,
-    current_path,
+    effective_current_path,
     strippedPublicPaths,
   ]);
 
-  const isOpen = (file) => openFiles.has(path_to_file(current_path, file.name));
+  const isOpen = (file) =>
+    openFiles.has(path_to_file(effective_current_path, file.name));
   const isActive = (file) =>
-    activePath == path_to_file(current_path, file.name);
+    activePath == path_to_file(effective_current_path, file.name);
 
   const publicFiles = getPublicFiles(
     directoryFiles,
     strippedPublicPaths,
-    current_path,
+    effective_current_path,
   );
 
-  const prev_current_path = usePrevious(current_path);
+  const prev_current_path = usePrevious(effective_current_path);
 
   useEffect(() => {
     // reset prev selection if path changes
@@ -312,7 +334,7 @@ export function FilesFlyout({
     // we reset the checked files as well. This should probably be somewhere in the actions, though.
     // The edge case is when more than one editor in different directories is open,
     // and you switch between the two. Checked files are not reset in that case.
-    if (prev_current_path != null && prev_current_path !== current_path) {
+    if (prev_current_path !== effective_current_path) {
       actions?.set_all_files_unchecked();
     }
 
@@ -321,11 +343,11 @@ export function FilesFlyout({
       refInput.current?.focus();
     }
     setScrollIdx(null);
-  }, [current_path]);
+  }, [effective_current_path]);
 
   useEffect(() => {
     setShowCheckboxIndex(null);
-  }, [directoryListing, current_path]);
+  }, [directoryListing, effective_current_path]);
 
   const triggerRootResize = debounce(
     () => setRootHeightPx(rootRef.current?.clientHeight ?? 0),
@@ -379,7 +401,7 @@ export function FilesFlyout({
     if (file == null) return;
 
     if (!skip) {
-      const fullPath = path_to_file(current_path, file.name);
+      const fullPath = path_to_file(effective_current_path, file.name);
 
       if (file.isDir) {
         // true: change history, false: do not show "files" page
@@ -412,7 +434,7 @@ export function FilesFlyout({
   function toggleSelected(index: number, fn: string, nextState?: boolean) {
     // never select "..", only calls for trouble
     if (fn === "..") return;
-    fn = path_to_file(current_path, fn);
+    fn = path_to_file(effective_current_path, fn);
     window.getSelection()?.removeAllRanges();
     if (nextState != null ? !nextState : checked_files.includes(fn)) {
       // deselects the file
@@ -469,13 +491,13 @@ export function FilesFlyout({
         const start = Math.min(prevSelected, index);
         const end = Math.max(prevSelected, index);
         const add = !checked_files.includes(
-          path_to_file(current_path, directoryFiles[index].name),
+          path_to_file(effective_current_path, directoryFiles[index].name),
         );
         let fileNames: string[] = [];
         for (let i = start; i <= end; i++) {
           const fn = directoryFiles[i].name;
           if (fn === "..") continue; // don't select parent dir, just calls for trouble
-          fileNames.push(path_to_file(current_path, fn));
+          fileNames.push(path_to_file(effective_current_path, fn));
         }
         if (add) {
           actions?.set_file_list_checked(fileNames);
@@ -513,7 +535,7 @@ export function FilesFlyout({
   function showFileSharingDialog(file?: { name: string }) {
     if (!file) return;
     actions?.set_active_tab("files");
-    const fullPath = path_to_file(current_path, file.name);
+    const fullPath = path_to_file(effective_current_path, file.name);
     // only select the published file, same logic as in file-row.tsx
     actions?.set_all_files_unchecked();
     actions?.set_file_list_checked([fullPath]);
@@ -574,9 +596,9 @@ export function FilesFlyout({
       scrollIdx != null
         ? !scrollIdxHide && index === scrollIdx
         : checked_files.includes(
-            path_to_file(current_path, directoryFiles[index].name),
+            path_to_file(effective_current_path, directoryFiles[index].name),
           );
-    const fullPath = path_to_file(current_path, item.name);
+    const fullPath = path_to_file(effective_current_path, item.name);
     const pathForStar = item.isDir ? `${fullPath}/` : fullPath;
     const isStarred = manageStarredFiles.starred.includes(pathForStar);
     return (
@@ -596,7 +618,7 @@ export function FilesFlyout({
           setSelectionOnMouseDown(window.getSelection()?.toString() ?? "");
           if (e.button === 1) {
             // middle mouse click
-            actions?.close_tab(path_to_file(current_path, name));
+            actions?.close_tab(path_to_file(effective_current_path, name));
           }
         }}
         itemStyle={fileItemStyle(age ?? 0, mask)}
@@ -658,7 +680,7 @@ export function FilesFlyout({
     return (
       <StatefulVirtuoso
         ref={virtuosoRef}
-        cacheId={`${project_id}::flyout::files::${current_path}`}
+        cacheId={`${project_id}::flyout::files::${effective_current_path}`}
         style={{}}
         increaseViewportBy={10}
         onMouseLeave={() => setShowCheckboxIndex(null)}
@@ -686,7 +708,7 @@ export function FilesFlyout({
     actions?.set_file_list_checked(
       directoryFiles
         .filter((f) => f.name !== "..")
-        .map((f) => path_to_file(current_path, f.name)),
+        .map((f) => path_to_file(effective_current_path, f.name)),
     );
   }
 
@@ -724,7 +746,7 @@ export function FilesFlyout({
       ) : (
         <FileUploadWrapper
           project_id={project_id}
-          dest_path={current_path}
+          dest_path={effective_current_path}
           style={{
             flex: "1 0 auto",
             display: "flex",

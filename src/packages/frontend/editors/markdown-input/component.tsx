@@ -679,7 +679,12 @@ export function MarkdownInput(props: Props) {
       return;
     }
     ignoreChangeRef.current = true;
-    cm.current.setValueNoJump(newValue);
+    const setValueNoJumpFn = (cm.current as any).setValueNoJump;
+    if (typeof setValueNoJumpFn === "function") {
+      setValueNoJumpFn.call(cm.current, newValue);
+    } else {
+      cm.current.setValue(newValue);
+    }
     ignoreChangeRef.current = false;
   }, []);
 

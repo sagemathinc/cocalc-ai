@@ -2,9 +2,13 @@ import useAsyncEffect from "use-async-effect";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { field_cmp } from "@cocalc/util/misc";
+import {
+  BACKUPS,
+  isBackupsPath,
+} from "@cocalc/util/consts/backups";
 import type { DirectoryListingEntry } from "@cocalc/frontend/project/explorer/types";
 
-export const BACKUPS = ".backups";
+export { BACKUPS, isBackupsPath };
 
 export interface BackupMeta {
   id: string;
@@ -14,10 +18,6 @@ export interface BackupMeta {
 
 const CACHE_TTL_MS = 5*60_000;
 const PREFETCH_LIMIT = 8;
-
-export function isBackupsPath(path: string) {
-  return path === BACKUPS || path.startsWith(`${BACKUPS}/`);
-}
 
 export default function useBackupsListing({
   project_id,

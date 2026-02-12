@@ -41,6 +41,10 @@ type OptionalBindMount = {
   readOnly?: boolean;
 };
 
+const API_KEY_PROVIDER_ID = "cocalc-openai-api-key";
+const API_KEY_PROVIDER_CONFIG = `model_providers.${API_KEY_PROVIDER_ID}={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false}`;
+const API_KEY_PROVIDER_SELECT = `model_provider="${API_KEY_PROVIDER_ID}"`;
+
 function codexContainerName(projectId: string, contextId: string): string {
   return `codex-${projectId}-${contextId.slice(0, 12)}`;
 }
@@ -186,7 +190,10 @@ async function ensureContainer({
   const rootfs = await mountRootFs({ project_id: projectId, home, config: { image } });
   const name = codexContainerName(projectId, authRuntime.contextId);
   const { containerPath, mount } = await resolveCodexBinary();
-  const codexHome = authRuntime.codexHome ?? resolveSharedCodexHome();
+  const codexHome =
+    authRuntime.codexHome ??
+    (authRuntime.source === "shared-home" ? resolveSharedCodexHome() : undefined);
+  const projectCodexHome = join(home, ".codex");
   const projectRow = getProject(projectId);
   const hasGpu =
     projectRow?.run_quota?.gpu === true ||
@@ -198,6 +205,7 @@ async function ensureContainer({
 
   const args: string[] = [];
   args.push("run", "--runtime", "/usr/bin/crun", "--detach", "--rm");
+  args.push("--security-opt", "no-new-privileges");
   args.push(networkArgument());
   if (hasGpu) {
     args.push("--device", "nvidia.com/gpu=all");
@@ -228,7 +236,12 @@ async function ensureContainer({
   if (extraEnv) {
     for (const key in extraEnv) {
       if (typeof extraEnv[key] === "string") {
-        env[key] = `${extraEnv[key]}`;
+        const value = `${extraEnv[key]}`;
+        if (key === "OPENAI_API_KEY" && !value.trim()) {
+          // Do not let an empty per-turn env override a resolved auth key.
+          continue;
+        }
+        env[key] = value;
       }
     }
   }
@@ -237,6 +250,11 @@ async function ensureContainer({
   }
 
   args.push(mountArg({ source: home, target: "/root" }));
+  try {
+    await fs.mkdir(projectCodexHome, { recursive: true, mode: 0o700 });
+  } catch {
+    // best effort: project home mount may already provide this path
+  }
   if (scratch) {
     args.push(mountArg({ source: scratch, target: "/scratch" }));
   }
@@ -254,7 +272,7 @@ async function ensureContainer({
     }
   }
   args.push(mountArg({ source: mount, target: "/opt/codex/bin", readOnly: true }));
-  if (codexHome) {
+  if (codexHome && authRuntime.source === "shared-home") {
     try {
       const stat = await fs.stat(codexHome);
       if (stat.isDirectory()) {
@@ -262,6 +280,39 @@ async function ensureContainer({
       }
     } catch {
       // ignore if codex home missing
+    }
+  }
+  if (codexHome && authRuntime.source === "subscription") {
+    // Subscription auth should not live in project storage. Mount only the auth
+    // files from secrets, while keeping /root/.codex/sessions in the project.
+    const authPath = join(codexHome, "auth.json");
+    const configPath = join(codexHome, "config.toml");
+    try {
+      const stat = await fs.stat(authPath);
+      if (stat.isFile()) {
+        args.push(
+          mountArg({
+            source: authPath,
+            target: "/root/.codex/auth.json",
+          }),
+        );
+      }
+    } catch {
+      // missing auth file -- runtime may fail auth, but do not fall back to
+      // workspace auth.json in launchpad mode.
+    }
+    try {
+      const stat = await fs.stat(configPath);
+      if (stat.isFile()) {
+        args.push(
+          mountArg({
+            source: configPath,
+            target: "/root/.codex/config.toml",
+          }),
+        );
+      }
+    } catch {
+      // optional
     }
   }
   for (const mount of optionalCerts.mounts) {
@@ -307,6 +358,7 @@ export type SpawnCodexInProjectContainerOptions = {
   env?: NodeJS.ProcessEnv;
   authRuntime?: CodexAuthRuntime;
   touchReason?: string | false;
+  forceRefreshSiteKey?: boolean;
 };
 
 export type SpawnCodexInProjectContainerResult = {
@@ -326,9 +378,38 @@ export async function spawnCodexInProjectContainer({
   env: extraEnv,
   authRuntime: explicitAuthRuntime,
   touchReason = "codex",
+  forceRefreshSiteKey = false,
 }: SpawnCodexInProjectContainerOptions): Promise<SpawnCodexInProjectContainerResult> {
   const authRuntime =
-    explicitAuthRuntime ?? (await resolveCodexAuthRuntime({ projectId, accountId }));
+    explicitAuthRuntime ??
+    (await resolveCodexAuthRuntime({
+      projectId,
+      accountId,
+      forceRefreshSiteKey,
+    }));
+  let codexArgs = args;
+  if (
+    authRuntime.source === "project-api-key" ||
+    authRuntime.source === "account-api-key" ||
+    authRuntime.source === "site-api-key"
+  ) {
+    // Codex's built-in OpenAI provider expects auth from auth.json by default.
+    // For key-based auth in project-host, force a provider that reads
+    // OPENAI_API_KEY from env so turns can run without mutating user auth.json.
+    codexArgs = [
+      ...codexArgs,
+      "--config",
+      API_KEY_PROVIDER_CONFIG,
+      "--config",
+      API_KEY_PROVIDER_SELECT,
+    ];
+    logger.debug("codex project: forcing API-key provider config", {
+      projectId,
+      accountId,
+      source: authRuntime.source,
+      provider: API_KEY_PROVIDER_ID,
+    });
+  }
   if (explicitAuthRuntime) {
     logger.debug("using explicit codex auth runtime", {
       projectId,
@@ -357,10 +438,14 @@ export async function spawnCodexInProjectContainer({
     "HOME=/root",
   ];
   const execEnv = { ...authRuntime.env, ...toStringEnv(extraEnv) };
+  if (!execEnv.OPENAI_API_KEY?.trim()) {
+    // Avoid overriding runtime key selection with an empty per-turn value.
+    delete execEnv.OPENAI_API_KEY;
+  }
   for (const key in execEnv) {
     execArgs.push("-e", `${key}=${execEnv[key]}`);
   }
-  execArgs.push(info.name, info.codexPath, ...args);
+  execArgs.push(info.name, info.codexPath, ...codexArgs);
   logger.debug("codex project: podman exec", redactPodmanArgs(execArgs));
   const proc = spawn("podman", execArgs, {
     stdio: ["pipe", "pipe", "pipe"],
@@ -386,7 +471,14 @@ export async function spawnCodexInProjectContainer({
 
 export function initCodexProjectRunner(): void {
   setCodexProjectSpawner({
-    async spawnCodexExec({ projectId, accountId, args, cwd, env: extraEnv }) {
+    async spawnCodexExec({
+      projectId,
+      accountId,
+      args,
+      cwd,
+      env: extraEnv,
+      forceRefreshSiteKey,
+    }) {
       const hasSandboxFlag =
         args.includes("--full-auto") ||
         args.includes("--dangerously-bypass-approvals-and-sandbox") ||
@@ -403,12 +495,14 @@ export function initCodexProjectRunner(): void {
         env: extraEnv,
         args: hasSandboxFlag ? args : ["--full-auto", ...args],
         touchReason: "codex",
+        forceRefreshSiteKey,
       });
       return {
         proc: spawned.proc,
         cmd: spawned.cmd,
         args: spawned.args,
         cwd: spawned.cwd,
+        authSource: spawned.authRuntime.source,
       };
     },
   });

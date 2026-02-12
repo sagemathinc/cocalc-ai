@@ -8,7 +8,7 @@ import { refreshLaunchpadOnPremAuthorizedKeys } from "../launchpad/onprem-sshd";
 
 const DEFAULT_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 
-export type BootstrapTokenInfo = {
+export type ProjectHostTokenInfo = {
   token: string;
   token_id: string;
   host_id: string;
@@ -36,10 +36,10 @@ function deriveBootstrapKeySeed(secret: string): string {
     .digest("base64url");
 }
 
-export async function createBootstrapToken(
+export async function createProjectHostToken(
   hostId: string,
   opts: { ttlMs?: number; purpose?: string } = {},
-): Promise<BootstrapTokenInfo> {
+): Promise<ProjectHostTokenInfo> {
   const token_id = randomUUID();
   const secret = randomBytes(32).toString("base64url");
   const token = `${token_id}.${secret}`;
@@ -67,7 +67,7 @@ export async function createBootstrapToken(
   return { token, token_id, host_id: hostId, purpose, expires };
 }
 
-export async function verifyBootstrapToken(
+export async function verifyProjectHostToken(
   token: string,
   opts: { purpose?: string } = {},
 ): Promise<{
@@ -113,7 +113,7 @@ export async function verifyBootstrapToken(
   };
 }
 
-export async function revokeBootstrapTokensForHost(
+export async function revokeProjectHostTokensForHost(
   hostId: string,
   opts: { purpose?: string } = {},
 ): Promise<void> {
@@ -127,3 +127,29 @@ export async function revokeBootstrapTokensForHost(
   );
   await refreshLaunchpadOnPremAuthorizedKeys();
 }
+
+export async function createProjectHostBootstrapToken(
+  hostId: string,
+  opts: { ttlMs?: number } = {},
+): Promise<ProjectHostTokenInfo> {
+  return await createProjectHostToken(hostId, {
+    ...opts,
+    purpose: "bootstrap",
+  });
+}
+
+export async function createProjectHostMasterConatToken(
+  hostId: string,
+  opts: { ttlMs?: number } = {},
+): Promise<ProjectHostTokenInfo> {
+  return await createProjectHostToken(hostId, {
+    ...opts,
+    purpose: "master-conat",
+  });
+}
+
+// Backward-compatible aliases; prefer create/verify/revokeProjectHost* names.
+export type BootstrapTokenInfo = ProjectHostTokenInfo;
+export const createBootstrapToken = createProjectHostToken;
+export const verifyBootstrapToken = verifyProjectHostToken;
+export const revokeBootstrapTokensForHost = revokeProjectHostTokensForHost;

@@ -199,14 +199,43 @@ export abstract class AppRedux implements AppReduxInterface {
     if (!is_valid_uuid_string(project_id)) {
       throw Error(`getEditorStore: INVALID project_id -- "${project_id}"`);
     }
-    return this.getStore(redux_name(project_id, path));
+    const direct = this.getStore(redux_name(project_id, path));
+    if (direct != null) {
+      return direct;
+    }
+    const sync_path = this.getOpenFileSyncPath(project_id, path);
+    if (sync_path != null && sync_path !== path) {
+      return this.getStore(redux_name(project_id, sync_path));
+    }
+    return direct;
   }
 
   getEditorActions(project_id: string, path: string) {
     if (!is_valid_uuid_string(project_id)) {
       throw Error(`getEditorActions: INVALID project_id -- "${project_id}"`);
     }
-    return this.getActions(redux_name(project_id, path));
+    const direct = this.getActions(redux_name(project_id, path));
+    if (direct != null) {
+      return direct;
+    }
+    const sync_path = this.getOpenFileSyncPath(project_id, path);
+    if (sync_path != null && sync_path !== path) {
+      return this.getActions(redux_name(project_id, sync_path));
+    }
+    return direct;
+  }
+
+  private getOpenFileSyncPath(
+    project_id: string,
+    display_path: string,
+  ): string | undefined {
+    const project_store: any = this.getStore(project_redux_name(project_id));
+    const sync_path = project_store?.getIn?.([
+      "open_files",
+      display_path,
+      "sync_path",
+    ]);
+    return typeof sync_path === "string" ? sync_path : undefined;
   }
 
   hasProjectStore(project_id: string): boolean {

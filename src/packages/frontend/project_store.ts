@@ -62,8 +62,8 @@ export type ModalInfo = TypedMap<{
 
 export interface ProjectStoreState {
   // Shared
-  current_path: string;
-  history_path: string;
+  current_path_abs: string;
+  history_path_abs: string;
   open_files: immutable.Map<string, immutable.Map<string, any>>;
   open_files_order: immutable.List<string>;
   just_closed_files: immutable.List<string>;
@@ -270,8 +270,8 @@ export class ProjectStore extends Store<ProjectStoreState> {
   getInitialState = (): ProjectStoreState => {
     return {
       // Shared
-      current_path: "",
-      history_path: "",
+      current_path_abs: "/",
+      history_path_abs: "/",
       open_files: immutable.Map<immutable.Map<string, any>>({}),
       open_files_order: immutable.List([]),
       just_closed_files: immutable.List([]),
@@ -398,7 +398,12 @@ export function getPublicFiles(
     return new Set();
   }
 
-  const head = current_path ? current_path + "/" : "";
+  const head =
+    current_path === "/"
+      ? "/"
+      : current_path && current_path.length > 0
+        ? `${current_path}/`
+        : "";
   if (containing_public_path(current_path, paths)) {
     // fast special case: *every* file is public
     return new Set(listing.map(({ name }) => name));

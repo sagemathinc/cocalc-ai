@@ -11,6 +11,7 @@ import {
   deleteRememberMe,
   deleteAllRememberMe,
 } from "@cocalc/server/auth/remember-me";
+import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
 import getParams from "lib/api/get-params";
 import { apiRoute, apiRouteOperation } from "lib/api";
 import { SuccessStatus } from "lib/api/status";
@@ -39,6 +40,8 @@ async function signOut(req, res): Promise<void> {
     const account_id = await getAccountId(req);
     if (!account_id) return; // not signed in
     await deleteAllRememberMe(account_id);
+    // Revoke host-level persistent sessions/tokens issued before now.
+    await recordAccountRevocation(account_id, Date.now());
   } else {
     const hash = getRememberMeHash(req);
     if (!hash) return; // not signed in

@@ -135,7 +135,15 @@ export const useHostsPageViewModel = () => {
 
   const [fastPoll, setFastPoll] = React.useState(false);
   const [setupOpen, setSetupOpen] = React.useState(false);
-  const { hosts, setHosts, refresh, canCreateHosts } = useHosts(hub, {
+  const {
+    hosts,
+    setHosts,
+    refresh,
+    canCreateHosts,
+    loading: hostsLoading,
+    loaded: hostsLoaded,
+    error: hostsError,
+  } = useHosts(hub, {
     onError: () => console.warn("Unable to load hosts"),
     adminView: isAdmin && showAdmin,
     includeDeleted: showDeleted,
@@ -172,8 +180,8 @@ export const useHostsPageViewModel = () => {
     refresh,
     onHostOp: trackHostOp,
   });
-  const upgradeHostSoftware = React.useCallback(
-    async (host: Host) => {
+  const runUpgrade = React.useCallback(
+    async (host: Host, opts?: { base_url?: string }) => {
       if (!hub.hosts.upgradeHostSoftware) {
         return;
       }
@@ -188,6 +196,7 @@ export const useHostsPageViewModel = () => {
             { artifact: "project", channel: "latest" },
             { artifact: "tools", channel: "latest" },
           ],
+          ...(opts?.base_url ? { base_url: opts.base_url } : {}),
         });
         trackHostOp(host.id, op);
         await refresh();
@@ -196,6 +205,12 @@ export const useHostsPageViewModel = () => {
       }
     },
     [hub, refresh, trackHostOp],
+  );
+  const upgradeHostSoftware = React.useCallback(
+    async (host: Host) => {
+      await runUpgrade(host);
+    },
+    [runUpgrade],
   );
   const cancelHostOp = React.useCallback(
     async (op_id: string) => {
@@ -275,10 +290,9 @@ export const useHostsPageViewModel = () => {
     selectedStorageMode,
   } = useHostFormValues(form);
 
-  const { catalog, catalogError, catalogRefreshing, refreshCatalog } =
+  const { catalog, catalogError, catalogLoading, catalogRefreshing, refreshCatalog } =
     useHostCatalog(hub, {
       provider: catalogProvider,
-      refreshProvider,
       onError: (text) => console.warn(text),
     });
   const hasSelfHostHosts = React.useMemo(
@@ -343,6 +357,13 @@ export const useHostsPageViewModel = () => {
     const raw = `${window.location.origin}${basePath}`;
     return raw.replace(/\/$/, "");
   }, []);
+  const upgradeHostSoftwareFromHub = React.useCallback(
+    async (host: Host) => {
+      if (!baseUrl) return;
+      await runUpgrade(host, { base_url: `${baseUrl}/software` });
+    },
+    [baseUrl, runUpgrade],
+  );
   const [setupHost, setSetupHost] = React.useState<Host | undefined>();
   const [setupToken, setSetupToken] = React.useState<string | undefined>();
   const [setupExpires, setSetupExpires] = React.useState<string | undefined>();
@@ -614,6 +635,7 @@ export const useHostsPageViewModel = () => {
         persistentGrowable,
         showDiskFields,
       },
+      catalogLoading,
       catalogError,
     },
     catalogRefresh: {
@@ -676,6 +698,9 @@ export const useHostsPageViewModel = () => {
 
   const hostListVm = useHostListViewModel({
     hosts,
+    hostsLoading,
+    hostsLoaded,
+    hostsError,
     hostOps,
     onStart: (id: string) => setStatus(id, "start"),
     onStop: (id: string, opts) => setStatus(id, "stop", opts),
@@ -684,6 +709,7 @@ export const useHostsPageViewModel = () => {
     onRefresh: refreshHostsNow,
     onCancelOp: cancelHostOp,
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
+    onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
     onDetails: openDetails,
     onEdit: openEdit,
     onToggleStar: toggleHostStar,
@@ -715,6 +741,7 @@ export const useHostsPageViewModel = () => {
     onClose: closeDetails,
     onEdit: openEdit,
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
+    onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
     canUpgrade: isAdmin,
     onCancelOp: cancelHostOp,
     hostLog,

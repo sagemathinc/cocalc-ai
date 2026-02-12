@@ -14,6 +14,7 @@ export COCALC_SSH_SERVER=localhost:2224,
 export COCALC_FILE_SERVER_MOUNTPOINT=/mnt/btrfs
 export PROJECT_RUNNER_NAME=2
 export HOST=0.0.0.0
+export COCALC_ALLOW_INSECURE_HTTP_MODE=true
 export COCALC_LITE_SQLITE_FILENAME=$HOME/project-host.db
 export DEBUG='cocalc:*'
 export DEBUG_CONSOLE='no'

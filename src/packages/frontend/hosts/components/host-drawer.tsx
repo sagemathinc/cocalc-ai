@@ -38,6 +38,7 @@ type HostDrawerViewModel = {
   onClose: () => void;
   onEdit: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
+  onUpgradeFromHub?: (host: Host) => void;
   canUpgrade?: boolean;
   onCancelOp?: (op_id: string) => void;
   hostLog: HostLogEntry[];
@@ -182,6 +183,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onClose,
     onEdit,
     onUpgrade,
+    onUpgradeFromHub,
     canUpgrade,
     onCancelOp,
     hostLog,
@@ -435,6 +437,22 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 disabled={hostOpActive || host.status !== "running"}
               >
                 Upgrade software
+              </Button>
+            </Popconfirm>
+          )}
+          {canUpgrade && host && !host.deleted && onUpgradeFromHub && (
+            <Popconfirm
+              title={upgradeConfirmContent}
+              okText="Upgrade"
+              cancelText="Cancel"
+              onConfirm={() => onUpgradeFromHub(host)}
+              disabled={hostOpActive || host.status !== "running"}
+            >
+              <Button
+                size="small"
+                disabled={hostOpActive || host.status !== "running"}
+              >
+                Upgrade from hub source
               </Button>
             </Popconfirm>
           )}

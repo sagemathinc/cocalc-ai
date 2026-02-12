@@ -40,6 +40,18 @@ function publishSummary(summary: LroSummary) {
   });
 }
 
+async function publishSummarySafe(summary: LroSummary, context: string): Promise<void> {
+  try {
+    await publishSummary(summary);
+  } catch (err) {
+    logger.warn("failed to publish backup LRO summary", {
+      context,
+      op_id: summary.op_id,
+      err: `${err}`,
+    });
+  }
+}
+
 function progressEvent({
   op,
   step,
@@ -63,6 +75,13 @@ function progressEvent({
       progress: progressSteps[step],
       detail,
     },
+  }).catch((err) => {
+    logger.warn("failed to publish backup LRO progress", {
+      op_id: op.op_id,
+      step,
+      message,
+      err: `${err}`,
+    });
   });
 }
 
@@ -85,7 +104,7 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
       error: "backup op missing project_id",
     });
     if (updated) {
-      await publishSummary(updated);
+      await publishSummarySafe(updated, "missing-project-id");
     }
     return;
   }
@@ -138,7 +157,7 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
       progress_summary: { phase: "validate" },
     });
     if (running) {
-      await publishSummary(running);
+      await publishSummarySafe(running, "set-running");
     }
     progress({
       step: "validate",
@@ -182,7 +201,7 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
       error: null,
     });
     if (updated) {
-      await publishSummary(updated);
+      await publishSummarySafe(updated, "set-succeeded");
     }
     progress({
       step: "done",
@@ -197,7 +216,7 @@ async function handleBackupOp(op: LroSummary): Promise<void> {
       error: `${err}`,
     });
     if (updated) {
-      await publishSummary(updated);
+      await publishSummarySafe(updated, "set-failed");
     }
     progress({ step: "done", message: "failed" });
   } finally {
@@ -241,7 +260,7 @@ export function startBackupLroWorker({
             error: `${err}`,
           });
           if (updated) {
-            await publishSummary(updated);
+            await publishSummarySafe(updated, "handler-catch");
           }
         })
         .finally(() => {

@@ -30,6 +30,7 @@ import { debounce } from "lodash";
 import { init as initGroups } from "@cocalc/frontend/groups/redux";
 import { BITSET_FIELDS } from "@cocalc/util/db-schema/messages";
 import { once } from "@cocalc/util/async-utils";
+import { delay } from "awaiting";
 import type { TypedMap } from "@cocalc/util/types/typed-map";
 
 const DEFAULT_FONT_SIZE = 14;
@@ -224,10 +225,20 @@ export class MessagesActions extends Actions<MessagesState> {
     // draft comes back from the database.
     //     const sent_table = this.redux.getTable("sent_messages")._table;
     //     sent_table.set({ id, subject, body, to_ids, thread_id, sent });
-    // wait for the message to exist locally in our table.
+    // Best effort: wait briefly for changefeed echo so table state is warm,
+    // but never block composer actions indefinitely if echo is delayed/missing.
     const store = this.getStore();
-    while (store.get("messages")?.get(id) == null) {
-      await once(store, "change");
+    const hasLocal = () => store.get("messages")?.get(id) != null;
+    const start = Date.now();
+    const timeoutMs = 3000;
+    while (!hasLocal() && Date.now() - start < timeoutMs) {
+      await Promise.race([once(store, "change"), delay(150)]);
+    }
+    if (!hasLocal()) {
+      console.warn(
+        "messages.createDraft: draft was created remotely but not visible in local table within timeout",
+        { id, timeoutMs },
+      );
     }
     return id;
   };

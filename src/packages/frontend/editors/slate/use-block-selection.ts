@@ -4,7 +4,7 @@
  */
 
 import { useCallback } from "react";
-import { Descendant, Transforms } from "slate";
+import { Descendant, Editor, Transforms } from "slate";
 import { ReactEditor } from "./slate-react";
 import type { SlateEditor } from "./types";
 import { blockSelectionPoint, pointFromOffsetInDoc } from "./block-selection-utils";
@@ -52,18 +52,51 @@ export function useBlockSelection(options: Options) {
     setFocusedIndex,
   } = options;
 
+  const safelyFocusAndSelect = useCallback(
+    (
+      editor: SlateEditor,
+      anchor: { path: number[]; offset: number },
+      focus: { path: number[]; offset: number } = anchor,
+    ) => {
+      if (!Editor.hasPath(editor, anchor.path) || !Editor.hasPath(editor, focus.path)) {
+        return false;
+      }
+      try {
+        // Preserve prior behavior: focus first, then set selection.
+        ReactEditor.focus(editor);
+        Transforms.setSelection(editor, { anchor, focus });
+      } catch (_err) {
+        // If focus fails due stale DOM selection mapping, retry with a fresh selection.
+        try {
+          Transforms.setSelection(editor, { anchor, focus });
+          ReactEditor.focus(editor);
+        } catch (_retryErr) {
+          // Last resort: clear selection state and retry once.
+          try {
+            Transforms.deselect(editor);
+            ReactEditor.focus(editor);
+            Transforms.setSelection(editor, { anchor, focus });
+          } catch (_lastErr) {
+            return false;
+          }
+        }
+      }
+      return true;
+    },
+    [],
+  );
+
   const tryApplySelectionAtOffset = useCallback(
     (index: number, offset: number) => {
       if (index < 0 || index >= blocksRef.current.length) return false;
       const editor = editorMapRef.current.get(index);
       if (!editor) return false;
       const point = pointFromOffsetInDoc(editor.children as Descendant[], offset);
-      ReactEditor.focus(editor);
-      Transforms.setSelection(editor, { anchor: point, focus: point });
+      if (!safelyFocusAndSelect(editor, point)) return false;
       setFocusedIndex(index);
       return true;
     },
-    [blocksRef, editorMapRef, setFocusedIndex],
+    [blocksRef, editorMapRef, safelyFocusAndSelect, setFocusedIndex],
   );
 
   const setSelectionAtOffset = useCallback(
@@ -118,12 +151,18 @@ export function useBlockSelection(options: Options) {
         }) ??
         blockSelectionPoint(editor, "start");
       if (!point) return false;
-      ReactEditor.focus(editor);
-      Transforms.setSelection(editor, { anchor: point, focus: point });
+      if (!safelyFocusAndSelect(editor, point)) return false;
       setFocusedIndex(target.index);
       return true;
     },
-    [blocksRef, editorMapRef, pendingSelectionRef, setFocusedIndex, virtuosoRef],
+    [
+      blocksRef,
+      editorMapRef,
+      pendingSelectionRef,
+      safelyFocusAndSelect,
+      setFocusedIndex,
+      virtuosoRef,
+    ],
   );
 
   const setSelectionRangeFromMarkdownPosition = useCallback(
@@ -189,12 +228,19 @@ export function useBlockSelection(options: Options) {
           editor,
         }) ??
         startPoint;
-      ReactEditor.focus(editor);
-      Transforms.setSelection(editor, { anchor: startPoint, focus: endPoint });
+      if (!safelyFocusAndSelect(editor, startPoint, endPoint)) return false;
       setFocusedIndex(start.index);
       return true;
     },
-    [blocksRef, editorMapRef, pendingSelectionRef, setFocusedIndex, setSelectionFromMarkdownPosition, virtuosoRef],
+    [
+      blocksRef,
+      editorMapRef,
+      pendingSelectionRef,
+      safelyFocusAndSelect,
+      setFocusedIndex,
+      setSelectionFromMarkdownPosition,
+      virtuosoRef,
+    ],
   );
 
   const getSelectionGlobalRange = useCallback(() => {

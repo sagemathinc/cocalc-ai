@@ -685,7 +685,7 @@ export const withAutoFormat = (editor) => {
           }
         }
       }
-      if (isPlainTextOnly || lineCount >= MULTILINE_PASTE_THRESHOLD) {
+      if (lineCount >= MULTILINE_PASTE_THRESHOLD) {
         const pasteId = `paste-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         Transforms.insertNodes(
           editor,

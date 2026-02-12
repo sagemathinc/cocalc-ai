@@ -31,15 +31,31 @@ function NavigationSliderNoMarks({
   version,
   versions,
   setVersion,
+  wallTime,
 }: Props) {
   const { isVisible } = useFrameContext();
   if (versions == null || version == null || !isVisible) {
     return null;
   }
 
+  const tooltip =
+    versions.size > 5000
+      ? { open: false as const }
+      : {
+          formatter: (value?: number) => {
+            if (value == null) return "";
+            const id = versions.get(value);
+            if (id == null) return "";
+            const t = wallTime(id);
+            return t == null
+              ? `Revision ${value + 1}`
+              : new Date(t).toLocaleString();
+          },
+        };
+
   return (
     <Slider
-      tooltip={{ open: false }}
+      tooltip={tooltip}
       style={{ margin: "10px 15px" }}
       min={0}
       max={versions.size - 1}
@@ -59,6 +75,7 @@ function NavigationSliderMarks({
   version,
   versions,
   setVersion,
+  wallTime,
 }: Props) {
   const { isVisible } = useFrameContext();
 
@@ -77,9 +94,24 @@ function NavigationSliderMarks({
     return null;
   }
 
+  const tooltip =
+    versions.size > 5000
+      ? { open: false as const }
+      : {
+          formatter: (value?: number) => {
+            if (value == null) return "";
+            const id = versions.get(value);
+            if (id == null) return "";
+            const t = wallTime(id);
+            return t == null
+              ? `Revision ${value + 1}`
+              : new Date(t).toLocaleString();
+          },
+        };
+
   return (
     <Slider
-      tooltip={{ open: false }}
+      tooltip={tooltip}
       marks={marks}
       included={false}
       step={null}
