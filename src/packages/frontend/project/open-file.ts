@@ -52,7 +52,7 @@ export interface OpenFileOpts {
   explicit?: boolean;
 }
 
-function findOpenDisplayPathForSyncPath(
+export function findOpenDisplayPathForSyncPath(
   actions: ProjectActions,
   syncPath: string,
   excludeDisplayPath?: string,

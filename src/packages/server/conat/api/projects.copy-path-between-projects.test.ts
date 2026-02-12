@@ -152,7 +152,7 @@ describe("projects.copyPathBetweenProjects", () => {
       account_id: "acct-1",
       src: { project_id: "src-project", path: ["/root/a.txt", "/tmp/b.txt"] },
       dest: { project_id: "dest-project", path: "/root/out" },
-      options: { overwriteNewer: true },
+      options: { force: true },
     });
 
     expect(createLroMock).toHaveBeenCalledWith(
@@ -165,7 +165,7 @@ describe("projects.copyPathBetweenProjects", () => {
         input: {
           src: { project_id: "src-project", path: ["/root/a.txt", "/tmp/b.txt"] },
           dests: [{ project_id: "dest-project", path: "/root/out" }],
-          options: { overwriteNewer: true },
+          options: { force: true },
         },
         status: "queued",
       }),
