@@ -1,9 +1,6 @@
 /*
-Privileges: This uses sudo to do an overlayfs mount.
-
-    wstein ALL=(ALL) NOPASSWD: /bin/mount -t overlay *, /bin/umount *
-
-where obviously wstein is replaced by the user running this server.
+Privileges: This uses sudo with the root-owned runtime wrapper for overlayfs
+mount lifecycle operations only.
 */
 
 import { join } from "path";
@@ -11,7 +8,6 @@ import { data } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { mkdir, rm, writeFile, readFile } from "fs/promises";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
-import { replace_all } from "@cocalc/util/misc";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import { getImage } from "./podman";
 import { extractBaseImage, IMAGE_CACHE, registerProgress } from "./rootfs-base";
@@ -64,7 +60,7 @@ const leases = new RefcountLeaseManager<string>({
         verbose: true,
         err_on_exit: true,
         command: "sudo",
-        args: ["-n", STORAGE_WRAPPER, "umount", "-l", mountpoint],
+        args: ["-n", STORAGE_WRAPPER, "umount-overlay-project", mountpoint],
       });
     } catch (err) {
       const e = `${err}`;
@@ -232,10 +228,6 @@ export async function unmount(project_id: string) {
   await release();
 }
 
-export function escape(path) {
-  return replace_all(path, ":", `\\:`);
-}
-
 async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
   await executeCode({
     verbose: true,
@@ -244,17 +236,12 @@ async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
     args: [
       "-n",
       STORAGE_WRAPPER,
-      "mount",
-      "-t",
-      "overlay",
-      "overlay",
-      "-o",
-      // CRITICAL: using xino=off,metacopy=off,redirect_dir=off disables all use of xattrs,
-      // so we can rsync rootfs in a purely rootless context.  It is much LESS efficient
-      // if users are modifying big base layer file metadata or deleting a lot of base
-      // image directories... but that's not at all the likely use case of our overlay filesystem.
-      // Much more likely is that users place data and new software installs in the rootfs.
-      `lowerdir=${escape(lowerdir)},upperdir=${escape(upperdir)},workdir=${escape(workdir)},xino=off,metacopy=off,redirect_dir=off`,
+      "mount-overlay-project",
+      // CRITICAL: wrapper hardcodes xino=off,metacopy=off,redirect_dir=off to
+      // disable xattr-dependent overlay behaviors in this rootless workflow.
+      lowerdir,
+      upperdir,
+      workdir,
       merged,
     ],
   });

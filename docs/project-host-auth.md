@@ -618,6 +618,9 @@ Phase 2: sudo minimization
 - Introduce audited wrapper scripts for required privileged operations.
 - Replace ad-hoc sudo calls with whitelist entries mapped to wrappers.
 - Add tests that assert denied sudo for non-whitelisted commands.
+- Remove generic privileged `mount`/`umount` wrapper entrypoints; allow only
+  fixed-purpose overlay mount lifecycle commands with strict mountpoint
+  validation.
 
 Phase 3: podman/network hardening
 

@@ -648,6 +648,24 @@ allow_path() {
   esac
 }
 
+allow_overlay_mountpoint() {
+  local path="${1//\\\\:/:}"
+  case "$path" in
+    /mnt/cocalc/data/cache/project-roots/*|/btrfs/data/cache/project-roots/*)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  local base
+  base="$(basename "$path")"
+  # project ids are UUID-like; keep this strict to avoid broad mount targets.
+  if ! echo "$base" | grep -Eq '^[0-9a-fA-F-]{32,64}$'; then
+    return 1
+  fi
+  return 0
+}
+
 check_args() {
   local arg value
   for arg in "$@"; do
@@ -684,13 +702,34 @@ case "$cmd" in
     fi
     exec /sbin/mkfs.btrfs "$@"
     ;;
-  mount)
-    check_args "$@"
-    exec /bin/mount "$@"
+  mount-overlay-project)
+    if [ "$#" -ne 4 ]; then
+      echo "usage: cocalc-runtime-storage mount-overlay-project <lowerdir> <upperdir> <workdir> <merged>" >&2
+      exit 2
+    fi
+    lowerdir="$1"
+    upperdir="$2"
+    workdir="$3"
+    merged="$4"
+    check_args "$lowerdir" "$upperdir" "$workdir" "$merged"
+    if ! allow_overlay_mountpoint "$merged"; then
+      echo "cocalc-runtime-storage: overlay mountpoint not allowed: $merged" >&2
+      exit 2
+    fi
+    exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir},upperdir=${upperdir},workdir=${workdir},xino=off,metacopy=off,redirect_dir=off" "$merged"
     ;;
-  umount)
-    check_args "$@"
-    exec /bin/umount "$@"
+  umount-overlay-project)
+    if [ "$#" -ne 1 ]; then
+      echo "usage: cocalc-runtime-storage umount-overlay-project <merged>" >&2
+      exit 2
+    fi
+    merged="$1"
+    check_args "$merged"
+    if ! allow_overlay_mountpoint "$merged"; then
+      echo "cocalc-runtime-storage: overlay mountpoint not allowed: $merged" >&2
+      exit 2
+    fi
+    exec /bin/umount -l "$merged"
     ;;
   losetup)
     check_args "$@"
@@ -1310,6 +1349,26 @@ def verify_runtime_sudoers(cfg: BootstrapConfig) -> None:
     if denied.returncode == 0:
         raise RuntimeError(
             "runtime sudo policy too broad: non-whitelisted command /bin/true was allowed"
+        )
+    mount_denied = run_cmd(
+        cfg,
+        [
+            "sudo",
+            "-n",
+            "/usr/local/sbin/cocalc-runtime-storage",
+            "mount",
+            "-t",
+            "overlay",
+            "overlay",
+            "/mnt/cocalc/data",
+        ],
+        "runtime generic mount command denied check",
+        as_user=user,
+        check=False,
+    )
+    if mount_denied.returncode == 0:
+        raise RuntimeError(
+            "runtime storage wrapper still allows generic mount command; expected deny"
         )
 
 
