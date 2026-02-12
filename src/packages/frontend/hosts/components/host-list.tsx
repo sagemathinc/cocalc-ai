@@ -181,6 +181,7 @@ type HostListViewModel = {
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
   onUpgrade?: (host: Host) => void;
+  onUpgradeFromHub?: (host: Host) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
   onToggleStar: (host: Host) => void;
@@ -221,6 +222,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     onRefresh,
     onCancelOp,
     onUpgrade,
+    onUpgradeFromHub,
     onDetails,
     onEdit,
     onToggleStar,
@@ -924,6 +926,22 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               disabled={!upgradeTargets.length}
             >
               Upgrade ({upgradeTargets.length})
+            </Button>
+          )}
+          {onUpgradeFromHub && (
+            <Button
+              size="small"
+              onClick={() =>
+                runBulkAction(
+                  "Upgrade (hub source)",
+                  upgradeTargets,
+                  onUpgradeFromHub,
+                  { notice: upgradeNotice },
+                )
+              }
+              disabled={!upgradeTargets.length}
+            >
+              Upgrade from hub ({upgradeTargets.length})
             </Button>
           )}
           <Button

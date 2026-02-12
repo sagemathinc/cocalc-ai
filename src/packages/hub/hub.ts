@@ -64,7 +64,6 @@ import * as MetricsRecorder from "@cocalc/server/metrics/metrics-recorder";
 import { setConatClient } from "@cocalc/conat/client";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { createProjectHostProxyHandlers } from "./proxy/project-host";
-import { maybeStartEmbeddedProjectHost } from "./servers/project-host";
 import { ensureSelfHostReverseTunnelsOnStartup } from "@cocalc/server/self-host/ssh-target";
 import { assertLocalBindOrInsecure } from "@cocalc/backend/network/policy";
 
@@ -235,8 +234,6 @@ async function startServer(): Promise<void> {
     logger.info("starting cloud VM reconcile loop...");
     startCloudVmReconciler();
   }
-
-  await maybeStartEmbeddedProjectHost();
 
   if (program.conatServer) {
     if (program.mode != "kucalc") {

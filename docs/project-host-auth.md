@@ -259,21 +259,11 @@ Because authorization is ACL-based (not project-list claims inside JWT), revocat
 - No requirement for per-message central introspection (keeps latency low and reduces control-plane dependency).
 - Fast-grant behavior depends on reliable hub -> host collaborator delta delivery.
 
-## Embedded Dev Host Exception
+## Embedded Dev Host
 
-The hub has a dev-only embedded project-host mode (`COCALC_EMBEDDED_PROJECT_HOST=1`).
-That path is intentionally not production-hardened and is now explicitly gated.
-
-Why this is different:
-
-- Project containers connect back to host conat via `host.containers.internal` (podman slirp4netns path), not plain loopback.
-- In current dev wiring, that requires embedded project-host bind host `HOST=0.0.0.0` so container -> host conat works reliably.
-
-Enforcement:
-
-- Embedded mode now fails fast unless `COCALC_ALLOW_INSECURE_HTTP_MODE=true`.
-- This keeps insecure bind behavior opt-in and explicit for local development.
-- Production project-host deployments should not rely on this dev exception.
+Embedded project-host mode inside the hub process has been removed.
+Development and production now share one runtime model: a VM-owned
+project-host deployment with the same privilege wrappers and network model.
 
 ## Hub -> Project-Host Routed Control Auth
 
@@ -520,7 +510,7 @@ Operational status:
 - Networking isolation remains an additional hardening layer to reduce blast
   radius if any application-layer control regresses in the future.
 
-## User Model Redesign (Planned)
+## User Model Redesign (Status)
 
 Objective:
 
@@ -650,13 +640,14 @@ Phase 4: operations hardening
 
 Phase 5: developer/runtime simplification
 
-- Remove embedded project-host runtime path (dev-only mode) from the main
-  production code path.
-- Standardize on VM-owned project-host deployment (local VM acceptable for
-  dev) so security wrappers and privileged operations are only maintained in
-  one runtime model.
-- Improve bundle/tool iteration loop for development without relying on
-  hand-managed external publish scripts.
+- Remove embedded project-host runtime path from hub startup.
+  - Implemented: hub no longer starts an in-process project-host.
+- Add hub-served software endpoint for local development/testing iteration.
+  - Implemented: hub now serves local manifests/artifacts under `/software`
+    using timestamped versions derived from local build artifact mtimes.
+- Add explicit host upgrade action that uses hub-served software source.
+  - Implemented: frontend now exposes "Upgrade from hub source", which calls
+    host upgrade with `base_url=<hub>/software`.
 
 Acceptance criteria for this redesign:
 
