@@ -15,9 +15,11 @@ export function defaultOpenProjectTarget({
   if (target != null) {
     return target;
   }
-  if (!hasOpenFiles && activeProjectTab === "files") {
+  if (
+    !hasOpenFiles &&
+    (activeProjectTab == null || activeProjectTab === "files")
+  ) {
     return "home/";
   }
   return undefined;
 }
-

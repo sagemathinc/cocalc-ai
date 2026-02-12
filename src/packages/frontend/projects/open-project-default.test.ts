@@ -40,5 +40,14 @@ describe("defaultOpenProjectTarget", () => {
       }),
     ).toBeUndefined();
   });
-});
 
+  it("defaults to home/ when active tab is unset and no open files", () => {
+    expect(
+      defaultOpenProjectTarget({
+        target: undefined,
+        activeProjectTab: undefined,
+        hasOpenFiles: false,
+      }),
+    ).toBe("home/");
+  });
+});
