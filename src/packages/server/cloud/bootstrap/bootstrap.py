@@ -636,10 +636,17 @@ fi
 cmd="$1"
 shift
 
+deny() {
+  local code="$1"
+  local detail="$2"
+  echo "SECURITY_DENY code=${code} detail=${detail}" >&2
+  exit 2
+}
+
 allow_path() {
   local path="${1//\\\\:/:}"
   case "$path" in
-    /mnt/cocalc|/mnt/cocalc/*|/btrfs|/btrfs/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
+    /mnt/cocalc|/mnt/cocalc/*|/dev/loop*|/var/lib/cocalc/cocalc.img|/var/lib/cocalc/btrfs.img|/opt/cocalc/project-host|/opt/cocalc/project-host/*|/opt/cocalc/project-bundles|/opt/cocalc/project-bundles/*|/opt/cocalc/tools|/opt/cocalc/tools/*)
       return 0
       ;;
     *)
@@ -651,7 +658,7 @@ allow_path() {
 allow_overlay_mountpoint() {
   local path="${1//\\\\:/:}"
   case "$path" in
-    /mnt/cocalc/data/cache/project-roots/*|/btrfs/data/cache/project-roots/*)
+    /mnt/cocalc/data/cache/project-roots/*)
       ;;
     *)
       return 1
@@ -671,8 +678,7 @@ check_args() {
   for arg in "$@"; do
     if [[ "$arg" == /* ]]; then
       if ! allow_path "$arg"; then
-        echo "cocalc-runtime-storage: path not allowed: $arg" >&2
-        exit 2
+        deny "path-not-allowed" "$arg"
       fi
       continue
     fi
@@ -682,8 +688,7 @@ check_args() {
       for _part in "${_parts[@]}"; do
         [ -z "$_part" ] && continue
         if [[ "$_part" == /* ]] && ! allow_path "$_part"; then
-          echo "cocalc-runtime-storage: path not allowed: $_part" >&2
-          exit 2
+          deny "path-not-allowed" "$_part"
         fi
       done
     fi
@@ -720,8 +725,7 @@ case "$cmd" in
     merged="$4"
     check_args "$lowerdir" "$upperdir" "$workdir" "$merged"
     if ! allow_overlay_mountpoint "$merged"; then
-      echo "cocalc-runtime-storage: overlay mountpoint not allowed: $merged" >&2
-      exit 2
+      deny "overlay-mountpoint-not-allowed" "$merged"
     fi
     lowerdir_escaped="$(escape_overlay_path "$lowerdir")"
     upperdir_escaped="$(escape_overlay_path "$upperdir")"
@@ -736,8 +740,7 @@ case "$cmd" in
     merged="$1"
     check_args "$merged"
     if ! allow_overlay_mountpoint "$merged"; then
-      echo "cocalc-runtime-storage: overlay mountpoint not allowed: $merged" >&2
-      exit 2
+      deny "overlay-mountpoint-not-allowed" "$merged"
     fi
     exec /bin/umount -l "$merged"
     ;;
@@ -796,12 +799,10 @@ case "$cmd" in
     ;;
   grow-btrfs)
     if [ "$#" -gt 1 ]; then
-      echo "cocalc-runtime-storage: grow-btrfs accepts at most one numeric argument" >&2
-      exit 2
+      deny "grow-btrfs-bad-args" "too-many-arguments"
     fi
     if [ "$#" -eq 1 ] && ! echo "$1" | grep -Eq '^[0-9]+$'; then
-      echo "cocalc-runtime-storage: grow-btrfs argument must be numeric" >&2
-      exit 2
+      deny "grow-btrfs-bad-args" "non-numeric-argument"
     fi
     exec /usr/local/sbin/cocalc-grow-btrfs "$@"
     ;;
@@ -809,8 +810,7 @@ case "$cmd" in
     exec /bin/sync "$@"
     ;;
   *)
-    echo "cocalc-runtime-storage: unsupported command: $cmd" >&2
-    exit 2
+    deny "unsupported-command" "$cmd"
     ;;
 esac
 """

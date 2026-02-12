@@ -212,6 +212,19 @@ export function getMountPoint(): string {
   return fs.opts.mount;
 }
 
+export function getFileServerRuntimeStatus():
+  | {
+      mount: string;
+      bees: ReturnType<Filesystem["getBeesStatus"]>;
+    }
+  | undefined {
+  if (fs == null) return undefined;
+  return {
+    mount: fs.opts.mount,
+    bees: fs.getBeesStatus(),
+  };
+}
+
 export async function listProvisionedProjects(): Promise<string[]> {
   if (fs == null) {
     throw Error("file server not initialized");

@@ -632,11 +632,20 @@ Phase 3: podman/network hardening
 Phase 4: operations hardening
 
 - Add patch/update automation checks for host OS and Podman.
+  - Implemented: runtime posture monitor now checks apt timer status, apt
+    update freshness, and logs podman version visibility.
 - Add runtime conformance checks at daemon start (ownership/permissions/sudo
   policy drift detection).
+  - Implemented: startup conformance gate (`COCALC_RUNTIME_CONFORMANCE`) plus
+    periodic drift sweeps for wrapper/sudoers ownership and sudo allowlist.
 - Add incident-oriented logs/metrics for denied escalations and policy misses.
+  - Implemented: privileged wrapper now emits structured
+    `SECURITY_DENY code=...`, and backend execute logging promotes those denies
+    to warning-level security events.
 - Add BEES operational checks (enabled by default, process liveness visible,
   and alert/log when dedup is unexpectedly not running).
+  - Implemented: BEES supervision now auto-restarts with bounded backoff and
+    exposes runtime status consumed by the posture monitor.
 
 Phase 5: developer/runtime simplification
 

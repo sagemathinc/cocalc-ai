@@ -56,6 +56,11 @@ import { startConatRevocationKickLoop } from "./conat-revocation-kick";
 import { getOrCreateProjectHostConatPassword } from "./local-conat-password";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import {
+  runRuntimeConformanceStartupChecks,
+  startRuntimeConformanceMonitor,
+} from "./runtime-conformance";
+import { startRuntimePostureMonitor } from "./runtime-posture";
+import {
   assertLocalBindOrInsecure,
   assertSecureUrlOrLocal,
 } from "@cocalc/backend/network/policy";
@@ -159,6 +164,8 @@ export async function main(
     url: process.env.PROJECT_HOST_INTERNAL_URL ?? "",
     urlName: "PROJECT_HOST_INTERNAL_URL",
   });
+  await runRuntimeConformanceStartupChecks();
+  const stopRuntimeConformanceMonitor = startRuntimeConformanceMonitor();
   const tls = resolveTlsConfig(host, port);
   // Project-host internal conat auth is always local and host-specific.
   const localConatPassword = getOrCreateProjectHostConatPassword();
@@ -292,9 +299,11 @@ export async function main(
   // to master to get rustic backup config.
   logger.info("File-server (local btrfs + optional ssh proxy if enabled)");
   let stopOnPremTunnel: (() => void) | undefined;
+  let stopRuntimePostureMonitor: () => void = () => {};
   try {
     await initFileServer({ client: conatClient });
     stopOnPremTunnel = await startOnPremTunnel({ localHttpPort: port });
+    stopRuntimePostureMonitor = startRuntimePostureMonitor();
   } catch (err) {
     logger.error("FATAL: Failed to init file server", err);
     process.exit(1);
@@ -310,6 +319,8 @@ export async function main(
     stopMasterRegistration?.();
     stopReconciler?.();
     stopDataPermissionHardener?.();
+    stopRuntimeConformanceMonitor?.();
+    stopRuntimePostureMonitor?.();
     stopConatRevocationKickLoop?.();
     stopCodexSubscriptionCacheGc?.();
     stopCopyWorker?.();
