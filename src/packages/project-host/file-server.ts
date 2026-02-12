@@ -153,7 +153,10 @@ export async function ensureVolume(project_id: string, scratch?: boolean) {
   return vol;
 }
 
-export async function deleteVolume(project_id: string) {
+export async function deleteVolume(
+  project_id: string,
+  opts: { reportProvisioned?: boolean } = {},
+) {
   if (fs == null) {
     throw Error("file server not initialized");
   }
@@ -185,7 +188,9 @@ export async function deleteVolume(project_id: string) {
 
   await deleteIfExists({ name: volName(project_id), clearSnapshots: true });
   await deleteIfExists({ name: scratchVolName(project_id) });
-  queueProjectProvisioned(project_id, false);
+  if (opts.reportProvisioned !== false) {
+    queueProjectProvisioned(project_id, false);
+  }
   await deleteBackupIndexCache(project_id);
 }
 
@@ -208,6 +213,19 @@ export function getMountPoint(): string {
     throw Error("file server not initialized");
   }
   return fs.opts.mount;
+}
+
+export function getFileServerRuntimeStatus():
+  | {
+      mount: string;
+      bees: ReturnType<Filesystem["getBeesStatus"]>;
+    }
+  | undefined {
+  if (fs == null) return undefined;
+  return {
+    mount: fs.opts.mount,
+    bees: fs.getBeesStatus(),
+  };
 }
 
 export async function listProvisionedProjects(): Promise<string[]> {
@@ -256,7 +274,15 @@ async function startBackupConfigInvalidation(client: ConatClient) {
   const hostId = getLocalHostId();
   if (!hostId) return;
   const subject = `project-host.${hostId}.backup.invalidate`;
-  backupConfigInvalidationSub = await client.subscribe(subject);
+  try {
+    backupConfigInvalidationSub = await client.subscribe(subject);
+  } catch (err) {
+    logger.warn("backup config invalidation subscribe failed", {
+      subject,
+      err: String(err),
+    });
+    return;
+  }
   (async () => {
     for await (const _msg of backupConfigInvalidationSub) {
       backupConfigCache.clear();

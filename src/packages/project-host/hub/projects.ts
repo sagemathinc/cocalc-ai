@@ -1,7 +1,11 @@
 import { hubApi } from "@cocalc/lite/hub/api";
 import { account_id } from "@cocalc/backend/data";
 import { uuid, isValidUUID } from "@cocalc/util/misc";
-import { getProject, upsertProject } from "../sqlite/projects";
+import {
+  getProject,
+  getOrCreateProjectLocalSecretToken,
+  upsertProject,
+} from "../sqlite/projects";
 import {
   type CreateProjectOptions,
   type SnapshotCounts,
@@ -46,6 +50,7 @@ import {
 } from "../codex/codex-device-auth";
 import { uploadSubscriptionAuthFile } from "../codex/codex-auth";
 import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
+import { clearProjectHostConatAuthCaches } from "../conat-auth";
 
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
@@ -227,8 +232,10 @@ async function getRunnerConfig(
   const disk = limits.disk ?? existing?.disk;
   const scratch = limits.scratch ?? existing?.scratch;
   const ssh_proxy_public_key = await getSshProxyPublicKey();
+  const secret = getOrCreateProjectLocalSecretToken(project_id);
   return {
     image: normalizeImage(opts?.image ?? existing?.image),
+    secret,
     authorized_keys,
     ssh_proxy_public_key,
     run_quota,
@@ -552,6 +559,22 @@ export async function updateAuthorizedKeys({
     throw Error("invalid project_id");
   }
   await refreshAuthorizedKeys(project_id, authorized_keys ?? "");
+}
+
+export async function updateProjectUsers({
+  project_id,
+  users,
+}: {
+  project_id: string;
+  users?: any;
+}) {
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  // Store collaborator map in the generic sqlite row mirror used by conat auth.
+  // This is separate from the concrete projects SQL table schema.
+  upsertProject({ project_id, users });
+  clearProjectHostConatAuthCaches();
 }
 
 export async function getSshKeys({

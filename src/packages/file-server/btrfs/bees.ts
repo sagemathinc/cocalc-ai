@@ -5,7 +5,7 @@ Automate running BEES on the btrfs pool.
 import { spawn } from "node:child_process";
 import { delay } from "awaiting";
 import getLogger from "@cocalc/backend/logger";
-import { sudo } from "./util";
+import { sudo, STORAGE_WRAPPER } from "./util";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { join } from "node:path";
 
@@ -21,11 +21,18 @@ interface Options {
 }
 
 const children: any[] = [];
+
+function beesDisabledByEnv(): boolean {
+  const value = `${process.env.COCALC_DISABLE_BEES ?? ""}`.trim().toLowerCase();
+  if (!value) return false;
+  return !["0", "false", "no", "off"].includes(value);
+}
+
 export default async function bees(
   mountpoint: string,
   { loadavgTarget = 1, verbose = 1, size = "1G" }: Options = {},
 ) {
-  if (process.env.COCALC_DISABLE_BEES) {
+  if (beesDisabledByEnv()) {
     logger.debug(
       "bees: COCALC_DISABLE_BEES is set to not running bees",
       mountpoint,
@@ -49,8 +56,8 @@ export default async function bees(
     args.push("-g", `${loadavgTarget}`);
   }
   args.push(mountpoint);
-  logger.debug(`Running 'sudo ${args.join(" ")}'`);
-  const child = spawn("sudo", args, {
+  logger.debug(`Running 'sudo -n ${STORAGE_WRAPPER} ${args.join(" ")}'`);
+  const child = spawn("sudo", ["-n", STORAGE_WRAPPER, ...args], {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -381,7 +381,27 @@ export function terminalServer({
         case "resize":
           const { rows, cols } = data;
           if (pty != null) {
-            pty.resize(cols, rows);
+            try {
+              // Newer node-pty APIs support optional pixel size as an object.
+              pty.resize(cols, rows, { width: 0, height: 0 });
+            } catch (err0) {
+              try {
+                // Older signatures expect explicit xPixel/yPixel positional args.
+                pty.resize(cols, rows, 0, 0);
+              } catch (err1) {
+                try {
+                  // Legacy two-argument signature.
+                  pty.resize(cols, rows);
+                } catch {
+                  logger.debug("terminal resize failed", {
+                    rows,
+                    cols,
+                    err0,
+                    err1,
+                  });
+                }
+              }
+            }
             pty.emit("broadcast", "resize", { rows, cols });
           }
           return;

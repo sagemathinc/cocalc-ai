@@ -57,6 +57,15 @@ export class Filesystem {
   public readonly subvolumes: Subvolumes;
   public readonly fileSync: FileSync;
   private bees?: ChildProcess;
+  private beesRestartTimer?: NodeJS.Timeout;
+  private beesRestartAttempts = 0;
+  private beesDisabledByConfig = false;
+  private beesStopping = false;
+  private beesLastExit?: {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+    at: string;
+  };
 
   constructor(opts: Options) {
     this.opts = opts;
@@ -94,14 +103,7 @@ export class Filesystem {
       );
     }
     await this.sync();
-    try {
-      this.bees = await bees(this.opts.mount);
-    } catch (err) {
-      logger.debug(
-        "Error starting bees dedup service -- offline dedup not available",
-        err,
-      );
-    }
+    await this.startBees("startup");
   };
 
   sync = async () => {
@@ -117,9 +119,110 @@ export class Filesystem {
   };
 
   close = () => {
+    this.beesStopping = true;
+    if (this.beesRestartTimer) {
+      clearTimeout(this.beesRestartTimer);
+      this.beesRestartTimer = undefined;
+    }
     this.bees?.kill("SIGQUIT");
     this.fileSync.close();
   };
+
+  getBeesStatus = () => {
+    return {
+      enabled: !this.beesDisabledByConfig,
+      running:
+        !this.beesDisabledByConfig &&
+        this.bees != null &&
+        this.bees.killed !== true &&
+        this.bees.exitCode == null,
+      pid: this.bees?.pid,
+      restartAttempts: this.beesRestartAttempts,
+      restartPending: this.beesRestartTimer != null,
+      lastExit: this.beesLastExit,
+    };
+  };
+
+  private scheduleBeesRestart(reason: string) {
+    if (this.beesStopping || this.beesDisabledByConfig) {
+      return;
+    }
+    if (this.beesRestartTimer) {
+      return;
+    }
+    this.beesRestartAttempts += 1;
+    const delayMs = Math.min(
+      60_000,
+      Math.max(1_000, 2 ** (this.beesRestartAttempts - 1) * 1_000),
+    );
+    logger.warn("scheduling BEES restart", {
+      mount: this.opts.mount,
+      reason,
+      attempt: this.beesRestartAttempts,
+      delayMs,
+    });
+    this.beesRestartTimer = setTimeout(() => {
+      this.beesRestartTimer = undefined;
+      void this.startBees(`restart:${reason}`);
+    }, delayMs);
+    this.beesRestartTimer.unref();
+  }
+
+  private async startBees(reason: string): Promise<void> {
+    if (this.beesStopping) {
+      return;
+    }
+    try {
+      const child = await bees(this.opts.mount);
+      if (!child) {
+        this.bees = undefined;
+        this.beesDisabledByConfig = true;
+        logger.warn("BEES dedup disabled by configuration", {
+          mount: this.opts.mount,
+          reason,
+        });
+        return;
+      }
+      this.bees = child;
+      this.beesDisabledByConfig = false;
+      this.beesRestartAttempts = 0;
+      logger.info("BEES dedup service running", {
+        mount: this.opts.mount,
+        pid: child.pid,
+        reason,
+      });
+      child.once("exit", (code, signal) => {
+        if (this.bees !== child) return;
+        this.bees = undefined;
+        this.beesLastExit = {
+          code: code ?? null,
+          signal: signal ?? null,
+          at: new Date().toISOString(),
+        };
+        if (this.beesStopping) {
+          logger.info("BEES dedup service stopped", {
+            mount: this.opts.mount,
+            code,
+            signal,
+          });
+          return;
+        }
+        logger.error("BEES dedup service exited unexpectedly", {
+          mount: this.opts.mount,
+          code,
+          signal,
+        });
+        this.scheduleBeesRestart("unexpected-exit");
+      });
+    } catch (err) {
+      logger.error("Error starting BEES dedup service", {
+        mount: this.opts.mount,
+        reason,
+        err: `${err}`,
+      });
+      this.scheduleBeesRestart("start-failure");
+    }
+  }
 
   private initDevice = async () => {
     if (!this.opts.image) {

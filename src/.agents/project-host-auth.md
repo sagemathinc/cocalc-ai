@@ -1,0 +1,79 @@
+# Project-Host Auth Implementation Checklist
+
+Branch scope: implement robust browser -> project-host Conat authentication and subject authorization.
+
+DO NOT FORGET:
+
+- [x] Implement conat auth for projects running on project-host
+- [x] Make project control work for starting projects on project-host from browser.
+- [x] Make sure that the project-hosts no longer get the central hub's conat_password as part of their bootstrap and initialization steps.  More generally, audit how that conat_password is used.
+  - [x] In particular, project-host should receive host-specific token for hub --&gt; project-host auth.
+- [x] audit: make sure all key/token/secret lifecycles have a clear key rotation story; there must never be anything where manual intervention on a particular day is required by design.
+- [ ] (this is not auth, so will do as a separate project) do direct browser-&gt;host project control 
+
+## Principles
+
+- Authenticate once per websocket connection using short-lived host-scoped token.
+- Authorize each publish/subscribe using local ACL state on project-host.
+- Keep auth policy logic shared across central and project-host implementations.
+- Optimize for quick collaborator grant propagation and scalable host behavior.
+
+## Checklist
+
+- [x] Create shared auth policy module under `src/packages/conat/auth/`.
+- [x] Refactor central hub auth code to reuse shared policy logic from `src/packages/server/conat/socketio/auth.ts`.
+- [x] Add project-host auth adapter that uses shared policy + project-host collaborator lookups.
+- [x] Replace permissive `getUser: async () => ({ account_id })` in project-host Conat startup.
+
+### Token issuance and verification
+
+- [x] Add central RPC to issue project-host auth token (host-scoped, short TTL).
+- [x] Define token claims and validation rules (`sub`, `aud`, `exp`, `iat`, `jti`).
+- [ ] Implement signing key config and key id (`kid`) support.
+- [x] Implement project-host token verification path in websocket handshake.
+
+### Frontend wiring
+
+- [x] Add per-host token manager in frontend conat client.
+- [x] Attach token via socket.io `auth` for routed project-host connections.
+- [x] Refresh token before expiry and retry once on auth failure.
+
+### ACL data plane
+
+- [x] Implement project-host in-memory ACL indexes for collaborator checks.
+- [x] Add hub -> host collaborator delta stream and handlers.
+- [x] Ensure fast grant propagation path (seconds target).
+- [x] Add bounded periodic reconcile (recently modified + active projects only).
+- [x] Add on-demand single-project ACL refresh for unknown project checks.
+
+### Authorization behavior
+
+- [x] Enforce account-scoped hub subjects (`hub.account.<id>.api`) per authenticated identity.
+- [x] Enforce project subject access based on local collaborator ACL.
+- [x] Enforce inbox/public/common conat subject rules consistent with central policy.
+- [x] Deny by default for unknown/unsupported subject classes.
+
+### Caching and performance
+
+- [x] Share/port auth decision LRU cache logic for repeated checks.
+- [x] Add TTL and invalidation strategy tied to ACL updates.
+- [ ] Validate memory footprint under high project counts.
+
+### Observability and ops
+
+- [ ] Add structured logs for token verify failures and deny reasons.
+- [ ] Add metrics for allow/deny, delta lag, reconcile duration, on-demand fetches.
+- [ ] Add health/debug endpoint or trace hooks for ACL cache state summaries.
+
+### Tests
+
+- [ ] Unit tests for shared subject policy logic.
+- [ ] Unit tests for project-host adapter collaborator cases.
+- [ ] Integration tests for add-collaborator fast grant behavior.
+- [ ] Integration tests for revoke behavior and stale-token scenarios.
+- [ ] Scale-oriented test for hosts with large project sets.
+
+## Deferred / Out of Scope Here
+
+- Full provider API key proxy architecture.
+- Broader non-conat project-host auth hardening not directly related to websocket subject auth.

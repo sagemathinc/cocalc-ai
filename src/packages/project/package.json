@@ -1,6 +1,6 @@
 {
   "name": "@cocalc/project",
-  "version": "1.41.25",
+  "version": "1.41.30",
   "description": "CoCalc: project daemon",
   "exports": {
     "./conat": "./dist/conat/index.js",
@@ -30,7 +30,7 @@
     "@cocalc/sync": "workspace:*",
     "@cocalc/sync-client": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "@lydell/node-pty": "^1.1.0",
+    "node-pty": "1.2.0-beta.11",
     "@types/jest": "^30.0.0",
     "awaiting": "^3.0.0",
     "commander": "^14.0.1",

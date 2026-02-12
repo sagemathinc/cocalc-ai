@@ -31,6 +31,11 @@ import { userInfo } from "node:os";
 import httpProxy from "http-proxy-3";
 import { getLogger } from "@cocalc/project/logger";
 import { project_id } from "@cocalc/project/data";
+import { secretToken } from "@cocalc/project/data";
+import {
+  PROJECT_PROXY_AUTH_HEADER,
+  getSingleHeaderValue,
+} from "@cocalc/backend/auth/project-proxy-auth";
 import listen from "@cocalc/backend/misc/async-server-listen";
 
 const logger = getLogger("project:servers:proxy");
@@ -65,6 +70,11 @@ export async function startProxyServer({
   const proxyServer = http.createServer((req, res) => {
     try {
       const target = getTarget(req);
+      if (!hasValidInternalProxySecret(req)) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        res.end("Forbidden\n");
+        return;
+      }
       proxy.web(req, res, { target, prependPath: false });
     } catch {
       // Not matched — 404 so it's obvious when a wrong base is used.
@@ -76,6 +86,11 @@ export async function startProxyServer({
   proxyServer.on("upgrade", (req, socket, head) => {
     try {
       const target = getTarget(req);
+      if (!hasValidInternalProxySecret(req)) {
+        socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
       proxy.ws(req, socket, head, {
         target,
       });
@@ -116,6 +131,11 @@ export function attachProxyServer({
     app.use((req, res, next) => {
       try {
         const target = getTarget(req);
+        if (!hasValidInternalProxySecret(req)) {
+          res.writeHead(403, { "Content-Type": "text/plain" });
+          res.end("Forbidden\n");
+          return;
+        }
         proxy.web(req, res, { target, prependPath: false });
       } catch {
         return next();
@@ -127,6 +147,11 @@ export function attachProxyServer({
     httpServer.prependListener("upgrade", (req, socket, head) => {
       try {
         const target = getTarget(req);
+        if (!hasValidInternalProxySecret(req)) {
+          socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
         proxy.ws(req, socket, head, {
           target,
         });
@@ -219,4 +244,11 @@ function createProxyResolver({
   });
 
   return { proxy, getTarget };
+}
+
+function hasValidInternalProxySecret(req: http.IncomingMessage): boolean {
+  const expected = `${secretToken ?? ""}`.trim();
+  if (!expected) return false;
+  const got = getSingleHeaderValue(req.headers[PROJECT_PROXY_AUTH_HEADER]);
+  return `${got ?? ""}`.trim() === expected;
 }

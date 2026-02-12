@@ -1,6 +1,7 @@
 import getPool from "@cocalc/database/pool";
 import { jsonbSet } from "@cocalc/database/postgres/jsonb-utils";
 import { isValidUUID } from "@cocalc/util/misc";
+import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 
 interface Options {
   account_id: string;
@@ -26,4 +27,5 @@ export default async function addUserToProject({
     `UPDATE projects SET ${set} WHERE project_id=$${params.length + 1}`,
     params.concat(project_id)
   );
+  await syncProjectUsersOnHost({ project_id });
 }

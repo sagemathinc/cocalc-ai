@@ -2,7 +2,7 @@ import {
   filesystem,
   type Filesystem,
 } from "@cocalc/file-server/btrfs/filesystem";
-import { chmod, mkdtemp, mkdir, rm } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "path";
 import { until } from "@cocalc/util/async-utils";
@@ -16,11 +16,20 @@ let tempDir;
 const TEMP_PREFIX = "cocalc-test-btrfs-";
 
 export async function before() {
+  const tmp = tmpdir();
   try {
-    const command = `umount ${join(tmpdir(), TEMP_PREFIX)}*/mnt`;
-    // attempt to unmount any mounts left from previous runs.
-    // TODO: this could impact runs in parallel
-    await sudo({ command, bash: true });
+    // Attempt to unmount any mounts left from previous runs.
+    // TODO: this could impact runs in parallel.
+    const entries = await readdir(tmp, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith(TEMP_PREFIX)) continue;
+      const mount = join(tmp, entry.name, "mnt");
+      try {
+        await sudo({ command: "umount", args: ["-l", mount] });
+      } catch {
+        // ignore stale/non-mounted paths
+      }
+    }
   } catch {}
   await ensureMoreLoopbackDevices();
   tempDir = await mkdtemp(join(tmpdir(), TEMP_PREFIX));

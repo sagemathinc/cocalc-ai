@@ -11,6 +11,7 @@ export COCALC_SSH_SERVER=localhost:2222
 export COCALC_FILE_SERVER_MOUNTPOINT=/home/wstein/scratch/btrfs2/mnt/0
 export PROJECT_RUNNER_NAME=0
 export HOST=0.0.0.0
+export COCALC_ALLOW_INSECURE_HTTP_MODE=true
 export COCALC_LITE_SQLITE_FILENAME=/home/wstein/build/cocalc-lite/src/packages/project-host/data-0/sqlite.db
 export DEBUG='cocalc:*'
 export DEBUG_CONSOLE='no'
@@ -21,4 +22,3 @@ export COCALC_PROJECT_BUNDLE=/home/wstein/build/cocalc-lite/src/packages/project
 #rm -f $DEBUG_FILE
 
 #./cocalc-project-host-0.1.4-x86_64-linux/cocalc-project-host
-

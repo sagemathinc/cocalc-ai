@@ -30,7 +30,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { NamedServerName } from "@cocalc/util/types/servers";
 import { useAvailableFeatures } from "./use-available-features";
 import AppState from "@cocalc/frontend/project/apps/app-state";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppStatus } from "@cocalc/frontend/project/apps/use-app-status";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { Button } from "antd";
@@ -320,10 +320,32 @@ export function ServerLink({
 
   const ready = appStatus.status?.ready === true;
   const running = appStatus.status?.state === "running";
-  const appUrl =
-    ready && appStatus.status?.url
-      ? withProjectHostBase(project_id, appStatus.status.url)
-      : undefined;
+  const [appUrl, setAppUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let canceled = false;
+    void (async () => {
+      const rawUrl =
+        ready && appStatus.status?.url
+          ? withProjectHostBase(project_id, appStatus.status.url)
+          : undefined;
+      if (!rawUrl) {
+        if (!canceled) setAppUrl(undefined);
+        return;
+      }
+      const authed = await webapp_client.conat_client.addProjectHostAuthToUrl({
+        project_id,
+        url: rawUrl,
+      });
+      if (!canceled) {
+        setAppUrl(authed);
+      }
+    })().catch((_err) => {
+      if (!canceled) setAppUrl(undefined);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [appStatus.status?.url, project_id, ready]);
 
   if (!appUrl) {
     if (running) {

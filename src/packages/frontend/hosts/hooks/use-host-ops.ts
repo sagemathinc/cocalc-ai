@@ -230,17 +230,18 @@ export function useHostOps({
               scope_id: id,
               include_completed: true,
             });
-            const hostOps = ops.filter(
-              (op) =>
-                op.kind?.startsWith("host-") &&
-                !isDismissed(op) &&
-                op.status !== "succeeded",
-            );
+            const hostOps = ops
+              .filter((op) => op.kind?.startsWith("host-") && !isDismissed(op))
+              .sort((a, b) => toTime(b) - toTime(a));
             if (!hostOps.length) {
               return;
             }
-            const latest = hostOps.sort((a, b) => toTime(b) - toTime(a))[0];
+            const latest = hostOps[0];
             if (!latest) return;
+            // If the newest host op succeeded, suppress stale older failures.
+            if (latest.status === "succeeded") {
+              return;
+            }
             const status = hostStatusMap.get(id);
             if (
               status &&

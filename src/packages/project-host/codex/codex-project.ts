@@ -205,6 +205,7 @@ async function ensureContainer({
 
   const args: string[] = [];
   args.push("run", "--runtime", "/usr/bin/crun", "--detach", "--rm");
+  args.push("--security-opt", "no-new-privileges");
   args.push(networkArgument());
   if (hasGpu) {
     args.push("--device", "nvidia.com/gpu=all");

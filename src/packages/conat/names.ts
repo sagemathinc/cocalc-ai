@@ -30,10 +30,12 @@ export function jsName({
   project_id,
   account_id,
   hub_id,
+  host_id,
 }: {
   project_id?: string;
   account_id?: string;
   hub_id?: string;
+  host_id?: string;
 }) {
   if (project_id) {
     return `project-${project_id}`;
@@ -43,6 +45,9 @@ export function jsName({
   }
   if (hub_id) {
     return `hub-${hub_id}`;
+  }
+  if (host_id) {
+    return `host-${host_id}`;
   }
   if (process.env.COCALC_TEST_MODE) {
     return "test";
@@ -77,13 +82,15 @@ export function inboxPrefix({
   account_id,
   project_id,
   hub_id,
+  host_id,
 }: {
   account_id?: string;
   project_id?: string;
   hub_id?: string;
+  host_id?: string;
 }) {
   // a project or account:
-  return `_INBOX.${jsName({ account_id, project_id, hub_id })}`;
+  return `_INBOX.${jsName({ account_id, project_id, hub_id, host_id })}`;
 }
 
 export function streamSubject({
