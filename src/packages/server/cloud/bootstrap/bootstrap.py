@@ -692,10 +692,9 @@ check_args() {
 
 escape_overlay_path() {
   local path="$1"
-  path="${path//\\/\\\\}"
-  path="${path//:/\\:}"
-  path="${path//,/\\,}"
-  printf '%s' "$path"
+  # Escape backslash/colon/comma for overlay mount option parsing.
+  # Using sed here avoids fragile nested escaping through Python -> bash.
+  printf '%s' "$path" | /usr/bin/sed -e 's/[\\\\,:]/\\\\&/g'
 }
 
 case "$cmd" in
