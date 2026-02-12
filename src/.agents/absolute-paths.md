@@ -355,6 +355,20 @@ Mitigation:
     - `new/...` and `search/...` URL pushes now avoid `//` by using normalized path suffixes.
   - Remaining:
     - Final manual verification pass on URL routes (`files`, `home`, `new/home`, `search/home`) across history/back/forward navigation.
+- Ticket 3: In progress.
+  - Done:
+    - File-open flow preserves `display_path` while resolving/storing `sync_path` at open boundary:
+      - [src/packages/frontend/project/open-file.ts](./src/packages/frontend/project/open-file.ts)
+    - Project action lifecycle (`show/hide/goto/chat/close`) now consistently routes editor identity through `sync_path` when present:
+      - [src/packages/frontend/project_actions.ts](./src/packages/frontend/project_actions.ts)
+    - Project page/frame wiring now explicitly requests editor actions via `sync_path` (not only display-path fallback):
+      - [src/packages/frontend/project/page/page.tsx](./src/packages/frontend/project/page/page.tsx)
+      - [src/packages/frontend/project/page/content.tsx](./src/packages/frontend/project/page/content.tsx)
+    - Added regression tests for display-path to sync-path fallback and precedence:
+      - [src/packages/util/redux/AppRedux.test.ts](./src/packages/util/redux/AppRedux.test.ts)
+  - Remaining:
+    - Manual cross-browser symlink alias verification (`a.txt` and `b.txt -> a.txt`) under active editing/cursor updates.
+    - Add a focused integration-style frontend test for alias-open / close-last-alias behavior if we add a lightweight project-actions harness.
 - Ticket 4: In progress.
   - Done:
     - Explorer and flyout paths now mostly use `current_path_abs`.
