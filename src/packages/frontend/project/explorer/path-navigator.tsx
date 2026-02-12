@@ -13,7 +13,7 @@ import {
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
+import { DropdownMenu, Icon, type MenuItems } from "@cocalc/frontend/components";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { trunc_middle } from "@cocalc/util/misc";
@@ -26,6 +26,7 @@ interface Props {
   style?: React.CSSProperties;
   className?: string;
   mode?: "files" | "flyout";
+  showSourceSelector?: boolean;
 }
 
 // This path consists of several PathSegmentLinks
@@ -35,6 +36,7 @@ export const PathNavigator: React.FC<Props> = React.memo(
     style,
     className = "cc-path-navigator",
     mode = "files",
+    showSourceSelector = false,
   }: Readonly<Props>) => {
     const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
     const historyPathAbs = useTypedRedux({ project_id }, "history_path_abs");
@@ -60,35 +62,94 @@ export const PathNavigator: React.FC<Props> = React.memo(
       return normalizeAbsolutePath(path, homePath);
     };
 
+    const sourceForPath = (
+      path: string,
+    ): { key: "home" | "root" | "tmp" | "scratch"; rootPath: string } => {
+      if (!path.startsWith("/")) {
+        return { key: "home", rootPath: homePath };
+      }
+      if (homePath !== "/" && (path === homePath || path.startsWith(`${homePath}/`))) {
+        return { key: "home", rootPath: homePath };
+      }
+      if (path === "/tmp" || path.startsWith("/tmp/")) {
+        return { key: "tmp", rootPath: "/tmp" };
+      }
+      if (!lite && (path === "/scratch" || path.startsWith("/scratch/"))) {
+        return { key: "scratch", rootPath: "/scratch" };
+      }
+      return { key: "root", rootPath: "/" };
+    };
+
+    const stripRootPrefix = (path: string, rootPath: string): string[] => {
+      if (!path) return [];
+      if (!path.startsWith("/")) {
+        return path.split("/").filter(Boolean);
+      }
+      if (rootPath === "/") {
+        return path.split("/").filter(Boolean);
+      }
+      if (path === rootPath) {
+        return [];
+      }
+      if (path.startsWith(`${rootPath}/`)) {
+        return path.slice(rootPath.length).split("/").filter(Boolean);
+      }
+      return path.split("/").filter(Boolean);
+    };
+
     const currentPath = normalizePathForNav(
       currentPathAbs ?? homePath,
     );
     const historyPath = normalizePathForNav(
       historyPathAbs ?? currentPath,
     );
+    const currentSource = sourceForPath(currentPath);
+    const historySource = sourceForPath(historyPath);
+    const historyInSameRoot = currentSource.rootPath === historySource.rootPath;
     const actions = useActions({ project_id });
+
+    const sourceMenuItems: MenuItems = [
+      {
+        key: "home",
+        label: "Home",
+        onClick: () => actions?.open_directory(homePath, true, false),
+      },
+      {
+        key: "root",
+        label: "/",
+        onClick: () => actions?.open_directory("/", true, false),
+      },
+      {
+        key: "tmp",
+        label: "/tmp",
+        onClick: () => actions?.open_directory("/tmp", true, false),
+      },
+    ];
+    if (!lite) {
+      sourceMenuItems.push({
+        key: "scratch",
+        label: "/scratch",
+        onClick: () => actions?.open_directory("/scratch", true, false),
+      });
+    }
+
+    const sourceTitle =
+      currentSource.key === "home"
+        ? "Home"
+        : currentSource.key === "root"
+          ? "/"
+          : currentSource.key === "tmp"
+            ? "/tmp"
+            : "/scratch";
 
     function make_path() {
       const v: any[] = [];
 
-      const currentPathInHome =
-        currentPath === homePath || currentPath.startsWith(`${homePath}/`);
-      const historyPathInHome =
-        historyPath === homePath || historyPath.startsWith(`${homePath}/`);
-      const currentSegments = (
-        currentPathInHome && homePath !== "/"
-          ? currentPath.slice(homePath.length)
-          : currentPath
-      )
-        .split("/")
-        .filter(Boolean);
-      const historySegments = (
-        historyPathInHome && homePath !== "/"
-          ? historyPath.slice(homePath.length)
-          : historyPath
-      )
-        .split("/")
-        .filter(Boolean);
+      const currentSegments = stripRootPrefix(currentPath, currentSource.rootPath);
+      const historySegments = stripRootPrefix(
+        historyInSameRoot ? historyPath : currentPath,
+        currentSource.rootPath,
+      );
       const currentPathDepth = currentSegments.length - 1;
 
       const homeStyle: CSS = {
@@ -97,27 +158,43 @@ export const PathNavigator: React.FC<Props> = React.memo(
       } as const;
 
       const homeDisplay =
-        mode === "files" ? (
+        currentSource.key === "home" && mode === "files" ? (
           <>
             <HomeOutlined style={homeStyle} />{" "}
             <span style={homeStyle}>Home</span>
           </>
-        ) : (
+        ) : currentSource.key === "home" ? (
           <HomeOutlined style={homeStyle} />
+        ) : (
+          <span style={homeStyle}>{currentSource.rootPath}</span>
         );
 
-      v.push(
-        createPathSegmentLink({
-          path: homePath,
-          display: (
-            <Tooltip title="Go to home directory">{homeDisplay}</Tooltip>
-          ),
-          full_name: homePath,
-          key: 0,
-          on_click: () => actions?.open_directory(homePath, true, false),
-          active: currentPath === homePath,
-        }),
-      );
+      const suppressRedundantRootSegment =
+        showSourceSelector && currentSource.key === "root";
+
+      if (!suppressRedundantRootSegment) {
+        v.push(
+          createPathSegmentLink({
+            path: currentSource.rootPath,
+            display: (
+              <Tooltip
+                title={
+                  currentSource.key === "home"
+                    ? "Go to home directory"
+                    : `Go to ${currentSource.rootPath}`
+                }
+              >
+                {homeDisplay}
+              </Tooltip>
+            ),
+            full_name: currentSource.rootPath,
+            key: 0,
+            on_click: () =>
+              actions?.open_directory(currentSource.rootPath, true, false),
+            active: currentPath === currentSource.rootPath,
+          }),
+        );
+      }
 
       const pathLen = currentPathDepth;
       const condense = mode === "flyout";
@@ -128,12 +205,9 @@ export const PathNavigator: React.FC<Props> = React.memo(
         const relativePath = historySegments
           .slice(0, i + 1 || undefined)
           .join("/");
-        const path =
-          historyPathInHome && homePath !== "/"
-            ? normalizeAbsolutePath(relativePath, homePath)
-            : historyPath.startsWith("/")
-              ? `/${relativePath}`
-              : relativePath;
+        const path = historyPath.startsWith("/")
+          ? normalizeAbsolutePath(relativePath, currentSource.rootPath)
+          : relativePath;
 
         // don't show too much in flyout mode
         const hide =
@@ -155,6 +229,20 @@ export const PathNavigator: React.FC<Props> = React.memo(
         );
       });
       return v;
+    }
+
+    function renderSourceSelector() {
+      if (!showSourceSelector) return null;
+      return (
+        <DropdownMenu
+          button
+          showDown
+          size={mode === "files" ? "middle" : "small"}
+          title={sourceTitle}
+          items={sourceMenuItems}
+          style={{ marginRight: "6px", flexShrink: 0 }}
+        />
+      );
     }
 
     function renderUP() {
@@ -183,13 +271,20 @@ export const PathNavigator: React.FC<Props> = React.memo(
     const bc = (
       <Breadcrumb style={style} className={className} items={make_path()} />
     );
+
+    const pathBar = (
+      <Flex align="center" style={{ width: "100%", minWidth: 0 }}>
+        {renderSourceSelector()}
+        <div style={{ flex: 1, minWidth: 0 }}>{bc}</div>
+      </Flex>
+    );
     return mode === "files" ? (
       <Flex justify="space-between" align="center" style={{ width: "100%" }}>
-        <div style={{ flex: 1, minWidth: 0 }}>{bc}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>{pathBar}</div>
         {renderUP()}
       </Flex>
     ) : (
-      bc
+      pathBar
     );
   },
 );

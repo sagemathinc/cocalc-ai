@@ -753,7 +753,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   push_state(local_url?: string, hash?: string): void {
     if (local_url == null) {
-      local_url = this._last_history_state ?? "files/";
+      local_url = this._last_history_state ?? (lite ? "home/" : "files/");
     }
     this._last_history_state = local_url;
     set_url(this._url_in_project(local_url), hash);

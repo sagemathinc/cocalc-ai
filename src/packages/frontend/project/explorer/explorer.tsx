@@ -453,7 +453,7 @@ export function Explorer() {
                 ref={currentDirectoryRef}
                 className="cc-project-files-path-nav"
               >
-                <PathNavigator project_id={project_id} />
+                <PathNavigator project_id={project_id} showSourceSelector />
               </div>
             </div>
           </div>
