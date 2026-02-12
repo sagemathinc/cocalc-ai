@@ -7,7 +7,6 @@
 Functionality that mainly involves working with a specific project.
 */
 
-import { join } from "path";
 import { readFile, type ReadFileOptions } from "@cocalc/conat/files/read";
 import { writeFile, type WriteFileOptions } from "@cocalc/conat/files/write";
 import { projectSubject, EXEC_STREAM_SERVICE } from "@cocalc/conat/names";
@@ -22,7 +21,6 @@ import {
   Configuration,
   ConfigurationAspect,
 } from "@cocalc/frontend/project_configuration";
-import { HOME_ROOT } from "@cocalc/util/consts/files";
 import type { ApiKey } from "@cocalc/util/db-schema/api-keys";
 import {
   ExecOptsBlocking,
@@ -110,15 +108,11 @@ export class ProjectClient {
     path: string; // string or array of strings
   }): string => {
     const base_path = appBasePath;
-    if (opts.path[0] === "/") {
-      // absolute path to the root
-      opts.path = HOME_ROOT + opts.path; // use root symlink, which is created by start_smc
-    }
-    let url = join(
-      base_path,
-      `${opts.project_id}/files/${encode_path(opts.path)}`,
-    );
-    return url;
+    const encodedPath = opts.path.startsWith("/")
+      ? `%2F${encode_path(opts.path.slice(1))}`
+      : encode_path(opts.path);
+    const base = base_path.endsWith("/") ? base_path.slice(0, -1) : base_path;
+    return `${base}/${opts.project_id}/files/${encodedPath}`;
   };
 
   copyPathBetweenProjects = async (opts: {

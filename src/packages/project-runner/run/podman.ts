@@ -405,7 +405,129 @@ async function resolveProjectScript(): Promise<ScriptResolution> {
 }
 
 export function networkArgument() {
-  return "--network=slirp4netns";
+  // Allow explicit override when debugging networking behavior.
+  const explicit = `${process.env.COCALC_PROJECT_RUNNER_NETWORK ?? ""}`.trim();
+  if (explicit) {
+    const lowered = explicit.toLowerCase();
+    const allowed =
+      lowered === "none" ||
+      lowered.startsWith("slirp4netns") ||
+      lowered.startsWith("pasta");
+    if (allowed) {
+      return `--network=${explicit}`;
+    }
+    logger.warn("ignoring unsupported COCALC_PROJECT_RUNNER_NETWORK override", {
+      explicit,
+    });
+  }
+  const defaultNetworkRaw = `${
+    process.env.COCALC_PROJECT_RUNNER_NETWORK_DEFAULT ?? "pasta"
+  }`
+    .trim()
+    .toLowerCase();
+  const defaultNetwork =
+    defaultNetworkRaw === "pasta" || defaultNetworkRaw === "none"
+      ? defaultNetworkRaw
+      : "slirp4netns";
+  if (defaultNetwork === "none") {
+    return "--network=none";
+  }
+  if (defaultNetwork === "pasta") {
+    const pastaOptionsRaw = `${
+      process.env.COCALC_PROJECT_RUNNER_PASTA_OPTIONS ??
+      "--map-gw,--map-guest-addr,169.254.1.2"
+    }`.trim();
+    if (!pastaOptionsRaw) {
+      return "--network=pasta";
+    }
+    return `--network=pasta:${pastaOptionsRaw}`;
+  }
+  // Rootless pods need host loopback access so project containers can reach
+  // host-local conat (mapped as host.containers.internal in env.ts).
+  const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
+    .trim()
+    .toLowerCase();
+  const allowHostLoopback = !(
+    allowHostLoopbackRaw === "0" ||
+    allowHostLoopbackRaw === "false" ||
+    allowHostLoopbackRaw === "no"
+  );
+  return allowHostLoopback
+    ? "--network=slirp4netns:allow_host_loopback=true"
+    : "--network=slirp4netns";
+}
+
+function hasExplicitNetworkOverride(): boolean {
+  return !!`${process.env.COCALC_PROJECT_RUNNER_NETWORK ?? ""}`.trim();
+}
+
+function allowNetworkFallback(): boolean {
+  const raw = `${process.env.COCALC_PROJECT_RUNNER_NETWORK_FALLBACK ?? "true"}`
+    .trim()
+    .toLowerCase();
+  return !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
+}
+
+function slirpNetworkArgument(): string {
+  const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
+    .trim()
+    .toLowerCase();
+  const allowHostLoopback = !(
+    allowHostLoopbackRaw === "0" ||
+    allowHostLoopbackRaw === "false" ||
+    allowHostLoopbackRaw === "no"
+  );
+  return allowHostLoopback
+    ? "--network=slirp4netns:allow_host_loopback=true"
+    : "--network=slirp4netns";
+}
+
+function pastaConatHost(): string | undefined {
+  const host = `${process.env.COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST ?? ""}`
+    .trim();
+  return host || undefined;
+}
+
+function pastaHostAliasDefaultAddr(): string | undefined {
+  const addr = `${
+    process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ?? "169.254.1.2"
+  }`.trim();
+  return addr || undefined;
+}
+
+export function publishHost(): string {
+  const value = `${process.env.COCALC_PROJECT_RUNNER_PUBLISH_HOST ?? "127.0.0.1"}`
+    .trim()
+    .toLowerCase();
+  if (!value) return "127.0.0.1";
+  if (value === "127.0.0.1" || value === "localhost" || value === "::1") {
+    return value === "localhost" ? "127.0.0.1" : value;
+  }
+  if (value === "0.0.0.0" || value === "::") {
+    const allowInsecurePublishHostRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_INSECURE_PUBLISH_HOST ?? "false"}`
+      .trim()
+      .toLowerCase();
+    const allowInsecurePublishHost =
+      allowInsecurePublishHostRaw === "1" ||
+      allowInsecurePublishHostRaw === "true" ||
+      allowInsecurePublishHostRaw === "yes" ||
+      allowInsecurePublishHostRaw === "on";
+    if (allowInsecurePublishHost) {
+      return value;
+    }
+    logger.warn(
+      "refusing insecure non-loopback publish host without explicit override",
+      {
+        value,
+        overrideVar: "COCALC_PROJECT_RUNNER_ALLOW_INSECURE_PUBLISH_HOST",
+      },
+    );
+    return "127.0.0.1";
+  }
+  logger.warn("ignoring invalid COCALC_PROJECT_RUNNER_PUBLISH_HOST override", {
+    value,
+  });
+  return "127.0.0.1";
 }
 
 export async function start({
@@ -594,15 +716,92 @@ export async function start({
     const args: string[] = [];
     args.push("run");
     args.push("--runtime", "/usr/bin/crun");
+    args.push("--security-opt", "no-new-privileges");
     //args.push("--user", "1000:1000");
     args.push("--user", "0:0");
     args.push("--detach");
     args.push("--label", `project_id=${project_id}`, "--label", `role=project`);
     args.push("--rm");
     args.push("--replace");
-    args.push(networkArgument());
-    args.push("-p", `${ssh_port}:22`);
-    args.push("-p", `${http_port}:80`);
+    const originalConatServer = env.CONAT_SERVER;
+    const selectedNetwork = networkArgument();
+    args.push(selectedNetwork);
+    let pastaHostAliasArgIndex: number | undefined;
+    if (selectedNetwork.startsWith("--network=pasta")) {
+      const explicitPastaConatHost = pastaConatHost();
+      try {
+        const url = new URL(originalConatServer);
+        if (
+          explicitPastaConatHost &&
+          url.hostname === "host.containers.internal"
+        ) {
+          url.hostname = explicitPastaConatHost;
+          env.CONAT_SERVER = url.toString();
+          logger.debug("using pasta conat host override", {
+            project_id,
+            conat_server: env.CONAT_SERVER,
+          });
+        }
+      } catch {
+        // Keep original conat server on parse failure.
+      }
+      const pastaHostAliasAddr = pastaHostAliasDefaultAddr();
+      if (pastaHostAliasAddr) {
+        // Ensure a stable host alias for conat under pasta.
+        pastaHostAliasArgIndex = args.length;
+        args.push(
+          "--add-host",
+          `host.containers.internal:${pastaHostAliasAddr}`,
+        );
+      }
+
+      // Startup assumption check: with pasta, we expect a host path that can
+      // reliably reach conat.
+      const hasNoMapGw = selectedNetwork.includes("--no-map-gw");
+      let conatHost = "";
+      let conatPort: number | undefined;
+      try {
+        const url = new URL(env.CONAT_SERVER);
+        conatHost = url.hostname;
+        conatPort = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+      } catch {
+        // keep defaults on parse failure
+      }
+      const expectedPastaHost =
+        explicitPastaConatHost ?? "host.containers.internal";
+      const assumptionsOk =
+        !!conatHost &&
+        conatHost === expectedPastaHost &&
+        (!explicitPastaConatHost || !hasNoMapGw);
+      logger.info("pasta startup assumptions", {
+        project_id,
+        ok: assumptionsOk,
+        selectedNetwork,
+        conatHost,
+        conatPort,
+        expectedPastaHost,
+        hasNoMapGw,
+        pastaHostAliasAddr,
+        explicitPastaConatHost,
+      });
+      if (!assumptionsOk) {
+        logger.warn(
+          "pasta startup assumptions not met; connectivity to conat may fail",
+          {
+            project_id,
+            selectedNetwork,
+            conat_server: env.CONAT_SERVER,
+            expectedPastaHost,
+            hasNoMapGw,
+            pastaHostAliasAddr,
+            explicitPastaConatHost,
+          },
+        );
+      }
+    }
+    const publishHostValue = publishHost();
+    args.push("-p", `${publishHostValue}:${ssh_port}:22`);
+    args.push("-p", `${publishHostValue}:${http_port}:80`);
     if (config.gpu) {
       args.push("--device", "nvidia.com/gpu=all");
       args.push("--security-opt", "label=disable");
@@ -631,8 +830,12 @@ export async function start({
       args.push(mountArg({ source: join(scratch, "tmp"), target: "/tmp" }));
     }
 
+    let conatServerArgIndex: number | undefined;
     for (const key in env) {
       args.push("-e", `${key}=${env[key]}`);
+      if (key === "CONAT_SERVER") {
+        conatServerArgIndex = args.length - 1;
+      }
     }
 
     args.push(...(await podmanLimits(config)));
@@ -646,7 +849,44 @@ export async function start({
 
     logger.debug("start: launching container - ", name);
 
-    await podman(args);
+    const canFallback =
+      !hasExplicitNetworkOverride() &&
+      allowNetworkFallback() &&
+      selectedNetwork.startsWith("--network=pasta");
+    const fallbackNetwork = slirpNetworkArgument();
+    const networkArgIndex = args.findIndex((x) => x === selectedNetwork);
+    const setNetworkArg = (networkArg: string) => {
+      if (networkArgIndex !== -1) {
+        args[networkArgIndex] = networkArg;
+      } else {
+        args.push(networkArg);
+      }
+    };
+
+    try {
+      await podman(args);
+    } catch (err) {
+      // Start with pasta by default, but retry with slirp4netns automatically
+      // when runtime doesn't support pasta yet.
+      if (!canFallback) throw err;
+      logger.warn(
+        "podman run failed with pasta; retrying with slirp4netns fallback",
+        {
+          project_id,
+          selectedNetwork,
+          fallbackNetwork,
+          err: `${err}`,
+        },
+      );
+      if (pastaHostAliasArgIndex != null) {
+        args.splice(pastaHostAliasArgIndex, 2);
+      }
+      if (conatServerArgIndex != null) {
+        args[conatServerArgIndex] = `CONAT_SERVER=${originalConatServer}`;
+      }
+      setNetworkArg(fallbackNetwork);
+      await podman(args);
+    }
 
     report({
       type: "start-project",

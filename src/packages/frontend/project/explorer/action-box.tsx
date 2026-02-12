@@ -25,6 +25,7 @@ import {
   file_actions,
   type ProjectActions,
 } from "@cocalc/frontend/project_store";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import ConfigureShare from "@cocalc/frontend/share/config";
 import * as misc from "@cocalc/util/misc";
@@ -35,7 +36,7 @@ import CreateArchive from "./create-archive";
 import Download from "./download";
 import RenameFile from "./rename-file";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
+import { BACKUPS } from "@cocalc/util/consts/backups";
 
 export const PRE_STYLE = {
   marginBottom: "15px",
@@ -70,10 +71,10 @@ export function ActionBox({
   const runQuota = useRunQuota(project_id, null);
   const get_user_type: () => string = useRedux("account", "get_user_type");
   const [copy_destination_directory, set_copy_destination_directory] =
-    useState<string>("");
+    useState<string>(current_path);
   const [copy_destination_project_id, set_copy_destination_project_id] =
-    useState<string>(project_id);
-  const [move_destination, set_move_destination] = useState<string>("");
+    useState<string | undefined>(project_id);
+  const [move_destination, set_move_destination] = useState<string>(current_path);
   const [show_different_project, set_show_different_project] =
     useState<boolean>(false);
   const [overwrite, set_overwrite] = useState<boolean>(true);
@@ -211,10 +212,10 @@ export function ActionBox({
     if (dest === src_path) {
       return false;
     }
-    if (misc.contains(dest, "//") || misc.startswith(dest, "/")) {
+    if (misc.contains(dest, "//")) {
       return false;
     }
-    if (dest.charAt(dest.length - 1) === "/") {
+    if (dest.length > 1 && dest.charAt(dest.length - 1) === "/") {
       dest = dest.slice(0, dest.length - 1);
     }
     return dest !== current_path;
@@ -240,10 +241,10 @@ export function ActionBox({
             </Space>
           </Col>
           <Col sm={5} style={{ color: COLORS.GRAY_M, marginBottom: "15px" }}>
-            <h4>
-              Destination:{" "}
-              {move_destination == "" ? "Home directory" : move_destination}
-            </h4>
+              <h4>
+                Destination:{" "}
+              {move_destination}
+              </h4>
             <DirectorySelector
               title="Select Move Destination Folder"
               key="move_destination"
@@ -252,6 +253,7 @@ export function ActionBox({
               }
               project_id={project_id}
               startingPath={current_path}
+              allowAbsolutePaths
               isExcluded={(path) => checked_files.has(path)}
               style={{ width: "100%" }}
               bodyStyle={{ maxHeight: "250px" }}
@@ -276,9 +278,13 @@ export function ActionBox({
           <SelectProject
             at_top={[project_id]}
             value={copy_destination_project_id}
-            onChange={(copy_destination_project_id) =>
-              set_copy_destination_project_id(copy_destination_project_id)
-            }
+            onChange={(copy_destination_project_id) => {
+              if (copy_destination_project_id) {
+                set_copy_destination_project_id(copy_destination_project_id);
+              } else {
+                set_copy_destination_project_id(undefined);
+              }
+            }}
           />
           {render_copy_different_project_options()}
         </Col>
@@ -287,7 +293,7 @@ export function ActionBox({
   }
 
   function render_copy_different_project_options() {
-    if (project_id !== copy_destination_project_id) {
+    if (copy_destination_project_id && project_id !== copy_destination_project_id) {
       return (
         <div>
           <Checkbox onChange={(e) => set_overwrite((e.target as any).checked)}>
@@ -302,6 +308,14 @@ export function ActionBox({
     const destination_project_id = copy_destination_project_id;
     const destination_directory = copy_destination_directory;
     const paths = checked_files.toArray();
+    if (show_different_project && !destination_project_id) {
+      alert_message({
+        type: "error",
+        title: "Copy failed",
+        message: "Select a destination project before copying to a different project.",
+      });
+      return;
+    }
     if (
       destination_project_id != undefined &&
       project_id !== destination_project_id
@@ -334,16 +348,13 @@ export function ActionBox({
     ) {
       return false;
     }
-    if (copy_destination_project_id === "") {
+    if (!copy_destination_project_id) {
       return false;
     }
     if (
       input === current_path &&
       project_id === copy_destination_project_id
     ) {
-      return false;
-    }
-    if (misc.startswith(input, "/")) {
       return false;
     }
     return true;
@@ -433,21 +444,26 @@ export function ActionBox({
                 }
               >
                 Destination:{" "}
-                {copy_destination_directory == ""
-                  ? "Home Directory"
-                  : copy_destination_directory}
+                {copy_destination_directory}
               </h4>
-              <DirectorySelector
-                title={"Destination"}
-                onSelect={(value: string) =>
-                  set_copy_destination_directory(value)
-                }
-                key="copy_destination_directory"
-                startingPath={current_path}
-                project_id={copy_destination_project_id}
-                style={{ width: "100%" }}
-                bodyStyle={{ maxHeight: "250px" }}
-              />
+              {show_different_project && !copy_destination_project_id ? (
+                <Alert bsStyle="warning" style={{ marginTop: "10px" }}>
+                  Select a destination project.
+                </Alert>
+              ) : (
+                <DirectorySelector
+                  title={"Destination"}
+                  onSelect={(value: string) =>
+                    set_copy_destination_directory(value)
+                  }
+                  key="copy_destination_directory"
+                  startingPath={current_path}
+                  project_id={copy_destination_project_id ?? project_id}
+                  allowAbsolutePaths
+                  style={{ width: "100%" }}
+                  bodyStyle={{ maxHeight: "250px" }}
+                />
+              )}
             </Col>
           </Row>
         </div>

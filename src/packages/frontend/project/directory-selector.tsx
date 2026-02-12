@@ -19,16 +19,18 @@ import {
   useRef,
   useState,
 } from "react";
-import { Icon, Loading } from "@cocalc/frontend/components";
-import { path_split } from "@cocalc/util/misc";
+import { DropdownMenu, Icon, Loading, type MenuItems } from "@cocalc/frontend/components";
+import { path_split, path_to_file } from "@cocalc/util/misc";
 import { alert_message } from "@cocalc/frontend/alerts";
-import { redux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import ShowError from "@cocalc/frontend/components/error";
 import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useFiles, {
   getCacheId,
 } from "@cocalc/frontend/project/listing/use-files";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { lite } from "@cocalc/frontend/lite";
 
 const NEW_FOLDER = "New Folder";
 
@@ -42,7 +44,7 @@ interface Props {
   bodyStyle?: CSSProperties;
   project_id?: string;
   startingPath?: string;
-  isExcluded?: (path: string) => boolean; // grey out directories that return true.  Relative to home directory.
+  isExcluded?: (path: string) => boolean; // grey out directories that return true.
   onSelect?: (path: string) => void; // called when user chooses a directory; only when multi is false.
   onMultiSelect?: (selection: Set<string>) => void; // called whenever selection changes: only when multi true
   onClose?: () => void;
@@ -50,6 +52,76 @@ interface Props {
   title?: ReactNode;
   multi?: boolean; // if true enables multiple select
   closable?: boolean;
+  allowAbsolutePaths?: boolean;
+}
+
+type RootSource = "home" | "root" | "tmp" | "scratch";
+
+function sourceForPath(
+  path: string,
+  homePath: string,
+): { source: RootSource; rootPath: string } {
+  if (!path.startsWith("/")) {
+    return { source: "home", rootPath: homePath };
+  }
+  if (homePath !== "/" && (path === homePath || path.startsWith(`${homePath}/`))) {
+    return { source: "home", rootPath: homePath };
+  }
+  if (path === "/tmp" || path.startsWith("/tmp/")) {
+    return { source: "tmp", rootPath: "/tmp" };
+  }
+  if (!lite && (path === "/scratch" || path.startsWith("/scratch/"))) {
+    return { source: "scratch", rootPath: "/scratch" };
+  }
+  return { source: "root", rootPath: "/" };
+}
+
+function relativeExpandedPaths(startingPath: string): string[] {
+  const expandedPaths: string[] = [""];
+  if (!startingPath) {
+    return expandedPaths;
+  }
+  const parts = startingPath
+    .replace(/^\/+/, "")
+    .split("/")
+    .filter(Boolean);
+  let path = "";
+  for (const part of parts) {
+    path = path ? `${path}/${part}` : part;
+    expandedPaths.push(path);
+  }
+  return expandedPaths;
+}
+
+function absoluteExpandedPaths({
+  startingPath,
+  rootPath,
+  homePath,
+}: {
+  startingPath: string;
+  rootPath: string;
+  homePath: string;
+}): string[] {
+  const expandedPaths: string[] = [rootPath];
+  const normalizedStart = normalizeAbsolutePath(startingPath || rootPath, homePath);
+  const inRoot =
+    rootPath === "/" ||
+    normalizedStart === rootPath ||
+    normalizedStart.startsWith(`${rootPath}/`);
+  const effectiveStart = inRoot ? normalizedStart : rootPath;
+  if (effectiveStart === rootPath) {
+    return expandedPaths;
+  }
+  const suffix =
+    rootPath === "/"
+      ? effectiveStart.slice(1)
+      : effectiveStart.slice(rootPath.length + 1);
+  let path = rootPath;
+  for (const part of suffix.split("/").filter(Boolean)) {
+    path = path === "/" ? `/${part}` : `${path}/${part}`;
+    expandedPaths.push(path);
+  }
+  return expandedPaths;
 }
 
 export default function DirectorySelector({
@@ -65,27 +137,54 @@ export default function DirectorySelector({
   title,
   multi,
   closable = true,
+  allowAbsolutePaths = false,
 }: Props) {
   const frameContext = useFrameContext(); // optionally used to define project_id and startingPath, when in a frame
   project_id ??= frameContext.project_id;
+  const availableFeatures = useTypedRedux({ project_id }, "available_features");
+  const liteHome = availableFeatures?.get("homeDirectory");
+  const homePath =
+    lite && typeof liteHome === "string" && liteHome.length > 0
+      ? normalizeAbsolutePath(liteHome)
+      : "/root";
+  const initialPath = startingPath ?? frameContext.path ?? "";
+  const normalizedInitialAbs = normalizeAbsolutePath(
+    initialPath || homePath,
+    homePath,
+  );
+  const initialRootPath = allowAbsolutePaths
+    ? sourceForPath(normalizedInitialAbs, homePath).rootPath
+    : "";
+  const [rootPath, setRootPath] = useState<string>(initialRootPath);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => {
-    const expandedPaths: string[] = [""];
-    if (startingPath == null) {
-      startingPath = frameContext.path;
+    if (allowAbsolutePaths) {
+      return new Set(
+        absoluteExpandedPaths({
+          startingPath: normalizedInitialAbs,
+          rootPath: initialRootPath,
+          homePath,
+        }),
+      );
     }
-    if (startingPath) {
-      const v = startingPath.split("/");
-      let path = v[0];
-      expandedPaths.push(path);
-      for (let i = 1; i < v.length; i++) {
-        path += "/" + v[i];
-        expandedPaths.push(path);
-      }
-    }
-    return new Set(expandedPaths);
+    return new Set(relativeExpandedPaths(initialPath));
   });
   const [showHidden, setShowHidden] = useState<boolean>(!!defaultShowHidden);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const rootNodePath = allowAbsolutePaths ? rootPath : "";
+  const rootSource = sourceForPath(
+    allowAbsolutePaths ? rootPath : homePath,
+    homePath,
+  );
+  const rootTitle =
+    rootSource.source === "home"
+      ? "Home"
+      : rootSource.source === "root"
+        ? "/"
+        : rootSource.source === "tmp"
+          ? "/tmp"
+          : "/scratch";
+  const rootDisplayName =
+    rootSource.source === "home" ? "Home Folder" : rootSource.rootPath;
 
   const toggleSelection = useCallback(
     (path: string) => {
@@ -101,7 +200,7 @@ export default function DirectorySelector({
       } else {
         if (selectedPaths.has(path)) {
           x = new Set([]);
-          onSelect?.("");
+          onSelect?.(allowAbsolutePaths ? rootNodePath : "");
         } else {
           x = new Set([path]);
           onSelect?.(path);
@@ -109,8 +208,49 @@ export default function DirectorySelector({
       }
       setSelectedPaths(new Set(x));
     },
-    [selectedPaths, multi],
+    [selectedPaths, multi, allowAbsolutePaths, rootNodePath],
   );
+
+  const sourceMenuItems: MenuItems = [
+    {
+      key: "home",
+      label: "Home",
+      onClick: () => {
+        setRootPath(homePath);
+        setExpandedPaths(new Set([homePath]));
+        setSelectedPaths(new Set());
+      },
+    },
+    {
+      key: "root",
+      label: "/",
+      onClick: () => {
+        setRootPath("/");
+        setExpandedPaths(new Set(["/"]));
+        setSelectedPaths(new Set());
+      },
+    },
+    {
+      key: "tmp",
+      label: "/tmp",
+      onClick: () => {
+        setRootPath("/tmp");
+        setExpandedPaths(new Set(["/tmp"]));
+        setSelectedPaths(new Set());
+      },
+    },
+  ];
+  if (!lite) {
+    sourceMenuItems.push({
+      key: "scratch",
+      label: "/scratch",
+      onClick: () => {
+        setRootPath("/scratch");
+        setExpandedPaths(new Set(["/scratch"]));
+        setSelectedPaths(new Set());
+      },
+    });
+  }
 
   return (
     <Card
@@ -140,13 +280,24 @@ export default function DirectorySelector({
         },
       }}
     >
+      {allowAbsolutePaths && (
+        <div style={{ marginBottom: "8px" }}>
+          <DropdownMenu
+            button
+            showDown
+            title={rootTitle}
+            items={sourceMenuItems}
+          />
+        </div>
+      )}
       <SelectablePath
         project_id={project_id}
-        path={""}
+        path={rootNodePath}
         tail={""}
-        isSelected={selectedPaths.has("")}
+        displayName={rootDisplayName}
+        isSelected={selectedPaths.has(rootNodePath)}
         toggleSelection={toggleSelection}
-        isExcluded={isExcluded?.("")}
+        isExcluded={isExcluded?.(rootNodePath)}
         expand={() => {}}
       />
       <Subdirs
@@ -158,7 +309,7 @@ export default function DirectorySelector({
         setExpandedPaths={setExpandedPaths}
         showHidden={showHidden}
         project_id={project_id}
-        path={""}
+        path={rootNodePath}
       />
       <Checkbox
         style={{ fontWeight: "400", marginTop: "15px" }}
@@ -181,6 +332,16 @@ function SelectablePath({
   toggleSelection,
   isExcluded,
   expand,
+  displayName,
+}: {
+  project_id: string;
+  path: string;
+  tail: string;
+  isSelected: boolean;
+  toggleSelection: (path: string) => void;
+  isExcluded?: boolean;
+  expand: () => void;
+  displayName?: string;
 }) {
   const [editedTail, setEditedTail] = useState<string | null>(null);
 
@@ -206,7 +367,9 @@ function SelectablePath({
   if (editedTail == null) {
     content = (
       <>
-        {tail ? (
+        {displayName ? (
+          displayName
+        ) : tail ? (
           tail
         ) : (
           <>
@@ -380,7 +543,6 @@ function Subdirs(props) {
   }
 
   const w: React.JSX.Element[] = [];
-  const base = !path ? "" : path + "/";
   const paths: string[] = [];
   const newPaths: string[] = [];
   for (const name in files) {
@@ -401,7 +563,7 @@ function Subdirs(props) {
   };
   w.push(<CreateDirectory key="create1" {...createProps} />);
   for (const name of paths.concat(newPaths)) {
-    w.push(<Directory key={name} {...props} path={join(base, name)} />);
+    w.push(<Directory key={name} {...props} path={join(path, name)} />);
   }
   if (w.length > 10) {
     w.push(<CreateDirectory key="create2" {...createProps} />);
@@ -438,7 +600,7 @@ function CreateDirectory({
     if (!open) {
       return;
     }
-    const target = path + (path != "" ? "/" : "") + value;
+    const target = path_to_file(path || "/", value);
     (async () => {
       try {
         const path1 = await getValidPath(project_id, target);

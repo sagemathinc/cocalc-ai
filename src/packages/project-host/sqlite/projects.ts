@@ -6,6 +6,7 @@ import {
   deleteRow,
 } from "@cocalc/lite/hub/sqlite/database";
 import { account_id } from "@cocalc/backend/data";
+import { randomBytes } from "crypto";
 
 function parseRunQuota(run_quota?: any): any | undefined {
   if (run_quota == null) return undefined;
@@ -33,7 +34,14 @@ function serializeRunQuota(run_quota?: any): string | null {
 }
 
 // Local cache of project metadata on a project-host. This mirrors the
-// minimal information we need when the master is unreachable. Fields:
+// minimal information we need when the master is unreachable.
+//
+// NOTE:
+// - The concrete sqlite `projects` table stores runtime/project fields only.
+// - Collaborator `users` is stored in the generic `data` mirror row via
+//   `upsertRow("projects", ...)`, and read by conat auth from there.
+//
+// Fields:
 // - project_id: primary key
 // - title: human-friendly project title
 // - state: latest known run state (e.g. running/stopped)
@@ -43,8 +51,10 @@ function serializeRunQuota(run_quota?: any): string | null {
 // - scratch: scratch quota (bytes)
 // - last_seen: timestamp (ms) when we last touched the project locally
 // - updated_at: timestamp (ms) of last local change
-// - users: optional map of users/groups for the project
+// - users: optional map of users/groups for the project (generic `data` mirror only)
 // - http_port / ssh_port: host-exposed ports for the project container (if running)
+// - secret_token: host-local project auth token; only in concrete sqlite table
+//   and never mirrored into generic `data` rows.
 // - authorized_keys: concatenated SSH keys from master (account + project keys); the project’s own
 //   ~/.ssh/authorized_keys is read directly from the filesystem at auth time.
 // - run_quota: resource limits/settings passed from the master (mirrors projects.run_quota in Postgres)
@@ -61,12 +71,15 @@ export interface ProjectRow {
   users?: Record<string, any>;
   http_port?: number | null;
   ssh_port?: number | null;
+  secret_token?: string | null;
   authorized_keys?: string | null;
   run_quota?: any;
 }
 
 function ensureProjectsTable() {
   const db = initDatabase();
+  // Intentionally no `users` column here; collaborator state lives in the
+  // generic `data` table mirror (see upsertProject).
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       project_id TEXT PRIMARY KEY,
@@ -80,6 +93,7 @@ function ensureProjectsTable() {
       updated_at INTEGER,
       http_port INTEGER,
       ssh_port INTEGER,
+      secret_token TEXT,
       authorized_keys TEXT,
       run_quota TEXT
     )
@@ -95,6 +109,9 @@ function ensureProjectsTable() {
   } catch {}
   try {
     db.exec("ALTER TABLE projects ADD COLUMN ssh_port INTEGER");
+  } catch {}
+  try {
+    db.exec("ALTER TABLE projects ADD COLUMN secret_token TEXT");
   } catch {}
   try {
     db.exec("ALTER TABLE projects ADD COLUMN authorized_keys TEXT");
@@ -116,7 +133,7 @@ export function upsertProject(row: ProjectRow) {
   // from the concrete projects table (e.g., state_reported).
   const existingProjectsRow = db
     .prepare(
-      "SELECT state, state_reported, http_port, ssh_port, authorized_keys, run_quota FROM projects WHERE project_id=?",
+      "SELECT state, state_reported, http_port, ssh_port, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
     )
     .get(row.project_id) || {};
   const existing = getRow("projects", pk) || {};
@@ -148,6 +165,10 @@ export function upsertProject(row: ProjectRow) {
     row.http_port ?? (existing as any).http_port ?? existingProjectsRow.http_port ?? null;
   const ssh_port =
     row.ssh_port ?? (existing as any).ssh_port ?? existingProjectsRow.ssh_port ?? null;
+  const secret_token =
+    row.secret_token ??
+    (existingProjectsRow as any).secret_token ??
+    null;
   const authorized_keys =
     row.authorized_keys ??
     (existing as any).authorized_keys ??
@@ -175,8 +196,8 @@ export function upsertProject(row: ProjectRow) {
   }
 
   const stmt = db.prepare(`
-    INSERT INTO projects(project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, authorized_keys, run_quota)
-    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects(project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, secret_token, authorized_keys, run_quota)
+    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id) DO UPDATE SET
       title=excluded.title,
       state=excluded.state,
@@ -188,6 +209,7 @@ export function upsertProject(row: ProjectRow) {
       updated_at=excluded.updated_at,
       http_port=excluded.http_port,
       ssh_port=excluded.ssh_port,
+      secret_token=excluded.secret_token,
       authorized_keys=excluded.authorized_keys,
       run_quota=excluded.run_quota
   `);
@@ -203,6 +225,7 @@ export function upsertProject(row: ProjectRow) {
     updated_at,
     http_port,
     ssh_port,
+    secret_token,
     authorized_keys,
     run_quota_json,
   );
@@ -233,7 +256,7 @@ export function listProjects(): ProjectRow[] {
   ensureProjectsTable();
   const db = getDatabase();
   const stmt = db.prepare(
-    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, run_quota FROM projects",
+    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, secret_token, run_quota FROM projects",
   );
   return stmt.all() as ProjectRow[];
 }
@@ -242,13 +265,37 @@ export function getProject(project_id: string): ProjectRow | undefined {
   ensureProjectsTable();
   const db = getDatabase();
   const stmt = db.prepare(
-    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, authorized_keys, run_quota FROM projects WHERE project_id=?",
+    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
   );
   const row = stmt.get(project_id) as any;
   if (row?.run_quota) {
     row.run_quota = parseRunQuota(row.run_quota);
   }
   return row as ProjectRow | undefined;
+}
+
+function generateLocalProjectSecretToken(): string {
+  return randomBytes(24).toString("hex");
+}
+
+export function getOrCreateProjectLocalSecretToken(project_id: string): string {
+  ensureProjectsTable();
+  const db = getDatabase();
+  const row = db
+    .prepare("SELECT secret_token FROM projects WHERE project_id=?")
+    .get(project_id) as { secret_token?: string | null } | undefined;
+  if (!row) {
+    throw new Error(`project ${project_id} not found in local sqlite`);
+  }
+  if (row.secret_token) {
+    return row.secret_token;
+  }
+  const token = generateLocalProjectSecretToken();
+  db.prepare("UPDATE projects SET secret_token=? WHERE project_id=?").run(
+    token,
+    project_id,
+  );
+  return token;
 }
 
 export function listUnreportedProjects(): ProjectRow[] {

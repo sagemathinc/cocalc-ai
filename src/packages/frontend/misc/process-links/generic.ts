@@ -11,8 +11,7 @@ Define a jQuery plugin that processes links.
  - Handles anchor links
 */
 
-import { join } from "path";
-import { is_valid_uuid_string as isUUID } from "@cocalc/util/misc";
+import { is_valid_uuid_string as isUUID, path_to_file } from "@cocalc/util/misc";
 import { isCoCalcURL } from "@cocalc/frontend/lib/cocalc-urls";
 import Fragment, { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { fileURL } from "@cocalc/frontend/lib/cocalc-urls";
@@ -130,16 +129,14 @@ function processAnchorTag(y: any, opts: Options): void {
         target = decodeURI(target.slice(1)); // just get rid of leading slash
       } else if (target[0] === "/" && opts.projectId) {
         // absolute inside of project -- we CANNOT use join here
-        // since it is critical to **keep** the slash to get
-        //   .../files//path/to/somewhere
-        // Otherwise, there is now way to represent an absolute path.
-        // A URL isn't just a unix path in general.
-        target = opts.projectId + "/files/" + decodeURI(target);
+        target = opts.projectId + "/files" + decodeURI(target);
       } else if (opts.projectId && opts.filePath != null) {
         // realtive to current path
         let x: string = decodeURI(target);
         if (x == null) x = "";
-        target = join(opts.projectId, "files", opts.filePath ?? "", x);
+        const resolved = path_to_file(opts.filePath ?? "", x);
+        const prefixed = resolved.startsWith("/") ? resolved : `/${resolved}`;
+        target = opts.projectId + "/files" + prefixed;
       }
       loadTarget(
         target,

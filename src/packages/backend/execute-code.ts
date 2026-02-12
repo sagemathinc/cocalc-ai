@@ -43,6 +43,7 @@ import { envForSpawn } from "./misc";
 import { ProcessStats, sumChildren } from "./process-stats";
 
 const log = getLogger("execute-code");
+const SECURITY_DENY_PREFIX = "SECURITY_DENY";
 
 const PREFIX = "COCALC_PROJECT_ASYNC_EXEC";
 const ASYNC_CACHE_MAX = envToInt(`${PREFIX}_CACHE_MAX`, 100);
@@ -97,6 +98,40 @@ function asyncCacheUpdate(job_id: string, upd): ExecuteCodeOutputAsync {
     updates.emit(eventKey("finished", next.job_id), next);
   }
   return next;
+}
+
+function parseSecurityDenyLine(line: string): Record<string, string> {
+  const payload: Record<string, string> = {};
+  for (const token of line.split(/\s+/g).slice(1)) {
+    const i = token.indexOf("=");
+    if (i <= 0) continue;
+    const key = token.slice(0, i);
+    const value = token.slice(i + 1);
+    if (!key) continue;
+    payload[key] = value;
+  }
+  return payload;
+}
+
+function logSecurityDenies(opts: {
+  command: string;
+  args?: string[];
+  stderr: string;
+}) {
+  const lines = opts.stderr
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(SECURITY_DENY_PREFIX));
+  if (!lines.length) return;
+  for (const line of lines) {
+    const parsed = parseSecurityDenyLine(line);
+    log.warn("privilege escalation denied by runtime policy", {
+      command: opts.command,
+      args: opts.args ?? [],
+      deny: parsed,
+      raw: line,
+    });
+  }
 }
 
 // Async/await interface to executing code.
@@ -654,6 +689,13 @@ function doSpawn(
         stdout: trunc(stdout, 512),
         stderr: trunc(stderr, 512),
         exit_code,
+      });
+    }
+    if (stderr) {
+      logSecurityDenies({
+        command: opts.command,
+        args: opts.args,
+        stderr,
       });
     }
 

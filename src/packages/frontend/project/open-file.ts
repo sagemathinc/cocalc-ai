@@ -52,6 +52,31 @@ export interface OpenFileOpts {
   explicit?: boolean;
 }
 
+export function findOpenDisplayPathForSyncPath(
+  actions: ProjectActions,
+  syncPath: string,
+  excludeDisplayPath?: string,
+): string | undefined {
+  const store = actions.get_store();
+  const openFiles = store?.get("open_files");
+  if (openFiles == null) {
+    return undefined;
+  }
+  let found: string | undefined;
+  openFiles.forEach((_obj, displayPath) => {
+    if (found != null || displayPath === excludeDisplayPath) {
+      return;
+    }
+    const otherSyncPath = openFiles.getIn([displayPath, "sync_path"]);
+    if (typeof otherSyncPath === "string") {
+      if (otherSyncPath === syncPath) {
+        found = displayPath;
+      }
+    }
+  });
+  return found;
+}
+
 export async function open_file(
   actions: ProjectActions,
   opts: OpenFileOpts,
@@ -78,6 +103,7 @@ export async function open_file(
     explicit: false,
   });
   opts.path = normalize(opts.path);
+  const displayPath = opts.path;
 
   if (opts.line != null && !opts.fragmentId) {
     // backward compat
@@ -105,7 +131,7 @@ export async function open_file(
   });
 
   const tabIsOpened = () =>
-    !!actions.get_store()?.get("open_files")?.has(opts.path);
+    !!actions.get_store()?.get("open_files")?.has(displayPath);
   const alreadyOpened = tabIsOpened();
 
   if (!alreadyOpened) {
@@ -120,7 +146,7 @@ export async function open_file(
       return;
       // closed
     }
-    actions.open_files.set(opts.path, "component", {});
+    actions.open_files.set(displayPath, "component", {});
   }
 
   // intercept any requests to open files with an error when in kiosk mode
@@ -150,23 +176,54 @@ export async function open_file(
     return;
   }
 
+  let syncPath = displayPath;
   try {
     const fs = actions.fs();
-    // cocalc assumes the path is not a symlink
-    const realpath = await fs.realpath(opts.path);
-    if (!tabIsOpened()) {
-      return;
-    }
-    if (opts.path != realpath) {
-      if (!actions.open_files) return; // closed
-      actions.open_files.delete(opts.path);
-      opts.path = realpath;
-      actions.open_files.set(opts.path, "component", {});
-    }
+    // Resolve once on open for sync identity. Keep display path unchanged.
+    syncPath = await fs.realpath(displayPath);
   } catch (_) {
     // TODO: old projects will not have the new realpath api call -- can delete this try/catch at some point.
   }
-  let ext = opts.ext ?? filename_extension(opts.path).toLowerCase();
+  // Map resolved paths to canonical sync identities used by specific editors
+  // (e.g. ipynb syncdb path, terminal path key).
+  syncPath = canonicalPath(syncPath);
+  if (!tabIsOpened()) {
+    return;
+  }
+  if (actions.open_files != null) {
+    actions.open_files.set(displayPath, "sync_path", syncPath);
+    actions.open_files.set(displayPath, "display_path", displayPath);
+  }
+  // If this path resolves to a sync identity that is already open in this browser,
+  // don't keep a second tab with the same realtime session key.
+  const alreadyOpenAliasPath = alreadyOpened
+    ? undefined
+    : findOpenDisplayPathForSyncPath(actions, syncPath, displayPath);
+  if (alreadyOpenAliasPath != null) {
+    if (actions.open_files?.has(displayPath)) {
+      actions.open_files.delete(displayPath);
+    }
+    redux.getActions("page").save_session();
+    if (opts.foreground) {
+      actions.foreground_project(opts.change_history);
+      actions.set_active_tab(path_to_tab(alreadyOpenAliasPath), {
+        change_history: opts.change_history,
+      });
+    }
+    if (opts.chat) {
+      actions.open_chat({ path: alreadyOpenAliasPath });
+    }
+    if (opts.fragmentId != null) {
+      actions.gotoFragment(alreadyOpenAliasPath, opts.fragmentId);
+    }
+    alert_message({
+      type: "info",
+      message: `"${displayPath}" is already open as "${alreadyOpenAliasPath}". Switched to that tab.`,
+      timeout: 4,
+    });
+    return;
+  }
+  let ext = opts.ext ?? filename_extension(syncPath).toLowerCase();
 
   let store = actions.get_store();
   if (store == null) {
@@ -182,7 +239,7 @@ export async function open_file(
   } catch (err) {
     actions.set_activity({
       id: uuid(),
-      error: `Error opening file '${opts.path}' (error ensuring project is open) -- ${err}`,
+      error: `Error opening file '${displayPath}' (error ensuring project is open) -- ${err}`,
     });
     return;
   }
@@ -210,17 +267,19 @@ export async function open_file(
 
   if (!alreadyOpened) {
     // Add it to open files
-    actions.open_files.set(opts.path, "ext", ext);
-    actions.open_files.set(opts.path, "component", {});
-    actions.open_files.set(opts.path, "chat_width", opts.chat_width);
+    actions.open_files.set(displayPath, "ext", ext);
+    actions.open_files.set(displayPath, "component", {});
+    actions.open_files.set(displayPath, "chat_width", opts.chat_width);
+    actions.open_files.set(displayPath, "sync_path", syncPath);
+    actions.open_files.set(displayPath, "display_path", displayPath);
     if (opts.chat) {
-      actions.open_chat({ path: opts.path });
+      actions.open_chat({ path: displayPath });
     }
 
     redux.getActions("page").save_session();
   }
 
-  actions.open_files.set(opts.path, "fragmentId", opts.fragmentId ?? "");
+  actions.open_files.set(displayPath, "fragmentId", opts.fragmentId ?? "");
 
   void opts.explicit;
 
@@ -230,19 +289,19 @@ export async function open_file(
 
   if (opts.foreground) {
     actions.foreground_project(opts.change_history);
-    const tab = path_to_tab(opts.path);
+    const tab = path_to_tab(displayPath);
     actions.set_active_tab(tab, {
       change_history: opts.change_history,
     });
   } else if (PRELOAD_BACKGROUND_TABS) {
-    await actions.initFileRedux(opts.path);
+    await actions.initFileRedux(syncPath);
   }
 
   if (alreadyOpened && opts.fragmentId) {
     // when file already opened we have to explicitly do this, since
     // it doesn't happen in response to foregrounding the file the
     // first time.
-    actions.gotoFragment(opts.path, opts.fragmentId);
+    actions.gotoFragment(displayPath, opts.fragmentId);
   }
 }
 
@@ -389,10 +448,11 @@ function get_side_chat_state(
 }
 
 export function canonicalPath(path: string) {
-  if (path.endsWith(".ipynb")) {
+  const ext = filename_extension(path).toLowerCase();
+  if (ext === "ipynb") {
     return ipynbSyncdbPath(path);
   }
-  if (path.endsWith("term") && path[0] != ".") {
+  if (ext === "term" && !path_split(path).tail.startsWith(".")) {
     return termPath({ path, cmd: "", number: 0 });
   }
   return path;

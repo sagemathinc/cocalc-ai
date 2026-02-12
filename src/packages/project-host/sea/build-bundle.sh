@@ -32,6 +32,7 @@ echo "- Bundle entry point with @vercel/ncc"
 ncc build packages/project-host/bin/start.js \
   -o "$OUT"/bundle \
   --source-map \
+  --external node-pty \
   --external bufferutil \
   --external utf-8-validate
 
@@ -39,6 +40,7 @@ echo "- Bundle main entrypoint (daemon target)"
 ncc build packages/project-host/dist/main.js \
   -o "$OUT"/main \
   --source-map \
+  --external node-pty \
   --external bufferutil \
   --external utf-8-validate
 
@@ -93,8 +95,16 @@ fetch_native_pkg() {
 copy_native_pkg() {
   local pkg="$1"
   local dest_root="$2"
-  local dir
-  dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  local dir=""
+  if [ -d "$ROOT/packages/project-host/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/project-host/node_modules/$pkg"
+  elif [ -d "$ROOT/packages/project-runner/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/project-runner/node_modules/$pkg"
+  elif [ -d "$ROOT/packages/project/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/project/node_modules/$pkg"
+  else
+    dir=$(find "$ROOT/packages" -path "*node_modules/${pkg}" -type d -print -quit || true)
+  fi
   echo "- Copy native module ${pkg} -> ${dest_root}/node_modules/${pkg}"
   if [ -n "$dir" ]; then
     mkdir -p "${dest_root}/node_modules/${pkg}"
@@ -104,43 +114,34 @@ copy_native_pkg() {
   fi
 }
 
-patch_node_pty_exports() {
+prune_node_pty_pkg() {
   local dest_root="$1"
-  for pkg in "${dest_root}"/node_modules/@lydell/node-pty-linux-*/package.json; do
-    [ -f "$pkg" ] || continue
-    node -e "const fs=require('fs');const p=process.argv[1];const data=JSON.parse(fs.readFileSync(p,'utf8'));delete data.exports;fs.writeFileSync(p, JSON.stringify(data,null,2));" "$pkg"
-  done
-  for pkgdir in "${dest_root}"/node_modules/@lydell/node-pty-linux-*; do
-    [ -d "$pkgdir" ] || continue
-    arch=$(basename "$pkgdir" | sed 's/^node-pty-linux-//')
-    prebuild="$pkgdir/prebuilds/linux-$arch/pty.node"
-    if [ -f "$prebuild" ]; then
-      cp "$prebuild" "$pkgdir/pty.node"
-    fi
-  done
+  local pkg_dir="$dest_root/node_modules/node-pty"
+  if [ ! -d "$pkg_dir" ]; then
+    return
+  fi
+  # Keep only runtime essentials.
+  find "$pkg_dir" -mindepth 1 -maxdepth 1 \
+    ! -name lib \
+    ! -name prebuilds \
+    ! -name package.json \
+    ! -name LICENSE \
+    ! -name README.md \
+    -exec rm -rf {} +
+  # Keep only linux prebuilds for target runtime.
+  if [ -d "$pkg_dir/prebuilds" ]; then
+    find "$pkg_dir/prebuilds" -mindepth 1 -maxdepth 1 -type d \
+      ! -name 'linux-*' -exec rm -rf {} +
+  fi
 }
 
-echo "- Copy node-pty native addons (linux x64 + arm64)"
-copy_native_pkg "@lydell/node-pty-linux-x64" "$OUT/bundle"
-copy_native_pkg "@lydell/node-pty-linux-arm64" "$OUT/bundle"
-copy_native_pkg "@lydell/node-pty-linux-x64" "$OUT/main"
-copy_native_pkg "@lydell/node-pty-linux-arm64" "$OUT/main"
-rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-darwin-* "$OUT"/bundle/node_modules/@lydell/node-pty-win32-* || true
-rm -rf "$OUT"/main/node_modules/@lydell/node-pty-darwin-* "$OUT"/main/node_modules/@lydell/node-pty-win32-* || true
+echo "- Copy node-pty package"
+copy_native_pkg "node-pty" "$OUT/bundle"
+copy_native_pkg "node-pty" "$OUT/main"
 
-echo "- Allow node-pty native subpath requires"
-patch_node_pty_exports "$OUT/bundle"
-patch_node_pty_exports "$OUT/main"
-
-echo "- Verify node-pty prebuilds (linux x64 + arm64)"
-if [ ! -f "$OUT/bundle/node_modules/@lydell/node-pty-linux-x64/pty.node" ]; then
-  echo "ERROR: missing node-pty linux-x64 binary" >&2
-  exit 1
-fi
-if [ ! -f "$OUT/bundle/node_modules/@lydell/node-pty-linux-arm64/pty.node" ]; then
-  echo "ERROR: missing node-pty linux-arm64 binary" >&2
-  exit 1
-fi
+echo "- Prune node-pty package"
+prune_node_pty_pkg "$OUT/bundle"
+prune_node_pty_pkg "$OUT/main"
 
 copy_native_pkg "bufferutil" "$OUT/bundle"
 copy_native_pkg "utf-8-validate" "$OUT/bundle"
@@ -156,6 +157,18 @@ for dest_root in "$OUT/bundle" "$OUT/main"; do
     fi
   done
   rm -f "$dest_root"/node_modules/utf-8-validate/prebuilds/linux-*/utf-8-validate.musl.node || true
+done
+
+echo "- Verify node-pty prebuilds (linux x64 + arm64)"
+for dest_root in "$OUT/bundle" "$OUT/main"; do
+  if [ ! -f "$dest_root/node_modules/node-pty/prebuilds/linux-x64/pty.node" ]; then
+    echo "ERROR: missing node-pty linux-x64 prebuild in $dest_root" >&2
+    exit 1
+  fi
+  if [ ! -f "$dest_root/node_modules/node-pty/prebuilds/linux-arm64/pty.node" ]; then
+    echo "ERROR: missing node-pty linux-arm64 prebuild in $dest_root" >&2
+    exit 1
+  fi
 done
 
 echo "- Copy project-runner templates"

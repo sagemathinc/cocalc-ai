@@ -19,6 +19,7 @@ import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import { is_paying_customer } from "@cocalc/database/postgres/account/queries";
 import { project_has_network_access } from "@cocalc/database/postgres/project/queries";
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
+import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 
 const logger = getLogger("project:collaborators");
 
@@ -125,6 +126,7 @@ export async function inviteCollaborator({
     account_id: opts.account_id,
     group: "collaborator", // in future: "invite_collaborator"
   });
+  await syncProjectUsersOnHost({ project_id: opts.project_id });
 
   // Everything else in this big function is about notifying the user that they
   // were added.
@@ -252,6 +254,7 @@ export async function inviteCollaboratorWithoutAccount({
         account_id: to_account_id,
         group: "collaborator",
       });
+      await syncProjectUsersOnHost({ project_id: opts.project_id });
     } else {
       dbg(
         `user ${email_address} doesn't have an account yet -- may send email (if we haven't recently)`,

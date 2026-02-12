@@ -12,8 +12,10 @@ import { touchProjectLastEdited } from "./last-edited";
 import {
   ensureVolume,
   getVolume,
+  getScratchMountpoint,
   resolveRusticRepo,
 } from "./file-server";
+import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
 import type { ProjectCopyRow } from "@cocalc/conat/hub/api/projects";
 
 const logger = getLogger("project-host:pending-copies");
@@ -21,14 +23,14 @@ const logger = getLogger("project-host:pending-copies");
 const COPY_STAGING_DIR = ".copy-staging";
 const RESTORE_TIMEOUT_MS = 30 * 60 * 1000;
 
-function normalizeRelativePath(raw: string, label: string): string {
+function normalizeCopyPath(raw: string, label: string): string {
   if (typeof raw !== "string") {
     throw new Error(`${label} must be a string`);
   }
   const trimmed = raw.trim();
   if (!trimmed) return "";
   if (path.posix.isAbsolute(trimmed)) {
-    throw new Error(`${label} must be project-relative`);
+    return path.posix.normalize(trimmed);
   }
   const normalized = path.posix.normalize(trimmed);
   if (normalized === "." || normalized === "") return "";
@@ -48,8 +50,8 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
-  const srcPath = normalizeRelativePath(row.src_path, "src_path");
-  let destPath = normalizeRelativePath(row.dest_path, "dest_path");
+  const srcPath = normalizeCopyPath(row.src_path, "src_path");
+  let destPath = normalizeCopyPath(row.dest_path, "dest_path");
   if (!destPath) {
     if (!srcPath) {
       throw new Error("dest_path cannot be empty when src_path is empty");
@@ -61,7 +63,10 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
   const volume = await getVolume(row.dest_project_id);
   const projectRoot = volume.path;
 
-  const destFs = new SandboxedFilesystem(projectRoot);
+  const destFs = new SandboxedFilesystem(projectRoot, {
+    rootfs: getRootfsMountpoint(row.dest_project_id),
+    scratch: getScratchMountpoint(row.dest_project_id),
+  });
   const destAbs = await destFs.safeAbsPath(destPath);
   if (destAbs === projectRoot) {
     throw new Error("dest_path cannot be project root");

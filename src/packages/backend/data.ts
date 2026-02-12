@@ -24,9 +24,14 @@ const DEFINITION = `CoCalc Environment Variables:
 - logs -- if env var LOGS is set, use that; otherwise, {data}/logs:  directory in which to store logs
 `;
 
-import { join, resolve } from "path";
+import { dirname, join, resolve } from "path";
 import { ConnectionOptions } from "node:tls";
-import { existsSync, mkdirSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import {
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+} from "crypto";
 import { isEmpty } from "lodash";
 import basePath from "@cocalc/backend/base-path";
 import port from "@cocalc/backend/port";
@@ -301,6 +306,130 @@ try {
 } catch {}
 export function setConatPassword(password: string) {
   conatPassword = password;
+}
+
+function normalizePem(value?: string): string | undefined {
+  const v = value?.trim();
+  if (!v) return;
+  return v.includes("\\n") ? v.replace(/\\n/g, "\n").trim() : v;
+}
+
+function maybeReadPem(path?: string): string | undefined {
+  if (!path) return;
+  try {
+    const v = readFileSync(path).toString().trim();
+    if (!v) return;
+    return v;
+  } catch {
+    return;
+  }
+}
+
+// Ed25519 keypair for project-host auth tokens:
+// - hub signs using PRIVATE key
+// - project-host verifies using PUBLIC key
+//
+// Defaults:
+//   ${secrets}/project-host-auth-ed25519-private.pem
+//   ${secrets}/project-host-auth-ed25519-public.pem
+//
+// Env overrides:
+//   COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY
+//   COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY
+//   COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY_PATH
+//   COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY_PATH
+export const projectHostAuthTokenPrivateKeyPath =
+  process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY_PATH ??
+  join(secrets, "project-host-auth-ed25519-private.pem");
+export const projectHostAuthTokenPublicKeyPath =
+  process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY_PATH ??
+  join(secrets, "project-host-auth-ed25519-public.pem");
+
+function isLaunchpadProduct(): boolean {
+  return (process.env.COCALC_PRODUCT ?? "").toLowerCase() === "launchpad";
+}
+
+function maybeAutoGenerateProjectHostAuthKeypair(): string | undefined {
+  if (!isLaunchpadProduct()) return;
+  const keypair = generateKeyPairSync("ed25519", {
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  }) as { privateKey: string; publicKey: string };
+  try {
+    mkdirSync(dirname(projectHostAuthTokenPrivateKeyPath), {
+      recursive: true,
+      mode: 0o700,
+    });
+    writeFileSync(
+      projectHostAuthTokenPrivateKeyPath,
+      keypair.privateKey.trim() + "\n",
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      projectHostAuthTokenPublicKeyPath,
+      keypair.publicKey.trim() + "\n",
+      { mode: 0o644 },
+    );
+  } catch (err) {
+    throw new Error(
+      `failed to auto-generate project-host auth keypair in launchpad mode: ${err}`,
+    );
+  }
+  return keypair.privateKey.trim();
+}
+
+export function getProjectHostAuthTokenPrivateKey(): string {
+  const fromEnv = normalizePem(
+    process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY,
+  );
+  const fromFile = maybeReadPem(projectHostAuthTokenPrivateKeyPath);
+  const key = fromEnv ?? fromFile ?? maybeAutoGenerateProjectHostAuthKeypair();
+  if (!key) {
+    throw new Error(
+      "missing project-host auth private key; set COCALC_PROJECT_HOST_AUTH_TOKEN_PRIVATE_KEY or provide " +
+        projectHostAuthTokenPrivateKeyPath +
+        ". In launchpad mode, this key is auto-generated.",
+    );
+  }
+  return key;
+}
+
+export function getConfiguredProjectHostAuthTokenPublicKey():
+  | string
+  | undefined {
+  const fromEnv = normalizePem(
+    process.env.COCALC_PROJECT_HOST_AUTH_TOKEN_PUBLIC_KEY,
+  );
+  const fromFile = maybeReadPem(projectHostAuthTokenPublicKeyPath);
+  return fromEnv ?? fromFile;
+}
+
+export function getProjectHostAuthTokenPublicKey(): string {
+  const configured = getConfiguredProjectHostAuthTokenPublicKey();
+  if (configured) {
+    return configured;
+  }
+  // Convenience fallback: derive public key from private if only private is available.
+  const privateKey = getProjectHostAuthTokenPrivateKey();
+  const pub = createPublicKey(createPrivateKey(privateKey)).export({
+    type: "spki",
+    format: "pem",
+  });
+  const derived = `${pub}`.trim();
+  if (isLaunchpadProduct()) {
+    try {
+      mkdirSync(dirname(projectHostAuthTokenPublicKeyPath), {
+        recursive: true,
+        mode: 0o700,
+      });
+      writeFileSync(projectHostAuthTokenPublicKeyPath, derived + "\n", {
+        mode: 0o644,
+      });
+    } catch {
+      // non-fatal: verification can still use derived key in memory
+    }
+  }
+  return derived;
 }
 
 export const codexSubscriptionsPath = join(secrets, "codex-subscriptions");

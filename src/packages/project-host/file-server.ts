@@ -55,6 +55,7 @@ import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import { fsServer, DEFAULT_FILE_SERVICE } from "@cocalc/conat/files/fs";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import cpExec from "@cocalc/backend/sandbox/cp";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -79,6 +80,8 @@ import {
 } from "@cocalc/file-server/btrfs/rustic-progress";
 import { publishLroEvent } from "@cocalc/conat/lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
+import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
+import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -150,7 +153,10 @@ export async function ensureVolume(project_id: string, scratch?: boolean) {
   return vol;
 }
 
-export async function deleteVolume(project_id: string) {
+export async function deleteVolume(
+  project_id: string,
+  opts: { reportProvisioned?: boolean } = {},
+) {
   if (fs == null) {
     throw Error("file server not initialized");
   }
@@ -182,7 +188,9 @@ export async function deleteVolume(project_id: string) {
 
   await deleteIfExists({ name: volName(project_id), clearSnapshots: true });
   await deleteIfExists({ name: scratchVolName(project_id) });
-  queueProjectProvisioned(project_id, false);
+  if (opts.reportProvisioned !== false) {
+    queueProjectProvisioned(project_id, false);
+  }
   await deleteBackupIndexCache(project_id);
 }
 
@@ -205,6 +213,19 @@ export function getMountPoint(): string {
     throw Error("file server not initialized");
   }
   return fs.opts.mount;
+}
+
+export function getFileServerRuntimeStatus():
+  | {
+      mount: string;
+      bees: ReturnType<Filesystem["getBeesStatus"]>;
+    }
+  | undefined {
+  if (fs == null) return undefined;
+  return {
+    mount: fs.opts.mount,
+    bees: fs.getBeesStatus(),
+  };
 }
 
 export async function listProvisionedProjects(): Promise<string[]> {
@@ -233,7 +254,7 @@ function projectMountpoint(project_id: string): string {
   return join(getMountPoint(), volName(project_id));
 }
 
-function scratchMountpoint(project_id: string): string {
+export function getScratchMountpoint(project_id: string): string {
   return join(getMountPoint(), scratchVolName(project_id));
 }
 
@@ -253,7 +274,15 @@ async function startBackupConfigInvalidation(client: ConatClient) {
   const hostId = getLocalHostId();
   if (!hostId) return;
   const subject = `project-host.${hostId}.backup.invalidate`;
-  backupConfigInvalidationSub = await client.subscribe(subject);
+  try {
+    backupConfigInvalidationSub = await client.subscribe(subject);
+  } catch (err) {
+    logger.warn("backup config invalidation subscribe failed", {
+      subject,
+      err: String(err),
+    });
+    return;
+  }
   (async () => {
     for await (const _msg of backupConfigInvalidationSub) {
       backupConfigCache.clear();
@@ -384,7 +413,9 @@ async function mount({
 }): Promise<{ path: string }> {
   logger.debug("mount", { project_id, scratch });
   return {
-    path: scratch ? scratchMountpoint(project_id) : projectMountpoint(project_id),
+    path: scratch
+      ? getScratchMountpoint(project_id)
+      : projectMountpoint(project_id),
   };
 }
 
@@ -466,8 +497,22 @@ async function cp({
   }
   const srcVolume = await getVolume(src.project_id);
   const destVolume = await getVolume(dest.project_id);
-  let srcPaths = await srcVolume.fs.safeAbsPaths(src.path);
-  let destPath = await destVolume.fs.safeAbsPath(dest.path);
+  // Paths may be project-relative or absolute (/..., /root/..., /scratch/...).
+  // Resolve using the same home/rootfs/scratch policy as the fs server API.
+  const srcFs = createProjectSandboxFilesystem({
+    project_id: src.project_id,
+    home: srcVolume.path,
+    rootfs: getRootfsMountpoint(src.project_id),
+    scratch: getScratchMountpoint(src.project_id),
+  });
+  const destFs = createProjectSandboxFilesystem({
+    project_id: dest.project_id,
+    home: destVolume.path,
+    rootfs: getRootfsMountpoint(dest.project_id),
+    scratch: getScratchMountpoint(dest.project_id),
+  });
+  let srcPaths = await srcFs.safeAbsPaths(src.path);
+  let destPath = await destFs.safeAbsPath(dest.path);
 
   const toRelative = (path: string) => {
     if (!path.startsWith(fs!.subvolumes.fs.path)) {
@@ -475,14 +520,32 @@ async function cp({
     }
     return path.slice(fs!.subvolumes.fs.path.length + 1);
   };
-  srcPaths = srcPaths.map(toRelative);
-  destPath = toRelative(destPath);
-  // Always reflink on btrfs.
-  await fs.subvolumes.fs.cp(
-    typeof src.path == "string" ? srcPaths[0] : srcPaths, // preserve string vs array
-    destPath,
-    { ...options, reflink: true },
-  );
+  const inSharedSubvolumeMount =
+    destPath.startsWith(fs.subvolumes.fs.path + "/") &&
+    srcPaths.every((p) => p.startsWith(fs!.subvolumes.fs.path + "/"));
+
+  if (inSharedSubvolumeMount) {
+    srcPaths = srcPaths.map(toRelative);
+    destPath = toRelative(destPath);
+    // Fast path: btrfs-aware copy inside the shared file-server mount.
+    await fs.subvolumes.fs.cp(
+      typeof src.path == "string" ? srcPaths[0] : srcPaths, // preserve string vs array
+      destPath,
+      { ...options, reflink: true },
+    );
+  } else {
+    // Fallback path for absolute rootfs/scratch locations that are outside
+    // the subvolume mount root.
+    await cpExec(
+      typeof src.path == "string" ? srcPaths[0] : srcPaths,
+      destPath,
+      {
+        ...options,
+        recursive: options?.recursive ?? true,
+        reflink: true,
+      },
+    );
+  }
   void touchProjectLastEdited(dest.project_id, "cp");
 }
 
@@ -1107,6 +1170,7 @@ async function restoreBackup({
 }): Promise<void> {
   const vol = await getVolumeForBackup(project_id);
   const home = projectMountpoint(project_id);
+  const scratch = getScratchMountpoint(project_id);
   const stagingRoot = join(dirname(home), RESTORE_STAGING_ROOT);
   const stagingHome = join(stagingRoot, volName(project_id));
   const restorePath = backupPath ?? "";
@@ -1126,15 +1190,28 @@ async function restoreBackup({
   let relDest = destPath ?? "";
 
   if (destPath && path.isAbsolute(destPath)) {
-    if (isSubPath(home, destPath)) {
+    const containerDest = path.posix.normalize(destPath);
+    if (containerDest === "/root" || containerDest.startsWith("/root/")) {
+      root = home;
+      relDest = path.posix.relative("/root", containerDest);
+    } else if (
+      containerDest === "/scratch" ||
+      containerDest.startsWith("/scratch/")
+    ) {
+      root = scratch;
+      relDest = path.posix.relative("/scratch", containerDest);
+    } else if (isSubPath(home, destPath)) {
       root = home;
       relDest = path.relative(home, destPath);
+    } else if (isSubPath(scratch, destPath)) {
+      root = scratch;
+      relDest = path.relative(scratch, destPath);
     } else if (isSubPath(stagingHome, destPath)) {
       root = stagingHome;
       relDest = path.relative(stagingHome, destPath);
     } else {
       throw new Error(
-        `restore destination must be within project home or restore staging: ${destPath}`,
+        `restore destination must be within project home, /scratch, or restore staging: ${destPath}`,
       );
     }
   } else {
@@ -1148,7 +1225,11 @@ async function restoreBackup({
 
   await assertSubvolumeRoot(
     root,
-    root === home ? "project home" : "restore staging",
+    root === home
+      ? "project home"
+      : root === scratch
+        ? "project scratch"
+        : "restore staging",
   );
 
   const restoreFs =
@@ -1509,7 +1590,12 @@ export async function initFsServer({
       }
       const project_id = projectIdFromSubject(subject);
       const { path } = await getVolume(project_id);
-      return new SandboxedFilesystem(path, { host: project_id });
+      return createProjectSandboxFilesystem({
+        project_id,
+        home: path,
+        rootfs: getRootfsMountpoint(project_id),
+        scratch: getScratchMountpoint(project_id),
+      });
     },
     onMutation: ({ subject, op }) => {
       const project_id = projectIdFromSubject(subject);

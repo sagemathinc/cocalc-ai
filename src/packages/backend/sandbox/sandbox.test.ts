@@ -18,6 +18,16 @@ beforeAll(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "cocalc"));
 });
 
+async function expectRejectsWithError(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (err) {
+    if (err instanceof Error) return err;
+    throw err;
+  }
+  throw new Error("Expected promise to reject with Error");
+}
+
 describe("test using the filesystem sandbox to do a few standard things", () => {
   let fs;
   it("creates and reads file", async () => {
@@ -305,6 +315,121 @@ describe("read only sandbox", () => {
       expect(err.code).toEqual("EACCES");
     }
   });
+});
+
+describe("rootfs option sandbox", () => {
+  let fs;
+  let home: string;
+  let rootfs: string;
+  let scratch: string;
+
+  it("fails absolute non-home operations when rootfs is missing", async () => {
+    home = join(tempDir, "test-rootfs-home");
+    rootfs = join(tempDir, "test-rootfs-missing");
+    await mkdir(home);
+    fs = new SandboxedFilesystem(home, { rootfs });
+    const err = await expectRejectsWithError(fs.writeFile("/alpha.txt", "from-home"));
+    expect(err.message).toContain(
+      "rootfs is not mounted; cannot access absolute path '/alpha.txt'. Start the workspace and try again.",
+    );
+    expect(err.message).not.toContain(rootfs);
+    await fs.writeFile("/root/home-ok.txt", "ok");
+    await fs.writeFile("relative-ok.txt", "ok");
+    expect(await fs.readFile("/root/home-ok.txt", "utf8")).toBe("ok");
+    expect(await fs.readFile("relative-ok.txt", "utf8")).toBe("ok");
+  });
+
+  it("does not leak mount paths when scratch is missing", async () => {
+    const secretScratchPath = join(tempDir, "very-secret-scratch-mount");
+    const fsMissingScratch = new SandboxedFilesystem(home, {
+      rootfs,
+      scratch: secretScratchPath,
+    });
+    const err = await expectRejectsWithError(
+      fsMissingScratch.writeFile("/scratch/blocked.txt", "blocked"),
+    );
+    expect(err.message).toContain(
+      "scratch is not mounted; cannot access absolute path '/scratch/blocked.txt'. Start the workspace and try again.",
+    );
+    expect(err.message).not.toContain(secretScratchPath);
+  });
+
+  it("switches to rootfs path once rootfs exists", async () => {
+    await mkdir(rootfs, { recursive: true });
+    await fs.mkdir("/tmp");
+    await fs.writeFile("/tmp/from-root.txt", "from-root");
+    expect(await fs.readFile("/tmp/from-root.txt", "utf8")).toBe("from-root");
+    expect(await readFile(join(rootfs, "tmp", "from-root.txt"), "utf8")).toBe(
+      "from-root",
+    );
+    await expect(readFile(join(home, "tmp", "from-root.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("keeps /root and relative paths mapped to home path when rootfs exists", async () => {
+    await fs.writeFile("/root/home-abs.txt", "from-home-abs");
+    await fs.writeFile("home-rel.txt", "from-home-rel");
+    expect(await fs.readFile("/root/home-abs.txt", "utf8")).toBe("from-home-abs");
+    expect(await fs.readFile("home-rel.txt", "utf8")).toBe("from-home-rel");
+    const rootListing = (await fs.readdir("/root")) as string[];
+    expect(rootListing).toContain("home-abs.txt");
+    expect(await readFile(join(home, "home-abs.txt"), "utf8")).toBe("from-home-abs");
+    expect(await readFile(join(home, "home-rel.txt"), "utf8")).toBe("from-home-rel");
+    await expect(readFile(join(rootfs, "root", "home-abs.txt"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(rootfs, "home-rel.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("realpath returns absolute style paths when rootfs mode is active", async () => {
+    expect(await fs.realpath("/tmp/from-root.txt")).toBe("/tmp/from-root.txt");
+  });
+
+  it("realpath preserves /root absolute style for home files", async () => {
+    expect(await fs.realpath("/root/home-abs.txt")).toBe("/root/home-abs.txt");
+  });
+
+  it("safe mode still blocks symlink escape outside rootfs", async () => {
+    await writeFile(join(tempDir, "root-secret.txt"), "s3cr3t");
+    await symlink(join(tempDir, "root-secret.txt"), join(rootfs, "danger-link"));
+    await expect(fs.readFile("/danger-link", "utf8")).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+
+  it("routes /scratch paths to scratch mount when configured", async () => {
+    scratch = join(tempDir, "test-scratch-mounted");
+    await mkdir(scratch, { recursive: true });
+    const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
+    await fsScratch.writeFile("/scratch/from-scratch.txt", "from-scratch");
+    expect(await fsScratch.readFile("/scratch/from-scratch.txt", "utf8")).toBe(
+      "from-scratch",
+    );
+    expect(await readFile(join(scratch, "from-scratch.txt"), "utf8")).toBe(
+      "from-scratch",
+    );
+    await expect(
+      readFile(join(rootfs, "scratch", "from-scratch.txt"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  it("errors on /scratch when scratch mount is missing", async () => {
+    const fsMissingScratch = new SandboxedFilesystem(home, {
+      rootfs,
+      scratch: join(tempDir, "scratch-missing"),
+    });
+    await expect(
+      fsMissingScratch.writeFile("/scratch/blocked.txt", "blocked"),
+    ).rejects.toThrow(
+      "scratch is not mounted; cannot access absolute path '/scratch/blocked.txt'. Start the workspace and try again.",
+    );
+    await fsMissingScratch.writeFile("/tmp/rootfs-ok.txt", "rootfs-ok");
+    expect(await fsMissingScratch.readFile("/tmp/rootfs-ok.txt", "utf8")).toBe(
+      "rootfs-ok",
+    );
+    await fsMissingScratch.writeFile("/root/home-still-ok.txt", "home-ok");
+    expect(await fsMissingScratch.readFile("/root/home-still-ok.txt", "utf8")).toBe(
+      "home-ok",
+    );
+  });
+
 });
 
 afterAll(async () => {

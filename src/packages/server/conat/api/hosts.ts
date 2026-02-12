@@ -17,7 +17,9 @@ import type {
   ProjectCopyRow,
   ProjectCopyState,
 } from "@cocalc/conat/hub/api/projects";
+import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
 import getLogger from "@cocalc/backend/logger";
+import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import {
   computePlacementPermission,
@@ -34,6 +36,7 @@ import {
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import isBanned from "@cocalc/server/accounts/is-banned";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import {
   gcpSafeName,
@@ -45,7 +48,8 @@ import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { revokeBootstrapTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
+import siteURL from "@cocalc/database/settings/site-url";
+import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
 import {
   claimPendingCopies as claimPendingCopiesDb,
   updateCopyStatus as updateCopyStatusDb,
@@ -85,6 +89,7 @@ import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
 import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
 import { saveResponse } from "@cocalc/server/llm/save-response";
 import { isCoreLanguageModel, type LanguageModelCore } from "@cocalc/util/db-schema/llm-utils";
+import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 function pool() {
   return getPool();
 }
@@ -368,7 +373,8 @@ async function markHostDeprovisioned(row: any, action: string) {
   delete nextMetadata.cloudflare_tunnel;
 
   logStatusUpdate(row.id, "deprovisioned", "api");
-  await revokeBootstrapTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
   try {
     if (await hasCloudflareTunnel()) {
       await deleteCloudflareTunnel({
@@ -545,6 +551,120 @@ async function assertHostCredentialProjectAccess({
   if (!rowCount) {
     throw new Error("host is not authorized for this credential project");
   }
+}
+
+async function assertAccountCanIssueProjectHostToken({
+  account_id,
+  host_id,
+  project_id,
+}: {
+  account_id: string;
+  host_id: string;
+  project_id?: string;
+}): Promise<void> {
+  if (await isAdmin(account_id)) {
+    return;
+  }
+
+  // If project_id is supplied, require collaborator access and verify placement.
+  if (project_id) {
+    const { rows } = await pool().query<{
+      host_id: string | null;
+      group: string | null;
+    }>(
+      `
+      SELECT
+        host_id,
+        users -> $2::text ->> 'group' AS "group"
+      FROM projects
+      WHERE project_id=$1
+        AND deleted IS NOT true
+      LIMIT 1
+    `,
+      [project_id, account_id],
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new Error("project not found");
+    }
+    if (row.host_id !== host_id) {
+      throw new Error("project is not assigned to the requested host");
+    }
+    if (row.group === "owner" || row.group === "collaborator") {
+      return;
+    }
+  }
+
+  // Host owner/collaborator controls are also valid authorization paths.
+  try {
+    await loadHostForListing(host_id, account_id);
+    return;
+  } catch {
+    // continue to project-based fallback check
+  }
+
+  // Fallback: allow if this account collaborates on any project hosted here.
+  const { rowCount } = await pool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE host_id=$1
+        AND deleted IS NOT true
+        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')
+      LIMIT 1
+    `,
+    [host_id, account_id],
+  );
+  if (!rowCount) {
+    throw new Error("not authorized for project-host access token");
+  }
+}
+
+export async function issueProjectHostAuthToken({
+  account_id,
+  host_id,
+  project_id,
+  ttl_seconds,
+}: {
+  account_id?: string;
+  host_id: string;
+  project_id?: string;
+  ttl_seconds?: number;
+}): Promise<{
+  host_id: string;
+  token: string;
+  expires_at: number;
+}> {
+  const owner = requireAccount(account_id);
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (await isBanned(owner)) {
+    throw new Error("account is banned");
+  }
+
+  await assertAccountCanIssueProjectHostToken({
+    account_id: owner,
+    host_id,
+    project_id,
+  });
+  if (project_id) {
+    // Keep project-host local ACL up to date before issuing browser token.
+    // This is best-effort fast path for grant/revoke propagation.
+    await syncProjectUsersOnHost({
+      project_id,
+      expected_host_id: host_id,
+    });
+  }
+
+  const { token, expires_at } = issueProjectHostAuthTokenJwt({
+    account_id: owner,
+    host_id,
+    ttl_seconds,
+    // Hub signs with Ed25519 private key; project-host verifies with public key.
+    private_key: getProjectHostAuthTokenPrivateKey(),
+  });
+  return { host_id, token, expires_at };
 }
 
 function normalizeExternalCredentialSelector({
@@ -2580,9 +2700,32 @@ export async function upgradeHostSoftwareInternal({
 }): Promise<HostSoftwareUpgradeResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
+  let requestedBaseUrl = base_url;
+  if (requestedBaseUrl) {
+    try {
+      const parsed = new URL(requestedBaseUrl);
+      const host = parsed.hostname.toLowerCase();
+      if (
+        host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "::1" ||
+        host === "[::1]"
+      ) {
+        const publicSite = (await siteURL()).replace(/\/+$/, "");
+        requestedBaseUrl = `${publicSite}/software`;
+        logger.warn("upgrade host: replaced loopback software base url", {
+          host_id: id,
+          requested: base_url,
+          effective: requestedBaseUrl,
+        });
+      }
+    } catch {
+      // keep provided value as-is if it is not a valid URL
+    }
+  }
   const { project_hosts_software_base_url } = await getServerSettings();
   const resolvedBaseUrl =
-    base_url ??
+    requestedBaseUrl ??
     project_hosts_software_base_url ??
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
     undefined;

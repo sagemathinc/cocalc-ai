@@ -10,7 +10,12 @@ const log = getLogger("server:conat:route-project");
 
 const CHANNEL = "project_host_update";
 
-const cache = new LRU<string, string>({
+export interface ProjectHostRouteTarget {
+  address: string;
+  host_id: string;
+}
+
+const cache = new LRU<string, ProjectHostRouteTarget>({
   max: 10_000,
   ttl: 5 * 60_000, // 5 minutes
 });
@@ -44,15 +49,22 @@ function extractProjectId(subject: string): string | undefined {
   return undefined;
 }
 
-function cacheAddress(project_id: string, address?: string | null) {
-  if (!address) {
+function cacheRouteTarget(
+  project_id: string,
+  route?: { address?: string | null; host_id?: string | null },
+) {
+  const address = route?.address;
+  const host_id = route?.host_id;
+  if (!address || !host_id) {
     cache.delete(project_id);
     return;
   }
-  cache.set(project_id, address);
+  cache.set(project_id, { address, host_id });
 }
 
-async function fetchHostAddress(project_id: string): Promise<string | undefined> {
+async function fetchHostAddress(
+  project_id: string,
+): Promise<ProjectHostRouteTarget | undefined> {
   if (inflight[project_id]) {
     await inflight[project_id];
     return cache.get(project_id);
@@ -86,7 +98,10 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
         const hostRow = hostRows[0];
         const directTunnel = onPremTunnelAddress(hostRow?.metadata);
         if (directTunnel) {
-          cache.set(project_id, directTunnel);
+          cacheRouteTarget(project_id, {
+            address: directTunnel,
+            host_id: row.host_id,
+          });
           return;
         }
         const machine = hostRow?.metadata?.machine ?? {};
@@ -106,10 +121,16 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
             });
             return;
           }
-          cache.set(project_id, addr);
+          cacheRouteTarget(project_id, {
+            address: addr,
+            host_id: row.host_id,
+          });
           return;
         }
-        cacheAddress(project_id, hostRow?.internal_url ?? hostRow?.public_url);
+        cacheRouteTarget(project_id, {
+          address: hostRow?.internal_url ?? hostRow?.public_url,
+          host_id: row.host_id,
+        });
         return;
       }
     } catch (err) {
@@ -124,7 +145,7 @@ async function fetchHostAddress(project_id: string): Promise<string | undefined>
 
 export function routeProjectSubject(
   subject: string,
-): { address?: string } | undefined {
+): { address?: string; host_id?: string } | undefined {
   const project_id = extractProjectId(subject);
   if (!project_id) {
     // log.debug("routeProjectSubject: not a project subject", subject);
@@ -134,7 +155,7 @@ export function routeProjectSubject(
   const cached = cache.get(project_id);
   if (cached) {
     // log.debug("routeProjectSubject: cached", { subject, cached });
-    return { address: cached };
+    return cached;
   }
 
   // Fire and forget fill; fall back to default connection until cached.
@@ -226,6 +247,6 @@ export async function materializeProjectHost(
   project_id: string,
 ): Promise<string | undefined> {
   const cached = cache.get(project_id);
-  if (cached) return cached;
-  return await fetchHostAddress(project_id);
+  if (cached) return cached.address;
+  return (await fetchHostAddress(project_id))?.address;
 }

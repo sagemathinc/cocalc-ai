@@ -28,6 +28,7 @@ echo "- Bundle entry point with @vercel/ncc"
 ncc build packages/project/bin/cocalc-project.js \
   -o "$OUT"/bundle \
   --source-map \
+  --external node-pty \
   --external bufferutil \
   --external utf-8-validate
 
@@ -98,8 +99,14 @@ fetch_native_pkg() {
 
 copy_native_pkg() {
   local pkg="$1"
-  local dir
-  dir=$(find src/packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  local dir=""
+  if [ -d "$ROOT/packages/project/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/project/node_modules/$pkg"
+  elif [ -d "$ROOT/packages/project-runner/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/project-runner/node_modules/$pkg"
+  else
+    dir=$(find "$ROOT/packages" -path "*node_modules/${pkg}" -type d -print -quit || true)
+  fi
   echo "- Copy native module ${pkg}"
   if [ -n "$dir" ]; then
     mkdir -p "$OUT"/bundle/node_modules/"$pkg"
@@ -109,42 +116,26 @@ copy_native_pkg() {
   fi
 }
 
-patch_node_pty_exports() {
-  local dest_root="$1"
-  for pkg in "${dest_root}"/bundle/node_modules/@lydell/node-pty-linux-*/package.json; do
-    [ -f "$pkg" ] || continue
-    node -e "const fs=require('fs');const p=process.argv[1];const data=JSON.parse(fs.readFileSync(p,'utf8'));delete data.exports;fs.writeFileSync(p, JSON.stringify(data,null,2));" "$pkg"
-  done
-  for pkgdir in "${dest_root}"/bundle/node_modules/@lydell/node-pty-linux-*; do
-    [ -d "$pkgdir" ] || continue
-    arch=$(basename "$pkgdir" | sed 's/^node-pty-linux-//')
-    prebuild="$pkgdir/prebuilds/linux-$arch/pty.node"
-    if [ -f "$prebuild" ]; then
-      cp "$prebuild" "$pkgdir/pty.node"
-    fi
-  done
-}
+echo "- Copy node-pty package"
+copy_native_pkg "node-pty"
 
-echo "- Copy node-pty native addon(s)"
-case "${OSTYPE}" in
-  linux*)
-    copy_native_pkg "@lydell/node-pty-linux-x64"
-    copy_native_pkg "@lydell/node-pty-linux-arm64"
-    ;;
-  darwin*)
-    case "$(uname -m)" in
-      x86_64) copy_native_pkg "@lydell/node-pty-darwin-x64" ;;
-      arm64) copy_native_pkg "@lydell/node-pty-darwin-arm64" ;;
-      *) echo "  (unsupported darwin arch for node-pty: $(uname -m))" ;;
-    esac
-    ;;
-  *)
-    echo "  (unsupported platform for node-pty: ${OSTYPE})"
-    ;;
-esac
-
-echo "- Allow node-pty native subpath requires"
-patch_node_pty_exports "$OUT"
+echo "- Prune node-pty package"
+NODE_PTY_DIR="$OUT/bundle/node_modules/node-pty"
+if [ -d "$NODE_PTY_DIR" ]; then
+  # Keep only runtime essentials.
+  find "$NODE_PTY_DIR" -mindepth 1 -maxdepth 1 \
+    ! -name lib \
+    ! -name prebuilds \
+    ! -name package.json \
+    ! -name LICENSE \
+    ! -name README.md \
+    -exec rm -rf {} +
+  # Keep only linux prebuilds for target runtime.
+  if [ -d "$NODE_PTY_DIR/prebuilds" ]; then
+    find "$NODE_PTY_DIR/prebuilds" -mindepth 1 -maxdepth 1 -type d \
+      ! -name 'linux-*' -exec rm -rf {} +
+  fi
+fi
 
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
@@ -174,24 +165,14 @@ if ! compgen -G "$OUT/bundle/build/linux/arm64/node/glibc-*/addon.node" >/dev/nu
   echo "ERROR: missing zeromq glibc addon for linux/arm64" >&2
   exit 1
 fi
-if [ ! -f "$OUT/bundle/node_modules/@lydell/node-pty-linux-x64/prebuilds/linux-x64/pty.node" ]; then
+if [ ! -f "$OUT/bundle/node_modules/node-pty/prebuilds/linux-x64/pty.node" ]; then
   echo "ERROR: missing node-pty linux-x64 prebuild" >&2
   exit 1
 fi
-if [ ! -f "$OUT/bundle/node_modules/@lydell/node-pty-linux-arm64/prebuilds/linux-arm64/pty.node" ]; then
+if [ ! -f "$OUT/bundle/node_modules/node-pty/prebuilds/linux-arm64/pty.node" ]; then
   echo "ERROR: missing node-pty linux-arm64 prebuild" >&2
   exit 1
 fi
-
-# Trim native builds for other platforms to keep output lean
-case "${OSTYPE}" in
-  linux*)
-    rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-darwin-* || true
-    ;;
-  darwin*)
-    rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-linux-* || true
-    ;;
-esac
 
 echo "- Copy project bin scripts"
 mkdir -p "$OUT"/src/packages/project

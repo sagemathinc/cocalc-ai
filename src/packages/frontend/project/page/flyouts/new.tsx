@@ -119,7 +119,8 @@ export function NewFlyout({
   const rfn = other_settings.get(NEW_FILENAMES);
   const selected = rfn ?? DEFAULT_NEW_FILENAMES;
   const actions = useActions({ project_id });
-  const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
   const availableFeatures = useAvailableFeatures(project_id);
   const file_creation_error = useTypedRedux(
     { project_id },
@@ -345,12 +346,12 @@ export function NewFlyout({
         await actions?.createFile({
           name: newFilename.trim(),
           ext: ext.trim(),
-          current_path,
+          current_path: effective_current_path,
         });
       } else {
         await actions?.createFolder({
           name: newFilename.trim(),
-          current_path,
+          current_path: effective_current_path,
         });
       }
       // success: reset the manual flag

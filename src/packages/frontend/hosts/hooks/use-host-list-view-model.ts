@@ -22,6 +22,7 @@ type UseHostListViewModelArgs = {
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
   onUpgrade?: (host: Host) => void;
+  onUpgradeFromHub?: (host: Host) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
   onToggleStar: (host: Host) => void;
@@ -59,6 +60,7 @@ export const useHostListViewModel = ({
   onRefresh,
   onCancelOp,
   onUpgrade,
+  onUpgradeFromHub,
   onDetails,
   onEdit,
   onToggleStar,
@@ -91,6 +93,7 @@ export const useHostListViewModel = ({
     onRefresh,
     onCancelOp,
     onUpgrade,
+    onUpgradeFromHub,
     onDetails,
     onEdit,
     onToggleStar,

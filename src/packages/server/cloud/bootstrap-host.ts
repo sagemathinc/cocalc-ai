@@ -5,7 +5,7 @@
  * - Cloud-init/startup-script runs once at first boot using a short-lived
  *   bootstrap token to fetch a larger script from the hub.
  * - The bootstrap script prepares the host, writes logs, and never re-runs
- *   after a successful bootstrap (guarded by /btrfs/data/.bootstrap_done and
+ *   after a successful bootstrap (guarded by /mnt/cocalc/data/.bootstrap_done and
  *   /var/lib/cocalc/.bootstrap_done).
  *
  * What bootstrap does:
@@ -17,18 +17,18 @@
  * - Enables time sync via chrony.
  * - Detects public IP when needed (if public_ip is not known at provision).
  * - Ensures subuid/subgid ranges for the ssh user to allow rootless podman.
- * - Prepares /btrfs:
+ * - Prepares /mnt/cocalc:
  *   - Uses an attached data disk when available, otherwise creates a loopback
- *     image at /var/lib/cocalc/btrfs.img.
+ *     image at /var/lib/cocalc/cocalc.img.
  *   - Never re-formats an existing btrfs data disk.
- *   - Mounts /btrfs and creates /btrfs/data subvolume.
- * - Configures podman storage to live on /btrfs (via storage.conf).
+ *   - Mounts /mnt/cocalc and creates /mnt/cocalc/data subvolume.
+ * - Configures podman storage to live on /mnt/cocalc (via storage.conf).
  * - Writes /etc/cocalc/project-host.env with runtime config.
  * - Fetches and installs:
  *   - project-host bundle
  *   - project bundle
  *   - tools bundle
- * - Writes helper scripts in ~/cocalc-host/bootstrap (ctl/logs/logs-cf, etc.).
+ * - Writes helper scripts in ~/cocalc-host/bin (wrappers to runtime scripts).
  * - Installs /usr/local/sbin/cocalc-grow-btrfs and runs it on boot.
  * - Sets cron @reboot hook to start project-host without re-running bootstrap.
  * - Installs and enables cloudflared (if Cloudflare tunnel is enabled).
@@ -218,7 +218,8 @@ export type BootstrapScripts = {
   publicUrl: string;
   internalUrl: string;
   sshServer: string;
-  sshUser: string;
+  bootstrapUser: string;
+  runtimeUser: string;
   hasGpu: boolean;
   imageSizeGb: string;
   dataDiskDevices: string;
@@ -274,9 +275,13 @@ export async function buildBootstrapScripts(
   const hasGpu = machineHasGpu(machine);
   const selfHostKind = machine.metadata?.self_host_kind;
   const isSelfHostDirect = isSelfHost && selfHostKind === "direct";
-  const sshUser = isSelfHostDirect
+  const bootstrapUser = isSelfHostDirect
     ? "\${BOOTSTRAP_USER}"
     : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+  const runtimeUser = isSelfHostDirect
+    ? bootstrapUser
+    : `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
+      "cocalc-host";
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
     isSelfHost && (!rawSelfHostMode || rawSelfHostMode === "local")
@@ -347,9 +352,9 @@ export async function buildBootstrapScripts(
     extractArtifactVersion(projectBundleUrl, "project") || "latest";
   const bootstrapHome = isSelfHostDirect
     ? "${BOOTSTRAP_HOME}"
-    : sshUser === "root"
+    : bootstrapUser === "root"
       ? "/root"
-      : `/home/${sshUser}`;
+      : `/home/${bootstrapUser}`;
   const bootstrapRoot = `${bootstrapHome}/cocalc-host`;
   const projectBundlesRoot = "/opt/cocalc/project-bundles";
   const projectBundleDir = `${projectBundlesRoot}/${projectBundleVersion}`;
@@ -429,7 +434,7 @@ export async function buildBootstrapScripts(
         ? row.internal_url.replace(/^http:\/\//, "https://")
         : `https://${publicIp || onPremUrlHost}`;
   const sshServer = row.ssh_server ?? `${publicIp || onPremUrlHost}:${sshPort}`;
-  const dataDir = "/btrfs/data";
+  const dataDir = "/mnt/cocalc/data";
   const envFile = "/etc/cocalc/project-host.env";
   const dataDiskCandidates = dataDiskDevices || "none";
   let tlsHostname = publicIp || onPremUrlHost;
@@ -442,10 +447,17 @@ export async function buildBootstrapScripts(
     }
   }
 
-  const projectHostBundlesRoot = `${bootstrapRoot}/bundles`;
+  const projectHostRoot = "/opt/cocalc/project-host";
+  const projectHostBundlesRoot = `${projectHostRoot}/bundles`;
   const projectHostBundleDir = `${projectHostBundlesRoot}/${projectHostVersion}`;
-  const projectHostCurrent = `${bootstrapRoot}/bundle`;
-  const projectHostBin = `${bootstrapRoot}/bin/project-host`;
+  const projectHostCurrent = `${projectHostRoot}/current`;
+  const projectHostBin = `${projectHostRoot}/bin/project-host`;
+
+  const bindHost = useOnPremSettings ? onPremBindHost : "0.0.0.0";
+  const isLoopbackBindHost =
+    bindHost === "localhost" ||
+    bindHost === "::1" ||
+    bindHost.startsWith("127.");
 
   const envLines = [
     `MASTER_CONAT_SERVER=${masterAddress}`,
@@ -456,29 +468,35 @@ export async function buildBootstrapScripts(
     `PROJECT_HOST_INTERNAL_URL=${internalUrl}`,
     `PROJECT_HOST_SSH_SERVER=${sshServer}`,
     `PROJECT_RUNNER_NAME=0`,
-    `COCALC_FILE_SERVER_MOUNTPOINT=/btrfs`,
+    `COCALC_FILE_SERVER_MOUNTPOINT=/mnt/cocalc`,
     `DATA=${dataDir}`,
     `COCALC_DATA=${dataDir}`,
     `COCALC_LITE_SQLITE_FILENAME=${dataDir}/sqlite.db`,
     `COCALC_PROJECT_BUNDLES=${projectBundlesRoot}`,
     `COCALC_PROJECT_TOOLS=${toolsRoot}/current`,
     `COCALC_BIN_PATH=${toolsRoot}/current`,
-    `COCALC_SYNC_PROJECTS=/btrfs/project-[project_id]/.local/share/cocalc/persist`,
+    `COCALC_SYNC_PROJECTS=/mnt/cocalc/project-[project_id]/.local/share/cocalc/persist`,
     `COCALC_BTRFS_IMAGE_GB=${imageSizeGb}`,
     `COCALC_PROJECT_HOST_SOFTWARE_BASE_URL=${softwareBaseUrl}`,
     `COCALC_PROJECT_HOST_BUNDLE_ROOT=${projectHostBundlesRoot}`,
     `COCALC_PROJECT_HOST_CURRENT=${projectHostCurrent}`,
     `COCALC_PROJECT_HOST_BIN=${projectHostBin}`,
-    `TMPDIR=/btrfs/data/tmp`,
-    `TMP=/btrfs/data/tmp`,
-    `TEMP=/btrfs/data/tmp`,
+    `COCALC_PROJECT_HOST_RUNTIME_USER=${runtimeUser}`,
+    `TMPDIR=/mnt/cocalc/data/tmp`,
+    `TMP=/mnt/cocalc/data/tmp`,
+    `TEMP=/mnt/cocalc/data/tmp`,
     `COCALC_PROJECT_HOST_HTTPS=${tlsEnabled ? "1" : "0"}`,
-    `HOST=${useOnPremSettings ? onPremBindHost : "0.0.0.0"}`,
+    `HOST=${bindHost}`,
     `PORT=${port}`,
     `DEBUG=cocalc:*`,
     `DEBUG_CONSOLE=yes`,
     `COCALC_SSH_SERVER=0.0.0.0:${sshPort}`,
   ];
+  if (!isLoopbackBindHost) {
+    // Current project-host cloud bootstrap defaults to non-loopback binding.
+    // Keep startup explicit and deterministic under network policy guard.
+    envLines.push(`COCALC_ALLOW_INSECURE_HTTP_MODE=true`);
+  }
   if (isSelfHost) {
     envLines.push(`COCALC_SELF_HOST_MODE=${effectiveSelfHostMode ?? "local"}`);
   }
@@ -521,7 +539,8 @@ export async function buildBootstrapScripts(
     publicUrl,
     internalUrl,
     sshServer,
-    sshUser,
+    bootstrapUser,
+    runtimeUser,
     hasGpu,
     imageSizeGb,
     dataDiskDevices,
@@ -572,12 +591,12 @@ CURL_CACERT_ARG="--cacert $BOOTSTRAP_CACERT_PATH"
     : `BOOTSTRAP_CACERT_PATH=""
 CURL_CACERT_ARG=""`;
   const conatPasswordCommand = `
-if [ -f /btrfs/data/secrets/conat-password ]; then
-  echo "bootstrap: conat password already present"
+if [ -f /mnt/cocalc/data/secrets/master-conat-token ]; then
+  echo "bootstrap: master conat token already present"
 else
-  echo "bootstrap: fetching conat password"
-  curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$CONAT_URL" | sudo tee /btrfs/data/secrets/conat-password >/dev/null
-  sudo chmod 600 /btrfs/data/secrets/conat-password
+  echo "bootstrap: fetching master conat token"
+  curl -fsSL $CURL_CACERT_ARG -H "Authorization: Bearer $BOOTSTRAP_TOKEN" "$CONAT_URL" | sudo tee /mnt/cocalc/data/secrets/master-conat-token >/dev/null
+  sudo chmod 600 /mnt/cocalc/data/secrets/master-conat-token
 fi
 `;
   const scripts = await buildBootstrapScripts(row, {
@@ -607,7 +626,9 @@ fi
   const envLinesJson = JSON.stringify(scripts.envLines);
   const cloudflaredJson = JSON.stringify(scripts.cloudflaredConfig ?? { enabled: false });
   const preferredBootstrapUser =
-    scripts.sshUser && scripts.sshUser !== "root" ? scripts.sshUser : "";
+    scripts.bootstrapUser && scripts.bootstrapUser !== "root"
+      ? scripts.bootstrapUser
+      : "";
   return `#!/bin/bash
 set -euo pipefail
 BOOTSTRAP_TOKEN="${token}"
@@ -698,7 +719,7 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   "data_disk_candidates": "${scripts.dataDiskCandidates}",
   "apt_packages": ${aptPackagesJson},
   "has_gpu": ${scripts.hasGpu ? "true" : "false"},
-  "ssh_user": "${scripts.sshUser}",
+  "ssh_user": "${scripts.runtimeUser}",
   "env_file": "${scripts.envFile}",
   "env_lines": ${envLinesJson},
   "node_version": "${scripts.nodeVersion}",
@@ -734,7 +755,7 @@ cat <<EOF_COCALC_BOOTSTRAP_CONFIG > "$BOOTSTRAP_DIR/bootstrap-config.json"
   "bootstrap_token": "$BOOTSTRAP_TOKEN",
   "ca_cert_path": "$BOOTSTRAP_CACERT_PATH",
   "parallel": true,
-  "bootstrap_done_paths": ["/btrfs/data/.bootstrap_done", "/var/lib/cocalc/.bootstrap_done"]
+  "bootstrap_done_paths": ["/mnt/cocalc/data/.bootstrap_done", "/var/lib/cocalc/.bootstrap_done"]
 }
 EOF_COCALC_BOOTSTRAP_CONFIG
 
@@ -816,7 +837,8 @@ if [ "$force" -ne 1 ]; then
     *) echo "aborted"; exit 1 ;;
   esac
 fi
-SSH_USER="${scripts.sshUser}"
+SSH_USER="${scripts.runtimeUser}"
+BOOTSTRAP_USER="${scripts.bootstrapUser}"
 SSH_UID="$(id -u "$SSH_USER" 2>/dev/null || echo "")"
 TARGET_HOME="$(getent passwd "$SSH_USER" | cut -d: -f6 || true)"
 if [ -z "$TARGET_HOME" ]; then
@@ -834,23 +856,25 @@ if [ -n "$ids" ]; then
   fi
 fi
 pkill -f /opt/cocalc/bin/node || true
-if [ -d /btrfs/data/cache/project-roots ]; then
-  for m in /btrfs/data/cache/project-roots/*; do
+if [ -d /mnt/cocalc/data/cache/project-roots ]; then
+  for m in /mnt/cocalc/data/cache/project-roots/*; do
     [ -d "$m" ] || continue
     umount "$m" || umount -l "$m" || true
   done
 fi
-if mountpoint -q /btrfs; then
-  umount /btrfs || umount -l /btrfs || true
+if mountpoint -q /mnt/cocalc; then
+  umount /mnt/cocalc || umount -l /mnt/cocalc || true
 fi
 if [ -f /etc/fstab ]; then
   sed -i.bak '/cocalc-btrfs/d' /etc/fstab || true
 fi
-rm -f /var/lib/cocalc/btrfs.img || true
-rm -rf /btrfs || true
+rm -f /var/lib/cocalc/cocalc.img /var/lib/cocalc/btrfs.img || true
+rm -rf /mnt/cocalc || true
+rm -f /btrfs || true
 rm -rf /var/lib/cocalc /etc/cocalc /opt/cocalc || true
 rm -f /usr/local/sbin/cocalc-grow-btrfs /usr/local/sbin/cocalc-nvidia-cdi || true
 rm -f /etc/containers/storage.conf || true
+rm -f /etc/sudoers.d/cocalc-project-host-runtime || true
 if [ "$uninstall_connector" -eq 1 ]; then
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
@@ -864,21 +888,27 @@ if [ "$uninstall_connector" -eq 1 ]; then
   if command -v sudo >/dev/null 2>&1; then
     sudo rm -f /usr/local/bin/cocalc-self-host-connector || true
   fi
-  rm -rf "$TARGET_HOME/cocalc-host" || true
+  BOOTSTRAP_HOME="$(getent passwd "$BOOTSTRAP_USER" | cut -d: -f6 || true)"
+  if [ -n "$BOOTSTRAP_HOME" ]; then
+    rm -rf "$BOOTSTRAP_HOME/cocalc-host" || true
+  fi
+fi
+if [ -n "$SSH_USER" ] && [ "$SSH_USER" != "root" ] && [ "$SSH_USER" != "$BOOTSTRAP_USER" ]; then
+  userdel -r "$SSH_USER" >/dev/null 2>&1 || true
 fi
 EOF_COCALC_DEPROVISION
 sudo chmod +x "$BOOTSTRAP_ROOT/bin/deprovision.sh"
-sudo chown ${scripts.sshUser}:${scripts.sshUser} "$BOOTSTRAP_ROOT/bin/deprovision.sh"
+sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/bin/deprovision.sh"
 SSH_UID=""
 RUNTIME_DIR=""
 ENV_FILE="/etc/cocalc/project-host.env"
 if [ -f "$ENV_FILE" ]; then
   RUNTIME_DIR="$(grep '^COCALC_PODMAN_RUNTIME_DIR=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)"
 fi
-if [ -z "$RUNTIME_DIR" ] && [ -n "$BOOTSTRAP_USER" ]; then
-  SSH_UID="$(id -u "$BOOTSTRAP_USER" 2>/dev/null || true)"
+if [ -z "$RUNTIME_DIR" ] && [ -n "${scripts.runtimeUser}" ]; then
+  SSH_UID="$(id -u "${scripts.runtimeUser}" 2>/dev/null || true)"
   if [ -n "$SSH_UID" ]; then
-    RUNTIME_DIR="/btrfs/data/tmp/cocalc-podman-runtime-$SSH_UID"
+    RUNTIME_DIR="/mnt/cocalc/data/tmp/cocalc-podman-runtime-$SSH_UID"
   fi
 fi
 if [ -n "$RUNTIME_DIR" ]; then
@@ -891,7 +921,7 @@ export COCALC_PODMAN_RUNTIME_DIR="$RUNTIME_DIR"
 export CONTAINERS_CGROUP_MANAGER="cgroupfs"
 EOF_COCALC_ENV
   sudo chmod +x "$HOST_DIR/env.sh"
-  sudo chown ${scripts.sshUser}:${scripts.sshUser} "$HOST_DIR/env.sh"
+  sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$HOST_DIR/env.sh"
 fi
 cat <<'EOF_COCALC_README' > "$BOOTSTRAP_ROOT/README.md"
 CoCalc Project Host (Direct) Layout
@@ -905,13 +935,21 @@ bootstrap/
   bootstrap.log      - output from bootstrap.sh
 
 bin/
-  ctl                - start/stop/status helpers for project-host
-  logs               - tail /btrfs/data/log
-  logs-cf            - cloudflared logs (if enabled)
-  deprovision.sh     - full teardown (use --force)
+  ctl                     - start/stop/status helper (runs as runtime user)
+  logs [lines]            - tail project-host log (runs as runtime user)
+  logs-cf                 - tail cloudflared logs (if enabled; runtime user)
+  ctl-cf                  - cloudflared {start|stop|restart|status} (runtime user)
+  fetch-project-bundle.sh - refresh project bundle from software endpoint
+  fetch-project-host.sh   - refresh project-host bundle from software endpoint
+  fetch-tools.sh          - refresh tools bundle from software endpoint
+  deprovision.sh          - full teardown (use --force)
+
+Runtime scripts (owned by runtime user):
+  /opt/cocalc/project-host/bin/*
+  (wrappers in this directory exec those runtime scripts as runtime user)
 
 Logs and status:
-  - Project-host logs:  tail -n 200 /btrfs/data/log -f
+  - Project-host logs:  $HOME/cocalc-host/bin/logs
   - Connector logs:     journalctl --user -u cocalc-self-host-connector.service -f
   - Cloudflared logs:   $HOME/cocalc-host/bin/logs-cf
 
@@ -922,10 +960,10 @@ Deprovision:
   sudo $HOME/cocalc-host/bin/deprovision.sh --force
 
 Notes:
-  - /btrfs holds project data and snapshots.
+  - /mnt/cocalc holds project data and snapshots.
   - /etc/cocalc/project-host.env contains runtime settings.
 EOF_COCALC_README
-sudo chown ${scripts.sshUser}:${scripts.sshUser} "$BOOTSTRAP_ROOT/README.md"
+sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/README.md"
 `;
 }
 
@@ -1014,7 +1052,7 @@ else
 fi
 ${caCertBlock}
 
-if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /btrfs/data/.bootstrap_done ]; then
+if [ -f /var/lib/cocalc/.bootstrap_done ] || [ -f /mnt/cocalc/data/.bootstrap_done ]; then
   echo "bootstrap: already complete; exiting"
   exit 0
 fi

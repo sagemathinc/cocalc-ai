@@ -212,6 +212,7 @@ export function ProjectsTable({
   function handleRowClick(record: ProjectTableRecord, e?: React.MouseEvent) {
     actions.open_project({
       project_id: record.project_id,
+      target: "project-home",
       switch_to: !(e?.button === 1 || e?.ctrlKey || e?.metaKey),
     });
   }

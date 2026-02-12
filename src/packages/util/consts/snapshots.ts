@@ -2,6 +2,16 @@
 
 export const SNAPSHOTS = ".snapshots";
 
+function stripLeadingSlash(path: string): string {
+  return path.replace(/^\/+/, "");
+}
+
+export function isSnapshotsPath(path?: string): boolean {
+  if (path == null) return false;
+  const normalized = stripLeadingSlash(path);
+  return normalized === SNAPSHOTS || normalized.startsWith(`${SNAPSHOTS}/`);
+}
+
 // Lengths of time in minutes to keep snapshots
 // (code below assumes these are listed in ORDER from shortest to longest)
 export const SNAPSHOT_INTERVALS_MS = {

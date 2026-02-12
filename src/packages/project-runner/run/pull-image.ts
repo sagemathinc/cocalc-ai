@@ -1,5 +1,5 @@
 // PTY-based Podman pull with progress parsing.
-import { spawn } from "@lydell/node-pty";
+import { spawn } from "node-pty";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("project-runner:pull-image");

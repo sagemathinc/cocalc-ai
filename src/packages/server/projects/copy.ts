@@ -79,14 +79,14 @@ async function createBackupAndWait({
   return { id, time: result.time ?? result.backup_time };
 }
 
-function normalizeRelativePath(raw: string, label: string): string {
+function normalizeCopyPath(raw: string, label: string): string {
   if (typeof raw !== "string") {
     throw new Error(`${label} must be a string`);
   }
   const trimmed = raw.trim();
   if (!trimmed) return "";
   if (path.posix.isAbsolute(trimmed)) {
-    throw new Error(`${label} must be project-relative`);
+    return path.posix.normalize(trimmed);
   }
   const normalized = path.posix.normalize(trimmed);
   if (normalized === "." || normalized === "") return "";
@@ -102,7 +102,7 @@ function normalizeSrcPaths(src: CopySource): string[] {
     throw new Error("src.path must not be empty");
   }
   const normalized = raw.map((p, idx) =>
-    normalizeRelativePath(p, `src.path[${idx}]`),
+    normalizeCopyPath(p, `src.path[${idx}]`),
   );
   return normalized;
 }
@@ -200,13 +200,17 @@ export async function copyProjectFiles({
   if (srcPaths.length > 1 && srcPaths.some((p) => !p)) {
     throw new Error("empty src path not allowed when copying multiple paths");
   }
+  const normalizedSrc: CopySource = {
+    project_id: src.project_id,
+    path: Array.isArray(src.path) ? srcPaths : srcPaths[0],
+  };
   if (shouldAbort && (await shouldAbort())) {
     throw copyCanceledError();
   }
 
   const normalizedDests = dests.map((dest, idx) => ({
     project_id: dest.project_id,
-    path: normalizeRelativePath(dest.path, `dests[${idx}].path`),
+    path: normalizeCopyPath(dest.path, `dests[${idx}].path`),
   }));
 
   const projectIds = new Set<string>([src.project_id]);
@@ -231,6 +235,15 @@ export async function copyProjectFiles({
   let localCount = 0;
 
   if (remoteDests.length && !skip_queue) {
+    if (
+      srcPaths.some(
+        (p) => p === "/scratch" || p.startsWith("/scratch/"),
+      )
+    ) {
+      throw new Error(
+        "copying from /scratch across hosts is not supported because /scratch is not backed up",
+      );
+    }
     if (shouldAbort && (await shouldAbort())) {
       throw copyCanceledError();
     }
@@ -294,7 +307,7 @@ export async function copyProjectFiles({
         if (srcPaths.length > 1) {
           for (const srcPath of srcPaths) {
             const base = path.posix.basename(srcPath);
-            const destPath = normalizeRelativePath(
+            const destPath = normalizeCopyPath(
               path.posix.join(dest.path, base),
               "dest.path",
             );
@@ -394,7 +407,7 @@ export async function copyProjectFiles({
       timeout_ms,
     );
     for (const dest of localDests) {
-      await client.cp({ src, dest, options });
+      await client.cp({ src: normalizedSrc, dest, options });
       localCount += srcPaths.length;
     }
   }

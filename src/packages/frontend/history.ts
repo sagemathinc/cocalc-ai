@@ -39,8 +39,10 @@ The URI schema handled by the single page app is as follows:
         https://cocalc.com/projects/project-id/log
      Folder listing (must have slash at end):
        https://cocalc.com/projects/project-id/files/path/to/dir/
+       https://cocalc.com/projects/project-id/home/path/to/dir/
      Open file:
        https://cocalc.com/projects/project-id/files/path/to/file
+       https://cocalc.com/projects/project-id/home/path/to/file
      (From before) raw http:
        https://cocalc.com/projects/project-id/raw/path/...
      (From before) proxy server (supports websockets and ssl) to a given port.

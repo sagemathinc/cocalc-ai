@@ -43,7 +43,7 @@ interface Props {
   project_id?: string;
   checked_files: immutable.Set<string>;
   listing: DirectoryListingEntry[];
-  current_path?: string;
+  current_path: string;
   project_map?;
   images?: ComputeImages;
   actions: ProjectActions;
@@ -67,9 +67,8 @@ export function ActionBar({
   refreshBackups,
 }: Props) {
   const intl = useIntl();
-  const currentParts = (current_path ?? "").split("/").filter(Boolean);
-  const inBackups =
-    current_path != null && isBackupsPath(current_path ?? "") ? true : false;
+  const currentParts = current_path.split("/").filter(Boolean);
+  const inBackups = isBackupsPath(current_path);
   const student_project_functionality = useStudentProjectFunctionality(
     actions.project_id,
   );
@@ -183,15 +182,25 @@ export function ActionBar({
       };
     }
     const subpath = currentParts.slice(2).join("/");
+    const startsWithCurrentPath = (candidate: string): boolean => {
+      if (candidate === current_path) return true;
+      if (current_path === "/") return candidate.startsWith("/");
+      return candidate.startsWith(`${current_path}/`);
+    };
+    const relativeToCurrentPath = (candidate: string): string => {
+      if (candidate === current_path) {
+        return "";
+      }
+      if (current_path === "/") {
+        return candidate.replace(/^\/+/, "");
+      }
+      return candidate
+        .slice(current_path.length + 1)
+        .replace(/^\/+/, "");
+    };
     const selected = Array.from(checked_files)
-      .filter(
-        (p) => p === current_path || p.startsWith(`${current_path ?? ""}/`),
-      )
-      .map((p) =>
-        p === current_path
-          ? ""
-          : p.slice((current_path?.length ?? 0) + 1).replace(/^\/+/, ""),
-      )
+      .filter(startsWithCurrentPath)
+      .map(relativeToCurrentPath)
       .filter(Boolean);
     const paths =
       selected.length === 0
@@ -225,7 +234,7 @@ export function ActionBar({
   function check_all_click_handler(): void {
     if (checked_files.size === 0) {
       actions.set_file_list_checked(
-        listing.map((file) => misc.path_to_file(current_path ?? "", file.name)),
+        listing.map((file) => misc.path_to_file(current_path, file.name)),
       );
     } else {
       clear_selection();
@@ -471,7 +480,7 @@ export function ActionBar({
       let isDir;
       const item = checked_files.first();
       for (const file of listing) {
-        if (misc.path_to_file(current_path ?? "", file.name) === item) {
+        if (misc.path_to_file(current_path, file.name) === item) {
           ({ isDir } = file);
         }
       }
