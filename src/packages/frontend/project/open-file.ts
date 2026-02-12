@@ -52,6 +52,31 @@ export interface OpenFileOpts {
   explicit?: boolean;
 }
 
+function findOpenDisplayPathForSyncPath(
+  actions: ProjectActions,
+  syncPath: string,
+  excludeDisplayPath?: string,
+): string | undefined {
+  const store = actions.get_store();
+  const openFiles = store?.get("open_files");
+  if (openFiles == null) {
+    return undefined;
+  }
+  let found: string | undefined;
+  openFiles.forEach((_obj, displayPath) => {
+    if (found != null || displayPath === excludeDisplayPath) {
+      return;
+    }
+    const otherSyncPath = openFiles.getIn([displayPath, "sync_path"]);
+    if (typeof otherSyncPath === "string") {
+      if (otherSyncPath === syncPath) {
+        found = displayPath;
+      }
+    }
+  });
+  return found;
+}
+
 export async function open_file(
   actions: ProjectActions,
   opts: OpenFileOpts,
@@ -168,6 +193,35 @@ export async function open_file(
   if (actions.open_files != null) {
     actions.open_files.set(displayPath, "sync_path", syncPath);
     actions.open_files.set(displayPath, "display_path", displayPath);
+  }
+  // If this path resolves to a sync identity that is already open in this browser,
+  // don't keep a second tab with the same realtime session key.
+  const alreadyOpenAliasPath = alreadyOpened
+    ? undefined
+    : findOpenDisplayPathForSyncPath(actions, syncPath, displayPath);
+  if (alreadyOpenAliasPath != null) {
+    if (actions.open_files?.has(displayPath)) {
+      actions.open_files.delete(displayPath);
+    }
+    redux.getActions("page").save_session();
+    if (opts.foreground) {
+      actions.foreground_project(opts.change_history);
+      actions.set_active_tab(path_to_tab(alreadyOpenAliasPath), {
+        change_history: opts.change_history,
+      });
+    }
+    if (opts.chat) {
+      actions.open_chat({ path: alreadyOpenAliasPath });
+    }
+    if (opts.fragmentId != null) {
+      actions.gotoFragment(alreadyOpenAliasPath, opts.fragmentId);
+    }
+    alert_message({
+      type: "info",
+      message: `"${displayPath}" is already open as "${alreadyOpenAliasPath}". Switched to that tab.`,
+      timeout: 4,
+    });
+    return;
   }
   let ext = opts.ext ?? filename_extension(syncPath).toLowerCase();
 
