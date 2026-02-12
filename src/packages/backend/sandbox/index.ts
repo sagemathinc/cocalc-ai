@@ -126,6 +126,9 @@ interface Options {
   // optional path to treat as "/" when mounted/available.
   // if set but unavailable, operations fail.
   rootfs?: string;
+  // optional path to treat as /scratch when mounted/available.
+  // if /scratch is requested but this is unavailable, operations fail.
+  scratch?: string;
   host?: string;
   rusticRepo?: string;
 }
@@ -143,6 +146,8 @@ const INTERNAL_METHODS = new Set([
   "readonly",
   "rootfs",
   "rootfsEnabled",
+  "scratch",
+  "scratchEnabled",
   "assertWritable",
   "rusticRepo",
   "host",
@@ -157,6 +162,8 @@ export class SandboxedFilesystem {
   public readonly readonly: boolean;
   public readonly rootfs?: string;
   private rootfsEnabled = false;
+  public readonly scratch?: string;
+  private scratchEnabled = false;
   public rusticRepo: string;
   private host?: string;
   private lastOnDisk = new LRU<string, string>({
@@ -175,6 +182,7 @@ export class SandboxedFilesystem {
       unsafeMode = false,
       readonly = false,
       rootfs,
+      scratch,
       host = "global",
       rusticRepo: repo,
     }: Options = {},
@@ -182,6 +190,7 @@ export class SandboxedFilesystem {
     this.unsafeMode = !!unsafeMode;
     this.readonly = !!readonly;
     this.rootfs = rootfs;
+    this.scratch = scratch;
     this.host = host;
     this.rusticRepo = repo ?? rusticRepo;
     for (const f in this) {
@@ -197,7 +206,13 @@ export class SandboxedFilesystem {
         } catch (err) {
           let sandboxBasePath = this.path;
           try {
-            sandboxBasePath = await this.resolveSandboxBasePath();
+            if (typeof args?.[0] === "string") {
+              sandboxBasePath = (
+                await this.resolvePathInSandbox(args[0])
+              ).sandboxBasePath;
+            } else {
+              sandboxBasePath = await this.resolveSandboxBasePath();
+            }
           } catch {
             // keep original error, and best-effort sanitize with home path
           }
@@ -257,16 +272,45 @@ export class SandboxedFilesystem {
     );
   }
 
+  private async requireScratchForAbsolutePath(
+    requestedAbsolutePath: string,
+  ): Promise<string> {
+    if (!this.scratch) {
+      throw new Error(
+        `scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
+      );
+    }
+    if (this.scratchEnabled) {
+      return this.scratch;
+    }
+    try {
+      const st = await stat(this.scratch);
+      if (st.isDirectory()) {
+        this.scratchEnabled = true;
+        return this.scratch;
+      }
+    } catch {
+      // handled below
+    }
+    throw new Error(
+      `scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
+    );
+  }
+
   private async resolvePathInSandbox(path: string): Promise<{
     pathInSandbox: string;
     sandboxBasePath: string;
     absoluteHomeAlias: boolean;
+    absoluteScratchAlias: boolean;
   }> {
     const resolvedInput = resolve("/", path);
     const isAbsoluteInput = path.startsWith("/");
     const isAbsoluteHomeAlias =
       isAbsoluteInput &&
       (resolvedInput == HOME_ROOT || resolvedInput.startsWith(`${HOME_ROOT}/`));
+    const isAbsoluteScratchAlias =
+      isAbsoluteInput &&
+      (resolvedInput == "/scratch" || resolvedInput.startsWith("/scratch/"));
 
     // Relative paths (and absolute /root paths) are always interpreted relative
     // to the project home mount `path`, even when rootfs mode is enabled.
@@ -281,6 +325,21 @@ export class SandboxedFilesystem {
         pathInSandbox: join(this.path, rel),
         sandboxBasePath: this.path,
         absoluteHomeAlias: isAbsoluteHomeAlias,
+        absoluteScratchAlias: false,
+      };
+    }
+
+    if (isAbsoluteScratchAlias) {
+      const scratchBase = await this.requireScratchForAbsolutePath(resolvedInput);
+      const rel =
+        resolvedInput == "/scratch"
+          ? ""
+          : resolvedInput.slice("/scratch".length + 1);
+      return {
+        pathInSandbox: join(scratchBase, rel),
+        sandboxBasePath: scratchBase,
+        absoluteHomeAlias: false,
+        absoluteScratchAlias: true,
       };
     }
 
@@ -291,6 +350,7 @@ export class SandboxedFilesystem {
       pathInSandbox: join(rootBase, resolvedInput),
       sandboxBasePath: rootBase,
       absoluteHomeAlias: false,
+      absoluteScratchAlias: false,
     };
   }
 
@@ -595,7 +655,12 @@ export class SandboxedFilesystem {
   };
 
   realpath = async (path: string): Promise<string> => {
-    const { pathInSandbox, sandboxBasePath, absoluteHomeAlias } =
+    const {
+      pathInSandbox,
+      sandboxBasePath,
+      absoluteHomeAlias,
+      absoluteScratchAlias,
+    } =
       await this.resolvePathInSandbox(path);
     const x = await realpath(pathInSandbox);
     const rel = this.toSandboxRelativePath(x, sandboxBasePath);
@@ -604,6 +669,12 @@ export class SandboxedFilesystem {
         return HOME_ROOT;
       }
       return `${HOME_ROOT}/${rel}`;
+    }
+    if (absoluteScratchAlias) {
+      if (rel === "" || rel === "/") {
+        return "/scratch";
+      }
+      return `/scratch/${rel}`;
     }
     return rel;
   };

@@ -1108,6 +1108,7 @@ async function restoreBackup({
 }): Promise<void> {
   const vol = await getVolumeForBackup(project_id);
   const home = projectMountpoint(project_id);
+  const scratch = scratchMountpoint(project_id);
   const stagingRoot = join(dirname(home), RESTORE_STAGING_ROOT);
   const stagingHome = join(stagingRoot, volName(project_id));
   const restorePath = backupPath ?? "";
@@ -1127,15 +1128,28 @@ async function restoreBackup({
   let relDest = destPath ?? "";
 
   if (destPath && path.isAbsolute(destPath)) {
-    if (isSubPath(home, destPath)) {
+    const containerDest = path.posix.normalize(destPath);
+    if (containerDest === "/root" || containerDest.startsWith("/root/")) {
+      root = home;
+      relDest = path.posix.relative("/root", containerDest);
+    } else if (
+      containerDest === "/scratch" ||
+      containerDest.startsWith("/scratch/")
+    ) {
+      root = scratch;
+      relDest = path.posix.relative("/scratch", containerDest);
+    } else if (isSubPath(home, destPath)) {
       root = home;
       relDest = path.relative(home, destPath);
+    } else if (isSubPath(scratch, destPath)) {
+      root = scratch;
+      relDest = path.relative(scratch, destPath);
     } else if (isSubPath(stagingHome, destPath)) {
       root = stagingHome;
       relDest = path.relative(stagingHome, destPath);
     } else {
       throw new Error(
-        `restore destination must be within project home or restore staging: ${destPath}`,
+        `restore destination must be within project home, /scratch, or restore staging: ${destPath}`,
       );
     }
   } else {
@@ -1149,7 +1163,11 @@ async function restoreBackup({
 
   await assertSubvolumeRoot(
     root,
-    root === home ? "project home" : "restore staging",
+    root === home
+      ? "project home"
+      : root === scratch
+        ? "project scratch"
+        : "restore staging",
   );
 
   const restoreFs =
@@ -1513,6 +1531,7 @@ export async function initFsServer({
       return new SandboxedFilesystem(path, {
         host: project_id,
         rootfs: getRootfsMountpoint(project_id),
+        scratch: scratchMountpoint(project_id),
       });
     },
     onMutation: ({ subject, op }) => {

@@ -311,6 +311,7 @@ describe("rootfs option sandbox", () => {
   let fs;
   let home: string;
   let rootfs: string;
+  let scratch: string;
 
   it("fails absolute non-home operations when rootfs is missing", async () => {
     home = join(tempDir, "test-rootfs-home");
@@ -363,6 +364,38 @@ describe("rootfs option sandbox", () => {
     await symlink(join(tempDir, "root-secret.txt"), join(rootfs, "danger-link"));
     await expect(fs.readFile("/danger-link", "utf8")).rejects.toThrow(
       "outside of sandbox",
+    );
+  });
+
+  it("routes /scratch paths to scratch mount when configured", async () => {
+    scratch = join(tempDir, "test-scratch-mounted");
+    await mkdir(scratch, { recursive: true });
+    const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
+    await fsScratch.writeFile("/scratch/from-scratch.txt", "from-scratch");
+    expect(await fsScratch.readFile("/scratch/from-scratch.txt", "utf8")).toBe(
+      "from-scratch",
+    );
+    expect(await readFile(join(scratch, "from-scratch.txt"), "utf8")).toBe(
+      "from-scratch",
+    );
+    await expect(
+      readFile(join(rootfs, "scratch", "from-scratch.txt"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  it("errors on /scratch when scratch mount is missing", async () => {
+    const fsMissingScratch = new SandboxedFilesystem(home, {
+      rootfs,
+      scratch: join(tempDir, "scratch-missing"),
+    });
+    await expect(
+      fsMissingScratch.writeFile("/scratch/blocked.txt", "blocked"),
+    ).rejects.toThrow(
+      "scratch is not mounted; cannot access absolute path '/scratch/blocked.txt'",
+    );
+    await fsMissingScratch.writeFile("/tmp/rootfs-ok.txt", "rootfs-ok");
+    expect(await fsMissingScratch.readFile("/tmp/rootfs-ok.txt", "utf8")).toBe(
+      "rootfs-ok",
     );
   });
 

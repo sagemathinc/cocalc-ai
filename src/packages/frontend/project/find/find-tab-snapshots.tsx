@@ -2,13 +2,14 @@ import { Alert, Button, Input, Radio, Space, message } from "antd";
 import { join, posix } from "path";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type VirtuosoGridHandle } from "react-virtuoso";
-import { useActions } from "@cocalc/frontend/app-framework";
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Loading, SearchInput } from "@cocalc/frontend/components";
 import { useProjectContext } from "@cocalc/frontend/project/context";
+import { lite } from "@cocalc/frontend/lite";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { BACKUPS } from "@cocalc/util/consts/backups";
+import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import {
-  path_to_file,
   search_match,
   search_split,
 } from "@cocalc/util/misc";
@@ -77,9 +78,39 @@ export function SnapshotsTab({
   const fieldWidth = mode === "flyout" ? "100%" : "50%";
   const { project_id } = useProjectContext();
   const actions = useActions({ project_id });
+  const available_features = useTypedRedux({ project_id }, "available_features");
+  const homeFromFeatures =
+    (available_features as any)?.homeDirectory ??
+    (available_features as any)?.get?.("homeDirectory");
   const fs = useMemo(
     () => webapp_client.conat_client.conat().fs({ project_id }),
     [project_id],
+  );
+  const homeDirectory = useMemo(() => {
+    if (lite && typeof homeFromFeatures === "string") {
+      return normalizeAbsolutePath(homeFromFeatures);
+    }
+    return "/root";
+  }, [homeFromFeatures]);
+  const archiveScopePath = useMemo(() => {
+    if (!scopePath) return "";
+    if (!isAbsolutePath(scopePath)) return stripDotSlash(scopePath);
+    const abs = normalizeAbsolutePath(scopePath, homeDirectory);
+    if (homeDirectory === "/") return stripDotSlash(abs);
+    if (abs === homeDirectory) return "";
+    if (abs.startsWith(`${homeDirectory}/`)) {
+      return stripDotSlash(abs.slice(homeDirectory.length + 1));
+    }
+    return null;
+  }, [homeDirectory, scopePath]);
+  const scopeOutsideHome = archiveScopePath == null;
+  const joinScopedRelativePath = useCallback(
+    (value: string): string => {
+      const rel = stripDotSlash(value || "");
+      if (!archiveScopePath) return rel;
+      return rel ? `${archiveScopePath}/${rel}` : archiveScopePath;
+    },
+    [archiveScopePath],
   );
   const [state, setState] = useFindTabState(
     project_id,
@@ -123,11 +154,15 @@ export function SnapshotsTab({
       setPreview(null);
       return;
     }
+    if (scopeOutsideHome) {
+      setPreview({ error: "Snapshots only include files under HOME." });
+      return;
+    }
     if (restoreTarget.isDir) {
       setPreview({ error: "Directory preview is not available." });
       return;
     }
-    const relative = path_to_file(scopePath, restoreTarget.path).replace(
+    const relative = joinScopedRelativePath(restoreTarget.path).replace(
       /\/+$/,
       "",
     );
@@ -156,7 +191,7 @@ export function SnapshotsTab({
         if (previewRequestRef.current !== requestId) return;
         setPreview({ loading: false, error: `${err}` });
       });
-  }, [project_id, restoreTarget, scopePath]);
+  }, [joinScopedRelativePath, project_id, restoreTarget, scopeOutsideHome]);
 
   const runSearch = useCallback(
     async (override?: string, nextMode?: SnapshotSearchMode) => {
@@ -165,6 +200,11 @@ export function SnapshotsTab({
       if (!q) {
         setResults([]);
         setError(null);
+        return;
+      }
+      if (scopeOutsideHome) {
+        setResults([]);
+        setError("Snapshots only include files under HOME.");
         return;
       }
       setLoading(true);
@@ -183,7 +223,7 @@ export function SnapshotsTab({
           const raw = Buffer.from(stdout).toString();
           const entries = raw.split("\n").filter(Boolean).map(stripDotSlash);
           const parsed = sortSnapshotResults(
-            parseSnapshotPaths(entries, scopePath, snapshotName),
+            parseSnapshotPaths(entries, archiveScopePath ?? "", snapshotName),
           );
           setResults(parsed);
           if (stderr?.length) {
@@ -212,7 +252,7 @@ export function SnapshotsTab({
               const parsed = sortSnapshotResults(
                 parseSnapshotContentResults(
                   rawResults ?? [],
-                  scopePath,
+                  archiveScopePath ?? "",
                   snapshotName,
                 ),
               );
@@ -230,7 +270,7 @@ export function SnapshotsTab({
         setLoading(false);
       }
     },
-    [fs, scopePath, snapshotName, state],
+    [archiveScopePath, fs, scopeOutsideHome, snapshotName, state],
   );
 
   useEffect(() => {
@@ -402,11 +442,11 @@ export function SnapshotsTab({
 
   const buildSnapshotPaths = useCallback(
     (result: SnapshotResult) => {
-      const relative = path_to_file(scopePath, result.path);
+      const relative = joinScopedRelativePath(result.path);
       const snapshotPath = join(SNAPSHOTS, result.snapshot, relative);
       return { relative, snapshotPath };
     },
-    [scopePath],
+    [joinScopedRelativePath],
   );
 
   const performRestore = useCallback(
@@ -467,7 +507,7 @@ export function SnapshotsTab({
   }, [actions]);
 
   const restorePath = restoreTarget
-    ? path_to_file(scopePath, restoreTarget.path)
+    ? joinScopedRelativePath(restoreTarget.path)
     : "";
   const alert = (
     <Alert
