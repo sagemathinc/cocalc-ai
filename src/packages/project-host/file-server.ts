@@ -81,6 +81,7 @@ import {
 import { publishLroEvent } from "@cocalc/conat/lro/stream";
 import { touchProjectLastEdited } from "./last-edited";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
+import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -472,11 +473,15 @@ async function cp({
   const destVolume = await getVolume(dest.project_id);
   // Paths may be project-relative or absolute (/..., /root/..., /scratch/...).
   // Resolve using the same home/rootfs/scratch policy as the fs server API.
-  const srcFs = new SandboxedFilesystem(srcVolume.path, {
+  const srcFs = createProjectSandboxFilesystem({
+    project_id: src.project_id,
+    home: srcVolume.path,
     rootfs: getRootfsMountpoint(src.project_id),
     scratch: getScratchMountpoint(src.project_id),
   });
-  const destFs = new SandboxedFilesystem(destVolume.path, {
+  const destFs = createProjectSandboxFilesystem({
+    project_id: dest.project_id,
+    home: destVolume.path,
     rootfs: getRootfsMountpoint(dest.project_id),
     scratch: getScratchMountpoint(dest.project_id),
   });
@@ -1559,8 +1564,9 @@ export async function initFsServer({
       }
       const project_id = projectIdFromSubject(subject);
       const { path } = await getVolume(project_id);
-      return new SandboxedFilesystem(path, {
-        host: project_id,
+      return createProjectSandboxFilesystem({
+        project_id,
+        home: path,
         rootfs: getRootfsMountpoint(project_id),
         scratch: getScratchMountpoint(project_id),
       });
