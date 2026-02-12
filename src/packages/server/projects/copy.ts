@@ -200,6 +200,10 @@ export async function copyProjectFiles({
   if (srcPaths.length > 1 && srcPaths.some((p) => !p)) {
     throw new Error("empty src path not allowed when copying multiple paths");
   }
+  const normalizedSrc: CopySource = {
+    project_id: src.project_id,
+    path: Array.isArray(src.path) ? srcPaths : srcPaths[0],
+  };
   if (shouldAbort && (await shouldAbort())) {
     throw copyCanceledError();
   }
@@ -231,6 +235,15 @@ export async function copyProjectFiles({
   let localCount = 0;
 
   if (remoteDests.length && !skip_queue) {
+    if (
+      srcPaths.some(
+        (p) => p === "/scratch" || p.startsWith("/scratch/"),
+      )
+    ) {
+      throw new Error(
+        "copying from /scratch across hosts is not supported because /scratch is not backed up",
+      );
+    }
     if (shouldAbort && (await shouldAbort())) {
       throw copyCanceledError();
     }
@@ -394,7 +407,7 @@ export async function copyProjectFiles({
       timeout_ms,
     );
     for (const dest of localDests) {
-      await client.cp({ src, dest, options });
+      await client.cp({ src: normalizedSrc, dest, options });
       localCount += srcPaths.length;
     }
   }

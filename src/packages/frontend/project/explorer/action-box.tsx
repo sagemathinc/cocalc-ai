@@ -25,6 +25,7 @@ import {
   file_actions,
   type ProjectActions,
 } from "@cocalc/frontend/project_store";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import ConfigureShare from "@cocalc/frontend/share/config";
 import * as misc from "@cocalc/util/misc";
@@ -72,7 +73,7 @@ export function ActionBox({
   const [copy_destination_directory, set_copy_destination_directory] =
     useState<string>(current_path);
   const [copy_destination_project_id, set_copy_destination_project_id] =
-    useState<string>(project_id);
+    useState<string | undefined>(project_id);
   const [move_destination, set_move_destination] = useState<string>(current_path);
   const [show_different_project, set_show_different_project] =
     useState<boolean>(false);
@@ -276,9 +277,13 @@ export function ActionBox({
           <SelectProject
             at_top={[project_id]}
             value={copy_destination_project_id}
-            onChange={(copy_destination_project_id) =>
-              set_copy_destination_project_id(copy_destination_project_id)
-            }
+            onChange={(copy_destination_project_id) => {
+              if (copy_destination_project_id) {
+                set_copy_destination_project_id(copy_destination_project_id);
+              } else {
+                set_copy_destination_project_id(undefined);
+              }
+            }}
           />
           {render_copy_different_project_options()}
         </Col>
@@ -287,7 +292,7 @@ export function ActionBox({
   }
 
   function render_copy_different_project_options() {
-    if (project_id !== copy_destination_project_id) {
+    if (copy_destination_project_id && project_id !== copy_destination_project_id) {
       return (
         <div>
           <Checkbox onChange={(e) => set_overwrite((e.target as any).checked)}>
@@ -302,6 +307,14 @@ export function ActionBox({
     const destination_project_id = copy_destination_project_id;
     const destination_directory = copy_destination_directory;
     const paths = checked_files.toArray();
+    if (show_different_project && !destination_project_id) {
+      alert_message({
+        type: "error",
+        title: "Copy failed",
+        message: "Select a destination project before copying to a different project.",
+      });
+      return;
+    }
     if (
       destination_project_id != undefined &&
       project_id !== destination_project_id
@@ -334,7 +347,7 @@ export function ActionBox({
     ) {
       return false;
     }
-    if (copy_destination_project_id === "") {
+    if (!copy_destination_project_id) {
       return false;
     }
     if (
@@ -432,17 +445,23 @@ export function ActionBox({
                 Destination:{" "}
                 {copy_destination_directory}
               </h4>
-              <DirectorySelector
-                title={"Destination"}
-                onSelect={(value: string) =>
-                  set_copy_destination_directory(value)
-                }
-                key="copy_destination_directory"
-                startingPath={current_path}
-                project_id={copy_destination_project_id}
-                style={{ width: "100%" }}
-                bodyStyle={{ maxHeight: "250px" }}
-              />
+              {show_different_project && !copy_destination_project_id ? (
+                <Alert bsStyle="warning" style={{ marginTop: "10px" }}>
+                  Select a destination project.
+                </Alert>
+              ) : (
+                <DirectorySelector
+                  title={"Destination"}
+                  onSelect={(value: string) =>
+                    set_copy_destination_directory(value)
+                  }
+                  key="copy_destination_directory"
+                  startingPath={current_path}
+                  project_id={copy_destination_project_id ?? project_id}
+                  style={{ width: "100%" }}
+                  bodyStyle={{ maxHeight: "250px" }}
+                />
+              )}
             </Col>
           </Row>
         </div>

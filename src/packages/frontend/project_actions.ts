@@ -2197,13 +2197,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       src = withSlashes;
     }
 
-    // If files start with a -, make them interpretable by rsync (see https://github.com/sagemathinc/cocalc/issues/516)
-    // Just prefix all of them, due to https://github.com/sagemathinc/cocalc/issues/4428 brining up yet another issue
+    // If files start with '-', prefix relative paths with './' so cp won't
+    // interpret them as options. Keep absolute paths unchanged.
     const add_leading_dash = function (src_path: string) {
-      return `./${src_path}`;
+      if (src_path.startsWith("/")) {
+        return src_path;
+      }
+      return src_path.startsWith("./") ? src_path : `./${src_path}`;
     };
 
-    // Ensure that src files are not interpreted as an option to rsync
     src = src.map(add_leading_dash);
 
     id ??= misc.uuid();

@@ -551,6 +551,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
         redux.getActions("page").restore_session(opts.project_id);
       }
     }
+    if (opts.target == null) {
+      const pstore = project_actions.get_store();
+      const openFiles = pstore?.get("open_files_order");
+      const hasOpenFiles = !!openFiles && openFiles.size > 0;
+      const activeProjectTab = pstore?.get("active_project_tab");
+      if (!hasOpenFiles && activeProjectTab === "files") {
+        // Default empty project open to HOME listing, not filesystem root.
+        opts.target = "home/";
+      }
+    }
     if (opts.target != null) {
       await project_actions.load_target(
         opts.target,

@@ -55,6 +55,7 @@ import { init as initSshServer } from "@cocalc/project-proxy/ssh-server";
 import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import { fsServer, DEFAULT_FILE_SERVICE } from "@cocalc/conat/files/fs";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
+import cpExec from "@cocalc/backend/sandbox/cp";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -470,9 +471,17 @@ async function cp({
   const srcVolume = await getVolume(src.project_id);
   const destVolume = await getVolume(dest.project_id);
   // Paths may be project-relative or absolute (/..., /root/..., /scratch/...).
-  // SandboxedFilesystem resolves policy based on home/rootfs/scratch mounts.
-  let srcPaths = await srcVolume.fs.safeAbsPaths(src.path);
-  let destPath = await destVolume.fs.safeAbsPath(dest.path);
+  // Resolve using the same home/rootfs/scratch policy as the fs server API.
+  const srcFs = new SandboxedFilesystem(srcVolume.path, {
+    rootfs: getRootfsMountpoint(src.project_id),
+    scratch: getScratchMountpoint(src.project_id),
+  });
+  const destFs = new SandboxedFilesystem(destVolume.path, {
+    rootfs: getRootfsMountpoint(dest.project_id),
+    scratch: getScratchMountpoint(dest.project_id),
+  });
+  let srcPaths = await srcFs.safeAbsPaths(src.path);
+  let destPath = await destFs.safeAbsPath(dest.path);
 
   const toRelative = (path: string) => {
     if (!path.startsWith(fs!.subvolumes.fs.path)) {
@@ -480,14 +489,32 @@ async function cp({
     }
     return path.slice(fs!.subvolumes.fs.path.length + 1);
   };
-  srcPaths = srcPaths.map(toRelative);
-  destPath = toRelative(destPath);
-  // Always reflink on btrfs.
-  await fs.subvolumes.fs.cp(
-    typeof src.path == "string" ? srcPaths[0] : srcPaths, // preserve string vs array
-    destPath,
-    { ...options, reflink: true },
-  );
+  const inSharedSubvolumeMount =
+    destPath.startsWith(fs.subvolumes.fs.path + "/") &&
+    srcPaths.every((p) => p.startsWith(fs!.subvolumes.fs.path + "/"));
+
+  if (inSharedSubvolumeMount) {
+    srcPaths = srcPaths.map(toRelative);
+    destPath = toRelative(destPath);
+    // Fast path: btrfs-aware copy inside the shared file-server mount.
+    await fs.subvolumes.fs.cp(
+      typeof src.path == "string" ? srcPaths[0] : srcPaths, // preserve string vs array
+      destPath,
+      { ...options, reflink: true },
+    );
+  } else {
+    // Fallback path for absolute rootfs/scratch locations that are outside
+    // the subvolume mount root.
+    await cpExec(
+      typeof src.path == "string" ? srcPaths[0] : srcPaths,
+      destPath,
+      {
+        ...options,
+        recursive: options?.recursive ?? true,
+        reflink: true,
+      },
+    );
+  }
   void touchProjectLastEdited(dest.project_id, "cp");
 }
 
