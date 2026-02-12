@@ -48,6 +48,7 @@ import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import siteURL from "@cocalc/database/settings/site-url";
 import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
 import {
   claimPendingCopies as claimPendingCopiesDb,
@@ -2699,9 +2700,32 @@ export async function upgradeHostSoftwareInternal({
 }): Promise<HostSoftwareUpgradeResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
+  let requestedBaseUrl = base_url;
+  if (requestedBaseUrl) {
+    try {
+      const parsed = new URL(requestedBaseUrl);
+      const host = parsed.hostname.toLowerCase();
+      if (
+        host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "::1" ||
+        host === "[::1]"
+      ) {
+        const publicSite = (await siteURL()).replace(/\/+$/, "");
+        requestedBaseUrl = `${publicSite}/software`;
+        logger.warn("upgrade host: replaced loopback software base url", {
+          host_id: id,
+          requested: base_url,
+          effective: requestedBaseUrl,
+        });
+      }
+    } catch {
+      // keep provided value as-is if it is not a valid URL
+    }
+  }
   const { project_hosts_software_base_url } = await getServerSettings();
   const resolvedBaseUrl =
-    base_url ??
+    requestedBaseUrl ??
     project_hosts_software_base_url ??
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
     undefined;

@@ -88,20 +88,90 @@ function extractVersionFromUrl(url: string, artifact: CanonicalArtifact) {
   }
 }
 
-async function fetchJson(url: string): Promise<any> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`fetch ${url} failed (${res.status})`);
+function describeError(err: any): string {
+  if (!err) return "unknown error";
+  const parts: string[] = [];
+  if (err?.name) parts.push(String(err.name));
+  if (err?.message) parts.push(String(err.message));
+  const cause = err?.cause;
+  if (cause) {
+    const detail =
+      cause?.code ??
+      cause?.errno ??
+      cause?.message ??
+      JSON.stringify(cause);
+    parts.push(`cause=${detail}`);
   }
-  return await res.json();
+  return parts.join(": ");
+}
+
+async function runCommandCapture(
+  cmd: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return await new Promise<{ stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      const proc = spawn(cmd, args, { stdio: "pipe" });
+      let stdout = "";
+      let stderr = "";
+      proc.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+      });
+      proc.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      proc.on("error", reject);
+      proc.on("close", (code) => {
+        if (code === 0) {
+          resolve({ stdout, stderr });
+        } else {
+          reject(
+            new Error(
+              stderr || stdout || `${cmd} failed with code ${code ?? "?"}`,
+            ),
+          );
+        }
+      });
+    },
+  );
+}
+
+async function fetchText(url: string): Promise<string> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`fetch ${url} failed (${res.status})`);
+    }
+    return await res.text();
+  } catch (err) {
+    logger.warn("upgrade: fetch failed, trying curl fallback", {
+      url,
+      err: describeError(err),
+    });
+    const { stdout } = await runCommandCapture("curl", ["-fsSL", url]);
+    return stdout;
+  }
+}
+
+async function fetchJson(url: string): Promise<any> {
+  const text = await fetchText(url);
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(
+      `invalid JSON from ${url}: ${describeError(err)}: ${text.slice(0, 200)}`,
+    );
+  }
 }
 
 async function fetchSha256(url: string): Promise<string | undefined> {
-  const res = await fetch(url);
-  if (!res.ok) return undefined;
-  const text = await res.text();
-  const token = text.trim().split(/\s+/)[0];
-  return token || undefined;
+  try {
+    const text = await fetchText(url);
+    const token = text.trim().split(/\s+/)[0];
+    return token || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveDownloadsRoot(): string {
@@ -137,13 +207,23 @@ function resolveProjectHostPaths() {
 }
 
 async function downloadToFile(url: string, dest: string) {
-  const res = await fetch(url);
-  if (!res.ok || !res.body) {
-    throw new Error(`download failed (${res.status})`);
+  try {
+    const res = await fetch(url);
+    if (!res.ok || !res.body) {
+      throw new Error(`download failed (${res.status})`);
+    }
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    const body = Readable.fromWeb(res.body as any);
+    await pipeline(body, fs.createWriteStream(dest));
+  } catch (err) {
+    logger.warn("upgrade: stream download failed, trying curl fallback", {
+      url,
+      dest,
+      err: describeError(err),
+    });
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    await runCommandCapture("curl", ["-fsSL", "-o", dest, url]);
   }
-  await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-  const body = Readable.fromWeb(res.body as any);
-  await pipeline(body, fs.createWriteStream(dest));
 }
 
 async function sha256File(filePath: string): Promise<string> {
@@ -175,21 +255,7 @@ async function runTar(args: string[]): Promise<void> {
 }
 
 async function runCommand(cmd: string, args: string[]): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const proc = spawn(cmd, args, { stdio: "pipe" });
-    let stderr = "";
-    proc.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    proc.on("error", reject);
-    proc.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(stderr || `${cmd} failed with code ${code}`));
-      }
-    });
-  });
+  await runCommandCapture(cmd, args);
 }
 
 async function ensureWritableDir(dir: string): Promise<void> {
@@ -471,7 +537,10 @@ export async function upgradeSoftware(
     }
     return { results };
   } catch (err) {
-    logger.error("upgrade: failed", { err: String(err) });
+    logger.error("upgrade: failed", {
+      err: describeError(err),
+      stack: (err as any)?.stack,
+    });
     throw err;
   }
 }
