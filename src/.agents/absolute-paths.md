@@ -398,6 +398,10 @@ Mitigation:
       - [src/packages/backend/sandbox/index.ts](./src/packages/backend/sandbox/index.ts)
     - Added Jest coverage for root-mode behavior:
       - [src/packages/backend/sandbox/sandbox.test.ts](./src/packages/backend/sandbox/sandbox.test.ts)
+    - Added additional policy hardening assertions:
+      - rootfs-missing errors do not leak mountpoint paths,
+      - scratch-missing errors do not leak mountpoint paths,
+      - `/root` access remains available when `/scratch` is unavailable.
     - Wired project-host file server to pass rootfs mountpoint:
       - [src/packages/project-host/file-server.ts](./src/packages/project-host/file-server.ts)
       - [src/packages/project-runner/run/rootfs.ts](./src/packages/project-runner/run/rootfs.ts)

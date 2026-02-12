@@ -318,13 +318,34 @@ describe("rootfs option sandbox", () => {
     rootfs = join(tempDir, "test-rootfs-missing");
     await mkdir(home);
     fs = new SandboxedFilesystem(home, { rootfs });
-    await expect(fs.writeFile("/alpha.txt", "from-home")).rejects.toThrow(
+    const err = await fs
+      .writeFile("/alpha.txt", "from-home")
+      .catch((e) => e as Error);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain(
       "rootfs is not mounted; cannot access absolute path '/alpha.txt'. Start the workspace and try again.",
     );
+    expect(err.message).not.toContain(rootfs);
     await fs.writeFile("/root/home-ok.txt", "ok");
     await fs.writeFile("relative-ok.txt", "ok");
     expect(await fs.readFile("/root/home-ok.txt", "utf8")).toBe("ok");
     expect(await fs.readFile("relative-ok.txt", "utf8")).toBe("ok");
+  });
+
+  it("does not leak mount paths when scratch is missing", async () => {
+    const secretScratchPath = join(tempDir, "very-secret-scratch-mount");
+    const fsMissingScratch = new SandboxedFilesystem(home, {
+      rootfs,
+      scratch: secretScratchPath,
+    });
+    const err = await fsMissingScratch
+      .writeFile("/scratch/blocked.txt", "blocked")
+      .catch((e) => e as Error);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain(
+      "scratch is not mounted; cannot access absolute path '/scratch/blocked.txt'. Start the workspace and try again.",
+    );
+    expect(err.message).not.toContain(secretScratchPath);
   });
 
   it("switches to rootfs path once rootfs exists", async () => {
@@ -396,6 +417,10 @@ describe("rootfs option sandbox", () => {
     await fsMissingScratch.writeFile("/tmp/rootfs-ok.txt", "rootfs-ok");
     expect(await fsMissingScratch.readFile("/tmp/rootfs-ok.txt", "utf8")).toBe(
       "rootfs-ok",
+    );
+    await fsMissingScratch.writeFile("/root/home-still-ok.txt", "home-ok");
+    expect(await fsMissingScratch.readFile("/root/home-still-ok.txt", "utf8")).toBe(
+      "home-ok",
     );
   });
 
