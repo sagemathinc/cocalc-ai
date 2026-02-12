@@ -690,6 +690,14 @@ check_args() {
   done
 }
 
+escape_overlay_path() {
+  local path="$1"
+  path="${path//\\/\\\\}"
+  path="${path//:/\\:}"
+  path="${path//,/\\,}"
+  printf '%s' "$path"
+}
+
 case "$cmd" in
   btrfs)
     check_args "$@"
@@ -716,7 +724,10 @@ case "$cmd" in
       echo "cocalc-runtime-storage: overlay mountpoint not allowed: $merged" >&2
       exit 2
     fi
-    exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir},upperdir=${upperdir},workdir=${workdir},xino=off,metacopy=off,redirect_dir=off" "$merged"
+    lowerdir_escaped="$(escape_overlay_path "$lowerdir")"
+    upperdir_escaped="$(escape_overlay_path "$upperdir")"
+    workdir_escaped="$(escape_overlay_path "$workdir")"
+    exec /bin/mount -t overlay overlay -o "lowerdir=${lowerdir_escaped},upperdir=${upperdir_escaped},workdir=${workdir_escaped},xino=off,metacopy=off,redirect_dir=off" "$merged"
     ;;
   umount-overlay-project)
     if [ "$#" -ne 1 ]; then
