@@ -66,7 +66,7 @@ module.exports = {
   resolveLaunchpadHost: resolveOnPremHost,
   logLaunchpadConfig() {
     const summary = {
-      host: resolveLaunchpadHost(),
+      host: resolveOnPremHost(),
       data_dir: process.env.COCALC_DATA_DIR ?? process.env.DATA,
       http_port: process.env.COCALC_HTTP_PORT,
       sshd_port: process.env.COCALC_SSHD_PORT,

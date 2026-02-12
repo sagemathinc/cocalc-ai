@@ -65,6 +65,9 @@ import { useLanguageModelSetting } from "./useLanguageModelSetting";
 import { UserDefinedLLMComponent } from "./user-defined-llm";
 import LiteAISettings from "./lite-ai-settings";
 import { lite } from "@cocalc/frontend/lite";
+import { AgentDebugPanel } from "./agent-debug-panel";
+
+declare var DEBUG: boolean;
 
 // Icon constants for account preferences sections
 export const THEME_ICON_NAME: IconName = "highlighter";
@@ -102,6 +105,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
     LAUNCHER_SITE_REMOVE_APPS_KEY,
   );
   const [showLauncherCustomize, setShowLauncherCustomize] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [model, setModel] = useLanguageModelSetting();
 
@@ -418,6 +422,18 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
         {anyLLMenabled && render_language_model()}
         {!lite && render_custom_llm()}
         {lite && <LiteAISettings />}
+        {DEBUG ? (
+          <div style={{ marginTop: 12 }}>
+            <Button
+              size="small"
+              onClick={() => setShowAdvanced((v) => !v)}
+              style={{ marginBottom: showAdvanced ? 12 : 0 }}
+            >
+              {showAdvanced ? "Hide Advanced" : "Advanced"}
+            </Button>
+            {showAdvanced ? <AgentDebugPanel /> : null}
+          </div>
+        ) : null}
       </Panel>
     );
   }
