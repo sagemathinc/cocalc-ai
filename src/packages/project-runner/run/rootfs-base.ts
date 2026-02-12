@@ -1,9 +1,9 @@
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import { data } from "@cocalc/backend/data";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { spawn } from "node:child_process";
-import { readFile, rm, writeFile } from "fs/promises";
+import { copyFile, readFile, rm, symlink, writeFile } from "fs/promises";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import pullImage from "./pull-image";
 import { shiftProgress } from "@cocalc/conat/lro/progress";
@@ -14,6 +14,16 @@ const logger = getLogger("project-runner:rootfs-base");
 
 export const IMAGE_CACHE =
   process.env.COCALC_IMAGE_CACHE ?? join(data, "cache", "images");
+
+export function imagePathComponent(image: string): string {
+  // overlayfs option parsing can break on ":" inside paths; use an encoded
+  // path component for all on-disk image directories.
+  return encodeURIComponent(image);
+}
+
+export function imageCachePath(image: string): string {
+  return join(IMAGE_CACHE, imagePathComponent(image));
+}
 
 type ProgressFunction = (opts: { progress: number; desc: string }) => void;
 
@@ -30,15 +40,42 @@ export function registerProgress(image: string, f: ProgressFunction) {
   }
 }
 
-function inspectFile(image) {
-  // we use the following format so that:
-  //   - the json files with the inspect info are hidden
-  //   - they start with a '.' so there is no way that one of these files
-  //     can also be the name of an OCI image that we're downloading
-  //     E.g., .foo.json cna't be the name of an image, because image names
-  //      can't start with separate characters and '.' is one -- see
-  //      https://stackoverflow.com/questions/43091075/docker-restrictions-regarding-naming-image
-  return join(IMAGE_CACHE, dirname(image), "." + basename(image) + ".json");
+function inspectFile(image: string): string {
+  return join(IMAGE_CACHE, `.${imagePathComponent(image)}.json`);
+}
+
+function legacyInspectFile(image: string): string {
+  const idx = image.lastIndexOf("/");
+  if (idx === -1) return join(IMAGE_CACHE, `.${image}.json`);
+  const dir = image.slice(0, idx);
+  const base = image.slice(idx + 1);
+  return join(IMAGE_CACHE, dir, `.${base}.json`);
+}
+
+async function ensureLegacyCacheAlias(image: string): Promise<void> {
+  const legacyBaseImagePath = join(IMAGE_CACHE, image);
+  const modernBaseImagePath = imageCachePath(image);
+  if (!(await exists(legacyBaseImagePath)) || (await exists(modernBaseImagePath))) {
+    return;
+  }
+  try {
+    await symlink(legacyBaseImagePath, modernBaseImagePath, "dir");
+  } catch {
+    // best effort: if this fails we'll just re-extract the image below.
+  }
+}
+
+async function ensureLegacyInspectAlias(image: string): Promise<void> {
+  const legacy = legacyInspectFile(image);
+  const modern = inspectFile(image);
+  if (!(await exists(legacy)) || (await exists(modern))) {
+    return;
+  }
+  try {
+    await copyFile(legacy, modern);
+  } catch {
+    // best effort only; we can regenerate via podman inspect.
+  }
 }
 
 // this should error if the image isn't available and extracted.  I.e., it should always
@@ -46,7 +83,11 @@ function inspectFile(image) {
 // extractBaseImage before using this.  The reason is to ensure that users have visibility
 // into all long running steps.
 export async function inspect(image: string) {
-  return JSON.parse(await readFile(inspectFile(image), "utf8"));
+  const modern = inspectFile(image);
+  if (await exists(modern)) {
+    return JSON.parse(await readFile(modern, "utf8"));
+  }
+  return JSON.parse(await readFile(legacyInspectFile(image), "utf8"));
 }
 
 export const extractBaseImage = reuseInFlight(async (image: string) => {
@@ -66,12 +107,11 @@ export const extractBaseImage = reuseInFlight(async (image: string) => {
   };
 
   try {
-    const baseImagePath = join(IMAGE_CACHE, image);
+    const baseImagePath = imageCachePath(image);
     reportProgress({ progress: 0, desc: `checking for ${image}...` });
-    if (
-      (await exists(inspectFile(image))) &&
-      (await exists(join(IMAGE_CACHE, image)))
-    ) {
+    await ensureLegacyCacheAlias(image);
+    await ensureLegacyInspectAlias(image);
+    if ((await exists(inspectFile(image))) && (await exists(baseImagePath))) {
       // already exist
       reportProgress({ progress: 100, desc: `${image} available` });
       return baseImagePath;

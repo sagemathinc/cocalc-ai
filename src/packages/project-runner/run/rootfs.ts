@@ -6,13 +6,19 @@ mount lifecycle operations only.
 import { join } from "path";
 import { data } from "@cocalc/backend/data";
 import { executeCode } from "@cocalc/backend/execute-code";
-import { mkdir, rm, writeFile, readFile } from "fs/promises";
+import { mkdir, rm, writeFile, readFile, rename } from "fs/promises";
 import { type Configuration } from "@cocalc/conat/project/runner/types";
 import { PROJECT_IMAGE_PATH } from "@cocalc/util/db-schema/defaults";
 import { getImage } from "./podman";
-import { extractBaseImage, IMAGE_CACHE, registerProgress } from "./rootfs-base";
+import {
+  extractBaseImage,
+  imageCachePath,
+  imagePathComponent,
+  registerProgress,
+} from "./rootfs-base";
 import { lroProgress } from "@cocalc/conat/lro/progress";
 import { RefcountLeaseManager } from "@cocalc/util/refcount/lease";
+import { exists } from "@cocalc/backend/misc/async-utils-node";
 
 import getLogger from "@cocalc/backend/logger";
 
@@ -39,14 +45,25 @@ export function getPaths({ home, image, project_id }): {
   workdir: string;
   merged: string;
   imageName: string;
+  userOverlays: string;
+  legacyUserOverlays: string;
 } {
-  const userOverlays = join(home, PROJECT_IMAGE_PATH, image);
+  const userOverlays = join(home, PROJECT_IMAGE_PATH, imagePathComponent(image));
+  const legacyUserOverlays = join(home, PROJECT_IMAGE_PATH, image);
   const upperdir = join(userOverlays, "upperdir");
   const workdir = join(userOverlays, "workdir");
   const merged = getMergedPath(project_id);
-  const lowerdir = join(IMAGE_CACHE, image);
+  const lowerdir = imageCachePath(image);
   const imageName = getImageNamePath(home);
-  return { lowerdir, upperdir, workdir, merged, imageName };
+  return {
+    lowerdir,
+    upperdir,
+    workdir,
+    merged,
+    imageName,
+    userOverlays,
+    legacyUserOverlays,
+  };
 }
 
 // Track mount reference counts so multiple users (e.g., project container +
@@ -170,10 +187,24 @@ export async function mount({
       progress: 70,
       desc: "extracted base image",
     });
-    const { upperdir, workdir, merged, imageName } = getPaths({
+    const {
+      upperdir,
+      workdir,
+      merged,
+      imageName,
+      userOverlays,
+      legacyUserOverlays,
+    } = getPaths({
       home,
       image,
       project_id,
+    });
+
+    await maybeMigrateLegacyOverlayPath({
+      legacyUserOverlays,
+      userOverlays,
+      project_id,
+      image,
     });
 
     // If a delayed unmount was pending, cancel it because we're reusing the mount.
@@ -245,4 +276,37 @@ async function mountOverlayFs({ upperdir, workdir, merged, lowerdir }) {
       merged,
     ],
   });
+}
+
+async function maybeMigrateLegacyOverlayPath({
+  legacyUserOverlays,
+  userOverlays,
+  project_id,
+  image,
+}: {
+  legacyUserOverlays: string;
+  userOverlays: string;
+  project_id: string;
+  image: string;
+}) {
+  if (legacyUserOverlays === userOverlays) return;
+  if (await exists(userOverlays)) return;
+  if (!(await exists(legacyUserOverlays))) return;
+  try {
+    await rename(legacyUserOverlays, userOverlays);
+    logger.info("migrated legacy rootfs overlay path", {
+      project_id,
+      image,
+      from: legacyUserOverlays,
+      to: userOverlays,
+    });
+  } catch (err) {
+    logger.warn("failed to migrate legacy rootfs overlay path", {
+      project_id,
+      image,
+      from: legacyUserOverlays,
+      to: userOverlays,
+      error: `${err}`,
+    });
+  }
 }
