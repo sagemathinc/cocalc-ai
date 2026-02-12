@@ -116,6 +116,10 @@ import { EditorLoadError } from "./file-editors-error";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { normalizeCpSourcePath } from "@cocalc/frontend/project/copy-paths";
+import {
+  moveDestinationPath,
+  normalizeDirectoryDestination,
+} from "@cocalc/frontend/project/action-paths";
 
 const { defaults, required } = misc;
 
@@ -2191,7 +2195,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       action: "copied",
       files: withSlashes,
       count: src.length,
-      dest: dest + (only_contents ? "" : "/"),
+      dest: only_contents ? dest : normalizeDirectoryDestination(dest),
     });
 
     if (only_contents) {
@@ -2379,14 +2383,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       const fs = this.fs();
       await Promise.all(
         src.map(async (path) =>
-          fs.move(path, join(dest, basename(path)), { overwrite: true }),
+          fs.move(path, moveDestinationPath(dest, path), { overwrite: true }),
         ),
       );
       this.log({
         event: "file_action",
         action: "moved",
         files: src,
-        dest: dest + "/" /* target is assumed to be a directory */,
+        dest: normalizeDirectoryDestination(dest),
       });
     } catch (err) {
       error = err;
