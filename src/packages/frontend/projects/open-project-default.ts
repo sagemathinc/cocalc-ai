@@ -6,19 +6,14 @@
 export function defaultOpenProjectTarget({
   target,
   activeProjectTab,
-  hasOpenFiles,
 }: {
   target?: string;
   activeProjectTab?: string;
-  hasOpenFiles: boolean;
 }): string | undefined {
-  if (target != null) {
+  if (target != null && target !== "") {
     return target;
   }
-  if (
-    !hasOpenFiles &&
-    (activeProjectTab == null || activeProjectTab === "files")
-  ) {
+  if (activeProjectTab == null || activeProjectTab === "files") {
     return "home/";
   }
   return undefined;

@@ -553,13 +553,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
     }
     const pstore = project_actions.get_store();
-    const openFiles = pstore?.get("open_files_order");
-    const hasOpenFiles = !!openFiles && openFiles.size > 0;
     const activeProjectTab = pstore?.get("active_project_tab");
     opts.target = defaultOpenProjectTarget({
       target: opts.target,
       activeProjectTab,
-      hasOpenFiles,
     });
     if (opts.target != null) {
       await project_actions.load_target(
