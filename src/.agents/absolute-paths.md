@@ -432,6 +432,8 @@ Mitigation:
     - Rootfs/scratch unmounted errors now explicitly tell users to start the workspace:
       - [src/packages/backend/sandbox/index.ts](./src/packages/backend/sandbox/index.ts)
       - [src/packages/backend/sandbox/sandbox.test.ts](./src/packages/backend/sandbox/sandbox.test.ts)
+    - Added focused server unit tests for copy orchestration (same-host absolute, cross-host `/scratch` rejection, queued absolute and multi-source basename expansion):
+      - [src/packages/server/projects/copy.test.ts](./src/packages/server/projects/copy.test.ts)
 
 ### Next Recommended Work (Tests First)
 1. Ticket 6 hardening via automated tests.
