@@ -124,8 +124,8 @@ interface Options {
   // readonly -- only allow operations that don't change files
   readonly?: boolean;
   // optional path to treat as "/" when mounted/available.
-  // if unavailable, we fall back to `path`.
-  root?: string;
+  // if set but unavailable, operations fail.
+  rootfs?: string;
   host?: string;
   rusticRepo?: string;
 }
@@ -141,8 +141,8 @@ const INTERNAL_METHODS = new Set([
   "path",
   "unsafeMode",
   "readonly",
-  "root",
-  "rootEnabled",
+  "rootfs",
+  "rootfsEnabled",
   "assertWritable",
   "rusticRepo",
   "host",
@@ -155,8 +155,8 @@ const INTERNAL_METHODS = new Set([
 export class SandboxedFilesystem {
   public readonly unsafeMode: boolean;
   public readonly readonly: boolean;
-  public readonly root?: string;
-  private rootEnabled = false;
+  public readonly rootfs?: string;
+  private rootfsEnabled = false;
   public rusticRepo: string;
   private host?: string;
   private lastOnDisk = new LRU<string, string>({
@@ -174,14 +174,14 @@ export class SandboxedFilesystem {
     {
       unsafeMode = false,
       readonly = false,
-      root,
+      rootfs,
       host = "global",
       rusticRepo: repo,
     }: Options = {},
   ) {
     this.unsafeMode = !!unsafeMode;
     this.readonly = !!readonly;
-    this.root = root;
+    this.rootfs = rootfs;
     this.host = host;
     this.rusticRepo = repo ?? rusticRepo;
     for (const f in this) {
@@ -195,7 +195,12 @@ export class SandboxedFilesystem {
           // @ts-ignore
           return await orig(...args);
         } catch (err) {
-          const sandboxBasePath = await this.resolveSandboxBasePath();
+          let sandboxBasePath = this.path;
+          try {
+            sandboxBasePath = await this.resolveSandboxBasePath();
+          } catch {
+            // keep original error, and best-effort sanitize with home path
+          }
           if (typeof err?.path == "string") {
             if (
               err.path == sandboxBasePath ||
@@ -222,21 +227,34 @@ export class SandboxedFilesystem {
   }
 
   private async resolveSandboxBasePath(): Promise<string> {
-    if (!this.root) {
-      return this.path;
-    }
-    if (this.rootEnabled) {
-      return this.root;
-    }
-    try {
-      if ((await stat(this.root)).isDirectory()) {
-        this.rootEnabled = true;
-        return this.root;
-      }
-    } catch {
-      // root path not available yet -- fall back to path
+    if (this.rootfsEnabled && this.rootfs) {
+      return this.rootfs;
     }
     return this.path;
+  }
+
+  private async requireRootfsForAbsolutePath(
+    requestedAbsolutePath: string,
+  ): Promise<string> {
+    if (!this.rootfs) {
+      // Backward-compatible mode when no rootfs is configured.
+      return this.path;
+    }
+    if (this.rootfsEnabled) {
+      return this.rootfs;
+    }
+    try {
+      const st = await stat(this.rootfs);
+      if (st.isDirectory()) {
+        this.rootfsEnabled = true;
+        return this.rootfs;
+      }
+    } catch {
+      // handled below
+    }
+    throw new Error(
+      `rootfs is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
+    );
   }
 
   private async resolvePathInSandbox(path: string): Promise<{
@@ -244,8 +262,6 @@ export class SandboxedFilesystem {
     sandboxBasePath: string;
     absoluteHomeAlias: boolean;
   }> {
-    const rootBase = await this.resolveSandboxBasePath();
-    const rootEnabled = !!this.root && rootBase == this.root;
     const resolvedInput = resolve("/", path);
     const isAbsoluteInput = path.startsWith("/");
     const isAbsoluteHomeAlias =
@@ -253,8 +269,8 @@ export class SandboxedFilesystem {
       (resolvedInput == HOME_ROOT || resolvedInput.startsWith(`${HOME_ROOT}/`));
 
     // Relative paths (and absolute /root paths) are always interpreted relative
-    // to the project home mount `path`, even when root mode is enabled.
-    if (!rootEnabled || !isAbsoluteInput || isAbsoluteHomeAlias) {
+    // to the project home mount `path`, even when rootfs mode is enabled.
+    if (!isAbsoluteInput || isAbsoluteHomeAlias) {
       const rel =
         isAbsoluteHomeAlias
           ? resolvedInput == HOME_ROOT
@@ -268,7 +284,9 @@ export class SandboxedFilesystem {
       };
     }
 
-    // Other absolute paths are interpreted from root mount.
+    const rootBase = await this.requireRootfsForAbsolutePath(resolvedInput);
+
+    // Other absolute paths are interpreted from rootfs mount.
     return {
       pathInSandbox: join(rootBase, resolvedInput),
       sandboxBasePath: rootBase,

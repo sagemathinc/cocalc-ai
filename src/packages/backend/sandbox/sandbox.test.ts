@@ -307,33 +307,37 @@ describe("read only sandbox", () => {
   });
 });
 
-describe("root option sandbox", () => {
+describe("rootfs option sandbox", () => {
   let fs;
   let home: string;
-  let root: string;
+  let rootfs: string;
 
-  it("falls back to home path when root is missing", async () => {
-    home = join(tempDir, "test-root-home");
-    root = join(tempDir, "test-root-missing");
+  it("fails absolute non-home operations when rootfs is missing", async () => {
+    home = join(tempDir, "test-rootfs-home");
+    rootfs = join(tempDir, "test-rootfs-missing");
     await mkdir(home);
-    fs = new SandboxedFilesystem(home, { root });
-    await fs.writeFile("/alpha.txt", "from-home");
-    expect(await fs.readFile("/alpha.txt", "utf8")).toBe("from-home");
-    expect(await readFile(join(home, "alpha.txt"), "utf8")).toBe("from-home");
+    fs = new SandboxedFilesystem(home, { rootfs });
+    await expect(fs.writeFile("/alpha.txt", "from-home")).rejects.toThrow(
+      "rootfs is not mounted; cannot access absolute path '/alpha.txt'",
+    );
+    await fs.writeFile("/root/home-ok.txt", "ok");
+    await fs.writeFile("relative-ok.txt", "ok");
+    expect(await fs.readFile("/root/home-ok.txt", "utf8")).toBe("ok");
+    expect(await fs.readFile("relative-ok.txt", "utf8")).toBe("ok");
   });
 
-  it("switches to root path once root exists", async () => {
-    await mkdir(root, { recursive: true });
+  it("switches to rootfs path once rootfs exists", async () => {
+    await mkdir(rootfs, { recursive: true });
     await fs.mkdir("/tmp");
     await fs.writeFile("/tmp/from-root.txt", "from-root");
     expect(await fs.readFile("/tmp/from-root.txt", "utf8")).toBe("from-root");
-    expect(await readFile(join(root, "tmp", "from-root.txt"), "utf8")).toBe(
+    expect(await readFile(join(rootfs, "tmp", "from-root.txt"), "utf8")).toBe(
       "from-root",
     );
     await expect(readFile(join(home, "tmp", "from-root.txt"), "utf8")).rejects.toThrow();
   });
 
-  it("keeps /root and relative paths mapped to home path when root exists", async () => {
+  it("keeps /root and relative paths mapped to home path when rootfs exists", async () => {
     await fs.writeFile("/root/home-abs.txt", "from-home-abs");
     await fs.writeFile("home-rel.txt", "from-home-rel");
     expect(await fs.readFile("/root/home-abs.txt", "utf8")).toBe("from-home-abs");
@@ -342,11 +346,11 @@ describe("root option sandbox", () => {
     expect(rootListing).toContain("home-abs.txt");
     expect(await readFile(join(home, "home-abs.txt"), "utf8")).toBe("from-home-abs");
     expect(await readFile(join(home, "home-rel.txt"), "utf8")).toBe("from-home-rel");
-    await expect(readFile(join(root, "root", "home-abs.txt"), "utf8")).rejects.toThrow();
-    await expect(readFile(join(root, "home-rel.txt"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(rootfs, "root", "home-abs.txt"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(rootfs, "home-rel.txt"), "utf8")).rejects.toThrow();
   });
 
-  it("realpath returns absolute style paths when root mode is active", async () => {
+  it("realpath returns absolute style paths when rootfs mode is active", async () => {
     expect(await fs.realpath("/tmp/from-root.txt")).toBe("/tmp/from-root.txt");
   });
 
@@ -354,9 +358,9 @@ describe("root option sandbox", () => {
     expect(await fs.realpath("/root/home-abs.txt")).toBe("/root/home-abs.txt");
   });
 
-  it("safe mode still blocks symlink escape outside root", async () => {
+  it("safe mode still blocks symlink escape outside rootfs", async () => {
     await writeFile(join(tempDir, "root-secret.txt"), "s3cr3t");
-    await symlink(join(tempDir, "root-secret.txt"), join(root, "danger-link"));
+    await symlink(join(tempDir, "root-secret.txt"), join(rootfs, "danger-link"));
     await expect(fs.readFile("/danger-link", "utf8")).rejects.toThrow(
       "outside of sandbox",
     );

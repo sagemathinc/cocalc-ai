@@ -1512,9 +1512,7 @@ export async function initFsServer({
       const { path } = await getVolume(project_id);
       return new SandboxedFilesystem(path, {
         host: project_id,
-        // If project rootfs is mounted, sandbox can resolve absolute paths there.
-        // If not mounted, SandboxedFilesystem falls back to the volume path.
-        root: getRootfsMountpoint(project_id),
+        rootfs: getRootfsMountpoint(project_id),
       });
     },
     onMutation: ({ subject, op }) => {
