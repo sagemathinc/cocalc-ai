@@ -316,7 +316,7 @@ Mitigation:
 
 ### Status Snapshot (Current Branch)
 - Ticket 1: Completed.
-- Ticket 2: In progress.
+- Ticket 2: Completed.
   - Done:
     - Migrated project store path state to absolute-only fields:
       - `current_path_abs`
@@ -353,9 +353,11 @@ Mitigation:
       - Home tab button resets path to `/` (not `""`).
       - Archive creation now uses absolute current path.
     - `new/...` and `search/...` URL pushes now avoid `//` by using normalized path suffixes.
-  - Remaining:
-    - Final manual verification pass on URL routes (`files`, `home`, `new/home`, `search/home`) across history/back/forward navigation.
-- Ticket 3: In progress.
+    - Manual validation in both lite and launchpad mode:
+      - `/projects/<id>/files/`, `/projects/<id>/files/<abs-path>`
+      - `/projects/<id>/home/`
+      - root/home URL defaults and redirect behavior
+- Ticket 3: Completed.
   - Done:
     - File-open flow preserves `display_path` while resolving/storing `sync_path` at open boundary:
       - [src/packages/frontend/project/open-file.ts](./src/packages/frontend/project/open-file.ts)
@@ -366,10 +368,10 @@ Mitigation:
       - [src/packages/frontend/project/page/content.tsx](./src/packages/frontend/project/page/content.tsx)
     - Added regression tests for display-path to sync-path fallback and precedence:
       - [src/packages/util/redux/AppRedux.test.ts](./src/packages/util/redux/AppRedux.test.ts)
-  - Remaining:
-    - Manual cross-browser symlink alias verification (`a.txt` and `b.txt -> a.txt`) under active editing/cursor updates.
-    - Add a focused integration-style frontend test for alias-open / close-last-alias behavior if we add a lightweight project-actions harness.
-- Ticket 4: In progress.
+    - Manual validation:
+      - cross-browser symlink alias realtime session sharing (`a.txt` and `b.txt -> a.txt`)
+      - same-browser alias duplicate open now fails gracefully by reusing existing tab
+- Ticket 4: Completed.
   - Done:
     - Explorer and flyout paths now mostly use `current_path_abs`.
     - Core listing/create/open/sort flows are absolute-first.
@@ -390,9 +392,6 @@ Mitigation:
       - [src/packages/frontend/project_actions.ts](./src/packages/frontend/project_actions.ts)
     - Added helper tests:
       - [src/packages/util/consts/virtual-paths.test.ts](./src/packages/util/consts/virtual-paths.test.ts)
-  - Remaining:
-    - Final sweep for straggling `""` path defaults in project/explorer/flyout helpers.
-    - Final pass on absolute-first path joins and parent nav behavior.
 - Ticket 5: Completed.
   - Done:
     - Added backend optional `root` mode to sandbox:
@@ -416,6 +415,48 @@ Mitigation:
       - [src/packages/project/browser-websocket/api.ts](./src/packages/project/browser-websocket/api.ts)
     - Deleted obsolete canonical-path implementation:
       - [src/packages/project/browser-websocket/canonical-path.ts](./src/packages/project/browser-websocket/canonical-path.ts)
+- Ticket 9: Completed.
+  - Done:
+    - Implemented root/home source selector UX in navigator/flyout.
+    - Root breadcrumb behavior cleaned up (no duplicate `/` visual artifact).
+    - Mode-aware source options (`/scratch` only in launchpad mode).
+    - Project root route default now lands on `/home` in lite mode.
+    - Manual validation in lite + launchpad confirmed behavior.
+- Ticket 10: Completed (copy-between-projects absolute-path migration).
+  - Done:
+    - Backend copy pipeline now accepts absolute and relative source/destination paths:
+      - [src/packages/server/projects/copy.ts](./src/packages/server/projects/copy.ts)
+    - Pending copy application now resolves destination paths with HOME/rootfs/scratch policy (same sandbox contract as file-server):
+      - [src/packages/project-host/pending-copies.ts](./src/packages/project-host/pending-copies.ts)
+      - [src/packages/project-host/file-server.ts](./src/packages/project-host/file-server.ts)
+    - Rootfs/scratch unmounted errors now explicitly tell users to start the workspace:
+      - [src/packages/backend/sandbox/index.ts](./src/packages/backend/sandbox/index.ts)
+      - [src/packages/backend/sandbox/sandbox.test.ts](./src/packages/backend/sandbox/sandbox.test.ts)
+
+### Next Recommended Work (Tests First)
+1. Ticket 6 hardening via automated tests.
+   - Add integration tests for rootfs mounted/unmounted transitions through project-host/file routes, not just sandbox unit tests.
+   - Ensure expected failure messages remain sanitized (no host-path leakage) and HOME path remains usable.
+2. Ticket 7 regression tests for sync identity behavior.
+   - Add test coverage for:
+     - alias open dedupe in same browser (`display_path` switch + toast behavior),
+     - close-last-alias teardown behavior,
+     - `getEditorActions/getEditorStore` display->sync fallback invariants.
+3. Add focused copy-between-projects tests (remaining coverage gap).
+   - Add tests in copy worker/API layer for:
+     - absolute source + absolute destination,
+     - HOME vs rootfs vs scratch policy behavior,
+     - cross-host queued copy behavior and failure reporting.
+4. Ticket 8 canonicalization boundary for non-existing targets.
+   - Add/create a shared parent-realpath + child lexical canonicalization helper and tests for create/rename/move/copy.
+5. Mutation-operation regression suite (create/rename/move/copy) under absolute paths.
+   - Add focused tests across frontend action wrappers and backend fs APIs for:
+     - absolute in-HOME paths,
+     - absolute out-of-HOME paths (when rootfs available),
+     - policy-denied targets,
+     - destination canonicalization for non-existing targets.
+6. Ticket 11 virtual-path context cleanup.
+   - Optional now, but this is the next likely source of subtle regressions (`.snapshots`/`.backups` route semantics).
 
 ### Ticket 1: Path Model Module + Tests
 - Priority: P1
@@ -560,10 +601,3 @@ Mitigation:
 - Acceptance criteria:
   - Performance checks pass for directory navigation and file open/edit workflows.
   - Temporary migration shims are removed or explicitly documented.
-- Ticket 3: In progress.
-  - Done:
-    - File open flow stores both display path and sync path.
-    - Sync path now canonicalizes resolved paths through editor-specific sync identity mapping (ipynb/term) after `realpath`.
-  - Remaining:
-    - Verify editor/tab metadata consumers consistently use display path in UI and sync path for realtime identity.
-    - Add focused regression coverage for symlink alias flows.

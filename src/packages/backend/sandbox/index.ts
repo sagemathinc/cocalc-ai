@@ -268,7 +268,7 @@ export class SandboxedFilesystem {
       // handled below
     }
     throw new Error(
-      `rootfs is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
+      `rootfs is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
     );
   }
 
@@ -293,7 +293,7 @@ export class SandboxedFilesystem {
       // handled below
     }
     throw new Error(
-      `scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'`,
+      `scratch is not mounted; cannot access absolute path '${requestedAbsolutePath}'. Start the workspace and try again.`,
     );
   }
 

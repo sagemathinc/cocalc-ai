@@ -319,7 +319,7 @@ describe("rootfs option sandbox", () => {
     await mkdir(home);
     fs = new SandboxedFilesystem(home, { rootfs });
     await expect(fs.writeFile("/alpha.txt", "from-home")).rejects.toThrow(
-      "rootfs is not mounted; cannot access absolute path '/alpha.txt'",
+      "rootfs is not mounted; cannot access absolute path '/alpha.txt'. Start the workspace and try again.",
     );
     await fs.writeFile("/root/home-ok.txt", "ok");
     await fs.writeFile("relative-ok.txt", "ok");
@@ -391,7 +391,7 @@ describe("rootfs option sandbox", () => {
     await expect(
       fsMissingScratch.writeFile("/scratch/blocked.txt", "blocked"),
     ).rejects.toThrow(
-      "scratch is not mounted; cannot access absolute path '/scratch/blocked.txt'",
+      "scratch is not mounted; cannot access absolute path '/scratch/blocked.txt'. Start the workspace and try again.",
     );
     await fsMissingScratch.writeFile("/tmp/rootfs-ok.txt", "rootfs-ok");
     expect(await fsMissingScratch.readFile("/tmp/rootfs-ok.txt", "utf8")).toBe(

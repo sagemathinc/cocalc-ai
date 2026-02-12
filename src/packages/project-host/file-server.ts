@@ -234,7 +234,7 @@ function projectMountpoint(project_id: string): string {
   return join(getMountPoint(), volName(project_id));
 }
 
-function scratchMountpoint(project_id: string): string {
+export function getScratchMountpoint(project_id: string): string {
   return join(getMountPoint(), scratchVolName(project_id));
 }
 
@@ -385,7 +385,9 @@ async function mount({
 }): Promise<{ path: string }> {
   logger.debug("mount", { project_id, scratch });
   return {
-    path: scratch ? scratchMountpoint(project_id) : projectMountpoint(project_id),
+    path: scratch
+      ? getScratchMountpoint(project_id)
+      : projectMountpoint(project_id),
   };
 }
 
@@ -467,6 +469,8 @@ async function cp({
   }
   const srcVolume = await getVolume(src.project_id);
   const destVolume = await getVolume(dest.project_id);
+  // Paths may be project-relative or absolute (/..., /root/..., /scratch/...).
+  // SandboxedFilesystem resolves policy based on home/rootfs/scratch mounts.
   let srcPaths = await srcVolume.fs.safeAbsPaths(src.path);
   let destPath = await destVolume.fs.safeAbsPath(dest.path);
 
@@ -1108,7 +1112,7 @@ async function restoreBackup({
 }): Promise<void> {
   const vol = await getVolumeForBackup(project_id);
   const home = projectMountpoint(project_id);
-  const scratch = scratchMountpoint(project_id);
+  const scratch = getScratchMountpoint(project_id);
   const stagingRoot = join(dirname(home), RESTORE_STAGING_ROOT);
   const stagingHome = join(stagingRoot, volName(project_id));
   const restorePath = backupPath ?? "";
@@ -1531,7 +1535,7 @@ export async function initFsServer({
       return new SandboxedFilesystem(path, {
         host: project_id,
         rootfs: getRootfsMountpoint(project_id),
-        scratch: scratchMountpoint(project_id),
+        scratch: getScratchMountpoint(project_id),
       });
     },
     onMutation: ({ subject, op }) => {
