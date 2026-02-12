@@ -72,4 +72,6 @@ jobs:
 
       - name: test
         timeout-minutes: 15
+        env:
+          COCALC_RUNTIME_STORAGE_ALLOW_DIRECT: "yes"
         run: source venv/bin/activate && cd src && pnpm test
