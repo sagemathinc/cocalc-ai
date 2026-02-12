@@ -333,8 +333,25 @@ describe("root option sandbox", () => {
     await expect(readFile(join(home, "tmp", "from-root.txt"), "utf8")).rejects.toThrow();
   });
 
+  it("keeps /root and relative paths mapped to home path when root exists", async () => {
+    await fs.writeFile("/root/home-abs.txt", "from-home-abs");
+    await fs.writeFile("home-rel.txt", "from-home-rel");
+    expect(await fs.readFile("/root/home-abs.txt", "utf8")).toBe("from-home-abs");
+    expect(await fs.readFile("home-rel.txt", "utf8")).toBe("from-home-rel");
+    const rootListing = (await fs.readdir("/root")) as string[];
+    expect(rootListing).toContain("home-abs.txt");
+    expect(await readFile(join(home, "home-abs.txt"), "utf8")).toBe("from-home-abs");
+    expect(await readFile(join(home, "home-rel.txt"), "utf8")).toBe("from-home-rel");
+    await expect(readFile(join(root, "root", "home-abs.txt"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(root, "home-rel.txt"), "utf8")).rejects.toThrow();
+  });
+
   it("realpath returns absolute style paths when root mode is active", async () => {
     expect(await fs.realpath("/tmp/from-root.txt")).toBe("/tmp/from-root.txt");
+  });
+
+  it("realpath preserves /root absolute style for home files", async () => {
+    expect(await fs.realpath("/root/home-abs.txt")).toBe("/root/home-abs.txt");
   });
 
   it("safe mode still blocks symlink escape outside root", async () => {

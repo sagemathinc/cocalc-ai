@@ -45,6 +45,7 @@ import useListing, {
 import useBackupsListing, {
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import filterListing from "@cocalc/frontend/project/listing/filter-listing";
 import ShowError from "@cocalc/frontend/components/error";
 import {
@@ -56,6 +57,7 @@ import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import { getSort, setSort } from "./config";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -150,13 +152,22 @@ export function Explorer() {
 
   const fs = useFs({ project_id });
   const inBackupsPath = isBackupsPath(effective_current_path);
+  const inSnapshotsPath = isSnapshotsPath(effective_current_path);
+  const homePath =
+    lite && typeof available_features?.homeDirectory === "string"
+      ? normalizeAbsolutePath(available_features.homeDirectory)
+      : "/root";
+  const listingPath =
+    inSnapshotsPath && !effective_current_path.startsWith("/")
+      ? normalizeAbsolutePath(effective_current_path, homePath)
+      : effective_current_path;
   let {
     refresh,
     listing,
     error: listingError,
   } = useListing({
     fs: inBackupsPath ? null : fs,
-    path: effective_current_path,
+    path: listingPath,
     ...sortDesc(active_file_sort),
     cacheId: actions?.getCacheId(),
     mask,

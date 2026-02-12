@@ -652,8 +652,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   ): { source: "files" | "home"; relativePath: string } => {
     const normalized = normalize(path);
     if (this.isVirtualListingPath(normalized)) {
+      const source: "files" | "home" = normalized.startsWith("/")
+        ? "files"
+        : "home";
       return {
-        source: "files",
+        source,
         relativePath: normalized.replace(/^\/+/, "").replace(/\/+$/, ""),
       };
     }
@@ -1646,6 +1649,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   open_directory = async (path, change_history = true, show_files = true) => {
+    const openDirectoryStart = performance.now();
     path = normalize(path);
     // Be forgiving if a route-like path is passed here.
     if (path === "files") {
@@ -1674,6 +1678,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       path = path.slice(0, -1);
     }
     const nextPathAbs = this.toAbsoluteCurrentPath(path);
+    console.info("[abs-path-debug] project/open_directory", {
+      project_id: this.project_id,
+      path,
+      nextPathAbs,
+      change_history,
+      show_files,
+      ms: Math.round(performance.now() - openDirectoryStart),
+    });
     this.foreground_project(change_history);
     this.set_current_path(nextPathAbs);
     const store = this.get_store();
@@ -2858,6 +2870,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     change_history = true,
     fragmentId?: FragmentId,
   ): Promise<void> => {
+    const loadTargetStart = performance.now();
     const segments = target.split("/");
     const main_segment = segments[0] as FixedTab | "home" | "project-home";
     const hasScopedPathSource =
@@ -2869,6 +2882,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     // Reserve /home for filesystem routes. Project home tab lives at /project-home.
     const isHomeFileRoute = main_segment === "home";
     const fileRouteSource: "files" | "home" = isHomeFileRoute ? "home" : "files";
+    console.info("[abs-path-debug] project/load_target:start", {
+      project_id: this.project_id,
+      target,
+      main_segment,
+      fileRouteSource,
+    });
 
     // In lite mode, /home/* URL resolution depends on homeDirectory capability.
     // Ensure configuration is loaded before mapping home-scoped routes.
@@ -2899,6 +2918,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       const store = this.get_store();
       if (store == null) {
+        console.info("[abs-path-debug] project/load_target:no-store", {
+          project_id: this.project_id,
+          target,
+          full_path,
+          ms: Math.round(performance.now() - loadTargetStart),
+        });
         return; // project closed already
       }
       // Provisional directory context to avoid flashing "/" while stat is in flight.
@@ -2911,6 +2936,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         });
       }
       const isDir = await this.isDir(full_path);
+      console.info("[abs-path-debug] project/load_target:isDir", {
+        project_id: this.project_id,
+        full_path,
+        isDir,
+        ms: Math.round(performance.now() - loadTargetStart),
+      });
       if (isDir) {
         this.open_directory(full_path, change_history);
       } else {
@@ -2923,6 +2954,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           fragmentId,
         });
       }
+      console.info("[abs-path-debug] project/load_target:done:file-route", {
+        project_id: this.project_id,
+        target,
+        ms: Math.round(performance.now() - loadTargetStart),
+      });
       return;
     }
     switch (main_segment) {
@@ -2982,6 +3018,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         misc.unreachable(main_segment);
         console.warn(`project/load_target: don't know segment ${main_segment}`);
     }
+    console.info("[abs-path-debug] project/load_target:done:tab-route", {
+      project_id: this.project_id,
+      target,
+      ms: Math.round(performance.now() - loadTargetStart),
+    });
   };
 
   set_compute_image = async (compute_image: string): Promise<void> => {

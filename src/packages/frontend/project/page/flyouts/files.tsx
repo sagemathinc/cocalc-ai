@@ -55,9 +55,12 @@ import useListing from "@cocalc/frontend/project/listing/use-listing";
 import useBackupsListing, {
   isBackupsPath,
 } from "@cocalc/frontend/project/listing/use-backups";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import ShowError from "@cocalc/frontend/components/error";
 import { getSort } from "@cocalc/frontend/project/explorer/config";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
+import { lite } from "@cocalc/frontend/lite";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
@@ -95,6 +98,10 @@ export function FilesFlyout({
   );
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
+  const available_features = useTypedRedux(
+    { project_id },
+    "available_features",
+  )?.toJS();
   const { onOpenSpecial, modal } = useSpecialPathPreview({
     project_id,
     actions,
@@ -145,6 +152,15 @@ export function FilesFlyout({
   }, [checked_files]);
 
   const inBackupsPath = isBackupsPath(effective_current_path);
+  const inSnapshotsPath = isSnapshotsPath(effective_current_path);
+  const homePath =
+    lite && typeof available_features?.homeDirectory === "string"
+      ? normalizeAbsolutePath(available_features.homeDirectory)
+      : "/root";
+  const listingPath =
+    inSnapshotsPath && !effective_current_path.startsWith("/")
+      ? normalizeAbsolutePath(effective_current_path, homePath)
+      : effective_current_path;
   const fs = useFs({ project_id });
   const {
     listing: directoryListing,
@@ -152,7 +168,7 @@ export function FilesFlyout({
     refresh,
   } = useListing({
     fs: inBackupsPath ? null : fs,
-    path: effective_current_path,
+    path: listingPath,
   });
   const {
     listing: backupsListing,

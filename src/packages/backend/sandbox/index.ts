@@ -130,6 +130,8 @@ interface Options {
   rusticRepo?: string;
 }
 
+const HOME_ROOT = "/root";
+
 // If you add any methods below that are NOT for the public api
 // be sure to exclude them here!
 const INTERNAL_METHODS = new Set([
@@ -237,6 +239,43 @@ export class SandboxedFilesystem {
     return this.path;
   }
 
+  private async resolvePathInSandbox(path: string): Promise<{
+    pathInSandbox: string;
+    sandboxBasePath: string;
+    absoluteHomeAlias: boolean;
+  }> {
+    const rootBase = await this.resolveSandboxBasePath();
+    const rootEnabled = !!this.root && rootBase == this.root;
+    const resolvedInput = resolve("/", path);
+    const isAbsoluteInput = path.startsWith("/");
+    const isAbsoluteHomeAlias =
+      isAbsoluteInput &&
+      (resolvedInput == HOME_ROOT || resolvedInput.startsWith(`${HOME_ROOT}/`));
+
+    // Relative paths (and absolute /root paths) are always interpreted relative
+    // to the project home mount `path`, even when root mode is enabled.
+    if (!rootEnabled || !isAbsoluteInput || isAbsoluteHomeAlias) {
+      const rel =
+        isAbsoluteHomeAlias
+          ? resolvedInput == HOME_ROOT
+            ? ""
+            : resolvedInput.slice(HOME_ROOT.length + 1)
+          : resolvedInput.slice(1);
+      return {
+        pathInSandbox: join(this.path, rel),
+        sandboxBasePath: this.path,
+        absoluteHomeAlias: isAbsoluteHomeAlias,
+      };
+    }
+
+    // Other absolute paths are interpreted from root mount.
+    return {
+      pathInSandbox: join(rootBase, resolvedInput),
+      sandboxBasePath: rootBase,
+      absoluteHomeAlias: false,
+    };
+  }
+
   private toSandboxRelativePath(absPath: string, basePath: string): string {
     if (absPath == basePath) {
       return basePath == this.path ? "" : "/";
@@ -267,9 +306,8 @@ export class SandboxedFilesystem {
     if (typeof path != "string") {
       throw Error(`path must be a string but is of type ${typeof path}`);
     }
-    const sandboxBasePath = await this.resolveSandboxBasePath();
-    // pathInSandbox is *definitely* a path in the sandbox:
-    const pathInSandbox = join(sandboxBasePath, resolve("/", path));
+    const { sandboxBasePath, pathInSandbox } =
+      await this.resolvePathInSandbox(path);
     if (this.unsafeMode) {
       // not secure -- just convenient.
       return pathInSandbox;
@@ -516,6 +554,18 @@ export class SandboxedFilesystem {
             sandboxBasePath,
           );
         }
+        if (
+          a.name == this.path ||
+          a.name.startsWith(this.path + "/")
+        ) {
+          a.name = this.toSandboxRelativePath(a.name, this.path);
+        }
+        if (
+          a.parentPath == this.path ||
+          a.parentPath.startsWith(this.path + "/")
+        ) {
+          a.parentPath = this.toSandboxRelativePath(a.parentPath, this.path);
+        }
       }
     }
 
@@ -527,9 +577,17 @@ export class SandboxedFilesystem {
   };
 
   realpath = async (path: string): Promise<string> => {
-    const sandboxBasePath = await this.resolveSandboxBasePath();
-    const x = await realpath(await this.safeAbsPath(path));
-    return this.toSandboxRelativePath(x, sandboxBasePath);
+    const { pathInSandbox, sandboxBasePath, absoluteHomeAlias } =
+      await this.resolvePathInSandbox(path);
+    const x = await realpath(pathInSandbox);
+    const rel = this.toSandboxRelativePath(x, sandboxBasePath);
+    if (absoluteHomeAlias) {
+      if (rel === "") {
+        return HOME_ROOT;
+      }
+      return `${HOME_ROOT}/${rel}`;
+    }
+    return rel;
   };
 
   rename = async (oldPath: string, newPath: string) => {

@@ -535,20 +535,31 @@ export class ProjectsActions extends Actions<ProjectsState> {
         await this.load_all_projects();
       }
     }
+    console.info("[abs-path-debug] open_project:start", {
+      project_id: opts.project_id,
+      target: opts.target,
+      switch_to: opts.switch_to,
+      restore_session: opts.restore_session,
+    });
     const host_id = store.getIn(["project_map", opts.project_id, "host_id"]);
     if (typeof host_id === "string") {
       // Ensure host routing info is ready before any conat project API calls.
+      const t0 = performance.now();
+      console.info("[abs-path-debug] open_project:ensure_host_info:start", {
+        project_id: opts.project_id,
+        host_id,
+      });
       await this.ensure_host_info(host_id);
+      console.info("[abs-path-debug] open_project:ensure_host_info:done", {
+        project_id: opts.project_id,
+        host_id,
+        ms: Math.round(performance.now() - t0),
+      });
     }
     const project_actions = redux.getProjectActions(opts.project_id);
     let relation = store.get_my_group(opts.project_id);
     if (relation == null || ["public", "admin"].includes(relation)) {
       this.fetch_public_project_title(opts.project_id);
-    }
-    if (opts.switch_to) {
-      redux
-        .getActions("page")
-        .set_active_tab(opts.project_id, opts.change_history);
     }
     if (!this.isProjectOpen(opts.project_id)) {
       this.setProjectOpen(opts.project_id);
@@ -557,16 +568,35 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
     }
     if (opts.target != null) {
-      project_actions.load_target(
+      const t0 = performance.now();
+      console.info("[abs-path-debug] open_project:load_target:start", {
+        project_id: opts.project_id,
+        target: opts.target,
+      });
+      await project_actions.load_target(
         opts.target,
         opts.switch_to,
         opts.ignore_kiosk,
         opts.change_history,
         opts.fragmentId,
       );
+      console.info("[abs-path-debug] open_project:load_target:done", {
+        project_id: opts.project_id,
+        target: opts.target,
+        ms: Math.round(performance.now() - t0),
+      });
+    }
+    if (opts.switch_to) {
+      redux
+        .getActions("page")
+        .set_active_tab(opts.project_id, opts.change_history);
     }
     // initialize project
     project_actions.init();
+    console.info("[abs-path-debug] open_project:done", {
+      project_id: opts.project_id,
+      target: opts.target,
+    });
   };
 
   // tab at old_index taken out and then inserted into the resulting array's new index
