@@ -438,6 +438,12 @@ Mitigation:
       - [src/packages/backend/sandbox/sandbox.test.ts](./src/packages/backend/sandbox/sandbox.test.ts)
     - Added focused server unit tests for copy orchestration (same-host absolute, cross-host `/scratch` rejection, queued absolute and multi-source basename expansion):
       - [src/packages/server/projects/copy.test.ts](./src/packages/server/projects/copy.test.ts)
+    - Added focused frontend non-UI helper tests for copy/open defaults:
+      - [src/packages/frontend/project/copy-paths.test.ts](./src/packages/frontend/project/copy-paths.test.ts)
+      - [src/packages/frontend/projects/open-project-default.test.ts](./src/packages/frontend/projects/open-project-default.test.ts)
+      - wired in:
+        - [src/packages/frontend/project_actions.ts](./src/packages/frontend/project_actions.ts)
+        - [src/packages/frontend/projects/actions.ts](./src/packages/frontend/projects/actions.ts)
 
 ### Next Recommended Work (Tests First)
 1. Ticket 6 hardening via automated tests.

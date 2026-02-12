@@ -115,6 +115,7 @@ import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { EditorLoadError } from "./file-editors-error";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { normalizeCpSourcePath } from "@cocalc/frontend/project/copy-paths";
 
 const { defaults, required } = misc;
 
@@ -2197,16 +2198,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       src = withSlashes;
     }
 
-    // If files start with '-', prefix relative paths with './' so cp won't
-    // interpret them as options. Keep absolute paths unchanged.
-    const add_leading_dash = function (src_path: string) {
-      if (src_path.startsWith("/")) {
-        return src_path;
-      }
-      return src_path.startsWith("./") ? src_path : `./${src_path}`;
-    };
-
-    src = src.map(add_leading_dash);
+    src = src.map(normalizeCpSourcePath);
 
     id ??= misc.uuid();
     this.set_activity({

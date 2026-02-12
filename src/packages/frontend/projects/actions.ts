@@ -27,6 +27,7 @@ import {
 import { ProjectsState, store } from "./store";
 import { load_all_projects, switch_to_project } from "./table";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
+import { defaultOpenProjectTarget } from "./open-project-default";
 
 import type {
   CourseInfo,
@@ -551,16 +552,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
         redux.getActions("page").restore_session(opts.project_id);
       }
     }
-    if (opts.target == null) {
-      const pstore = project_actions.get_store();
-      const openFiles = pstore?.get("open_files_order");
-      const hasOpenFiles = !!openFiles && openFiles.size > 0;
-      const activeProjectTab = pstore?.get("active_project_tab");
-      if (!hasOpenFiles && activeProjectTab === "files") {
-        // Default empty project open to HOME listing, not filesystem root.
-        opts.target = "home/";
-      }
-    }
+    const pstore = project_actions.get_store();
+    const openFiles = pstore?.get("open_files_order");
+    const hasOpenFiles = !!openFiles && openFiles.size > 0;
+    const activeProjectTab = pstore?.get("active_project_tab");
+    opts.target = defaultOpenProjectTarget({
+      target: opts.target,
+      activeProjectTab,
+      hasOpenFiles,
+    });
     if (opts.target != null) {
       await project_actions.load_target(
         opts.target,
