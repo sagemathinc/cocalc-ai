@@ -21,6 +21,7 @@ interface Props {
   version1?: VersionValue;
   setVersion0: (v: VersionValue) => void;
   setVersion1: (v: VersionValue) => void;
+  wallTime: (v: VersionValue) => number | undefined;
 }
 
 export function RangeSlider({ marks, ...props }: Props & { marks?: boolean }) {
@@ -37,6 +38,7 @@ function RangeSliderNoMarks({
   version1,
   setVersion0,
   setVersion1,
+  wallTime,
 }: Props) {
   const { isVisible } = useFrameContext();
 
@@ -62,6 +64,21 @@ function RangeSliderNoMarks({
     if (v1 != null) setVersion1(v1);
   };
 
+  const tooltip =
+    versions.size > 5000
+      ? { open: false as const }
+      : {
+          formatter: (value?: number) => {
+            if (value == null) return "";
+            const id = versions.get(value);
+            if (id == null) return "";
+            const t = wallTime(id);
+            return t == null
+              ? `Revision ${value + 1}`
+              : new Date(t).toLocaleString();
+          },
+        };
+
   return (
     <div
       style={{
@@ -73,7 +90,7 @@ function RangeSliderNoMarks({
       }}
     >
       <Slider
-        tooltip={{ open: false }}
+        tooltip={tooltip}
         range
         min={0}
         max={versions.size - 1}
@@ -94,6 +111,7 @@ function RangeSliderMarks({
   version1,
   setVersion0,
   setVersion1,
+  wallTime,
 }: Props) {
   const { isVisible } = useFrameContext();
 
@@ -130,6 +148,21 @@ function RangeSliderMarks({
     if (v1 != null) setVersion1(v1);
   };
 
+  const tooltip =
+    versions.size > 5000
+      ? { open: false as const }
+      : {
+          formatter: (value?: number) => {
+            if (value == null) return "";
+            const id = versions.get(value);
+            if (id == null) return "";
+            const t = wallTime(id);
+            return t == null
+              ? `Revision ${value + 1}`
+              : new Date(t).toLocaleString();
+          },
+        };
+
   return (
     <div
       style={{
@@ -141,7 +174,7 @@ function RangeSliderMarks({
       }}
     >
       <Slider
-        tooltip={{ open: false }}
+        tooltip={tooltip}
         marks={marks}
         step={null}
         included={false}

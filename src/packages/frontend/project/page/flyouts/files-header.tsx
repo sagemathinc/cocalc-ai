@@ -127,6 +127,11 @@ export function FilesHeader({
     "file_creation_error",
   );
   const current_path = useTypedRedux({ project_id }, "current_path");
+  const isReadonlyVirtualPath =
+    current_path === SNAPSHOTS ||
+    current_path?.startsWith(`${SNAPSHOTS}/`) ||
+    current_path === BACKUPS ||
+    current_path?.startsWith(`${BACKUPS}/`);
 
   const [highlighNothingFound, setHighlighNothingFound] = React.useState(false);
   const file_search_prev = usePrevious(file_search);
@@ -191,7 +196,7 @@ export function FilesHeader({
           setSearchState("");
           open(e, 0);
         } else {
-          if (e.shiftKey) {
+          if (e.shiftKey && !isReadonlyVirtualPath) {
             // only if shift is pressed as well, create a file or folder
             // this avoids accidentally creating jupyter notebooks (the default file type)
             createFileOrFolder();
@@ -279,6 +284,30 @@ export function FilesHeader({
 
   function createFileIfNotExists() {
     if (file_search === "" || !isEmpty) return;
+
+    if (isReadonlyVirtualPath) {
+      const style: CSS = {
+        padding: FLYOUT_PADDING,
+        margin: 0,
+        ...(highlighNothingFound ? { fontWeight: "bold" } : undefined),
+      };
+      return (
+        <Alert
+          type="info"
+          banner
+          showIcon={false}
+          style={style}
+          description={
+            <>
+              <div>
+                <FlyoutClearFilter setFilter={setSearchState} />
+                No files or folders match the current filter.
+              </div>
+            </>
+          }
+        />
+      );
+    }
 
     const what = file_search.trim().endsWith("/") ? "directory" : "file";
     const style: CSS = {

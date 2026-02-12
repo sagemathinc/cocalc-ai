@@ -10,6 +10,7 @@ export function OpenFile({ actions }) {
   // TODO: make the icon be the right one for the given type of file
   return (
     <Button
+      size="small"
       onClick={() => actions.open_file()}
       title={"Open the file whose history you are viewing"}
     >

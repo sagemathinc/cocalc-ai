@@ -19,9 +19,14 @@ the old viewer, which is a convenient fallback if somebody needs it for some rea
 import { debounce } from "lodash";
 import { List } from "immutable";
 import { once } from "@cocalc/util/async-utils";
-import { filename_extension, path_split } from "@cocalc/util/misc";
+import {
+  filename_extension,
+  history_path,
+  path_split,
+} from "@cocalc/util/misc";
 import { SyncDoc } from "@cocalc/sync/editor/generic/sync-doc";
 import { exec } from "@cocalc/frontend/frame-editors/generic/client";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ViewDocument } from "./view-document";
 import {
   BaseEditorActions as CodeEditorActions,
@@ -34,6 +39,15 @@ import LRUCache from "lru-cache";
 import { until } from "@cocalc/util/async-utils";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 type PatchId = string;
+interface GitCommitEntry {
+  hash: string;
+  name: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  timestampMs: number;
+  version: number;
+}
 
 const EXTENSION = ".time-travel";
 
@@ -62,6 +76,8 @@ const gitShowCache = new LRUCache<string, string>({
 export interface TimeTravelState extends CodeEditorState {
   versions: List<PatchId>;
   git_versions: List<number>;
+  snapshot_versions: List<string>;
+  backup_versions: List<string>;
   loading: boolean;
   has_full_history: boolean;
   docpath: string;
@@ -82,9 +98,12 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
   syncdoc?: SyncDoc;
   private first_load: boolean = true;
   ambient_actions?: CodeEditorActions;
-  private gitLog: {
-    [t: number]: { hash: string; name: string; subject: string };
-  } = {};
+  private gitCommits: GitCommitEntry[] = [];
+  private gitCommitByVersion: { [version: number]: GitCommitEntry } = {};
+  private gitCommitByHash: { [hash: string]: GitCommitEntry } = {};
+  private gitFilesByHash: { [hash: string]: string[] } = {};
+  private gitProjectPathPrefix?: string;
+  private backupTimeById: { [id: string]: number } = {};
 
   _init2(): void {
     const { head, tail } = path_split(this.path);
@@ -96,6 +115,8 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     this.docext = filename_extension(this.docpath);
     this.setState({
       versions: List([]),
+      snapshot_versions: List([]),
+      backup_versions: List([]),
       loading: true,
       has_full_history: false,
       docpath: this.docpath,
@@ -372,39 +393,263 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     );
   };
 
+  private gitRepoCommand = async (args: string[]) => {
+    const { head } = path_split(this.docpath);
+    return await exec(
+      {
+        command: "git",
+        args,
+        path: head,
+        project_id: this.project_id,
+        err_on_exit: true,
+      },
+      this.path,
+    );
+  };
+
+  private gitEntryForVersion = (
+    version: number | string | undefined,
+  ): GitCommitEntry | undefined => {
+    if (version == null) return;
+    const n = typeof version === "number" ? version : Number(version);
+    if (!Number.isFinite(n)) return;
+    return this.gitCommitByVersion[n];
+  };
+
+  private resetGitCommits = (): void => {
+    this.gitCommits = [];
+    this.gitCommitByVersion = {};
+    this.gitCommitByHash = {};
+    this.gitFilesByHash = {};
+    this.gitProjectPathPrefix = undefined;
+  };
+
+  updateSnapshotVersions = async (): Promise<List<string>> => {
+    try {
+      const fs = webapp_client.conat_client.conat().fs({
+        project_id: this.project_id,
+      });
+      const { tail } = path_split(this.docpath);
+      const docDepth = this.docpath.split("/").filter(Boolean).length + 1;
+      // Find candidate files in one RPC, then exact-match relative path in JS.
+      // This avoids tricky glob escaping and N per-snapshot stat calls.
+      const { stdout } = await fs.find(SNAPSHOTS, {
+        options: [
+          "-mindepth",
+          `${docDepth}`,
+          "-maxdepth",
+          `${docDepth}`,
+          "-type",
+          "f",
+          "-name",
+          tail,
+          "-printf",
+          "%T@\t%P\n",
+        ],
+      });
+      const existingBySnapshot = new Map<string, number>();
+      for (const row of Buffer.from(stdout).toString().split("\n")) {
+        if (!row) continue;
+        const i = row.indexOf("\t");
+        if (i <= 0) continue;
+        const mtime = Number(row.slice(0, i));
+        if (!Number.isFinite(mtime)) continue;
+        const rel = row.slice(i + 1);
+        const j = rel.indexOf("/");
+        if (j <= 0) continue;
+        const snapshot = rel.slice(0, j).trim();
+        const docpath = rel.slice(j + 1);
+        if (!snapshot || docpath !== this.docpath) continue;
+        const mtimeMs = Math.round(mtime * 1000);
+        const prev = existingBySnapshot.get(snapshot);
+        if (prev == null || mtimeMs > prev) {
+          existingBySnapshot.set(snapshot, mtimeMs);
+        }
+      }
+      const existing = Array.from(existingBySnapshot.entries())
+        .map(([snapshot, mtimeMs]) => ({ snapshot, mtimeMs }))
+        .sort((a, b) => a.snapshot.localeCompare(b.snapshot));
+      // Keep only versions where file timestamp changes; this matches "git log <file>"
+      // behavior better by eliding runs of snapshots with unchanged file content timestamp.
+      const filtered: string[] = [];
+      let lastMtimeMs: number | undefined = undefined;
+      for (const { snapshot, mtimeMs } of existing) {
+        if (lastMtimeMs !== mtimeMs) {
+          filtered.push(snapshot);
+          lastMtimeMs = mtimeMs;
+        }
+      }
+      const snapshot_versions = List<string>(filtered);
+      this.setState({ snapshot_versions });
+      return snapshot_versions;
+    } catch (_err) {
+      const snapshot_versions = List<string>([]);
+      this.setState({ snapshot_versions });
+      return snapshot_versions;
+    }
+  };
+
+  snapshotWallTime = (
+    version: number | string | undefined,
+  ): number | undefined => {
+    if (version == null) return;
+    const t = Date.parse(`${version}`);
+    if (!Number.isFinite(t)) return;
+    return t;
+  };
+
+  snapshotDoc = async (
+    version: number | string | undefined,
+  ): Promise<ViewDocument | undefined> => {
+    if (version == null) return;
+    try {
+      const resp =
+        await webapp_client.conat_client.hub.projects.getSnapshotFileText({
+          project_id: this.project_id,
+          snapshot: `${version}`,
+          path: this.docpath,
+        });
+      return new ViewDocument(this.docpath, resp.content);
+    } catch (err) {
+      this.set_error(`${err}`);
+      return;
+    }
+  };
+
+  updateBackupVersions = async (): Promise<List<string>> => {
+    try {
+      // Use indexed backup search in one RPC with exact path match.
+      const raw = await webapp_client.conat_client.hub.projects.findBackupFiles(
+        {
+          project_id: this.project_id,
+          glob: [this.docpath],
+        },
+      );
+      const rows = raw
+        .filter((x) => !x.isDir && x.path === this.docpath)
+        .map((x) => {
+          const t = new Date(x.time as any).getTime();
+          return {
+            id: x.id,
+            timeMs: Number.isFinite(t) ? t : 0,
+            mtime: x.mtime ?? 0,
+            size: x.size ?? 0,
+          };
+        })
+        .sort((a, b) =>
+          a.timeMs !== b.timeMs
+            ? a.timeMs - b.timeMs
+            : a.id.localeCompare(b.id),
+        );
+      // Keep only versions where file mtime/size changed, similar to git log per-file behavior.
+      const filteredIds: string[] = [];
+      const backup_times: { [id: string]: number } = {};
+      let lastSig: string | undefined = undefined;
+      for (const row of rows) {
+        const sig = `${row.mtime}:${row.size}`;
+        if (sig === lastSig) continue;
+        lastSig = sig;
+        filteredIds.push(row.id);
+        backup_times[row.id] = row.timeMs;
+      }
+      const backup_versions = List<string>(filteredIds);
+      this.backupTimeById = backup_times;
+      this.setState({ backup_versions });
+      return backup_versions;
+    } catch (_err) {
+      const backup_versions = List<string>([]);
+      this.backupTimeById = {};
+      this.setState({ backup_versions });
+      return backup_versions;
+    }
+  };
+
+  backupWallTime = (
+    version: number | string | undefined,
+  ): number | undefined => {
+    if (version == null) return;
+    const id = `${version}`;
+    const t = this.backupTimeById[id];
+    if (t == null || !Number.isFinite(t)) return;
+    return t;
+  };
+
+  backupDoc = async (
+    version: number | string | undefined,
+  ): Promise<ViewDocument | undefined> => {
+    if (version == null) return;
+    try {
+      const resp =
+        await webapp_client.conat_client.hub.projects.getBackupFileText({
+          project_id: this.project_id,
+          id: `${version}`,
+          path: this.docpath,
+        });
+      return new ViewDocument(this.docpath, resp.content);
+    } catch (err) {
+      this.set_error(`${err}`);
+      return;
+    }
+  };
+
   updateGitVersions = async () => {
     // log("updateGitVersions");
     // versions is an ordered list of Date objects, one for each commit that involves this file.
     try {
       const { stdout } = await this.gitCommand([
         "log",
-        `--format="%at %H %an <%ae> %s"`,
+        "--format=%at%x00%H%x00%an%x00%ae%x00%s",
         "--",
       ]);
-      this.gitLog = {};
-      const versions: Date[] = [];
+      this.resetGitCommits();
+      const parsed: Array<Omit<GitCommitEntry, "version">> = [];
       for (const x of stdout.split("\n")) {
-        const y = x.slice(1, -1);
-        const i = y.indexOf(" ");
-        if (i == -1) continue;
-        const t0 = y.slice(0, i);
-        const j = y.indexOf(" ", i + 1);
-        if (j == -1) continue;
-        const hash = y.slice(i + 1, j).trim();
-        const k = y.indexOf("> ", j + 1);
-        const name = y.slice(j + 1, k + 1).trim();
-        const subject = y.slice(k + 1).trim();
-        if (!x || !t0 || !hash) {
+        if (!x) continue;
+        const parts = x.split("\x00");
+        if (parts.length < 5) continue;
+        const [t0, hashRaw, authorNameRaw, authorEmailRaw, ...subjectParts] =
+          parts;
+        const hash = (hashRaw ?? "").trim();
+        const authorName = (authorNameRaw ?? "").trim();
+        const authorEmail = (authorEmailRaw ?? "").trim();
+        const subject = subjectParts.join("\x00").trim();
+        const name = authorEmail
+          ? `${authorName} <${authorEmail}>`
+          : authorName;
+        if (!t0 || !hash) {
           continue;
         }
-        const t = parseInt(t0) * 1000;
-        this.gitLog[t] = { hash, name, subject };
-        versions.push(new Date(t));
+        const t = parseInt(t0, 10) * 1000;
+        if (!Number.isFinite(t)) continue;
+        parsed.push({
+          hash,
+          name,
+          subject,
+          authorName,
+          authorEmail,
+          timestampMs: t,
+        });
       }
-      versions.reverse();
-      const git_versions = List<number>(versions.map((x) => x.valueOf()));
+
+      // git log output is newest->oldest; TimeTravel sliders are oldest->newest.
+      parsed.reverse();
+      const usedVersions = new Set<number>();
+      for (const entry of parsed) {
+        let version = entry.timestampMs;
+        // Preserve all commits even when two commits share the same second timestamp.
+        while (usedVersions.has(version)) {
+          version += 1;
+        }
+        usedVersions.add(version);
+        const commit: GitCommitEntry = { ...entry, version };
+        this.gitCommits.push(commit);
+        this.gitCommitByVersion[version] = commit;
+        this.gitCommitByHash[commit.hash] = commit;
+      }
+
+      const git_versions = List<number>(this.gitCommits.map((x) => x.version));
       this.setState({
-        git: versions.length > 0,
+        git: this.gitCommits.length > 0,
         git_versions,
       });
       return git_versions;
@@ -418,16 +663,16 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
 
   private gitShow = async (version: number): Promise<string | undefined> => {
     // log("gitShow", { version });
-    const h = this.gitLog[version]?.hash;
-    if (h == null) {
+    const entry = this.gitEntryForVersion(version);
+    if (entry == null) {
       return;
     }
-    const key = `${h}:${this.docpath}`;
+    const key = `${entry.hash}:${this.docpath}`;
     if (gitShowCache.has(key)) {
       return gitShowCache.get(key);
     }
     try {
-      const { stdout } = await this.gitCommand(["show"], h);
+      const { stdout } = await this.gitCommand(["show"], entry.hash);
       gitShowCache.set(key, stdout);
       return stdout;
     } catch (err) {
@@ -442,25 +687,208 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
       return [];
     }
     if (v0 == v1) {
-      const d = this.gitLog[`${v0}`];
+      const d = this.gitEntryForVersion(v0);
       if (d) {
         return [d.name];
       } else {
         return [];
       }
     }
+    const lo = Math.min(v0, v1);
+    const hi = Math.max(v0, v1);
     const names: string[] = [];
-    for (const t in this.gitLog) {
-      const t0 = parseInt(t);
-      if (v0 < t0 && t0 <= v1) {
-        names.push(this.gitLog[t].name);
+    for (const commit of this.gitCommits) {
+      if (lo < commit.version && commit.version <= hi) {
+        names.push(commit.name);
       }
     }
     return names;
   };
 
   gitSubject = (version: number): string | undefined => {
-    return this.gitLog[version]?.subject;
+    return this.gitEntryForVersion(version)?.subject;
+  };
+
+  gitCommit = (
+    version: number | string | undefined,
+  ):
+    | {
+        hash: string;
+        shortHash: string;
+        subject: string;
+        authorName: string;
+        authorEmail: string;
+        timestampMs: number;
+      }
+    | undefined => {
+    const entry = this.gitEntryForVersion(version);
+    if (entry == null) return;
+    return {
+      hash: entry.hash,
+      shortHash: entry.hash.slice(0, 7),
+      subject: entry.subject,
+      authorName: entry.authorName,
+      authorEmail: entry.authorEmail,
+      timestampMs: entry.timestampMs,
+    };
+  };
+
+  gitCommitRange = (
+    v0: number | string | undefined,
+    v1: number | string | undefined,
+  ): Array<{
+    hash: string;
+    shortHash: string;
+    subject: string;
+    authorName: string;
+    authorEmail: string;
+    timestampMs: number;
+  }> => {
+    if (v0 == null || v1 == null) return [];
+    const t0 = typeof v0 === "number" ? v0 : Number(v0);
+    const t1 = typeof v1 === "number" ? v1 : Number(v1);
+    if (!Number.isFinite(t0) || !Number.isFinite(t1)) return [];
+    const lo = Math.min(t0, t1);
+    const hi = Math.max(t0, t1);
+    const commits: Array<{
+      hash: string;
+      shortHash: string;
+      subject: string;
+      authorName: string;
+      authorEmail: string;
+      timestampMs: number;
+    }> = [];
+    for (const entry of this.gitCommits) {
+      if (entry.version < lo || entry.version > hi) {
+        continue;
+      }
+      const commit = this.gitCommit(entry.version);
+      if (commit != null) {
+        commits.push(commit);
+      }
+    }
+    commits.sort((a, b) => a.timestampMs - b.timestampMs);
+    return commits;
+  };
+
+  gitVersionForHash = (hash: string | undefined): number | undefined => {
+    if (hash == null || hash === "") return;
+    return this.gitCommitByHash[hash]?.version;
+  };
+
+  private async gitProjectPrefix(): Promise<string> {
+    if (this.gitProjectPathPrefix != null) {
+      return this.gitProjectPathPrefix;
+    }
+    try {
+      const { head, tail } = path_split(this.docpath);
+      const { stdout } = await exec(
+        {
+          command: "git",
+          args: ["ls-files", "--full-name", "--", tail],
+          path: head,
+          project_id: this.project_id,
+          err_on_exit: true,
+        },
+        this.path,
+      );
+      const repoRelativeCurrent = (stdout.split("\n")[0] ?? "").trim();
+      if (
+        repoRelativeCurrent !== "" &&
+        this.docpath.endsWith(repoRelativeCurrent)
+      ) {
+        this.gitProjectPathPrefix = this.docpath.slice(
+          0,
+          this.docpath.length - repoRelativeCurrent.length,
+        );
+      } else {
+        this.gitProjectPathPrefix = "";
+      }
+    } catch (_err) {
+      this.gitProjectPathPrefix = "";
+    }
+    return this.gitProjectPathPrefix;
+  }
+
+  gitChangedFiles = async (
+    version: number | string | undefined,
+  ): Promise<string[]> => {
+    const entry = this.gitEntryForVersion(version);
+    if (entry == null) {
+      return [];
+    }
+    const cached = this.gitFilesByHash[entry.hash];
+    if (cached != null) {
+      return cached;
+    }
+    try {
+      const { stdout } = await this.gitRepoCommand([
+        "show",
+        "--name-only",
+        "--pretty=format:",
+        "--no-color",
+        entry.hash,
+      ]);
+      const prefix = await this.gitProjectPrefix();
+      const files = stdout
+        .split("\n")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .map((x) => (prefix ? `${prefix}${x}` : x))
+        .map((x) => x.replace(/^\.\/+/, ""));
+      const unique = Array.from(new Set(files));
+      this.gitFilesByHash[entry.hash] = unique;
+      return unique;
+    } catch (_err) {
+      this.gitFilesByHash[entry.hash] = [];
+      return [];
+    }
+  };
+
+  openGitCommitFile = async (path: string, hash: string): Promise<void> => {
+    const projectActions = this.redux.getProjectActions(this.project_id);
+    const ttPath = history_path(path);
+    await projectActions.open_file({ path: ttPath, foreground: true });
+    let refreshed = false;
+    try {
+      await until(
+        async () => {
+          const target: any = this.redux.getEditorActions(
+            this.project_id,
+            ttPath,
+          );
+          if (target == null) {
+            return false;
+          }
+          if (!refreshed && typeof target.updateGitVersions === "function") {
+            await target.updateGitVersions();
+            refreshed = true;
+          }
+          const targetVersion =
+            typeof target.gitVersionForHash === "function"
+              ? target.gitVersionForHash(hash)
+              : undefined;
+          const id =
+            typeof target._active_id === "function"
+              ? target._active_id()
+              : undefined;
+          if (targetVersion == null || id == null) {
+            return false;
+          }
+          target.set_frame_tree({
+            id,
+            source: "git",
+            gitMode: true,
+            changesMode: false,
+            version: targetVersion,
+          });
+          return true;
+        },
+        { timeout: 7000, start: 100, max: 400, min: 50 },
+      );
+    } catch (_err) {
+      this.set_error("Unable to open selected file at that commit.");
+    }
   };
 
   gitDoc = async (version: number): Promise<ViewDocument | undefined> => {

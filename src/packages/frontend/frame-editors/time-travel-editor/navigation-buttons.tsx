@@ -61,17 +61,19 @@ export function NavigationButtons({
       if (i1 == -1) {
         return;
       }
+      const lastIdx = versions.size - 1;
+      const span = Math.max(0, i1 - i0);
       const setVersions = (v0, v1) => {
         setVersion0(v0);
         setVersion1(v1);
       };
       if (button == "first") {
         const a = versions.get(0);
-        const b = versions.get(i1 - i0);
+        const b = versions.get(Math.min(lastIdx, span));
         if (a != null && b != null) setVersions(a, b);
       } else if (button == "last") {
-        const a = versions.get(i0 - i1 - 1);
-        const b = versions.get(-1);
+        const b = versions.get(lastIdx);
+        const a = versions.get(Math.max(0, lastIdx - span));
         if (a != null && b != null) setVersions(a, b);
       } else if (button == "next") {
         const a = versions.get(i0 + 1);
@@ -108,40 +110,53 @@ export function NavigationButtons({
   };
 
   let v0, v1;
+  let i0 = -1;
+  let i1 = -1;
   if (changesMode) {
     v0 = version0;
     v1 = version1;
+    if (version0 != null) i0 = versions.indexOf(version0);
+    if (version1 != null) i1 = versions.indexOf(version1);
   } else {
     v0 = v1 = version;
+    if (version != null) {
+      i0 = i1 = versions.indexOf(version);
+    }
   }
+  const atStart = i0 <= 0;
+  const atEnd = i1 >= versions.size - 1 || i1 === -1;
 
   return (
     <Space.Compact style={{ display: "inline-flex" }}>
       <Button
-        title={"First version"}
+        title={"Jump to first version"}
         onClick={() => step("first")}
-        disabled={v0 == null || v0 <= versions.get(0)!}
+        disabled={v0 == null || atStart}
+        size="small"
       >
         <Icon name="backward" />
       </Button>
       <Button
-        title={"Previous version"}
+        title={"Step to previous version"}
         onClick={() => step("prev")}
-        disabled={v0 == null || v0 <= versions.get(0)!}
+        disabled={v0 == null || atStart}
+        size="small"
       >
         <Icon name="step-backward" />
       </Button>
       <Button
-        title={"Next version"}
+        title={"Step to next version"}
         onClick={() => step("next")}
-        disabled={v1 == null || v1 >= versions.get(-1)!}
+        disabled={v1 == null || atEnd}
+        size="small"
       >
         <Icon name="step-forward" />
       </Button>
       <Button
-        title={"Most recent version"}
+        title={"Jump to most recent version"}
         onClick={() => step("last")}
-        disabled={v1 == null || v1 >= versions.get(-1)!}
+        disabled={v1 == null || atEnd}
+        size="small"
       >
         <Icon name="forward" />
       </Button>
