@@ -1180,6 +1180,7 @@ export class SyncDoc extends EventEmitter {
     const query = { patches: [this.patch_table_query(this.last_snapshot)] };
     this.patches_table = await this.synctable(query, [], this.patch_interval);
     this.assert_not_closed("init_patchflow -- after making synctable");
+    this.applyPatchWriteHeaders();
 
     const update_has_unsaved_changes = debounce(
       this.update_has_unsaved_changes,
@@ -2069,6 +2070,7 @@ export class SyncDoc extends EventEmitter {
     await this.syncstring_table.save();
     this.settings = Map();
     this.history_epoch = undefined;
+    this.applyPatchWriteHeaders();
     this.emit("metadata-change");
     this.emit("settings-change", this.settings);
   };
@@ -2078,27 +2080,22 @@ export class SyncDoc extends EventEmitter {
     return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
   };
 
-  private reopenPatchflowFromHistoryReset = async (): Promise<void> => {
-    if (this.state === "closed") return;
-    this.patchflowSession?.close();
-    this.patchflowSession = undefined;
-    this.patchflowStore = undefined;
-    this.patchflowCodec = undefined;
-
-    const table = this.patches_table as any;
-    if (table != null) {
-      // This table-level close should not close the entire syncdoc.
-      table.removeListener?.("close", this.close);
-      table.close?.();
+  private patchWriteHeaders = (): { history_epoch: number } | undefined => {
+    if (
+      this.history_epoch != null &&
+      typeof this.history_epoch === "number" &&
+      Number.isFinite(this.history_epoch)
+    ) {
+      return { history_epoch: this.history_epoch };
     }
-    // @ts-ignore - reset before re-init
-    this.patches_table = undefined;
-    await this.init_patchflow();
-    this.patches_table?.on?.("close", this.close);
-    this.emit("history-purged", { history_epoch: this.history_epoch });
-    if (this.state === "ready") {
-      this.emit("after-change");
-      this.emit_change();
+    return;
+  };
+
+  private applyPatchWriteHeaders = (): void => {
+    const headers = this.patchWriteHeaders();
+    const table = this.patches_table as any;
+    if (typeof table?.setWriteHeaders === "function") {
+      table.setWriteHeaders(headers);
     }
   };
 
@@ -2139,8 +2136,12 @@ export class SyncDoc extends EventEmitter {
       current_history_epoch != null &&
       current_history_epoch > previous_history_epoch
     ) {
-      await this.reopenPatchflowFromHistoryReset();
+      this.emit("history-reset", { history_epoch: current_history_epoch });
+      this.close();
+      return;
     }
+
+    this.applyPatchWriteHeaders();
 
     if (settings !== this.settings) {
       this.settings = settings;
@@ -2750,6 +2751,7 @@ export class SyncDoc extends EventEmitter {
         project_id: this.project_id,
         relativePath: this.path,
         string_id: this.string_id,
+        history_epoch: this.history_epoch,
         doctype: this.doctype,
       });
     } catch (err) {

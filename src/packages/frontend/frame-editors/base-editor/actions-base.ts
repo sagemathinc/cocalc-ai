@@ -565,16 +565,16 @@ export class BaseEditorActions<
     }
     this.startOptimisticFastOpen();
     const sessionStart = Date.now();
+    const closeSyncdocAndFile = () => {
+      this._syncstring.close();
+      this._get_project_actions().close_file(this.path);
+    };
     this._syncstring.on("deleted", () => {
       // the file was deleted -- if we get this right when
       // initializing, we ask user if they want to create file; if
       // file has been opened file a while, just close it.
-      const close = () => {
-        this._syncstring.close();
-        this._get_project_actions().close_file(this.path);
-      };
       if (Date.now() - sessionStart >= 10_000) {
-        close();
+        closeSyncdocAndFile();
       } else {
         // ask user
         (async () => {
@@ -586,11 +586,20 @@ export class BaseEditorActions<
               cancelText: "Close",
             }))
           ) {
-            close();
+            closeSyncdocAndFile();
           }
           this.openAnywaysModalIsOpen = false;
         })();
       }
+    });
+    this._syncstring.on("history-reset", () => {
+      alert_message({
+        type: "warning",
+        title: path_split(this.path).tail,
+        message:
+          "Edit history was purged. Closing this tab so a fresh session can be opened.",
+      });
+      closeSyncdocAndFile();
     });
 
     this._syncstring.once("ready", (err) => {
