@@ -22,7 +22,6 @@ import {
 } from "@cocalc/util/misc";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
 import { normalize } from "./utils";
-import { syncdbPath as ipynbSyncdbPath } from "@cocalc/util/jupyter/names";
 import { termPath } from "@cocalc/util/terminal/names";
 
 // if true, PRELOAD_BACKGROUND_TABS makes it so all tabs have their file editing
@@ -228,7 +227,10 @@ export async function open_file(
     });
     return;
   }
-  let ext = opts.ext ?? filename_extension(syncPath).toLowerCase();
+  // Editor selection must use the user-facing file path extension.
+  // syncPath may be canonicalized to backend identities, which are not
+  // necessarily editor extensions.
+  let ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
 
   let store = actions.get_store();
   if (store == null) {
@@ -592,9 +594,6 @@ function get_side_chat_state(
 
 export function canonicalPath(path: string) {
   const ext = filename_extension(path).toLowerCase();
-  if (ext === "ipynb") {
-    return ipynbSyncdbPath(path);
-  }
   if (ext === "term" && !path_split(path).tail.startsWith(".")) {
     return termPath({ path, cmd: "", number: 0 });
   }

@@ -7,16 +7,13 @@ import {
   log_opened_time,
   mark_open_phase,
 } from "./open-file";
-import { syncdbPath as ipynbSyncdbPath } from "@cocalc/util/jupyter/names";
 import { termPath } from "@cocalc/util/terminal/names";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 describe("canonicalPath", () => {
-  it("maps ipynb to its syncdb identity", () => {
-    expect(canonicalPath("/root/notebook.ipynb")).toBe(
-      ipynbSyncdbPath("/root/notebook.ipynb"),
-    );
+  it("keeps ipynb path unchanged", () => {
+    expect(canonicalPath("/root/notebook.ipynb")).toBe("/root/notebook.ipynb");
   });
 
   it("maps non-hidden term files to numbered term identity", () => {

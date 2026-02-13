@@ -120,6 +120,7 @@ import {
   moveDestinationPath,
   normalizeDirectoryDestination,
 } from "@cocalc/frontend/project/action-paths";
+import { isJupyterPath } from "@cocalc/util/jupyter/names";
 
 const { defaults, required } = misc;
 
@@ -1336,6 +1337,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   private get_sync_path(path: string): string {
     const sync_path = this.open_files?.get(path, "sync_path");
     if (typeof sync_path === "string" && sync_path.length > 0) {
+      // Backward-compat: old sessions may persist ipynb tabs with sync_path
+      // set to .<name>.ipynb.sage-jupyter2. For editor actions/state, notebooks
+      // must be keyed by the user-visible .ipynb path.
+      if (
+        misc.filename_extension(path).toLowerCase() === "ipynb" &&
+        isJupyterPath(sync_path)
+      ) {
+        return path;
+      }
       return sync_path;
     }
     return path;
