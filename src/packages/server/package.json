@@ -59,7 +59,6 @@
     "@cocalc/database": "workspace:*",
     "@cocalc/gcloud-pricing-calculator": "^1.17.0",
     "@cocalc/project-runner": "workspace:*",
-    "@cocalc/sync": "workspace:*",
     "@cocalc/server": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@google-cloud/compute": "^4.7.0",
