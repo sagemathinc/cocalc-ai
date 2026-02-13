@@ -249,8 +249,8 @@ export async function purgeHistory({
       string_id,
       project_id,
       path,
-      last_snapshot: undefined,
-      last_seq: undefined,
+      last_snapshot: null,
+      last_seq: null,
       settings: nextSettings,
     });
     await syncstrings.save();

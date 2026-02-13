@@ -88,8 +88,8 @@ describe("sync.purgeHistory", () => {
 
     expect(setMock).toHaveBeenCalledTimes(1);
     const next = setMock.mock.calls[0][0];
-    expect(next.last_snapshot).toBeUndefined();
-    expect(next.last_seq).toBeUndefined();
+    expect(next.last_snapshot).toBeNull();
+    expect(next.last_seq).toBeNull();
     expect(next.settings.history_epoch).toBe(6);
     expect(next.settings.history_purged_by).toBe("acct-1");
     expect(saveMock).toHaveBeenCalled();
@@ -149,4 +149,3 @@ describe("sync.purgeHistory", () => {
     expect(result.history_epoch).toBe(1);
   });
 });
-
