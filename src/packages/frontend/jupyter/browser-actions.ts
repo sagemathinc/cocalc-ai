@@ -76,6 +76,9 @@ import {
 import { lite } from "@cocalc/frontend/lite";
 import { type WatchIterator } from "@cocalc/conat/files/watch";
 import { DiffMatchPatch, decompressPatch } from "@cocalc/util/dmp";
+import { mark_open_phase } from "@cocalc/frontend/project/open-file";
+import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
+import { IPynbImporter } from "@cocalc/jupyter/ipynb/import-from-ipynb";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -85,6 +88,44 @@ const dmpFileWatcher = new DiffMatchPatch({
 const OUTPUT_FPS = 29;
 const DEFAULT_OUTPUT_MESSAGE_LIMIT = 500;
 const WATCH_RECREATE_WAIT = 3000;
+const FAST_OPEN_IPYNB_DISABLE_QUERY_PARAM = "cocalc_disable_fast_open_ipynb";
+const FAST_OPEN_IPYNB_DISABLE_LOCAL_STORAGE_KEY =
+  "cocalc.disable_fast_open.ipynb";
+
+function parseBooleanFlag(value?: string | null): boolean | undefined {
+  if (value == null) return;
+  const v = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return;
+}
+
+function isFastOpenIpynbEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const queryDisable = parseBooleanFlag(
+      new URLSearchParams(window.location.search).get(
+        FAST_OPEN_IPYNB_DISABLE_QUERY_PARAM,
+      ),
+    );
+    if (queryDisable === true) {
+      return false;
+    }
+  } catch {
+    // no-op
+  }
+  try {
+    const localDisable = parseBooleanFlag(
+      window.localStorage.getItem(FAST_OPEN_IPYNB_DISABLE_LOCAL_STORAGE_KEY),
+    );
+    if (localDisable === true) {
+      return false;
+    }
+  } catch {
+    // no-op
+  }
+  return true;
+}
 
 // local cache: map project_id (string) -> kernels (immutable)
 let jupyter_kernels = Map<string, Kernels>();
@@ -99,6 +140,80 @@ export class JupyterActions extends JupyterActions0 {
   private lastCursorMoveTime: number = 0;
   public jupyterEditorActions?;
   private hasUnsavedChanges: boolean = false;
+  private optimisticFastOpenToken: number = 0;
+  private optimisticFastOpenApplied: boolean = false;
+
+  private startOptimisticIpynbFastOpen = (): void => {
+    if (!isFastOpenIpynbEnabled()) return;
+    if (!this.path?.toLowerCase().endsWith(".ipynb")) return;
+    if (this.syncdb?.isReady?.()) return;
+    const projectActions = this.redux?.getProjectActions?.(this.project_id);
+    const fs = projectActions?.fs?.();
+    if (typeof fs?.readFile !== "function") return;
+
+    const token = ++this.optimisticFastOpenToken;
+    void (async () => {
+      let importer: IPynbImporter | undefined;
+      try {
+        const raw = await fs.readFile(this.path, "utf8");
+        if (this.isClosed() || token !== this.optimisticFastOpenToken) {
+          return;
+        }
+        if (this.syncdb?.isReady?.()) return;
+        const content =
+          typeof raw === "string"
+            ? raw
+            : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
+        const ipynb = JSON.parse(content);
+
+        importer = new IPynbImporter();
+        importer.import({
+          ipynb,
+          new_id: this.new_id.bind(this),
+          existing_ids: this.store.get_cell_ids_list?.() ?? [],
+        });
+        const importedCells = importer.cells() ?? {};
+        let cells = Map<string, Map<string, any>>();
+        for (const id in importedCells) {
+          cells = cells.set(id, fromJS(importedCells[id]));
+        }
+        const cell_list = cell_utils.sorted_cell_list(cells);
+        const kernel = importer.kernel();
+        const metadata = importer.metadata();
+
+        if (this.isClosed() || token !== this.optimisticFastOpenToken) {
+          return;
+        }
+        if (this.syncdb?.isReady?.()) return;
+
+        const state: any = {
+          cells,
+          cell_list,
+          read_only: true,
+        };
+        if (kernel != null) {
+          state.kernel = kernel;
+          state.kernel_info = this.store.get_kernel_info(kernel);
+        }
+        if (metadata != null) {
+          state.metadata = fromJS(metadata);
+        }
+        this.setState(state);
+        this.store.emit("cell-list-recompute");
+        this.optimisticFastOpenApplied = true;
+
+        mark_open_phase(this.project_id, this.path, "optimistic_ready", {
+          bytes: content.length,
+          cells: cell_list.size,
+        });
+        projectActions?.log_opened_time(this.path);
+      } catch {
+        // If optimistic parsing fails, fallback to normal syncdb initialization.
+      } finally {
+        importer?.close();
+      }
+    })();
+  };
 
   protected init2(): void {
     this.syncdbPath = syncdbPath(this.path);
@@ -155,6 +270,13 @@ export class JupyterActions extends JupyterActions0 {
     this.nbgrader_actions = new NBGraderActions(this, this.redux);
 
     const handleSyncdbReady = () => {
+      if (this.optimisticFastOpenApplied) {
+        this.optimisticFastOpenApplied = false;
+        mark_open_phase(this.project_id, this.path, "handoff_done", {
+          source: "syncdb",
+        });
+      }
+      this.sync_read_only();
       const ipywidgets_state = this.syncdb.ipywidgets_state;
       if (ipywidgets_state == null) {
         throw Error(
@@ -182,6 +304,8 @@ export class JupyterActions extends JupyterActions0 {
       this.watchIpynb();
       this.refreshKernelStatus();
     };
+
+    this.startOptimisticIpynbFastOpen();
 
     if (this.syncdb.isReady()) {
       handleSyncdbReady();
