@@ -88,44 +88,6 @@ const dmpFileWatcher = new DiffMatchPatch({
 const OUTPUT_FPS = 29;
 const DEFAULT_OUTPUT_MESSAGE_LIMIT = 500;
 const WATCH_RECREATE_WAIT = 3000;
-const FAST_OPEN_IPYNB_DISABLE_QUERY_PARAM = "cocalc_disable_fast_open_ipynb";
-const FAST_OPEN_IPYNB_DISABLE_LOCAL_STORAGE_KEY =
-  "cocalc.disable_fast_open.ipynb";
-
-function parseBooleanFlag(value?: string | null): boolean | undefined {
-  if (value == null) return;
-  const v = value.trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(v)) return true;
-  if (["0", "false", "no", "off"].includes(v)) return false;
-  return;
-}
-
-function isFastOpenIpynbEnabled(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    const queryDisable = parseBooleanFlag(
-      new URLSearchParams(window.location.search).get(
-        FAST_OPEN_IPYNB_DISABLE_QUERY_PARAM,
-      ),
-    );
-    if (queryDisable === true) {
-      return false;
-    }
-  } catch {
-    // no-op
-  }
-  try {
-    const localDisable = parseBooleanFlag(
-      window.localStorage.getItem(FAST_OPEN_IPYNB_DISABLE_LOCAL_STORAGE_KEY),
-    );
-    if (localDisable === true) {
-      return false;
-    }
-  } catch {
-    // no-op
-  }
-  return true;
-}
 
 // local cache: map project_id (string) -> kernels (immutable)
 let jupyter_kernels = Map<string, Kernels>();
@@ -144,7 +106,6 @@ export class JupyterActions extends JupyterActions0 {
   private optimisticFastOpenApplied: boolean = false;
 
   private startOptimisticIpynbFastOpen = (): void => {
-    if (!isFastOpenIpynbEnabled()) return;
     if (!this.path?.toLowerCase().endsWith(".ipynb")) return;
     if (this.syncdb?.isReady?.()) return;
     const projectActions = this.redux?.getProjectActions?.(this.project_id);

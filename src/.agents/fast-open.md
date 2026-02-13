@@ -131,19 +131,23 @@ Completed and validated in this branch:
 - Users see file content quickly from `fs.readFile`, then handoff to live RTC.
 - Open-phase timings are logged and rendered in project log entries.
 - Handoff-diff behavior is implemented and tested.
+- Fast open for `.ipynb` notebooks is implemented and enabled by default.
+- Notebook behavior validated end-to-end: open, run code, shift+enter, and save path semantics.
+- Launchpad/remote-host manual validation confirms major perceived open-time improvement.
 - Regressions fixed:
   - ctrl/cmd+click behavior in explorer/flyout.
   - project log crash for missing filename.
   - open-event updates now preserve filename/action/path metadata.
+  - breadcrumb no longer includes file names as clickable directory entries.
 
 Still pending:
 
 1. Additional polish/testing for edge cases (background tabs, refresh behavior, remote-host latency).
-2. Extend fast-open pattern to non-text editors (likely notebook-related first).
-3. Tune RTC indicator wording/placement based on real usage feedback.
+2. Decide scope for other non-text doctypes (`board`, `slides`, `tasks`; likely skip `chat` for now).
+3. Tune RTC/readonly connecting affordances based on real usage feedback.
 
 ## Next Commit Checklist
 
-1. Add targeted tests for RTC indicator state transitions and non-regression.
-2. Design and implement fast-open for one non-text editor path as pilot.
-3. Add focused telemetry/bench script for launchpad p50/p95 initial-visible and live-ready timings.
+1. Add targeted tests for notebook optimistic-open state transitions and non-regression.
+2. Add focused telemetry/bench script for launchpad p50/p95 initial-visible and live-ready timings.
+3. Evaluate a second non-text pilot (`board` or `tasks`) only if complexity is low.
