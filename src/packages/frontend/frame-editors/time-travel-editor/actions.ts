@@ -373,6 +373,26 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     return path;
   };
 
+  purgeHistory = async ({
+    keep_current_state = true,
+  }: {
+    keep_current_state?: boolean;
+  } = {}): Promise<{
+    deleted: number;
+    seeded: boolean;
+    history_epoch: number;
+  }> => {
+    const result = await webapp_client.conat_client.hub.sync.purgeHistory({
+      project_id: this.project_id,
+      path: this.docpath,
+      keep_current_state,
+    });
+    // This state is conservative until syncdoc metadata change propagates.
+    this.setState({ has_full_history: true });
+    this.syncdoc_changed();
+    return result;
+  };
+
   // We have not implemented any way to do programmatical_goto_line this for time travel yet.
   // It will be very interesting and useful, because it will allow for
   // linking to a specific line/cell at a **specific point in time**.

@@ -31,6 +31,7 @@ import { NavigationButtons } from "./navigation-buttons";
 import { NavigationSlider } from "./navigation-slider";
 import { OpenFile } from "./open-file";
 import { OpenSnapshots } from "./open-snapshots";
+import { PurgeHistory } from "./purge-history";
 import { RangeSlider } from "./range-slider";
 import { RevertFile } from "./revert-file";
 import { Version, VersionRange } from "./version";
@@ -949,6 +950,19 @@ export function TimeTravel(props: Props) {
     return <Export actions={props.actions} />;
   };
 
+  const renderPurgeHistory = () => {
+    if (
+      gitMode ||
+      snapshotsMode ||
+      backupsMode ||
+      props.is_subframe ||
+      redux.getStore("page").get("fullscreen") == "kiosk"
+    ) {
+      return;
+    }
+    return <PurgeHistory actions={props.actions} />;
+  };
+
   const copyHash = async (hash: string) => {
     try {
       await navigator.clipboard.writeText(hash);
@@ -1128,6 +1142,7 @@ export function TimeTravel(props: Props) {
             {renderRevertFile()}
             {renderOpenSnapshots()}
             {renderExport()}
+            {renderPurgeHistory()}
           </Space.Compact>
         </div>
         {!logMode && activeVersionCount > 0 && (
