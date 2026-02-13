@@ -366,7 +366,46 @@ async function file_exists(project_id: string, path: string): Promise<boolean> {
   }
 }
 
-const log_open_time: { [path: string]: { id: string; start: number } } = {};
+export type OpenPhase =
+  | "open_start"
+  | "optimistic_ready"
+  | "sync_ready"
+  | "handoff_done"
+  | "handoff_differs";
+
+type OpenPhaseDetails = { [key: string]: string | number | boolean | undefined };
+
+interface OpenTiming {
+  id: string;
+  start: number;
+  marks: Partial<Record<OpenPhase, number>>;
+}
+
+const log_open_time: { [path: string]: OpenTiming } = {};
+
+export function mark_open_phase(
+  project_id: string,
+  path: string,
+  phase: OpenPhase,
+  details?: OpenPhaseDetails,
+): void {
+  const key = `${project_id}-${path}`;
+  const data = log_open_time[key];
+  if (data == null) return;
+  const now = Date.now();
+  const elapsed_ms = now - data.start;
+  data.marks[phase] = elapsed_ms;
+  const event: any = {
+    event: "open",
+    open_phase: phase,
+    open_phase_elapsed_ms: elapsed_ms,
+    open_phase_marks_ms: data.marks,
+  };
+  if (details != null) {
+    event.open_phase_details = details;
+  }
+  redux.getProjectActions(project_id).log(event, data.id);
+}
 
 export function log_file_open(
   project_id: string,
@@ -400,7 +439,9 @@ export function log_file_open(
     log_open_time[key] = {
       id,
       start: Date.now(),
+      marks: {},
     };
+    mark_open_phase(project_id, path, "open_start");
   }
 }
 

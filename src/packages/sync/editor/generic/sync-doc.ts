@@ -81,6 +81,7 @@ const DEBUG = false;
 
 export type State = "init" | "ready" | "closed";
 export type DataServer = "project" | "database";
+export type SyncDocOpenPhase = "open_start" | "sync_ready";
 
 export interface SyncOpts0 {
   project_id: string;
@@ -224,6 +225,22 @@ export class SyncDoc extends EventEmitter {
 
   private noAutosave?: boolean;
   private backendFsWatchTimer?: NodeJS.Timeout;
+  private readonly openStartedAtMs: number = Date.now();
+
+  private emitOpenPhase = (
+    phase: SyncDocOpenPhase,
+    details?: { [key: string]: string | number | boolean | undefined },
+  ): void => {
+    const payload = {
+      phase,
+      elapsed_ms: Math.max(0, Date.now() - this.openStartedAtMs),
+      project_id: this.project_id,
+      path: this.path,
+      string_id: this.string_id,
+      ...(details ?? {}),
+    };
+    this.emit("open-phase", payload);
+  };
 
   // The isDeleted flag is set to true if the file existed and then
   // was actively deleted after the session started. It would
@@ -302,6 +319,7 @@ export class SyncDoc extends EventEmitter {
     }
 
     this.setMaxListeners(100);
+    this.emitOpenPhase("open_start");
 
     this.init();
     // This makes it possible for other parts of the app to react to
@@ -354,6 +372,7 @@ export class SyncDoc extends EventEmitter {
     );
     if (this.isClosed()) return;
     this.set_state("ready");
+    this.emitOpenPhase("sync_ready");
 
     // Success -- everything initialized with no issues.
     if (this.opts.ignoreInitialChanges) {

@@ -46,7 +46,7 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
-import { log_opened_time } from "@cocalc/frontend/project/open-file";
+import { log_opened_time, mark_open_phase } from "@cocalc/frontend/project/open-file";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import { type SyncOpts, type PatchId } from "@cocalc/sync";
@@ -464,6 +464,7 @@ export class BaseEditorActions<
         // the doc could perhaps be closed by the time this init is fired, in which case just bail -- no point in trying to initialize anything.
         return;
       }
+      mark_open_phase(this.project_id, this.path, "sync_ready");
 
       this._syncstring_init = true;
       this._syncstring_metadata();
