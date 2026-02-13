@@ -15,6 +15,10 @@ import { join } from "node:path";
 import { controlAgentDev } from "./control-agent";
 import { setSshUi, ssh } from "./ssh";
 import { setReflectUi, reflect } from "./reflect";
+import {
+  history as syncHistory,
+  purgeHistory as syncPurgeHistory,
+} from "@cocalc/conat/hub/api/sync-impl";
 
 const logger = getLogger("lite:hub:api");
 
@@ -153,6 +157,7 @@ export const hubApi: HubApi = {
   projects: {},
   db: { touch: () => {}, userQuery },
   purchases: {},
+  sync: { history: syncHistory, purgeHistory: syncPurgeHistory },
   jupyter: {},
   controlAgent: { controlAgentDev },
   ssh,
