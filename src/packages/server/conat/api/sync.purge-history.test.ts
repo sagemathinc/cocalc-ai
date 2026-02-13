@@ -2,7 +2,6 @@ export {};
 
 let assertCollabMock: jest.Mock;
 let conatMock: jest.Mock;
-let projectApiClientMock: jest.Mock;
 
 jest.mock("./util", () => ({
   __esModule: true,
@@ -14,29 +13,20 @@ jest.mock("@cocalc/backend/conat", () => ({
   conat: (...args: any[]) => conatMock(...args),
 }));
 
-jest.mock("@cocalc/conat/project/api", () => ({
-  __esModule: true,
-  projectApiClient: (...args: any[]) => projectApiClientMock(...args),
-}));
-
 describe("sync.purgeHistory", () => {
   beforeEach(() => {
     jest.resetModules();
     assertCollabMock = jest.fn(async () => undefined);
     conatMock = jest.fn();
-    projectApiClientMock = jest.fn();
   });
 
-  it("deletes patch stream, seeds baseline, and bumps history_epoch", async () => {
+  it("deletes patch stream, fences writes, and bumps history_epoch", async () => {
     const deleteMock = jest.fn(async () => ({ seqs: [1, 2, 3] }));
-    const publishMock = jest.fn(async (_mesg: any) => ({
-      seq: 1,
-      time: Date.now(),
-    }));
+    const configMock = jest.fn(async () => ({ required_headers: {} }));
     const closeStreamMock = jest.fn();
     const stream = {
       delete: deleteMock,
-      publish: publishMock,
+      config: configMock,
       close: closeStreamMock,
     };
 
@@ -63,11 +53,6 @@ describe("sync.purgeHistory", () => {
       },
     };
     conatMock.mockReturnValue(client);
-    projectApiClientMock.mockReturnValue({
-      system: {
-        readTextFileFromProject: jest.fn(async () => "hello world"),
-      },
-    });
 
     const { purgeHistory } = await import("./sync");
     const result = await purgeHistory({
@@ -81,17 +66,10 @@ describe("sync.purgeHistory", () => {
       account_id: "acct-1",
       project_id: "00000000-1000-4000-8000-000000000000",
     });
+    expect(configMock).toHaveBeenCalledWith({
+      required_headers: { history_epoch: 6 },
+    });
     expect(deleteMock).toHaveBeenCalledWith({ all: true });
-    expect(publishMock).toHaveBeenCalledTimes(1);
-    const published = publishMock.mock.calls[0]?.[0];
-    expect(published).toBeDefined();
-    if (published == null) {
-      throw new Error("publish payload is missing");
-    }
-    expect(published.path).toBe("a.txt");
-    expect(published.patch).toEqual(expect.any(String));
-    expect(published.parents).toEqual([]);
-    expect(published.version).toBe(1);
 
     expect(setMock).toHaveBeenCalledTimes(1);
     const next = setMock.mock.calls[0][0];
@@ -105,17 +83,17 @@ describe("sync.purgeHistory", () => {
 
     expect(result).toEqual({
       deleted: 3,
-      seeded: true,
+      seeded: false,
       history_epoch: 6,
     });
   });
 
   it("supports keep_current_state=false", async () => {
     const deleteMock = jest.fn(async () => ({ seqs: [] }));
-    const publishMock = jest.fn();
+    const configMock = jest.fn(async () => ({ required_headers: {} }));
     const stream = {
       delete: deleteMock,
-      publish: publishMock,
+      config: configMock,
       close: jest.fn(),
     };
     const syncstrings = {
@@ -137,10 +115,6 @@ describe("sync.purgeHistory", () => {
         synctable: jest.fn(async () => syncstrings),
       },
     });
-    const readMock = jest.fn(async () => "ignored");
-    projectApiClientMock.mockReturnValue({
-      system: { readTextFileFromProject: readMock },
-    });
 
     const { purgeHistory } = await import("./sync");
     const result = await purgeHistory({
@@ -150,8 +124,9 @@ describe("sync.purgeHistory", () => {
       keep_current_state: false,
     });
 
-    expect(readMock).not.toHaveBeenCalled();
-    expect(publishMock).not.toHaveBeenCalled();
+    expect(configMock).toHaveBeenCalledWith({
+      required_headers: { history_epoch: 1 },
+    });
     expect(result.seeded).toBe(false);
     expect(result.history_epoch).toBe(1);
   });

@@ -2,17 +2,6 @@ import { conat as getConatClient } from "@cocalc/conat/client";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { type Patch, type HistoryInfo } from "@cocalc/conat/hub/api/sync";
 import { client_db } from "@cocalc/util/db-schema/client-db";
-import {
-  createDbCodec,
-  createImmerDbCodec,
-  type DocCodec,
-} from "@cocalc/sync/patchflow";
-import {
-  encodePatchId,
-  makeClientId,
-  StringDocument as PatchflowStringDocument,
-} from "@cocalc/sync/patchflow";
-import { projectApiClient } from "@cocalc/conat/project/api";
 
 type AssertAccessFn = (opts: {
   account_id?: string;
@@ -30,87 +19,6 @@ function resolveConatClient(client?: any) {
     }
   }
   return getConatClient();
-}
-
-type DocType = {
-  type?: string;
-  patch_format?: number;
-  opts?: Record<string, unknown>;
-};
-
-function toArray(val: unknown): string[] | undefined {
-  if (Array.isArray(val)) return val;
-  if (val instanceof Set) return Array.from(val);
-  return undefined;
-}
-
-function parseDocType(doctype?: unknown): DocType {
-  if (doctype == null) return { type: "string", patch_format: 0 };
-  if (typeof doctype === "string") {
-    try {
-      const parsed = JSON.parse(doctype);
-      if (parsed && typeof parsed === "object") {
-        return parsed as DocType;
-      }
-    } catch {
-      return { type: "string", patch_format: 0 };
-    }
-    return { type: "string", patch_format: 0 };
-  }
-  if (typeof doctype === "object") {
-    return doctype as DocType;
-  }
-  return { type: "string", patch_format: 0 };
-}
-
-function codecFromDocType(doctype: DocType): DocCodec | undefined {
-  if (doctype.patch_format !== 1) return;
-  const opts = (doctype.opts ?? {}) as Record<string, unknown>;
-  const primaryKeys =
-    toArray(
-      (opts as { primary_keys?: unknown; primaryKeys?: unknown }).primary_keys,
-    ) ??
-    toArray(
-      (opts as { primary_keys?: unknown; primaryKeys?: unknown }).primaryKeys,
-    );
-  if (!primaryKeys || primaryKeys.length === 0) return;
-  const stringCols =
-    toArray(
-      (opts as { string_cols?: unknown; stringCols?: unknown }).string_cols,
-    ) ??
-    toArray(
-      (opts as { string_cols?: unknown; stringCols?: unknown }).stringCols,
-    ) ??
-    [];
-  const type = doctype.type ?? "";
-  if (typeof type === "string" && type.toLowerCase().includes("immer")) {
-    return createImmerDbCodec({ primaryKeys, stringCols });
-  }
-  return createDbCodec({ primaryKeys, stringCols });
-}
-
-function makeInitialPatch({
-  content,
-  doctype,
-}: {
-  content: string;
-  doctype: DocType;
-}): { patch: unknown; format?: number } | undefined {
-  if (content.length === 0) return;
-  const codec = codecFromDocType(doctype);
-  if (codec != null) {
-    try {
-      const from = codec.fromString("");
-      const to = codec.fromString(content);
-      const patch = codec.makePatch(from, to);
-      return { patch, format: doctype.patch_format };
-    } catch {
-      return;
-    }
-  }
-  const from = new PatchflowStringDocument("");
-  const to = new PatchflowStringDocument(content);
-  return { patch: from.makePatch(to), format: doctype.patch_format };
 }
 
 export async function history({
@@ -223,54 +131,22 @@ export async function purgeHistory({
     doctype: JSON.stringify({ type: "string", patch_format: 0 }),
   }) as Record<string, any>;
 
-  const doctype = parseDocType(current.doctype);
-  let seeded = false;
+  const settings = (current.settings ?? {}) as Record<string, any>;
+  const history_epoch =
+    typeof settings.history_epoch === "number" &&
+    Number.isFinite(settings.history_epoch)
+      ? settings.history_epoch + 1
+      : 1;
   const stream = conatClient.sync.astream({
     name,
     project_id,
     noInventory: true,
   });
   try {
+    await stream.config({
+      required_headers: { history_epoch },
+    });
     const deleted = await stream.delete({ all: true });
-
-    if (keep_current_state) {
-      let content: string | undefined;
-      try {
-        const projectApi = projectApiClient({ client: conatClient, project_id });
-        content = await projectApi.system.readTextFileFromProject({ path });
-      } catch {
-        content = undefined;
-      }
-
-      if (typeof content === "string") {
-        const initial = makeInitialPatch({ content, doctype });
-        if (initial != null) {
-          const wall = Date.now();
-          await stream.publish({
-            string_id,
-            project_id,
-            path,
-            time: encodePatchId(wall, makeClientId()),
-            wall,
-            patch: JSON.stringify(initial.patch ?? []),
-            user_id: 0,
-            is_snapshot: false,
-            parents: [],
-            version: 1,
-            file: true,
-            ...(initial.format != null ? { format: initial.format } : {}),
-          } as any);
-          seeded = true;
-        }
-      }
-    }
-
-    const settings = (current.settings ?? {}) as Record<string, any>;
-    const history_epoch =
-      typeof settings.history_epoch === "number" &&
-      Number.isFinite(settings.history_epoch)
-        ? settings.history_epoch + 1
-        : 1;
     const nextSettings = {
       ...settings,
       history_epoch,
@@ -290,10 +166,13 @@ export async function purgeHistory({
 
     return {
       deleted: deleted.seqs?.length ?? 0,
-      seeded,
+      seeded: false,
       history_epoch,
     };
   } finally {
+    // keep_current_state is intentionally ignored in this generation-fenced model,
+    // where open clients are closed and reopening recreates state safely.
+    void keep_current_state;
     stream.close();
     syncstrings.close();
   }
