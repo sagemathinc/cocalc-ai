@@ -186,7 +186,12 @@ export async function purgeHistory({
     noInventory: true,
   });
 
-  const current = (syncstrings.get_one() ?? {
+  const getOne =
+    // types currently model synctable as a union that does not always expose get_one
+    (syncstrings as any).get_one ?? (syncstrings as any).getOne;
+  const current = ((typeof getOne === "function"
+    ? getOne.call(syncstrings)
+    : undefined) ?? {
     string_id,
     project_id,
     path,

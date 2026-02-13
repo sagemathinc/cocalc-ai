@@ -19,6 +19,7 @@
     { "path": "../file-server" },
     { "path": "../project-runner" },
     { "path": "../project-proxy" },
+    { "path": "../sync" },
     { "path": "../util" }
   ]
 }

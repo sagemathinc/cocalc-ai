@@ -29,7 +29,10 @@ describe("sync.purgeHistory", () => {
 
   it("deletes patch stream, seeds baseline, and bumps history_epoch", async () => {
     const deleteMock = jest.fn(async () => ({ seqs: [1, 2, 3] }));
-    const publishMock = jest.fn(async () => ({ seq: 1, time: Date.now() }));
+    const publishMock = jest.fn(async (_mesg: any) => ({
+      seq: 1,
+      time: Date.now(),
+    }));
     const closeStreamMock = jest.fn();
     const stream = {
       delete: deleteMock,
@@ -80,7 +83,11 @@ describe("sync.purgeHistory", () => {
     });
     expect(deleteMock).toHaveBeenCalledWith({ all: true });
     expect(publishMock).toHaveBeenCalledTimes(1);
-    const published = publishMock.mock.calls[0][0];
+    const published = publishMock.mock.calls[0]?.[0];
+    expect(published).toBeDefined();
+    if (published == null) {
+      throw new Error("publish payload is missing");
+    }
     expect(published.path).toBe("a.txt");
     expect(published.patch).toEqual(expect.any(String));
     expect(published.parents).toEqual([]);
