@@ -162,6 +162,12 @@ export const labels = defineMessages({
       "{type, select, read_only {Readonly} other {Save}}",
     description: "Frame editor's title bar 'Save' button",
   },
+  frame_editors_title_bar_connecting: {
+    id: "labels.frame-editors.title-bar.connecting",
+    defaultMessage: "Connecting...",
+    description:
+      "Frame editor's title bar state while waiting for live collaboration to finish connecting",
+  },
   project_settings_restart_project_confirm_explanation: {
     id: "labels.project.settings.restart-project.confirm.explanation",
     defaultMessage:

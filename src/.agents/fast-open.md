@@ -40,7 +40,7 @@ Thoughts?
 
 ## Commit-by-Commit Checklist
 
-1. **Commit 1: Add open latency instrumentation**
+1. **(done) Commit 1: Add open latency instrumentation**
    - Files:
      - [src/packages/frontend/project/open-file.ts](./src/packages/frontend/project/open-file.ts)
      - [src/packages/frontend/frame-editors/base-editor/actions-base.ts](./src/packages/frontend/frame-editors/base-editor/actions-base.ts)
@@ -53,7 +53,7 @@ Thoughts?
      - `handoff_differs`
    - Keep behavior unchanged.
 
-2. **Commit 2: Add feature flag and optimistic read-only bootstrap for plain text**
+2. **(done) Commit 2: Add feature flag and optimistic read-only bootstrap for plain text**
    - Files:
      - [src/packages/frontend/frame-editors/base-editor/actions-base.ts](./src/packages/frontend/frame-editors/base-editor/actions-base.ts)
      - [src/packages/frontend/frame-editors/base-editor/actions-text.ts](./src/packages/frontend/frame-editors/base-editor/actions-text.ts)
@@ -75,8 +75,8 @@ Thoughts?
 
 4. **Commit 4: Add frontend unit tests for fast-open state machine**
    - Files:
-     - [src/packages/frontend/frame-editors/base-editor/__tests__/actions-fast-open.test.ts](./src/packages/frontend/frame-editors/base-editor/__tests__/actions-fast-open.test.ts) (new)
-     - [src/packages/frontend/frame-editors/base-editor/__tests__/actions-structure.test.ts](./src/packages/frontend/frame-editors/base-editor/__tests__/actions-structure.test.ts)
+     - [src/packages/frontend/frame-editors/base-editor/tests/actions-fast-open.test.ts](./src/packages/frontend/frame-editors/base-editor/__tests__/actions-fast-open.test.ts) (new)
+     - [src/packages/frontend/frame-editors/base-editor/tests/actions-structure.test.ts](./src/packages/frontend/frame-editors/base-editor/__tests__/actions-structure.test.ts)
    - Cover:
      - optimistic load sets `is_loaded` early
      - read-only enforced before live ready
@@ -107,7 +107,7 @@ Thoughts?
    - Scope:
      - Toggle flag on for lite, keep launchpad default off.
    - Validate:
-     - local p50 open < 300ms
+     - local p50 open &lt; 300ms
      - no regressions in save/history/readonly behavior
 
 8. **Commit 8: Enable in launchpad after validation**
@@ -122,3 +122,28 @@ Thoughts?
      - [src/packages/sync/editor/string/fast-open-sync.ts](./src/packages/sync/editor/string/fast-open-sync.ts) (new)
      - [src/packages/conat/sync-doc/syncstring.ts](./src/packages/conat/sync-doc/syncstring.ts)
    - Move optimistic-first orchestration into a dedicated wrapper so [src/packages/sync/editor/generic/sync-doc.ts](./src/packages/sync/editor/generic/sync-doc.ts) remains unchanged.
+
+## Current Status (Updated)
+
+Completed and validated in this branch:
+
+- Fast open for syncstring text files is implemented and enabled by default.
+- Users see file content quickly from `fs.readFile`, then handoff to live RTC.
+- Open-phase timings are logged and rendered in project log entries.
+- Handoff-diff behavior is implemented and tested.
+- Regressions fixed:
+  - ctrl/cmd+click behavior in explorer/flyout.
+  - project log crash for missing filename.
+  - open-event updates now preserve filename/action/path metadata.
+
+Still pending:
+
+1. Additional polish/testing for edge cases (background tabs, refresh behavior, remote-host latency).
+2. Extend fast-open pattern to non-text editors (likely notebook-related first).
+3. Tune RTC indicator wording/placement based on real usage feedback.
+
+## Next Commit Checklist
+
+1. Add targeted tests for RTC indicator state transitions and non-regression.
+2. Design and implement fast-open for one non-text editor path as pilot.
+3. Add focused telemetry/bench script for launchpad p50/p95 initial-visible and live-ready timings.

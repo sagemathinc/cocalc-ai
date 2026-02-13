@@ -21,9 +21,10 @@ const WIKI_HELP_URL = "https://github.com/sagemathinc/cocalc/wiki/";
 const SAVE_ERROR = "Error saving file to disk. ";
 const SAVE_WORKAROUND =
   "Ensure your network connection is solid. If this problem persists, you might need to close and open this file, restart this project in project settings, or contact support (help@cocalc.com)";
-const FAST_OPEN_SYNCSTRING_FLAG_QUERY_PARAM = "cocalc_fast_open_syncstring";
-const FAST_OPEN_SYNCSTRING_FLAG_LOCAL_STORAGE_KEY =
-  "cocalc.fast_open.syncstring";
+const FAST_OPEN_SYNCSTRING_DISABLE_QUERY_PARAM =
+  "cocalc_disable_fast_open_syncstring";
+const FAST_OPEN_SYNCSTRING_DISABLE_LOCAL_STORAGE_KEY =
+  "cocalc.disable_fast_open.syncstring";
 const FAST_OPEN_SYNCSTRING_STATUS = "Loading live collaboration...";
 const FAST_OPEN_HANDOFF_DIFF_STATUS =
   "Updated to the latest live collaboration state.";
@@ -39,28 +40,30 @@ function parseBooleanFlag(value?: string | null): boolean | undefined {
 function isFastOpenSyncstringEnabled(): boolean {
   if (typeof window === "undefined") return false;
   try {
-    const queryFlag = parseBooleanFlag(
+    const queryDisable = parseBooleanFlag(
       new URLSearchParams(window.location.search).get(
-        FAST_OPEN_SYNCSTRING_FLAG_QUERY_PARAM,
+        FAST_OPEN_SYNCSTRING_DISABLE_QUERY_PARAM,
       ),
     );
-    if (queryFlag != null) {
-      return queryFlag;
+    if (queryDisable === true) {
+      return false;
     }
   } catch {
     // no-op
   }
   try {
-    return (
-      parseBooleanFlag(
-        window.localStorage.getItem(
-          FAST_OPEN_SYNCSTRING_FLAG_LOCAL_STORAGE_KEY,
-        ),
-      ) ?? true
+    const localDisable = parseBooleanFlag(
+      window.localStorage.getItem(
+        FAST_OPEN_SYNCSTRING_DISABLE_LOCAL_STORAGE_KEY,
+      ),
     );
+    if (localDisable === true) {
+      return false;
+    }
   } catch {
-    return true;
+    // no-op
   }
+  return true;
 }
 
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -211,6 +214,7 @@ export interface CodeEditorState {
   formatError?: string;
   formatInput?: string;
   status: string;
+  rtc_status?: "loading" | "live" | "error";
   read_only: boolean;
   settings: Map<string, any>; // settings specific to this file (but **not** this user or browser), e.g., spell check language.
   complete: Map<string, any>;
@@ -326,6 +330,7 @@ export class BaseEditorActions<
           is_loaded: true,
           read_only: true,
           status: FAST_OPEN_SYNCSTRING_STATUS,
+          rtc_status: "loading",
         });
         mark_open_phase(this.project_id, this.path, "optimistic_ready", {
           bytes: value.length,
@@ -366,6 +371,7 @@ export class BaseEditorActions<
     if (differs) {
       this.setTransientOptimisticFastOpenStatus(FAST_OPEN_HANDOFF_DIFF_STATUS);
     }
+    this.setState({ rtc_status: "live" });
     mark_open_phase(this.project_id, this.path, "handoff_done");
   }
 
@@ -554,6 +560,9 @@ export class BaseEditorActions<
     // File-open timing starts when live sync initialization actually begins,
     // not when a tab was created in the background.
     restart_open_timer(this.project_id, this.path, { source: "sync_init" });
+    if (this.doctype === "syncstring") {
+      this.setState({ rtc_status: "loading" });
+    }
     this.startOptimisticFastOpen();
     const sessionStart = Date.now();
     this._syncstring.on("deleted", () => {
@@ -592,6 +601,7 @@ export class BaseEditorActions<
       }
 
       if (err) {
+        this.setState({ rtc_status: "error" });
         this.set_error(`${err}\nFix this, then try opening the file again.`);
         return;
       }
@@ -601,6 +611,9 @@ export class BaseEditorActions<
       }
 
       this._syncstring_init = true;
+      if (this.doctype === "syncstring") {
+        this.setState({ rtc_status: "live" });
+      }
       this._syncstring_metadata();
       this._init_settings();
       this._init_syncstring_value();
@@ -634,6 +647,9 @@ export class BaseEditorActions<
     });
 
     this._syncstring.once("error", (err) => {
+      if (this.doctype === "syncstring") {
+        this.setState({ rtc_status: "error" });
+      }
       this.set_error(`${err}\nFix this, then try opening the file again.`);
     });
 

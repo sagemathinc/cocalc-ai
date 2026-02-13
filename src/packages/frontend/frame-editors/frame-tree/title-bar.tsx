@@ -228,6 +228,10 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
 
   // These come from editor_actions's store:
   const read_only: boolean = useRedux([props.editor_actions.name, "read_only"]);
+  const rtc_status: "loading" | "live" | "error" | undefined = useRedux([
+    props.editor_actions.name,
+    "rtc_status",
+  ]);
 
   const manageCommands = useMemo(
     () =>
@@ -657,6 +661,7 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           props.editor_actions.set_show_uncommitted_changes
         }
         read_only={read_only}
+        is_connecting={rtc_status === "loading"}
         is_saving={is_saving}
         no_labels={noLabel}
         size={button_size()}
