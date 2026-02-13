@@ -14,6 +14,12 @@ const version = "${VERSION}";
 const name = "${NAME}";
 const mainScript = "${MAIN}";
 
+function defaultLaunchpadDataDir() {
+  const dataHome =
+    process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+  return path.join(dataHome, "cocalc", "launchpad");
+}
+
 function extractAssetsSync() {
   const { getRawAsset } = require("node:sea");
   const { spawnSync } = require("node:child_process");
@@ -97,6 +103,11 @@ if (path.basename(process.argv[1]) == "node") {
 
   process.env.PATH =
     process.env.COCALC_BIN_PATH + path.delimiter + process.env.PATH;
+
+  // In SEA deployments there is often no source checkout to infer a root dir
+  // from, which can otherwise lead to DATA resolving to "/data".
+  process.env.COCALC_DATA_DIR ??= defaultLaunchpadDataDir();
+  process.env.DATA ??= process.env.COCALC_DATA_DIR;
 
   process.env.AUTH_TOKEN ??= "random";
   process.env.COCALC_BUNDLE_DIR ??= path.dirname(script);
