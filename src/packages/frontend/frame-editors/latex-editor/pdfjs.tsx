@@ -735,7 +735,9 @@ export function PDFJS({
         }}
         onScroll={(e: any) => {
           const offset =
-            e?.currentTarget?.scrollTop ?? scrollerElRef.current?.scrollTop ?? 0;
+            e?.currentTarget?.scrollTop ??
+            scrollerElRef.current?.scrollTop ??
+            0;
           const index = virtuosoRangeRef.current.startIndex ?? 0;
           const scrollState = { index, offset };
           actions.save_editor_state(id, { scrollState });
@@ -909,11 +911,10 @@ export function PDFJS({
     );
   }
 
-  if (mode == "rmd" && derived_file_types != undefined) {
-    if (!derived_file_types.contains("pdf")) {
-      return renderNoPdf();
-    }
-  }
+  const noPdfForRmd =
+    mode == "rmd" &&
+    derived_file_types != undefined &&
+    !derived_file_types.contains("pdf");
 
   // Note: we don't have to do anything for touch, since it "just works" for some reason --
   // probably the scroller just supports it.
@@ -949,6 +950,10 @@ export function PDFJS({
     lastMousePosRef.current = null;
     setCursor("grab");
   }, []);
+
+  if (noPdfForRmd) {
+    return renderNoPdf();
+  }
 
   return (
     <div

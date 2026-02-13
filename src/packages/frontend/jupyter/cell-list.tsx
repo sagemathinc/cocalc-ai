@@ -180,10 +180,6 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     frameActions.current?.set_cell_list_div(node);
   }, []);
 
-  if (cell_list == null) {
-    return render_loading();
-  }
-
   const saveScroll = useCallback(() => {
     if (use_windowed_list) {
       // TODO -- virtuoso
@@ -541,16 +537,20 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
 
   useEffect(updateScrollOrResize, [cells]);
 
-  let body;
-
-  const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
-
   const cellListResize = useResizeObserver({ ref: cellListDivRef });
   useEffect(() => {
     for (const key in scrollOrResize) {
       scrollOrResize[key]();
     }
   }, [cellListResize]);
+
+  const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
+
+  if (cell_list == null) {
+    return render_loading();
+  }
+
+  let body;
 
   if (use_windowed_list) {
     body = (

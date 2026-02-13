@@ -23,14 +23,21 @@ import {
   SettingBox,
   Tip,
 } from "@cocalc/frontend/components";
-import { filenameIcon, file_associations } from "@cocalc/frontend/file-associations";
+import {
+  filenameIcon,
+  file_associations,
+} from "@cocalc/frontend/file-associations";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { FileUpload } from "@cocalc/frontend/file-upload";
 import { labels } from "@cocalc/frontend/i18n";
 import { special_filenames_with_no_extension } from "@cocalc/frontend/project-file";
 import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
 import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
-import { filename_extension, is_only_downloadable, keys } from "@cocalc/util/misc";
+import {
+  filename_extension,
+  is_only_downloadable,
+  keys,
+} from "@cocalc/util/misc";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import type { NamedServerName } from "@cocalc/util/types/servers";
 import { PathNavigator } from "../explorer/path-navigator";
@@ -38,11 +45,7 @@ import { useAvailableFeatures } from "../use-available-features";
 import { NewFileButton } from "./new-file-button";
 import { AIGenerateDocumentModal } from "../page/home-page/ai-generate-document";
 import { Ext } from "../page/home-page/ai-generate-examples";
-import {
-  APP_CATALOG,
-  APP_MAP,
-  QUICK_CREATE_MAP,
-} from "./launcher-catalog";
+import { APP_CATALOG, APP_MAP, QUICK_CREATE_MAP } from "./launcher-catalog";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import {
   LAUNCHER_GLOBAL_DEFAULTS,
@@ -122,8 +125,7 @@ export default function NewFilePage(props: Props) {
     account_id,
     "group",
   ]);
-  const can_edit_project_defaults =
-    !!is_admin || user_group === "owner";
+  const can_edit_project_defaults = !!is_admin || user_group === "owner";
   const [extensionWarning, setExtensionWarning] = useState<boolean>(false);
   const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
   const effective_current_path = current_path_abs ?? "/";
@@ -141,8 +143,7 @@ export default function NewFilePage(props: Props) {
   const [aiPrompt, setAiPrompt] = useState<string>("");
   const [aiExt, setAiExt] = useState<Ext>("ipynb");
   const [showAiModal, setShowAiModal] = useState<boolean>(false);
-  const [showCustomizeModal, setShowCustomizeModal] =
-    useState<boolean>(false);
+  const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
   const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
   const [showServerPanel, setShowServerPanel] = useState<"" | NamedServerName>(
     "",
@@ -151,13 +152,7 @@ export default function NewFilePage(props: Props) {
     { project_id },
     "file_creation_error",
   );
-  if (actions == null) {
-    return <Loading theme="medium" />;
-  }
-
-  const projectLauncherDefaults = getProjectLauncherDefaults(
-    project_launcher,
-  );
+  const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
   const siteLauncherDefaults = getSiteLauncherDefaults({
     quickCreate: site_launcher_quick,
     apps: site_launcher_apps,
@@ -270,9 +265,11 @@ export default function NewFilePage(props: Props) {
     visibleAppsSeen.add(id);
     return true;
   });
-  const appSpecs = visibleApps
-    .map((id) => APP_MAP[id])
-    .filter(Boolean) as { id: NamedServerName; label: string; icon: IconName }[];
+  const appSpecs = visibleApps.map((id) => APP_MAP[id]).filter(Boolean) as {
+    id: NamedServerName;
+    label: string;
+    icon: IconName;
+  }[];
   const serversDisabled: boolean =
     !!student_project_functionality.disableJupyterLabServer &&
     !!student_project_functionality.disableJupyterClassicServer &&
@@ -295,12 +292,14 @@ export default function NewFilePage(props: Props) {
   }
 
   async function saveProjectLauncherDefaults(prefs: any) {
-    await redux
-      .getActions("projects")
-      .set_project_launcher(project_id, prefs);
+    await redux.getActions("projects").set_project_launcher(project_id, prefs);
   }
 
   const [creatingFile, setCreatingFile] = useState<string>("");
+
+  if (actions == null) {
+    return <Loading theme="medium" />;
+  }
 
   async function createFile(ext?: string, overrideFilename?: string) {
     const filename = overrideFilename ?? inputRef.current?.input.value;
@@ -344,8 +343,7 @@ export default function NewFilePage(props: Props) {
   function quickCreate(ext: string) {
     const current = inputRef.current?.input.value?.trim();
     if (!current) {
-      const next =
-        filename0 ? filename0 : default_filename(ext, project_id);
+      const next = filename0 ? filename0 : default_filename(ext, project_id);
       setFilename(next);
       createFile(ext, next);
       return;
@@ -529,9 +527,7 @@ export default function NewFilePage(props: Props) {
       </Modal>
       <Row key={"new-file-row"} gutter={[24, 12]}>
         <Col sm={24}>
-          <div style={{ marginBottom: "6px", fontWeight: 600 }}>
-            Filename
-          </div>
+          <div style={{ marginBottom: "6px", fontWeight: 600 }}>Filename</div>
           <div style={{ fontSize: "12px", opacity: 0.7, marginBottom: "8px" }}>
             Name of the file you’re about to create.
           </div>
@@ -549,7 +545,9 @@ export default function NewFilePage(props: Props) {
               autoFocus={autoFocusFilename}
               value={filename}
               disabled={extensionWarning}
-              placeholder={"Name your file, folder, or a URL to download from..."}
+              placeholder={
+                "Name your file, folder, or a URL to download from..."
+              }
               style={{ flex: "1 1 320px" }}
               onChange={(e) => {
                 if (extensionWarning) {
@@ -568,7 +566,14 @@ export default function NewFilePage(props: Props) {
       </Row>
       <Row gutter={[24, 16]} style={{ marginTop: "16px" }}>
         <Col md={14} sm={24}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              marginBottom: "8px",
+            }}
+          >
             <h3 style={{ margin: 0 }}>Quick Create</h3>
             <Button size="small" onClick={() => setShowCustomizeModal(true)}>
               Customize
@@ -651,18 +656,26 @@ export default function NewFilePage(props: Props) {
               value={aiExt}
               onChange={(value) => setAiExt(value)}
               style={{ minWidth: "120px" }}
-              options={[
-                availableFeatures.jupyter_notebook
-                  ? { value: "ipynb", label: "Notebook" }
-                  : undefined,
-                availableFeatures.sage
-                  ? { value: "ipynb-sagemath", label: "SageMath Notebook" }
-                  : undefined,
-                { value: "md", label: "Markdown" },
-                availableFeatures.latex ? { value: "tex", label: "LaTeX" } : undefined,
-                availableFeatures.qmd ? { value: "qmd", label: "Quarto" } : undefined,
-                availableFeatures.rmd ? { value: "rmd", label: "RMarkdown" } : undefined,
-              ].filter(Boolean) as { value: Ext; label: string }[]}
+              options={
+                [
+                  availableFeatures.jupyter_notebook
+                    ? { value: "ipynb", label: "Notebook" }
+                    : undefined,
+                  availableFeatures.sage
+                    ? { value: "ipynb-sagemath", label: "SageMath Notebook" }
+                    : undefined,
+                  { value: "md", label: "Markdown" },
+                  availableFeatures.latex
+                    ? { value: "tex", label: "LaTeX" }
+                    : undefined,
+                  availableFeatures.qmd
+                    ? { value: "qmd", label: "Quarto" }
+                    : undefined,
+                  availableFeatures.rmd
+                    ? { value: "rmd", label: "RMarkdown" }
+                    : undefined,
+                ].filter(Boolean) as { value: Ext; label: string }[]
+              }
             />
             <Button
               size="large"

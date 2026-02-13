@@ -35,10 +35,6 @@ export function SSHPanel({ project, mode = "project" }: Props) {
   const [sshCopied, setSshCopied] = useState(false);
   const copyTimeoutRef = useRef<number | null>(null);
 
-  if (lite) {
-    return null;
-  }
-
   const ssh_keys = project.getIn([
     "users",
     webapp_client.account_id as string,
@@ -75,6 +71,10 @@ export function SSHPanel({ project, mode = "project" }: Props) {
       copyTimeoutRef.current = null;
     }
   }, [sshCommand]);
+
+  if (lite) {
+    return null;
+  }
 
   const handleCopy = () => {
     setSshCopied(true);

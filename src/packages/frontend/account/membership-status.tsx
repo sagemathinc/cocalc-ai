@@ -180,6 +180,25 @@ export function MembershipStatusPanel({
     );
   }, [tiers]);
 
+  const candidateRows = useMemo(() => {
+    const candidates = details?.candidates ?? [];
+    return candidates.map((candidate) => {
+      const selected =
+        details?.selected.class === candidate.class &&
+        details?.selected.source === candidate.source;
+      const tierLabel = tierById[candidate.class]?.label ?? candidate.class;
+      return {
+        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? "admin"}`,
+        tier: tierLabel,
+        source: candidate.source === "subscription" ? "Subscription" : "Admin assigned",
+        priority: candidate.priority,
+        expires: candidate.expires,
+        subscription_id: candidate.subscription_id,
+        selected,
+      };
+    });
+  }, [details, tierById]);
+
   if (!account_id) {
     return null;
   }
@@ -211,25 +230,6 @@ export function MembershipStatusPanel({
   const featureTags = Object.entries(features)
     .map(([key, value]) => formatFeatureTag(key, value))
     .filter((value): value is string => !!value);
-
-  const candidateRows = useMemo(() => {
-    const candidates = details?.candidates ?? [];
-    return candidates.map((candidate) => {
-      const selected =
-        details?.selected.class === candidate.class &&
-        details?.selected.source === candidate.source;
-      const tierLabel = tierById[candidate.class]?.label ?? candidate.class;
-      return {
-        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? "admin"}`,
-        tier: tierLabel,
-        source: candidate.source === "subscription" ? "Subscription" : "Admin assigned",
-        priority: candidate.priority,
-        expires: candidate.expires,
-        subscription_id: candidate.subscription_id,
-        selected,
-      };
-    });
-  }, [details, tierById]);
 
   const projectDefaultsItems = PROJECT_DEFAULT_KEYS.map((key) => {
     if (!(key in projectDefaults)) return null;

@@ -216,13 +216,34 @@ function shouldPreferRichText(text: string): boolean {
   return hasMarkdown && !hasCode;
 }
 
-export function CodeLikeEditor({ attributes, children, element }: RenderElementProps) {
+export function CodeLikeEditor({
+  attributes,
+  children,
+  element,
+}: RenderElementProps) {
   if (element.type === "code_line") {
-    return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
+    return (
+      <CodeLineElement attributes={attributes}>{children}</CodeLineElement>
+    );
   }
   if (element.type != "code_block") {
     throw Error("bug");
   }
+
+  return (
+    <CodeBlockLikeEditor
+      attributes={attributes}
+      children={children}
+      element={element as CodeBlock}
+    />
+  );
+}
+
+function CodeBlockLikeEditor({
+  attributes,
+  children,
+  element,
+}: RenderElementProps & { element: CodeBlock }) {
   const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar } = useFileContext();
   const editor = useSlate();
@@ -237,7 +258,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     getHistory(editor, element) ?? [],
   );
   const elementPath = ReactEditor.findPath(editor, element);
-  const codeValue = getCodeBlockText(element as CodeBlock);
+  const codeValue = getCodeBlockText(element);
   const expandState =
     (editor as any).codeBlockExpandState ??
     ((editor as any).codeBlockExpandState = new Map<string, boolean>());
@@ -269,7 +290,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     }
   }, [editor, element, history, info]);
 
-  const lineCount = getCodeBlockLineCount(element as CodeBlock);
+  const lineCount = getCodeBlockLineCount(element);
   const modeLabel = infoToMode(info, { value: codeValue }) || "plain text";
   const shouldCollapse = false;
   const selected = useSelected();
@@ -300,8 +321,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const popularGuess = markdownCandidate
     ? guessPopularLanguage(codeValue ?? "")
     : null;
-  const showPopularGuess =
-    !!popularGuess && popularGuess.score >= 4;
+  const showPopularGuess = !!popularGuess && popularGuess.score >= 4;
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -368,12 +388,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
         const point =
           childIndex == null
             ? pointAtPath(editor, paragraphPath, undefined, "end")
-            : pointAtPath(
-                editor,
-                paragraphPath.concat(childIndex),
-                0,
-                "start",
-              );
+            : pointAtPath(editor, paragraphPath.concat(childIndex), 0, "start");
         Transforms.select(editor, { anchor: point, focus: point });
         ReactEditor.focus(editor);
       };
@@ -424,11 +439,19 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
 
       // Most common case when pasting in the middle of a paragraph:
       // [paragraph-before, code-block, spacer, paragraph-after]
-      if (isParagraph(prev) && isSpacerParagraph(next) && isParagraph(afterSpacer)) {
+      if (
+        isParagraph(prev) &&
+        isSpacerParagraph(next) &&
+        isParagraph(afterSpacer)
+      ) {
         const prevLen = Array.isArray(prev.children) ? prev.children.length : 0;
         const merged = {
           ...prev,
-          children: [...(prev.children ?? []), ...inlineChildren, ...(afterSpacer.children ?? [])],
+          children: [
+            ...(prev.children ?? []),
+            ...inlineChildren,
+            ...(afterSpacer.children ?? []),
+          ],
         };
         newChildren.splice(codeIndex - 1, 4, merged);
         focusParagraphPath = parentPath.concat(codeIndex - 1);
@@ -470,7 +493,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
         for (let i = parentChildren.length - 1; i >= 0; i--) {
           Transforms.removeNodes(editor, { at: parentPath.concat(i) });
         }
-        Transforms.insertNodes(editor, newChildren as any, { at: parentPath.concat(0) });
+        Transforms.insertNodes(editor, newChildren as any, {
+          at: parentPath.concat(0),
+        });
       });
       if (focusParagraphPath != null) {
         focusAtInlineBoundary(focusParagraphPath, focusChildIndex);
@@ -560,8 +585,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement("a");
                     link.href = url;
-                    const ext =
-                      infoToMode(info, { value: codeValue }) || "txt";
+                    const ext = infoToMode(info, { value: codeValue }) || "txt";
                     link.download = `code-block.${ext}`;
                     link.click();
                     URL.revokeObjectURL(url);

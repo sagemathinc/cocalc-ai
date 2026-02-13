@@ -35,15 +35,15 @@ export default function CreateSnapshot() {
     };
   }, [open]);
 
-  if (!project_id) {
-    return null;
-  }
-
   useEffect(() => {
     if (!openCreate) return;
     setOpen(true);
     actions?.setState({ open_create_snapshot: false });
   }, [actions, openCreate]);
+
+  if (!project_id) {
+    return null;
+  }
 
   async function createSnapshot() {
     try {

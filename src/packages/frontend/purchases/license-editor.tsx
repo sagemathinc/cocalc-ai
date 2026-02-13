@@ -83,15 +83,14 @@ export default function LicenseEditor({
 }: Props) {
   const intl = useIntl();
   const projectsLabel = intl.formatMessage(labels.projects);
-  if (info.type == "vouchers") {
-    return <Alert type="error" title="Editing vouchers is not allowed." />;
-  }
+  const isVouchers = info.type == "vouchers";
+  const quotaInfo = info.type == "quota" ? info : null;
 
   const [start, setStart] = useState<dayjs.Dayjs | undefined>(
-    info.start ? dayjs(info.start) : undefined,
+    quotaInfo?.start ? dayjs(quotaInfo.start) : undefined,
   );
   const [end, setEnd] = useState<dayjs.Dayjs | undefined>(
-    info.end ? dayjs(info.end) : undefined,
+    quotaInfo?.end ? dayjs(quotaInfo.end) : undefined,
   );
   const columns = [
     {
@@ -120,7 +119,8 @@ export default function LicenseEditor({
     onChange({ ...info, [field]: value });
   };
 
-  const isSubscription = info.subscription != null && info.subscription != "no";
+  const isSubscription =
+    quotaInfo?.subscription != null && quotaInfo.subscription != "no";
 
   const endPresets = useMemo(() => {
     if (isSubscription || start == null) {
@@ -151,6 +151,10 @@ export default function LicenseEditor({
       </div>
     );
   }, [isSubscription, start?.valueOf() ?? 0]);
+
+  if (isVouchers) {
+    return <Alert type="error" title="Editing vouchers is not allowed." />;
+  }
 
   let data = [
     {

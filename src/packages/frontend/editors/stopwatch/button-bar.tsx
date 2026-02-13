@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2020-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -7,7 +7,7 @@
 Some buttons
 */
 import { HistoryOutlined, RedoOutlined, UndoOutlined } from "@ant-design/icons";
-import { Button, Space } from "antd";
+import { Button } from "antd";
 import { useIntl } from "react-intl";
 
 import { Rendered } from "@cocalc/frontend/app-framework";
@@ -15,19 +15,22 @@ import { Gap } from "@cocalc/frontend/components/gap";
 import { labels } from "@cocalc/frontend/i18n";
 import { TimeActions } from "./actions";
 
-export function ButtonBar({ actions }: { actions: TimeActions }): React.JSX.Element {
+export function ButtonBar({
+  actions,
+}: {
+  actions: TimeActions;
+}): React.JSX.Element {
+  const intl = useIntl();
   return (
     <div style={{ margin: "1px" }}>
-      {timeTravelButton(actions)}
+      {timeTravelButton(actions, intl)}
       <Gap />
       {undoRedoGroup(actions)}
     </div>
   );
 }
 
-function timeTravelButton(actions: TimeActions): Rendered {
-  const intl = useIntl();
-
+function timeTravelButton(actions: TimeActions, intl): Rendered {
   return (
     <Button
       key={"time-travel"}
@@ -41,7 +44,7 @@ function timeTravelButton(actions: TimeActions): Rendered {
 
 function undoRedoGroup(actions: TimeActions): Rendered {
   return (
-    <Space.Compact key={"undo-group"}>
+    <Button.Group key={"undo-group"}>
       <Button
         key={"undo"}
         title={"Undo last thing you did"}
@@ -58,6 +61,6 @@ function undoRedoGroup(actions: TimeActions): Rendered {
       >
         Redo
       </Button>
-    </Space.Compact>
+    </Button.Group>
   );
 }

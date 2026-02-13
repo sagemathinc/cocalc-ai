@@ -72,9 +72,6 @@ export function ActionBar({
   const student_project_functionality = useStudentProjectFunctionality(
     actions.project_id,
   );
-  if (student_project_functionality.disableActions) {
-    return <div></div>;
-  }
 
   const [backupsMeta, setBackupsMeta] = useState<BackupMeta[] | null>(null);
   const [backupsLoading, setBackupsLoading] = useState<boolean>(false);
@@ -123,12 +120,13 @@ export function ActionBar({
             restoreMode === "scratch"
               ? path.posix.join("/scratch", rel || "")
               : undefined;
-          const op = await webapp_client.conat_client.hub.projects.restoreBackup({
-            project_id,
-            id: entry.id,
-            path: rel || undefined,
-            dest,
-          });
+          const op =
+            await webapp_client.conat_client.hub.projects.restoreBackup({
+              project_id,
+              id: entry.id,
+              path: rel || undefined,
+              dest,
+            });
           actions?.trackRestoreOp?.(op);
         }
       }
@@ -400,7 +398,9 @@ export function ActionBar({
           </ul>
         )}
         {restoreError && (
-          <div style={{ color: "red", marginTop: "8px" }}>{`${restoreError}`}</div>
+          <div
+            style={{ color: "red", marginTop: "8px" }}
+          >{`${restoreError}`}</div>
         )}
       </Modal>
     );
@@ -532,6 +532,9 @@ export function ActionBar({
     } else {
       return render_action_buttons();
     }
+  }
+  if (student_project_functionality.disableActions) {
+    return <div></div>;
   }
   if (checked_files.size === 0 && IS_MOBILE) {
     return null;

@@ -69,9 +69,7 @@ export default function HelpMeFix({
     "help-me-fix-solution",
   );
 
-  if (redux == null || (!canGetHint && !canGetSolution)) {
-    return null;
-  }
+  const shouldRender = redux != null && (canGetHint || canGetSolution);
 
   function createMessageMode(
     mode: "solution" | "hint",
@@ -96,14 +94,18 @@ export default function HelpMeFix({
   const hintText = createMessageMode("hint");
 
   useAsyncEffect(async () => {
+    if (!shouldRender) return;
     // compute the number of tokens (this MUST be a lazy import):
-    const { getMaxTokens, numTokensUpperBound } = await import(
-      "@cocalc/frontend/misc/llm"
-    );
+    const { getMaxTokens, numTokensUpperBound } =
+      await import("@cocalc/frontend/misc/llm");
 
     setSolutionTokens(numTokensUpperBound(solutionText, getMaxTokens(model)));
     setHintTokens(numTokensUpperBound(hintText, getMaxTokens(model)));
-  }, [model, solutionText, hintText]);
+  }, [model, shouldRender, solutionText, hintText]);
+
+  if (!shouldRender) {
+    return null;
+  }
 
   async function onConfirm(mode: "solution" | "hint") {
     setGettingHelp(true);

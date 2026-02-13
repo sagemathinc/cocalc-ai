@@ -154,6 +154,8 @@ export class AppRedux extends AppReduxBase {
     selectFrom: (store?: ProjectStore) => T,
     project_id?: string,
   ): T {
+    // The hook is exposed as a class method for API compatibility.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     return useSelector<any, T>((_) => {
       let projectStore = undefined;
       if (project_id) {

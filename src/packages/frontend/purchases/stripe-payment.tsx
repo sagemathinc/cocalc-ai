@@ -38,7 +38,7 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { debounce } from "lodash";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { join } from "path";
-import { moneyToStripe, stripeToMoney } from "@cocalc/util/money";
+import { stripeToDecimal, decimalToStripe } from "@cocalc/util/stripe/calc";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { LineItemsTable } from "./line-items";
 import { AddressButton } from "./address";
@@ -83,6 +83,11 @@ export default function StripePayment({
     })();
   }, []);
 
+  const lineItemsKey = JSON.stringify(lineItems ?? []);
+  useEffect(() => {
+    setRequiresPayment(false);
+  }, [lineItemsKey]);
+
   if (lineItems == null || lineItems.length == 0) {
     // no payment needed.
     return null;
@@ -90,12 +95,9 @@ export default function StripePayment({
 
   let totalStripe = 0;
   for (const lineItem of lineItems) {
-    totalStripe += moneyToStripe(lineItem.amount);
+    const lineItemAmountStripe = decimalToStripe(lineItem.amount);
+    totalStripe += lineItemAmountStripe;
   }
-
-  useEffect(() => {
-    setRequiresPayment(false);
-  }, [JSON.stringify(lineItems)]);
 
   const showOneClick =
     (hasPaymentMethods === true || hasPaymentMethods == null) &&
@@ -110,7 +112,7 @@ export default function StripePayment({
       <LineItemsTable
         lineItems={lineItems.concat({
           description: "Amount due (excluding tax)",
-          amount: stripeToMoney(totalStripe).toNumber(),
+          amount: stripeToDecimal(totalStripe),
           extra: true,
           bold: true,
         })}
@@ -136,7 +138,7 @@ export default function StripePayment({
                         purpose,
                         metadata,
                       });
-                      onFinished?.(stripeToMoney(totalStripe).toNumber());
+                      onFinished?.(stripeToDecimal(totalStripe));
                     } catch (err) {
                       setError(`${err}`);
                     } finally {
@@ -282,7 +284,7 @@ function StripeCheckout({
             showIcon
             style={{ width: "90%", margin: "15px auto", fontSize: "12pt" }}
             type="warning"
-            title={
+            message={
               <b>
                 If you have a problem paying below, add a{" "}
                 <a
@@ -304,7 +306,7 @@ function StripeCheckout({
         options={{
           fetchClientSecret: async () => secret.clientSecret,
           onComplete: () => {
-            onFinished?.(stripeToMoney(totalStripe).toNumber());
+            onFinished?.(stripeToDecimal(totalStripe));
           },
         }}
         stripe={loadStripe()}

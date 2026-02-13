@@ -4,7 +4,7 @@
  */
 
 import { Button, Popover } from "antd";
-import { CSSProperties, useMemo } from "react";
+import { CSSProperties } from "react";
 import { Icon, LabeledRow, Markdown } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import {
@@ -58,14 +58,13 @@ export function RenderRow({
   showAdvanced,
   onOpenWizard,
 }: RenderRowProps) {
+  const rootfsManifestUrls = [
+    data?.project_rootfs_manifest_url,
+    data?.project_rootfs_manifest_url_extra,
+  ]
+    .map((url) => `${url ?? ""}`.trim())
+    .filter((url) => url.length > 0);
   if (data == null) return null;
-  const rootfsManifestUrls = useMemo(
-    () =>
-      [data.project_rootfs_manifest_url, data.project_rootfs_manifest_url_extra]
-        .map((url) => `${url ?? ""}`.trim())
-        .filter((url) => url.length > 0),
-    [data.project_rootfs_manifest_url, data.project_rootfs_manifest_url_extra],
-  );
 
   function matchesRequiredEquals(raw: any, equals: string | string[]) {
     if (Array.isArray(equals)) {
