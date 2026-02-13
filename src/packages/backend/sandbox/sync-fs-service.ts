@@ -707,6 +707,7 @@ export class SyncFsService extends EventEmitter {
       info.heads.size === 0 || info.lastSeq == null
         ? undefined
         : info.lastSeq + 1;
+    let sawUpdatesSinceLastSeq = false;
     if (process.env.SYNC_FS_DEBUG) {
       console.log("sync-fs getStreamHeads start", { string_id, start_seq });
     }
@@ -715,6 +716,7 @@ export class SyncFsService extends EventEmitter {
         timeout: 15000,
         start_seq,
       })) {
+        sawUpdatesSinceLastSeq = true;
         const p: any = mesg;
         if (typeof seq === "number") info.lastSeq = seq;
         const parentIds = Array.isArray(p.parents)
@@ -737,6 +739,31 @@ export class SyncFsService extends EventEmitter {
         console.log("sync-fs getStreamHeads error", err);
       }
       // fall through with whatever we gathered
+    }
+    // If we resumed from a persisted lastSeq, saw no newer updates, and can no
+    // longer load that persisted seq, then the underlying persist stream was
+    // reset (e.g. sqlite deleted). Drop stale heads/version so the next write
+    // starts a fresh lineage instead of appending orphan patches.
+    if (
+      start_seq !== undefined &&
+      !sawUpdatesSinceLastSeq &&
+      info.lastSeq != null
+    ) {
+      const hasPersistedSeq = await this.streamHasSeq(writer, info.lastSeq);
+      if (!hasPersistedSeq) {
+        if (process.env.SYNC_FS_DEBUG) {
+          console.log("sync-fs getStreamHeads reset-detected", {
+            string_id,
+            lastSeq: info.lastSeq,
+          });
+        }
+        info = {
+          heads: new Set<PatchId>(),
+          maxVersion: 0,
+          maxTimeMs: 0,
+          lastSeq: undefined,
+        };
+      }
     }
     // If we still have no heads but saw versions, fallback to full replay once.
     if (
@@ -772,5 +799,16 @@ export class SyncFsService extends EventEmitter {
       maxVersion: info.maxVersion,
       maxTimeMs: info.maxTimeMs,
     };
+  }
+
+  private async streamHasSeq(
+    writer: AStream<any>,
+    seq: number,
+  ): Promise<boolean> {
+    try {
+      return (await writer.get(seq, { timeout: 2000 })) != null;
+    } catch {
+      return false;
+    }
   }
 }

@@ -32,6 +32,10 @@ class FakeAStream {
     }
   }
 
+  async get(seq: number): Promise<any | undefined> {
+    return this.messages.find((m) => m.seq === seq)?.mesg;
+  }
+
   close(): void {
     // no-op
   }
@@ -215,6 +219,38 @@ describe("SyncFsService", () => {
     const head = store.getFsHead("sid2");
     expect(head?.heads).toEqual([published.time]);
     expect(head?.lastSeq).toBe(fake.messages.length);
+    svc.close();
+  }, 10_000);
+
+  it("resets stale persisted heads if stream was deleted", async () => {
+    const dbPath = tmpNameSync({ prefix: "sync-fs-heads-", postfix: ".db" });
+    const store = new SyncFsWatchStore(dbPath);
+    store.setFsHead({
+      string_id: "sid3",
+      time: legacyPatchId(123),
+      version: 7,
+      heads: [legacyPatchId(123)],
+      lastSeq: 42,
+    });
+
+    // Simulate persist reset: stream has no historical messages.
+    const fake = new FakeAStream([]);
+    const svc = new SyncFsService(store);
+    (svc as any).getPatchWriter = async () => fake;
+
+    const meta = { project_id: "p3", relativePath: "d.txt", string_id: "sid3" };
+    const change = { patch: [], content: "fresh", hash: "h4", deleted: false };
+    await (svc as any).appendPatch(meta, "change", change);
+
+    const published = fake.messages[fake.messages.length - 1].mesg;
+    expect(Array.isArray(published.parents)).toBe(true);
+    expect(published.parents.length).toBe(0);
+    expect(published.version).toBe(1);
+
+    const head = store.getFsHead("sid3");
+    expect(head?.version).toBe(1);
+    expect(head?.lastSeq).toBe(1);
+    expect(head?.heads?.length).toBe(1);
     svc.close();
   }, 10_000);
 });
