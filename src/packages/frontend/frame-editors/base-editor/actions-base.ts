@@ -21,6 +21,43 @@ const WIKI_HELP_URL = "https://github.com/sagemathinc/cocalc/wiki/";
 const SAVE_ERROR = "Error saving file to disk. ";
 const SAVE_WORKAROUND =
   "Ensure your network connection is solid. If this problem persists, you might need to close and open this file, restart this project in project settings, or contact support (help@cocalc.com)";
+const FAST_OPEN_SYNCSTRING_FLAG_QUERY_PARAM = "cocalc_fast_open_syncstring";
+const FAST_OPEN_SYNCSTRING_FLAG_LOCAL_STORAGE_KEY =
+  "cocalc.fast_open.syncstring";
+const FAST_OPEN_SYNCSTRING_STATUS = "Loading live collaboration...";
+
+function parseBooleanFlag(value?: string | null): boolean | undefined {
+  if (value == null) return;
+  const v = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return;
+}
+
+function isFastOpenSyncstringEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const queryFlag = parseBooleanFlag(
+      new URLSearchParams(window.location.search).get(
+        FAST_OPEN_SYNCSTRING_FLAG_QUERY_PARAM,
+      ),
+    );
+    if (queryFlag != null) {
+      return queryFlag;
+    }
+  } catch {
+    // no-op
+  }
+  try {
+    return (
+      parseBooleanFlag(
+        window.localStorage.getItem(FAST_OPEN_SYNCSTRING_FLAG_LOCAL_STORAGE_KEY),
+      ) ?? false
+    );
+  } catch {
+    return false;
+  }
+}
 
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -208,6 +245,10 @@ export class BaseEditorActions<
   private _update_misspelled_words_last_hash: any;
   private _active_id_history: string[] = [];
   private _spellcheck_is_supported: boolean = false;
+  private optimisticFastOpenEnabled: boolean = isFastOpenSyncstringEnabled();
+  private optimisticFastOpenToken: number = 0;
+  private optimisticFastOpenValue?: string;
+  private optimisticFastOpenApplied: boolean = false;
   // True when the next syncstring change event is expected to be our own commit,
   // so remote handling can skip re-merging our own write.
   private _suppress_remote_once: boolean = false;
@@ -249,6 +290,65 @@ export class BaseEditorActions<
       delete cmAny._applying_remote;
     });
     this.setState({ value: merged });
+  }
+
+  private canUseOptimisticFastOpen(): boolean {
+    return this.optimisticFastOpenEnabled && this.doctype === "syncstring";
+  }
+
+  private startOptimisticFastOpen(): void {
+    if (!this.canUseOptimisticFastOpen()) return;
+    const fs = this._get_project_actions()?.fs?.();
+    if (typeof fs?.readFile !== "function") return;
+    const token = ++this.optimisticFastOpenToken;
+    void (async () => {
+      try {
+        const raw = await fs.readFile(this.path, "utf8");
+        if (this.isClosed() || token !== this.optimisticFastOpenToken) return;
+        if (this._syncstring?.get_state?.() === "ready") return;
+        const value =
+          typeof raw === "string" ? raw : (raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`;
+        this.optimisticFastOpenValue = value;
+        this.optimisticFastOpenApplied = true;
+        this.setState({
+          value,
+          is_loaded: true,
+          read_only: true,
+          status: FAST_OPEN_SYNCSTRING_STATUS,
+        });
+        mark_open_phase(this.project_id, this.path, "optimistic_ready", {
+          bytes: value.length,
+        });
+      } catch {
+        // fallback to normal path when optimistic read fails
+      }
+    })();
+  }
+
+  private completeOptimisticFastOpen(): void {
+    if (!this.optimisticFastOpenApplied) return;
+    this.optimisticFastOpenToken += 1;
+    this.optimisticFastOpenApplied = false;
+    let liveValue: string | undefined;
+    try {
+      liveValue = this._syncstring?.to_str();
+    } catch {
+      liveValue = undefined;
+    }
+    if (this.optimisticFastOpenValue != null && liveValue != null) {
+      if (this.optimisticFastOpenValue !== liveValue) {
+        mark_open_phase(this.project_id, this.path, "handoff_differs", {
+          optimistic_bytes: this.optimisticFastOpenValue.length,
+          live_bytes: liveValue.length,
+        });
+      }
+      this.setState({ value: liveValue });
+    }
+    this.optimisticFastOpenValue = undefined;
+    if (this.store?.get("status") === FAST_OPEN_SYNCSTRING_STATUS) {
+      this.setState({ status: "" });
+    }
+    mark_open_phase(this.project_id, this.path, "handoff_done");
   }
 
   // Entry point for any syncstring change: merge remote with live buffer and apply.
@@ -420,6 +520,7 @@ export class BaseEditorActions<
         throw Error(`invalid doctype="${this.doctype}"`);
       }
     }
+    this.startOptimisticFastOpen();
 
     const sessionStart = Date.now();
     this._syncstring.on("deleted", () => {
@@ -470,6 +571,7 @@ export class BaseEditorActions<
       this._syncstring_metadata();
       this._init_settings();
       this._init_syncstring_value();
+      this.completeOptimisticFastOpen();
       if (
         !this.store.get("is_loaded") &&
         (this._syncdb === undefined || this._syncdb_init)
