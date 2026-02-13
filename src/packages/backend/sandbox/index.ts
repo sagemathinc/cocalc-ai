@@ -946,6 +946,7 @@ export class SandboxedFilesystem {
       project_id?: string;
       relativePath?: string;
       string_id?: string;
+      history_epoch?: number;
       doctype?: any;
     },
   ): Promise<void> => {
@@ -962,6 +963,7 @@ export class SandboxedFilesystem {
       project_id,
       relativePath,
       string_id,
+      history_epoch: info?.history_epoch,
       doctype: info?.doctype,
     });
   };

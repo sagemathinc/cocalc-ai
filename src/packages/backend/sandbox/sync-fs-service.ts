@@ -32,6 +32,7 @@ export interface WatchMeta {
   project_id?: string;
   relativePath?: string;
   string_id?: string;
+  history_epoch?: number;
   doctype?: {
     type?: string;
     patch_format?: number;
@@ -535,7 +536,15 @@ export class SyncFsService extends EventEmitter {
           version,
         });
       }
-      const { seq } = await writer.publish(obj);
+      const headers =
+        typeof meta.history_epoch === "number" &&
+        Number.isFinite(meta.history_epoch)
+          ? { history_epoch: meta.history_epoch }
+          : undefined;
+      const { seq } = await writer.publish(
+        obj,
+        headers != null ? { headers } : undefined,
+      );
       this.store.setFsHead({ string_id, time, version });
       this.updateStreamInfo(string_id, obj, seq);
       if (process.env.SYNC_FS_DEBUG) {
