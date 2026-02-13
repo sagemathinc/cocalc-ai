@@ -19,11 +19,32 @@ set -euo pipefail
 ROOT="$(realpath "$(dirname "$0")/../../..")"
 OUT="${1:-$ROOT/packages/plus/build/bundle}"
 
+case "${OSTYPE}" in
+  linux*) TARGET_OS="linux" ;;
+  darwin*) TARGET_OS="darwin" ;;
+  *)
+    echo "unsupported platform: ${OSTYPE}" >&2
+    exit 1
+    ;;
+esac
+
+case "$(uname -m)" in
+  x86_64) TARGET_ARCH="x64" ;;
+  aarch64|arm64) TARGET_ARCH="arm64" ;;
+  *)
+    echo "unsupported architecture: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+TARGET_PREBUILDS_DIR="${TARGET_OS}-${TARGET_ARCH}"
+
 echo "WARNING: be sure to 'cd static && pnpm clean && pnpm install && pnpm build' to reset the static content!"
 
 echo "Building CoCalc Plus bundle..."
 echo "  root: $ROOT"
 echo "  out : $OUT"
+echo "  target: ${TARGET_PREBUILDS_DIR}"
 
 mkdir -p "$OUT"
 rm -rf "$OUT"/*
@@ -36,7 +57,6 @@ pnpm --filter @cocalc/plus build
 echo "- Bundle entry point with @vercel/ncc"
 ncc build packages/plus/dist/bin/start.js \
   -o "$OUT"/bundle \
-  --source-map \
   --external node-pty \
   --external bufferutil \
   --external utf-8-validate \
@@ -49,9 +69,21 @@ ZEROMQ_BUILD=$(find packages -path "*node_modules/zeromq/build" -type d -print -
 if [ -n "$ZEROMQ_BUILD" ]; then
   mkdir -p "$OUT"/bundle/build
   cp -r "$ZEROMQ_BUILD/"* "$OUT"/bundle/build/
-  # zeromq looks for ../build relative to the bundle root, so mirror it there too.
-  mkdir -p "$OUT"/build
-  cp -r "$ZEROMQ_BUILD/"* "$OUT"/build/
+  # Keep only target OS + arch for SEA output.
+  find "$OUT"/bundle/build -mindepth 1 -maxdepth 1 -type d \
+    ! -name "$TARGET_OS" -exec rm -rf {} +
+  if [ -d "$OUT"/bundle/build/"$TARGET_OS" ]; then
+    find "$OUT"/bundle/build/"$TARGET_OS" -mindepth 1 -maxdepth 1 -type d \
+      ! -name "$TARGET_ARCH" -exec rm -rf {} +
+  fi
+  if [ "$TARGET_OS" = "linux" ]; then
+    # SEA target is glibc-based; drop musl payloads.
+    rm -rf "$OUT"/bundle/build/linux/"$TARGET_ARCH"/node/musl-* || true
+  fi
+  # zeromq looks for ../build relative to the bundle root; use a symlink
+  # so we don't duplicate payloads in the tarball.
+  rm -rf "$OUT"/build
+  ln -s "bundle/build" "$OUT/build"
 else
   echo "zeromq build directory not found; skipping copy"
 fi
@@ -85,20 +117,22 @@ if [ -d "$NODE_PTY_DIR" ]; then
     -exec rm -rf {} +
   # Keep only prebuilds for the target OS.
   if [ -d "$NODE_PTY_DIR/prebuilds" ]; then
-    case "${OSTYPE}" in
-      linux*) keep='linux-*' ;;
-      darwin*) keep='darwin-*' ;;
-      *) keep='' ;;
-    esac
-    if [ -n "$keep" ]; then
-      find "$NODE_PTY_DIR/prebuilds" -mindepth 1 -maxdepth 1 -type d \
-        ! -name "$keep" -exec rm -rf {} +
-    fi
+    find "$NODE_PTY_DIR/prebuilds" -mindepth 1 -maxdepth 1 -type d \
+      ! -name "$TARGET_PREBUILDS_DIR" -exec rm -rf {} +
   fi
 fi
 
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
+
+echo "- Prune bufferutil/utf-8-validate prebuilds to target"
+for pkg in bufferutil utf-8-validate; do
+  prebuilds="$OUT/bundle/node_modules/$pkg/prebuilds"
+  if [ -d "$prebuilds" ]; then
+    find "$prebuilds" -mindepth 1 -maxdepth 1 -type d \
+      ! -name "$TARGET_PREBUILDS_DIR" -exec rm -rf {} +
+  fi
+done
 
 copy_js_pkg() {
   local pkg="$1"
@@ -196,16 +230,5 @@ rsync -a --delete \
   --exclude '*.map' \
   --exclude 'embed-*.js' \
   packages/static/dist/ "$OUT/static/"
-
-echo "- Remove other platform binaries"
-
-case "${OSTYPE}" in
-  linux*)
-    rm -rf "$OUT"/build/win32 "$OUT"/build/darwin
-    ;;
-  darwin*)
-    rm -rf "$OUT"/build/win32 "$OUT"/build/linux
-    ;;
-esac
 
 echo "- Bundle created at $OUT"
