@@ -2914,9 +2914,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         return; // project closed already
       }
       // Provisional directory context to avoid flashing "/" while stat is in flight.
-      // If this turns out to be a file, open_file will set the correct active tab/path.
+      // If this turns out to be a file, use its parent directory context.
       if (this.isDirViaCache(full_path) !== false) {
-        this.set_current_path(full_path);
+        this.set_current_path(parent_path);
         this.set_active_tab("files", {
           update_file_listing: false,
           change_history: false,

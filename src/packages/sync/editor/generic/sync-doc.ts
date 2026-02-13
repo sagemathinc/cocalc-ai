@@ -134,6 +134,7 @@ export interface SyncOpts0 {
   // is the Set of all values.  If true, that initial big
   // change event happens, but the Set is empty.
   ignoreInitialChanges?: boolean;
+
 }
 
 export interface SyncOpts extends SyncOpts0 {

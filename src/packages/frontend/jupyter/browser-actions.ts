@@ -199,6 +199,13 @@ export class JupyterActions extends JupyterActions0 {
           state.metadata = fromJS(metadata);
         }
         this.setState(state);
+        // JupyterEditor renders a loading spinner until cm_options exists.
+        // During optimistic open, initialize cm options immediately so cells
+        // become visible before syncdb reaches ready.
+        this.set_cm_options();
+        // Frame-tree wrappers gate rendering on editor_actions.is_loaded.
+        // For notebooks, lift that gate as soon as optimistic preview data is ready.
+        this.jupyterEditorActions?.setState?.({ is_loaded: true });
         this.store.emit("cell-list-recompute");
         this.optimisticFastOpenApplied = true;
 
@@ -270,6 +277,9 @@ export class JupyterActions extends JupyterActions0 {
     this.nbgrader_actions = new NBGraderActions(this, this.redux);
 
     const handleSyncdbReady = () => {
+      mark_open_phase(this.project_id, this.path, "sync_ready", {
+        source: "syncdb",
+      });
       if (this.optimisticFastOpenApplied) {
         this.optimisticFastOpenApplied = false;
         mark_open_phase(this.project_id, this.path, "handoff_done", {
