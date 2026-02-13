@@ -203,11 +203,11 @@ export const LogEntry: React.FC<Props> = React.memo(
           )}
           {details.length > 0 && (
             <>
-              <div style={{ fontWeight: 600, marginTop: "0.4em" }}>
-                Latest mark details
-              </div>
-              {details.map(([key, value]) => (
-                <div key={key}>
+              {details.map(([key, value], i) => (
+                <div
+                  key={key}
+                  style={i === 0 ? { marginTop: "0.4em" } : undefined}
+                >
                   {key}: {String(value)}
                 </div>
               ))}
@@ -225,7 +225,7 @@ export const LogEntry: React.FC<Props> = React.memo(
       const timing =
         visibleMs != null ? (
           <span style={{ color: COLORS.GRAY_M }}>
-            (visible in {formatDuration(visibleMs)})
+            ({formatDuration(visibleMs)})
           </span>
         ) : null;
       const timingWithHover =
