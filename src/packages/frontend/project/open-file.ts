@@ -88,13 +88,15 @@ export async function open_file(
     return;
   }
 
+  const foreground = opts.foreground ?? true;
+  const foreground_project = opts.foreground_project ?? foreground;
   opts = defaults(opts, {
     path: required,
     ext: undefined,
     line: undefined,
     fragmentId: undefined,
-    foreground: true,
-    foreground_project: true,
+    foreground,
+    foreground_project,
     chat: undefined,
     chat_width: undefined,
     ignore_kiosk: false,
@@ -123,12 +125,15 @@ export async function open_file(
     return;
   }
 
-  // ensure the project is opened -- otherwise the modal to start
-  // the project won't appear.
-  redux.getActions("projects").open_project({
-    project_id: actions.project_id,
-    switch_to: opts.foreground_project,
-  });
+  // For foreground opens, ensure the project is opened so startup UI appears.
+  // For background opens, do not call open_project here since it can alter
+  // the current file listing target (e.g. force "home/").
+  if (opts.foreground_project) {
+    redux.getActions("projects").open_project({
+      project_id: actions.project_id,
+      switch_to: true,
+    });
+  }
 
   const tabIsOpened = () =>
     !!actions.get_store()?.get("open_files")?.has(displayPath);
@@ -232,7 +237,7 @@ export async function open_file(
 
   // Wait for the project to start opening.
   try {
-    await actions.ensureProjectIsOpen();
+    await actions.ensureProjectIsOpen(opts.foreground_project);
     if (!tabIsOpened()) {
       return;
     }

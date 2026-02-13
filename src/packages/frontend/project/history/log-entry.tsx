@@ -221,6 +221,10 @@ export const LogEntry: React.FC<Props> = React.memo(
       const marks = getOpenPhaseMarks(event);
       const visibleMs =
         event.time ?? marks.optimistic_ready ?? marks.sync_ready;
+      const filename =
+        typeof event.filename == "string" && event.filename.length > 0
+          ? event.filename
+          : undefined;
       const phaseTooltip = renderOpenPhaseTooltip(event);
       const timing =
         visibleMs != null ? (
@@ -240,22 +244,28 @@ export const LogEntry: React.FC<Props> = React.memo(
         <span>
           Opened
           <Gap />
-          <PathLink
-            path={event.filename}
-            full={true}
-            style={cursor ? selected_item : undefined}
-            trunc={TRUNC}
-            project_id={project_id}
-            dimExtensions={dimFileExtensions}
-            onOpen={() =>
-              track("open-file", {
-                how: "project-log",
-                type: "open_file",
-                path: event.filename,
-                project_id,
-              })
-            }
-          />{" "}
+          {filename != null ? (
+            <PathLink
+              path={filename}
+              full={true}
+              style={cursor ? selected_item : undefined}
+              trunc={TRUNC}
+              project_id={project_id}
+              dimExtensions={dimFileExtensions}
+              onOpen={() =>
+                track("open-file", {
+                  how: "project-log",
+                  type: "open_file",
+                  path: filename,
+                  project_id,
+                })
+              }
+            />
+          ) : (
+            <span style={{ color: COLORS.GRAY_M }}>
+              (file path unavailable)
+            </span>
+          )}{" "}
           {timingWithHover}
           {event.deleted && (
             <>
@@ -918,6 +928,9 @@ export const LogEntry: React.FC<Props> = React.memo(
         case "open_project":
           return "folder-open";
         case "open": // open a file
+          if (typeof event.filename != "string" || event.filename.length == 0) {
+            return "file-code";
+          }
           const ext = misc.filename_extension(event.filename);
           const info = file_associations[ext];
           if (info == null) return "file-code";

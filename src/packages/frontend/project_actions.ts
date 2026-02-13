@@ -537,12 +537,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
-  ensureProjectIsOpen = async () => {
+  ensureProjectIsOpen = async (switch_to: boolean = true) => {
     const s = this.redux.getStore("projects");
     if (!s.is_project_open(this.project_id)) {
       this.redux.getActions("projects").open_project({
         project_id: this.project_id,
-        switch_to: true,
+        switch_to,
       });
       await s.waitUntilProjectIsOpen(this.project_id, 30);
     }
@@ -624,7 +624,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return "/root";
     }
     const store = this.get_store();
-    const homeDirectory = store?.get("available_features")?.get("homeDirectory");
+    const homeDirectory = store
+      ?.get("available_features")
+      ?.get("homeDirectory");
     if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
       return normalizeAbsolutePath(homeDirectory);
     }
@@ -720,7 +722,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       // Defensive decode for URLs that accidentally encoded absolute /home/*
       // paths as /home/<home-tail>/..., which would otherwise duplicate.
-      const homeTail = home.startsWith("/home/") ? home.slice("/home/".length) : "";
+      const homeTail = home.startsWith("/home/")
+        ? home.slice("/home/".length)
+        : "";
       if (
         homeTail.length > 0 &&
         (normalized === homeTail || normalized.startsWith(`${homeTail}/`))
@@ -849,10 +853,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     switch (key) {
       case "files":
         if (opts.change_history) {
-          this.set_url_to_path(
-            store.get("current_path_abs") ?? "/",
-            "",
-          );
+          this.set_url_to_path(store.get("current_path_abs") ?? "/", "");
         }
         break;
 
@@ -1245,7 +1246,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   public open_in_new_browser_window(path: string, fullscreen = "kiosk"): void {
-    let url = join(appBasePath, this._url_in_project(this.toUrlPath(path, false)));
+    let url = join(
+      appBasePath,
+      this._url_in_project(this.toUrlPath(path, false)),
+    );
     url += "?session=";
     if (fullscreen) {
       url += `&fullscreen=${fullscreen}`;
@@ -1719,8 +1723,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     let history_path_abs = store.get("history_path_abs") || "/";
     const is_adjacent_abs =
-      pathAbs.length > 0 &&
-      !(history_path_abs + "/").startsWith(pathAbs + "/");
+      pathAbs.length > 0 && !(history_path_abs + "/").startsWith(pathAbs + "/");
     const is_nested_abs = pathAbs.length > history_path_abs.length;
     if (is_adjacent_abs || is_nested_abs) {
       history_path_abs = pathAbs;
@@ -2336,7 +2339,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // using listings cache, attempt to tell if path is a directory;
   // undefined if no data about path in the cache.
   isDirViaCache = (path: string): boolean | undefined => {
-    if (!path || path === "." || path === "/" || this.isVirtualListingPath(path)) {
+    if (
+      !path ||
+      path === "." ||
+      path === "/" ||
+      this.isVirtualListingPath(path)
+    ) {
       return true;
     }
     const { head: dir, tail: base } = misc.path_split(path);
@@ -2399,11 +2407,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
-  deleteFiles = async ({
-    paths,
-  }: {
-    paths: string[];
-  }): Promise<void> => {
+  deleteFiles = async ({ paths }: { paths: string[] }): Promise<void> => {
     if (paths.length == 0) {
       // nothing to do
       return;
@@ -2564,10 +2568,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
     }
     const store = this.get_store();
-    const basePath =
-      current_path ??
-      store?.get("current_path_abs") ??
-      "/";
+    const basePath = current_path ?? store?.get("current_path_abs") ?? "/";
     let s = misc.path_to_file(this.toAbsoluteCurrentPath(basePath), name);
     if (ext != null && misc.filename_extension(s) !== ext) {
       s = `${s}.${ext}`;
@@ -2587,9 +2588,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }): Promise<void> => {
     const store = this.get_store();
     const basePath = this.toAbsoluteCurrentPath(
-      current_path ??
-        store?.get("current_path_abs") ??
-        "/",
+      current_path ?? store?.get("current_path_abs") ?? "/",
     );
     const path = join(basePath, name);
     const fs = this.fs();
@@ -2626,9 +2625,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (misc.is_only_downloadable(name)) {
       const store = this.get_store();
       const basePath = this.toAbsoluteCurrentPath(
-        current_path ??
-          store?.get("current_path_abs") ??
-          "/",
+        current_path ?? store?.get("current_path_abs") ?? "/",
       );
       this.new_file_from_web(name, basePath);
       return;
@@ -2648,9 +2645,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
     const store = this.get_store();
     const basePath = this.toAbsoluteCurrentPath(
-      current_path ??
-        store?.get("current_path_abs") ??
-        "/",
+      current_path ?? store?.get("current_path_abs") ?? "/",
     );
     let path = join(basePath, name);
     if (ext) {
@@ -2869,17 +2864,24 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const scopedPathIndex = hasScopedPathSource ? 2 : 1;
     // Reserve /home for filesystem routes. Project home tab lives at /project-home.
     const isHomeFileRoute = main_segment === "home";
-    const fileRouteSource: "files" | "home" = isHomeFileRoute ? "home" : "files";
+    const fileRouteSource: "files" | "home" = isHomeFileRoute
+      ? "home"
+      : "files";
     // In lite mode, /home/* URL resolution depends on homeDirectory capability.
     // Ensure configuration is loaded before mapping home-scoped routes.
     if (lite && (fileRouteSource === "home" || scopedPathSource === "home")) {
       const store = this.get_store();
-      const homeDirectory = store?.get("available_features")?.get("homeDirectory");
+      const homeDirectory = store
+        ?.get("available_features")
+        ?.get("homeDirectory");
       if (typeof homeDirectory !== "string" || homeDirectory.length === 0) {
         try {
           await this.init_configuration("main");
         } catch (err) {
-          console.warn("project/load_target: unable to preload configuration", err);
+          console.warn(
+            "project/load_target: unable to preload configuration",
+            err,
+          );
         }
       }
     }
@@ -3214,10 +3216,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       this.setState(x);
     };
-    const path =
-      opts?.path ??
-      store.get("current_path_abs") ??
-      "/";
+    const path = opts?.path ?? store.get("current_path_abs") ?? "/";
     const options = getSearch({
       project_id: this.project_id,
       path,

@@ -64,7 +64,7 @@ import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 type PartialClickEvent = Pick<
   React.MouseEvent | React.KeyboardEvent,
-  "detail" | "shiftKey" | "ctrlKey" | "stopPropagation"
+  "detail" | "shiftKey" | "ctrlKey" | "metaKey" | "stopPropagation"
 >;
 
 const EMPTY_LISTING: [DirectoryListing, FileMap, null, boolean] = [
@@ -191,7 +191,10 @@ export function FilesFlyout({
       const status = op?.summary?.status;
       if (!status) return;
       next.set(op_id, status);
-      if (status === "succeeded" && prevBackupStatuses.current.get(op_id) !== status) {
+      if (
+        status === "succeeded" &&
+        prevBackupStatuses.current.get(op_id) !== status
+      ) {
         shouldRefresh = true;
       }
     });
@@ -287,10 +290,7 @@ export function FilesFlyout({
 
     // the ".." dir does not change the isEmpty state
     // hide ".." if there is a search -- https://github.com/sagemathinc/cocalc/issues/6877
-    if (
-      file_search === "" &&
-      effective_current_path !== "/"
-    ) {
+    if (file_search === "" && effective_current_path !== "/") {
       processedFiles.unshift({
         name: "..",
         isDir: true,
@@ -456,6 +456,7 @@ export function FilesFlyout({
       detail: 1, // single click
       shiftKey: false,
       ctrlKey: false,
+      metaKey: false,
       stopPropagation: () => {},
     };
     // "hack" from explorer/file-listing/file-row.tsx to avoid a click,
@@ -518,7 +519,7 @@ export function FilesFlyout({
         break;
 
       case "open":
-        if (e.shiftKey || e.ctrlKey) {
+        if (e.shiftKey) {
           // Shift case: no prevSelected, otherwise see above
           toggleSelected(index, file.name);
         } else {
