@@ -38,8 +38,21 @@ export interface Sync {
     project_id: string;
     path: string;
   }) => Promise<{ patches: Patch[] }>;
+  purgeHistory: (opts: {
+    account_id?: string;
+    project_id: string;
+    path: string;
+    // when true (default), seed a fresh baseline patch from current file
+    // contents so opening the file does not temporarily appear blank.
+    keep_current_state?: boolean;
+  }) => Promise<{
+    deleted: number;
+    seeded: boolean;
+    history_epoch: number;
+  }>;
 }
 
 export const sync = {
   history: authFirst,
+  purgeHistory: authFirst,
 };
