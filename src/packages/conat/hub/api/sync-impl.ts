@@ -1,4 +1,4 @@
-import { getClient as getConatClient } from "@cocalc/conat/client";
+import { conat as getConatClient } from "@cocalc/conat/client";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { type Patch, type HistoryInfo } from "@cocalc/conat/hub/api/sync";
 import { client_db } from "@cocalc/util/db-schema/client-db";
@@ -18,6 +18,19 @@ type AssertAccessFn = (opts: {
   account_id?: string;
   project_id: string;
 }) => Promise<void> | void;
+
+function resolveConatClient(client?: any) {
+  if (client?.sync != null) {
+    return client;
+  }
+  if (typeof client?.conat === "function") {
+    const raw = client.conat();
+    if (raw?.sync != null) {
+      return raw;
+    }
+  }
+  return getConatClient();
+}
 
 type DocType = {
   type?: string;
@@ -119,7 +132,7 @@ export async function history({
 }): Promise<{ patches: Patch[]; info: HistoryInfo }> {
   await assertAccess?.({ account_id, project_id });
 
-  const conatClient = client ?? getConatClient();
+  const conatClient = resolveConatClient(client);
   const name = patchesStreamName({ path });
   const astream = conatClient.sync.astream({
     name,
@@ -166,7 +179,7 @@ export async function purgeHistory({
 }): Promise<{ deleted: number; seeded: boolean; history_epoch: number }> {
   await assertAccess?.({ account_id, project_id });
 
-  const conatClient = client ?? getConatClient();
+  const conatClient = resolveConatClient(client);
   const string_id = client_db.sha1(project_id, path);
   const name = patchesStreamName({ path });
 

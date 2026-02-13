@@ -45,14 +45,14 @@ export async function init({
   }
   await initUserQuery({ filename });
   const api = await client.subscribe(subject, { queue: "0" });
-  listen(api);
+  listen(api, client);
 }
 
-async function listen(api) {
+async function listen(api, client) {
   for await (const mesg of api) {
     (async () => {
       try {
-        await handleMessage(mesg);
+        await handleMessage(mesg, client);
       } catch (err) {
         logger.debug(`WARNING: unexpected error  - ${err}`);
       }
@@ -60,7 +60,7 @@ async function listen(api) {
   }
 }
 
-async function handleMessage(mesg) {
+async function handleMessage(mesg, client) {
   const request = mesg.data ?? ({} as any);
   let resp, headers;
   try {
@@ -83,8 +83,14 @@ async function handleMessage(mesg) {
       name,
     });
     resp =
-      (await getResponse({ name, args, account_id, project_id, host_id })) ??
-      null;
+      (await getResponse({
+        name,
+        args,
+        account_id,
+        project_id,
+        host_id,
+        client,
+      })) ?? null;
     headers = undefined;
   } catch (err) {
     resp = null;
@@ -164,7 +170,14 @@ export const hubApi: HubApi = {
   reflect,
 } as any;
 
-async function getResponse({ name, args, account_id, project_id, host_id }) {
+async function getResponse({
+  name,
+  args,
+  account_id,
+  project_id,
+  host_id,
+  client,
+}) {
   const [group, functionName] = name.split(".");
   if (functionName == "getSshKeys") {
     // no ssh keys in lite mode for now...
@@ -181,5 +194,8 @@ async function getResponse({ name, args, account_id, project_id, host_id }) {
     project_id,
     host_id,
   });
+  if (group === "sync" && args2?.[0] != null) {
+    args2[0].client = client;
+  }
   return await f(...args2);
 }
