@@ -185,6 +185,10 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
       }
     }
     this.syncdoc.on("change", debounce(this.syncdoc_changed, 750));
+    this.syncdoc.on("history-purged", () => {
+      this.setState({ has_full_history: true });
+      this.syncdoc_changed();
+    });
     // cause initial load -- we could be plugging into an already loaded syncdoc,
     // so there wouldn't be any change event, so we have to trigger this.
     this.syncdoc_changed();
