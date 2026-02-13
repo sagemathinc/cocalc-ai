@@ -10,8 +10,9 @@
 # packages/plus/dist/bin/start.js (delegating to @cocalc/lite/main),
 # and copies the static frontend assets.
 #
-# Native addons copied by ncc (e.g. zeromq, node-pty) are preserved.
-# Additional assets can be copied after this script if needed.
+# Native addons that are marked external (e.g. node-pty) are copied into
+# bundle/node_modules below. Additional assets can be copied after this script
+# if needed.
 
 set -euo pipefail
 
@@ -36,6 +37,7 @@ echo "- Bundle entry point with @vercel/ncc"
 ncc build packages/plus/dist/bin/start.js \
   -o "$OUT"/bundle \
   --source-map \
+  --external node-pty \
   --external bufferutil \
   --external utf-8-validate \
   --external reflect-sync
@@ -67,26 +69,33 @@ copy_native_pkg() {
   fi
 }
 
-echo "- Copy node-pty native addon for current platform"
-case "${OSTYPE}" in
-  linux*)
-    case "$(uname -m)" in
-      x86_64) copy_native_pkg "@lydell/node-pty-linux-x64" ;;
-      aarch64|arm64) copy_native_pkg "@lydell/node-pty-linux-arm64" ;;
-      *) echo "  (unsupported linux arch for node-pty: $(uname -m))" ;;
+echo "- Copy node-pty package"
+copy_native_pkg "node-pty"
+
+echo "- Prune node-pty package"
+NODE_PTY_DIR="$OUT/bundle/node_modules/node-pty"
+if [ -d "$NODE_PTY_DIR" ]; then
+  # Keep only runtime essentials.
+  find "$NODE_PTY_DIR" -mindepth 1 -maxdepth 1 \
+    ! -name lib \
+    ! -name prebuilds \
+    ! -name package.json \
+    ! -name LICENSE \
+    ! -name README.md \
+    -exec rm -rf {} +
+  # Keep only prebuilds for the target OS.
+  if [ -d "$NODE_PTY_DIR/prebuilds" ]; then
+    case "${OSTYPE}" in
+      linux*) keep='linux-*' ;;
+      darwin*) keep='darwin-*' ;;
+      *) keep='' ;;
     esac
-    ;;
-  darwin*)
-    case "$(uname -m)" in
-      x86_64) copy_native_pkg "@lydell/node-pty-darwin-x64" ;;
-      arm64) copy_native_pkg "@lydell/node-pty-darwin-arm64" ;;
-      *) echo "  (unsupported darwin arch for node-pty: $(uname -m))" ;;
-    esac
-    ;;
-  *)
-    echo "  (unsupported platform for node-pty: ${OSTYPE})"
-    ;;
-esac
+    if [ -n "$keep" ]; then
+      find "$NODE_PTY_DIR/prebuilds" -mindepth 1 -maxdepth 1 -type d \
+        ! -name "$keep" -exec rm -rf {} +
+    fi
+  fi
+fi
 
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
