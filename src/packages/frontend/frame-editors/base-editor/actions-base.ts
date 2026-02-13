@@ -25,6 +25,8 @@ const FAST_OPEN_SYNCSTRING_FLAG_QUERY_PARAM = "cocalc_fast_open_syncstring";
 const FAST_OPEN_SYNCSTRING_FLAG_LOCAL_STORAGE_KEY =
   "cocalc.fast_open.syncstring";
 const FAST_OPEN_SYNCSTRING_STATUS = "Loading live collaboration...";
+const FAST_OPEN_HANDOFF_DIFF_STATUS =
+  "Updated to the latest live collaboration state.";
 
 function parseBooleanFlag(value?: string | null): boolean | undefined {
   if (value == null) return;
@@ -255,6 +257,7 @@ export class BaseEditorActions<
   private optimisticFastOpenToken: number = 0;
   private optimisticFastOpenValue?: string;
   private optimisticFastOpenApplied: boolean = false;
+  private optimisticFastOpenStatusToken: number = 0;
   // True when the next syncstring change event is expected to be our own commit,
   // so remote handling can skip re-merging our own write.
   private _suppress_remote_once: boolean = false;
@@ -340,6 +343,7 @@ export class BaseEditorActions<
     this.optimisticFastOpenToken += 1;
     this.optimisticFastOpenApplied = false;
     let liveValue: string | undefined;
+    let differs = false;
     try {
       liveValue = this._syncstring?.to_str();
     } catch {
@@ -347,6 +351,7 @@ export class BaseEditorActions<
     }
     if (this.optimisticFastOpenValue != null && liveValue != null) {
       if (this.optimisticFastOpenValue !== liveValue) {
+        differs = true;
         mark_open_phase(this.project_id, this.path, "handoff_differs", {
           optimistic_bytes: this.optimisticFastOpenValue.length,
           live_bytes: liveValue.length,
@@ -358,7 +363,26 @@ export class BaseEditorActions<
     if (this.store?.get("status") === FAST_OPEN_SYNCSTRING_STATUS) {
       this.setState({ status: "" });
     }
+    if (differs) {
+      this.setTransientOptimisticFastOpenStatus(FAST_OPEN_HANDOFF_DIFF_STATUS);
+    }
     mark_open_phase(this.project_id, this.path, "handoff_done");
+  }
+
+  private setTransientOptimisticFastOpenStatus(
+    status: string,
+    durationMs: number = 5000,
+  ): void {
+    const token = ++this.optimisticFastOpenStatusToken;
+    this.setState({ status });
+    void (async () => {
+      await delay(durationMs);
+      if (this.isClosed()) return;
+      if (token !== this.optimisticFastOpenStatusToken) return;
+      if (this.store?.get("status") === status) {
+        this.setState({ status: "" });
+      }
+    })();
   }
 
   // Entry point for any syncstring change: merge remote with live buffer and apply.
