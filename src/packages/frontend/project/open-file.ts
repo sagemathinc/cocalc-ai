@@ -384,8 +384,13 @@ type OpenPhaseDetails = {
 
 interface OpenTiming {
   id: string;
+  path: string;
   start: number;
   marks: Partial<Record<OpenPhase, number>>;
+  lastPhase?: OpenPhase;
+  lastPhaseDetails?: OpenPhaseDetails;
+  opened_time_ms?: number;
+  deleted?: number;
   opened_time_logged: boolean;
 }
 
@@ -429,6 +434,34 @@ function maybeCleanupOpenTiming(project_id: string, path: string): void {
   }
 }
 
+function buildOpenUpdateEvent(
+  data: OpenTiming,
+  phase?: OpenPhase,
+  elapsed_ms?: number,
+): any {
+  const event: any = {
+    event: "open",
+    action: "open",
+    filename: data.path,
+    open_phase_marks_ms: { ...data.marks },
+  };
+  const effectivePhase = phase ?? data.lastPhase;
+  if (effectivePhase != null) {
+    event.open_phase = effectivePhase;
+    event.open_phase_elapsed_ms = elapsed_ms ?? data.marks[effectivePhase];
+  }
+  if (data.lastPhaseDetails != null) {
+    event.open_phase_details = data.lastPhaseDetails;
+  }
+  if (data.opened_time_ms != null) {
+    event.time = data.opened_time_ms;
+  }
+  if (data.deleted != null) {
+    event.deleted = data.deleted;
+  }
+  return event;
+}
+
 export function restart_open_timer(
   project_id: string,
   path: string,
@@ -438,8 +471,11 @@ export function restart_open_timer(
   if (data == null) return;
   data.start = Date.now();
   data.marks = {};
+  data.lastPhase = undefined;
+  data.lastPhaseDetails = details;
+  data.opened_time_ms = undefined;
+  data.marks.open_start = 0;
   data.opened_time_logged = false;
-  mark_open_phase(project_id, path, "open_start", details);
 }
 
 export function mark_open_phase(
@@ -454,15 +490,11 @@ export function mark_open_phase(
   const now = Date.now();
   const elapsed_ms = now - data.start;
   data.marks[phase] = elapsed_ms;
-  const event: any = {
-    event: "open",
-    open_phase: phase,
-    open_phase_elapsed_ms: elapsed_ms,
-    open_phase_marks_ms: data.marks,
-  };
+  data.lastPhase = phase;
   if (details != null) {
-    event.open_phase_details = details;
+    data.lastPhaseDetails = details;
   }
+  const event = buildOpenUpdateEvent(data, phase, elapsed_ms);
   redux.getProjectActions(project_id).log(event, data.id);
   maybeCleanupOpenTiming(project_id, path);
 }
@@ -499,11 +531,15 @@ export function log_file_open(
     const key = openTimingKey(project_id, path);
     log_open_time[key] = {
       id,
+      path,
       start: Date.now(),
-      marks: {},
+      marks: { open_start: 0 },
+      lastPhaseDetails: undefined,
+      lastPhase: undefined,
+      opened_time_ms: undefined,
+      deleted,
       opened_time_logged: false,
     };
-    mark_open_phase(project_id, path, "open_start");
   }
 }
 
@@ -525,7 +561,8 @@ export function log_opened_time(project_id: string, path: string): void {
   const actions = redux.getProjectActions(project_id);
   const time = Date.now() - start;
   data.opened_time_logged = true;
-  actions.log({ time }, id);
+  data.opened_time_ms = time;
+  actions.log(buildOpenUpdateEvent(data), id);
   maybeCleanupOpenTiming(project_id, path);
 }
 
