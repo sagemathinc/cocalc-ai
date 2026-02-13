@@ -55,6 +55,20 @@ import type {
 import { isUnknownEvent } from "./types";
 
 const TRUNC = 90;
+type OpenPhaseName = NonNullable<OpenFile["open_phase"]>;
+const OPEN_PHASE_ORDER: OpenPhaseName[] = [
+  "optimistic_ready",
+  "sync_ready",
+  "handoff_differs",
+  "handoff_done",
+];
+const OPEN_PHASE_LABEL: Record<OpenPhaseName, string> = {
+  optimistic_ready: "initial file load",
+  sync_ready: "live collaboration ready",
+  handoff_differs: "handoff content differs",
+  handoff_done: "handoff complete",
+  open_start: "open requested",
+};
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { User } = require("@cocalc/frontend/users");
@@ -101,13 +115,34 @@ function TookTime({
   if (ms == undefined) {
     return null;
   }
-  let description = `${ms}ms`;
+  return (
+    <span style={{ color: COLORS.GRAY_M }}>
+      (took {formatDuration(ms, display)})
+    </span>
+  );
+}
 
+function formatDuration(ms: number, display: "seconds" = "seconds"): string {
   if (display == "seconds" && ms >= 1000) {
-    description = `${(Math.round(ms / 100) / 10).toFixed(1)}s`;
+    return `${(Math.round(ms / 100) / 10).toFixed(1)}s`;
   }
+  return `${ms}ms`;
+}
 
-  return <span style={{ color: COLORS.GRAY_M }}>(took {description})</span>;
+function getOpenPhaseMarks(
+  event: OpenFile,
+): Partial<Record<OpenPhaseName, number>> {
+  const marks: Partial<Record<OpenPhaseName, number>> = {
+    ...(event.open_phase_marks_ms ?? {}),
+  };
+  if (
+    event.open_phase != null &&
+    event.open_phase_elapsed_ms != null &&
+    marks[event.open_phase] == null
+  ) {
+    marks[event.open_phase] = event.open_phase_elapsed_ms;
+  }
+  return marks;
 }
 
 function areEqual(prev: Props, next: Props): boolean {
@@ -143,7 +178,64 @@ export const LogEntry: React.FC<Props> = React.memo(
     const otherSettings = useTypedRedux("account", "other_settings");
     const dimFileExtensions = !!otherSettings?.get("dim_file_extensions");
 
+    function renderOpenPhaseTooltip(event: OpenFile): React.JSX.Element | null {
+      const marks = getOpenPhaseMarks(event);
+      const phaseRows = OPEN_PHASE_ORDER.filter(
+        (phase) => marks[phase] != null,
+      );
+      const details = Object.entries(event.open_phase_details ?? {}).filter(
+        ([, value]) => value != null,
+      );
+      if (phaseRows.length == 0) {
+        return null;
+      }
+      return (
+        <div style={{ maxWidth: "34em" }}>
+          {phaseRows.length > 0 && (
+            <>
+              <div style={{ fontWeight: 600 }}>Open phases</div>
+              {phaseRows.map((phase) => (
+                <div key={phase}>
+                  {OPEN_PHASE_LABEL[phase]}: {formatDuration(marks[phase] ?? 0)}
+                </div>
+              ))}
+            </>
+          )}
+          {details.length > 0 && (
+            <>
+              <div style={{ fontWeight: 600, marginTop: "0.4em" }}>
+                Latest mark details
+              </div>
+              {details.map(([key, value]) => (
+                <div key={key}>
+                  {key}: {String(value)}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      );
+    }
+
     function render_open_file(event: OpenFile): React.JSX.Element {
+      const marks = getOpenPhaseMarks(event);
+      const visibleMs =
+        event.time ?? marks.optimistic_ready ?? marks.sync_ready;
+      const phaseTooltip = renderOpenPhaseTooltip(event);
+      const timing =
+        visibleMs != null ? (
+          <span style={{ color: COLORS.GRAY_M }}>
+            (visible in {formatDuration(visibleMs)})
+          </span>
+        ) : null;
+      const timingWithHover =
+        phaseTooltip != null && mode !== "flyout" ? (
+          <Tooltip title={phaseTooltip}>
+            <span>{timing}</span>
+          </Tooltip>
+        ) : (
+          timing
+        );
       return (
         <span>
           Opened
@@ -164,7 +256,7 @@ export const LogEntry: React.FC<Props> = React.memo(
               })
             }
           />{" "}
-          <TookTime ms={event.time} />
+          {timingWithHover}
           {event.deleted && (
             <>
               {" "}
@@ -459,7 +551,8 @@ export const LogEntry: React.FC<Props> = React.memo(
         case "uploaded":
           return (
             <span>
-              {intl.formatMessage(labels.uploaded)} {file_link(e.file, true, 0)}{" "}
+              {intl.formatMessage(labels.uploaded)}{" "}
+              {file_link(e.file, true, 0)}{" "}
             </span>
           );
         case "created":
@@ -877,6 +970,23 @@ export const LogEntry: React.FC<Props> = React.memo(
       }
     }
 
+    function renderFlyoutTooltip(): React.JSX.Element {
+      let phase: React.JSX.Element | null = null;
+      if (
+        typeof event != "string" &&
+        !isUnknownEvent(event) &&
+        event.event == "open"
+      ) {
+        phase = renderOpenPhaseTooltip(event);
+      }
+      return (
+        <>
+          <TimeAgo date={props.time} />
+          {phase != null && <div style={{ marginTop: "0.5em" }}>{phase}</div>}
+        </>
+      );
+    }
+
     switch (mode) {
       case "full":
         const style = props.cursor ? selected_item : backgroundStyle;
@@ -909,14 +1019,7 @@ export const LogEntry: React.FC<Props> = React.memo(
               ...backgroundStyle,
             }}
           >
-            <Tooltip
-              placement="rightTop"
-              title={
-                <>
-                  <TimeAgo date={props.time} />
-                </>
-              }
-            >
+            <Tooltip placement="rightTop" title={renderFlyoutTooltip()}>
               <div style={{ flex: "1", padding: "5px" }}>
                 {render_avatar()} <Icon name={icon()} /> {render_desc()}{" "}
                 {renderDuration()} {renderExtra()}

@@ -51,11 +51,13 @@ function isFastOpenSyncstringEnabled(): boolean {
   try {
     return (
       parseBooleanFlag(
-        window.localStorage.getItem(FAST_OPEN_SYNCSTRING_FLAG_LOCAL_STORAGE_KEY),
-      ) ?? false
+        window.localStorage.getItem(
+          FAST_OPEN_SYNCSTRING_FLAG_LOCAL_STORAGE_KEY,
+        ),
+      ) ?? true
     );
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -83,7 +85,11 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
-import { log_opened_time, mark_open_phase } from "@cocalc/frontend/project/open-file";
+import {
+  log_opened_time,
+  mark_open_phase,
+  restart_open_timer,
+} from "@cocalc/frontend/project/open-file";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import { type SyncOpts, type PatchId } from "@cocalc/sync";
@@ -307,7 +313,9 @@ export class BaseEditorActions<
         if (this.isClosed() || token !== this.optimisticFastOpenToken) return;
         if (this._syncstring?.get_state?.() === "ready") return;
         const value =
-          typeof raw === "string" ? raw : (raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`;
+          typeof raw === "string"
+            ? raw
+            : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
         this.optimisticFastOpenValue = value;
         this.optimisticFastOpenApplied = true;
         this.setState({
@@ -319,6 +327,8 @@ export class BaseEditorActions<
         mark_open_phase(this.project_id, this.path, "optimistic_ready", {
           bytes: value.length,
         });
+        // "Visible to user" for fast-open is when this fs.readFile result lands.
+        log_opened_time(this.project_id, this.path);
       } catch {
         // fallback to normal path when optimistic read fails
       }
@@ -395,11 +405,7 @@ export class BaseEditorActions<
     this.string_cols = descriptor.string_cols;
   }
 
-  _init(
-    project_id: string,
-    path: string,
-    store: any,
-  ): void {
+  _init(project_id: string, path: string, store: any): void {
     this._save_local_view_state = debounce(
       () => this.__save_local_view_state(),
       1500,
@@ -520,8 +526,11 @@ export class BaseEditorActions<
         throw Error(`invalid doctype="${this.doctype}"`);
       }
     }
-    this.startOptimisticFastOpen();
 
+    // File-open timing starts when live sync initialization actually begins,
+    // not when a tab was created in the background.
+    restart_open_timer(this.project_id, this.path, { source: "sync_init" });
+    this.startOptimisticFastOpen();
     const sessionStart = Date.now();
     this._syncstring.on("deleted", () => {
       // the file was deleted -- if we get this right when
@@ -552,6 +561,7 @@ export class BaseEditorActions<
     });
 
     this._syncstring.once("ready", (err) => {
+      mark_open_phase(this.project_id, this.path, "sync_ready");
       if (this.doctype != "none") {
         // doctype = 'none' must be handled elsewhere, e.g., terminals.
         log_opened_time(this.project_id, this.path);
@@ -565,7 +575,6 @@ export class BaseEditorActions<
         // the doc could perhaps be closed by the time this init is fired, in which case just bail -- no point in trying to initialize anything.
         return;
       }
-      mark_open_phase(this.project_id, this.path, "sync_ready");
 
       this._syncstring_init = true;
       this._syncstring_metadata();
@@ -3173,7 +3182,7 @@ export class BaseEditorActions<
       if (node == null) return id;
       if (node.get("path") == path) return id; // already done;
       // Change it --
-    await this.setFrameToCodeEditor({ id, path });
+      await this.setFrameToCodeEditor({ id, path });
       return id;
     }
 

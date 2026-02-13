@@ -373,15 +373,69 @@ export type OpenPhase =
   | "handoff_done"
   | "handoff_differs";
 
-type OpenPhaseDetails = { [key: string]: string | number | boolean | undefined };
+type OpenPhaseDetails = {
+  [key: string]: string | number | boolean | undefined;
+};
 
 interface OpenTiming {
   id: string;
   start: number;
   marks: Partial<Record<OpenPhase, number>>;
+  opened_time_logged: boolean;
 }
 
 const log_open_time: { [path: string]: OpenTiming } = {};
+
+function openTimingKey(project_id: string, path: string): string {
+  return `${project_id}-${normalize(path)}`;
+}
+
+function getOpenTiming(
+  project_id: string,
+  path: string,
+): OpenTiming | undefined {
+  const normalizedPath = normalize(path);
+  const normalizedKey = `${project_id}-${normalizedPath}`;
+  const direct = log_open_time[normalizedKey];
+  if (direct != null) {
+    return direct;
+  }
+  // Backward-compat for entries keyed before normalization.
+  const legacyKey = `${project_id}-${path}`;
+  const legacy = log_open_time[legacyKey];
+  if (legacy != null) {
+    log_open_time[normalizedKey] = legacy;
+    delete log_open_time[legacyKey];
+    return legacy;
+  }
+  return undefined;
+}
+
+function maybeCleanupOpenTiming(project_id: string, path: string): void {
+  const key = openTimingKey(project_id, path);
+  const data = log_open_time[key];
+  if (data == null || !data.opened_time_logged) return;
+  const hasOptimistic = data.marks.optimistic_ready != null;
+  const finalPhase =
+    data.marks.handoff_done != null ||
+    (!hasOptimistic && data.marks.sync_ready != null);
+  if (finalPhase) {
+    delete log_open_time[key];
+  }
+}
+
+export function restart_open_timer(
+  project_id: string,
+  path: string,
+  details?: OpenPhaseDetails,
+): void {
+  const data = getOpenTiming(project_id, path);
+  if (data == null) return;
+  data.start = Date.now();
+  data.marks = {};
+  data.opened_time_logged = false;
+  mark_open_phase(project_id, path, "open_start", details);
+}
 
 export function mark_open_phase(
   project_id: string,
@@ -389,8 +443,8 @@ export function mark_open_phase(
   phase: OpenPhase,
   details?: OpenPhaseDetails,
 ): void {
-  const key = `${project_id}-${path}`;
-  const data = log_open_time[key];
+  path = normalize(path);
+  const data = getOpenTiming(project_id, path);
   if (data == null) return;
   const now = Date.now();
   const elapsed_ms = now - data.start;
@@ -405,6 +459,7 @@ export function mark_open_phase(
     event.open_phase_details = details;
   }
   redux.getProjectActions(project_id).log(event, data.id);
+  maybeCleanupOpenTiming(project_id, path);
 }
 
 export function log_file_open(
@@ -412,6 +467,7 @@ export function log_file_open(
   path: string,
   deleted?: number,
 ): void {
+  path = normalize(path);
   // Only do this if the file isn't
   // deleted, since if it *is* deleted, then user sees a dialog
   // and we only log the open if they select to recreate the file.
@@ -435,11 +491,12 @@ export function log_file_open(
   // since the idea of "finishing opening and rendering" is
   // not simple to define.
   if (id !== undefined) {
-    const key = `${project_id}-${path}`;
+    const key = openTimingKey(project_id, path);
     log_open_time[key] = {
       id,
       start: Date.now(),
       marks: {},
+      opened_time_logged: false,
     };
     mark_open_phase(project_id, path, "open_start");
   }
@@ -450,18 +507,21 @@ export function log_opened_time(project_id: string, path: string): void {
   // this file successfully opened and rendered so that the user can
   // actually see it.  This is used to get a sense for how long things
   // are taking...
-  const key = `${project_id}-${path}`;
-  const data = log_open_time[key];
+  path = normalize(path);
+  const data = getOpenTiming(project_id, path);
   if (data == null) {
     // never setup log event recording the start of open (this would get set in @open_file)
     return;
   }
+  if (data.opened_time_logged) {
+    return;
+  }
   const { id, start } = data;
-  // do not allow recording the time more than once, which would be weird.
-  delete log_open_time[key];
   const actions = redux.getProjectActions(project_id);
   const time = Date.now() - start;
+  data.opened_time_logged = true;
   actions.log({ time }, id);
+  maybeCleanupOpenTiming(project_id, path);
 }
 
 // This modifies the opts object passed into it:
