@@ -2126,22 +2126,128 @@ export class SyncDoc extends EventEmitter {
   };
 
   is_read_only = (): boolean => {
+    if (this.canWriteToPath != null) {
+      return !this.canWriteToPath;
+    }
     if (this.stats) {
-      return isReadOnlyForOwner(this.stats);
+      return isReadOnlyForCurrentUser(this.stats, this.userIdentity);
     } else {
       return false;
     }
   };
 
   private stats?: Stats;
+  private canWriteToPath?: boolean;
+  private userIdentity?: {
+    uid: number;
+    gids: Set<number>;
+  };
+
+  private detectUserIdentity = reuseInFlight(
+    async (): Promise<{ uid: number; gids: Set<number> } | undefined> => {
+      const proc = (globalThis as any)?.process;
+      if (typeof proc?.getuid === "function") {
+        const uid = Number(proc.getuid());
+        const gids = new Set<number>();
+        if (typeof proc?.getgid === "function") {
+          const gid = Number(proc.getgid());
+          if (!Number.isNaN(gid)) gids.add(gid);
+        }
+        if (typeof proc?.getgroups === "function") {
+          for (const groupId of proc.getgroups()) {
+            const num = Number(groupId);
+            if (!Number.isNaN(num)) gids.add(num);
+          }
+        }
+        if (!Number.isNaN(uid)) {
+          return { uid, gids };
+        }
+      }
+
+      // Browser-side fallback: read effective uid/gids from procfs via fs API.
+      try {
+        const status = await this.fs.readFile("/proc/self/status", "utf8");
+        if (typeof status === "string") {
+          const uidLine = status.match(/^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);
+          const gidLine = status.match(/^Gid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);
+          const groupsLine = status.match(/^Groups:\s+(.+)$/m);
+          const effectiveUid = Number(uidLine?.[2] ?? uidLine?.[1]);
+          const effectiveGid = Number(gidLine?.[2] ?? gidLine?.[1]);
+          if (!Number.isNaN(effectiveUid)) {
+            const gids = new Set<number>();
+            if (!Number.isNaN(effectiveGid)) {
+              gids.add(effectiveGid);
+            }
+            const groups = groupsLine?.[1]?.trim().split(/\s+/) ?? [];
+            for (const group of groups) {
+              const num = Number(group);
+              if (!Number.isNaN(num)) gids.add(num);
+            }
+            return { uid: effectiveUid, gids };
+          }
+        }
+      } catch {}
+
+      // Last-resort fallback: infer uid/gid from /home, which maps to HOME in CoCalc.
+      try {
+        const homeStats = (await this.fs.stat("/home")) as Stats;
+        return {
+          uid: Number(homeStats.uid),
+          gids: new Set<number>([Number(homeStats.gid)]),
+        };
+      } catch {
+        return undefined;
+      }
+    },
+  );
+
+  private statWriteAccess = async (): Promise<boolean | undefined> => {
+    // In tests we use minimal clients with stubbed path_access that
+    // do not model real filesystem permissions.
+    if (isTestClient(this.client)) return undefined;
+    if (typeof this.client?.path_access !== "function") return undefined;
+    return await new Promise<boolean | undefined>((resolve) => {
+      try {
+        this.client.path_access({
+          path: this.path,
+          mode: "w",
+          cb: (result) => {
+            // Compatibility: some sync clients (esp. browser/conat adapters)
+            // use boolean callbacks, but some return constant true as a stub.
+            // In that case, fall back to stat-based permission checks.
+            if (typeof result === "boolean") {
+              resolve(undefined);
+              return;
+            }
+            resolve(result == null);
+          },
+        });
+      } catch {
+        resolve(undefined);
+      }
+    });
+  };
+
   stat = async (): Promise<Stats> => {
     if (this.opts.noSaveToDisk) {
       throw Error("the noSaveToDisk options is set");
     }
+    const prevReadOnly = this.is_read_only();
     const prevStats = this.stats;
     this.stats = (await this.fs.stat(this.path)) as Stats;
+    const identity = await this.detectUserIdentity();
+    if (identity != null) {
+      this.userIdentity = identity;
+    }
+    const canWriteToPath = await this.statWriteAccess();
+    if (canWriteToPath != null) {
+      this.canWriteToPath = canWriteToPath;
+    }
     this.isDeleted = false; // definitely not deleted since we just stat' it
-    if (prevStats?.mode != this.stats.mode) {
+    if (
+      prevStats?.mode != this.stats.mode ||
+      prevReadOnly != this.is_read_only()
+    ) {
       // used by clients to track read-only state.
       this.emit("metadata-change");
     }
@@ -2661,7 +2767,28 @@ function isCompletePatchStream(dstream) {
   return false;
 }
 
-function isReadOnlyForOwner(stats): boolean {
-  // 0o200 is owner write permission
-  return (stats.mode & 0o200) === 0;
+function isReadOnlyForCurrentUser(
+  stats,
+  identity?: { uid: number; gids: Set<number> },
+): boolean {
+  const uid = identity?.uid;
+  if (uid == null || Number.isNaN(uid)) {
+    // Unknown current user: conservative fallback to historical behavior.
+    return (stats.mode & 0o200) === 0;
+  }
+  if (uid === 0) {
+    // Root can usually write regardless of mode bits. Any write failures
+    // (e.g., read-only filesystem) are handled by statWriteAccess/save error.
+    return false;
+  }
+  if (Number(stats.uid) === uid) {
+    return (stats.mode & 0o200) === 0;
+  }
+
+  const groups = identity?.gids ?? new Set<number>();
+
+  if (groups.has(Number(stats.gid))) {
+    return (stats.mode & 0o020) === 0;
+  }
+  return (stats.mode & 0o002) === 0;
 }
