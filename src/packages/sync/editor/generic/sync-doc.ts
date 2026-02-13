@@ -204,6 +204,7 @@ export class SyncDoc extends EventEmitter {
   private last_snapshot?: PatchId;
   private last_seq?: number;
   private snapshot_interval: number;
+  private history_epoch?: number;
 
   private users: string[];
 
@@ -2067,8 +2068,38 @@ export class SyncDoc extends EventEmitter {
     this.syncstring_table.set(obj);
     await this.syncstring_table.save();
     this.settings = Map();
+    this.history_epoch = undefined;
     this.emit("metadata-change");
     this.emit("settings-change", this.settings);
+  };
+
+  private metadataHistoryEpoch = (settings: Map<string, any>): number | undefined => {
+    const raw = settings?.get?.("history_epoch");
+    return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+  };
+
+  private reopenPatchflowFromHistoryReset = async (): Promise<void> => {
+    if (this.state === "closed") return;
+    this.patchflowSession?.close();
+    this.patchflowSession = undefined;
+    this.patchflowStore = undefined;
+    this.patchflowCodec = undefined;
+
+    const table = this.patches_table as any;
+    if (table != null) {
+      // This table-level close should not close the entire syncdoc.
+      table.removeListener?.("close", this.close);
+      table.close?.();
+    }
+    // @ts-ignore - reset before re-init
+    this.patches_table = undefined;
+    await this.init_patchflow();
+    this.patches_table?.on?.("close", this.close);
+    this.emit("history-purged", { history_epoch: this.history_epoch });
+    if (this.state === "ready") {
+      this.emit("after-change");
+      this.emit_change();
+    }
   };
 
   private handle_syncstring_update_existing_document = async (
@@ -2099,6 +2130,18 @@ export class SyncDoc extends EventEmitter {
     }
 
     const settings = data.get("settings", Map());
+    const previous_history_epoch = this.history_epoch;
+    const current_history_epoch = this.metadataHistoryEpoch(settings);
+    this.history_epoch = current_history_epoch;
+
+    if (
+      previous_history_epoch != null &&
+      current_history_epoch != null &&
+      current_history_epoch > previous_history_epoch
+    ) {
+      await this.reopenPatchflowFromHistoryReset();
+    }
+
     if (settings !== this.settings) {
       this.settings = settings;
       this.emit("settings-change", settings);
