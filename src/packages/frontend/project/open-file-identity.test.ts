@@ -7,7 +7,6 @@ import {
   log_opened_time,
   mark_open_phase,
 } from "./open-file";
-import { normalizeSyncPathIdentity } from "./utils";
 import { termPath } from "@cocalc/util/terminal/names";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -25,29 +24,6 @@ describe("canonicalPath", () => {
 
   it("keeps hidden term files unchanged", () => {
     expect(canonicalPath("/root/.shell.term")).toBe("/root/.shell.term");
-  });
-});
-
-describe("normalizeSyncPathIdentity", () => {
-  it("keeps relative paths unchanged", () => {
-    expect(normalizeSyncPathIdentity("a/b/c.txt", "/home/wstein")).toBe(
-      "a/b/c.txt",
-    );
-  });
-
-  it("maps absolute home paths to relative identity", () => {
-    expect(
-      normalizeSyncPathIdentity(
-        "/home/wstein/build/cocalc-lite4/a.txt",
-        "/home/wstein",
-      ),
-    ).toBe("build/cocalc-lite4/a.txt");
-  });
-
-  it("keeps absolute paths outside home unchanged", () => {
-    expect(normalizeSyncPathIdentity("/etc/bash.bashrc", "/home/wstein")).toBe(
-      "/etc/bash.bashrc",
-    );
   });
 });
 

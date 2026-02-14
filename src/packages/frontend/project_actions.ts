@@ -66,7 +66,6 @@ import {
   NewFilenames,
   download_href,
   normalize,
-  normalizeSyncPathIdentity,
   url_href,
 } from "@cocalc/frontend/project/utils";
 import { API } from "@cocalc/frontend/project/websocket/api";
@@ -654,10 +653,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return normalized;
     }
     return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
-  };
-
-  private normalizeSyncIdentityPath = (path: string): string => {
-    return normalizeSyncPathIdentity(path, this.getHomeDirectoryForPaths());
   };
 
   private getPathRoute = (
@@ -1340,22 +1335,20 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   private get_sync_path(path: string): string {
-    const display_sync_path = this.normalizeSyncIdentityPath(path);
     const sync_path = this.open_files?.get(path, "sync_path");
     if (typeof sync_path === "string" && sync_path.length > 0) {
-      const normalized_sync_path = this.normalizeSyncIdentityPath(sync_path);
       // Backward-compat: old sessions may persist ipynb tabs with sync_path
       // set to .<name>.ipynb.sage-jupyter2. For editor actions/state, notebooks
       // must be keyed by the user-visible .ipynb path.
       if (
         misc.filename_extension(path).toLowerCase() === "ipynb" &&
-        isJupyterPath(normalized_sync_path)
+        isJupyterPath(sync_path)
       ) {
-        return display_sync_path;
+        return path;
       }
-      return normalized_sync_path;
+      return sync_path;
     }
-    return display_sync_path;
+    return path;
   }
 
   private has_display_path_for_sync_path(
