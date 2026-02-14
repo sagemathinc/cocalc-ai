@@ -420,8 +420,8 @@ Task SBOX-101: Migrate safe-mode mutators to native path
 
 ## Tracking Checklist
 
-- [ ] SBOX-001 complete
-- [ ] SBOX-002 complete
+- [x] SBOX-001 complete
+- [x] SBOX-002 complete
 - [ ] SBOX-010 complete
 - [ ] SBOX-011 complete
 - [ ] SBOX-012 complete
