@@ -213,6 +213,7 @@ data-0
 data-1
 
 publish*.sh
+!src/packages/launchpad/sea/publish-sea.sh
 
 src/packages/next/lib/api-v2-manifest.ts
 src/create*.sh
