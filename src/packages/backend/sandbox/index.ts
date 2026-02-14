@@ -37,7 +37,6 @@ import {
   chmod,
   cp,
   constants,
-  copyFile,
   link,
   lstat,
   open,
@@ -558,34 +557,79 @@ export class SandboxedFilesystem {
   };
 
   copyFile = async (src: string, dest: string) => {
-    const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(
-      src,
-      dest,
-    );
-    await copyFile(srcPath, destPath);
+    const [, destPath] = await this.resolveReadWriteSandboxPaths(src, dest);
+    const opened = await this.openVerifiedHandle({
+      path: src,
+      flags: constants.O_RDONLY,
+    });
+    const sourceHandle = opened.handle;
+    try {
+      const sourceStat = await sourceHandle.stat();
+      // Avoid self-copy corruption if source and destination resolve to the
+      // same inode.
+      try {
+        const destStat = await stat(destPath);
+        if (sourceStat.dev === destStat.dev && sourceStat.ino === destStat.ino) {
+          const err: NodeJS.ErrnoException = new Error(
+            `Source and destination must not be the same file: '${src}'`,
+          );
+          err.code = "EINVAL";
+          err.path = dest;
+          throw err;
+        }
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") {
+          throw err;
+        }
+      }
+      const data = await sourceHandle.readFile();
+      await this.writeFile(dest, data);
+      try {
+        await chmod(destPath, sourceStat.mode);
+      } catch {
+        // best-effort metadata parity with fs.copyFile behavior
+      }
+    } finally {
+      await sourceHandle.close();
+    }
   };
 
   cp = async (src: string | string[], dest: string, options?: CopyOptions) => {
-    dest = await this.resolveWritableSandboxPath(dest);
+    const destInput = dest;
+    const destPath = await this.resolveWritableSandboxPath(destInput);
 
     // ensure containing directory of destination exists -- node cp doesn't
     // do this but for cocalc this is very convenient and saves some network
     // round trips.
-    const destDir = dirname(dest);
+    const destDir = dirname(destPath);
     const sandboxBasePath = await this.resolveSandboxBasePath();
     if (destDir != sandboxBasePath && !(await exists(destDir))) {
       await mkdir(destDir, { recursive: true });
     }
 
-    const v = await this.safeAbsPaths(src);
+    const srcInput = typeof src == "string" ? [src] : src;
+    const v = await this.safeAbsPaths(srcInput);
     if (!options?.reflink) {
       // can use node cp:
-      for (const path of v) {
+      for (let i = 0; i < v.length; i++) {
+        const srcPath = v[i];
+        const source = srcInput[i];
         if (typeof src == "string") {
-          await cp(path, dest, options);
+          const st = await lstat(srcPath);
+          if (st.isFile()) {
+            await this.copyFile(source, destInput);
+          } else {
+            await cp(srcPath, destPath, options);
+          }
         } else {
           // copying multiple files to a directory
-          await cp(path, join(dest, basename(path)), options);
+          const target = join(destInput, basename(srcPath));
+          const st = await lstat(srcPath);
+          if (st.isFile()) {
+            await this.copyFile(source, target);
+          } else {
+            await cp(srcPath, join(destPath, basename(srcPath)), options);
+          }
         }
       }
     } else {
@@ -593,7 +637,7 @@ export class SandboxedFilesystem {
       // so we pass the absolute paths v in that way.
       await cpExec(
         typeof src == "string" ? v[0] : v,
-        dest,
+        destPath,
         capTimeout(options, MAX_TIMEOUT),
       );
     }

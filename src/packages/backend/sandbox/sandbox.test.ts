@@ -82,6 +82,16 @@ describe("baseline mutator parity behavior", () => {
     expect(await fs.exists("dst/moved.txt")).toBe(false);
   });
 
+  it("supports cp for single files and arrays", async () => {
+    await fs.writeFile("cp-source.txt", "cp-data");
+    await fs.cp("cp-source.txt", "cp-target.txt");
+    expect(await fs.readFile("cp-target.txt", "utf8")).toBe("cp-data");
+
+    await fs.mkdir("cp-dir");
+    await fs.cp(["cp-source.txt"], "cp-dir");
+    expect(await fs.readFile("cp-dir/cp-source.txt", "utf8")).toBe("cp-data");
+  });
+
   it("supports rm for single path and array path arguments", async () => {
     await fs.writeFile("x.txt", "x");
     await fs.writeFile("y.txt", "y");
@@ -407,6 +417,16 @@ describe("safe mode mutator escape checks", () => {
     await expect(fs.rename("escape-link", "x")).rejects.toThrow("outside of sandbox");
     await expect(fs.move("escape-link", "x")).rejects.toThrow("outside of sandbox");
     await expect(fs.copyFile("escape-link", "copied.txt")).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+
+  it("blocks cp when source resolves outside sandbox", async () => {
+    await expect(fs.cp("escape-link", "copied-via-cp.txt")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    await fs.mkdir("safe-cp-dir");
+    await expect(fs.cp(["escape-link"], "safe-cp-dir")).rejects.toThrow(
       "outside of sandbox",
     );
   });
