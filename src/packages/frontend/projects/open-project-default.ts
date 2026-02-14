@@ -14,7 +14,7 @@ export function defaultOpenProjectTarget({
     return target;
   }
   if (activeProjectTab == null || activeProjectTab === "files") {
-    return "home/";
+    return "files/";
   }
   return undefined;
 }

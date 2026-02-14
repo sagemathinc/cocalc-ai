@@ -10,31 +10,31 @@ describe("defaultOpenProjectTarget", () => {
     ).toBe("files/tmp/");
   });
 
-  it("treats empty target as unset and defaults to home/", () => {
+  it("treats empty target as unset and defaults to files/", () => {
     expect(
       defaultOpenProjectTarget({
         target: "",
         activeProjectTab: "files",
       }),
-    ).toBe("home/");
+    ).toBe("files/");
   });
 
-  it("defaults to home/ when files tab", () => {
+  it("defaults to files/ when files tab", () => {
     expect(
       defaultOpenProjectTarget({
         target: undefined,
         activeProjectTab: "files",
       }),
-    ).toBe("home/");
+    ).toBe("files/");
   });
 
-  it("defaults to home/ when files tab even if files are open", () => {
+  it("defaults to files/ when files tab even if files are open", () => {
     expect(
       defaultOpenProjectTarget({
         target: undefined,
         activeProjectTab: "files",
       }),
-    ).toBe("home/");
+    ).toBe("files/");
   });
 
   it("does not default when active tab is an editor", () => {
@@ -55,12 +55,12 @@ describe("defaultOpenProjectTarget", () => {
     ).toBeUndefined();
   });
 
-  it("defaults to home/ when active tab is unset", () => {
+  it("defaults to files/ when active tab is unset", () => {
     expect(
       defaultOpenProjectTarget({
         target: undefined,
         activeProjectTab: undefined,
       }),
-    ).toBe("home/");
+    ).toBe("files/");
   });
 });
