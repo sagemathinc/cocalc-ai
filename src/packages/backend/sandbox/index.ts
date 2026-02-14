@@ -101,6 +101,7 @@ interface OpenAt2SandboxRoot {
   rename(oldPath: string, newPath: string): void;
   renameNoReplace?(oldPath: string, newPath: string): void;
   link?(oldPath: string, newPath: string): void;
+  symlink?(target: string, newPath: string): void;
   chmod(path: string, mode: number): void;
   truncate(path: string, len: number): void;
   copyFile(src: string, dest: string, mode?: number | null): void;
@@ -1347,8 +1348,24 @@ export class SandboxedFilesystem {
 
   symlink = async (target: string, path: string) => {
     this.assertSafeModeLinkPolicy("symlink", path);
-    const targetPath = await this.resolveSandboxPath(target);
-    const linkPath = await this.resolveWritableSandboxPath(path);
+    const [targetPath, linkPath] = await Promise.all([
+      this.resolveSandboxPath(target),
+      this.resolveWritableSandboxPath(path),
+    ]);
+    const openAt2Root = this.getOpenAt2Root();
+    const rel = await this.getOpenAt2RelativePath(path);
+    if (
+      openAt2Root != null &&
+      typeof openAt2Root.symlink === "function" &&
+      rel != null
+    ) {
+      try {
+        openAt2Root.symlink(targetPath, rel);
+        return;
+      } catch (err) {
+        this.throwOpenAt2PathError(path, err);
+      }
+    }
     return await symlink(targetPath, linkPath);
   };
 
