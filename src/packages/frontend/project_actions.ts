@@ -963,13 +963,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
                 syncPath,
                 this.open_files?.get(path, "ext"),
               );
-              if (this.open_files == null) return;
-              info.redux_name = name;
-              info.Editor = Editor;
+              const current_info = this.get_store()
+                ?.get("open_files")
+                .getIn([path, "component"]) as any;
+              if (this.open_files == null || current_info == null) return;
+              current_info.redux_name = name;
+              current_info.Editor = Editor;
               // IMPORTANT: we make a *copy* of info below to trigger an update
               // of the component that displays this editor.  Otherwise, the user
               // would just see a spinner until they tab away and tab back.
-              this.open_files.set(path, "component", { ...info });
+              this.open_files.set(path, "component", { ...current_info });
               // just like in the case where it is already loaded, we have to "show" it.
               // this is important, because e.g. the store has a "visible" field, which stays undefined
               // which in turn causes e.g. https://github.com/sagemathinc/cocalc/issues/5398
@@ -989,14 +992,17 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             } catch (err) {
               // Error already reported to user by alert_message in file-editors.ts
               // Show error component in the editor area
-              if (this.open_files == null) return;
+              const current_info = this.get_store()
+                ?.get("open_files")
+                .getIn([path, "component"]) as any;
+              if (this.open_files == null || current_info == null) return;
               const error = err as Error;
-              info.Editor = () =>
+              current_info.Editor = () =>
                 require("react").createElement(EditorLoadError, {
                   path,
                   error,
                 });
-              this.open_files.set(path, "component", { ...info });
+              this.open_files.set(path, "component", { ...current_info });
               if (!opts.noFocus) {
                 this.show_file(path);
               }
