@@ -1080,8 +1080,10 @@ export class SyncDoc extends EventEmitter {
     // before opening the patches table, so we don't fetch the entire history
     // when a snapshot is available.
     await this.init_syncstring_table();
-    await this.init_patchflow();
+    // Prime backend sync-fs reconciliation first so the patch stream reflects
+    // current on-disk content before we load it into this client session.
     await this.startBackendFsWatch();
+    await this.init_patchflow();
     await Promise.all([this.init_cursors()]);
     this.assert_not_closed(
       "initAll -- successful init patchflow, cursors, and ipywidgets",
