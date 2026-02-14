@@ -19,6 +19,9 @@ function prependPath(dir) {
   try {
     applyLaunchpadDefaults();
     logLaunchpadConfig();
+    if (process.env.COCALC_OPEN_BROWSER == null) {
+      process.env.COCALC_OPEN_BROWSER = "1";
+    }
 
     const bundledRootCandidate = join(__dirname, "..", "..", "..");
     const bundleDir =
