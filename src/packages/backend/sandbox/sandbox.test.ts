@@ -47,6 +47,55 @@ describe("test using the filesystem sandbox to do a few standard things", () => 
   });
 });
 
+describe("baseline mutator parity behavior", () => {
+  let fs;
+  it("creates sandbox", async () => {
+    await mkdir(join(tempDir, "test-mutators"));
+    fs = new SandboxedFilesystem(join(tempDir, "test-mutators"));
+  });
+
+  it("supports write overwrite and append", async () => {
+    await fs.writeFile("a.txt", "alpha");
+    expect(await fs.readFile("a.txt", "utf8")).toBe("alpha");
+
+    await fs.writeFile("a.txt", "beta");
+    expect(await fs.readFile("a.txt", "utf8")).toBe("beta");
+
+    await fs.appendFile("a.txt", "-tail");
+    expect(await fs.readFile("a.txt", "utf8")).toBe("beta-tail");
+  });
+
+  it("supports copy, rename, move and unlink", async () => {
+    await fs.copyFile("a.txt", "copy.txt");
+    expect(await fs.readFile("copy.txt", "utf8")).toBe("beta-tail");
+
+    await fs.rename("copy.txt", "renamed.txt");
+    expect(await fs.exists("copy.txt")).toBe(false);
+    expect(await fs.readFile("renamed.txt", "utf8")).toBe("beta-tail");
+
+    await fs.mkdir("dst");
+    await fs.move("renamed.txt", "dst/moved.txt");
+    expect(await fs.exists("renamed.txt")).toBe(false);
+    expect(await fs.readFile("dst/moved.txt", "utf8")).toBe("beta-tail");
+
+    await fs.unlink("dst/moved.txt");
+    expect(await fs.exists("dst/moved.txt")).toBe(false);
+  });
+
+  it("supports rm for single path and array path arguments", async () => {
+    await fs.writeFile("x.txt", "x");
+    await fs.writeFile("y.txt", "y");
+    await fs.rm(["x.txt", "y.txt"]);
+    expect(await fs.exists("x.txt")).toBe(false);
+    expect(await fs.exists("y.txt")).toBe(false);
+
+    await fs.mkdir("tmp");
+    await fs.writeFile("tmp/z.txt", "z");
+    await fs.rm("tmp", { recursive: true });
+    expect(await fs.exists("tmp")).toBe(false);
+  });
+});
+
 describe("make various attempts to break out of the sandbox", () => {
   let fs;
   it("creates sandbox", async () => {
@@ -201,6 +250,33 @@ describe("test watching a file and a folder in the sandbox", () => {
       done: false,
       value: { event: "unlink", filename: "z" },
     });
+    w.end();
+  });
+
+  it("create-write then unlink does not queue a spurious change event", async () => {
+    await fs.mkdir("folder-regression");
+    const w = await fs.watch("folder-regression", {
+      pollInterval: 0,
+      stabilityThreshold: 0,
+    });
+
+    await fs.writeFile("folder-regression/new.txt", "there");
+    expect(await w.next()).toEqual({
+      done: false,
+      value: { event: "add", filename: "new.txt" },
+    });
+
+    // Regression guard: after create+write, the queue should not gain an
+    // extra "change" event before unlink.
+    await delay(60);
+    expect(w.queueSize()).toBe(0);
+
+    await fs.unlink("folder-regression/new.txt");
+    expect(await w.next()).toEqual({
+      done: false,
+      value: { event: "unlink", filename: "new.txt" },
+    });
+    w.end();
   });
 });
 
