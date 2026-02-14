@@ -51,8 +51,9 @@ function initMenus(): void {
           icon: "file-export",
           label: "Export...",
           title: "Export information about this file's edit history to JSON.",
-          onClick: async ({ props }) => {
-            await props.actions.export_history?.();
+          onClick: async ({ frame_actions, props }) => {
+            const actions = frame_actions ?? props.editor_actions ?? props.actions;
+            await actions.export_history?.();
           },
         };
       }
@@ -69,8 +70,9 @@ function initMenus(): void {
             okText: "Purge History",
             cancelText: "Cancel",
           },
-          onClick: async ({ props }) => {
-            await props.actions.purge_history?.();
+          onClick: async ({ frame_actions, props }) => {
+            const actions = frame_actions ?? props.editor_actions ?? props.actions;
+            await actions.purge_history?.();
           },
         };
       }

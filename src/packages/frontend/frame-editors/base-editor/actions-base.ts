@@ -619,11 +619,12 @@ export class BaseEditorActions<
       }
     });
     this._syncstring.on("history-reset", () => {
+      // Another session purged TimeTravel history for this file.
+      // Close this file so stale editors don't remain visible.
       alert_message({
         type: "warning",
-        title: path_split(this.path).tail,
-        message:
-          "Edit history was purged. Closing this tab so a fresh session can be opened.",
+        title: "Edit history was purged",
+        message: `${this.path} was closed because its edit history was purged in another session.`,
       });
       closeSyncdocAndFile();
     });

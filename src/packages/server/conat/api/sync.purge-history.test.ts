@@ -59,7 +59,6 @@ describe("sync.purgeHistory", () => {
       account_id: "acct-1",
       project_id: "00000000-1000-4000-8000-000000000000",
       path: "a.txt",
-      keep_current_state: true,
     });
 
     expect(assertCollabMock).toHaveBeenCalledWith({
@@ -83,12 +82,11 @@ describe("sync.purgeHistory", () => {
 
     expect(result).toEqual({
       deleted: 3,
-      seeded: false,
       history_epoch: 6,
     });
   });
 
-  it("supports keep_current_state=false", async () => {
+  it("works when there is no prior history metadata", async () => {
     const deleteMock = jest.fn(async () => ({ seqs: [] }));
     const configMock = jest.fn(async () => ({ required_headers: {} }));
     const stream = {
@@ -121,13 +119,11 @@ describe("sync.purgeHistory", () => {
       account_id: "acct-1",
       project_id: "00000000-1000-4000-8000-000000000000",
       path: "a.txt",
-      keep_current_state: false,
     });
 
     expect(configMock).toHaveBeenCalledWith({
       required_headers: { history_epoch: 1 },
     });
-    expect(result.seeded).toBe(false);
     expect(result.history_epoch).toBe(1);
   });
 });

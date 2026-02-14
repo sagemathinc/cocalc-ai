@@ -34,18 +34,15 @@ export async function purgeHistory({
   account_id,
   project_id,
   path,
-  keep_current_state = true,
 }: {
   account_id?: string;
   project_id: string;
   path: string;
-  keep_current_state?: boolean;
-}): Promise<{ deleted: number; seeded: boolean; history_epoch: number }> {
+}): Promise<{ deleted: number; history_epoch: number }> {
   return await purgeHistoryImpl({
     account_id,
     project_id,
     path,
-    keep_current_state,
     client: conat(),
     assertAccess: assertCollab,
   });

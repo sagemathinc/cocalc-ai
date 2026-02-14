@@ -25,11 +25,7 @@ export function PurgeHistory({ actions }: Props) {
         setPending(true);
         try {
           const result = await actions.purgeHistory();
-          message.success(
-            `Purged ${result.deleted} history entries${
-              result.seeded ? "" : " (no baseline reseed)"
-            }.`,
-          );
+          message.success(`Purged ${result.deleted} history entries.`);
         } catch (err) {
           message.error(`Unable to purge history: ${err}`);
         } finally {

@@ -291,6 +291,32 @@ export class ManageCommands {
     }
   };
 
+  private getFrameActions = () => {
+    const actions = this.props.actions as any;
+    const frameId = this.props.id;
+
+    // Jupyter-style per-frame actions map or accessor.
+    if (typeof actions.get_frame_actions === "function") {
+      const frameActions = actions.get_frame_actions(frameId);
+      if (frameActions != null) return frameActions;
+    }
+    const byId = actions.frame_actions;
+    if (byId != null && typeof byId === "object") {
+      if (frameId != null && byId[frameId] != null) return byId[frameId];
+      // Backward compatibility for editors that expose a single frame-actions object.
+      if (typeof byId.close === "function" || typeof byId.sync === "function") {
+        return byId;
+      }
+    }
+
+    // TimeTravel subframe currently stores its leaf actions here.
+    if (this.props.type === "time_travel" && actions.timeTravelActions != null) {
+      return actions.timeTravelActions;
+    }
+
+    return this.props.editor_actions;
+  };
+
   private getCommandIcon = (cmd: Partial<Command>) => {
     const rotate = cmd.iconRotate;
     let icon = cmd.icon;
@@ -551,9 +577,11 @@ export class ManageCommands {
         }
       }
       try {
+        const frame_actions = this.getFrameActions();
         if (cmd.onClick != null) {
           await cmd.onClick?.({
             ...this,
+            frame_actions,
             event,
           });
         } else {

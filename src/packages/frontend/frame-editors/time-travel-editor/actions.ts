@@ -378,19 +378,13 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     return path;
   };
 
-  purgeHistory = async ({
-    keep_current_state = true,
-  }: {
-    keep_current_state?: boolean;
-  } = {}): Promise<{
+  purgeHistory = async (): Promise<{
     deleted: number;
-    seeded: boolean;
     history_epoch: number;
   }> => {
     const result = await webapp_client.conat_client.hub.sync.purgeHistory({
       project_id: this.project_id,
       path: this.docpath,
-      keep_current_state,
     });
     const projectActions: any = this.redux.getProjectActions(this.project_id);
     const store = projectActions?.get_store?.();
@@ -440,9 +434,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     const result = await this.purgeHistory();
     alert_message({
       type: "success",
-      message: `Purged ${result.deleted} history entries${
-        result.seeded ? "" : " (no baseline reseed)"
-      }.`,
+      message: `Purged ${result.deleted} history entries.`,
     });
   };
 

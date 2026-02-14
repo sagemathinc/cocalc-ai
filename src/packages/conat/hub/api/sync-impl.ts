@@ -74,17 +74,15 @@ export async function purgeHistory({
   account_id,
   project_id,
   path,
-  keep_current_state = true,
   client,
   assertAccess,
 }: {
   account_id?: string;
   project_id: string;
   path: string;
-  keep_current_state?: boolean;
   client?: any;
   assertAccess?: AssertAccessFn;
-}): Promise<{ deleted: number; seeded: boolean; history_epoch: number }> {
+}): Promise<{ deleted: number; history_epoch: number }> {
   await assertAccess?.({ account_id, project_id });
 
   const conatClient = resolveConatClient(client);
@@ -166,13 +164,9 @@ export async function purgeHistory({
 
     return {
       deleted: deleted.seqs?.length ?? 0,
-      seeded: false,
       history_epoch,
     };
   } finally {
-    // keep_current_state is intentionally ignored in this generation-fenced model,
-    // where open clients are closed and reopening recreates state safely.
-    void keep_current_state;
     stream.close();
     syncstrings.close();
   }
