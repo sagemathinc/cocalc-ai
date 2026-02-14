@@ -1160,13 +1160,9 @@ export class SandboxedFilesystem {
     ) {
       try {
         openReadFd = openAt2Root.openRead(rel);
-      } catch (err) {
-        const { code } = this.parseOpenAt2Error(err);
-        // openat2 open_read blocks symlink traversal by design. For allowed
-        // in-sandbox symlinks, fall back to the existing verified-handle path.
-        if (code !== "ELOOP" && code !== "ENOSYS" && code !== "EINVAL") {
-          this.throwOpenAt2PathError(path, err);
-        }
+      } catch {
+        // Preserve Node-compatible read error shape/messages by falling back
+        // to the existing verified-handle path implementation.
       }
     }
     if (openReadFd != null) {
@@ -1369,7 +1365,14 @@ export class SandboxedFilesystem {
     const f = async (inputPath: string, absPath: string) => {
       const openAt2Root = this.getOpenAt2Root();
       const rel = await this.getOpenAt2RelativePath(inputPath);
-      if (openAt2Root != null && typeof openAt2Root.rm === "function" && rel != null) {
+      if (
+        recursive &&
+        openAt2Root != null &&
+        typeof openAt2Root.rm === "function" &&
+        rel != null
+      ) {
+        // Keep non-recursive rm semantics from Node fs (including directory
+        // error behavior) while using openat2 hardening for recursive removal.
         try {
           openAt2Root.rm(rel, recursive, force);
           void globalSyncFsService.recordLocalDelete(absPath);
