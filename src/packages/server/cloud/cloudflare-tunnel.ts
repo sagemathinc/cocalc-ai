@@ -140,7 +140,9 @@ async function getConfig(): Promise<TunnelConfig | undefined> {
   const dns = clean(settings.project_hosts_dns);
   const accountId = clean(settings.project_hosts_cloudflare_tunnel_account_id);
   const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
-  const prefix = normalizePrefix(settings.project_hosts_cloudflare_tunnel_prefix);
+  const prefix = normalizePrefix(
+    settings.project_hosts_cloudflare_tunnel_prefix,
+  );
   const externalDomain = normalizeHostname(settings.dns);
   const defaultSuffix = externalDomain ? `-${externalDomain}` : undefined;
   const hostSuffix =
@@ -159,7 +161,9 @@ async function getHubConfig(): Promise<HubTunnelConfig | undefined> {
   const token = clean(settings.project_hosts_cloudflare_tunnel_api_token);
   const zone = clean(settings.project_hosts_dns);
   const hostname = normalizeHostname(settings.dns);
-  const prefix = normalizePrefix(settings.project_hosts_cloudflare_tunnel_prefix);
+  const prefix = normalizePrefix(
+    settings.project_hosts_cloudflare_tunnel_prefix,
+  );
   if (!accountId || !token || !zone || !hostname) return undefined;
   return { accountId, token, zone, hostname, prefix };
 }
@@ -178,17 +182,14 @@ async function cloudflareRequest<T>(
   path: string,
   body?: Record<string, any>,
 ): Promise<T> {
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/${path}`,
-    {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: body ? JSON.stringify(body) : undefined,
+  const response = await fetch(`https://api.cloudflare.com/client/v4/${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
     },
-  );
+    body: body ? JSON.stringify(body) : undefined,
+  });
   if (!response.ok) {
     let details = "";
     try {
@@ -197,7 +198,10 @@ async function cloudflareRequest<T>(
         try {
           const data = JSON.parse(text) as CloudflareResponse<any>;
           details =
-            data?.errors?.map((err) => err.message).filter(Boolean).join(", ") ||
+            data?.errors
+              ?.map((err) => err.message)
+              .filter(Boolean)
+              .join(", ") ||
             data?.result?.message ||
             text;
         } catch {
@@ -215,8 +219,10 @@ async function cloudflareRequest<T>(
   const data = (await response.json()) as CloudflareResponse<T>;
   if (!data?.success) {
     const details =
-      data?.errors?.map((err) => err.message).filter(Boolean).join(", ") ||
-      "unknown error";
+      data?.errors
+        ?.map((err) => err.message)
+        .filter(Boolean)
+        .join(", ") || "unknown error";
     throw new Error(`cloudflare api failed: ${details}`);
   }
   if (data.result === undefined) {
@@ -256,8 +262,10 @@ async function getZoneId(token: string, dns: string) {
   const data = (await response.json()) as ZoneResponse;
   if (!data?.success) {
     const details =
-      data?.errors?.map((err) => err.message).filter(Boolean).join(", ") ||
-      "unknown error";
+      data?.errors
+        ?.map((err) => err.message)
+        .filter(Boolean)
+        .join(", ") || "unknown error";
     throw new Error(`cloudflare zones lookup failed: ${details}`);
   }
   const match = data.result?.find((zone) => zone.name === dns);
@@ -268,7 +276,10 @@ async function getZoneId(token: string, dns: string) {
   throw new Error(`cloudflare zone not found for ${dns}`);
 }
 
-async function getZoneIdForHostname(token: string, hostname: string): Promise<string> {
+async function getZoneIdForHostname(
+  token: string,
+  hostname: string,
+): Promise<string> {
   const parts = hostname.split(".").filter(Boolean);
   for (let i = 0; i < parts.length - 1; i += 1) {
     const candidate = parts.slice(i).join(".");
@@ -462,8 +473,10 @@ async function fetchTunnel(
   const data = (await response.json()) as CloudflareResponse<TunnelResponse>;
   if (!data?.success) {
     const details =
-      data?.errors?.map((err) => err.message).filter(Boolean).join(", ") ||
-      "unknown error";
+      data?.errors
+        ?.map((err) => err.message)
+        .filter(Boolean)
+        .join(", ") || "unknown error";
     throw new Error(`cloudflare tunnel lookup failed: ${details}`);
   }
   return data.result;
@@ -647,7 +660,8 @@ async function ensureCloudflareTunnel(opts: {
     record_id: opts.existing?.record_id,
   });
   let token: string | undefined =
-    (typeof created?.token === "string" ? created.token : undefined) ?? undefined;
+    (typeof created?.token === "string" ? created.token : undefined) ??
+    undefined;
   if (!token) {
     try {
       token = await getTunnelToken(opts.accountId, opts.token, tunnelId);
@@ -677,7 +691,7 @@ export async function ensureCloudflareTunnelForHub(opts?: {
   if (!config) return undefined;
   if (!config.hostname.endsWith(config.zone)) {
     throw new Error(
-      `External Domain Name must be within '${config.zone}' for Cloudflare tunnel automation.`,
+      `External Domain Name '${config.hostname}' must end with '${config.zone}' for Cloudflare tunnel automation.`,
     );
   }
   const prefix = config.prefix ? `${config.prefix}-` : "";
