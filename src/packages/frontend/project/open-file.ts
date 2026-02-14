@@ -126,7 +126,7 @@ export async function open_file(
 
   // For foreground opens, ensure the project is opened so startup UI appears.
   // For background opens, do not call open_project here since it can alter
-  // the current file listing target (e.g. force "home/").
+  // the current file listing target.
   if (opts.foreground_project) {
     redux.getActions("projects").open_project({
       project_id: actions.project_id,

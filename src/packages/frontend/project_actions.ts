@@ -655,84 +655,40 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
   };
 
-  private getPathRoute = (
-    path: string,
-  ): { source: "files" | "home"; relativePath: string } => {
+  private getPathRoute = (path: string): { relativePath: string } => {
     const normalized = normalize(path);
     if (this.isVirtualListingPath(normalized)) {
-      const source: "files" | "home" = normalized.startsWith("/")
-        ? "files"
-        : "home";
       return {
-        source,
         relativePath: normalized.replace(/^\/+/, "").replace(/\/+$/, ""),
       };
     }
     if (normalized === "/") {
-      return { source: "files", relativePath: "" };
+      return { relativePath: "" };
     }
-    const home = this.getHomeDirectoryForPaths();
-    const absolute = normalizeAbsolutePath(normalized, home);
-    if (
-      home !== "/" &&
-      (absolute === home || absolute.startsWith(`${home}/`))
-    ) {
-      return {
-        source: "home",
-        relativePath: absolute === home ? "" : absolute.slice(home.length + 1),
-      };
-    }
+    const absolute = normalizeAbsolutePath(
+      normalized,
+      this.getHomeDirectoryForPaths(),
+    );
     return {
-      source: "files",
       relativePath: absolute === "/" ? "" : absolute.slice(1),
     };
   };
 
   private toUrlPath = (path: string, isDirectory: boolean): string => {
-    const { source, relativePath } = this.getPathRoute(path);
+    const { relativePath } = this.getPathRoute(path);
     if (relativePath.length === 0) {
-      return `${source}/`;
+      return "files/";
     }
-    return `${source}/${relativePath}${isDirectory ? "/" : ""}`;
+    return `files/${relativePath}${isDirectory ? "/" : ""}`;
   };
 
-  private fromUrlDirectoryPath = (
-    path: string,
-    source: "files" | "home" = "files",
-  ): string => {
+  private fromUrlDirectoryPath = (path: string): string => {
     let normalized = normalize(path);
-    const stripSourcePrefix = (
-      value: string,
-      prefix: "files" | "home",
-    ): string => {
-      const trimmed = value.replace(/^\/+/, "");
-      if (trimmed === prefix) return "";
-      if (trimmed.startsWith(`${prefix}/`)) {
-        return trimmed.slice(prefix.length + 1);
-      }
-      return value;
-    };
-    normalized = stripSourcePrefix(normalized, source);
-    if (source === "home") {
-      const home = this.getHomeDirectoryForPaths();
-      if (normalized === "" || normalized === "." || normalized === "/") {
-        return home;
-      }
-      if (this.isVirtualListingPath(normalized)) {
-        return normalized;
-      }
-      // Defensive decode for URLs that accidentally encoded absolute /home/*
-      // paths as /home/<home-tail>/..., which would otherwise duplicate.
-      const homeTail = home.startsWith("/home/")
-        ? home.slice("/home/".length)
-        : "";
-      if (
-        homeTail.length > 0 &&
-        (normalized === homeTail || normalized.startsWith(`${homeTail}/`))
-      ) {
-        return normalizeAbsolutePath(`/home/${normalized}`);
-      }
-      return normalizeAbsolutePath(normalized, home);
+    const trimmed = normalized.replace(/^\/+/, "");
+    if (trimmed === "files") {
+      normalized = "";
+    } else if (trimmed.startsWith("files/")) {
+      normalized = trimmed.slice("files/".length);
     }
     if (normalized === "" || normalized === "." || normalized === "/") {
       return "/";
@@ -744,12 +700,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   private toAuxTabPath = (tab: "new" | "search", path: string): string => {
-    const { source, relativePath } = this.getPathRoute(path);
-    if (source === "home") {
-      return relativePath.length === 0
-        ? `${tab}/home/`
-        : `${tab}/home/${relativePath}`;
-    }
+    const { relativePath } = this.getPathRoute(path);
     return relativePath.length === 0 ? `${tab}/` : `${tab}/${relativePath}`;
   };
 
@@ -763,7 +714,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   push_state(local_url?: string, hash?: string): void {
     if (local_url == null) {
-      local_url = this._last_history_state ?? (lite ? "home/" : "files/");
+      local_url = this._last_history_state ?? "files/";
     }
     this._last_history_state = local_url;
     set_url(this._url_in_project(local_url), hash);
@@ -1681,11 +1632,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     } else if (path.startsWith("files/")) {
       const rel = path.replace(/^files\/+/, "");
       path = rel.length === 0 ? "/" : `/${rel}`;
-    } else if (path === "home") {
-      path = this.getHomeDirectoryForPaths();
-    } else if (path.startsWith("home/")) {
-      const rel = path.replace(/^home\/+/, "");
-      path = normalizeAbsolutePath(rel, this.getHomeDirectoryForPaths());
     }
     try {
       await this.ensureProjectIsOpen();
@@ -2871,46 +2817,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     fragmentId?: FragmentId,
   ): Promise<void> => {
     const segments = target.split("/");
-    const main_segment = segments[0] as FixedTab | "home" | "project-home";
+    const main_segment = segments[0] as FixedTab | "project-home";
     const hasScopedPathSource =
       (main_segment === "new" || main_segment === "search") &&
-      (segments[1] === "home" || segments[1] === "files");
-    const scopedPathSource: "files" | "home" =
-      hasScopedPathSource && segments[1] === "home" ? "home" : "files";
+      segments[1] === "files";
     const scopedPathIndex = hasScopedPathSource ? 2 : 1;
-    // Reserve /home for filesystem routes. Project home tab lives at /project-home.
-    const isHomeFileRoute = main_segment === "home";
-    const fileRouteSource: "files" | "home" = isHomeFileRoute
-      ? "home"
-      : "files";
-    // In lite mode, /home/* URL resolution depends on homeDirectory capability.
-    // Ensure configuration is loaded before mapping home-scoped routes.
-    if (lite && (fileRouteSource === "home" || scopedPathSource === "home")) {
-      const store = this.get_store();
-      const homeDirectory = store
-        ?.get("available_features")
-        ?.get("homeDirectory");
-      if (typeof homeDirectory !== "string" || homeDirectory.length === 0) {
-        try {
-          await this.init_configuration("main");
-        } catch (err) {
-          console.warn(
-            "project/load_target: unable to preload configuration",
-            err,
-          );
-        }
-      }
-    }
-
-    const full_path = this.fromUrlDirectoryPath(
-      segments.slice(1).join("/"),
-      fileRouteSource,
-    );
+    const full_path = this.fromUrlDirectoryPath(segments.slice(1).join("/"));
     const parent_path = this.fromUrlDirectoryPath(
       segments.slice(1, segments.length - 1).join("/"),
-      fileRouteSource,
     );
-    if (main_segment === "files" || isHomeFileRoute) {
+    if (main_segment === "files") {
       if (target.endsWith("/")) {
         this.open_directory(parent_path, change_history);
         return;
@@ -2952,10 +2868,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "new": // ignore foreground for these and below, since would be nonsense
         this.set_current_path(
-          this.fromUrlDirectoryPath(
-            segments.slice(scopedPathIndex).join("/"),
-            scopedPathSource,
-          ),
+          this.fromUrlDirectoryPath(segments.slice(scopedPathIndex).join("/")),
         );
         this.set_active_tab("new", { change_history: change_history });
         break;
@@ -2978,10 +2891,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "search":
         this.set_current_path(
-          this.fromUrlDirectoryPath(
-            segments.slice(scopedPathIndex).join("/"),
-            scopedPathSource,
-          ),
+          this.fromUrlDirectoryPath(segments.slice(scopedPathIndex).join("/")),
         );
         this.set_active_tab("search", { change_history: change_history });
         break;
