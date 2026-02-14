@@ -423,7 +423,7 @@ Task SBOX-101: Migrate safe-mode mutators to native path
 - [x] SBOX-001 complete
 - [x] SBOX-002 complete
 - [x] SBOX-010 complete
-- [ ] SBOX-011 complete
+- [x] SBOX-011 complete
 - [ ] SBOX-012 complete
 - [ ] SBOX-013 complete
 - [ ] SBOX-020 complete
