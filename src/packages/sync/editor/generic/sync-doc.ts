@@ -2128,13 +2128,21 @@ export class SyncDoc extends EventEmitter {
 
     const settings = data.get("settings", Map());
     const previous_history_epoch = this.history_epoch;
+    const previous_history_purged_at = this.settings?.get?.("history_purged_at");
     const current_history_epoch = this.metadataHistoryEpoch(settings);
+    const current_history_purged_at = settings?.get?.("history_purged_at");
     this.history_epoch = current_history_epoch;
 
-    if (
+    const history_epoch_increased =
       previous_history_epoch != null &&
       current_history_epoch != null &&
-      current_history_epoch > previous_history_epoch
+      current_history_epoch > previous_history_epoch;
+    const history_purge_marker_changed =
+      current_history_purged_at != null &&
+      current_history_purged_at !== previous_history_purged_at;
+    if (
+      history_epoch_increased ||
+      (this.isReady() && history_purge_marker_changed)
     ) {
       this.emit("history-reset", { history_epoch: current_history_epoch });
       this.close();
