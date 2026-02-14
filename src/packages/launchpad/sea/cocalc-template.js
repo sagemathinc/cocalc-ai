@@ -14,6 +14,28 @@ const version = "${VERSION}";
 const name = "${NAME}";
 const mainScript = "${MAIN}";
 
+function installWarningFilter() {
+  const originalEmitWarning = process.emitWarning.bind(process);
+  process.emitWarning = (warning, ...args) => {
+    const message =
+      typeof warning === "string" ? warning : warning?.message ?? "";
+    const objectCode =
+      warning && typeof warning === "object" ? warning.code : undefined;
+    const argCode = typeof args[1] === "string" ? args[1] : undefined;
+    const code = objectCode ?? argCode;
+
+    if (
+      code === "DEP0040" ||
+      code === "DEP0169" ||
+      message.includes("SQLite is an experimental feature")
+    ) {
+      return;
+    }
+
+    return originalEmitWarning(warning, ...args);
+  };
+}
+
 function defaultLaunchpadDataDir() {
   const dataHome =
     process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
@@ -61,6 +83,7 @@ function extractAssetsSync() {
 }
 
 const Module = require("node:module");
+installWarningFilter();
 
 if (path.basename(process.argv[1]) == "node") {
   const noUserScript =
