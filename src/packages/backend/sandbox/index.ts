@@ -26,8 +26,9 @@ Current status:
 
 Remaining work:
 
-- Path-based mutators (`rename`, `move`, `copyFile`, `rm`, etc.) still need
-  deeper hardening to eliminate residual TOCTOU windows around path resolution.
+- Path-based mutators still not routed through the `openat2` helper (`move`,
+  `rm`, recursive delete paths, etc.) need deeper hardening to eliminate
+  residual TOCTOU windows.
 - Full end-state is descriptor-anchored path resolution for all mutating ops
   (see [src/.agents/sandbox.md](./src/.agents/sandbox.md), task list SBOX-*).
 
@@ -85,6 +86,19 @@ import { SyncFsService } from "./sync-fs-service";
 import { client_db } from "@cocalc/util/db-schema/client-db";
 
 const logger = getLogger("sandbox:fs");
+const OPENAT2_DISABLED = ["0", "false", "no", "off"].includes(
+  (process.env.COCALC_SANDBOX_OPENAT2 ?? "").toLowerCase(),
+);
+
+interface OpenAt2SandboxRoot {
+  mkdir(path: string, recursive?: boolean | null, mode?: number | null): void;
+  unlink(path: string): void;
+  rmdir(path: string): void;
+  rename(oldPath: string, newPath: string): void;
+  chmod(path: string, mode: number): void;
+  truncate(path: string, len: number): void;
+  copyFile(src: string, dest: string, mode?: number | null): void;
+}
 
 // max time code can run (in safe mode), e.g., for find,
 // ripgrep, fd, and dust.
@@ -164,6 +178,7 @@ export class SandboxedFilesystem {
   public readonly allowSafeModeSymlink: boolean;
   public rusticRepo: string;
   private host?: string;
+  private openAt2Root: OpenAt2SandboxRoot | null | undefined;
   private lastOnDisk = new LRU<string, string>({
     maxSize: MAX_LAST_ON_DISK,
     sizeCalculation: (value) => value.length + 1, // must be positive!
@@ -273,6 +288,98 @@ export class SandboxedFilesystem {
       code: err?.code,
       message: typeof err?.message === "string" ? err.message : String(err),
     });
+  }
+
+  private isOpenAt2Enabled(): boolean {
+    return !this.unsafeMode && process.platform === "linux" && !OPENAT2_DISABLED;
+  }
+
+  private getOpenAt2Root(): OpenAt2SandboxRoot | null {
+    if (!this.isOpenAt2Enabled()) {
+      return null;
+    }
+    if (this.openAt2Root !== undefined) {
+      return this.openAt2Root;
+    }
+    try {
+      const { SandboxRoot } = require("@cocalc/openat2") as {
+        SandboxRoot: new (root: string) => OpenAt2SandboxRoot;
+      };
+      this.openAt2Root = new SandboxRoot(this.path);
+      return this.openAt2Root;
+    } catch (err) {
+      logger.warn("openat2 unavailable; falling back to node fs sandbox path", {
+        err: `${err}`,
+      });
+      this.openAt2Root = null;
+      return null;
+    }
+  }
+
+  private parseOpenAt2Error(err: any): { code?: string; message: string } {
+    const message =
+      typeof err?.message === "string" ? err.message : String(err ?? "unknown");
+    const m = message.match(/^([A-Z][A-Z0-9_]+):\s*(.*)$/);
+    if (!m) {
+      return { message };
+    }
+    return { code: m[1], message: m[2] };
+  }
+
+  private throwOpenAt2PathError(path: string, err: any): never {
+    const parsed = this.parseOpenAt2Error(err);
+    const code = parsed.code ?? err?.code;
+    if (code === "ELOOP" || code === "EXDEV" || code === "ENOTDIR") {
+      const outside: NodeJS.ErrnoException = new Error(
+        `realpath of '${path}' resolves to a path outside of sandbox`,
+      );
+      outside.code = "EACCES";
+      outside.path = path;
+      throw outside;
+    }
+    const e: NodeJS.ErrnoException =
+      err instanceof Error ? err : new Error(parsed.message);
+    if (code != null) {
+      e.code = code;
+    }
+    if (e.path == null) {
+      e.path = path;
+    }
+    throw e;
+  }
+
+  private async getOpenAt2RelativePath(path: string): Promise<string | null> {
+    const root = this.getOpenAt2Root();
+    if (root == null) {
+      return null;
+    }
+    const { pathInSandbox, sandboxBasePath } = await this.resolvePathInSandbox(path);
+    if (sandboxBasePath !== this.path) {
+      // rootfs/scratch aliases are not yet wired through openat2 helper.
+      return null;
+    }
+    const rel = this.toSandboxRelativePath(pathInSandbox, sandboxBasePath);
+    if (rel == "" || rel == "/") {
+      return null;
+    }
+    return rel;
+  }
+
+  private parseFsMode(mode: number | string): number | null {
+    if (typeof mode === "number" && Number.isFinite(mode)) {
+      return mode;
+    }
+    if (typeof mode !== "string") {
+      return null;
+    }
+    const trimmed = mode.trim();
+    if (/^[0-7]+$/.test(trimmed)) {
+      return parseInt(trimmed, 8);
+    }
+    if (/^0o[0-7]+$/i.test(trimmed)) {
+      return parseInt(trimmed.slice(2), 8);
+    }
+    return null;
   }
 
   private async resolveSandboxBasePath(): Promise<string> {
@@ -682,6 +789,18 @@ export class SandboxedFilesystem {
 
   chmod = async (path: string, mode: string | number) => {
     this.assertWritable(path);
+    await this.safeAbsPath(path);
+    const rel = await this.getOpenAt2RelativePath(path);
+    const modeNum = this.parseFsMode(mode);
+    const openAt2Root = this.getOpenAt2Root();
+    if (openAt2Root != null && rel != null && modeNum != null) {
+      try {
+        openAt2Root.chmod(rel, modeNum);
+        return;
+      } catch (err) {
+        this.throwOpenAt2PathError(path, err);
+      }
+    }
     const { handle } = await this.openVerifiedHandle({
       path,
       flags: constants.O_RDONLY,
@@ -698,6 +817,22 @@ export class SandboxedFilesystem {
   };
 
   copyFile = async (src: string, dest: string) => {
+    this.assertWritable(dest);
+    await Promise.all([this.safeAbsPath(src), this.safeAbsPath(dest)]);
+    const openAt2Root = this.getOpenAt2Root();
+    const [srcRel, destRel] = await Promise.all([
+      this.getOpenAt2RelativePath(src),
+      this.getOpenAt2RelativePath(dest),
+    ]);
+    if (openAt2Root != null && srcRel != null && destRel != null) {
+      try {
+        openAt2Root.copyFile(srcRel, destRel);
+        return;
+      } catch (err) {
+        this.throwOpenAt2PathError(src, err);
+      }
+    }
+
     const [, destPath] = await this.resolveReadWriteSandboxPaths(src, dest);
     const opened = await this.openVerifiedHandle({
       path: src,
@@ -914,8 +1049,27 @@ export class SandboxedFilesystem {
 
   mkdir = async (path: string, options?) => {
     this.assertWritable(path);
-    const absPath = await this.resolveSandboxPath(path);
     await this.verifyExistingAncestorInSandbox(path);
+    const openAt2Root = this.getOpenAt2Root();
+    const rel = await this.getOpenAt2RelativePath(path);
+    let recursive = false;
+    let mode: number | string | undefined;
+    if (typeof options === "number" || typeof options === "string") {
+      mode = options;
+    } else if (options != null && typeof options === "object") {
+      recursive = !!options.recursive;
+      mode = options.mode;
+    }
+    const modeNum = mode == null ? 0o777 : this.parseFsMode(mode);
+    if (openAt2Root != null && rel != null && modeNum != null) {
+      try {
+        openAt2Root.mkdir(rel, recursive, modeNum);
+        return;
+      } catch (err) {
+        this.throwOpenAt2PathError(path, err);
+      }
+    }
+    const absPath = await this.resolveSandboxPath(path);
     await mkdir(absPath, options);
     // For create paths, re-validate post-create target resolves in sandbox.
     await this.safeAbsPath(path);
@@ -1034,6 +1188,20 @@ export class SandboxedFilesystem {
   };
 
   rename = async (oldPath: string, newPath: string) => {
+    await Promise.all([this.safeAbsPath(oldPath), this.safeAbsPath(newPath)]);
+    const openAt2Root = this.getOpenAt2Root();
+    const [oldRel, newRel] = await Promise.all([
+      this.getOpenAt2RelativePath(oldPath),
+      this.getOpenAt2RelativePath(newPath),
+    ]);
+    if (openAt2Root != null && oldRel != null && newRel != null) {
+      try {
+        openAt2Root.rename(oldRel, newRel);
+        return;
+      } catch (err) {
+        this.throwOpenAt2PathError(oldPath, err);
+      }
+    }
     const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(
       oldPath,
       newPath,
@@ -1067,6 +1235,19 @@ export class SandboxedFilesystem {
   };
 
   rmdir = async (path: string, options?) => {
+    this.assertWritable(path);
+    await this.safeAbsPath(path);
+    const recursive = !!(options != null && typeof options === "object" && options.recursive);
+    const openAt2Root = this.getOpenAt2Root();
+    const rel = await this.getOpenAt2RelativePath(path);
+    if (!recursive && openAt2Root != null && rel != null) {
+      try {
+        openAt2Root.rmdir(rel);
+        return;
+      } catch (err) {
+        this.throwOpenAt2PathError(path, err);
+      }
+    }
     const absPath = await this.resolveWritableSandboxPath(path);
     await this.preflightExistingSource(path, absPath);
     await rmdir(absPath, options);
@@ -1085,6 +1266,17 @@ export class SandboxedFilesystem {
 
   truncate = async (path: string, len?: number) => {
     this.assertWritable(path);
+    await this.safeAbsPath(path);
+    const openAt2Root = this.getOpenAt2Root();
+    const rel = await this.getOpenAt2RelativePath(path);
+    if (openAt2Root != null && rel != null) {
+      try {
+        openAt2Root.truncate(rel, len ?? 0);
+        return;
+      } catch (err) {
+        this.throwOpenAt2PathError(path, err);
+      }
+    }
     const { handle } = await this.openVerifiedHandle({
       path,
       flags: constants.O_RDWR,
@@ -1098,6 +1290,17 @@ export class SandboxedFilesystem {
 
   unlink = async (path: string) => {
     const abs = await this.resolveWritableSandboxPath(path);
+    const openAt2Root = this.getOpenAt2Root();
+    const rel = await this.getOpenAt2RelativePath(path);
+    if (openAt2Root != null && rel != null) {
+      try {
+        openAt2Root.unlink(rel);
+        void globalSyncFsService.recordLocalDelete(abs);
+        return;
+      } catch (err) {
+        this.throwOpenAt2PathError(path, err);
+      }
+    }
     await this.preflightExistingSource(path, abs);
     await unlink(abs);
     void globalSyncFsService.recordLocalDelete(abs);
