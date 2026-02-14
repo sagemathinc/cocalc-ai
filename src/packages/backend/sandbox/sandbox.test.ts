@@ -8,6 +8,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { rmSync, symlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "path";
@@ -81,6 +82,16 @@ describe("baseline mutator parity behavior", () => {
 
     await fs.unlink("dst/moved.txt");
     expect(await fs.exists("dst/moved.txt")).toBe(false);
+  });
+
+  it("move defaults to no-overwrite behavior", async () => {
+    await fs.writeFile("move-src.txt", "new");
+    await fs.writeFile("move-dest.txt", "old");
+    await expect(fs.move("move-src.txt", "move-dest.txt")).rejects.toMatchObject({
+      code: "EEXIST",
+    });
+    expect(await fs.readFile("move-src.txt", "utf8")).toBe("new");
+    expect(await fs.readFile("move-dest.txt", "utf8")).toBe("old");
   });
 
   it("supports cp for single files and arrays", async () => {
@@ -573,6 +584,65 @@ describe("openat2 motivation regressions", () => {
     await expect(stat(join(outsideRoot, "grand"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("move should not mutate outside sandbox when destination parent is swapped to a symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-move-race");
+    const outsideRoot = join(tempDir, "test-openat2-move-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.mkdir("nested");
+    await fs.writeFile("inside.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (
+      openAt2Root == null ||
+      typeof openAt2Root.renameNoReplace !== "function"
+    ) {
+      return;
+    }
+
+    const originalRenameNoReplace = openAt2Root.renameNoReplace.bind(openAt2Root);
+    openAt2Root.renameNoReplace = (oldPath: string, newPath: string) => {
+      const linkPath = join(sandboxRoot, "nested");
+      rmSync(linkPath, { force: true, recursive: true });
+      symlinkSync(outsideRoot, linkPath);
+      return originalRenameNoReplace(oldPath, newPath);
+    };
+
+    await expect(fs.move("inside.txt", "nested/moved.txt")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    await expect(stat(join(outsideRoot, "moved.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("move should fail closed on EXDEV from openat2 (no path-based fallback)", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-move-exdev");
+    await mkdir(sandboxRoot);
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("inside.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (
+      openAt2Root == null ||
+      typeof openAt2Root.renameNoReplace !== "function"
+    ) {
+      return;
+    }
+
+    openAt2Root.renameNoReplace = () => {
+      throw new Error("EXDEV: cross-device move");
+    };
+
+    await expect(fs.move("inside.txt", "moved.txt")).rejects.toMatchObject({
+      code: "EXDEV",
+    });
+    expect(await fs.readFile("inside.txt", "utf8")).toBe("inside");
+    expect(await fs.exists("moved.txt")).toBe(false);
   });
 });
 

@@ -10,6 +10,10 @@ Absolute and relative paths are considered as relative to the input folder path.
 REFERENCE: We don't use https://github.com/metarhia/sandboxed-fs, but did
 look at the code.
 
+NOTE: Using `openat2`/`*at` descriptor-anchored operations for sandboxed path
+resolution is a standard hardening pattern in container software, including
+Docker and runc.
+
 SECURITY:
 
 The main race risk in this module is TOCTOU path replacement (especially
@@ -26,9 +30,9 @@ Current status:
 
 Remaining work:
 
-- Path-based mutators still not routed through the `openat2` helper (`move`,
-  `rm`, recursive delete paths, etc.) need deeper hardening to eliminate
-  residual TOCTOU windows.
+- Some path-based mutators still fall back to path APIs (`rm` recursive paths,
+  `link`/`symlink`, rootfs/scratch aliases, etc.) and need deeper hardening
+  to eliminate residual TOCTOU windows.
 - Full end-state is descriptor-anchored path resolution for all mutating ops
   (see [src/.agents/sandbox.md](./src/.agents/sandbox.md), task list SBOX-*).
 
@@ -95,6 +99,7 @@ interface OpenAt2SandboxRoot {
   unlink(path: string): void;
   rmdir(path: string): void;
   rename(oldPath: string, newPath: string): void;
+  renameNoReplace?(oldPath: string, newPath: string): void;
   chmod(path: string, mode: number): void;
   truncate(path: string, len: number): void;
   copyFile(src: string, dest: string, mode?: number | null): void;
@@ -1215,6 +1220,55 @@ export class SandboxedFilesystem {
     dest: string,
     options?: { overwrite?: boolean },
   ) => {
+    await Promise.all([this.safeAbsPath(src), this.safeAbsPath(dest)]);
+    const overwrite = !!options?.overwrite;
+    const openAt2Root = this.getOpenAt2Root();
+    const [srcRel, destRel] = await Promise.all([
+      this.getOpenAt2RelativePath(src),
+      this.getOpenAt2RelativePath(dest),
+    ]);
+    if (openAt2Root != null && srcRel != null && destRel != null) {
+      if (!overwrite && typeof openAt2Root.renameNoReplace === "function") {
+        try {
+          openAt2Root.renameNoReplace(srcRel, destRel);
+          return;
+        } catch (err) {
+          const { code } = this.parseOpenAt2Error(err);
+          if (code === "EXDEV") {
+            const exdev: NodeJS.ErrnoException =
+              err instanceof Error
+                ? err
+                : new Error("cross-device move is not supported");
+            exdev.code = "EXDEV";
+            exdev.path = dest;
+            throw exdev;
+          }
+          if (code !== "ENOSYS" && code !== "EINVAL") {
+            this.throwOpenAt2PathError(src, err);
+          }
+        }
+      } else if (overwrite) {
+        try {
+          openAt2Root.rename(srcRel, destRel);
+          return;
+        } catch (err) {
+          const { code } = this.parseOpenAt2Error(err);
+          if (code === "EXDEV") {
+            const exdev: NodeJS.ErrnoException =
+              err instanceof Error
+                ? err
+                : new Error("cross-device move is not supported");
+            exdev.code = "EXDEV";
+            exdev.path = dest;
+            throw exdev;
+          }
+          if (code !== "ENOSYS" && code !== "EINVAL") {
+            this.throwOpenAt2PathError(src, err);
+          }
+        }
+      }
+    }
+
     const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(
       src,
       dest,
