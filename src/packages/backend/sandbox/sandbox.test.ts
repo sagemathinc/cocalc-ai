@@ -4,6 +4,7 @@ import {
   mkdir,
   rm,
   readFile,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -521,6 +522,38 @@ describe("safe mode race-condition regressions", () => {
     expect(await readFile(outsideFile(), "utf8")).toBe("outside-secret");
     expect(success).toBe(80);
     expect(denied).toBe(80);
+  });
+});
+
+describe("openat2 motivation regressions", () => {
+  it("mkdir should not mutate outside sandbox when an intermediate component is swapped to a symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-mkdir-race");
+    const outsideRoot = join(tempDir, "test-openat2-mkdir-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.mkdir("nested");
+
+    // Inject a deterministic race right after ancestor verification:
+    // replace nested/child with a symlink to an outside directory.
+    const originalVerify = (fs as any).verifyExistingAncestorInSandbox.bind(fs);
+    (fs as any).verifyExistingAncestorInSandbox = async (path: string) => {
+      await originalVerify(path);
+      const linkPath = join(sandboxRoot, "nested", "child");
+      await rm(linkPath, { force: true, recursive: true });
+      await symlink(outsideRoot, linkPath);
+    };
+
+    await expect(
+      fs.mkdir("nested/child/grand", { recursive: true }),
+    ).rejects.toThrow("outside of sandbox");
+
+    // Desired secure behavior: a rejected operation must not have mutated
+    // outside paths. This currently fails and motivates openat2/*at adoption.
+    await expect(stat(join(outsideRoot, "grand"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });
 
