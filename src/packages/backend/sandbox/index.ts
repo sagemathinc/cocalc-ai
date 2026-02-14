@@ -373,6 +373,34 @@ export class SandboxedFilesystem {
     );
   };
 
+  private resolveSandboxPath = async (path: string): Promise<string> => {
+    return await this.safeAbsPath(path);
+  };
+
+  private resolveWritableSandboxPath = async (path: string): Promise<string> => {
+    this.assertWritable(path);
+    return await this.resolveSandboxPath(path);
+  };
+
+  private resolveWritableSandboxPaths = async (
+    path: string | string[],
+  ): Promise<string[]> => {
+    const paths = typeof path == "string" ? [path] : path;
+    for (const p of paths) {
+      this.assertWritable(p);
+    }
+    return await this.safeAbsPaths(paths);
+  };
+
+  private resolveReadWriteSandboxPaths = async (
+    src: string,
+    dest: string,
+  ): Promise<[string, string]> => {
+    this.assertWritable(dest);
+    const [srcPath, destPath] = await this.safeAbsPaths([src, dest]);
+    return [srcPath, destPath];
+  };
+
   private isInsideSandbox = (
     candidatePath: string,
     sandboxBasePath: string,
@@ -476,8 +504,7 @@ export class SandboxedFilesystem {
   };
 
   chmod = async (path: string, mode: string | number) => {
-    this.assertWritable(path);
-    await chmod(await this.safeAbsPath(path), mode);
+    await chmod(await this.resolveWritableSandboxPath(path), mode);
   };
 
   constants = async (): Promise<{ [key: string]: number }> => {
@@ -485,13 +512,15 @@ export class SandboxedFilesystem {
   };
 
   copyFile = async (src: string, dest: string) => {
-    this.assertWritable(dest);
-    await copyFile(await this.safeAbsPath(src), await this.safeAbsPath(dest));
+    const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(
+      src,
+      dest,
+    );
+    await copyFile(srcPath, destPath);
   };
 
   cp = async (src: string | string[], dest: string, options?: CopyOptions) => {
-    this.assertWritable(dest);
-    dest = await this.safeAbsPath(dest);
+    dest = await this.resolveWritableSandboxPath(dest);
 
     // ensure containing directory of destination exists -- node cp doesn't
     // do this but for cocalc this is very convenient and saves some network
@@ -525,12 +554,12 @@ export class SandboxedFilesystem {
   };
 
   exists = async (path: string) => {
-    return await exists(await this.safeAbsPath(path));
+    return await exists(await this.resolveSandboxPath(path));
   };
 
   find = async (path: string, options?: FindOptions): Promise<ExecOutput> => {
     return await find(
-      await this.safeAbsPath(path),
+      await this.resolveSandboxPath(path),
       capTimeout(options, MAX_TIMEOUT),
     );
   };
@@ -538,13 +567,13 @@ export class SandboxedFilesystem {
   getListing = async (
     path: string,
   ): Promise<{ files: Files; truncated?: boolean }> => {
-    return await getListing(await this.safeAbsPath(path));
+    return await getListing(await this.resolveSandboxPath(path));
   };
 
   // find files
   fd = async (path: string, options?: FdOptions): Promise<ExecOutput> => {
     return await fd(
-      await this.safeAbsPath(path),
+      await this.resolveSandboxPath(path),
       capTimeout(options, MAX_TIMEOUT),
     );
   };
@@ -552,7 +581,7 @@ export class SandboxedFilesystem {
   // disk usage
   dust = async (path: string, options?: DustOptions): Promise<ExecOutput> => {
     return await dust(
-      await this.safeAbsPath(path),
+      await this.resolveSandboxPath(path),
       // dust reasonably takes longer than the other commands and is used less,
       // so for now we give it more breathing room.
       capTimeout(options, 4 * MAX_TIMEOUT),
@@ -563,10 +592,12 @@ export class SandboxedFilesystem {
   ouch = async (args: string[], options?: OuchOptions): Promise<ExecOutput> => {
     options = { ...options };
     if (options.cwd) {
-      options.cwd = await this.safeAbsPath(options.cwd);
+      options.cwd = await this.resolveSandboxPath(options.cwd);
     }
     return await ouch(
-      [args[0]].concat(await Promise.all(args.slice(1).map(this.safeAbsPath))),
+      [args[0]].concat(
+        await Promise.all(args.slice(1).map(this.resolveSandboxPath)),
+      ),
       capTimeout(options, 6 * MAX_TIMEOUT),
     );
   };
@@ -609,7 +640,7 @@ export class SandboxedFilesystem {
     options?: RipgrepOptions,
   ): Promise<ExecOutput> => {
     return await ripgrep(
-      await this.safeAbsPath(path),
+      await this.resolveSandboxPath(path),
       pattern,
       capTimeout(options, MAX_TIMEOUT),
     );
@@ -617,20 +648,19 @@ export class SandboxedFilesystem {
 
   // hard link
   link = async (existingPath: string, newPath: string) => {
-    this.assertWritable(newPath);
-    return await link(
-      await this.safeAbsPath(existingPath),
-      await this.safeAbsPath(newPath),
+    const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(
+      existingPath,
+      newPath,
     );
+    return await link(srcPath, destPath);
   };
 
   lstat = async (path: string) => {
-    return await lstat(await this.safeAbsPath(path));
+    return await lstat(await this.resolveSandboxPath(path));
   };
 
   mkdir = async (path: string, options?) => {
-    this.assertWritable(path);
-    await mkdir(await this.safeAbsPath(path), options);
+    await mkdir(await this.resolveWritableSandboxPath(path), options);
   };
 
   private readFileLock = new Set<string>();
@@ -659,7 +689,7 @@ export class SandboxedFilesystem {
   };
 
   lockFile = async (path: string, lock?: number) => {
-    const p = await this.safeAbsPath(path);
+    const p = await this.resolveSandboxPath(path);
     this._lockFile(p, lock);
   };
 
@@ -675,7 +705,7 @@ export class SandboxedFilesystem {
   };
 
   readdir = async (path: string, options?) => {
-    const x = (await readdir(await this.safeAbsPath(path), options)) as any[];
+    const x = (await readdir(await this.resolveSandboxPath(path), options)) as any[];
     if (options?.withFileTypes) {
       const sandboxBasePath = await this.resolveSandboxBasePath();
       // each entry in x has a name and parentPath field, which refers to the
@@ -717,7 +747,7 @@ export class SandboxedFilesystem {
   };
 
   readlink = async (path: string): Promise<string> => {
-    return await readlink(await this.safeAbsPath(path));
+    return await readlink(await this.resolveSandboxPath(path));
   };
 
   realpath = async (path: string): Promise<string> => {
@@ -746,11 +776,11 @@ export class SandboxedFilesystem {
   };
 
   rename = async (oldPath: string, newPath: string) => {
-    this.assertWritable(newPath);
-    await rename(
-      await this.safeAbsPath(oldPath),
-      await this.safeAbsPath(newPath),
+    const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(
+      oldPath,
+      newPath,
     );
+    await rename(srcPath, destPath);
   };
 
   move = async (
@@ -758,18 +788,16 @@ export class SandboxedFilesystem {
     dest: string,
     options?: { overwrite?: boolean },
   ) => {
-    this.assertWritable(dest);
-    await move(
-      await this.safeAbsPath(src),
-      await this.safeAbsPath(dest),
-      options,
+    const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(
+      src,
+      dest,
     );
+    await move(srcPath, destPath, options);
   };
 
   rm = async (path: string | string[], options?) => {
-    const v = await this.safeAbsPaths(path);
+    const v = await this.resolveWritableSandboxPaths(path);
     const f = async (absPath: string) => {
-      this.assertWritable(absPath);
       await rm(absPath, options);
       void globalSyncFsService.recordLocalDelete(absPath);
     };
@@ -777,30 +805,25 @@ export class SandboxedFilesystem {
   };
 
   rmdir = async (path: string, options?) => {
-    this.assertWritable(path);
-    await rmdir(await this.safeAbsPath(path), options);
+    await rmdir(await this.resolveWritableSandboxPath(path), options);
   };
 
   stat = async (path: string) => {
-    return await stat(await this.safeAbsPath(path));
+    return await stat(await this.resolveSandboxPath(path));
   };
 
   symlink = async (target: string, path: string) => {
-    this.assertWritable(path);
-    return await symlink(
-      await this.safeAbsPath(target),
-      await this.safeAbsPath(path),
-    );
+    const targetPath = await this.resolveSandboxPath(target);
+    const linkPath = await this.resolveWritableSandboxPath(path);
+    return await symlink(targetPath, linkPath);
   };
 
   truncate = async (path: string, len?: number) => {
-    this.assertWritable(path);
-    await truncate(await this.safeAbsPath(path), len);
+    await truncate(await this.resolveWritableSandboxPath(path), len);
   };
 
   unlink = async (path: string) => {
-    this.assertWritable(path);
-    const abs = await this.safeAbsPath(path);
+    const abs = await this.resolveWritableSandboxPath(path);
     await unlink(abs);
     void globalSyncFsService.recordLocalDelete(abs);
   };
@@ -810,8 +833,7 @@ export class SandboxedFilesystem {
     atime: number | string | Date,
     mtime: number | string | Date,
   ) => {
-    this.assertWritable(path);
-    await utimes(await this.safeAbsPath(path), atime, mtime);
+    await utimes(await this.resolveWritableSandboxPath(path), atime, mtime);
   };
 
   watch = async (
@@ -819,7 +841,7 @@ export class SandboxedFilesystem {
     options: WatchOptions = {},
   ): Promise<WatchIterator> => {
     return watch(
-      await this.safeAbsPath(path),
+      await this.resolveSandboxPath(path),
       options,
       this.lastOnDisk,
       this.lastOnDiskHash,
@@ -1020,7 +1042,7 @@ export class SandboxedFilesystem {
       doctype?: any;
     },
   ): Promise<void> => {
-    const abs = await this.safeAbsPath(path);
+    const abs = await this.resolveSandboxPath(path);
     const project_id = info?.project_id ?? this.host;
     const relativePath = info?.relativePath ?? path;
     const string_id =
