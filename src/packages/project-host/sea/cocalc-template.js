@@ -106,10 +106,7 @@ if (path.basename(process.argv[1]) == "node") {
   }
 
   process.chdir(path.dirname(script));
-  const argv = process.argv.slice(1);
-  if (argv[0] === process.argv[0]) {
-    argv.shift();
-  }
+  const argv = process.argv.slice(2);
   process.argv = [process.execPath, script, ...argv];
   const binPath =
     process.env.COCALC_BIN_PATH ||

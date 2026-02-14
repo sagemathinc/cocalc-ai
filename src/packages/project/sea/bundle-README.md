@@ -13,7 +13,7 @@ Contents (high level):
 
 Native addons:
 - zeromq: bundle/build/linux/<arch>/node/glibc-*/addon.node
-- node-pty: bundle/node_modules/@lydell/node-pty-linux-*/prebuilds/.../pty.node
+- node-pty: bundle/node_modules/node-pty/prebuilds/linux-*/pty.node
 
 This bundle intentionally excludes darwin/win32 payloads and musl builds
 to keep size small and avoid irrelevant binaries.

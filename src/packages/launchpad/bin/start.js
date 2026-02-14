@@ -28,9 +28,17 @@ function prependPath(dir) {
         ? bundledRootCandidate
         : process.cwd());
     process.env.COCALC_BUNDLE_DIR ??= bundleDir;
-    const pgliteBundleDir = join(bundleDir, "pglite");
-    if (!process.env.COCALC_PGLITE_BUNDLE_DIR && existsSync(pgliteBundleDir)) {
-      process.env.COCALC_PGLITE_BUNDLE_DIR = pgliteBundleDir;
+    const pgliteBundleCandidates = [
+      join(bundleDir, "pglite"),
+      join(bundleDir, "bundle", "node_modules", "@electric-sql", "pglite", "dist"),
+    ];
+    if (!process.env.COCALC_PGLITE_BUNDLE_DIR) {
+      for (const pgliteBundleDir of pgliteBundleCandidates) {
+        if (existsSync(join(pgliteBundleDir, "pglite.data"))) {
+          process.env.COCALC_PGLITE_BUNDLE_DIR = pgliteBundleDir;
+          break;
+        }
+      }
     }
     const apiRoot = join(bundleDir, "next-dist", "pages", "api", "v2");
     if (!process.env.COCALC_API_V2_ROOT && existsSync(apiRoot)) {

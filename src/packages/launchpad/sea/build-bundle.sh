@@ -15,11 +15,32 @@ set -euo pipefail
 ROOT="$(realpath "$(dirname "$0")/../../..")"
 OUT="${1:-$ROOT/packages/launchpad/build/bundle}"
 
+case "${OSTYPE}" in
+  linux*) TARGET_OS="linux" ;;
+  darwin*) TARGET_OS="darwin" ;;
+  *)
+    echo "unsupported platform: ${OSTYPE}" >&2
+    exit 1
+    ;;
+esac
+
+case "$(uname -m)" in
+  x86_64) TARGET_ARCH="x64" ;;
+  aarch64|arm64) TARGET_ARCH="arm64" ;;
+  *)
+    echo "unsupported architecture: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+TARGET_PREBUILDS_DIR="${TARGET_OS}-${TARGET_ARCH}"
+
 echo "WARNING: be sure to 'cd static && pnpm clean && pnpm install && pnpm build' to reset the static content!"
 
 echo "Building CoCalc Launchpad bundle..."
 echo "  root: $ROOT"
 echo "  out : $OUT"
+echo "  target: ${TARGET_PREBUILDS_DIR}"
 
 mkdir -p "$OUT"
 rm -rf "$OUT"/*
@@ -48,7 +69,6 @@ echo "- Bundle entry point with @vercel/ncc"
 NODE_PATH="${NODE_PATH:+$NODE_PATH:}$ROOT/packages/next/dist" \
 ncc build packages/launchpad/bin/start.js \
   -o "$OUT"/bundle \
-  --source-map \
   --external @electric-sql/pglite \
   --external bufferutil \
   --external utf-8-validate
@@ -73,6 +93,15 @@ copy_native_pkg() {
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
 
+echo "- Prune native prebuilds to target"
+for pkg in bufferutil utf-8-validate; do
+  prebuilds="$OUT/bundle/node_modules/$pkg/prebuilds"
+  if [ -d "$prebuilds" ]; then
+    find "$prebuilds" -mindepth 1 -maxdepth 1 -type d \
+      ! -name "$TARGET_PREBUILDS_DIR" -exec rm -rf {} +
+  fi
+done
+
 copy_js_pkg() {
   local pkg="$1"
   local dir
@@ -88,6 +117,22 @@ copy_js_pkg() {
 
 copy_js_pkg "@electric-sql/pglite"
 
+echo "- Prune pglite package"
+PGLITE_DIR="$OUT/bundle/node_modules/@electric-sql/pglite"
+if [ -d "$PGLITE_DIR" ]; then
+  # Keep runtime essentials only.
+  find "$PGLITE_DIR" -mindepth 1 -maxdepth 1 \
+    ! -name dist \
+    ! -name package.json \
+    ! -name LICENSE \
+    ! -name README.md \
+    -exec rm -rf {} +
+  # Drop TS declaration/source maps from runtime payload.
+  find "$PGLITE_DIR/dist" -type f \
+    \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.cts' \) \
+    -delete
+fi
+
 echo "- Copy static frontend assets"
 mkdir -p "$OUT"/static
 rsync -a --delete \
@@ -98,18 +143,12 @@ rsync -a --delete \
 echo "- Copy Next api/v2 handlers"
 mkdir -p "$OUT"/next-dist
 rsync -a --delete \
-  --exclude '*.map' \
+  --include '/lib/***' \
+  --include '/pages/' \
+  --include '/pages/api/' \
+  --include '/pages/api/v2/***' \
+  --exclude '*' \
   packages/next/dist/ "$OUT/next-dist/"
-
-echo "- Copy PGlite bundle assets"
-PGLITE_DIST=$(find packages -path "*node_modules/@electric-sql/pglite/dist" -type d -print -quit || true)
-if [ -n "$PGLITE_DIST" ]; then
-  mkdir -p "$OUT"/pglite
-  cp "$PGLITE_DIST"/pglite.data "$OUT"/pglite/ || true
-  cp "$PGLITE_DIST"/pglite.wasm "$OUT"/pglite/ || true
-else
-  echo "pglite dist directory not found; skipping copy"
-fi
 
 echo "- Copy bootstrap.py"
 BOOTSTRAP_PY="$ROOT/packages/server/cloud/bootstrap/bootstrap.py"
@@ -119,16 +158,5 @@ if [ -f "$BOOTSTRAP_PY" ]; then
 else
   echo "bootstrap.py not found at $BOOTSTRAP_PY"
 fi
-
-echo "- Remove other platform binaries"
-
-case "${OSTYPE}" in
-  linux*)
-    rm -rf "$OUT"/build/win32 "$OUT"/build/darwin
-    ;;
-  darwin*)
-    rm -rf "$OUT"/build/win32 "$OUT"/build/linux
-    ;;
-esac
 
 echo "- Bundle created at $OUT"
