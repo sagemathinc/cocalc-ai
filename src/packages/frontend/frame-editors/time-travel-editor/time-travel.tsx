@@ -11,7 +11,6 @@ import { debounce } from "lodash";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AccountState } from "@cocalc/frontend/account/types";
 import {
-  redux,
   useAsyncEffect,
   useEditorRedux,
 } from "@cocalc/frontend/app-framework";
@@ -24,14 +23,12 @@ import { to_ipynb } from "../../jupyter/history-viewer";
 import { TimeTravelActions, TimeTravelState } from "./actions";
 import { GitAuthors, TimeTravelAuthors } from "./authors";
 import { Diff } from "./diff";
-import { Export } from "./export";
 import { LoadMoreHistory } from "./load-more-history";
 import { LogView } from "./log-view";
 import { NavigationButtons } from "./navigation-buttons";
 import { NavigationSlider } from "./navigation-slider";
 import { OpenFile } from "./open-file";
 import { OpenSnapshots } from "./open-snapshots";
-import { PurgeHistory } from "./purge-history";
 import { RangeSlider } from "./range-slider";
 import { RevertFile } from "./revert-file";
 import { Version, VersionRange } from "./version";
@@ -937,32 +934,6 @@ export function TimeTravel(props: Props) {
     );
   };
 
-  const renderExport = () => {
-    if (
-      gitMode ||
-      snapshotsMode ||
-      backupsMode ||
-      redux.getStore("page").get("fullscreen") == "kiosk"
-    ) {
-      // doesn't make sense in kiosk mode.
-      return;
-    }
-    return <Export actions={props.actions} />;
-  };
-
-  const renderPurgeHistory = () => {
-    if (
-      gitMode ||
-      snapshotsMode ||
-      backupsMode ||
-      props.is_subframe ||
-      redux.getStore("page").get("fullscreen") == "kiosk"
-    ) {
-      return;
-    }
-    return <PurgeHistory actions={props.actions} />;
-  };
-
   const copyHash = async (hash: string) => {
     try {
       await navigator.clipboard.writeText(hash);
@@ -1141,8 +1112,6 @@ export function TimeTravel(props: Props) {
             {renderOpenFile()}
             {renderRevertFile()}
             {renderOpenSnapshots()}
-            {renderExport()}
-            {renderPurgeHistory()}
           </Space.Compact>
         </div>
         {!logMode && activeVersionCount > 0 && (
