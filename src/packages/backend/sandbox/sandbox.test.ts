@@ -397,6 +397,7 @@ describe("safe mode sandbox", () => {
 describe("safe mode mutator escape checks", () => {
   let fs;
   const outsideFile = () => join(tempDir, "mutator-outside-secret.txt");
+  const outsideDir = () => join(tempDir, "mutator-outside-dir");
 
   it("creates sandbox and outside targets", async () => {
     await mkdir(join(tempDir, "test-safe-mutator-escapes"));
@@ -404,8 +405,10 @@ describe("safe mode mutator escape checks", () => {
       unsafeMode: false,
     });
     await writeFile(outsideFile(), "s3cr3t");
+    await mkdir(outsideDir(), { recursive: true });
     await fs.writeFile("inside.txt", "inside");
     await symlink(outsideFile(), join(tempDir, "test-safe-mutator-escapes", "escape-link"));
+    await symlink(outsideDir(), join(tempDir, "test-safe-mutator-escapes", "escape-dir"));
   });
 
   it("blocks unlink/rm on symlink that resolves outside sandbox", async () => {
@@ -427,6 +430,21 @@ describe("safe mode mutator escape checks", () => {
     );
     await fs.mkdir("safe-cp-dir");
     await expect(fs.cp(["escape-link"], "safe-cp-dir")).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+
+  it("blocks metadata mutators when target resolves outside sandbox", async () => {
+    await expect(fs.truncate("escape-link", 1)).rejects.toThrow("outside of sandbox");
+    await expect(fs.chmod("escape-link", 0o600)).rejects.toThrow("outside of sandbox");
+    await expect(fs.utimes("escape-link", new Date(), new Date())).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+
+  it("blocks mkdir when an existing ancestor resolves outside sandbox", async () => {
+    await expect(fs.mkdir("escape-dir/new-dir")).rejects.toThrow("outside of sandbox");
+    await expect(fs.mkdir("escape-dir/deeper/new-dir", { recursive: true })).rejects.toThrow(
       "outside of sandbox",
     );
   });

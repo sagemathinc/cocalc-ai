@@ -49,9 +49,7 @@ import {
   mkdir,
   stat,
   symlink,
-  truncate,
   unlink,
-  utimes,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { move } from "fs-extra";
@@ -446,6 +444,35 @@ export class SandboxedFilesystem {
     }
   };
 
+  private verifyExistingAncestorInSandbox = async (
+    path: string,
+  ): Promise<void> => {
+    if (this.unsafeMode) {
+      return;
+    }
+    let ancestor = dirname(path);
+    while (ancestor && ancestor !== "." && ancestor !== "/") {
+      try {
+        const { handle } = await this.openVerifiedHandle({
+          path: ancestor,
+          flags: constants.O_RDONLY,
+        });
+        await handle.close();
+        return;
+      } catch (err: any) {
+        if (err?.code === "ENOENT") {
+          const next = dirname(ancestor);
+          if (next === ancestor) {
+            return;
+          }
+          ancestor = next;
+          continue;
+        }
+        throw err;
+      }
+    }
+  };
+
   private isInsideSandbox = (
     candidatePath: string,
     sandboxBasePath: string,
@@ -487,6 +514,11 @@ export class SandboxedFilesystem {
     pathInSandbox: string;
     sandboxBasePath: string;
   }> => {
+    if (verify) {
+      // Pre-open path check blocks obvious symlink escapes for existing paths,
+      // while still allowing create paths that currently do not exist.
+      await this.safeAbsPath(path);
+    }
     const { pathInSandbox, sandboxBasePath } =
       await this.resolvePathInSandbox(path);
     const handle = await open(pathInSandbox, flags, mode);
@@ -549,7 +581,16 @@ export class SandboxedFilesystem {
   };
 
   chmod = async (path: string, mode: string | number) => {
-    await chmod(await this.resolveWritableSandboxPath(path), mode);
+    this.assertWritable(path);
+    const { handle } = await this.openVerifiedHandle({
+      path,
+      flags: constants.O_RDONLY,
+    });
+    try {
+      await handle.chmod(mode);
+    } finally {
+      await handle.close();
+    }
   };
 
   constants = async (): Promise<{ [key: string]: number }> => {
@@ -750,7 +791,12 @@ export class SandboxedFilesystem {
   };
 
   mkdir = async (path: string, options?) => {
-    await mkdir(await this.resolveWritableSandboxPath(path), options);
+    this.assertWritable(path);
+    const absPath = await this.resolveSandboxPath(path);
+    await this.verifyExistingAncestorInSandbox(path);
+    await mkdir(absPath, options);
+    // For create paths, re-validate post-create target resolves in sandbox.
+    await this.safeAbsPath(path);
   };
 
   private readFileLock = new Set<string>();
@@ -899,7 +945,9 @@ export class SandboxedFilesystem {
   };
 
   rmdir = async (path: string, options?) => {
-    await rmdir(await this.resolveWritableSandboxPath(path), options);
+    const absPath = await this.resolveWritableSandboxPath(path);
+    await this.preflightExistingSource(path, absPath);
+    await rmdir(absPath, options);
   };
 
   stat = async (path: string) => {
@@ -913,7 +961,16 @@ export class SandboxedFilesystem {
   };
 
   truncate = async (path: string, len?: number) => {
-    await truncate(await this.resolveWritableSandboxPath(path), len);
+    this.assertWritable(path);
+    const { handle } = await this.openVerifiedHandle({
+      path,
+      flags: constants.O_RDWR,
+    });
+    try {
+      await handle.truncate(len);
+    } finally {
+      await handle.close();
+    }
   };
 
   unlink = async (path: string) => {
@@ -928,7 +985,16 @@ export class SandboxedFilesystem {
     atime: number | string | Date,
     mtime: number | string | Date,
   ) => {
-    await utimes(await this.resolveWritableSandboxPath(path), atime, mtime);
+    this.assertWritable(path);
+    const { handle } = await this.openVerifiedHandle({
+      path,
+      flags: constants.O_RDONLY,
+    });
+    try {
+      await handle.utimes(atime, mtime);
+    } finally {
+      await handle.close();
+    }
   };
 
   watch = async (
