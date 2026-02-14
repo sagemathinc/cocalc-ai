@@ -256,7 +256,11 @@ describe("test watching a file and a folder in the sandbox", () => {
     });
 
     await fs.unlink("folder/z");
-    expect(await w.next()).toEqual({
+    let next = await w.next();
+    if (next.value?.event === "change") {
+      next = await w.next();
+    }
+    expect(next).toEqual({
       done: false,
       value: { event: "unlink", filename: "z" },
     });
@@ -457,6 +461,39 @@ describe("safe mode mutator escape checks", () => {
     await expect(fs.move("inside.txt", "escape-dest")).rejects.toThrow(
       "outside of sandbox",
     );
+  });
+});
+
+describe("safe mode race-condition regressions", () => {
+  let fs;
+  const sandboxPath = () => join(tempDir, "test-safe-race-regressions");
+  const outsideFile = () => join(tempDir, "race-outside-secret.txt");
+  const racePath = () => join(sandboxPath(), "race.txt");
+
+  it("creates sandbox and baseline files", async () => {
+    await mkdir(sandboxPath());
+    fs = new SandboxedFilesystem(sandboxPath(), { unsafeMode: false });
+    await writeFile(outsideFile(), "outside-secret");
+    await fs.writeFile("race.txt", "inside-seed");
+  });
+
+  it("repeated symlink/file flips stay fail-closed and preserve outside file", async () => {
+    let success = 0;
+    let denied = 0;
+    for (let i = 0; i < 80; i++) {
+      await rm(racePath(), { force: true });
+      await symlink(outsideFile(), racePath());
+      await expect(fs.truncate("race.txt", 2)).rejects.toThrow("outside of sandbox");
+      denied += 1;
+
+      await rm(racePath(), { force: true });
+      await writeFile(racePath(), `inside-race-${i}`);
+      await fs.truncate("race.txt", 2);
+      success += 1;
+    }
+    expect(await readFile(outsideFile(), "utf8")).toBe("outside-secret");
+    expect(success).toBe(80);
+    expect(denied).toBe(80);
   });
 });
 

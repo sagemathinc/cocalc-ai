@@ -531,6 +531,41 @@ export class SandboxedFilesystem {
     }
   };
 
+  private ensureHandleMatchesPath = async (
+    handle: Awaited<ReturnType<typeof open>>,
+    pathInSandbox: string,
+    sandboxBasePath: string,
+    path: string,
+  ): Promise<void> => {
+    let fdStat;
+    let pathStat;
+    try {
+      [fdStat, pathStat] = await Promise.all([handle.stat(), stat(pathInSandbox)]);
+    } catch (err: any) {
+      if (err?.code === "ENOENT") {
+        const stale: NodeJS.ErrnoException = new Error(
+          `Path changed during operation: '${path}'`,
+        );
+        stale.code = "ESTALE";
+        stale.path = path;
+        throw stale;
+      }
+      throw err;
+    }
+    if (fdStat.dev !== pathStat.dev || fdStat.ino !== pathStat.ino) {
+      const stale: NodeJS.ErrnoException = new Error(
+        `Path changed during operation: '${path}'`,
+      );
+      stale.code = "ESTALE";
+      stale.path = path;
+      throw stale;
+    }
+    const resolved = await realpath(pathInSandbox);
+    if (!this.isInsideSandbox(resolved, sandboxBasePath)) {
+      throw Error(`realpath of '${path}' resolves to a path outside of sandbox`);
+    }
+  };
+
   private openVerifiedHandle = async ({
     path,
     flags,
@@ -557,6 +592,12 @@ export class SandboxedFilesystem {
     if (verify) {
       try {
         await this.ensureFdInSandbox(handle.fd, sandboxBasePath, path);
+        await this.ensureHandleMatchesPath(
+          handle,
+          pathInSandbox,
+          sandboxBasePath,
+          path,
+        );
       } catch (err) {
         try {
           await handle.close();
