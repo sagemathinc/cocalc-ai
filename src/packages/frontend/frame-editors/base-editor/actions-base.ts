@@ -567,7 +567,26 @@ export class BaseEditorActions<
     const sessionStart = Date.now();
     const closeSyncdocAndFile = () => {
       this._syncstring.close();
-      this._get_project_actions().close_file(this.path);
+      const projectActions = this._get_project_actions();
+      const openFiles = projectActions?.get_store?.()?.get("open_files");
+      const syncPath = this.path;
+      const toClose = new Set<string>();
+
+      if (openFiles?.has?.(syncPath)) {
+        toClose.add(syncPath);
+      }
+      openFiles?.forEach?.((_obj, displayPath) => {
+        const mappedSyncPath = openFiles.getIn([displayPath, "sync_path"]);
+        if (mappedSyncPath === syncPath) {
+          toClose.add(displayPath);
+        }
+      });
+      if (toClose.size === 0) {
+        toClose.add(syncPath);
+      }
+      for (const displayPath of toClose) {
+        projectActions.close_file(displayPath);
+      }
     };
     this._syncstring.on("deleted", () => {
       // the file was deleted -- if we get this right when
