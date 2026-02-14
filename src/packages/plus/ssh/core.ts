@@ -896,8 +896,21 @@ export async function getUpgradeInfo(opts?: {
 
 export function openUrl(url: string) {
   const platform = process.platform;
-  const cmd = platform === "darwin" ? "open" : "xdg-open";
-  spawn(cmd, [url], { stdio: "ignore", detached: true }).unref();
+  const cmd =
+    platform === "darwin" && fs.existsSync("/usr/bin/open")
+      ? "/usr/bin/open"
+      : platform === "darwin"
+        ? "open"
+        : "xdg-open";
+  try {
+    const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
+    child.once("error", () => {
+      // ignore: opener may not exist on headless/minimal systems
+    });
+    child.unref();
+  } catch {
+    // ignore failures to spawn opener
+  }
 }
 
 function sleep(ms: number): Promise<void> {

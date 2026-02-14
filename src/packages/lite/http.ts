@@ -258,17 +258,26 @@ function openUrlIfRequested(url: string) {
   if (flag !== "1" && flag !== "true" && flag !== "yes") return;
   const platform = process.platform;
   let cmd: string;
-  let args: string[];
+  const args = [url];
   if (platform === "darwin") {
-    cmd = "open";
-    args = [url];
+    cmd = fs.existsSync("/usr/bin/open") ? "/usr/bin/open" : "open";
   } else {
     cmd = "xdg-open";
-    args = [url];
   }
   try {
-    spawn(cmd, args, { stdio: "ignore", detached: true }).unref();
-  } catch {
-    // ignore failures (headless or missing opener)
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+    child.once("error", (err) => {
+      // headless or missing opener is expected in some deployments
+      logger.debug("browser auto-open failed", {
+        cmd,
+        message: err?.message,
+      });
+    });
+    child.unref();
+  } catch (err: any) {
+    logger.debug("browser auto-open failed to spawn", {
+      cmd,
+      message: err?.message,
+    });
   }
 }
