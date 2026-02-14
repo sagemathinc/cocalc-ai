@@ -14,7 +14,7 @@ TimeTravel for them.
 import { labels } from "@cocalc/frontend/i18n";
 import { AsyncComponent } from "@cocalc/frontend/misc/async-component";
 import { set } from "@cocalc/util/misc";
-import { addEditorMenus } from "../frame-tree/commands";
+import { addEditorMenus } from "../frame-tree/commands/editor-menus";
 import { createEditor } from "../frame-tree/editor";
 import { EditorDescription } from "../frame-tree/types";
 
