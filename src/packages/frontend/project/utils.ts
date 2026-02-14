@@ -25,6 +25,7 @@ import {
   uuid,
 } from "@cocalc/util/misc";
 import { fileURL } from "@cocalc/frontend/lib/cocalc-urls";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 export function randomPetName() {
   return Math.random() > 0.5 ? catNames.random() : dogNames.allRandom();
@@ -254,6 +255,35 @@ export function normalize(path: string): string {
   } else {
     return path;
   }
+}
+
+// Normalize a path for sync identity (patch stream keys, editor redux keys, etc).
+// If the path is under the user's home directory, use a home-relative form so
+// absolute (/home/...) and relative opens map to the same sync state.
+export function normalizeSyncPathIdentity(
+  path: string,
+  homeDirectory?: string,
+): string {
+  const normalized = normalize(path);
+  if (!normalized.startsWith("/")) {
+    return normalized;
+  }
+  const absolute = normalizeAbsolutePath(normalized);
+  if (
+    homeDirectory == null ||
+    homeDirectory.length === 0 ||
+    homeDirectory === "/"
+  ) {
+    return absolute;
+  }
+  const home = normalizeAbsolutePath(homeDirectory);
+  if (absolute === home) {
+    return "";
+  }
+  if (absolute.startsWith(`${home}/`)) {
+    return absolute.slice(home.length + 1);
+  }
+  return absolute;
 }
 
 // test, if the given file exists and has nonzero size

@@ -21,8 +21,9 @@ import {
   uuid,
 } from "@cocalc/util/misc";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
-import { normalize } from "./utils";
+import { normalize, normalizeSyncPathIdentity } from "./utils";
 import { termPath } from "@cocalc/util/terminal/names";
+import { lite } from "@cocalc/frontend/lite";
 
 // if true, PRELOAD_BACKGROUND_TABS makes it so all tabs have their file editing
 // preloaded, even background tabs.  This can make the UI much more responsive,
@@ -190,6 +191,7 @@ export async function open_file(
   }
   // Map resolved paths to canonical sync identities used by specific editors
   // (e.g. ipynb syncdb path, terminal path key).
+  syncPath = normalizeSyncPathIdentity(syncPath, getHomeDirectoryForSyncPath(actions));
   syncPath = canonicalPath(syncPath);
   if (!tabIsOpened()) {
     return;
@@ -598,4 +600,16 @@ export function canonicalPath(path: string) {
     return termPath({ path, cmd: "", number: 0 });
   }
   return path;
+}
+
+function getHomeDirectoryForSyncPath(actions: ProjectActions): string | undefined {
+  const store = actions.get_store();
+  const homeDirectory = store?.get("available_features")?.get("homeDirectory");
+  if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
+    return homeDirectory;
+  }
+  if (!lite) {
+    return "/root";
+  }
+  return;
 }
