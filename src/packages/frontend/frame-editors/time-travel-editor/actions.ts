@@ -391,6 +391,22 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
       path: this.docpath,
       keep_current_state,
     });
+    const projectActions: any = this.redux.getProjectActions(this.project_id);
+    const store = projectActions?.get_store?.();
+    const openFiles = store?.get?.("open_files");
+    const toClose = new Set<string>();
+    if (openFiles?.has?.(this.docpath)) {
+      toClose.add(this.docpath);
+    }
+    openFiles?.forEach?.((_obj, displayPath) => {
+      const syncPath = openFiles.getIn([displayPath, "sync_path"]);
+      if (syncPath === this.docpath) {
+        toClose.add(displayPath);
+      }
+    });
+    for (const displayPath of toClose) {
+      projectActions?.close_tab?.(displayPath);
+    }
     // This state is conservative until syncdoc metadata change propagates.
     this.setState({ has_full_history: true });
     this.syncdoc_changed();

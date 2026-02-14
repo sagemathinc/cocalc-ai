@@ -120,6 +120,7 @@ import {
   filename_extension,
   history_path,
   len,
+  path_to_tab,
   path_split,
   uuid,
 } from "@cocalc/util/misc";
@@ -568,7 +569,9 @@ export class BaseEditorActions<
     const closeSyncdocAndFile = () => {
       this._syncstring.close();
       const projectActions = this._get_project_actions();
-      const openFiles = projectActions?.get_store?.()?.get("open_files");
+      const store = projectActions?.get_store?.();
+      const openFiles = store?.get("open_files");
+      const activeTab = store?.get("active_project_tab");
       const syncPath = this.path;
       const toClose = new Set<string>();
 
@@ -585,7 +588,11 @@ export class BaseEditorActions<
         toClose.add(syncPath);
       }
       for (const displayPath of toClose) {
-        projectActions.close_file(displayPath);
+        if (activeTab === path_to_tab(displayPath)) {
+          projectActions.close_tab(displayPath);
+        } else {
+          projectActions.close_file(displayPath);
+        }
       }
     };
     this._syncstring.on("deleted", () => {
