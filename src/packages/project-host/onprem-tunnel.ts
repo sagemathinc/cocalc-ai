@@ -53,6 +53,9 @@ type TunnelState = {
   child?: ChildProcessWithoutNullStreams;
   retryTimer?: NodeJS.Timeout;
   retryAttempt?: number;
+  restartTimer?: NodeJS.Timeout;
+  lastForwardFailureMs?: number;
+  restartPending?: boolean;
 };
 
 async function fileExists(path: string): Promise<boolean> {
@@ -331,11 +334,30 @@ export async function startOnPremTunnel(opts: {
     parsePort(process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT) ??
     ONPREM_REST_TUNNEL_LOCAL_PORT;
   const state: TunnelState = { stopped: false };
+  let currentConfig: TunnelConfig | undefined = fallbackConfig;
+
+  const resolveNextConfig = async (
+    fallback?: TunnelConfig,
+  ): Promise<TunnelConfig | undefined> => {
+    const latestStored = await loadStoredConfig(configPath);
+    const fresh = await registerTunnelConfig({
+      keyPath,
+      configPath,
+      fallback: latestStored ?? storedConfig,
+    });
+    return (
+      fresh ??
+      normalizeStoredConfig(latestStored, keyPath) ??
+      fallback ??
+      currentConfig
+    );
+  };
 
   const start = (config: TunnelConfig) => {
     if (state.stopped) {
       return;
     }
+    currentConfig = config;
     const remoteRestPort =
       config.restPort ??
       parsePort(process.env.COCALC_LAUNCHPAD_REST_PORT) ??
@@ -360,21 +382,78 @@ export async function startOnPremTunnel(opts: {
     });
     const child = spawn(SSH_BINARY, args);
     state.child = child;
+    const scheduleRestart = (reason: string) => {
+      if (state.stopped || state.restartPending) {
+        return;
+      }
+      state.restartPending = true;
+      if (state.restartTimer) {
+        clearTimeout(state.restartTimer);
+      }
+      state.restartTimer = setTimeout(async () => {
+        state.restartPending = false;
+        if (state.stopped) return;
+        const next = await resolveNextConfig(config);
+        if (!next) {
+          logger.warn("onprem tunnel restart could not refresh config", {
+            reason,
+          });
+          scheduleRetry();
+          return;
+        }
+        if (
+          next.sshdHost !== config.sshdHost ||
+          next.sshdPort !== config.sshdPort ||
+          next.restPort !== config.restPort
+        ) {
+          logger.info("onprem tunnel refreshed config after disconnect", {
+            reason,
+            sshd_host: next.sshdHost,
+            sshd_port: next.sshdPort,
+            rest_port: next.restPort,
+          });
+        }
+        start(next);
+      }, 5000);
+    };
     child.on("error", (err) => {
       if (state.stopped) {
         return;
       }
       logger.warn("onprem tunnel spawn failed", { err: String(err) });
-      setTimeout(() => start(config), 5000);
+      scheduleRestart("spawn-error");
     });
     child.stdout.on("data", (chunk) => logger.debug(chunk.toString()));
-    child.stderr.on("data", (chunk) => logger.debug(chunk.toString()));
+    child.stderr.on("data", (chunk) => {
+      const line = chunk.toString();
+      logger.debug(line);
+      // If the forwarded REST target is stale/unreachable on the hub side,
+      // force a reconnect so we re-register and pick up fresh ports.
+      if (
+        /connect_to 127\.0\.0\.1 port \d+: failed/.test(line) ||
+        /open failed: connect failed: Connection refused/.test(line)
+      ) {
+        const now = Date.now();
+        if (
+          state.lastForwardFailureMs == null ||
+          now - state.lastForwardFailureMs > 15000
+        ) {
+          state.lastForwardFailureMs = now;
+          logger.warn("onprem tunnel forward target failed; reconnecting", {
+            line: line.trim(),
+          });
+          if (child.exitCode == null) {
+            child.kill("SIGTERM");
+          }
+        }
+      }
+    });
     child.on("exit", (code, signal) => {
       if (state.stopped) {
         return;
       }
       logger.warn("onprem tunnel exited", { code, signal });
-      setTimeout(() => start(config), 5000);
+      scheduleRestart("ssh-exit");
     });
   };
 
@@ -393,11 +472,7 @@ export async function startOnPremTunnel(opts: {
     });
     state.retryTimer = setTimeout(async () => {
       if (state.stopped) return;
-      const config = await registerTunnelConfig({
-        keyPath,
-        configPath,
-        fallback: storedConfig,
-      });
+      const config = await resolveNextConfig();
       if (config) {
         state.retryTimer = undefined;
         state.retryAttempt = 0;
@@ -409,18 +484,16 @@ export async function startOnPremTunnel(opts: {
     }, delay);
   };
 
-  const config =
-    (await registerTunnelConfig({
-      keyPath,
-      configPath,
-      fallback: storedConfig,
-    })) ?? fallbackConfig;
+  const config = await resolveNextConfig(fallbackConfig);
   if (!config) {
     scheduleRetry();
     return () => {
       state.stopped = true;
       if (state.retryTimer) {
         clearTimeout(state.retryTimer);
+      }
+      if (state.restartTimer) {
+        clearTimeout(state.restartTimer);
       }
     };
   }
@@ -434,6 +507,9 @@ export async function startOnPremTunnel(opts: {
     state.stopped = true;
     if (state.retryTimer) {
       clearTimeout(state.retryTimer);
+    }
+    if (state.restartTimer) {
+      clearTimeout(state.restartTimer);
     }
     if (state.child && state.child.exitCode == null) {
       state.child.kill("SIGTERM");
