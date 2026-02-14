@@ -39,15 +39,14 @@ The problem is that 1 and 3 happen microseconds apart as separate calls to the f
 */
 
 import {
-  appendFile,
   chmod,
   cp,
   constants,
   copyFile,
   link,
   lstat,
+  open,
   readdir,
-  readFile,
   readlink,
   realpath,
   rename,
@@ -57,7 +56,6 @@ import {
   stat,
   symlink,
   truncate,
-  writeFile,
   unlink,
   utimes,
 } from "node:fs/promises";
@@ -380,6 +378,63 @@ export class SandboxedFilesystem {
     );
   };
 
+  private isInsideSandbox = (
+    candidatePath: string,
+    sandboxBasePath: string,
+  ): boolean => {
+    return (
+      candidatePath == sandboxBasePath ||
+      candidatePath.startsWith(sandboxBasePath + "/")
+    );
+  };
+
+  private ensureFdInSandbox = async (
+    fd: number,
+    sandboxBasePath: string,
+    path: string,
+  ): Promise<void> => {
+    if (this.unsafeMode) {
+      return;
+    }
+    // Verify the actual opened inode is still inside the sandbox boundary.
+    // This closes the TOCTOU window between path validation and read/write.
+    const resolved = await realpath(`/proc/self/fd/${fd}`);
+    if (!this.isInsideSandbox(resolved, sandboxBasePath)) {
+      throw Error(`realpath of '${path}' resolves to a path outside of sandbox`);
+    }
+  };
+
+  private openVerifiedHandle = async ({
+    path,
+    flags,
+    mode,
+    verify = true,
+  }: {
+    path: string;
+    flags: number;
+    mode?: number;
+    verify?: boolean;
+  }): Promise<{
+    handle: Awaited<ReturnType<typeof open>>;
+    pathInSandbox: string;
+    sandboxBasePath: string;
+  }> => {
+    const { pathInSandbox, sandboxBasePath } =
+      await this.resolvePathInSandbox(path);
+    const handle = await open(pathInSandbox, flags, mode);
+    if (verify) {
+      try {
+        await this.ensureFdInSandbox(handle.fd, sandboxBasePath, path);
+      } catch (err) {
+        try {
+          await handle.close();
+        } catch {}
+        throw err;
+      }
+    }
+    return { handle, pathInSandbox, sandboxBasePath };
+  };
+
   safeAbsPath = async (path: string): Promise<string> => {
     if (typeof path != "string") {
       throw Error(`path must be a string but is of type ${typeof path}`);
@@ -414,7 +469,15 @@ export class SandboxedFilesystem {
 
   appendFile = async (path: string, data: string | Buffer, encoding?) => {
     this.assertWritable(path);
-    return await appendFile(await this.safeAbsPath(path), data, encoding);
+    const { handle } = await this.openVerifiedHandle({
+      path,
+      flags: constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT,
+    });
+    try {
+      return await handle.appendFile(data as any, encoding);
+    } finally {
+      await handle.close();
+    }
   };
 
   chmod = async (path: string, mode: string | number) => {
@@ -581,15 +644,23 @@ export class SandboxedFilesystem {
     encoding?: any,
     lock?: number,
   ): Promise<string | Buffer> => {
-    const p = await this.safeAbsPath(path);
+    const { pathInSandbox } = await this.resolvePathInSandbox(path);
+    const p = this.unsafeMode ? pathInSandbox : await this.safeAbsPath(path);
     if (this.readFileLock.has(p)) {
       throw new ConatError(`path is locked - ${p}`, { code: "LOCK" });
     }
     if (lock) {
       this._lockFile(p, lock);
     }
-
-    return await readFile(p, encoding);
+    const { handle } = await this.openVerifiedHandle({
+      path,
+      flags: constants.O_RDONLY,
+    });
+    try {
+      return await handle.readFile(encoding);
+    } finally {
+      await handle.close();
+    }
   };
 
   lockFile = async (path: string, lock?: number) => {
@@ -766,68 +837,88 @@ export class SandboxedFilesystem {
     saveLast?: boolean,
   ) => {
     this.assertWritable(path);
-    const p = await this.safeAbsPath(path);
+    const { pathInSandbox } = await this.resolvePathInSandbox(path);
+    const p = this.unsafeMode ? pathInSandbox : await this.safeAbsPath(path);
     if (isPatchRequest(data)) {
       const encoding = data.encoding ?? "utf8";
       let current: string;
+      let handle: Awaited<ReturnType<typeof open>> | undefined;
       try {
-        current = (await readFile(p, { encoding })) as string;
+        const opened = await this.openVerifiedHandle({
+          path,
+          flags: constants.O_RDWR,
+        });
+        handle = opened.handle;
+        current = (await handle.readFile({ encoding })) as string;
       } catch (err: any) {
         if (err?.code === "ENOENT") {
           err.code = "ETAG_MISMATCH";
         }
         throw err;
       }
-      const normalizedEncoding = encoding === "utf-8" ? "utf8" : encoding;
-      const currentHash = createHash("sha256")
-        .update(Buffer.from(current, normalizedEncoding))
-        .digest("hex");
-      if (currentHash !== data.sha256) {
-        const err: NodeJS.ErrnoException = new Error(
-          "Mismatched base version for patch write",
-        );
-        err.code = "ETAG_MISMATCH";
-        err.path = p;
-        throw err;
-      }
-      let compressedPatch: CompressedPatch;
       try {
-        compressedPatch =
-          typeof data.patch === "string"
-            ? (JSON.parse(data.patch) as CompressedPatch)
-            : data.patch;
-      } catch {
-        const err: NodeJS.ErrnoException = new Error(
-          "Invalid patch format for writeFile",
-        );
-        err.code = "EINVAL";
-        err.path = p;
-        throw err;
-      }
-      if (!Array.isArray(compressedPatch)) {
-        const err: NodeJS.ErrnoException = new Error(
-          "Invalid patch payload for writeFile",
-        );
-        err.code = "EINVAL";
-        err.path = p;
-        throw err;
-      }
-      const [patched, clean] = apply_patch(compressedPatch, current);
-      if (!clean) {
-        const err: NodeJS.ErrnoException = new Error(
-          "Failed to apply patch cleanly",
-        );
-        err.code = "PATCH_FAILED";
-        err.path = p;
-        throw err;
-      }
-      await this.writeFileAtomic(p, patched, { encoding: normalizedEncoding });
-      if (saveLast) {
-        this.lastOnDisk.set(p, patched);
-        this.lastOnDiskHash.set(`${p}-${sha1(patched)}`, true);
-      }
-      if (saveLast) {
-        globalSyncFsService.recordLocalWrite(p, patched, true);
+        const normalizedEncoding = encoding === "utf-8" ? "utf8" : encoding;
+        const currentHash = createHash("sha256")
+          .update(Buffer.from(current, normalizedEncoding))
+          .digest("hex");
+        if (currentHash !== data.sha256) {
+          const err: NodeJS.ErrnoException = new Error(
+            "Mismatched base version for patch write",
+          );
+          err.code = "ETAG_MISMATCH";
+          err.path = p;
+          throw err;
+        }
+        let compressedPatch: CompressedPatch;
+        try {
+          compressedPatch =
+            typeof data.patch === "string"
+              ? (JSON.parse(data.patch) as CompressedPatch)
+              : data.patch;
+        } catch {
+          const err: NodeJS.ErrnoException = new Error(
+            "Invalid patch format for writeFile",
+          );
+          err.code = "EINVAL";
+          err.path = p;
+          throw err;
+        }
+        if (!Array.isArray(compressedPatch)) {
+          const err: NodeJS.ErrnoException = new Error(
+            "Invalid patch payload for writeFile",
+          );
+          err.code = "EINVAL";
+          err.path = p;
+          throw err;
+        }
+        const [patched, clean] = apply_patch(compressedPatch, current);
+        if (!clean) {
+          const err: NodeJS.ErrnoException = new Error(
+            "Failed to apply patch cleanly",
+          );
+          err.code = "PATCH_FAILED";
+          err.path = p;
+          throw err;
+        }
+        if (handle == null) {
+          throw new Error("missing file handle for patch write");
+        }
+        await handle.truncate(0);
+        const encoded = Buffer.from(patched, normalizedEncoding);
+        await handle.write(encoded, 0, encoded.length, 0);
+        if (saveLast) {
+          this.lastOnDisk.set(p, patched);
+          this.lastOnDiskHash.set(`${p}-${sha1(patched)}`, true);
+        }
+        if (saveLast) {
+          globalSyncFsService.recordLocalWrite(p, patched, true);
+        }
+      } finally {
+        if (handle != null) {
+          try {
+            await handle.close();
+          } catch {}
+        }
       }
       return;
     }
@@ -835,7 +926,51 @@ export class SandboxedFilesystem {
       this.lastOnDisk.set(p, data);
       this.lastOnDiskHash.set(`${p}-${sha1(data)}`, true);
     }
-    await writeFile(p, data);
+    const writeToHandle = async (
+      handle: Awaited<ReturnType<typeof open>>,
+    ): Promise<void> => {
+      try {
+        await handle.truncate(0);
+        await handle.writeFile(data as any);
+      } finally {
+        await handle.close();
+      }
+    };
+    try {
+      const { handle } = await this.openVerifiedHandle({
+        path,
+        flags: constants.O_RDWR,
+      });
+      await writeToHandle(handle);
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        throw err;
+      }
+      try {
+        const { handle } = await this.openVerifiedHandle({
+          path,
+          flags: constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+          mode: 0o666,
+          // Avoid delaying first write to freshly-created files; this keeps
+          // directory watch events stable (add, then later unlink).
+          verify: false,
+        });
+        try {
+          await handle.writeFile(data as any);
+        } finally {
+          await handle.close();
+        }
+      } catch (createErr: any) {
+        if (createErr?.code !== "EEXIST") {
+          throw createErr;
+        }
+        const { handle } = await this.openVerifiedHandle({
+          path,
+          flags: constants.O_RDWR,
+        });
+        await writeToHandle(handle);
+      }
+    }
     if (saveLast === true && typeof data === "string") {
       globalSyncFsService.recordLocalWrite(p, data, true);
     }
@@ -848,35 +983,20 @@ export class SandboxedFilesystem {
       { baseContents?: string; minLength?: number; saveLast?: boolean },
     ];
     this.assertWritable(path);
-    const p = await this.safeAbsPath(path);
     const { baseContents, minLength = 1024, saveLast } = options;
     if (
       typeof content !== "string" ||
       typeof baseContents !== "string" ||
       content.length <= minLength
     ) {
-      if (saveLast && typeof content === "string") {
-        this.lastOnDisk.set(p, content);
-        this.lastOnDiskHash.set(`${p}-${sha1(content)}`, true);
-      }
-      await this.writeFileAtomic(p, content);
-      if (saveLast === true && typeof content === "string") {
-        globalSyncFsService.recordLocalWrite(p, content, true);
-      }
+      await this.writeFile(path, content, saveLast);
       return;
     }
     if (baseContents === content) {
       return;
     }
     if (!baseContents.length || !content.length) {
-      if (saveLast && typeof content === "string") {
-        this.lastOnDisk.set(p, content);
-        this.lastOnDiskHash.set(`${p}-${sha1(content)}`, true);
-      }
-      await this.writeFileAtomic(p, content);
-      if (saveLast === true && typeof content === "string") {
-        globalSyncFsService.recordLocalWrite(p, content, true);
-      }
+      await this.writeFile(path, content, saveLast);
       return;
     }
     const patch = make_patch(baseContents, content);
@@ -891,51 +1011,6 @@ export class SandboxedFilesystem {
       },
       saveLast,
     );
-  };
-
-  private writeFileAtomic = async (
-    path: string,
-    data: string | Buffer,
-    options?: { encoding?: BufferEncoding },
-  ): Promise<void> => {
-    const dir = dirname(path);
-    const base = basename(path);
-    const tmp = join(
-      dir,
-      `.${base}.tmp.${process.pid}.${Date.now().toString(36)}.${Math.random()
-        .toString(16)
-        .slice(2)}`,
-    );
-    let mode: number | undefined;
-    try {
-      const stat0 = await stat(path);
-      mode = stat0.mode;
-    } catch (err: any) {
-      if (err?.code !== "ENOENT") {
-        throw err;
-      }
-    }
-    try {
-      if (options?.encoding) {
-        await writeFile(tmp, data, {
-          encoding: options.encoding,
-          mode,
-        });
-      } else {
-        await writeFile(tmp, data, { mode });
-      }
-      await rename(tmp, path);
-      if (mode != null) {
-        try {
-          await chmod(path, mode);
-        } catch {}
-      }
-    } catch (err) {
-      try {
-        await unlink(tmp);
-      } catch {}
-      throw err;
-    }
   };
 
   // Heartbeat indicating a client is actively editing this path.
