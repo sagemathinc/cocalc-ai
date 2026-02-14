@@ -225,10 +225,42 @@ export class SandboxedFilesystem {
               err.message = replace_all(err.message, this.path + "/", "");
             }
           }
+          this.logSecurityDenial(f, args, err);
           throw err;
         }
       };
     }
+  }
+
+  private isSecurityDenial(err: any): boolean {
+    if (err == null) {
+      return false;
+    }
+    if (
+      err?.code === "EACCES" ||
+      err?.code === "EPERM" ||
+      err?.code === "ESTALE"
+    ) {
+      return true;
+    }
+    if (typeof err?.message === "string") {
+      return err.message.includes("outside of sandbox");
+    }
+    return false;
+  }
+
+  private logSecurityDenial(method: string, args: unknown[], err: any): void {
+    if (this.unsafeMode || !this.isSecurityDenial(err)) {
+      return;
+    }
+    const requestedPath = typeof args?.[0] === "string" ? args[0] : undefined;
+    logger.warn("sandbox security deny", {
+      method,
+      mode: this.unsafeMode ? "unsafe" : "safe",
+      path: requestedPath,
+      code: err?.code,
+      message: typeof err?.message === "string" ? err.message : String(err),
+    });
   }
 
   private async resolveSandboxBasePath(): Promise<string> {
