@@ -163,6 +163,9 @@ importers:
       '@cocalc/conat':
         specifier: workspace:*
         version: link:../conat
+      '@cocalc/openat2':
+        specifier: link:/home/wstein/build/cocalc-openat2
+        version: link:../../../../cocalc-openat2
       '@cocalc/sync':
         specifier: workspace:*
         version: link:../sync
@@ -8139,7 +8142,7 @@ packages:
 
   glob@6.0.4:
     resolution: {integrity: sha512-MKZeRNyYZAVVVG1oZeLaWie1uweH40m9AZwIwxyPbTSX4hHrVYSzLg0Ro5Z5R7XKkIX+Cc6oD1rqeDJnwsB8/A==}
-    deprecated: Glob versions prior to v9 are no longer supported
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
 
   glob@7.2.3:
     resolution: {integrity: sha512-nFR0zLpU2YCaRxwoCJvL6UvCH2JFyFVIvwTLsIf21AuHlMskA1hhTdk+LlYJtOlYt9v6dvszD2BGRqBL+iQK9Q==}
