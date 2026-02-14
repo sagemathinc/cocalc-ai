@@ -466,6 +466,25 @@ describe("safe mode mutator escape checks", () => {
     );
   });
 
+  it("blocks ouch --dir when destination resolves outside sandbox", async () => {
+    const ouchSandbox = join(tempDir, "test-safe-mutator-escapes-ouch");
+    const ouchOutside = join(tempDir, "test-safe-mutator-escapes-ouch-outside");
+    await rm(ouchSandbox, { force: true, recursive: true });
+    await rm(ouchOutside, { force: true, recursive: true });
+    await mkdir(ouchSandbox, { recursive: true });
+    await mkdir(ouchOutside, { recursive: true });
+    await symlink(ouchOutside, join(ouchSandbox, "escape-dir"));
+    const ouchFs = new SandboxedFilesystem(ouchSandbox, {
+      unsafeMode: false,
+    });
+    await ouchFs.writeFile("inside.txt", "inside");
+    await expect(
+      ouchFs.ouch(["decompress", "inside.txt"], {
+        options: ["--dir", "escape-dir"],
+      }),
+    ).rejects.toThrow("outside of sandbox");
+  });
+
   it("blocks metadata mutators when target resolves outside sandbox", async () => {
     await expect(fs.truncate("escape-link", 1)).rejects.toThrow("outside of sandbox");
     await expect(fs.chmod("escape-link", 0o600)).rejects.toThrow("outside of sandbox");

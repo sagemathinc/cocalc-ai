@@ -1,8 +1,9 @@
 import { execFile, spawn } from "node:child_process";
-import { arch } from "node:os";
+import { platform } from "node:os";
 import { type ExecOutput } from "@cocalc/conat/files/fs";
 export { type ExecOutput };
 import getLogger from "@cocalc/backend/logger";
+import { posix } from "node:path";
 
 const logger = getLogger("files:sandbox:exec");
 
@@ -18,9 +19,9 @@ export interface Options {
   positionalArgs?: string[];
   // whitelisted args flags; these are checked according to the whitelist specified below
   options?: string[];
-  // if given, use these options when os.arch()=='darwin' (i.e., macOS); these must match whitelist
+  // if given, use these options when os.platform()=='darwin' (i.e., macOS); these must match whitelist
   darwin?: string[];
-  // if given, use these options when os.arch()=='linux'; these must match whitelist
+  // if given, use these options when os.platform()=='linux'; these must match whitelist
   linux?: string[];
   // when total size of stdout and stderr hits this amount, command is terminated, and
   // truncated is set.  The total amount of output may thus be slightly larger than maxOutput
@@ -72,11 +73,7 @@ export default async function exec({
   onStdoutLine,
   onStderrLine,
 }: Options): Promise<ExecOutput> {
-  if (arch() == "darwin") {
-    options = options.concat(darwin);
-  } else if (arch() == "linux") {
-    options = options.concat(linux);
-  }
+  options = selectPlatformOptions(options, { darwin, linux });
   options = safety.concat(parseAndValidateOptions(options, whitelist));
   const userId = username ? await getUserIds(username) : undefined;
 
@@ -94,7 +91,7 @@ export default async function exec({
       args.push("--", ...positionalArgs);
     }
 
-    logger.debug((cwd ? `cd ${cwd}; ` : "") + `${cmd} ${args.join(" ")}`);
+    logger.debug(formatCommandForLog({ cwd, cmd, args }));
 
     //console.log(`${cmd} ${args.join(" ")}`, { cwd, env });
     const child = spawn(cmd, args, {
@@ -240,6 +237,66 @@ export function parseAndValidateOptions(
   return validatedOptions;
 }
 
+export function selectPlatformOptions(
+  options: string[],
+  {
+    darwin = [],
+    linux = [],
+    platformName = platform(),
+  }: { darwin?: string[]; linux?: string[]; platformName?: string } = {},
+): string[] {
+  if (platformName === "darwin") {
+    return options.concat(darwin);
+  }
+  if (platformName === "linux") {
+    return options.concat(linux);
+  }
+  return options;
+}
+
+function formatCommandForLog({
+  cwd,
+  cmd,
+  args,
+}: {
+  cwd?: string;
+  cmd: string;
+  args: string[];
+}): string {
+  const redactedArgs = redactArgs(args);
+  return (cwd ? `cd ${cwd}; ` : "") + `${cmd} ${redactedArgs.join(" ")}`;
+}
+
+const SENSITIVE_OPTIONS = new Set([
+  "-p",
+  "--password",
+  "--passphrase",
+  "--token",
+  "--secret",
+]);
+
+function redactArgs(args: string[]): string[] {
+  const redacted: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const [opt, value] = arg.split("=", 2);
+    if (SENSITIVE_OPTIONS.has(opt)) {
+      if (value !== undefined) {
+        redacted.push(`${opt}=REDACTED`);
+      } else {
+        redacted.push(opt);
+        if (i + 1 < args.length) {
+          redacted.push("REDACTED");
+          i += 1;
+        }
+      }
+      continue;
+    }
+    redacted.push(arg);
+  }
+  return redacted;
+}
+
 export const validate = {
   str: () => {},
   set: (allowed) => {
@@ -251,15 +308,36 @@ export const validate = {
     };
   },
   int: (value: string) => {
-    const x = parseInt(value);
-    if (!isFinite(x)) {
+    if (!/^[+-]?\d+$/.test(value)) {
+      throw Error("argument must be an integer");
+    }
+    const x = Number(value);
+    if (!Number.isFinite(x)) {
       throw Error("argument must be a number");
     }
   },
   float: (value: string) => {
-    const x = parseFloat(value);
-    if (!isFinite(x)) {
+    if (value.trim() !== value || value.length === 0) {
       throw Error("argument must be a number");
+    }
+    const x = Number(value);
+    if (!Number.isFinite(x)) {
+      throw Error("argument must be a number");
+    }
+  },
+  relativePath: (value: string) => {
+    if (value.length === 0) {
+      throw Error("path must not be empty");
+    }
+    if (value.includes("\0")) {
+      throw Error("invalid path");
+    }
+    if (value.startsWith("/")) {
+      throw Error("path must be relative");
+    }
+    const normalized = posix.normalize(value);
+    if (normalized === ".." || normalized.startsWith("../")) {
+      throw Error("path must stay within working directory");
     }
   },
 };

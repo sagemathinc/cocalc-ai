@@ -825,12 +825,33 @@ export class SandboxedFilesystem {
     if (options.cwd) {
       options.cwd = await this.resolveSandboxPath(options.cwd);
     }
+    if (options.options) {
+      options.options = await this.resolveOuchOptionPaths(options.options);
+    }
     return await ouch(
       [args[0]].concat(
         await Promise.all(args.slice(1).map(this.resolveSandboxPath)),
       ),
       capTimeout(options, 6 * MAX_TIMEOUT),
     );
+  };
+
+  private resolveOuchOptionPaths = async (
+    options: string[],
+  ): Promise<string[]> => {
+    const resolved = options.slice();
+    for (let i = 0; i < resolved.length; i++) {
+      const opt = resolved[i];
+      if (opt !== "-d" && opt !== "--dir") {
+        continue;
+      }
+      if (i + 1 >= resolved.length) {
+        throw new Error(`Option ${opt} requires a value`);
+      }
+      resolved[i + 1] = await this.resolveSandboxPath(resolved[i + 1]);
+      i += 1;
+    }
+    return resolved;
   };
 
   // backups
