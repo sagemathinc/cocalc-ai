@@ -401,6 +401,52 @@ export class SandboxedFilesystem {
     return [srcPath, destPath];
   };
 
+  private verifySameInode = async (
+    path: string,
+    absPath: string,
+  ): Promise<void> => {
+    if (this.unsafeMode) {
+      return;
+    }
+    // Symlink path operations (rename/unlink) act on the link itself, while
+    // open() resolves to the target. Skip inode pinning for links.
+    const lst = await lstat(absPath);
+    if (lst.isSymbolicLink()) {
+      return;
+    }
+    const { handle } = await this.openVerifiedHandle({
+      path,
+      flags: constants.O_RDONLY,
+    });
+    try {
+      const [fdStat, pathStat] = await Promise.all([handle.stat(), stat(absPath)]);
+      if (fdStat.dev !== pathStat.dev || fdStat.ino !== pathStat.ino) {
+        const err: NodeJS.ErrnoException = new Error(
+          `Path changed during operation: '${path}'`,
+        );
+        err.code = "ESTALE";
+        err.path = path;
+        throw err;
+      }
+    } finally {
+      await handle.close();
+    }
+  };
+
+  private preflightExistingSource = async (
+    path: string,
+    absPath: string,
+  ): Promise<void> => {
+    try {
+      await this.verifySameInode(path, absPath);
+    } catch (err: any) {
+      if (err?.code === "ENOENT") {
+        return;
+      }
+      throw err;
+    }
+  };
+
   private isInsideSandbox = (
     candidatePath: string,
     sandboxBasePath: string,
@@ -780,6 +826,7 @@ export class SandboxedFilesystem {
       oldPath,
       newPath,
     );
+    await this.preflightExistingSource(oldPath, srcPath);
     await rename(srcPath, destPath);
   };
 
@@ -792,16 +839,19 @@ export class SandboxedFilesystem {
       src,
       dest,
     );
+    await this.preflightExistingSource(src, srcPath);
     await move(srcPath, destPath, options);
   };
 
   rm = async (path: string | string[], options?) => {
-    const v = await this.resolveWritableSandboxPaths(path);
-    const f = async (absPath: string) => {
+    const paths = typeof path == "string" ? [path] : path;
+    const v = await this.resolveWritableSandboxPaths(paths);
+    const f = async (inputPath: string, absPath: string) => {
+      await this.preflightExistingSource(inputPath, absPath);
       await rm(absPath, options);
       void globalSyncFsService.recordLocalDelete(absPath);
     };
-    await Promise.all(v.map(f));
+    await Promise.all(v.map((absPath, i) => f(paths[i], absPath)));
   };
 
   rmdir = async (path: string, options?) => {
@@ -824,6 +874,7 @@ export class SandboxedFilesystem {
 
   unlink = async (path: string) => {
     const abs = await this.resolveWritableSandboxPath(path);
+    await this.preflightExistingSource(path, abs);
     await unlink(abs);
     void globalSyncFsService.recordLocalDelete(abs);
   };
