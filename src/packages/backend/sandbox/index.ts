@@ -56,6 +56,10 @@ import {
   symlink,
   unlink,
 } from "node:fs/promises";
+import {
+  close as closeFdCallback,
+  readFile as readFileFdCallback,
+} from "node:fs";
 import { createHash } from "node:crypto";
 import { move } from "fs-extra";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
@@ -105,6 +109,14 @@ interface OpenAt2SandboxRoot {
   chmod(path: string, mode: number): void;
   truncate(path: string, len: number): void;
   copyFile(src: string, dest: string, mode?: number | null): void;
+  openRead?(path: string): number;
+  openWrite?(
+    path: string,
+    create?: boolean | null,
+    truncate?: boolean | null,
+    append?: boolean | null,
+    mode?: number | null,
+  ): number;
   rm?(path: string, recursive?: boolean | null, force?: boolean | null): void;
 }
 
@@ -128,6 +140,31 @@ const LAST_ON_DISK_TTL = 1000 * 60 * 5; // 5 minutes
 // while mostly still mostly allowing collaboration via disk with
 // other editors (e.g., vscode).
 const LAST_ON_DISK_TTL_HASH = 1000 * 15;
+
+const readFileByFd = (
+  fd: number,
+  encoding?: any,
+): Promise<string | Buffer> =>
+  new Promise((resolve, reject) => {
+    readFileFdCallback(fd, encoding as any, (err, data) => {
+      if (err != null) {
+        reject(err);
+        return;
+      }
+      resolve(data as any);
+    });
+  });
+
+const closeFd = (fd: number): Promise<void> =>
+  new Promise((resolve, reject) => {
+    closeFdCallback(fd, (err) => {
+      if (err != null) {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
+  });
 
 interface Options {
   // unsafeMode -- if true, assume security model where user is running this
@@ -1112,6 +1149,34 @@ export class SandboxedFilesystem {
     }
     if (lock) {
       this._lockFile(p, lock);
+    }
+    const openAt2Root = this.getOpenAt2Root();
+    const rel = await this.getOpenAt2RelativePath(path);
+    let openReadFd: number | null = null;
+    if (
+      openAt2Root != null &&
+      typeof openAt2Root.openRead === "function" &&
+      rel != null
+    ) {
+      try {
+        openReadFd = openAt2Root.openRead(rel);
+      } catch (err) {
+        const { code } = this.parseOpenAt2Error(err);
+        // openat2 open_read blocks symlink traversal by design. For allowed
+        // in-sandbox symlinks, fall back to the existing verified-handle path.
+        if (code !== "ELOOP" && code !== "ENOSYS" && code !== "EINVAL") {
+          this.throwOpenAt2PathError(path, err);
+        }
+      }
+    }
+    if (openReadFd != null) {
+      try {
+        return await readFileByFd(openReadFd, encoding);
+      } finally {
+        try {
+          await closeFd(openReadFd);
+        } catch {}
+      }
     }
     const { handle } = await this.openVerifiedHandle({
       path,
