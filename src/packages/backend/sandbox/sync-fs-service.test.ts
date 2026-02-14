@@ -253,4 +253,69 @@ describe("SyncFsService", () => {
     expect(head?.heads?.length).toBe(1);
     svc.close();
   }, 10_000);
+
+  it("publishes an initial patch when history is empty even if local snapshot exists", async () => {
+    const path = join(dir, "cached.txt");
+    writeFileSync(path, "fresh");
+
+    const dbPath = tmpNameSync({ prefix: "sync-fs-init-", postfix: ".db" });
+    const store = new SyncFsWatchStore(dbPath);
+    // Simulate backend fs writes that populated the local snapshot cache before
+    // any watcher/stream history existed.
+    store.setContent(path, "fresh");
+
+    const svc = new SyncFsService(store);
+    const fake = new FakeAStream([]);
+    (svc as any).getPatchWriter = async () => fake;
+
+    await (svc as any).initPath(path, {
+      project_id: "p4",
+      relativePath: "cached.txt",
+      string_id: "sid-cached",
+    });
+
+    expect(fake.messages.length).toBe(1);
+    const published = fake.messages[0].mesg;
+    expect(Array.isArray(published.parents)).toBe(true);
+    expect(published.parents).toEqual([]);
+    expect(published.version).toBe(1);
+
+    const dmp = new DiffMatchPatch({ diffTimeout: 0.5 });
+    const patch = JSON.parse(published.patch);
+    const [result, applied] = dmp.patch_apply(decompressPatch(patch), "");
+    expect(applied.every(Boolean)).toBe(true);
+    expect(result).toBe("fresh");
+    svc.close();
+  }, 10_000);
+
+  it("rebuilds local baseline from stream history before diffing", async () => {
+    const path = join(dir, "history.txt");
+    writeFileSync(path, "stream-value");
+
+    const dbPath = tmpNameSync({
+      prefix: "sync-fs-stream-baseline-",
+      postfix: ".db",
+    });
+    const store = new SyncFsWatchStore(dbPath);
+    // Stale local cache should not be used when stream history exists.
+    store.setContent(path, "stale-cache");
+
+    const fake = new FakeAStream([
+      { mesg: { time: legacyPatchId(100), parents: [], version: 1 }, seq: 1 },
+    ]);
+    const svc = new SyncFsService(store);
+    (svc as any).getPatchWriter = async () => fake;
+    (svc as any).loadDocViaSyncDoc = async () => "stream-value";
+
+    await (svc as any).initPath(path, {
+      project_id: "p5",
+      relativePath: "history.txt",
+      string_id: "sid-history",
+    });
+
+    // No extra publish is needed because disk content already matches stream.
+    expect(fake.messages.length).toBe(1);
+    expect((svc as any).store.get(path)?.content).toBe("stream-value");
+    svc.close();
+  }, 10_000);
 });

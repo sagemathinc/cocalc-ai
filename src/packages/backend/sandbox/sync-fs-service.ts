@@ -90,29 +90,41 @@ export class SyncFsService extends EventEmitter {
       meta.string_id ?? client_db.sha1(meta.project_id, meta.relativePath);
     const codec = this.resolveCodec(meta);
     try {
-      // If we already have a snapshot of on-disk content, just diff against it.
-      const existing = this.store.get(path);
-      if (!existing) {
-        // Fresh store entry but history may already exist in the patch stream.
-    const { heads, maxVersion } = await this.getStreamHeads({
-      project_id: meta.project_id,
-      string_id,
-      path: meta.relativePath,
-    });
-        if (heads.length > 0 || maxVersion > 0) {
-          // Reconstruct the current document from the patch stream (respecting
-          // snapshots) to avoid emitting an orphaned "initial" patch that
-          // duplicates content.
-          const current = await this.loadDocViaSyncDoc({
-            project_id: meta.project_id,
-            string_id,
-            relativePath: meta.relativePath,
-            doctype: meta.doctype,
-          });
-          if (current != null) {
-            this.store.setContent(path, current);
+      // Always reconcile local snapshot state against the actual patch stream.
+      // A cached filesystem snapshot may exist even when history is empty
+      // (e.g. file written via backend API before watcher starts). In that
+      // case we MUST force an empty baseline so opening the file publishes the
+      // first patch; otherwise clients see an empty live document.
+      const { heads, maxVersion } = await this.getStreamHeads({
+        project_id: meta.project_id,
+        string_id,
+        path: meta.relativePath,
+      });
+      const hasHistory = heads.length > 0 || maxVersion > 0;
+      if (hasHistory) {
+        // Reconstruct the current document from the patch stream (respecting
+        // snapshots) to avoid emitting orphaned/incorrect patches when the
+        // local fs snapshot cache is stale.
+        const current = await this.loadDocViaSyncDoc({
+          project_id: meta.project_id,
+          string_id,
+          relativePath: meta.relativePath,
+          doctype: meta.doctype,
+        });
+        if (current == null) {
+          if (process.env.SYNC_FS_DEBUG) {
+            console.log("sync-fs initPath: unable to load stream baseline", {
+              path: meta.relativePath,
+              string_id,
+            });
           }
+          return;
         }
+        this.store.setContent(path, current);
+      } else {
+        // Explicitly reset to an empty baseline when stream history is empty.
+        // This prevents cached snapshots from suppressing the initial patch.
+        this.store.setContent(path, "");
       }
 
       const change = await this.store.handleExternalChange(
