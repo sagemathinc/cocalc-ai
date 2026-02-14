@@ -12,29 +12,24 @@ look at the code.
 
 SECURITY:
 
-The following could be a big problem -- user somehow create or change path to
-be a dangerous symlink *after* the realpath check below, but before we do an fs *read*
-operation. If they did that, then we would end up reading the target of the
-symlink. I.e., if they could somehow create the file *as an unsafe symlink*
-right after we confirm that it does not exist and before we read from it. This
-would only happen via something not involving this sandbox, e.g., the filesystem
-mounted into a container some other way.
+The main race risk in this module is TOCTOU path replacement (especially
+symlink swaps) between validation and filesystem operations.
 
-In short, I'm worried about:
+Current status:
 
-1. Request to read a file named "link" which is just a normal file. We confirm this using realpath
-   in safeAbsPath.
-2. Somehow delete "link" and replace it by a new file that is a symlink to "../{project_id}/.ssh/id_ed25519"
-3. Read the file "link" and get the contents of "../{project_id}/.ssh/id_ed25519".
+1. `readFile`/`writeFile`/`appendFile` in safe mode now use file descriptors,
+   then verify `/proc/self/fd/<fd>` resolves inside the sandbox root before
+   reading/writing.
+2. This closes the most important content read/write race for existing files.
+3. A create fast-path intentionally skips fd verification for brand new files
+   to preserve watcher event ordering (`add`, then later `unlink`).
 
-The problem is that 1 and 3 happen microseconds apart as separate calls to the filesystem.
+Remaining work:
 
-**[ ] TODO -- NOT IMPLEMENTED YET: This is why we have to uses file descriptors!**
-
-1. User requests to read a file named "link" which is just a normal file.
-2. We wet file descriptor fd for whatever "link" is. Then confirm this is OK using realpath in safeAbsPath.
-3. user somehow deletes "link" and replace it by a new file that is a symlink to "../{project_id}/.ssh/id_ed25519"
-4. We read from the file descriptor fd and get the contents of original "link" (or error).
+- Path-based mutators (`rename`, `move`, `copyFile`, `rm`, etc.) still need
+  deeper hardening to eliminate residual TOCTOU windows around path resolution.
+- Full end-state is descriptor-anchored path resolution for all mutating ops
+  (see [src/.agents/sandbox.md](./src/.agents/sandbox.md), task list SBOX-*).
 
 */
 
