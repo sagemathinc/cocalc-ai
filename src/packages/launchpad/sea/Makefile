@@ -28,11 +28,12 @@ FUSE           := $(shell [ -f sea.term ] && sed -n '1p' sea.term)
 
 .SHELLFLAGS := -euo pipefail -c
 
-.PHONY: help sea sign-bin verify-bin pkg sign-pkg notarize staple release clean veryclean show-ids entitlements
+.PHONY: help sea signed-tar sign-bin verify-bin pkg sign-pkg notarize staple release clean veryclean show-ids entitlements
 
 help:
 	@echo "Targets:"
 	@echo "  make sea         # (optional) build & inject SEA into $(BIN)"
+	@echo "  make signed-tar  # build SEA and sign binary, then create tar.xz"
 	@echo "  make sign-bin    # sign SEA binary with hardened runtime + entitlements"
 	@echo "  make verify-bin  # local codesign + Gatekeeper checks"
 	@echo "  make pkg         # build unsigned pkg that installs $(BIN) to /usr/local/bin"
@@ -62,6 +63,12 @@ sea: clean-sea
 	  --sentinel-fuse "$(FUSE)" \
 	  --macho-segment-name NODE_SEA
 	@echo "SEA injection done: $(BIN)"
+
+signed-tar:
+	@echo "→ Build signed SEA tarball"
+	COCALC_LAUNCHPAD_SIGN_ID="$(DEV_APP_ID)" \
+	COCALC_LAUNCHPAD_ENTITLEMENTS="entitlements.plist" \
+	./build-sea.sh
 
 clean-sea:
 	rm -f sea-prep.blob sea.term
