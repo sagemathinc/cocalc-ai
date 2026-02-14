@@ -837,7 +837,17 @@ if [ "$force" -ne 1 ]; then
   esac
 fi
 SSH_USER="${scripts.runtimeUser}"
-BOOTSTRAP_USER="${scripts.bootstrapUser}"
+BOOTSTRAP_USER="\${SUDO_USER:-}"
+PREFERRED_BOOTSTRAP_USER="${preferredBootstrapUser}"
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="$(id -un 2>/dev/null || true)"
+fi
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="root"
+fi
+if [ -n "$PREFERRED_BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" = "root" ]; then
+  BOOTSTRAP_USER="$PREFERRED_BOOTSTRAP_USER"
+fi
 SSH_UID="$(id -u "$SSH_USER" 2>/dev/null || echo "")"
 TARGET_HOME="$(getent passwd "$SSH_USER" | cut -d: -f6 || true)"
 if [ -z "$TARGET_HOME" ]; then

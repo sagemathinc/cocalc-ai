@@ -19,6 +19,8 @@ import {
 import { createBucket, R2BucketInfo } from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
+import { ONPREM_REST_TUNNEL_LOCAL_PORT } from "@cocalc/conat/project-host/api";
+import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
 
 const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
@@ -416,11 +418,17 @@ export async function getBackupConfig({
   const isSelfHostLocal =
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   if (isSelfHostLocal) {
+    await maybeStartLaunchpadOnPremServices();
     const config = getLaunchpadLocalConfig("local");
     const restPort = getLaunchpadRestPort() ?? config.rest_port;
     if (!restPort || !config.backup_root) {
       return { toml: "", ttl_seconds: 0 };
     }
+    const tunnelLocalPort =
+      Number.parseInt(
+        process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT ?? "",
+        10,
+      ) || ONPREM_REST_TUNNEL_LOCAL_PORT;
     const root = DEFAULT_BACKUP_ROOT;
     try {
       await mkdir(join(config.backup_root, root), { recursive: true });
@@ -432,7 +440,7 @@ export async function getBackupConfig({
     const authPrefix = auth
       ? `${encodeURIComponent(auth.user)}:${encodeURIComponent(auth.password)}@`
       : "";
-    const endpoint = `http://${authPrefix}127.0.0.1:${restPort}/${root}`;
+    const endpoint = `http://${authPrefix}127.0.0.1:${tunnelLocalPort}/${root}`;
     const toml = [
       "[repository]",
       `repository = \"rest:${endpoint}\"`,

@@ -16,7 +16,10 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import { sshServer } from "@cocalc/backend/data";
-import { createHostStatusClient } from "@cocalc/conat/project-host/api";
+import {
+  createHostStatusClient,
+  ONPREM_REST_TUNNEL_LOCAL_PORT,
+} from "@cocalc/conat/project-host/api";
 import { randomBytes } from "micro-key-producer/utils.js";
 import ssh from "micro-key-producer/ssh.js";
 import { getMasterConatClient } from "./master-status";
@@ -324,7 +327,9 @@ export async function startOnPremTunnel(opts: {
   await ensureKeyPair(keyPath, hostId);
 
   const localSshPort = sshServer.port;
-  const localRestPort = 9345;
+  const localRestPort =
+    parsePort(process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT) ??
+    ONPREM_REST_TUNNEL_LOCAL_PORT;
   const state: TunnelState = { stopped: false };
 
   const start = (config: TunnelConfig) => {
