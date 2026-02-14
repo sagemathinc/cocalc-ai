@@ -278,10 +278,9 @@ export async function buildBootstrapScripts(
   const bootstrapUser = isSelfHostDirect
     ? "\${BOOTSTRAP_USER}"
     : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
-  const runtimeUser = isSelfHostDirect
-    ? bootstrapUser
-    : `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
-      "cocalc-host";
+  const runtimeUser =
+    `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
+    "cocalc-host";
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
     isSelfHost && (!rawSelfHostMode || rawSelfHostMode === "local")
