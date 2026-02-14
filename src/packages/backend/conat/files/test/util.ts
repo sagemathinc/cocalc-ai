@@ -9,10 +9,22 @@ const tempDirs: string[] = [];
 const servers: any[] = [];
 export async function createPathFileserver({
   service = `fs-${randomId()}`,
-}: { service?: string } = {}) {
+  allowSafeModeHardlink = true,
+  allowSafeModeSymlink = true,
+}: {
+  service?: string;
+  allowSafeModeHardlink?: boolean;
+  allowSafeModeSymlink?: boolean;
+} = {}) {
   const tempDir = await mkdtemp(join(tmpdir(), `cocalc-${randomId()}0`));
   tempDirs.push(tempDir);
-  const server = await localPathFileserver({ client, service, path: tempDir });
+  const server = await localPathFileserver({
+    client,
+    service,
+    path: tempDir,
+    allowSafeModeHardlink,
+    allowSafeModeSymlink,
+  });
   servers.push(server);
   return server;
 }

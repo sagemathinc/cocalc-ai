@@ -396,6 +396,33 @@ describe("safe mode sandbox", () => {
       await fs.readFile("danger", "utf8");
     }).rejects.toThrow("outside of sandbox");
   });
+
+  it("denies link and symlink creation by default in safe mode", async () => {
+    await fs.writeFile("link-policy-src.txt", "src");
+    await expect(fs.link("link-policy-src.txt", "hard-link.txt")).rejects.toThrow(
+      "operation not permitted in safe mode",
+    );
+    await expect(fs.symlink("link-policy-src.txt", "sym-link.txt")).rejects.toThrow(
+      "operation not permitted in safe mode",
+    );
+  });
+});
+
+describe("safe mode link policy overrides", () => {
+  let fs;
+  it("allows link and symlink creation when explicitly enabled", async () => {
+    await mkdir(join(tempDir, "test-safe-link-policy"));
+    fs = new SandboxedFilesystem(join(tempDir, "test-safe-link-policy"), {
+      unsafeMode: false,
+      allowSafeModeHardlink: true,
+      allowSafeModeSymlink: true,
+    });
+    await fs.writeFile("source.txt", "hello");
+    await fs.link("source.txt", "hard.txt");
+    await fs.symlink("source.txt", "sym.txt");
+    expect(await fs.readFile("hard.txt", "utf8")).toBe("hello");
+    expect(await fs.readFile("sym.txt", "utf8")).toBe("hello");
+  });
 });
 
 describe("safe mode mutator escape checks", () => {

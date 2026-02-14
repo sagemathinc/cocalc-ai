@@ -121,6 +121,10 @@ interface Options {
   scratch?: string;
   host?: string;
   rusticRepo?: string;
+  // Explicitly allow hard link creation in safe mode.
+  allowSafeModeHardlink?: boolean;
+  // Explicitly allow symlink creation in safe mode.
+  allowSafeModeSymlink?: boolean;
 }
 
 const HOME_ROOT = "/root";
@@ -138,6 +142,8 @@ const INTERNAL_METHODS = new Set([
   "rootfsEnabled",
   "scratch",
   "scratchEnabled",
+  "allowSafeModeHardlink",
+  "allowSafeModeSymlink",
   "assertWritable",
   "rusticRepo",
   "host",
@@ -154,6 +160,8 @@ export class SandboxedFilesystem {
   private rootfsEnabled = false;
   public readonly scratch?: string;
   private scratchEnabled = false;
+  public readonly allowSafeModeHardlink: boolean;
+  public readonly allowSafeModeSymlink: boolean;
   public rusticRepo: string;
   private host?: string;
   private lastOnDisk = new LRU<string, string>({
@@ -175,6 +183,8 @@ export class SandboxedFilesystem {
       scratch,
       host = "global",
       rusticRepo: repo,
+      allowSafeModeHardlink = false,
+      allowSafeModeSymlink = false,
     }: Options = {},
   ) {
     this.unsafeMode = !!unsafeMode;
@@ -182,6 +192,8 @@ export class SandboxedFilesystem {
     this.rootfs = rootfs;
     this.scratch = scratch;
     this.host = host;
+    this.allowSafeModeHardlink = allowSafeModeHardlink;
+    this.allowSafeModeSymlink = allowSafeModeSymlink;
     this.rusticRepo = repo ?? rusticRepo;
     for (const f in this) {
       if (INTERNAL_METHODS.has(f)) {
@@ -395,6 +407,21 @@ export class SandboxedFilesystem {
       );
     }
   };
+
+  private assertSafeModeLinkPolicy(kind: "link" | "symlink", path: string): void {
+    if (this.unsafeMode) {
+      return;
+    }
+    const allowed =
+      kind === "link" ? this.allowSafeModeHardlink : this.allowSafeModeSymlink;
+    if (allowed) {
+      return;
+    }
+    throw new SandboxError(
+      `EPERM: operation not permitted in safe mode, ${kind} '${path}'`,
+      { errno: -1, code: "EPERM", syscall: kind, path },
+    );
+  }
 
   safeAbsPaths = async (path: string[] | string): Promise<string[]> => {
     return await Promise.all(
@@ -852,6 +879,7 @@ export class SandboxedFilesystem {
 
   // hard link
   link = async (existingPath: string, newPath: string) => {
+    this.assertSafeModeLinkPolicy("link", newPath);
     const [srcPath, destPath] = await this.resolveReadWriteSandboxPaths(
       existingPath,
       newPath,
@@ -1028,6 +1056,7 @@ export class SandboxedFilesystem {
   };
 
   symlink = async (target: string, path: string) => {
+    this.assertSafeModeLinkPolicy("symlink", path);
     const targetPath = await this.resolveSandboxPath(target);
     const linkPath = await this.resolveWritableSandboxPath(path);
     return await symlink(targetPath, linkPath);
