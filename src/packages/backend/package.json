@@ -78,6 +78,7 @@
   "devDependencies": {
     "@types/debug": "^4.1.12",
     "@types/jest": "^30.0.0",
-    "@types/node": "^22.10.10"
+    "@types/node": "^22.10.10",
+    "socket.io-client": "^4.8.3"
   }
 }
