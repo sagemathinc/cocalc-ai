@@ -329,6 +329,40 @@ async function cleanupMultipassVm(vmName: string): Promise<void> {
   }
 }
 
+async function listMultipassVmNames(): Promise<string[]> {
+  try {
+    const { stdout } = await runCommand("multipass", ["list", "--format", "json"]);
+    const parsed = JSON.parse(stdout);
+    const list = Array.isArray(parsed?.list) ? parsed.list : [];
+    return list
+      .map((x: any) => `${x?.name ?? ""}`.trim())
+      .filter((name: string) => !!name);
+  } catch {
+    const { stdout } = await runCommand("multipass", ["list"]);
+    const lines = stdout.split("\n").map((s) => s.trim());
+    const names: string[] = [];
+    for (const line of lines) {
+      if (!line || line.startsWith("Name")) continue;
+      const name = line.split(/\s+/)[0];
+      if (name) names.push(name);
+    }
+    return names;
+  }
+}
+
+async function cleanupExistingSmokeVms(): Promise<void> {
+  const all = await listMultipassVmNames();
+  const smokeVms = all.filter((name) => name.startsWith("cocalc-smoke-"));
+  if (!smokeVms.length) return;
+  logger.info("self-host smoke cleanup existing multipass VMs", {
+    count: smokeVms.length,
+    names: smokeVms,
+  });
+  for (const name of smokeVms) {
+    await cleanupMultipassVm(name);
+  }
+}
+
 export async function runSelfHostMultipassBackupSmoke(
   opts: SelfHostMultipassSmokeOptions = {},
 ): Promise<SelfHostMultipassSmokeResult> {
@@ -439,6 +473,7 @@ export async function runSelfHostMultipassBackupSmoke(
     await runStep("preflight", async () => {
       await requireCommand("multipass");
       await requireCommand("ssh");
+      await cleanupExistingSmokeVms();
       sshPublicKey = await resolveSshPublicKey(opts.ssh_public_key_path);
     });
 
