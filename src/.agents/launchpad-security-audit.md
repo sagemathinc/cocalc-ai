@@ -67,9 +67,14 @@ Status labels:
 
 ## Low
 
-8. (`pending`) Missing baseline HTTP hardening headers at hub app layer.
+8. (`done`) Missing baseline HTTP hardening headers at hub app layer.
    - Code: [src/packages/hub/servers/express-app.ts](./src/packages/hub/servers/express-app.ts)
-   - Opportunity: add conservative `helmet` defaults tuned for existing app behavior.
+   - Status details:
+     - Added conservative baseline security headers at the hub app layer:
+       - `X-Content-Type-Options: nosniff`
+       - `X-DNS-Prefetch-Control: off`
+       - `X-Permitted-Cross-Domain-Policies: none`
+       - `Referrer-Policy: strict-origin-when-cross-origin`
 
 9. (`pending`) API v2 cookie parsing is brittle for malformed cookie fragments.
    - Code: [src/packages/next/lib/api-v2-router.ts](./src/packages/next/lib/api-v2-router.ts)
