@@ -877,6 +877,36 @@ else
 fi
 echo "[$(date -u +%FT%TZ)] cocalc deprovision starting"
 echo "[$(date -u +%FT%TZ)] log_file=$DEPROVISION_LOG"
+log_step() {
+  echo "[$(date -u +%FT%TZ)] $*"
+}
+umount_with_timeout() {
+  local target="$1"
+  [ -n "$target" ] || return 0
+  if ! mountpoint -q "$target" >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -km "$target" >/dev/null 2>&1 || true
+  fi
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 10s umount "$target" >/dev/null 2>&1 || true
+  else
+    umount "$target" >/dev/null 2>&1 || true
+  fi
+  if mountpoint -q "$target" >/dev/null 2>&1; then
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 10s umount -l "$target" >/dev/null 2>&1 || true
+    else
+      umount -l "$target" >/dev/null 2>&1 || true
+    fi
+  fi
+  if mountpoint -q "$target" >/dev/null 2>&1; then
+    log_step "WARNING: failed to unmount $target"
+  else
+    log_step "unmounted $target"
+  fi
+}
 if [ -n "$RUNTIME_UID" ]; then
   export XDG_RUNTIME_DIR="/run/user/$RUNTIME_UID"
 fi
@@ -892,20 +922,29 @@ pkill -f /opt/cocalc/bin/node || true
 if [ -d /mnt/cocalc/data/cache/project-roots ]; then
   for m in /mnt/cocalc/data/cache/project-roots/*; do
     [ -d "$m" ] || continue
-    umount "$m" || umount -l "$m" || true
+    umount_with_timeout "$m"
   done
 fi
-if mountpoint -q /mnt/cocalc; then
-  umount /mnt/cocalc || umount -l /mnt/cocalc || true
-fi
+umount_with_timeout /mnt/cocalc
 if [ -f /etc/fstab ]; then
   sed -i.bak '/cocalc-btrfs/d' /etc/fstab || true
 fi
 rm -f /var/lib/cocalc/cocalc.img /var/lib/cocalc/btrfs.img || true
 rm -rf /mnt/cocalc || true
 rm -f /btrfs || true
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl disable --now cocalc-cloudflared.service >/dev/null 2>&1 || true
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
 rm -rf /var/lib/cocalc /etc/cocalc /opt/cocalc || true
-rm -f /usr/local/sbin/cocalc-grow-btrfs /usr/local/sbin/cocalc-nvidia-cdi || true
+rm -f /usr/local/sbin/cocalc-runtime-storage \
+      /usr/local/sbin/cocalc-mount-data \
+      /usr/local/sbin/cocalc-cloudflared-ctl \
+      /usr/local/sbin/cocalc-cloudflared-logs \
+      /usr/local/sbin/cocalc-grow-btrfs \
+      /usr/local/sbin/cocalc-nvidia-cdi || true
+rm -f /etc/systemd/system/cocalc-cloudflared.service || true
+rm -f /etc/cron.d/cocalc-project-host /etc/cron.d/cocalc-nvidia-cdi || true
 rm -f /etc/containers/storage.conf || true
 rm -f /etc/sudoers.d/cocalc-project-host-runtime || true
 # Ensure runtime user can be deleted cleanly.
