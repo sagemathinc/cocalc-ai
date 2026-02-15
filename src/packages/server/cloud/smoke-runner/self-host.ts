@@ -600,7 +600,11 @@ users:
           id: backup_id,
           path: dirname(sentinelPath),
         })) as any;
-        const children = Array.isArray(listing?.children) ? listing.children : [];
+        const children = Array.isArray(listing)
+          ? listing
+          : Array.isArray(listing?.children)
+            ? listing.children
+            : [];
         const found = children.some((entry: any) =>
           String(entry?.name ?? "").includes("self-host-backup.txt"),
         );
