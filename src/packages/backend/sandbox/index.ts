@@ -30,9 +30,9 @@ Current status:
 
 Remaining work:
 
-- Some path-based mutator paths still fall back to Node path APIs (`symlink`,
-  rootfs/scratch aliases, or when openat2 is unavailable) and need deeper
-  hardening to eliminate residual TOCTOU windows.
+- Some paths still fall back to Node path APIs when openat2 is unavailable
+  (or for intentionally compatibility-preserving behavior), so those fallback
+  paths must remain conservative and fail-closed.
 - Full end-state is descriptor-anchored path resolution for all mutating ops
   (see [src/.agents/sandbox.md](./src/.agents/sandbox.md), task list SBOX-*).
 
@@ -241,6 +241,7 @@ const INTERNAL_METHODS = new Set([
   "_lockFile",
   "lastOnDisk",
   "lastOnDiskHash",
+  "openAt2Roots",
 ]);
 
 export class SandboxedFilesystem {
@@ -254,7 +255,7 @@ export class SandboxedFilesystem {
   public readonly allowSafeModeSymlink: boolean;
   public rusticRepo: string;
   private host?: string;
-  private openAt2Root: OpenAt2SandboxRoot | null | undefined;
+  private openAt2Roots = new Map<string, OpenAt2SandboxRoot | null>();
   private lastOnDisk = new LRU<string, string>({
     maxSize: MAX_LAST_ON_DISK,
     sizeCalculation: (value) => value.length + 1, // must be positive!
@@ -371,23 +372,29 @@ export class SandboxedFilesystem {
   }
 
   private getOpenAt2Root(): OpenAt2SandboxRoot | null {
+    return this.getOpenAt2RootForBase(this.path);
+  }
+
+  private getOpenAt2RootForBase(basePath: string): OpenAt2SandboxRoot | null {
     if (!this.isOpenAt2Enabled()) {
       return null;
     }
-    if (this.openAt2Root !== undefined) {
-      return this.openAt2Root;
+    if (this.openAt2Roots.has(basePath)) {
+      return this.openAt2Roots.get(basePath) ?? null;
     }
     try {
       const { SandboxRoot } = require("@cocalc/openat2") as {
         SandboxRoot: new (root: string) => OpenAt2SandboxRoot;
       };
-      this.openAt2Root = new SandboxRoot(this.path);
-      return this.openAt2Root;
+      const root = new SandboxRoot(basePath);
+      this.openAt2Roots.set(basePath, root);
+      return root;
     } catch (err) {
       logger.warn("openat2 unavailable; falling back to node fs sandbox path", {
+        basePath,
         err: `${err}`,
       });
-      this.openAt2Root = null;
+      this.openAt2Roots.set(basePath, null);
       return null;
     }
   }
@@ -424,21 +431,65 @@ export class SandboxedFilesystem {
     throw e;
   }
 
-  private async getOpenAt2RelativePath(path: string): Promise<string | null> {
-    const root = this.getOpenAt2Root();
-    if (root == null) {
+  private toOpenAt2RelativePath(
+    pathInSandbox: string,
+    sandboxBasePath: string,
+  ): string | null {
+    if (!pathInSandbox.startsWith(sandboxBasePath + "/")) {
       return null;
     }
-    const { pathInSandbox, sandboxBasePath } = await this.resolvePathInSandbox(path);
-    if (sandboxBasePath !== this.path) {
-      // rootfs/scratch aliases are not yet wired through openat2 helper.
-      return null;
-    }
-    const rel = this.toSandboxRelativePath(pathInSandbox, sandboxBasePath);
-    if (rel == "" || rel == "/") {
+    const rel = pathInSandbox.slice(sandboxBasePath.length + 1);
+    if (rel == "") {
       return null;
     }
     return rel;
+  }
+
+  private async getOpenAt2PathTarget(
+    path: string,
+  ): Promise<{ root: OpenAt2SandboxRoot; rel: string } | null> {
+    const { pathInSandbox, sandboxBasePath } = await this.resolvePathInSandbox(path);
+    const root =
+      sandboxBasePath === this.path
+        ? this.getOpenAt2Root()
+        : this.getOpenAt2RootForBase(sandboxBasePath);
+    if (root == null) {
+      return null;
+    }
+    const rel = this.toOpenAt2RelativePath(pathInSandbox, sandboxBasePath);
+    if (rel == null) {
+      return null;
+    }
+    return { root, rel };
+  }
+
+  private async getOpenAt2DualPathTarget(
+    src: string,
+    dest: string,
+  ): Promise<{ root: OpenAt2SandboxRoot; srcRel: string; destRel: string } | null> {
+    const [srcResolved, destResolved] = await Promise.all([
+      this.resolvePathInSandbox(src),
+      this.resolvePathInSandbox(dest),
+    ]);
+    if (srcResolved.sandboxBasePath !== destResolved.sandboxBasePath) {
+      return null;
+    }
+    const root = this.getOpenAt2RootForBase(srcResolved.sandboxBasePath);
+    if (root == null) {
+      return null;
+    }
+    const srcRel = this.toOpenAt2RelativePath(
+      srcResolved.pathInSandbox,
+      srcResolved.sandboxBasePath,
+    );
+    const destRel = this.toOpenAt2RelativePath(
+      destResolved.pathInSandbox,
+      destResolved.sandboxBasePath,
+    );
+    if (srcRel == null || destRel == null) {
+      return null;
+    }
+    return { root, srcRel, destRel };
   }
 
   private parseFsMode(mode: number | string): number | null {
@@ -852,16 +903,20 @@ export class SandboxedFilesystem {
 
   appendFile = async (path: string, data: string | Buffer, encoding?) => {
     this.assertWritable(path);
-    const openAt2Root = this.getOpenAt2Root();
-    const rel = await this.getOpenAt2RelativePath(path);
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
     let openWriteFd: number | null = null;
     if (
-      openAt2Root != null &&
-      typeof openAt2Root.openWrite === "function" &&
-      rel != null
+      openAt2Target != null &&
+      typeof openAt2Target.root.openWrite === "function"
     ) {
       try {
-        openWriteFd = openAt2Root.openWrite(rel, true, false, true, 0o666);
+        openWriteFd = openAt2Target.root.openWrite(
+          openAt2Target.rel,
+          true,
+          false,
+          true,
+          0o666,
+        );
       } catch (err) {
         const { code } = this.parseOpenAt2Error(err);
         if (code !== "ENOSYS" && code !== "EINVAL") {
@@ -893,12 +948,11 @@ export class SandboxedFilesystem {
   chmod = async (path: string, mode: string | number) => {
     this.assertWritable(path);
     await this.safeAbsPath(path);
-    const rel = await this.getOpenAt2RelativePath(path);
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
     const modeNum = this.parseFsMode(mode);
-    const openAt2Root = this.getOpenAt2Root();
-    if (openAt2Root != null && rel != null && modeNum != null) {
+    if (openAt2Target != null && modeNum != null) {
       try {
-        openAt2Root.chmod(rel, modeNum);
+        openAt2Target.root.chmod(openAt2Target.rel, modeNum);
         return;
       } catch (err) {
         this.throwOpenAt2PathError(path, err);
@@ -922,14 +976,10 @@ export class SandboxedFilesystem {
   copyFile = async (src: string, dest: string) => {
     this.assertWritable(dest);
     await Promise.all([this.safeAbsPath(src), this.safeAbsPath(dest)]);
-    const openAt2Root = this.getOpenAt2Root();
-    const [srcRel, destRel] = await Promise.all([
-      this.getOpenAt2RelativePath(src),
-      this.getOpenAt2RelativePath(dest),
-    ]);
-    if (openAt2Root != null && srcRel != null && destRel != null) {
+    const openAt2Target = await this.getOpenAt2DualPathTarget(src, dest);
+    if (openAt2Target != null) {
       try {
-        openAt2Root.copyFile(srcRel, destRel);
+        openAt2Target.root.copyFile(openAt2Target.srcRel, openAt2Target.destRel);
         return;
       } catch (err) {
         this.throwOpenAt2PathError(src, err);
@@ -1144,19 +1194,13 @@ export class SandboxedFilesystem {
   link = async (existingPath: string, newPath: string) => {
     this.assertSafeModeLinkPolicy("link", newPath);
     await Promise.all([this.safeAbsPath(existingPath), this.safeAbsPath(newPath)]);
-    const openAt2Root = this.getOpenAt2Root();
-    const [srcRel, destRel] = await Promise.all([
-      this.getOpenAt2RelativePath(existingPath),
-      this.getOpenAt2RelativePath(newPath),
-    ]);
-    if (
-      openAt2Root != null &&
-      typeof openAt2Root.link === "function" &&
-      srcRel != null &&
-      destRel != null
-    ) {
+    const openAt2Target = await this.getOpenAt2DualPathTarget(
+      existingPath,
+      newPath,
+    );
+    if (openAt2Target != null && typeof openAt2Target.root.link === "function") {
       try {
-        openAt2Root.link(srcRel, destRel);
+        openAt2Target.root.link(openAt2Target.srcRel, openAt2Target.destRel);
         return;
       } catch (err) {
         this.throwOpenAt2PathError(existingPath, err);
@@ -1173,8 +1217,7 @@ export class SandboxedFilesystem {
   mkdir = async (path: string, options?) => {
     this.assertWritable(path);
     await this.verifyExistingAncestorInSandbox(path);
-    const openAt2Root = this.getOpenAt2Root();
-    const rel = await this.getOpenAt2RelativePath(path);
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
     let recursive = false;
     let mode: number | string | undefined;
     if (typeof options === "number" || typeof options === "string") {
@@ -1184,9 +1227,9 @@ export class SandboxedFilesystem {
       mode = options.mode;
     }
     const modeNum = mode == null ? 0o777 : this.parseFsMode(mode);
-    if (openAt2Root != null && rel != null && modeNum != null) {
+    if (openAt2Target != null && modeNum != null) {
       try {
-        openAt2Root.mkdir(rel, recursive, modeNum);
+        openAt2Target.root.mkdir(openAt2Target.rel, recursive, modeNum);
         return;
       } catch (err) {
         this.throwOpenAt2PathError(path, err);
@@ -1212,16 +1255,14 @@ export class SandboxedFilesystem {
     if (lock) {
       this._lockFile(p, lock);
     }
-    const openAt2Root = this.getOpenAt2Root();
-    const rel = await this.getOpenAt2RelativePath(path);
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
     let openReadFd: number | null = null;
     if (
-      openAt2Root != null &&
-      typeof openAt2Root.openRead === "function" &&
-      rel != null
+      openAt2Target != null &&
+      typeof openAt2Target.root.openRead === "function"
     ) {
       try {
-        openReadFd = openAt2Root.openRead(rel);
+        openReadFd = openAt2Target.root.openRead(openAt2Target.rel);
       } catch {
         // Preserve Node-compatible read error shape/messages by falling back
         // to the existing verified-handle path implementation.
@@ -1336,14 +1377,10 @@ export class SandboxedFilesystem {
 
   rename = async (oldPath: string, newPath: string) => {
     await Promise.all([this.safeAbsPath(oldPath), this.safeAbsPath(newPath)]);
-    const openAt2Root = this.getOpenAt2Root();
-    const [oldRel, newRel] = await Promise.all([
-      this.getOpenAt2RelativePath(oldPath),
-      this.getOpenAt2RelativePath(newPath),
-    ]);
-    if (openAt2Root != null && oldRel != null && newRel != null) {
+    const openAt2Target = await this.getOpenAt2DualPathTarget(oldPath, newPath);
+    if (openAt2Target != null) {
       try {
-        openAt2Root.rename(oldRel, newRel);
+        openAt2Target.root.rename(openAt2Target.srcRel, openAt2Target.destRel);
         return;
       } catch (err) {
         this.throwOpenAt2PathError(oldPath, err);
@@ -1364,15 +1401,14 @@ export class SandboxedFilesystem {
   ) => {
     await Promise.all([this.safeAbsPath(src), this.safeAbsPath(dest)]);
     const overwrite = !!options?.overwrite;
-    const openAt2Root = this.getOpenAt2Root();
-    const [srcRel, destRel] = await Promise.all([
-      this.getOpenAt2RelativePath(src),
-      this.getOpenAt2RelativePath(dest),
-    ]);
-    if (openAt2Root != null && srcRel != null && destRel != null) {
-      if (!overwrite && typeof openAt2Root.renameNoReplace === "function") {
+    const openAt2Target = await this.getOpenAt2DualPathTarget(src, dest);
+    if (openAt2Target != null) {
+      if (!overwrite && typeof openAt2Target.root.renameNoReplace === "function") {
         try {
-          openAt2Root.renameNoReplace(srcRel, destRel);
+          openAt2Target.root.renameNoReplace(
+            openAt2Target.srcRel,
+            openAt2Target.destRel,
+          );
           return;
         } catch (err) {
           const { code } = this.parseOpenAt2Error(err);
@@ -1391,7 +1427,7 @@ export class SandboxedFilesystem {
         }
       } else if (overwrite) {
         try {
-          openAt2Root.rename(srcRel, destRel);
+          openAt2Target.root.rename(openAt2Target.srcRel, openAt2Target.destRel);
           return;
         } catch (err) {
           const { code } = this.parseOpenAt2Error(err);
@@ -1425,18 +1461,16 @@ export class SandboxedFilesystem {
     const recursive = !!(options != null && typeof options === "object" && options.recursive);
     const force = !!(options != null && typeof options === "object" && options.force);
     const f = async (inputPath: string, absPath: string) => {
-      const openAt2Root = this.getOpenAt2Root();
-      const rel = await this.getOpenAt2RelativePath(inputPath);
+      const openAt2Target = await this.getOpenAt2PathTarget(inputPath);
       if (
         recursive &&
-        openAt2Root != null &&
-        typeof openAt2Root.rm === "function" &&
-        rel != null
+        openAt2Target != null &&
+        typeof openAt2Target.root.rm === "function"
       ) {
         // Keep non-recursive rm semantics from Node fs (including directory
         // error behavior) while using openat2 hardening for recursive removal.
         try {
-          openAt2Root.rm(rel, recursive, force);
+          openAt2Target.root.rm(openAt2Target.rel, recursive, force);
           void globalSyncFsService.recordLocalDelete(absPath);
           return;
         } catch (err) {
@@ -1457,11 +1491,10 @@ export class SandboxedFilesystem {
     this.assertWritable(path);
     await this.safeAbsPath(path);
     const recursive = !!(options != null && typeof options === "object" && options.recursive);
-    const openAt2Root = this.getOpenAt2Root();
-    const rel = await this.getOpenAt2RelativePath(path);
-    if (!recursive && openAt2Root != null && rel != null) {
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
+    if (!recursive && openAt2Target != null) {
       try {
-        openAt2Root.rmdir(rel);
+        openAt2Target.root.rmdir(openAt2Target.rel);
         return;
       } catch (err) {
         this.throwOpenAt2PathError(path, err);
@@ -1482,15 +1515,13 @@ export class SandboxedFilesystem {
       this.resolveSandboxPath(target),
       this.resolveWritableSandboxPath(path),
     ]);
-    const openAt2Root = this.getOpenAt2Root();
-    const rel = await this.getOpenAt2RelativePath(path);
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
     if (
-      openAt2Root != null &&
-      typeof openAt2Root.symlink === "function" &&
-      rel != null
+      openAt2Target != null &&
+      typeof openAt2Target.root.symlink === "function"
     ) {
       try {
-        openAt2Root.symlink(targetPath, rel);
+        openAt2Target.root.symlink(targetPath, openAt2Target.rel);
         return;
       } catch (err) {
         this.throwOpenAt2PathError(path, err);
@@ -1502,11 +1533,10 @@ export class SandboxedFilesystem {
   truncate = async (path: string, len?: number) => {
     this.assertWritable(path);
     await this.safeAbsPath(path);
-    const openAt2Root = this.getOpenAt2Root();
-    const rel = await this.getOpenAt2RelativePath(path);
-    if (openAt2Root != null && rel != null) {
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
+    if (openAt2Target != null) {
       try {
-        openAt2Root.truncate(rel, len ?? 0);
+        openAt2Target.root.truncate(openAt2Target.rel, len ?? 0);
         return;
       } catch (err) {
         this.throwOpenAt2PathError(path, err);
@@ -1525,11 +1555,10 @@ export class SandboxedFilesystem {
 
   unlink = async (path: string) => {
     const abs = await this.resolveWritableSandboxPath(path);
-    const openAt2Root = this.getOpenAt2Root();
-    const rel = await this.getOpenAt2RelativePath(path);
-    if (openAt2Root != null && rel != null) {
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
+    if (openAt2Target != null) {
       try {
-        openAt2Root.unlink(rel);
+        openAt2Target.root.unlink(openAt2Target.rel);
         void globalSyncFsService.recordLocalDelete(abs);
         return;
       } catch (err) {
@@ -1548,15 +1577,17 @@ export class SandboxedFilesystem {
   ) => {
     this.assertWritable(path);
     await this.safeAbsPath(path);
-    const openAt2Root = this.getOpenAt2Root();
-    const rel = await this.getOpenAt2RelativePath(path);
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
     if (
-      openAt2Root != null &&
-      typeof openAt2Root.utimes === "function" &&
-      rel != null
+      openAt2Target != null &&
+      typeof openAt2Target.root.utimes === "function"
     ) {
       try {
-        openAt2Root.utimes(rel, toTimespecNs(atime), toTimespecNs(mtime));
+        openAt2Target.root.utimes(
+          openAt2Target.rel,
+          toTimespecNs(atime),
+          toTimespecNs(mtime),
+        );
         return;
       } catch (err) {
         this.throwOpenAt2PathError(path, err);
@@ -1596,17 +1627,15 @@ export class SandboxedFilesystem {
     if (isPatchRequest(data)) {
       const encoding = data.encoding ?? "utf8";
       const normalizedEncoding = encoding === "utf-8" ? "utf8" : encoding;
-      const openAt2Root = this.getOpenAt2Root();
-      const rel = await this.getOpenAt2RelativePath(path);
+      const openAt2Target = await this.getOpenAt2PathTarget(path);
       let current: string;
       let openReadFd: number | null = null;
       if (
-        openAt2Root != null &&
-        typeof openAt2Root.openRead === "function" &&
-        rel != null
+        openAt2Target != null &&
+        typeof openAt2Target.root.openRead === "function"
       ) {
         try {
-          openReadFd = openAt2Root.openRead(rel);
+          openReadFd = openAt2Target.root.openRead(openAt2Target.rel);
         } catch (err) {
           const { code } = this.parseOpenAt2Error(err);
           if (code === "ENOENT") {
@@ -1697,12 +1726,17 @@ export class SandboxedFilesystem {
       const encoded = Buffer.from(patched, normalizedEncoding);
       let openWriteFd: number | null = null;
       if (
-        openAt2Root != null &&
-        typeof openAt2Root.openWrite === "function" &&
-        rel != null
+        openAt2Target != null &&
+        typeof openAt2Target.root.openWrite === "function"
       ) {
         try {
-          openWriteFd = openAt2Root.openWrite(rel, false, true, false, 0o666);
+          openWriteFd = openAt2Target.root.openWrite(
+            openAt2Target.rel,
+            false,
+            true,
+            false,
+            0o666,
+          );
         } catch (err) {
           const { code } = this.parseOpenAt2Error(err);
           if (code === "ENOENT") {
@@ -1751,16 +1785,20 @@ export class SandboxedFilesystem {
       this.lastOnDisk.set(p, data);
       this.lastOnDiskHash.set(`${p}-${sha1(data)}`, true);
     }
-    const openAt2Root = this.getOpenAt2Root();
-    const rel = await this.getOpenAt2RelativePath(path);
+    const openAt2Target = await this.getOpenAt2PathTarget(path);
     let openWriteFd: number | null = null;
     if (
-      openAt2Root != null &&
-      typeof openAt2Root.openWrite === "function" &&
-      rel != null
+      openAt2Target != null &&
+      typeof openAt2Target.root.openWrite === "function"
     ) {
       try {
-        openWriteFd = openAt2Root.openWrite(rel, true, true, false, 0o666);
+        openWriteFd = openAt2Target.root.openWrite(
+          openAt2Target.rel,
+          true,
+          true,
+          false,
+          0o666,
+        );
       } catch (err) {
         const { code } = this.parseOpenAt2Error(err);
         if (code !== "ENOSYS" && code !== "EINVAL") {
