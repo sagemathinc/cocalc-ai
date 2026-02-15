@@ -26,7 +26,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import admins from "@cocalc/server/accounts/admins";
-import { createProject, start as startProject } from "@cocalc/server/conat/api/projects";
+import {
+  createProject,
+  start as startProject,
+} from "@cocalc/server/conat/api/projects";
 import {
   createBackup as createProjectBackup,
   getBackupFiles,
@@ -310,6 +313,57 @@ async function waitForBackupIndexed({
   throw new Error(`backup index never appeared (indexed backups=${lastCount})`);
 }
 
+async function launchMultipassVm({
+  vmName,
+  vmImage,
+  vmUser,
+  vmCpus,
+  vmMemoryGb,
+  vmDiskGb,
+  sshPublicKey,
+  tempRoot,
+  tempDirs,
+}: {
+  vmName: string;
+  vmImage: string;
+  vmUser: string;
+  vmCpus: number;
+  vmMemoryGb: number;
+  vmDiskGb: number;
+  sshPublicKey: string;
+  tempRoot: string;
+  tempDirs: string[];
+}): Promise<{ vmIp: string; sshTarget: string }> {
+  await mkdir(tempRoot, { recursive: true });
+  const tempDir = await mkdtemp(join(tempRoot, "cocalc-self-host-smoke-"));
+  tempDirs.push(tempDir);
+  const cloudInitPath = join(tempDir, "cloud-init.yaml");
+  const cloudInit = `#cloud-config
+users:
+  - name: ${vmUser}
+    ssh_authorized_keys:
+      - ${quoteYamlSingle(sshPublicKey)}
+`;
+  await writeFile(cloudInitPath, cloudInit, "utf8");
+  const args = [
+    "launch",
+    vmImage,
+    "--name",
+    vmName,
+    "--cpus",
+    String(vmCpus),
+    "--memory",
+    `${vmMemoryGb}G`,
+    "--disk",
+    `${vmDiskGb}G`,
+    "--cloud-init",
+    cloudInitPath,
+  ];
+  await runCommand("multipass", args, { timeoutMs: 8 * 60 * 1000 });
+  const vmIp = await getMultipassIp(vmName);
+  return { vmIp, sshTarget: `${vmUser}@${vmIp}` };
+}
+
 async function cleanupMultipassVm(vmName: string): Promise<void> {
   try {
     await runCommand("multipass", ["delete", vmName], { timeoutMs: 120_000 });
@@ -397,9 +451,10 @@ export async function runSelfHostMultipassBackupSmoke(
     DEFAULT_HOST_DEPROVISIONED_WAIT,
   );
 
-  let tempDir: string | undefined;
-  let cloudInitPath: string | undefined;
-  let vmCreated = false;
+  const tempDirs: string[] = [];
+  const createdVmNames: string[] = [];
+  const cleanupHostIds = new Set<string>();
+  const smokeTmpBase = join(homedir(), "cocalc-smoke-runner");
   let vmIp: string | undefined;
   let sshTarget: string | undefined;
   let host_id: string | undefined;
@@ -453,18 +508,18 @@ export async function runSelfHostMultipassBackupSmoke(
         });
       }
     }
-    if (host_id) {
+    for (const cleanupHostId of cleanupHostIds) {
       try {
-        await deleteHostInternal({ account_id, id: host_id });
+        await deleteHostInternal({ account_id, id: cleanupHostId });
       } catch (err) {
         logger.warn("self-host smoke cleanup host failed", {
-          host_id,
+          host_id: cleanupHostId,
           err: `${err}`,
         });
       }
     }
-    if (vmCreated) {
-      await cleanupMultipassVm(vmName);
+    for (const name of createdVmNames) {
+      await cleanupMultipassVm(name);
     }
   };
 
@@ -478,35 +533,20 @@ export async function runSelfHostMultipassBackupSmoke(
     });
 
     await runStep("launch_multipass_vm", async () => {
-      const smokeTmpBase = join(homedir(), "cocalc-smoke-runner");
-      await mkdir(smokeTmpBase, { recursive: true });
-      tempDir = await mkdtemp(join(smokeTmpBase, "cocalc-self-host-smoke-"));
-      cloudInitPath = join(tempDir, "cloud-init.yaml");
-      const cloudInit = `#cloud-config
-users:
-  - name: ${vmUser}
-    ssh_authorized_keys:
-      - ${quoteYamlSingle(sshPublicKey)}
-`;
-      await writeFile(cloudInitPath, cloudInit, "utf8");
-      const args = [
-        "launch",
-        vmImage,
-        "--name",
+      const launched = await launchMultipassVm({
         vmName,
-        "--cpus",
-        String(vmCpus),
-        "--memory",
-        `${vmMemoryGb}G`,
-        "--disk",
-        `${vmDiskGb}G`,
-        "--cloud-init",
-        cloudInitPath,
-      ];
-      await runCommand("multipass", args, { timeoutMs: 8 * 60 * 1000 });
-      vmCreated = true;
-      vmIp = await getMultipassIp(vmName);
-      sshTarget = `${vmUser}@${vmIp}`;
+        vmImage,
+        vmUser,
+        vmCpus,
+        vmMemoryGb,
+        vmDiskGb,
+        sshPublicKey,
+        tempRoot: smokeTmpBase,
+        tempDirs,
+      });
+      vmIp = launched.vmIp;
+      sshTarget = launched.sshTarget;
+      createdVmNames.push(vmName);
     });
 
     await runStep("wait_ssh_ready", async () => {
@@ -536,6 +576,7 @@ users:
         },
       });
       host_id = host.id;
+      cleanupHostIds.add(host.id);
     });
 
     await runStep("start_host", async () => {
@@ -623,6 +664,7 @@ users:
           allowed: ["deprovisioned"],
           wait: waitHostDeprovisioned,
         });
+        cleanupHostIds.delete(host_id);
       });
     }
 
@@ -669,8 +711,8 @@ users:
       debug_hints,
     };
   } finally {
-    if (tempDir) {
-      await rm(tempDir, { recursive: true, force: true });
+    for (const dir of tempDirs) {
+      await rm(dir, { recursive: true, force: true });
     }
   }
 }
