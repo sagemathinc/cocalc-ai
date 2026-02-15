@@ -227,6 +227,9 @@ importers:
       '@types/node':
         specifier: ^22.10.10
         version: 22.18.13
+      socket.io-client:
+        specifier: ^4.8.3
+        version: 4.8.3(bufferutil@4.0.9)(utf-8-validate@6.0.5)
 
   cdn:
     devDependencies:
