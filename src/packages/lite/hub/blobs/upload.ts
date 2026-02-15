@@ -49,7 +49,8 @@ export default function init(app, conatClient) {
       }
       res.send({ uuid });
     } catch (err) {
-      res.status(500).send(`upload failed -- ${err}`);
+      logger.warn("blob upload failed", { err: String(err) });
+      res.status(500).send("upload failed");
     }
   });
 }
