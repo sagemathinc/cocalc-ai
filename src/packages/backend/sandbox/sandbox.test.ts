@@ -820,6 +820,38 @@ describe("openat2 motivation regressions", () => {
     const outsideAfter = await stat(outsidePath);
     expect(outsideAfter.mtimeMs).toBe(outsideBefore.mtimeMs);
   });
+
+  it("cp should not mutate outside sandbox when destination parent is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-cp-race");
+    const outsideRoot = join(tempDir, "test-openat2-cp-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("inside.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.mkdir !== "function") {
+      return;
+    }
+
+    const originalMkdir = openAt2Root.mkdir.bind(openAt2Root);
+    openAt2Root.mkdir = (path: string, recursive?: boolean, mode?: number) => {
+      if (path === "nested") {
+        const linkPath = join(sandboxRoot, "nested");
+        rmSync(linkPath, { force: true, recursive: true });
+        symlinkSync(outsideRoot, linkPath);
+      }
+      return originalMkdir(path, recursive, mode);
+    };
+
+    await expect(fs.cp("inside.txt", "nested/copied.txt")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    await expect(stat(join(outsideRoot, "copied.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });
 
 describe("read only sandbox", () => {
