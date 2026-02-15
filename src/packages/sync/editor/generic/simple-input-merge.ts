@@ -69,8 +69,10 @@ export class SimpleInputMerge {
     const local = opts.getLocal() ?? "";
     // console.log("handleRemote", { remote, local, last: this.last });
 
-    // Pending value has been echoed and local hasn't changed beyond it.
-    if (this.pending != null && remote === this.pending && local === this.pending) {
+    // Pending value has been echoed.  IMPORTANT: local may already have
+    // advanced beyond pending.  In that case, we must advance baseline first
+    // and stop; attempting to rebase from stale `last` can duplicate text.
+    if (this.pending != null && remote === this.pending) {
       this.noteApplied(remote);
       return;
     }
