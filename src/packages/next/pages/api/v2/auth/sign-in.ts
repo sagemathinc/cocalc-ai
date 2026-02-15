@@ -19,6 +19,7 @@ import { Request, Response } from "express";
 
 import getPool from "@cocalc/database/pool";
 import { recordFail, signInCheck } from "@cocalc/server/auth/throttle";
+import getRequiresToken from "@cocalc/server/auth/tokens/get-requires-token";
 import getParams from "lib/api/get-params";
 import { verify } from "password-hash";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -28,6 +29,7 @@ export default async function signIn(req: Request, res: Response) {
   let { email, password } = getParams(req);
 
   email = email.toLowerCase().trim();
+  const requiresToken = await getRequiresToken();
 
   const check: string | undefined = await signInCheck(email, req.ip);
   if (check) {
@@ -43,12 +45,36 @@ export default async function signIn(req: Request, res: Response) {
     // await reCaptcha(req);
     account_id = await getAccount(email, password);
   } catch (err) {
-    res.json({ error: `Problem signing into account -- ${err.message}.` });
+    res.json({ error: getSignInErrorMessage(err, { requiresToken }) });
     recordFail(email, req.ip);
     return;
   }
 
   await signUserIn(req, res, account_id);
+}
+
+function getSignInErrorMessage(
+  err: unknown,
+  opts: { requiresToken: boolean },
+): string {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  if (opts.requiresToken) {
+    // In registration-token deployments, avoid leaking account existence/state.
+    return "Invalid email address or password.";
+  }
+  if (message.includes("is banned")) {
+    return "This account is not allowed to sign in.";
+  }
+  if (
+    message.startsWith("no account with email address") ||
+    message.startsWith("password for ")
+  ) {
+    return `Problem signing into account -- ${message}.`;
+  }
+  if (message.startsWith("The password must be shorter than")) {
+    return message;
+  }
+  return "Problem signing into account.";
 }
 
 export async function getAccount(
@@ -95,7 +121,8 @@ export async function signUserIn(
       maxAge: opts?.maxAge,
     });
   } catch (err) {
-    res.json({ error: `Problem setting auth cookies -- ${err}` });
+    // Avoid leaking cookie implementation/internal errors to clients.
+    res.json({ error: "Problem setting auth cookies." });
     return;
   }
   res.json({ account_id });

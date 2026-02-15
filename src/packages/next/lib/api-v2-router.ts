@@ -250,6 +250,14 @@ function parseCookieHeader(header: string | undefined): Record<string, string> {
   if (!header) {
     return cookies;
   }
+  const decodeCookieComponent = (value: string): string => {
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      // Malformed cookie fragments should not break request handling.
+      return value;
+    }
+  };
   for (const part of header.split(";")) {
     const trimmed = part.trim();
     if (!trimmed) {
@@ -257,11 +265,11 @@ function parseCookieHeader(header: string | undefined): Record<string, string> {
     }
     const eq = trimmed.indexOf("=");
     if (eq === -1) {
-      cookies[decodeURIComponent(trimmed)] = "";
+      cookies[decodeCookieComponent(trimmed)] = "";
       continue;
     }
-    const key = decodeURIComponent(trimmed.slice(0, eq).trim());
-    const value = decodeURIComponent(trimmed.slice(eq + 1).trim());
+    const key = decodeCookieComponent(trimmed.slice(0, eq).trim());
+    const value = decodeCookieComponent(trimmed.slice(eq + 1).trim());
     cookies[key] = value;
   }
   return cookies;

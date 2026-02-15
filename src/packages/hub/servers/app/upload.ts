@@ -28,8 +28,27 @@ import { writeFile as writeFileToProject } from "@cocalc/conat/files/write";
 import { join } from "path";
 import { callback } from "awaiting";
 
-// ridiculously long -- effectively no limit.
-const MAX_UPLOAD_TIME_MS = 1000 * 60 * 60 * 24 * 7;
+function envNumber(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// Upper bound for waiting on the backend writer for a single upload.
+const MAX_UPLOAD_TIME_MS = envNumber(
+  "COCALC_UPLOAD_MAX_WAIT_MS",
+  1000 * 60 * 60 * 6, // 6 hours
+);
+// TTL for in-memory upload state. This bounds leaks if the client disconnects
+// mid-upload and never sends final chunks.
+const UPLOAD_STATE_TTL_MS = envNumber(
+  "COCALC_UPLOAD_STATE_TTL_MS",
+  Math.max(MAX_UPLOAD_TIME_MS * 2, 1000 * 60 * 30), // at least 30 minutes
+);
+// Hard cap to prevent unbounded growth of upload state maps.
+const MAX_UPLOAD_STATE_ENTRIES = envNumber(
+  "COCALC_UPLOAD_MAX_STATE_ENTRIES",
+  2000,
+);
 
 const logger = getLogger("hub:servers:app:upload");
 
@@ -40,11 +59,10 @@ export default function init(router: Router) {
       res.status(500).send("user must be signed in to upload files");
       return;
     }
-    const { project_id, path = "", ttl, blob } = req.query;
+    const { project_id, path = "", blob } = req.query;
     try {
       if (blob) {
         //await handleBlobUpload({ ttl, req, res });
-        console.log(ttl);
         throw Error("not implemented");
       } else {
         await handleUploadToProject({
@@ -56,8 +74,12 @@ export default function init(router: Router) {
         });
       }
     } catch (err) {
-      logger.debug("upload failed ", err);
-      res.status(500).send(`upload failed -- ${err}`);
+      logger.warn("upload failed", {
+        err: String(err),
+        account_id,
+        project_id,
+      });
+      res.status(500).send("upload failed");
     }
   });
 }
@@ -68,6 +90,7 @@ export default function init(router: Router) {
 
 const errors: { [key: string]: string[] } = {};
 const finished: { [key: string]: { state: boolean; cb: () => void } } = {};
+const stateMeta: { [key: string]: { created: number; touched: number } } = {};
 
 async function handleUploadToProject({
   account_id,
@@ -128,8 +151,15 @@ async function handleUploadToProject({
   const index = parseInt(fields.dzchunkindex?.[0] ?? "0");
   const count = parseInt(fields.dztotalchunkcount?.[0] ?? "1");
   const key = JSON.stringify({ path, filename, project_id });
+  touchStateKey(key);
+  pruneUploadState();
   if (index > 0 && errors?.[key]?.length > 0) {
-    res.status(500).send(`upload failed -- ${errors[key].join(", ")}`);
+    logger.warn("upload failed (early state error)", {
+      key,
+      errors: errors[key],
+    });
+    res.status(500).send("Upload failed.");
+    cleanupUploadKey(key);
     return;
   }
   if (index == 0) {
@@ -177,15 +207,21 @@ async function handleUploadToProject({
       };
       await callback(f);
     }
-    delete finished[key];
+    cleanupUploadKey(key);
   }
   if ((errors[key]?.length ?? 0) > 0) {
-    // console.log("saying upload failed");
-    let e = errors[key].join(", ");
-    if (e.includes("Error: 503")) {
-      e += ", Upload service not running.";
-    }
-    res.status(500).send(`Upload failed: ${e}`);
+    logger.warn("upload failed (backend write)", {
+      key,
+      errors: errors[key],
+    });
+    const serviceUnavailable = errors[key].some((e) => e.includes("Error: 503"));
+    res
+      .status(500)
+      .send(
+        serviceUnavailable
+          ? "Upload failed: upload service not running."
+          : "Upload failed.",
+      );
   } else {
     // console.log("saying upload worked");
     res.send({ status: "ok" });
@@ -198,7 +234,9 @@ function getKey(opts) {
 
 const streams: any = {};
 export function getWriteStream(opts) {
+  pruneUploadState();
   const key = getKey(opts);
+  touchStateKey(key);
   let totalStream = streams[key];
   if (totalStream == null) {
     totalStream = new PassThrough();
@@ -209,5 +247,53 @@ export function getWriteStream(opts) {
 }
 
 function freeWriteStream(opts) {
-  delete streams[getKey(opts)];
+  const key = getKey(opts);
+  const stream = streams[key];
+  if (stream != null) {
+    try {
+      stream.end();
+    } catch {}
+    delete streams[key];
+  }
+}
+
+function touchStateKey(key: string): void {
+  const now = Date.now();
+  const meta = stateMeta[key];
+  if (meta == null) {
+    stateMeta[key] = { created: now, touched: now };
+  } else {
+    meta.touched = now;
+  }
+}
+
+function cleanupUploadKey(key: string): void {
+  delete errors[key];
+  delete finished[key];
+  delete stateMeta[key];
+  const stream = streams[key];
+  if (stream != null) {
+    try {
+      stream.end();
+    } catch {}
+    delete streams[key];
+  }
+}
+
+function pruneUploadState(): void {
+  const now = Date.now();
+  const keys = Object.keys(stateMeta);
+  for (const key of keys) {
+    if (now - stateMeta[key].touched > UPLOAD_STATE_TTL_MS) {
+      cleanupUploadKey(key);
+    }
+  }
+  const remaining = Object.keys(stateMeta);
+  if (remaining.length <= MAX_UPLOAD_STATE_ENTRIES) {
+    return;
+  }
+  remaining
+    .sort((a, b) => stateMeta[a].touched - stateMeta[b].touched)
+    .slice(0, remaining.length - MAX_UPLOAD_STATE_ENTRIES)
+    .forEach(cleanupUploadKey);
 }

@@ -17,10 +17,85 @@ import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import formidable from "formidable";
 import { readFile, unlink } from "fs/promises";
 import { uuidsha1 } from "@cocalc/backend/misc_node";
+import LRU from "lru-cache";
 
 const logger = getLogger("hub:servers:app:blob-upload");
 function dbg(...args): void {
   logger.debug("upload ", ...args);
+}
+
+function envNumber(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const SHORT_WINDOW_MS = envNumber(
+  "COCALC_BLOB_UPLOAD_SHORT_WINDOW_MS",
+  1000 * 60,
+);
+const LONG_WINDOW_MS = envNumber(
+  "COCALC_BLOB_UPLOAD_LONG_WINDOW_MS",
+  1000 * 60 * 60,
+);
+const ACCOUNT_SHORT_LIMIT = envNumber(
+  "COCALC_BLOB_UPLOAD_ACCOUNT_SHORT_LIMIT",
+  20,
+);
+const ACCOUNT_LONG_LIMIT = envNumber(
+  "COCALC_BLOB_UPLOAD_ACCOUNT_LONG_LIMIT",
+  400,
+);
+const IP_SHORT_LIMIT = envNumber("COCALC_BLOB_UPLOAD_IP_SHORT_LIMIT", 60);
+const IP_LONG_LIMIT = envNumber("COCALC_BLOB_UPLOAD_IP_LONG_LIMIT", 1200);
+
+const accountShort = new LRU<string, number>({
+  max: 20000,
+  ttl: SHORT_WINDOW_MS,
+});
+const accountLong = new LRU<string, number>({
+  max: 40000,
+  ttl: LONG_WINDOW_MS,
+});
+const ipShort = new LRU<string, number>({
+  max: 20000,
+  ttl: SHORT_WINDOW_MS,
+});
+const ipLong = new LRU<string, number>({
+  max: 40000,
+  ttl: LONG_WINDOW_MS,
+});
+
+function checkAndRecordCount(
+  cache: LRU<string, number>,
+  key: string,
+  limit: number,
+): boolean {
+  const next = (cache.get(key) ?? 0) + 1;
+  cache.set(key, next);
+  return next <= limit;
+}
+
+function ensureBlobUploadRateLimit({
+  account_id,
+  ip,
+}: {
+  account_id: string;
+  ip?: string;
+}): string | undefined {
+  if (!checkAndRecordCount(accountShort, account_id, ACCOUNT_SHORT_LIMIT)) {
+    return "too many blob uploads for this account; try again in about a minute";
+  }
+  if (!checkAndRecordCount(accountLong, account_id, ACCOUNT_LONG_LIMIT)) {
+    return "too many blob uploads for this account; try again later";
+  }
+  if (ip) {
+    if (!checkAndRecordCount(ipShort, ip, IP_SHORT_LIMIT)) {
+      return "too many blob uploads from this IP; try again in about a minute";
+    }
+    if (!checkAndRecordCount(ipLong, ip, IP_LONG_LIMIT)) {
+      return "too many blob uploads from this IP; try again later";
+    }
+  }
 }
 
 export default function init(router: Router) {
@@ -28,20 +103,28 @@ export default function init(router: Router) {
   router.post("/blobs", async (req, res) => {
     const account_id = await getAccount(req);
     if (!account_id) {
-      res.status(500).send("user must be signed in to upload files");
+      res.status(401).send("user must be signed in to upload files");
       return;
     }
     const { project_id, ttl } = req.query;
     if (typeof project_id == "string" && project_id) {
       if (!(await isCollaborator({ account_id, project_id }))) {
-        res.status(500).send("user must be collaborator on project");
+        res.status(403).send("user must be collaborator on project");
         return;
       }
     }
 
     dbg({ account_id, project_id });
 
-    // TODO: check for throttling/limits
+    const limitError = ensureBlobUploadRateLimit({
+      account_id,
+      ip: req.ip,
+    });
+    if (limitError) {
+      res.status(429).send(limitError);
+      return;
+    }
+
     try {
       const form = formidable({
         keepExtensions: true,
@@ -96,8 +179,12 @@ export default function init(router: Router) {
       }
       res.send({ uuid });
     } catch (err) {
-      dbg("upload failed ", err);
-      res.status(500).send(`upload failed -- ${err}`);
+      logger.warn("blob upload failed", {
+        err: String(err),
+        account_id,
+        project_id,
+      });
+      res.status(500).send("upload failed");
     }
   });
 }
