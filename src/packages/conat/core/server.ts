@@ -168,6 +168,18 @@ export interface Options {
 
   // the ip address of this server on the cluster.
   clusterIpAddress?: string;
+
+  // If true, only trust forwarded client-IP headers when the immediate peer
+  // is a trusted local proxy endpoint (loopback). This is intended for
+  // deployments where cloudflared runs locally and forwards internet traffic.
+  //
+  // SECURITY CONTEXT:
+  // Conat tracks auth failures per client address and can temporarily block
+  // repeated failures. If client IP is spoofable, that protection is weaker
+  // (attackers can evade blocks, or potentially cause noisy false blocks).
+  // Strict mode prevents trusting spoofable forwarded headers from untrusted
+  // peers.
+  strictCloudflareProxy?: boolean | (() => boolean);
 }
 
 type State = "init" | "ready" | "closed";
@@ -222,6 +234,7 @@ export class ConatServer extends EventEmitter {
       forgetClusterNodeInterval = DEFAULT_FORGET_CLUSTER_NODE_INTERVAL,
       localClusterSize = 1,
       clusterIpAddress,
+      strictCloudflareProxy = false,
     } = options;
     this.clusterName = clusterName;
     this.options = {
@@ -238,7 +251,13 @@ export class ConatServer extends EventEmitter {
       forgetClusterNodeInterval,
       localClusterSize,
       clusterIpAddress,
+      strictCloudflareProxy,
     };
+    this.log("client address mode", {
+      mode: resolveStrictCloudflareProxy(strictCloudflareProxy)
+        ? "strict-cloudflare"
+        : "legacy",
+    });
     this.cluster = !!id && !!clusterName;
     this.getUser = async (socket) => {
       if (getUser == null) {
@@ -795,7 +814,11 @@ export class ConatServer extends EventEmitter {
       recv: { messages: 0, bytes: 0 },
       subs: 0,
       connected: Date.now(),
-      address: getAddress(socket),
+      address: getAddress(socket, {
+        strictCloudflareProxy: resolveStrictCloudflareProxy(
+          this.options.strictCloudflareProxy,
+        ),
+      }),
     };
     const address = this.stats[socket.id].address
       ? `ip:${this.stats[socket.id].address}`
@@ -1674,29 +1697,92 @@ export function randomChoice<T>(v: Set<T>): T {
   return w[i];
 }
 
+function normalizeIp(value?: string): string | undefined {
+  if (!value) return undefined;
+  let v = value.trim();
+  if (!v) return undefined;
+  if (v.startsWith("[") && v.endsWith("]")) {
+    v = v.slice(1, -1);
+  }
+  if (v.startsWith('"') && v.endsWith('"')) {
+    v = v.slice(1, -1);
+  }
+  if (v.startsWith("::ffff:")) {
+    v = v.slice("::ffff:".length);
+  }
+  const zoneIndex = v.indexOf("%");
+  if (zoneIndex >= 0) {
+    v = v.slice(0, zoneIndex);
+  }
+  return v;
+}
+
+function isTrustedLocalProxyPeer(addr?: string): boolean {
+  const ip = normalizeIp(addr);
+  return ip === "127.0.0.1" || ip === "::1";
+}
+
+function parseForwardedForHeader(header: string): string | undefined {
+  for (const directive of header.split(",")[0].split(";")) {
+    const trimmed = directive.trim();
+    if (trimmed.startsWith("for=")) {
+      return normalizeIp(trimmed.substring(4));
+    }
+  }
+  return undefined;
+}
+
+function resolveStrictCloudflareProxy(
+  value: boolean | (() => boolean) | undefined,
+): boolean {
+  if (typeof value === "function") {
+    try {
+      return !!value();
+    } catch {
+      return false;
+    }
+  }
+  return !!value;
+}
+
 // See https://socket.io/how-to/get-the-ip-address-of-the-client
-function getAddress(socket) {
-  const header = socket.handshake.headers["forwarded"];
-  if (header) {
-    for (const directive of header.split(",")[0].split(";")) {
-      if (directive.startsWith("for=")) {
-        return directive.substring(4);
+//
+// SECURITY CONTEXT:
+// The returned address feeds abuse controls (e.g. auth failure throttling/
+// temporary bans) and operational observability. In strict mode, we only
+// honor forwarded headers when the immediate peer is trusted (loopback
+// cloudflared/local proxy); otherwise we must use the direct peer address.
+export function getAddress(
+  socket,
+  { strictCloudflareProxy = false }: { strictCloudflareProxy?: boolean } = {},
+) {
+  const peer = normalizeIp(socket.handshake.address) ?? socket.handshake.address;
+  const headers = socket.handshake.headers ?? {};
+  const trustForwarded = !strictCloudflareProxy || isTrustedLocalProxyPeer(peer);
+
+  if (trustForwarded) {
+    for (const other of ["cf-connecting-ip", "fastly-client-ip"]) {
+      const addr = normalizeIp(headers[other]);
+      if (addr) {
+        return addr;
+      }
+    }
+
+    const xff = normalizeIp(headers["x-forwarded-for"]?.split(",")?.[0]);
+    if (xff) {
+      return xff;
+    }
+
+    const forwarded = headers["forwarded"];
+    if (typeof forwarded === "string") {
+      const addr = parseForwardedForHeader(forwarded);
+      if (addr) {
+        return addr;
       }
     }
   }
 
-  let addr = socket.handshake.headers["x-forwarded-for"]?.split(",")?.[0];
-  if (addr) {
-    return addr;
-  }
-  for (const other of ["cf-connecting-ip", "fastly-client-ip"]) {
-    addr = socket.handshake.headers[other];
-    if (addr) {
-      return addr;
-    }
-  }
-
-  return socket.handshake.address;
+  return peer;
 }
 
 export function updateInterest(update: InterestUpdate, interest: Interest) {

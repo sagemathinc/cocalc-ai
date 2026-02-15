@@ -30,6 +30,7 @@ import initStats from "./app/stats";
 import { getDatabase } from "./database";
 import initHttpServer from "./http";
 import initRobots from "./robots";
+import getServerSettings from "./server-settings";
 import basePath from "@cocalc/backend/base-path";
 import { initConatServer } from "@cocalc/server/conat/socketio";
 import { conatSocketioCount, root } from "@cocalc/backend/data";
@@ -53,6 +54,51 @@ const PYTHON_API_PATH = join(root, "python", "cocalc-api", "site");
 // Used for longterm caching of files. This should be in units of seconds.
 const MAX_AGE = Math.round(ms("10 days") / 1000);
 const SHORT_AGE = Math.round(ms("10 seconds") / 1000);
+
+function isEnabled(value: unknown): boolean {
+  if (value === true) return true;
+  if (value == null) return false;
+  const lowered = String(value).trim().toLowerCase();
+  if (!lowered) return false;
+  return !["0", "false", "no", "off"].includes(lowered);
+}
+
+function normalizeCloudflareMode(
+  value: unknown,
+): "none" | "self" | "managed" | undefined {
+  const raw = `${value ?? ""}`.trim().toLowerCase();
+  if (raw === "none" || raw === "self" || raw === "managed") {
+    return raw;
+  }
+  return undefined;
+}
+
+function cloudflareTunnelEnabled(settings: Record<string, any>): boolean {
+  const mode = normalizeCloudflareMode(settings.cloudflare_mode);
+  const tunnelEnabled = isEnabled(settings.project_hosts_cloudflare_tunnel_enabled);
+  if (mode === "self") return tunnelEnabled;
+  if (mode === "managed") return false;
+  if (mode === "none") return tunnelEnabled;
+  return tunnelEnabled;
+}
+
+function normalizeIp(ip?: string): string {
+  let v = `${ip ?? ""}`.trim();
+  if (!v) return "";
+  if (v.startsWith("::ffff:")) {
+    v = v.slice("::ffff:".length);
+  }
+  const zoneIndex = v.indexOf("%");
+  if (zoneIndex >= 0) {
+    v = v.slice(0, zoneIndex);
+  }
+  return v;
+}
+
+function isTrustedCloudflareProxyPeer(ip?: string): boolean {
+  const v = normalizeIp(ip);
+  return v === "127.0.0.1" || v === "::1";
+}
 
 interface Options {
   projectControl;
@@ -104,8 +150,40 @@ export default async function init(opts: Options): Promise<{
   // Install custom middleware to track response time metrics via prometheus
   setupInstrumentation(router);
 
-  // see http://stackoverflow.com/questions/10849687/express-js-how-to-get-remote-client-address
-  app.enable("trust proxy");
+  // Decide how proxy headers are trusted.
+  //
+  // SECURITY CONTEXT:
+  // We use req.ip in security-sensitive logic (e.g. login throttling / temporary
+  // abuse bans and endpoint allowlists).  If proxy headers are trusted from the
+  // wrong peer, an attacker can spoof those headers and bypass controls that are
+  // supposed to be keyed by client IP.
+  //
+  // Therefore:
+  //   - strict-cloudflare mode: trust forwarded headers only from local tunnel
+  //     proxy peers (loopback).
+  //   - off mode: ignore forwarded headers and use direct socket address.
+  //
+  // In launchpad self-host mode we only enable strict-cloudflare when tunnel mode
+  // is explicitly enabled in settings.
+  const settings = await getServerSettings();
+  let strictCloudflareProxy = false;
+  const applyTrustProxy = () => {
+    const nextStrict = cloudflareTunnelEnabled(settings.all as Record<string, any>);
+    strictCloudflareProxy = nextStrict;
+    if (nextStrict) {
+      app.set("trust proxy", (ip: string) => isTrustedCloudflareProxyPeer(ip));
+      logger.info(
+        "proxy trust mode is strict-cloudflare (forwarded headers trusted only from loopback peers)",
+      );
+    } else {
+      app.set("trust proxy", false);
+      logger.info(
+        "proxy trust mode is off (forwarded headers ignored; using direct socket address)",
+      );
+    }
+  };
+  applyTrustProxy();
+  settings.table.on("change", applyTrustProxy);
 
   router.use("/robots.txt", initRobots());
 
@@ -183,6 +261,7 @@ export default async function init(opts: Options): Promise<{
     initConatServer({
       httpServer,
       ssl: !!opts.cert,
+      strictCloudflareProxy: () => strictCloudflareProxy,
     });
   }
 
