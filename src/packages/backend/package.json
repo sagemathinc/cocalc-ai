@@ -51,7 +51,7 @@
   "dependencies": {
     "@cocalc/backend": "workspace:*",
     "@cocalc/conat": "workspace:*",
-    "@cocalc/openat2": "link:/home/wstein/build/cocalc-openat2",
+    "@cocalc/openat2": "^0.1.0",
     "@cocalc/sync": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@isaacs/ttlcache": "^1.4.1",
