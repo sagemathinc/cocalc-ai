@@ -4,6 +4,7 @@ import { randomBytes } from "crypto";
 import { type Subvolume } from "../subvolume";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { SYNC_STATE } from "../sync";
+import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 
 beforeAll(before);
 
@@ -133,15 +134,25 @@ describe("the filesystem operations", () => {
     await fs.sync();
     expect(async () => {
       await vol.fs.appendFile("c.txt", " there");
-    }).rejects.toThrow("EACCES");
+    }).rejects.toThrow(/EACCES|Permission denied/);
     await vol.fs.chmod("c.txt", "660");
     await vol.fs.appendFile("c.txt", " there");
   });
 
-  it("realpath of a symlink", async () => {
+  it("symlink is blocked in safe mode", async () => {
     await vol.fs.writeFile("real.txt", "i am real");
-    await vol.fs.symlink("real.txt", "link.txt");
-    expect(await vol.fs.realpath("link.txt")).toBe("real.txt");
+    expect(async () => {
+      await vol.fs.symlink("real.txt", "link.txt");
+    }).rejects.toThrow("EPERM");
+  });
+
+  it("realpath of a symlink in unsafe mode", async () => {
+    const unsafeFs = new SandboxedFilesystem(vol.path, {
+      unsafeMode: true,
+      host: "unsafe-test",
+    });
+    await unsafeFs.symlink("real.txt", "link.txt");
+    expect(await unsafeFs.realpath("link.txt")).toBe("real.txt");
   });
 
   it("watch for changes", async () => {

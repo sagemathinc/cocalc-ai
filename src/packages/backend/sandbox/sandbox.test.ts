@@ -4,9 +4,11 @@ import {
   mkdir,
   rm,
   readFile,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { rmSync, symlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "path";
@@ -44,6 +46,75 @@ describe("test using the filesystem sandbox to do a few standard things", () => 
     await fs.truncate("b", 4);
     const r = await fs.readFile("b", "utf8");
     expect(r).toEqual("hell");
+  });
+});
+
+describe("baseline mutator parity behavior", () => {
+  let fs;
+  it("creates sandbox", async () => {
+    await mkdir(join(tempDir, "test-mutators"));
+    fs = new SandboxedFilesystem(join(tempDir, "test-mutators"));
+  });
+
+  it("supports write overwrite and append", async () => {
+    await fs.writeFile("a.txt", "alpha");
+    expect(await fs.readFile("a.txt", "utf8")).toBe("alpha");
+
+    await fs.writeFile("a.txt", "beta");
+    expect(await fs.readFile("a.txt", "utf8")).toBe("beta");
+
+    await fs.appendFile("a.txt", "-tail");
+    expect(await fs.readFile("a.txt", "utf8")).toBe("beta-tail");
+  });
+
+  it("supports copy, rename, move and unlink", async () => {
+    await fs.copyFile("a.txt", "copy.txt");
+    expect(await fs.readFile("copy.txt", "utf8")).toBe("beta-tail");
+
+    await fs.rename("copy.txt", "renamed.txt");
+    expect(await fs.exists("copy.txt")).toBe(false);
+    expect(await fs.readFile("renamed.txt", "utf8")).toBe("beta-tail");
+
+    await fs.mkdir("dst");
+    await fs.move("renamed.txt", "dst/moved.txt");
+    expect(await fs.exists("renamed.txt")).toBe(false);
+    expect(await fs.readFile("dst/moved.txt", "utf8")).toBe("beta-tail");
+
+    await fs.unlink("dst/moved.txt");
+    expect(await fs.exists("dst/moved.txt")).toBe(false);
+  });
+
+  it("move defaults to no-overwrite behavior", async () => {
+    await fs.writeFile("move-src.txt", "new");
+    await fs.writeFile("move-dest.txt", "old");
+    await expect(fs.move("move-src.txt", "move-dest.txt")).rejects.toMatchObject({
+      code: "EEXIST",
+    });
+    expect(await fs.readFile("move-src.txt", "utf8")).toBe("new");
+    expect(await fs.readFile("move-dest.txt", "utf8")).toBe("old");
+  });
+
+  it("supports cp for single files and arrays", async () => {
+    await fs.writeFile("cp-source.txt", "cp-data");
+    await fs.cp("cp-source.txt", "cp-target.txt");
+    expect(await fs.readFile("cp-target.txt", "utf8")).toBe("cp-data");
+
+    await fs.mkdir("cp-dir");
+    await fs.cp(["cp-source.txt"], "cp-dir");
+    expect(await fs.readFile("cp-dir/cp-source.txt", "utf8")).toBe("cp-data");
+  });
+
+  it("supports rm for single path and array path arguments", async () => {
+    await fs.writeFile("x.txt", "x");
+    await fs.writeFile("y.txt", "y");
+    await fs.rm(["x.txt", "y.txt"]);
+    expect(await fs.exists("x.txt")).toBe(false);
+    expect(await fs.exists("y.txt")).toBe(false);
+
+    await fs.mkdir("tmp");
+    await fs.writeFile("tmp/z.txt", "z");
+    await fs.rm("tmp", { recursive: true });
+    expect(await fs.exists("tmp")).toBe(false);
   });
 });
 
@@ -197,10 +268,51 @@ describe("test watching a file and a folder in the sandbox", () => {
     });
 
     await fs.unlink("folder/z");
-    expect(await w.next()).toEqual({
+    let next = await w.next();
+    if (next.value?.event === "change") {
+      next = await w.next();
+    }
+    expect(next).toEqual({
       done: false,
       value: { event: "unlink", filename: "z" },
     });
+    w.end();
+  });
+
+  it("create-write then unlink emits unlink (allowing optional intermediate change)", async () => {
+    await fs.mkdir("folder-regression");
+    const w = await fs.watch("folder-regression", {
+      pollInterval: 0,
+      stabilityThreshold: 0,
+    });
+
+    await fs.writeFile("folder-regression/new.txt", "there");
+    expect(await w.next()).toEqual({
+      done: false,
+      value: { event: "add", filename: "new.txt" },
+    });
+
+    // Filesystem watcher behavior can include an intermediate "change" event
+    // after "add" on some runs/platforms. If present, consume it so we can
+    // assert the core contract: unlink is emitted for the file.
+    await delay(60);
+    if (w.queueSize() > 0) {
+      expect(await w.next()).toEqual({
+        done: false,
+        value: { event: "change", filename: "new.txt" },
+      });
+    }
+
+    await fs.unlink("folder-regression/new.txt");
+    let next = await w.next();
+    if (next.value?.event === "change") {
+      next = await w.next();
+    }
+    expect(next).toEqual({
+      done: false,
+      value: { event: "unlink", filename: "new.txt" },
+    });
+    w.end();
   });
 });
 
@@ -296,6 +408,510 @@ describe("safe mode sandbox", () => {
       await fs.readFile("danger", "utf8");
     }).rejects.toThrow("outside of sandbox");
   });
+
+  it("denies link and symlink creation by default in safe mode", async () => {
+    await fs.writeFile("link-policy-src.txt", "src");
+    await expect(fs.link("link-policy-src.txt", "hard-link.txt")).rejects.toThrow(
+      "operation not permitted in safe mode",
+    );
+    await expect(fs.symlink("link-policy-src.txt", "sym-link.txt")).rejects.toThrow(
+      "operation not permitted in safe mode",
+    );
+  });
+});
+
+describe("safe mode link policy overrides", () => {
+  let fs;
+  it("allows link and symlink creation when explicitly enabled", async () => {
+    await mkdir(join(tempDir, "test-safe-link-policy"));
+    fs = new SandboxedFilesystem(join(tempDir, "test-safe-link-policy"), {
+      unsafeMode: false,
+      allowSafeModeHardlink: true,
+      allowSafeModeSymlink: true,
+    });
+    await fs.writeFile("source.txt", "hello");
+    await fs.link("source.txt", "hard.txt");
+    await fs.symlink("source.txt", "sym.txt");
+    expect(await fs.readFile("hard.txt", "utf8")).toBe("hello");
+    expect(await fs.readFile("sym.txt", "utf8")).toBe("hello");
+  });
+});
+
+describe("safe mode mutator escape checks", () => {
+  let fs;
+  const outsideFile = () => join(tempDir, "mutator-outside-secret.txt");
+  const outsideDir = () => join(tempDir, "mutator-outside-dir");
+
+  it("creates sandbox and outside targets", async () => {
+    await mkdir(join(tempDir, "test-safe-mutator-escapes"));
+    fs = new SandboxedFilesystem(join(tempDir, "test-safe-mutator-escapes"), {
+      unsafeMode: false,
+    });
+    await writeFile(outsideFile(), "s3cr3t");
+    await mkdir(outsideDir(), { recursive: true });
+    await fs.writeFile("inside.txt", "inside");
+    await symlink(outsideFile(), join(tempDir, "test-safe-mutator-escapes", "escape-link"));
+    await symlink(outsideDir(), join(tempDir, "test-safe-mutator-escapes", "escape-dir"));
+  });
+
+  it("blocks unlink/rm on symlink that resolves outside sandbox", async () => {
+    await expect(fs.unlink("escape-link")).rejects.toThrow("outside of sandbox");
+    await expect(fs.rm("escape-link")).rejects.toThrow("outside of sandbox");
+  });
+
+  it("blocks rename/move/copyFile when source resolves outside sandbox", async () => {
+    await expect(fs.rename("escape-link", "x")).rejects.toThrow("outside of sandbox");
+    await expect(fs.move("escape-link", "x")).rejects.toThrow("outside of sandbox");
+    await expect(fs.copyFile("escape-link", "copied.txt")).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+
+  it("blocks cp when source resolves outside sandbox", async () => {
+    await expect(fs.cp("escape-link", "copied-via-cp.txt")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    await fs.mkdir("safe-cp-dir");
+    await expect(fs.cp(["escape-link"], "safe-cp-dir")).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+
+  it("blocks ouch --dir when destination resolves outside sandbox", async () => {
+    const ouchSandbox = join(tempDir, "test-safe-mutator-escapes-ouch");
+    const ouchOutside = join(tempDir, "test-safe-mutator-escapes-ouch-outside");
+    await rm(ouchSandbox, { force: true, recursive: true });
+    await rm(ouchOutside, { force: true, recursive: true });
+    await mkdir(ouchSandbox, { recursive: true });
+    await mkdir(ouchOutside, { recursive: true });
+    await symlink(ouchOutside, join(ouchSandbox, "escape-dir"));
+    const ouchFs = new SandboxedFilesystem(ouchSandbox, {
+      unsafeMode: false,
+    });
+    await ouchFs.writeFile("inside.txt", "inside");
+    await expect(
+      ouchFs.ouch(["decompress", "inside.txt"], {
+        options: ["--dir", "escape-dir"],
+      }),
+    ).rejects.toThrow("outside of sandbox");
+  });
+
+  it("blocks metadata mutators when target resolves outside sandbox", async () => {
+    await expect(fs.truncate("escape-link", 1)).rejects.toThrow("outside of sandbox");
+    await expect(fs.chmod("escape-link", 0o600)).rejects.toThrow("outside of sandbox");
+    await expect(fs.utimes("escape-link", new Date(), new Date())).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+
+  it("blocks mkdir when an existing ancestor resolves outside sandbox", async () => {
+    await expect(fs.mkdir("escape-dir/new-dir")).rejects.toThrow("outside of sandbox");
+    await expect(fs.mkdir("escape-dir/deeper/new-dir", { recursive: true })).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+
+  it("blocks rename/move when destination symlink resolves outside sandbox", async () => {
+    await symlink(outsideFile(), join(tempDir, "test-safe-mutator-escapes", "escape-dest"));
+    await expect(fs.rename("inside.txt", "escape-dest")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    await expect(fs.move("inside.txt", "escape-dest")).rejects.toThrow(
+      "outside of sandbox",
+    );
+  });
+});
+
+describe("safe mode race-condition regressions", () => {
+  let fs;
+  const sandboxPath = () => join(tempDir, "test-safe-race-regressions");
+  const outsideFile = () => join(tempDir, "race-outside-secret.txt");
+  const racePath = () => join(sandboxPath(), "race.txt");
+
+  it("creates sandbox and baseline files", async () => {
+    await mkdir(sandboxPath());
+    fs = new SandboxedFilesystem(sandboxPath(), { unsafeMode: false });
+    await writeFile(outsideFile(), "outside-secret");
+    await fs.writeFile("race.txt", "inside-seed");
+  });
+
+  it("repeated symlink/file flips stay fail-closed and preserve outside file", async () => {
+    let success = 0;
+    let denied = 0;
+    for (let i = 0; i < 80; i++) {
+      await rm(racePath(), { force: true });
+      await symlink(outsideFile(), racePath());
+      await expect(fs.truncate("race.txt", 2)).rejects.toThrow("outside of sandbox");
+      denied += 1;
+
+      await rm(racePath(), { force: true });
+      await writeFile(racePath(), `inside-race-${i}`);
+      await fs.truncate("race.txt", 2);
+      success += 1;
+    }
+    expect(await readFile(outsideFile(), "utf8")).toBe("outside-secret");
+    expect(success).toBe(80);
+    expect(denied).toBe(80);
+  });
+});
+
+describe("openat2 motivation regressions", () => {
+  it("mkdir should not mutate outside sandbox when an intermediate component is swapped to a symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-mkdir-race");
+    const outsideRoot = join(tempDir, "test-openat2-mkdir-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.mkdir("nested");
+
+    // Inject a deterministic race right after ancestor verification:
+    // replace nested/child with a symlink to an outside directory.
+    const originalVerify = (fs as any).verifyExistingAncestorInSandbox.bind(fs);
+    (fs as any).verifyExistingAncestorInSandbox = async (path: string) => {
+      await originalVerify(path);
+      const linkPath = join(sandboxRoot, "nested", "child");
+      await rm(linkPath, { force: true, recursive: true });
+      await symlink(outsideRoot, linkPath);
+    };
+
+    await expect(
+      fs.mkdir("nested/child/grand", { recursive: true }),
+    ).rejects.toThrow("outside of sandbox");
+
+    // Desired secure behavior: a rejected operation must not have mutated
+    // outside paths. This currently fails and motivates openat2/*at adoption.
+    await expect(stat(join(outsideRoot, "grand"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("move should not mutate outside sandbox when destination parent is swapped to a symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-move-race");
+    const outsideRoot = join(tempDir, "test-openat2-move-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.mkdir("nested");
+    await fs.writeFile("inside.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (
+      openAt2Root == null ||
+      typeof openAt2Root.renameNoReplace !== "function"
+    ) {
+      return;
+    }
+
+    const originalRenameNoReplace = openAt2Root.renameNoReplace.bind(openAt2Root);
+    openAt2Root.renameNoReplace = (oldPath: string, newPath: string) => {
+      const linkPath = join(sandboxRoot, "nested");
+      rmSync(linkPath, { force: true, recursive: true });
+      symlinkSync(outsideRoot, linkPath);
+      return originalRenameNoReplace(oldPath, newPath);
+    };
+
+    await expect(fs.move("inside.txt", "nested/moved.txt")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    await expect(stat(join(outsideRoot, "moved.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("move should fail closed on EXDEV from openat2 (no path-based fallback)", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-move-exdev");
+    await mkdir(sandboxRoot);
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("inside.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (
+      openAt2Root == null ||
+      typeof openAt2Root.renameNoReplace !== "function"
+    ) {
+      return;
+    }
+
+    openAt2Root.renameNoReplace = () => {
+      throw new Error("EXDEV: cross-device move");
+    };
+
+    await expect(fs.move("inside.txt", "moved.txt")).rejects.toMatchObject({
+      code: "EXDEV",
+    });
+    expect(await fs.readFile("inside.txt", "utf8")).toBe("inside");
+    expect(await fs.exists("moved.txt")).toBe(false);
+  });
+
+  it("rm recursive should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-rm-race");
+    const outsideRoot = join(tempDir, "test-openat2-rm-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+    await writeFile(join(outsideRoot, "secret.txt"), "secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.mkdir("tree", { recursive: true });
+    await fs.writeFile("tree/inside.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.rm !== "function") {
+      return;
+    }
+
+    const originalRm = openAt2Root.rm.bind(openAt2Root);
+    openAt2Root.rm = (path: string, recursive?: boolean, force?: boolean) => {
+      rmSync(join(sandboxRoot, "tree"), { recursive: true, force: true });
+      symlinkSync(outsideRoot, join(sandboxRoot, "tree"));
+      return originalRm(path, recursive, force);
+    };
+
+    // Depending on exact timing, openat2-safe behavior either:
+    // - rejects because the target became a symlink during resolution, or
+    // - successfully removes just the in-sandbox symlink itself.
+    // Both are safe as long as outside data is untouched.
+    try {
+      await fs.rm("tree", { recursive: true });
+    } catch (err: any) {
+      expect(err?.message ?? "").toContain("outside of sandbox");
+    }
+    expect(await readFile(join(outsideRoot, "secret.txt"), "utf8")).toBe("secret");
+    expect(await fs.exists("tree")).toBe(false);
+  });
+
+  it("rmdir recursive should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-rmdir-race");
+    const outsideRoot = join(tempDir, "test-openat2-rmdir-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+    await writeFile(join(outsideRoot, "secret.txt"), "secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.mkdir("tree", { recursive: true });
+    await fs.writeFile("tree/inside.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.rm !== "function") {
+      return;
+    }
+
+    const originalRm = openAt2Root.rm.bind(openAt2Root);
+    openAt2Root.rm = (path: string, recursive?: boolean, force?: boolean) => {
+      rmSync(join(sandboxRoot, "tree"), { recursive: true, force: true });
+      symlinkSync(outsideRoot, join(sandboxRoot, "tree"));
+      return originalRm(path, recursive, force);
+    };
+
+    try {
+      await fs.rmdir("tree", { recursive: true });
+    } catch (err: any) {
+      expect(err?.message ?? "").toContain("outside of sandbox");
+    }
+    expect(await readFile(join(outsideRoot, "secret.txt"), "utf8")).toBe("secret");
+    expect(await fs.exists("tree")).toBe(false);
+  });
+
+  it("writeFile should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-write-race");
+    const outsidePath = join(tempDir, "test-openat2-write-race-outside.txt");
+    await mkdir(sandboxRoot);
+    await writeFile(outsidePath, "outside-secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("target.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+      return;
+    }
+
+    const originalOpenWrite = openAt2Root.openWrite.bind(openAt2Root);
+    openAt2Root.openWrite = (
+      path: string,
+      create?: boolean,
+      truncate?: boolean,
+      append?: boolean,
+      mode?: number,
+    ) => {
+      const targetPath = join(sandboxRoot, path);
+      rmSync(targetPath, { force: true, recursive: true });
+      symlinkSync(outsidePath, targetPath);
+      return originalOpenWrite(path, create, truncate, append, mode);
+    };
+
+    await expect(fs.writeFile("target.txt", "inside-updated")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
+  });
+
+  it("appendFile should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-append-race");
+    const outsidePath = join(tempDir, "test-openat2-append-race-outside.txt");
+    await mkdir(sandboxRoot);
+    await writeFile(outsidePath, "outside-secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("target.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+      return;
+    }
+
+    const originalOpenWrite = openAt2Root.openWrite.bind(openAt2Root);
+    openAt2Root.openWrite = (
+      path: string,
+      create?: boolean,
+      truncate?: boolean,
+      append?: boolean,
+      mode?: number,
+    ) => {
+      const targetPath = join(sandboxRoot, path);
+      rmSync(targetPath, { force: true, recursive: true });
+      symlinkSync(outsidePath, targetPath);
+      return originalOpenWrite(path, create, truncate, append, mode);
+    };
+
+    await expect(fs.appendFile("target.txt", "-inside-append")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
+  });
+
+  it("patch write should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-patch-race");
+    const outsidePath = join(tempDir, "test-openat2-patch-race-outside.txt");
+    await mkdir(sandboxRoot);
+    await writeFile(outsidePath, "outside-secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("target.txt", "inside");
+    const current = (await fs.readFile("target.txt", "utf8")) as string;
+    const patch = make_patch(current, "inside-updated");
+    const sha256 = createHash("sha256")
+      .update(Buffer.from(current, "utf8"))
+      .digest("hex");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+      return;
+    }
+
+    const originalOpenWrite = openAt2Root.openWrite.bind(openAt2Root);
+    openAt2Root.openWrite = (
+      path: string,
+      create?: boolean,
+      truncate?: boolean,
+      append?: boolean,
+      mode?: number,
+    ) => {
+      const targetPath = join(sandboxRoot, path);
+      rmSync(targetPath, { force: true, recursive: true });
+      symlinkSync(outsidePath, targetPath);
+      return originalOpenWrite(path, create, truncate, append, mode);
+    };
+
+    await expect(
+      fs.writeFile("target.txt", {
+        patch,
+        sha256,
+      }),
+    ).rejects.toThrow("outside of sandbox");
+    expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
+  });
+
+  it("utimes should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-utimes-race");
+    const outsidePath = join(tempDir, "test-openat2-utimes-race-outside.txt");
+    await mkdir(sandboxRoot);
+    await writeFile(outsidePath, "outside-secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("target.txt", "inside");
+    const outsideBefore = await stat(outsidePath);
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.utimes !== "function") {
+      return;
+    }
+
+    const originalUtimes = openAt2Root.utimes.bind(openAt2Root);
+    openAt2Root.utimes = (path: string, atimeNs: number, mtimeNs: number) => {
+      const targetPath = join(sandboxRoot, path);
+      rmSync(targetPath, { force: true, recursive: true });
+      symlinkSync(outsidePath, targetPath);
+      return originalUtimes(path, atimeNs, mtimeNs);
+    };
+
+    await expect(
+      fs.utimes("target.txt", new Date(0), new Date(0)),
+    ).rejects.toThrow("outside of sandbox");
+    const outsideAfter = await stat(outsidePath);
+    expect(outsideAfter.mtimeMs).toBe(outsideBefore.mtimeMs);
+  });
+
+  it("cp should not mutate outside sandbox when destination parent is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-cp-race");
+    const outsideRoot = join(tempDir, "test-openat2-cp-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("inside.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.mkdir !== "function") {
+      return;
+    }
+
+    const originalMkdir = openAt2Root.mkdir.bind(openAt2Root);
+    openAt2Root.mkdir = (path: string, recursive?: boolean, mode?: number) => {
+      if (path === "nested") {
+        const linkPath = join(sandboxRoot, "nested");
+        rmSync(linkPath, { force: true, recursive: true });
+        symlinkSync(outsideRoot, linkPath);
+      }
+      return originalMkdir(path, recursive, mode);
+    };
+
+    await expect(fs.cp("inside.txt", "nested/copied.txt")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    await expect(stat(join(outsideRoot, "copied.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("cp recursive directory should fail closed if destination ancestor flips to symlink after validation", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-cp-dir-race");
+    const outsideRoot = join(tempDir, "test-openat2-cp-dir-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.mkdir("srcdir");
+    await fs.writeFile("srcdir/a.txt", "inside");
+    await fs.mkdir("nested");
+
+    const originalSafeAbsPaths = (fs as any).safeAbsPaths.bind(fs);
+    (fs as any).safeAbsPaths = async (paths: string[]) => {
+      const resolved = await originalSafeAbsPaths(paths);
+      const nestedPath = join(sandboxRoot, "nested");
+      rmSync(nestedPath, { force: true, recursive: true });
+      symlinkSync(outsideRoot, nestedPath);
+      return resolved;
+    };
+
+    await expect(
+      fs.cp("srcdir", "nested/copied-srcdir", { recursive: true }),
+    ).rejects.toThrow("outside of sandbox");
+    await expect(stat(join(outsideRoot, "copied-srcdir"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });
 
 describe("read only sandbox", () => {
@@ -365,6 +981,38 @@ describe("rootfs option sandbox", () => {
     await expect(readFile(join(home, "tmp", "from-root.txt"), "utf8")).rejects.toThrow();
   });
 
+  it("openat2 hardening applies to rootfs absolute paths", async () => {
+    const outsidePath = join(tempDir, "test-rootfs-openat2-outside.txt");
+    await writeFile(outsidePath, "outside-secret");
+    await fs.writeFile("/tmp/race-target.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2RootForBase?.(rootfs);
+    if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+      return;
+    }
+
+    const originalOpenWrite = openAt2Root.openWrite.bind(openAt2Root);
+    openAt2Root.openWrite = (
+      relPath: string,
+      create?: boolean,
+      truncate?: boolean,
+      append?: boolean,
+      mode?: number,
+    ) => {
+      if (relPath === "tmp/race-target.txt") {
+        const targetPath = join(rootfs, "tmp", "race-target.txt");
+        rmSync(targetPath, { force: true, recursive: true });
+        symlinkSync(outsidePath, targetPath);
+      }
+      return originalOpenWrite(relPath, create, truncate, append, mode);
+    };
+
+    await expect(fs.writeFile("/tmp/race-target.txt", "inside-updated")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
+  });
+
   it("keeps /root and relative paths mapped to home path when rootfs exists", async () => {
     await fs.writeFile("/root/home-abs.txt", "from-home-abs");
     await fs.writeFile("home-rel.txt", "from-home-rel");
@@ -376,6 +1024,22 @@ describe("rootfs option sandbox", () => {
     expect(await readFile(join(home, "home-rel.txt"), "utf8")).toBe("from-home-rel");
     await expect(readFile(join(rootfs, "root", "home-abs.txt"), "utf8")).rejects.toThrow();
     await expect(readFile(join(rootfs, "home-rel.txt"), "utf8")).rejects.toThrow();
+  });
+
+  it("fails closed for move across home/rootfs base boundary", async () => {
+    await fs.writeFile("/root/move-home.txt", "home");
+    await fs.writeFile("/tmp/move-rootfs.txt", "rootfs");
+
+    await expect(fs.move("/root/move-home.txt", "/tmp/move-home.txt")).rejects.toMatchObject({
+      code: "EXDEV",
+    });
+    await expect(fs.move("/tmp/move-rootfs.txt", "/root/move-rootfs.txt")).rejects.toMatchObject(
+      {
+        code: "EXDEV",
+      },
+    );
+    expect(await fs.readFile("/root/move-home.txt", "utf8")).toBe("home");
+    expect(await fs.readFile("/tmp/move-rootfs.txt", "utf8")).toBe("rootfs");
   });
 
   it("realpath returns absolute style paths when rootfs mode is active", async () => {
@@ -408,6 +1072,39 @@ describe("rootfs option sandbox", () => {
     await expect(
       readFile(join(rootfs, "scratch", "from-scratch.txt"), "utf8"),
     ).rejects.toThrow();
+  });
+
+  it("openat2 hardening applies to /scratch absolute paths", async () => {
+    const outsidePath = join(tempDir, "test-scratch-openat2-outside.txt");
+    await writeFile(outsidePath, "outside-secret");
+    const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
+    await fsScratch.writeFile("/scratch/race-target.txt", "inside");
+
+    const openAt2Root = (fsScratch as any).getOpenAt2RootForBase?.(scratch);
+    if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+      return;
+    }
+
+    const originalOpenWrite = openAt2Root.openWrite.bind(openAt2Root);
+    openAt2Root.openWrite = (
+      relPath: string,
+      create?: boolean,
+      truncate?: boolean,
+      append?: boolean,
+      mode?: number,
+    ) => {
+      if (relPath === "race-target.txt") {
+        const targetPath = join(scratch, "race-target.txt");
+        rmSync(targetPath, { force: true, recursive: true });
+        symlinkSync(outsidePath, targetPath);
+      }
+      return originalOpenWrite(relPath, create, truncate, append, mode);
+    };
+
+    await expect(
+      fsScratch.writeFile("/scratch/race-target.txt", "inside-updated"),
+    ).rejects.toThrow("outside of sandbox");
+    expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
   });
 
   it("errors on /scratch when scratch mount is missing", async () => {

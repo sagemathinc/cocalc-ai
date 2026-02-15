@@ -60,6 +60,14 @@ describe("find files", () => {
     expect(new Set(w)).toEqual(new Set(["pattern", "blue/Patton"]));
   });
 
+  it("rejects absolute reference paths for -newer", async () => {
+    await expect(
+      find(tempDir, {
+        options: ["-newer", "/tmp/reference", "-print"],
+      }),
+    ).rejects.toThrow("path must be relative");
+  });
+
 //   // this is NOT a great test, unfortunately.
 //   const count = 5000;
 //   it(`hopefully exceed the timeout by creating ${count} files`, async () => {
