@@ -59,6 +59,7 @@ import {
 import {
   close as closeFdCallback,
   readFile as readFileFdCallback,
+  writeFile as writeFileFdCallback,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { move } from "fs-extra";
@@ -164,6 +165,26 @@ const closeFd = (fd: number): Promise<void> =>
       }
       resolve();
     });
+  });
+
+const writeFileByFd = (
+  fd: number,
+  data: string | Buffer,
+  options?: any,
+): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const cb = (err: NodeJS.ErrnoException | null) => {
+      if (err != null) {
+        reject(err);
+        return;
+      }
+      resolve();
+    };
+    if (options === undefined) {
+      (writeFileFdCallback as any)(fd, data as any, cb);
+      return;
+    }
+    (writeFileFdCallback as any)(fd, data as any, options as any, cb);
   });
 
 interface Options {
@@ -821,6 +842,33 @@ export class SandboxedFilesystem {
 
   appendFile = async (path: string, data: string | Buffer, encoding?) => {
     this.assertWritable(path);
+    const openAt2Root = this.getOpenAt2Root();
+    const rel = await this.getOpenAt2RelativePath(path);
+    let openWriteFd: number | null = null;
+    if (
+      openAt2Root != null &&
+      typeof openAt2Root.openWrite === "function" &&
+      rel != null
+    ) {
+      try {
+        openWriteFd = openAt2Root.openWrite(rel, true, false, true, 0o666);
+      } catch (err) {
+        const { code } = this.parseOpenAt2Error(err);
+        if (code !== "ENOSYS" && code !== "EINVAL") {
+          this.throwOpenAt2PathError(path, err);
+        }
+      }
+    }
+    if (openWriteFd != null) {
+      try {
+        await writeFileByFd(openWriteFd, data, encoding);
+        return;
+      } finally {
+        try {
+          await closeFd(openWriteFd);
+        } catch {}
+      }
+    }
     const { handle } = await this.openVerifiedHandle({
       path,
       flags: constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT,
@@ -1602,6 +1650,36 @@ export class SandboxedFilesystem {
     if (saveLast && typeof data == "string") {
       this.lastOnDisk.set(p, data);
       this.lastOnDiskHash.set(`${p}-${sha1(data)}`, true);
+    }
+    const openAt2Root = this.getOpenAt2Root();
+    const rel = await this.getOpenAt2RelativePath(path);
+    let openWriteFd: number | null = null;
+    if (
+      openAt2Root != null &&
+      typeof openAt2Root.openWrite === "function" &&
+      rel != null
+    ) {
+      try {
+        openWriteFd = openAt2Root.openWrite(rel, true, true, false, 0o666);
+      } catch (err) {
+        const { code } = this.parseOpenAt2Error(err);
+        if (code !== "ENOSYS" && code !== "EINVAL") {
+          this.throwOpenAt2PathError(path, err);
+        }
+      }
+    }
+    if (openWriteFd != null) {
+      try {
+        await writeFileByFd(openWriteFd, data as any);
+      } finally {
+        try {
+          await closeFd(openWriteFd);
+        } catch {}
+      }
+      if (saveLast === true && typeof data === "string") {
+        globalSyncFsService.recordLocalWrite(p, data, true);
+      }
+      return;
     }
     const writeToHandle = async (
       handle: Awaited<ReturnType<typeof open>>,
