@@ -9,6 +9,9 @@ What it does:
 5. Writes a sentinel file.
 6. Creates a backup and waits until an indexed snapshot is visible.
 7. Optionally verifies the sentinel file is browseable in backup index.
+8. Optionally creates a second VM host, moves the project there, and verifies
+   the sentinel file is restored and readable on the destination host.
+9. Optionally deprovisions all created hosts.
 
 Typical usage from a node REPL:
 
@@ -28,12 +31,14 @@ import getPool from "@cocalc/database/pool";
 import admins from "@cocalc/server/accounts/admins";
 import {
   createProject,
+  moveProject,
   start as startProject,
 } from "@cocalc/server/conat/api/projects";
 import {
   createBackup as createProjectBackup,
   getBackupFiles,
   getBackups,
+  restoreBackup as restoreProjectBackup,
 } from "@cocalc/server/conat/api/project-backups";
 import {
   createHost,
@@ -80,11 +85,14 @@ export type SelfHostMultipassSmokeOptions = {
   cleanup_on_failure?: boolean;
   verify_deprovision?: boolean;
   verify_backup_index_contents?: boolean;
+  verify_move_restore_on_second_host?: boolean;
   wait?: Partial<{
     ssh_ready: Partial<WaitOptions>;
     host_running: Partial<WaitOptions>;
     host_deprovisioned: Partial<WaitOptions>;
     backup_indexed: Partial<WaitOptions>;
+    move_completed: Partial<WaitOptions>;
+    restored_file: Partial<WaitOptions>;
   }>;
   log?: (event: LogEvent) => void;
 };
@@ -96,9 +104,15 @@ export type SelfHostMultipassSmokeResult = {
   vm_ip?: string;
   ssh_target?: string;
   host_id?: string;
+  second_vm_name?: string;
+  second_vm_ip?: string;
+  second_ssh_target?: string;
+  second_host_id?: string;
   project_id?: string;
   backup_id?: string;
   backup_op_id?: string;
+  move_op_id?: string;
+  restore_op_id?: string;
   sentinel_path: string;
   sentinel_value: string;
   steps: StepResult[];
@@ -115,6 +129,14 @@ const DEFAULT_HOST_RUNNING_WAIT: WaitOptions = { intervalMs: 5000, attempts: 120
 const DEFAULT_BACKUP_INDEXED_WAIT: WaitOptions = {
   intervalMs: 3000,
   attempts: 80,
+};
+const DEFAULT_MOVE_COMPLETED_WAIT: WaitOptions = {
+  intervalMs: 3000,
+  attempts: 120,
+};
+const DEFAULT_RESTORED_FILE_WAIT: WaitOptions = {
+  intervalMs: 2000,
+  attempts: 90,
 };
 const DEFAULT_HOST_DEPROVISIONED_WAIT: WaitOptions = {
   intervalMs: 5000,
@@ -313,6 +335,93 @@ async function waitForBackupIndexed({
   throw new Error(`backup index never appeared (indexed backups=${lastCount})`);
 }
 
+async function waitForLroDone({
+  op_id,
+  wait,
+}: {
+  op_id: string;
+  wait: WaitOptions;
+}): Promise<{ status: string; error?: string | null }> {
+  let lastStatus = "unknown";
+  let lastError: string | null | undefined;
+  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
+    const { rows } = await getPool().query<{
+      status: string | null;
+      error: string | null;
+    }>("SELECT status, error FROM long_running_operations WHERE op_id=$1", [
+      op_id,
+    ]);
+    const row = rows[0];
+    const status = String(row?.status ?? "unknown");
+    lastStatus = status;
+    lastError = row?.error;
+    if (["succeeded", "failed", "canceled", "expired"].includes(status)) {
+      return { status, error: row?.error };
+    }
+    await sleep(wait.intervalMs);
+  }
+  throw new Error(
+    `timeout waiting for lro ${op_id}; last status=${lastStatus} error=${lastError ?? ""}`,
+  );
+}
+
+async function waitForProjectPlacement({
+  project_id,
+  host_id,
+  wait,
+}: {
+  project_id: string;
+  host_id: string;
+  wait: WaitOptions;
+}): Promise<void> {
+  let lastHost = "unknown";
+  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
+    const { rows } = await getPool().query<{ host_id: string | null }>(
+      "SELECT host_id FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    const current = String(rows[0]?.host_id ?? "");
+    lastHost = current || "none";
+    if (current === host_id) return;
+    await sleep(wait.intervalMs);
+  }
+  throw new Error(
+    `project placement did not update to destination host; last host_id=${lastHost}`,
+  );
+}
+
+async function waitForProjectFileValue({
+  project_id,
+  path,
+  expected,
+  wait,
+}: {
+  project_id: string;
+  path: string;
+  expected: string;
+  wait: WaitOptions;
+}): Promise<void> {
+  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
+    try {
+      const client = fsClient({
+        client: conatWithProjectRouting(),
+        subject: fsSubject({ project_id }),
+      });
+      const value = await client.readFile(path, "utf8");
+      if (value === expected) return;
+    } catch (err) {
+      logger.debug("self-host smoke readFile retry", {
+        project_id,
+        path,
+        attempt,
+        err: `${err}`,
+      });
+    }
+    await sleep(wait.intervalMs);
+  }
+  throw new Error(`timeout waiting for restored file '${path}'`);
+}
+
 async function launchMultipassVm({
   vmName,
   vmImage,
@@ -437,6 +546,11 @@ export async function runSelfHostMultipassBackupSmoke(
   const cleanupOnFailure = opts.cleanup_on_failure ?? false;
   const verifyDeprovision = opts.verify_deprovision ?? true;
   const verifyBackupIndexContents = opts.verify_backup_index_contents ?? true;
+  const verifyMoveRestoreOnSecondHost =
+    opts.verify_move_restore_on_second_host ?? true;
+  const secondVmName = verifyMoveRestoreOnSecondHost
+    ? `${vmName}-dest`
+    : undefined;
   const waitSshReady = resolveWait(opts.wait?.ssh_ready, DEFAULT_SSH_READY_WAIT);
   const waitHostRunning = resolveWait(
     opts.wait?.host_running,
@@ -450,6 +564,14 @@ export async function runSelfHostMultipassBackupSmoke(
     opts.wait?.host_deprovisioned,
     DEFAULT_HOST_DEPROVISIONED_WAIT,
   );
+  const waitMoveCompleted = resolveWait(
+    opts.wait?.move_completed,
+    DEFAULT_MOVE_COMPLETED_WAIT,
+  );
+  const waitRestoredFile = resolveWait(
+    opts.wait?.restored_file,
+    DEFAULT_RESTORED_FILE_WAIT,
+  );
 
   const tempDirs: string[] = [];
   const createdVmNames: string[] = [];
@@ -457,10 +579,15 @@ export async function runSelfHostMultipassBackupSmoke(
   const smokeTmpBase = join(homedir(), "cocalc-smoke-runner");
   let vmIp: string | undefined;
   let sshTarget: string | undefined;
+  let secondVmIp: string | undefined;
+  let secondSshTarget: string | undefined;
   let host_id: string | undefined;
+  let second_host_id: string | undefined;
   let project_id: string | undefined;
   let backup_id: string | undefined;
   let backup_op_id: string | undefined;
+  let move_op_id: string | undefined;
+  let restore_op_id: string | undefined;
   const sentinelPath = "smoke-self-host-backup/self-host-backup.txt";
   const sentinelValue = `self-host-smoke:${Date.now()}:${randomUUID()}`;
   const debug_hints = {
@@ -655,16 +782,137 @@ export async function runSelfHostMultipassBackupSmoke(
       });
     }
 
-    if (verifyDeprovision) {
-      await runStep("deprovision_host", async () => {
-        if (!host_id) throw new Error("missing host_id");
-        await deleteHost({ account_id, id: host_id, skip_backups: true });
-        await waitForHostStatus({
-          host_id,
-          allowed: ["deprovisioned"],
-          wait: waitHostDeprovisioned,
+    if (verifyMoveRestoreOnSecondHost) {
+      await runStep("launch_second_multipass_vm", async () => {
+        if (!secondVmName) throw new Error("missing second vm name");
+        const launched = await launchMultipassVm({
+          vmName: secondVmName,
+          vmImage,
+          vmUser,
+          vmCpus,
+          vmMemoryGb,
+          vmDiskGb,
+          sshPublicKey,
+          tempRoot: smokeTmpBase,
+          tempDirs,
         });
-        cleanupHostIds.delete(host_id);
+        secondVmIp = launched.vmIp;
+        secondSshTarget = launched.sshTarget;
+        createdVmNames.push(secondVmName);
+      });
+
+      await runStep("wait_second_ssh_ready", async () => {
+        if (!secondSshTarget) throw new Error("missing second ssh target");
+        await waitForSshReady({ sshTarget: secondSshTarget, wait: waitSshReady });
+      });
+
+      await runStep("create_second_self_host_record", async () => {
+        if (!secondSshTarget || !secondVmName) {
+          throw new Error("missing second host context");
+        }
+        const host = await createHost({
+          account_id,
+          name: `Self-host smoke ${secondVmName}`,
+          region: "pending",
+          size: "custom",
+          gpu: false,
+          machine: {
+            cloud: "self-host",
+            storage_mode: "persistent",
+            disk_gb: vmDiskGb,
+            metadata: {
+              cpu: vmCpus,
+              ram_gb: vmMemoryGb,
+              self_host_mode: "local",
+              self_host_kind: "direct",
+              self_host_ssh_target: secondSshTarget,
+            },
+          },
+        });
+        second_host_id = host.id;
+        cleanupHostIds.add(host.id);
+      });
+
+      await runStep("start_second_host", async () => {
+        if (!second_host_id) throw new Error("missing second_host_id");
+        await startHostInternal({ account_id, id: second_host_id });
+        await waitForHostStatus({
+          host_id: second_host_id,
+          allowed: ["running", "active"],
+          wait: waitHostRunning,
+        });
+      });
+
+      await runStep("move_project_to_second_host", async () => {
+        if (!project_id || !second_host_id) {
+          throw new Error("missing move context");
+        }
+        const op = await moveProject({
+          account_id,
+          project_id,
+          dest_host_id: second_host_id,
+        });
+        move_op_id = op.op_id;
+        const summary = await waitForLroDone({
+          op_id: op.op_id,
+          wait: waitMoveCompleted,
+        });
+        if (summary.status !== "succeeded") {
+          throw new Error(
+            `move lro did not succeed: status=${summary.status} error=${summary.error ?? ""}`,
+          );
+        }
+        await waitForProjectPlacement({
+          project_id,
+          host_id: second_host_id,
+          wait: waitMoveCompleted,
+        });
+      });
+
+      await runStep("restore_backup_on_second_host", async () => {
+        if (!project_id || !backup_id) {
+          throw new Error("missing restore context");
+        }
+        const op = await restoreProjectBackup({
+          account_id,
+          project_id,
+          id: backup_id,
+        });
+        restore_op_id = op.op_id;
+        const summary = await waitForLroDone({
+          op_id: op.op_id,
+          wait: waitMoveCompleted,
+        });
+        if (summary.status !== "succeeded") {
+          throw new Error(
+            `restore lro did not succeed: status=${summary.status} error=${summary.error ?? ""}`,
+          );
+        }
+      });
+
+      await runStep("verify_restored_file_on_second_host", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        await waitForProjectFileValue({
+          project_id,
+          path: sentinelPath,
+          expected: sentinelValue,
+          wait: waitRestoredFile,
+        });
+      });
+    }
+
+    if (verifyDeprovision) {
+      await runStep("deprovision_hosts", async () => {
+        const hostIds = [second_host_id, host_id].filter(Boolean) as string[];
+        for (const id of hostIds) {
+          await deleteHost({ account_id, id, skip_backups: true });
+          await waitForHostStatus({
+            host_id: id,
+            allowed: ["deprovisioned"],
+            wait: waitHostDeprovisioned,
+          });
+          cleanupHostIds.delete(id);
+        }
       });
     }
 
@@ -681,9 +929,15 @@ export async function runSelfHostMultipassBackupSmoke(
       vm_ip: vmIp,
       ssh_target: sshTarget,
       host_id,
+      second_vm_name: secondVmName,
+      second_vm_ip: secondVmIp,
+      second_ssh_target: secondSshTarget,
+      second_host_id,
       project_id,
       backup_id,
       backup_op_id,
+      move_op_id,
+      restore_op_id,
       sentinel_path: sentinelPath,
       sentinel_value: sentinelValue,
       steps,
@@ -701,9 +955,15 @@ export async function runSelfHostMultipassBackupSmoke(
       vm_ip: vmIp,
       ssh_target: sshTarget,
       host_id,
+      second_vm_name: secondVmName,
+      second_vm_ip: secondVmIp,
+      second_ssh_target: secondSshTarget,
+      second_host_id,
       project_id,
       backup_id,
       backup_op_id,
+      move_op_id,
+      restore_op_id,
       sentinel_path: sentinelPath,
       sentinel_value: sentinelValue,
       steps,
