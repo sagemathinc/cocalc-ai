@@ -19,6 +19,9 @@ function prependPath(dir) {
   try {
     applyLaunchpadDefaults();
     logLaunchpadConfig();
+    if (!process.env.NO_RSPACK_DEV_SERVER) {
+      process.env.NO_RSPACK_DEV_SERVER = "1";
+    }
     if (process.env.COCALC_OPEN_BROWSER == null) {
       process.env.COCALC_OPEN_BROWSER = "1";
     }

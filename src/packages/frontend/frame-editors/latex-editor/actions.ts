@@ -1856,7 +1856,11 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   public updateTableOfContents(force: boolean = false): void {
-    if (this._state == "closed" || this._syncstring == null) {
+    if (
+      this._state == "closed" ||
+      this._syncstring == null ||
+      this._syncstring.get_state?.() != "ready"
+    ) {
       // no need since not initialized yet or already closed.
       return;
     }
@@ -1868,9 +1872,14 @@ export class Actions extends BaseActions<LatexEditorState> {
       // There is no table of contents frame or output frame so don't update that info.
       return;
     }
-    const contents = fromJS(
-      parseTableOfContents(this._syncstring.to_str() ?? ""),
-    ) as any;
+    let value = "";
+    try {
+      value = this._syncstring.to_str() ?? "";
+    } catch {
+      // sync doc can race during startup/refresh.
+      return;
+    }
+    const contents = fromJS(parseTableOfContents(value)) as any;
     this.setState({ contents });
   }
 

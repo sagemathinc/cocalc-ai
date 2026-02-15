@@ -710,7 +710,21 @@ async function listBackupIndexSnapshots(project_id: string): Promise<
       host: backupIndexHost(project_id),
     }),
   );
-  const raw = JSON.parse(stdout);
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return [];
+  }
+  let raw;
+  try {
+    raw = JSON.parse(trimmed);
+  } catch (err) {
+    logger.warn("backup index snapshots JSON parse failed", {
+      project_id,
+      err,
+      stdout: trimmed.slice(0, 500),
+    });
+    return [];
+  }
   const groups = Array.isArray(raw) ? raw : [];
   const snapshots: any[] = [];
   for (const group of groups) {

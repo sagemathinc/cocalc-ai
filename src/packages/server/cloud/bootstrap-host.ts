@@ -278,10 +278,9 @@ export async function buildBootstrapScripts(
   const bootstrapUser = isSelfHostDirect
     ? "\${BOOTSTRAP_USER}"
     : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
-  const runtimeUser = isSelfHostDirect
-    ? bootstrapUser
-    : `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
-      "cocalc-host";
+  const runtimeUser =
+    `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
+    "cocalc-host";
   const rawSelfHostMode = machine.metadata?.self_host_mode;
   const effectiveSelfHostMode =
     isSelfHost && (!rawSelfHostMode || rawSelfHostMode === "local")
@@ -838,7 +837,17 @@ if [ "$force" -ne 1 ]; then
   esac
 fi
 SSH_USER="${scripts.runtimeUser}"
-BOOTSTRAP_USER="${scripts.bootstrapUser}"
+BOOTSTRAP_USER="\${SUDO_USER:-}"
+PREFERRED_BOOTSTRAP_USER="${preferredBootstrapUser}"
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="$(id -un 2>/dev/null || true)"
+fi
+if [ -z "$BOOTSTRAP_USER" ]; then
+  BOOTSTRAP_USER="root"
+fi
+if [ -n "$PREFERRED_BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" = "root" ]; then
+  BOOTSTRAP_USER="$PREFERRED_BOOTSTRAP_USER"
+fi
 SSH_UID="$(id -u "$SSH_USER" 2>/dev/null || echo "")"
 TARGET_HOME="$(getent passwd "$SSH_USER" | cut -d: -f6 || true)"
 if [ -z "$TARGET_HOME" ]; then
