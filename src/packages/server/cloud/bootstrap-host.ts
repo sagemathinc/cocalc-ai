@@ -817,13 +817,14 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 force=0
-uninstall_connector=0
+uninstall_connector=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) force=1 ;;
     --uninstall-connector) uninstall_connector=1 ;;
+    --keep-connector) uninstall_connector=0 ;;
     --help)
-      echo "Usage: deprovision.sh [--force] [--uninstall-connector]"
+      echo "Usage: deprovision.sh [--force] [--uninstall-connector|--keep-connector]"
       exit 0
       ;;
   esac
@@ -836,7 +837,7 @@ if [ "$force" -ne 1 ]; then
     *) echo "aborted"; exit 1 ;;
   esac
 fi
-SSH_USER="${scripts.runtimeUser}"
+RUNTIME_USER="${scripts.runtimeUser}"
 BOOTSTRAP_USER="\${SUDO_USER:-}"
 PREFERRED_BOOTSTRAP_USER="${preferredBootstrapUser}"
 if [ -z "$BOOTSTRAP_USER" ]; then
@@ -848,20 +849,43 @@ fi
 if [ -n "$PREFERRED_BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" = "root" ]; then
   BOOTSTRAP_USER="$PREFERRED_BOOTSTRAP_USER"
 fi
-SSH_UID="$(id -u "$SSH_USER" 2>/dev/null || echo "")"
-TARGET_HOME="$(getent passwd "$SSH_USER" | cut -d: -f6 || true)"
-if [ -z "$TARGET_HOME" ]; then
-  TARGET_HOME="$HOME"
+RUNTIME_UID="$(id -u "$RUNTIME_USER" 2>/dev/null || echo "")"
+BOOTSTRAP_UID="$(id -u "$BOOTSTRAP_USER" 2>/dev/null || echo "")"
+BOOTSTRAP_HOME="$(getent passwd "$BOOTSTRAP_USER" | cut -d: -f6 || true)"
+if [ -z "$BOOTSTRAP_HOME" ] && [ -n "$HOME" ]; then
+  BOOTSTRAP_HOME="$HOME"
 fi
-if [ -n "$SSH_UID" ]; then
-  export XDG_RUNTIME_DIR="/run/user/$SSH_UID"
+if [ -z "$BOOTSTRAP_HOME" ]; then
+  BOOTSTRAP_HOME="/root"
 fi
-ids="$(sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman ps -a --filter "label=role=project" -q 2>/dev/null || true)"
+LOG_STAMP="$(date -u +%Y%m%d-%H%M%S)"
+DEPROVISION_LOG="$BOOTSTRAP_HOME/cocalc-deprovision-$LOG_STAMP.log"
+DEPROVISION_LOG_LATEST="$BOOTSTRAP_HOME/cocalc-deprovision.log"
+if ! touch "$DEPROVISION_LOG" 2>/dev/null; then
+  DEPROVISION_LOG="/tmp/cocalc-deprovision-$LOG_STAMP.log"
+  DEPROVISION_LOG_LATEST=""
+  touch "$DEPROVISION_LOG" || true
+fi
+chmod 600 "$DEPROVISION_LOG" >/dev/null 2>&1 || true
+if [ -n "$DEPROVISION_LOG_LATEST" ]; then
+  ln -sfn "$DEPROVISION_LOG" "$DEPROVISION_LOG_LATEST" >/dev/null 2>&1 || true
+fi
+if command -v tee >/dev/null 2>&1; then
+  exec > >(tee -a "$DEPROVISION_LOG") 2>&1
+else
+  exec >>"$DEPROVISION_LOG" 2>&1
+fi
+echo "[$(date -u +%FT%TZ)] cocalc deprovision starting"
+echo "[$(date -u +%FT%TZ)] log_file=$DEPROVISION_LOG"
+if [ -n "$RUNTIME_UID" ]; then
+  export XDG_RUNTIME_DIR="/run/user/$RUNTIME_UID"
+fi
+ids="$(sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman ps -a --filter "label=role=project" -q 2>/dev/null || true)"
 if [ -n "$ids" ]; then
   if command -v timeout >/dev/null 2>&1; then
-    timeout 30s sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
+    timeout 30s sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
   else
-    sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
+    sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
   fi
 fi
 pkill -f /opt/cocalc/bin/node || true
@@ -884,27 +908,48 @@ rm -rf /var/lib/cocalc /etc/cocalc /opt/cocalc || true
 rm -f /usr/local/sbin/cocalc-grow-btrfs /usr/local/sbin/cocalc-nvidia-cdi || true
 rm -f /etc/containers/storage.conf || true
 rm -f /etc/sudoers.d/cocalc-project-host-runtime || true
+# Ensure runtime user can be deleted cleanly.
+if [ -n "$RUNTIME_USER" ] && [ "$RUNTIME_USER" != "root" ]; then
+  pkill -u "$RUNTIME_USER" >/dev/null 2>&1 || true
+  if command -v loginctl >/dev/null 2>&1; then
+    loginctl terminate-user "$RUNTIME_USER" >/dev/null 2>&1 || true
+  fi
+  sleep 1
+  pkill -9 -u "$RUNTIME_USER" >/dev/null 2>&1 || true
+fi
 if [ "$uninstall_connector" -eq 1 ]; then
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+    if [ -n "$BOOTSTRAP_UID" ]; then
+      sudo -n -u "$BOOTSTRAP_USER" -H env XDG_RUNTIME_DIR="/run/user/$BOOTSTRAP_UID" systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+    else
+      systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+    fi
   fi
   if command -v launchctl >/dev/null 2>&1; then
-    launchctl unload "$HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
+    if [ -n "$BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" != "root" ]; then
+      sudo -n -u "$BOOTSTRAP_USER" -H launchctl unload "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
+    else
+      launchctl unload "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
+    fi
   fi
-  rm -rf "$TARGET_HOME/.config/cocalc-connector" || true
-  rm -f "$TARGET_HOME/.config/systemd/user/cocalc-self-host-connector.service" || true
-  rm -f "$TARGET_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" || true
-  if command -v sudo >/dev/null 2>&1; then
-    sudo rm -f /usr/local/bin/cocalc-self-host-connector || true
-  fi
-  BOOTSTRAP_HOME="$(getent passwd "$BOOTSTRAP_USER" | cut -d: -f6 || true)"
-  if [ -n "$BOOTSTRAP_HOME" ]; then
-    rm -rf "$BOOTSTRAP_HOME/cocalc-host" || true
+  rm -rf "$BOOTSTRAP_HOME/.config/cocalc-connector" || true
+  rm -f "$BOOTSTRAP_HOME/.config/systemd/user/cocalc-self-host-connector.service" || true
+  rm -f "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" || true
+  rm -f /usr/local/bin/cocalc-self-host-connector || true
+  rm -rf "$BOOTSTRAP_HOME/cocalc-host" || true
+fi
+if [ -n "$RUNTIME_USER" ] && [ "$RUNTIME_USER" != "root" ] && [ "$RUNTIME_USER" != "$BOOTSTRAP_USER" ]; then
+  if id "$RUNTIME_USER" >/dev/null 2>&1; then
+    for attempt in 1 2 3; do
+      if userdel -r "$RUNTIME_USER" >/dev/null 2>&1; then
+        break
+      fi
+      pkill -9 -u "$RUNTIME_USER" >/dev/null 2>&1 || true
+      sleep 1
+    done
   fi
 fi
-if [ -n "$SSH_USER" ] && [ "$SSH_USER" != "root" ] && [ "$SSH_USER" != "$BOOTSTRAP_USER" ]; then
-  userdel -r "$SSH_USER" >/dev/null 2>&1 || true
-fi
+echo "[$(date -u +%FT%TZ)] cocalc deprovision complete"
 EOF_COCALC_DEPROVISION
 sudo chmod +x "$BOOTSTRAP_ROOT/bin/deprovision.sh"
 sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/bin/deprovision.sh"

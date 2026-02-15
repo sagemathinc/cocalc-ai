@@ -1355,6 +1355,8 @@ func cleanupDirectHost(sshUser string, uninstallConnector bool) error {
 	}
 	if uninstallConnector {
 		script = append(script, `ARGS="$ARGS --uninstall-connector"`)
+	} else {
+		script = append(script, `ARGS="$ARGS --keep-connector"`)
 	}
 	script = append(script, `exec "$SCRIPT" $ARGS`)
 	args = append(args, strings.Join(script, "\n"))
