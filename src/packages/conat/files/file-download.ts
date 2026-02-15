@@ -10,6 +10,20 @@ const DANGEROUS_CONTENT_TYPE = new Set(["image/svg+xml" /*, "text/html"*/]);
 const logger = getLogger("conat:file-download");
 
 // assumes request has already been authenticated!
+function extractDownloadPath(url: string): string {
+  const i = url.indexOf("files/");
+  let j = url.lastIndexOf("?");
+  if (j == -1) {
+    j = url.length;
+  }
+  const decodedPath = decodeURIComponent(url.slice(i + "files/".length, j));
+  if (decodedPath == "" || decodedPath == "/") {
+    return "/";
+  }
+  // Frontend routes encode absolute paths as ".../files/<path-without-leading-slash>".
+  // Re-add the leading slash so backend file APIs do not interpret it relative to cwd.
+  return decodedPath.startsWith("/") ? decodedPath : `/${decodedPath}`;
+}
 
 export async function handleFileDownload({
   req,
@@ -35,12 +49,7 @@ export async function handleFileDownload({
     res.end("Invalid URL");
     return;
   }
-  const i = url.indexOf("files/");
-  let j = url.lastIndexOf("?");
-  if (j == -1) {
-    j = url.length;
-  }
-  const path = decodeURIComponent(url.slice(i + "files/".length, j));
+  const path = extractDownloadPath(url);
   const project_id = url.split("/").slice(1)[0];
   logger.debug("conat: get file", { project_id, path, url });
   const fileName = path_split(path).tail;
