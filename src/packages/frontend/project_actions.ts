@@ -631,6 +631,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
       return normalizeAbsolutePath(homeDirectory);
     }
+    const configuredHomeDirectory = store?.getIn([
+      "configuration",
+      "main",
+      "capabilities",
+      "homeDirectory",
+    ]);
+    if (
+      typeof configuredHomeDirectory === "string" &&
+      configuredHomeDirectory.length > 0
+    ) {
+      return normalizeAbsolutePath(configuredHomeDirectory);
+    }
     return "/";
   };
 
@@ -804,8 +816,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const change: any = { active_project_tab: key };
     switch (key) {
       case "files":
+        // From project-home, opening Explorer should default to HOME instead of "/".
+        // Keep "/" if user already explicitly navigated there.
+        const currentPathAbs = store.get("current_path_abs") ?? "/";
+        const filesPathAbs =
+          prev_active_project_tab === "home" && currentPathAbs === "/"
+            ? this.getHomeDirectoryForPaths()
+            : currentPathAbs;
+        if (filesPathAbs !== currentPathAbs) {
+          this.set_current_path(filesPathAbs);
+        }
         if (opts.change_history) {
-          this.set_url_to_path(store.get("current_path_abs") ?? "/", "");
+          this.set_url_to_path(filesPathAbs, "");
         }
         break;
 
@@ -855,6 +877,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         break;
 
       case "home":
+        this.set_current_path(this.getHomeDirectoryForPaths());
         if (opts.change_history) {
           this.push_state("project-home", "");
         }
@@ -2137,6 +2160,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           configuration_loading: false,
         } as any),
       );
+
+      // Keep project-home aligned with HOME once capabilities arrive.
+      if (store.get("active_project_tab") === "home") {
+        const homeDirectory = (next.get("main") as any)?.capabilities
+          ?.homeDirectory;
+        if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
+          this.set_current_path(homeDirectory);
+        }
+      }
 
       return next.get(aspect) as Configuration;
     },
