@@ -998,6 +998,39 @@ describe("rootfs option sandbox", () => {
     ).rejects.toThrow();
   });
 
+  it("openat2 hardening applies to /scratch absolute paths", async () => {
+    const outsidePath = join(tempDir, "test-scratch-openat2-outside.txt");
+    await writeFile(outsidePath, "outside-secret");
+    const fsScratch = new SandboxedFilesystem(home, { rootfs, scratch });
+    await fsScratch.writeFile("/scratch/race-target.txt", "inside");
+
+    const openAt2Root = (fsScratch as any).getOpenAt2RootForBase?.(scratch);
+    if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+      return;
+    }
+
+    const originalOpenWrite = openAt2Root.openWrite.bind(openAt2Root);
+    openAt2Root.openWrite = (
+      relPath: string,
+      create?: boolean,
+      truncate?: boolean,
+      append?: boolean,
+      mode?: number,
+    ) => {
+      if (relPath === "race-target.txt") {
+        const targetPath = join(scratch, "race-target.txt");
+        rmSync(targetPath, { force: true, recursive: true });
+        symlinkSync(outsidePath, targetPath);
+      }
+      return originalOpenWrite(relPath, create, truncate, append, mode);
+    };
+
+    await expect(
+      fsScratch.writeFile("/scratch/race-target.txt", "inside-updated"),
+    ).rejects.toThrow("outside of sandbox");
+    expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
+  });
+
   it("errors on /scratch when scratch mount is missing", async () => {
     const fsMissingScratch = new SandboxedFilesystem(home, {
       rootfs,
