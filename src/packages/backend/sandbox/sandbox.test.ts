@@ -681,6 +681,38 @@ describe("openat2 motivation regressions", () => {
     expect(await fs.exists("tree")).toBe(false);
   });
 
+  it("rmdir recursive should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-rmdir-race");
+    const outsideRoot = join(tempDir, "test-openat2-rmdir-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+    await writeFile(join(outsideRoot, "secret.txt"), "secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.mkdir("tree", { recursive: true });
+    await fs.writeFile("tree/inside.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.rm !== "function") {
+      return;
+    }
+
+    const originalRm = openAt2Root.rm.bind(openAt2Root);
+    openAt2Root.rm = (path: string, recursive?: boolean, force?: boolean) => {
+      rmSync(join(sandboxRoot, "tree"), { recursive: true, force: true });
+      symlinkSync(outsideRoot, join(sandboxRoot, "tree"));
+      return originalRm(path, recursive, force);
+    };
+
+    try {
+      await fs.rmdir("tree", { recursive: true });
+    } catch (err: any) {
+      expect(err?.message ?? "").toContain("outside of sandbox");
+    }
+    expect(await readFile(join(outsideRoot, "secret.txt"), "utf8")).toBe("secret");
+    expect(await fs.exists("tree")).toBe(false);
+  });
+
   it("writeFile should not mutate outside sandbox when target is swapped to symlink", async () => {
     const sandboxRoot = join(tempDir, "test-openat2-write-race");
     const outsidePath = join(tempDir, "test-openat2-write-race-outside.txt");
