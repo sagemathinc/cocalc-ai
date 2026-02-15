@@ -680,6 +680,74 @@ describe("openat2 motivation regressions", () => {
     expect(await readFile(join(outsideRoot, "secret.txt"), "utf8")).toBe("secret");
     expect(await fs.exists("tree")).toBe(false);
   });
+
+  it("writeFile should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-write-race");
+    const outsidePath = join(tempDir, "test-openat2-write-race-outside.txt");
+    await mkdir(sandboxRoot);
+    await writeFile(outsidePath, "outside-secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("target.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+      return;
+    }
+
+    const originalOpenWrite = openAt2Root.openWrite.bind(openAt2Root);
+    openAt2Root.openWrite = (
+      path: string,
+      create?: boolean,
+      truncate?: boolean,
+      append?: boolean,
+      mode?: number,
+    ) => {
+      const targetPath = join(sandboxRoot, path);
+      rmSync(targetPath, { force: true, recursive: true });
+      symlinkSync(outsidePath, targetPath);
+      return originalOpenWrite(path, create, truncate, append, mode);
+    };
+
+    await expect(fs.writeFile("target.txt", "inside-updated")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
+  });
+
+  it("appendFile should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-append-race");
+    const outsidePath = join(tempDir, "test-openat2-append-race-outside.txt");
+    await mkdir(sandboxRoot);
+    await writeFile(outsidePath, "outside-secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("target.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+      return;
+    }
+
+    const originalOpenWrite = openAt2Root.openWrite.bind(openAt2Root);
+    openAt2Root.openWrite = (
+      path: string,
+      create?: boolean,
+      truncate?: boolean,
+      append?: boolean,
+      mode?: number,
+    ) => {
+      const targetPath = join(sandboxRoot, path);
+      rmSync(targetPath, { force: true, recursive: true });
+      symlinkSync(outsidePath, targetPath);
+      return originalOpenWrite(path, create, truncate, append, mode);
+    };
+
+    await expect(fs.appendFile("target.txt", "-inside-append")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
+  });
 });
 
 describe("read only sandbox", () => {
