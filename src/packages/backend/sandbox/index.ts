@@ -30,9 +30,9 @@ Current status:
 
 Remaining work:
 
-- Some paths still fall back to Node path APIs when openat2 is unavailable
-  (or for intentionally compatibility-preserving behavior), so those fallback
-  paths must remain conservative and fail-closed.
+- Some paths still fall back to Node path APIs when openat2 is explicitly
+  disabled (`COCALC_SANDBOX_OPENAT2=off`), so those fallback paths must remain
+  conservative and fail-closed.
 - Full end-state is descriptor-anchored path resolution for all mutating ops
   (see [src/.agents/sandbox.md](./src/.agents/sandbox.md), task list SBOX-*).
 
@@ -95,9 +95,10 @@ import { SyncFsService } from "./sync-fs-service";
 import { client_db } from "@cocalc/util/db-schema/client-db";
 
 const logger = getLogger("sandbox:fs");
-const OPENAT2_DISABLED = ["0", "false", "no", "off"].includes(
-  (process.env.COCALC_SANDBOX_OPENAT2 ?? "").toLowerCase(),
-);
+const OPENAT2_SETTING = (process.env.COCALC_SANDBOX_OPENAT2 ?? "")
+  .trim()
+  .toLowerCase();
+const OPENAT2_DISABLED = ["0", "false", "no", "off"].includes(OPENAT2_SETTING);
 
 interface OpenAt2SandboxRoot {
   mkdir(path: string, recursive?: boolean | null, mode?: number | null): void;
@@ -242,6 +243,8 @@ const INTERNAL_METHODS = new Set([
   "lastOnDisk",
   "lastOnDiskHash",
   "openAt2Roots",
+  "openAt2InitErrors",
+  "openAt2ModeLogged",
 ]);
 
 export class SandboxedFilesystem {
@@ -256,6 +259,8 @@ export class SandboxedFilesystem {
   public rusticRepo: string;
   private host?: string;
   private openAt2Roots = new Map<string, OpenAt2SandboxRoot | null>();
+  private openAt2InitErrors = new Map<string, Error>();
+  private openAt2ModeLogged = new Set<string>();
   private lastOnDisk = new LRU<string, string>({
     maxSize: MAX_LAST_ON_DISK,
     sizeCalculation: (value) => value.length + 1, // must be positive!
@@ -367,8 +372,55 @@ export class SandboxedFilesystem {
     });
   }
 
+  private logOpenAt2Mode(
+    basePath: string,
+    mode: "openat2" | "node-fallback" | "unsafe" | "hard-fail",
+    reason: string,
+    err?: unknown,
+  ): void {
+    const key = `${basePath}:${mode}`;
+    if (this.openAt2ModeLogged.has(key)) {
+      return;
+    }
+    this.openAt2ModeLogged.add(key);
+    const payload = {
+      basePath,
+      mode,
+      reason,
+      platform: process.platform,
+      envSetting: process.env.COCALC_SANDBOX_OPENAT2 ?? null,
+      err: err == null ? undefined : String(err),
+    };
+    if (mode === "openat2" || mode === "unsafe") {
+      logger.info("sandbox openat2 mode", payload);
+      return;
+    }
+    if (mode === "hard-fail") {
+      logger.error("sandbox openat2 mode", payload);
+      return;
+    }
+    logger.warn("sandbox openat2 mode", payload);
+  }
+
   private isOpenAt2Enabled(): boolean {
     return !this.unsafeMode && process.platform === "linux" && !OPENAT2_DISABLED;
+  }
+
+  private makeOpenAt2RequiredError(
+    basePath: string,
+    reason: string,
+    cause?: unknown,
+  ): Error {
+    const err = new Error(
+      `openat2 is required in safe mode (${reason}). ` +
+        `To explicitly disable openat2 and accept fallback behavior, set COCALC_SANDBOX_OPENAT2=off.`,
+    );
+    if (cause !== undefined) {
+      (err as any).cause = cause;
+    }
+    this.openAt2InitErrors.set(basePath, err);
+    this.logOpenAt2Mode(basePath, "hard-fail", reason, cause);
+    return err;
   }
 
   private getOpenAt2Root(): OpenAt2SandboxRoot | null {
@@ -376,8 +428,28 @@ export class SandboxedFilesystem {
   }
 
   private getOpenAt2RootForBase(basePath: string): OpenAt2SandboxRoot | null {
-    if (!this.isOpenAt2Enabled()) {
+    if (this.unsafeMode) {
+      this.logOpenAt2Mode(basePath, "unsafe", "unsafe mode enabled");
       return null;
+    }
+    const initError = this.openAt2InitErrors.get(basePath);
+    if (initError != null) {
+      throw initError;
+    }
+    if (OPENAT2_DISABLED) {
+      this.logOpenAt2Mode(
+        basePath,
+        "node-fallback",
+        `explicitly disabled via COCALC_SANDBOX_OPENAT2='${OPENAT2_SETTING || "(empty)"}'`,
+      );
+      this.openAt2Roots.set(basePath, null);
+      return null;
+    }
+    if (process.platform !== "linux") {
+      throw this.makeOpenAt2RequiredError(
+        basePath,
+        `platform '${process.platform}' is not supported`,
+      );
     }
     if (this.openAt2Roots.has(basePath)) {
       return this.openAt2Roots.get(basePath) ?? null;
@@ -388,14 +460,14 @@ export class SandboxedFilesystem {
       };
       const root = new SandboxRoot(basePath);
       this.openAt2Roots.set(basePath, root);
+      this.logOpenAt2Mode(basePath, "openat2", "native addon initialized");
       return root;
     } catch (err) {
-      logger.warn("openat2 unavailable; falling back to node fs sandbox path", {
+      throw this.makeOpenAt2RequiredError(
         basePath,
-        err: `${err}`,
-      });
-      this.openAt2Roots.set(basePath, null);
-      return null;
+        "native addon initialization failed",
+        err,
+      );
     }
   }
 
