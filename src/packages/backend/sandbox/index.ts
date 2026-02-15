@@ -119,6 +119,7 @@ interface OpenAt2SandboxRoot {
     mode?: number | null,
   ): number;
   rm?(path: string, recursive?: boolean | null, force?: boolean | null): void;
+  utimes?(path: string, atimeNs: number, mtimeNs: number): void;
 }
 
 // max time code can run (in safe mode), e.g., for find,
@@ -186,6 +187,15 @@ const writeFileByFd = (
     }
     (writeFileFdCallback as any)(fd, data as any, options as any, cb);
   });
+
+const toTimespecNs = (value: number | string | Date): number => {
+  const seconds =
+    value instanceof Date ? value.getTime() / 1000 : Number(value as any);
+  if (!Number.isFinite(seconds)) {
+    throw new TypeError(`Invalid time value: ${value}`);
+  }
+  return Math.trunc(seconds * 1_000_000_000);
+};
 
 interface Options {
   // unsafeMode -- if true, assume security model where user is running this
@@ -1533,6 +1543,21 @@ export class SandboxedFilesystem {
     mtime: number | string | Date,
   ) => {
     this.assertWritable(path);
+    await this.safeAbsPath(path);
+    const openAt2Root = this.getOpenAt2Root();
+    const rel = await this.getOpenAt2RelativePath(path);
+    if (
+      openAt2Root != null &&
+      typeof openAt2Root.utimes === "function" &&
+      rel != null
+    ) {
+      try {
+        openAt2Root.utimes(rel, toTimespecNs(atime), toTimespecNs(mtime));
+        return;
+      } catch (err) {
+        this.throwOpenAt2PathError(path, err);
+      }
+    }
     const { handle } = await this.openVerifiedHandle({
       path,
       flags: constants.O_RDONLY,
