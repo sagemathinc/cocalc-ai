@@ -40,7 +40,7 @@ export default function init(router: Router) {
       return;
     }
     if (!is_valid_uuid_string(uuid)) {
-      res.status(404).send(`invalid uuid=${uuid}`);
+      res.status(404).send("invalid blob id");
       return;
     }
     if (!database_is_working()) {
@@ -51,7 +51,7 @@ export default function init(router: Router) {
     try {
       const data = await callback2(database.get_blob, { uuid });
       if (data == null) {
-        res.status(404).send(`blob ${uuid} not found`);
+        res.status(404).send("blob not found");
       } else {
         const filename = safeFilenameFromPath(req.path);
         const forceDownload =
