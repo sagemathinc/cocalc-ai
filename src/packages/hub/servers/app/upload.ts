@@ -59,11 +59,10 @@ export default function init(router: Router) {
       res.status(500).send("user must be signed in to upload files");
       return;
     }
-    const { project_id, path = "", ttl, blob } = req.query;
+    const { project_id, path = "", blob } = req.query;
     try {
       if (blob) {
         //await handleBlobUpload({ ttl, req, res });
-        console.log(ttl);
         throw Error("not implemented");
       } else {
         await handleUploadToProject({
@@ -75,8 +74,12 @@ export default function init(router: Router) {
         });
       }
     } catch (err) {
-      logger.debug("upload failed ", err);
-      res.status(500).send(`upload failed -- ${err}`);
+      logger.warn("upload failed", {
+        err: String(err),
+        account_id,
+        project_id,
+      });
+      res.status(500).send("upload failed");
     }
   });
 }
@@ -151,7 +154,11 @@ async function handleUploadToProject({
   touchStateKey(key);
   pruneUploadState();
   if (index > 0 && errors?.[key]?.length > 0) {
-    res.status(500).send(`upload failed -- ${errors[key].join(", ")}`);
+    logger.warn("upload failed (early state error)", {
+      key,
+      errors: errors[key],
+    });
+    res.status(500).send("Upload failed.");
     cleanupUploadKey(key);
     return;
   }
@@ -203,12 +210,18 @@ async function handleUploadToProject({
     cleanupUploadKey(key);
   }
   if ((errors[key]?.length ?? 0) > 0) {
-    // console.log("saying upload failed");
-    let e = errors[key].join(", ");
-    if (e.includes("Error: 503")) {
-      e += ", Upload service not running.";
-    }
-    res.status(500).send(`Upload failed: ${e}`);
+    logger.warn("upload failed (backend write)", {
+      key,
+      errors: errors[key],
+    });
+    const serviceUnavailable = errors[key].some((e) => e.includes("Error: 503"));
+    res
+      .status(500)
+      .send(
+        serviceUnavailable
+          ? "Upload failed: upload service not running."
+          : "Upload failed.",
+      );
   } else {
     // console.log("saying upload worked");
     res.send({ status: "ok" });

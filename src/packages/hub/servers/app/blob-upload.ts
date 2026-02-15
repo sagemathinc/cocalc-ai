@@ -103,13 +103,13 @@ export default function init(router: Router) {
   router.post("/blobs", async (req, res) => {
     const account_id = await getAccount(req);
     if (!account_id) {
-      res.status(500).send("user must be signed in to upload files");
+      res.status(401).send("user must be signed in to upload files");
       return;
     }
     const { project_id, ttl } = req.query;
     if (typeof project_id == "string" && project_id) {
       if (!(await isCollaborator({ account_id, project_id }))) {
-        res.status(500).send("user must be collaborator on project");
+        res.status(403).send("user must be collaborator on project");
         return;
       }
     }
@@ -179,8 +179,12 @@ export default function init(router: Router) {
       }
       res.send({ uuid });
     } catch (err) {
-      dbg("upload failed ", err);
-      res.status(500).send(`upload failed -- ${err}`);
+      logger.warn("blob upload failed", {
+        err: String(err),
+        account_id,
+        project_id,
+      });
+      res.status(500).send("upload failed");
     }
   });
 }
