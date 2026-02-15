@@ -966,6 +966,22 @@ describe("rootfs option sandbox", () => {
     await expect(readFile(join(rootfs, "home-rel.txt"), "utf8")).rejects.toThrow();
   });
 
+  it("fails closed for move across home/rootfs base boundary", async () => {
+    await fs.writeFile("/root/move-home.txt", "home");
+    await fs.writeFile("/tmp/move-rootfs.txt", "rootfs");
+
+    await expect(fs.move("/root/move-home.txt", "/tmp/move-home.txt")).rejects.toMatchObject({
+      code: "EXDEV",
+    });
+    await expect(fs.move("/tmp/move-rootfs.txt", "/root/move-rootfs.txt")).rejects.toMatchObject(
+      {
+        code: "EXDEV",
+      },
+    );
+    expect(await fs.readFile("/root/move-home.txt", "utf8")).toBe("home");
+    expect(await fs.readFile("/tmp/move-rootfs.txt", "utf8")).toBe("rootfs");
+  });
+
   it("realpath returns absolute style paths when rootfs mode is active", async () => {
     expect(await fs.realpath("/tmp/from-root.txt")).toBe("/tmp/from-root.txt");
   });
