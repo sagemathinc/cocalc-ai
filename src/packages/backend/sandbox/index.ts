@@ -980,10 +980,14 @@ export class SandboxedFilesystem {
     // ensure containing directory of destination exists -- node cp doesn't
     // do this but for cocalc this is very convenient and saves some network
     // round trips.
-    const destDir = dirname(destPath);
-    const sandboxBasePath = await this.resolveSandboxBasePath();
-    if (destDir != sandboxBasePath && !(await exists(destDir))) {
-      await mkdir(destDir, { recursive: true });
+    const destInputDir = dirname(destInput);
+    if (
+      destInputDir !== "." &&
+      destInputDir !== "/" &&
+      destInputDir !== HOME_ROOT &&
+      !(await this.exists(destInputDir))
+    ) {
+      await this.mkdir(destInputDir, { recursive: true });
     }
 
     const srcInput = typeof src == "string" ? [src] : src;
