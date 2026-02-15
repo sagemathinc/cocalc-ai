@@ -790,6 +790,36 @@ describe("openat2 motivation regressions", () => {
     ).rejects.toThrow("outside of sandbox");
     expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
   });
+
+  it("utimes should not mutate outside sandbox when target is swapped to symlink", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-utimes-race");
+    const outsidePath = join(tempDir, "test-openat2-utimes-race-outside.txt");
+    await mkdir(sandboxRoot);
+    await writeFile(outsidePath, "outside-secret");
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.writeFile("target.txt", "inside");
+    const outsideBefore = await stat(outsidePath);
+
+    const openAt2Root = (fs as any).getOpenAt2Root?.();
+    if (openAt2Root == null || typeof openAt2Root.utimes !== "function") {
+      return;
+    }
+
+    const originalUtimes = openAt2Root.utimes.bind(openAt2Root);
+    openAt2Root.utimes = (path: string, atimeNs: number, mtimeNs: number) => {
+      const targetPath = join(sandboxRoot, path);
+      rmSync(targetPath, { force: true, recursive: true });
+      symlinkSync(outsidePath, targetPath);
+      return originalUtimes(path, atimeNs, mtimeNs);
+    };
+
+    await expect(
+      fs.utimes("target.txt", new Date(0), new Date(0)),
+    ).rejects.toThrow("outside of sandbox");
+    const outsideAfter = await stat(outsidePath);
+    expect(outsideAfter.mtimeMs).toBe(outsideBefore.mtimeMs);
+  });
 });
 
 describe("read only sandbox", () => {
