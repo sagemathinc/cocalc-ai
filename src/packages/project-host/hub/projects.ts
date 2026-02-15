@@ -58,9 +58,33 @@ const DEFAULT_PID_LIMIT = 4096;
 const MAX_BACKUPS_PER_PROJECT = 30;
 const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
 const LRO_PUBLISH_RETRY_DELAY_MS = 500;
+const LRO_PUBLISH_ATTEMPT_TIMEOUT_MS = 3000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  context: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`timeout after ${timeoutMs}ms (${context})`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer != null) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 async function publishLroSummaryWithRetry({
@@ -76,7 +100,11 @@ async function publishLroSummaryWithRetry({
 }): Promise<boolean> {
   for (let attempt = 1; attempt <= LRO_PUBLISH_RETRY_ATTEMPTS; attempt++) {
     try {
-      await publishLroSummary({ scope_type, scope_id, summary });
+      await withTimeout(
+        publishLroSummary({ scope_type, scope_id, summary }),
+        LRO_PUBLISH_ATTEMPT_TIMEOUT_MS,
+        context,
+      );
       if (attempt > 1) {
         logger.info("lro summary publish recovered", {
           context,
@@ -731,7 +759,7 @@ export async function createBackup({
 
   void (async () => {
     const started = Date.now();
-    await publishLroSummaryWithRetry({
+    void publishLroSummaryWithRetry({
       scope_type: "project",
       scope_id: project_id,
       summary: baseSummary,
@@ -890,7 +918,7 @@ export async function restoreBackup({
 
   void (async () => {
     const started = Date.now();
-    await publishLroSummaryWithRetry({
+    void publishLroSummaryWithRetry({
       scope_type: "project",
       scope_id: project_id,
       summary: baseSummary,

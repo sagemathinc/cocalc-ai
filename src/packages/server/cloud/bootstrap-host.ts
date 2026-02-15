@@ -880,6 +880,11 @@ echo "[$(date -u +%FT%TZ)] log_file=$DEPROVISION_LOG"
 log_step() {
   echo "[$(date -u +%FT%TZ)] $*"
 }
+invoked_via_connector=0
+if [ -r /proc/self/cgroup ] && grep -q 'cocalc-self-host-connector' /proc/self/cgroup 2>/dev/null; then
+  invoked_via_connector=1
+  log_step "detected invocation from cocalc-self-host-connector service"
+fi
 umount_with_timeout() {
   local target="$1"
   [ -n "$target" ] || return 0
@@ -918,7 +923,11 @@ if [ -n "$ids" ]; then
     sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
   fi
 fi
-pkill -f /opt/cocalc/bin/node || true
+# Only kill runtime user's node processes, so we do not kill the connector process
+# that may be invoking this script.
+if [ -n "$RUNTIME_USER" ]; then
+  pkill -u "$RUNTIME_USER" -f /opt/cocalc/bin/node >/dev/null 2>&1 || true
+fi
 if [ -d /mnt/cocalc/data/cache/project-roots ]; then
   for m in /mnt/cocalc/data/cache/project-roots/*; do
     [ -d "$m" ] || continue
@@ -957,19 +966,26 @@ if [ -n "$RUNTIME_USER" ] && [ "$RUNTIME_USER" != "root" ]; then
   pkill -9 -u "$RUNTIME_USER" >/dev/null 2>&1 || true
 fi
 if [ "$uninstall_connector" -eq 1 ]; then
-  if command -v systemctl >/dev/null 2>&1; then
-    if [ -n "$BOOTSTRAP_UID" ]; then
-      sudo -n -u "$BOOTSTRAP_USER" -H env XDG_RUNTIME_DIR="/run/user/$BOOTSTRAP_UID" systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
-    else
-      systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+  # When invoked by the connector service itself, stopping that service here can
+  # terminate this script before completion. In that case, keep the process alive
+  # long enough for command ack/status updates, while still removing files.
+  if [ "$invoked_via_connector" -eq 0 ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+      if [ -n "$BOOTSTRAP_UID" ]; then
+        sudo -n -u "$BOOTSTRAP_USER" -H env XDG_RUNTIME_DIR="/run/user/$BOOTSTRAP_UID" systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+      else
+        systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+      fi
     fi
-  fi
-  if command -v launchctl >/dev/null 2>&1; then
-    if [ -n "$BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" != "root" ]; then
-      sudo -n -u "$BOOTSTRAP_USER" -H launchctl unload "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
-    else
-      launchctl unload "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
+    if command -v launchctl >/dev/null 2>&1; then
+      if [ -n "$BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" != "root" ]; then
+        sudo -n -u "$BOOTSTRAP_USER" -H launchctl unload "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
+      else
+        launchctl unload "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
+      fi
     fi
+  else
+    log_step "skipping connector stop/unload (invoked via connector); files will still be removed"
   fi
   rm -rf "$BOOTSTRAP_HOME/.config/cocalc-connector" || true
   rm -f "$BOOTSTRAP_HOME/.config/systemd/user/cocalc-self-host-connector.service" || true
