@@ -20,7 +20,7 @@ import {
   TestimonialComponent,
   twoRandomTestimonials,
 } from "components/testimonials";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { useCustomize } from "lib/customize";
 import assignments from "public/features/cocalc-course-assignments-2019.png";
 import RTC from "public/features/cocalc-real-time-jupyter.png";
@@ -146,7 +146,7 @@ export function CoCalcComFeatures() {
         <Paragraph>
           <Button
             onClick={() =>
-              (window.location.href = join(basePath, "/features/teaching"))
+              (window.location.href = join(ROOT_PATH, "/features/teaching"))
             }
           >
             More about teaching on {siteName}
@@ -178,7 +178,7 @@ export function CoCalcComFeatures() {
     const software = (
       <Paragraph style={{ textAlign: "center" }}>
         <Button
-          onClick={() => (window.location.href = join(basePath, "/software"))}
+          onClick={() => (window.location.href = join(ROOT_PATH, "/software"))}
           title={text.software}
         >
           {text.software}
@@ -189,7 +189,7 @@ export function CoCalcComFeatures() {
       <Paragraph style={{ textAlign: "center" }}>
         <Button
           onClick={() =>
-            (window.location.href = join(basePath, "/features/whiteboard"))
+            (window.location.href = join(ROOT_PATH, "/features/whiteboard"))
           }
           title={text.whiteboard}
         >
@@ -200,7 +200,7 @@ export function CoCalcComFeatures() {
     const features = (
       <Paragraph style={{ textAlign: "center" }}>
         <Button
-          onClick={() => (window.location.href = join(basePath, "/features"))}
+          onClick={() => (window.location.href = join(ROOT_PATH, "/features"))}
           title={text.features}
         >
           {text.features}
@@ -306,7 +306,7 @@ export function CoCalcComFeatures() {
           ghost
           size="large"
           style={{ fontWeight: "bold" }}
-          onClick={() => (window.location.href = join(basePath, urlProducts))}
+          onClick={() => (window.location.href = join(ROOT_PATH, urlProducts))}
           title={"Products Overview"}
         >
           Products Overview
@@ -320,7 +320,7 @@ export function CoCalcComFeatures() {
           ghost
           size="large"
           style={{ fontWeight: "bold" }}
-          onClick={() => (window.location.href = join(basePath, urlCourses))}
+          onClick={() => (window.location.href = join(ROOT_PATH, urlCourses))}
           title={"Course Licenses"}
         >
           Course Licenses
@@ -334,7 +334,7 @@ export function CoCalcComFeatures() {
           ghost
           size="large"
           style={{ fontWeight: "bold" }}
-          onClick={() => (window.location.href = join(basePath, urlOnprem))}
+          onClick={() => (window.location.href = join(ROOT_PATH, urlOnprem))}
           title={"On-Premises Offerings"}
         >
           On-Premises Offerings
@@ -471,7 +471,7 @@ export function CoCalcComFeatures() {
           <Col md={24} style={{ textAlign: "center" }}>
             <Button
               onClick={() =>
-                (window.location.href = join(basePath, "/testimonials"))
+                (window.location.href = join(ROOT_PATH, "/testimonials"))
               }
               title={`More testimonials from users of ${siteName}`}
             >

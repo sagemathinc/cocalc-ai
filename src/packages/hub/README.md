@@ -57,7 +57,6 @@ remote rustic repo, and is not useful without that extra configuration.
 
 - `PORT` controls the Hub HTTP(S) port (defaults to 5000).
 - `HOST` controls the bind interface (defaults to `localhost` in these scripts).
-- `BASE_PATH` can be used to serve the Hub under a sub‑path.
 
 See [docs/launchpad.md](../../docs/launchpad.md) for the full Launchpad
 architecture and TLS behavior in local‑network mode.

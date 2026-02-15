@@ -11,10 +11,10 @@ import Head from "next/head";
 import Analytics from "components/analytics";
 import Footer from "components/landing/footer";
 import Header from "./header";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import useCustomize from "lib/use-customize";
 
-const favicon = join(basePath, "webapp/favicon-32x32.png");
+const favicon = join(ROOT_PATH, "webapp/favicon-32x32.png");
 
 interface Props {
   title: string;

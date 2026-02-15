@@ -4,7 +4,7 @@
  */
 
 import { join } from "path";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 
 interface CollaboratorOptions {
   project_id: string;
@@ -26,7 +26,7 @@ export default function editURL(options: Options): string {
 
 // needed since we're making a link outside of the nextjs server.
 function withBasePath(url: string): string {
-  return join(basePath, url);
+  return join(ROOT_PATH, url);
 }
 
 function collaboratorURL({

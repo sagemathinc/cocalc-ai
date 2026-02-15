@@ -13,7 +13,7 @@ import { checkRequiredSSO } from "@cocalc/server/auth/sso/check-required-sso";
 import { PRIMARY_SSO } from "@cocalc/util/types/passport-types";
 import { Strategy } from "@cocalc/util/types/sso";
 import Loading from "components/share/loading";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { useCustomize } from "lib/customize";
 
 const { Link: AntdLink } = Typography;
@@ -31,11 +31,11 @@ interface SSOProps {
 export function getLink(strategy: string, target?: string): string {
   // special case: private SSO mechanism, we point to the overview page
   if (strategy === "sso") {
-    return `${join(basePath, "sso")}`;
+    return `${join(ROOT_PATH, "sso")}`;
   }
   // TODO: the target is ignored by the server right now -- it's not implemented
   // and I don't know how... yet.  Code is currently in src/packages/hub/auth.ts
-  return `${join(basePath, "auth", strategy)}${
+  return `${join(ROOT_PATH, "auth", strategy)}${
     target ? "?target=" + encodeURIComponent(target) : ""
   }`;
 }
@@ -114,7 +114,7 @@ export default function SSO(props: SSOProps) {
 function useSSOHref(name?: string) {
   const router = useRouter();
   if (name == null) return "";
-  return getLink(name, join(router.basePath, router.pathname));
+  return getLink(name, router.pathname);
 }
 
 interface AvatarProps {
@@ -221,7 +221,7 @@ export function RequiredSSO({ strategy }: { strategy?: Strategy }) {
   if (strategy == null) return null;
   if (strategy.name == "null")
     return <Alert type="error" message={"SSO Strategy not defined!"} />;
-  const ssoLink = join(basePath, "sso", strategy.name);
+  const ssoLink = join(ROOT_PATH, "sso", strategy.name);
   return (
     <Alert
       style={{ margin: "15px 0" }}

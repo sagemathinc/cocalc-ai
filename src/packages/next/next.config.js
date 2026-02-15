@@ -1,23 +1,13 @@
-// next.js defines / to be an invalid basepath, whereas in cocalc it is valid:
-const BASE_PATH = process.env.BASE_PATH ?? "/";
-
-// next.js definition:
-const basePath = BASE_PATH == "/" ? "" : BASE_PATH;
-
 const { join, resolve, sep } = require("path");
 
-// Important!  We include resolve('.') and basePath to avoid
-// any possibility of multiple cocalc installs or different base
-// paths conflicting with each other and causing corruption.
+// Important!  We include resolve('.') to avoid any possibility of multiple
+// cocalc installs conflicting with each other and causing corruption.
 const cacheDirectory = join(
   `/tmp/nextjs-${require("os").userInfo().username}`,
-  basePath,
   resolve("."),
 );
 
 const config = {
-  basePath,
-  env: { BASE_PATH },
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
   // Keep pglite in node_modules so its .data/.wasm assets resolve at runtime.

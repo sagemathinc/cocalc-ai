@@ -43,3 +43,12 @@ This should work for proxy.json to directly connect, but it isn't:
 ```
 
 but we should just add ssl support and use this instead of that proxy.
+
+### Proxy Prefixes (Current Behavior)
+
+When running `cocalc-plus` behind a reverse proxy, use a strip-prefix setup.
+The upstream should receive requests as if Plus is mounted at `/`.
+
+- Supported: external `/some/prefix/...` -> upstream `/...`
+- Not required: compile-time `BASE_PATH`
+- Not the same thing: `/port/...` routing (that is separate and mainly for app proxies like JupyterLab)

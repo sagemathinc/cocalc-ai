@@ -168,14 +168,16 @@ export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
   app.get("*", (req, res) => {
     if (req.url.endsWith("__webpack_hmr")) return;
     logger.debug("redirecting", req.url);
-    const target = mapLiteTarget(req.originalUrl || req.url || "");
+    const rawUrl = req.originalUrl || req.url || "";
+    const target = mapLiteTarget(rawUrl);
+    const redirectBase = toPrefixRelative(rawUrl, "static/app.html");
     if (!target) {
-      res.redirect("/static/app.html");
+      res.redirect(redirectBase);
       return;
     }
-    const redirectUrl = new URL("http://host/static/app.html");
-    redirectUrl.searchParams.set("target", target);
-    res.redirect(redirectUrl.pathname + redirectUrl.search);
+    const params = new URLSearchParams();
+    params.set("target", target);
+    res.redirect(`${redirectBase}?${params.toString()}`);
   });
 }
 
@@ -211,6 +213,18 @@ function mapLiteTarget(rawUrl: string): string {
     return "";
   }
   return `${targetPath}${parsed.search || ""}`;
+}
+
+// Build a relative path from the current request path to the same app mount root.
+// This makes redirects work both at "/" and behind strip-prefix proxies.
+function toPrefixRelative(rawUrl: string, target: string): string {
+  const parsed = new URL(`http://host${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`);
+  const trimmed = parsed.pathname.replace(/^\/+|\/+$/g, "");
+  if (!trimmed) {
+    return target;
+  }
+  const depth = trimmed.split("/").length;
+  return `${"../".repeat(depth)}${target}`;
 }
 
 function initProjectProxy({

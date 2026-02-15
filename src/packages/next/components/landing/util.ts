@@ -2,7 +2,7 @@ import { join } from "path";
 
 import { COLORS } from "@cocalc/util/theme";
 import { CSS } from "components/misc";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 
 export function MediaURL(url) {
   if (typeof url != "string") {
@@ -12,7 +12,7 @@ export function MediaURL(url) {
   if (url.includes("://")) {
     return url;
   }
-  return join(basePath, url);
+  return join(ROOT_PATH, url);
 }
 
 // slight shadow with rounded corners

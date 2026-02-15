@@ -25,7 +25,7 @@ import {
 } from "components/antd-menu-items";
 import A from "components/misc/A";
 import apiPost from "lib/api/post";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { useCustomize } from "lib/customize";
 import useProfile from "lib/hooks/profile";
 import { useRouter } from "next/router";
@@ -39,9 +39,9 @@ type SettingsLink =
   | `/settings/${SettingsPageType}`
   | `/settings/preferences/${PreferencesSubTabType}`;
 
-// Helper function to create type-safe settings links with basePath prefix
+// Helper function to create type-safe settings links with ROOT_PATH prefix
 function createSettingsLink(path: SettingsLink): string {
-  return join(basePath, path);
+  return join(ROOT_PATH, path);
 }
 
 interface Props {
@@ -191,7 +191,7 @@ export default function AccountNavTab({ style }: Props) {
     yours.push(
       menuItem(
         "projects",
-        <a href={join(basePath, "projects")}>
+        <a href={join(ROOT_PATH, "projects")}>
           {WORKSPACES_LABEL}
         </a>,
         "edit",
@@ -275,7 +275,7 @@ export default function AccountNavTab({ style }: Props) {
       DIVIDER,
       menuItem(
         "admin",
-        <a href={join(basePath, "admin")}>Site Administration</a>,
+        <a href={join(ROOT_PATH, "admin")}>Site Administration</a>,
         "settings",
       ),
     ];

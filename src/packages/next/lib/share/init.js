@@ -14,23 +14,14 @@ const next = require("next");
 const conf = require("../next.config");
 const getLogger = require("@cocalc/backend/logger").default;
 
-async function init({ basePath }) {
+async function init() {
   const winston = getLogger("share-server:init");
 
   // dev = Whether or not to run in dev mode.  This features hot module reloading,
   // but navigation between pages and serving pages is much slower.
   const dev = process.env.NODE_ENV != "production";
 
-  // We do this to ensure that our config is like when
-  // running things directly (via npm run dev), without having
-  // to set the BASE_PATH env variable, which might have
-  // a strange impact somewhere else in CoCalc.
-  conf.basePath = basePath == "/" ? "" : basePath; // won't happen since is "../share".
-  conf.env.BASE_PATH = basePath;
-
-  winston.info(
-    `creating next.js app with basePath="${basePath}", and dev=${dev}`
-  );
+  winston.info(`creating next.js app with dev=${dev}`);
   const app = next({ dev, conf, dir: join(__dirname, "..") });
   const handle = app.getRequestHandler();
   winston.info("preparing next.js app...");

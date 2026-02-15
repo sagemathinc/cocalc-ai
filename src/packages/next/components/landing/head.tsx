@@ -7,7 +7,7 @@ import NextHead from "next/head";
 import { join } from "path";
 import { ReactNode } from "react";
 
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { useCustomize } from "lib/customize";
 import IconLogo from "public/logo/icon.svg";
 
@@ -20,7 +20,7 @@ export default function Head({ title }: Props) {
 
   const faviconURL = logoSquareURL
     ? logoSquareURL
-    : join(basePath ?? "", IconLogo.src);
+    : join(ROOT_PATH ?? "", IconLogo.src);
 
   const feedTitle = `${siteName}'s News Feed`;
 
@@ -39,19 +39,19 @@ export default function Head({ title }: Props) {
       <link
         rel="alternate"
         type="application/rss+xml"
-        href={join(basePath, "/news/rss.xml")}
+        href={join(ROOT_PATH, "/news/rss.xml")}
         title={feedTitle}
       />
       <link
         rel="alternate"
         type="application/feed+json"
-        href={join(basePath, "/news/feed.json")}
+        href={join(ROOT_PATH, "/news/feed.json")}
         title={feedTitle}
       />
       <link
         rel="alternate"
         type="application/atom+xml"
-        href={join(basePath, "/news/rss.xml")}
+        href={join(ROOT_PATH, "/news/rss.xml")}
         title={feedTitle}
       />
     </NextHead>

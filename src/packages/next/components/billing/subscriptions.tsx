@@ -5,7 +5,7 @@
 
 import { Alert, Button, Popconfirm, Table } from "antd";
 import { useMemo, useState } from "react";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { join } from "path";
 import { NewFileButton } from "@cocalc/frontend/project/new/new-file-button";
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -266,7 +266,7 @@ export default function Subscriptions() {
     <div>
       <div style={{ textAlign: "center", marginBottom: "30px" }}>
         <NewFileButton
-          href={join(basePath, "settings", "subscriptions")}
+          href={join(ROOT_PATH, "settings", "subscriptions")}
           icon="calendar"
           name="Visit the new subscriptions page..."
         />
@@ -276,7 +276,7 @@ export default function Subscriptions() {
       <Paragraph style={{ marginBottom: "30px" }}>
         <p>
           Manage memberships and other subscriptions on the{" "}
-          <A href={join(basePath, "settings", "subscriptions")} external>
+          <A href={join(ROOT_PATH, "settings", "subscriptions")} external>
             subscriptions page
           </A>
           .

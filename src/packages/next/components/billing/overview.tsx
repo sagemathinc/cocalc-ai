@@ -13,7 +13,7 @@ import {
   Product,
 } from "lib/styles/layouts";
 const { Text } = Typography;
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { join } from "path";
 
 export default function Overview() {
@@ -45,7 +45,7 @@ export default function Overview() {
         <Product
           icon="edit"
           title="Software Licenses"
-          href={join(basePath, "/settings/licenses")}
+          href={join(ROOT_PATH, "/settings/licenses")}
           external
         >
           View and manage your software licenses.
