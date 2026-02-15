@@ -1353,7 +1353,7 @@ async function updateBackups({
   limit?: number;
 }): Promise<void> {
   const vol = await getVolumeForBackup(project_id);
-  await vol.rustic.update(counts, { limit });
+  await vol.rustic.update(counts, { limit, index: { project_id } });
   try {
     const backups = await vol.rustic.snapshots();
     await syncBackupIndexCache(project_id, {

@@ -297,8 +297,11 @@ export async function buildBootstrapScripts(
     project_hosts_bootstrap_channel,
     project_hosts_bootstrap_version,
   } = await getServerSettings();
+  const forcedSoftwareBaseUrl =
+    process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() || "";
   const softwareBaseUrl = normalizeSoftwareBaseUrl(
-    project_hosts_software_base_url ||
+    forcedSoftwareBaseUrl ||
+      project_hosts_software_base_url ||
       process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ||
       "",
   );
@@ -817,13 +820,14 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 force=0
-uninstall_connector=0
+uninstall_connector=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) force=1 ;;
     --uninstall-connector) uninstall_connector=1 ;;
+    --keep-connector) uninstall_connector=0 ;;
     --help)
-      echo "Usage: deprovision.sh [--force] [--uninstall-connector]"
+      echo "Usage: deprovision.sh [--force] [--uninstall-connector|--keep-connector]"
       exit 0
       ;;
   esac
@@ -836,7 +840,7 @@ if [ "$force" -ne 1 ]; then
     *) echo "aborted"; exit 1 ;;
   esac
 fi
-SSH_USER="${scripts.runtimeUser}"
+RUNTIME_USER="${scripts.runtimeUser}"
 BOOTSTRAP_USER="\${SUDO_USER:-}"
 PREFERRED_BOOTSTRAP_USER="${preferredBootstrapUser}"
 if [ -z "$BOOTSTRAP_USER" ]; then
@@ -848,63 +852,162 @@ fi
 if [ -n "$PREFERRED_BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" = "root" ]; then
   BOOTSTRAP_USER="$PREFERRED_BOOTSTRAP_USER"
 fi
-SSH_UID="$(id -u "$SSH_USER" 2>/dev/null || echo "")"
-TARGET_HOME="$(getent passwd "$SSH_USER" | cut -d: -f6 || true)"
-if [ -z "$TARGET_HOME" ]; then
-  TARGET_HOME="$HOME"
+RUNTIME_UID="$(id -u "$RUNTIME_USER" 2>/dev/null || echo "")"
+BOOTSTRAP_UID="$(id -u "$BOOTSTRAP_USER" 2>/dev/null || echo "")"
+BOOTSTRAP_HOME="$(getent passwd "$BOOTSTRAP_USER" | cut -d: -f6 || true)"
+if [ -z "$BOOTSTRAP_HOME" ] && [ -n "$HOME" ]; then
+  BOOTSTRAP_HOME="$HOME"
 fi
-if [ -n "$SSH_UID" ]; then
-  export XDG_RUNTIME_DIR="/run/user/$SSH_UID"
+if [ -z "$BOOTSTRAP_HOME" ]; then
+  BOOTSTRAP_HOME="/root"
 fi
-ids="$(sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman ps -a --filter "label=role=project" -q 2>/dev/null || true)"
+LOG_STAMP="$(date -u +%Y%m%d-%H%M%S)"
+DEPROVISION_LOG="$BOOTSTRAP_HOME/cocalc-deprovision-$LOG_STAMP.log"
+DEPROVISION_LOG_LATEST="$BOOTSTRAP_HOME/cocalc-deprovision.log"
+if ! touch "$DEPROVISION_LOG" 2>/dev/null; then
+  DEPROVISION_LOG="/tmp/cocalc-deprovision-$LOG_STAMP.log"
+  DEPROVISION_LOG_LATEST=""
+  touch "$DEPROVISION_LOG" || true
+fi
+chmod 600 "$DEPROVISION_LOG" >/dev/null 2>&1 || true
+if [ -n "$DEPROVISION_LOG_LATEST" ]; then
+  ln -sfn "$DEPROVISION_LOG" "$DEPROVISION_LOG_LATEST" >/dev/null 2>&1 || true
+fi
+if command -v tee >/dev/null 2>&1; then
+  exec > >(tee -a "$DEPROVISION_LOG") 2>&1
+else
+  exec >>"$DEPROVISION_LOG" 2>&1
+fi
+echo "[$(date -u +%FT%TZ)] cocalc deprovision starting"
+echo "[$(date -u +%FT%TZ)] log_file=$DEPROVISION_LOG"
+log_step() {
+  echo "[$(date -u +%FT%TZ)] $*"
+}
+invoked_via_connector=0
+if [ -r /proc/self/cgroup ] && grep -q 'cocalc-self-host-connector' /proc/self/cgroup 2>/dev/null; then
+  invoked_via_connector=1
+  log_step "detected invocation from cocalc-self-host-connector service"
+fi
+umount_with_timeout() {
+  local target="$1"
+  [ -n "$target" ] || return 0
+  if ! mountpoint -q "$target" >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -km "$target" >/dev/null 2>&1 || true
+  fi
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 10s umount "$target" >/dev/null 2>&1 || true
+  else
+    umount "$target" >/dev/null 2>&1 || true
+  fi
+  if mountpoint -q "$target" >/dev/null 2>&1; then
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 10s umount -l "$target" >/dev/null 2>&1 || true
+    else
+      umount -l "$target" >/dev/null 2>&1 || true
+    fi
+  fi
+  if mountpoint -q "$target" >/dev/null 2>&1; then
+    log_step "WARNING: failed to unmount $target"
+  else
+    log_step "unmounted $target"
+  fi
+}
+if [ -n "$RUNTIME_UID" ]; then
+  export XDG_RUNTIME_DIR="/run/user/$RUNTIME_UID"
+fi
+ids="$(sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman ps -a --filter "label=role=project" -q 2>/dev/null || true)"
 if [ -n "$ids" ]; then
   if command -v timeout >/dev/null 2>&1; then
-    timeout 30s sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
+    timeout 30s sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
   else
-    sudo -n -u "$SSH_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
+    sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
   fi
 fi
-pkill -f /opt/cocalc/bin/node || true
+# Only kill runtime user's node processes, so we do not kill the connector process
+# that may be invoking this script.
+if [ -n "$RUNTIME_USER" ]; then
+  pkill -u "$RUNTIME_USER" -f /opt/cocalc/bin/node >/dev/null 2>&1 || true
+fi
 if [ -d /mnt/cocalc/data/cache/project-roots ]; then
   for m in /mnt/cocalc/data/cache/project-roots/*; do
     [ -d "$m" ] || continue
-    umount "$m" || umount -l "$m" || true
+    umount_with_timeout "$m"
   done
 fi
-if mountpoint -q /mnt/cocalc; then
-  umount /mnt/cocalc || umount -l /mnt/cocalc || true
-fi
+umount_with_timeout /mnt/cocalc
 if [ -f /etc/fstab ]; then
   sed -i.bak '/cocalc-btrfs/d' /etc/fstab || true
 fi
 rm -f /var/lib/cocalc/cocalc.img /var/lib/cocalc/btrfs.img || true
 rm -rf /mnt/cocalc || true
 rm -f /btrfs || true
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl disable --now cocalc-cloudflared.service >/dev/null 2>&1 || true
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
 rm -rf /var/lib/cocalc /etc/cocalc /opt/cocalc || true
-rm -f /usr/local/sbin/cocalc-grow-btrfs /usr/local/sbin/cocalc-nvidia-cdi || true
+rm -f /usr/local/sbin/cocalc-runtime-storage \
+      /usr/local/sbin/cocalc-mount-data \
+      /usr/local/sbin/cocalc-cloudflared-ctl \
+      /usr/local/sbin/cocalc-cloudflared-logs \
+      /usr/local/sbin/cocalc-grow-btrfs \
+      /usr/local/sbin/cocalc-nvidia-cdi || true
+rm -f /etc/systemd/system/cocalc-cloudflared.service || true
+rm -f /etc/cron.d/cocalc-project-host /etc/cron.d/cocalc-nvidia-cdi || true
 rm -f /etc/containers/storage.conf || true
 rm -f /etc/sudoers.d/cocalc-project-host-runtime || true
+# Ensure runtime user can be deleted cleanly.
+if [ -n "$RUNTIME_USER" ] && [ "$RUNTIME_USER" != "root" ]; then
+  pkill -u "$RUNTIME_USER" >/dev/null 2>&1 || true
+  if command -v loginctl >/dev/null 2>&1; then
+    loginctl terminate-user "$RUNTIME_USER" >/dev/null 2>&1 || true
+  fi
+  sleep 1
+  pkill -9 -u "$RUNTIME_USER" >/dev/null 2>&1 || true
+fi
 if [ "$uninstall_connector" -eq 1 ]; then
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+  # When invoked by the connector service itself, stopping that service here can
+  # terminate this script before completion. In that case, keep the process alive
+  # long enough for command ack/status updates, while still removing files.
+  if [ "$invoked_via_connector" -eq 0 ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+      if [ -n "$BOOTSTRAP_UID" ]; then
+        sudo -n -u "$BOOTSTRAP_USER" -H env XDG_RUNTIME_DIR="/run/user/$BOOTSTRAP_UID" systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+      else
+        systemctl --user disable --now cocalc-self-host-connector.service >/dev/null 2>&1 || true
+      fi
+    fi
+    if command -v launchctl >/dev/null 2>&1; then
+      if [ -n "$BOOTSTRAP_USER" ] && [ "$BOOTSTRAP_USER" != "root" ]; then
+        sudo -n -u "$BOOTSTRAP_USER" -H launchctl unload "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
+      else
+        launchctl unload "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
+      fi
+    fi
+  else
+    log_step "skipping connector stop/unload (invoked via connector); files will still be removed"
   fi
-  if command -v launchctl >/dev/null 2>&1; then
-    launchctl unload "$HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" >/dev/null 2>&1 || true
-  fi
-  rm -rf "$TARGET_HOME/.config/cocalc-connector" || true
-  rm -f "$TARGET_HOME/.config/systemd/user/cocalc-self-host-connector.service" || true
-  rm -f "$TARGET_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" || true
-  if command -v sudo >/dev/null 2>&1; then
-    sudo rm -f /usr/local/bin/cocalc-self-host-connector || true
-  fi
-  BOOTSTRAP_HOME="$(getent passwd "$BOOTSTRAP_USER" | cut -d: -f6 || true)"
-  if [ -n "$BOOTSTRAP_HOME" ]; then
-    rm -rf "$BOOTSTRAP_HOME/cocalc-host" || true
+  rm -rf "$BOOTSTRAP_HOME/.config/cocalc-connector" || true
+  rm -f "$BOOTSTRAP_HOME/.config/systemd/user/cocalc-self-host-connector.service" || true
+  rm -f "$BOOTSTRAP_HOME/Library/LaunchAgents/com.cocalc.self-host-connector.plist" || true
+  rm -f /usr/local/bin/cocalc-self-host-connector || true
+  rm -rf "$BOOTSTRAP_HOME/cocalc-host" || true
+fi
+if [ -n "$RUNTIME_USER" ] && [ "$RUNTIME_USER" != "root" ] && [ "$RUNTIME_USER" != "$BOOTSTRAP_USER" ]; then
+  if id "$RUNTIME_USER" >/dev/null 2>&1; then
+    for attempt in 1 2 3; do
+      if userdel -r "$RUNTIME_USER" >/dev/null 2>&1; then
+        break
+      fi
+      pkill -9 -u "$RUNTIME_USER" >/dev/null 2>&1 || true
+      sleep 1
+    done
   fi
 fi
-if [ -n "$SSH_USER" ] && [ "$SSH_USER" != "root" ] && [ "$SSH_USER" != "$BOOTSTRAP_USER" ]; then
-  userdel -r "$SSH_USER" >/dev/null 2>&1 || true
-fi
+echo "[$(date -u +%FT%TZ)] cocalc deprovision complete"
 EOF_COCALC_DEPROVISION
 sudo chmod +x "$BOOTSTRAP_ROOT/bin/deprovision.sh"
 sudo chown "$BOOTSTRAP_USER":"$BOOTSTRAP_USER" "$BOOTSTRAP_ROOT/bin/deprovision.sh"

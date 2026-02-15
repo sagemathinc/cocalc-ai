@@ -167,6 +167,7 @@ src/.claude/settings.local.json
 junit.xml
 src/packages/frontend/test-results/
 src/packages/frontend/playwright-report/
+src/.local/
 
 
 sea-prep.blob

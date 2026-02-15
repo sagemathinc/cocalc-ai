@@ -287,8 +287,23 @@ export class SubvolumeRustic {
 
   // Snapshot compat api, which is useful for rolling backups.
 
-  create = async (_name?: string, { limit }: { limit?: number } = {}) => {
-    await this.backup({ limit });
+  create = async (
+    _name?: string,
+    {
+      limit,
+      timeout,
+      tags,
+      progress,
+      index,
+    }: {
+      timeout?: number;
+      limit?: number;
+      tags?: string[];
+      progress?: (update: RusticProgressUpdate) => void;
+      index?: { project_id: string; enabled?: boolean };
+    } = {},
+  ) => {
+    await this.backup({ limit, timeout, tags, progress, index });
   };
 
   readdir = async (): Promise<string[]> => {
