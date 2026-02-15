@@ -475,10 +475,29 @@ export class SandboxedFilesystem {
     const message =
       typeof err?.message === "string" ? err.message : String(err ?? "unknown");
     const m = message.match(/^([A-Z][A-Z0-9_]+):\s*(.*)$/);
-    if (!m) {
-      return { message };
+    if (m) {
+      return { code: m[1], message: m[2] };
     }
-    return { code: m[1], message: m[2] };
+    const osErr = message.match(/\(os error (\d+)\)/i);
+    if (osErr) {
+      const errno = parseInt(osErr[1], 10);
+      const code = {
+        1: "EPERM",
+        2: "ENOENT",
+        13: "EACCES",
+        17: "EEXIST",
+        18: "EXDEV",
+        20: "ENOTDIR",
+        21: "EISDIR",
+        22: "EINVAL",
+        39: "ENOTEMPTY",
+        40: "ELOOP",
+      }[errno];
+      if (code) {
+        return { code, message };
+      }
+    }
+    return { message };
   }
 
   private throwOpenAt2PathError(path: string, err: any): never {
@@ -496,6 +515,9 @@ export class SandboxedFilesystem {
       err instanceof Error ? err : new Error(parsed.message);
     if (code != null) {
       e.code = code;
+      if (typeof e.message === "string" && !e.message.includes(code)) {
+        e.message = `${code}: ${parsed.message}`;
+      }
     }
     if (e.path == null) {
       e.path = path;
