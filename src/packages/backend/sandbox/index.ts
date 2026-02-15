@@ -1566,84 +1566,155 @@ export class SandboxedFilesystem {
     const p = this.unsafeMode ? pathInSandbox : await this.safeAbsPath(path);
     if (isPatchRequest(data)) {
       const encoding = data.encoding ?? "utf8";
+      const normalizedEncoding = encoding === "utf-8" ? "utf8" : encoding;
+      const openAt2Root = this.getOpenAt2Root();
+      const rel = await this.getOpenAt2RelativePath(path);
       let current: string;
-      let handle: Awaited<ReturnType<typeof open>> | undefined;
+      let openReadFd: number | null = null;
+      if (
+        openAt2Root != null &&
+        typeof openAt2Root.openRead === "function" &&
+        rel != null
+      ) {
+        try {
+          openReadFd = openAt2Root.openRead(rel);
+        } catch (err) {
+          const { code } = this.parseOpenAt2Error(err);
+          if (code === "ENOENT") {
+            const e: NodeJS.ErrnoException = new Error(
+              "Mismatched base version for patch write",
+            );
+            e.code = "ETAG_MISMATCH";
+            e.path = p;
+            throw e;
+          }
+          if (code !== "ENOSYS" && code !== "EINVAL") {
+            this.throwOpenAt2PathError(path, err);
+          }
+        }
+      }
+      if (openReadFd != null) {
+        try {
+          current = (await readFileByFd(openReadFd, encoding)) as string;
+        } finally {
+          try {
+            await closeFd(openReadFd);
+          } catch {}
+        }
+      } else {
+        let handle: Awaited<ReturnType<typeof open>> | undefined;
+        try {
+          const opened = await this.openVerifiedHandle({
+            path,
+            flags: constants.O_RDONLY,
+          });
+          handle = opened.handle;
+          current = (await handle.readFile({ encoding })) as string;
+        } catch (err: any) {
+          if (err?.code === "ENOENT") {
+            err.code = "ETAG_MISMATCH";
+          }
+          throw err;
+        } finally {
+          if (handle != null) {
+            try {
+              await handle.close();
+            } catch {}
+          }
+        }
+      }
+      const currentHash = createHash("sha256")
+        .update(Buffer.from(current, normalizedEncoding))
+        .digest("hex");
+      if (currentHash !== data.sha256) {
+        const err: NodeJS.ErrnoException = new Error(
+          "Mismatched base version for patch write",
+        );
+        err.code = "ETAG_MISMATCH";
+        err.path = p;
+        throw err;
+      }
+      let compressedPatch: CompressedPatch;
       try {
-        const opened = await this.openVerifiedHandle({
+        compressedPatch =
+          typeof data.patch === "string"
+            ? (JSON.parse(data.patch) as CompressedPatch)
+            : data.patch;
+      } catch {
+        const err: NodeJS.ErrnoException = new Error(
+          "Invalid patch format for writeFile",
+        );
+        err.code = "EINVAL";
+        err.path = p;
+        throw err;
+      }
+      if (!Array.isArray(compressedPatch)) {
+        const err: NodeJS.ErrnoException = new Error(
+          "Invalid patch payload for writeFile",
+        );
+        err.code = "EINVAL";
+        err.path = p;
+        throw err;
+      }
+      const [patched, clean] = apply_patch(compressedPatch, current);
+      if (!clean) {
+        const err: NodeJS.ErrnoException = new Error(
+          "Failed to apply patch cleanly",
+        );
+        err.code = "PATCH_FAILED";
+        err.path = p;
+        throw err;
+      }
+      const encoded = Buffer.from(patched, normalizedEncoding);
+      let openWriteFd: number | null = null;
+      if (
+        openAt2Root != null &&
+        typeof openAt2Root.openWrite === "function" &&
+        rel != null
+      ) {
+        try {
+          openWriteFd = openAt2Root.openWrite(rel, false, true, false, 0o666);
+        } catch (err) {
+          const { code } = this.parseOpenAt2Error(err);
+          if (code === "ENOENT") {
+            const e: NodeJS.ErrnoException = new Error(
+              "Mismatched base version for patch write",
+            );
+            e.code = "ETAG_MISMATCH";
+            e.path = p;
+            throw e;
+          }
+          if (code !== "ENOSYS" && code !== "EINVAL") {
+            this.throwOpenAt2PathError(path, err);
+          }
+        }
+      }
+      if (openWriteFd != null) {
+        try {
+          await writeFileByFd(openWriteFd, encoded);
+        } finally {
+          try {
+            await closeFd(openWriteFd);
+          } catch {}
+        }
+      } else {
+        const { handle } = await this.openVerifiedHandle({
           path,
           flags: constants.O_RDWR,
         });
-        handle = opened.handle;
-        current = (await handle.readFile({ encoding })) as string;
-      } catch (err: any) {
-        if (err?.code === "ENOENT") {
-          err.code = "ETAG_MISMATCH";
-        }
-        throw err;
-      }
-      try {
-        const normalizedEncoding = encoding === "utf-8" ? "utf8" : encoding;
-        const currentHash = createHash("sha256")
-          .update(Buffer.from(current, normalizedEncoding))
-          .digest("hex");
-        if (currentHash !== data.sha256) {
-          const err: NodeJS.ErrnoException = new Error(
-            "Mismatched base version for patch write",
-          );
-          err.code = "ETAG_MISMATCH";
-          err.path = p;
-          throw err;
-        }
-        let compressedPatch: CompressedPatch;
         try {
-          compressedPatch =
-            typeof data.patch === "string"
-              ? (JSON.parse(data.patch) as CompressedPatch)
-              : data.patch;
-        } catch {
-          const err: NodeJS.ErrnoException = new Error(
-            "Invalid patch format for writeFile",
-          );
-          err.code = "EINVAL";
-          err.path = p;
-          throw err;
+          await handle.truncate(0);
+          await handle.write(encoded, 0, encoded.length, 0);
+        } finally {
+          await handle.close();
         }
-        if (!Array.isArray(compressedPatch)) {
-          const err: NodeJS.ErrnoException = new Error(
-            "Invalid patch payload for writeFile",
-          );
-          err.code = "EINVAL";
-          err.path = p;
-          throw err;
-        }
-        const [patched, clean] = apply_patch(compressedPatch, current);
-        if (!clean) {
-          const err: NodeJS.ErrnoException = new Error(
-            "Failed to apply patch cleanly",
-          );
-          err.code = "PATCH_FAILED";
-          err.path = p;
-          throw err;
-        }
-        if (handle == null) {
-          throw new Error("missing file handle for patch write");
-        }
-        await handle.truncate(0);
-        const encoded = Buffer.from(patched, normalizedEncoding);
-        await handle.write(encoded, 0, encoded.length, 0);
-        if (saveLast) {
-          this.lastOnDisk.set(p, patched);
-          this.lastOnDiskHash.set(`${p}-${sha1(patched)}`, true);
-        }
-        if (saveLast) {
-          globalSyncFsService.recordLocalWrite(p, patched, true);
-        }
-      } finally {
-        if (handle != null) {
-          try {
-            await handle.close();
-          } catch {}
-        }
+      }
+      if (saveLast) {
+        this.lastOnDisk.set(p, patched);
+        this.lastOnDiskHash.set(`${p}-${sha1(patched)}`, true);
+      }
+      if (saveLast) {
+        globalSyncFsService.recordLocalWrite(p, patched, true);
       }
       return;
     }
