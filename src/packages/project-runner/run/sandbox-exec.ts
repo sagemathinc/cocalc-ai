@@ -38,31 +38,6 @@ export interface SandboxExecResult {
 
 const logger = getLogger("project-runner:sandbox-exec");
 
-function hasExplicitNetworkOverride(): boolean {
-  return !!`${process.env.COCALC_PROJECT_RUNNER_NETWORK ?? ""}`.trim();
-}
-
-function allowNetworkFallback(): boolean {
-  const raw = `${process.env.COCALC_PROJECT_RUNNER_NETWORK_FALLBACK ?? "true"}`
-    .trim()
-    .toLowerCase();
-  return !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
-}
-
-function slirpNetworkArgument(): string {
-  const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
-    .trim()
-    .toLowerCase();
-  const allowHostLoopback = !(
-    allowHostLoopbackRaw === "0" ||
-    allowHostLoopbackRaw === "false" ||
-    allowHostLoopbackRaw === "no"
-  );
-  return allowHostLoopback
-    ? "--network=slirp4netns:allow_host_loopback=true"
-    : "--network=slirp4netns";
-}
-
 // this will fail if never run on this project host, as documented above.
 async function getContainerImage(home: string): Promise<string> {
   return (await readFile(getImageNamePath(home))).toString().trim();
@@ -135,8 +110,6 @@ export async function sandboxExec({
   };
 
   let rootfs: string | undefined;
-  let selectedNetwork: string | undefined;
-  let networkArgIndex: number | undefined;
   try {
     if (useEphemeral) {
       const { home, scratch } = await localPath({
@@ -154,9 +127,7 @@ export async function sandboxExec({
       args.push("--security-opt", "no-new-privileges");
       // execFile timeout still applies; podman itself doesn't have a timeout flag.
       if (!noNetwork) {
-        selectedNetwork = networkArgument();
-        networkArgIndex = args.length;
-        args.push(selectedNetwork);
+        args.push(networkArgument());
       }
       args.push("--workdir", getWorkdir());
 
@@ -195,33 +166,7 @@ export async function sandboxExec({
     }
 
     logger.debug("podman", argsJoin(args));
-    let result = await runPodman(args);
-    const canFallback =
-      useEphemeral &&
-      !noNetwork &&
-      !!selectedNetwork &&
-      selectedNetwork.startsWith("--network=pasta") &&
-      !hasExplicitNetworkOverride() &&
-      allowNetworkFallback() &&
-      networkArgIndex != null;
-    if (canFallback && result.code !== 0) {
-      const fallbackNetwork = slirpNetworkArgument();
-      logger.warn(
-        "sandbox-exec podman run failed with pasta; retrying with slirp4netns fallback",
-        {
-          project_id,
-          selectedNetwork,
-          fallbackNetwork,
-          code: result.code,
-          stderr: result.stderr,
-        },
-      );
-      if (networkArgIndex != null) {
-        args[networkArgIndex] = fallbackNetwork;
-        result = await runPodman(args);
-      }
-    }
-    return result;
+    return await runPodman(args);
   } finally {
     if (rootfs) {
       // Decrement overlay mount refcount; actual unmount happens only when
