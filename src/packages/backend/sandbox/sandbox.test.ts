@@ -884,6 +884,34 @@ describe("openat2 motivation regressions", () => {
       code: "ENOENT",
     });
   });
+
+  it("cp recursive directory should fail closed if destination ancestor flips to symlink after validation", async () => {
+    const sandboxRoot = join(tempDir, "test-openat2-cp-dir-race");
+    const outsideRoot = join(tempDir, "test-openat2-cp-dir-race-outside");
+    await mkdir(sandboxRoot);
+    await mkdir(outsideRoot);
+
+    const fs = new SandboxedFilesystem(sandboxRoot, { unsafeMode: false });
+    await fs.mkdir("srcdir");
+    await fs.writeFile("srcdir/a.txt", "inside");
+    await fs.mkdir("nested");
+
+    const originalSafeAbsPaths = (fs as any).safeAbsPaths.bind(fs);
+    (fs as any).safeAbsPaths = async (paths: string[]) => {
+      const resolved = await originalSafeAbsPaths(paths);
+      const nestedPath = join(sandboxRoot, "nested");
+      rmSync(nestedPath, { force: true, recursive: true });
+      symlinkSync(outsideRoot, nestedPath);
+      return resolved;
+    };
+
+    await expect(
+      fs.cp("srcdir", "nested/copied-srcdir", { recursive: true }),
+    ).rejects.toThrow("outside of sandbox");
+    await expect(stat(join(outsideRoot, "copied-srcdir"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });
 
 describe("read only sandbox", () => {

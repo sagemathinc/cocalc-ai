@@ -1023,6 +1023,91 @@ export class SandboxedFilesystem {
     }
   };
 
+  private cpDirectoryRequiresRecursiveError = (
+    src: string,
+    dest: string,
+  ): NodeJS.ErrnoException => {
+    const err: NodeJS.ErrnoException = new Error(
+      `EISDIR: recursive option is required to copy a directory: '${src}' -> '${dest}'`,
+    );
+    err.code = "EISDIR";
+    err.path = src;
+    return err;
+  };
+
+  private cpUnsupportedTypeError = (src: string): NodeJS.ErrnoException => {
+    const err: NodeJS.ErrnoException = new Error(
+      `Unsupported source file type for cp in safe mode: '${src}'`,
+    );
+    err.code = "EINVAL";
+    err.path = src;
+    return err;
+  };
+
+  private cpDestNotDirectoryError = (
+    src: string,
+    dest: string,
+  ): NodeJS.ErrnoException => {
+    const err: NodeJS.ErrnoException = new Error(
+      `ENOTDIR: destination is not a directory for copy: '${src}' -> '${dest}'`,
+    );
+    err.code = "ENOTDIR";
+    err.path = dest;
+    return err;
+  };
+
+  private cpSafeDirectoryRecursive = async (
+    sourceDir: string,
+    destDir: string,
+  ): Promise<void> => {
+    try {
+      const destStat = await this.stat(destDir);
+      if (!destStat.isDirectory()) {
+        throw this.cpDestNotDirectoryError(sourceDir, destDir);
+      }
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        throw err;
+      }
+      await this.mkdir(destDir, { recursive: true });
+    }
+
+    const entries = (await this.readdir(sourceDir)) as string[];
+    for (const name of entries) {
+      const childSource = join(sourceDir, name);
+      const childDest = join(destDir, name);
+      const childStat = await this.stat(childSource);
+      if (childStat.isDirectory()) {
+        await this.cpSafeDirectoryRecursive(childSource, childDest);
+      } else if (childStat.isFile()) {
+        await this.copyFile(childSource, childDest);
+      } else {
+        throw this.cpUnsupportedTypeError(childSource);
+      }
+    }
+  };
+
+  private cpSafeOne = async (
+    source: string,
+    sourceAbs: string,
+    destInput: string,
+    options?: CopyOptions,
+  ): Promise<void> => {
+    const sourceStat = await this.stat(source);
+    if (sourceStat.isFile()) {
+      await this.copyFile(source, destInput);
+      return;
+    }
+    if (sourceStat.isDirectory()) {
+      if (!options?.recursive) {
+        throw this.cpDirectoryRequiresRecursiveError(source, destInput);
+      }
+      await this.cpSafeDirectoryRecursive(source, destInput);
+      return;
+    }
+    throw this.cpUnsupportedTypeError(sourceAbs);
+  };
+
   cp = async (src: string | string[], dest: string, options?: CopyOptions) => {
     const destInput = dest;
     const destPath = await this.resolveWritableSandboxPath(destInput);
@@ -1042,6 +1127,19 @@ export class SandboxedFilesystem {
 
     const srcInput = typeof src == "string" ? [src] : src;
     const v = await this.safeAbsPaths(srcInput);
+    if (!this.unsafeMode) {
+      for (let i = 0; i < v.length; i++) {
+        const source = srcInput[i];
+        const srcPath = v[i];
+        const target =
+          typeof src == "string"
+            ? destInput
+            : join(destInput, basename(srcPath));
+        await this.cpSafeOne(source, srcPath, target, options);
+      }
+      return;
+    }
+
     if (!options?.reflink) {
       // can use node cp:
       for (let i = 0; i < v.length; i++) {
