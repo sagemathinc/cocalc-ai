@@ -1505,8 +1505,13 @@ export class SandboxedFilesystem {
     this.assertWritable(path);
     await this.safeAbsPath(path);
     const recursive = !!(options != null && typeof options === "object" && options.recursive);
+    if (recursive) {
+      // Keep recursive rmdir fail-closed by routing through the hardened rm path.
+      await this.rm(path, { recursive: true, force: false });
+      return;
+    }
     const openAt2Target = await this.getOpenAt2PathTarget(path);
-    if (!recursive && openAt2Target != null) {
+    if (openAt2Target != null) {
       try {
         openAt2Target.root.rmdir(openAt2Target.rel);
         return;
