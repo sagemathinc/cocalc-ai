@@ -298,7 +298,9 @@ export async function claimLroOps({
                 AND (heartbeat_at IS NULL OR heartbeat_at < now() - ($2::text || ' milliseconds')::interval)
               )
             )
-          ORDER BY updated_at
+          ORDER BY
+            CASE WHEN status='queued' THEN 0 ELSE 1 END,
+            updated_at
           FOR UPDATE SKIP LOCKED
           LIMIT $3
         )

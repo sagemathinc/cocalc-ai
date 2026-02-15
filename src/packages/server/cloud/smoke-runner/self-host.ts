@@ -19,9 +19,9 @@ Typical usage from a node REPL:
 import { randomUUID } from "node:crypto";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
@@ -34,8 +34,9 @@ import {
 } from "@cocalc/server/conat/api/project-backups";
 import {
   createHost,
+  deleteHost,
   deleteHostInternal,
-  startHost,
+  startHostInternal,
 } from "@cocalc/server/conat/api/hosts";
 import deleteProject from "@cocalc/server/projects/delete";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
@@ -74,10 +75,12 @@ export type SelfHostMultipassSmokeOptions = {
   ssh_public_key_path?: string;
   cleanup_on_success?: boolean;
   cleanup_on_failure?: boolean;
+  verify_deprovision?: boolean;
   verify_backup_index_contents?: boolean;
   wait?: Partial<{
     ssh_ready: Partial<WaitOptions>;
     host_running: Partial<WaitOptions>;
+    host_deprovisioned: Partial<WaitOptions>;
     backup_indexed: Partial<WaitOptions>;
   }>;
   log?: (event: LogEvent) => void;
@@ -109,6 +112,10 @@ const DEFAULT_HOST_RUNNING_WAIT: WaitOptions = { intervalMs: 5000, attempts: 120
 const DEFAULT_BACKUP_INDEXED_WAIT: WaitOptions = {
   intervalMs: 3000,
   attempts: 80,
+};
+const DEFAULT_HOST_DEPROVISIONED_WAIT: WaitOptions = {
+  intervalMs: 5000,
+  attempts: 120,
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -340,6 +347,7 @@ export async function runSelfHostMultipassBackupSmoke(
   const vmDiskGb = opts.vm_disk_gb ?? 40;
   const cleanupOnSuccess = opts.cleanup_on_success ?? true;
   const cleanupOnFailure = opts.cleanup_on_failure ?? false;
+  const verifyDeprovision = opts.verify_deprovision ?? true;
   const verifyBackupIndexContents = opts.verify_backup_index_contents ?? true;
   const waitSshReady = resolveWait(opts.wait?.ssh_ready, DEFAULT_SSH_READY_WAIT);
   const waitHostRunning = resolveWait(
@@ -349,6 +357,10 @@ export async function runSelfHostMultipassBackupSmoke(
   const waitBackupIndexed = resolveWait(
     opts.wait?.backup_indexed,
     DEFAULT_BACKUP_INDEXED_WAIT,
+  );
+  const waitHostDeprovisioned = resolveWait(
+    opts.wait?.host_deprovisioned,
+    DEFAULT_HOST_DEPROVISIONED_WAIT,
   );
 
   let tempDir: string | undefined;
@@ -360,7 +372,7 @@ export async function runSelfHostMultipassBackupSmoke(
   let project_id: string | undefined;
   let backup_id: string | undefined;
   let backup_op_id: string | undefined;
-  const sentinelPath = ".smoke/self-host-backup.txt";
+  const sentinelPath = "smoke-self-host-backup/self-host-backup.txt";
   const sentinelValue = `self-host-smoke:${Date.now()}:${randomUUID()}`;
   const debug_hints = {
     host_log: "/mnt/cocalc/data/log",
@@ -431,11 +443,15 @@ export async function runSelfHostMultipassBackupSmoke(
     });
 
     await runStep("launch_multipass_vm", async () => {
-      tempDir = await mkdtemp(join(tmpdir(), "cocalc-self-host-smoke-"));
+      const smokeTmpBase = join(homedir(), "cocalc-smoke-runner");
+      await mkdir(smokeTmpBase, { recursive: true });
+      tempDir = await mkdtemp(join(smokeTmpBase, "cocalc-self-host-smoke-"));
       cloudInitPath = join(tempDir, "cloud-init.yaml");
       const cloudInit = `#cloud-config
-ssh_authorized_keys:
-  - ${quoteYamlSingle(sshPublicKey)}
+users:
+  - name: ${vmUser}
+    ssh_authorized_keys:
+      - ${quoteYamlSingle(sshPublicKey)}
 `;
       await writeFile(cloudInitPath, cloudInit, "utf8");
       const args = [
@@ -479,7 +495,7 @@ ssh_authorized_keys:
             cpu: vmCpus,
             ram_gb: vmMemoryGb,
             self_host_mode: "local",
-            self_host_kind: "multipass",
+            self_host_kind: "direct",
             self_host_ssh_target: sshTarget,
           },
         },
@@ -489,7 +505,7 @@ ssh_authorized_keys:
 
     await runStep("start_host", async () => {
       if (!host_id) throw new Error("missing host_id");
-      await startHost({ account_id, id: host_id });
+      await startHostInternal({ account_id, id: host_id });
       await waitForHostStatus({
         host_id,
         allowed: ["running", "active"],
@@ -503,7 +519,7 @@ ssh_authorized_keys:
         account_id,
         title: `self-host backup smoke ${vmName}`,
         host_id,
-        start: true,
+        start: false,
       });
     });
 
@@ -518,7 +534,7 @@ ssh_authorized_keys:
         client: conatWithProjectRouting(),
         subject: fsSubject({ project_id }),
       });
-      await client.mkdir(".smoke", { recursive: true });
+      await client.mkdir(dirname(sentinelPath), { recursive: true });
       await client.writeFile(sentinelPath, sentinelValue);
     });
 
@@ -547,7 +563,7 @@ ssh_authorized_keys:
           account_id,
           project_id,
           id: backup_id,
-          path: ".smoke",
+          path: dirname(sentinelPath),
         })) as any;
         const children = Array.isArray(listing?.children) ? listing.children : [];
         const found = children.some((entry: any) =>
@@ -556,6 +572,18 @@ ssh_authorized_keys:
         if (!found) {
           throw new Error("backup index did not include sentinel file");
         }
+      });
+    }
+
+    if (verifyDeprovision) {
+      await runStep("deprovision_host", async () => {
+        if (!host_id) throw new Error("missing host_id");
+        await deleteHost({ account_id, id: host_id, skip_backups: true });
+        await waitForHostStatus({
+          host_id,
+          allowed: ["deprovisioned"],
+          wait: waitHostDeprovisioned,
+        });
       });
     }
 
