@@ -1401,6 +1401,20 @@ export class SandboxedFilesystem {
   ) => {
     await Promise.all([this.safeAbsPath(src), this.safeAbsPath(dest)]);
     const overwrite = !!options?.overwrite;
+    if (this.isOpenAt2Enabled()) {
+      const [srcResolved, destResolved] = await Promise.all([
+        this.resolvePathInSandbox(src),
+        this.resolvePathInSandbox(dest),
+      ]);
+      if (srcResolved.sandboxBasePath !== destResolved.sandboxBasePath) {
+        const exdev: NodeJS.ErrnoException = new Error(
+          "cross-base move is not supported",
+        );
+        exdev.code = "EXDEV";
+        exdev.path = dest;
+        throw exdev;
+      }
+    }
     const openAt2Target = await this.getOpenAt2DualPathTarget(src, dest);
     if (openAt2Target != null) {
       if (!overwrite && typeof openAt2Target.root.renameNoReplace === "function") {
