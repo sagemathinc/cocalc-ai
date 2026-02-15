@@ -56,6 +56,54 @@ const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
 const DEFAULT_PID_LIMIT = 4096;
 const MAX_BACKUPS_PER_PROJECT = 30;
+const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
+const LRO_PUBLISH_RETRY_DELAY_MS = 500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function publishLroSummaryWithRetry({
+  scope_type,
+  scope_id,
+  summary,
+  context,
+}: {
+  scope_type: "project" | "host";
+  scope_id: string;
+  summary: LroSummary;
+  context: string;
+}): Promise<boolean> {
+  for (let attempt = 1; attempt <= LRO_PUBLISH_RETRY_ATTEMPTS; attempt++) {
+    try {
+      await publishLroSummary({ scope_type, scope_id, summary });
+      if (attempt > 1) {
+        logger.info("lro summary publish recovered", {
+          context,
+          op_id: summary.op_id,
+          attempt,
+        });
+      }
+      return true;
+    } catch (err) {
+      logger.warn("lro summary publish failed", {
+        context,
+        op_id: summary.op_id,
+        attempt,
+        err: `${err}`,
+      });
+      if (attempt < LRO_PUBLISH_RETRY_ATTEMPTS) {
+        await delay(LRO_PUBLISH_RETRY_DELAY_MS);
+      }
+    }
+  }
+  logger.warn("lro summary publish exhausted retries", {
+    context,
+    op_id: summary.op_id,
+    attempts: LRO_PUBLISH_RETRY_ATTEMPTS,
+  });
+  return false;
+}
 
 function normalizeRunQuota(run_quota?: any): any | undefined {
   if (run_quota == null) return undefined;
@@ -683,6 +731,12 @@ export async function createBackup({
 
   void (async () => {
     const started = Date.now();
+    await publishLroSummaryWithRetry({
+      scope_type: "project",
+      scope_id: project_id,
+      summary: baseSummary,
+      context: "backup-running",
+    });
     try {
       const backup = await fileServer(project_id).createBackup({
         project_id,
@@ -691,7 +745,7 @@ export async function createBackup({
       });
       const duration_ms = Date.now() - started;
       const finished = new Date();
-      await publishLroSummary({
+      await publishLroSummaryWithRetry({
         scope_type: "project",
         scope_id: project_id,
         summary: {
@@ -713,10 +767,11 @@ export async function createBackup({
           finished_at: finished,
           updated_at: finished,
         },
+        context: "backup-succeeded",
       });
     } catch (err) {
       const finished = new Date();
-      await publishLroSummary({
+      await publishLroSummaryWithRetry({
         scope_type: "project",
         scope_id: project_id,
         summary: {
@@ -727,6 +782,7 @@ export async function createBackup({
           finished_at: finished,
           updated_at: finished,
         },
+        context: "backup-failed",
       });
     }
   })();
@@ -834,6 +890,12 @@ export async function restoreBackup({
 
   void (async () => {
     const started = Date.now();
+    await publishLroSummaryWithRetry({
+      scope_type: "project",
+      scope_id: project_id,
+      summary: baseSummary,
+      context: "restore-running",
+    });
     try {
       await fileServer(project_id).restoreBackup({
         project_id,
@@ -844,7 +906,7 @@ export async function restoreBackup({
       });
       const duration_ms = Date.now() - started;
       const finished = new Date();
-      await publishLroSummary({
+      await publishLroSummaryWithRetry({
         scope_type: "project",
         scope_id: project_id,
         summary: {
@@ -855,10 +917,11 @@ export async function restoreBackup({
           finished_at: finished,
           updated_at: finished,
         },
+        context: "restore-succeeded",
       });
     } catch (err) {
       const finished = new Date();
-      await publishLroSummary({
+      await publishLroSummaryWithRetry({
         scope_type: "project",
         scope_id: project_id,
         summary: {
@@ -869,6 +932,7 @@ export async function restoreBackup({
           finished_at: finished,
           updated_at: finished,
         },
+        context: "restore-failed",
       });
     }
   })();
