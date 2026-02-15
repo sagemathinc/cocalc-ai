@@ -297,8 +297,11 @@ export async function buildBootstrapScripts(
     project_hosts_bootstrap_channel,
     project_hosts_bootstrap_version,
   } = await getServerSettings();
+  const forcedSoftwareBaseUrl =
+    process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() || "";
   const softwareBaseUrl = normalizeSoftwareBaseUrl(
-    project_hosts_software_base_url ||
+    forcedSoftwareBaseUrl ||
+      project_hosts_software_base_url ||
       process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ||
       "",
   );

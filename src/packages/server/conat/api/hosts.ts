@@ -2724,8 +2724,12 @@ export async function upgradeHostSoftwareInternal({
     }
   }
   const { project_hosts_software_base_url } = await getServerSettings();
+  const forcedSoftwareBaseUrl =
+    process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() ||
+    undefined;
   const resolvedBaseUrl =
     requestedBaseUrl ??
+    forcedSoftwareBaseUrl ??
     project_hosts_software_base_url ??
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
     undefined;
