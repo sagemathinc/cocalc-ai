@@ -921,6 +921,38 @@ describe("rootfs option sandbox", () => {
     await expect(readFile(join(home, "tmp", "from-root.txt"), "utf8")).rejects.toThrow();
   });
 
+  it("openat2 hardening applies to rootfs absolute paths", async () => {
+    const outsidePath = join(tempDir, "test-rootfs-openat2-outside.txt");
+    await writeFile(outsidePath, "outside-secret");
+    await fs.writeFile("/tmp/race-target.txt", "inside");
+
+    const openAt2Root = (fs as any).getOpenAt2RootForBase?.(rootfs);
+    if (openAt2Root == null || typeof openAt2Root.openWrite !== "function") {
+      return;
+    }
+
+    const originalOpenWrite = openAt2Root.openWrite.bind(openAt2Root);
+    openAt2Root.openWrite = (
+      relPath: string,
+      create?: boolean,
+      truncate?: boolean,
+      append?: boolean,
+      mode?: number,
+    ) => {
+      if (relPath === "tmp/race-target.txt") {
+        const targetPath = join(rootfs, "tmp", "race-target.txt");
+        rmSync(targetPath, { force: true, recursive: true });
+        symlinkSync(outsidePath, targetPath);
+      }
+      return originalOpenWrite(relPath, create, truncate, append, mode);
+    };
+
+    await expect(fs.writeFile("/tmp/race-target.txt", "inside-updated")).rejects.toThrow(
+      "outside of sandbox",
+    );
+    expect(await readFile(outsidePath, "utf8")).toBe("outside-secret");
+  });
+
   it("keeps /root and relative paths mapped to home path when rootfs exists", async () => {
     await fs.writeFile("/root/home-abs.txt", "from-home-abs");
     await fs.writeFile("home-rel.txt", "from-home-rel");
