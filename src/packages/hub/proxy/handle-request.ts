@@ -20,22 +20,6 @@ export default function init({
   isPersonal,
   projectProxyHandlersPromise,
 }: Options) {
-  const escapeHtml = (value: unknown): string => {
-    return `${value ?? ""}`
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
-  };
-
-  const errorMessage = (err: unknown): string => {
-    if (err instanceof Error) {
-      return err.message;
-    }
-    return `${err}`;
-  };
-
   async function handleProxyRequest(req, res): Promise<void> {
     const dbg = (...args) => {
       // for low level debugging -- silly isn't logged by default
@@ -118,13 +102,10 @@ export default function init({
     try {
       await handleProxyRequest(req, res);
     } catch (err) {
-      // SECURITY: req.url and err content may contain attacker-controlled input.
-      // Never reflect either directly into HTML; this path runs for internet
-      // requests and is visible in browser responses.
-      const msg = `WARNING: error proxying request ${req.url} -- ${err}`;
-      const body = `<!doctype html><meta charset="utf-8"><h1>Proxy request failed</h1><p>Request: <code>${escapeHtml(req.url)}</code></p><pre>${escapeHtml(
-        errorMessage(err),
-      )}</pre>`;
+      // SECURITY: this path handles internet-facing requests.  Never reflect
+      // internal error text to clients.
+      const body =
+        "<!doctype html><meta charset=\"utf-8\"><h1>Proxy request failed</h1><p>The request could not be completed.</p>";
       try {
         // this will fail if handleProxyRequest already wrote a header, so we
         // try/catch it.
@@ -138,7 +119,10 @@ export default function init({
       } catch {}
       // Not something to log as an error -- just debug; it's normal for it to happen, e.g., when
       // a project isn't running.
-      logger.debug(msg);
+      logger.debug("proxy request failed", {
+        url: req.url,
+        err: err instanceof Error ? err.message : `${err}`,
+      });
     }
   };
 }
