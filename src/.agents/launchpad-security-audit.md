@@ -76,9 +76,11 @@ Status labels:
        - `X-Permitted-Cross-Domain-Policies: none`
        - `Referrer-Policy: strict-origin-when-cross-origin`
 
-9. (`pending`) API v2 cookie parsing is brittle for malformed cookie fragments.
+9. (`done`) API v2 cookie parsing is brittle for malformed cookie fragments.
    - Code: [src/packages/next/lib/api-v2-router.ts](./src/packages/next/lib/api-v2-router.ts)
-   - Issue: direct `decodeURIComponent` without guard.
+   - Status details:
+     - Cookie component decoding now catches malformed URI encoding.
+     - Invalid fragments no longer throw and break API request handling.
 
 ---
 
