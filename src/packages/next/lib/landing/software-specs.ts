@@ -5,6 +5,7 @@
 
 import { keys, map, sortBy, zipObject } from "lodash";
 import { promises } from "node:fs";
+import { join } from "node:path";
 
 import {
   SOFTWARE_ENV_NAMES,
@@ -22,7 +23,10 @@ import {
   SoftwareSpec,
 } from "./types";
 
-const { readFile } = promises;
+const { mkdir, readFile, stat, writeFile } = promises;
+
+const SOFTWARE_CACHE_DIR = join(process.cwd(), "lib", "software-inventory");
+const SOFTWARE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 async function makeObject(keys, fn) {
   return zipObject(keys, await Promise.all(map(keys, fn)));
@@ -38,7 +42,37 @@ async function file2json(path: string): Promise<any> {
   return JSON.parse(data);
 }
 
+async function readCachedInventory(
+  name: SoftwareEnvNames,
+  opts: { allowStale: boolean },
+): Promise<EnvData | null> {
+  const cachePath = join(SOFTWARE_CACHE_DIR, `${name}.json`);
+  try {
+    const info = await stat(cachePath);
+    const isFresh = Date.now() - info.mtimeMs < SOFTWARE_CACHE_TTL_MS;
+    if (!isFresh && !opts.allowStale) {
+      return null;
+    }
+    return (await file2json(cachePath)) as EnvData;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedInventory(
+  name: SoftwareEnvNames,
+  data: EnvData,
+): Promise<void> {
+  const cachePath = join(SOFTWARE_CACHE_DIR, `${name}.json`);
+  await mkdir(SOFTWARE_CACHE_DIR, { recursive: true });
+  await writeFile(cachePath, JSON.stringify(data));
+}
+
 async function downloadInventoryJson(name: SoftwareEnvNames): Promise<EnvData> {
+  const cached = await readCachedInventory(name, { allowStale: false });
+  if (cached != null) {
+    return cached;
+  }
   try {
     const raw = await fetch(SOFTWARE_URLS[name]);
     if (!raw.ok) {
@@ -46,10 +80,15 @@ async function downloadInventoryJson(name: SoftwareEnvNames): Promise<EnvData> {
     } else {
       const data = await raw.json();
       console.log(`Downloaded software inventory ${name} successfully`);
-      return data;
+      await writeCachedInventory(name, data);
+      return data as EnvData;
     }
   } catch (err) {
     console.log(`Problem downloading: ${err}`);
+  }
+  const stale = await readCachedInventory(name, { allowStale: true });
+  if (stale != null) {
+    return stale;
   }
   return SOFTWARE_FALLBACK[name] as EnvData;
 }
@@ -90,9 +129,9 @@ const fetchSoftwareSpec = reuseInFlight(async function () {
  * get a cached copy of the software specs
  */
 async function getSoftwareInfo(name: SoftwareEnvNames): Promise<EnvData> {
-  // if SoftwareEnvSpecs is not set or not older than one hour, fetch it
+  // if SoftwareEnvSpecs is not set or not older than 24 hours, fetch it
   if (SoftwareEnvSpecs != null) {
-    if (SoftwareEnvDownloadedTimestamp > hours_ago(1).getTime()) {
+    if (SoftwareEnvDownloadedTimestamp > hours_ago(24).getTime()) {
       // fresh enough, just return it
       return SoftwareEnvSpecs[name];
     } else {

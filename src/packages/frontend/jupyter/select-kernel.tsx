@@ -16,7 +16,7 @@ import {
   Spin,
   Tabs,
   Tooltip,
-  Typography,
+  Typography, Space,
 } from "antd";
 import { Map as ImmutableMap, List, OrderedMap } from "immutable";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -220,7 +220,7 @@ export function KernelSelector({ actions }: KernelSelectorProps) {
   function render_no_kernels(): Rendered[] {
     return [
       <Descriptions.Item key="no_kernels" label={<Icon name="ban" />}>
-        <Button.Group>
+        <Space.Compact>
           <Paragraph>
             There are no kernels available. <SiteName /> searches the standard
             paths of Jupyter{" "}
@@ -245,7 +245,7 @@ export function KernelSelector({ actions }: KernelSelectorProps) {
             </a>
             .
           </Paragraph>
-        </Button.Group>
+        </Space.Compact>
       </Descriptions.Item>,
     ];
   }
@@ -263,9 +263,9 @@ export function KernelSelector({ actions }: KernelSelectorProps) {
 
       all.push(
         <Descriptions.Item key={lang} label={label}>
-          <Button.Group style={{ display: "flex", flexWrap: "wrap" }}>
+          <Space.Compact style={{ display: "flex", flexWrap: "wrap" }}>
             {kernels}
-          </Button.Group>
+          </Space.Compact>
         </Descriptions.Item>,
       );
       return true;

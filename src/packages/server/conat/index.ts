@@ -22,6 +22,7 @@ import { startRestoreLroWorker } from "@cocalc/server/projects/restore-worker";
 import { startHostLroWorker } from "@cocalc/server/hosts/start-worker";
 import { startSharePublishLroWorker } from "@cocalc/server/shares/publish-worker";
 import { ensureShareWorkerProvisioned } from "@cocalc/server/shares/worker-provision";
+import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
 
 export { loadConatConfiguration };
 
@@ -57,7 +58,7 @@ export async function initConatApi() {
   startSharePublishLroWorker();
   ensureShareWorkerProvisioned({ reason: "startup" }).catch(() => undefined);
   initLLM();
-  if (process.env.COCALC_MODE !== "launchpad") {
+  if (!isLaunchpadProduct()) {
     const { init: initProjectRunner } = lazyRequire("./project/run") as {
       init: () => Promise<void>;
     };
@@ -71,7 +72,7 @@ export async function initConatApi() {
     };
     initProjectRunnerLoadBalancer();
   } else {
-    logger.info("launchpad mode: skipping project runner services");
+    logger.info("launchpad product: skipping project runner services");
   }
   createTimeService();
 }

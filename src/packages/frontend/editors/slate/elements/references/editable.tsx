@@ -13,9 +13,8 @@ is good, but it could be confusing.  Undo will put them back though.
 */
 
 import { register } from "../register";
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
-import infoToMode from "../code-block/info-to-mode";
 import { Tooltip } from "antd";
+import { highlightCodeHtml } from "../code-block/prism";
 
 function fromSlate({ node }) {
   if (!node.value) return "";
@@ -44,11 +43,12 @@ register({
             References
           </Tooltip>
         </div>
-        <CodeMirrorStatic
-          no_border
-          style={{ marginBottom: 0 }}
-          options={{ mode: infoToMode("md"), lineWrapping: true }}
-          value={fromSlate({ node: element })}
+        <pre
+          className="cocalc-slate-code-block"
+          style={{ margin: 0 }}
+          dangerouslySetInnerHTML={{
+            __html: highlightCodeHtml(fromSlate({ node: element }), "md"),
+          }}
         />
         {children}
       </div>

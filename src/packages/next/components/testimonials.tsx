@@ -128,7 +128,6 @@ I just found out that my CoCalc class got by far the best course evaluations for
     name: "Will Conley",
     image: conley,
     date: "Fall 2016",
-    website: "https://www.math.ucla.edu/~conley/",
     affiliation: {
       url: "https://www.math.ucla.edu/",
       name: "Department of Mathematics, University of California, Los Angeles",

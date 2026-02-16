@@ -20,7 +20,17 @@ export function init(redux, configuration: CustomizeState) {
   redux.getActions("projects").setState({
     open_projects: [project_id],
   });
-  redux.getActions("page").set_active_tab(project_id);
+  void redux
+    .getActions("projects")
+    .open_project({
+      project_id,
+      target: "project-home",
+      switch_to: true,
+      restore_session: false,
+    })
+    .catch((err) => {
+      console.warn("lite/init: failed to open default project-home target", err);
+    });
 
   if (configuration.remote_sync) {
     initSyncDoc();

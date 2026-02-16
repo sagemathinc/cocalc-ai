@@ -85,6 +85,10 @@ export const projects = {
   getSshKeys: authFirstRequireProject,
 
   moveProject: authFirstRequireAccount,
+  codexDeviceAuthStart: authFirstRequireAccount,
+  codexDeviceAuthStatus: authFirstRequireAccount,
+  codexDeviceAuthCancel: authFirstRequireAccount,
+  codexUploadAuthFile: authFirstRequireAccount,
 };
 
 export type AddCollaborator =
@@ -399,4 +403,52 @@ export interface Projects {
     service: string;
     stream_name: string;
   }>;
+
+  codexDeviceAuthStart: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<{
+    id: string;
+    accountId: string;
+    state: "pending" | "completed" | "failed" | "canceled";
+    verificationUrl?: string;
+    userCode?: string;
+    output: string;
+    startedAt: number;
+    updatedAt: number;
+    exitCode?: number | null;
+    signal?: string | null;
+    error?: string;
+  }>;
+
+  codexDeviceAuthStatus: (opts: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) => Promise<{
+    id: string;
+    accountId: string;
+    state: "pending" | "completed" | "failed" | "canceled";
+    verificationUrl?: string;
+    userCode?: string;
+    output: string;
+    startedAt: number;
+    updatedAt: number;
+    exitCode?: number | null;
+    signal?: string | null;
+    error?: string;
+  }>;
+
+  codexDeviceAuthCancel: (opts: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) => Promise<{ id: string; canceled: boolean }>;
+
+  codexUploadAuthFile: (opts: {
+    account_id?: string;
+    project_id: string;
+    filename?: string;
+    content: string;
+  }) => Promise<{ ok: true; codexHome: string; bytes: number }>;
 }

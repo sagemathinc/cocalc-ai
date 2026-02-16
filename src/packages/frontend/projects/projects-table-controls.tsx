@@ -92,12 +92,15 @@ export function ProjectsTableControls({
 
   function handlePressEnter() {
     if (visible_projects.length > 0) {
-      actions.open_project({ project_id: visible_projects[0] });
+      actions.open_project({
+        project_id: visible_projects[0],
+        target: "project-home",
+      });
     }
   }
 
   return (
-    <Space style={CONTROLS_STYLE} direction="horizontal">
+    <Space style={CONTROLS_STYLE} orientation="horizontal">
       {/* Left section: Search and Hashtags */}
       <Space wrap ref={searchRef}>
         <Input.Search

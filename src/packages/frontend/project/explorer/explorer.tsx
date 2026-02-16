@@ -42,10 +42,12 @@ import useFs from "@cocalc/frontend/project/listing/use-fs";
 import useListing, {
   type SortField,
 } from "@cocalc/frontend/project/listing/use-listing";
-import useBackupsListing from "@cocalc/frontend/project/listing/use-backups";
+import useBackupsListing, {
+  isBackupsPath,
+} from "@cocalc/frontend/project/listing/use-backups";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import filterListing from "@cocalc/frontend/project/listing/filter-listing";
 import ShowError from "@cocalc/frontend/components/error";
-import { MainConfiguration } from "@cocalc/frontend/project_configuration";
 import {
   getPublicFiles,
   useStrippedPublicPaths,
@@ -55,6 +57,7 @@ import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import { getSort, setSort } from "./config";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { lite } from "@cocalc/frontend/lite";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -111,7 +114,8 @@ export function Explorer() {
   )?.toJS();
   const checked_files = useTypedRedux({ project_id }, "checked_files");
   const configuration = useTypedRedux({ project_id }, "configuration");
-  const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
   const error = useTypedRedux({ project_id }, "error");
   const ext_selection = useTypedRedux({ project_id }, "ext_selection");
   const file_action = useTypedRedux({ project_id }, "file_action");
@@ -141,21 +145,29 @@ export function Explorer() {
     () =>
       getSort({
         project_id,
-        path: current_path,
+        path: effective_current_path,
       }),
-    [sort, current_path, project_id],
+    [sort, effective_current_path, project_id],
   );
 
   const fs = useFs({ project_id });
-  const isBackupsPath =
-    current_path === ".backups" || current_path?.startsWith(".backups/");
+  const inBackupsPath = isBackupsPath(effective_current_path);
+  const inSnapshotsPath = isSnapshotsPath(effective_current_path);
+  const homePath =
+    lite && typeof available_features?.homeDirectory === "string"
+      ? normalizeAbsolutePath(available_features.homeDirectory)
+      : "/root";
+  const listingPath =
+    inSnapshotsPath && !effective_current_path.startsWith("/")
+      ? normalizeAbsolutePath(effective_current_path, homePath)
+      : effective_current_path;
   let {
     refresh,
     listing,
     error: listingError,
   } = useListing({
-    fs: isBackupsPath ? null : fs,
-    path: current_path,
+    fs: inBackupsPath ? null : fs,
+    path: listingPath,
     ...sortDesc(active_file_sort),
     cacheId: actions?.getCacheId(),
     mask,
@@ -166,7 +178,7 @@ export function Explorer() {
     refresh: refreshBackups,
   } = useBackupsListing({
     project_id,
-    path: current_path,
+    path: effective_current_path,
     ...sortDesc(active_file_sort),
   });
   const backupOps = useTypedRedux({ project_id }, "backup_ops");
@@ -197,7 +209,7 @@ export function Explorer() {
       refreshBackups();
     }
   }, [backupOps, refreshBackups]);
-  if (isBackupsPath) {
+  if (inBackupsPath) {
     listing = backupsListing;
     listingError = backupsError;
     refresh = refreshBackups;
@@ -223,8 +235,8 @@ export function Explorer() {
     if (listing == null) {
       return new Set<string>();
     }
-    return getPublicFiles(listing, strippedPublicPaths, current_path);
-  }, [listing, current_path, strippedPublicPaths]);
+    return getPublicFiles(listing, strippedPublicPaths, effective_current_path);
+  }, [listing, effective_current_path, strippedPublicPaths]);
 
   const { val: clicked, inc: clickedOnExplorer } = useCounter();
   useEffect(() => {
@@ -240,15 +252,15 @@ export function Explorer() {
         return;
       }
       if (flyout && $(":focus").length > 0) {
-        return;
-      }
-      if (e.key == "ArrowUp") {
-        if (e.shiftKey || e.ctrlKey || e.metaKey) {
-          const path = dirname(current_path);
-          actions.open_directory(path == "." ? "" : path);
-        } else {
-          actions.decrement_selected_file_index();
+          return;
         }
+        if (e.key == "ArrowUp") {
+          if (e.shiftKey || e.ctrlKey || e.metaKey) {
+            const path = dirname(effective_current_path);
+            actions.open_directory(path == "." ? "/" : path);
+          } else {
+            actions.decrement_selected_file_index();
+          }
       } else if (e.key == "ArrowDown") {
         actions.increment_selected_file_index();
       } else if (e.key == "Enter") {
@@ -265,7 +277,7 @@ export function Explorer() {
         const x = listing?.[n];
         if (x != null) {
           const { isDir, name } = x;
-          const path = join(current_path, name);
+          const path = join(effective_current_path, name);
           if (isDir) {
             actions.open_directory(path);
           } else {
@@ -293,7 +305,7 @@ export function Explorer() {
     };
   }, [
     project_id,
-    current_path,
+    effective_current_path,
     listing,
     file_action,
     flyout,
@@ -322,7 +334,7 @@ export function Explorer() {
     actions.createFile({
       name: file_search ?? "",
       ext,
-      current_path: current_path,
+      current_path: effective_current_path,
       switch_over,
     });
     actions.setState({ file_search: "" });
@@ -331,7 +343,7 @@ export function Explorer() {
   const create_folder = (switch_over = true): void => {
     actions.createFolder({
       name: file_search ?? "",
-      current_path: current_path,
+      current_path: effective_current_path,
       switch_over,
     });
     actions.setState({ file_search: "" });
@@ -441,7 +453,7 @@ export function Explorer() {
                 ref={currentDirectoryRef}
                 className="cc-project-files-path-nav"
               >
-                <PathNavigator project_id={project_id} />
+                <PathNavigator project_id={project_id} showSourceSelector />
               </div>
             </div>
           </div>
@@ -455,8 +467,9 @@ export function Explorer() {
             >
               <div ref={newFileRef}>
                 <NewButton
+                  project_id={project_id}
                   file_search={file_search ?? ""}
-                  current_path={current_path}
+                  current_path={effective_current_path}
                   actions={actions}
                   create_file={create_file}
                   create_folder={create_folder}
@@ -470,7 +483,7 @@ export function Explorer() {
             <div style={{ flex: "1 1 auto" }} ref={searchAndTerminalBar}>
               <SearchBar
                 actions={actions}
-                current_path={current_path}
+                current_path={effective_current_path}
                 file_search={file_search ?? ""}
                 file_creation_error={file_creation_error}
                 create_file={create_file}
@@ -508,7 +521,7 @@ export function Explorer() {
                 listing={listing}
                 project_id={project_id}
                 checked_files={checked_files}
-                current_path={current_path}
+                current_path={effective_current_path}
                 project_map={project_map}
                 images={images}
                 actions={actions}
@@ -550,7 +563,7 @@ export function Explorer() {
               <ActionBox
                 file_action={file_action}
                 checked_files={checked_files}
-                current_path={current_path}
+                current_path={effective_current_path}
                 project_id={project_id}
                 actions={actions}
               />
@@ -574,7 +587,7 @@ export function Explorer() {
                 onClick={async () => {
                   const fs = actions?.fs();
                   try {
-                    await fs.mkdir(current_path, { recursive: true });
+                    await fs.mkdir(effective_current_path, { recursive: true });
                     refresh();
                   } catch (err) {
                     actions?.setState({ error: err });
@@ -601,7 +614,7 @@ export function Explorer() {
         >
           <FileUploadWrapper
             project_id={project_id}
-            dest_path={current_path}
+            dest_path={effective_current_path}
             config={{ clickable: ".upload-button" }}
             style={{
               flex: "1 0 auto",
@@ -621,19 +634,16 @@ export function Explorer() {
                   setSort({
                     column_name,
                     project_id,
-                    path: current_path,
+                    path: effective_current_path,
                   })
                 }
                 listing={listing}
                 file_search={file_search}
                 checked_files={checked_files}
-                current_path={current_path}
+                current_path={effective_current_path}
                 actions={actions}
                 project_id={project_id}
                 shiftIsDown={shiftIsDown}
-                configuration_main={
-                  configuration?.get("main") as MainConfiguration | undefined
-                }
                 publicFiles={publicFiles}
               />
             )}

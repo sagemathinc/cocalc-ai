@@ -4,10 +4,15 @@
  */
 
 import { Space } from "antd";
-import { join } from "path";
 import { defineMessage, useIntl } from "react-intl";
 import { Button } from "@cocalc/frontend/antd-bootstrap";
-import { DropdownMenu, Icon, Tip, VisibleLG, type MenuItems } from "@cocalc/frontend/components";
+import {
+  DropdownMenu,
+  Icon,
+  Tip,
+  VisibleLG,
+  type MenuItems,
+} from "@cocalc/frontend/components";
 import LinkRetry from "@cocalc/frontend/components/link-retry";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
@@ -19,10 +24,16 @@ import { type JSX, type MouseEvent } from "react";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import Snapshots from "@cocalc/frontend/project/snapshots";
 import Backups from "@cocalc/frontend/project/backups";
-import { BACKUPS, isBackupsPath } from "@cocalc/frontend/project/listing/use-backups";
+import {
+  BACKUPS,
+  isBackupsPath,
+} from "@cocalc/util/consts/backups";
 import { lite } from "@cocalc/frontend/lite";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import TourButton from "./tour/button";
 import CloneProject from "./clone";
+
+const SHOW_APPS = false;
 
 const OPEN_MSG = defineMessage({
   id: "project.explorer.misc-side-buttons.open_dir.tooltip",
@@ -32,7 +43,8 @@ const OPEN_MSG = defineMessage({
 export function MiscSideButtons() {
   const { actions, project_id } = useProjectContext();
   const show_hidden = useTypedRedux({ project_id }, "show_hidden");
-  const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
   const available_features = useTypedRedux(
     { project_id },
     "available_features",
@@ -135,7 +147,6 @@ export function MiscSideButtons() {
     );
   }
 
-
   function render_vscode_button(): JSX.Element | undefined {
     if (student_project_functionality.disableVSCodeServer) {
       return;
@@ -143,7 +154,10 @@ export function MiscSideButtons() {
     if (!available_features) return;
     const { vscode, homeDirectory } = available_features;
     if (!vscode || !homeDirectory) return;
-    const absPath = join(homeDirectory, current_path ?? "");
+    const absPath = normalizeAbsolutePath(
+      effective_current_path,
+      homeDirectory,
+    );
     // setting ?folder= tells VS Code to open that directory
     const url = `${serverURL(project_id, "code")}?folder=${absPath}`;
     const values = { name: SPEC.code.longName };
@@ -168,7 +182,18 @@ export function MiscSideButtons() {
     const base = serverURL(project_id, "jupyterlab");
     // we make sure the url ends with a slash, without messing up the full URL
     const s = base.slice(base.length - 1) === "/" ? "" : "/";
-    const url = `${base}${s}${current_path ? "lab/tree/" + current_path : ""}`;
+    const absPath = normalizeAbsolutePath(
+      effective_current_path,
+      available_features.homeDirectory || "/",
+    );
+    const home = normalizeAbsolutePath(available_features.homeDirectory || "/");
+    const relativePath =
+      absPath === home
+        ? ""
+        : home !== "/" && absPath.startsWith(`${home}/`)
+          ? absPath.slice(home.length + 1)
+          : absPath.slice(1);
+    const url = `${base}${s}${relativePath ? "lab/tree/" + relativePath : ""}`;
     const values = { name: SPEC.jupyterlab.longName };
     const tooltip = intl.formatMessage(OPEN_MSG, values);
     const description = intl.formatMessage(SPEC.jupyterlab.description, values);
@@ -199,20 +224,19 @@ export function MiscSideButtons() {
 
   return (
     <Space className="pull-right">
-      {(current_path == SNAPSHOTS ||
-        current_path.startsWith(SNAPSHOTS + "/")) && <Snapshots />}
-      {current_path &&
-        isBackupsPath(current_path) &&
-        (current_path === BACKUPS || current_path.startsWith(`${BACKUPS}/`)) && (
-          <Backups />
-        )}
-      <Space.Compact>
-        {render_jupyterlab_button()}
-        {render_vscode_button()}
-      </Space.Compact>
-      <Space.Compact>
-        {render_upload_button()}
-      </Space.Compact>
+      {(effective_current_path == SNAPSHOTS ||
+        effective_current_path.startsWith(SNAPSHOTS + "/")) && <Snapshots />}
+      {effective_current_path &&
+        isBackupsPath(effective_current_path) &&
+        (effective_current_path === BACKUPS ||
+          effective_current_path.startsWith(`${BACKUPS}/`)) && <Backups />}
+      {SHOW_APPS && (
+        <Space.Compact>
+          {render_jupyterlab_button()}
+          {render_vscode_button()}
+        </Space.Compact>
+      )}
+      <Space.Compact>{render_upload_button()}</Space.Compact>
       <div className="pull-right">
         <Space.Compact>
           {render_hidden_toggle()}

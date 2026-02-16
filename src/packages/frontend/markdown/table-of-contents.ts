@@ -48,7 +48,13 @@ export function parseTableOfContents(
         } else {
           number[number.length - 1] += 1;
         }
-        entry = { level, value: "", id: `${id}`, number: [...number] };
+        entry = {
+          level,
+          value: "",
+          id: `${id}`,
+          number: [...number],
+          extra: token.map ? { line: token.map[0] } : undefined,
+        };
         id += 1;
         continue;
       }

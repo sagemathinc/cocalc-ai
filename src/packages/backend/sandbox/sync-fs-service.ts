@@ -32,6 +32,7 @@ export interface WatchMeta {
   project_id?: string;
   relativePath?: string;
   string_id?: string;
+  history_epoch?: number;
   doctype?: {
     type?: string;
     patch_format?: number;
@@ -89,28 +90,41 @@ export class SyncFsService extends EventEmitter {
       meta.string_id ?? client_db.sha1(meta.project_id, meta.relativePath);
     const codec = this.resolveCodec(meta);
     try {
-      // If we already have a snapshot of on-disk content, just diff against it.
-      const existing = this.store.get(path);
-      if (!existing) {
-        // Fresh store entry but history may already exist in the patch stream.
-        const { heads, maxVersion } = await this.getStreamHeads({
+      // Always reconcile local snapshot state against the actual patch stream.
+      // A cached filesystem snapshot may exist even when history is empty
+      // (e.g. file written via backend API before watcher starts). In that
+      // case we MUST force an empty baseline so opening the file publishes the
+      // first patch; otherwise clients see an empty live document.
+      const { heads, maxVersion } = await this.getStreamHeads({
+        project_id: meta.project_id,
+        string_id,
+        path: meta.relativePath,
+      });
+      const hasHistory = heads.length > 0 || maxVersion > 0;
+      if (hasHistory) {
+        // Reconstruct the current document from the patch stream (respecting
+        // snapshots) to avoid emitting orphaned/incorrect patches when the
+        // local fs snapshot cache is stale.
+        const current = await this.loadDocViaSyncDoc({
           project_id: meta.project_id,
           string_id,
+          relativePath: meta.relativePath,
+          doctype: meta.doctype,
         });
-        if (heads.length > 0 || maxVersion > 0) {
-          // Reconstruct the current document from the patch stream (respecting
-          // snapshots) to avoid emitting an orphaned "initial" patch that
-          // duplicates content.
-          const current = await this.loadDocViaSyncDoc({
-            project_id: meta.project_id,
-            string_id,
-            relativePath: meta.relativePath,
-            doctype: meta.doctype,
-          });
-          if (current != null) {
-            this.store.setContent(path, current);
+        if (current == null) {
+          if (process.env.SYNC_FS_DEBUG) {
+            console.log("sync-fs initPath: unable to load stream baseline", {
+              path: meta.relativePath,
+              string_id,
+            });
           }
+          return;
         }
+        this.store.setContent(path, current);
+      } else {
+        // Explicitly reset to an empty baseline when stream history is empty.
+        // This prevents cached snapshots from suppressing the initial patch.
+        this.store.setContent(path, "");
       }
 
       const change = await this.store.handleExternalChange(
@@ -488,6 +502,7 @@ export class SyncFsService extends EventEmitter {
     const { heads, maxVersion, maxTimeMs } = await this.getStreamHeads({
       project_id: meta.project_id,
       string_id,
+      path: relativePath,
     });
     const parents = heads;
     const parentMaxMs =
@@ -523,6 +538,7 @@ export class SyncFsService extends EventEmitter {
       const writer = await this.getPatchWriter({
         project_id: meta.project_id,
         string_id,
+        path: relativePath,
       });
       if (process.env.SYNC_FS_DEBUG) {
         console.log("sync-fs appendPatch publish", {
@@ -532,7 +548,15 @@ export class SyncFsService extends EventEmitter {
           version,
         });
       }
-      const { seq } = await writer.publish(obj);
+      const headers =
+        typeof meta.history_epoch === "number" &&
+        Number.isFinite(meta.history_epoch)
+          ? { history_epoch: meta.history_epoch }
+          : undefined;
+      const { seq } = await writer.publish(
+        obj,
+        headers != null ? { headers } : undefined,
+      );
       this.store.setFsHead({ string_id, time, version });
       this.updateStreamInfo(string_id, obj, seq);
       if (process.env.SYNC_FS_DEBUG) {
@@ -555,14 +579,16 @@ export class SyncFsService extends EventEmitter {
   private async getPatchWriter({
     project_id,
     string_id,
+    path,
   }: {
     project_id: string;
     string_id: string;
+    path: string;
   }): Promise<AStream<any>> {
     const cached = this.patchWriters.get(string_id);
     if (cached) return cached;
     const writer = new AStream({
-      name: patchesStreamName({ string_id }),
+      name: patchesStreamName({ path }),
       project_id,
       client: this.getConatClient(),
       noInventory: true,
@@ -656,15 +682,17 @@ export class SyncFsService extends EventEmitter {
   private async getStreamHeads({
     project_id,
     string_id,
+    path,
   }: {
     project_id: string;
     string_id: string;
+    path: string;
   }): Promise<{
     heads: PatchId[];
     maxVersion: number;
     maxTimeMs: number;
   }> {
-    const writer = await this.getPatchWriter({ project_id, string_id });
+    const writer = await this.getPatchWriter({ project_id, string_id, path });
     const persisted = this.store.getFsHead(string_id);
     let info: StreamInfo =
       this.streamInfo.get(string_id) ??
@@ -700,6 +728,7 @@ export class SyncFsService extends EventEmitter {
       info.heads.size === 0 || info.lastSeq == null
         ? undefined
         : info.lastSeq + 1;
+    let sawUpdatesSinceLastSeq = false;
     if (process.env.SYNC_FS_DEBUG) {
       console.log("sync-fs getStreamHeads start", { string_id, start_seq });
     }
@@ -708,6 +737,7 @@ export class SyncFsService extends EventEmitter {
         timeout: 15000,
         start_seq,
       })) {
+        sawUpdatesSinceLastSeq = true;
         const p: any = mesg;
         if (typeof seq === "number") info.lastSeq = seq;
         const parentIds = Array.isArray(p.parents)
@@ -731,6 +761,31 @@ export class SyncFsService extends EventEmitter {
       }
       // fall through with whatever we gathered
     }
+    // If we resumed from a persisted lastSeq, saw no newer updates, and can no
+    // longer load that persisted seq, then the underlying persist stream was
+    // reset (e.g. sqlite deleted). Drop stale heads/version so the next write
+    // starts a fresh lineage instead of appending orphan patches.
+    if (
+      start_seq !== undefined &&
+      !sawUpdatesSinceLastSeq &&
+      info.lastSeq != null
+    ) {
+      const hasPersistedSeq = await this.streamHasSeq(writer, info.lastSeq);
+      if (!hasPersistedSeq) {
+        if (process.env.SYNC_FS_DEBUG) {
+          console.log("sync-fs getStreamHeads reset-detected", {
+            string_id,
+            lastSeq: info.lastSeq,
+          });
+        }
+        info = {
+          heads: new Set<PatchId>(),
+          maxVersion: 0,
+          maxTimeMs: 0,
+          lastSeq: undefined,
+        };
+      }
+    }
     // If we still have no heads but saw versions, fallback to full replay once.
     if (
       info.heads.size === 0 &&
@@ -740,7 +795,7 @@ export class SyncFsService extends EventEmitter {
       if (process.env.SYNC_FS_DEBUG) {
         console.log("sync-fs getStreamHeads retry from start", { string_id });
       }
-      return this.getStreamHeads({ project_id, string_id });
+      return this.getStreamHeads({ project_id, string_id, path });
     }
     if (process.env.SYNC_FS_DEBUG) {
       console.log("sync-fs getStreamHeads done", {
@@ -765,5 +820,16 @@ export class SyncFsService extends EventEmitter {
       maxVersion: info.maxVersion,
       maxTimeMs: info.maxTimeMs,
     };
+  }
+
+  private async streamHasSeq(
+    writer: AStream<any>,
+    seq: number,
+  ): Promise<boolean> {
+    try {
+      return (await writer.get(seq, { timeout: 2000 })) != null;
+    } catch {
+      return false;
+    }
   }
 }

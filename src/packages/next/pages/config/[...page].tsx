@@ -11,7 +11,7 @@ import Head from "components/landing/head";
 import Header from "components/landing/header";
 import { Paragraph } from "components/misc";
 import A from "components/misc/A";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { Customize } from "lib/customize";
 import withCustomize from "lib/with-customize";
 
@@ -28,7 +28,7 @@ export default function Preferences({ customize, page }) {
         }}
       >
         This is the account configuration page.{" "}
-        <A href={join(basePath, "settings")} external>
+        <A href={join(ROOT_PATH, "settings")} external>
           You can also adjust preferences in the main app...
         </A>
       </Paragraph>

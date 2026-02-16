@@ -3,4 +3,4 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
+export { default as EditableMarkdown } from "@cocalc/frontend/editors/slate/block-markdown-editor";

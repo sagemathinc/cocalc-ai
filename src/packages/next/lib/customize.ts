@@ -63,6 +63,9 @@ interface Customize extends ServerCustomize {
   enabledPages?: EnabledPageTree; // tree structure which specifies supported routes for this install
   support?: string; // HTML/MD to replace the generic support pages
   supportVideoCall?: string;
+  cocalc_product?: string;
+  is_launchpad?: boolean;
+  is_rocket?: boolean;
 }
 
 const CustomizeContext = createContext<Partial<Customize>>({});

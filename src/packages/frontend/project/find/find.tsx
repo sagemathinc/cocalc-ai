@@ -23,7 +23,8 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
 }) => {
   const { project_id } = useProjectContext();
   const actions = useActions({ project_id });
-  const currentPath = useTypedRedux({ project_id }, "current_path") ?? "";
+  const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
+  const currentPath = currentPathAbs ?? "/";
   const storedTab = useTypedRedux({ project_id }, "find_tab") as
     | FindTab
     | undefined;
@@ -68,7 +69,7 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
       actions.setState({ find_scope_mode: "current" });
     }
     if (storedScopePath == null) {
-      actions.setState({ find_scope_path: currentPath ?? "" });
+      actions.setState({ find_scope_path: currentPath });
     }
     if (storedScopePinned == null) {
       actions.setState({ find_scope_pinned: false });
@@ -231,7 +232,7 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
         style={{ marginTop: "10px" }}
         type="warning"
         showIcon
-        message={`Find path is inside .${restrictedTab}.`}
+        title={`Find path is inside .${restrictedTab}.`}
         description={
           <div>
             Other tabs are disabled for this path. Jump to the corresponding

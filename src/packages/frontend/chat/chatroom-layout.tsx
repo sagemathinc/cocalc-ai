@@ -47,7 +47,7 @@ export function ChatRoomLayout({
           onClose={() => setSidebarVisible(false)}
           placement="right"
           title="Chats"
-          destroyOnClose
+          destroyOnHidden
           resizable
         >
           {sidebarContent}

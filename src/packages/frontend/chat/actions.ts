@@ -253,11 +253,13 @@ export class ChatActions extends Actions<ChatState> {
     }
     const time_stamp: Date = webapp_client.server_time();
     const time_stamp_str = time_stamp.toISOString();
-    if (submitMentionsRef?.current != null) {
-      input = submitMentionsRef.current?.({ chat: `${time_stamp.valueOf()}` });
-    }
-    if (extraInput) {
-      input = (input ?? "") + extraInput;
+    const mentionsInput =
+      submitMentionsRef?.current?.({ chat: `${time_stamp.valueOf()}` }) ?? "";
+    if (extraInput != null) {
+      // Prefer mention-processed content when available; otherwise use explicit input.
+      input = mentionsInput.trim().length > 0 ? mentionsInput : extraInput;
+    } else if (mentionsInput.trim().length > 0) {
+      input = mentionsInput;
     }
     input = input?.trim();
     if (!input) {
@@ -555,6 +557,13 @@ export class ChatActions extends Actions<ChatState> {
   };
 
   renameThread = (threadKey: string, name: string): boolean => {
+    return this.setThreadAppearance(threadKey, { name });
+  };
+
+  setThreadAppearance = (
+    threadKey: string,
+    opts: { name?: string; color?: string; icon?: string },
+  ): boolean => {
     if (this.syncdb == null) {
       return false;
     }
@@ -562,11 +571,29 @@ export class ChatActions extends Actions<ChatState> {
     if (entry == null) {
       return false;
     }
-    const trimmed = name.trim();
-    if (trimmed) {
-      entry.doc.name = trimmed;
-    } else {
-      delete entry.doc.name;
+    if ("name" in opts) {
+      const trimmed = (opts.name ?? "").trim();
+      if (trimmed) {
+        entry.doc.name = trimmed;
+      } else {
+        delete entry.doc.name;
+      }
+    }
+    if ("color" in opts) {
+      const trimmed = (opts.color ?? "").trim();
+      if (trimmed) {
+        entry.doc.thread_color = trimmed;
+      } else {
+        delete entry.doc.thread_color;
+      }
+    }
+    if ("icon" in opts) {
+      const trimmed = (opts.icon ?? "").trim();
+      if (trimmed) {
+        entry.doc.thread_icon = trimmed;
+      } else {
+        delete entry.doc.thread_icon;
+      }
     }
     this.setSyncdb(entry.doc);
     this.syncdb.commit();
@@ -821,14 +848,6 @@ export class ChatActions extends Actions<ChatState> {
     return model ? model.includes("codex") : false;
   };
 
-  runCodexCompact = async (threadKey: string): Promise<void> => {
-    if (!threadKey) {
-      throw Error("runCodexCompact -- threadKey must be defined");
-    }
-    const reply_to = new Date(parseFloat(threadKey));
-    this.sendChat({ input: "/compact", reply_to });
-  };
-
   private processLLM = async ({
     message,
     reply_to,
@@ -1024,7 +1043,7 @@ export class ChatActions extends Actions<ChatState> {
       }
     }
     if (nextConfig && !nextConfig.model) {
-      nextConfig.model = "gpt-5.2-codex";
+      nextConfig.model = "gpt-5.3-codex";
     }
 
     const now = webapp_client.server_time();

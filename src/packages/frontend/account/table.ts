@@ -45,6 +45,8 @@ export class AccountTable extends Table {
           groups: null,
           last_active: null,
           ssh_keys: null,
+          default_rootfs_image: null,
+          default_rootfs_image_gpu: null,
           created: null,
           ephemeral: null,
           customize: null,

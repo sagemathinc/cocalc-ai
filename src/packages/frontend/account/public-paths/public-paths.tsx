@@ -244,7 +244,7 @@ export const PublicPaths: React.FC = () => {
         style={{ margin: "30px auto" }}
         type="info"
         banner
-        message={
+        title={
           <FormattedMessage
             id="account.public-paths.banner"
             defaultMessage={`This is an overview of your published files.

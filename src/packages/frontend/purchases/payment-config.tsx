@@ -141,7 +141,7 @@ export default function PaymentConfig({
           step={5}
           value={paymentAmount}
           onChange={setPaymentAmount}
-          addonBefore="$"
+          prefix="$"
         />
       </div>
     </div>

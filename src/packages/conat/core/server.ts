@@ -88,6 +88,24 @@ const DEFAULT_FORGET_CLUSTER_NODE_INTERVAL = 30 * 60_000; // 30 minutes by defau
 
 const DEBUG = false;
 
+function envNumber(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+const AUTH_FAIL_WINDOW_MS = Math.max(
+  5_000,
+  envNumber("COCALC_CONAT_AUTH_FAIL_WINDOW_MS", 60_000),
+);
+const AUTH_FAIL_LIMIT = Math.max(
+  1,
+  envNumber("COCALC_CONAT_AUTH_FAIL_LIMIT", 20),
+);
+const AUTH_FAIL_BLOCK_MS = Math.max(
+  5_000,
+  envNumber("COCALC_CONAT_AUTH_FAIL_BLOCK_MS", 5 * 60_000),
+);
+
 export interface InterestUpdate {
   op: "add" | "delete";
   subject: string;
@@ -150,6 +168,18 @@ export interface Options {
 
   // the ip address of this server on the cluster.
   clusterIpAddress?: string;
+
+  // If true, only trust forwarded client-IP headers when the immediate peer
+  // is a trusted local proxy endpoint (loopback). This is intended for
+  // deployments where cloudflared runs locally and forwards internet traffic.
+  //
+  // SECURITY CONTEXT:
+  // Conat tracks auth failures per client address and can temporarily block
+  // repeated failures. If client IP is spoofable, that protection is weaker
+  // (attackers can evade blocks, or potentially cause noisy false blocks).
+  // Strict mode prevents trusting spoofable forwarded headers from untrusted
+  // peers.
+  strictCloudflareProxy?: boolean | (() => boolean);
 }
 
 type State = "init" | "ready" | "closed";
@@ -167,6 +197,11 @@ export class ConatServer extends EventEmitter {
   private stats: { [id: string]: ConnectionStats } = {};
   private usage: UsageMonitor;
   public state: State = "init";
+
+  private authFailuresByAddress: Map<
+    string,
+    { windowStart: number; count: number; blockedUntil: number }
+  > = new Map();
 
   private subscriptions: { [socketId: string]: Set<string> } = {};
   public interest: Interest = new Patterns();
@@ -199,6 +234,7 @@ export class ConatServer extends EventEmitter {
       forgetClusterNodeInterval = DEFAULT_FORGET_CLUSTER_NODE_INTERVAL,
       localClusterSize = 1,
       clusterIpAddress,
+      strictCloudflareProxy = false,
     } = options;
     this.clusterName = clusterName;
     this.options = {
@@ -215,7 +251,13 @@ export class ConatServer extends EventEmitter {
       forgetClusterNodeInterval,
       localClusterSize,
       clusterIpAddress,
+      strictCloudflareProxy,
     };
+    this.log("client address mode", {
+      mode: resolveStrictCloudflareProxy(strictCloudflareProxy)
+        ? "strict-cloudflare"
+        : "legacy",
+    });
     this.cluster = !!id && !!clusterName;
     this.getUser = async (socket) => {
       if (getUser == null) {
@@ -347,6 +389,7 @@ export class ConatServer extends EventEmitter {
     this.subscriptions = {};
     this.stats = {};
     this.sockets = {};
+    this.authFailuresByAddress.clear();
   };
 
   private info = (): ServerInfo => {
@@ -359,6 +402,45 @@ export class ConatServer extends EventEmitter {
 
   private log = (...args) => {
     logger.debug("id", this.id, ":", ...args);
+  };
+
+  private pruneAuthFailures = (now = Date.now()) => {
+    for (const [address, rec] of this.authFailuresByAddress) {
+      if (rec.blockedUntil > now) continue;
+      if (now - rec.windowStart <= AUTH_FAIL_WINDOW_MS) continue;
+      this.authFailuresByAddress.delete(address);
+    }
+  };
+
+  private isAddressAuthBlocked = (address: string, now = Date.now()): boolean => {
+    const rec = this.authFailuresByAddress.get(address);
+    if (!rec) return false;
+    if (rec.blockedUntil > now) return true;
+    if (now - rec.windowStart > AUTH_FAIL_WINDOW_MS) {
+      this.authFailuresByAddress.delete(address);
+      return false;
+    }
+    return false;
+  };
+
+  private recordAuthFailure = (address: string, now = Date.now()) => {
+    const rec = this.authFailuresByAddress.get(address);
+    if (!rec || now - rec.windowStart > AUTH_FAIL_WINDOW_MS) {
+      this.authFailuresByAddress.set(address, {
+        windowStart: now,
+        count: 1,
+        blockedUntil: 0,
+      });
+      return;
+    }
+    rec.count += 1;
+    if (rec.count >= AUTH_FAIL_LIMIT) {
+      rec.blockedUntil = now + AUTH_FAIL_BLOCK_MS;
+    }
+  };
+
+  private clearAuthFailures = (address: string) => {
+    this.authFailuresByAddress.delete(address);
   };
 
   private unsubscribe = async ({ socket, subject }) => {
@@ -732,19 +814,38 @@ export class ConatServer extends EventEmitter {
       recv: { messages: 0, bytes: 0 },
       subs: 0,
       connected: Date.now(),
-      address: getAddress(socket),
+      address: getAddress(socket, {
+        strictCloudflareProxy: resolveStrictCloudflareProxy(
+          this.options.strictCloudflareProxy,
+        ),
+      }),
     };
+    const address = this.stats[socket.id].address
+      ? `ip:${this.stats[socket.id].address}`
+      : `socket:${socket.id}`;
+    this.pruneAuthFailures();
     let user: any = null;
     let added = false;
     try {
+      if (this.isAddressAuthBlocked(address)) {
+        const rec = this.authFailuresByAddress.get(address);
+        const waitMs = Math.max(1_000, (rec?.blockedUntil ?? Date.now()) - Date.now());
+        const waitSec = Math.ceil(waitMs / 1000);
+        throw new ConatError(
+          `too many authentication failures from ${address}; retry in about ${waitSec}s`,
+          { code: 429 },
+        );
+      }
       user = await this.getUser(socket);
       this.usage.add(user);
       added = true;
+      this.clearAuthFailures(address);
     } catch (err) {
       // getUser is supposed to throw an error if authentication fails
       // for any reason
       // Also, if the connection limit is hit they still connect, but as
       // the error user who can't do anything (hence not waste resources).
+      this.recordAuthFailure(address);
       user = { error: `${err}`, code: err.code };
     }
     this.stats[socket.id].user = user;
@@ -752,6 +853,49 @@ export class ConatServer extends EventEmitter {
     this.log("new connection", { id, user });
     if (this.subscriptions[id] == null) {
       this.subscriptions[id] = new Set<string>();
+    }
+    socket.on("disconnecting", async () => {
+      this.log("disconnecting", { id, user });
+      // Always remove from tracked sockets on teardown so auth-failed
+      // connections do not linger in memory if "closed" is not emitted.
+      delete this.sockets[socket.id];
+      delete this.stats[socket.id];
+      if (added) {
+        this.usage.delete(user);
+      }
+      const rooms = Array.from(socket.rooms) as string[];
+      for (const room of rooms) {
+        const subject = getSubjectFromRoom(room);
+        this.unsubscribe({ socket, subject });
+      }
+      delete this.subscriptions[id];
+    });
+
+    if (user?.error) {
+      // Send one explicit auth-failure info packet so clients can surface the
+      // reason, then immediately disconnect to avoid lingering unauthenticated
+      // websocket sessions.
+      try {
+        socket.emit("info", { ...this.info(), user });
+      } catch {
+        // ignore
+      }
+      const forceDisconnect = () => {
+        try {
+          socket.disconnect(true);
+        } catch {
+          // ignore
+        }
+        // Fallback: ensure transport is torn down even if namespace disconnect
+        // does not immediately close the underlying socket.
+        try {
+          socket.conn?.close?.();
+        } catch {
+          // ignore
+        }
+      };
+      setTimeout(forceDisconnect, 25);
+      return;
     }
 
     this.sendInfo(socket, user);
@@ -885,19 +1029,6 @@ export class ConatServer extends EventEmitter {
       respond?.(this.clusterAddresses(this.clusterName));
     });
 
-    socket.on("disconnecting", async () => {
-      this.log("disconnecting", { id, user });
-      delete this.stats[socket.id];
-      if (added) {
-        this.usage.delete(user);
-      }
-      const rooms = Array.from(socket.rooms) as string[];
-      for (const room of rooms) {
-        const subject = getSubjectFromRoom(room);
-        this.unsubscribe({ socket, subject });
-      }
-      delete this.subscriptions[id];
-    });
   };
 
   sendInfo = async (socket, user) => {
@@ -1329,6 +1460,11 @@ export class ConatServer extends EventEmitter {
     let count = 0;
 
     const f = async (client) => {
+      // Guard against race condition: client may be closed during scan
+      const address = client?.options?.address;
+      if (!address) {
+        return;
+      }
       try {
         const sys = sysApi(client);
         const knownByRemoteNode = new Set(
@@ -1337,22 +1473,18 @@ export class ConatServer extends EventEmitter {
         if (this.isClosed()) return;
         logger.debug(
           "scan: remote",
-          client.options.address,
+          address,
           "knows about ",
           knownByRemoteNode,
         );
-        for (const address of knownByRemoteNode) {
-          if (!knownByUs.has(address)) {
-            unknownToUs.add(address);
+        for (const addr of knownByRemoteNode) {
+          if (!knownByUs.has(addr)) {
+            unknownToUs.add(addr);
           }
         }
         if (!knownByRemoteNode.has(this.address())) {
           // we know about them, but they don't know about us, so ask them to link to us.
-          logger.debug(
-            "scan: asking remote ",
-            client.options.address,
-            " to link to us",
-          );
+          logger.debug("scan: asking remote ", address, " to link to us");
           await sys.join(this.address());
           if (this.isClosed()) return;
           count += 1;
@@ -1360,7 +1492,7 @@ export class ConatServer extends EventEmitter {
       } catch (err) {
         errors.push({
           err,
-          desc: `requesting remote ${client.options.address} join us`,
+          desc: `requesting remote ${address} join us`,
         });
       }
     };
@@ -1565,29 +1697,92 @@ export function randomChoice<T>(v: Set<T>): T {
   return w[i];
 }
 
+function normalizeIp(value?: string): string | undefined {
+  if (!value) return undefined;
+  let v = value.trim();
+  if (!v) return undefined;
+  if (v.startsWith("[") && v.endsWith("]")) {
+    v = v.slice(1, -1);
+  }
+  if (v.startsWith('"') && v.endsWith('"')) {
+    v = v.slice(1, -1);
+  }
+  if (v.startsWith("::ffff:")) {
+    v = v.slice("::ffff:".length);
+  }
+  const zoneIndex = v.indexOf("%");
+  if (zoneIndex >= 0) {
+    v = v.slice(0, zoneIndex);
+  }
+  return v;
+}
+
+function isTrustedLocalProxyPeer(addr?: string): boolean {
+  const ip = normalizeIp(addr);
+  return ip === "127.0.0.1" || ip === "::1";
+}
+
+function parseForwardedForHeader(header: string): string | undefined {
+  for (const directive of header.split(",")[0].split(";")) {
+    const trimmed = directive.trim();
+    if (trimmed.startsWith("for=")) {
+      return normalizeIp(trimmed.substring(4));
+    }
+  }
+  return undefined;
+}
+
+function resolveStrictCloudflareProxy(
+  value: boolean | (() => boolean) | undefined,
+): boolean {
+  if (typeof value === "function") {
+    try {
+      return !!value();
+    } catch {
+      return false;
+    }
+  }
+  return !!value;
+}
+
 // See https://socket.io/how-to/get-the-ip-address-of-the-client
-function getAddress(socket) {
-  const header = socket.handshake.headers["forwarded"];
-  if (header) {
-    for (const directive of header.split(",")[0].split(";")) {
-      if (directive.startsWith("for=")) {
-        return directive.substring(4);
+//
+// SECURITY CONTEXT:
+// The returned address feeds abuse controls (e.g. auth failure throttling/
+// temporary bans) and operational observability. In strict mode, we only
+// honor forwarded headers when the immediate peer is trusted (loopback
+// cloudflared/local proxy); otherwise we must use the direct peer address.
+export function getAddress(
+  socket,
+  { strictCloudflareProxy = false }: { strictCloudflareProxy?: boolean } = {},
+) {
+  const peer = normalizeIp(socket.handshake.address) ?? socket.handshake.address;
+  const headers = socket.handshake.headers ?? {};
+  const trustForwarded = !strictCloudflareProxy || isTrustedLocalProxyPeer(peer);
+
+  if (trustForwarded) {
+    for (const other of ["cf-connecting-ip", "fastly-client-ip"]) {
+      const addr = normalizeIp(headers[other]);
+      if (addr) {
+        return addr;
+      }
+    }
+
+    const xff = normalizeIp(headers["x-forwarded-for"]?.split(",")?.[0]);
+    if (xff) {
+      return xff;
+    }
+
+    const forwarded = headers["forwarded"];
+    if (typeof forwarded === "string") {
+      const addr = parseForwardedForHeader(forwarded);
+      if (addr) {
+        return addr;
       }
     }
   }
 
-  let addr = socket.handshake.headers["x-forwarded-for"]?.split(",")?.[0];
-  if (addr) {
-    return addr;
-  }
-  for (const other of ["cf-connecting-ip", "fastly-client-ip"]) {
-    addr = socket.handshake.headers[other];
-    if (addr) {
-      return addr;
-    }
-  }
-
-  return socket.handshake.address;
+  return peer;
 }
 
 export function updateInterest(update: InterestUpdate, interest: Interest) {

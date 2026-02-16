@@ -1,5 +1,7 @@
 const { existsSync } = require("fs");
 const { join } = require("path");
+const { resolveOnPremHost } = require("@cocalc/server/onprem");
+const resolveLaunchpadHost = resolveOnPremHost;
 
 function parsePort(value) {
   if (value == null || value === "") {
@@ -27,10 +29,22 @@ function resolveDataDir() {
   return join(home, ".local", "share", "cocalc", "launchpad");
 }
 
+function findArgValue(flag) {
+  const idx = process.argv.indexOf(flag);
+  if (idx !== -1) {
+    return process.argv[idx + 1];
+  }
+  const prefixed = process.argv.find((arg) => arg.startsWith(`${flag}=`));
+  if (prefixed) {
+    return prefixed.slice(flag.length + 1);
+  }
+  return undefined;
+}
+
 function applyLaunchpadDefaults() {
   process.env.COCALC_DB ??= "pglite";
   process.env.COCALC_DISABLE_NEXT ??= "1";
-  process.env.COCALC_MODE ??= "launchpad";
+  process.env.COCALC_PRODUCT ??= "launchpad";
 
   const dataDir = resolveDataDir();
   process.env.DATA ??= dataDir;
@@ -39,27 +53,24 @@ function applyLaunchpadDefaults() {
 
   const basePort =
     parsePort(process.env.COCALC_BASE_PORT) ??
-    parsePort(process.env.COCALC_HTTPS_PORT) ??
+    parsePort(process.env.COCALC_HTTP_PORT) ??
     parsePort(process.env.PORT) ??
-    8443;
-  const httpsPort = parsePort(process.env.COCALC_HTTPS_PORT) ?? basePort;
+    9001;
 
-  process.env.COCALC_HTTPS_PORT ??= String(httpsPort);
-  process.env.PORT ??= String(httpsPort);
-  process.env.COCALC_HTTP_PORT ??= String(Math.max(basePort - 1, 1));
+  process.env.COCALC_HTTP_PORT ??= String(basePort);
+  process.env.PORT ??= process.env.COCALC_HTTP_PORT;
   process.env.COCALC_SSHD_PORT ??= String(basePort + 1);
-  process.env.COCALC_SSHPIPERD_PORT ??= String(basePort + 2);
 }
 
 module.exports = {
   applyLaunchpadDefaults,
+  resolveLaunchpadHost,
   logLaunchpadConfig() {
     const summary = {
+      host: resolveLaunchpadHost(),
       data_dir: process.env.COCALC_DATA_DIR ?? process.env.DATA,
-      https_port: process.env.COCALC_HTTPS_PORT ?? process.env.PORT,
       http_port: process.env.COCALC_HTTP_PORT,
       sshd_port: process.env.COCALC_SSHD_PORT,
-      sshpiperd_port: process.env.COCALC_SSHPIPERD_PORT,
     };
     console.log("launchpad config:", summary);
   },

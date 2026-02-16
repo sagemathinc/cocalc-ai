@@ -4,23 +4,35 @@
  */
 
 import { Button, Input, Popover } from "antd";
-import { ReactNode, useEffect, useRef, useState } from "react";
-import { useIsMountedRef } from "@cocalc/frontend/app-framework";
+import {
+  ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { register, RenderElementProps } from "../register";
-import { useSlate } from "../hooks";
-import { SlateCodeMirror } from "../codemirror";
-import { delay } from "awaiting";
+import { useFocused, useSelected, useSlate } from "../hooks";
 import { useSetElement } from "../set-element";
 import infoToMode from "./info-to-mode";
 import ActionButtons, { RunFunction } from "./action-buttons";
-import { useChange } from "../../use-change";
-import { getHistory, isPreviousSiblingCodeBlock } from "./history";
-import InsertBar from "./insert-bar";
+import { getHistory } from "./history";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
 import CopyButton from "@cocalc/frontend/components/copy-button";
+import { ReactEditor } from "../../slate-react";
+import { hash_string } from "@cocalc/util/misc";
+import { Editor, Transforms } from "slate";
+import { markdown_to_slate } from "../../markdown-to-slate";
+import { insertPlainTextInCodeBlock } from "../../format/auto-format";
+import type { CodeBlock } from "./types";
+import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
+import { CodeBlockBody, CodeLineElement } from "./code-like";
+import { guessPopularLanguage } from "@cocalc/frontend/misc/detect-language";
+import { pointAtPath } from "../../slate-util";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -34,6 +46,7 @@ interface FloatingActionMenuProps {
   lineCount: number;
   modeLabel: string;
   onRun?: () => void;
+  collapseToggle?: { label: string; onClick: () => void } | null;
 }
 
 function FloatingActionMenu({
@@ -48,6 +61,7 @@ function FloatingActionMenu({
   lineCount,
   modeLabel,
   onRun,
+  collapseToggle,
 }: FloatingActionMenuProps) {
   const [open, setOpen] = useState(false);
 
@@ -72,11 +86,18 @@ function FloatingActionMenu({
           onBlur={() => {
             onInfoBlur();
           }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
+            e.stopPropagation();
             if (e.keyCode == 13 && e.shiftKey) {
               onRun?.();
             }
           }}
+          onKeyUp={(e) => e.stopPropagation()}
+          onKeyPress={(e) => e.stopPropagation()}
+          onBeforeInput={(e) => e.stopPropagation()}
+          onInput={(e) => e.stopPropagation()}
           onChange={(e) => {
             const next = e.target.value;
             setInfo(next);
@@ -126,6 +147,21 @@ function FloatingActionMenu({
         padding: "2px 4px",
       }}
     >
+      {collapseToggle && (
+        <Button
+          size="small"
+          type="text"
+          style={{ color: "#666", background: "transparent" }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            collapseToggle.onClick();
+          }}
+        >
+          {collapseToggle.label}
+        </Button>
+      )}
       <CopyButton
         size="small"
         value={code}
@@ -153,61 +189,342 @@ function FloatingActionMenu({
   );
 }
 
-function Element({ attributes, children, element }: RenderElementProps) {
+function shouldPreferRichText(text: string): boolean {
+  if (!text) return false;
+  const markdownHints = [
+    /^#{1,6}\s/m,
+    /^>\s/m,
+    /^(\s*[-*+]|\s*\d+\.)\s/m,
+    /```/,
+    /\[[^\]]+\]\([^)]+\)/,
+    /!\[[^\]]*\]\([^)]+\)/,
+    /(^|\s)`[^`]+`/m,
+    /\*\*[^*]+\*\*/,
+    /(^|\s)_[^_]+_/m,
+    /\|\s*[^|]+\s*\|/,
+  ];
+  const codeHints = [
+    /;\s*$/m,
+    /[{}]/,
+    /=>|::|->|<-|\+=|-=|\*=|\/=|==|!=|<=|>=/,
+    /^\s*(def|class|function|import|from|#include|using|public|private|static)\b/m,
+    /^\s*[A-Za-z_][\w]*\s*=\s*.+/m,
+    /^\s*(if|for|while|switch|case|return)\b/m,
+  ];
+  const hasMarkdown = markdownHints.some((re) => re.test(text));
+  const hasCode = codeHints.some((re) => re.test(text));
+  return hasMarkdown && !hasCode;
+}
+
+export function CodeLikeEditor({ attributes, children, element }: RenderElementProps) {
+  if (element.type === "code_line") {
+    return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
+  }
   if (element.type != "code_block") {
     throw Error("bug");
   }
+  const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar } = useFileContext();
   const editor = useSlate();
-  const isMountedRef = useIsMountedRef();
+  const focused = useFocused();
   const [info, setInfo] = useState<string>(element.info ?? "");
   const infoFocusedRef = useRef<boolean>(false);
   const [output, setOutput] = useState<null | ReactNode>(null);
   const runRef = useRef<RunFunction | null>(null);
   const setElement = useSetElement(editor, element);
   // textIndent: 0 is needed due to task lists -- see https://github.com/sagemathinc/cocalc/issues/6074
-  const { change } = useChange();
   const [history, setHistory] = useState<string[]>(
     getHistory(editor, element) ?? [],
   );
-  const [codeSibling, setCodeSibling] = useState<boolean>(
-    isPreviousSiblingCodeBlock(editor, element),
+  const elementPath = ReactEditor.findPath(editor, element);
+  const codeValue = getCodeBlockText(element as CodeBlock);
+  const expandState =
+    (editor as any).codeBlockExpandState ??
+    ((editor as any).codeBlockExpandState = new Map<string, boolean>());
+  const blockIndex = (editor as any).blockIndex;
+  const collapseKey = useMemo(() => {
+    if (blockIndex != null) {
+      return `block:${blockIndex}`;
+    }
+    if (elementPath != null) {
+      return `path:${elementPath.join(".")}`;
+    }
+    const base = `${info ?? ""}\n${codeValue}`;
+    return `code:${hash_string(base)}`;
+  }, [blockIndex, elementPath, info, codeValue]);
+  const [expanded, setExpanded] = useState<boolean>(
+    () => expandState.get(collapseKey) ?? false,
   );
+  useEffect(() => {
+    setExpanded(expandState.get(collapseKey) ?? false);
+  }, [collapseKey]);
   useEffect(() => {
     const newHistory = getHistory(editor, element);
     if (newHistory != null && !isEqual(history, newHistory)) {
       setHistory(newHistory);
-      setCodeSibling(isPreviousSiblingCodeBlock(editor, element));
     }
     if (!infoFocusedRef.current && element.info != info) {
       // upstream change
       setInfo(element.info);
     }
-  }, [change, element]);
+  }, [editor, element, history, info]);
 
-  const lineCount = element.value.split("\n").length;
-  const modeLabel = infoToMode(info, { value: element.value }) || "plain text";
+  const lineCount = getCodeBlockLineCount(element as CodeBlock);
+  const modeLabel = infoToMode(info, { value: codeValue }) || "plain text";
+  const shouldCollapse = false;
+  const selected = useSelected();
+  const selectionInBlock = !!focused && !!selected;
+  const syncSelectionFromDom = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const domSelection = window.getSelection?.();
+    if (!domSelection || domSelection.rangeCount === 0) return;
+    const domRange = domSelection.getRangeAt(0);
+    const ignoreSelection = editor.getIgnoreSelection?.() ?? false;
+    if (ignoreSelection) editor.setIgnoreSelection(false);
+    try {
+      const range = ReactEditor.toSlateRange(editor, domRange);
+      if (range) {
+        Transforms.select(editor, range);
+      }
+    } catch {
+      // ignore selection conversion issues
+    } finally {
+      if (ignoreSelection) editor.setIgnoreSelection(true);
+    }
+  }, [editor]);
+  const forceExpanded = selectionInBlock;
+  const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
+  const markdownCandidate = (element as any).markdownCandidate;
+  const preferRichText =
+    !!markdownCandidate && shouldPreferRichText(codeValue ?? "");
+  const popularGuess = markdownCandidate
+    ? guessPopularLanguage(codeValue ?? "")
+    : null;
+  const showPopularGuess =
+    !!popularGuess && popularGuess.score >= 4;
+  const setExpandedState = useCallback(
+    (next: boolean, focus: boolean) => {
+      expandState.set(collapseKey, next);
+      setExpanded(next);
+      if (next && focus) {
+        const point = Editor.start(editor, elementPath);
+        Transforms.select(editor, point);
+        ReactEditor.focus(editor);
+      }
+    },
+    [collapseKey, expandState, editor, elementPath],
+  );
+
+  const toggleCollapse = useCallback(
+    (opts?: { focus?: boolean }) => {
+      const next = !expanded;
+      const focus = next && (opts?.focus ?? true);
+      setExpandedState(next, focus);
+    },
+    [expanded, setExpandedState],
+  );
+
+  const collapseNow = useCallback(() => {
+    setExpandedState(false, false);
+  }, [setExpandedState]);
+
+  const dismissMarkdownCandidate = useCallback(() => {
+    setElement({ markdownCandidate: undefined } as any);
+  }, [setElement]);
+
+  const focusAfterCodeBlock = useCallback(() => {
+    const focusNow = () => {
+      const after = Editor.after(editor, elementPath);
+      const point = after ?? Editor.end(editor, elementPath);
+      Transforms.select(editor, { anchor: point, focus: point });
+      ReactEditor.focus(editor);
+    };
+    if (typeof window === "undefined") {
+      focusNow();
+      return;
+    }
+    window.setTimeout(focusNow, 0);
+  }, [editor, elementPath]);
+
+  const focusAtPathEnd = useCallback(
+    (path: number[]) => {
+      const focusNow = () => {
+        const point = pointAtPath(editor, path, undefined, "end");
+        Transforms.select(editor, { anchor: point, focus: point });
+        ReactEditor.focus(editor);
+      };
+      if (typeof window === "undefined") {
+        focusNow();
+        return;
+      }
+      window.setTimeout(focusNow, 0);
+    },
+    [editor],
+  );
+
+  const focusAtInlineBoundary = useCallback(
+    (paragraphPath: number[], childIndex: number | null) => {
+      const focusNow = () => {
+        const point =
+          childIndex == null
+            ? pointAtPath(editor, paragraphPath, undefined, "end")
+            : pointAtPath(
+                editor,
+                paragraphPath.concat(childIndex),
+                0,
+                "start",
+              );
+        Transforms.select(editor, { anchor: point, focus: point });
+        ReactEditor.focus(editor);
+      };
+      if (typeof window === "undefined") {
+        focusNow();
+        return;
+      }
+      window.setTimeout(focusNow, 0);
+    },
+    [editor],
+  );
+
+  const convertMarkdownCandidateInline = useCallback(
+    (doc: any[]): boolean => {
+      if (
+        doc.length !== 1 ||
+        doc[0]?.type !== "paragraph" ||
+        !Array.isArray(doc[0]?.children)
+      ) {
+        return false;
+      }
+      const inlineChildrenRaw = doc[0].children;
+      if (inlineChildrenRaw.length === 0) return false;
+      const inlineChildren =
+        typeof structuredClone === "function"
+          ? structuredClone(inlineChildrenRaw)
+          : JSON.parse(JSON.stringify(inlineChildrenRaw));
+      const parentPath = elementPath.slice(0, -1);
+      const codeIndex = elementPath[elementPath.length - 1];
+      let parentChildren: any[] | undefined;
+      try {
+        const [parentNode] = Editor.node(editor, parentPath);
+        parentChildren = (parentNode as any)?.children;
+      } catch {
+        return false;
+      }
+      if (!Array.isArray(parentChildren)) return false;
+      const prev = parentChildren[codeIndex - 1];
+      const next = parentChildren[codeIndex + 1];
+      const afterSpacer = parentChildren[codeIndex + 2];
+      const isParagraph = (node: any) =>
+        node != null && typeof node === "object" && node.type === "paragraph";
+      const isSpacerParagraph = (node: any) =>
+        isParagraph(node) && node.spacer === true;
+      const newChildren = [...parentChildren];
+      let focusParagraphPath: number[] | null = null;
+      let focusChildIndex: number | null = null;
+
+      // Most common case when pasting in the middle of a paragraph:
+      // [paragraph-before, code-block, spacer, paragraph-after]
+      if (isParagraph(prev) && isSpacerParagraph(next) && isParagraph(afterSpacer)) {
+        const prevLen = Array.isArray(prev.children) ? prev.children.length : 0;
+        const merged = {
+          ...prev,
+          children: [...(prev.children ?? []), ...inlineChildren, ...(afterSpacer.children ?? [])],
+        };
+        newChildren.splice(codeIndex - 1, 4, merged);
+        focusParagraphPath = parentPath.concat(codeIndex - 1);
+        const boundary = prevLen + inlineChildren.length;
+        focusChildIndex = boundary < merged.children.length ? boundary : null;
+      } else if (isParagraph(prev) && isSpacerParagraph(next)) {
+        const merged = {
+          ...prev,
+          children: [...(prev.children ?? []), ...inlineChildren],
+        };
+        newChildren.splice(codeIndex - 1, 3, merged);
+        focusParagraphPath = parentPath.concat(codeIndex - 1);
+        focusChildIndex = null;
+      } else if (isSpacerParagraph(next) && isParagraph(afterSpacer)) {
+        const merged = {
+          ...afterSpacer,
+          spacer: undefined,
+          children: [...inlineChildren, ...(afterSpacer.children ?? [])],
+        };
+        newChildren.splice(codeIndex, 3, merged);
+        focusParagraphPath = parentPath.concat(codeIndex);
+        focusChildIndex =
+          inlineChildren.length < merged.children.length
+            ? inlineChildren.length
+            : null;
+      } else if (isSpacerParagraph(next)) {
+        const merged = {
+          type: "paragraph",
+          children: inlineChildren,
+        };
+        newChildren.splice(codeIndex, 2, merged);
+        focusParagraphPath = parentPath.concat(codeIndex);
+        focusChildIndex = null;
+      } else {
+        return false;
+      }
+
+      Editor.withoutNormalizing(editor, () => {
+        for (let i = parentChildren.length - 1; i >= 0; i--) {
+          Transforms.removeNodes(editor, { at: parentPath.concat(i) });
+        }
+        Transforms.insertNodes(editor, newChildren as any, { at: parentPath.concat(0) });
+      });
+      if (focusParagraphPath != null) {
+        focusAtInlineBoundary(focusParagraphPath, focusChildIndex);
+      }
+      return true;
+    },
+    [editor, elementPath, focusAtInlineBoundary],
+  );
+
+  const convertMarkdownCandidate = useCallback(() => {
+    const markdown = codeValue ?? "";
+    const doc = markdown_to_slate(markdown, true);
+    if (convertMarkdownCandidateInline(doc as any[])) {
+      return;
+    }
+    const insertPath = [...elementPath];
+    Editor.withoutNormalizing(editor, () => {
+      Transforms.removeNodes(editor, { at: elementPath });
+      Transforms.insertNodes(editor, doc as any, { at: elementPath });
+    });
+    focusAtPathEnd(insertPath);
+  }, [
+    editor,
+    codeValue,
+    elementPath,
+    focusAtPathEnd,
+    convertMarkdownCandidateInline,
+  ]);
+
+  const handlePaste = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const text = event.clipboardData?.getData("text/plain");
+      if (!text) return;
+      event.preventDefault();
+      event.stopPropagation();
+      syncSelectionFromDom();
+      if (!insertPlainTextInCodeBlock(editor, text)) {
+        Editor.insertText(editor, text);
+      }
+    },
+    [editor, syncSelectionFromDom],
+  );
 
   return (
-    <div {...attributes}>
-      <div contentEditable={false} style={{ textIndent: 0 }}>
-        {!codeSibling && (
-          <InsertBar
-            editor={editor}
-            element={element}
-            info={info}
-            above={true}
-          />
-        )}
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ position: "relative" }}>
-              {!disableMarkdownCodebar && (
+    <div {...attributes} spellCheck={false} style={{ textIndent: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ position: "relative" }}>
+            {!disableMarkdownCodebar && (
+              <div contentEditable={false}>
                 <FloatingActionMenu
                   info={info}
                   setInfo={(info) => {
                     setInfo(info);
-                    setElement({ info });
                   }}
                   showInfoInput={!!element.fence}
                   onInfoFocus={() => {
@@ -217,11 +534,14 @@ function Element({ attributes, children, element }: RenderElementProps) {
                   onInfoBlur={() => {
                     infoFocusedRef.current = false;
                     editor.setIgnoreSelection(false);
+                    if (element.info != info) {
+                      setElement({ info });
+                    }
                   }}
                   renderActions={() => (
                     <ActionButtons
                       size="small"
-                      input={element.value}
+                      input={codeValue}
                       history={history}
                       setOutput={setOutput}
                       output={output}
@@ -232,16 +552,16 @@ function Element({ attributes, children, element }: RenderElementProps) {
                       }}
                     />
                   )}
-                  code={element.value}
+                  code={codeValue}
                   download={() => {
-                    const blob = new Blob([element.value], {
+                    const blob = new Blob([codeValue], {
                       type: "text/plain;charset=utf-8",
                     });
                     const url = URL.createObjectURL(blob);
                     const link = document.createElement("a");
                     link.href = url;
                     const ext =
-                      infoToMode(info, { value: element.value }) || "txt";
+                      infoToMode(info, { value: codeValue }) || "txt";
                     link.download = `code-block.${ext}`;
                     link.click();
                     URL.revokeObjectURL(url);
@@ -249,69 +569,135 @@ function Element({ attributes, children, element }: RenderElementProps) {
                   lineCount={lineCount}
                   modeLabel={modeLabel}
                   onRun={() => runRef.current?.()}
+                  collapseToggle={
+                    shouldCollapse
+                      ? {
+                          label: isCollapsed ? "Show all" : "Collapse",
+                          onClick: isCollapsed
+                            ? () => toggleCollapse({ focus: true })
+                            : collapseNow,
+                        }
+                      : null
+                  }
                 />
-              )}
-              <SlateCodeMirror
-                options={{ lineWrapping: true }}
-                value={element.value}
-                info={infoToMode(info, { value: element.value })}
-                onChange={(value) => {
-                  setElement({ value });
+              </div>
+            )}
+            {isCollapsed ? (
+              <pre
+                className="cocalc-slate-code-block"
+                contentEditable={false}
+                style={{ margin: 0 }}
+              >
+                {codeValue
+                  .split("\n")
+                  .slice(0, COLLAPSE_THRESHOLD_LINES)
+                  .join("\n")}
+              </pre>
+            ) : (
+              <CodeBlockBody onPaste={handlePaste}>{children}</CodeBlockBody>
+            )}
+            {markdownCandidate && (
+              <div
+                contentEditable={false}
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-start",
+                  gap: "8px",
+                  marginTop: 6,
+                  marginBottom: 6,
                 }}
-                onFocus={async () => {
-                  await delay(1); // must be a little longer than the onBlur below.
-                  if (!isMountedRef.current) return;
+                onMouseDown={(e) => {
+                  // Prevent toolbar button clicks from stealing DOM focus from Slate.
+                  e.preventDefault();
+                  e.stopPropagation();
                 }}
-                onBlur={async () => {
-                  await delay(0);
-                  if (!isMountedRef.current) return;
+              >
+                <Button
+                  size="small"
+                  type={preferRichText ? "primary" : "default"}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    convertMarkdownCandidate();
+                  }}
+                >
+                  Markdown
+                </Button>
+                <Button
+                  size="small"
+                  type={preferRichText ? "default" : "primary"}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dismissMarkdownCandidate();
+                    focusAfterCodeBlock();
+                  }}
+                >
+                  Code Block
+                </Button>
+                {showPopularGuess && popularGuess && (
+                  <Button
+                    size="small"
+                    type="default"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const info = popularGuess.mode;
+                      setInfo(info);
+                      setElement({ info } as any);
+                      dismissMarkdownCandidate();
+                      focusAfterCodeBlock();
+                    }}
+                  >
+                    {popularGuess.label}
+                  </Button>
+                )}
+              </div>
+            )}
+            {!disableMarkdownCodebar && output != null && (
+              <div
+                contentEditable={false}
+                onMouseDown={() => {
+                  editor.setIgnoreSelection(true);
                 }}
-                onShiftEnter={() => {
-                  runRef.current?.();
+                onMouseUp={() => {
+                  editor.setIgnoreSelection(false);
                 }}
-                addonAfter={
-                  disableMarkdownCodebar || output == null ? null : (
-                    <div
-                      onMouseDown={() => {
-                        editor.setIgnoreSelection(true);
-                      }}
-                      onMouseUp={() => {
-                        // Re-enable slate listing for selection changes again in next render loop.
-                        setTimeout(() => {
-                          editor.setIgnoreSelection(false);
-                        }, 0);
-                      }}
-                      style={{
-                        borderTop: "1px dashed #ccc",
-                        background: "white",
-                        padding: "5px 0 5px 30px",
-                      }}
-                    >
-                      {output}
-                    </div>
-                  )
-                }
-              />
-            </div>
+                style={{
+                  borderTop: "1px dashed #ccc",
+                  background: "white",
+                  padding: "5px 0 5px 30px",
+                }}
+              >
+                {output}
+              </div>
+            )}
           </div>
-          {element.info == "mermaid" && (
-            <Mermaid style={{ flex: 1 }} value={element.value} />
-          )}
         </div>
-        <InsertBar
-          editor={editor}
-          element={element}
-          info={info}
-          above={false}
-        />
+        {element.info == "mermaid" && (
+          <div contentEditable={false}>
+            <Mermaid style={{ flex: 1 }} value={codeValue} />
+          </div>
+        )}
       </div>
-      {children}
     </div>
   );
 }
 
 function fromSlate({ node }) {
-  const value = node.value as string;
+  const value = getCodeBlockText(node as CodeBlock);
 
   // We always convert them to fenced, because otherwise collaborative editing just
   // isn't possible, e.g., because you can't have blank lines at the end.  This isn't
@@ -339,9 +725,14 @@ function fromSlate({ node }) {
 register({
   slateType: "code_block",
   fromSlate,
-  Element,
+  Element: CodeLikeEditor,
   rules: {
     autoFocus: true,
     autoAdvance: true,
   },
+});
+
+register({
+  slateType: "code_line",
+  Element: CodeLikeEditor,
 });

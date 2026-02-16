@@ -167,6 +167,7 @@ export interface Host {
   can_start?: boolean;
   can_place?: boolean;
   reason_unavailable?: string;
+  starred?: boolean;
   last_action?: string;
   last_action_at?: string;
   last_action_status?: string;
@@ -174,6 +175,15 @@ export interface Host {
   provider_observed_at?: string;
   deleted?: string;
   backup_status?: HostBackupStatus;
+}
+
+export interface HostConnectionInfo {
+  host_id: string;
+  name?: string | null;
+  ssh_server?: string | null;
+  connect_url?: string | null;
+  local_proxy?: boolean;
+  ready?: boolean;
 }
 
 export interface HostLogEntry {
@@ -215,9 +225,35 @@ export interface HostSoftwareUpgradeResponse {
   }>;
 }
 
+export type ExternalCredentialScope =
+  | "account"
+  | "project"
+  | "organization"
+  | "site";
+
+export interface ExternalCredentialSelector {
+  provider: string;
+  kind: string;
+  scope: ExternalCredentialScope;
+  owner_account_id?: string;
+  project_id?: string;
+  organization_id?: string;
+}
+
+export interface ExternalCredentialRecord {
+  id: string;
+  payload: string;
+  metadata: Record<string, any>;
+  created: Date;
+  updated: Date;
+  revoked: Date | null;
+  last_used: Date | null;
+}
+
 export const hosts = {
   listHosts: authFirstRequireAccount,
   listHostProjects: authFirstRequireAccount,
+  resolveHostConnection: authFirstRequireAccount,
   getCatalog: authFirstRequireAccount,
   updateCloudCatalog: authFirstRequireAccount,
   getHostLog: authFirstRequireAccount,
@@ -231,12 +267,27 @@ export const hosts = {
   updateHostMachine: authFirstRequireAccount,
   deleteHost: authFirstRequireAccount,
   upgradeHostSoftware: authFirstRequireAccount,
+  upgradeHostConnector: authFirstRequireAccount,
+  setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   updateCopyStatus: authFirstRequireHost,
+  hasExternalCredential: authFirstRequireHost,
+  getExternalCredential: authFirstRequireHost,
+  touchExternalCredential: authFirstRequireHost,
+  upsertExternalCredential: authFirstRequireHost,
+  getSiteOpenAiApiKey: authFirstRequireHost,
+  checkCodexSiteUsageAllowance: authFirstRequireHost,
+  recordCodexSiteUsage: authFirstRequireHost,
+  issueProjectHostAuthToken: authFirstRequireAccount,
 };
+
+export interface HostConnectorUpgradeRequest {
+  id: string;
+  version?: string;
+}
 
 export interface Hosts {
   listHosts: (opts: {
@@ -252,6 +303,10 @@ export interface Hosts {
     cursor?: string;
     risk_only?: boolean;
   }) => Promise<HostProjectsResponse>;
+  resolveHostConnection: (opts: {
+    account_id?: string;
+    host_id: string;
+  }) => Promise<HostConnectionInfo>;
   getCatalog: (opts: {
     account_id?: string;
     provider?: string;
@@ -294,6 +349,68 @@ export interface Hosts {
     status: ProjectCopyState;
     last_error?: string;
   }) => Promise<void>;
+  hasExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<boolean>;
+  getExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<ExternalCredentialRecord | undefined>;
+  touchExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<boolean>;
+  upsertExternalCredential: (opts: {
+    host_id?: string;
+    project_id: string;
+    selector: ExternalCredentialSelector;
+    payload: string;
+    metadata?: Record<string, any>;
+  }) => Promise<{ id: string; created: boolean }>;
+  getSiteOpenAiApiKey: (opts: {
+    host_id?: string;
+  }) => Promise<{
+    enabled: boolean;
+    has_api_key: boolean;
+    api_key?: string;
+  }>;
+  checkCodexSiteUsageAllowance: (opts: {
+    host_id?: string;
+    project_id: string;
+    account_id: string;
+    model?: string;
+  }) => Promise<{
+    allowed: boolean;
+    reason?: string;
+    window?: "5h" | "7d";
+    reset_in?: string;
+  }>;
+  recordCodexSiteUsage: (opts: {
+    host_id?: string;
+    project_id: string;
+    account_id: string;
+    model?: string;
+    path?: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_time_s: number;
+  }) => Promise<{
+    usage_units: number;
+  }>;
+  issueProjectHostAuthToken: (opts: {
+    account_id?: string;
+    host_id: string;
+    project_id?: string;
+    ttl_seconds?: number;
+  }) => Promise<{
+    host_id: string;
+    token: string;
+    expires_at: number;
+  }>;
 
   createHost: (opts: {
     account_id?: string;
@@ -328,6 +445,11 @@ export interface Hosts {
     id: string;
     name: string;
   }) => Promise<Host>;
+  setHostStar: (opts: {
+    account_id?: string;
+    id: string;
+    starred: boolean;
+  }) => Promise<void>;
   updateHostMachine: (opts: {
     account_id?: string;
     id: string;
@@ -341,6 +463,7 @@ export interface Hosts {
     gpu_count?: number;
     storage_mode?: HostMachine["storage_mode"];
     boot_disk_gb?: number;
+    self_host_ssh_target?: string;
     region?: string;
     zone?: string;
   }) => Promise<Host>;
@@ -350,6 +473,11 @@ export interface Hosts {
     targets: HostSoftwareUpgradeTarget[];
     base_url?: string;
   }) => Promise<HostLroResponse>;
+  upgradeHostConnector: (opts: {
+    account_id?: string;
+    id: string;
+    version?: string;
+  }) => Promise<void>;
   deleteHost: (opts: {
     account_id?: string;
     id: string;

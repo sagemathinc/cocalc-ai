@@ -6,6 +6,7 @@
 import { PostgreSQL } from "@cocalc/database/postgres/types";
 import { is_array, is_valid_uuid_string } from "@cocalc/util/misc";
 import { callback2 } from "@cocalc/util/async-utils";
+import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 
 const GROUPS = ["owner", "collaborator"] as const;
 
@@ -63,6 +64,9 @@ export async function add_collaborators_to_projects(
       await increment_project_invite_token_counter(db, token_id);
     }
   }
+  for (const project_id of new Set(projects)) {
+    await syncProjectUsersOnHost({ project_id });
+  }
 }
 
 export async function remove_collaborators_from_projects(
@@ -100,6 +104,9 @@ export async function remove_collaborators_from_projects(
       project_id,
       account_id,
     });
+  }
+  for (const project_id of new Set(projects)) {
+    await syncProjectUsersOnHost({ project_id });
   }
 }
 

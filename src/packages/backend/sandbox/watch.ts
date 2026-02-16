@@ -31,14 +31,15 @@ const MAX_PATCH_FILE_SIZE = 1_000_000;
 //const log = (...args) => console.log(...args);
 const log = (..._args) => {};
 
-export default function watch(
+export default async function watch(
   path: string,
   options: WatchOptions,
   lastOnDisk: LRU<string, string>,
   lastOnDiskHash: TTL<string, boolean>,
-): WatchIterator {
+): Promise<WatchIterator> {
   log("watch", path, options);
   const watcher = new Watcher(path, options, lastOnDisk, lastOnDiskHash);
+  await watcher.waitUntilReady();
 
   const iter = new EventIterator(watcher, "change", {
     maxQueue: options.maxQueue ?? 2048,
@@ -61,6 +62,8 @@ export default function watch(
 class Watcher extends EventEmitter {
   private watcher: ReturnType<typeof chokidarWatch>;
   private ready: boolean = false;
+  private readonly readyPromise: Promise<void>;
+  private readyResolve: (() => void) | null = null;
   private patchSeq: number = 0;
 
   constructor(
@@ -70,6 +73,9 @@ class Watcher extends EventEmitter {
     private lastOnDiskHash: TTL<string, boolean>,
   ) {
     super();
+    this.readyPromise = new Promise((resolve) => {
+      this.readyResolve = resolve;
+    });
 
     const stabilityThreshold = options.stabilityThreshold ?? 500;
     const pollInterval = options.pollInterval ?? 250;
@@ -92,6 +98,8 @@ class Watcher extends EventEmitter {
 
     this.watcher.once("ready", () => {
       this.ready = true;
+      this.readyResolve?.();
+      this.readyResolve = null;
     });
     this.watcher.on("all", async (...args) => {
       const change = await this.handle(...args);
@@ -166,6 +174,13 @@ class Watcher extends EventEmitter {
     this.patchSeq++;
     //log(path, "made patch", { time: Date.now() - t, seq: x.patchSeq }, x.patch);
     return x;
+  };
+
+  waitUntilReady = async (): Promise<void> => {
+    if (this.ready) {
+      return;
+    }
+    await this.readyPromise;
   };
 
   close() {

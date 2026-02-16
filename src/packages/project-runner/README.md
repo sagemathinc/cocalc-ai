@@ -6,13 +6,9 @@ cache. It then starts the project running and manages synchronizing
 files with the central file server.
 
 Running projects is done almost entirely in user space using rootless
-podman. The only thing that involves sudo is creating an overlayfs
-mount when starting a project, which requires the following sudo rule,
-where "wstein" is replaced by the user that is running the project runner.
-
-```
-wstein ALL=(ALL) NOPASSWD: /bin/mount -t overlay *, /bin/umount *
-```
+podman. The only privileged operation is overlayfs mount lifecycle, and that
+goes through a root-owned wrapper command (e.g.
+`/usr/local/sbin/cocalc-runtime-storage`) with strict argument validation.
 
 **Absolutely everything else is done in user space right now.**
 The only way that might change is if we make management of the

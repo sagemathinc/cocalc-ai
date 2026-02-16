@@ -27,7 +27,7 @@ export function EditorSettingsAutosaveInterval(props: Props): React.JSX.Element 
         min={15}
         max={900}
         value={props.autosave}
-        addonAfter="seconds"
+        suffix="seconds"
       />
     </LabeledRow>
   );

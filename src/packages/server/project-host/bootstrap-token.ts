@@ -1,13 +1,14 @@
-import { randomBytes, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
 import { isValidUUID } from "@cocalc/util/misc";
+import { refreshLaunchpadOnPremAuthorizedKeys } from "../launchpad/onprem-sshd";
 
 const DEFAULT_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 
-export type BootstrapTokenInfo = {
+export type ProjectHostTokenInfo = {
   token: string;
   token_id: string;
   host_id: string;
@@ -28,14 +29,22 @@ function splitToken(token: string): { tokenId: string; secret: string } | null {
   return { tokenId, secret };
 }
 
-export async function createBootstrapToken(
+function deriveBootstrapKeySeed(secret: string): string {
+  return createHash("sha256")
+    .update("cocalc-ssh-bootstrap:")
+    .update(secret)
+    .digest("base64url");
+}
+
+export async function createProjectHostToken(
   hostId: string,
   opts: { ttlMs?: number; purpose?: string } = {},
-): Promise<BootstrapTokenInfo> {
+): Promise<ProjectHostTokenInfo> {
   const token_id = randomUUID();
   const secret = randomBytes(32).toString("base64url");
   const token = `${token_id}.${secret}`;
   const token_hash = passwordHash(secret);
+  const ssh_key_seed = deriveBootstrapKeySeed(secret);
   const purpose = opts.purpose ?? "bootstrap";
   const created = new Date();
   const expires = new Date(created.getTime() + (opts.ttlMs ?? DEFAULT_TTL_MS));
@@ -49,15 +58,16 @@ export async function createBootstrapToken(
 
   await pool().query(
     `INSERT INTO project_host_bootstrap_tokens
-       (token_id, host_id, token_hash, purpose, created, expires, revoked)
-     VALUES ($1,$2,$3,$4,$5,$6,FALSE)`,
-    [token_id, hostId, token_hash, purpose, created, expires],
+       (token_id, host_id, token_hash, ssh_key_seed, purpose, created, expires, revoked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE)`,
+    [token_id, hostId, token_hash, ssh_key_seed, purpose, created, expires],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
 
   return { token, token_id, host_id: hostId, purpose, expires };
 }
 
-export async function verifyBootstrapToken(
+export async function verifyProjectHostToken(
   token: string,
   opts: { purpose?: string } = {},
 ): Promise<{
@@ -103,7 +113,7 @@ export async function verifyBootstrapToken(
   };
 }
 
-export async function revokeBootstrapTokensForHost(
+export async function revokeProjectHostTokensForHost(
   hostId: string,
   opts: { purpose?: string } = {},
 ): Promise<void> {
@@ -115,4 +125,31 @@ export async function revokeBootstrapTokensForHost(
        ${purpose ? "AND purpose=$2" : ""}`,
     purpose ? [hostId, purpose] : [hostId],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
 }
+
+export async function createProjectHostBootstrapToken(
+  hostId: string,
+  opts: { ttlMs?: number } = {},
+): Promise<ProjectHostTokenInfo> {
+  return await createProjectHostToken(hostId, {
+    ...opts,
+    purpose: "bootstrap",
+  });
+}
+
+export async function createProjectHostMasterConatToken(
+  hostId: string,
+  opts: { ttlMs?: number } = {},
+): Promise<ProjectHostTokenInfo> {
+  return await createProjectHostToken(hostId, {
+    ...opts,
+    purpose: "master-conat",
+  });
+}
+
+// Backward-compatible aliases; prefer create/verify/revokeProjectHost* names.
+export type BootstrapTokenInfo = ProjectHostTokenInfo;
+export const createBootstrapToken = createProjectHostToken;
+export const verifyBootstrapToken = verifyProjectHostToken;
+export const revokeBootstrapTokensForHost = revokeProjectHostTokensForHost;

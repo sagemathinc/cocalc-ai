@@ -20,6 +20,7 @@ import { is_different } from "@cocalc/util/misc";
 import { NoNetworkProjectWarning } from "../warnings/no-network";
 import { NonMemberProjectWarning } from "../warnings/non-member";
 import { AboutBox } from "./about-box";
+import { LauncherDefaults } from "./launcher-defaults";
 import { ApiKeys } from "./api-keys";
 import { Datastore } from "./datastore";
 import { Environment } from "./environment";
@@ -54,7 +55,6 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
   const projectLabel = intl.formatMessage(labels.project);
   const kucalc = useTypedRedux("customize", "kucalc");
   const runQuota = useRunQuota(project_id, null);
-  const ssh_gateway = useTypedRedux("customize", "ssh_gateway");
   const datastore = useTypedRedux("customize", "datastore");
   const commercial = useTypedRedux("customize", "commercial");
 
@@ -101,6 +101,10 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
             name={project.get("name")}
             actions={redux.getActions("projects")}
           />
+          <LauncherDefaults
+            project_id={id}
+            project={project}
+          />
           {!lite && (
             <HideDeleteBox
               key="hide-delete"
@@ -121,14 +125,13 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
         {!lite && (
           <Col sm={6}>
             <ProjectControl key="control" project={project} />
-            {!student.disableSSH &&
-              (ssh_gateway || kucalc === KUCALC_COCALC_COM) && (
-                <SSHPanel
-                  key="ssh-keys"
-                  project={project}
-                  account_id={account_id}
-                />
-              )}
+            {!lite && !student.disableSSH && (
+              <SSHPanel
+                key="ssh-keys"
+                project={project}
+                account_id={account_id}
+              />
+            )}
             <ApiKeys project_id={project_id} />
           </Col>
         )}

@@ -22,7 +22,11 @@ echo "Building CoCalc Project SEA for $OS"
 cp "$NODE_BIN" "$TARGET"
 chmod u+w "$TARGET"
 
-cp ../build/bundle-${OS}-${ARCH}.tar.xz cocalc.tar.xz
+if [ "$OS" != "linux" ]; then
+  echo "build-sea expects a linux project bundle (bundle-linux.tar.xz)" >&2
+  exit 1
+fi
+cp ../build/bundle-linux.tar.xz cocalc.tar.xz
 envsubst < ../../project-host/sea/cocalc-template.js > cocalc.js
 
 node --experimental-sea-config sea-config.json

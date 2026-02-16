@@ -52,8 +52,6 @@ export default async function getCustomize(
       isCommercial: settings.commercial,
 
       kucalc: settings.kucalc,
-      sshGateway: settings.ssh_gateway,
-      sshGatewayDNS: settings.ssh_gateway_dns,
 
       emailSignup: settings.email_signup,
       accountCreationInstructions: settings.account_creation_email_instructions,
@@ -77,6 +75,16 @@ export default async function getCustomize(
       policies: settings.policies,
       support: settings.support,
       supportVideoCall: settings.support_video_call,
+      project_hosts_nebius_enabled: settings.project_hosts_nebius_enabled,
+      "project_hosts_google-cloud_enabled":
+        (settings as any)["project_hosts_google-cloud_enabled"],
+      project_hosts_hyperstack_enabled: settings.project_hosts_hyperstack_enabled,
+      project_hosts_lambda_enabled: settings.project_hosts_lambda_enabled,
+      project_hosts_local_enabled: settings.project_hosts_local_enabled,
+      project_hosts_self_host_alpha_enabled:
+        settings.project_hosts_self_host_alpha_enabled,
+      project_hosts_cloudflare_tunnel_enabled:
+        settings.project_hosts_cloudflare_tunnel_enabled,
 
       // Is important for invite emails, password reset, etc. (e.g., so we can construct a url to our site).
       // This *can* start with http:// to explicitly use http instead of https, and can end
@@ -123,5 +131,5 @@ export default async function getCustomize(
       },
     };
   }
-  return fields ? copy_with(cachedCustomize, fields) : cachedCustomize;
+  return fields ? copy_with(cachedCustomize!, fields) : cachedCustomize!;
 }

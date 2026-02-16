@@ -6,7 +6,7 @@
  *
  * Uploads a build artifact to Cloudflare R2 (S3-compatible) using SigV4.
  * - Uploads the file and a sibling .sha256 file.
- * - Optionally writes a "latest" manifest JSON (url, sha256, size, built_at, os, arch).
+ * - Optionally writes a "latest" manifest JSON (url, sha256, size, built_at, os, arch, version).
  * - Can also copy an existing object (e.g., staging -> latest) without
  *   uploading a new file.
  *
@@ -23,7 +23,7 @@
  * Examples:
  *   node publish-r2.js --file ./artifact.tar.xz --bucket cocalc-artifacts \
  *     --prefix software/project-host/0.1.7 --latest-key software/project-host/latest-linux-amd64.json \
- *     --os linux --arch amd64
+ *     --os linux --arch amd64 --version 0.1.7
  *   node publish-r2.js --bucket cocalc-artifacts \
  *     --copy-from software/project-host/staging.json \
  *     --copy-to software/project-host/latest.json
@@ -36,7 +36,7 @@ const path = require("node:path");
 
 function usage() {
   console.error(
-    "Usage: publish-r2.js --file <path> --bucket <bucket> [--key <key>] [--prefix <prefix>] [--public-base-url <url>] [--latest-key <key>] [--os <os>] [--arch <arch>] [--cache-control <value>] [--latest-cache-control <value>] [--copy-from <key> --copy-to <key>]",
+    "Usage: publish-r2.js --file <path> --bucket <bucket> [--key <key>] [--prefix <prefix>] [--public-base-url <url>] [--latest-key <key>] [--os <os>] [--arch <arch>] [--version <semver>] [--cache-control <value>] [--latest-cache-control <value>] [--copy-from <key> --copy-to <key>]",
   );
   process.exit(2);
 }
@@ -87,6 +87,14 @@ function getSignatureKey(secret, dateStamp, region, service) {
 function joinKey(prefix, filename) {
   if (!prefix) return filename;
   return `${prefix.replace(/\/+$/, "")}/${filename}`;
+}
+
+function extractVersion(raw) {
+  if (!raw) return null;
+  const match = raw.match(
+    /(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/,
+  );
+  return match ? match[1] : null;
 }
 
 async function hashFile(filePath) {
@@ -332,10 +340,16 @@ async function main() {
   const latestKey = args["latest-key"] || process.env.COCALC_R2_LATEST_KEY;
   const manifestOs = args.os || process.env.COCALC_R2_OS;
   const manifestArch = args.arch || process.env.COCALC_R2_ARCH;
-
-  const host = `${accountId}.r2.cloudflarestorage.com`;
   const filename = path.basename(filePath);
   const key = args.key || joinKey(prefix, filename);
+  const manifestVersion =
+    args.version ||
+    process.env.COCALC_R2_VERSION ||
+    process.env.VERSION ||
+    extractVersion(key) ||
+    extractVersion(filename);
+
+  const host = `${accountId}.r2.cloudflarestorage.com`;
   const contentType =
     args["content-type"] ||
     process.env.COCALC_R2_CONTENT_TYPE ||
@@ -386,6 +400,9 @@ async function main() {
     }
     if (manifestArch) {
       manifest.arch = manifestArch;
+    }
+    if (manifestVersion) {
+      manifest.version = manifestVersion;
     }
     const manifestBody = Buffer.from(JSON.stringify(manifest, null, 2));
     await putObject({

@@ -15,8 +15,9 @@
     "clean": "rm -rf build dist node_modules tsconfig.tsbuildinfo",
     "build": "pnpm exec tsc --build",
     "test": "pnpm exec jest --forceExit",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores @types/debug,@types/jest,@types/node,ts-node",
-    "app": "pnpm exec cocalc-lite"
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores @types/debug,@types/jest,@types/node,ts-node,@cocalc/plus",
+    "app": "pnpm exec cocalc-lite",
+    "jupyter:bench": "pnpm exec ts-node ./jupyter-benchmark.ts"
   },
   "bin": {
     "cocalc-lite": "./bin/start.js"
@@ -40,6 +41,7 @@
     "@types/express": "^4.17.23",
     "@types/lodash": "^4.17.20",
     "@openai/agents": "^0.3.7",
+    "ascii-table3": "^1.0.1",
     "compression": "^1.8.1",
     "express": "^4.21.2",
     "formidable": "^3.5.4",

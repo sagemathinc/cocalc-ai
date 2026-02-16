@@ -135,6 +135,11 @@ export interface Configuration {
   // Use the option {ttl:number of MILLISECONDS} when publishing to set a ttl.
   allow_msg_ttl: boolean;
 
+  // If set, writes are rejected unless all listed header key/value pairs
+  // exactly match the message headers.  This is used as a fencing token,
+  // e.g. to reject stale writers after a history reset.
+  required_headers: JSONValue;
+
   // description of this table
   desc: JSONValue;
 }
@@ -163,6 +168,11 @@ const CONFIGURATION = {
     def: false,
     fromDb: (x) => x == "true",
     toDb: (x) => `${!!x}`,
+  },
+  required_headers: {
+    def: null,
+    fromDb: JSON.parse,
+    toDb: JSON.stringify,
   },
   desc: {
     def: null,
@@ -447,6 +457,7 @@ export class PersistentStream extends EventEmitter {
     if (msgID != null && this.msgIDs?.has(msgID)) {
       return this.msgIDs.get(msgID)!;
     }
+    this.checkRequiredHeaders(headers);
     if (key !== undefined && previousSeq !== undefined) {
       // throw error if current seq number for the row
       // with this key is not previousSeq.
@@ -504,6 +515,28 @@ export class PersistentStream extends EventEmitter {
       this.msgIDs.set(msgID, { time, seq });
     }
     return { time, seq };
+  };
+
+  private checkRequiredHeaders = (headers?: JSONValue): void => {
+    const required = this.conf.required_headers as
+      | Record<string, unknown>
+      | null
+      | undefined;
+    if (required == null || typeof required !== "object") {
+      return;
+    }
+    const provided =
+      headers != null && typeof headers === "object"
+        ? (headers as Record<string, unknown>)
+        : {};
+    for (const [key, expected] of Object.entries(required)) {
+      if (!Object.is(provided[key], expected)) {
+        throw new ConatError(
+          `required header mismatch for '${key}'`,
+          { code: "reject" },
+        );
+      }
+    }
   };
 
   get = ({

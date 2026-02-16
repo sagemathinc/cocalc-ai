@@ -13,13 +13,13 @@ import { BASE_URL } from "@cocalc/frontend/misc";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { DEFAULT_NEW_FILENAMES } from "@cocalc/util/db-schema";
 import { NewFilenameTypes } from "@cocalc/util/db-schema/defaults";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import {
   capitalize,
   encode_path,
   path_split,
   separate_file_extension,
   sha1,
-  startswith,
   to_iso_path,
   unreachable,
   uuid,
@@ -305,5 +305,9 @@ export function download_href(
 }
 
 export function in_snapshot_path(path: string): boolean {
-  return startswith(path, ".snapshots/") || path.indexOf("/.snapshots/") != -1;
+  return (
+    isSnapshotsPath(path) ||
+    path.indexOf("/.snapshots/") !== -1 ||
+    path.endsWith("/.snapshots")
+  );
 }

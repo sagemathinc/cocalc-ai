@@ -43,8 +43,9 @@ import { FlyoutClearFilter, FlyoutFilterWarning } from "./filter-warning";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { setSort } from "@cocalc/frontend/project/explorer/config";
-import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
+import { BACKUPS } from "@cocalc/util/consts/backups";
 import { lite } from "@cocalc/frontend/lite";
+import { dirname } from "path";
 
 function searchToFilename(search: string): string {
   if (search.endsWith(" ")) {
@@ -126,7 +127,13 @@ export function FilesHeader({
     { project_id },
     "file_creation_error",
   );
-  const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
+  const isReadonlyVirtualPath =
+    effective_current_path === SNAPSHOTS ||
+    effective_current_path?.startsWith(`${SNAPSHOTS}/`) ||
+    effective_current_path === BACKUPS ||
+    effective_current_path?.startsWith(`${BACKUPS}/`);
 
   const [highlighNothingFound, setHighlighNothingFound] = React.useState(false);
   const file_search_prev = usePrevious(file_search);
@@ -161,7 +168,7 @@ export function FilesHeader({
     const fn = searchToFilename(file_search);
     await actions?.createFile({
       name: fn,
-      current_path,
+      current_path: effective_current_path,
     });
   }
 
@@ -174,10 +181,15 @@ export function FilesHeader({
 
     // left arrow key: go up a directory
     else if (e.code === "ArrowLeft") {
-      if (current_path != "") {
-        actions?.set_current_path(
-          current_path.split("/").slice(0, -1).join("/"),
-        );
+      if (effective_current_path !== "/") {
+        const normalizedPath = effective_current_path.replace(/^\/+/, "");
+        if (normalizedPath.startsWith(".")) {
+          actions?.set_current_path(
+            normalizedPath.split("/").slice(0, -1).join("/"),
+          );
+        } else {
+          actions?.set_current_path(dirname(effective_current_path));
+        }
       }
     }
 
@@ -191,7 +203,7 @@ export function FilesHeader({
           setSearchState("");
           open(e, 0);
         } else {
-          if (e.shiftKey) {
+          if (e.shiftKey && !isReadonlyVirtualPath) {
             // only if shift is pressed as well, create a file or folder
             // this avoids accidentally creating jupyter notebooks (the default file type)
             createFileOrFolder();
@@ -215,7 +227,7 @@ export function FilesHeader({
     return (
       <FileUploadWrapper
         project_id={project_id}
-        dest_path={current_path}
+        dest_path={effective_current_path}
         config={{ clickable: `.${uploadClassName}` }}
         className="smc-vfill"
       >
@@ -241,7 +253,7 @@ export function FilesHeader({
           setSort({
             column_name: name,
             project_id,
-            path: current_path,
+            path: effective_current_path,
           })
         }
       >
@@ -279,6 +291,30 @@ export function FilesHeader({
 
   function createFileIfNotExists() {
     if (file_search === "" || !isEmpty) return;
+
+    if (isReadonlyVirtualPath) {
+      const style: CSS = {
+        padding: FLYOUT_PADDING,
+        margin: 0,
+        ...(highlighNothingFound ? { fontWeight: "bold" } : undefined),
+      };
+      return (
+        <Alert
+          type="info"
+          banner
+          showIcon={false}
+          style={style}
+          description={
+            <>
+              <div>
+                <FlyoutClearFilter setFilter={setSearchState} />
+                No files or folders match the current filter.
+              </div>
+            </>
+          }
+        />
+      );
+    }
 
     const what = file_search.trim().endsWith("/") ? "directory" : "file";
     const style: CSS = {
@@ -343,7 +379,7 @@ export function FilesHeader({
   return (
     <>
       <Space
-        direction="vertical"
+        orientation="vertical"
         style={{
           flex: "0 0 auto",
           paddingBottom: FLYOUT_PADDING,
@@ -368,7 +404,7 @@ export function FilesHeader({
               {renderSortButton("time", "Time")}
               {renderSortButton("type", "Type")}
             </Radio.Group>
-            <Space.Compact direction="horizontal" size={"small"}>
+            <Space.Compact orientation="horizontal" size={"small"}>
               <Tooltip
                 title={intl.formatMessage(labels.upload_tooltip)}
                 placement="bottom"
@@ -418,7 +454,7 @@ export function FilesHeader({
             allowClear
             prefix={<Icon name="search" />}
           />
-          <Space.Compact direction="horizontal" size="small">
+          <Space.Compact orientation="horizontal" size="small">
             <BootstrapButton
               title={intl.formatMessage(labels.hidden_files, { hidden })}
               bsSize="xsmall"
@@ -428,7 +464,7 @@ export function FilesHeader({
               <Icon name={hidden ? "eye" : "eye-slash"} />
             </BootstrapButton>
           </Space.Compact>
-          <Space.Compact direction="horizontal" size="small">
+          <Space.Compact orientation="horizontal" size="small">
             {!lite ? (
               <Tooltip title="Recovery" placement="bottom">
                 <span>
@@ -438,7 +474,7 @@ export function FilesHeader({
                     items={[
                       {
                         key: "snapshots-open",
-                        label: "Open Snapshots",
+                        label: "Browse Snapshots",
                         onClick: () => {
                           actions?.open_directory(SNAPSHOTS);
                           track("snapshots", {
@@ -466,7 +502,7 @@ export function FilesHeader({
                       { type: "divider" },
                       {
                         key: "backups-open",
-                        label: "Open Backups",
+                        label: "Browse Backups",
                         onClick: () => {
                           actions?.open_directory(BACKUPS);
                           track("backups", {
@@ -505,7 +541,7 @@ export function FilesHeader({
         {renderFileControls()}
       </Space>
       <Space
-        direction="vertical"
+        orientation="vertical"
         style={{
           flex: "0 0 auto",
           borderBottom: FIX_BORDER,

@@ -6,6 +6,9 @@ import stripRememberMeCookie from "./strip-remember-me-cookie";
 import { versionCheckFails } from "./version";
 import { proxyConatWebsocket } from "./proxy-conat";
 import basePath from "@cocalc/backend/base-path";
+import { parseReq } from "./parse";
+import hasAccess from "./check-for-access-to-project";
+import { stripBasePath } from "./util";
 
 const LISTENERS_HACK = true;
 
@@ -15,6 +18,7 @@ export default function initUpgrade(
   {
     httpServer,
     proxyConat,
+    isPersonal,
     projectProxyHandlersPromise,
   }: { httpServer; proxyConat; projectProxyHandlersPromise?; isPersonal },
   proxy_regexp: string,
@@ -25,6 +29,8 @@ export default function initUpgrade(
   let socketioUpgrade: undefined | Function = undefined;
 
   async function handleProxyUpgradeRequest(req, socket, head): Promise<void> {
+    let remember_me: string | undefined = undefined;
+    let api_key: string | undefined = undefined;
     let removedSocketioThisCall = false;
     let removedNextThisCall = false;
     if (LISTENERS_HACK) {
@@ -122,8 +128,24 @@ export default function initUpgrade(
 
     if (req.headers["cookie"] != null) {
       let cookie;
-      ({ cookie } = stripRememberMeCookie(req.headers["cookie"]));
+      ({ cookie, remember_me, api_key } = stripRememberMeCookie(
+        req.headers["cookie"],
+      ));
       req.headers["cookie"] = cookie;
+    }
+
+    const parsed = parseReq(stripBasePath(req.url), remember_me, api_key);
+    const accessType = parsed.type === "files" ? "read" : "write";
+    if (
+      !(await hasAccess({
+        project_id: parsed.project_id,
+        remember_me,
+        api_key,
+        type: accessType,
+        isPersonal,
+      }))
+    ) {
+      throw Error(`user does not have ${accessType} access to project`);
     }
     projectProxyHandlers.handleUpgrade(req, socket, head);
   }

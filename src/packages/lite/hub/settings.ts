@@ -32,6 +32,8 @@ const DEFAULT_CONFIGURATION = {
   i18n: ["en"],
   dns: "",
   country: "XX",
+  ssh_remote_target: "",
+  ssh_remote_url: "",
 };
 
 // Allow only site_settings & extras defined in the shared schema
@@ -92,6 +94,14 @@ export async function getCustomizePayload(): Promise<CustomizePayload> {
     ...DEFAULT_CONFIGURATION,
     ...publicSettings,
   };
+  const sshRemoteTarget = process.env.COCALC_REMOTE_SSH_TARGET;
+  if (sshRemoteTarget) {
+    configuration.ssh_remote_target = sshRemoteTarget;
+  }
+  const sshRemoteUrl = process.env.COCALC_REMOTE_SSH_LOCAL_URL;
+  if (sshRemoteUrl) {
+    configuration.ssh_remote_url = sshRemoteUrl;
+  }
 
   return {
     configuration,

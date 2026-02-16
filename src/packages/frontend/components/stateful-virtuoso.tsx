@@ -69,6 +69,16 @@ function StatefulVirtuosoCore(
   const snapshotRef = useRef<StateSnapshot | undefined>(undefined);
   const savingRef = useRef<boolean>(false);
 
+  const canSaveState = () => {
+    if (typeof document !== "undefined" && document.hidden) return false;
+    const node = scrollerRef.current;
+    if (!node) return true;
+    const height = node.clientHeight ?? 0;
+    const scrollHeight = node.scrollHeight ?? 0;
+    if (height <= 1 || scrollHeight <= 1) return false;
+    return true;
+  };
+
   const cached = cacheId ? cache.get(cacheId) : undefined;
   if (cached && snapshotRef.current == null) {
     snapshotRef.current = cached;
@@ -77,6 +87,7 @@ function StatefulVirtuosoCore(
   }
 
   const saveState = () => {
+    if (!canSaveState()) return;
     if (savingRef.current || !virtRef.current) return;
     savingRef.current = true;
     setTimeout(() => {

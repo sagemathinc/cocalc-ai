@@ -21,7 +21,8 @@ export default function Download({ clear }) {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const project_id = actions?.project_id ?? "";
-  const current_path = useRedux(["current_path"], project_id);
+  const current_path_abs = useRedux(["current_path_abs"], project_id);
+  const effective_current_path = current_path_abs ?? "/";
   const checked_files = useRedux(["checked_files"], project_id);
   const [target, setTarget] = useState<string>(() => {
     if (checked_files?.size == 1) {
@@ -52,7 +53,7 @@ export default function Download({ clear }) {
       const store = actions?.get_store();
       setUrl(store?.fileURL(file) ?? "");
     }
-  }, [checked_files, current_path]);
+  }, [checked_files, effective_current_path]);
 
   useEffect(() => {
     if (!archiveMode) {
@@ -82,7 +83,7 @@ export default function Download({ clear }) {
       const files = checked_files.toArray();
       let dest;
       if (archiveMode) {
-        const path = store.get("current_path");
+        const path = store.get("current_path_abs") ?? "/";
         dest = join(path, target + "." + format);
         await createArchive({ path, files, target, format, actions });
       } else {

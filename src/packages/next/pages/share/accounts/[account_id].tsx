@@ -13,7 +13,7 @@ Page for a given user.
  */
 
 import { join } from "path";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import getAccountInfo from "lib/share/get-account-info";
 import withCustomize from "lib/with-customize";
 import Account from "components/account/account";
@@ -27,7 +27,7 @@ export async function getServerSideProps(context) {
     if (accountInfo.name) {
       // This account has a nice username. Redirect to that instead
       // of rendering here.
-      return { props: { redirect: join(basePath, accountInfo.name) } };
+      return { props: { redirect: join(ROOT_PATH, accountInfo.name) } };
     }
     return await withCustomize({
       context,

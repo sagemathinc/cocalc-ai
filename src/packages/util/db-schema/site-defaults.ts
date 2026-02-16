@@ -37,18 +37,22 @@ export const TAGS = [
   "Licensing",
   "GitHub",
   "Pay as you Go",
-  "Google Cloud",
   "Cloud",
   "Project Hosts",
+  "Workspace",
+  "RootFS",
+  "OCI",
+  "GPU",
   "Hyperstack",
   "Nebius",
+  "Cloudflare",
   "Backups",
-  "R2",
   "AI LLM",
   "Theme",
   "On-Prem",
   "I18N",
   "Security",
+  "R2",
   "SSH",
   "Support",
 ] as const;
@@ -94,9 +98,6 @@ export type SiteSettingsKeys =
   | "i18n"
   | "dns"
   | "datastore"
-  | "ssh_gateway"
-  | "ssh_gateway_dns"
-  | "ssh_gateway_fingerprint"
   | "versions"
   | "version_min_project"
   | "version_min_browser"
@@ -114,13 +115,22 @@ export type SiteSettingsKeys =
   | "project_hosts_google-cloud_enabled"
   | "project_hosts_hyperstack_enabled"
   | "project_hosts_lambda_enabled"
+  | "project_hosts_local_enabled"
+  | "project_hosts_self_host_alpha_enabled"
   | "project_hosts_nebius_enabled"
+  | "cloudflare_mode"
   | "project_hosts_dns"
-  | "launchpad_mode"
-  | "insecure_test_mode"
+  | "launcher_default_quick_create"
+  | "launcher_default_apps"
+  | "launcher_remove_quick_create"
+  | "launcher_remove_apps"
+  | "project_rootfs_manifest_url"
+  | "project_rootfs_manifest_url_extra"
+  | "project_rootfs_default_image"
+  | "project_rootfs_default_image_gpu"
+  | "project_rootfs_prepull_images"
   | "samesite_remember_me"
   | "user_tracking";
-
 
 type Mapping = { [key: string]: string | number | boolean };
 
@@ -130,6 +140,12 @@ type ToValFunc<T> = (
   config?: { [key in SiteSettingsKeys]?: string },
 ) => T;
 
+export type RequiredWhen = {
+  key: string;
+  equals?: string | string[];
+  present?: boolean;
+};
+
 export interface Config {
   readonly name: string;
   readonly desc: string;
@@ -137,6 +153,8 @@ export interface Config {
   readonly default: string;
   // list of allowed strings or a validator function
   readonly valid?: ConfigValid;
+  // optional display labels for valid values
+  readonly valid_labels?: Readonly<Record<string, string>>;
   readonly password?: boolean;
   readonly show?: (conf: any) => boolean;
   // this optional function derives the actual value of this setting from current value or from a global (unprocessed) setting.
@@ -150,6 +168,23 @@ export interface Config {
   readonly cocalc_only?: boolean; // only for use on cocalc.com (or subdomains)
   readonly help?: string; // markdown formatted help text
   readonly tags?: Readonly<Tag[]>; // tags for filtering
+  readonly managed_by_wizard?: boolean; // shown as wizard-managed in admin UI
+  readonly wizard?: {
+    name: string;
+    label: string;
+  };
+  // optional metadata for organizing admin settings UI
+  readonly group?: string;
+  readonly subgroup?: string;
+  readonly order?: number;
+  readonly advanced?: boolean;
+  readonly hidden?: boolean;
+  readonly depends_on?: Readonly<string[]>;
+  readonly required_when?: Readonly<RequiredWhen[]>;
+  readonly wizard_id?: string;
+  readonly action_label?: string;
+  readonly launchpad_only?: boolean;
+  readonly rocket_only?: boolean;
 }
 
 export type SiteSettings = Record<SiteSettingsKeys, Config>;
@@ -170,7 +205,6 @@ export const only_for_password_reset_smtp = (conf): boolean =>
   to_bool(conf.email_enabled) && conf.password_reset_override === "smtp";
 export const only_onprem = (conf): boolean =>
   conf.kucalc === KUCALC_ON_PREMISES;
-export const only_ssh_gateway = (conf): boolean => to_bool(conf.ssh_gateway);
 export const only_cocalc_com = (conf): boolean =>
   conf.kucalc === KUCALC_COCALC_COM;
 export const not_cocalc_com = (conf): boolean => !only_cocalc_com(conf);
@@ -272,14 +306,19 @@ export const displayJson = (conf) =>
 
 // TODO a cheap'n'dirty validation is good enough
 export const valid_dns_name = (val) => val.match(/^[a-zA-Z0-9.-]+$/g);
-export const valid_dns_name_or_empty = (val) =>
-  !val || valid_dns_name(val);
+export const valid_dns_name_or_empty = (val) => !val || valid_dns_name(val);
 
 export const split_iframe_comm_hosts: ToValFunc<string[]> = (hosts) =>
   (hosts ?? "").match(/[a-z0-9.-]+/g) || [];
 
 const split_strings: ToValFunc<string[]> = (str) =>
   (str ?? "").match(/[a-zA-Z0-9]+/g) || [];
+
+const split_csv_tokens: ToValFunc<string[]> = (str) =>
+  (str ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^[a-zA-Z0-9_-]+$/.test(s));
 
 function num_dns_hosts(val): string {
   return `Found ${split_iframe_comm_hosts(val).length} hosts.`;
@@ -296,18 +335,6 @@ const commercial_to_val: ToValFunc<boolean> = (
     return to_bool(val);
   }
   return false;
-};
-
-const gateway_dns_to_val: ToValFunc<string> = (
-  val?,
-  conf?: { [key in SiteSettingsKeys]: string },
-): string => {
-  // sensible default, in case ssh gateway dns is not set – fallback to the known value in prod/test or the DNS.
-  const dns: string = to_trimmed_str(conf?.dns ?? "");
-  return (
-    (val ?? "").trim() ||
-    (conf != null && only_cocalc_com(conf) ? `ssh.${dns}` : dns)
-  );
 };
 
 export const DATASTORE_TITLE = "Cloud Storage & Remote Filesystems";
@@ -369,6 +396,27 @@ export const site_settings_conf: SiteSettings = {
     default: "",
     to_val: to_trimmed_str,
     //valid: valid_dns_name,
+    group: "Networking",
+    subgroup: "Domain",
+    order: 10,
+    required_when: [{ key: "cloudflare_mode", equals: ["self", "managed"] }],
+  },
+  cloudflare_mode: {
+    name: "Cloudflare Integration Mode",
+    desc: "Choose how Cloudflare is used for this hub. Use **none** for fully self-hosted setups, **self** to use your own Cloudflare account, or **managed** to use CoCalc-managed Cloudflare.",
+    default: "none",
+    valid: ["none", "self", "managed"],
+    valid_labels: {
+      none: "Do not use Cloudflare at all",
+      self: "Use your own Cloudflare account (pay for DNS and bucket storage)",
+      managed: "CoCalc managed (included with your membership)",
+    },
+    to_val: to_trimmed_str,
+    wizard: { name: "cloudflare-config", label: "Wizard..." },
+    tags: ["Cloudflare", "Cloud"],
+    group: "Cloudflare",
+    subgroup: "Mode",
+    order: 5,
   },
   theming: {
     name: "Show Theming",
@@ -377,14 +425,18 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Overview",
   },
   site_name: {
     name: "Site name",
     desc: "The heading name of your CoCalc site.",
-    default: "Open CoCalc",
+    default: "CoCalc Launchpad",
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Branding",
   },
   site_description: {
     name: "Site description",
@@ -393,6 +445,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Branding",
   },
   help_email: {
     name: help_email_name,
@@ -402,6 +456,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme", "Email", "Support"],
+    group: "Branding & UI",
+    subgroup: "Contact",
   },
   terms_of_service_url: {
     name: "Terms of Service URL",
@@ -410,6 +466,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Legal",
   },
   terms_of_service: {
     name: "ToS information",
@@ -418,6 +476,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Legal",
   },
   account_creation_email_instructions: {
     name: "Account creation",
@@ -426,6 +486,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Signup",
   },
   organization_name: {
     name: "Organization name",
@@ -434,6 +496,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Contact",
   },
   organization_email: {
     name: "Contact email address",
@@ -443,6 +507,8 @@ export const site_settings_conf: SiteSettings = {
     valid: is_valid_email_address,
     show: show_theming_vars,
     tags: ["Theme", "Email"],
+    group: "Branding & UI",
+    subgroup: "Contact",
   },
   organization_url: {
     name: "Organization website",
@@ -451,6 +517,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Contact",
   },
   logo_square: {
     name: "Logo (square)",
@@ -459,6 +527,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Logo", "Theme"],
+    group: "Branding & UI",
+    subgroup: "Branding",
   },
   logo_rectangular: {
     name: "Logo (rectangular)",
@@ -467,6 +537,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Logo", "Theme"],
+    group: "Branding & UI",
+    subgroup: "Branding",
   },
   splash_image: {
     name: "Index page picture",
@@ -475,6 +547,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Landing",
   },
   index_info_html: {
     name: "Index page info",
@@ -484,6 +558,8 @@ export const site_settings_conf: SiteSettings = {
     show: show_theming_vars,
     multiline: 5,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Landing",
   },
   index_tagline: {
     name: "Index page tagline",
@@ -492,6 +568,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: show_theming_vars,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Landing",
   },
   imprint: {
     name: "Imprint page",
@@ -501,6 +579,8 @@ export const site_settings_conf: SiteSettings = {
     show: show_theming_vars,
     multiline: 5,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Legal",
   },
   policies: {
     name: "Policies page",
@@ -510,6 +590,8 @@ export const site_settings_conf: SiteSettings = {
     show: show_theming_vars,
     multiline: 5,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Legal",
   },
   support: {
     name: "Support page (on-prem only)",
@@ -519,6 +601,8 @@ export const site_settings_conf: SiteSettings = {
     show: (conf) => show_theming_vars(conf) && not_cocalc_com(conf),
     multiline: 5,
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Support",
   },
   support_video_call: {
     name: "Video Call for Support",
@@ -527,6 +611,8 @@ export const site_settings_conf: SiteSettings = {
     clearable: true,
     show: (conf) => show_theming_vars(conf) && only_cocalc_com(conf),
     tags: ["Theme"],
+    group: "Branding & UI",
+    subgroup: "Support",
   },
   // ============== END THEMING ============
 
@@ -536,6 +622,8 @@ export const site_settings_conf: SiteSettings = {
     default: "",
     type: "header",
     tags: ["Version"],
+    group: "System / Advanced",
+    subgroup: "Versions",
   },
   version_min_project: {
     name: "Required project version",
@@ -544,6 +632,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_nonneg_int,
     show: () => true,
     tags: ["Version"],
+    group: "System / Advanced",
+    subgroup: "Versions",
   },
   version_min_browser: {
     name: "Required browser version",
@@ -552,6 +642,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_nonneg_int,
     show: () => true,
     tags: ["Version"],
+    group: "System / Advanced",
+    subgroup: "Versions",
   },
   version_recommended_browser: {
     name: "Recommended version",
@@ -560,6 +652,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_nonneg_int,
     show: () => true,
     tags: ["Version"],
+    group: "System / Advanced",
+    subgroup: "Versions",
   },
   kucalc: {
     name: "KuCalc UI",
@@ -567,6 +661,8 @@ export const site_settings_conf: SiteSettings = {
     default: KUCALC_DISABLED,
     valid: KUCALC_VALID_VALS,
     tags: ["On-Prem"],
+    group: "System / Advanced",
+    subgroup: "Platform",
   },
   i18n: {
     name: "Internationalization",
@@ -581,12 +677,16 @@ export const site_settings_conf: SiteSettings = {
         : list.join(", ");
     },
     tags: ["I18N"],
+    group: "Branding & UI",
+    subgroup: "Localization",
   },
   google_analytics: {
     name: "Google Analytics",
     desc: `A Google Analytics GA4 tag for tracking usage of your site ("G-...").`,
     default: "",
     show: only_cocalc_com,
+    group: "System / Advanced",
+    subgroup: "Analytics",
   },
   commercial: {
     name: "Commercial",
@@ -596,6 +696,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: commercial_to_val,
     show: only_cocalc_com,
     tags: ["Commercialization"],
+    group: "Payments & Billing",
+    subgroup: "Commercialization",
   },
   max_trial_projects: {
     name: "Maximum Trial Projects",
@@ -605,6 +707,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_nonneg_int,
     show: only_cocalc_com,
     tags: ["Commercialization"],
+    group: "Payments & Billing",
+    subgroup: "Commercialization",
   },
   nonfree_countries: {
     name: "Nonfree Countries",
@@ -613,6 +717,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: split_strings,
     show: only_cocalc_com,
     tags: ["Commercialization"],
+    group: "Payments & Billing",
+    subgroup: "Commercialization",
   },
   datastore: {
     name: "Datastore",
@@ -621,6 +727,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     show: only_onprem,
     to_val: to_bool,
+    group: "System / Advanced",
+    subgroup: "On-Prem",
   },
   onprem_quota_heading: {
     name: "On-prem Quotas",
@@ -629,6 +737,8 @@ export const site_settings_conf: SiteSettings = {
     show: only_onprem,
     type: "header",
     tags: ["On-Prem"],
+    group: "System / Advanced",
+    subgroup: "On-Prem Quotas",
   },
   default_quotas: {
     name: "Default Quotas",
@@ -640,6 +750,8 @@ export const site_settings_conf: SiteSettings = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["On-Prem"],
+    group: "System / Advanced",
+    subgroup: "On-Prem Quotas",
   },
   max_upgrades: {
     name: "Maximum Quota Upgrades",
@@ -651,28 +763,8 @@ export const site_settings_conf: SiteSettings = {
     to_display: displayJson,
     valid: parsableJson,
     tags: ["On-Prem"],
-  },
-  ssh_gateway: {
-    name: "SSH Gateway",
-    desc: "Show corresponding UI elements",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-  },
-  ssh_gateway_dns: {
-    name: "SSH Gateway's DNS",
-    desc: "This is the DNS name of the SSH gateway server.  It is displayed to users as the ssh target to connect to a project.",
-    default: "",
-    valid: valid_dns_name,
-    show: only_ssh_gateway,
-    to_val: gateway_dns_to_val,
-  },
-  ssh_gateway_fingerprint: {
-    name: "SSH Gateway's Fingerprint",
-    desc: "Tell users the fingerprint of the SSH gateway server. This is used to verify that the SSH gateway server is the one they expect. E.g., `SHA256:8fa43247...`",
-    default: "",
-    show: only_ssh_gateway,
-    to_val: to_trimmed_str,
+    group: "System / Advanced",
+    subgroup: "On-Prem Quotas",
   },
   iframe_comm_hosts: {
     name: "IFrame embedding",
@@ -680,6 +772,8 @@ export const site_settings_conf: SiteSettings = {
     default: "",
     to_val: split_iframe_comm_hosts,
     to_display: num_dns_hosts,
+    group: "Access & Identity",
+    subgroup: "Embedding",
   },
   email_enabled: {
     name: "Email sending enabled",
@@ -688,6 +782,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "General",
   },
   verify_emails: {
     name: "Verify email addresses",
@@ -697,6 +793,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "General",
   },
   email_signup: {
     name: "Allow email signup",
@@ -704,6 +802,8 @@ export const site_settings_conf: SiteSettings = {
     default: "yes",
     valid: only_booleans,
     to_val: to_bool,
+    group: "Access & Identity",
+    subgroup: "Signup",
   },
   share_server: {
     name: "Allow public file sharing",
@@ -711,6 +811,8 @@ export const site_settings_conf: SiteSettings = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
+    group: "Access & Identity",
+    subgroup: "Sharing",
   },
   share_domain: {
     name: "Share Domain",
@@ -727,6 +829,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_bool,
     show: only_cocalc_com,
     cocalc_only: true,
+    group: "Branding & UI",
+    subgroup: "Landing",
   },
   openai_enabled: {
     name: "OpenAI ChatGPT UI",
@@ -735,6 +839,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["OpenAI", "AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   agent_openai_control_agent_enabled: {
     name: "OpenAI Control Agent UI",
@@ -743,6 +849,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["OpenAI", "AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   agent_openai_codex_enabled: {
     name: "OpenAI Codex Agent UI",
@@ -751,6 +859,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["OpenAI", "AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   google_vertexai_enabled: {
     name: "Google Generative AI UI",
@@ -759,6 +869,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   mistral_enabled: {
     name: "Mistral AI UI",
@@ -767,6 +879,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   anthropic_enabled: {
     name: "Anthropic AI UI",
@@ -775,6 +889,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   ollama_enabled: {
     name: "Ollama LLM UI",
@@ -783,6 +899,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   custom_openai_enabled: {
     name: "Custom OpenAI LLM UI",
@@ -791,6 +909,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "Providers",
   },
   selectable_llms: {
     name: "User Selectable LLMs",
@@ -805,6 +925,8 @@ export const site_settings_conf: SiteSettings = {
         : list.join(", ");
     },
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "User Experience",
   },
   default_llm: {
     name: "Default LLM",
@@ -813,6 +935,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_default_llm,
     valid: USER_SELECTABLE_LANGUAGE_MODELS, // ATTN: This is not true. It's actually the list selectable_llms (which has this list as a constant) + all ollama + custom_llm. This is a special case in the Admin UI.
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "User Experience",
   },
   user_defined_llm: {
     name: "User Defined LLM",
@@ -821,6 +945,8 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_bool,
     valid: only_booleans,
     tags: ["AI LLM"],
+    group: "AI & LLM",
+    subgroup: "User Experience",
   },
   project_hosts_nebius_enabled: {
     name: "Enable Project Hosts - Nebius Cloud",
@@ -829,6 +955,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "Cloud", "Nebius"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   "project_hosts_google-cloud_enabled": {
     name: "Enable Project Hosts - Google Cloud",
@@ -836,7 +964,9 @@ export const site_settings_conf: SiteSettings = {
     default: "no",
     valid: only_booleans,
     to_val: to_bool,
-    tags: ["Project Hosts", "Cloud", "Google Cloud"],
+    tags: ["Project Hosts", "Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   project_hosts_hyperstack_enabled: {
     name: "Enable Project Hosts - Hyperstack",
@@ -845,6 +975,8 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "Cloud", "Hyperstack"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   project_hosts_lambda_enabled: {
     name: "Enable Project Hosts - Lambda Cloud",
@@ -853,14 +985,28 @@ export const site_settings_conf: SiteSettings = {
     valid: only_booleans,
     to_val: to_bool,
     tags: ["Project Hosts", "Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
-  launchpad_mode: {
-    name: "Launchpad Mode",
-    desc: "Select how Launchpad routes traffic. 'onprem' starts local SSH services and uses local backups; 'cloud' expects Cloudflare + bucket settings. Default is 'unset' to require explicit selection.",
-    default: "unset",
-    valid: ["unset", "onprem", "cloud"],
-    to_val: to_trimmed_str,
-    tags: ["On-Prem", "Cloud"],
+  project_hosts_local_enabled: {
+    name: "Enable Project Hosts - Local (manual setup)",
+    desc: "Whether or not to include the local/manual project-host option (for development use).",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Project Hosts", "On-Prem"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
+  },
+  project_hosts_self_host_alpha_enabled: {
+    name: "Enable Project Hosts - Self-Host (alpha options)",
+    desc: "Enable alpha self-host options (e.g., Multipass VM and manual setup).",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["Project Hosts", "On-Prem"],
+    group: "Compute / Project Hosts",
+    subgroup: "Enable Providers",
   },
   project_hosts_dns: {
     name: "Project Hosts: Domain name",
@@ -869,27 +1015,116 @@ export const site_settings_conf: SiteSettings = {
     valid: valid_dns_name_or_empty,
     to_val: to_trimmed_str,
     tags: ["Project Hosts", "Cloud"],
+    group: "Compute / Project Hosts",
+    subgroup: "Domain",
+    show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
+    required_when: [{ key: "cloudflare_mode", equals: "self" }],
   },
-  insecure_test_mode: {
-    name: "Insecure Test Mode",
-    desc: "Put this server in a highly insecure test mode that is suitable for evaluating CoCalc, but **CANNOT BE USED IN PRODUCTION**.",
-    default: "no",
-    valid: only_booleans,
-    to_val: to_bool,
-    tags: ["Security"],
+  launcher_default_quick_create: {
+    name: "Launcher: Default Quick Create",
+    desc: "Comma-separated default quick-create ids used by workspaces when project and user defaults are unset (e.g. chat,ipynb,md,tex,term).",
+    default: "chat,ipynb,md,tex,term",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
+  },
+  launcher_default_apps: {
+    name: "Launcher: Default Apps",
+    desc: "Comma-separated default app ids shown in launcher sections when project and user defaults are unset (e.g. jupyterlab,code,jupyter,pluto,rserver).",
+    default: "jupyterlab,code,jupyter,pluto,rserver",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
+  },
+  launcher_remove_quick_create: {
+    name: "Launcher: Remove Quick Create",
+    desc: "Comma-separated quick-create ids removed from inherited launcher defaults at the site level.",
+    default: "",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
+  },
+  launcher_remove_apps: {
+    name: "Launcher: Remove Apps",
+    desc: "Comma-separated app ids removed from inherited launcher defaults at the site level.",
+    default: "",
+    to_val: split_csv_tokens,
+    tags: ["Workspace"],
+    group: "Branding & UI",
+    subgroup: "Launcher",
+    wizard: { name: "launcher-defaults", label: "Wizard..." },
+    managed_by_wizard: true,
+  },
+  project_rootfs_manifest_url: {
+    name: "Workspace RootFS Image Manifest URL",
+    desc: "Primary manifest URL that lists the curated root filesystem images shown to users when creating a workspace.",
+    default: "https://software.cocalc.ai/rootfs/manifest.json",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_manifest_url_extra: {
+    name: "Workspace RootFS Image Manifest URL (Additional)",
+    desc: "Optional additional manifest URL. Entries are merged with the primary manifest.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_default_image: {
+    name: "Workspace RootFS Default Image",
+    desc: "Default OCI image used when a user does not choose an image. This image is also pulled to every host.",
+    default: "ubuntu:25.10",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_default_image_gpu: {
+    name: "Workspace RootFS Default Image (GPU)",
+    desc: "Optional default OCI image used when a user enables GPU in workspace creation.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI", "GPU"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
+  },
+  project_rootfs_prepull_images: {
+    name: "Workspace RootFS Prepull Images",
+    desc: "Comma-separated list of OCI images to pre-pull to every host (in addition to the default image).",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Workspace", "RootFS", "OCI"],
+    group: "Compute / Workspaces",
+    subgroup: "Root Filesystem Images",
   },
   samesite_remember_me: {
     name: "sameSite setting for remember_me authentication cookie",
-    desc: "The [sameSite setting](https://expressjs.com/en/resources/middleware/cookie-session.html) for the remember_me authentication token, which can be one of 'strict', 'lax', or 'none'.  The default is 'strict', which is the safest choice, as it is a useful line of defense against certain attacks.  Using 'none' is **extremely** insecure, just begging to be hacked; using 'lax' might be OK.  The non-strict options are supported since they are needed for certain development work; they could also be useful in on-prem settings.",
+    desc: "The [sameSite setting](https://expressjs.com/en/resources/middleware/cookie-session.html) for the remember_me authentication token, which can be one of 'strict' or 'lax'. The default is 'strict', which is the safest choice, as it is a useful line of defense against certain attacks. Using 'lax' might be OK for some on-prem or development setups.",
     default: "strict",
-    valid: ["strict", "lax", "none"],
-    to_val: (x) => `${x}`,
+    valid: ["strict", "lax"],
+    to_val: (x) => (x === "none" ? "lax" : `${x}`),
     tags: ["Security"],
+    group: "Access & Identity",
+    subgroup: "Security",
   },
   user_tracking: {
     name: "User Tracking",
     desc: "If enabled, then information about what users do in the frontend browser gets temporarily recorded in the user_tracking table of the database.",
     default: "no",
     valid: only_booleans,
+    group: "System / Advanced",
+    subgroup: "Analytics",
   },
 } as const;

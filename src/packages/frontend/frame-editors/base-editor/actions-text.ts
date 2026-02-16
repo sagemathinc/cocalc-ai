@@ -22,6 +22,7 @@ export class TextEditorActions<
     const latest = this.getLatestVersion();
     try {
       const value = this._syncstring.to_str();
+      this.setState({ value });
       this.getMergeCoordinator().seedBase(value, latest as any);
     } catch {
       // ignore if not ready yet

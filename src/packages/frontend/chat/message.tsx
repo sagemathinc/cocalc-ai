@@ -143,6 +143,17 @@ interface Props {
   dim?: boolean;
 }
 
+export function resolveEditedMessageForSave(
+  mentionSubstituted: string | undefined,
+  submittedValue: string | undefined,
+  editedValue: string,
+): string {
+  const fallback = submittedValue ?? editedValue;
+  return typeof mentionSubstituted === "string" && mentionSubstituted !== ""
+    ? mentionSubstituted
+    : fallback;
+}
+
 export default function Message({
   index,
   actions,
@@ -193,7 +204,7 @@ export default function Message({
 
   const new_changes = useMemo(
     () => edited_message !== newest_content(message),
-    [message] /* note -- edited_message is a function of message */,
+    [edited_message, message],
   );
 
   // date as ms since epoch or 0
@@ -265,6 +276,13 @@ export default function Message({
   );
   const isCodexThread =
     typeof isLLMThread === "string" && isLLMThread.includes("codex");
+
+  useEffect(() => {
+    if (isEditing) return;
+    const latest = newest_content(message);
+    set_edited_message(latest);
+    edited_message_ref.current = latest;
+  }, [isEditing, message]);
 
   useEffect(() => {
     if (generating === true && date > 0) {
@@ -458,7 +476,7 @@ export default function Message({
           <span style={{ margin: "10px 10px 0 10px", display: "inline-block" }}>
             <Button onClick={on_cancel}>Cancel</Button>
             <Gap />
-            <Button onClick={saveEditedMessage} type="primary">
+            <Button onClick={() => saveEditedMessage()} type="primary">
               Save (shift+enter)
             </Button>
           </span>
@@ -473,6 +491,9 @@ export default function Message({
       return;
     }
     actions.setEditing(message, true);
+    const latest = newest_content(message);
+    set_edited_message(latest);
+    edited_message_ref.current = latest;
     setAutoFocusEdit(true);
     scroll_into_view?.();
   }
@@ -1033,7 +1054,7 @@ export default function Message({
     return (
       <Col key={1} xs={mainXS}>
         <div
-          style={{ display: "flex" }}
+          style={{ display: "flex", margin: "10px 0 -10px 0" }}
           onClick={() => {
             const d = dateValue(message);
             if (d != null) actions?.setFragment(d);
@@ -1074,11 +1095,14 @@ export default function Message({
     );
   }
 
-  function saveEditedMessage(): void {
+  function saveEditedMessage(submittedValue?: string): void {
     if (actions == null) return;
-    const mesg =
-      submitMentionsRef.current?.({ chat: `${date}` }) ??
-      edited_message_ref.current;
+    const mentionSubstituted = submitMentionsRef.current?.({ chat: `${date}` });
+    const mesg = resolveEditedMessageForSave(
+      mentionSubstituted,
+      submittedValue,
+      edited_message_ref.current,
+    );
     const value = newest_content(message);
     if (mesg !== value) {
       set_edited_message(mesg);
@@ -1107,13 +1131,14 @@ export default function Message({
           fontSize={font_size}
           autoFocus={autoFocusEdit}
           cacheId={`${path}${project_id}${date}`}
-          input={newest_content(message)}
+          input={edited_message}
           submitMentionsRef={submitMentionsRef}
-          on_send={saveEditedMessage}
+          on_send={(value) => saveEditedMessage(value)}
           height={"auto"}
           syncdb={actions.syncdb}
           date={date}
           onChange={(value) => {
+            set_edited_message(value);
             edited_message_ref.current = value;
           }}
         />
@@ -1127,7 +1152,7 @@ export default function Message({
           >
             {intl.formatMessage(labels.cancel)}
           </Button>
-          <Button type="primary" onClick={saveEditedMessage}>
+          <Button type="primary" onClick={() => saveEditedMessage()}>
             <Icon name="save" /> Save Edited Message
           </Button>
         </div>

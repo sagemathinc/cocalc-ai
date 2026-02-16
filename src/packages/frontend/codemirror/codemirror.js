@@ -17,4 +17,5 @@ try {
     global.CodeMirror = require("codemirror/addon/runmode/runmode.node");
 }
 
-export default CodeMirror;
+module.exports = CodeMirror;
+module.exports.default = CodeMirror;

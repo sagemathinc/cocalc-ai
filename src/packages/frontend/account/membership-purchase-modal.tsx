@@ -234,7 +234,7 @@ export default function MembershipPurchaseModal({
           <Spin />
         </div>
       )}
-      {error && <Alert type="error" message={error} />}
+      {error && <Alert type="error" title={error} />}
       {!loading && !error && (
         <>
           <div style={{ marginBottom: "12px" }}>
@@ -260,7 +260,7 @@ export default function MembershipPurchaseModal({
             {visibleTiers.length === 0 && (
               <Alert
                 type="info"
-                message="No membership tiers are currently available."
+                title="No membership tiers are currently available."
               />
             )}
             {visibleTiers.map((tier) => {
@@ -318,11 +318,11 @@ export default function MembershipPurchaseModal({
         <div style={{ marginTop: "20px" }}>
           <Divider />
           {quoteLoading && <Spin />}
-          {quoteError && <Alert type="error" message={quoteError} />}
+          {quoteError && <Alert type="error" title={quoteError} />}
           {quote && quote.allowed === false && quote.reason && (
             <Alert
               type={paymentRequired ? "warning" : "error"}
-              message={quote.reason}
+              title={quote.reason}
             />
           )}
           {quote && place === "checkout" && (
@@ -335,7 +335,7 @@ export default function MembershipPurchaseModal({
               {refundValue.gt(0) && (
                 <Alert
                   type="info"
-                  message={`Prorated credit applied: ${currency(
+                  title={`Prorated credit applied: ${currency(
                     moneyRound2Up(refundValue).toNumber(),
                   )}`}
                 />
@@ -343,7 +343,7 @@ export default function MembershipPurchaseModal({
               {quote.change === "downgrade" && quote.current_period_end && (
                 <Alert
                   type="info"
-                  message={
+                  title={
                     <span>
                       Downgrades take effect immediately. Current period ends{" "}
                       <TimeAgo date={quote.current_period_end} />.
@@ -396,7 +396,7 @@ export default function MembershipPurchaseModal({
             <div>
               <Alert
                 type="info"
-                message="Payment is processing. Your membership will update once the payment completes."
+                title="Payment is processing. Your membership will update once the payment completes."
                 style={{ marginBottom: "12px" }}
               />
               <Payments
@@ -417,7 +417,7 @@ export default function MembershipPurchaseModal({
           {place === "done" && (
             <Alert
               type="success"
-              message="Membership updated."
+              title="Membership updated."
               style={{ marginTop: "12px" }}
             />
           )}

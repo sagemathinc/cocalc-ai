@@ -21,6 +21,20 @@ This package deliberately **does not depend on @cocalc/server, @cocalc/hub, or @
 - Keep dependencies narrow: podman, btrfs, project-runner, file-server, and project-proxy live here; frontend and heavy hub logic stay out.
 - When adding host APIs, design them so future “Plus” flows can reuse the same Lite surface without forks.
 
+## Routing Rules (HTTP vs conat)
+
+- Prefer conat hub RPC for any endpoint that is user-, account-, or project-scoped.
+- The main reason: HTTP body fields such as `account_id` or `project_id` are not trustworthy on their own.
+- Project-host routing already supports project-scoped conat traffic from the frontend; use that path instead of adding bespoke HTTP POST handlers.
+- Keep `web.ts` focused on minimal host HTTP concerns (health/customize/static responses), not authorization-sensitive mutations.
+
+When adding a new project-host API, use this flow:
+
+- Add method shape and transform/auth mapping in [../conat/hub/api/projects.ts](../conat/hub/api/projects.ts).
+- Implement the host-local behavior in [hub/projects.ts](./hub/projects.ts).
+- Call it from frontend conat code so subject routing can send project messages to the correct project-host.
+- Only add HTTP routes when they are intentionally host-global and do not rely on caller identity.
+
 ## Getting Started
 
 - Build with `pnpm --filter @cocalc/project-host build`.

@@ -10,7 +10,6 @@ import accountCreationActions, {
   creationActionsDone,
 } from "./account-creation-actions";
 import { getLogger } from "@cocalc/backend/logger";
-import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
 const log = getLogger("server:accounts:create");
 
@@ -73,15 +72,6 @@ export default async function createAccount({
         customize ?? null,
       ],
     );
-    const { insecure_test_mode } = await getServerSettings();
-    if (insecure_test_mode) {
-      log.debug("Creating account in insecure_test_mode!");
-      await pool.query("UPDATE accounts SET groups=$1 WHERE account_id=$2", [
-        ["admin"],
-        account_id,
-      ]);
-    }
-
     await accountCreationActions({
       email_address: email,
       account_id,

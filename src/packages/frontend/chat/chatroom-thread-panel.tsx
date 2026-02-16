@@ -8,11 +8,13 @@ import { React } from "@cocalc/frontend/app-framework";
 import { Space } from "antd";
 import { ChatLog } from "./chat-log";
 import CodexConfigButton from "./codex";
+import { ThreadBadge } from "./thread-badge";
 import type { ChatActions } from "./actions";
 import type { ChatMessages } from "./types";
 import type * as immutable from "immutable";
 import type { ThreadIndexEntry } from "./message-cache";
 import type { ThreadListItem, ThreadMeta } from "./threads";
+import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 
 const CHAT_LOG_STYLE: React.CSSProperties = {
   padding: "0",
@@ -42,6 +44,9 @@ interface ChatRoomThreadPanelProps {
   onNewChat: () => void;
   composerTargetKey?: string | null;
   composerFocused?: boolean;
+  codexPaymentSource?: CodexPaymentSourceInfo;
+  codexPaymentSourceLoading?: boolean;
+  refreshCodexPaymentSource?: () => void;
 }
 
 export function ChatRoomThreadPanel({
@@ -64,6 +69,9 @@ export function ChatRoomThreadPanel({
   onNewChat,
   composerTargetKey,
   composerFocused,
+  codexPaymentSource,
+  codexPaymentSourceLoading,
+  refreshCodexPaymentSource,
 }: ChatRoomThreadPanelProps) {
   if (!selectedThreadKey) {
     return (
@@ -98,13 +106,18 @@ export function ChatRoomThreadPanel({
   const shouldShowCodexConfig =
     selectedThread != null &&
     Boolean(selectedThread.rootMessage) &&
-    Boolean(actions?.isCodexThread?.(new Date(parseInt(selectedThread.key, 10))));
+    Boolean(
+      actions?.isCodexThread?.(new Date(parseInt(selectedThread.key, 10))),
+    );
   const selectedThreadForLog = selectedThreadKey ?? undefined;
-  const compactThreadLabel = selectedThread
-    ? "displayLabel" in selectedThread
-      ? selectedThread.displayLabel
-      : selectedThread.label
-    : undefined;
+  const threadMeta =
+    selectedThread && "displayLabel" in selectedThread
+      ? selectedThread
+      : undefined;
+  const compactThreadLabel = threadMeta?.displayLabel ?? selectedThread?.label;
+  const compactThreadIcon = threadMeta?.threadIcon;
+  const compactThreadColor = threadMeta?.threadColor;
+  const compactThreadHasAppearance = threadMeta?.hasCustomAppearance ?? false;
 
   return (
     <div
@@ -117,16 +130,20 @@ export function ChatRoomThreadPanel({
       }}
     >
       {shouldShowCodexConfig && (
-          <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10 }}>
-            <Space size={6}>
-              <CodexConfigButton
-                threadKey={selectedThreadKey}
-                chatPath={path ?? ""}
-                actions={actions}
-              />
-            </Space>
-          </div>
-        )}
+        <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10 }}>
+          <Space size={6}>
+            <CodexConfigButton
+              threadKey={selectedThreadKey}
+              chatPath={path ?? ""}
+              projectId={project_id}
+              actions={actions}
+              paymentSource={codexPaymentSource}
+              paymentSourceLoading={codexPaymentSourceLoading}
+              refreshPaymentSource={refreshCodexPaymentSource}
+            />
+          </Space>
+        </div>
+      )}
       {variant === "compact" && compactThreadLabel && (
         <div
           style={{
@@ -138,8 +155,18 @@ export function ChatRoomThreadPanel({
             fontSize: "12px",
             letterSpacing: "0.02em",
             textTransform: "uppercase",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
           }}
         >
+          {compactThreadHasAppearance && (
+            <ThreadBadge
+              icon={compactThreadIcon}
+              color={compactThreadColor}
+              size={18}
+            />
+          )}
           {compactThreadLabel}
         </div>
       )}

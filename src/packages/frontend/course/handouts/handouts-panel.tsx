@@ -179,7 +179,7 @@ export function HandoutsPanel({
             fontSize: "12pt",
             maxWidth: "800px",
           }}
-          message={
+          title={
             <b>
               <a onClick={() => frameActions.setModal("add-handouts")}>
                 <FormattedMessage

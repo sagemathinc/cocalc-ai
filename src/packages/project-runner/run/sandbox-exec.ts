@@ -82,6 +82,33 @@ export async function sandboxExec({
     }
   };
 
+  const runPodman = async (args: string[]): Promise<SandboxExecResult> => {
+    return await new Promise((resolve) => {
+      execFile(
+        "podman",
+        args,
+        {
+          timeout: timeoutMs,
+          maxBuffer: 10 * 1024 * 1024,
+          killSignal: "SIGKILL",
+        },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (error: any, stdout?: string, stderr?: string) => {
+          if (error) {
+            resolve({
+              stdout: stdout ?? "",
+              stderr: stderr ?? error?.message ?? "",
+              code: typeof error?.code === "number" ? error.code : null,
+              signal: error?.signal,
+            });
+          } else {
+            resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code: 0 });
+          }
+        },
+      );
+    });
+  };
+
   let rootfs: string | undefined;
   try {
     if (useEphemeral) {
@@ -97,6 +124,7 @@ export async function sandboxExec({
 
       // Build a one-off container run.
       args.push("run", "--runtime", "/usr/bin/crun", "--rm", "-i");
+      args.push("--security-opt", "no-new-privileges");
       // execFile timeout still applies; podman itself doesn't have a timeout flag.
       if (!noNetwork) {
         args.push(networkArgument());
@@ -138,31 +166,7 @@ export async function sandboxExec({
     }
 
     logger.debug("podman", argsJoin(args));
-
-    return await new Promise((resolve) => {
-      execFile(
-        "podman",
-        args,
-        {
-          timeout: timeoutMs,
-          maxBuffer: 10 * 1024 * 1024,
-          killSignal: "SIGKILL",
-        },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (error: any, stdout?: string, stderr?: string) => {
-          if (error) {
-            resolve({
-              stdout: stdout ?? "",
-              stderr: stderr ?? error?.message ?? "",
-              code: typeof error?.code === "number" ? error.code : null,
-              signal: error?.signal,
-            });
-          } else {
-            resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code: 0 });
-          }
-        },
-      );
-    });
+    return await runPodman(args);
   } finally {
     if (rootfs) {
       // Decrement overlay mount refcount; actual unmount happens only when

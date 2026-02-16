@@ -9,6 +9,12 @@ import { Gauge, register } from "prom-client";
 import { getLogger } from "@cocalc/backend/logger";
 import type { ConatServer } from "@cocalc/conat/core/server";
 import { Metrics } from "@cocalc/conat/types";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  extractForwardedIp,
+  isIpAllowed,
+  parseAllowlist,
+} from "@cocalc/util/ip-allowlist";
 
 const logger = getLogger("conat:socketio:metrics");
 
@@ -42,10 +48,24 @@ export async function initMetrics(server: ConatServer) {
 }
 
 export async function handleMetrics(
-  _req: IncomingMessage,
+  req: IncomingMessage,
   res: ServerResponse,
 ) {
   try {
+    const settings = await getServerSettings();
+    if (!settings.prometheus_metrics) {
+      res.statusCode = 403;
+      res.end("Metrics disabled.");
+      return;
+    }
+    const allowlist = parseAllowlist(settings.prometheus_metrics_allowlist);
+    const forwarded = extractForwardedIp(req.headers["x-forwarded-for"]);
+    const clientIp = forwarded ?? req.socket?.remoteAddress ?? null;
+    if (!isIpAllowed(clientIp, allowlist)) {
+      res.statusCode = 403;
+      res.end("Metrics access denied.");
+      return;
+    }
     const metricsData = await register.metrics();
     res.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
     res.statusCode = 200;

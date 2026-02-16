@@ -42,7 +42,7 @@ render({ type: "timestamp", editable: true }, ({ field, obj }) => {
 
   if (edit) {
     return (
-      <Space direction="vertical" style={{ width: "100%" }}>
+      <Space orientation="vertical" style={{ width: "100%" }}>
         <DatePicker
           showTime
           changeOnBlur
@@ -61,7 +61,7 @@ render({ type: "timestamp", editable: true }, ({ field, obj }) => {
   } else {
     return (
       <ClickToEdit empty={!value}>
-        <Space direction="vertical">
+        <Space orientation="vertical">
           {value && <TimeAgo date={value.toDate()} />}
         </Space>
       </ClickToEdit>

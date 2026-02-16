@@ -795,7 +795,7 @@ export function PDFJS({
         closable
         type="info"
         icon={<Icon name="layout" />}
-        message={
+        title={
           <>
             <Button type="text" size="small" onClick={handleNewLayoutClick}>
               <Text strong>New Layout Available:</Text>
@@ -887,7 +887,7 @@ export function PDFJS({
     if (custom_pdf_error_message == null) return;
     return (
       <Alert
-        message={<Markdown value={custom_pdf_error_message} />}
+        title={<Markdown value={custom_pdf_error_message} />}
         type="info"
       />
     );

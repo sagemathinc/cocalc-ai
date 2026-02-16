@@ -33,6 +33,7 @@ import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import type { AcpEvaluateRequest, AcpAgent, AcpStreamHandler } from "./types";
 import { getCodexProjectSpawner } from "./codex-project";
+import { getCodexSiteKeyGovernor } from "./codex-site-key-governor";
 import {
   findSessionFile,
   getSessionsRoot,
@@ -47,6 +48,75 @@ const DEFAULT_PRECONTENT_MAX_FILE_MB = 2;
 const COMPRESS_THRESHOLD_BYTES = 64 * 1024;
 const FILE_LINK_GUIDANCE =
   "When referencing workspace files, output markdown links relative to the project root so they stay clickable in CoCalc, e.g., foo.py -> [foo.py](./foo.py) (no backticks around the link). For images use ![](./image.png).";
+const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
+
+function redactArgsForLog(args: string[]): string {
+  const out = [...args];
+  for (let i = 0; i < out.length - 1; i++) {
+    if (out[i] !== "-e") continue;
+    const raw = out[i + 1];
+    const j = raw.indexOf("=");
+    if (j === -1) continue;
+    const key = raw.slice(0, j);
+    if (/(KEY|TOKEN|SECRET|PASSWORD)/i.test(key)) {
+      out[i + 1] = `${key}=***`;
+    }
+  }
+  return argsJoin(out);
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, "");
+}
+
+function extractModelNotFound(text: string): string | undefined {
+  const m = text.match(
+    /The requested model ['"]([^'"]+)['"] does not exist/i,
+  );
+  return m?.[1];
+}
+
+function normalizeErrorMessages(errors: string[]): string[] {
+  const uniq: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of errors) {
+    const value = stripAnsi(raw ?? "").trim();
+    if (!value) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    uniq.push(value);
+  }
+  return uniq.filter((msg, i, arr) => {
+    // Remove short duplicates that are fully contained in longer messages.
+    if (msg.length > 200) return true;
+    return !arr.some((other, j) => j !== i && other.includes(msg));
+  });
+}
+
+function formatCodexError(errors: string[]): string {
+  const normalized = normalizeErrorMessages(errors);
+  const merged = normalized.join("\n\n");
+  const model = extractModelNotFound(merged);
+  if (model) {
+    return [
+      `Codex request failed: model '${model}' is not available for this authentication method.`,
+      "Try connecting a ChatGPT subscription for this model, or choose a different model.",
+    ].join("\n");
+  }
+  if (normalized.length === 0) return "Codex request failed.";
+  if (normalized.length === 1) return normalized[0];
+  return normalized.join("\n\n");
+}
+
+function hasSiteKeyAuthFailure(errors: string[]): boolean {
+  const text = errors.join("\n");
+  return (
+    /Missing bearer(?: or basic)? authentication in header/i.test(text) ||
+    /invalid_api_key/i.test(text) ||
+    /Incorrect API key/i.test(text) ||
+    /401 Unauthorized/i.test(text)
+  );
+}
 
 // JSONL event shapes from codex exec (--experimental-json)
 type ThreadEvent =
@@ -117,178 +187,341 @@ export class CodexExecAgent implements AcpAgent {
     const cwd = this.resolveCwd(config);
     const resumeId = config?.sessionId ?? session_id;
     if (resumeId) {
-      await this.ensureSessionConfig(resumeId, cwd, config);
+      await this.tryEnsureSessionConfig(resumeId, cwd, config);
     }
     const preContentCache = this.createPreContentCache();
     void this.capturePreContentsFromText(prompt, cwd, preContentCache);
     const args = this.buildArgs(config, cwd);
-    let cmd = this.opts.binaryPath ?? "codex";
-    let proc: ReturnType<typeof spawn>;
     const projectSpawner = getCodexProjectSpawner();
     const projectId = request.chat?.project_id;
-    if (projectSpawner && projectId) {
-      const spawned = await projectSpawner.spawnCodexExec({
-        projectId,
-        args,
-        cwd,
-        env: this.opts.env,
-      });
-      proc = spawned.proc;
-      cmd = spawned.cmd;
-      logger.debug("codex-exec: spawning via project container", {
-        cmd,
-        args: argsJoin(spawned.args),
-        cwd: spawned.cwd ?? cwd,
-      });
-    } else {
-      logger.debug("codex-exec: spawning", {
-        cmd,
-        args: argsJoin(args),
-        cwd,
-        opts: this.opts,
-      });
-      const HOME = process.env.COCALC_ORIGINAL_HOME ?? process.env.HOME;
-      proc = spawn(cmd, args, {
-        cwd,
-        env: {
-          ...process.env,
-          ...this.opts.env,
-          ...(HOME ? { HOME } : {}),
-        },
-      });
-    }
-
-    if (LOG_OUTPUT) {
-      proc.stdout?.on("data", (chunk) => {
-        logger.debug("codex-exec: stdout", chunk.toString());
-      });
-      proc.stderr?.on("data", (chunk) => {
-        logger.debug("codex-exec: stderr", chunk.toString());
-      });
-    }
-
-    this.running.set(session.sessionId, {
-      proc,
-      stop: () => this.kill(proc),
-      interrupted: false,
-    });
-
-    // send prompt
-    proc.stdin?.write(this.decoratePrompt(prompt));
-    proc.stdin?.end();
-
-    const rl = createInterface({ input: proc.stdout as Readable });
-    const errors: string[] = [];
-    let finalResponse = "";
-    let latestUsage: Usage | undefined;
-    let threadId: string | undefined;
-
-    const handleEvent = async (evt: ThreadEvent) => {
-      switch (evt.type) {
-        case "thread.started": {
-          threadId = evt.thread_id;
-          this.sessions.set(evt.thread_id, {
-            sessionId: evt.thread_id,
-            cwd: session.cwd,
-          });
-          if (config) {
-            await this.ensureSessionConfig(evt.thread_id, cwd, config);
-          }
-          await stream({ type: "status", state: "init" });
-          break;
-        }
-        case "turn.started":
-          await stream({ type: "status", state: "running" });
-          break;
-        case "turn.completed":
-          latestUsage = evt.usage;
-          break;
-        case "turn.failed":
-          errors.push(evt.error.message);
-          break;
-        case "item.completed":
-        case "item.started":
-        case "item.updated":
-          await this.handleItem(
-            evt.item,
-            stream,
-            cwd,
-            preContentCache,
-            (resp) => {
-              finalResponse = resp;
-            },
-          );
-          break;
-        case "error":
-          errors.push(evt.message);
-          break;
-        default:
-          break;
+    const accountId = request.account_id;
+    const model = config?.model;
+    const siteKeyGovernor = getCodexSiteKeyGovernor();
+    const executeAttempt = async (
+      {
+        forceRefreshSiteKey = false,
+      }: {
+        forceRefreshSiteKey?: boolean;
+      } = {},
+    ): Promise<{
+      errors: string[];
+      finalResponse: string;
+      latestUsage?: Usage;
+      threadId?: string;
+      authSource?: string;
+      interrupted: boolean;
+    }> => {
+      let cmd = this.opts.binaryPath ?? "codex";
+      let proc: ReturnType<typeof spawn>;
+      let authSource: string | undefined;
+      const attemptStartedAt = Date.now();
+      if (projectSpawner && projectId) {
+        const spawned = await projectSpawner.spawnCodexExec({
+          projectId,
+          accountId,
+          args,
+          cwd,
+          env: this.opts.env,
+          forceRefreshSiteKey,
+        });
+        proc = spawned.proc;
+        cmd = spawned.cmd;
+        authSource = spawned.authSource;
+        logger.debug("codex-exec: spawning via project container", {
+          cmd,
+          args: redactArgsForLog(spawned.args),
+          cwd: spawned.cwd ?? cwd,
+          authSource,
+          forceRefreshSiteKey,
+        });
+      } else {
+        logger.debug("codex-exec: spawning", {
+          cmd,
+          args: argsJoin(args),
+          cwd,
+          opts: this.opts,
+        });
+        const HOME = process.env.COCALC_ORIGINAL_HOME ?? process.env.HOME;
+        proc = spawn(cmd, args, {
+          cwd,
+          env: {
+            ...process.env,
+            ...this.opts.env,
+            ...(HOME ? { HOME } : {}),
+          },
+        });
       }
+
+      if (LOG_OUTPUT) {
+        proc.stdout?.on("data", (chunk) => {
+          logger.debug("codex-exec: stdout", chunk.toString());
+        });
+        proc.stderr?.on("data", (chunk) => {
+          logger.debug("codex-exec: stderr", chunk.toString());
+        });
+      }
+
+      this.running.set(session.sessionId, {
+        proc,
+        stop: () => this.kill(proc),
+        interrupted: false,
+      });
+
+      const errors: string[] = [];
+      let finalResponse = "";
+      let latestUsage: Usage | undefined;
+      let threadId: string | undefined;
+      let interrupted = false;
+      const siteKeyEnforced =
+        authSource === "site-api-key" &&
+        !!siteKeyGovernor &&
+        !!accountId &&
+        !!projectId;
+      let quotaPollTimer: NodeJS.Timeout | undefined;
+      let maxTurnTimer: NodeJS.Timeout | undefined;
+      let quotaCheckInFlight = false;
+      let quotaStopReason: string | undefined;
+
+      const stopForQuota = (message: string) => {
+        if (quotaStopReason) return;
+        quotaStopReason = message;
+        errors.push(message);
+        const running = this.running.get(session.sessionId);
+        if (running) {
+          running.interrupted = true;
+        }
+        this.kill(proc);
+      };
+
+      const checkQuota = async (phase: "start" | "poll") => {
+        if (!siteKeyEnforced || !siteKeyGovernor || !accountId || !projectId) {
+          return;
+        }
+        try {
+          const verdict = await siteKeyGovernor.checkAllowed({
+            accountId,
+            projectId,
+            model,
+            phase,
+          });
+          if (!verdict.allowed) {
+            const reason =
+              verdict.reason ??
+              "Stopped: you reached your CoCalc LLM usage limit for site-provided OpenAI access.";
+            stopForQuota(reason);
+          }
+        } catch (err) {
+          logger.warn("codex-exec: site-key quota check failed", {
+            phase,
+            accountId,
+            projectId,
+            err: `${err}`,
+          });
+        }
+      };
+
+      await checkQuota("start");
+
+      if (!this.running.get(session.sessionId)?.interrupted) {
+        // send prompt
+        proc.stdin?.write(this.decoratePrompt(prompt));
+      }
+      proc.stdin?.end();
+
+      if (siteKeyEnforced && siteKeyGovernor && accountId && projectId) {
+        const pollMs = Math.max(30_000, siteKeyGovernor.pollIntervalMs ?? 120_000);
+        quotaPollTimer = setInterval(() => {
+          if (quotaCheckInFlight || quotaStopReason) return;
+          quotaCheckInFlight = true;
+          void checkQuota("poll").finally(() => {
+            quotaCheckInFlight = false;
+          });
+        }, pollMs);
+        quotaPollTimer.unref?.();
+
+        const configuredMaxTurnMs = siteKeyGovernor.maxTurnMs;
+        if (configuredMaxTurnMs != null && configuredMaxTurnMs > 0) {
+          const maxTurnMs = Math.max(60_000, configuredMaxTurnMs);
+          maxTurnTimer = setTimeout(() => {
+            stopForQuota(
+              "Stopped: this Codex turn exceeded the maximum runtime for site-provided OpenAI access.",
+            );
+          }, maxTurnMs);
+          maxTurnTimer.unref?.();
+        }
+      }
+
+      const rl = createInterface({ input: proc.stdout as Readable });
+
+      const handleEvent = async (evt: ThreadEvent) => {
+        switch (evt.type) {
+          case "thread.started": {
+            threadId = evt.thread_id;
+            this.sessions.set(evt.thread_id, {
+              sessionId: evt.thread_id,
+              cwd: session.cwd,
+            });
+            if (config) {
+              await this.tryEnsureSessionConfig(evt.thread_id, cwd, config);
+            }
+            await stream({ type: "status", state: "init" });
+            break;
+          }
+          case "turn.started":
+            await stream({ type: "status", state: "running" });
+            break;
+          case "turn.completed":
+            latestUsage = evt.usage;
+            break;
+          case "turn.failed":
+            errors.push(evt.error.message);
+            break;
+          case "item.completed":
+          case "item.started":
+          case "item.updated":
+            await this.handleItem(
+              evt.item,
+              stream,
+              cwd,
+              preContentCache,
+              (resp) => {
+                finalResponse = resp;
+              },
+            );
+            break;
+          case "error":
+            errors.push(evt.message);
+            break;
+          default:
+            break;
+        }
+      };
+
+      const linePromises: Promise<void>[] = [];
+      rl.on("line", (line) => {
+        if (!line.trim()) return;
+        try {
+          const evt = JSON.parse(line) as ThreadEvent;
+          linePromises.push(handleEvent(evt));
+        } catch (err) {
+          logger.warn("codex-exec: failed to parse JSONL", { line, err });
+        }
+      });
+
+      const stderrBuf: string[] = [];
+      proc.stderr?.on("data", (chunk) => stderrBuf.push(chunk.toString()));
+
+      const exitPromise = new Promise<void>((resolve) => {
+        proc.on("exit", (code, signal) => {
+          interrupted = !!this.running.get(session.sessionId)?.interrupted;
+          if (code !== 0 && !interrupted) {
+            const stderr = stderrBuf.join("");
+            if (errors.length === 0) {
+              const errMsg =
+                stderr ||
+                `codex exited with code ${code ?? "?"} signal ${signal ?? "?"}`;
+              errors.push(errMsg);
+            }
+            logger.warn("codex-exec: process exited with code", {
+              code,
+              signal,
+              stderr,
+              authSource,
+            });
+          } else if (interrupted) {
+            logger.debug("codex-exec: process exited after interrupt", {
+              code,
+              signal,
+              authSource,
+            });
+          }
+          resolve();
+        });
+        proc.on("error", (err) => {
+          errors.push(`spawn error: ${err}`);
+          logger.warn("codex-exec: spawn error", err);
+        });
+      });
+
+      await exitPromise;
+      await Promise.all(linePromises);
+      if (quotaPollTimer) {
+        clearInterval(quotaPollTimer);
+      }
+      if (maxTurnTimer) {
+        clearTimeout(maxTurnTimer);
+      }
+      if (
+        siteKeyEnforced &&
+        siteKeyGovernor &&
+        accountId &&
+        projectId &&
+        latestUsage &&
+        !interrupted
+      ) {
+        try {
+          await siteKeyGovernor.reportUsage({
+            accountId,
+            projectId,
+            model,
+            usage: {
+              input_tokens: latestUsage.input_tokens,
+              cached_input_tokens: latestUsage.cached_input_tokens,
+              output_tokens: latestUsage.output_tokens,
+              total_tokens:
+                latestUsage.input_tokens +
+                latestUsage.cached_input_tokens +
+                latestUsage.output_tokens,
+            },
+            totalTimeS: Math.max(0, (Date.now() - attemptStartedAt) / 1000),
+            path: request.chat?.path,
+          });
+        } catch (err) {
+          logger.warn("codex-exec: failed to report site-key usage", {
+            accountId,
+            projectId,
+            model,
+            err: `${err}`,
+          });
+        }
+      }
+      this.running.delete(session.sessionId);
+
+      return {
+        errors,
+        finalResponse,
+        latestUsage,
+        threadId,
+        authSource,
+        interrupted,
+      };
     };
 
-    const linePromises: Promise<void>[] = [];
-    rl.on("line", (line) => {
-      if (!line.trim()) return;
-      try {
-        const evt = JSON.parse(line) as ThreadEvent;
-        linePromises.push(handleEvent(evt));
-      } catch (err) {
-        logger.warn("codex-exec: failed to parse JSONL", { line, err });
-      }
-    });
-
-    const stderrBuf: string[] = [];
-    proc.stderr?.on("data", (chunk) => stderrBuf.push(chunk.toString()));
-
-    const exitPromise = new Promise<void>((resolve) => {
-      proc.on("exit", (code, signal) => {
-        const interrupted = this.running.get(session.sessionId)?.interrupted;
-        if (code !== 0 && !interrupted) {
-          const errMsg =
-            stderrBuf.join("") ||
-            `codex exited with code ${code ?? "?"} signal ${signal ?? "?"}`;
-          errors.push(errMsg);
-          logger.warn("codex-exec: process exited with code", {
-            code,
-            signal,
-            stderr: stderrBuf.join(""),
-          });
-        } else if (interrupted) {
-          logger.debug("codex-exec: process exited after interrupt", {
-            code,
-            signal,
-          });
-        }
-        resolve();
+    let result = await executeAttempt();
+    const shouldRetrySiteKey =
+      !result.interrupted &&
+      result.authSource === "site-api-key" &&
+      result.errors.length > 0 &&
+      hasSiteKeyAuthFailure(result.errors);
+    if (shouldRetrySiteKey) {
+      logger.info("codex-exec: retrying once after site-key auth failure", {
+        projectId,
+        authSource: result.authSource,
       });
-      proc.on("error", (err) => {
-        errors.push(`spawn error: ${err}`);
-        logger.warn("codex-exec: spawn error", err);
-      });
-    });
+      result = await executeAttempt({ forceRefreshSiteKey: true });
+    }
 
-    await exitPromise;
-    await Promise.all(linePromises);
-
-    const errorText = errors.join("; ");
+    const errorText = result.errors.length > 0 ? formatCodexError(result.errors) : "";
     if (errorText) {
       await stream({ type: "error", error: errorText });
-      if (!finalResponse) {
-        finalResponse = errorText;
-      } else {
-        finalResponse = `${finalResponse}\n\nErrors: ${errorText}`;
-      }
     }
     // emit summary even if errors to clear UI state
     await stream({
       type: "summary",
-      finalResponse,
-      usage: latestUsage ? { ...latestUsage } : undefined,
-      threadId,
+      finalResponse: result.finalResponse,
+      usage: result.latestUsage ? { ...result.latestUsage } : undefined,
+      threadId: result.threadId,
     });
-
-    this.running.delete(session.sessionId);
   }
 
   async dispose(): Promise<void> {
@@ -322,6 +555,7 @@ export class CodexExecAgent implements AcpAgent {
     cwd: string,
   ): string[] {
     const args: string[] = [
+      "--search",
       "exec",
       "--experimental-json",
       "--skip-git-repo-check",
@@ -415,6 +649,22 @@ export class CodexExecAgent implements AcpAgent {
       maxBytes,
       keepCompactions: 2,
     });
+  }
+
+  private async tryEnsureSessionConfig(
+    sessionId: string,
+    cwd: string,
+    config?: CodexSessionConfig,
+  ): Promise<void> {
+    try {
+      await this.ensureSessionConfig(sessionId, cwd, config);
+    } catch (err) {
+      logger.warn("codex-exec: failed to update session metadata", {
+        sessionId,
+        cwd,
+        err: `${err}`,
+      });
+    }
   }
 
   private decoratePrompt(prompt: string): string {

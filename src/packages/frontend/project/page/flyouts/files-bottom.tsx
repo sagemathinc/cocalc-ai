@@ -84,7 +84,8 @@ export function FilesBottom({
   refreshBackups,
 }: FilesBottomProps) {
   const [mode, setMode] = modeState;
-  const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
   const actions = useActions({ project_id });
   const [activeKeys, setActiveKeys] = useState<PanelKey[]>([]);
   const [resize, setResize] = useState<number>(0);
@@ -191,7 +192,7 @@ export function FilesBottom({
     if (!singleFile) return;
     const { name, isDir, size = 0 } = singleFile;
     if (isDir) return;
-    const full_path = path_to_file(current_path, name);
+    const full_path = path_to_file(effective_current_path, name);
     const ext = (filename_extension(name) ?? "").toLowerCase();
     const showView = VIEWABLE_FILE_EXT.includes(ext);
     // the "href" part makes the link right-click copyable
@@ -248,7 +249,7 @@ export function FilesBottom({
 
   function renderSelectExtra() {
     return (
-      <Space size="small" direction="horizontal" wrap>
+      <Space size="small" orientation="horizontal" wrap>
         {singleFile != null ? renderDownloadView() : undefined}
         <FilesSelectButtons
           setMode={setMode}
@@ -345,7 +346,7 @@ export function FilesBottom({
     if (!shown) return;
     const disabled = connectionStatus !== "connected";
     return (
-      <Space size="small" direction="horizontal">
+      <Space size="small" orientation="horizontal">
         {connectionStatus !== "" ? (
           <span title={connectionStatus}>
             <ConnectionStatusIcon status={connectionStatus} />

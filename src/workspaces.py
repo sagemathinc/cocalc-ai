@@ -286,6 +286,106 @@ def install(args) -> None:
             shutil.move(tmp, ws)
 
 
+def is_github_ci() -> bool:
+    """Check if we're running in GitHub CI environment."""
+    return 'GITHUB_STEP_SUMMARY' in os.environ
+
+
+def write_github_summary(success: List[str], flaky: List[str], fails: List[str],
+                         elapsed_minutes: float) -> None:
+    """Write a markdown summary to GitHub Actions step summary."""
+    if not is_github_ci():
+        return
+
+    summary_file = os.environ.get('GITHUB_STEP_SUMMARY')
+    if not summary_file:
+        return
+
+    # Calculate totals
+    total_packages = len(success) + len(flaky) + len(fails)
+    success_count = len(success)
+    flaky_count = len(flaky)
+    fail_count = len(fails)
+
+    # Guard against zero packages (e.g., --packages filter matched nothing)
+    if total_packages == 0:
+        return
+
+    # Determine overall status
+    if fail_count > 0:
+        status_emoji = "❌"
+        status_text = "Tests Failed"
+        status_color = "🔴"
+    elif flaky_count > 0:
+        status_emoji = "⚠️"
+        status_text = "Tests Passed (with retries)"
+        status_color = "🟡"
+    else:
+        status_emoji = "✅"
+        status_text = "All Tests Passed"
+        status_color = "🟢"
+
+    # Build markdown report
+    md = []
+    md.append(f"# {status_emoji} {status_text}\n")
+    md.append(
+        f"**{status_color} {success_count}/{total_packages} packages passed** • "
+        f"⏱️ {elapsed_minutes:.1f} minutes\n"
+    )
+
+    # Summary stats table
+    md.append("## 📊 Test Summary\n")
+    md.append("| Status | Count | Percentage |")
+    md.append("|--------|-------|------------|")
+    md.append(
+        f"| ✅ Passed (first try) | {success_count} | {100*success_count/total_packages:.1f}% |"
+    )
+    md.append(
+        f"| 🔄 Flaky (passed after retry) | {flaky_count} | {100*flaky_count/total_packages:.1f}% |"
+    )
+    md.append(
+        f"| ❌ Failed | {fail_count} | {100*fail_count/total_packages:.1f}% |"
+    )
+    md.append("")
+
+    # Details for each category
+    if success:
+        md.append("## ✅ Passed on First Try\n")
+        md.append("<details>")
+        md.append(f"<summary>View {len(success)} successful packages</summary>\n")
+        for pkg in sorted(success):
+            pkg_name = pkg.split('/')[-1]
+            md.append(f"- `{pkg_name}`")
+        md.append("</details>\n")
+
+    if flaky:
+        md.append("## 🔄 Flaky Tests (Passed After Retry)\n")
+        md.append(
+            "> ⚠️ These tests failed initially but passed on retry. Consider investigating for stability.\n"
+        )
+        for pkg in sorted(flaky):
+            pkg_name = pkg.split('/')[-1]
+            md.append(f"- ⚠️ `{pkg_name}`")
+        md.append("")
+
+    if fails:
+        md.append("## ❌ Failed Tests\n")
+        md.append(
+            "> 🚨 These tests failed all retry attempts. Action required!\n")
+        for pkg in sorted(fails):
+            pkg_name = pkg.split('/')[-1]
+            md.append(f"- ❌ `{pkg_name}`")
+        md.append("")
+
+    # Write to file
+    try:
+        with open(summary_file, 'a') as f:
+            f.write('\n'.join(md))
+            f.write('\n')
+    except Exception as e:
+        print(f"Warning: Could not write GitHub summary: {e}")
+
+
 def test(args) -> None:
     CUR = os.path.abspath('.')
     flaky = []
@@ -293,14 +393,42 @@ def test(args) -> None:
     success = []
     start = time.time()
 
-    def status():
-        print(
-            "Status: ", {
-                "fails": fails,
-                "flaky": flaky,
-                "success": success,
-                "time": "%s minutes" % ((time.time() - start) / 60.0)
-            })
+    def status(package: Optional[str] = None):
+        elapsed = (time.time() - start) / 60.0
+        status_dict = {
+            "fails": fails,
+            "flaky": flaky,
+            "success": success,
+            "time": "%s minutes" % elapsed
+        }
+
+        if is_github_ci():
+            # Format as GitHub Actions workflow command
+            msg = (
+                f"Test Status: "
+                f"{len(success)} passed, "
+                f"{len(flaky)} flaky, "
+                f"{len(fails)} failed "
+                f"({elapsed:.1f} minutes)"
+            )
+
+            # Add package name if provided
+            if package:
+                pkg_name = package.split('/')[-1]
+                msg += f" - testing `{pkg_name}`"
+
+            if len(fails) > 0:
+                # At least one failure - use error
+                print(f"::error::❌ {msg}")
+            elif len(flaky) > 0:
+                # Flaky tests - use warning
+                print(f"::warning::⚠️ {msg}")
+            else:
+                # All good - use notice
+                print(f"::notice::✅ {msg}")
+        else:
+            # Normal console output
+            print("Status: ", status_dict)
 
     v = packages(args)
     v.sort()
@@ -315,11 +443,10 @@ def test(args) -> None:
         def f():
             print("\n" * 3)
             print("*" * 40)
-            print("*")
-            status()
             print(f"TESTING {n}/{len(v)}: {path}")
-            print("*")
+            status(path)
             print("*" * 40)
+            sys.stdout.flush()  # Ensure output appears before subprocess starts
             if args.test_github_ci and 'test-github-ci' in package_json:
                 test_cmd = "pnpm run test-github-ci"
             elif 'test:all' in package_json:
@@ -357,6 +484,10 @@ def test(args) -> None:
     status()
     if len(flaky) > 0:
         print("Flaky test suites:", flaky)
+
+    # Write GitHub Actions summary if in CI
+    elapsed_minutes = (time.time() - start) / 60.0
+    write_github_summary(success, flaky, fails, elapsed_minutes)
 
     if len(fails) == 0:
         print("ALL TESTS PASSED!")
@@ -482,9 +613,7 @@ def clean(args) -> None:
         banner("Running 'pnpm run clean' if it exists...")
 
         def g(path):
-            # can only use --if-present with npm, but should be fine since clean is
-            # usually just "rm".
-            cmd("npm run clean --if-present", path)
+            cmd("pnpm run --if-present clean", path)
 
         thread_map(g, [os.path.abspath(path) for path in v],
                    nb_threads=3 if args.parallel else 1)

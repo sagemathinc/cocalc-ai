@@ -23,7 +23,7 @@ echo "Building CoCalc Project Host SEA for $OS"
 cp "$NODE_BIN" "$TARGET"
 chmod u+w "$TARGET"
 
-cp ../build/bundle.tar.xz cocalc.tar.xz
+cp ../build/bundle-linux.tar.xz cocalc.tar.xz
 
 # Replace ${NAME}, ${VERSION}, and ${MAIN} in the template
 envsubst < cocalc-template.js > cocalc.js

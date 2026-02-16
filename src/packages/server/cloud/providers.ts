@@ -9,7 +9,11 @@ import {
 } from "@cocalc/cloud";
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { getNebiusCredentialsFromSettings } from "./nebius-credentials";
+import {
+  getNebiusCredentialsFromSettings,
+  getNebiusRegionConfigEntry,
+  getNebiusRegionConfigFromSettings,
+} from "./nebius-credentials";
 import { getData as getGcpPricingData } from "@cocalc/gcloud-pricing-calculator";
 import type {
   FlavorRegionData,
@@ -19,8 +23,9 @@ import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 
 export type ProviderCredsContext = {
   settings: Awaited<ReturnType<typeof getServerSettings>>;
-  controlPlanePublicKey: string;
+  sshPublicKeys: string[];
   prefix: string;
+  region?: string;
 };
 
 export type ServerProviderEntry = {
@@ -125,6 +130,16 @@ export function gcpSafeName(prefix: string, base: string): string {
   return safePrefix.slice(0, maxLen);
 }
 
+function requireSshPublicKey(
+  sshPublicKeys: string[],
+  provider: string,
+): string {
+  if (sshPublicKeys.length) return sshPublicKeys[0];
+  throw new Error(
+    `Project Hosts: SSH Public Keys must be configured for ${provider} hosts`,
+  );
+}
+
 const DEFAULT_PREFIX = "cocalc-host";
 const PROVIDER_PREFIX_SETTING: Record<
   ProviderId,
@@ -181,26 +196,26 @@ function getLambdaCatalogFetchOptions(
   return { apiKey: lambda_cloud_api_key };
 }
 
-const NEBIUS_DEFAULT_REGIONS = [
-  "eu-north1",
-  "eu-west1",
-  "me-west1",
-  "us-central1",
-];
-
 function getNebiusCatalogFetchOptions(
   settings: ProviderCredsContext["settings"],
 ) {
-  const { nebius_parent_id } = settings;
-  if (!settings.nebius_credentials_json) {
+  const regionConfig = getNebiusRegionConfigFromSettings(settings);
+  if (!regionConfig) {
     return undefined;
   }
-  const creds = getNebiusCredentialsFromSettings(settings);
-  return {
-    ...creds,
-    parentId: nebius_parent_id || undefined,
-    regions: NEBIUS_DEFAULT_REGIONS,
-  };
+  const regions = Object.keys(regionConfig).sort();
+  if (regions.length) {
+    const entry = regionConfig[regions[0]];
+    const creds = getNebiusCredentialsFromSettings(settings, {
+      region: regions[0],
+    });
+    return {
+      ...creds,
+      parentId: entry?.nebius_parent_id || undefined,
+      regions,
+    };
+  }
+  return undefined;
 }
 
 async function postProcessGcpCatalog(catalog: any) {
@@ -224,9 +239,9 @@ type ServerProviderOverrides = Omit<
 
 const SERVER_PROVIDER_OVERRIDES: Record<ProviderId, ServerProviderOverrides> = {
   gcp: {
-    getCreds: ({ settings, controlPlanePublicKey, prefix }) => ({
+    getCreds: ({ settings, sshPublicKeys, prefix }) => ({
       service_account_json: settings.google_cloud_service_account_json,
-      ssh_public_key: controlPlanePublicKey,
+      ssh_public_key: sshPublicKeys[0],
       prefix,
     }),
     getCatalogFetchOptions: getGcpCatalogFetchOptions,
@@ -237,15 +252,16 @@ const SERVER_PROVIDER_OVERRIDES: Record<ProviderId, ServerProviderOverrides> = {
         : `/dev/disk/by-id/google-${spec.name}-data`,
   },
   hyperstack: {
-    getCreds: async ({ settings, controlPlanePublicKey, prefix }) => {
+    getCreds: async ({ settings, sshPublicKeys, prefix }) => {
       const { hyperstack_api_key } = settings;
       if (!hyperstack_api_key) {
         throw new Error("hyperstack_api_key is not configured");
       }
+      const sshPublicKey = requireSshPublicKey(sshPublicKeys, "Hyperstack");
       const catalog = await loadHyperstackCatalog();
       return {
         apiKey: hyperstack_api_key,
-        sshPublicKey: controlPlanePublicKey,
+        sshPublicKey,
         prefix,
         catalog,
       };
@@ -255,28 +271,37 @@ const SERVER_PROVIDER_OVERRIDES: Record<ProviderId, ServerProviderOverrides> = {
       "/dev/vdb /dev/vdc /dev/xvdb /dev/xvdc /dev/sdb /dev/sdc /dev/nvme1n1 /dev/nvme2n1",
   },
   lambda: {
-    getCreds: ({ settings, controlPlanePublicKey, prefix }) => {
+    getCreds: ({ settings, sshPublicKeys, prefix }) => {
       const { lambda_cloud_api_key } = settings;
       if (!lambda_cloud_api_key) {
         throw new Error("lambda_cloud_api_key is not configured");
       }
+      const sshPublicKey = requireSshPublicKey(sshPublicKeys, "Lambda Cloud");
       return {
         apiKey: lambda_cloud_api_key,
-        sshPublicKey: controlPlanePublicKey,
+        sshPublicKey,
         prefix,
       };
     },
     getCatalogFetchOptions: getLambdaCatalogFetchOptions,
   },
   nebius: {
-    getCreds: ({ settings, controlPlanePublicKey, prefix }) => {
-      const { nebius_parent_id, nebius_subnet_id } = settings;
-      const creds = getNebiusCredentialsFromSettings(settings);
+    getCreds: ({ settings, sshPublicKeys, prefix, region }) => {
+      const regionConfig = getNebiusRegionConfigFromSettings(settings);
+      const regionEntry = getNebiusRegionConfigEntry(settings, region);
+      if (regionConfig && region && !regionEntry) {
+        throw new Error(`Nebius region ${region} is not configured`);
+      }
+      if (!regionEntry) {
+        throw new Error("Nebius region config is not configured");
+      }
+      const sshPublicKey = requireSshPublicKey(sshPublicKeys, "Nebius");
+      const creds = getNebiusCredentialsFromSettings(settings, { region });
       return {
         ...creds,
-        parentId: nebius_parent_id || undefined,
-        subnetId: nebius_subnet_id,
-        sshPublicKey: controlPlanePublicKey,
+        parentId: regionEntry.nebius_parent_id || undefined,
+        subnetId: regionEntry.nebius_subnet_id,
+        sshPublicKey,
         prefix,
       };
     },

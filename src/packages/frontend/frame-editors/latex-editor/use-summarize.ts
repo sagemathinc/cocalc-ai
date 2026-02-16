@@ -201,8 +201,8 @@ export function useTexSummaries(
           return;
         }
 
-        // The switch_to_files contains canonical paths relative to the project root
-        // Pass the actual home directory to the Python script
+        // switch_to_files may contain absolute or home-relative paths;
+        // pass home directory so the helper can resolve both.
         const result = await exec({
           command: "python3",
           args: [scriptPath, homeDir, ...fileList],

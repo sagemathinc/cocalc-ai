@@ -8,3 +8,7 @@ export type State = "load" | "edit" | "save" | "error";
 export type Data = { [name: string]: string };
 
 export type IsReadonly = { [name: string]: boolean };
+
+export type IsSet = { [name: string]: boolean };
+
+export type IsClearing = { [name: string]: boolean };

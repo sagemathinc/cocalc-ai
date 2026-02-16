@@ -190,7 +190,7 @@ which installs exactly the right packages, and builds the code.
 
 #### Environment Variables
 
-See `packages/backend/data.ts` . In particular, you can set BASE_PATH, DATA, PGHOST, PGDATA, PROJECTS, SECRETS to override the defaults. Data is stored in `cocalc/src/data/` by default.
+See `packages/backend/data.ts` . In particular, you can set DATA, PGHOST, PGDATA, PROJECTS, SECRETS to override the defaults. Data is stored in `cocalc/src/data/` by default.
 
 #### File System Build Caching
 

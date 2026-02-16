@@ -1,7 +1,8 @@
-import { randomBytes, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import passwordHash, { verifyPassword } from "@cocalc/backend/auth/password-hash";
 import { isValidUUID } from "@cocalc/util/misc";
+import { refreshLaunchpadOnPremAuthorizedKeys } from "../launchpad/onprem-sshd";
 
 const DEFAULT_PAIRING_TTL_MS = 1000 * 60 * 30; // 30 minutes
 
@@ -20,6 +21,20 @@ function splitToken(token: string): TokenParts | null {
   return { tokenId, secret };
 }
 
+function derivePairingKeySeed(secret: string): string {
+  return createHash("sha256")
+    .update("cocalc-ssh-pair:")
+    .update(secret)
+    .digest("base64url");
+}
+
+function deriveConnectorKeySeed(secret: string): string {
+  return createHash("sha256")
+    .update("cocalc-ssh-connector:")
+    .update(secret)
+    .digest("base64url");
+}
+
 export async function createPairingToken(opts: {
   account_id: string;
   ttlMs?: number;
@@ -31,25 +46,117 @@ export async function createPairingToken(opts: {
   const secret = randomBytes(32).toString("base64url");
   const token = `${token_id}.${secret}`;
   const token_hash = passwordHash(secret);
+  const pairing_key_seed = derivePairingKeySeed(secret);
   const purpose = opts.purpose ?? "pairing";
   const created = new Date();
   const expires = new Date(created.getTime() + (opts.ttlMs ?? DEFAULT_PAIRING_TTL_MS));
   await pool().query(
     `INSERT INTO self_host_connector_tokens
-       (token_id, account_id, connector_id, host_id, token_hash, purpose, created, expires, revoked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)`,
+       (token_id, account_id, connector_id, host_id, token_hash, pairing_key_seed, purpose, created, expires, revoked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,FALSE)`,
     [
       token_id,
       opts.account_id,
       opts.connector_id ?? null,
       opts.host_id ?? null,
       token_hash,
+      pairing_key_seed,
       purpose,
       created,
       expires,
     ],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
   return { token, token_id, expires };
+}
+
+export async function createPairingTokenForHost(opts: {
+  account_id: string;
+  host_id: string;
+  name?: string;
+  ttlMs?: number;
+}): Promise<{
+  token: string;
+  expires: Date;
+  connector_id: string;
+}> {
+  const { rows } = await pool().query<{
+    id: string;
+    name: string | null;
+    region: string | null;
+    metadata: any;
+  }>(
+    `SELECT id, name, region, metadata
+       FROM project_hosts
+      WHERE id=$1 AND deleted IS NULL`,
+    [opts.host_id],
+  );
+  const host = rows[0];
+  if (!host) {
+    throw new Error("host not found");
+  }
+  const owner = host.metadata?.owner ?? "";
+  if (owner && owner !== opts.account_id) {
+    throw new Error("host not found");
+  }
+  const machineCloud = host.metadata?.machine?.cloud;
+  if (machineCloud !== "self-host") {
+    throw new Error("host is not self-hosted");
+  }
+  let connectorId = host.region;
+  const attachConnector = async (id: string) => {
+    const machine = host.metadata?.machine ?? {};
+    const machineMetadata = {
+      ...(machine.metadata ?? {}),
+      connector_id: id,
+    };
+    const selfHostMetadata = {
+      ...(host.metadata?.self_host ?? {}),
+      auto_start_pending: true,
+      auto_start_requested_at: new Date().toISOString(),
+    };
+    const nextMetadata = {
+      ...(host.metadata ?? {}),
+      machine: { ...machine, metadata: machineMetadata },
+      self_host: selfHostMetadata,
+    };
+    await pool().query(
+      `UPDATE project_hosts
+       SET region=$2, metadata=$3, updated=NOW()
+       WHERE id=$1 AND deleted IS NULL`,
+      [host.id, id, nextMetadata],
+    );
+  };
+  if (!connectorId) {
+    const created = await createConnectorRecord({
+      account_id: opts.account_id,
+      host_id: host.id,
+      name: opts.name ?? host.name ?? undefined,
+      metadata: host.metadata ?? {},
+    });
+    connectorId = created.connector_id;
+    await attachConnector(connectorId);
+  } else {
+    await ensureConnectorRecord({
+      connector_id: connectorId,
+      account_id: opts.account_id,
+      host_id: host.id,
+      name: opts.name ?? host.name ?? undefined,
+      metadata: host.metadata ?? {},
+    });
+    await attachConnector(connectorId);
+  }
+  const tokenInfo = await createPairingToken({
+    account_id: opts.account_id,
+    ttlMs: opts.ttlMs,
+    connector_id: connectorId,
+    host_id: host.id,
+  });
+  return {
+    token: tokenInfo.token,
+    expires: tokenInfo.expires,
+    connector_id: connectorId,
+  };
 }
 
 export async function verifyPairingToken(token: string, purpose = "pairing"): Promise<{
@@ -102,6 +209,7 @@ export async function revokePairingToken(tokenId: string): Promise<void> {
      WHERE token_id=$1`,
     [tokenId],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
 }
 
 export async function createConnectorRecord(opts: {
@@ -184,21 +292,24 @@ export async function createConnector(opts: {
   const secret = randomBytes(32).toString("base64url");
   const token = `${connector_id}.${secret}`;
   const token_hash = passwordHash(secret);
+  const ssh_key_seed = deriveConnectorKeySeed(secret);
   const created = new Date();
   await pool().query(
     `INSERT INTO self_host_connectors
-       (connector_id, account_id, host_id, token_hash, name, metadata, created, last_seen, revoked)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,FALSE)`,
+       (connector_id, account_id, host_id, token_hash, ssh_key_seed, name, metadata, created, last_seen, revoked)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULL,FALSE)`,
     [
       connector_id,
       opts.account_id,
       opts.host_id ?? null,
       token_hash,
+      ssh_key_seed,
       opts.name ?? null,
       opts.metadata ?? {},
       created,
     ],
   );
+  await refreshLaunchpadOnPremAuthorizedKeys();
   return { connector_id, token };
 }
 
@@ -211,6 +322,7 @@ export async function revokeConnector(opts: {
     `UPDATE self_host_connectors
      SET revoked=TRUE,
          token_hash=NULL,
+         ssh_key_seed=NULL,
          host_id=NULL
      WHERE connector_id=$1
        ${account_id ? "AND account_id=$2" : "" }
@@ -220,6 +332,7 @@ export async function revokeConnector(opts: {
   if (!rows[0]?.connector_id) {
     throw new Error("connector not found");
   }
+  await refreshLaunchpadOnPremAuthorizedKeys();
 }
 
 export async function activateConnector(opts: {
@@ -231,17 +344,20 @@ export async function activateConnector(opts: {
   const secret = randomBytes(32).toString("base64url");
   const token = `${opts.connector_id}.${secret}`;
   const token_hash = passwordHash(secret);
+  const ssh_key_seed = deriveConnectorKeySeed(secret);
   const { rows } = await pool().query(
     `UPDATE self_host_connectors
      SET token_hash=$3,
-         name=COALESCE($4, name),
-         metadata=COALESCE($5, metadata)
+         ssh_key_seed=$4,
+         name=COALESCE($5, name),
+         metadata=COALESCE($6, metadata)
      WHERE connector_id=$1 AND account_id=$2 AND revoked IS NOT TRUE
      RETURNING connector_id`,
     [
       opts.connector_id,
       opts.account_id,
       token_hash,
+      ssh_key_seed,
       opts.name ?? null,
       opts.metadata ?? null,
     ],
@@ -249,6 +365,7 @@ export async function activateConnector(opts: {
   if (!rows[0]?.connector_id) {
     throw new Error("connector not found");
   }
+  await refreshLaunchpadOnPremAuthorizedKeys();
   return { connector_id: opts.connector_id, token };
 }
 

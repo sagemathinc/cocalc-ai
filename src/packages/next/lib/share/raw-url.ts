@@ -5,7 +5,7 @@ The raw URL is the following, of course encoded as a URL:
 */
 
 import { join } from "path";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 
 interface Options {
   id: string;
@@ -15,7 +15,7 @@ interface Options {
 
 export default function rawURL({ id, path, relativePath }: Options): string {
   return join(
-    basePath,
+    ROOT_PATH,
     `share/raw/${id}/${encodePath(join(path, relativePath))}`
   );
 }

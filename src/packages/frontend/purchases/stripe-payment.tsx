@@ -282,7 +282,7 @@ function StripeCheckout({
             showIcon
             style={{ width: "90%", margin: "15px auto", fontSize: "12pt" }}
             type="warning"
-            message={
+            title={
               <b>
                 If you have a problem paying below, add a{" "}
                 <a

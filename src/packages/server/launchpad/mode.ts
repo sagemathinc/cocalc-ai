@@ -1,72 +1,106 @@
-import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import getLogger from "@cocalc/backend/logger";
+const logger = getLogger("server:launchpad:mode");
 
-export type LaunchpadMode = "unset" | "onprem" | "cloud";
+export type CocalcProduct = "plus" | "launchpad" | "rocket";
 
-const VALID_MODES: LaunchpadMode[] = ["unset", "onprem", "cloud"];
+const VALID_PRODUCTS: CocalcProduct[] = ["plus", "launchpad", "rocket"];
 
-function normalizeMode(value?: string | null): LaunchpadMode {
-  const mode = (value ?? "").trim().toLowerCase();
-  if ((VALID_MODES as string[]).includes(mode)) {
-    return mode as LaunchpadMode;
+function normalizeProduct(value?: string | null): CocalcProduct | undefined {
+  const raw = (value ?? "").trim();
+  if (!raw) return undefined;
+  const product = raw.toLowerCase();
+  if ((VALID_PRODUCTS as string[]).includes(product)) {
+    return product as CocalcProduct;
   }
-  return "unset";
+  throw new Error(`Invalid COCALC_PRODUCT '${raw}'`);
 }
 
-export async function getLaunchpadMode(): Promise<LaunchpadMode> {
-  const envMode = process.env.COCALC_LAUNCHPAD_MODE;
-  if (envMode) {
-    return normalizeMode(envMode);
+let cachedProduct: CocalcProduct | undefined;
+let warnedProduct = false;
+let warnedLegacyMode = false;
+
+export function getCocalcProduct(): CocalcProduct {
+  if (cachedProduct) return cachedProduct;
+  const envProduct = normalizeProduct(process.env.COCALC_PRODUCT);
+  if (envProduct) {
+    cachedProduct = envProduct;
+    return envProduct;
   }
-  const settings = await getServerSettings();
-  return normalizeMode(settings.launchpad_mode);
+  if (process.env.COCALC_MODE && !warnedLegacyMode) {
+    warnedLegacyMode = true;
+    logger.warn("COCALC_MODE is deprecated and ignored; use COCALC_PRODUCT", {
+      mode: process.env.COCALC_MODE,
+    });
+  }
+  if (!warnedProduct) {
+    warnedProduct = true;
+    logger.warn("COCALC_PRODUCT not set; defaulting to plus");
+  }
+  cachedProduct = "plus";
+  return cachedProduct;
 }
 
-export async function requireLaunchpadModeSelected(): Promise<LaunchpadMode> {
-  if (process.env.COCALC_MODE !== "launchpad") {
-    return "cloud";
-  }
-  const mode = await getLaunchpadMode();
-  if (mode === "unset") {
-    throw new Error(
-      "Launchpad mode not selected. Set Admin Settings → Launchpad Mode or COCALC_LAUNCHPAD_MODE.",
-    );
-  }
-  return mode;
+export function isLaunchpadProduct(): boolean {
+  return getCocalcProduct() === "launchpad";
 }
 
-export type LaunchpadOnPremConfig = {
-  mode: LaunchpadMode;
-  https_port?: number;
+export function isRocketProduct(): boolean {
+  return getCocalcProduct() === "rocket";
+}
+
+export type LaunchpadLocalConfig = {
+  http_port?: number;
   sshd_port?: number;
-  sshpiperd_port?: number;
-  proxy_prefix?: string;
-  sftp_root?: string;
+  ssh_user?: string;
+  backup_root?: string;
+  rest_port?: number;
 };
 
-export function getLaunchpadOnPremConfig(
-  modeOverride?: LaunchpadMode,
-): LaunchpadOnPremConfig {
-  const httpsPort = Number.parseInt(
-    process.env.COCALC_HTTPS_PORT ?? process.env.PORT ?? "",
-    10,
-  );
-  const sshdPort = Number.parseInt(process.env.COCALC_SSHD_PORT ?? "", 10);
-  const sshpiperdPort = Number.parseInt(
-    process.env.COCALC_SSHPIPERD_PORT ?? "",
-    10,
-  );
+export function getLaunchpadLocalConfig(
+  _modeOverride?: string,
+): LaunchpadLocalConfig {
+  const basePortRaw =
+    process.env.COCALC_BASE_PORT ??
+    process.env.COCALC_HTTP_PORT ??
+    process.env.PORT ??
+    "";
+  const basePortParsed = Number.parseInt(basePortRaw, 10);
+  const basePort = Number.isFinite(basePortParsed) ? basePortParsed : 9001;
+  const httpPortRaw =
+    process.env.COCALC_HTTP_PORT ??
+    process.env.COCALC_BASE_PORT ??
+    process.env.PORT ??
+    "";
+  const httpPortParsed = Number.parseInt(httpPortRaw, 10);
+  const httpPort = Number.isFinite(httpPortParsed)
+    ? httpPortParsed
+    : basePort;
+  const sshdPortRaw = process.env.COCALC_SSHD_PORT ?? "";
+  const sshdPortParsed = Number.parseInt(sshdPortRaw, 10);
+  const sshdPort = Number.isFinite(sshdPortParsed)
+    ? sshdPortParsed
+    : basePort + 1;
+  const restPortRaw =
+    process.env.COCALC_LAUNCHPAD_REST_PORT ??
+    process.env.COCALC_REST_PORT ??
+    "";
+  const restPortParsed = Number.parseInt(restPortRaw, 10);
+  const restPort = Number.isFinite(restPortParsed) ? restPortParsed : 9345;
   const dataDir = process.env.COCALC_DATA_DIR ?? process.env.DATA;
-  const sftpRoot =
-    process.env.COCALC_SFTP_ROOT ??
+  const backupRoot =
+    process.env.COCALC_BACKUP_ROOT ??
     (dataDir ? `${dataDir}/backup-repo` : undefined);
-  const proxyPrefix = process.env.COCALC_PROXY_PREFIX ?? "/host";
+  const sshUser =
+    process.env.COCALC_SSHD_USER ??
+    process.env.USER ??
+    process.env.LOGNAME ??
+    undefined;
 
   return {
-    mode: modeOverride ?? normalizeMode(process.env.COCALC_LAUNCHPAD_MODE),
-    https_port: Number.isFinite(httpsPort) ? httpsPort : undefined,
+    http_port: Number.isFinite(httpPort) ? httpPort : undefined,
     sshd_port: Number.isFinite(sshdPort) ? sshdPort : undefined,
-    sshpiperd_port: Number.isFinite(sshpiperdPort) ? sshpiperdPort : undefined,
-    proxy_prefix: proxyPrefix,
-    sftp_root: sftpRoot,
+    ssh_user: sshUser,
+    backup_root: backupRoot,
+    rest_port: Number.isFinite(restPort) ? restPort : undefined,
   };
 }

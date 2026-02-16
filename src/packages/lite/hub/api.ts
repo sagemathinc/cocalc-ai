@@ -3,7 +3,7 @@ This is a very lightweight small subset of the hub's API for browser clients.
 */
 
 import getLogger from "@cocalc/backend/logger";
-import { type HubApi, transformArgs } from "@cocalc/conat/hub/api";
+import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import userQuery, { init as initUserQuery } from "./sqlite/user-query";
 import { account_id as ACCOUNT_ID, data } from "@cocalc/backend/data";
 import {
@@ -13,26 +13,46 @@ import {
 import { callRemoteHub, hasRemote, project_id } from "../remote";
 import { join } from "node:path";
 import { controlAgentDev } from "./control-agent";
+import { setSshUi, ssh } from "./ssh";
+import { setReflectUi, reflect } from "./reflect";
+import {
+  history as syncHistory,
+  purgeHistory as syncPurgeHistory,
+} from "@cocalc/conat/hub/api/sync-impl";
 
 const logger = getLogger("lite:hub:api");
 
-export async function init({ client }) {
+export async function init({
+  client,
+  sshUi,
+  reflectUi,
+}: {
+  client;
+  sshUi?: any;
+  reflectUi?: any;
+}) {
   const subject = "hub.*.*.api";
   const filename = join(data, "hub.db");
   logger.debug(`init -- subject='${subject}', options=`, {
     queue: "0",
     filename,
   });
+  if (sshUi) {
+    setSshUi(sshUi);
+  }
+  if (reflectUi) {
+    setReflectUi(reflectUi);
+  }
   await initUserQuery({ filename });
   const api = await client.subscribe(subject, { queue: "0" });
-  listen(api);
+  listen(api, client);
 }
 
-async function listen(api) {
+async function listen(api, client) {
   for await (const mesg of api) {
     (async () => {
       try {
-        await handleMessage(mesg);
+        await handleMessage(mesg, client);
       } catch (err) {
         logger.debug(`WARNING: unexpected error  - ${err}`);
       }
@@ -40,21 +60,37 @@ async function listen(api) {
   }
 }
 
-async function handleMessage(mesg) {
+async function handleMessage(mesg, client) {
   const request = mesg.data ?? ({} as any);
   let resp, headers;
   try {
-    const { account_id, project_id } = {
-      account_id: ACCOUNT_ID,
-      project_id: undefined,
-    };
+    let account_id: string | undefined;
+    let project_id: string | undefined;
+    let host_id: string | undefined;
+    try {
+      ({ account_id, project_id, host_id } = getUserId(mesg.subject));
+    } catch {
+      // Keep legacy fallback behavior if subject parsing fails unexpectedly.
+      account_id = ACCOUNT_ID;
+      project_id = undefined;
+      host_id = undefined;
+    }
     const { name, args } = request as any;
     logger.debug("handling hub.api request:", {
       account_id,
       project_id,
+      host_id,
       name,
     });
-    resp = (await getResponse({ name, args, account_id, project_id })) ?? null;
+    resp =
+      (await getResponse({
+        name,
+        args,
+        account_id,
+        project_id,
+        host_id,
+        client,
+      })) ?? null;
     headers = undefined;
   } catch (err) {
     resp = null;
@@ -108,18 +144,40 @@ async function getNames(account_ids: string[]) {
   return { ...names, ...x };
 }
 
+async function logClientError(_opts?: { event?: string; error?: string }) {
+  // No-op in lite mode.
+}
+
+async function userTracking(_opts?: { event?: string; value?: object }) {
+  // No-op in lite mode.
+}
+
+async function webappError(_opts?: object) {
+  // No-op in lite mode.
+}
+
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add
 // host-specific implementations of hub APIs. Keep the defaults minimal here.
 export const hubApi: HubApi = {
-  system: { getNames },
+  system: { getNames, logClientError, userTracking, webappError },
   projects: {},
   db: { touch: () => {}, userQuery },
   purchases: {},
+  sync: { history: syncHistory, purgeHistory: syncPurgeHistory },
   jupyter: {},
   controlAgent: { controlAgentDev },
+  ssh,
+  reflect,
 } as any;
 
-async function getResponse({ name, args, account_id, project_id }) {
+async function getResponse({
+  name,
+  args,
+  account_id,
+  project_id,
+  host_id,
+  client,
+}) {
   const [group, functionName] = name.split(".");
   if (functionName == "getSshKeys") {
     // no ssh keys in lite mode for now...
@@ -134,6 +192,10 @@ async function getResponse({ name, args, account_id, project_id }) {
     args,
     account_id,
     project_id,
+    host_id,
   });
+  if (group === "sync" && args2?.[0] != null) {
+    args2[0].client = client;
+  }
   return await f(...args2);
 }

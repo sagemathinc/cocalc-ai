@@ -12,7 +12,7 @@ import {
   Typography,
 } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
-import { React } from "@cocalc/frontend/app-framework";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type { HostLogEntry } from "../hooks/use-host-log";
@@ -38,6 +38,7 @@ type HostDrawerViewModel = {
   onClose: () => void;
   onEdit: (host: Host) => void;
   onUpgrade?: (host: Host) => void;
+  onUpgradeFromHub?: (host: Host) => void;
   canUpgrade?: boolean;
   onCancelOp?: (op_id: string) => void;
   hostLog: HostLogEntry[];
@@ -178,16 +179,17 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const {
     open,
     host,
-  hostOps,
-  onClose,
-  onEdit,
-  onUpgrade,
-  canUpgrade,
-  onCancelOp,
-  hostLog,
-  loadingLog,
-  selfHost,
-} = vm;
+    hostOps,
+    onClose,
+    onEdit,
+    onUpgrade,
+    onUpgradeFromHub,
+    canUpgrade,
+    onCancelOp,
+    hostLog,
+    loadingLog,
+    selfHost,
+  } = vm;
   const isSelfHost = host?.machine?.cloud === "self-host";
   const readPositive = (value: unknown) => {
     const parsed = Number(value);
@@ -203,8 +205,26 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     !isSelfHost ||
     !selfHost?.isConnectorOnline ||
     selfHost.isConnectorOnline(host?.region);
+  const selfHostAlphaEnabled = !!useTypedRedux(
+    "customize",
+    "project_hosts_self_host_alpha_enabled",
+  );
+  const hasSshTarget = !!String(
+    host?.machine?.metadata?.self_host_ssh_target ?? "",
+  ).trim();
+  const autoSetup = isSelfHost && hasSshTarget;
+  const handleSetupClick = React.useCallback(() => {
+    if (!host || !selfHost) return;
+    onClose();
+    selfHost.onSetup(host);
+  }, [host, onClose, selfHost]);
   const showConnectorWarning =
-    isSelfHost && !!host && !connectorOnline && host.status === "off";
+    isSelfHost &&
+    selfHostAlphaEnabled &&
+    !!host &&
+    !connectorOnline &&
+    host.status === "off" &&
+    !autoSetup;
   const connectorLabel = isSelfHost
     ? `Connector: ${host?.region ?? "n/a"}`
     : host?.region;
@@ -303,7 +323,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       open={open && !!host}
     >
       {host ? (
-        <Space direction="vertical" style={{ width: "100%" }} size="middle">
+        <Space orientation="vertical" style={{ width: "100%" }} size="middle">
           <Space size="small">
             <Tag>
               {host.machine?.cloud
@@ -324,7 +344,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             )}
           </Space>
           {!showUpgradeProgress && (
-            <Space direction="vertical" size="small">
+            <Space orientation="vertical" size="small">
               <HostOpProgress op={activeOp} />
               {canCancelBackups && (
                 <Popconfirm
@@ -348,7 +368,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               Connector ID: {host.region}
             </Typography.Text>
           )}
-          <Space direction="vertical" size="small">
+          <Space orientation="vertical" size="small">
             {host.machine?.cloud && host.public_ip && (
               <Typography.Text copyable={{ text: host.public_ip }}>
                 Public IP: {host.public_ip}
@@ -374,8 +394,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 {selfHostDisk ?? "?"} GB disk
               </Typography.Text>
             )}
+            {isSelfHost && host.machine?.metadata?.self_host_ssh_target && (
+              <Typography.Text>
+                SSH target: {host.machine.metadata.self_host_ssh_target}
+              </Typography.Text>
+            )}
           </Space>
-          <Space direction="vertical" size="small">
+          <Space orientation="vertical" size="small">
             <HostWorkspaceStatus host={host} fontSize={14} />
             <Button size="small" onClick={() => setShowProjects(true)}>
               Browse projects
@@ -384,7 +409,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           {(host.version ||
             host.project_bundle_version ||
             host.tools_version) && (
-            <Space direction="vertical" size="small">
+            <Space orientation="vertical" size="small">
               <Typography.Text strong>Software</Typography.Text>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {[
@@ -399,26 +424,59 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               </Typography.Text>
             </Space>
           )}
+          {canUpgrade && host && !host.deleted && onUpgrade && (
+            <Popconfirm
+              title={upgradeConfirmContent}
+              okText="Upgrade"
+              cancelText="Cancel"
+              onConfirm={() => onUpgrade(host)}
+              disabled={hostOpActive || host.status !== "running"}
+            >
+              <Button
+                size="small"
+                disabled={hostOpActive || host.status !== "running"}
+              >
+                Upgrade software
+              </Button>
+            </Popconfirm>
+          )}
+          {canUpgrade && host && !host.deleted && onUpgradeFromHub && (
+            <Popconfirm
+              title={upgradeConfirmContent}
+              okText="Upgrade"
+              cancelText="Cancel"
+              onConfirm={() => onUpgradeFromHub(host)}
+              disabled={hostOpActive || host.status !== "running"}
+            >
+              <Button
+                size="small"
+                disabled={hostOpActive || host.status !== "running"}
+              >
+                Upgrade from hub source
+              </Button>
+            </Popconfirm>
+          )}
           {showConnectorWarning && selfHost && (
             <Alert
               type="warning"
               showIcon
-              message="Connector offline"
+              title="Connector offline"
               description={
-                <Button size="small" onClick={() => selfHost.onSetup(host)}>
+                <Button size="small" onClick={handleSetupClick}>
                   Set up connector
                 </Button>
               }
             />
           )}
+          {showUpgradeProgress && <HostOpProgress op={activeOp} />}
           {isSelfHost && selfHost && !host.deleted && (
-            <Space direction="vertical" size="small">
+            <Space orientation="vertical" size="small">
               <Typography.Text strong>Connector actions</Typography.Text>
               <Space wrap>
                 <Button
                   size="small"
                   disabled={hostOpActive}
-                  onClick={() => selfHost.onSetup(host)}
+                  onClick={handleSetupClick}
                 >
                   Setup or reconnect
                 </Button>
@@ -446,23 +504,6 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               </Space>
             </Space>
           )}
-          {canUpgrade && host && !host.deleted && onUpgrade && (
-            <Popconfirm
-              title={upgradeConfirmContent}
-              okText="Upgrade"
-              cancelText="Cancel"
-              onConfirm={() => onUpgrade(host)}
-              disabled={hostOpActive || host.status !== "running"}
-            >
-              <Button
-                size="small"
-                disabled={hostOpActive || host.status !== "running"}
-              >
-                Upgrade software
-              </Button>
-            </Popconfirm>
-          )}
-          {showUpgradeProgress && <HostOpProgress op={activeOp} />}
           <Typography.Text type="secondary">
             Last seen:{" "}
             {host.last_seen ? new Date(host.last_seen).toLocaleString() : "n/a"}
@@ -471,7 +512,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <Alert
               type="error"
               showIcon
-              message="Provisioning error"
+              title="Provisioning error"
               description={host.last_error}
             />
           )}
@@ -482,7 +523,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           ) : hostLog.length === 0 ? (
             <Typography.Text type="secondary">No actions yet.</Typography.Text>
           ) : (
-            <Space direction="vertical" style={{ width: "100%" }} size="small">
+            <Space orientation="vertical" style={{ width: "100%" }} size="small">
               {hostLog.map((entry) => (
                 <Card
                   key={entry.id}

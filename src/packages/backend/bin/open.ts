@@ -6,7 +6,7 @@
  *   - Zero dependencies
  *   - Durable write: tmp -> fsync(file) -> rename -> fsync(dir)
  *   - Preserve shell view of CWD via $PWD
- *   - Map abs paths outside $HOME to "$HOME/.smc/root/..."
+ *   - Emit canonical absolute paths for frontend open handlers
  *   - Create parents + touch missing files
  *   - Ignore non-expanded globs when path does not exist
  *   - Message schema: { event: "open", paths: [{ file|directory: string }] }
@@ -17,8 +17,6 @@ import fsp, { FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 const MAX_FILES = 15 as const;
-const ROOT_SYMLINK = ".smc/root" as const; // relative to $HOME
-
 function usage(): void {
   console.error(`Usage: ${path.basename(process.argv[1])} [path names] ...`);
 }
@@ -71,14 +69,6 @@ function resolveAbsPreservePWD(p: string): string {
 async function classifyPath(absPath: string): Promise<"file" | "directory"> {
   const st = await fsp.lstat(absPath);
   return st.isDirectory() ? "directory" : "file";
-}
-
-function mapToHomeView(absPath: string, home: string): string {
-  const sep = path.sep;
-  if (absPath.startsWith(home + sep)) {
-    return absPath.slice(home.length + 1);
-  }
-  return path.join(ROOT_SYMLINK, absPath);
 }
 
 function hrtimeNs(): bigint {
@@ -163,12 +153,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const home = process.env.HOME;
-  if (!home) {
-    console.error("HOME not set");
-    process.exit(2);
-  }
-
   const controlDir = process.env.COCALC_CONTROL_DIR;
   if (!controlDir) {
     console.error("COCALC_CONTROL_DIR not set");
@@ -184,20 +168,19 @@ async function main(): Promise<void> {
   const out: PathMsg[] = [];
 
   for (const p of inputs) {
-    const exists = await pathExists(p);
+    const abs = resolveAbsPreservePWD(p);
+    const exists = await pathExists(abs);
     if (!exists && hasGlobChars(p)) {
       console.error(`no match for '${p}', so not creating`);
       continue;
     }
     if (!exists) {
-      await ensureParentsAndMaybeTouch(p);
+      await ensureParentsAndMaybeTouch(abs);
     }
 
-    const abs = resolveAbsPreservePWD(p);
     const kind = await classifyPath(abs);
-    const name = mapToHomeView(abs, home);
-    if (kind === "directory") out.push({ directory: name });
-    else out.push({ file: name });
+    if (kind === "directory") out.push({ directory: abs });
+    else out.push({ file: abs });
   }
 
   if (out.length === 0) return;

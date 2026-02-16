@@ -1,6 +1,6 @@
 {
   "name": "@cocalc/server",
-  "version": "0.44.5",
+  "version": "0.45.20",
   "description": "CoCalc server functionality: functions used by either the hub and the next.js server",
   "exports": {
     "./*": "./dist/*.js",
@@ -12,6 +12,8 @@
     "./cloud": "./dist/cloud/index.js",
     "./database/*": "./dist/database/*.js",
     "./mentions/*": "./dist/mentions/*.js",
+    "./onprem": "./dist/onprem/index.js",
+    "./onprem/*": "./dist/onprem/*.js",
     "./conat": "./dist/conat/index.js",
     "./conat/api": "./dist/conat/api/index.js",
     "./conat/auth": "./dist/conat/auth/index.js",
@@ -39,9 +41,10 @@
     "preinstall": "npx only-allow pnpm",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo",
     "build": "../node_modules/.bin/tsc --build",
+    "publish:bootstrap": "cd cloud && ./publish-bootstrap.sh",
     "test": "pnpm test:pglite",
-    "test:psql": "TZ=UTC jest --forceExit --maxWorkers=1",
-    "test:pglite": "COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' TZ=UTC jest --forceExit",
+    "test:psql": "NODE_NO_WARNINGS=1 TZ=UTC jest --forceExit --maxWorkers=1",
+    "test:pglite": "NODE_NO_WARNINGS=1 COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS='--experimental-vm-modules' TZ=UTC jest --forceExit",
     "test:both": "pnpm test:psql && pnpm test:pglite",
     "depcheck": "pnpm -w exec depcheck \"$PWD\"",
     "prepublishOnly": "test"

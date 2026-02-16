@@ -69,9 +69,10 @@ export function FilesSelectedControls({
   publicFiles,
   refreshBackups,
 }: FilesSelectedControlsProps) {
-  const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
   const actions = useActions({ project_id });
-  const inBackups = isBackupsPath(current_path ?? "");
+  const inBackups = isBackupsPath(effective_current_path);
 
   const singleFile = useSingleFile({
     checked_files,
@@ -112,7 +113,7 @@ export function FilesSelectedControls({
     } finally {
       setBackupsLoading(false);
     }
-  }, [inBackups, project_id, current_path, backupsTick]);
+  }, [inBackups, project_id, effective_current_path, backupsTick]);
 
   interface BackupSelection {
     id: string;
@@ -129,7 +130,7 @@ export function FilesSelectedControls({
     if (!backupsMeta)
       return { mode: "loading" as const, entries: [] as BackupSelection[] };
 
-    const parts = (current_path ?? "").split("/").filter(Boolean);
+    const parts = effective_current_path.split("/").filter(Boolean);
     if (parts.length === 0 || parts[0] !== BACKUPS) {
       return { mode: "none" as const, entries: [] as BackupSelection[] };
     }
@@ -164,15 +165,25 @@ export function FilesSelectedControls({
       };
     }
     const subpath = parts.slice(2).join("/");
+    const startsWithCurrentPath = (candidate: string): boolean => {
+      if (candidate === effective_current_path) return true;
+      if (effective_current_path === "/") return candidate.startsWith("/");
+      return candidate.startsWith(`${effective_current_path}/`);
+    };
+    const relativeToCurrentPath = (candidate: string): string => {
+      if (candidate === effective_current_path) {
+        return "";
+      }
+      if (effective_current_path === "/") {
+        return candidate.replace(/^\/+/, "");
+      }
+      return candidate
+        .slice(effective_current_path.length + 1)
+        .replace(/^\/+/, "");
+    };
     const selected = Array.from(checked_files)
-      .filter(
-        (p) => p === current_path || p.startsWith(`${current_path ?? ""}/`),
-      )
-      .map((p) =>
-        p === current_path
-          ? ""
-          : p.slice((current_path?.length ?? 0) + 1).replace(/^\/+/, ""),
-      )
+      .filter(startsWithCurrentPath)
+      .map(relativeToCurrentPath)
       .filter(Boolean);
     const paths =
       selected.length === 0
@@ -190,7 +201,7 @@ export function FilesSelectedControls({
     backupsErr,
     backupsMeta,
     checked_files,
-    current_path,
+    effective_current_path,
   ]);
 
   async function openAllSelectedFiles(e: React.MouseEvent) {
@@ -358,7 +369,7 @@ export function FilesSelectedControls({
           }
         }
         message.success("Restore started");
-        actions?.open_directory?.(current_path, false);
+        actions?.open_directory?.(effective_current_path, false);
         setRestoreOpen(false);
       } catch (err) {
         setRestoreError(err);
@@ -379,7 +390,7 @@ export function FilesSelectedControls({
         message.success("Backup deleted");
         refreshBackups?.();
         setBackupsTick((value) => value + 1);
-        actions?.open_directory?.(current_path, false);
+        actions?.open_directory?.(effective_current_path, false);
       } catch (err) {
         message.error(err?.message ?? `${err}`);
       }
@@ -387,7 +398,7 @@ export function FilesSelectedControls({
 
     return (
       <>
-        <Space direction="horizontal" wrap>
+        <Space orientation="horizontal" wrap>
           {err ? (
             <div style={{ color: "#c00" }}>{err?.message ?? `${err}`}</div>
           ) : null}
@@ -433,7 +444,7 @@ export function FilesSelectedControls({
             value={restoreMode}
             onChange={(e) => setRestoreMode(e.target.value)}
           >
-            <Space direction="vertical">
+            <Space orientation="vertical">
               <Radio value="original">
                 Restore to original location (overwrite)
               </Radio>
@@ -459,11 +470,11 @@ export function FilesSelectedControls({
     if (mode === "top" && checked_files.size === 0) return;
 
     return (
-      <Space direction="horizontal" wrap>
+      <Space orientation="horizontal" wrap>
         {checked_files.size > 0 ? renderOpenFile() : undefined}
         <FileActionsDropdown
           names={names}
-          current_path={current_path ?? ""}
+          current_path={effective_current_path}
           actions={actions}
           label="Actions"
           size="small"
@@ -476,7 +487,7 @@ export function FilesSelectedControls({
 
   return (
     <Space
-      direction="vertical"
+      orientation="vertical"
       size="small"
       style={mode === "top" ? PANEL_STYLE_TOP : PANEL_STYLE_BOTTOM}
     >

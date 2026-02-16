@@ -58,6 +58,8 @@ import LRU from "lru-cache";
 import getLogger from "@cocalc/backend/logger";
 
 const logger = getLogger("sandbox:rustic");
+const initializedTomlRepos = new Set<string>();
+const initializingTomlRepos = new Map<string, Promise<void>>();
 
 export interface RusticOptions {
   repo?: string;
@@ -282,28 +284,44 @@ export async function ensureInitialized(repo: string) {
 
 async function ensureInitializedWithCommon(repo: string, common: string[]) {
   if (repo.endsWith(".toml")) {
-    try {
-      parseOutput(
-        await exec({
-          cmd: rusticPath,
-          safety: [...common, "repoinfo"],
-          timeout: 30_000,
-        }),
-      );
-      logger.debug("ensureInitializedWithCommon - repo is initialized");
-      return;
-    } catch {
-      logger.debug("ensureInitializedWithCommon - initializing");
-      parseOutput(
-        await exec({
-          cmd: rusticPath,
-          safety: ["--no-progress", ...common, "init"],
-          timeout: 30_000,
-        }),
-      );
-      logger.debug("ensureInitializedWithCommon - initialiszing");
+    if (initializedTomlRepos.has(repo)) {
       return;
     }
+    const inFlight = initializingTomlRepos.get(repo);
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+    const task = (async () => {
+      try {
+        parseOutput(
+          await exec({
+            cmd: rusticPath,
+            safety: [...common, "repoinfo"],
+            timeout: 30_000,
+          }),
+        );
+        logger.debug("ensureInitializedWithCommon - repo is initialized");
+      } catch {
+        logger.debug("ensureInitializedWithCommon - initializing");
+        parseOutput(
+          await exec({
+            cmd: rusticPath,
+            safety: ["--no-progress", ...common, "init"],
+            timeout: 30_000,
+          }),
+        );
+        logger.debug("ensureInitializedWithCommon - initialiszing");
+      }
+      initializedTomlRepos.add(repo);
+    })();
+    initializingTomlRepos.set(repo, task);
+    try {
+      await task;
+    } finally {
+      initializingTomlRepos.delete(repo);
+    }
+    return;
   }
   const config = join(repo, "config");
   if (!(await exists(config))) {

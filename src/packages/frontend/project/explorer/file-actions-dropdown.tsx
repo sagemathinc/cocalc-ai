@@ -7,7 +7,7 @@ import { isDisabledSnapshots, isSnapshotPath } from "./action-utils";
 
 interface Props {
   names: readonly FileAction[];
-  current_path?: string;
+  current_path: string;
   actions?: ProjectActions;
   label?: string;
   size?: "small" | "middle" | "large";

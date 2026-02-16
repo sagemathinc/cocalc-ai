@@ -54,6 +54,7 @@ export function ProjectsTable({
   const actions = useActions("projects");
   const projectLabel = intl.formatMessage(labels.project);
   const project_map = useTypedRedux("projects", "project_map");
+  const host_info = useTypedRedux("projects", "host_info");
   const user_map = useTypedRedux("users", "user_map");
   const expanded_project_id = useTypedRedux("projects", "expanded_project_id");
   const { isProjectBookmarked, setProjectBookmarked } = useBookmarkedProjects();
@@ -111,7 +112,8 @@ export function ProjectsTable({
         title: project.get("title") ?? "Untitled",
         description: project.get("description") ?? "",
         host: (() => {
-          const hostName = project.getIn(["host", "name"]);
+          const hostId = project.get("host_id");
+          const hostName = host_info?.get(hostId)?.get?.("name");
           return typeof hostName === "string" ? hostName : undefined;
         })(),
         last_edited: project.get("last_edited"),
@@ -122,7 +124,7 @@ export function ProjectsTable({
         collaborators,
       };
     });
-  }, [visible_projects, project_map, isProjectBookmarked]);
+  }, [visible_projects, project_map, host_info, isProjectBookmarked]);
 
   const handleToggleStar = (project_id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -210,6 +212,7 @@ export function ProjectsTable({
   function handleRowClick(record: ProjectTableRecord, e?: React.MouseEvent) {
     actions.open_project({
       project_id: record.project_id,
+      target: "project-home",
       switch_to: !(e?.button === 1 || e?.ctrlKey || e?.metaKey),
     });
   }

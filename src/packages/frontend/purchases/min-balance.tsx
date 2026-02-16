@@ -18,7 +18,7 @@ export default function MinBalance({ minBalance, style }: Props) {
   return (
     <Card style={style}>
       <MoneyStatistic title={"Minimum Balance"} value={minBalance} />
-      <Space direction="vertical">
+      <Space orientation="vertical">
         <ClosingDate type="link" />
         <Support>
           <Tooltip title="Create support request to allow your balance to be negative for Pay As You Go purchases.">

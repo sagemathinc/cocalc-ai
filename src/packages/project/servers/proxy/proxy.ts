@@ -26,10 +26,16 @@ This proxy gets typically exposed externally via the proxy in
 */
 
 import * as http from "node:http";
+import type express from "express";
 import { userInfo } from "node:os";
 import httpProxy from "http-proxy-3";
 import { getLogger } from "@cocalc/project/logger";
 import { project_id } from "@cocalc/project/data";
+import { secretToken } from "@cocalc/project/data";
+import {
+  PROJECT_PROXY_AUTH_HEADER,
+  getSingleHeaderValue,
+} from "@cocalc/backend/auth/project-proxy-auth";
 import listen from "@cocalc/backend/misc/async-server-listen";
 
 const logger = getLogger("project:servers:proxy");
@@ -56,17 +62,148 @@ export async function startProxyServer({
   }
 
   logger.debug("startProxyServer", { base_url, port, host });
+  const { proxy, getTarget } = createProxyResolver({
+    base_url,
+    host: "localhost",
+  });
+
+  const proxyServer = http.createServer((req, res) => {
+    try {
+      const target = getTarget(req);
+      if (!hasValidInternalProxySecret(req)) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        res.end("Forbidden\n");
+        return;
+      }
+      proxy.web(req, res, { target, prependPath: false });
+    } catch {
+      // Not matched — 404 so it's obvious when a wrong base is used.
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found\n");
+    }
+  });
+
+  proxyServer.on("upgrade", (req, socket, head) => {
+    try {
+      const target = getTarget(req);
+      if (!hasValidInternalProxySecret(req)) {
+        socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      proxy.ws(req, socket, head, {
+        target,
+      });
+    } catch {
+      // Not matched — close gracefully.
+      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+  });
+
+  await listen({
+    server: proxyServer,
+    port,
+    host,
+    desc: "project HTTP proxy server",
+  });
+  return proxyServer;
+}
+
+export function attachProxyServer({
+  app,
+  httpServer,
+  base_url = getProxyBaseUrl({ project_id }),
+  host = "localhost",
+}: {
+  app?: express.Application;
+  httpServer?: http.Server;
+  base_url?: string;
+  host?: string;
+}) {
+  if (!app && !httpServer) {
+    throw new Error("attachProxyServer requires app or httpServer");
+  }
+  const { proxy, getTarget } = createProxyResolver({ base_url, host });
+
+  if (app) {
+    app.use((req, res, next) => {
+      try {
+        const target = getTarget(req);
+        if (!hasValidInternalProxySecret(req)) {
+          res.writeHead(403, { "Content-Type": "text/plain" });
+          res.end("Forbidden\n");
+          return;
+        }
+        proxy.web(req, res, { target, prependPath: false });
+      } catch {
+        return next();
+      }
+    });
+  }
+
+  if (httpServer) {
+    httpServer.prependListener("upgrade", (req, socket, head) => {
+      try {
+        const target = getTarget(req);
+        if (!hasValidInternalProxySecret(req)) {
+          socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        proxy.ws(req, socket, head, {
+          target,
+        });
+      } catch {
+        return;
+      }
+    });
+  }
+}
+
+// Build the default base_url from project/compute ids.
+function getProxyBaseUrl({ project_id }: { project_id: string }): string {
+  return `${project_id}`;
+}
+
+// Ensure base_url has no leading/trailing slashes; proxy matches start after a single slash.
+function normalizeBase(base_url: string): string {
+  return base_url.replace(/^\/+|\/+$/g, "");
+}
+
+// Escape string for use inside a RegExp literal.
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Build a matcher:
+//  - type "server": ^/<base>/server/(\d+)(/.*)?$
+//  - type "port":   ^/<base>/port/(\d+)(/.*)?$
+function buildPattern(base: string, type: "server" | "port" | "proxy"): RegExp {
+  const prefix = `/${escapeRegExp(base)}/${type}/`;
+  // capture numeric port, then optionally capture the rest of the path
+  return new RegExp(`^${prefix}(\\d+)(/.*)?$`);
+}
+
+function createProxyResolver({
+  base_url,
+  host,
+}: {
+  base_url: string;
+  host: string;
+}) {
   const base = normalizeBase(base_url);
   const serverPattern = buildPattern(base, "server");
   const proxyPattern = buildPattern(base, "proxy");
   const portPattern = buildPattern(base, "port");
 
-  function getTarget(req) {
+  function getTarget(req: http.IncomingMessage) {
     const url = req.url ?? "";
     const mPort = portPattern.exec(url);
     if (mPort) {
       const port = Number(mPort[1]);
-      return { port, host: "localhost" };
+      return { port, host };
     }
     const mServer = serverPattern.exec(url) || proxyPattern.exec(url);
     if (mServer) {
@@ -74,7 +211,7 @@ export async function startProxyServer({
       const rest = mServer[2] || "/";
       // Rewrite path by mutating req.url before proxying
       req.url = rest;
-      return { port, host: "localhost" };
+      return { port, host };
     }
 
     logger.debug("URL not matched", { url });
@@ -106,60 +243,12 @@ export async function startProxyServer({
     proxyReq.setHeader("X-Proxy-By", "cocalc-lite-proxy");
   });
 
-  const proxyServer = http.createServer((req, res) => {
-    try {
-      const target = getTarget(req);
-      proxy.web(req, res, { target, prependPath: false });
-    } catch {
-      // Not matched — 404 so it's obvious when a wrong base is used.
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("Not found\n");
-    }
-  });
-
-  proxyServer.on("upgrade", (req, socket, head) => {
-    try {
-      const target = getTarget(req);
-      proxy.ws(req, socket, head, {
-        target,
-      });
-    } catch {
-      // Not matched — close gracefully.
-      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-  });
-
-  await listen({
-    server: proxyServer,
-    port,
-    host,
-    desc: "project HTTP proxy server",
-  });
-  return proxyServer;
+  return { proxy, getTarget };
 }
 
-// Build the default base_url from project/compute ids.
-function getProxyBaseUrl({ project_id }: { project_id: string }): string {
-  return `${project_id}`;
-}
-
-// Ensure base_url has no leading/trailing slashes; proxy matches start after a single slash.
-function normalizeBase(base_url: string): string {
-  return base_url.replace(/^\/+|\/+$/g, "");
-}
-
-// Escape string for use inside a RegExp literal.
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Build a matcher:
-//  - type "server": ^/<base>/server/(\d+)(/.*)?$
-//  - type "port":   ^/<base>/port/(\d+)(/.*)?$
-function buildPattern(base: string, type: "server" | "port" | "proxy"): RegExp {
-  const prefix = `/${escapeRegExp(base)}/${type}/`;
-  // capture numeric port, then optionally capture the rest of the path
-  return new RegExp(`^${prefix}(\\d+)(/.*)?$`);
+function hasValidInternalProxySecret(req: http.IncomingMessage): boolean {
+  const expected = `${secretToken ?? ""}`.trim();
+  if (!expected) return false;
+  const got = getSingleHeaderValue(req.headers[PROJECT_PROXY_AUTH_HEADER]);
+  return `${got ?? ""}`.trim() === expected;
 }

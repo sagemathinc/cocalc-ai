@@ -133,13 +133,13 @@ function ensureDefaults(env: Record<string, string>, index: number): void {
     env.PROJECT_HOST_SSH_SERVER = `localhost:${2222 + index}`;
   }
   if (!env.COCALC_FILE_SERVER_MOUNTPOINT) {
-    env.COCALC_FILE_SERVER_MOUNTPOINT = "/btrfs";
+    env.COCALC_FILE_SERVER_MOUNTPOINT = "/mnt/cocalc";
   }
   if (!env.PROJECT_RUNNER_NAME) {
     env.PROJECT_RUNNER_NAME = String(index);
   }
   if (!env.HOST) {
-    env.HOST = "0.0.0.0";
+    env.HOST = "127.0.0.1";
   }
   if (!env.PORT) {
     env.PORT = String(9002 + index);
@@ -210,7 +210,12 @@ function resolveExec(root: string): { command: string; args: string[] } {
     process.env.COCALC_PROJECT_HOST_DAEMON_EXEC ?? process.execPath;
   const args: string[] = [];
   if (path.basename(command) === "node") {
-    args.push(path.join(root, "dist/main.js"));
+    const bundledMain = path.join(root, "main", "index.js");
+    if (fs.existsSync(bundledMain)) {
+      args.push(bundledMain);
+    } else {
+      args.push(path.join(root, "dist/main.js"));
+    }
   }
   return { command, args };
 }
@@ -218,7 +223,12 @@ function resolveExec(root: string): { command: string; args: string[] } {
 export function startDaemon(index = 0): void {
   const { env, dataDir, logPath, pidPath } = resolveEnv(index);
   ensureNotAlreadyRunning(pidPath);
-  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(dataDir, 0o700);
+  } catch {
+    // best effort
+  }
   try {
     if (fs.existsSync(logPath)) {
       fs.unlinkSync(logPath);
@@ -228,6 +238,11 @@ export function startDaemon(index = 0): void {
   }
   const stdout = fs.openSync(logPath, "a");
   const stderr = fs.openSync(logPath, "a");
+  try {
+    fs.chmodSync(logPath, 0o600);
+  } catch {
+    // best effort
+  }
   const root = path.join(__dirname, "..");
   const { command, args } = resolveExec(root);
   const child = spawn(command, args, {
@@ -238,13 +253,20 @@ export function startDaemon(index = 0): void {
   });
   child.unref();
   fs.writeFileSync(pidPath, String(child.pid));
+  try {
+    fs.chmodSync(pidPath, 0o600);
+  } catch {
+    // best effort
+  }
   console.log(`project-host started (pid ${child.pid}); log=${logPath}`);
 }
 
 export function stopDaemon(index = 0): void {
   const { pidPath } = resolveEnv(index);
   if (!fs.existsSync(pidPath)) {
-    throw new Error(`No pid file found at ${pidPath}; nothing to stop.`);
+    // Nothing to stop; treat as success for idempotent callers.
+    console.warn(`No pid file found at ${pidPath}; nothing to stop.`);
+    return;
   }
   const pid = Number(fs.readFileSync(pidPath, "utf8"));
   if (!pid || !isRunning(pid)) {

@@ -28,6 +28,7 @@ import { getAuthToken } from "./auth-token";
 import getLogger from "@cocalc/backend/logger";
 import compression from "compression";
 import { enableMemoryUseLogger } from "@cocalc/backend/memory";
+import { connectionInfoPath } from "./connection-info";
 
 const logger = getLogger("lite:main");
 
@@ -41,7 +42,10 @@ function conat(opts?): Client {
   return conatServer.client({ path: "/", ...opts });
 }
 
-export async function main(): Promise<number> {
+export async function main(opts?: {
+  sshUi?: any;
+  reflectUi?: any;
+}): Promise<number> {
   logger.debug("main");
   enableMemoryUseLogger();
   process.chdir(process.env.HOME ?? "");
@@ -50,9 +54,11 @@ export async function main(): Promise<number> {
   const AUTH_TOKEN = await getAuthToken();
 
   logger.debug("start http server");
-  const { httpServer, app, port, isHttps } = await initHttpServer({
+  const { httpServer, app, port, isHttps, hostname } = await initHttpServer({
     AUTH_TOKEN,
   });
+
+  await writeConnectionInfo({ port, AUTH_TOKEN, isHttps, hostname });
 
   logger.debug("create server");
   const options = {
@@ -101,7 +107,11 @@ export async function main(): Promise<number> {
   const path = process.cwd();
 
   logger.debug("start hub api");
-  await initHubApi({ client: conatClient });
+  await initHubApi({
+    client: conatClient,
+    sshUi: opts?.sshUi,
+    reflectUi: opts?.reflectUi,
+  });
 
   logger.debug("start fs service");
   localPathFileserver({
@@ -125,4 +135,37 @@ export async function main(): Promise<number> {
   });
 
   return port;
+}
+
+async function writeConnectionInfo({
+  port,
+  AUTH_TOKEN,
+  isHttps,
+  hostname,
+}: {
+  port: number;
+  AUTH_TOKEN?: string;
+  isHttps: boolean;
+  hostname: string;
+}) {
+  const output = connectionInfoPath();
+  try {
+    const { mkdir, writeFile, chmod } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    const info = {
+      port,
+      token: AUTH_TOKEN ?? "",
+      protocol: isHttps ? "https" : "http",
+      host: hostname,
+      url: `${isHttps ? "https" : "http"}://${hostname}:${port}`,
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+    };
+    await mkdir(dirname(output), { recursive: true });
+    await writeFile(output, JSON.stringify(info, null, 2), "utf8");
+    await chmod(output, 0o600);
+    logger.debug("wrote connection info", { output, port, pid: process.pid });
+  } catch (err) {
+    logger.warn("failed to write connection info", err);
+  }
 }

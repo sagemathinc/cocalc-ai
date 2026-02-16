@@ -132,7 +132,7 @@ export default function EditBackupSchedule() {
               <Flex style={{ marginBottom: "5px" }}>
                 <div style={{ flex: 0.5 }}>Daily</div>
                 <InputNumber
-                  addonAfter="backups"
+                  suffix="backups"
                   style={{ flex: 0.5 }}
                   step={1}
                   min={0}
@@ -151,7 +151,7 @@ export default function EditBackupSchedule() {
               <Flex style={{ marginBottom: "5px" }}>
                 <div style={{ flex: 0.5 }}>Weekly</div>
                 <InputNumber
-                  addonAfter="backups"
+                  suffix="backups"
                   style={{ flex: 0.5 }}
                   step={1}
                   min={0}
@@ -170,7 +170,7 @@ export default function EditBackupSchedule() {
               <Flex style={{ marginBottom: "5px" }}>
                 <div style={{ flex: 0.5 }}>Monthly</div>
                 <InputNumber
-                  addonAfter="backups"
+                  suffix="backups"
                   style={{ flex: 0.5 }}
                   step={1}
                   min={0}
@@ -191,7 +191,7 @@ export default function EditBackupSchedule() {
               <Flex style={{ marginBottom: "5px" }}>
                 <div style={{ flex: 0.5 }}>Frequent (15 min)</div>
                 <InputNumber
-                  addonAfter="backups"
+                  suffix="backups"
                   precision={0}
                   style={{ flex: 0.5 }}
                   step={1}

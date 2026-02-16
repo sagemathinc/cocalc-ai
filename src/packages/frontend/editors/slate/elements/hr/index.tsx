@@ -7,6 +7,7 @@ import { register, SlateElement } from "../register";
 
 export interface HR extends SlateElement {
   type: "hr";
+  isVoid?: boolean;
 }
 
 register({

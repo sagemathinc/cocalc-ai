@@ -11,7 +11,7 @@ import Header from "components/landing/header";
 import Main from "components/landing/main";
 import SanitizedMarkdown from "components/misc/sanitized-markdown";
 import { ssoNav } from "components/sso";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { Customize, CustomizeType } from "lib/customize";
 import { getOneSSO } from "lib/sso/sso";
 import withCustomize from "lib/with-customize";
@@ -68,7 +68,7 @@ export default function Signup(props: Props) {
   }
 
   function renderButton() {
-    const href = join(basePath, "auth", id);
+    const href = join(ROOT_PATH, "auth", id);
     return (
       <Button
         href={href}

@@ -13,7 +13,7 @@ import SignUp from "components/auth/sign-up";
 import Footer from "components/landing/footer";
 import Head from "components/landing/head";
 import Header from "components/landing/header";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { Customize } from "lib/customize";
 import withCustomize from "lib/with-customize";
 
@@ -62,7 +62,7 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
   if (customize.props.customize.account != null) {
     // user is already signed in -- redirect them to top level page for now (todo).
     const { res } = context;
-    res.writeHead(302, { location: basePath });
+    res.writeHead(302, { location: ROOT_PATH });
     res.end();
     return { props: { customize: {} } };
   }

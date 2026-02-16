@@ -13,14 +13,6 @@ const START_PROJECT_TIMEOUT_MS = 60 * 60 * 1000;
 
 type HostPlacement = {
   host_id: string;
-  host: {
-    name?: string;
-    region?: string;
-    tier?: number;
-    public_url?: string;
-    internal_url?: string;
-    ssh_server?: string;
-  };
 };
 
 export type ProjectMeta = {
@@ -28,7 +20,6 @@ export type ProjectMeta = {
   users?: any;
   image?: string;
   host_id?: string;
-  host?: any;
   authorized_keys?: string;
   run_quota?: any;
 };
@@ -39,7 +30,7 @@ export async function loadProject(project_id: string): Promise<ProjectMeta> {
   const { rows } = await pool().query(
     // Prefer an explicit rootfs_image, but fall back to compute_image so legacy
     // rows created before rootfs_image existed still work.
-    "SELECT title, users, COALESCE(rootfs_image, compute_image) as image, host_id, host, run_quota FROM projects WHERE project_id=$1",
+    "SELECT title, users, COALESCE(rootfs_image, compute_image) as image, host_id, run_quota FROM projects WHERE project_id=$1",
     [project_id],
   );
   if (!rows[0]) throw Error(`project ${project_id} not found`);
@@ -80,18 +71,33 @@ async function applyHostGpuToRunQuota(
 
 export async function loadHostFromRegistry(host_id: string) {
   const { rows } = await pool().query(
-    "SELECT name, region, public_url, internal_url, ssh_server, tier FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    "SELECT name, region, public_url, internal_url, ssh_server, tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
     [host_id],
   );
   if (!rows[0]) return undefined;
-  rows[0].tier = normalizeHostTier(rows[0].tier);
-  return rows[0];
+  const row = rows[0];
+  const machine = row?.metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  const tier = normalizeHostTier(row.tier);
+  return {
+    name: row.name,
+    region: row.region,
+    public_url: row.public_url,
+    internal_url: row.internal_url,
+    ssh_server: row.ssh_server,
+    tier,
+    local_proxy: isLocalSelfHost,
+  };
 }
 
 export async function selectActiveHost(exclude_host_id?: string) {
   const { rows } = await pool().query(
     `
-      SELECT id, name, region, public_url, internal_url, ssh_server, tier
+      SELECT id, name, region, public_url, internal_url, ssh_server, tier, metadata
       FROM project_hosts
       WHERE status='running'
         AND deleted IS NULL
@@ -103,30 +109,44 @@ export async function selectActiveHost(exclude_host_id?: string) {
     exclude_host_id ? [exclude_host_id] : [],
   );
   if (!rows[0]) return undefined;
-  rows[0].tier = normalizeHostTier(rows[0].tier);
-  return rows[0];
+  const row = rows[0];
+  const machine = row?.metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  const tier = normalizeHostTier(row.tier);
+  return {
+    id: row.id,
+    name: row.name,
+    region: row.region,
+    public_url: row.public_url,
+    internal_url: row.internal_url,
+    ssh_server: row.ssh_server,
+    tier,
+    local_proxy: isLocalSelfHost,
+  };
 }
 
 export async function savePlacement(
   project_id: string,
   placement: HostPlacement,
 ) {
-  await pool().query(
-    "UPDATE projects SET host_id=$1, host=$2::jsonb WHERE project_id=$3",
-    [placement.host_id, JSON.stringify(placement.host), project_id],
-  );
+  await pool().query("UPDATE projects SET host_id=$1 WHERE project_id=$2", [
+    placement.host_id,
+    project_id,
+  ]);
   await notifyProjectHostUpdate({
     project_id,
     host_id: placement.host_id,
-    host: placement.host,
   });
 }
 
 async function ensurePlacement(project_id: string): Promise<HostPlacement> {
   const meta = await loadProject(project_id);
   if (meta.host_id) {
-    const hostInfo =
-      meta.host ?? (await loadHostFromRegistry(meta.host_id)) ?? undefined;
+    const hostInfo = await loadHostFromRegistry(meta.host_id);
     if (!hostInfo) {
       // Project is already placed, but the host is missing/unregistered.
       // Never auto-reassign here to avoid split-brain/data loss; require an explicit move.
@@ -134,13 +154,7 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
         `project is assigned to host ${meta.host_id} but it is unavailable`,
       );
     }
-    if (!meta.host) {
-      await savePlacement(project_id, {
-        host_id: meta.host_id,
-        host: hostInfo,
-      });
-    }
-    return { host_id: meta.host_id, host: hostInfo };
+    return { host_id: meta.host_id };
   }
 
   const chosen = await selectActiveHost();
@@ -171,17 +185,7 @@ async function ensurePlacement(project_id: string): Promise<HostPlacement> {
     run_quota,
   });
 
-  const placement: HostPlacement = {
-    host_id: chosen.id,
-    host: {
-      name: chosen.name,
-      region: chosen.region,
-      public_url: chosen.public_url,
-      internal_url: chosen.internal_url,
-      ssh_server: chosen.ssh_server,
-      tier: normalizeHostTier(chosen.tier),
-    },
-  };
+  const placement: HostPlacement = { host_id: chosen.id };
 
   await savePlacement(project_id, placement);
   return placement;
@@ -282,6 +286,42 @@ export async function updateAuthorizedKeysOnHost(
     });
   } catch (err) {
     log.warn("updateAuthorizedKeysOnHost failed", { project_id, host_id, err });
+  }
+}
+
+export async function syncProjectUsersOnHost({
+  project_id,
+  expected_host_id,
+}: {
+  project_id: string;
+  expected_host_id?: string;
+}): Promise<void> {
+  const meta = await loadProject(project_id);
+  const host_id = meta.host_id;
+  if (!host_id) {
+    return;
+  }
+  if (expected_host_id && expected_host_id !== host_id) {
+    throw Error(
+      `project ${project_id} is assigned to host ${host_id}, not ${expected_host_id}`,
+    );
+  }
+  const client = createHostControlClient({
+    host_id,
+    client: conatWithProjectRouting(),
+  });
+  try {
+    await client.updateProjectUsers({
+      project_id,
+      users: meta.users ?? {},
+    });
+  } catch (err) {
+    log.warn("syncProjectUsersOnHost failed", {
+      project_id,
+      host_id,
+      err,
+    });
+    throw err;
   }
 }
 

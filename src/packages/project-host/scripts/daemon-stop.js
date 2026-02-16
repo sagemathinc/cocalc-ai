@@ -29,8 +29,8 @@ function isRunning(pid) {
 
 function stop() {
   if (!fs.existsSync(pidPath)) {
-    console.error(`No pid file found at ${pidPath}; nothing to stop.`);
-    process.exit(1);
+    console.warn(`No pid file found at ${pidPath}; nothing to stop.`);
+    process.exit(0);
   }
   const pid = Number(fs.readFileSync(pidPath, "utf8"));
   if (!pid || !isRunning(pid)) {

@@ -20,9 +20,7 @@ output:
 
 */
 
-import { CodeMirrorStatic } from "@cocalc/frontend/jupyter/codemirror-static";
 import { register } from "../register";
-import infoToMode from "../code-block/info-to-mode";
 import { Meta, createMetaNode } from "./type";
 export type { Meta };
 export { createMetaNode };
@@ -39,11 +37,9 @@ register({
     return (
       <div {...attributes}>
         <code>---</code>
-        <CodeMirrorStatic
-          style={{ marginBottom: 0 }}
-          options={{ mode: infoToMode("yml"), lineWrapping: true }}
-          value={element.value}
-        />
+        <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+          {element.value}
+        </pre>
         <code>---</code>
       </div>
     );

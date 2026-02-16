@@ -199,7 +199,11 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
     filteredFiles.forEach((path) => {
       const { head, tail } = path_split(path);
       const group =
-        mode === "folder" ? head : (filename_extension_notilde(tail) ?? "");
+        mode === "folder"
+          ? head === ""
+            ? "/"
+            : head
+          : (filename_extension_notilde(tail) ?? "");
       if (grouped[group] == null) grouped[group] = [];
       grouped[group].push(path);
     });
@@ -212,10 +216,10 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
 
       if (mode === "folder") {
         // for all starred directories (starred ending in /)
-        // make sure there is a group with an empty string array
+        // make sure there is a group entry
         // only show it, if it matches the search terms
         starredFolders.forEach((path) => {
-          const dirName = path.slice(0, -1);
+          const dirName = path.slice(0, -1) || "/";
           if (grouped[dirName] == null) grouped[dirName] = [];
         });
       } // while in type mode, make a "folder" group for starred directories
@@ -276,10 +280,7 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
     const isOpen = openFiles.includes(path);
 
     // if it is a directory, remove the trailing slash
-    // and if it starts with ".smc/root/", replace that by a "/"
-    const display = isDir
-      ? path.slice(0, -1).replace(/^\.smc\/root\//, "/")
-      : undefined;
+    const display = isDir ? path.slice(0, -1) : undefined;
 
     return (
       <FileListItem

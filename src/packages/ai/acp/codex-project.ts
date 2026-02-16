@@ -2,9 +2,11 @@ import type { ChildProcess } from "node:child_process";
 
 export type CodexProjectSpawnOptions = {
   projectId: string;
+  accountId?: string;
   args: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  forceRefreshSiteKey?: boolean;
 };
 
 export type CodexProjectSpawner = {
@@ -13,6 +15,7 @@ export type CodexProjectSpawner = {
     cmd: string;
     args: string[];
     cwd?: string;
+    authSource?: string;
   }>;
 };
 

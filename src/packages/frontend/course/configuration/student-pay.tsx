@@ -199,7 +199,7 @@ export default function StudentPay({ actions, settings }) {
             {showStudentPay && (
               <Alert
                 style={{ margin: "15px 0" }}
-                message={
+                title={
                   <>
                     <Icon name="credit-card" /> Require Students to Upgrade
                     their {projectLabel}

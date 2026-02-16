@@ -275,7 +275,8 @@ export function parse_target(target?: string):
         | "file-use"
         | "notifications"
         | "admin"
-        | "hosts";
+        | "hosts"
+        | "ssh";
     }
   | { page: "project"; target: string }
   | { page: "profile" | "settings" }
@@ -345,6 +346,8 @@ export function parse_target(target?: string):
       return { page: "admin" };
     case "hosts":
       return { page: "hosts" };
+    case "ssh":
+      return { page: "ssh" };
     case "auth":
       return { page: "auth", view: parseAuthView(segments[1]) };
     default:

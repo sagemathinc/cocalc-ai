@@ -3,6 +3,7 @@ import { COCALC_MINIMAL } from "../fullscreen";
 import { parse_query } from "@cocalc/sync/table/util";
 import { once } from "@cocalc/util/async-utils";
 import { redux, Table } from "../app-framework";
+import { lite } from "@cocalc/frontend/lite";
 
 declare var DEBUG: boolean;
 
@@ -74,6 +75,10 @@ function initTableError(): void {
 }
 
 export const load_all_projects = reuseInFlight(async () => {
+  if (lite) {
+    // only one project in lite mode
+    return;
+  }
   if (DEBUG && COCALC_MINIMAL) {
     console.error(
       "projects/load_all_projects was called in kiosk/minimal mode",

@@ -5,12 +5,19 @@ usage() {
   cat <<'USAGE'
 Usage:
   install-connector.sh --base-url <url> --token <pairing_token> [options]
+  install-connector.sh --ssh-host <host> --token <pairing_token> [options]
 
 Options:
   --name <name>                Optional connector name.
+  --version <version>          Install a specific connector version (falls back to latest if unavailable).
   --replace                    Allow replacing an existing connector config.
   --no-daemon                  Run in foreground (default is daemon).
   --no-service                 Skip installing an auto-start service.
+  --insecure                   Skip TLS verification (self-signed on-prem).
+  --ssh-host <host>            Hub SSH host (for local network mode).
+  --ssh-port <port>            Hub SSH port (optional).
+  --ssh-user <user>            Hub SSH username (optional).
+  --ssh-no-strict-host-key-checking  Disable strict host key checking.
   --software-base-url <url>    Defaults to https://software.cocalc.ai/software
   --install-dir <path>         Linux install dir (default /usr/local/bin).
   -h, --help                   Show this help.
@@ -18,17 +25,25 @@ Options:
 Example:
   curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \
     bash -s -- --base-url https://dev.cocalc.ai --token <token> --name my-mac
+  curl -fsSL https://software.cocalc.ai/software/self-host/install.sh | \
+    bash -s -- --ssh-host 192.168.1.10 --token <token> --name lab-host
 USAGE
 }
 
 BASE_URL=""
+SSH_HOST=""
+SSH_PORT=""
+SSH_USER=""
+SSH_NO_STRICT="0"
 TOKEN=""
 NAME_ARG=""
 REPLACE="0"
 DAEMON="1"
 INSTALL_SERVICE="1"
+INSECURE="0"
 SOFTWARE_BASE_URL="https://software.cocalc.ai/software"
 INSTALL_DIR=""
+VERSION=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,8 +55,28 @@ while [[ $# -gt 0 ]]; do
       TOKEN="${2:-}"
       shift 2
       ;;
+    --ssh-host)
+      SSH_HOST="${2:-}"
+      shift 2
+      ;;
+    --ssh-port)
+      SSH_PORT="${2:-}"
+      shift 2
+      ;;
+    --ssh-user)
+      SSH_USER="${2:-}"
+      shift 2
+      ;;
+    --ssh-no-strict-host-key-checking)
+      SSH_NO_STRICT="1"
+      shift
+      ;;
     --name)
       NAME_ARG="${2:-}"
+      shift 2
+      ;;
+    --version)
+      VERSION="${2:-}"
       shift 2
       ;;
     --replace)
@@ -54,6 +89,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-service)
       INSTALL_SERVICE="0"
+      shift
+      ;;
+    --insecure)
+      INSECURE="1"
       shift
       ;;
     --software-base-url)
@@ -76,8 +115,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$BASE_URL" || -z "$TOKEN" ]]; then
-  echo "Missing --base-url or --token" >&2
+if [[ -z "$TOKEN" ]]; then
+  echo "Missing --token" >&2
+  usage
+  exit 2
+fi
+
+if [[ -z "$BASE_URL" && -z "$SSH_HOST" ]]; then
+  echo "Missing --base-url or --ssh-host" >&2
   usage
   exit 2
 fi
@@ -124,10 +169,12 @@ esac
 SOFTWARE_BASE_URL="${SOFTWARE_BASE_URL%/}"
 LATEST_URL="${SOFTWARE_BASE_URL}/self-host/latest-${OS}-${ARCH}.json"
 
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cocalc-connector"
+BASE_DIR="${COCALC_CONNECTOR_BASE_DIR:-$HOME/cocalc-host}"
+CONFIG_DIR="${BASE_DIR}/config"
 CONFIG_PATH="${CONFIG_DIR}/config.json"
+LEGACY_CONFIG_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/cocalc-connector/config.json"
 
-if [[ -f "$CONFIG_PATH" && "$REPLACE" != "1" ]]; then
+if { [[ -f "$CONFIG_PATH" ]] || [[ -f "$LEGACY_CONFIG_PATH" ]]; } && [[ "$REPLACE" != "1" ]]; then
   if [[ -t 0 ]]; then
     echo "Connector config already exists at $CONFIG_PATH."
     read -r -p "Replace it? [y/N] " reply
@@ -158,15 +205,43 @@ if [[ -f "$CONFIG_PATH" && "$REPLACE" != "1" ]]; then
     exit 2
   fi
 fi
-
-json="$(curl -fsSL "$LATEST_URL")"
-url="$(printf '%s' "$json" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-sha256="$(printf '%s' "$json" | sed -n 's/.*"sha256"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-
-if [[ -z "$url" || -z "$sha256" ]]; then
-  echo "Failed to parse latest manifest from $LATEST_URL" >&2
-  exit 2
+if [[ "$REPLACE" == "1" ]]; then
+  rm -f "$CONFIG_PATH" "$LEGACY_CONFIG_PATH" || true
 fi
+
+url=""
+sha256=""
+if [[ -n "$VERSION" ]]; then
+  if [[ "$OS" == "darwin" ]]; then
+    artifact_name="cocalc-self-host-connector-${VERSION}.pkg"
+  else
+    artifact_name="cocalc-self-host-connector-${VERSION}-${OS}-${ARCH}"
+  fi
+  url="${SOFTWARE_BASE_URL}/self-host/${VERSION}/${OS}-${ARCH}/${artifact_name}"
+  if ! sha256_raw="$(curl -fsSL "${url}.sha256" 2>/dev/null)"; then
+    echo "Connector version ${VERSION} not found; falling back to latest." >&2
+    VERSION=""
+  else
+    sha256="$(printf '%s' "$sha256_raw" | awk '{print $1}')"
+    if [[ -z "$sha256" ]]; then
+      echo "Connector version ${VERSION} is missing sha256; falling back to latest." >&2
+      VERSION=""
+    fi
+  fi
+fi
+
+if [[ -z "$VERSION" ]]; then
+  json="$(curl -fsSL "$LATEST_URL")"
+  url="$(printf '%s' "$json" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  sha256="$(printf '%s' "$json" | sed -n 's/.*"sha256"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+
+  if [[ -z "$url" || -z "$sha256" ]]; then
+    echo "Failed to parse latest manifest from $LATEST_URL" >&2
+    exit 2
+  fi
+fi
+
+echo "Installing connector ${VERSION:-latest} for ${OS}/${ARCH}."
 
 tmp_dir="$(mktemp -d)"
 cleanup() {
@@ -204,7 +279,9 @@ if [[ "$OS" == "darwin" ]]; then
     exit 2
   fi
   echo "This step uses sudo to install the connector into /usr/local/bin."
-  echo "The connector will run as your user and store config in $CONFIG_PATH."
+  echo "You may be prompted for your sudo password; this is only for installation."
+  echo "The connector runs as your user and stores config in $CONFIG_PATH."
+  echo "SSH pairing happens after install and does not use sudo."
   if ! command -v sudo >/dev/null 2>&1; then
     echo "sudo is required to install the pkg on macOS." >&2
     exit 2
@@ -213,7 +290,9 @@ if [[ "$OS" == "darwin" ]]; then
   BIN_PATH="/usr/local/bin/${BIN_NAME}"
 else
   echo "This step uses sudo to install the connector into ${INSTALL_DIR}."
-  echo "The connector will run as your user and store config in $CONFIG_PATH."
+  echo "You may be prompted for your sudo password; this is only for installation."
+  echo "The connector runs as your user and stores config in $CONFIG_PATH."
+  echo "SSH pairing happens after install and does not use sudo."
   if [[ "$(id -u)" == "0" ]]; then
     SUDO=""
   elif command -v sudo >/dev/null 2>&1; then
@@ -309,12 +388,29 @@ EOF
   return 0
 }
 
-pair_args=("$BIN_PATH" "pair" "--base-url" "$BASE_URL" "--token" "$TOKEN")
+pair_args=("$BIN_PATH")
+if [[ -n "$SSH_HOST" ]]; then
+  pair_args+=("pair-ssh" "--ssh-host" "$SSH_HOST" "--token" "$TOKEN")
+  if [[ -n "$SSH_PORT" ]]; then
+    pair_args+=("--ssh-port" "$SSH_PORT")
+  fi
+  if [[ -n "$SSH_USER" ]]; then
+    pair_args+=("--ssh-user" "$SSH_USER")
+  fi
+  if [[ "$SSH_NO_STRICT" == "1" ]]; then
+    pair_args+=("--ssh-no-strict-host-key-checking")
+  fi
+else
+  pair_args+=("pair" "--base-url" "$BASE_URL" "--token" "$TOKEN")
+fi
 if [[ -n "$NAME_ARG" ]]; then
   pair_args+=("--name" "$NAME_ARG")
 fi
 if [[ "$REPLACE" == "1" ]]; then
   pair_args+=("--replace")
+fi
+if [[ "$INSECURE" == "1" && -z "$SSH_HOST" ]]; then
+  pair_args+=("--insecure")
 fi
 "${pair_args[@]}"
 

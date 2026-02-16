@@ -82,7 +82,7 @@ export default function CreatePayment({ account_id, onClose }: Props) {
           disabled={done || loading}
           min={0}
           max={10000}
-          addonBefore="$"
+          prefix="$"
           placeholder="Amount..."
           style={{ maxWidth: "100px" }}
           value={amount}
@@ -140,7 +140,7 @@ export default function CreatePayment({ account_id, onClose }: Props) {
             showIcon
             style={{ margin: "15px auto 0 auto", maxWidth: "700px" }}
             type="success"
-            message="Payment Successfully Created"
+            title="Payment Successfully Created"
           />
         </div>
       )}

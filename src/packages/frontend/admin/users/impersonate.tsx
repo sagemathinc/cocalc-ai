@@ -86,7 +86,7 @@ export function Impersonate({ first_name, last_name, account_id }: Props) {
             showIcon
             style={{ margin: "30px auto", maxWidth: "800px" }}
             type="warning"
-            message="Open this link in a new Incognito Window!"
+            title="Open this link in a new Incognito Window!"
             description="Otherwise your current browser session will get overwritten, and potentially sensitive information could leak."
           />
         )}

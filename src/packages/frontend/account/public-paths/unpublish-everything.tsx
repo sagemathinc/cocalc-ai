@@ -80,7 +80,7 @@ export const UnpublishEverything: React.FC<Props> = React.memo(
       return (
         <Alert
           style={{ marginBottom: "20px" }}
-          message={<h3>{unpublishEverything}?</h3>}
+          title={<h3>{unpublishEverything}?</h3>}
           description={body}
           type="warning"
           showIcon

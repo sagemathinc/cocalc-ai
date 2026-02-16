@@ -59,6 +59,43 @@ export class UsersClient {
     },
   );
 
+  getAdminAssignedMembership = reuseInFlight(
+    async ({
+      user_account_id,
+    }: {
+      user_account_id: string;
+    }): Promise<
+      | {
+          account_id: string;
+          membership_class: string;
+          assigned_by: string;
+          assigned_at: Date;
+          expires_at?: Date | null;
+          notes?: string | null;
+        }
+      | undefined
+    > => {
+      return await this.client.conat_client.hub.system.getAdminAssignedMembership(
+        { user_account_id },
+      );
+    },
+  );
+
+  setAdminAssignedMembership = async (opts: {
+    user_account_id: string;
+    membership_class: string;
+    expires_at?: Date | null;
+    notes?: string | null;
+  }): Promise<void> => {
+    await this.client.conat_client.hub.system.setAdminAssignedMembership(opts);
+  };
+
+  clearAdminAssignedMembership = async (opts: {
+    user_account_id: string;
+  }): Promise<void> => {
+    await this.client.conat_client.hub.system.clearAdminAssignedMembership(opts);
+  };
+
   // Gets username with given account_id.   We use caching and aggregate to
   // makes it so this never calls to the backend more than once at a time
   // (per minute) for a given account_id.

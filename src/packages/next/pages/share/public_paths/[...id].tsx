@@ -5,7 +5,7 @@
 
 import { join } from "path";
 import NextHead from "next/head";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import getPublicPathInfo from "lib/share/get-public-path-info";
 import shareURL from "lib/share/share-url";
 import withCustomize from "lib/with-customize";
@@ -55,7 +55,7 @@ export async function getServerSideProps(context) {
     if (names != null) {
       // redirect
       let location = join(
-        basePath,
+        ROOT_PATH,
         names.owner,
         names.project,
         names.public_path,

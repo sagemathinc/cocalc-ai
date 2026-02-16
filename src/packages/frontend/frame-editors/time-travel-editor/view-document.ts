@@ -1,12 +1,13 @@
 import { fromJS, type List } from "immutable";
 import type { Document } from "@cocalc/sync/editor/generic/types";
-import { filenameMode } from "@cocalc/frontend/file-associations";
+import { getSyncDocDescriptor } from "@cocalc/sync/editor/doctypes";
+import { filename_extension } from "@cocalc/util/misc";
 import parseIpynb from "@cocalc/jupyter/ipynb/parse";
 
 export function isObjectDoc(path) {
-  /* not a great way to tell if json lines or text? */
-  const obj = "__cocalc__object_doc__";
-  return filenameMode(path, obj) == obj;
+  // Jupyter uses object-doc/jsonl internally even though the on-disk extension is .ipynb.
+  if (filename_extension(path).toLowerCase() == "ipynb") return true;
+  return getSyncDocDescriptor(path).doctype !== "syncstring";
 }
 
 export class ViewDocument implements Document {

@@ -5,14 +5,28 @@
 
 import { Button, type MenuProps, Space } from "antd";
 import { useIntl } from "react-intl";
+import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { DropdownMenu, Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import {
+  LAUNCHER_SITE_REMOVE_APPS_KEY,
+  LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  LAUNCHER_SETTINGS_KEY,
+  getProjectLauncherDefaults,
+  getSiteLauncherDefaults,
+  getUserLauncherLayers,
+  mergeLauncherSettings,
+} from "@cocalc/frontend/project/new/launcher-preferences";
 import { ProjectActions } from "@cocalc/frontend/project_store";
 import { COLORS } from "@cocalc/util/theme";
 import { EXTs as ALL_FILE_BUTTON_TYPES } from "./file-listing/utils";
 import { file_options } from "@cocalc/frontend/editor-tmp";
+import { file_associations } from "@cocalc/frontend/file-associations";
 
 interface Props {
+  project_id: string;
   file_search: string;
   current_path: string;
   actions: ProjectActions;
@@ -23,6 +37,7 @@ interface Props {
 }
 
 export const NewButton: React.FC<Props> = ({
+  project_id,
   file_search = "",
   actions,
   create_folder,
@@ -31,6 +46,43 @@ export const NewButton: React.FC<Props> = ({
   disabled,
 }: Props) => {
   const intl = useIntl();
+  const other_settings = useTypedRedux("account", "other_settings");
+  const site_launcher_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
+  );
+  const site_launcher_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_DEFAULTS_APPS_KEY,
+  );
+  const site_remove_quick = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_QUICK_KEY,
+  );
+  const site_remove_apps = useTypedRedux(
+    "customize",
+    LAUNCHER_SITE_REMOVE_APPS_KEY,
+  );
+  const project_launcher = useTypedRedux(
+    "projects",
+    "project_map",
+  )?.getIn([project_id, "launcher"]);
+  const siteLauncherDefaults = getSiteLauncherDefaults({
+    quickCreate: site_launcher_quick,
+    apps: site_launcher_apps,
+    hiddenQuickCreate: site_remove_quick,
+    hiddenApps: site_remove_apps,
+  });
+  const userLauncherLayers = getUserLauncherLayers(
+    other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
+    project_id,
+  );
+  const mergedLauncher = mergeLauncherSettings({
+    globalDefaults: siteLauncherDefaults,
+    projectDefaults: getProjectLauncherDefaults(project_launcher),
+    accountUserPrefs: userLauncherLayers.account,
+    projectUserPrefs: userLauncherLayers.project,
+  });
 
   function new_file_button_types() {
     if (configuration != undefined) {
@@ -55,18 +107,35 @@ export const NewButton: React.FC<Props> = ({
   }
 
   function file_dropdown_item(ext: string) {
-    const data = file_options("x." + ext);
+    const canonicalExt = canonical_extension(ext);
+    const data = file_options("x." + canonicalExt);
     return {
-      key: ext,
-      onClick: () => on_dropdown_entry_clicked(ext),
+      key: canonicalExt,
+      onClick: () => on_dropdown_entry_clicked(canonicalExt),
       label: (
         <span style={{ whiteSpace: "nowrap" }}>
           <Icon name={data.icon} />{" "}
           <span style={{ textTransform: "capitalize" }}>{data.name} </span>{" "}
-          <span style={{ color: COLORS.GRAY_D }}>(.{ext})</span>
+          <span style={{ color: COLORS.GRAY_D }}>(.{canonicalExt})</span>
         </span>
       ),
     };
+  }
+
+  function canonical_extension(ext: string): string {
+    const assoc = file_associations[ext];
+    if (assoc?.ext) return assoc.ext;
+    if (ext.startsWith("sage-")) {
+      const withoutPrefix = ext.slice(5);
+      if (
+        withoutPrefix &&
+        file_associations[withoutPrefix] != null &&
+        file_associations[withoutPrefix] === assoc
+      ) {
+        return withoutPrefix;
+      }
+    }
+    return ext;
   }
 
   function choose_extension(ext: string): void {
@@ -107,15 +176,70 @@ export const NewButton: React.FC<Props> = ({
     }
   }
 
+  const allowedTypes = React.useMemo(() => {
+    const seen = new Set<string>();
+    const canonicalized: string[] = [];
+    for (const ext of new_file_button_types() as string[]) {
+      const canonical = canonical_extension(ext);
+      if (seen.has(canonical)) continue;
+      seen.add(canonical);
+      canonicalized.push(canonical);
+    }
+    return canonicalized;
+  }, [configuration]);
+  const quickExtensions = React.useMemo(() => {
+    const allowed = new Set<string>(allowedTypes);
+    return mergedLauncher.quickCreate
+      .filter((ext) => allowed.has(ext))
+      .filter((ext, idx, arr) => arr.indexOf(ext) === idx);
+  }, [mergedLauncher.quickCreate, allowedTypes]);
+  const fullListExtensions = React.useMemo(() => {
+    const quickSet = new Set<string>(quickExtensions);
+    return allowedTypes.filter((ext) => !quickSet.has(ext));
+  }, [allowedTypes, quickExtensions]);
+
   const items: MenuProps["items"] = [
-    ...new_file_button_types().map(file_dropdown_item),
+    ...(React.useMemo(() => {
+      const quick = quickExtensions.map((ext) => {
+        const data = file_options("x." + ext);
+        return {
+          key: `quick:${ext}`,
+          onClick: () => on_dropdown_entry_clicked(ext),
+          label: (
+            <span style={{ whiteSpace: "nowrap" }}>
+              <Icon name={data.icon} />{" "}
+              <span style={{ textTransform: "capitalize" }}>{data.name} </span>{" "}
+              <span style={{ color: COLORS.GRAY_D }}>(.{ext})</span>
+            </span>
+          ),
+        };
+      });
+      if (quick.length === 0) return [];
+      return [
+        {
+          key: "__quick_create__",
+          disabled: true,
+          label: (
+            <span style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
+              Quick Create
+            </span>
+          ),
+        },
+        ...quick,
+        { type: "divider" as const },
+      ];
+    }, [quickExtensions])),
+    ...fullListExtensions.map(file_dropdown_item),
     { type: "divider" },
     {
       key: "folder",
       onClick: () => on_dropdown_entry_clicked("folder"),
       label: (
         <span style={{ whiteSpace: "nowrap" }}>
-          <Icon name="folder" /> {intl.formatMessage(labels.folder)}
+          <Icon name="folder" />{" "}
+          <span style={{ textTransform: "capitalize" }}>
+            {intl.formatMessage(labels.folder)}
+          </span>
         </span>
       ),
     },

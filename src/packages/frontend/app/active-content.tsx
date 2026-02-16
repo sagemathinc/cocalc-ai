@@ -20,6 +20,7 @@ import { Connecting } from "@cocalc/frontend/landing-page/connecting";
 import { NotificationPage } from "@cocalc/frontend/notifications";
 import { ProjectPage } from "@cocalc/frontend/project/page/page";
 import { ProjectsPage } from "@cocalc/frontend/projects/projects-page";
+import { SshPage } from "@cocalc/frontend/ssh";
 import { KioskModeBanner } from "./kiosk-mode-banner";
 import { HostsPage } from "@cocalc/frontend/hosts/hosts-page";
 import { AuthPage } from "@cocalc/frontend/auth";
@@ -169,6 +170,9 @@ export const ActiveContent: React.FC = React.memo(() => {
         break;
       case "hosts":
         overlay = renderLayer("hosts", true, <HostsPage />);
+        break;
+      case "ssh":
+        overlay = renderLayer("ssh", true, <SshPage />);
         break;
       case "auth":
         overlay = renderLayer("auth", true, <AuthPage />);

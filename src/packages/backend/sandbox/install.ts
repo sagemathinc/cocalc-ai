@@ -11,8 +11,8 @@ e.g.,
   - security vulnerabilities: https://github.com/microsoft/ripgrep-prebuilt/issues/48
   - not updated to a major new release without a good reason: https://github.com/microsoft/ripgrep-prebuilt/issues/38
 
-NOTE: there is a linux program "upx", which can be run on any of these binaries
-(except ssh where it is already run), which makes them self-extracting executables.
+NOTE: there is a linux program "upx", which can be run on any of these binaries,
+which makes them self-extracting executables.
 The binaries become less than half their size, but startup time is typically
 increased to about 100ms to do the decompression every time.  We're not currently
 using this, but it could be useful in some contexts, maybe.   The main value in
@@ -48,7 +48,7 @@ function hasBinary(dir: string | undefined, name: string): boolean {
 
 function resolveBinPath(): string {
   const envPath = process.env.COCALC_BIN_PATH;
-  if (envPath && hasBinary(envPath, "rg") && hasBinary(envPath, "fd")) {
+  if (envPath) {
     return envPath;
   }
   if (hasBinary(SYSTEM_BIN_PATH, "rg") && hasBinary(SYSTEM_BIN_PATH, "fd")) {
@@ -64,7 +64,41 @@ function resolveBinPath(): string {
 // Prefer explicit override so tests/bundled environments can point to the
 // correct toolchain even when package resolution lands elsewhere.
 const binPath = resolveBinPath();
-const systemBinPathInUse = binPath === SYSTEM_BIN_PATH;
+const systemBinPathInUse =
+  !process.env.COCALC_BIN_PATH && binPath === SYSTEM_BIN_PATH;
+
+const overridePlatform = process.env.COCALC_TOOL_PLATFORM;
+const overrideArch = process.env.COCALC_TOOL_ARCH;
+
+function effectivePlatform(): NodeJS.Platform {
+  return (overridePlatform as NodeJS.Platform) ?? platform();
+}
+
+function normalizeArch(value: string): string {
+  switch (value) {
+    case "amd64":
+    case "x86_64":
+      return "x64";
+    case "aarch64":
+      return "arm64";
+    default:
+      return value;
+  }
+}
+
+function isCrossBuild(): boolean {
+  if (overridePlatform && overridePlatform !== platform()) {
+    return true;
+  }
+  if (overrideArch && normalizeArch(overrideArch) !== arch()) {
+    return true;
+  }
+  return false;
+}
+
+function effectiveArch(): string {
+  return normalizeArch(overrideArch ?? arch());
+}
 
 interface Spec {
   nonFatal?: boolean; // true if failure to install is non-fatal
@@ -141,6 +175,21 @@ export const SPEC = {
     stripComponents: 0,
     pathInArchive: () => "rustic",
   },
+  restServer: {
+    // See https://github.com/restic/rest-server/releases
+    VERSION: "0.14.0",
+    getVersion: "rest-server --version | awk '{print $2}'",
+    BASE: "https://github.com/restic/rest-server/releases/download",
+    binary: "rest-server",
+    path: join(binPath, "rest-server"),
+    platforms: ["linux"],
+    stripComponents: 1,
+    url: () => {
+      const a = effectiveArch() === "x64" ? "amd64" : effectiveArch();
+      return `${SPEC.restServer.BASE}/v${SPEC.restServer.VERSION}/rest-server_${SPEC.restServer.VERSION}_linux_${a}.tar.gz`;
+    },
+    pathInArchive: () => `rest-server_${SPEC.restServer.VERSION}_linux_${effectiveArch() === "x64" ? "amd64" : effectiveArch()}/${SPEC.restServer.binary}`,
+  },
   // sshpiper -- used by the project-host
   // See https://github.com/sagemathinc/sshpiper-binaries/releases
   sshpiper: {
@@ -153,8 +202,8 @@ export const SPEC = {
     script: () => {
       // this is the actual version in our release page
       const VERSION = "v1.5.0";
-      const a = arch() == "x64" ? "amd64" : arch();
-      return `curl -L https://github.com/sagemathinc/sshpiper-binaries/releases/download/${VERSION}/sshpiper-${VERSION}-${platform()}-${a}.tar.xz | tar -xJ -C "${binPath}" --strip-components=1`;
+      const a = effectiveArch() == "x64" ? "amd64" : effectiveArch();
+      return `curl -L https://github.com/sagemathinc/sshpiper-binaries/releases/download/${VERSION}/sshpiper-${VERSION}-${effectivePlatform()}-${a}.tar.xz | tar -xJ -C "${binPath}" --strip-components=1`;
     },
     url: () => {
       const VERSION = SPEC.sshpiper.VERSION;
@@ -163,16 +212,17 @@ export const SPEC = {
     },
     BASE: "https://github.com/sagemathinc/sshpiper-binaries/releases",
   },
+  // https://github.com/openai/codex/releases
   codex: {
     optional: false,
     desc: "codex",
     path: join(binPath, "codex"),
     getVersion: "codex --version | awk '{print $2}'",
-    VERSION: "0.80.0",
+    VERSION: "0.98.0",
     script: () => {
       // https://github.com/openai/codex/releases/download/rust-v0.80.0/codex-aarch64-apple-darwin.tar.gz
       let p;
-      switch (platform()) {
+      switch (effectivePlatform()) {
         case "darwin":
           p = "apple-darwin";
           break;
@@ -183,7 +233,7 @@ export const SPEC = {
           throw Error(`unsupported platform ${platform()}`);
       }
       const VERSION = SPEC.codex.VERSION;
-      const a = arch() == "x64" ? "x86_64" : "aarch64";
+      const a = effectiveArch() == "x64" ? "x86_64" : "aarch64";
       return `curl -L https://github.com/openai/codex/releases/download/rust-v${VERSION}/codex-${a}-${p}.tar.gz | tar -xz -C "${binPath}" && mv ${join(binPath, "codex-" + a + "-" + p)} ${join(binPath, "codex")}`;
     },
     BASE: "https://github.com/openai/codex/releases",
@@ -212,57 +262,11 @@ export const SPEC = {
     path: join(binPath, "dropbear"),
     // we grab just the dropbear binary out of the release; we don't
     // need any of the others:
-    script: () =>
-      `curl -L https://github.com/sagemathinc/dropbear/releases/download/main/dropbear-$(uname -m)-linux-musl.tar.xz | tar -xJ -C ${binPath} --strip-components=1 dropbear-$(uname -m)-linux-musl/dropbear`,
+    script: () => {
+      const archName = effectiveArch() === "x64" ? "x86_64" : "aarch64";
+      return `curl -L https://github.com/sagemathinc/dropbear/releases/download/main/dropbear-${archName}-linux-musl.tar.xz | tar -xJ -C ${binPath} --strip-components=1 dropbear-${archName}-linux-musl/dropbear`;
+    },
   },
-  /*
-   Locate the latest binaries are here:
-     https://github.com/sagemathinc/static-openssh-binaries/releases
-   E.g., the files look like
-    https://github.com/sagemathinc/static-openssh-binaries/releases/download/OpenSSH_9.9p2/openssh-static-x86_64-small-2025-10-02b.tar.gz
-    https://github.com/sagemathinc/static-openssh-binaries/releases/download/OpenSSH_9.9p2/openssh-static-aarch64-small-2025-10-02b.tar.gz
-   and they extract like this:
-~# tar xvf openssh-static-x86_64-small-OpenSSH_9.9p2.tar.gz
-openssh/
-openssh/sbin/
-openssh/sbin/sshd
-openssh/etc/
-openssh/etc/sshd_config
-openssh/bin/
-openssh/bin/ssh-add
-openssh/bin/sftp
-openssh/bin/ssh-keyscan
-openssh/bin/ssh-keygen
-openssh/bin/ssh-agent
-openssh/bin/ssh
-openssh/bin/scp
-openssh/var/
-openssh/var/empty/
-openssh/libexec/
-openssh/libexec/ssh-keysign
-openssh/libexec/sshd-session
-openssh/libexec/sftp-server
-
-To build a new version figure out what version (say OpenSSH_9.9p2)
-happens to be being built, then do
-
-   git tag OpenSSH_9.9p2
-   git push --tags
-
-to make a binary with that version
-
----
-*/
-  ssh: {
-    desc: "statically linked compressed openssh binaries: ssh, scp, ssh-keygen",
-    path: join(binPath, "ssh"),
-    platforms: ["linux"],
-    VERSION: "OpenSSH_9.9p2",
-    getVersion: "ssh -V 2>&1 | cut -f 1 -d ','",
-    script: () =>
-      `curl -L https://github.com/sagemathinc/static-openssh-binaries/releases/download/${SPEC.ssh.VERSION}/openssh-static-$(uname -m)-small-${SPEC.ssh.VERSION}.tar.gz | tar -xz -C ${binPath} --strip-components=2 openssh/bin/ssh openssh/bin/ssh-keygen openssh/libexec/sftp-server`,
-  },
-
   // See https://github.com/moparisthebest/static-curl/releases
   //
   // https://github.com/moparisthebest/static-curl/releases/download/v8.11.0/curl-amd64
@@ -289,27 +293,22 @@ to make a binary with that version
     VERSION: "2024-10-04a",
     // https://github.com/sagemathinc/bees-binaries/releases/download/2024-10-04a/bees-2024-10-04a-x86_64-linux-glibc.tar.xz
     script: () => {
-      const a = arch() == "x64" ? "x86_64" : "aarch64";
+      const a = effectiveArch() === "x64" ? "x86_64" : "aarch64";
       const name = `bees-${SPEC.bees.VERSION}-${a}-linux-glibc`;
       return `curl -L https://github.com/sagemathinc/bees-binaries/releases/download/${SPEC.bees.VERSION}/${name}.tar.xz | tar -xJ -C ${binPath} --strip-components=2 ${name}/bin/bees`;
     },
   },
-  //   "reflect-sync": {
-  //     optional: true,
-  //     binary: "reflect-sync",
-  //     path: join(binPath, "reflect-sync"),
-  //   },
 };
 
 export const rg = SPEC.rg.path;
 export const fd = SPEC.fd.path;
 export const dust = SPEC.dust.path;
 export const rustic = SPEC.rustic.path;
+export const restServer = SPEC.restServer.path;
 export const ouch = SPEC.ouch.path;
 export const sshpiper = SPEC.sshpiper.path;
 export const btm = SPEC.btm.path;
 export const dropbear = SPEC.dropbear.path;
-export const ssh = SPEC.ssh.path;
 export const curl = SPEC.curl.path;
 
 type App = keyof typeof SPEC;
@@ -365,6 +364,9 @@ export async function alreadyInstalled(app: App) {
   if (!(await exists(path))) {
     return false;
   }
+  if (isCrossBuild()) {
+    return true;
+  }
   const v = await installedVersion(app);
   if (v == null) {
     // no version info
@@ -399,7 +401,10 @@ export async function install(
 
   const spec = SPEC[app] as Spec;
 
-  if (spec.platforms != null && !spec.platforms?.includes(platform())) {
+  if (
+    spec.platforms != null &&
+    !spec.platforms?.includes(effectivePlatform())
+  ) {
     return;
   }
 
@@ -420,7 +425,11 @@ export async function install(
         }
         throw err;
       }
-      if (!(await alreadyInstalled(app))) {
+      if (isCrossBuild()) {
+        if (!(await exists(spec.path))) {
+          throw Error(`failed to install ${app}`);
+        }
+      } else if (!(await alreadyInstalled(app))) {
         throw Error(`failed to install ${app}`);
       }
       return;
@@ -542,26 +551,26 @@ function getUrl(app: App) {
 }
 
 function getOS() {
-  switch (platform()) {
+  switch (effectivePlatform()) {
     case "linux":
-      switch (arch()) {
+      switch (effectiveArch()) {
         case "x64":
           return "x86_64-unknown-linux-musl";
         case "arm64":
           return "aarch64-unknown-linux-gnu";
         default:
-          throw Error(`unsupported arch '${arch()}'`);
+          throw Error(`unsupported arch '${effectiveArch()}'`);
       }
     case "darwin":
-      switch (arch()) {
+      switch (effectiveArch()) {
         case "x64":
           return "x86_64-apple-darwin";
         case "arm64":
           return "aarch64-apple-darwin";
         default:
-          throw Error(`unsupported arch '${arch()}'`);
+          throw Error(`unsupported arch '${effectiveArch()}'`);
       }
     default:
-      throw Error(`unsupported platform '${platform()}'`);
+      throw Error(`unsupported platform '${effectivePlatform()}'`);
   }
 }

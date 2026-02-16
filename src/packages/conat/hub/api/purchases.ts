@@ -10,10 +10,24 @@ export interface MembershipEntitlements {
 
 export interface MembershipResolution {
   class: MembershipClass;
-  source: "subscription" | "free";
+  source: "subscription" | "admin" | "free";
   entitlements: MembershipEntitlements;
   subscription_id?: number;
   expires?: Date;
+}
+
+export interface MembershipCandidate {
+  class: MembershipClass;
+  source: "subscription" | "admin";
+  priority: number;
+  entitlements: MembershipEntitlements;
+  subscription_id?: number;
+  expires?: Date;
+}
+
+export interface MembershipDetails {
+  selected: MembershipResolution;
+  candidates: MembershipCandidate[];
 }
 
 export interface LLMUsageWindowStatus {
@@ -34,6 +48,10 @@ export interface Purchases {
   getBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
   getMinBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
   getMembership: (opts?: { account_id?: string }) => Promise<MembershipResolution>;
+  getMembershipDetails: (opts?: {
+    account_id?: string;
+    user_account_id?: string;
+  }) => Promise<MembershipDetails>;
   getLLMUsage: (opts?: { account_id?: string }) => Promise<LLMUsageStatus>;
 }
 
@@ -41,5 +59,6 @@ export const purchases = {
   getBalance: authFirst,
   getMinBalance: authFirst,
   getMembership: authFirst,
+  getMembershipDetails: authFirst,
   getLLMUsage: authFirst,
 };

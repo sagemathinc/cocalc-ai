@@ -36,7 +36,7 @@ export default function NewMenu({
       placement="bottom"
       overlayInnerStyle={{ maxHeight: "90vh", overflow: "auto" }}
       content={
-        <Space direction="vertical">
+        <Space orientation="vertical">
           <div style={{ textAlign: "center" }}>
             <Button type="primary" onClick={addNew}>
               Create New {singular(title)}
@@ -112,7 +112,7 @@ function RecentRecords({ addedRecords, table, setOpen }) {
 
   const cmp = field_cmp("timestamp");
   return (
-    <Space direction="vertical" style={{ width: "100%" }}>
+    <Space orientation="vertical" style={{ width: "100%" }}>
       <Divider style={{ margin: 0 }}>Recent</Divider>
       {addedRecords
         .sort((a, b) => -cmp(a, b))

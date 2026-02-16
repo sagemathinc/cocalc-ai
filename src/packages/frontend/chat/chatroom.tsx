@@ -6,6 +6,7 @@
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import {
   React,
+  useCallback,
   useEditorRedux,
   useEffect,
   useMemo,
@@ -31,9 +32,11 @@ import type { ThreadIndexEntry } from "./message-cache";
 import { markChatAsReadIfUnseen, toMsString } from "./utils";
 import { COMBINED_FEED_KEY, useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
+import { useChatComposerDraft } from "./use-chat-composer-draft";
 import * as immutable from "immutable";
 import { useChatThreadSelection } from "./thread-selection";
 import { dateValue } from "./access";
+import { useCodexPaymentSource } from "./use-codex-payment-source";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -127,8 +130,6 @@ export function ChatPanel({
   if (IS_MOBILE) {
     variant = "compact";
   }
-  const [input, setInput] = useState("");
-  const hasInput = input.trim().length > 0;
   const scrollToIndex = getDescValue(desc, "data-scrollToIndex") ?? null;
   const scrollToDate = getDescValue(desc, "data-scrollToDate") ?? null;
   const fragmentId = getDescValue(desc, "data-fragmentId") ?? null;
@@ -188,6 +189,7 @@ export function ChatPanel({
 
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
+  const [composerSession, setComposerSession] = useState(0);
 
   const composerDraftKey = useMemo(() => {
     if (
@@ -200,7 +202,47 @@ export function ChatPanel({
     return 0;
   }, [singleThreadView, selectedThreadDate]);
 
+  const { input, setInput, clearInput, clearComposerDraft } = useChatComposerDraft({
+    account_id,
+    project_id,
+    path,
+    composerDraftKey,
+  });
+  const inputRef = useRef<string>(input);
+  const composerSessionRef = useRef<number>(composerSession);
+  useEffect(() => {
+    inputRef.current = input;
+  }, [input]);
+  useEffect(() => {
+    composerSessionRef.current = composerSession;
+  }, [composerSession]);
+  const setComposerInput = useCallback(
+    (value: string, sessionToken?: number) => {
+      if (
+        sessionToken != null &&
+        sessionToken !== composerSessionRef.current
+      ) {
+        return;
+      }
+      if (value === inputRef.current) {
+        return;
+      }
+      inputRef.current = value;
+      setInput(value);
+    },
+    [setInput],
+  );
+  const hasInput = input.trim().length > 0;
+
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
+  const {
+    paymentSource: codexPaymentSource,
+    loading: codexPaymentSourceLoading,
+    refresh: refreshCodexPaymentSource,
+  } = useCodexPaymentSource({
+    projectId: project_id,
+    enabled: isSelectedThreadAI,
+  });
 
   const combinedFeedIndex = useMemo(() => {
     if (!threadIndex || !combinedThread) return undefined;
@@ -250,20 +292,6 @@ export function ChatPanel({
     }
   }, [isCombinedFeedSelected, threads, composerTargetKey]);
 
-  useEffect(() => {
-    if (!actions?.syncdb || !account_id) return;
-    const fetchDraft = (date: number) =>
-      actions.syncdb
-        ?.get_one({
-          event: "draft",
-          sender_id: account_id,
-          date,
-        })
-        ?.get?.("input") ?? "";
-    let nextInput = fetchDraft(composerDraftKey);
-    setInput(nextInput);
-  }, [actions?.syncdb, account_id, composerDraftKey]);
-
   const mark_as_read = () => markChatAsReadIfUnseen(project_id, path);
 
   useEffect(() => {
@@ -308,10 +336,32 @@ export function ChatPanel({
     [threadSections],
   );
 
+  const advanceComposerSession = useCallback((): number => {
+    const nextSession = composerSessionRef.current + 1;
+    composerSessionRef.current = nextSession;
+    setComposerSession(nextSession);
+    return nextSession;
+  }, []);
+
+  const clearComposerNow = useCallback(
+    (draftKey: number) => {
+      // Keep local guard state coherent immediately, before async state/render.
+      inputRef.current = "";
+      // Clear current composer draft before send switches selected thread context.
+      actions.deleteDraft(draftKey);
+      void clearInput();
+    },
+    [actions, clearInput],
+  );
+
   function sendMessage(
     replyToOverride?: Date | null,
     extraInput?: string,
   ): void {
+    const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
+    const sendingText = rawSendingText.trim();
+    if (sendingText.length === 0) return;
+    advanceComposerSession();
     let reply_to: Date | undefined;
     if (replyToOverride !== undefined) {
       reply_to = replyToOverride ?? undefined;
@@ -331,6 +381,8 @@ export function ChatPanel({
     } else if (isCombinedFeedSelected) {
       setAllowAutoSelectThread(false);
     }
+    clearComposerNow(composerDraftKey);
+
     const timeStamp = actions.sendChat({
       submitMentionsRef,
       reply_to,
@@ -347,11 +399,20 @@ export function ChatPanel({
     setTimeout(() => {
       scrollToBottomRef.current?.(true);
     }, 100);
-    actions.deleteDraft(composerDraftKey);
-    setInput("");
   }
-  function on_send(): void {
-    sendMessage();
+  function on_send(value?: string): void {
+    sendMessage(undefined, value);
+  }
+
+  function onNewChat(): void {
+    // Explicitly reset draft state for the global "new chat" composer bucket.
+    advanceComposerSession();
+    inputRef.current = "";
+    setInput("");
+    actions.deleteDraft(0);
+    void clearComposerDraft(0);
+    setAllowAutoSelectThread(false);
+    setSelectedThreadKey(null);
   }
 
   const renderChatContent = () => (
@@ -374,11 +435,13 @@ export function ChatPanel({
         fragmentId={fragmentId}
         threadsCount={threads.length}
         onNewChat={() => {
-          setAllowAutoSelectThread(false);
-          setSelectedThreadKey(null);
+          onNewChat();
         }}
         composerTargetKey={composerTargetKey}
         composerFocused={composerFocused}
+        codexPaymentSource={codexPaymentSource}
+        codexPaymentSourceLoading={codexPaymentSourceLoading}
+        refreshCodexPaymentSource={refreshCodexPaymentSource}
       />
       <ChatRoomComposer
         actions={actions}
@@ -386,18 +449,21 @@ export function ChatPanel({
         path={path}
         fontSize={fontSize}
         composerDraftKey={composerDraftKey}
+        composerSession={composerSession}
         input={input}
-        setInput={setInput}
+        setInput={setComposerInput}
         on_send={on_send}
         submitMentionsRef={submitMentionsRef}
         hasInput={hasInput}
         isSelectedThreadAI={isSelectedThreadAI}
-        sendMessage={sendMessage}
         combinedFeedSelected={isCombinedFeedSelected}
         composerTargetKey={composerTargetKey}
         threads={threads}
+        selectedThread={selectedThread}
         onComposerTargetChange={setComposerTargetKey}
         onComposerFocusChange={setComposerFocused}
+        codexPaymentSource={codexPaymentSource}
+        codexPaymentSourceLoading={codexPaymentSourceLoading}
       />
     </div>
   );
@@ -434,7 +500,16 @@ export function ChatPanel({
             setSidebarVisible={setSidebarVisible}
             threadSections={threadSections}
             combinedThread={combinedThread}
-            openRenameModal={modalHandlers?.openRenameModal ?? (() => undefined)}
+            openRenameModal={
+              modalHandlers?.openRenameModal ??
+              ((
+                _threadKey,
+                _label,
+                _useCurrentLabel,
+                _color,
+                _icon,
+              ) => undefined)
+            }
             openExportModal={modalHandlers?.openExportModal ?? (() => undefined)}
             openForkModal={modalHandlers?.openForkModal ?? (() => undefined)}
             confirmDeleteThread={
@@ -444,8 +519,7 @@ export function ChatPanel({
         }
         chatContent={renderChatContent()}
         onNewChat={() => {
-          setAllowAutoSelectThread(false);
-          setSelectedThreadKey(null);
+          onNewChat();
         }}
         newChatSelected={!selectedThreadKey}
       />

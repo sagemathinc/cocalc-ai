@@ -14,6 +14,11 @@ via the newer registration system.
 NOTE: Obviously, github etc. has to solve basically the same problem,
 and they have a similar massive list: https://github.com/blakeembrey/language-map/blob/main/languages.json
 Maybe that could be useful at some point.
+
+NOTE: If you add new extensions/modes here, you may also need to
+update Prism language support in
+src/packages/frontend/editors/slate/elements/code-block/prism.ts
+so the Slate editor highlights those modes.
 */
 
 import type { IconName } from "@cocalc/frontend/components/icon";
@@ -56,6 +61,7 @@ const codemirror_associations: { [ext: string]: string } = {
   cljc: "text/x-clojure",
   edn: "text/x-clojure",
   elm: "text/x-elm",
+  env: "shell",
   erl: "text/x-erlang",
   hrl: "text/x-erlang", // according to https://en.wikipedia.org/wiki/Erlang_(programming_language)
   cjsx: "text/cjsx",

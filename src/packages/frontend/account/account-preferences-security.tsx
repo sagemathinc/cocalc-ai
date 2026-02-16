@@ -3,9 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
-
-import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
+import { lite } from "@cocalc/frontend/lite";
 import ApiKeys from "./settings/api-keys";
 import GlobalSSHKeys from "./ssh-keys/global-ssh-keys";
 
@@ -15,12 +13,9 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 export const KEYS_ICON_NAME: IconName = "key";
 
 export function AccountPreferencesSecurity() {
-  const kucalc = useTypedRedux("customize", "kucalc");
-  const ssh_gateway = useTypedRedux("customize", "ssh_gateway");
-
   return (
     <>
-      {(ssh_gateway || kucalc === KUCALC_COCALC_COM) && <GlobalSSHKeys />}
+      {!lite && <GlobalSSHKeys />}
       <ApiKeys />
     </>
   );

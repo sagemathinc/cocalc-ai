@@ -7,7 +7,6 @@ import { Map } from "immutable";
 
 import { TypedMap } from "@cocalc/frontend/app-framework";
 
-
 import type { Mode as JupyterCellLLMMode } from "@cocalc/frontend/jupyter/llm/cell-tool";
 import { Ext } from "@cocalc/frontend/project/page/home-page/ai-generate-examples";
 
@@ -149,6 +148,26 @@ export type OpenFile = {
   filename: string;
   time?: number;
   type?: string;
+  open_phase?:
+    | "open_start"
+    | "optimistic_ready"
+    | "sync_ready"
+    | "handoff_done"
+    | "handoff_differs";
+  open_phase_elapsed_ms?: number;
+  open_phase_marks_ms?: Partial<
+    Record<
+      | "open_start"
+      | "optimistic_ready"
+      | "sync_ready"
+      | "handoff_done"
+      | "handoff_differs",
+      number
+    >
+  >;
+  open_phase_details?: {
+    [key: string]: string | number | boolean | undefined;
+  };
   // if true, opening a file that was deleted
   deleted?: number;
 };

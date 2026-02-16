@@ -30,7 +30,7 @@ export function ServersFlyout({ project_id, wrap }) {
           When launched, these servers run inside this project. They should open
           up in a new browser tab, and get access all files in this project.
         </Paragraph>
-        <Space direction="vertical">
+        <Space orientation="vertical">
           {servers}
           {servers.length === 0 && (
             <Paragraph>

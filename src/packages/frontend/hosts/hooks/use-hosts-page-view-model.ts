@@ -1,4 +1,4 @@
-import { Form, message } from "antd";
+import { Form } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -65,6 +65,7 @@ function readHostSortField(): HostSortField {
   }
   const raw = window.localStorage.getItem(HOSTS_SORT_FIELD_STORAGE_KEY);
   if (
+    raw === "starred" ||
     raw === "name" ||
     raw === "provider" ||
     raw === "region" ||
@@ -134,8 +135,16 @@ export const useHostsPageViewModel = () => {
 
   const [fastPoll, setFastPoll] = React.useState(false);
   const [setupOpen, setSetupOpen] = React.useState(false);
-  const { hosts, setHosts, refresh, canCreateHosts } = useHosts(hub, {
-    onError: () => message.error("Unable to load hosts"),
+  const {
+    hosts,
+    setHosts,
+    refresh,
+    canCreateHosts,
+    loading: hostsLoading,
+    loaded: hostsLoaded,
+    error: hostsError,
+  } = useHosts(hub, {
+    onError: () => console.warn("Unable to load hosts"),
     adminView: isAdmin && showAdmin,
     includeDeleted: showDeleted,
     pollMs: fastPoll ? 5000 : 30000,
@@ -171,10 +180,9 @@ export const useHostsPageViewModel = () => {
     refresh,
     onHostOp: trackHostOp,
   });
-  const upgradeHostSoftware = React.useCallback(
-    async (host: Host) => {
+  const runUpgrade = React.useCallback(
+    async (host: Host, opts?: { base_url?: string }) => {
       if (!hub.hosts.upgradeHostSoftware) {
-        message.error("Host upgrades are not available");
         return;
       }
       if (host.status !== "running") {
@@ -188,15 +196,21 @@ export const useHostsPageViewModel = () => {
             { artifact: "project", channel: "latest" },
             { artifact: "tools", channel: "latest" },
           ],
+          ...(opts?.base_url ? { base_url: opts.base_url } : {}),
         });
         trackHostOp(host.id, op);
         await refresh();
       } catch (err) {
         console.error(err);
-        message.error("Failed to upgrade host software");
       }
     },
     [hub, refresh, trackHostOp],
+  );
+  const upgradeHostSoftware = React.useCallback(
+    async (host: Host) => {
+      await runUpgrade(host);
+    },
+    [runUpgrade],
   );
   const cancelHostOp = React.useCallback(
     async (op_id: string) => {
@@ -204,7 +218,6 @@ export const useHostsPageViewModel = () => {
         await hub.lro.cancel({ op_id });
       } catch (err) {
         console.error(err);
-        message.error("Failed to cancel host operation");
       }
     },
     [hub],
@@ -270,16 +283,17 @@ export const useHostsPageViewModel = () => {
     selectedZone,
     selectedMachineType,
     selectedGpuType,
+    selectedSelfHostKind,
+    selectedSelfHostMode,
     selectedGpu,
     selectedSize,
     selectedStorageMode,
   } = useHostFormValues(form);
 
-  const { catalog, catalogError, catalogRefreshing, refreshCatalog } =
+  const { catalog, catalogError, catalogLoading, catalogRefreshing, refreshCatalog } =
     useHostCatalog(hub, {
       provider: catalogProvider,
-      refreshProvider,
-      onError: (text) => message.error(text),
+      onError: (text) => console.warn(text),
     });
   const hasSelfHostHosts = React.useMemo(
     () => hosts.some((host) => host.machine?.cloud === "self-host"),
@@ -343,11 +357,39 @@ export const useHostsPageViewModel = () => {
     const raw = `${window.location.origin}${basePath}`;
     return raw.replace(/\/$/, "");
   }, []);
+  const upgradeHostSoftwareFromHub = React.useCallback(
+    async (host: Host) => {
+      if (!baseUrl) return;
+      await runUpgrade(host, { base_url: `${baseUrl}/software` });
+    },
+    [baseUrl, runUpgrade],
+  );
   const [setupHost, setSetupHost] = React.useState<Host | undefined>();
   const [setupToken, setSetupToken] = React.useState<string | undefined>();
   const [setupExpires, setSetupExpires] = React.useState<string | undefined>();
+  const [setupLaunchpad, setSetupLaunchpad] = React.useState<
+    | {
+        http_port?: number;
+        sshd_port?: number;
+        ssh_user?: string;
+        ssh_host?: string;
+      }
+    | undefined
+  >();
   const [setupError, setSetupError] = React.useState<string | undefined>();
   const [setupLoading, setSetupLoading] = React.useState(false);
+  const [setupInstalling, setSetupInstalling] = React.useState(false);
+  const [setupConnectorVersion, setSetupConnectorVersion] = React.useState<
+    string | undefined
+  >();
+  const [setupNotice, setSetupNotice] = React.useState<string | undefined>();
+  const [setupUpgradePending, setSetupUpgradePending] = React.useState(false);
+  const [setupUpgradeFromVersion, setSetupUpgradeFromVersion] = React.useState<
+    string | undefined
+  >();
+  const [setupUpgradeRequestedAt, setSetupUpgradeRequestedAt] = React.useState<
+    number | undefined
+  >();
   const setupRequestRef = React.useRef(0);
   const [removeHostTarget, setRemoveHostTarget] = React.useState<
     Host | undefined
@@ -371,6 +413,13 @@ export const useHostsPageViewModel = () => {
         pairing_token: string;
         expires?: string;
         connector_id?: string;
+        connector_version?: string;
+        launchpad?: {
+          http_port?: number;
+          sshd_port?: number;
+          ssh_user?: string;
+          ssh_host?: string;
+        };
       };
     },
     [baseUrl],
@@ -385,6 +434,8 @@ export const useHostsPageViewModel = () => {
         if (setupRequestRef.current !== requestId) return;
         setSetupToken(data.pairing_token);
         setSetupExpires(data.expires);
+        setSetupLaunchpad(data.launchpad);
+        setSetupConnectorVersion(data.connector_version);
       } catch (err) {
         if (setupRequestRef.current !== requestId) return;
         console.error(err);
@@ -401,13 +452,48 @@ export const useHostsPageViewModel = () => {
     },
     [requestPairingToken],
   );
+
+  const installConnector = React.useCallback(
+    async (host: Host) => {
+      setSetupInstalling(true);
+      setSetupError(undefined);
+      const currentConnector = host.region
+        ? selfHostConnectorMap.get(host.region)
+        : undefined;
+      const currentVersion = currentConnector?.version;
+      setSetupUpgradeFromVersion(currentVersion);
+      setSetupUpgradePending(true);
+      setSetupUpgradeRequestedAt(Date.now());
+      try {
+        if (!hub.hosts.upgradeHostConnector) {
+          throw new Error("connector upgrade is not supported");
+        }
+        await hub.hosts.upgradeHostConnector({ id: host.id });
+        await loadSetupToken(host);
+        setSetupNotice("Connector upgrade started.");
+      } catch (err) {
+        setSetupError(
+          err instanceof Error && err.message
+            ? err.message
+            : "connector upgrade failed",
+        );
+        setSetupUpgradePending(false);
+      } finally {
+        setSetupInstalling(false);
+      }
+    },
+    [hub, loadSetupToken, selfHostConnectorMap],
+  );
   const openSetup = React.useCallback(
     (host: Host) => {
       setSetupHost(host);
       setSetupOpen(true);
       setSetupToken(undefined);
       setSetupExpires(undefined);
+      setSetupLaunchpad(undefined);
+      setSetupConnectorVersion(undefined);
       setSetupError(undefined);
+      setSetupNotice(undefined);
       void loadSetupToken(host);
     },
     [loadSetupToken],
@@ -417,8 +503,54 @@ export const useHostsPageViewModel = () => {
     setSetupHost(undefined);
     setSetupToken(undefined);
     setSetupExpires(undefined);
+    setSetupLaunchpad(undefined);
+    setSetupConnectorVersion(undefined);
     setSetupError(undefined);
+    setSetupNotice(undefined);
+    setSetupUpgradePending(false);
+    setSetupUpgradeFromVersion(undefined);
+    setSetupUpgradeRequestedAt(undefined);
+    setSetupInstalling(false);
   }, []);
+
+  React.useEffect(() => {
+    if (!setupUpgradePending || !setupHost) return;
+    const connector = setupHost.region
+      ? selfHostConnectorMap.get(setupHost.region)
+      : undefined;
+    const currentVersion = connector?.version;
+    if (!currentVersion) return;
+    if (!setupUpgradeFromVersion || currentVersion !== setupUpgradeFromVersion) {
+      setSetupNotice(`Connector upgraded to v${currentVersion}.`);
+      setSetupUpgradePending(false);
+      return;
+    }
+  }, [
+    setupHost,
+    setupUpgradePending,
+    setupUpgradeFromVersion,
+    selfHostConnectorMap,
+  ]);
+  React.useEffect(() => {
+    if (!setupUpgradePending || !setupUpgradeFromVersion || !setupHost) return;
+    const timer = setTimeout(() => {
+      const connector = setupHost.region
+        ? selfHostConnectorMap.get(setupHost.region)
+        : undefined;
+      const currentVersion = connector?.version;
+      if (currentVersion && currentVersion === setupUpgradeFromVersion) {
+        setSetupNotice(`Connector is already at v${currentVersion}.`);
+        setSetupUpgradePending(false);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [
+    setupHost,
+    setupUpgradePending,
+    setupUpgradeFromVersion,
+    setupUpgradeRequestedAt,
+    selfHostConnectorMap,
+  ]);
   const openRemove = React.useCallback((host: Host) => {
     setRemoveHostTarget(host);
     setRemoveOpen(true);
@@ -451,6 +583,8 @@ export const useHostsPageViewModel = () => {
     selectedZone,
     selectedMachineType,
     selectedGpuType,
+    selectedSelfHostKind,
+    selectedSelfHostMode,
     selectedGpu,
     selectedSize,
     selectedStorageMode,
@@ -480,6 +614,7 @@ export const useHostsPageViewModel = () => {
     refresh,
     fieldOptions,
     catalog,
+    onHostOp: trackHostOp,
   });
 
   const createVm = useHostCreateViewModel({
@@ -500,6 +635,7 @@ export const useHostsPageViewModel = () => {
         persistentGrowable,
         showDiskFields,
       },
+      catalogLoading,
       catalogError,
     },
     catalogRefresh: {
@@ -530,8 +666,41 @@ export const useHostsPageViewModel = () => {
     await refreshHostOps({ force: true });
   }, [refresh, refreshHostOps]);
 
+  const toggleHostStar = React.useCallback(
+    async (host: Host) => {
+      if (!hub.hosts.setHostStar) {
+        console.warn("host star updates are not supported");
+        return;
+      }
+      const prevStarred = !!host.starred;
+      const nextStarred = !prevStarred;
+      setHosts((prev) =>
+        prev.map((item) =>
+          item.id === host.id ? { ...item, starred: nextStarred } : item,
+        ),
+      );
+      try {
+        await hub.hosts.setHostStar({
+          id: host.id,
+          starred: nextStarred,
+        });
+      } catch (err) {
+        console.error("failed to update host star", err);
+        setHosts((prev) =>
+          prev.map((item) =>
+            item.id === host.id ? { ...item, starred: prevStarred } : item,
+          ),
+        );
+      }
+    },
+    [hub, setHosts],
+  );
+
   const hostListVm = useHostListViewModel({
     hosts,
+    hostsLoading,
+    hostsLoaded,
+    hostsError,
     hostOps,
     onStart: (id: string) => setStatus(id, "start"),
     onStop: (id: string, opts) => setStatus(id, "stop", opts),
@@ -540,8 +709,10 @@ export const useHostsPageViewModel = () => {
     onRefresh: refreshHostsNow,
     onCancelOp: cancelHostOp,
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
+    onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
     onDetails: openDetails,
     onEdit: openEdit,
+    onToggleStar: toggleHostStar,
     selfHost: {
       connectorMap: selfHostConnectorMap,
       isConnectorOnline: isSelfHostConnectorOnline,
@@ -570,6 +741,7 @@ export const useHostsPageViewModel = () => {
     onClose: closeDetails,
     onEdit: openEdit,
     onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
+    onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
     canUpgrade: isAdmin,
     onCancelOp: cancelHostOp,
     hostLog,
@@ -609,6 +781,7 @@ export const useHostsPageViewModel = () => {
         storage_mode?: string;
         region?: string;
         zone?: string;
+        self_host_ssh_target?: string;
       },
     ) => {
       setSavingEdit(true);
@@ -657,6 +830,9 @@ export const useHostsPageViewModel = () => {
           if (machine.disk_type) update.disk_type = machine.disk_type;
           if (typeof metadata.cpu === "number") update.cpu = metadata.cpu;
           if (typeof metadata.ram_gb === "number") update.ram_gb = metadata.ram_gb;
+          if (typeof metadata.self_host_ssh_target === "string") {
+            update.self_host_ssh_target = metadata.self_host_ssh_target;
+          }
           if (Object.keys(update).length > 0) {
             await updateHostMachine(id, update);
           }
@@ -680,6 +856,14 @@ export const useHostsPageViewModel = () => {
           if (nextRam && nextRam !== currentRam) update.ram_gb = nextRam;
         }
         if (nextDisk && nextDisk !== currentDisk) update.disk_gb = nextDisk;
+        if (isSelfHost) {
+          const currentTarget =
+            editingHost.machine?.metadata?.self_host_ssh_target ?? "";
+          const nextTarget = values.self_host_ssh_target ?? "";
+          if (String(currentTarget) !== String(nextTarget)) {
+            update.self_host_ssh_target = nextTarget.trim() || undefined;
+          }
+        }
 
         if (canEditMachine) {
           const nextMachineType = values.machine_type || values.size;
@@ -743,9 +927,13 @@ export const useHostsPageViewModel = () => {
     open: setupOpen,
     host: setupHost,
     loading: setupLoading,
+    installing: setupInstalling,
     error: setupError,
+    notice: setupNotice,
     token: setupToken,
     expires: setupExpires,
+    launchpad: setupLaunchpad,
+    connectorVersion: setupConnectorVersion,
     baseUrl,
     connector:
       setupHost && setupHost.region
@@ -753,6 +941,7 @@ export const useHostsPageViewModel = () => {
         : undefined,
     onCancel: closeSetup,
     onRefresh: refreshSetup,
+    onInstall: setupHost ? () => installConnector(setupHost) : undefined,
   };
 
   const removeVm = {

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { BACKUPS } from "@cocalc/frontend/project/listing/use-backups";
+import { BACKUPS } from "@cocalc/util/consts/backups";
 import FindRestoreModal from "@cocalc/frontend/project/find/restore-modal";
 
 type RestoreTarget = {
@@ -21,7 +21,7 @@ export function useSpecialPathPreview({
 }: {
   project_id: string;
   actions?: ProjectActions | null;
-  current_path?: string | null;
+  current_path: string;
 }) {
   const [restoreTarget, setRestoreTarget] = useState<RestoreTarget | null>(null);
   const [restoreLoading, setRestoreLoading] = useState(false);
@@ -36,7 +36,7 @@ export function useSpecialPathPreview({
   const backupIdRef = useRef<string | null>(null);
   const backupNameRef = useRef<string | null>(null);
 
-  const path = current_path ?? "";
+  const path = current_path;
 
   const specialContext = useMemo(() => {
     if (path === SNAPSHOTS || path.startsWith(`${SNAPSHOTS}/`)) {

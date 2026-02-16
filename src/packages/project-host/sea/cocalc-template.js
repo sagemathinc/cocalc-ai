@@ -11,8 +11,22 @@ const os = require("node:os");
 
 // DO NOT use ${} in this file; envsubst fills NAME/VERSION/MAIN.
 const version = "${VERSION}";
-const name = "${NAME}";
+const exeName = path.basename(process.argv[0] ?? "");
+const inferredName = exeName.startsWith("cocalc-plus") ? "cocalc-plus" : "";
+const name =
+  "${NAME}" || process.env.COCALC_NAME || inferredName || "cocalc";
 const mainScript = "${MAIN}";
+const quiet =
+  process.env.COCALC_SEA_QUIET === "1" ||
+  process.argv.includes("reflect") ||
+  process.argv.includes("reflect-sync") ||
+  process.argv.includes("--run-reflect");
+
+function log(...args) {
+  if (!quiet) {
+    console.log(...args);
+  }
+}
 
 function extractAssetsSync() {
   const { getRawAsset } = require("node:sea");
@@ -28,7 +42,7 @@ function extractAssetsSync() {
 
   const stamp = path.join(destDir, ".ok");
   if (!fs.existsSync(stamp)) {
-    console.log("Unpacking...");
+    log("Unpacking...");
     const ab = getRawAsset("cocalc.tar.xz");
     const buf = Buffer.from(new Uint8Array(ab));
 
@@ -51,7 +65,7 @@ function extractAssetsSync() {
 
     fs.writeFileSync(stamp, "");
   }
-  console.log("Assets ready at:", destDir);
+  log("Assets ready at:", destDir);
   return destDir;
 }
 
@@ -82,7 +96,7 @@ if (path.basename(process.argv[1]) == "node") {
   process.exit(0);
 } else {
   const destDir = extractAssetsSync();
-  console.log("CoCalc Project Host (v" + version + ")");
+  log("CoCalc Project Host (v" + version + ")");
 
   const script = path.join(destDir, mainScript);
 
@@ -92,19 +106,35 @@ if (path.basename(process.argv[1]) == "node") {
   }
 
   process.chdir(path.dirname(script));
-  const argv = process.argv.slice(1);
-  if (argv[0] === process.argv[0]) {
-    argv.shift();
-  }
+  const argv = process.argv.slice(2);
   process.argv = [process.execPath, script, ...argv];
-  process.env.COCALC_BIN_PATH = path.join(destDir, `src/packages/${name}/bin/`);
-  console.log(process.env.COCALC_BIN_PATH);
-
-  process.env.PATH =
-    process.env.COCALC_BIN_PATH + path.delimiter + process.env.PATH;
+  const binPath =
+    process.env.COCALC_BIN_PATH ||
+    path.join(destDir, `src/packages/${name}/bin/`);
+  if (!process.env.COCALC_BIN_PATH) {
+    process.env.COCALC_BIN_PATH = binPath;
+  }
+  process.env.PATH = binPath + path.delimiter + process.env.PATH;
   process.env.COCALC_PROJECT_HOST_VERSION ??= version;
+  process.env.COCALC_SEA_VERSION ??= version;
 
   process.env.AUTH_TOKEN ??= "random";
+
+  if (name === "cocalc-plus" || inferredName === "cocalc-plus") {
+    const originalEmitWarning = process.emitWarning;
+    process.emitWarning = (warning, ...args) => {
+      const message =
+        typeof warning === "string" ? warning : warning?.message ?? "";
+      const code = typeof warning === "object" ? warning?.code : undefined;
+      if (
+        message.includes("SQLite is an experimental feature") ||
+        code === "DEP0169"
+      ) {
+        return;
+      }
+      return originalEmitWarning.call(process, warning, ...args);
+    };
+  }
 }
 
 Module.runMain();

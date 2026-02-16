@@ -640,7 +640,7 @@ export function Assignment({
       <Alert
         style={{ marginBottom: "15px" }}
         type="info"
-        message={`NOTE: Only the ${STUDENT_SUBDIR}/ subdirectory will be copied to the students.`}
+        title={`NOTE: Only the ${STUDENT_SUBDIR}/ subdirectory will be copied to the students.`}
       />
     );
   }
@@ -661,7 +661,7 @@ export function Assignment({
 
   function render_copy_confirm_to_all(step: AssignmentCopyStep, status) {
     const n = status[`not_${step}`];
-    const message = (
+    const confirmation = (
       <div>
         <div style={{ marginBottom: "15px" }}>
           {capitalize(step_verb(step))} this homework {step_direction(step)} the{" "}
@@ -688,7 +688,7 @@ export function Assignment({
         type="warning"
         key={`${step}_confirm_to_all`}
         style={{ marginTop: "15px" }}
-        message={message}
+        title={confirmation}
       />
     );
   }
@@ -790,7 +790,7 @@ export function Assignment({
         type="warning"
         key={`${step}_confirm_to_all_or_new`}
         style={{ marginTop: "15px" }}
-        message={message}
+        title={message}
       />
     );
   }

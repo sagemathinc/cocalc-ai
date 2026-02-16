@@ -9,13 +9,13 @@ import Head from "next/head";
 import Footer from "components/landing/footer";
 import LandingHeader from "components/landing/header";
 import { Layout } from "antd";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { COLORS } from "@cocalc/util/theme";
 import apiPost from "lib/api/post";
 import { MAX_WIDTH } from "lib/config";
 
-const favicon = join(basePath, "webapp/favicon-32x32.png");
+const favicon = join(ROOT_PATH, "webapp/favicon-32x32.png");
 
 export default function Custom404() {
   const [siteName, setSiteName] = useState<string>("");
@@ -60,7 +60,7 @@ export default function Custom404() {
             </h1>
 
             <div>
-              <a href={`${basePath}/`}>
+              <a href={`${ROOT_PATH}/`}>
                 Back to {siteName ? `${siteName}'s ` : "the "} main page
               </a>
             </div>

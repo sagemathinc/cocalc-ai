@@ -72,30 +72,75 @@ export function unindentListItem(editor: Editor): boolean {
   }
 
   const to = Path.next(parentOfListPath);
+  const indexInList = path[path.length - 1];
+  const listChildCount = list.children.length;
 
   try {
     Editor.withoutNormalizing(editor, () => {
-      Transforms.moveNodes(editor, {
-        to,
-        match: (node) => node === list,
-      });
-      Transforms.unwrapNodes(editor, { at: to });
+      if (indexInList === 0) {
+        // Move the first item out and carry the remaining siblings as a nested list.
+        moveCursorToBeginningOfBlock(editor);
+        Transforms.moveNodes(editor, {
+          at: path,
+          to,
+          match: (node) => node === item,
+        });
+        if (listChildCount > 1) {
+          try {
+            const [movedItem] = Editor.node(editor, to);
+            if (Element.isElement(movedItem)) {
+              const insertIndex = movedItem.children.length;
+              Transforms.moveNodes(editor, {
+                at: listPath,
+                to: to.concat(insertIndex),
+              });
+            }
+          } catch (_err) {
+            // If paths shifted, let normalization clean up.
+          }
+        } else {
+          try {
+            const [listAfter] = Editor.node(editor, listPath);
+            if (
+              Element.isElement(listAfter) &&
+              Array.isArray(listAfter.children) &&
+              listAfter.children.length === 0
+            ) {
+              Transforms.removeNodes(editor, { at: listPath });
+            }
+          } catch (_err) {
+            // listPath might be invalid after move; ignore.
+          }
+        }
+      } else {
+        // Move just the current list item out, leaving remaining siblings nested.
+        Transforms.moveNodes(editor, {
+          at: path,
+          to,
+          match: (node) => node === item,
+        });
+        try {
+          const [listAfter] = Editor.node(editor, listPath);
+          if (
+            Element.isElement(listAfter) &&
+            Array.isArray(listAfter.children) &&
+            listAfter.children.length === 0
+          ) {
+            Transforms.removeNodes(editor, { at: listPath });
+          }
+        } catch (_err) {
+          // listPath might be invalid after move; ignore.
+        }
+      }
+      try {
+        const focus = Editor.start(editor, to);
+        Transforms.setSelection(editor, { anchor: focus, focus });
+      } catch (_err) {
+        // selection may be invalid; ignore.
+      }
     });
   } catch (err) {
     console.warn(`SLATE -- issue with unindentListItem ${err}`);
-  }
-
-  // re-indent any extra siblings that we just unintentionally un-indented
-  // Yes, I wish there was a simpler way than this, but fortunately this
-  // is not a speed critical path for anything.
-  const numBefore = path[path.length - 1];
-  const numAfter = list.children.length - numBefore - 1;
-  for (let i = 0; i < numBefore; i++) {
-    indentListItem(editor, to);
-  }
-  const after = Path.next(to);
-  for (let i = 0; i < numAfter; i++) {
-    indentListItem(editor, after);
   }
 
   return true;

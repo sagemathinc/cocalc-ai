@@ -1,11 +1,17 @@
 import express, { Router, type Request } from "express";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/hub/logger";
 import basePath from "@cocalc/backend/base-path";
-import { conatPassword } from "@cocalc/backend/data";
 import { buildBootstrapScriptWithStatus } from "@cocalc/server/cloud/bootstrap-host";
-import { verifyBootstrapToken } from "@cocalc/server/project-host/bootstrap-token";
-import siteURL from "@cocalc/database/settings/site-url";
+import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
+import {
+  createProjectHostMasterConatToken,
+  verifyProjectHostToken,
+} from "@cocalc/server/project-host/bootstrap-token";
+import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
+import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 
 const logger = getLogger("hub:servers:app:project-host-bootstrap");
 
@@ -18,6 +24,62 @@ function extractToken(req: Request): string | undefined {
   if (!header) return undefined;
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim();
+}
+
+function resolveBootstrapPyPath(): string | undefined {
+  const candidates: Array<string | undefined> = [
+    process.env.COCALC_BOOTSTRAP_PY,
+    process.env.COCALC_BUNDLE_DIR
+      ? join(process.env.COCALC_BUNDLE_DIR, "bundle", "bootstrap", "bootstrap.py")
+      : undefined,
+    join(process.cwd(), "packages/server/cloud/bootstrap/bootstrap.py"),
+    join(process.cwd(), "src/packages/server/cloud/bootstrap/bootstrap.py"),
+    join(__dirname, "../../../../server/cloud/bootstrap/bootstrap.py"),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function resolveNebiusSetupPath(): string | undefined {
+  const candidates: Array<string | undefined> = [
+    process.env.COCALC_NEBIUS_SETUP_SH,
+    process.env.COCALC_BUNDLE_DIR
+      ? join(
+          process.env.COCALC_BUNDLE_DIR,
+          "bundle",
+          "nebius",
+          "nebius-setup.sh",
+        )
+      : undefined,
+    join(process.cwd(), "packages/server/cloud/nebius/nebius-setup.sh"),
+    join(process.cwd(), "src/packages/server/cloud/nebius/nebius-setup.sh"),
+    join(__dirname, "../../../../server/cloud/nebius/nebius-setup.sh"),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function resolveGcpSetupPath(): string | undefined {
+  const candidates: Array<string | undefined> = [
+    process.env.COCALC_GCP_SETUP_SH,
+    process.env.COCALC_BUNDLE_DIR
+      ? join(process.env.COCALC_BUNDLE_DIR, "bundle", "gcp", "gcp-setup.sh")
+      : undefined,
+    join(process.cwd(), "packages/server/cloud/gcp/gcp-setup.sh"),
+    join(process.cwd(), "src/packages/server/cloud/gcp/gcp-setup.sh"),
+    join(__dirname, "../../../../server/cloud/gcp/gcp-setup.sh"),
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 async function loadHostRow(hostId: string): Promise<any> {
@@ -57,6 +119,63 @@ async function updateBootstrapStatus(
 export default function init(router: Router) {
   const jsonParser = express.json({ limit: "256kb" });
 
+  router.get("/project-host/bootstrap.py", async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) {
+        res.status(401).send("missing bootstrap token");
+        return;
+      }
+      const tokenInfo = await verifyProjectHostToken(token, {
+        purpose: "bootstrap",
+      });
+      if (!tokenInfo) {
+        res.status(401).send("invalid bootstrap token");
+        return;
+      }
+      const path = resolveBootstrapPyPath();
+      if (!path) {
+        res.status(500).send("bootstrap.py not found");
+        return;
+      }
+      const contents = readFileSync(path, "utf8");
+      res.type("text/x-python").send(contents);
+    } catch (err) {
+      logger.warn("bootstrap.py fetch failed", err);
+      res.status(500).send("bootstrap.py fetch failed");
+    }
+  });
+
+  router.get("/project-host/nebius-setup.sh", async (_req, res) => {
+    try {
+      const path = resolveNebiusSetupPath();
+      if (!path) {
+        res.status(500).send("nebius-setup.sh not found");
+        return;
+      }
+      const contents = readFileSync(path, "utf8");
+      res.type("text/x-sh").send(contents);
+    } catch (err) {
+      logger.warn("nebius-setup.sh fetch failed", err);
+      res.status(500).send("nebius-setup.sh fetch failed");
+    }
+  });
+
+  router.get("/project-host/gcp-setup.sh", async (_req, res) => {
+    try {
+      const path = resolveGcpSetupPath();
+      if (!path) {
+        res.status(500).send("gcp-setup.sh not found");
+        return;
+      }
+      const contents = readFileSync(path, "utf8");
+      res.type("text/x-sh").send(contents);
+    } catch (err) {
+      logger.warn("gcp-setup.sh fetch failed", err);
+      res.status(500).send("gcp-setup.sh fetch failed");
+    }
+  });
+
   router.get("/project-host/bootstrap", async (req, res) => {
     try {
       const token = extractToken(req);
@@ -64,7 +183,7 @@ export default function init(router: Router) {
         res.status(401).send("missing bootstrap token");
         return;
       }
-      const tokenInfo = await verifyBootstrapToken(token, {
+      const tokenInfo = await verifyProjectHostToken(token, {
         purpose: "bootstrap",
       });
       if (!tokenInfo) {
@@ -73,18 +192,34 @@ export default function init(router: Router) {
       }
       const hostRow = await loadHostRow(tokenInfo.host_id);
       let baseUrl: string;
+      const machine: HostMachine = hostRow?.metadata?.machine ?? {};
+      const selfHostMode = machine?.metadata?.self_host_mode;
+      const isSelfHostLocal =
+        machine?.cloud === "self-host" &&
+        (!selfHostMode || selfHostMode === "local");
+      if (isSelfHostLocal) {
+        const localConfig = getLaunchpadLocalConfig("local");
+        const httpPort = localConfig.http_port ?? 9200;
+        baseUrl = `http://127.0.0.1:${httpPort}`;
+      } else {
       try {
-        baseUrl = await siteURL();
+        const resolved = await resolveLaunchpadBootstrapUrl({
+          fallbackHost: req.get("host"),
+          fallbackProtocol: req.protocol,
+        });
+        baseUrl = resolved.baseUrl;
       } catch {
         const hostHeader = req.get("host") ?? "";
         const proto = req.protocol;
         const base = basePath === "/" ? "" : basePath;
         baseUrl = `${proto}://${hostHeader}${base}`;
       }
+      }
       const script = await buildBootstrapScriptWithStatus(
         hostRow,
         token,
         baseUrl,
+        undefined,
       );
       res.type("text/x-shellscript").send(script);
     } catch (err) {
@@ -100,7 +235,7 @@ export default function init(router: Router) {
         res.status(401).send("missing bootstrap token");
         return;
       }
-      const tokenInfo = await verifyBootstrapToken(token, {
+      const tokenInfo = await verifyProjectHostToken(token, {
         purpose: "bootstrap",
       });
       if (!tokenInfo) {
@@ -128,21 +263,23 @@ export default function init(router: Router) {
         res.status(401).send("missing bootstrap token");
         return;
       }
-      const tokenInfo = await verifyBootstrapToken(token, {
+      const tokenInfo = await verifyProjectHostToken(token, {
         purpose: "bootstrap",
       });
       if (!tokenInfo) {
         res.status(401).send("invalid bootstrap token");
         return;
       }
-      if (!conatPassword) {
-        res.status(500).send("conat password not configured");
-        return;
-      }
-      res.type("text/plain").send(conatPassword);
+      const issued = await createProjectHostMasterConatToken(
+        tokenInfo.host_id,
+        {
+        ttlMs: 1000 * 60 * 60 * 24 * 365, // 1 year
+        },
+      );
+      res.type("text/plain").send(issued.token);
     } catch (err) {
-      logger.warn("bootstrap conat password failed", err);
-      res.status(500).send("bootstrap conat password failed");
+      logger.warn("bootstrap conat token failed", err);
+      res.status(500).send("bootstrap conat token failed");
     }
   });
 }

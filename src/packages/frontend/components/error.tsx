@@ -25,7 +25,7 @@ export default function ShowError({
       banner={banner}
       style={style}
       showIcon
-      message={message}
+      title={message}
       type="error"
       description={
         <div style={{ maxHeight: "150px", overflow: "auto", textWrap: "wrap" }}>

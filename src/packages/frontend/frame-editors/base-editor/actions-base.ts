@@ -21,6 +21,50 @@ const WIKI_HELP_URL = "https://github.com/sagemathinc/cocalc/wiki/";
 const SAVE_ERROR = "Error saving file to disk. ";
 const SAVE_WORKAROUND =
   "Ensure your network connection is solid. If this problem persists, you might need to close and open this file, restart this project in project settings, or contact support (help@cocalc.com)";
+const FAST_OPEN_SYNCSTRING_DISABLE_QUERY_PARAM =
+  "cocalc_disable_fast_open_syncstring";
+const FAST_OPEN_SYNCSTRING_DISABLE_LOCAL_STORAGE_KEY =
+  "cocalc.disable_fast_open.syncstring";
+const FAST_OPEN_SYNCSTRING_STATUS = "Loading live collaboration...";
+const FAST_OPEN_HANDOFF_DIFF_STATUS =
+  "Updated to the latest live collaboration state.";
+
+function parseBooleanFlag(value?: string | null): boolean | undefined {
+  if (value == null) return;
+  const v = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return;
+}
+
+function isFastOpenSyncstringEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const queryDisable = parseBooleanFlag(
+      new URLSearchParams(window.location.search).get(
+        FAST_OPEN_SYNCSTRING_DISABLE_QUERY_PARAM,
+      ),
+    );
+    if (queryDisable === true) {
+      return false;
+    }
+  } catch {
+    // no-op
+  }
+  try {
+    const localDisable = parseBooleanFlag(
+      window.localStorage.getItem(
+        FAST_OPEN_SYNCSTRING_DISABLE_LOCAL_STORAGE_KEY,
+      ),
+    );
+    if (localDisable === true) {
+      return false;
+    }
+  } catch {
+    // no-op
+  }
+  return true;
+}
 
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
@@ -46,7 +90,11 @@ import {
   get_local_storage,
   set_local_storage,
 } from "@cocalc/frontend/misc/local-storage";
-import { log_opened_time } from "@cocalc/frontend/project/open-file";
+import {
+  log_opened_time,
+  mark_open_phase,
+  restart_open_timer,
+} from "@cocalc/frontend/project/open-file";
 import { ensure_project_running } from "@cocalc/frontend/project/project-start-warning";
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
 import { type SyncOpts, type PatchId } from "@cocalc/sync";
@@ -72,6 +120,7 @@ import {
   filename_extension,
   history_path,
   len,
+  path_to_tab,
   path_split,
   uuid,
 } from "@cocalc/util/misc";
@@ -166,6 +215,7 @@ export interface CodeEditorState {
   formatError?: string;
   formatInput?: string;
   status: string;
+  rtc_status?: "loading" | "live" | "error";
   read_only: boolean;
   settings: Map<string, any>; // settings specific to this file (but **not** this user or browser), e.g., spell check language.
   complete: Map<string, any>;
@@ -208,6 +258,11 @@ export class BaseEditorActions<
   private _update_misspelled_words_last_hash: any;
   private _active_id_history: string[] = [];
   private _spellcheck_is_supported: boolean = false;
+  private optimisticFastOpenEnabled: boolean = isFastOpenSyncstringEnabled();
+  private optimisticFastOpenToken: number = 0;
+  private optimisticFastOpenValue?: string;
+  private optimisticFastOpenApplied: boolean = false;
+  private optimisticFastOpenStatusToken: number = 0;
   // True when the next syncstring change event is expected to be our own commit,
   // so remote handling can skip re-merging our own write.
   private _suppress_remote_once: boolean = false;
@@ -249,6 +304,92 @@ export class BaseEditorActions<
       delete cmAny._applying_remote;
     });
     this.setState({ value: merged });
+  }
+
+  private canUseOptimisticFastOpen(): boolean {
+    return this.optimisticFastOpenEnabled && this.doctype === "syncstring";
+  }
+
+  private startOptimisticFastOpen(): void {
+    if (!this.canUseOptimisticFastOpen()) return;
+    const fs = this._get_project_actions()?.fs?.();
+    if (typeof fs?.readFile !== "function") return;
+    const token = ++this.optimisticFastOpenToken;
+    void (async () => {
+      try {
+        const raw = await fs.readFile(this.path, "utf8");
+        if (this.isClosed() || token !== this.optimisticFastOpenToken) return;
+        if (this._syncstring?.get_state?.() === "ready") return;
+        const value =
+          typeof raw === "string"
+            ? raw
+            : ((raw as any)?.toString?.("utf8") ?? `${raw ?? ""}`);
+        this.optimisticFastOpenValue = value;
+        this.optimisticFastOpenApplied = true;
+        this.setState({
+          value,
+          is_loaded: true,
+          read_only: true,
+          status: FAST_OPEN_SYNCSTRING_STATUS,
+          rtc_status: "loading",
+        });
+        mark_open_phase(this.project_id, this.path, "optimistic_ready", {
+          bytes: value.length,
+        });
+        // "Visible to user" for fast-open is when this fs.readFile result lands.
+        log_opened_time(this.project_id, this.path);
+      } catch {
+        // fallback to normal path when optimistic read fails
+      }
+    })();
+  }
+
+  private completeOptimisticFastOpen(): void {
+    if (!this.optimisticFastOpenApplied) return;
+    this.optimisticFastOpenToken += 1;
+    this.optimisticFastOpenApplied = false;
+    let liveValue: string | undefined;
+    let differs = false;
+    try {
+      liveValue = this._syncstring?.to_str();
+    } catch {
+      liveValue = undefined;
+    }
+    if (this.optimisticFastOpenValue != null && liveValue != null) {
+      if (this.optimisticFastOpenValue !== liveValue) {
+        differs = true;
+        mark_open_phase(this.project_id, this.path, "handoff_differs", {
+          optimistic_bytes: this.optimisticFastOpenValue.length,
+          live_bytes: liveValue.length,
+        });
+      }
+      this.setState({ value: liveValue });
+    }
+    this.optimisticFastOpenValue = undefined;
+    if (this.store?.get("status") === FAST_OPEN_SYNCSTRING_STATUS) {
+      this.setState({ status: "" });
+    }
+    if (differs) {
+      this.setTransientOptimisticFastOpenStatus(FAST_OPEN_HANDOFF_DIFF_STATUS);
+    }
+    this.setState({ rtc_status: "live" });
+    mark_open_phase(this.project_id, this.path, "handoff_done");
+  }
+
+  private setTransientOptimisticFastOpenStatus(
+    status: string,
+    durationMs: number = 5000,
+  ): void {
+    const token = ++this.optimisticFastOpenStatusToken;
+    this.setState({ status });
+    void (async () => {
+      await delay(durationMs);
+      if (this.isClosed()) return;
+      if (token !== this.optimisticFastOpenStatusToken) return;
+      if (this.store?.get("status") === status) {
+        this.setState({ status: "" });
+      }
+    })();
   }
 
   // Entry point for any syncstring change: merge remote with live buffer and apply.
@@ -295,11 +436,7 @@ export class BaseEditorActions<
     this.string_cols = descriptor.string_cols;
   }
 
-  _init(
-    project_id: string,
-    path: string,
-    store: any,
-  ): void {
+  _init(project_id: string, path: string, store: any): void {
     this._save_local_view_state = debounce(
       () => this.__save_local_view_state(),
       1500,
@@ -421,17 +558,49 @@ export class BaseEditorActions<
       }
     }
 
+    // File-open timing starts when live sync initialization actually begins,
+    // not when a tab was created in the background.
+    restart_open_timer(this.project_id, this.path, { source: "sync_init" });
+    if (this.doctype === "syncstring") {
+      this.setState({ rtc_status: "loading" });
+    }
+    this.startOptimisticFastOpen();
     const sessionStart = Date.now();
+    const closeSyncdocAndFile = () => {
+      this._syncstring.close();
+      const projectActions = this._get_project_actions();
+      const store = projectActions?.get_store?.();
+      const openFiles = store?.get("open_files");
+      const activeTab = store?.get("active_project_tab");
+      const syncPath = this.path;
+      const toClose = new Set<string>();
+
+      if (openFiles?.has?.(syncPath)) {
+        toClose.add(syncPath);
+      }
+      openFiles?.forEach?.((_obj, displayPath) => {
+        const mappedSyncPath = openFiles.getIn([displayPath, "sync_path"]);
+        if (mappedSyncPath === syncPath) {
+          toClose.add(displayPath);
+        }
+      });
+      if (toClose.size === 0) {
+        toClose.add(syncPath);
+      }
+      for (const displayPath of toClose) {
+        if (activeTab === path_to_tab(displayPath)) {
+          projectActions.close_tab(displayPath);
+        } else {
+          projectActions.close_file(displayPath);
+        }
+      }
+    };
     this._syncstring.on("deleted", () => {
       // the file was deleted -- if we get this right when
       // initializing, we ask user if they want to create file; if
       // file has been opened file a while, just close it.
-      const close = () => {
-        this._syncstring.close();
-        this._get_project_actions().close_file(this.path);
-      };
       if (Date.now() - sessionStart >= 10_000) {
-        close();
+        closeSyncdocAndFile();
       } else {
         // ask user
         (async () => {
@@ -443,20 +612,32 @@ export class BaseEditorActions<
               cancelText: "Close",
             }))
           ) {
-            close();
+            closeSyncdocAndFile();
           }
           this.openAnywaysModalIsOpen = false;
         })();
       }
     });
+    this._syncstring.on("history-reset", () => {
+      // Another session purged TimeTravel history for this file.
+      // Close this file so stale editors don't remain visible.
+      alert_message({
+        type: "warning",
+        title: "Edit history was purged",
+        message: `${this.path} was closed because its edit history was purged in another session.`,
+      });
+      closeSyncdocAndFile();
+    });
 
     this._syncstring.once("ready", (err) => {
+      mark_open_phase(this.project_id, this.path, "sync_ready");
       if (this.doctype != "none") {
         // doctype = 'none' must be handled elsewhere, e.g., terminals.
         log_opened_time(this.project_id, this.path);
       }
 
       if (err) {
+        this.setState({ rtc_status: "error" });
         this.set_error(`${err}\nFix this, then try opening the file again.`);
         return;
       }
@@ -466,9 +647,13 @@ export class BaseEditorActions<
       }
 
       this._syncstring_init = true;
+      if (this.doctype === "syncstring") {
+        this.setState({ rtc_status: "live" });
+      }
       this._syncstring_metadata();
       this._init_settings();
       this._init_syncstring_value();
+      this.completeOptimisticFastOpen();
       if (
         !this.store.get("is_loaded") &&
         (this._syncdb === undefined || this._syncdb_init)
@@ -498,6 +683,9 @@ export class BaseEditorActions<
     });
 
     this._syncstring.once("error", (err) => {
+      if (this.doctype === "syncstring") {
+        this.setState({ rtc_status: "error" });
+      }
       this.set_error(`${err}\nFix this, then try opening the file again.`);
     });
 
@@ -3070,7 +3258,7 @@ export class BaseEditorActions<
       if (node == null) return id;
       if (node.get("path") == path) return id; // already done;
       // Change it --
-    await this.setFrameToCodeEditor({ id, path });
+      await this.setFrameToCodeEditor({ id, path });
       return id;
     }
 

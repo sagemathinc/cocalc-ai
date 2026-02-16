@@ -11,6 +11,9 @@ import type { HostLroState } from "./use-host-ops";
 
 type UseHostListViewModelArgs = {
   hosts: Host[];
+  hostsLoading?: boolean;
+  hostsLoaded?: boolean;
+  hostsError?: string | null;
   hostOps?: Record<string, HostLroState>;
   onStart: (id: string) => void;
   onStop: (id: string, opts?: HostStopOptions) => void;
@@ -19,8 +22,10 @@ type UseHostListViewModelArgs = {
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
   onUpgrade?: (host: Host) => void;
+  onUpgradeFromHub?: (host: Host) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
+  onToggleStar: (host: Host) => void;
   selfHost?: {
     connectorMap: Map<string, { id: string; name?: string; last_seen?: string }>;
     isConnectorOnline: (connectorId?: string) => boolean;
@@ -44,6 +49,9 @@ type UseHostListViewModelArgs = {
 
 export const useHostListViewModel = ({
   hosts,
+  hostsLoading,
+  hostsLoaded,
+  hostsError,
   hostOps,
   onStart,
   onStop,
@@ -52,8 +60,10 @@ export const useHostListViewModel = ({
   onRefresh,
   onCancelOp,
   onUpgrade,
+  onUpgradeFromHub,
   onDetails,
   onEdit,
+  onToggleStar,
   selfHost,
   viewMode,
   setViewMode,
@@ -72,6 +82,9 @@ export const useHostListViewModel = ({
 }: UseHostListViewModelArgs) => {
   return {
     hosts,
+    hostsLoading,
+    hostsLoaded,
+    hostsError,
     hostOps,
     onStart,
     onStop,
@@ -80,8 +93,10 @@ export const useHostListViewModel = ({
     onRefresh,
     onCancelOp,
     onUpgrade,
+    onUpgradeFromHub,
     onDetails,
     onEdit,
+    onToggleStar,
     selfHost,
     viewMode,
     setViewMode,

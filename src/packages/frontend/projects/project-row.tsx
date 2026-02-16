@@ -194,6 +194,7 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
   function open_project_from_list(e?): void {
     actions.open_project({
       project_id,
+      target: "project-home",
       switch_to: !(e?.which === 2 || e?.ctrlKey || e?.metaKey),
     });
     e?.preventDefault();

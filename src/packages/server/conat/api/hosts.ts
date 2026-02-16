@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type {
   Host,
   HostBackupStatus,
+  HostConnectionInfo,
   HostMachine,
   HostStatus,
   HostCatalog,
@@ -12,8 +13,13 @@ import type {
   HostProjectRow,
   HostProjectsResponse,
 } from "@cocalc/conat/hub/api/hosts";
-import type { ProjectCopyRow, ProjectCopyState } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectCopyRow,
+  ProjectCopyState,
+} from "@cocalc/conat/hub/api/projects";
+import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
 import getLogger from "@cocalc/backend/logger";
+import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import {
   computePlacementPermission,
@@ -30,6 +36,7 @@ import {
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import isBanned from "@cocalc/server/accounts/is-banned";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import {
   gcpSafeName,
@@ -41,7 +48,8 @@ import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { revokeBootstrapTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
+import siteURL from "@cocalc/database/settings/site-url";
+import { revokeProjectHostTokensForHost } from "@cocalc/server/project-host/bootstrap-token";
 import {
   claimPendingCopies as claimPendingCopiesDb,
   updateCopyStatus as updateCopyStatusDb,
@@ -58,12 +66,30 @@ import {
   createConnectorRecord,
   ensureConnectorRecord,
   revokeConnector,
+  createPairingTokenForHost,
 } from "@cocalc/server/self-host/connector-tokens";
+import {
+  getExternalCredential as getExternalCredentialDb,
+  hasExternalCredential as hasExternalCredentialDb,
+  touchExternalCredential as touchExternalCredentialDb,
+  upsertExternalCredential as upsertExternalCredentialDb,
+  type ExternalCredentialScope,
+} from "@cocalc/server/external-credentials/store";
+import {
+  ensureSelfHostReverseTunnel,
+  runConnectorInstallOverSsh,
+} from "@cocalc/server/self-host/ssh-target";
 import {
   deleteCloudflareTunnel,
   hasCloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
-import { requireLaunchpadModeSelected } from "@cocalc/server/launchpad/mode";
+import { resolveOnPremHost } from "@cocalc/server/onprem";
+import { to_bool } from "@cocalc/util/db-schema/site-defaults";
+import { getLLMUsageStatus } from "@cocalc/server/llm/usage-status";
+import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
+import { saveResponse } from "@cocalc/server/llm/save-response";
+import { isCoreLanguageModel, type LanguageModelCore } from "@cocalc/util/db-schema/llm-utils";
+import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 function pool() {
   return getPool();
 }
@@ -107,6 +133,7 @@ function parseRow(
     can_place?: boolean;
     reason_unavailable?: string;
     backup_status?: HostBackupStatus;
+    starred?: boolean;
   } = {},
 ): Host {
   const metadata = row.metadata ?? {};
@@ -114,7 +141,7 @@ function parseRow(
   const machine: HostMachine | undefined = metadata.machine;
   const rawStatus = String(row.status ?? "");
   const normalizedStatus =
-    rawStatus === "active" ? "running" : (rawStatus || "off");
+    rawStatus === "active" ? "running" : rawStatus || "off";
   return {
     id: row.id,
     name: row.name ?? "Host",
@@ -140,6 +167,7 @@ function parseRow(
     can_start: opts.can_start,
     can_place: opts.can_place,
     reason_unavailable: opts.reason_unavailable,
+    starred: opts.starred,
     last_action: metadata.last_action,
     last_action_at: metadata.last_action_at,
     last_action_status: metadata.last_action_status,
@@ -345,7 +373,8 @@ async function markHostDeprovisioned(row: any, action: string) {
   delete nextMetadata.cloudflare_tunnel;
 
   logStatusUpdate(row.id, "deprovisioned", "api");
-  await revokeBootstrapTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
+  await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
   try {
     if (await hasCloudflareTunnel()) {
       await deleteCloudflareTunnel({
@@ -381,10 +410,7 @@ async function markHostDeprovisioned(row: any, action: string) {
   });
 }
 
-async function loadHostForView(
-  id: string,
-  account_id?: string,
-): Promise<any> {
+async function loadHostForView(id: string, account_id?: string): Promise<any> {
   const owner = requireAccount(account_id);
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1`,
@@ -423,7 +449,10 @@ function requireCreateHosts(entitlements: any) {
   }
 }
 
-export { getBackupConfig, recordProjectBackup } from "@cocalc/server/project-backup";
+export {
+  getBackupConfig,
+  recordProjectBackup,
+} from "@cocalc/server/project-backup";
 
 export async function touchProject({
   host_id,
@@ -498,6 +527,664 @@ export async function updateCopyStatus({
   });
 }
 
+async function assertHostCredentialProjectAccess({
+  host_id,
+  project_id,
+  owner_account_id,
+}: {
+  host_id: string;
+  project_id: string;
+  owner_account_id?: string;
+}): Promise<void> {
+  const { rowCount } = await pool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+        AND ($3::text IS NULL OR users ? $3::text)
+      LIMIT 1
+    `,
+    [project_id, host_id, owner_account_id ?? null],
+  );
+  if (!rowCount) {
+    throw new Error("host is not authorized for this credential project");
+  }
+}
+
+async function assertAccountCanIssueProjectHostToken({
+  account_id,
+  host_id,
+  project_id,
+}: {
+  account_id: string;
+  host_id: string;
+  project_id?: string;
+}): Promise<void> {
+  if (await isAdmin(account_id)) {
+    return;
+  }
+
+  // If project_id is supplied, require collaborator access and verify placement.
+  if (project_id) {
+    const { rows } = await pool().query<{
+      host_id: string | null;
+      group: string | null;
+    }>(
+      `
+      SELECT
+        host_id,
+        users -> $2::text ->> 'group' AS "group"
+      FROM projects
+      WHERE project_id=$1
+        AND deleted IS NOT true
+      LIMIT 1
+    `,
+      [project_id, account_id],
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new Error("project not found");
+    }
+    if (row.host_id !== host_id) {
+      throw new Error("project is not assigned to the requested host");
+    }
+    if (row.group === "owner" || row.group === "collaborator") {
+      return;
+    }
+  }
+
+  // Host owner/collaborator controls are also valid authorization paths.
+  try {
+    await loadHostForListing(host_id, account_id);
+    return;
+  } catch {
+    // continue to project-based fallback check
+  }
+
+  // Fallback: allow if this account collaborates on any project hosted here.
+  const { rowCount } = await pool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE host_id=$1
+        AND deleted IS NOT true
+        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')
+      LIMIT 1
+    `,
+    [host_id, account_id],
+  );
+  if (!rowCount) {
+    throw new Error("not authorized for project-host access token");
+  }
+}
+
+export async function issueProjectHostAuthToken({
+  account_id,
+  host_id,
+  project_id,
+  ttl_seconds,
+}: {
+  account_id?: string;
+  host_id: string;
+  project_id?: string;
+  ttl_seconds?: number;
+}): Promise<{
+  host_id: string;
+  token: string;
+  expires_at: number;
+}> {
+  const owner = requireAccount(account_id);
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (await isBanned(owner)) {
+    throw new Error("account is banned");
+  }
+
+  await assertAccountCanIssueProjectHostToken({
+    account_id: owner,
+    host_id,
+    project_id,
+  });
+  if (project_id) {
+    // Keep project-host local ACL up to date before issuing browser token.
+    // This is best-effort fast path for grant/revoke propagation.
+    await syncProjectUsersOnHost({
+      project_id,
+      expected_host_id: host_id,
+    });
+  }
+
+  const { token, expires_at } = issueProjectHostAuthTokenJwt({
+    account_id: owner,
+    host_id,
+    ttl_seconds,
+    // Hub signs with Ed25519 private key; project-host verifies with public key.
+    private_key: getProjectHostAuthTokenPrivateKey(),
+  });
+  return { host_id, token, expires_at };
+}
+
+function normalizeExternalCredentialSelector({
+  provider,
+  kind,
+  scope,
+  owner_account_id,
+  project_id,
+  organization_id,
+}: {
+  provider: string;
+  kind: string;
+  scope: ExternalCredentialScope;
+  owner_account_id?: string;
+  project_id?: string;
+  organization_id?: string;
+}) {
+  const normalizedProvider = `${provider ?? ""}`.trim().toLowerCase();
+  const normalizedKind = `${kind ?? ""}`.trim().toLowerCase();
+  const normalizedScope = `${scope ?? ""}`.trim().toLowerCase() as ExternalCredentialScope;
+  if (!normalizedProvider) throw new Error("provider must be specified");
+  if (!normalizedKind) throw new Error("kind must be specified");
+  if (
+    normalizedScope !== "account" &&
+    normalizedScope !== "project" &&
+    normalizedScope !== "organization" &&
+    normalizedScope !== "site"
+  ) {
+    throw new Error(`unsupported scope '${scope}'`);
+  }
+  if (normalizedScope === "site") {
+    throw new Error("site scope is not writable via host API");
+  }
+  return {
+    provider: normalizedProvider,
+    kind: normalizedKind,
+    scope: normalizedScope,
+    owner_account_id,
+    project_id,
+    organization_id,
+  };
+}
+
+export async function upsertExternalCredential({
+  host_id,
+  project_id,
+  selector,
+  payload,
+  metadata,
+}: {
+  host_id?: string;
+  project_id: string;
+  selector: {
+    provider: string;
+    kind: string;
+    scope: ExternalCredentialScope;
+    owner_account_id?: string;
+    project_id?: string;
+    organization_id?: string;
+  };
+  payload: string;
+  metadata?: Record<string, any>;
+}): Promise<{ id: string; created: boolean }> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!selector) {
+    throw new Error("selector must be specified");
+  }
+
+  const normalized = normalizeExternalCredentialSelector(selector);
+  const selectorProjectId =
+    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+  if (normalized.scope === "account" && !normalized.owner_account_id) {
+    throw new Error("owner_account_id must be specified for account scope");
+  }
+  if (normalized.scope === "organization" && !normalized.organization_id) {
+    throw new Error("organization_id must be specified for organization scope");
+  }
+  if (normalized.scope === "project" && !selectorProjectId) {
+    throw new Error("project_id must be specified for project scope");
+  }
+
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: normalized.owner_account_id,
+  });
+  if (selectorProjectId && selectorProjectId !== project_id) {
+    await assertHostCredentialProjectAccess({
+      host_id,
+      project_id: selectorProjectId,
+      owner_account_id: normalized.owner_account_id,
+    });
+  }
+
+  return await upsertExternalCredentialDb({
+    selector: {
+      provider: normalized.provider,
+      kind: normalized.kind,
+      scope: normalized.scope,
+      owner_account_id: normalized.owner_account_id,
+      project_id: selectorProjectId,
+      organization_id: normalized.organization_id,
+    },
+    payload,
+    metadata: metadata ?? {},
+  });
+}
+
+export async function getExternalCredential({
+  host_id,
+  project_id,
+  selector,
+}: {
+  host_id?: string;
+  project_id: string;
+  selector: {
+    provider: string;
+    kind: string;
+    scope: ExternalCredentialScope;
+    owner_account_id?: string;
+    project_id?: string;
+    organization_id?: string;
+  };
+}): Promise<{
+  id: string;
+  payload: string;
+  metadata: Record<string, any>;
+  created: Date;
+  updated: Date;
+  revoked: Date | null;
+  last_used: Date | null;
+} | undefined> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!selector) {
+    throw new Error("selector must be specified");
+  }
+
+  const normalized = normalizeExternalCredentialSelector(selector);
+  const selectorProjectId =
+    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+  if (normalized.scope === "account" && !normalized.owner_account_id) {
+    throw new Error("owner_account_id must be specified for account scope");
+  }
+  if (normalized.scope === "organization" && !normalized.organization_id) {
+    throw new Error("organization_id must be specified for organization scope");
+  }
+  if (normalized.scope === "project" && !selectorProjectId) {
+    throw new Error("project_id must be specified for project scope");
+  }
+
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: normalized.owner_account_id,
+  });
+  if (selectorProjectId && selectorProjectId !== project_id) {
+    await assertHostCredentialProjectAccess({
+      host_id,
+      project_id: selectorProjectId,
+      owner_account_id: normalized.owner_account_id,
+    });
+  }
+
+  const result = await getExternalCredentialDb({
+    selector: {
+      provider: normalized.provider,
+      kind: normalized.kind,
+      scope: normalized.scope,
+      owner_account_id: normalized.owner_account_id,
+      project_id: selectorProjectId,
+      organization_id: normalized.organization_id,
+    },
+  });
+  if (!result) {
+    return undefined;
+  }
+  return {
+    id: result.id,
+    payload: result.payload,
+    metadata: result.metadata,
+    created: result.created,
+    updated: result.updated,
+    revoked: result.revoked,
+    last_used: result.last_used,
+  };
+}
+
+export async function hasExternalCredential({
+  host_id,
+  project_id,
+  selector,
+}: {
+  host_id?: string;
+  project_id: string;
+  selector: {
+    provider: string;
+    kind: string;
+    scope: ExternalCredentialScope;
+    owner_account_id?: string;
+    project_id?: string;
+    organization_id?: string;
+  };
+}): Promise<boolean> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!selector) {
+    throw new Error("selector must be specified");
+  }
+
+  const normalized = normalizeExternalCredentialSelector(selector);
+  const selectorProjectId =
+    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+  if (normalized.scope === "account" && !normalized.owner_account_id) {
+    throw new Error("owner_account_id must be specified for account scope");
+  }
+  if (normalized.scope === "organization" && !normalized.organization_id) {
+    throw new Error("organization_id must be specified for organization scope");
+  }
+  if (normalized.scope === "project" && !selectorProjectId) {
+    throw new Error("project_id must be specified for project scope");
+  }
+
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: normalized.owner_account_id,
+  });
+  if (selectorProjectId && selectorProjectId !== project_id) {
+    await assertHostCredentialProjectAccess({
+      host_id,
+      project_id: selectorProjectId,
+      owner_account_id: normalized.owner_account_id,
+    });
+  }
+
+  return await hasExternalCredentialDb({
+    selector: {
+      provider: normalized.provider,
+      kind: normalized.kind,
+      scope: normalized.scope,
+      owner_account_id: normalized.owner_account_id,
+      project_id: selectorProjectId,
+      organization_id: normalized.organization_id,
+    },
+  });
+}
+
+export async function touchExternalCredential({
+  host_id,
+  project_id,
+  selector,
+}: {
+  host_id?: string;
+  project_id: string;
+  selector: {
+    provider: string;
+    kind: string;
+    scope: ExternalCredentialScope;
+    owner_account_id?: string;
+    project_id?: string;
+    organization_id?: string;
+  };
+}): Promise<boolean> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!selector) {
+    throw new Error("selector must be specified");
+  }
+
+  const normalized = normalizeExternalCredentialSelector(selector);
+  const selectorProjectId =
+    normalized.project_id ?? (normalized.scope === "project" ? project_id : undefined);
+  if (normalized.scope === "account" && !normalized.owner_account_id) {
+    throw new Error("owner_account_id must be specified for account scope");
+  }
+  if (normalized.scope === "organization" && !normalized.organization_id) {
+    throw new Error("organization_id must be specified for organization scope");
+  }
+  if (normalized.scope === "project" && !selectorProjectId) {
+    throw new Error("project_id must be specified for project scope");
+  }
+
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: normalized.owner_account_id,
+  });
+  if (selectorProjectId && selectorProjectId !== project_id) {
+    await assertHostCredentialProjectAccess({
+      host_id,
+      project_id: selectorProjectId,
+      owner_account_id: normalized.owner_account_id,
+    });
+  }
+
+  return await touchExternalCredentialDb({
+    selector: {
+      provider: normalized.provider,
+      kind: normalized.kind,
+      scope: normalized.scope,
+      owner_account_id: normalized.owner_account_id,
+      project_id: selectorProjectId,
+      organization_id: normalized.organization_id,
+    },
+  });
+}
+
+export async function getSiteOpenAiApiKey({
+  host_id,
+}: {
+  host_id?: string;
+}): Promise<{
+  enabled: boolean;
+  has_api_key: boolean;
+  api_key?: string;
+}> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  const settings = await getServerSettings();
+  const enabled = to_bool(settings.openai_enabled);
+  const apiKey = `${settings.openai_api_key ?? ""}`.trim();
+  const has_api_key = apiKey.length > 0;
+  return {
+    enabled,
+    has_api_key,
+    api_key: enabled && has_api_key ? apiKey : undefined,
+  };
+}
+
+function formatUsageLimitMessage({
+  window,
+  reset_in,
+}: {
+  window: "5h" | "7d";
+  reset_in?: string;
+}): string {
+  const label = window === "5h" ? "5-hour" : "7-day";
+  return `You have reached your ${label} LLM usage limit.${reset_in ? ` Limit resets in ${reset_in}.` : ""} Please try again later or upgrade your membership.`;
+}
+
+export async function checkCodexSiteUsageAllowance({
+  host_id,
+  project_id,
+  account_id,
+  model: _model,
+}: {
+  host_id?: string;
+  project_id: string;
+  account_id: string;
+  model?: string;
+}): Promise<{
+  allowed: boolean;
+  reason?: string;
+  window?: "5h" | "7d";
+  reset_in?: string;
+}> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!account_id) {
+    throw new Error("account_id must be specified");
+  }
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: account_id,
+  });
+
+  const status = await getLLMUsageStatus({ account_id });
+  for (const window of status.windows) {
+    const limit = window.limit;
+    if (limit == null) {
+      continue;
+    }
+    // Deny once usage reaches the configured limit (not only after exceeding).
+    if (limit <= 0 || window.used >= limit) {
+      return {
+        allowed: false,
+        reason: formatUsageLimitMessage({
+          window: window.window,
+          reset_in: window.reset_in,
+        }),
+        window: window.window,
+        reset_in: window.reset_in,
+      };
+    }
+  }
+
+  return { allowed: true };
+}
+
+function getCodexFallbackBillingModel(): LanguageModelCore {
+  const configured = (
+    process.env.COCALC_CODEX_SITE_USAGE_FALLBACK_MODEL ?? "gpt-5-mini"
+  ).trim();
+  if (isCoreLanguageModel(configured)) {
+    return configured;
+  }
+  return "gpt-5-mini";
+}
+
+async function computeCodexSiteUsageUnits({
+  model,
+  prompt_tokens,
+  completion_tokens,
+}: {
+  model?: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+}): Promise<{
+  usage_units: number;
+  billed_model: string;
+}> {
+  const normalized = `${model ?? ""}`.trim();
+  if (isCoreLanguageModel(normalized)) {
+    return {
+      usage_units: await computeUsageUnits({
+        model: normalized,
+        prompt_tokens,
+        completion_tokens,
+      }),
+      billed_model: normalized,
+    };
+  }
+  const fallback = getCodexFallbackBillingModel();
+  return {
+    usage_units: await computeUsageUnits({
+      model: fallback,
+      prompt_tokens,
+      completion_tokens,
+    }),
+    billed_model: fallback,
+  };
+}
+
+export async function recordCodexSiteUsage({
+  host_id,
+  project_id,
+  account_id,
+  model,
+  path,
+  prompt_tokens,
+  completion_tokens,
+  total_time_s,
+}: {
+  host_id?: string;
+  project_id: string;
+  account_id: string;
+  model?: string;
+  path?: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_time_s: number;
+}): Promise<{ usage_units: number }> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  if (!account_id) {
+    throw new Error("account_id must be specified");
+  }
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id: account_id,
+  });
+
+  const prompt = Math.max(0, Math.floor(prompt_tokens));
+  const completion = Math.max(0, Math.floor(completion_tokens));
+  const totalTokens = prompt + completion;
+  const { usage_units, billed_model } = await computeCodexSiteUsageUnits({
+    model,
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+  });
+
+  await saveResponse({
+    account_id,
+    analytics_cookie: undefined,
+    history: [],
+    input: `[codex-site-key] model=${model ?? "unknown"}`,
+    model: billed_model,
+    output: "",
+    path,
+    project_id,
+    prompt_tokens: prompt,
+    system: "",
+    tag: "codex-site-key",
+    total_time_s: Math.max(0, Number(total_time_s) || 0),
+    total_tokens: totalTokens,
+    usage_units,
+  });
+
+  return { usage_units };
+}
+
 export async function listHosts({
   account_id,
   admin_view,
@@ -516,7 +1203,9 @@ export async function listHosts({
   const filters: string[] = [];
   const params: any[] = [];
   if (!admin_view) {
-    filters.push(`(metadata->>'owner' = $${params.length + 1} OR tier IS NOT NULL)`);
+    filters.push(
+      `(metadata->>'owner' = $${params.length + 1} OR tier IS NOT NULL)`,
+    );
     params.push(owner);
   }
   if (!include_deleted) {
@@ -541,6 +1230,8 @@ export async function listHosts({
     const isCollab = collaborators.includes(owner);
     const tier = normalizeHostTier(row.tier);
     const shared = tier != null;
+    const starredBy = (row.starred_by ?? []) as string[];
+    const starred = starredBy.includes(owner);
 
     const scope: Host["scope"] = isOwner
       ? "owned"
@@ -572,10 +1263,84 @@ export async function listHosts({
         can_start,
         reason_unavailable,
         backup_status: backupStatus.get(row.id),
+        starred,
       }),
     );
   }
   return result;
+}
+
+export async function resolveHostConnection({
+  account_id,
+  host_id,
+}: {
+  account_id?: string;
+  host_id: string;
+}): Promise<HostConnectionInfo> {
+  const owner = requireAccount(account_id);
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  const { rows } = await pool().query(
+    `SELECT id, name, public_url, internal_url, ssh_server, metadata, tier
+     FROM project_hosts
+     WHERE id=$1 AND deleted IS NULL`,
+    [host_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("host not found");
+  }
+  const metadata = row.metadata ?? {};
+  const rowOwner = metadata.owner ?? "";
+  const collaborators = (metadata.collaborators ?? []) as string[];
+  const isOwner = rowOwner === owner;
+  const isCollab = collaborators.includes(owner);
+  const isShared = row.tier != null;
+  if (!isOwner && !isCollab && !isShared) {
+    const { rows: projectRows } = await pool().query(
+      `SELECT 1
+       FROM projects
+       WHERE host_id=$1 AND users ? $2
+       LIMIT 1`,
+      [host_id, owner],
+    );
+    if (!projectRows.length) {
+      throw new Error("not authorized");
+    }
+  }
+  const machine = metadata?.machine ?? {};
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+
+  let connect_url: string | null = null;
+  let ssh_server: string | null = row.ssh_server ?? null;
+  let local_proxy = false;
+  let ready = false;
+  if (isLocalSelfHost) {
+    local_proxy = true;
+    ready = !!metadata?.self_host?.http_tunnel_port;
+    const sshPort = metadata?.self_host?.ssh_tunnel_port;
+    if (sshPort) {
+      const sshHost = resolveOnPremHost();
+      ssh_server = `${sshHost}:${sshPort}`;
+    }
+  } else {
+    connect_url = row.public_url ?? row.internal_url ?? null;
+    ready = !!connect_url;
+  }
+
+  return {
+    host_id: row.id,
+    name: row.name ?? null,
+    ssh_server,
+    connect_url,
+    local_proxy,
+    ready,
+  };
 }
 
 export async function listHostProjects({
@@ -677,14 +1442,13 @@ export async function listHostProjects({
   }
 
   const summaryMap = await loadHostBackupStatus([id]);
-  const summary =
-    summaryMap.get(id) ?? {
-      total: 0,
-      provisioned: 0,
-      running: 0,
-      provisioned_up_to_date: 0,
-      provisioned_needs_backup: 0,
-    };
+  const summary = summaryMap.get(id) ?? {
+    total: 0,
+    provisioned: 0,
+    running: 0,
+    provisioned_up_to_date: 0,
+    provisioned_needs_backup: 0,
+  };
 
   const resultRows: HostProjectRow[] = trimmed.map((row) => ({
     project_id: row.project_id,
@@ -719,8 +1483,9 @@ export async function getCatalog({
       connector_id: string;
       name: string | null;
       last_seen: Date | null;
+      metadata: any;
     }>(
-      `SELECT connector_id, name, last_seen
+      `SELECT connector_id, name, last_seen, metadata
          FROM self_host_connectors
         WHERE account_id=$1 AND revoked IS NOT TRUE
         ORDER BY created DESC`,
@@ -730,7 +1495,17 @@ export async function getCatalog({
       id: row.connector_id,
       name: row.name ?? undefined,
       last_seen: row.last_seen ? row.last_seen.toISOString() : undefined,
+      version: row.metadata?.version,
     }));
+    const { project_hosts_self_host_alpha_enabled } =
+      await getServerSettings();
+    const modes = await hasCloudflareTunnel()
+      ? ["cloudflare", "local"]
+      : ["local"];
+    const kinds = ["direct"];
+    if (project_hosts_self_host_alpha_enabled) {
+      kinds.push("multipass");
+    }
     return {
       provider: cloud,
       entries: [
@@ -738,6 +1513,16 @@ export async function getCatalog({
           kind: "connectors",
           scope: "account",
           payload: connectors,
+        },
+        {
+          kind: "self_host_modes",
+          scope: "account",
+          payload: modes,
+        },
+        {
+          kind: "self_host_kinds",
+          scope: "account",
+          payload: kinds,
         },
       ],
       provider_capabilities: Object.fromEntries(
@@ -838,7 +1623,6 @@ export async function createHost({
   gpu?: boolean;
   machine?: Host["machine"];
 }): Promise<Host> {
-  await requireLaunchpadModeSelected();
   const owner = requireAccount(account_id);
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
@@ -847,6 +1631,50 @@ export async function createHost({
   const machineCloud = normalizeProviderId(machine?.cloud);
   const isSelfHost = machineCloud === "self-host";
   const initialStatus = machineCloud && !isSelfHost ? "starting" : "off";
+  const rawSelfHostMode = machine?.metadata?.self_host_mode;
+  const selfHostMode =
+    rawSelfHostMode === "cloudflare" || rawSelfHostMode === "local"
+      ? rawSelfHostMode
+      : undefined;
+  if (isSelfHost && rawSelfHostMode && !selfHostMode) {
+    throw new Error(`invalid self_host_mode '${rawSelfHostMode}'`);
+  }
+  const rawSelfHostKind = machine?.metadata?.self_host_kind;
+  const selfHostKind =
+    rawSelfHostKind === "direct" || rawSelfHostKind === "multipass"
+      ? rawSelfHostKind
+      : undefined;
+  if (isSelfHost && rawSelfHostKind && !selfHostKind) {
+    throw new Error(`invalid self_host_kind '${rawSelfHostKind}'`);
+  }
+  const effectiveSelfHostKind = isSelfHost
+    ? (selfHostKind ?? "direct")
+    : undefined;
+  if (isSelfHost && selfHostMode === "cloudflare") {
+    if (!(await hasCloudflareTunnel())) {
+      throw new Error("cloudflare tunnel is not configured");
+    }
+  }
+  const {
+    project_hosts_bootstrap_channel,
+    project_hosts_bootstrap_version,
+  } = await getServerSettings();
+  const requestedBootstrapChannel =
+    typeof machine?.metadata?.bootstrap_channel === "string"
+      ? machine.metadata.bootstrap_channel.trim()
+      : "";
+  const requestedBootstrapVersion =
+    typeof machine?.metadata?.bootstrap_version === "string"
+      ? machine.metadata.bootstrap_version.trim()
+      : "";
+  const bootstrapChannel =
+    requestedBootstrapChannel ||
+    project_hosts_bootstrap_channel?.trim() ||
+    "latest";
+  const bootstrapVersion =
+    requestedBootstrapVersion ||
+    project_hosts_bootstrap_version?.trim() ||
+    "";
   let resolvedRegion = region;
   let connectorId: string | undefined;
   if (isSelfHost) {
@@ -860,16 +1688,20 @@ export async function createHost({
   }
   const normalizedMachine = normalizeMachineGpuInPlace(
     {
-    ...(machine ?? {}),
-    ...(machineCloud ? { cloud: machineCloud } : {}),
-    ...(connectorId
-      ? {
-          metadata: {
-            ...(machine?.metadata ?? {}),
-            connector_id: connectorId,
-          },
-        }
-      : {}),
+      ...(machine ?? {}),
+      ...(machineCloud ? { cloud: machineCloud } : {}),
+      ...(connectorId
+        ? {
+            metadata: {
+              ...(machine?.metadata ?? {}),
+              connector_id: connectorId,
+              ...(selfHostMode ? { self_host_mode: selfHostMode } : {}),
+              ...(effectiveSelfHostKind
+                ? { self_host_kind: effectiveSelfHostKind }
+                : {}),
+            },
+          }
+        : {}),
     },
     gpu,
   );
@@ -888,6 +1720,8 @@ export async function createHost({
         size,
         gpu: gpuEnabled,
         machine: normalizedMachine,
+        ...(bootstrapChannel ? { bootstrap_channel: bootstrapChannel } : {}),
+        ...(bootstrapVersion ? { bootstrap_version: bootstrapVersion } : {}),
       },
       now,
     ],
@@ -925,7 +1759,6 @@ async function createHostLro({
   input: any;
   dedupe_key?: string;
 }): Promise<HostLroResponse> {
-  await requireLaunchpadModeSelected();
   const op = await createLro({
     kind,
     scope_type: "host",
@@ -991,13 +1824,60 @@ export async function startHostInternal({
   const row = await loadHostForStartStop(id, account_id);
   const metadata = row.metadata ?? {};
   const owner = metadata.owner ?? account_id;
-  const nextMetadata = { ...metadata };
-  if (nextMetadata.bootstrap) {
-    // bootstrap should be idempotent and we bootstrap on EVERY start
-    delete nextMetadata.bootstrap;
-  }
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
+  if (machineCloud === "self-host" && sshTarget && owner) {
+    await ensureSelfHostReverseTunnel({
+      host_id: row.id,
+      ssh_target: sshTarget,
+    });
+    const { rows: connectorRows } = await pool().query<{
+      connector_id: string;
+      last_seen: Date | null;
+    }>(
+      `SELECT connector_id, last_seen
+         FROM self_host_connectors
+        WHERE host_id=$1 AND revoked IS NOT TRUE
+        ORDER BY last_seen DESC NULLS LAST
+        LIMIT 1`,
+      [row.id],
+    );
+    const connectorRow = connectorRows[0];
+    const lastSeen = connectorRow?.last_seen;
+    const connectorOnline =
+      !!lastSeen && Date.now() - lastSeen.getTime() < 2 * 60 * 1000;
+    if (!connectorOnline) {
+      const tokenInfo = await createPairingTokenForHost({
+        account_id: owner,
+        host_id: row.id,
+        ttlMs: 30 * 60 * 1000,
+      });
+      const { project_hosts_self_host_connector_version } =
+        await getServerSettings();
+      const connectorVersion =
+        project_hosts_self_host_connector_version?.trim() || undefined;
+      const { rows: metaRows } = await pool().query<{ metadata: any }>(
+        `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+        [row.id],
+      );
+      const updatedMetadata = metaRows[0]?.metadata ?? metadata;
+      const reversePort = Number(
+        updatedMetadata?.self_host?.ssh_reverse_port ?? 0,
+      );
+      if (!reversePort) {
+        throw new Error("self-host ssh reverse port missing");
+      }
+      await runConnectorInstallOverSsh({
+        host_id: row.id,
+        ssh_target: sshTarget,
+        pairing_token: tokenInfo.token,
+        name: row.name ?? undefined,
+        ssh_port: reversePort,
+        version: connectorVersion,
+      });
+    }
+  }
   if (machineCloud === "self-host" && row.region && owner) {
     await ensureConnectorRecord({
       connector_id: row.region,
@@ -1005,6 +1885,23 @@ export async function startHostInternal({
       host_id: row.id,
       name: row.name ?? undefined,
     });
+  }
+  const { rows: metaRowsFinal } = await pool().query<{ metadata: any }>(
+    `SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+    [row.id],
+  );
+  const nextMetadata = metaRowsFinal[0]?.metadata ?? metadata;
+  if (nextMetadata?.self_host?.auto_start_pending) {
+    const nextSelfHost = {
+      ...(nextMetadata.self_host ?? {}),
+      auto_start_pending: false,
+      auto_start_cleared_at: new Date().toISOString(),
+    };
+    nextMetadata.self_host = nextSelfHost;
+  }
+  if (nextMetadata?.bootstrap) {
+    // bootstrap should be idempotent and we bootstrap on EVERY start
+    delete nextMetadata.bootstrap;
   }
   logStatusUpdate(id, "starting", "api");
   await pool().query(
@@ -1133,7 +2030,9 @@ export async function restartHostInternal({
   const caps = provider?.entry.capabilities;
   const wantsHard = mode === "hard";
   if (machineCloud && caps) {
-    const supported = wantsHard ? caps.supportsHardRestart : caps.supportsRestart;
+    const supported = wantsHard
+      ? caps.supportsHardRestart
+      : caps.supportsRestart;
     if (!supported) {
       throw new Error(
         wantsHard ? "hard reboot is not supported" : "reboot is not supported",
@@ -1160,7 +2059,10 @@ export async function restartHostInternal({
       [id, "running", new Date()],
     );
   } else {
-    await markHostActionPending(id, mode === "hard" ? "hard_restart" : "restart");
+    await markHostActionPending(
+      id,
+      mode === "hard" ? "hard_restart" : "restart",
+    );
     await enqueueCloudVmWork({
       vm_id: id,
       action: mode === "hard" ? "hard_restart" : "restart",
@@ -1290,6 +2192,51 @@ export async function renameHost({
   return parseRow(rows[0]);
 }
 
+export async function setHostStar({
+  account_id,
+  id,
+  starred,
+}: {
+  account_id?: string;
+  id: string;
+  starred: boolean;
+}): Promise<void> {
+  const owner = requireAccount(account_id);
+  const { rows } = await pool().query(
+    `SELECT id, metadata, tier, deleted, starred_by
+     FROM project_hosts
+     WHERE id=$1`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row || row.deleted) {
+    throw new Error("host not found");
+  }
+  const metadata = row.metadata ?? {};
+  const rowOwner = metadata.owner ?? "";
+  const collaborators = (metadata.collaborators ?? []) as string[];
+  const isOwner = rowOwner === owner;
+  const isCollab = collaborators.includes(owner);
+  const shared = row.tier != null;
+  const isAdminUser = await isAdmin(owner);
+  if (!isOwner && !isCollab && !shared && !isAdminUser) {
+    throw new Error("not authorized");
+  }
+  const current = (row.starred_by ?? []) as string[];
+  const next = new Set(current);
+  if (starred) {
+    next.add(owner);
+  } else {
+    next.delete(owner);
+  }
+  await pool().query(
+    `UPDATE project_hosts
+     SET starred_by=$2, updated=NOW()
+     WHERE id=$1`,
+    [id, [...next]],
+  );
+}
+
 export async function updateHostMachine({
   account_id,
   id,
@@ -1304,6 +2251,7 @@ export async function updateHostMachine({
   storage_mode,
   region,
   zone,
+  self_host_ssh_target,
 }: {
   account_id?: string;
   id: string;
@@ -1318,6 +2266,7 @@ export async function updateHostMachine({
   storage_mode?: HostMachine["storage_mode"];
   region?: string;
   zone?: string;
+  self_host_ssh_target?: string;
 }): Promise<Host> {
   const row = await loadOwnedHost(id, account_id);
   const metadata = row.metadata ?? {};
@@ -1398,6 +2347,18 @@ export async function updateHostMachine({
     nextMachine.metadata = { ...(nextMachine.metadata ?? {}), ram_gb: nextRam };
     changed = true;
     nonDiskChange = true;
+  }
+  if (isSelfHost && typeof self_host_ssh_target === "string") {
+    const nextTarget = self_host_ssh_target.trim();
+    const currentTarget = String(machine.metadata?.self_host_ssh_target ?? "");
+    if (nextTarget !== currentTarget) {
+      nextMachine.metadata = {
+        ...(nextMachine.metadata ?? {}),
+        self_host_ssh_target: nextTarget || undefined,
+      };
+      changed = true;
+      nonDiskChange = true;
+    }
   }
   if (nextDisk != null) {
     const currentDisk = Number(machine.disk_gb);
@@ -1580,7 +2541,9 @@ export async function updateHostMachine({
     if (!runtime.instance_id) {
       throw new Error("host is not provisioned");
     }
-    const { entry, creds } = await getProviderContext(machineCloud);
+    const { entry, creds } = await getProviderContext(machineCloud, {
+      region: row.region,
+    });
     await entry.provider.resizeDisk(runtime, nextDisk, creds);
     if (row.status !== "off") {
       const client = createHostControlClient({
@@ -1658,6 +2621,54 @@ export async function upgradeHostSoftware({
   });
 }
 
+export async function upgradeHostConnector({
+  account_id,
+  id,
+  version,
+}: {
+  account_id?: string;
+  id: string;
+  version?: string;
+}): Promise<void> {
+  const row = await loadHostForStartStop(id, account_id);
+  const metadata = row.metadata ?? {};
+  const machine = metadata.machine ?? {};
+  if (machine.cloud !== "self-host") {
+    throw new Error("host is not self-hosted");
+  }
+  const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
+  if (!sshTarget) {
+    throw new Error("missing self-host ssh target");
+  }
+  const owner = metadata.owner ?? account_id;
+  if (!owner) {
+    throw new Error("missing host owner");
+  }
+  const reversePort = await ensureSelfHostReverseTunnel({
+    host_id: row.id,
+    ssh_target: sshTarget,
+  });
+  const tokenInfo = await createPairingTokenForHost({
+    account_id: owner,
+    host_id: row.id,
+    ttlMs: 30 * 60 * 1000,
+  });
+  const { project_hosts_self_host_connector_version } =
+    await getServerSettings();
+  const connectorVersion =
+    version?.trim() ||
+    project_hosts_self_host_connector_version?.trim() ||
+    undefined;
+  await runConnectorInstallOverSsh({
+    host_id: row.id,
+    ssh_target: sshTarget,
+    pairing_token: tokenInfo.token,
+    name: row.name ?? undefined,
+    ssh_port: reversePort,
+    version: connectorVersion,
+  });
+}
+
 function assertHostRunningForUpgrade(row: any) {
   const status = String(row.status ?? "");
   if (status !== "active" && status !== "running") {
@@ -1665,7 +2676,9 @@ function assertHostRunningForUpgrade(row: any) {
   }
 }
 
-function mapUpgradeArtifact(artifact: string): "project_host" | "project_bundle" | "tools" | undefined {
+function mapUpgradeArtifact(
+  artifact: string,
+): "project_host" | "project_bundle" | "tools" | undefined {
   if (artifact === "project-host") return "project_host";
   if (artifact === "project" || artifact === "project-bundle") {
     return "project_bundle";
@@ -1687,9 +2700,36 @@ export async function upgradeHostSoftwareInternal({
 }): Promise<HostSoftwareUpgradeResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
+  let requestedBaseUrl = base_url;
+  if (requestedBaseUrl) {
+    try {
+      const parsed = new URL(requestedBaseUrl);
+      const host = parsed.hostname.toLowerCase();
+      if (
+        host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "::1" ||
+        host === "[::1]"
+      ) {
+        const publicSite = (await siteURL()).replace(/\/+$/, "");
+        requestedBaseUrl = `${publicSite}/software`;
+        logger.warn("upgrade host: replaced loopback software base url", {
+          host_id: id,
+          requested: base_url,
+          effective: requestedBaseUrl,
+        });
+      }
+    } catch {
+      // keep provided value as-is if it is not a valid URL
+    }
+  }
   const { project_hosts_software_base_url } = await getServerSettings();
+  const forcedSoftwareBaseUrl =
+    process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() ||
+    undefined;
   const resolvedBaseUrl =
-    base_url ??
+    requestedBaseUrl ??
+    forcedSoftwareBaseUrl ??
     project_hosts_software_base_url ??
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
     undefined;
@@ -1752,6 +2792,7 @@ export async function deleteHostInternal({
   id: string;
 }): Promise<void> {
   const row = await loadOwnedHost(id, account_id);
+  const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   if (row.status === "deprovisioned") {
     await pool().query(
       `UPDATE project_hosts SET deleted=NOW(), updated=NOW() WHERE id=$1 AND deleted IS NULL`,
@@ -1759,9 +2800,6 @@ export async function deleteHostInternal({
     );
     return;
   }
-  const metadata = row.metadata ?? {};
-  const machine: HostMachine = metadata.machine ?? {};
-  const machineCloud = normalizeProviderId(machine.cloud);
   if (machineCloud) {
     await enqueueCloudVmWork({
       vm_id: id,

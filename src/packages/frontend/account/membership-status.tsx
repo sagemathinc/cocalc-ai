@@ -6,10 +6,12 @@
 import {
   Alert,
   Button,
+  Collapse,
   Descriptions,
   Divider,
   Space,
   Tag,
+  Table,
   Typography,
 } from "antd";
 import { type ReactElement, useMemo, useState } from "react";
@@ -24,8 +26,12 @@ import { LLMUsageStatus } from "@cocalc/frontend/misc/llm-cost-estimation";
 import { labels } from "@cocalc/frontend/i18n";
 import { upgrades } from "@cocalc/util/upgrade-spec";
 import { capitalize, round2 } from "@cocalc/util/misc";
-import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
+import type {
+  MembershipDetails,
+  MembershipResolution,
+} from "@cocalc/conat/hub/api/purchases";
 import MembershipPurchaseModal from "./membership-purchase-modal";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const { Text } = Typography;
 
@@ -128,6 +134,7 @@ export function MembershipStatusPanel({
     null,
   );
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
+  const [details, setDetails] = useState<MembershipDetails | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [refreshToken, setRefreshToken] = useState<number>(0);
@@ -142,13 +149,15 @@ export function MembershipStatusPanel({
       setLoading(true);
       setError("");
       try {
-        const [membershipResult, tiersResult] = await Promise.all([
+        const [membershipResult, tiersResult, detailsResult] = await Promise.all([
           api("purchases/get-membership"),
           api("purchases/get-membership-tiers"),
+          webapp_client.conat_client.hub.purchases.getMembershipDetails({}),
         ]);
         if (!isMounted()) return;
         setMembership(membershipResult as MembershipResolution);
         setTiers((tiersResult as MembershipTiersResponse)?.tiers ?? []);
+        setDetails((detailsResult as MembershipDetails) ?? null);
       } catch (err) {
         if (!isMounted()) return;
         setError(`${err}`);
@@ -185,6 +194,14 @@ export function MembershipStatusPanel({
   const tier = membership ? tierById[membership.class] : undefined;
   const tierLabel =
     tier?.label ?? (membership ? capitalize(membership.class) : "");
+  const membershipSourceLabel =
+    membership?.source === "subscription"
+      ? "Subscription"
+      : membership?.source === "admin"
+        ? "Admin assigned"
+        : "Free";
+  const expiresLabel =
+    membership?.source === "subscription" ? "Current period ends" : "Expires";
   const entitlements = normalizeRecord(membership?.entitlements);
   const projectDefaults = normalizeRecord(entitlements.project_defaults);
   const llmLimits = normalizeRecord(entitlements.llm_limits);
@@ -194,6 +211,25 @@ export function MembershipStatusPanel({
   const featureTags = Object.entries(features)
     .map(([key, value]) => formatFeatureTag(key, value))
     .filter((value): value is string => !!value);
+
+  const candidateRows = useMemo(() => {
+    const candidates = details?.candidates ?? [];
+    return candidates.map((candidate) => {
+      const selected =
+        details?.selected.class === candidate.class &&
+        details?.selected.source === candidate.source;
+      const tierLabel = tierById[candidate.class]?.label ?? candidate.class;
+      return {
+        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? "admin"}`,
+        tier: tierLabel,
+        source: candidate.source === "subscription" ? "Subscription" : "Admin assigned",
+        priority: candidate.priority,
+        expires: candidate.expires,
+        subscription_id: candidate.subscription_id,
+        selected,
+      };
+    });
+  }, [details, tierById]);
 
   const projectDefaultsItems = PROJECT_DEFAULT_KEYS.map((key) => {
     if (!(key in projectDefaults)) return null;
@@ -223,9 +259,9 @@ export function MembershipStatusPanel({
       }
     >
       {loading && <Loading />}
-      {error && !loading && <Alert type="error" message={error} />}
+      {error && !loading && <Alert type="error" title={error} />}
       {!loading && !error && membership && (
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
           <Descriptions size="small" column={1}>
             <Descriptions.Item label="Tier">
               <Space>
@@ -236,7 +272,7 @@ export function MembershipStatusPanel({
               </Space>
             </Descriptions.Item>
             <Descriptions.Item label="Source">
-              {membership.source === "subscription" ? "Subscription" : "Free"}
+              {membershipSourceLabel}
             </Descriptions.Item>
             {membership.subscription_id != null && (
               <Descriptions.Item label="Subscription id">
@@ -244,7 +280,7 @@ export function MembershipStatusPanel({
               </Descriptions.Item>
             )}
             {membership.expires && (
-              <Descriptions.Item label="Current period ends">
+              <Descriptions.Item label={expiresLabel}>
                 <TimeAgo date={membership.expires} />
               </Descriptions.Item>
             )}
@@ -315,6 +351,52 @@ export function MembershipStatusPanel({
               )}
             </div>
           </div>
+
+          <Collapse
+            items={[
+              {
+                key: "membership-sources",
+                label: "Why this membership?",
+                children:
+                  candidateRows.length === 0 ? (
+                    <Text type="secondary">
+                      No active subscriptions or admin assignments.
+                    </Text>
+                  ) : (
+                    <Table
+                      size="small"
+                      pagination={false}
+                      dataSource={candidateRows}
+                      columns={[
+                        {
+                          title: "Tier",
+                          dataIndex: "tier",
+                          render: (value, row) => (
+                            <Space>
+                              {value}
+                              {row.selected && <Tag color="blue">Selected</Tag>}
+                            </Space>
+                          ),
+                        },
+                        { title: "Source", dataIndex: "source" },
+                        { title: "Priority", dataIndex: "priority" },
+                        {
+                          title: "Expires",
+                          dataIndex: "expires",
+                          render: (value) =>
+                            value ? <TimeAgo date={value} /> : "Never",
+                        },
+                        {
+                          title: "Subscription id",
+                          dataIndex: "subscription_id",
+                          render: (value) => value ?? "—",
+                        },
+                      ]}
+                    />
+                  ),
+              },
+            ]}
+          />
         </Space>
       )}
       <MembershipPurchaseModal

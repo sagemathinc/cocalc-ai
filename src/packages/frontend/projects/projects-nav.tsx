@@ -4,8 +4,14 @@
  */
 
 import type { TabsProps } from "antd";
-import { Avatar, Popover, Tabs, Tooltip } from "antd";
-import { CSSProperties, useMemo, useState } from "react";
+import { Avatar, Button, Divider, Popover, Select, Tabs, Tooltip } from "antd";
+import {
+  CSSProperties,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   CSS,
@@ -29,6 +35,7 @@ import { COMPUTE_STATES } from "@cocalc/util/schema";
 import { COLORS } from "@cocalc/util/theme";
 import { useProjectState } from "../project/page/project-state-hook";
 import { useProjectHasInternetAccess } from "../project/settings/has-internet-access-hook";
+import { useBookmarkedProjects } from "./use-bookmarked-projects";
 
 const PROJECT_NAME_STYLE: CSS = {
   whiteSpace: "nowrap",
@@ -36,6 +43,19 @@ const PROJECT_NAME_STYLE: CSS = {
   textOverflow: "ellipsis",
   maxWidth: "200px",
 } as const;
+
+type ProjectsNavMode = "tabs" | "dropdown";
+
+const PROJECT_NAV_MODE_KEY = "cocalc:projects-nav-mode";
+const DEFAULT_PROJECT_NAV_MODE: ProjectsNavMode = "dropdown";
+
+function getStoredProjectsNavMode(): ProjectsNavMode {
+  if (typeof window === "undefined") return DEFAULT_PROJECT_NAV_MODE;
+  const stored = window.localStorage.getItem(PROJECT_NAV_MODE_KEY);
+  return stored === "tabs" || stored === "dropdown"
+    ? stored
+    : DEFAULT_PROJECT_NAV_MODE;
+}
 
 interface ProjectTabProps {
   project_id: string;
@@ -113,7 +133,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
     return (
       <>
         <div style={fontStyle}>
-          This project does not have access to the internet.
+          This workspace does not have access to the internet.
         </div>
         {mode === "popover" ? <hr /> : null}
       </>
@@ -135,7 +155,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
         />
         <hr />
         <div style={{ color: COLORS.GRAY }}>
-          Hint: Shift+click any project or file tab to open it in new window.
+          Hint: Shift+click any workspace or file tab to open it in new window.
         </div>
       </div>
     );
@@ -200,7 +220,7 @@ function ProjectTab({ project_id }: ProjectTabProps) {
     <div
       onMouseUp={onMouseUp}
       style={{
-        marginTop: "-4px" /* compensate for border */,
+        marginTop: "-1px" /* compensate for border */,
         ...(width != null ? { width } : undefined),
       }}
     >
@@ -242,7 +262,39 @@ export function ProjectsNav(props: ProjectsNavProps) {
   const projectActions = useActions("projects");
   const activeTopTab = useTypedRedux("page", "active_top_tab");
   const openProjects = useTypedRedux("projects", "open_projects");
+  const projectMap = useTypedRedux("projects", "project_map");
+  const publicProjectTitles = useTypedRedux(
+    "projects",
+    "public_project_titles",
+  );
+  const { bookmarkedProjects } = useBookmarkedProjects();
   //const project_map = useTypedRedux("projects", "project_map");
+  const [mode, setMode] = useState<ProjectsNavMode>(
+    getStoredProjectsNavMode,
+  );
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
+  const selectRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(PROJECT_NAV_MODE_KEY, mode);
+  }, [mode]);
+
+  useEffect(() => {
+    function handleKeydown(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        if (mode !== "dropdown") {
+          setMode("dropdown");
+        }
+        setDropdownOpen(true);
+        setTimeout(() => selectRef.current?.focus?.(), 0);
+      }
+    }
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  }, [mode]);
 
   const items: TabsProps["items"] = useMemo(() => {
     if (openProjects == null) return [];
@@ -258,6 +310,67 @@ export function ProjectsNav(props: ProjectsNavProps) {
     if (openProjects == null) return [];
     return openProjects.toJS().map((project_id) => project_id);
   }, [openProjects]);
+
+  const openProjectIds = project_ids;
+  const openProjectSet = useMemo(
+    () => new Set(openProjectIds),
+    [openProjectIds],
+  );
+
+  const activeProjectId = useMemo(() => {
+    if (openProjectIds.includes(activeTopTab)) return activeTopTab;
+    return openProjectIds[0];
+  }, [activeTopTab, openProjectIds]);
+
+  const recentProjectIds = useMemo(() => {
+    if (!projectMap) return [];
+    const ids = projectMap.keySeq().toArray();
+    ids.sort((a, b) => {
+      const aTime = projectMap.getIn([a, "last_edited"]);
+      const bTime = projectMap.getIn([b, "last_edited"]);
+      const aMs =
+        typeof aTime === "string" ||
+        typeof aTime === "number" ||
+        aTime instanceof Date
+          ? new Date(aTime).getTime()
+          : 0;
+      const bMs =
+        typeof bTime === "string" ||
+        typeof bTime === "number" ||
+        bTime instanceof Date
+          ? new Date(bTime).getTime()
+          : 0;
+      return bMs - aMs;
+    });
+    return ids.filter((id) => !openProjectSet.has(id)).slice(0, 10);
+  }, [projectMap, openProjectSet]);
+
+  const starredProjectIds = useMemo(() => {
+    if (!projectMap || !bookmarkedProjects) return [];
+    return bookmarkedProjects.filter((id) => {
+      if (!projectMap.get(id)) return false;
+      return !openProjectSet.has(id);
+    });
+  }, [bookmarkedProjects, openProjectSet, projectMap]);
+
+  function getProjectTitle(project_id: string): string {
+    return (
+      projectMap?.getIn([project_id, "title"]) ??
+      publicProjectTitles?.get(project_id) ??
+      "Untitled workspace"
+    );
+  }
+
+  function getProjectVisual(project_id: string) {
+    const project = projectMap?.get(project_id);
+    const title = getProjectTitle(project_id);
+    return {
+      title,
+      label: title,
+      color: project?.get?.("color"),
+      avatar: project?.get?.("avatar_image_tiny"),
+    };
+  }
 
   function onEdit(project_id: string, action: "add" | "remove") {
     if (action === "add") {
@@ -315,6 +428,224 @@ export function ProjectsNav(props: ProjectsNavProps) {
     );
   }
 
+  function renderDropdownNav() {
+    const normalizedSearch = searchValue.trim().toLowerCase();
+    const matchesSearch = (label: string) =>
+      !normalizedSearch || label.toLowerCase().includes(normalizedSearch);
+    const renderLabelNode = (option) => {
+      return (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+          }}
+        >
+          {option?.avatar || option?.color ? (
+            <Avatar
+              style={{
+                backgroundColor: option?.color ?? undefined,
+                border: option?.color ? `2px solid ${option.color}` : undefined,
+              }}
+              shape="circle"
+              icon={option?.avatar ? <img src={option.avatar} /> : undefined}
+              size={18}
+            />
+          ) : (
+            <Icon name="circle" />
+          )}
+          <span
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {option?.title}
+          </span>
+        </span>
+      );
+    };
+    const makeOption = (project_id: string, closable?: boolean) => {
+      const visual = getProjectVisual(project_id);
+      const labelNode = renderLabelNode(visual);
+      return {
+        value: project_id,
+        ...visual,
+        label: labelNode,
+        labelText: visual.title,
+        closable,
+      };
+    };
+
+    const openOptions = openProjectIds
+      .map((project_id) => makeOption(project_id, true))
+      .filter((option) => matchesSearch(option.title));
+    const recentOptions = recentProjectIds
+      .map((project_id) => makeOption(project_id))
+      .filter((option) => matchesSearch(option.title));
+    const starredOptions = starredProjectIds
+      .map((project_id) => makeOption(project_id))
+      .filter((option) => matchesSearch(option.title));
+
+    const groupedOptions = [
+      ...(openOptions.length > 0
+        ? [{ label: "Open workspaces", options: openOptions }]
+        : []),
+      ...(starredOptions.length > 0
+        ? [{ label: "Starred workspaces", options: starredOptions }]
+        : []),
+      ...(recentOptions.length > 0
+        ? [{ label: "Recent workspaces", options: recentOptions }]
+        : []),
+    ];
+
+    const hasResults = groupedOptions.some(
+      (group) => group.options && group.options.length > 0,
+    );
+
+    const renderOptionItem = (option) => {
+      const project_id = option?.value;
+      const closable = option?.closable;
+      return (
+        <div
+          key={project_id}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 8px",
+            borderRadius: 6,
+            cursor: "pointer",
+          }}
+          onClick={() => {
+            projectActions.open_project({
+              project_id,
+              switch_to: true,
+            });
+            setDropdownOpen(false);
+          }}
+        >
+          <span
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={option?.title}
+          >
+            {renderLabelNode(option)}
+          </span>
+          {closable ? (
+            <Button
+              size="small"
+              type="text"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                actions.close_project_tab(project_id);
+              }}
+            >
+              <Icon name="times" />
+            </Button>
+          ) : null}
+        </div>
+      );
+    };
+
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          height: `${height}px`,
+          paddingRight: "8px",
+        }}
+      >
+        <Tooltip
+          title={
+            mode === "tabs" ? "Switch to workspace list" : "Switch to tabs"
+          }
+        >
+          <Button
+            size="small"
+            onClick={() => setMode(mode === "tabs" ? "dropdown" : "tabs")}
+          >
+            {mode === "tabs" ? "Tabs" : "List"}
+          </Button>
+        </Tooltip>
+        <Select
+          ref={selectRef}
+          size="middle"
+          open={dropdownOpen}
+          onDropdownVisibleChange={(open) => {
+            setDropdownOpen(open);
+            if (!open) {
+              setSearchValue("");
+            }
+          }}
+          style={{ minWidth: 260, maxWidth: 400 }}
+          placeholder="Switch workspace…"
+          value={activeProjectId}
+          showSearch
+          optionLabelProp="label"
+          filterOption={false}
+          searchValue={searchValue}
+          onSearch={setSearchValue}
+          onClear={() => setSearchValue("")}
+          allowClear
+          options={groupedOptions}
+          dropdownRender={() => (
+            <>
+              <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                {hasResults ? (
+                  groupedOptions.map((group) => (
+                    <div key={group.label} style={{ padding: "4px 0" }}>
+                      <div
+                        style={{
+                          padding: "6px 8px",
+                          fontSize: 12,
+                          color: "#666",
+                        }}
+                      >
+                        {group.label}
+                      </div>
+                      {group.options.map((option) =>
+                        renderOptionItem(option),
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ padding: "8px 12px", color: "#888" }}>
+                    No workspaces found
+                  </div>
+                )}
+              </div>
+              <Divider style={{ margin: "6px 0" }} />
+              <div style={{ padding: "4px 8px" }}>
+                <Button
+                  size="small"
+                  onClick={() => actions.set_active_tab("projects")}
+                >
+                  All workspaces…
+                </Button>
+              </div>
+            </>
+          )}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
@@ -323,25 +654,62 @@ export function ProjectsNav(props: ProjectsNavProps) {
         ...style,
       }}
     >
-      {items.length > 0 && (
-        <SortableTabs
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          items={project_ids}
+      {mode === "dropdown" ? (
+        renderDropdownNav()
+      ) : (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            height: `${height}px`,
+            paddingTop: "2px",
+            paddingBottom: "2px",
+          }}
         >
-          <Tabs
-            animated={false}
-            moreIcon={<Icon style={{ fontSize: "18px" }} name="ellipsis" />}
-            activeKey={activeTopTab}
-            onEdit={onEdit}
-            onChange={(project_id) => {
-              actions.set_active_tab(project_id);
-            }}
-            type={"editable-card"}
-            renderTabBar={renderTabBar0}
-            items={items}
-          />
-        </SortableTabs>
+          <div style={{ padding: "0 8px", flex: "0 0 auto" }}>
+            <Tooltip
+              title={
+                mode === "tabs" ? "Switch to workspace list" : "Switch to tabs"
+              }
+            >
+              <Button
+                size="small"
+                onClick={() =>
+                  setMode(mode === "tabs" ? "dropdown" : "tabs")
+                }
+              >
+                {mode === "tabs" ? "Tabs" : "List"}
+              </Button>
+            </Tooltip>
+          </div>
+          <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+            {items.length > 0 && (
+              <SortableTabs
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                items={project_ids}
+              >
+                <Tabs
+                  animated={false}
+                  moreIcon={
+                    <Icon style={{ fontSize: "18px" }} name="ellipsis" />
+                  }
+                  size="small"
+                  tabBarStyle={{ margin: 0 }}
+                  activeKey={activeTopTab}
+                  onEdit={onEdit}
+                  onChange={(project_id) => {
+                    actions.set_active_tab(project_id);
+                  }}
+                  type={"editable-card"}
+                  renderTabBar={renderTabBar0}
+                  items={items}
+                />
+              </SortableTabs>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

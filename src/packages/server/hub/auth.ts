@@ -49,7 +49,7 @@ import passwordHash, {
 } from "@cocalc/backend/auth/password-hash";
 import base_path from "@cocalc/backend/base-path";
 import { getLogger } from "@cocalc/backend/logger";
-import { loadSSOConf } from "@cocalc/database/postgres/load-sso-conf";
+import { loadSSOConf } from "@cocalc/database/postgres/auth/load-sso-conf";
 import type { PostgreSQL } from "@cocalc/database/postgres/types";
 import { getExtraStrategyConstructor } from "@cocalc/server/auth/sso/extra-strategies";
 import { addUserProfileCallback } from "@cocalc/server/auth/sso/oauth2-user-profile-callback";
@@ -79,7 +79,7 @@ import { WinstonLogger } from "@cocalc/backend/logger";
 import {
   getOauthCache,
   getPassportCache,
-} from "@cocalc/database/postgres/passport-store";
+} from "@cocalc/database/postgres/auth/passport-store";
 import { getServerSettings } from "@cocalc/database/settings";
 import {
   PassportLoginOpts,
@@ -285,7 +285,13 @@ export class PassportManager {
 
     // initialize use of middleware
     // @ts-ignore
-    this.router.use(express_session({ secret: v4() })); // secret is totally random and per-hub session
+    this.router.use(
+      express_session({
+        secret: v4(), // secret is totally random and per-hub session
+        resave: false,
+        saveUninitialized: false,
+      }),
+    );
     // @ts-ignore
     this.router.use(passport.initialize());
     this.router.use(passport.session());

@@ -44,17 +44,17 @@ export default function FindRestoreModal({
       style={{ maxWidth: "90vw" }}
       onCancel={onCancel}
       footer={null}
-      destroyOnClose
+      destroyOnHidden
     >
-      <Space direction="vertical" style={{ width: "100%" }} size="middle">
+      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
         <div>
           <div style={{ marginBottom: "4px", color: "#666" }}>
             Selected path
           </div>
           <Typography.Text code>{path}</Typography.Text>
         </div>
-        {error ? <Alert type="error" message={error} /> : null}
-        <Space direction="vertical" style={{ width: "100%" }}>
+        {error ? <Alert type="error" title={error} /> : null}
+        <Space orientation="vertical" style={{ width: "100%" }}>
           <Button
             type="primary"
             block
@@ -74,7 +74,7 @@ export default function FindRestoreModal({
           <div>
             <div style={{ marginBottom: "6px", color: "#666" }}>Preview</div>
             {preview.error ? (
-              <Alert type="warning" message={preview.error} />
+              <Alert type="warning" title={preview.error} />
             ) : preview.loading ? (
               <Loading />
             ) : preview.content != null ? (
@@ -97,7 +97,7 @@ export default function FindRestoreModal({
                   <Alert
                     style={{ marginTop: "8px" }}
                     type="info"
-                    message="Preview truncated to 10MB."
+                    title="Preview truncated to 10MB."
                   />
                 ) : null}
               </div>

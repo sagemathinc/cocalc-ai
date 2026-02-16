@@ -558,7 +558,7 @@ export function AIGenerateCodeCell({
             </Button>
           </Space>
         </Paragraph>
-        {error ? <Alert type="error" message={error} /> : undefined}
+        {error ? <Alert type="error" title={error} /> : undefined}
       </>
     );
   }
@@ -655,7 +655,7 @@ export function AIGenerateCodeCell({
             type="secondary"
           />
         ) : undefined}
-        {error ? <Alert type="error" message={error} /> : undefined}
+        {error ? <Alert type="error" title={error} /> : undefined}
       </>
     );
   }

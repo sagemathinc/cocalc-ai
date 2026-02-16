@@ -20,16 +20,10 @@ const next = require("next");
 const conf = require("../next.config");
 const winston = getLogger("next:init");
 
-async function init({ basePath }) {
+async function init() {
   // dev = Whether or not to run in dev mode.  This features hot module reloading,
   // but navigation between pages and serving pages is much slower.
   const dev = process.env.NODE_ENV != "production";
-
-  winston.info(`basePath=${basePath}`);
-  // this is the next.js definition of "basePath";
-  // it differs from what we use in cocalc and internally here too.
-  conf.basePath = basePath == "/" ? "" : basePath;
-  conf.env.BASE_PATH = basePath;
 
   winston.info(`creating next.js app with dev=${dev}`);
   const app = next({ dev, dir: join(__dirname, ".."), conf });

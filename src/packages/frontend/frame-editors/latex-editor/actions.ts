@@ -56,6 +56,7 @@ import {
   splitlines,
   startswith,
 } from "@cocalc/util/misc";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import * as tree_ops from "../frame-tree/tree-ops";
 import { bibtex } from "./bibtex";
@@ -1173,11 +1174,23 @@ export class Actions extends BaseActions<LatexEditorState> {
       }
     }
 
-    // get canonical path names for each file
+    // Resolve dependency paths to absolute paths (prefer realpath for existing
+    // files, lexical absolute fallback otherwise).
     const api = await project_api(this.project_id);
-    let files2;
+    const home = normalizeAbsolutePath(await api.getHomeDirectory());
+    const baseDir = normalizeAbsolutePath(path_split(this.path).head || home, home);
+    let files2: string[];
     try {
-      files2 = await api.canonical_paths(files1);
+      files2 = await Promise.all(
+        files1.map(async (path) => {
+          const absolute = normalizeAbsolutePath(path, baseDir);
+          try {
+            return await api.realpath(absolute);
+          } catch {
+            return absolute;
+          }
+        }),
+      );
       this.setState({ includeError: "" });
     } catch (err) {
       // Safely convert error to string, handling undefined/null cases
@@ -1188,15 +1201,14 @@ export class Actions extends BaseActions<LatexEditorState> {
       return;
     }
 
-    // record all relative paths
+    // Record mappings from relative dependency names from build output logs to
+    // resolved absolute paths.
     for (let i = 0; i < files2.length; i++) {
       const canon_path = files2[i];
-      if (!canon_path.startsWith("/")) {
-        switch_to_files.push(canon_path);
-        const norm_path = path_normalize(files[i]);
-        this.relative_paths[canon_path] = norm_path;
-        this.canonical_paths[norm_path] = canon_path;
-      }
+      switch_to_files.push(canon_path);
+      const norm_path = path_normalize(files[i]);
+      this.relative_paths[canon_path] = norm_path;
+      this.canonical_paths[norm_path] = canon_path;
     }
     // sort and make unique.
     this.setState({
@@ -1400,7 +1412,14 @@ export class Actions extends BaseActions<LatexEditorState> {
 
   public async goto_line_in_file(line: number, path: string): Promise<void> {
     if (path.indexOf("/.") != -1 || path.indexOf("./") != -1) {
-      path = await (await project_api(this.project_id)).canonical_path(path);
+      const api = await project_api(this.project_id);
+      const baseDir = path_split(this.path).head || "/";
+      const normalized = normalizeAbsolutePath(path, baseDir);
+      try {
+        path = await api.realpath(normalized);
+      } catch {
+        path = normalized;
+      }
     }
     if (this.knitr) {
       // #v0 will not support multi-file knitr.
@@ -1837,7 +1856,11 @@ export class Actions extends BaseActions<LatexEditorState> {
   }
 
   public updateTableOfContents(force: boolean = false): void {
-    if (this._state == "closed" || this._syncstring == null) {
+    if (
+      this._state == "closed" ||
+      this._syncstring == null ||
+      this._syncstring.get_state?.() != "ready"
+    ) {
       // no need since not initialized yet or already closed.
       return;
     }
@@ -1849,9 +1872,14 @@ export class Actions extends BaseActions<LatexEditorState> {
       // There is no table of contents frame or output frame so don't update that info.
       return;
     }
-    const contents = fromJS(
-      parseTableOfContents(this._syncstring.to_str() ?? ""),
-    ) as any;
+    let value = "";
+    try {
+      value = this._syncstring.to_str() ?? "";
+    } catch {
+      // sync doc can race during startup/refresh.
+      return;
+    }
+    const contents = fromJS(parseTableOfContents(value)) as any;
     this.setState({ contents });
   }
 

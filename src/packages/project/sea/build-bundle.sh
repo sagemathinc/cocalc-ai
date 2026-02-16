@@ -28,6 +28,7 @@ echo "- Bundle entry point with @vercel/ncc"
 ncc build packages/project/bin/cocalc-project.js \
   -o "$OUT"/bundle \
   --source-map \
+  --external node-pty \
   --external bufferutil \
   --external utf-8-validate
 
@@ -59,71 +60,118 @@ NODE
 # Copy zeromq native manifest/build artifacts expected at runtime (via @cocalc/jupyter)
 ZEROMQ_BUILD=$(find packages -path "*node_modules/zeromq/build" -type d -print -quit || true)
 if [ -n "$ZEROMQ_BUILD" ]; then
-  echo "- Copy zeromq native build artefacts"
+echo "- Copy zeromq native build artefacts"
   mkdir -p "$OUT"/bundle/build
   cp -r "$ZEROMQ_BUILD/"* "$OUT"/bundle/build/
-  mkdir -p "$OUT"/build
-  cp -r "$ZEROMQ_BUILD/"* "$OUT"/build/
+  # Keep only linux builds in the bundle to avoid shipping unused platforms.
+  rm -rf "$OUT"/bundle/build/darwin "$OUT"/bundle/build/win32 || true
+  # Keep only glibc builds (we run on glibc-based Ubuntu).
+  rm -rf "$OUT"/bundle/build/linux/*/node/musl-* || true
+  # Ensure legacy path /opt/cocalc/project-bundle/build/... resolves correctly.
+  rm -f "$OUT/build"
+  ln -s "bundle/build" "$OUT/build"
 else
   echo "  (zeromq build directory not found; skipping copy)"
 fi
 
+fetch_native_pkg() {
+  local pkg="$1"
+  local dest="$2"
+  local tmp
+  tmp=$(mktemp -d)
+  echo "  (fetching ${pkg} from npm)"
+  (
+    cd "$tmp"
+    npm pack --silent "$pkg" >/dev/null
+    local tgz
+    tgz=$(ls *.tgz | head -n1)
+    if [ -z "$tgz" ]; then
+      echo "ERROR: failed to download ${pkg} via npm pack"
+      exit 1
+    fi
+    tar -xzf "$tgz"
+  )
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  cp -r "$tmp"/package/. "$dest"/
+  rm -rf "$tmp"
+}
+
 copy_native_pkg() {
   local pkg="$1"
-  local dir
-  dir=$(find packages -path "*node_modules/${pkg}" -type d -print -quit || true)
+  local dir=""
+  if [ -d "$ROOT/packages/project/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/project/node_modules/$pkg"
+  elif [ -d "$ROOT/packages/project-runner/node_modules/$pkg" ]; then
+    dir="$ROOT/packages/project-runner/node_modules/$pkg"
+  else
+    dir=$(find "$ROOT/packages" -path "*node_modules/${pkg}" -type d -print -quit || true)
+  fi
+  echo "- Copy native module ${pkg}"
   if [ -n "$dir" ]; then
-    echo "- Copy native module ${pkg}"
     mkdir -p "$OUT"/bundle/node_modules/"$pkg"
     cp -r "$dir"/. "$OUT"/bundle/node_modules/"$pkg"/
   else
-    echo "  (skipping ${pkg}; not found)"
+    fetch_native_pkg "$pkg" "$OUT"/bundle/node_modules/"$pkg"
   fi
 }
 
-echo "- Copy node-pty native addon for current platform"
-case "${OSTYPE}" in
-  linux*)
-    case "$(uname -m)" in
-      x86_64) copy_native_pkg "@lydell/node-pty-linux-x64" ;;
-      aarch64|arm64) copy_native_pkg "@lydell/node-pty-linux-arm64" ;;
-      *) echo "  (unsupported linux arch for node-pty: $(uname -m))" ;;
-    esac
-    ;;
-  darwin*)
-    case "$(uname -m)" in
-      x86_64) copy_native_pkg "@lydell/node-pty-darwin-x64" ;;
-      arm64) copy_native_pkg "@lydell/node-pty-darwin-arm64" ;;
-      *) echo "  (unsupported darwin arch for node-pty: $(uname -m))" ;;
-    esac
-    ;;
-  *)
-    echo "  (unsupported platform for node-pty: ${OSTYPE})"
-    ;;
-esac
+echo "- Copy node-pty package"
+copy_native_pkg "node-pty"
+
+echo "- Prune node-pty package"
+NODE_PTY_DIR="$OUT/bundle/node_modules/node-pty"
+if [ -d "$NODE_PTY_DIR" ]; then
+  # Keep only runtime essentials.
+  find "$NODE_PTY_DIR" -mindepth 1 -maxdepth 1 \
+    ! -name lib \
+    ! -name prebuilds \
+    ! -name package.json \
+    ! -name LICENSE \
+    ! -name README.md \
+    -exec rm -rf {} +
+  # Keep only linux prebuilds for target runtime.
+  if [ -d "$NODE_PTY_DIR/prebuilds" ]; then
+    find "$NODE_PTY_DIR/prebuilds" -mindepth 1 -maxdepth 1 -type d \
+      ! -name 'linux-*' -exec rm -rf {} +
+  fi
+fi
 
 copy_native_pkg "bufferutil"
 copy_native_pkg "utf-8-validate"
 
-# Trim native builds for other platforms to keep output lean
-case "${OSTYPE}" in
-  linux*)
-    rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-darwin-* || true
-    ;;
-  darwin*)
-    rm -rf "$OUT"/bundle/node_modules/@lydell/node-pty-linux-* || true
-    ;;
-esac
+echo "- Prune non-linux prebuilds"
+for pkg in bufferutil utf-8-validate; do
+  prebuilds="$OUT/bundle/node_modules/$pkg/prebuilds"
+  if [ -d "$prebuilds" ]; then
+    find "$prebuilds" -mindepth 1 -maxdepth 1 -type d ! -name 'linux-*' -exec rm -rf {} + || true
+  fi
+done
 
-if [ -d "$OUT"/build ]; then
-  case "${OSTYPE}" in
-    linux*)
-      rm -rf "$OUT"/build/darwin "$OUT"/build/win32
-      ;;
-    darwin*)
-      rm -rf "$OUT"/build/linux "$OUT"/build/win32
-      ;;
-  esac
+echo "- Strip musl prebuilds"
+rm -f "$OUT"/bundle/node_modules/utf-8-validate/prebuilds/linux-*/utf-8-validate.musl.node || true
+
+echo "- Add bundle README"
+if [ -f "$ROOT/packages/project/sea/bundle-README.md" ]; then
+  cp "$ROOT/packages/project/sea/bundle-README.md" "$OUT"/bundle/README.md
+fi
+
+echo "- Verify native addons (linux glibc)"
+if ! compgen -G "$OUT/bundle/build/linux/x64/node/glibc-*/addon.node" >/dev/null; then
+  echo "ERROR: missing zeromq glibc addon for linux/x64" >&2
+  exit 1
+fi
+if ! compgen -G "$OUT/bundle/build/linux/arm64/node/glibc-*/addon.node" >/dev/null; then
+  echo "ERROR: missing zeromq glibc addon for linux/arm64" >&2
+  exit 1
+fi
+if [ ! -f "$OUT/bundle/node_modules/node-pty/prebuilds/linux-x64/pty.node" ]; then
+  echo "ERROR: missing node-pty linux-x64 prebuild" >&2
+  exit 1
+fi
+if [ ! -f "$OUT/bundle/node_modules/node-pty/prebuilds/linux-arm64/pty.node" ]; then
+  echo "ERROR: missing node-pty linux-arm64 prebuild" >&2
+  exit 1
 fi
 
 echo "- Copy project bin scripts"

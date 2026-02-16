@@ -31,7 +31,7 @@
     "build": "pnpm exec tsc --build && pnpm install-sandbox-tools && pnpm install-bin-tools",
     "test": "NODE_NO_WARNINGS=1 pnpm exec jest --forceExit",
     "test-conat": " pnpm exec jest --forceExit conat",
-    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores events,reflect-sync",
+    "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores events",
     "prepublishOnly": "pnpm test",
     "conat-watch": "node ./bin/conat-watch.cjs",
     "conat-connections": "node ./bin/conat-connections.cjs",
@@ -51,6 +51,7 @@
   "dependencies": {
     "@cocalc/backend": "workspace:*",
     "@cocalc/conat": "workspace:*",
+    "@cocalc/openat2": "^0.1.0",
     "@cocalc/sync": "workspace:*",
     "@cocalc/util": "workspace:*",
     "@isaacs/ttlcache": "^1.4.1",
@@ -65,7 +66,6 @@
     "patchflow": "^0.7.1",
     "pkg-dir": "^5.0.0",
     "prom-client": "^15.1.3",
-    "reflect-sync": "^0.14.4",
     "rimraf": "^5.0.5",
     "shell-escape": "^0.2.0",
     "tmp-promise": "^3.0.3"
@@ -78,6 +78,7 @@
   "devDependencies": {
     "@types/debug": "^4.1.12",
     "@types/jest": "^30.0.0",
-    "@types/node": "^22.10.10"
+    "@types/node": "^22.10.10",
+    "socket.io-client": "^4.8.3"
   }
 }

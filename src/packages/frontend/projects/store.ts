@@ -57,6 +57,8 @@ export interface ProjectsState {
 
   project_websockets: Map<string, WebsocketState>;
 
+  host_info: Map<string, any>;
+
   tableError?: TypedMap<{ error: string; query: any }>;
 
   expanded_project_id?: string; // the currently expanded project in the projects table
@@ -627,6 +629,8 @@ const init_store = {
   public_project_titles: Map<string, any>(),
 
   project_websockets: Map<string, WebsocketState>(),
+
+  host_info: Map<string, any>(),
 } as ProjectsState;
 
 export let store: ProjectsStore;

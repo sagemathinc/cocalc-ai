@@ -1,4 +1,4 @@
-import { Alert, Button, Card, Col, Input, Modal, Popconfirm, Popover, Radio, Row, Select, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Card, Col, Input, Modal, Popconfirm, Popover, Radio, Row, Select, Space, Spin, Switch, Table, Tag, Tooltip, Typography } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
@@ -6,6 +6,7 @@ import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import { HostCard } from "./host-card";
 import { STATUS_COLOR, getHostOnlineTooltip, getHostStatusTooltip, isHostOnline, isHostTransitioning } from "../constants";
 import type { ColumnsType } from "antd/es/table";
+import { COLORS } from "@cocalc/util/theme";
 import {
   getProviderDescriptor,
   isKnownProvider,
@@ -73,6 +74,26 @@ function getProviderLabel(host: Host): string {
   return cloud;
 }
 
+function getSelfHostDetail(host: Host): string | undefined {
+  if (host.machine?.cloud !== "self-host") return undefined;
+  const kind = host.machine?.metadata?.self_host_kind as string | undefined;
+  const mode = host.machine?.metadata?.self_host_mode as string | undefined;
+  const kindLabel =
+    kind === "direct"
+      ? "Direct"
+      : kind === "multipass"
+        ? "Multipass"
+        : undefined;
+  const modeLabel =
+    mode === "cloudflare"
+      ? "Cloudflare tunnel"
+      : mode === "local"
+        ? "Local network"
+        : undefined;
+  if (kindLabel && modeLabel) return `${kindLabel} / ${modeLabel}`;
+  return kindLabel ?? modeLabel ?? undefined;
+}
+
 function compareText(a?: string, b?: string): number {
   return (a ?? "").localeCompare(b ?? "", undefined, { sensitivity: "base" });
 }
@@ -98,6 +119,12 @@ function sortHosts(
   return [...hosts].sort((a, b) => {
     let result = 0;
     switch (field) {
+      case "starred":
+        result = compareNumber(
+          Number(b.starred ?? false),
+          Number(a.starred ?? false),
+        );
+        break;
       case "name":
         result = compareText(a.name, b.name);
         break;
@@ -141,6 +168,9 @@ function sortHosts(
 
 type HostListViewModel = {
   hosts: Host[];
+  hostsLoading?: boolean;
+  hostsLoaded?: boolean;
+  hostsError?: string | null;
   hostOps?: Record<string, HostLroState>;
   createPanelOpen?: boolean;
   onStart: (id: string) => void;
@@ -151,8 +181,10 @@ type HostListViewModel = {
   onRefresh: () => void;
   onCancelOp?: (op_id: string) => void;
   onUpgrade?: (host: Host) => void;
+  onUpgradeFromHub?: (host: Host) => void;
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
+  onToggleStar: (host: Host) => void;
   selfHost?: {
     connectorMap: Map<string, { id: string; name?: string; last_seen?: string }>;
     isConnectorOnline: (connectorId?: string) => boolean;
@@ -177,6 +209,9 @@ type HostListViewModel = {
 export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   const {
     hosts,
+    hostsLoading = false,
+    hostsLoaded = true,
+    hostsError = null,
     hostOps,
     createPanelOpen,
     onStart,
@@ -187,8 +222,10 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     onRefresh,
     onCancelOp,
     onUpgrade,
+    onUpgradeFromHub,
     onDetails,
     onEdit,
+    onToggleStar,
     selfHost,
     viewMode,
     setViewMode,
@@ -262,9 +299,11 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     if (!searchTerms.length) return hosts;
     return hosts.filter((host) => {
       const statusLabel = host.deleted ? "deleted" : host.status;
+      const selfHostDetail = getSelfHostDetail(host);
       const haystack = [
         host.name,
         getProviderLabel(host),
+        selfHostDetail,
         host.region,
         host.size,
         statusLabel,
@@ -452,6 +491,48 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
 
   const columns: ColumnsType<Host> = [
     {
+      title: (
+        <Icon
+          name="star-filled"
+          style={{ fontSize: 16, color: COLORS.YELL_LL }}
+        />
+      ),
+      dataIndex: "starred",
+      key: "starred",
+      width: 48,
+      align: "center",
+      sorter: true,
+      sortDirections: ["ascend", "descend"],
+      sortOrder:
+        sortField === "starred"
+          ? sortDirection === "asc"
+            ? "ascend"
+            : "descend"
+          : undefined,
+      onCell: () => ({
+        onClick: (event: React.MouseEvent) => {
+          event.stopPropagation();
+        },
+        style: { cursor: "pointer" },
+      }),
+      render: (starred: boolean, host: Host) => (
+        <span
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleStar(host);
+          }}
+          style={{ cursor: "pointer", fontSize: 18 }}
+        >
+          <Icon
+            name={starred ? "star-filled" : "star"}
+            style={{
+              color: starred ? COLORS.STAR : COLORS.GRAY_L,
+            }}
+          />
+        </span>
+      ),
+    },
+    {
       title: "Name",
       dataIndex: "name",
       key: "name",
@@ -464,7 +545,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             : "descend"
           : undefined,
       render: (_: string, host: Host) => (
-        <Space direction="vertical" size={0}>
+        <Space orientation="vertical" size={0}>
           <Button type="link" onClick={() => onDetails(host)}>
             {host.name}
           </Button>
@@ -501,12 +582,17 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             ? "ascend"
             : "descend"
           : undefined,
-      render: (_: string, host: Host) =>
-        host.machine?.cloud
-          ? isKnownProvider(host.machine.cloud)
-            ? getProviderDescriptor(host.machine.cloud).label
-            : host.machine.cloud
-          : "n/a",
+      render: (_: string, host: Host) => {
+        const baseLabel = getProviderLabel(host);
+        const detail = getSelfHostDetail(host);
+        if (!detail) return baseLabel;
+        return (
+          <Space orientation="vertical" size={0}>
+            <span>{baseLabel}</span>
+            <Typography.Text type="secondary">{detail}</Typography.Text>
+          </Space>
+        );
+      },
     },
     {
       title: "Region",
@@ -562,7 +648,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const statusLabel = host.deleted ? "deleted" : host.status;
         const op = hostOps?.[host.id];
         return (
-          <Space direction="vertical" size={2}>
+          <Space orientation="vertical" size={2}>
             <Space size="small">
               <Tooltip
                 title={getHostStatusTooltip(
@@ -611,18 +697,21 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const op = hostOps?.[host.id];
         const hostOpActive = isHostOpActive(op);
         const isSelfHost = host.machine?.cloud === "self-host";
+        const hasSshTarget = !!String(
+          host.machine?.metadata?.self_host_ssh_target ?? "",
+        ).trim();
+        const autoSetup = isSelfHost && hasSshTarget;
         const connectorOnline =
           !isSelfHost ||
           !selfHost?.isConnectorOnline ||
           selfHost.isConnectorOnline(host.region);
-        const showConnectorSetup =
-          isSelfHost && !connectorOnline && host.status === "off";
+        const showConnectorSetup = isSelfHost && selfHost && !isDeleted;
         const startDisabled =
           isDeleted ||
           host.status === "running" ||
           host.status === "starting" ||
           host.status === "restarting" ||
-          !connectorOnline ||
+          (!connectorOnline && !autoSetup) ||
           hostOpActive;
         const startLabel =
           host.status === "starting"
@@ -682,7 +771,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               disabled={hostOpActive}
               onClick={() => selfHost.onSetup(host)}
             >
-              Setup
+              Setup / reconnect
             </Button>
           ) : null,
           allowStop ? (
@@ -788,6 +877,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   ];
 
   const sortOptions = [
+    { value: "starred", label: "Starred" },
     { value: "name", label: "Name" },
     { value: "provider", label: "Provider" },
     { value: "region", label: "Region" },
@@ -838,6 +928,22 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               Upgrade ({upgradeTargets.length})
             </Button>
           )}
+          {onUpgradeFromHub && (
+            <Button
+              size="small"
+              onClick={() =>
+                runBulkAction(
+                  "Upgrade (hub source)",
+                  upgradeTargets,
+                  onUpgradeFromHub,
+                  { notice: upgradeNotice },
+                )
+              }
+              disabled={!upgradeTargets.length}
+            >
+              Upgrade from hub ({upgradeTargets.length})
+            </Button>
+          )}
           <Button
             size="small"
             danger
@@ -878,7 +984,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     <Alert
       type="warning"
       showIcon
-      message={
+      title={
         visibleHosts.length === 0
           ? "No hosts match this filter."
           : `Showing ${visibleHosts.length} of ${hosts.length} hosts.`
@@ -893,19 +999,35 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   ) : null;
 
   const header = (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-      <Space size="large" align="center">
-        <Space size="middle" align="center">
-          <Space size="small" align="center">
-            <Typography.Title level={5} style={{ margin: 0 }}>
-              Workspace Hosts
-            </Typography.Title>
-            {onToggleCreatePanel && !createPanelOpen && (
-              <Button size="small" type="primary" onClick={onToggleCreatePanel}>
-                Create
-              </Button>
-            )}
-          </Space>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        marginBottom: 8,
+      }}
+    >
+      <Space size="small" align="center" wrap>
+        <Typography.Title level={5} style={{ margin: 0, whiteSpace: "nowrap" }}>
+          Workspace Hosts
+        </Typography.Title>
+        {onToggleCreatePanel && !createPanelOpen && (
+          <Button size="small" type="primary" onClick={onToggleCreatePanel}>
+            Create
+          </Button>
+        )}
+      </Space>
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <Space size="middle" align="center" wrap>
           <Input.Search
             allowClear
             size="small"
@@ -914,8 +1036,10 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             placeholder="Filter hosts..."
             style={{ width: 220 }}
           />
-          <Space size="small" align="center">
-            <Typography.Text>Sort by</Typography.Text>
+          <Space size="small" align="center" wrap>
+            <Typography.Text style={{ whiteSpace: "nowrap" }}>
+              Sort by
+            </Typography.Text>
             <Select
               size="small"
               value={sortField}
@@ -928,10 +1052,16 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             </Button>
           </Space>
           {isDynamicSort && (
-            <Space size="small" align="center">
-              <Switch size="small" checked={autoResort} onChange={setAutoResort} />
+            <Space size="small" align="center" wrap>
+              <Switch
+                size="small"
+                checked={autoResort}
+                onChange={setAutoResort}
+              />
               {autoResort ? (
-                <Typography.Text>Auto-resort</Typography.Text>
+                <Typography.Text style={{ whiteSpace: "nowrap" }}>
+                  Auto-resort
+                </Typography.Text>
               ) : (
                 <Button size="small" type="link" onClick={resortNow}>
                   Auto-resort
@@ -939,38 +1069,78 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               )}
             </Space>
           )}
-        </Space>
-        <Space size="middle" align="center">
           {isAdmin && (
-            <Space size="small" align="center">
+            <Space size="small" align="center" wrap>
               <Switch size="small" checked={showAdmin} onChange={setShowAdmin} />
-              <Typography.Text>All (Admin)</Typography.Text>
+              <Typography.Text style={{ whiteSpace: "nowrap" }}>
+                All (Admin)
+              </Typography.Text>
             </Space>
           )}
-          <Space size="small" align="center">
+          <Space size="small" align="center" wrap>
             <Switch size="small" checked={showDeleted} onChange={setShowDeleted} />
-            <Typography.Text>Deleted</Typography.Text>
+            <Typography.Text style={{ whiteSpace: "nowrap" }}>
+              Deleted
+            </Typography.Text>
           </Space>
         </Space>
-      </Space>
-      <Space size="small" align="center">
-        <Button size="small" icon={<SyncOutlined />} onClick={onRefresh}>
-          Refresh
-        </Button>
-        <Radio.Group
-          value={viewMode}
-          onChange={(event) =>
-            setViewMode(event.target.value as HostListViewMode)
-          }
-          optionType="button"
-          buttonStyle="solid"
-        >
-          <Radio.Button value="grid">Cards</Radio.Button>
-          <Radio.Button value="list">List</Radio.Button>
-        </Radio.Group>
-      </Space>
+
+        <Space size="small" align="center" wrap>
+          <Button size="small" icon={<SyncOutlined />} onClick={onRefresh}>
+            Refresh
+          </Button>
+          <Radio.Group
+            value={viewMode}
+            onChange={(event) =>
+              setViewMode(event.target.value as HostListViewMode)
+            }
+            optionType="button"
+            buttonStyle="solid"
+          >
+            <Radio.Button value="grid">Cards</Radio.Button>
+            <Radio.Button value="list">List</Radio.Button>
+          </Radio.Group>
+        </Space>
+      </div>
     </div>
   );
+
+  const showInitialLoading = hosts.length === 0 && (!hostsLoaded || hostsLoading);
+  const showLoadError =
+    hosts.length === 0 && !!hostsError && !showInitialLoading;
+
+  if (showInitialLoading) {
+    return (
+      <div>
+        {header}
+        <Card style={{ maxWidth: 720, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+            <Spin tip="Loading workspace hosts..." />
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (showLoadError) {
+    return (
+      <div>
+        {header}
+        <Alert
+          type="error"
+          showIcon
+          message="Unable to load workspace hosts"
+          description={hostsError}
+          action={
+            <Button size="small" onClick={onRefresh}>
+              Retry
+            </Button>
+          }
+          style={{ marginBottom: 12 }}
+        />
+      </div>
+    );
+  }
 
   if (hosts.length === 0) {
     return (
@@ -1046,6 +1216,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 onCancelOp={onCancelOp}
                 onDetails={onDetails}
                 onEdit={onEdit}
+                onToggleStar={onToggleStar}
                 selfHost={selfHost}
                 providerCapabilities={providerCapabilities}
               />

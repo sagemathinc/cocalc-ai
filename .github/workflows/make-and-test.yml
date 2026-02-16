@@ -22,7 +22,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: runner
 
     strategy:
       matrix:
@@ -33,34 +33,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-
-      - name: Install btrfs-progs for @cocalc/file-server
-        run: sudo apt-get update && sudo apt-get install -y btrfs-progs
-
-      - name: Set up Python venv and Jupyter kernel
-        run: |
-          sudo apt-get update && sudo apt-get install -y python3
-          python3 -m pip install --upgrade pip virtualenv
-          python3 -m virtualenv venv
-          source venv/bin/activate
-          pip install ipykernel requests yapf
-          python -m ipykernel install --prefix=./jupyter-local --name python3-local --display-name "Python 3 (Local)"
-
       - name: install pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
           run_install: false
 
-      - name: Configure pnpm store
-        run: pnpm config set store-dir ~/.pnpm-store
+      - name: Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+          cache-dependency-path: src/packages/pnpm-lock.yaml
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y btrfs-progs python3
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py3-${{ hashFiles('src/requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-py3-
+
+      - name: Set up Python venv and Jupyter kernel
+        run: |
+          python3 -m pip install --upgrade pip virtualenv
+          python3 -m virtualenv venv
+          source venv/bin/activate
+          pip install ipykernel requests yapf
+          python -m ipykernel install --prefix=./jupyter-local --name python3-local --display-name "Python 3 (Local)"
 
       - name: build
         run: cd src && pnpm build-dev
 
       - name: test
+        timeout-minutes: 15
+        env:
+          COCALC_RUNTIME_STORAGE_ALLOW_DIRECT: "yes"
         run: source venv/bin/activate && cd src && pnpm test

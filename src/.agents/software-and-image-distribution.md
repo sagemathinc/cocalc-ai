@@ -169,6 +169,11 @@ This plan covers:
 - Periodically GC unused rootfs subvolumes.
 - Keep a small LRU cache of recently used images.
 
+### Admin UI note (prepull selection)
+
+- The "prepull" list should eventually be selected from the manifest (not a freeform comma list).
+- Use an admin UI that fetches the manifest and lets admins choose a subset via a multi-select (e.g., antd Select tags).
+
 ### Security and trust
 
 - Only trusted hosts upload to R2.

@@ -4,12 +4,13 @@ Get the client for the given LanguageModel.
 You do not have to worry too much about throwing an exception, because they're caught in ./index::evaluate
 */
 
-import { Ollama } from "@langchain/ollama";
-import { ChatOpenAI as ChatOpenAILC } from "@langchain/openai";
+import type { Ollama } from "@langchain/ollama";
+import type { ChatOpenAI as ChatOpenAILC } from "@langchain/openai";
 import { omit } from "lodash";
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { isCustomOpenAI, isOllamaLLM } from "@cocalc/util/db-schema/llm-utils";
+import { importLangchain } from "./langchain-import";
 
 const log = getLogger("llm:client");
 
@@ -63,6 +64,9 @@ export async function getOllama(model: string): Promise<Ollama> {
 
   log.debug("Instantiating Ollama client with config", ollamaConfig);
 
+  const { Ollama } = await importLangchain<typeof import("@langchain/ollama")>(
+    "@langchain/ollama",
+  );
   const client = new Ollama(ollamaConfig);
   return client;
 }
@@ -119,7 +123,10 @@ export async function getCustomOpenAI(
     omit(customOpenAIConfig, ["apiKey", "openAIApiKey", "azureOpenAIApiKey"]),
   );
 
+  const { ChatOpenAI } = await importLangchain<
+    typeof import("@langchain/openai")
+  >("@langchain/openai");
   // https://js.langchain.com/docs/integrations/chat/openai/
-  const client = new ChatOpenAILC(customOpenAIConfig);
+  const client = new ChatOpenAI(customOpenAIConfig);
   return client;
 }

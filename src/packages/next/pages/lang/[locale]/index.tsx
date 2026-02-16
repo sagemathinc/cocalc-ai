@@ -36,7 +36,7 @@ import { CSS, Paragraph, Title } from "components/misc";
 import A from "components/misc/A";
 import { Customize, useCustomize } from "lib/customize";
 import withCustomize from "lib/with-customize";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 
 import SAGEMATH_JUPYTER from "public/cocalc-sagemath-2024-11-22-nq8.png";
 import assignments from "public/features/cocalc-course-assignments-2019.png";
@@ -390,7 +390,7 @@ function Features() {
                   size="large"
                   style={{ fontWeight: "bold" }}
                   onClick={() =>
-                    (window.location.href = join(basePath, "/auth/sign-up"))
+                    (window.location.href = join(ROOT_PATH, "/auth/sign-up"))
                   }
                   title={t("sign-up")}
                 >
@@ -423,7 +423,7 @@ function Features() {
                   size="large"
                   style={{ fontWeight: "bold" }}
                   onClick={() =>
-                    (window.location.href = join(basePath, "/pricing/onprem"))
+                    (window.location.href = join(ROOT_PATH, "/pricing/onprem"))
                   }
                   title={"On-Premises"}
                 >
@@ -459,7 +459,7 @@ function Features() {
               size="large"
               style={{ fontWeight: "bold" }}
               onClick={() =>
-                (window.location.href = join(basePath, "/auth/sign-up"))
+                (window.location.href = join(ROOT_PATH, "/auth/sign-up"))
               }
               title={t("sign-up")}
             >

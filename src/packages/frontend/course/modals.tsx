@@ -182,7 +182,7 @@ function getModal(modal: string): {
     default:
       return {
         Body: () => (
-          <Alert type="warning" message={<>BUG -- Unknown modal: {modal}</>} />
+          <Alert type="warning" title={<>BUG -- Unknown modal: {modal}</>} />
         ),
         title: "Error",
         icon: "bug",

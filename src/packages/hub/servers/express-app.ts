@@ -23,11 +23,14 @@ import initBlobs from "./app/blobs";
 import initCustomize from "./app/customize";
 import { initMetricsEndpoint, setupInstrumentation } from "./app/metrics";
 import initProjectHostBootstrap from "./app/project-host-bootstrap";
+import initProjectHostSoftware from "./app/project-host-software";
 import initSelfHostConnector from "./app/self-host-connector";
+import initRootfsManifest from "./app/rootfs-manifest";
 import initStats from "./app/stats";
-import { database } from "./database";
+import { getDatabase } from "./database";
 import initHttpServer from "./http";
 import initRobots from "./robots";
+import getServerSettings from "./server-settings";
 import basePath from "@cocalc/backend/base-path";
 import { initConatServer } from "@cocalc/server/conat/socketio";
 import { conatSocketioCount, root } from "@cocalc/backend/data";
@@ -36,6 +39,7 @@ import createApiV2Router from "@cocalc/next/lib/api-v2-router";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
 import {
   getLicenseStatus,
+  isLicenseRequired,
   isLaunchpadMode,
   isSoftwareLicenseActivated,
 } from "@cocalc/server/software-licenses/activation";
@@ -51,6 +55,51 @@ const PYTHON_API_PATH = join(root, "python", "cocalc-api", "site");
 const MAX_AGE = Math.round(ms("10 days") / 1000);
 const SHORT_AGE = Math.round(ms("10 seconds") / 1000);
 
+function isEnabled(value: unknown): boolean {
+  if (value === true) return true;
+  if (value == null) return false;
+  const lowered = String(value).trim().toLowerCase();
+  if (!lowered) return false;
+  return !["0", "false", "no", "off"].includes(lowered);
+}
+
+function normalizeCloudflareMode(
+  value: unknown,
+): "none" | "self" | "managed" | undefined {
+  const raw = `${value ?? ""}`.trim().toLowerCase();
+  if (raw === "none" || raw === "self" || raw === "managed") {
+    return raw;
+  }
+  return undefined;
+}
+
+function cloudflareTunnelEnabled(settings: Record<string, any>): boolean {
+  const mode = normalizeCloudflareMode(settings.cloudflare_mode);
+  const tunnelEnabled = isEnabled(settings.project_hosts_cloudflare_tunnel_enabled);
+  if (mode === "self") return tunnelEnabled;
+  if (mode === "managed") return false;
+  if (mode === "none") return tunnelEnabled;
+  return tunnelEnabled;
+}
+
+function normalizeIp(ip?: string): string {
+  let v = `${ip ?? ""}`.trim();
+  if (!v) return "";
+  if (v.startsWith("::ffff:")) {
+    v = v.slice("::ffff:".length);
+  }
+  const zoneIndex = v.indexOf("%");
+  if (zoneIndex >= 0) {
+    v = v.slice(0, zoneIndex);
+  }
+  return v;
+}
+
+function isTrustedCloudflareProxyPeer(ip?: string): boolean {
+  const v = normalizeIp(ip);
+  return v === "127.0.0.1" || v === "::1";
+}
+
 interface Options {
   projectControl;
   isPersonal: boolean;
@@ -62,11 +111,31 @@ interface Options {
   projectProxyHandlersPromise?;
 }
 
+function applyBaselineSecurityHeaders(_req, res, next): void {
+  // Conservative defaults that improve security without imposing CSP or frame
+  // restrictions that could break existing integrations.
+  if (!res.hasHeader("X-Content-Type-Options")) {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+  }
+  if (!res.hasHeader("X-DNS-Prefetch-Control")) {
+    res.setHeader("X-DNS-Prefetch-Control", "off");
+  }
+  if (!res.hasHeader("X-Permitted-Cross-Domain-Policies")) {
+    res.setHeader("X-Permitted-Cross-Domain-Policies", "none");
+  }
+  if (!res.hasHeader("Referrer-Policy")) {
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  }
+  next();
+}
+
 export default async function init(opts: Options): Promise<{
   httpServer;
   router: express.Router;
 }> {
-  logger.info("creating express app");
+  const winston = getLogger("express-app");
+  winston.info("creating express app");
+  const database = getDatabase();
 
   // Create an express application
   const app = express();
@@ -95,20 +164,50 @@ export default async function init(opts: Options): Promise<{
   }
 
   app.use(cookieParser());
+  app.use(applyBaselineSecurityHeaders);
 
   // Install custom middleware to track response time metrics via prometheus
   setupInstrumentation(router);
 
-  // see http://stackoverflow.com/questions/10849687/express-js-how-to-get-remote-client-address
-  app.enable("trust proxy");
+  // Decide how proxy headers are trusted.
+  //
+  // SECURITY CONTEXT:
+  // We use req.ip in security-sensitive logic (e.g. login throttling / temporary
+  // abuse bans and endpoint allowlists).  If proxy headers are trusted from the
+  // wrong peer, an attacker can spoof those headers and bypass controls that are
+  // supposed to be keyed by client IP.
+  //
+  // Therefore:
+  //   - strict-cloudflare mode: trust forwarded headers only from local tunnel
+  //     proxy peers (loopback).
+  //   - off mode: ignore forwarded headers and use direct socket address.
+  //
+  // In launchpad self-host mode we only enable strict-cloudflare when tunnel mode
+  // is explicitly enabled in settings.
+  const settings = await getServerSettings();
+  let strictCloudflareProxy = false;
+  const applyTrustProxy = () => {
+    const nextStrict = cloudflareTunnelEnabled(settings.all as Record<string, any>);
+    strictCloudflareProxy = nextStrict;
+    if (nextStrict) {
+      app.set("trust proxy", (ip: string) => isTrustedCloudflareProxyPeer(ip));
+      logger.info(
+        "proxy trust mode is strict-cloudflare (forwarded headers trusted only from loopback peers)",
+      );
+    } else {
+      app.set("trust proxy", false);
+      logger.info(
+        "proxy trust mode is off (forwarded headers ignored; using direct socket address)",
+      );
+    }
+  };
+  applyTrustProxy();
+  settings.table.on("change", applyTrustProxy);
 
   router.use("/robots.txt", initRobots());
 
   // setup the analytics.js endpoint (skip for launchpad/minimal modes)
-  if (
-    process.env.COCALC_MODE !== "launchpad" &&
-    !process.env.COCALC_DISABLE_ANALYTICS
-  ) {
+  if (!isLaunchpadMode() && !process.env.COCALC_DISABLE_ANALYTICS) {
     const analyticsModule = lazyRequire(join(__dirname, "..", "analytics")) as {
       initAnalytics?: (router: express.Router, db: any) => Promise<void>;
     };
@@ -150,11 +249,13 @@ export default async function init(opts: Options): Promise<{
   if (!opts.nextServer) {
     initLanding(router);
   }
-  if (!opts.nextServer && isLaunchpadMode()) {
+  if (!opts.nextServer && isLaunchpadMode() && isLicenseRequired()) {
     initLaunchpadActivationGate(router);
   }
   initAppRedirect(router, { includeAuth: !opts.nextServer });
   initProjectHostBootstrap(router);
+  initProjectHostSoftware(router);
+  initRootfsManifest(router);
   initSelfHostConnector(router);
 
   if (!opts.nextServer) {
@@ -179,6 +280,7 @@ export default async function init(opts: Options): Promise<{
     initConatServer({
       httpServer,
       ssl: !!opts.cert,
+      strictCloudflareProxy: () => strictCloudflareProxy,
     });
   }
 
@@ -324,7 +426,7 @@ function initLanding(router: express.Router) {
   router.get("/", (req, res) => {
     void (async () => {
       const base = basePath === "/" ? "" : basePath;
-      if (isLaunchpadMode()) {
+      if (isLaunchpadMode() && isLicenseRequired()) {
         const status = await getLicenseStatus();
         if (!status.activated) {
           const baseUrl = `${req.protocol}://${req.get("host")}${base}/`;
@@ -466,7 +568,7 @@ function initLanding(router: express.Router) {
         { href: `${base}/auth/sign-up`, label: "Sign up" },
       ];
       if (signedIn) {
-        links.unshift({ href: `${base}/projects`, label: "Projects" });
+        links.unshift({ href: `${base}/projects`, label: "Workspaces" });
       }
       res.type("html").send(`<!doctype html>
 <html lang="en">
@@ -539,8 +641,7 @@ function initLanding(router: express.Router) {
   <body>
     <div class="wrap">
       <div class="card">
-        <h1>CoCalc Launchpad</h1>
-        <p>Lightweight control plane for managing project hosts and accounts.</p>
+        <h1 style="margin-bottom:30px">CoCalc Launchpad</h1>
         <div class="links">
           ${links
             .map((link, index) => {

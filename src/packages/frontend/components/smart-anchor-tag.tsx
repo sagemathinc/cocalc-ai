@@ -171,7 +171,8 @@ function CoCalcURL({ href, title, children, project_id }) {
         </>
       );
     } else if (target.startsWith("files/")) {
-      targetPath = decodeURI(target).slice("files/".length);
+      const rawPath = decodeURI(target).slice("files/".length);
+      targetPath = rawPath;
       const filename = path_split(targetPath).tail;
       const hash = fragmentId ? `#${Fragment.encode(fragmentId)}` : "";
       if (project_id == target_project_id) {
@@ -285,7 +286,8 @@ function CoCalcURL({ href, title, children, project_id }) {
           ) : (
             <ProjectTitle project_id={target_project_id} />
           )}{" "}
-          in the {targetPath ? <>directory "{targetPath}"</> : "home directory"}
+          in the{" "}
+          {targetPath ? <>directory "{targetPath}"</> : "project root directory"}
           .
         </>
       );

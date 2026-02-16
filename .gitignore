@@ -14,7 +14,7 @@ codemirror.min.js
 .*.sage-backup
 .*.sage-history
 .*.smc-backup
-data/
+data*/
 .#*
 \#*
 node_modules
@@ -25,6 +25,8 @@ log
 out
 
 src/cocalc-testcafe/package-lock.json
+
+src/packages/database/coverage/
 
 src/tsconfig.tsbuildinfo
 
@@ -130,6 +132,7 @@ src/go-landing
 **/dist-prod/
 **/dist-prod-measure/
 **/dist-ts/
+src/packages/next/dist-types/
 
 src/packages/landing
 tsconfig.tsbuildinfo
@@ -162,6 +165,9 @@ src/.claude/settings.local.json
 
 # test reports by jest-junit
 junit.xml
+src/packages/frontend/test-results/
+src/packages/frontend/playwright-report/
+src/.local/
 
 
 sea-prep.blob
@@ -194,8 +200,10 @@ g-cs
 g-cs2
 g-ssh-server
 g-bundle
+g-postgres
 g2
 g-lite
+g-*.sh
 scratch
 patchflow
 *.pid
@@ -205,6 +213,8 @@ patchflow
 data-0
 data-1
 
-publish.sh
+publish*.sh
+!src/packages/launchpad/sea/publish-sea.sh
 
 src/packages/next/lib/api-v2-manifest.ts
+src/create*.sh

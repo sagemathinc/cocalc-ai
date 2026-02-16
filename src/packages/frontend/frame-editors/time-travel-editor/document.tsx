@@ -8,13 +8,57 @@ Render a static version of a document for use in TimeTravel.
 */
 
 import { fromJS } from "immutable";
-import { CodemirrorEditor } from "../code-editor/codemirror-editor";
+import {
+  CodemirrorEditor,
+  type Props as CodemirrorEditorProps,
+} from "../code-editor/codemirror-editor";
 
-export function TextDocument(props) {
+function withExtension(path: string, ext: string): string {
+  const normalized = ext.startsWith(".") ? ext.slice(1) : ext;
+  if (!normalized) return path;
+  const slash = path.lastIndexOf("/");
+  const base = slash >= 0 ? path.slice(slash + 1) : path;
+  const hasExt = base.lastIndexOf(".") > 0;
+  if (hasExt) {
+    return path.replace(/\.([^.\/]+)$/, `.${normalized}`);
+  }
+  return `${path}.${normalized}`;
+}
+
+type TextDocumentProps = Pick<
+  CodemirrorEditorProps,
+  "id" | "actions" | "path" | "project_id" | "font_size" | "editor_settings"
+> & {
+  value: string | (() => string);
+  syntaxHighlightExtension?: string;
+};
+
+export function TextDocument(props: TextDocumentProps) {
+  const {
+    id,
+    actions,
+    path,
+    project_id,
+    font_size,
+    editor_settings,
+    value,
+    syntaxHighlightExtension,
+  } = props;
+  const modePath =
+    syntaxHighlightExtension != null
+      ? withExtension(path, syntaxHighlightExtension)
+      : undefined;
   return (
     <div className="smc-vfill" style={{ overflowY: "auto" }}>
       <CodemirrorEditor
-        {...props}
+        id={id}
+        actions={actions}
+        path={path}
+        project_id={project_id}
+        font_size={font_size}
+        editor_settings={editor_settings}
+        value={value}
+        mode_path={modePath}
         cursors={fromJS({})}
         editor_state={fromJS({})}
         read_only={true}

@@ -102,18 +102,27 @@ export default function init({
     try {
       await handleProxyRequest(req, res);
     } catch (err) {
-      const msg = `WARNING: error proxying request ${req.url} -- ${err}`;
+      // SECURITY: this path handles internet-facing requests.  Never reflect
+      // internal error text to clients.
+      const body =
+        "<!doctype html><meta charset=\"utf-8\"><h1>Proxy request failed</h1><p>The request could not be completed.</p>";
       try {
         // this will fail if handleProxyRequest already wrote a header, so we
         // try/catch it.
-        res.writeHead(500, { "Content-Type": "text/html" });
+        res.writeHead(500, {
+          "Content-Type": "text/html; charset=utf-8",
+          "X-Content-Type-Options": "nosniff",
+        });
       } catch {}
       try {
-        res.end(msg);
+        res.end(body);
       } catch {}
       // Not something to log as an error -- just debug; it's normal for it to happen, e.g., when
       // a project isn't running.
-      logger.debug(msg);
+      logger.debug("proxy request failed", {
+        url: req.url,
+        err: err instanceof Error ? err.message : `${err}`,
+      });
     }
   };
 }

@@ -320,7 +320,7 @@ export function ProjectRowExpandedContent({ project_id }: Props) {
           </Space>
         </Descriptions.Item>
         <Descriptions.Item label={intl.formatMessage(labels.state)}>
-          <Space direction="vertical" size="small">
+          <Space orientation="vertical" size="small">
             <ProjectState state={project.get("state")} />
             <Space.Compact>
               <RestartProject project_id={project_id} size="small" />

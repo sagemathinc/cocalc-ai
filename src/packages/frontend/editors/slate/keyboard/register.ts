@@ -5,11 +5,11 @@
 
 // Plugin system for keyboarding handlers.
 
-export { IS_MACOS } from "@cocalc/frontend/feature";
+export { IS_MACOS } from "../../../feature";
 
-import { SlateEditor } from "../editable-markdown";
-import { Actions } from "../types";
-import { SearchHook } from "../search";
+import type { SlateEditor } from "../types";
+import type { Actions } from "../types";
+import type { SearchHook } from "../search";
 
 interface Key {
   key: string;
@@ -62,12 +62,25 @@ export function register(
   const s = KeyToString(key as Key);
   if (keyHandlers[s] != null) {
     // making this a warning to support hot module reloading.
-    console.warn(`WARNING: there is already a handler registered for ${s}`);
+    if (
+      typeof process !== "undefined" &&
+      process?.env?.NODE_ENV === "test"
+    ) {
+      // Avoid noisy warnings in unit tests that import this module multiple times.
+    } else {
+      console.warn(`WARNING: there is already a handler registered for ${s}`);
+    }
   }
   keyHandlers[s] = handlerNoThrow;
 }
 
 export function getHandler(event): KeyHandler | undefined {
   // console.log(event.key);
-  return keyHandlers[EventToString(event)];
+  const direct = keyHandlers[EventToString(event)];
+  if (direct != null) return direct;
+  if (event?.code === "Semicolon") {
+    const prefix = `${event.shiftKey}${event.ctrlKey}${event.metaKey}${event.altKey}`;
+    return keyHandlers[`${prefix};`] ?? keyHandlers[`${prefix}:`];
+  }
+  return undefined;
 }

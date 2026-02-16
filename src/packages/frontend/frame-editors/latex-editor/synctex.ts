@@ -12,6 +12,7 @@ import {
   splitlines,
   change_filename_extension,
 } from "@cocalc/util/misc";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { exec, ExecOutput, project_api } from "../generic/client";
 
 interface SyncTex {
@@ -52,16 +53,18 @@ export async function pdf_to_tex(opts: {
   const output = await exec_synctex(opts.project_id, path, args);
   const info = parse_synctex_output(output.stdout);
   if (info.Input != null) {
-    // Determine canonical path to source file
-    // Unfortunately, we use a roundtrip back to the project again for this (slightly more latency, but more robust).
+    // Resolve to an absolute path for editor open flows.
     const projectAPI = await project_api(opts.project_id);
     const inputOrig = `${info.Input}`;
+    const baseDir = path_split(opts.src).head || "/";
+    const normalized = normalizeAbsolutePath(inputOrig, baseDir);
     try {
-      info.Input = await projectAPI.canonical_path(inputOrig);
+      info.Input = await projectAPI.realpath(normalized);
     } catch (_) {
-      // there are situations, where synctex claims the file extension is .Rnw, while in reality it is .rnw or whatever else
-      // we use the path of the input file as a fallback. Usually, this should work fine.
-      info.Input = opts.src;
+      // There are situations where synctex reports a path that does not
+      // exist yet (or has a mismatched extension). Keep the normalized
+      // absolute path as a robust fallback.
+      info.Input = normalized;
     }
   }
   return info;

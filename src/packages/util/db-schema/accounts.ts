@@ -1,5 +1,5 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2020-2025 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
@@ -289,6 +289,14 @@ Table({
       type: "map",
       desc: "Map from ssh key fingerprints to ssh key objects.",
     },
+    default_rootfs_image: {
+      type: "string",
+      desc: "Default workspace root filesystem image for this account.",
+    },
+    default_rootfs_image_gpu: {
+      type: "string",
+      desc: "Default workspace root filesystem image for this account when using GPUs.",
+    },
     api_key: {
       type: "string",
       desc: "Optional API key that grants full API access to anything this account can access. Key is of the form 'sk_9QabcrqJFy7JIhvAGih5c6Nb', where the random part is 24 characters (base 62).",
@@ -556,6 +564,8 @@ Table({
           },
           customize: null,
           ssh_keys: {},
+          default_rootfs_image: null,
+          default_rootfs_image_gpu: null,
           created: null,
           ephemeral: null,
           unlisted: false,
@@ -585,6 +595,8 @@ Table({
           font_size: true,
           profile: true,
           ssh_keys: true,
+          default_rootfs_image: true,
+          default_rootfs_image_gpu: true,
           sign_up_usage_intent: true,
           unlisted: true,
           tags: true,

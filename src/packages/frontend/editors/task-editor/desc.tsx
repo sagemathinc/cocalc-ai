@@ -10,7 +10,7 @@ Task description:
  - allows for changing it
 */
 
-import { Button, Popconfirm, Tooltip } from "antd";
+import { Button, Popconfirm, Tooltip, Space } from "antd";
 import { React } from "../../app-framework";
 import { Icon } from "../../components";
 import { DescriptionRendered } from "./desc-rendered";
@@ -109,7 +109,7 @@ export const Description: React.FC<Props> = React.memo(
         );
 
       return (
-        <Button.Group>
+        <Space.Compact>
           <Tooltip title="Edit this task (double click or enter key)">
             <Button size="small" type="link" onClick={edit}>
               <Icon name={"edit"} /> Edit
@@ -123,7 +123,7 @@ export const Description: React.FC<Props> = React.memo(
               <Icon name="trash" /> Delete
             </Button>
           </Popconfirm>
-        </Button.Group>
+        </Space.Compact>
       );
     }
 

@@ -3,16 +3,17 @@ import {
   DEFAULT_PROJECT_IMAGE,
   PROJECT_IMAGE_PATH,
 } from "@cocalc/util/db-schema/defaults";
-import { Button, Input, Modal, Spin, Tag } from "antd";
-import { useEffect, useState } from "react";
+import { Button, Input, Modal, Radio, Select, Space, Spin, Tag } from "antd";
+import { useEffect, useMemo, useState } from "react";
 import { useIntl } from "react-intl";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import ShowError from "@cocalc/frontend/components/error";
-import { redux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { dirname, join } from "path";
 import { A, Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { split } from "@cocalc/util/misc";
+import { useRootfsImages } from "@cocalc/frontend/rootfs/manifest";
 
 export default function RootFilesystemImage() {
   const { project } = useProjectContext();
@@ -20,14 +21,85 @@ export default function RootFilesystemImage() {
   const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
   const [open, setOpen] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
-  const [value, setValue] = useState<string>(getImage(project));
+  const siteDefaultRootfs = useTypedRedux(
+    "customize",
+    "project_rootfs_default_image",
+  );
+  const siteDefaultRootfsGpu = useTypedRedux(
+    "customize",
+    "project_rootfs_default_image_gpu",
+  );
+  const accountDefaultRootfs = useTypedRedux(
+    "account",
+    "default_rootfs_image",
+  );
+  const accountDefaultRootfsGpu = useTypedRedux(
+    "account",
+    "default_rootfs_image_gpu",
+  );
+  const manifestUrl = useTypedRedux(
+    "customize",
+    "project_rootfs_manifest_url",
+  );
+  const manifestUrlExtra = useTypedRedux(
+    "customize",
+    "project_rootfs_manifest_url_extra",
+  );
+  const effectiveDefaultRootfs = useMemo(() => {
+    const siteDefault = siteDefaultRootfs?.trim() || DEFAULT_PROJECT_IMAGE;
+    const siteGpu = siteDefaultRootfsGpu?.trim() || "";
+    const accountDefault = accountDefaultRootfs?.trim() || "";
+    const accountDefaultGpu = accountDefaultRootfsGpu?.trim() || "";
+    return (
+      accountDefaultGpu ||
+      siteGpu ||
+      accountDefault ||
+      siteDefault ||
+      DEFAULT_PROJECT_IMAGE
+    );
+  }, [
+    accountDefaultRootfs,
+    accountDefaultRootfsGpu,
+    siteDefaultRootfs,
+    siteDefaultRootfsGpu,
+  ]);
+  const [value, setValue] = useState<string>(
+    getImage(project, effectiveDefaultRootfs),
+  );
   const [error, setError] = useState<string>("");
   const [images, setImages] = useState<string[]>([DEFAULT_PROJECT_IMAGE]);
   const [help, setHelp] = useState<boolean>(false);
+  const [rootfsMode, setRootfsMode] = useState<"catalog" | "custom">("catalog");
+  const [rootfsDraft, setRootfsDraft] = useState<string>("");
+  const manifestUrls = useMemo(
+    () =>
+      [manifestUrl, manifestUrlExtra]
+        .map((url) => url?.trim())
+        .filter((url): url is string => !!url && url.length > 0),
+    [manifestUrl, manifestUrlExtra],
+  );
+  const {
+    images: rootfsImages,
+    loading: rootfsLoading,
+    error: rootfsError,
+  } = useRootfsImages(manifestUrls);
+  const selectedRootfsEntry = useMemo(() => {
+    const image = rootfsDraft?.trim();
+    if (!image) return undefined;
+    return rootfsImages.find((entry) => entry.image === image);
+  }, [rootfsImages, rootfsDraft]);
+  const rootfsOptions = useMemo(
+    () =>
+      rootfsImages.map((entry) => ({
+        value: entry.image,
+        label: entry.label || entry.image,
+      })),
+    [rootfsImages],
+  );
 
   useEffect(() => {
-    setValue(getImage(project));
-  }, [project]);
+    setValue(getImage(project, effectiveDefaultRootfs));
+  }, [project, effectiveDefaultRootfs]);
 
   useEffect(() => {
     if (project == null) return;
@@ -48,6 +120,12 @@ export default function RootFilesystemImage() {
         type={"link"}
         disabled={open}
         onClick={() => {
+          const current = getImage(project, effectiveDefaultRootfs);
+          setRootfsDraft(current);
+          const inCatalog = rootfsImages.some(
+            (entry) => entry.image === current,
+          );
+          setRootfsMode(inCatalog ? "catalog" : "custom");
           setOpen(!open);
         }}
       >
@@ -58,7 +136,9 @@ export default function RootFilesystemImage() {
           width={700}
           open
           onCancel={() => {
-            setValue(getImage(project));
+            const current = getImage(project, effectiveDefaultRootfs);
+            setValue(current);
+            setRootfsDraft(current);
             setOpen(false);
           }}
           title={
@@ -84,8 +164,12 @@ export default function RootFilesystemImage() {
             try {
               setSaving(true);
               const project_id = project.get("project_id");
+              const next =
+                rootfsMode === "custom"
+                  ? rootfsDraft?.trim() || effectiveDefaultRootfs
+                  : rootfsDraft || effectiveDefaultRootfs;
               const v = split(
-                value?.trim() ? value.trim() : DEFAULT_PROJECT_IMAGE,
+                next?.trim() ? next.trim() : effectiveDefaultRootfs,
               );
               // just take last part, so if they type "docker pull imagename" it still works.
               let image = v.slice(-1)[0];
@@ -93,6 +177,12 @@ export default function RootFilesystemImage() {
                 project_id,
                 image,
               });
+              setValue(image);
+              setRootfsDraft(image);
+              const inCatalog = rootfsImages.some(
+                (entry) => entry.image === image,
+              );
+              setRootfsMode(inCatalog ? "catalog" : "custom");
               if (project.getIn(["state", "state"]) == "running") {
                 redux.getActions("projects").restart_project(project_id);
               }
@@ -146,13 +236,43 @@ export default function RootFilesystemImage() {
             </div>
           )}
 
-          <Input
-            value={value}
-            onChange={(e) => {
-              setValue(e.target.value);
-            }}
-            allowClear
-          />
+          <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+            <Radio.Group
+              value={rootfsMode}
+              onChange={(e) => setRootfsMode(e.target.value)}
+            >
+              <Radio value="catalog">Curated images</Radio>
+              <Radio value="custom">Custom image</Radio>
+            </Radio.Group>
+            {rootfsMode === "catalog" ? (
+              <>
+                <Select
+                  showSearch
+                  options={rootfsOptions}
+                  value={rootfsDraft}
+                  placeholder="Select an image"
+                  onChange={(next) => setRootfsDraft(next)}
+                  loading={rootfsLoading}
+                  disabled={rootfsLoading}
+                />
+                {selectedRootfsEntry?.description && (
+                  <div style={{ color: "#666" }}>
+                    {selectedRootfsEntry.description}
+                  </div>
+                )}
+                {rootfsError && (
+                  <div style={{ color: "#c00" }}>{rootfsError}</div>
+                )}
+              </>
+            ) : (
+              <Input
+                value={rootfsDraft}
+                onChange={(e) => setRootfsDraft(e.target.value)}
+                allowClear
+                placeholder="e.g. ghcr.io/org/image:tag"
+              />
+            )}
+          </Space>
           <div style={{ marginTop: "15px" }}>
             <div style={{ marginBottom: "8px" }}>Recent Images:</div>
             {images.map((image) => (
@@ -166,7 +286,8 @@ export default function RootFilesystemImage() {
                 color={image == value ? "#108ee9" : undefined}
                 key={image}
                 onClick={() => {
-                  setValue(image);
+                  setRootfsDraft(image);
+                  setRootfsMode("custom");
                 }}
               >
                 {image}
@@ -181,9 +302,9 @@ export default function RootFilesystemImage() {
   );
 }
 
-function getImage(project) {
+function getImage(project, fallback: string) {
   const image = project?.get("rootfs_image")?.trim();
-  return image ? image : DEFAULT_PROJECT_IMAGE;
+  return image ? image : fallback;
 }
 
 async function getImages(project_id: string) {

@@ -49,11 +49,38 @@ This file provides guidance to Claude Code (claude.ai/code), Gemini CLI (https:/
 - To typecheck the frontend, it is best to run `cd packages/static && pnpm build` - this implicitly compiles the frontend and reports TypeScript errors
 - **IMPORTANT**: When modifying packages like `util` that other packages depend on, you must run `pnpm build` in the modified package before typechecking dependent packages
 
+### Dependency Management
+
+**Package versions must be uniform across all CoCalc packages in the monorepo.**
+
+When updating npm packages:
+
+- **ALWAYS update associated `@types/[name]` packages** when updating an npm package `[name]` if `@types/[name]` is installed
+- **Check all packages in the workspace** that depend on the package being updated
+- **Ensure version consistency** across all packages - the same package must use the same version everywhere
+- Run `pnpm version-check` from the root directory (`cocalc/src/`) to verify version consistency
+- Run `pnpm install` after updating dependencies in any package
+- Use `pnpm list [package]` to verify the installed version across the workspace
+- Example: When updating `pg` from `^8.7.1` to `^8.16.3`, also update `@types/pg` from `^8.6.1` to `^8.16.0` in **all packages** that use them
+
 ### Development
 
 - **IMPORTANT**: Always run `prettier -w [filename]` immediately after editing any .ts, .tsx, .md, or .json file to ensure consistent styling
-- After TypeScript or `*.tsx` changes, run `pnpm build` in the relevant package directory
-  - When editing the frontend, run `pnpm build-dev` in `packages/static` (this implicitly builds the frontend)
+- After TypeScript or `*.tsx` changes, run `pnpm tsc --build` in the relevant package directory
+
+#### Modernizing Legacy Callback Code
+
+When working with legacy callback-based code (using `async.series`, `defaults()`, nested callbacks), follow the comprehensive modernization guide:
+
+**📖 See [dev/MODERNIZE_CODE.md](./dev/MODERNIZE_CODE.md)** for the complete step-by-step process to convert callback-based code to modern async/await TypeScript.
+
+This guide covers:
+
+- Converting `async.series`/`async.parallel` to native async/await
+- Replacing `defaults()` with TypeScript destructuring
+- Proper error handling with try/catch
+- Maintaining backwards compatibility
+- Updating callers to use direct async/await
 
 ## Architecture Overview
 
@@ -109,6 +136,13 @@ CoCalc is organized as a monorepo with key packages:
   5. **Authentication**: Each conat request includes account_id and is subject to permission checks at the hub level
   6. **Subjects**: Messages are routed using hierarchical subjects like `hub.account.{uuid}.{service}` or `project.{uuid}.{service}`
 
+### Config And Paths Source Of Truth
+
+- Before adding a new env-var default or filesystem path, check `packages/backend/data.ts`.
+- If config is shared across packages (secrets paths, auth cache roots, data dirs), define/export a constant in `packages/backend/data.ts` and reuse it.
+- Prefer paths under `secrets` from `packages/backend/data.ts` for secret/auth-related storage.
+- Only use package-local hardcoded defaults when there is a clear package boundary reason; add a short comment when doing so.
+
 ### Key Technologies
 
 - **TypeScript**: Primary language for all new code
@@ -156,11 +190,12 @@ CoCalc is organized as a monorepo with key packages:
 
 ## Git Workflow
 
-- All changes happen through feature branches, which are pushed as pull requests to GitHub
+- Never modify a file when in the `master` or `main` branch
+- All changes happen through feature branches.
 - When creating a new file, run `git add [filename]` to track the file.
 - Prefix git commits with the package and general area. e.g. 'frontend/latex: ...' if it concerns latex editor changes in the packages/frontend/... code.
 - When pushing a new branch to Github, track it upstream. e.g. `git push --set-upstream origin feature-foo` for branch "feature-foo".
-- Only automatically commit when I explicitly ask.  I will review ALL code before committing it.
+- Only automatically commit when I explicitly ask. I will review ALL code before committing it.
 
 ## React-intl / Internationalization (i18n)
 
@@ -182,6 +217,9 @@ Examples:
 - `labels.masked_files` - for common UI labels
 - `account.sign-out.button.title` - for account sign-out dialog
 - `command.generic.force_build.label` - for command labels
+
+Also we use the term "project" most everywhere in the code for the containers
+users work in, but the word "workspace" in user facing text.
 
 ### Usage Patterns
 

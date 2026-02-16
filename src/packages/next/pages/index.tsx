@@ -20,7 +20,7 @@ import Logo from "components/logo";
 import { CSS, Paragraph, Title } from "components/misc";
 import A from "components/misc/A";
 import Videos, { Video } from "components/videos";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { Customize, CustomizeType } from "lib/customize";
 import { PublicPath as PublicPathType } from "lib/share/types";
 import withCustomize from "lib/with-customize";
@@ -85,7 +85,7 @@ export default function Home(props: Props) {
         <Title level={1} style={{ color: COLORS.GRAY }}>
         Signed in as{" "}
           <Tooltip title={"View all your account settings"} placement={"right"}>
-            <a href={join(basePath, "settings")}>
+            <a href={join(ROOT_PATH, "settings")}>
               {`${account.first_name} ${account.last_name} ${
                 account.name ? "(@" + account.name + ")" : ""
               }`}
@@ -95,11 +95,11 @@ export default function Home(props: Props) {
         <Paragraph style={{ fontSize: "11pt", margin: "15px 0" }}>
           {isCommercial && account && (
             <>
-              <a href={join(basePath, "store")} style={TOP_LINK_STYLE}>
+              <a href={join(ROOT_PATH, "store")} style={TOP_LINK_STYLE}>
                 Store
               </a>{" "}
               <a
-                href={join(basePath, "settings/purchases")}
+                href={join(ROOT_PATH, "settings/purchases")}
                 style={TOP_LINK_STYLE}
               >
                 Purchases
@@ -109,7 +109,7 @@ export default function Home(props: Props) {
               </A>{" "}
             </>
           )}
-          <a href={join(basePath, "projects")} style={TOP_LINK_STYLE}>
+          <a href={join(ROOT_PATH, "projects")} style={TOP_LINK_STYLE}>
             Projects
           </a>{" "}
           {customize.landingPages && (

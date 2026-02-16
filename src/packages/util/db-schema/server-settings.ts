@@ -90,8 +90,6 @@ export interface Customize {
   contactEmail?: string;
   isCommercial?: boolean;
   kucalc?: KucalcValues;
-  sshGateway?: boolean;
-  sshGatewayDNS?: string;
   logoSquareURL?: string;
   logoRectangularURL?: string;
   splashImage?: string;
@@ -122,6 +120,20 @@ export interface Customize {
   support?: string;
   supportVideoCall?: string;
   shareDomain?: string;
+  project_hosts_nebius_enabled?: boolean;
+  "project_hosts_google-cloud_enabled"?: boolean;
+  project_hosts_hyperstack_enabled?: boolean;
+  project_hosts_lambda_enabled?: boolean;
+  project_hosts_local_enabled?: boolean;
+  project_hosts_self_host_alpha_enabled?: boolean;
+  project_hosts_cloudflare_tunnel_enabled?: boolean;
+  cloudflare_mode?: string;
+  launchpad_cloudflare_tunnel_status?: {
+    enabled: boolean;
+    running: boolean;
+    hostname?: string;
+    error?: string | null;
+  };
   version?: {
     min_project?: number;
     min_browser?: number;

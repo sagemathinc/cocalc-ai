@@ -1,5 +1,5 @@
 //########################################################################
-// This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+// This file is part of CoCalc: Copyright © 2020-2025 Sagemath, Inc.
 // License: MS-RSL – see LICENSE.md for details
 //########################################################################
 
@@ -9,21 +9,21 @@
 
 import { callback } from "awaiting";
 import blocked from "blocked";
-import { spawn } from "child_process";
 import { program as commander } from "commander";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import basePath from "@cocalc/backend/base-path";
 import {
-  pghost as DEFAULT_DB_HOST,
-  pgdatabase as DEFAULT_DB_NAME,
-  pguser as DEFAULT_DB_USER,
   pgConcurrentWarn as DEFAULT_DB_CONCURRENT_WARN,
   hubHostname as DEFAULT_HUB_HOSTNAME,
   agentPort as DEFAULT_AGENT_PORT,
+  conatServer,
 } from "@cocalc/backend/data";
 import { trimLogFileSize } from "@cocalc/backend/logger";
 import port from "@cocalc/backend/port";
-import { init_start_always_running_projects } from "@cocalc/database/postgres/always-running";
+import { init_start_always_running_projects } from "@cocalc/database/postgres/project/always-running";
 import { load_server_settings_from_env } from "@cocalc/database/settings/server-settings";
+import { ensureLocalPostgres } from "@cocalc/database/postgres/dev";
 import { init_passport } from "@cocalc/server/hub/auth";
 import { initialOnPremSetup } from "@cocalc/server/initial-onprem-setup";
 import { ensureBootstrapAdminToken } from "@cocalc/server/auth/bootstrap-admin";
@@ -35,6 +35,12 @@ import initIdleTimeout from "@cocalc/server/projects/control/stop-idle-projects"
 import initPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
 import initEphemeralMaintenance from "@cocalc/server/ephemeral-maintenance";
 import initSalesloftMaintenance from "@cocalc/server/salesloft/init";
+import { maybeStartLaunchpadOnPremServices } from "@cocalc/server/launchpad/onprem-sshd";
+import {
+  getCocalcProduct,
+  isLaunchpadProduct,
+  isRocketProduct,
+} from "@cocalc/server/launchpad/mode";
 import {
   cloudHostHandlers,
   startCloudCatalogWorker,
@@ -44,7 +50,7 @@ import {
 import { callback2, retry_until_success } from "@cocalc/util/async-utils";
 import { set_agent_endpoint } from "./health-checks";
 import { getLogger } from "./logger";
-import initDatabase, { database } from "./servers/database";
+import initDatabase, { getDatabase } from "./servers/database";
 import initExpressApp from "./servers/express-app";
 import {
   loadConatConfiguration,
@@ -60,7 +66,8 @@ import * as MetricsRecorder from "@cocalc/server/metrics/metrics-recorder";
 import { setConatClient } from "@cocalc/conat/client";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { createProjectHostProxyHandlers } from "./proxy/project-host";
-import { maybeStartEmbeddedProjectHost } from "./servers/project-host";
+import { ensureSelfHostReverseTunnelsOnStartup } from "@cocalc/server/self-host/ssh-target";
+import { assertLocalBindOrInsecure } from "@cocalc/backend/network/policy";
 
 // Logger tagged with 'hub' for this file.
 const logger = getLogger("hub");
@@ -71,9 +78,37 @@ export { program };
 
 const REGISTER_INTERVAL_S = 20;
 
+function openUrlIfRequested(url: string): void {
+  const flag = (process.env.COCALC_OPEN_BROWSER || "").toLowerCase();
+  if (flag !== "1" && flag !== "true" && flag !== "yes") {
+    return;
+  }
+  const cmd =
+    process.platform === "darwin" && existsSync("/usr/bin/open")
+      ? "/usr/bin/open"
+      : process.platform === "darwin"
+        ? "open"
+        : "xdg-open";
+  try {
+    const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
+    child.once("error", (err) => {
+      logger.debug("browser auto-open failed", {
+        cmd,
+        message: (err as any)?.message,
+      });
+    });
+    child.unref();
+  } catch (err: any) {
+    logger.debug("browser auto-open failed to spawn", {
+      cmd,
+      message: err?.message,
+    });
+  }
+}
+
 async function reset_password(email_address: string): Promise<void> {
   try {
-    await callback2(database.reset_password, { email_address });
+    await callback2(getDatabase().reset_password, { email_address });
     logger.info(`Password changed for ${email_address}`);
   } catch (err) {
     logger.info(`Error resetting password -- ${err}`);
@@ -87,13 +122,12 @@ setConatClient({ conat: conatWithProjectRouting, getLogger });
 // It's important that we call this periodically, because otherwise the /stats data is outdated.
 async function init_update_stats(): Promise<void> {
   logger.info("init updating stats periodically");
-  const update = () => callback2(database.get_stats);
+  const update = () => callback2(getDatabase().get_stats);
   // Do it every minute:
   setInterval(() => update(), 60000);
   // Also do it once now:
   await update();
 }
-
 
 async function initMetrics() {
   logger.info("Initializing Metrics Recorder...");
@@ -106,13 +140,31 @@ async function initMetrics() {
   };
 }
 
+async function maybeInitOnPremTls(): Promise<void> {
+  if (!isLaunchpadProduct() && !isRocketProduct()) {
+    return;
+  }
+  if (!process.env.CONAT_SERVER) {
+    logger.info("local network conat server using default", {
+      address: conatServer,
+    });
+  } else {
+    logger.info("local network conat server using explicit CONAT_SERVER", {
+      address: process.env.CONAT_SERVER,
+    });
+  }
+}
+
 async function startServer(): Promise<void> {
   logger.info("start_server");
 
+  assertLocalBindOrInsecure({
+    bindHost: program.hostname,
+    serviceName: "hub http listener",
+  });
+
   logger.info(`basePath='${basePath}'`);
-  logger.info(
-    `database: name="${program.databaseName}" nodes="${program.databaseNodes}" user="${program.databaseUser}"`,
-  );
+  logger.info("database: using env configuration");
 
   const { metric_blocked } = await initMetrics();
 
@@ -129,7 +181,7 @@ async function startServer(): Promise<void> {
 
   // Wait for database connection to work.  Everything requires this.
   await retry_until_success({
-    f: async () => await callback2(database.connect),
+    f: async () => await callback2(getDatabase().connect),
     start_delay: 1000,
     max_delay: 10000,
   });
@@ -137,18 +189,21 @@ async function startServer(): Promise<void> {
 
   if (program.updateDatabaseSchema) {
     logger.info("Update database schema");
-    await callback2(database.update_schema);
+    await getDatabase().update_schema();
 
     // in those cases where we initialize the database upon startup
     // (essentially only relevant for kucalc's hub-websocket)
     if (program.mode === "kucalc") {
       // and for on-prem setups, also initialize the admin account, set a registration token, etc.
-      await initialOnPremSetup(database);
+      await initialOnPremSetup(getDatabase());
     }
   }
 
   // set server settings based on environment variables
-  await load_server_settings_from_env(database);
+  await load_server_settings_from_env(getDatabase());
+  await maybeInitOnPremTls();
+  await maybeStartLaunchpadOnPremServices();
+  await ensureSelfHostReverseTunnelsOnStartup();
 
   if (program.agentPort) {
     logger.info("Configure agent port");
@@ -166,9 +221,6 @@ async function startServer(): Promise<void> {
   // Project control
   logger.info("initializing project control...");
   const projectControl = initProjectControl();
-  // used for nextjs hot module reloading dev server
-  process.env["COCALC_MODE"] = program.mode;
-
   if (program.mode != "kucalc" && program.conatServer) {
     // We handle idle timeout of projects.
     // This can be disabled via COCALC_NO_IDLE_TIMEOUT.
@@ -213,35 +265,12 @@ async function startServer(): Promise<void> {
     startCloudVmReconciler();
   }
 
-  await maybeStartEmbeddedProjectHost();
-
   if (program.conatServer) {
-    if (program.mode == "single-user" && process.env.USER == "user") {
-      // Definitely in dev mode, probably on cocalc.com in a project, so we kill
-      // all the running projects when starting the hub:
-      // Whenever we start the dev server, we just assume
-      // all projects are stopped, since assuming they are
-      // running when they are not is bad.  Something similar
-      // is done in cocalc-docker.
-      logger.info("killing all projects...");
-      await callback2(database._query, {
-        safety_check: false,
-        query: 'update projects set state=\'{"state":"opened"}\'',
-      });
-      await spawn("pkill", ["-f", "node_modules/.bin/cocalc-project"]);
-
-      // Also, unrelated to killing projects, for purposes of developing
-      // custom software images, we inject a couple of random nonsense entries
-      // into the table in the DB:
-      logger.info("inserting random nonsense compute images in database");
-      await callback2(database.insert_random_compute_images);
-    }
-
     if (program.mode != "kucalc") {
       await init_update_stats();
       // This is async but runs forever, so don't wait for it.
       logger.info("init starting always running projects");
-      init_start_always_running_projects(database);
+      init_start_always_running_projects(getDatabase());
     }
   }
 
@@ -261,6 +290,8 @@ async function startServer(): Promise<void> {
       cert: program.httpsCert,
       key: program.httpsKey,
     });
+
+    const database = getDatabase();
 
     // The express app create via initExpressApp above **assumes** that init_passport is done
     // or complains a lot. This is obviously not really necessary, but we leave it for now.
@@ -296,15 +327,10 @@ async function startServer(): Promise<void> {
 
     const bootstrapUrl = await ensureBootstrapAdminToken({ baseUrl: target });
     const displayUrl = bootstrapUrl ?? target;
-    const msg = `Started HUB!\n\n-----------\n\n The following URL *might* work: ${displayUrl}\n\n\nPORT=${port}\nBASE_PATH=${basePath}\nPROTOCOL=${protocol}\n\n${
-      basePath.length <= 1
-        ? ""
-        : "If you are developing cocalc inside of cocalc, take the URL of the host cocalc\nand append " +
-          basePath +
-          " to it."
-    }\n\n-----------\n\n`;
+    const msg = `PORT=${port}\nBASE_PATH=${basePath}\nPROTOCOL=${protocol}\n\n\n\nStarted HUB!\n\n-----------\n\n\n\n    ${displayUrl}\n\n\n\n-----------\n\n`;
     logger.info(msg);
     console.log(msg);
+    openUrlIfRequested(displayUrl);
   }
 
   if (program.all || program.mentions) {
@@ -330,11 +356,6 @@ async function main(): Promise<void> {
   commander
     .name("cocalc-hub-server")
     .usage("options")
-    .option(
-      "--mode <string>",
-      `REQUIRED mode in which to run CoCalc or set COCALC_MODE env var`,
-      "",
-    )
     .option(
       "--all",
       "runs all of the servers: websocket, proxy, next (so you don't have to pass all those opts separately), and also mentions updator and updates db schema on startup; use this in situations where there is a single hub that serves everything (instead of a microservice situation like kucalc)",
@@ -383,21 +404,6 @@ async function main(): Promise<void> {
       `host of interface to bind to (default: "${DEFAULT_HUB_HOSTNAME}")`,
       DEFAULT_HUB_HOSTNAME,
     )
-    .option(
-      "--database-nodes <string,string,...>",
-      `database address (default: '${DEFAULT_DB_HOST}')`,
-      DEFAULT_DB_HOST,
-    )
-    .option(
-      "--database-name [string]",
-      `Database name to use (default: "${DEFAULT_DB_NAME}")`,
-      DEFAULT_DB_NAME,
-    )
-    .option(
-      "--database-user [string]",
-      `Database username to use (default: "${DEFAULT_DB_USER}")`,
-      DEFAULT_DB_USER,
-    )
     .option("--passwd [email_address]", "Reset password of given user", "")
     .option(
       "--update-database-schema",
@@ -439,15 +445,7 @@ async function main(): Promise<void> {
   for (const name in opts) {
     program[name] = opts[name];
   }
-  if (!program.mode) {
-    program.mode = process.env.COCALC_MODE;
-    if (!program.mode) {
-      throw Error(
-        `the --mode option must be specified or the COCALC_MODE env var`,
-      );
-      process.exit(1);
-    }
-  }
+  program.mode = getCocalcProduct() === "rocket" ? "kucalc" : "launchpad";
   if (program.all) {
     program.conatServer =
       program.proxyServer =
@@ -455,6 +453,11 @@ async function main(): Promise<void> {
       program.mentions =
       program.updateDatabaseSchema =
         true;
+    // In daemon mode, do not run one-shot maintenance commands that
+    // intentionally call process.exit() right after execution.
+    program.deleteExpired = false;
+    program.blobMaintenance = false;
+    program.updateStats = false;
   }
   if (process.env.COCALC_DISABLE_NEXT) {
     program.nextServer = false;
@@ -463,15 +466,23 @@ async function main(): Promise<void> {
   //console.log("got opts", opts);
 
   try {
+    if (process.env.COCALC_LOCAL_POSTGRES === "1") {
+      const localPg = await ensureLocalPostgres({
+        enabled: true,
+        logExports: true,
+      });
+      if (localPg) {
+        program.databaseNodes = localPg.socketDir;
+        program.databaseUser = localPg.user;
+        process.env.PGHOST = localPg.socketDir;
+        process.env.PGUSER = localPg.user;
+        process.env.PGDATABASE ??= localPg.database;
+      }
+    }
     // Everything we do here requires the database to be initialized. Once
-    // this is called, require('@cocalc/database/postgres/database').default() is a valid db
-    // instance that can be used.
-    initDatabase({
-      host: program.databaseNodes,
-      database: program.databaseName,
-      user: program.databaseUser,
-      concurrent_warn: program.dbConcurrentWarn,
-    });
+    // initDatabase returns, database is the initialized singleton.
+    const database = initDatabase();
+    database._concurrent_warn = program.dbConcurrentWarn;
 
     if (program.passwd) {
       logger.debug("Resetting password");
@@ -483,7 +494,7 @@ async function main(): Promise<void> {
       });
       process.exit();
     } else if (program.blobMaintenance) {
-      await callback2(database.blob_maintenance);
+      await database.blob_maintenance({});
       process.exit();
     } else if (program.updateStats) {
       await callback2(database.get_stats);

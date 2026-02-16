@@ -52,7 +52,7 @@ export function init(redux) {
       }, 2000);
     }
     const table = redux.getTable("account")._table;
-    if (table != "connected") {
+    if (table.get_state?.() !== "connected") {
       // not fully signed in until the account table is connected, so that we know
       // email address, etc. If we don't set this, the UI briefly shows the
       // pre-sign-in state.

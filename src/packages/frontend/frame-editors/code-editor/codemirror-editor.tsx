@@ -51,6 +51,8 @@ export interface Props {
   id: string;
   actions: any;
   path: string;
+  // Optional path used only for syntax highlighting mode detection.
+  mode_path?: string;
   project_id: string;
   font_size: number;
   cursors?: Map<string, any>;
@@ -116,6 +118,15 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
   }, [props.path]);
 
   useEffect(cm_update_font_size, [props.font_size]);
+
+  useEffect(() => {
+    if (cmRef.current == null || props.value == null) return;
+    const value =
+      typeof props.value == "function" ? props.value() ?? "" : props.value;
+    if (cmRef.current.getValue() !== value) {
+      cmRef.current.setValue(value);
+    }
+  }, [props.value]);
 
   useEffect(() => {
     if (cmRef.current != null) {
@@ -214,7 +225,7 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     }
 
     const options: any = cm_options(
-      props.path,
+      props.mode_path ?? props.path,
       props.editor_settings,
       props.gutters,
       editor_actions(),
@@ -290,12 +301,18 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     if (cm == null) return;
     (cm as any)._actions = editor_actions();
 
-    if (!has_doc(props.project_id, props.path)) {
-      // save it to cache so can be used by other components/editors
-      set_doc(props.project_id, props.path, cm);
+    if (props.value == null) {
+      if (!has_doc(props.project_id, props.path)) {
+        // save it to cache so can be used by other components/editors
+        set_doc(props.project_id, props.path, cm);
+      } else {
+        // has it already, so use that.
+        cm.swapDoc(get_linked_doc(props.project_id, props.path));
+      }
     } else {
-      // has it already, so use that.
-      cm.swapDoc(get_linked_doc(props.project_id, props.path));
+      const value =
+        typeof props.value == "function" ? props.value() ?? "" : props.value;
+      cm.setValue(value);
     }
 
     const throttled_save_editor_state = throttle(save_editor_state, 150);
@@ -381,7 +398,7 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     if (cmRef.current == null) return;
     if (!options) {
       options = cm_options(
-        props.path,
+        props.mode_path ?? props.path,
         props.editor_settings,
         props.gutters,
         editor_actions(),

@@ -53,8 +53,9 @@ export function TerminalFlyout({
   sync,
 }: TerminalFlyoutProps) {
   const actions = useActions({ project_id });
-  const current_path = useTypedRedux({ project_id }, "current_path");
-  const currentPathRef = useRef<string>(current_path);
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
+  const currentPathRef = useRef<string>(effective_current_path);
   const account_id = useTypedRedux("account", "account_id");
   const terminal = useTypedRedux("account", "terminal");
   const terminalRef = useRef<Terminal | undefined>(undefined);
@@ -68,8 +69,8 @@ export function TerminalFlyout({
   const syncRef = useRef<boolean>(sync);
 
   useEffect(() => {
-    currentPathRef.current = current_path;
-  }, [current_path]);
+    currentPathRef.current = effective_current_path;
+  }, [effective_current_path]);
 
   useEffect(() => {
     syncRef.current = sync;
@@ -129,9 +130,7 @@ export function TerminalFlyout({
         // ignored, default location
         if (payload === "/tmp") return;
         if (currentPathRef.current != payload) {
-          const next =
-            payload.charAt(0) === "/" ? ".smc/root" + payload : payload;
-          actions?.set_current_path(next);
+          actions?.set_current_path(payload);
         }
       },
       _tree_is_single_leaf() {
@@ -240,12 +239,15 @@ export function TerminalFlyout({
     // this "line reset" is from the terminal guide,
     // see frame-editors/terminal-editor/actions::run_command
     const clean = "\x05\x15"; // move cursor to end of line, then clear line
-    const nextCwd = escapeBashChangeDirPath(current_path);
+    const nextPath = effective_current_path;
     // start with a space to avoid recording in history
-    const cmd = ` cd "$HOME/${nextCwd}"`;
+    const cmd =
+      nextPath.startsWith("/")
+        ? ` cd "${escapeBashChangeDirPath(nextPath)}"`
+        : ` cd "$HOME/${escapeBashChangeDirPath(nextPath)}"`;
     // this will end up in a write buffer, hence it should be ok to do right at the beginning
     terminalRef.current.conn_write(`${clean}${cmd}\n`);
-  }, [current_path, syncPath, sync, terminalExists]);
+  }, [effective_current_path, syncPath, sync, terminalExists]);
 
   const set_font_size = debounce(
     () => {
@@ -286,11 +288,11 @@ export function TerminalFlyout({
     };
     if (error) {
       return (
-        <Alert banner closable type="error" message={error} style={style} />
+        <Alert banner closable type="error" title={error} style={style} />
       );
     } else if (status) {
       return (
-        <Alert banner closable type="info" message={status} style={style} />
+        <Alert banner closable type="info" title={status} style={style} />
       );
     }
   }

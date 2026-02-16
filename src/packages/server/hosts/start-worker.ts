@@ -22,6 +22,7 @@ import {
   stopHostInternal,
   upgradeHostSoftwareInternal,
 } from "@cocalc/server/conat/api/hosts";
+import { stopSelfHostReverseTunnel } from "@cocalc/server/self-host/ssh-target";
 
 const logger = getLogger("server:hosts:ops-worker");
 
@@ -502,6 +503,16 @@ function waitConfig(kind: HostOpKind) {
   }
 }
 
+function shouldStopTunnel(kind: HostOpKind): boolean {
+  return [
+    "host-stop",
+    "host-deprovision",
+    "host-delete",
+    "host-force-deprovision",
+    "host-remove-connector",
+  ].includes(kind);
+}
+
 async function runHostAction(kind: HostOpKind, host_id: string, account_id: string, input: any) {
   switch (kind) {
     case "host-start":
@@ -735,6 +746,9 @@ async function handleOp(op: LroSummary): Promise<void> {
     });
     if (updated) {
       await publishSummary(updated);
+    }
+    if (shouldStopTunnel(kind)) {
+      stopSelfHostReverseTunnel(host_id);
     }
     await progressStep("done", `${actionLower} complete`, {
       host_id,

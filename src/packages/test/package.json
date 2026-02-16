@@ -13,8 +13,7 @@
     "preinstall": "npx only-allow pnpm",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "build": "pnpm exec tsc --build",
-    "tsc": "pnpm exec tsc --watch  --pretty --preserveWatchOutput",
-    "test": "pnpm exec jest --forceExit",
+    "test": "NODE_NO_WARNINGS=1 pnpm exec jest --forceExit",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores @types/debug,@types/jest,@types/node,jest-environment-jsdom"
   },
   "author": "SageMath, Inc.",

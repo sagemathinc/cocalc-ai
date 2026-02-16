@@ -21,6 +21,7 @@ const DEFAULT_BASE_URL = "https://software.cocalc.ai/software";
 const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_ROOT = "/opt/cocalc/tools";
 const PROJECT_HOST_ROOT = "/opt/cocalc/project-host";
+const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 type CanonicalArtifact = "project-host" | "project" | "tools";
 
@@ -87,20 +88,90 @@ function extractVersionFromUrl(url: string, artifact: CanonicalArtifact) {
   }
 }
 
-async function fetchJson(url: string): Promise<any> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`fetch ${url} failed (${res.status})`);
+function describeError(err: any): string {
+  if (!err) return "unknown error";
+  const parts: string[] = [];
+  if (err?.name) parts.push(String(err.name));
+  if (err?.message) parts.push(String(err.message));
+  const cause = err?.cause;
+  if (cause) {
+    const detail =
+      cause?.code ??
+      cause?.errno ??
+      cause?.message ??
+      JSON.stringify(cause);
+    parts.push(`cause=${detail}`);
   }
-  return await res.json();
+  return parts.join(": ");
+}
+
+async function runCommandCapture(
+  cmd: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
+  return await new Promise<{ stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      const proc = spawn(cmd, args, { stdio: "pipe" });
+      let stdout = "";
+      let stderr = "";
+      proc.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+      });
+      proc.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      proc.on("error", reject);
+      proc.on("close", (code) => {
+        if (code === 0) {
+          resolve({ stdout, stderr });
+        } else {
+          reject(
+            new Error(
+              stderr || stdout || `${cmd} failed with code ${code ?? "?"}`,
+            ),
+          );
+        }
+      });
+    },
+  );
+}
+
+async function fetchText(url: string): Promise<string> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`fetch ${url} failed (${res.status})`);
+    }
+    return await res.text();
+  } catch (err) {
+    logger.warn("upgrade: fetch failed, trying curl fallback", {
+      url,
+      err: describeError(err),
+    });
+    const { stdout } = await runCommandCapture("curl", ["-fsSL", url]);
+    return stdout;
+  }
+}
+
+async function fetchJson(url: string): Promise<any> {
+  const text = await fetchText(url);
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(
+      `invalid JSON from ${url}: ${describeError(err)}: ${text.slice(0, 200)}`,
+    );
+  }
 }
 
 async function fetchSha256(url: string): Promise<string | undefined> {
-  const res = await fetch(url);
-  if (!res.ok) return undefined;
-  const text = await res.text();
-  const token = text.trim().split(/\s+/)[0];
-  return token || undefined;
+  try {
+    const text = await fetchText(url);
+    const token = text.trim().split(/\s+/)[0];
+    return token || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveDownloadsRoot(): string {
@@ -111,14 +182,48 @@ function resolveDownloadsRoot(): string {
   return path.join(os.tmpdir(), "cocalc-software-downloads");
 }
 
-async function downloadToFile(url: string, dest: string) {
-  const res = await fetch(url);
-  if (!res.ok || !res.body) {
-    throw new Error(`download failed (${res.status})`);
+function resolveProjectHostPaths() {
+  const bundleRoot = process.env.COCALC_PROJECT_HOST_BUNDLE_ROOT;
+  const currentLink = process.env.COCALC_PROJECT_HOST_CURRENT;
+  if (bundleRoot || currentLink) {
+    const root =
+      bundleRoot ??
+      (currentLink
+        ? path.join(path.dirname(currentLink), "bundles")
+        : PROJECT_HOST_ROOT);
+    return {
+      root,
+      currentLink: currentLink ?? path.join(root, "current"),
+      stripComponents: 1,
+      usesBundleLayout: true,
+    };
   }
-  await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-  const body = Readable.fromWeb(res.body as any);
-  await pipeline(body, fs.createWriteStream(dest));
+  return {
+    root: PROJECT_HOST_ROOT,
+    currentLink: path.join(PROJECT_HOST_ROOT, "current"),
+    stripComponents: 1,
+    usesBundleLayout: false,
+  };
+}
+
+async function downloadToFile(url: string, dest: string) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok || !res.body) {
+      throw new Error(`download failed (${res.status})`);
+    }
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    const body = Readable.fromWeb(res.body as any);
+    await pipeline(body, fs.createWriteStream(dest));
+  } catch (err) {
+    logger.warn("upgrade: stream download failed, trying curl fallback", {
+      url,
+      dest,
+      err: describeError(err),
+    });
+    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+    await runCommandCapture("curl", ["-fsSL", "-o", dest, url]);
+  }
 }
 
 async function sha256File(filePath: string): Promise<string> {
@@ -147,6 +252,41 @@ async function runTar(args: string[]): Promise<void> {
       }
     });
   });
+}
+
+async function runCommand(cmd: string, args: string[]): Promise<void> {
+  await runCommandCapture(cmd, args);
+}
+
+async function ensureWritableDir(dir: string): Promise<void> {
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+    return;
+  } catch (err: any) {
+    if (err?.code !== "EACCES") throw err;
+  }
+  const user = os.userInfo().username;
+  logger.warn("upgrade: fixing permissions with sudo", { dir, user });
+  await runCommand("sudo", ["-n", STORAGE_WRAPPER, "mkdir", "-p", dir]);
+  await runCommand("sudo", [
+    "-n",
+    STORAGE_WRAPPER,
+    "chown",
+    "-R",
+    `${user}:${user}`,
+    dir,
+  ]);
+  await fs.promises.mkdir(dir, { recursive: true });
+}
+
+async function safeRemove(dir: string): Promise<void> {
+  try {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  } catch (err: any) {
+    if (err?.code !== "EACCES") throw err;
+    logger.warn("upgrade: removing with sudo", { dir });
+    await runCommand("sudo", ["-n", STORAGE_WRAPPER, "rm", "-rf", dir]);
+  }
 }
 
 async function replaceSymlink(linkPath: string, target: string) {
@@ -178,7 +318,10 @@ async function resolveArtifact(
     const channel: SoftwareChannel = target.channel ?? "latest";
     const os = normalizeOs();
     const arch = normalizeArch();
-    const manifestUrl = `${baseUrl}/${canonicalArtifact}/${channel}-${os}-${arch}.json`;
+    const manifestUrl =
+      canonicalArtifact === "tools"
+        ? `${baseUrl}/${canonicalArtifact}/${channel}-${os}-${arch}.json`
+        : `${baseUrl}/${canonicalArtifact}/${channel}-${os}.json`;
     const manifest = await fetchJson(manifestUrl);
     const manifestOs = normalizeOsValue(manifest?.os);
     const manifestArch = normalizeArchValue(manifest?.arch);
@@ -187,7 +330,7 @@ async function resolveArtifact(
         `manifest OS mismatch (${canonicalArtifact}): expected ${os}, got ${manifestOs}`,
       );
     }
-    if (manifestArch && manifestArch !== arch) {
+    if (canonicalArtifact === "tools" && manifestArch && manifestArch !== arch) {
       throw new Error(
         `manifest arch mismatch (${canonicalArtifact}): expected ${arch}, got ${manifestArch}`,
       );
@@ -196,13 +339,13 @@ async function resolveArtifact(
     sha256 = manifest?.sha256;
     version = extractVersionFromUrl(url, canonicalArtifact);
   } else {
-    const arch = normalizeArch();
     const os = normalizeOs();
     if (canonicalArtifact === "project-host") {
-      url = `${baseUrl}/project-host/${version}/cocalc-project-host-${version}-${arch}-${os}.tar.xz`;
+      url = `${baseUrl}/project-host/${version}/bundle-${os}.tar.xz`;
     } else if (canonicalArtifact === "project") {
-      url = `${baseUrl}/project/${version}/bundle-${os}-${arch}.tar.xz`;
+      url = `${baseUrl}/project/${version}/bundle-${os}.tar.xz`;
     } else {
+      const arch = normalizeArch();
       url = `${baseUrl}/tools/${version}/tools-${os}-${arch}.tar.xz`;
     }
   }
@@ -215,20 +358,30 @@ async function resolveArtifact(
   if (!version) {
     version = extractVersionFromUrl(url, canonicalArtifact) ?? "unknown";
   }
+  const projectHostPaths =
+    canonicalArtifact === "project-host" ? resolveProjectHostPaths() : undefined;
   const root =
     canonicalArtifact === "project-host"
-      ? PROJECT_HOST_ROOT
+      ? projectHostPaths?.root ?? PROJECT_HOST_ROOT
       : canonicalArtifact === "project"
         ? process.env.COCALC_PROJECT_BUNDLES ?? DEFAULT_BUNDLE_ROOT
         : process.env.COCALC_PROJECT_TOOLS
           ? path.dirname(process.env.COCALC_PROJECT_TOOLS)
           : DEFAULT_TOOLS_ROOT;
-  const stripComponents = canonicalArtifact === "project-host" ? 2 : 1;
+  const stripComponents =
+    canonicalArtifact === "project-host"
+      ? projectHostPaths?.stripComponents ?? 2
+      : 1;
   const versionDir =
     canonicalArtifact === "project-host"
-      ? path.join(root, "versions", version)
+      ? projectHostPaths?.usesBundleLayout
+        ? path.join(root, version)
+        : path.join(root, "versions", version)
       : path.join(root, version);
-  const currentLink = path.join(root, "current");
+  const currentLink =
+    canonicalArtifact === "project-host"
+      ? projectHostPaths?.currentLink ?? path.join(root, "current")
+      : path.join(root, "current");
   return {
     artifact,
     canonicalArtifact,
@@ -264,7 +417,7 @@ async function downloadAndInstall(
       status: "noop",
     };
   }
-  await fs.promises.mkdir(resolved.root, { recursive: true });
+  await ensureWritableDir(resolved.root);
   const downloadsRoot = resolveDownloadsRoot();
   const archivePath = path.join(
     downloadsRoot,
@@ -276,6 +429,11 @@ async function downloadAndInstall(
     url: resolved.url,
   });
   await downloadToFile(resolved.url, archivePath);
+  logger.info("upgrade: downloaded artifact", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    archive: archivePath,
+  });
   if (resolved.sha256) {
     const actual = await sha256File(archivePath);
     if (actual !== resolved.sha256) {
@@ -283,9 +441,19 @@ async function downloadAndInstall(
         `sha256 mismatch for ${resolved.artifact} (${resolved.version})`,
       );
     }
+    logger.info("upgrade: checksum ok", {
+      artifact: resolved.artifact,
+      version: resolved.version,
+    });
   }
-  await fs.promises.rm(resolved.versionDir, { recursive: true, force: true });
-  await fs.promises.mkdir(resolved.versionDir, { recursive: true });
+  await safeRemove(resolved.versionDir);
+  await ensureWritableDir(resolved.versionDir);
+  logger.info("upgrade: extracting artifact", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    stripComponents: resolved.stripComponents,
+    dir: resolved.versionDir,
+  });
   await runTar([
     "-xJf",
     archivePath,
@@ -293,15 +461,28 @@ async function downloadAndInstall(
     "-C",
     resolved.versionDir,
   ]);
+  logger.info("upgrade: extracted artifact", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    dir: resolved.versionDir,
+  });
   await replaceSymlink(resolved.currentLink, resolved.versionDir);
+  logger.info("upgrade: updated current symlink", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    current: resolved.currentLink,
+  });
   return { artifact: resolved.artifact, version: resolved.version, status: "updated" };
 }
 
 async function scheduleHostRestart() {
+  const override = process.env.COCALC_PROJECT_HOST_BIN;
   const candidate = path.join(PROJECT_HOST_ROOT, "current", "cocalc-project-host");
-  const bin = fs.existsSync(candidate)
-    ? candidate
-    : path.join(PROJECT_HOST_ROOT, "cocalc-project-host");
+  const bin = override
+    ? override
+    : fs.existsSync(candidate)
+      ? candidate
+      : path.join(PROJECT_HOST_ROOT, "cocalc-project-host");
   const cmd = `sleep 3; ${bin} daemon stop || true; ${bin} daemon start`;
   const child = spawn("bash", ["-c", cmd], {
     detached: true,
@@ -326,23 +507,40 @@ function orderTargets(targets: SoftwareUpgradeTarget[]): SoftwareUpgradeTarget[]
 export async function upgradeSoftware(
   opts: UpgradeSoftwareRequest,
 ): Promise<UpgradeSoftwareResponse> {
-  const targets = orderTargets(opts.targets ?? []);
-  if (!targets.length) {
-    throw new Error("upgrade requires at least one target");
-  }
-  const baseUrl = normalizeBaseUrl(opts.base_url);
-  const results: UpgradeSoftwareResult[] = [];
-  let restartHost = false;
-  for (const target of targets) {
-    const resolved = await resolveArtifact(target, baseUrl);
-    const result = await downloadAndInstall(resolved);
-    results.push(result);
-    if (resolved.artifact === "project-host" && result.status === "updated") {
-      restartHost = true;
+  try {
+    const targets = orderTargets(opts.targets ?? []);
+    if (!targets.length) {
+      throw new Error("upgrade requires at least one target");
     }
+    const baseUrl = normalizeBaseUrl(opts.base_url);
+    const results: UpgradeSoftwareResult[] = [];
+    let restartHost = false;
+    for (const target of targets) {
+  const resolved = await resolveArtifact(target, baseUrl);
+  logger.info("upgrade: resolved artifact", {
+    artifact: resolved.artifact,
+    version: resolved.version,
+    url: resolved.url,
+    root: resolved.root,
+    versionDir: resolved.versionDir,
+    currentLink: resolved.currentLink,
+    stripComponents: resolved.stripComponents,
+  });
+  const result = await downloadAndInstall(resolved);
+      results.push(result);
+      if (resolved.artifact === "project-host" && result.status === "updated") {
+        restartHost = true;
+      }
+    }
+    if (restartHost) {
+      await scheduleHostRestart();
+    }
+    return { results };
+  } catch (err) {
+    logger.error("upgrade: failed", {
+      err: describeError(err),
+      stack: (err as any)?.stack,
+    });
+    throw err;
   }
-  if (restartHost) {
-    await scheduleHostRestart();
-  }
-  return { results };
 }

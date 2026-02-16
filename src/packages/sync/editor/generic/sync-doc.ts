@@ -81,6 +81,7 @@ const DEBUG = false;
 
 export type State = "init" | "ready" | "closed";
 export type DataServer = "project" | "database";
+export type SyncDocOpenPhase = "open_start" | "sync_ready";
 
 export interface SyncOpts0 {
   project_id: string;
@@ -133,6 +134,7 @@ export interface SyncOpts0 {
   // is the Set of all values.  If true, that initial big
   // change event happens, but the Set is empty.
   ignoreInitialChanges?: boolean;
+
 }
 
 export interface SyncOpts extends SyncOpts0 {
@@ -202,6 +204,7 @@ export class SyncDoc extends EventEmitter {
   private last_snapshot?: PatchId;
   private last_seq?: number;
   private snapshot_interval: number;
+  private history_epoch?: number;
 
   private users: string[];
 
@@ -224,6 +227,22 @@ export class SyncDoc extends EventEmitter {
 
   private noAutosave?: boolean;
   private backendFsWatchTimer?: NodeJS.Timeout;
+  private readonly openStartedAtMs: number = Date.now();
+
+  private emitOpenPhase = (
+    phase: SyncDocOpenPhase,
+    details?: { [key: string]: string | number | boolean | undefined },
+  ): void => {
+    const payload = {
+      phase,
+      elapsed_ms: Math.max(0, Date.now() - this.openStartedAtMs),
+      project_id: this.project_id,
+      path: this.path,
+      string_id: this.string_id,
+      ...(details ?? {}),
+    };
+    this.emit("open-phase", payload);
+  };
 
   // The isDeleted flag is set to true if the file existed and then
   // was actively deleted after the session started. It would
@@ -302,6 +321,7 @@ export class SyncDoc extends EventEmitter {
     }
 
     this.setMaxListeners(100);
+    this.emitOpenPhase("open_start");
 
     this.init();
     // This makes it possible for other parts of the app to react to
@@ -354,6 +374,7 @@ export class SyncDoc extends EventEmitter {
     );
     if (this.isClosed()) return;
     this.set_state("ready");
+    this.emitOpenPhase("sync_ready");
 
     // Success -- everything initialized with no issues.
     if (this.opts.ignoreInitialChanges) {
@@ -1059,8 +1080,10 @@ export class SyncDoc extends EventEmitter {
     // before opening the patches table, so we don't fetch the entire history
     // when a snapshot is available.
     await this.init_syncstring_table();
-    await this.init_patchflow();
+    // Prime backend sync-fs reconciliation first so the patch stream reflects
+    // current on-disk content before we load it into this client session.
     await this.startBackendFsWatch();
+    await this.init_patchflow();
     await Promise.all([this.init_cursors()]);
     this.assert_not_closed(
       "initAll -- successful init patchflow, cursors, and ipywidgets",
@@ -1159,6 +1182,7 @@ export class SyncDoc extends EventEmitter {
     const query = { patches: [this.patch_table_query(this.last_snapshot)] };
     this.patches_table = await this.synctable(query, [], this.patch_interval);
     this.assert_not_closed("init_patchflow -- after making synctable");
+    this.applyPatchWriteHeaders();
 
     const update_has_unsaved_changes = debounce(
       this.update_has_unsaved_changes,
@@ -1227,16 +1251,6 @@ export class SyncDoc extends EventEmitter {
       const mostRecentPatch = this.patchflowSession.getPatch(v[v.length - 1]);
       if (mostRecentPatch?.meta?.deleted || this.isDeleted) {
         this.emitDeleted();
-      } else {
-        // check if deleted when backend not watching it
-        try {
-          await this.stat();
-        } catch (err) {
-          if (err.code == "ENOENT") {
-            //  we know for sure the file doesn't exist
-            this.emitDeleted();
-          }
-        }
       }
     }
 
@@ -2047,8 +2061,34 @@ export class SyncDoc extends EventEmitter {
     this.syncstring_table.set(obj);
     await this.syncstring_table.save();
     this.settings = Map();
+    this.history_epoch = undefined;
+    this.applyPatchWriteHeaders();
     this.emit("metadata-change");
     this.emit("settings-change", this.settings);
+  };
+
+  private metadataHistoryEpoch = (settings: Map<string, any>): number | undefined => {
+    const raw = settings?.get?.("history_epoch");
+    return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+  };
+
+  private patchWriteHeaders = (): { history_epoch: number } | undefined => {
+    if (
+      this.history_epoch != null &&
+      typeof this.history_epoch === "number" &&
+      Number.isFinite(this.history_epoch)
+    ) {
+      return { history_epoch: this.history_epoch };
+    }
+    return;
+  };
+
+  private applyPatchWriteHeaders = (): void => {
+    const headers = this.patchWriteHeaders();
+    const table = this.patches_table as any;
+    if (typeof table?.setWriteHeaders === "function") {
+      table.setWriteHeaders(headers);
+    }
   };
 
   private handle_syncstring_update_existing_document = async (
@@ -2079,6 +2119,30 @@ export class SyncDoc extends EventEmitter {
     }
 
     const settings = data.get("settings", Map());
+    const previous_history_epoch = this.history_epoch;
+    const previous_history_purged_at = this.settings?.get?.("history_purged_at");
+    const current_history_epoch = this.metadataHistoryEpoch(settings);
+    const current_history_purged_at = settings?.get?.("history_purged_at");
+    this.history_epoch = current_history_epoch;
+
+    const history_epoch_increased =
+      previous_history_epoch != null &&
+      current_history_epoch != null &&
+      current_history_epoch > previous_history_epoch;
+    const history_purge_marker_changed =
+      current_history_purged_at != null &&
+      current_history_purged_at !== previous_history_purged_at;
+    if (
+      history_epoch_increased ||
+      (this.isReady() && history_purge_marker_changed)
+    ) {
+      this.emit("history-reset", { history_epoch: current_history_epoch });
+      this.close();
+      return;
+    }
+
+    this.applyPatchWriteHeaders();
+
     if (settings !== this.settings) {
       this.settings = settings;
       this.emit("settings-change", settings);
@@ -2107,22 +2171,128 @@ export class SyncDoc extends EventEmitter {
   };
 
   is_read_only = (): boolean => {
+    if (this.canWriteToPath != null) {
+      return !this.canWriteToPath;
+    }
     if (this.stats) {
-      return isReadOnlyForOwner(this.stats);
+      return isReadOnlyForCurrentUser(this.stats, this.userIdentity);
     } else {
       return false;
     }
   };
 
   private stats?: Stats;
+  private canWriteToPath?: boolean;
+  private userIdentity?: {
+    uid: number;
+    gids: Set<number>;
+  };
+
+  private detectUserIdentity = reuseInFlight(
+    async (): Promise<{ uid: number; gids: Set<number> } | undefined> => {
+      const proc = (globalThis as any)?.process;
+      if (typeof proc?.getuid === "function") {
+        const uid = Number(proc.getuid());
+        const gids = new Set<number>();
+        if (typeof proc?.getgid === "function") {
+          const gid = Number(proc.getgid());
+          if (!Number.isNaN(gid)) gids.add(gid);
+        }
+        if (typeof proc?.getgroups === "function") {
+          for (const groupId of proc.getgroups()) {
+            const num = Number(groupId);
+            if (!Number.isNaN(num)) gids.add(num);
+          }
+        }
+        if (!Number.isNaN(uid)) {
+          return { uid, gids };
+        }
+      }
+
+      // Browser-side fallback: read effective uid/gids from procfs via fs API.
+      try {
+        const status = await this.fs.readFile("/proc/self/status", "utf8");
+        if (typeof status === "string") {
+          const uidLine = status.match(/^Uid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);
+          const gidLine = status.match(/^Gid:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)/m);
+          const groupsLine = status.match(/^Groups:\s+(.+)$/m);
+          const effectiveUid = Number(uidLine?.[2] ?? uidLine?.[1]);
+          const effectiveGid = Number(gidLine?.[2] ?? gidLine?.[1]);
+          if (!Number.isNaN(effectiveUid)) {
+            const gids = new Set<number>();
+            if (!Number.isNaN(effectiveGid)) {
+              gids.add(effectiveGid);
+            }
+            const groups = groupsLine?.[1]?.trim().split(/\s+/) ?? [];
+            for (const group of groups) {
+              const num = Number(group);
+              if (!Number.isNaN(num)) gids.add(num);
+            }
+            return { uid: effectiveUid, gids };
+          }
+        }
+      } catch {}
+
+      // Last-resort fallback: infer uid/gid from /home, which maps to HOME in CoCalc.
+      try {
+        const homeStats = (await this.fs.stat("/home")) as Stats;
+        return {
+          uid: Number(homeStats.uid),
+          gids: new Set<number>([Number(homeStats.gid)]),
+        };
+      } catch {
+        return undefined;
+      }
+    },
+  );
+
+  private statWriteAccess = async (): Promise<boolean | undefined> => {
+    // In tests we use minimal clients with stubbed path_access that
+    // do not model real filesystem permissions.
+    if (isTestClient(this.client)) return undefined;
+    if (typeof this.client?.path_access !== "function") return undefined;
+    return await new Promise<boolean | undefined>((resolve) => {
+      try {
+        this.client.path_access({
+          path: this.path,
+          mode: "w",
+          cb: (result) => {
+            // Compatibility: some sync clients (esp. browser/conat adapters)
+            // use boolean callbacks, but some return constant true as a stub.
+            // In that case, fall back to stat-based permission checks.
+            if (typeof result === "boolean") {
+              resolve(undefined);
+              return;
+            }
+            resolve(result == null);
+          },
+        });
+      } catch {
+        resolve(undefined);
+      }
+    });
+  };
+
   stat = async (): Promise<Stats> => {
     if (this.opts.noSaveToDisk) {
       throw Error("the noSaveToDisk options is set");
     }
+    const prevReadOnly = this.is_read_only();
     const prevStats = this.stats;
     this.stats = (await this.fs.stat(this.path)) as Stats;
+    const identity = await this.detectUserIdentity();
+    if (identity != null) {
+      this.userIdentity = identity;
+    }
+    const canWriteToPath = await this.statWriteAccess();
+    if (canWriteToPath != null) {
+      this.canWriteToPath = canWriteToPath;
+    }
     this.isDeleted = false; // definitely not deleted since we just stat' it
-    if (prevStats?.mode != this.stats.mode) {
+    if (
+      prevStats?.mode != this.stats.mode ||
+      prevReadOnly != this.is_read_only()
+    ) {
       // used by clients to track read-only state.
       this.emit("metadata-change");
     }
@@ -2581,6 +2751,7 @@ export class SyncDoc extends EventEmitter {
         project_id: this.project_id,
         relativePath: this.path,
         string_id: this.string_id,
+        history_epoch: this.history_epoch,
         doctype: this.doctype,
       });
     } catch (err) {
@@ -2642,7 +2813,28 @@ function isCompletePatchStream(dstream) {
   return false;
 }
 
-function isReadOnlyForOwner(stats): boolean {
-  // 0o200 is owner write permission
-  return (stats.mode & 0o200) === 0;
+function isReadOnlyForCurrentUser(
+  stats,
+  identity?: { uid: number; gids: Set<number> },
+): boolean {
+  const uid = identity?.uid;
+  if (uid == null || Number.isNaN(uid)) {
+    // Unknown current user: conservative fallback to historical behavior.
+    return (stats.mode & 0o200) === 0;
+  }
+  if (uid === 0) {
+    // Root can usually write regardless of mode bits. Any write failures
+    // (e.g., read-only filesystem) are handled by statWriteAccess/save error.
+    return false;
+  }
+  if (Number(stats.uid) === uid) {
+    return (stats.mode & 0o200) === 0;
+  }
+
+  const groups = identity?.gids ?? new Set<number>();
+
+  if (groups.has(Number(stats.gid))) {
+    return (stats.mode & 0o020) === 0;
+  }
+  return (stats.mode & 0o002) === 0;
 }

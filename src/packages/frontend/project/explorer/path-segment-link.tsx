@@ -28,7 +28,7 @@ export interface PathSegmentItem {
 
 // One segment of the directory links at the top of the files listing.
 export function createPathSegmentLink({
-  path = "",
+  path = "/",
   display,
   on_click,
   full_name,

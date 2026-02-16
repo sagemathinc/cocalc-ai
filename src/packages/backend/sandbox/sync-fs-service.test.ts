@@ -32,6 +32,10 @@ class FakeAStream {
     }
   }
 
+  async get(seq: number): Promise<any | undefined> {
+    return this.messages.find((m) => m.seq === seq)?.mesg;
+  }
+
   close(): void {
     // no-op
   }
@@ -215,6 +219,103 @@ describe("SyncFsService", () => {
     const head = store.getFsHead("sid2");
     expect(head?.heads).toEqual([published.time]);
     expect(head?.lastSeq).toBe(fake.messages.length);
+    svc.close();
+  }, 10_000);
+
+  it("resets stale persisted heads if stream was deleted", async () => {
+    const dbPath = tmpNameSync({ prefix: "sync-fs-heads-", postfix: ".db" });
+    const store = new SyncFsWatchStore(dbPath);
+    store.setFsHead({
+      string_id: "sid3",
+      time: legacyPatchId(123),
+      version: 7,
+      heads: [legacyPatchId(123)],
+      lastSeq: 42,
+    });
+
+    // Simulate persist reset: stream has no historical messages.
+    const fake = new FakeAStream([]);
+    const svc = new SyncFsService(store);
+    (svc as any).getPatchWriter = async () => fake;
+
+    const meta = { project_id: "p3", relativePath: "d.txt", string_id: "sid3" };
+    const change = { patch: [], content: "fresh", hash: "h4", deleted: false };
+    await (svc as any).appendPatch(meta, "change", change);
+
+    const published = fake.messages[fake.messages.length - 1].mesg;
+    expect(Array.isArray(published.parents)).toBe(true);
+    expect(published.parents.length).toBe(0);
+    expect(published.version).toBe(1);
+
+    const head = store.getFsHead("sid3");
+    expect(head?.version).toBe(1);
+    expect(head?.lastSeq).toBe(1);
+    expect(head?.heads?.length).toBe(1);
+    svc.close();
+  }, 10_000);
+
+  it("publishes an initial patch when history is empty even if local snapshot exists", async () => {
+    const path = join(dir, "cached.txt");
+    writeFileSync(path, "fresh");
+
+    const dbPath = tmpNameSync({ prefix: "sync-fs-init-", postfix: ".db" });
+    const store = new SyncFsWatchStore(dbPath);
+    // Simulate backend fs writes that populated the local snapshot cache before
+    // any watcher/stream history existed.
+    store.setContent(path, "fresh");
+
+    const svc = new SyncFsService(store);
+    const fake = new FakeAStream([]);
+    (svc as any).getPatchWriter = async () => fake;
+
+    await (svc as any).initPath(path, {
+      project_id: "p4",
+      relativePath: "cached.txt",
+      string_id: "sid-cached",
+    });
+
+    expect(fake.messages.length).toBe(1);
+    const published = fake.messages[0].mesg;
+    expect(Array.isArray(published.parents)).toBe(true);
+    expect(published.parents).toEqual([]);
+    expect(published.version).toBe(1);
+
+    const dmp = new DiffMatchPatch({ diffTimeout: 0.5 });
+    const patch = JSON.parse(published.patch);
+    const [result, applied] = dmp.patch_apply(decompressPatch(patch), "");
+    expect(applied.every(Boolean)).toBe(true);
+    expect(result).toBe("fresh");
+    svc.close();
+  }, 10_000);
+
+  it("rebuilds local baseline from stream history before diffing", async () => {
+    const path = join(dir, "history.txt");
+    writeFileSync(path, "stream-value");
+
+    const dbPath = tmpNameSync({
+      prefix: "sync-fs-stream-baseline-",
+      postfix: ".db",
+    });
+    const store = new SyncFsWatchStore(dbPath);
+    // Stale local cache should not be used when stream history exists.
+    store.setContent(path, "stale-cache");
+
+    const fake = new FakeAStream([
+      { mesg: { time: legacyPatchId(100), parents: [], version: 1 }, seq: 1 },
+    ]);
+    const svc = new SyncFsService(store);
+    (svc as any).getPatchWriter = async () => fake;
+    (svc as any).loadDocViaSyncDoc = async () => "stream-value";
+
+    await (svc as any).initPath(path, {
+      project_id: "p5",
+      relativePath: "history.txt",
+      string_id: "sid-history",
+    });
+
+    // No extra publish is needed because disk content already matches stream.
+    expect(fake.messages.length).toBe(1);
+    expect((svc as any).store.get(path)?.content).toBe("stream-value");
     svc.close();
   }, 10_000);
 });

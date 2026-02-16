@@ -6,7 +6,7 @@ import {
   normalizeProviderId,
 } from "@cocalc/cloud";
 import getLogger from "@cocalc/backend/logger";
-import { getControlPlaneSshKeypair } from "./ssh-key";
+import { getHostSshPublicKeys } from "./ssh-key";
 import { getProviderContext, getProviderPrefix } from "./provider-context";
 import {
   getServerProvider,
@@ -286,8 +286,7 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
         : metadata.gpu
           ? { type: "nvidia-l4", count: 1 }
           : undefined;
-  const { publicKey: controlPlanePublicKey } =
-    await getControlPlaneSshKeypair();
+  const sshPublicKeys = await getHostSshPublicKeys();
   const ssh_user = machine.metadata?.ssh_user ?? "ubuntu";
   const baseName = row.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
   const providerId = normalizeProviderId(machine.cloud);
@@ -417,7 +416,8 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
       bootstrap_url: machine.bootstrap_url,
       startup_script: machine.startup_script,
       storage_mode,
-      ssh_public_key: controlPlanePublicKey,
+      ...(sshPublicKeys.length ? { ssh_public_key: sshPublicKeys[0] } : {}),
+      ssh_public_keys: sshPublicKeys,
       ssh_user,
     },
   };
@@ -443,7 +443,9 @@ export async function provisionIfNeeded(
       startup_script: opts.startupScript,
     };
   }
-  const { entry, creds } = await getProviderContext(providerId);
+  const { entry, creds } = await getProviderContext(providerId, {
+    region: row.region,
+  });
   const runtimeCreated = await entry.provider.createHost(spec, creds);
   return {
     ...row,

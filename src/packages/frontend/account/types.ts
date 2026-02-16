@@ -60,6 +60,7 @@ export interface AccountState {
     dark_mode_brightness: number;
     dark_mode_contrast: number;
     dark_mode_sepia: number;
+    file_tab_accent_mode?: string;
     news_read_until: number; // JavaScript timestamp in milliseconds
     [OTHER_SETTINGS_USERDEFINED_LLM]: string; // string is JSON: CustomLLM[]
     [OTHER_SETTINGS_LOCALE_KEY]?: string;
@@ -93,6 +94,8 @@ export interface AccountState {
   is_admin: boolean;
   is_ready: boolean; // user signed in and account settings have been loaded.
   lti_id?: List<string>;
+  default_rootfs_image?: string;
+  default_rootfs_image_gpu?: string;
   created?: Date;
   ephemeral?: number;
   strategies?: List<TypedMap<PassportStrategyFrontend>>;

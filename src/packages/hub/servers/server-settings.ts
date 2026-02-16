@@ -14,7 +14,8 @@ import { buildPublicSiteSettings } from "@cocalc/util/db-schema/site-settings-pu
 import { AllSiteSettings } from "@cocalc/util/db-schema/types";
 import { startswith } from "@cocalc/util/misc";
 import { site_settings_conf as SITE_SETTINGS_CONF } from "@cocalc/util/schema";
-import { database } from "./database";
+import { decryptSettingValue } from "@cocalc/database/settings/secret-settings";
+import { getDatabase } from "./database";
 
 // Returns:
 //   - all: a mutable javascript object that is a map from each server setting to its current value.
@@ -41,17 +42,26 @@ export default async function getServerSettings(): Promise<ServerSettingsDynamic
   if (serverSettings != null) {
     return serverSettings;
   }
+  const database = getDatabase();
   const table = database.server_settings_synctable();
   serverSettings = { all: {}, pub: {}, version: {}, table: table };
   const { all, pub, version } = serverSettings;
   const update = async function () {
     const allRaw = {};
+    const entries: Array<[string, any]> = [];
     table.get().forEach((record, field) => {
-      allRaw[field] = record.get("value");
+      entries.push([field, record]);
     });
+    for (const [field, record] of entries) {
+      const { value: rawValue } = await decryptSettingValue(
+        field,
+        record.get("value"),
+      );
+      allRaw[field] = rawValue;
+    }
 
-    table.get().forEach(function (record, field) {
-      const rawValue = record.get("value");
+    for (const [field] of entries) {
+      const rawValue = allRaw[field];
 
       // process all values from the database according to the optional "to_val" mapping function
       const spec = SITE_SETTINGS_CONF[field] ?? SERVER_SETTINGS_EXTRAS[field];
@@ -72,7 +82,7 @@ export default async function getServerSettings(): Promise<ServerSettingsDynamic
           all[field] = 0;
         }
       }
-    });
+    }
 
     // set all default values
     for (const config of [SITE_SETTINGS_CONF, SERVER_SETTINGS_EXTRAS]) {

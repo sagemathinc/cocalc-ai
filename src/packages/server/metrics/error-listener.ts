@@ -55,6 +55,17 @@ export function addErrorListeners() {
   });
 
   return process.on("unhandledRejection", (reason, p) => {
+    const reasonText = `${reason ?? ""}`;
+    const isConatTimeout =
+      reasonText.includes("request timed out") &&
+      reasonText.includes("ConatSocketClient.request");
+    if (isConatTimeout) {
+      logger.warn(
+        "Transient conat timeout in unhandledRejection path; downgraded from BUG",
+        { reason: reasonText.slice(0, 500) },
+      );
+      return;
+    }
     logger.error(
       "BUG UNHANDLED REJECTION *********************************************************",
     );

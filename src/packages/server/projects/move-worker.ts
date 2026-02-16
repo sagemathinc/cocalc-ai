@@ -83,7 +83,12 @@ function progressEvent({
       progress,
       detail: update.detail,
     },
-  });
+  }).catch((err) =>
+    logger.debug("move op progress event publish failed", {
+      op_id: op.op_id,
+      err,
+    }),
+  );
 }
 
 async function updateProgressSummary(op: LroSummary, update: MoveProjectProgressUpdate) {
@@ -230,6 +235,38 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
   }
 }
 
+async function markMoveOpFailedFromWorker({
+  op_id,
+  err,
+}: {
+  op_id: string;
+  err: unknown;
+}): Promise<void> {
+  try {
+    const updated = await updateLro({
+      op_id,
+      status: "failed",
+      error: `${err}`,
+    });
+    if (updated) {
+      try {
+        await publishSummary(updated);
+      } catch (publishErr) {
+        logger.warn("move op publish summary failed after worker error", {
+          op_id,
+          err: publishErr,
+        });
+      }
+    }
+  } catch (updateErr) {
+    logger.error("move op worker failure handling failed", {
+      op_id,
+      err: updateErr,
+      original_error: `${err}`,
+    });
+  }
+}
+
 export function startMoveLroWorker({
   intervalMs = TICK_MS,
   maxParallel = MAX_PARALLEL,
@@ -257,16 +294,9 @@ export function startMoveLroWorker({
     for (const op of ops) {
       inFlight += 1;
       void handleMoveOp(op)
-        .catch(async (err) => {
+        .catch((err) => {
           logger.warn("move op handler failed", { op_id: op.op_id, err });
-          const updated = await updateLro({
-            op_id: op.op_id,
-            status: "failed",
-            error: `${err}`,
-          });
-          if (updated) {
-            await publishSummary(updated);
-          }
+          void markMoveOpFailedFromWorker({ op_id: op.op_id, err });
         })
         .finally(() => {
           inFlight = Math.max(0, inFlight - 1);

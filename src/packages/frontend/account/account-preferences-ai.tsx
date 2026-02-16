@@ -5,6 +5,7 @@
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { OtherSettings } from "./other-settings";
+import { CodexCredentialsPanel } from "./codex-credentials-panel";
 
 export function AccountPreferencesAI() {
   const other_settings = useTypedRedux("account", "other_settings");
@@ -12,13 +13,16 @@ export function AccountPreferencesAI() {
   const kucalc = useTypedRedux("customize", "kucalc");
 
   return (
-    <OtherSettings
-      other_settings={other_settings}
-      is_stripe_customer={
-        !!stripe_customer?.getIn(["subscriptions", "total_count"])
-      }
-      kucalc={kucalc}
-      mode="ai"
-    />
+    <>
+      <OtherSettings
+        other_settings={other_settings}
+        is_stripe_customer={
+          !!stripe_customer?.getIn(["subscriptions", "total_count"])
+        }
+        kucalc={kucalc}
+        mode="ai"
+      />
+      <CodexCredentialsPanel />
+    </>
   );
 }

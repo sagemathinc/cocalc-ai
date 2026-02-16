@@ -405,7 +405,194 @@ async function resolveProjectScript(): Promise<ScriptResolution> {
 }
 
 export function networkArgument() {
-  return "--network=slirp4netns";
+  // Allow explicit override when debugging networking behavior.
+  const explicit = `${process.env.COCALC_PROJECT_RUNNER_NETWORK ?? ""}`.trim();
+  if (explicit) {
+    const lowered = explicit.toLowerCase();
+    const allowed =
+      lowered === "none" ||
+      lowered.startsWith("slirp4netns") ||
+      lowered.startsWith("pasta");
+    if (allowed) {
+      return `--network=${explicit}`;
+    }
+    logger.warn("ignoring unsupported COCALC_PROJECT_RUNNER_NETWORK override", {
+      explicit,
+    });
+  }
+  const defaultNetworkRaw = `${
+    process.env.COCALC_PROJECT_RUNNER_NETWORK_DEFAULT ?? "pasta"
+  }`
+    .trim()
+    .toLowerCase();
+  const defaultNetwork =
+    defaultNetworkRaw === "pasta" || defaultNetworkRaw === "none"
+      ? defaultNetworkRaw
+      : "slirp4netns";
+  if (defaultNetwork === "none") {
+    return "--network=none";
+  }
+  if (defaultNetwork === "pasta") {
+    const pastaOptionsRaw = `${
+      process.env.COCALC_PROJECT_RUNNER_PASTA_OPTIONS ??
+      "--map-gw"
+    }`.trim();
+    if (!pastaOptionsRaw) {
+      return "--network=pasta";
+    }
+    return `--network=pasta:${pastaOptionsRaw}`;
+  }
+  // Rootless pods need host loopback access so project containers can reach
+  // host-local conat (mapped as host.containers.internal in env.ts).
+  const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
+    .trim()
+    .toLowerCase();
+  const allowHostLoopback = !(
+    allowHostLoopbackRaw === "0" ||
+    allowHostLoopbackRaw === "false" ||
+    allowHostLoopbackRaw === "no"
+  );
+  return allowHostLoopback
+    ? "--network=slirp4netns:allow_host_loopback=true"
+    : "--network=slirp4netns";
+}
+
+function pastaConatHost(): string | undefined {
+  const host = `${process.env.COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST ?? ""}`
+    .trim();
+  return host || undefined;
+}
+
+function slirpConatHost(): string {
+  const host = `${process.env.COCALC_PROJECT_RUNNER_SLIRP_CONAT_HOST ?? "10.0.2.2"}`
+    .trim();
+  return host || "10.0.2.2";
+}
+
+// Parse Linux /proc/net/route content and return the default gateway IPv4.
+//
+// Why we do this:
+// - With pasta --map-gw, host services bound on host loopback are reachable
+//   from the container via the container's default gateway.
+// - This avoids hardcoding host aliases such as 169.254.1.2, which are not
+//   universally valid across pasta versions/configurations.
+//
+// /proc/net/route stores Destination and Gateway as little-endian hex. For the
+// default route Destination is 00000000, and Gateway must be byte-reversed when
+// converting to dotted-decimal IPv4.
+function defaultGatewayFromProcNetRouteContent(
+  content: string,
+): string | undefined {
+  const lines = content.trim().split("\n");
+  for (const line of lines.slice(1)) {
+    const cols = line.trim().split(/\s+/);
+    // Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
+    if (cols.length < 4) continue;
+    const destination = cols[1];
+    const gatewayHex = cols[2];
+    const flagsHex = cols[3];
+    if (destination !== "00000000") continue;
+    const flags = Number.parseInt(flagsHex, 16);
+    // RTF_GATEWAY bit must be set.
+    if (Number.isNaN(flags) || (flags & 0x2) === 0) continue;
+    if (!/^[0-9a-fA-F]{8}$/.test(gatewayHex)) continue;
+    const bytes = gatewayHex.match(/../g);
+    if (!bytes || bytes.length !== 4) continue;
+    // Example: C0A80401 -> 192.168.4.1 (reverse byte order first).
+    const octets = bytes.reverse().map((x) => Number.parseInt(x, 16));
+    if (octets.some((x) => Number.isNaN(x))) continue;
+    return octets.join(".");
+  }
+  return undefined;
+}
+
+async function defaultGatewayFromProcNetRoute(): Promise<string | undefined> {
+  try {
+    const content = await readFile("/proc/net/route", "utf8");
+    return defaultGatewayFromProcNetRouteContent(content);
+  } catch {
+    return undefined;
+  }
+}
+
+async function pastaHostAliasDefaultAddr(
+  selectedNetwork: string,
+): Promise<string | undefined> {
+  // Explicit override always wins.
+  const explicit = `${
+    process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ?? ""
+  }`.trim();
+  if (explicit) {
+    return explicit;
+  }
+  // Only synthesize a default host alias when pasta is configured with
+  // --map-guest-addr. Otherwise we may force host.containers.internal to an
+  // unroutable address on older pasta versions.
+  if (!selectedNetwork.includes("--map-guest-addr")) {
+    if (!selectedNetwork.includes("--map-gw")) {
+      return undefined;
+    }
+    // With --map-gw (and without --map-guest-addr support), host loopback is
+    // reachable via the guest default gateway address.
+    const gateway = await defaultGatewayFromProcNetRoute();
+    if (!gateway) return undefined;
+    return gateway;
+  }
+  const addr = "169.254.1.2";
+  return addr || undefined;
+}
+
+function replaceUrlHostname(value: string, hostname: string): string {
+  try {
+    const url = new URL(value);
+    url.hostname = hostname;
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function getUrlHostname(value: string): string | undefined {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+export function publishHost(): string {
+  const value = `${process.env.COCALC_PROJECT_RUNNER_PUBLISH_HOST ?? "127.0.0.1"}`
+    .trim()
+    .toLowerCase();
+  if (!value) return "127.0.0.1";
+  if (value === "127.0.0.1" || value === "localhost" || value === "::1") {
+    return value === "localhost" ? "127.0.0.1" : value;
+  }
+  if (value === "0.0.0.0" || value === "::") {
+    const allowInsecurePublishHostRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_INSECURE_PUBLISH_HOST ?? "false"}`
+      .trim()
+      .toLowerCase();
+    const allowInsecurePublishHost =
+      allowInsecurePublishHostRaw === "1" ||
+      allowInsecurePublishHostRaw === "true" ||
+      allowInsecurePublishHostRaw === "yes" ||
+      allowInsecurePublishHostRaw === "on";
+    if (allowInsecurePublishHost) {
+      return value;
+    }
+    logger.warn(
+      "refusing insecure non-loopback publish host without explicit override",
+      {
+        value,
+        overrideVar: "COCALC_PROJECT_RUNNER_ALLOW_INSECURE_PUBLISH_HOST",
+      },
+    );
+    return "127.0.0.1";
+  }
+  logger.warn("ignoring invalid COCALC_PROJECT_RUNNER_PUBLISH_HOST override", {
+    value,
+  });
+  return "127.0.0.1";
 }
 
 export async function start({
@@ -594,15 +781,111 @@ export async function start({
     const args: string[] = [];
     args.push("run");
     args.push("--runtime", "/usr/bin/crun");
+    args.push("--security-opt", "no-new-privileges");
     //args.push("--user", "1000:1000");
     args.push("--user", "0:0");
     args.push("--detach");
     args.push("--label", `project_id=${project_id}`, "--label", `role=project`);
     args.push("--rm");
     args.push("--replace");
-    args.push(networkArgument());
-    args.push("-p", `${ssh_port}:22`);
-    args.push("-p", `${http_port}:80`);
+    const originalConatServer = env.CONAT_SERVER;
+    const selectedNetwork = networkArgument();
+    args.push(selectedNetwork);
+    const originalConatHost = getUrlHostname(originalConatServer);
+    const conatUsesDefaultHostAlias =
+      originalConatHost === "host.containers.internal";
+    const explicitPastaConatHost = pastaConatHost();
+    const slirpConatServer = conatUsesDefaultHostAlias
+      ? replaceUrlHostname(originalConatServer, slirpConatHost())
+      : originalConatServer;
+    if (selectedNetwork.startsWith("--network=pasta")) {
+      const resolvedPastaConatHost =
+        explicitPastaConatHost ??
+        (conatUsesDefaultHostAlias
+          ? await pastaHostAliasDefaultAddr(selectedNetwork)
+          : undefined);
+      if (resolvedPastaConatHost && conatUsesDefaultHostAlias) {
+        env.CONAT_SERVER = replaceUrlHostname(
+          originalConatServer,
+          resolvedPastaConatHost,
+        );
+        logger.debug("using pasta conat host", {
+          project_id,
+          conat_server: env.CONAT_SERVER,
+          host: resolvedPastaConatHost,
+          explicit: !!explicitPastaConatHost,
+        });
+      }
+
+      const pastaHostAliasAddr = conatUsesDefaultHostAlias
+        ? resolvedPastaConatHost
+        : undefined;
+      if (pastaHostAliasAddr) {
+        // Preserve host.containers.internal for software inside the project that
+        // expects this alias, but point it at an actually routable address.
+        args.push(
+          "--add-host",
+          `host.containers.internal:${pastaHostAliasAddr}`,
+        );
+      }
+
+      // Startup assumption check: with pasta, we expect a host path that can
+      // reliably reach conat.
+      const hasNoMapGw = selectedNetwork.includes("--no-map-gw");
+      let conatHost = "";
+      let conatPort: number | undefined;
+      try {
+        const url = new URL(env.CONAT_SERVER);
+        conatHost = url.hostname;
+        conatPort = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+      } catch {
+        // keep defaults on parse failure
+      }
+      const expectedPastaHost =
+        explicitPastaConatHost ??
+        (conatUsesDefaultHostAlias ? pastaHostAliasAddr : conatHost);
+      const assumptionsOk =
+        !!conatHost &&
+        conatHost === expectedPastaHost &&
+        (!explicitPastaConatHost || !hasNoMapGw);
+      logger.info("pasta startup assumptions", {
+        project_id,
+        ok: assumptionsOk,
+        selectedNetwork,
+        conatHost,
+        conatPort,
+        expectedPastaHost,
+        hasNoMapGw,
+        pastaHostAliasAddr,
+        explicitPastaConatHost,
+      });
+      if (!assumptionsOk) {
+        logger.warn(
+          "pasta startup assumptions not met; connectivity to conat may fail",
+          {
+            project_id,
+            selectedNetwork,
+            conat_server: env.CONAT_SERVER,
+            expectedPastaHost,
+            hasNoMapGw,
+            pastaHostAliasAddr,
+            explicitPastaConatHost,
+          },
+        );
+      }
+    } else if (
+      selectedNetwork.startsWith("--network=slirp4netns") &&
+      conatUsesDefaultHostAlias
+    ) {
+      env.CONAT_SERVER = slirpConatServer;
+      logger.debug("using slirp conat host", {
+        project_id,
+        conat_server: env.CONAT_SERVER,
+      });
+    }
+    const publishHostValue = publishHost();
+    args.push("-p", `${publishHostValue}:${ssh_port}:22`);
+    args.push("-p", `${publishHostValue}:${http_port}:80`);
     if (config.gpu) {
       args.push("--device", "nvidia.com/gpu=all");
       args.push("--security-opt", "label=disable");
@@ -645,7 +928,6 @@ export async function start({
     args.push(projectScript, "--init", "project_init.sh");
 
     logger.debug("start: launching container - ", name);
-
     await podman(args);
 
     report({

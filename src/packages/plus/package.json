@@ -1,27 +1,34 @@
 {
   "name": "@cocalc/plus",
-  "version": "0.1.0",
+  "version": "0.2.75",
   "description": "CoCalcPlus: productized wrapper around CoCalc Lite",
   "main": "./electron.js",
   "exports": {
     ".": "./dist/index.js",
-    "./*": "./dist/*.js"
+    "./*": "./dist/*.js",
+    "./ssh/*": "./dist/ssh/*.js",
+    "./reflect/*": "./dist/reflect/*.js"
   },
   "bin": {
-    "cocalc-plus": "./bin/start.js"
+    "cocalc-plus": "./dist/bin/start.js"
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "build": "pnpm exec tsc --build",
+    "build": "pnpm exec tsc --build && node bin/add-shebang.js",
     "test": "exit 0",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo sea/sea-prep.blob build",
-    "build:static": "cd ../static && pnpm clean && pnpm install && pnpm build",
+    "build:static": "cd sea && ./build-static.sh",
     "build:bundle": "pnpm build:static && cd sea && ./build-bundle.sh",
     "build:tarball": "pnpm build:bundle && cd build && tar Jcvf bundle.tar.xz bundle",
     "run:bundle": "node ./build/bundle/bundle/index.js",
     "sea": "pnpm build:tarball && cd sea && ./build-sea.sh",
+    "sea:signed": "pnpm build:tarball && cd sea && make signed-tar",
+    "publish:sea": "pnpm tsc:root && cd sea && ./publish-sea.sh",
+    "publish:sea:signed": "pnpm sea:signed && pnpm publish:sea",
+    "publish:site": "pnpm tsc:root && cd site && ./publish-site.sh",
+    "tsc:root": "cd ../.. && pnpm tsc",
     "build:all": "pnpm build && pnpm build:tarball && pnpm sea",
-    "app": "pnpm run build && node bin/start.js",
+    "app": "pnpm run build && node dist/bin/start.js",
     "app-electron": "pnpm electron-rebuild && electron ."
   },
   "files": [
@@ -35,7 +42,11 @@
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {
-    "@cocalc/lite": "workspace:*"
+    "@cocalc/conat": "workspace:*",
+    "@cocalc/lite": "workspace:*",
+    "ascii-table3": "^1.0.1",
+    "commander": "^14.0.1",
+    "reflect-sync": "0.15.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",

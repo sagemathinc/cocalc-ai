@@ -35,6 +35,8 @@ import FileTabs from "./file-tabs";
 import { ShareIndicator } from "./share-indicator";
 import { lite } from "@cocalc/frontend/lite";
 import SettingsButton from "@cocalc/frontend/account/settings-button";
+import { RemoteSshButton, SshButton } from "@cocalc/frontend/ssh";
+import SshUpgradeButton from "@cocalc/frontend/ssh/ssh-upgrade-button";
 
 const INDICATOR_STYLE: React.CSSProperties = {
   overflow: "hidden",
@@ -51,6 +53,7 @@ export default function ProjectTabs(props: PTProps) {
   const { project_id } = props;
   const openFiles = useTypedRedux({ project_id }, "open_files_order");
   const activeTab = useTypedRedux({ project_id }, "active_project_tab");
+  const sshRemoteTarget = useTypedRedux("customize", "ssh_remote_target");
 
   //if (openFiles.size == 0) return <></>;
 
@@ -86,7 +89,13 @@ export default function ProjectTabs(props: PTProps) {
           <ShareIndicatorTab activeTab={activeTab} project_id={project_id} />
           <ChatIndicatorTab activeTab={activeTab} project_id={project_id} />
         </div>
-        {lite && <SettingsButton />}
+        {lite && (
+          <>
+            {sshRemoteTarget ? <RemoteSshButton /> : <SshButton />}
+            <SshUpgradeButton />
+            <SettingsButton />
+          </>
+        )}
       </div>
     </div>
   );
@@ -410,14 +419,15 @@ function ChatIndicatorTab({ activeTab, project_id }): React.JSX.Element | null {
 }
 
 function ShareIndicatorTab({ activeTab, project_id }) {
-  const currentPath = useTypedRedux({ project_id }, "current_path");
+  const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
+  const currentPath = currentPathAbs ?? "/";
 
   const path = activeTab === "files" ? currentPath : tab_to_path(activeTab);
   if (path == null) {
     // nothing specifically to share
     return null;
   }
-  if (path === "") {
+  if (path === "/") {
     // sharing whole project not implemented
     return null;
   }

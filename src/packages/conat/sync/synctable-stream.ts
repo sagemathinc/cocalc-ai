@@ -18,6 +18,8 @@ import { dstream, DStream } from "./dstream";
 import { fromJS, Map } from "immutable";
 import type { Configuration } from "@cocalc/conat/sync/core-stream";
 import type { Client } from "@cocalc/conat/core/client";
+import type { Headers } from "@cocalc/conat/core/client";
+import { join } from "path";
 
 export type State = "disconnected" | "connected" | "closed";
 
@@ -47,6 +49,7 @@ export class SyncTableStream extends EventEmitter {
   private noInventory?: boolean;
   private noAutosave?: boolean;
   private ephemeral?: boolean;
+  private writeHeaders?: Headers;
 
   constructor({
     query,
@@ -101,7 +104,7 @@ export class SyncTableStream extends EventEmitter {
   }
 
   init = async () => {
-    const name = patchesStreamName({ string_id: this.string_id });
+    const name = patchesStreamName({ path: this.path });
     this.dstream = await dstream({
       name,
       client: this.client,
@@ -141,14 +144,20 @@ export class SyncTableStream extends EventEmitter {
 
   getKey = this.primaryString;
 
+  setWriteHeaders = (headers?: Headers) => {
+    this.writeHeaders = headers;
+  };
+
   set = (obj) => {
     if (Map.isMap(obj)) {
       obj = obj.toJS();
     }
+    const headers = obj?.__headers ?? this.writeHeaders;
     // console.log("set", obj);
     // delete string_id since it is redundant info
     const key = this.primaryString(obj);
-    const { string_id, ...obj2 } = obj;
+    const { string_id, __headers, ...obj2 } = obj;
+    void __headers;
     if (this.data[key] != null) {
       throw Error(
         `object with key ${key} was already written to the stream -- written data cannot be modified`,
@@ -159,7 +168,10 @@ export class SyncTableStream extends EventEmitter {
     if (this.dstream == null) {
       throw Error("closed");
     }
-    this.dstream.publish(obj2);
+    this.dstream.publish(
+      obj2,
+      headers != null ? { headers } : undefined,
+    );
   };
 
   private handle = (obj, changeEvent: boolean) => {
@@ -228,23 +240,6 @@ export class SyncTableStream extends EventEmitter {
   };
 }
 
-export function patchesStreamName({
-  project_id,
-  path,
-  string_id,
-}: {
-  project_id?: string;
-  path?: string;
-  string_id?: string;
-}): string {
-  if (!string_id) {
-    if (!project_id || !path) {
-      throw Error("one of string_id or both project_id and path must be given");
-    }
-    string_id = client_db.sha1(project_id, path);
-  }
-  if (!string_id) {
-    throw Error("bug");
-  }
-  return `patches:${string_id}`;
+export function patchesStreamName({ path }: { path: string }): string {
+  return join("patchflow", path);
 }

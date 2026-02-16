@@ -667,7 +667,7 @@ export function LogFlyout({
   return (
     <>
       <Space
-        direction="vertical"
+        orientation="vertical"
         style={{
           flex: "0 0 auto",
           borderBottom: FIX_BORDER,

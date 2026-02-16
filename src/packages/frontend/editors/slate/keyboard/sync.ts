@@ -13,7 +13,7 @@ register(
   ({ editor, extra }) => {
     const altEnter = extra?.actions?.altEnter;
     if (altEnter != null) {
-      altEnter(editor.getMarkdownValue());
+      altEnter(editor.getMarkdownValue(), extra?.id);
       return true;
     }
     editor.inverseSearch(true);

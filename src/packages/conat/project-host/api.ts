@@ -41,6 +41,10 @@ export interface HostControlApi {
     project_id: string;
     authorized_keys?: string;
   }) => Promise<void>;
+  updateProjectUsers: (opts: {
+    project_id: string;
+    users?: any;
+  }) => Promise<void>;
   deleteProjectData: (opts: { project_id: string }) => Promise<void>;
   upgradeSoftware: (
     opts: UpgradeSoftwareRequest,
@@ -54,6 +58,7 @@ function subjectForHost(host_id: string): string {
 }
 
 const STATUS_SUBJECT = "project-hosts.status";
+export const ONPREM_REST_TUNNEL_LOCAL_PORT = 9345;
 
 export function createHostControlClient({
   host_id,
@@ -96,6 +101,20 @@ export interface HostProvisionedInventory {
   checked_at?: number;
 }
 
+export interface HostRegisterOnPremTunnelRequest {
+  host_id: string;
+  public_key: string;
+}
+
+export interface HostRegisterOnPremTunnelResponse {
+  sshd_host: string;
+  sshd_port: number;
+  ssh_user: string;
+  http_tunnel_port: number;
+  ssh_tunnel_port: number;
+  rest_port: number;
+}
+
 export type SoftwareArtifact =
   | "project-host"
   | "project"
@@ -135,6 +154,23 @@ export interface HostStatusApi {
   reportHostProvisionedInventory: (
     opts: HostProvisionedInventory,
   ) => Promise<{ delete_project_ids?: string[] } | void>;
+  syncAccountRevocations: (opts: {
+    host_id: string;
+    cursor_updated_ms?: number;
+    cursor_account_id?: string;
+    limit?: number;
+  }) => Promise<{
+    rows: Array<{
+      account_id: string;
+      revoked_before_ms: number;
+      updated_ms: number;
+    }>;
+    next_cursor_updated_ms?: number;
+    next_cursor_account_id?: string;
+  }>;
+  registerOnPremTunnel: (
+    opts: HostRegisterOnPremTunnelRequest,
+  ) => Promise<HostRegisterOnPremTunnelResponse>;
 }
 
 export function createHostStatusClient({

@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// NOTE: in this file we use {event:'draft', date:time in ms} as
-// primary key into the syncdb whereas in the main thread, we
-// use {event:'chat', date:iso string}. That's fine.
+// Chat draft text is private in AKV via the shared draft controller.
+// Composer presence is published with syncdoc cursors, so it is ephemeral
+// and doesn't spam chat rows.
 
 import {
   CSSProperties,
@@ -17,25 +17,24 @@ import {
 } from "react";
 import { useIntl } from "react-intl";
 import { useDebouncedCallback } from "use-debounce";
-import { CSS, redux, useIsMountedRef } from "@cocalc/frontend/app-framework";
+import { CSS, redux } from "@cocalc/frontend/app-framework";
 import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { SAVE_DEBOUNCE_MS } from "@cocalc/frontend/frame-editors/code-editor/const";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
+import { lite } from "@cocalc/frontend/lite";
 import type { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import { SubmitMentionsRef } from "./types";
 
 interface Props {
   on_send: (value: string) => void;
-  onChange: (string) => void;
+  onChange: (value: string, sessionToken?: number) => void;
   syncdb: ImmerDB | undefined;
-  // date:
-  //   - ms since epoch of when this message was first sent
-  //   - set to 0 for editing new message
-  //   - set to -time (negative time) to respond to thread, where time is the time of ROOT message of the the thread.
   date: number;
+  presenceThreadKey?: string | null;
   input?: string;
   on_paste?: (e) => void;
   height?: string;
+  autoGrowMaxHeight?: number;
   submitMentionsRef?: SubmitMentionsRef;
   fontSize?: number;
   hideHelp?: boolean;
@@ -47,12 +46,31 @@ interface Props {
   placeholder?: string;
   autoFocus?: boolean;
   moveCursorToEndOfLine?: boolean;
+  sessionToken?: number;
+  fixedMode?: "markdown" | "editor";
+}
+
+type HistoryEntry = {
+  value: string;
+  cursor?: { line: number; ch: number };
+  at: number;
+};
+
+const HISTORY_GROUP_MS = 250;
+const CHAT_INPUT_SAVE_DEBOUNCE_MS = 120;
+
+function markdownEndPosition(value: string): { line: number; ch: number } {
+  const lines = value.split("\n");
+  const line = Math.max(0, lines.length - 1);
+  const ch = lines[line]?.length ?? 0;
+  return { line, ch };
 }
 
 export default function ChatInput({
   autoFocus,
   cacheId,
   date,
+  presenceThreadKey,
   editBarStyle,
   fontSize,
   height,
@@ -66,213 +84,222 @@ export default function ChatInput({
   style,
   submitMentionsRef,
   syncdb,
-  moveCursorToEndOfLine,
+  autoGrowMaxHeight,
+  sessionToken,
+  fixedMode,
 }: Props) {
   const intl = useIntl();
-  const onSendRef = useRef<Function>(on_send);
-  useEffect(() => {
-    onSendRef.current = on_send;
-  }, [on_send]);
   const { project_id } = useFrameContext();
-  const sender_id = useMemo(
-    () => redux.getStore("account").get_account_id(),
+  const controlRef = useRef<any>(null);
+  const [input, setInput] = useState<string>(propsInput ?? "");
+  const mountedRef = useRef<boolean>(true);
+  const currentSessionTokenRef = useRef<number | undefined>(sessionToken);
+  const historyRef = useRef<HistoryEntry[]>([
+    { value: propsInput ?? "", at: Date.now() },
+  ]);
+  const historyIndexRef = useRef<number>(0);
+  const applyingHistoryRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    currentSessionTokenRef.current = sessionToken;
+  }, [sessionToken]);
+
+  const isStaleSessionCallback = useCallback(
+    (token?: number): boolean => {
+      const current = currentSessionTokenRef.current;
+      return token != null && current != null && token !== current;
+    },
     [],
   );
-  const controlRef = useRef<any>(null);
-  const [input, setInput] = useState<string>("");
-
-  const getDraftInput = useCallback(() => {
-    const rec = syncdb?.get_one({
-      event: "draft",
-      sender_id,
-      date,
-    });
-    if (rec == null) return undefined;
-    return (rec as any).input;
-  }, [syncdb, sender_id, date]);
 
   useEffect(() => {
-    const dbInput = getDraftInput();
-    // take version from syncdb if it is there; otherwise, version from input prop.
-    // the db version is used when you refresh your browser while editing, or scroll up and down
-    // thus unmounting and remounting the currently editing message (due to virtualization).
-    // See https://github.com/sagemathinc/cocalc/issues/6415
-    const input = dbInput ?? propsInput;
-    setInput(input);
-    if (input?.trim() && moveCursorToEndOfLine) {
-      // have to wait until it's all rendered -- i hate code like this...
-      for (const n of [1, 10, 50]) {
-        setTimeout(() => {
-          controlRef.current?.moveCursorToEndOfLine();
-        }, n);
-      }
+    const next = propsInput ?? "";
+    if (next !== input) {
+      setInput(next);
+      historyRef.current = [{ value: next, at: Date.now() }];
+      historyIndexRef.current = 0;
     }
-  }, [date, sender_id, propsInput, getDraftInput]);
+  }, [propsInput, input]);
 
-  const currentInputRef = useRef<string>(input);
-  const saveOnUnmountRef = useRef<boolean>(true);
-  const isMountedRef = useIsMountedRef();
-  const lastSavedRef = useRef<string>(input);
-  const saveChat = useDebouncedCallback(
-    (input) => {
-      if (
-        syncdb == null ||
-        (!isMountedRef.current && !saveOnUnmountRef.current)
-      ) {
-        return;
-      }
-      onChange(input);
-      lastSavedRef.current = input;
-      // also save to syncdb, so we have undo, etc.
-      // but definitely don't save (thus updating active) if
-      // the input didn't really change, since we use active for
-      // showing that a user is writing to other users.
-      const input0 = getDraftInput();
-      if (input0 != input) {
-        if (input0 == null && !input) {
-          // DO NOT save if you haven't written a draft before, and
-          // the draft we would save here would be empty, since that
-          // would lead to what humans would consider false notifications.
-          return;
-        }
-        syncdb.set({
-          event: "draft",
-          sender_id,
-          input,
-          date,
-          // date is a primary key so can't use iots to represent when
-          // user last edited this; use other date for editing past chats.
-          active: Date.now(),
-        });
-        syncdb.commit();
-      }
+  const resolvedPresenceThreadKey = useMemo((): string | null | undefined => {
+    if (presenceThreadKey === undefined) return undefined;
+    if (presenceThreadKey != null) return presenceThreadKey;
+    if (date < 0) return `${-date}`;
+    if (date > 0) return `${date}`;
+    return null;
+  }, [presenceThreadKey, date]);
+
+  const setComposingPresence = useCallback(
+    (value: string): void => {
+      if (!syncdb) return;
+      // In lite mode there is only one user, so cross-user presence is useless.
+      if (lite) return;
+      // Presence is only for the shared chat composer, not edit/reply inputs.
+      if (resolvedPresenceThreadKey === undefined) return;
+      const composing = value.trim().length > 0;
+      syncdb.set_cursor_locs([
+        {
+          chat_composing: composing,
+          chat_thread_key: resolvedPresenceThreadKey,
+        },
+      ]);
     },
-    SAVE_DEBOUNCE_MS,
-    {
-      leading: false,
-      trailing: true,
-    },
+    [resolvedPresenceThreadKey, syncdb],
   );
 
-  useEffect(() => {
-    return () => {
-      if (!isMountedRef.current && !saveOnUnmountRef.current) {
-        return;
-      }
-      // save before unmounting.  This is very important since if a new reply comes in,
-      // then the input component gets unmounted, then remounted BELOW the reply.
-      // Note: it is still slightly annoying, due to loss of focus... however, data
-      // loss is NOT ok, whereas loss of focus is.
-      const input = currentInputRef.current;
-      if (!input || syncdb == null) {
-        return;
-      }
-      try {
-        if (
-          syncdb.get_one({
-            event: "draft",
-            sender_id,
-            date,
-          }) == null
-        ) {
-          return;
-        }
-      } catch {
-        // sometimes syncdb.get_one throws
-        return;
-      }
-      syncdb.set({
-        event: "draft",
-        sender_id,
-        input,
-        date,
-        active: Date.now(),
-      });
-      syncdb.commit();
-    };
-  }, [syncdb, sender_id, date]);
+  const savePresence = useDebouncedCallback(setComposingPresence, SAVE_DEBOUNCE_MS, {
+    leading: false,
+    trailing: true,
+  });
 
   useEffect(() => {
-    if (syncdb == null) return;
-    const onSyncdbChange = () => {
-      const sender_id = redux.getStore("account").get_account_id();
-      const x = syncdb.get_one({
-        event: "draft",
-        sender_id,
-        date,
-      });
-      const input = (x as any)?.input ?? "";
-      if (input != lastSavedRef.current) {
-        setInput(input);
-        currentInputRef.current = input;
-        lastSavedRef.current = input;
-      }
-    };
-    syncdb.on("change", onSyncdbChange);
     return () => {
-      syncdb.removeListener("change", onSyncdbChange);
+      savePresence.cancel();
     };
-  }, [syncdb, sender_id, date]);
+  }, [savePresence]);
+
+  const publishNotComposing = () => {
+    if (!syncdb) return;
+    if (lite) return;
+    if (resolvedPresenceThreadKey === undefined) return;
+    syncdb.set_cursor_locs([
+      {
+        chat_composing: false,
+        chat_thread_key: resolvedPresenceThreadKey,
+      },
+    ]);
+  };
 
   function getPlaceholder(): string {
     if (placeholder != null) return placeholder;
-    const have_llm = redux
-      .getStore("projects")
-      .hasLanguageModelEnabled(project_id);
+    const have_llm =
+      project_id != null &&
+      redux.getStore("projects").hasLanguageModelEnabled(project_id);
     return intl.formatMessage(
       {
         id: "chat.input.placeholder",
         defaultMessage: "Message (@mention)...",
       },
-      {
-        have_llm,
-      },
+      { have_llm },
     );
   }
-  height;
 
   const hasInput = (input ?? "").trim().length > 0;
 
+  const applyHistoryValue = (entry: HistoryEntry) => {
+    applyingHistoryRef.current = true;
+    const value = entry.value;
+    setInput(value);
+    onChange(value, sessionToken);
+    savePresence(value);
+    const pos = entry.cursor ?? markdownEndPosition(value);
+    setTimeout(() => {
+      controlRef.current?.setSelectionFromMarkdownPosition?.(pos);
+    }, 0);
+    applyingHistoryRef.current = false;
+  };
+
   return (
     <MarkdownInput
+      fixedMode={fixedMode}
       autoFocus={autoFocus}
-      saveDebounceMs={0}
-      onFocus={onFocus}
-      onBlur={onBlur}
+      saveDebounceMs={CHAT_INPUT_SAVE_DEBOUNCE_MS}
+      onFocus={() => {
+        onFocus?.();
+      }}
+      onBlur={() => {
+        savePresence.flush?.();
+        onBlur?.();
+      }}
       cacheId={cacheId}
       value={input}
       controlRef={controlRef}
       enableUpload={true}
       enableMentions={true}
       submitMentionsRef={submitMentionsRef}
-      onChange={(input) => {
-        currentInputRef.current = input;
-        /* BUG: in Markdown mode this stops getting
-        called after you paste in an image.  It works
-        fine in Slate/Text mode. See
-        https://github.com/sagemathinc/cocalc/issues/7728
-        */
-        setInput(input);
-        saveChat(input);
+      onChange={(value) => {
+        if (!mountedRef.current) return;
+        if (isStaleSessionCallback(sessionToken)) {
+          return;
+        }
+        setInput(value);
+        onChange(value, sessionToken);
+        savePresence(value);
+        if (applyingHistoryRef.current) return;
+        const history = historyRef.current;
+        const idx = historyIndexRef.current;
+        const current = history[idx]?.value ?? "";
+        if (current === value) {
+          history[idx] = {
+            ...(history[idx] ?? { value: current, at: Date.now() }),
+            cursor: controlRef.current?.getMarkdownPositionForSelection?.(),
+            at: Date.now(),
+          };
+          return;
+        }
+        const now = Date.now();
+        const cursor = controlRef.current?.getMarkdownPositionForSelection?.();
+        const trimmed = history.slice(0, idx + 1);
+        const last = trimmed[trimmed.length - 1];
+        // Group nearby edits into one undo step, rather than per-character.
+        if (last && now - last.at <= HISTORY_GROUP_MS) {
+          trimmed[trimmed.length - 1] = { value, cursor, at: now };
+        } else {
+          trimmed.push({ value, cursor, at: now });
+        }
+        const maxEntries = 200;
+        if (trimmed.length > maxEntries) {
+          trimmed.splice(0, trimmed.length - maxEntries);
+        }
+        historyRef.current = trimmed;
+        historyIndexRef.current = trimmed.length - 1;
       }}
-      onShiftEnter={(input) => {
-        setInput("");
-        saveChat("");
-        on_send(input);
+      onShiftEnter={(value) => {
+        if (!mountedRef.current) return;
+        if (isStaleSessionCallback(sessionToken)) {
+          return;
+        }
+        savePresence.cancel();
+        controlRef.current?.cancelPendingUploads?.();
+        publishNotComposing();
+        on_send(value);
+      }}
+      onUndo={() => {
+        const idx = historyIndexRef.current;
+        if (idx <= 0) return;
+        historyIndexRef.current = idx - 1;
+        applyHistoryValue(
+          historyRef.current[historyIndexRef.current] ?? {
+            value: "",
+            at: Date.now(),
+          },
+        );
+      }}
+      onRedo={() => {
+        const history = historyRef.current;
+        const idx = historyIndexRef.current;
+        if (idx >= history.length - 1) return;
+        historyIndexRef.current = idx + 1;
+        applyHistoryValue(
+          history[idx + 1] ?? {
+            value: "",
+            at: Date.now(),
+          },
+        );
       }}
       height={height}
+      autoGrowMaxHeight={autoGrowMaxHeight}
       placeholder={getPlaceholder()}
       fontSize={fontSize}
       hideHelp={hideHelp}
       style={style}
-      onUndo={() => {
-        saveChat.cancel();
-        syncdb?.undo();
-      }}
-      onRedo={() => {
-        saveChat.cancel();
-        syncdb?.redo();
-      }}
       editBarStyle={editBarStyle}
       overflowEllipsis={true}
       hideModeSwitch={!hasInput}

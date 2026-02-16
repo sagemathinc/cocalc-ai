@@ -91,7 +91,7 @@ function DeleteAccountConfirmation({
       style={{
         marginTop: "26px",
       }}
-      message={
+      title={
         <FormattedMessage
           id="account.delete-account.alert.message"
           defaultMessage={"Are you sure you want to DELETE YOUR ACCOUNT?"}

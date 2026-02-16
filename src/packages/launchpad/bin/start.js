@@ -3,7 +3,10 @@
 // pglite + nextless mode with lightweight defaults.
 const { dirname, join } = require("path");
 const { existsSync } = require("fs");
-const { applyLaunchpadDefaults, logLaunchpadConfig } = require("../lib/onprem-config");
+const {
+  applyLaunchpadDefaults,
+  logLaunchpadConfig,
+} = require("../lib/onprem-config");
 
 function prependPath(dir) {
   if (!dir || !existsSync(dir)) {
@@ -16,6 +19,12 @@ function prependPath(dir) {
   try {
     applyLaunchpadDefaults();
     logLaunchpadConfig();
+    if (!process.env.NO_RSPACK_DEV_SERVER) {
+      process.env.NO_RSPACK_DEV_SERVER = "1";
+    }
+    if (process.env.COCALC_OPEN_BROWSER == null) {
+      process.env.COCALC_OPEN_BROWSER = "1";
+    }
 
     const bundledRootCandidate = join(__dirname, "..", "..", "..");
     const bundleDir =
@@ -25,9 +34,17 @@ function prependPath(dir) {
         ? bundledRootCandidate
         : process.cwd());
     process.env.COCALC_BUNDLE_DIR ??= bundleDir;
-    const pgliteBundleDir = join(bundleDir, "pglite");
-    if (!process.env.COCALC_PGLITE_BUNDLE_DIR && existsSync(pgliteBundleDir)) {
-      process.env.COCALC_PGLITE_BUNDLE_DIR = pgliteBundleDir;
+    const pgliteBundleCandidates = [
+      join(bundleDir, "pglite"),
+      join(bundleDir, "bundle", "node_modules", "@electric-sql", "pglite", "dist"),
+    ];
+    if (!process.env.COCALC_PGLITE_BUNDLE_DIR) {
+      for (const pgliteBundleDir of pgliteBundleCandidates) {
+        if (existsSync(join(pgliteBundleDir, "pglite.data"))) {
+          process.env.COCALC_PGLITE_BUNDLE_DIR = pgliteBundleDir;
+          break;
+        }
+      }
     }
     const apiRoot = join(bundleDir, "next-dist", "pages", "api", "v2");
     if (!process.env.COCALC_API_V2_ROOT && existsSync(apiRoot)) {

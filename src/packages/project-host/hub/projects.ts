@@ -1,7 +1,11 @@
 import { hubApi } from "@cocalc/lite/hub/api";
 import { account_id } from "@cocalc/backend/data";
 import { uuid, isValidUUID } from "@cocalc/util/misc";
-import { getProject, upsertProject } from "../sqlite/projects";
+import {
+  getProject,
+  getOrCreateProjectLocalSecretToken,
+  upsertProject,
+} from "../sqlite/projects";
 import {
   type CreateProjectOptions,
   type SnapshotCounts,
@@ -39,11 +43,95 @@ import {
   touchProjectLastEditedRunning,
 } from "../last-edited";
 import { getGeneration } from "@cocalc/file-server/btrfs/subvolume-snapshots";
+import {
+  startCodexDeviceAuth,
+  getCodexDeviceAuthStatus,
+  cancelCodexDeviceAuth,
+} from "../codex/codex-device-auth";
+import { uploadSubscriptionAuthFile } from "../codex/codex-auth";
+import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
+import { clearProjectHostConatAuthCaches } from "../conat-auth";
 
 const logger = getLogger("project-host:hub:projects");
 const MB = 1_000_000;
 const DEFAULT_PID_LIMIT = 4096;
 const MAX_BACKUPS_PER_PROJECT = 30;
+const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
+const LRO_PUBLISH_RETRY_DELAY_MS = 500;
+const LRO_PUBLISH_ATTEMPT_TIMEOUT_MS = 3000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  context: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`timeout after ${timeoutMs}ms (${context})`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer != null) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function publishLroSummaryWithRetry({
+  scope_type,
+  scope_id,
+  summary,
+  context,
+}: {
+  scope_type: "project" | "host";
+  scope_id: string;
+  summary: LroSummary;
+  context: string;
+}): Promise<boolean> {
+  for (let attempt = 1; attempt <= LRO_PUBLISH_RETRY_ATTEMPTS; attempt++) {
+    try {
+      await withTimeout(
+        publishLroSummary({ scope_type, scope_id, summary }),
+        LRO_PUBLISH_ATTEMPT_TIMEOUT_MS,
+        context,
+      );
+      if (attempt > 1) {
+        logger.info("lro summary publish recovered", {
+          context,
+          op_id: summary.op_id,
+          attempt,
+        });
+      }
+      return true;
+    } catch (err) {
+      logger.warn("lro summary publish failed", {
+        context,
+        op_id: summary.op_id,
+        attempt,
+        err: `${err}`,
+      });
+      if (attempt < LRO_PUBLISH_RETRY_ATTEMPTS) {
+        await delay(LRO_PUBLISH_RETRY_DELAY_MS);
+      }
+    }
+  }
+  logger.warn("lro summary publish exhausted retries", {
+    context,
+    op_id: summary.op_id,
+    attempts: LRO_PUBLISH_RETRY_ATTEMPTS,
+  });
+  return false;
+}
 
 function normalizeRunQuota(run_quota?: any): any | undefined {
   if (run_quota == null) return undefined;
@@ -220,8 +308,10 @@ async function getRunnerConfig(
   const disk = limits.disk ?? existing?.disk;
   const scratch = limits.scratch ?? existing?.scratch;
   const ssh_proxy_public_key = await getSshProxyPublicKey();
+  const secret = getOrCreateProjectLocalSecretToken(project_id);
   return {
     image: normalizeImage(opts?.image ?? existing?.image),
+    secret,
     authorized_keys,
     ssh_proxy_public_key,
     run_quota,
@@ -372,6 +462,126 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     }
   }
 
+  async function codexDeviceAuthStart({
+    account_id,
+    project_id,
+  }: {
+    account_id?: string;
+    project_id: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+    return await startCodexDeviceAuth(project_id, account_id);
+  }
+
+  async function codexDeviceAuthStatus({
+    account_id,
+    project_id,
+    id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+    if (!isValidUUID(id)) {
+      throw Error("invalid id");
+    }
+    const status = getCodexDeviceAuthStatus(id);
+    if (
+      !status ||
+      status.accountId !== account_id ||
+      status.projectId !== project_id
+    ) {
+      throw Error("unknown device auth id");
+    }
+    return status;
+  }
+
+  async function codexDeviceAuthCancel({
+    account_id,
+    project_id,
+    id,
+  }: {
+    account_id?: string;
+    project_id: string;
+    id: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+    if (!isValidUUID(id)) {
+      throw Error("invalid id");
+    }
+    const status = getCodexDeviceAuthStatus(id);
+    if (
+      !status ||
+      status.accountId !== account_id ||
+      status.projectId !== project_id
+    ) {
+      throw Error("unknown device auth id");
+    }
+    const canceled = cancelCodexDeviceAuth(id);
+    return { id, canceled };
+  }
+
+  async function codexUploadAuthFile({
+    account_id,
+    project_id,
+    filename,
+    content,
+  }: {
+    account_id?: string;
+    project_id: string;
+    filename?: string;
+    content: string;
+  }) {
+    if (!account_id) {
+      throw Error("user must be signed in");
+    }
+    if (!isValidUUID(project_id)) {
+      throw Error("invalid project_id");
+    }
+    if (!getProject(project_id)) {
+      throw Error("project is not hosted on this project-host");
+    }
+    if (filename && !/auth\.json$/i.test(filename.trim())) {
+      throw Error("only auth.json uploads are supported");
+    }
+    const result = await uploadSubscriptionAuthFile({
+      accountId: account_id,
+      content,
+    });
+    const synced = await pushSubscriptionAuthToRegistry({
+      projectId: project_id,
+      accountId: account_id,
+      codexHome: result.codexHome,
+      content,
+    });
+    return { ok: true as const, synced: synced.ok, ...result };
+  }
+
   // Create a project locally and optionally start it.
   hubApi.projects.createProject = createProject;
   hubApi.projects.start = start;
@@ -389,6 +599,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.getBackups = getBackups;
   hubApi.projects.getBackupFiles = getBackupFiles;
   hubApi.projects.getBackupQuota = getBackupQuota;
+  hubApi.projects.codexDeviceAuthStart = codexDeviceAuthStart;
+  hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
+  hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
+  hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;
 }
 
 // Update managed SSH keys for a project without restarting it.
@@ -421,6 +635,22 @@ export async function updateAuthorizedKeys({
     throw Error("invalid project_id");
   }
   await refreshAuthorizedKeys(project_id, authorized_keys ?? "");
+}
+
+export async function updateProjectUsers({
+  project_id,
+  users,
+}: {
+  project_id: string;
+  users?: any;
+}) {
+  if (!isValidUUID(project_id)) {
+    throw Error("invalid project_id");
+  }
+  // Store collaborator map in the generic sqlite row mirror used by conat auth.
+  // This is separate from the concrete projects SQL table schema.
+  upsertProject({ project_id, users });
+  clearProjectHostConatAuthCaches();
 }
 
 export async function getSshKeys({
@@ -529,6 +759,12 @@ export async function createBackup({
 
   void (async () => {
     const started = Date.now();
+    void publishLroSummaryWithRetry({
+      scope_type: "project",
+      scope_id: project_id,
+      summary: baseSummary,
+      context: "backup-running",
+    });
     try {
       const backup = await fileServer(project_id).createBackup({
         project_id,
@@ -537,7 +773,7 @@ export async function createBackup({
       });
       const duration_ms = Date.now() - started;
       const finished = new Date();
-      await publishLroSummary({
+      await publishLroSummaryWithRetry({
         scope_type: "project",
         scope_id: project_id,
         summary: {
@@ -559,10 +795,11 @@ export async function createBackup({
           finished_at: finished,
           updated_at: finished,
         },
+        context: "backup-succeeded",
       });
     } catch (err) {
       const finished = new Date();
-      await publishLroSummary({
+      await publishLroSummaryWithRetry({
         scope_type: "project",
         scope_id: project_id,
         summary: {
@@ -573,6 +810,7 @@ export async function createBackup({
           finished_at: finished,
           updated_at: finished,
         },
+        context: "backup-failed",
       });
     }
   })();
@@ -680,6 +918,12 @@ export async function restoreBackup({
 
   void (async () => {
     const started = Date.now();
+    void publishLroSummaryWithRetry({
+      scope_type: "project",
+      scope_id: project_id,
+      summary: baseSummary,
+      context: "restore-running",
+    });
     try {
       await fileServer(project_id).restoreBackup({
         project_id,
@@ -690,7 +934,7 @@ export async function restoreBackup({
       });
       const duration_ms = Date.now() - started;
       const finished = new Date();
-      await publishLroSummary({
+      await publishLroSummaryWithRetry({
         scope_type: "project",
         scope_id: project_id,
         summary: {
@@ -701,10 +945,11 @@ export async function restoreBackup({
           finished_at: finished,
           updated_at: finished,
         },
+        context: "restore-succeeded",
       });
     } catch (err) {
       const finished = new Date();
-      await publishLroSummary({
+      await publishLroSummaryWithRetry({
         scope_type: "project",
         scope_id: project_id,
         summary: {
@@ -715,6 +960,7 @@ export async function restoreBackup({
           finished_at: finished,
           updated_at: finished,
         },
+        context: "restore-failed",
       });
     }
   })();

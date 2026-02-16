@@ -11,7 +11,7 @@ export default function JupyterClassic({ project_id }) {
         showIcon
         style={{ maxWidth: "800px", margin: "30px auto" }}
         type="warning"
-        message={"Collaborative Jupyter Classic in CoCalc is Deprecated"}
+        title={"Collaborative Jupyter Classic in CoCalc is Deprecated"}
         description={
           <div>
             Jupyter Classic as a Collaborative CoCalc editor is no longer

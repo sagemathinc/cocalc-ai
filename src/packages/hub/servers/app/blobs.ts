@@ -1,12 +1,36 @@
 import { Router } from "express";
-import { database } from "../database";
+import { basename, extname } from "node:path";
+import { getDatabase } from "../database";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { database_is_working } from "@cocalc/server/metrics/hub_register";
 import { callback2 } from "@cocalc/util/async-utils";
 import { getLogger } from "@cocalc/hub/logger";
 
 const logger = getLogger("hub:servers:app:blobs");
+
+const SAFE_INLINE_IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".avif",
+  ".bmp",
+  ".ico",
+]);
+
+function safeFilenameFromPath(pathname: string): string {
+  const name = basename(pathname || "") || "blob";
+  return name.replace(/[^\w.\-()+ ]+/g, "_");
+}
+
+function shouldInlineByFilename(filename: string): boolean {
+  const ext = extname(filename).toLowerCase();
+  return SAFE_INLINE_IMAGE_EXTENSIONS.has(ext);
+}
+
 export default function init(router: Router) {
+  const database = getDatabase();
   // return uuid-indexed blobs (mainly used for graphics)
   router.get("/blobs/*", async (req, res) => {
     logger.debug(`${JSON.stringify(req.query)}, ${req.path}`);
@@ -16,7 +40,7 @@ export default function init(router: Router) {
       return;
     }
     if (!is_valid_uuid_string(uuid)) {
-      res.status(404).send(`invalid uuid=${uuid}`);
+      res.status(404).send("invalid blob id");
       return;
     }
     if (!database_is_working()) {
@@ -27,16 +51,20 @@ export default function init(router: Router) {
     try {
       const data = await callback2(database.get_blob, { uuid });
       if (data == null) {
-        res.status(404).send(`blob ${uuid} not found`);
+        res.status(404).send("blob not found");
       } else {
-        const filename = req.path.slice(req.path.lastIndexOf("/") + 1);
-        if (req.query.download != null) {
-          // tell browser to download the link as a file instead
-          // of displaying it in browser
+        const filename = safeFilenameFromPath(req.path);
+        const forceDownload =
+          req.query.download != null || !shouldInlineByFilename(filename);
+        if (forceDownload) {
+          // Force download for anything that is not an explicitly safe inline
+          // type, to avoid serving executable content (e.g. HTML/SVG/JS) on
+          // hub origin.
           res.attachment(filename);
         } else {
           res.type(filename);
         }
+        res.set("X-Content-Type-Options", "nosniff");
         // Cache as long as possible (e.g., One year in seconds), since
         // what we are returning is defined by a sha1 hash, so cannot change.
         res.set("Cache-Control", `public, max-age=${365 * 24 * 60 * 60}`);
@@ -51,7 +79,7 @@ export default function init(router: Router) {
       }
     } catch (err) {
       logger.error(`internal error ${err} getting blob ${uuid}`);
-      res.status(500).send(`internal error: ${err}`);
+      res.status(500).send("internal error getting blob");
     }
   });
 }

@@ -24,6 +24,10 @@ register(
   [
     { key: ",", ctrl: true, shift: true },
     { key: ",", meta: true, shift: true },
+    { key: "<", ctrl: true },
+    { key: "<", ctrl: true, shift: true },
+    { key: "<", meta: true },
+    { key: "<", meta: true, shift: true },
   ],
   ({ extra }) => {
     extra?.actions.change_font_size?.(-1);
@@ -35,6 +39,10 @@ register(
   [
     { key: ".", ctrl: true, shift: true },
     { key: ".", meta: true, shift: true },
+    { key: ">", ctrl: true },
+    { key: ">", ctrl: true, shift: true },
+    { key: ">", meta: true },
+    { key: ">", meta: true, shift: true },
   ],
   ({ extra }) => {
     extra?.actions.change_font_size?.(+1);
@@ -49,10 +57,11 @@ register(
   ],
   ({ editor, extra }) => {
     if (extra == null) return false;
-    if (extra.actions.undo != null) {
-      editor.saveValue(true);
-      extra.actions.undo(extra.id);
+    if (extra.actions.undo == null) {
+      return false;
     }
+    editor.saveValue(true);
+    extra.actions.undo(extra.id);
     editor.resetHasUnsavedChanges();
     //ReactEditor.focus(editor);
     return true;
@@ -66,10 +75,11 @@ register(
   ],
   ({ editor, extra }) => {
     if (extra == null) return false;
-    if (extra.actions.redo != null) {
-      editor.saveValue(true);
-      extra.actions.redo(extra.id);
+    if (extra.actions.redo == null) {
+      return false;
     }
+    editor.saveValue(true);
+    extra.actions.redo(extra.id);
     editor.resetHasUnsavedChanges();
     //ReactEditor.focus(editor);
     return true;

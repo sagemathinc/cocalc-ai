@@ -140,6 +140,7 @@ interface Props {
   docName: string;
   show: boolean;
   filename?: string;
+  initialPrompt?: string;
 }
 
 function AIGenerateDocument({
@@ -149,16 +150,20 @@ function AIGenerateDocument({
   ext,
   docName,
   filename: filename0,
+  initialPrompt,
 }: Props) {
   const intl = useIntl();
   const projectActions = useActions({ project_id });
-  const current_path = useTypedRedux({ project_id }, "current_path");
+  const current_path_abs = useTypedRedux({ project_id }, "current_path_abs");
+  const effective_current_path = current_path_abs ?? "/";
 
   const [model, setModel] = useLanguageModelSetting(project_id);
   const [tokens, setTokens] = useState<number>(0);
   const [paperSize, setPaperSize] = useState<string | null>(null);
   // User's description of document they want to generate.
   const [prompt, setPrompt] = useState<string>("");
+  const lastInitialPromptRef = useRef<string | undefined>(undefined);
+  const lastShowRef = useRef<boolean>(false);
   const { prompts: historyPrompts, addPrompt } = useLLMHistory("generate");
   const [querying, setQuerying] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
@@ -171,6 +176,22 @@ function AIGenerateDocument({
   useEffect(() => {
     setFilename(ensureExtension(filename0 ?? "", ext));
   }, [filename0]);
+
+  useEffect(() => {
+    if (!show) return;
+    if (initialPrompt == null) return;
+    if (!lastShowRef.current || lastInitialPromptRef.current !== initialPrompt) {
+      setPrompt(initialPrompt);
+      lastInitialPromptRef.current = initialPrompt;
+    }
+    lastShowRef.current = true;
+  }, [show, initialPrompt]);
+
+  useEffect(() => {
+    if (!show) {
+      lastShowRef.current = false;
+    }
+  }, [show]);
 
   const promptRef = useRef<HTMLElement>(null);
 
@@ -339,7 +360,7 @@ function AIGenerateDocument({
         history,
         system,
         project_id,
-        path: current_path, // mainly for analytics / metadata -- can't put the actual document path since the model outputs that.
+        path: effective_current_path, // mainly for analytics / metadata -- can't put the actual document path since the model outputs that.
         tag: TAG,
         model,
       });
@@ -354,7 +375,12 @@ function AIGenerateDocument({
   }
 
   async function createDocument(preview: string): Promise<string> {
-    const prefix = current_path ? `${current_path}/` : "";
+    const prefix =
+      effective_current_path === "/"
+        ? "/"
+        : effective_current_path
+          ? `${effective_current_path}/`
+          : "";
     const path = `${prefix}${filename}`;
 
     track(TAG, { project_id, path, ext });
@@ -978,7 +1004,7 @@ function AIGenerateDocument({
                 banner
                 type={saving ? "info" : "warning"}
                 style={{ fontWeight: "bold" }}
-                message={message}
+                title={message}
               />
             ) : (
               <FormattedMessage
@@ -1077,7 +1103,7 @@ function AIGenerateDocument({
           }}
           showIcon
           type="error"
-          message="Error"
+          title="Error"
           description={<Markdown value={error} />}
         />
       ) : undefined}
@@ -1091,6 +1117,7 @@ export function AIGenerateDocumentModal({
   project_id,
   ext,
   filename,
+  initialPrompt,
 }: {
   show: boolean;
   setShow: (val: boolean) => void;
@@ -1098,6 +1125,7 @@ export function AIGenerateDocumentModal({
   style?: CSS;
   ext: Props["ext"];
   filename?: string;
+  initialPrompt?: string;
 }) {
   const ext2 = normalizeExt(ext) as string;
   const docName = file_options(`x.${ext2}`).name ?? `${capitalize(ext2)}`;
@@ -1126,6 +1154,7 @@ export function AIGenerateDocumentModal({
         ext={ext}
         docName={docName}
         filename={filename}
+        initialPrompt={initialPrompt}
       />
     </Modal>
   );

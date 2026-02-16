@@ -39,7 +39,7 @@ export type Group = (typeof MENUS)[keyof typeof MENUS]["groups"][number];
  * instance (providing access to frame context, props, etc.) and an optional
  * event object from the UI interaction.
  */
-export type OnClick = (opts: ManageCommands & { event? }) => void;
+export type OnClick = (opts: ManageCommands & { event?; frame_actions? }) => void;
 
 /**
  * Configuration options for Ant Design Popconfirm modal dialogs.

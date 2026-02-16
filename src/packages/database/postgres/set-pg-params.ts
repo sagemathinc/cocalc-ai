@@ -1,22 +1,22 @@
 /*
- *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2020-2025 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
 // This is used in postgres-base to set postgres parameters for a single query
 // https://www.postgresql.org/docs/10/sql-set.html
 
-import { Client } from "pg";
+import type { Client, PoolClient } from "pg";
 import { getLogger } from "@cocalc/backend/logger";
 import { normalizeValues } from "../pool/pg-utc-normalize";
 
 const L = getLogger("db:set-pg-params").debug;
 
 interface Opts {
-  client: Client;
+  client: Client | PoolClient;
   query: string;
-  params: string[];
-  pg_params: { [key: string]: string };
+  params: any[];
+  pg_params: { [key: string]: string | number };
   cb: (err?, result?) => void;
 }
 

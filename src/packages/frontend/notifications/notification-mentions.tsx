@@ -53,7 +53,7 @@ export function MentionsPanel(props: MentionsPanelProps) {
 
     const opposite: NotificationFilter = filter === "read" ? "unread" : "read";
     return (
-      <Space direction="horizontal" size="small">
+      <Space orientation="horizontal" size="small">
         <MarkAll
           how={opposite}
           size="small"
@@ -142,7 +142,7 @@ export function MentionsPanel(props: MentionsPanelProps) {
   }
 
   return (
-    <Space direction="vertical" size="large">
+    <Space orientation="vertical" size="large">
       {project_panels}
     </Space>
   );

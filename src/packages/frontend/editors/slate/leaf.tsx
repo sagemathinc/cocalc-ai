@@ -69,7 +69,38 @@ const Leaf: React.FC<RenderLeafProps> = React.memo(
       children = <span style={{ backgroundColor: "#ffa" }}>{children}</span>;
     }
 
-    return <span {...attributes}>{children}</span>;
+    const attrAny = attributes as any;
+    let className = attrAny.className ?? "";
+    const tokenLeaf = leaf as any;
+    if (tokenLeaf.token) {
+      const exclude = new Set([
+        "text",
+        "token",
+        "bold",
+        "italic",
+        "strikethrough",
+        "underline",
+        "sup",
+        "sub",
+        "code",
+        "small",
+        "tt",
+        "search",
+        "cursor",
+      ]);
+      const tokenClasses = Object.keys(tokenLeaf)
+        .filter((key) => tokenLeaf[key] === true && !exclude.has(key))
+        .map((key) => `token ${key}`);
+      if (tokenClasses.length > 0) {
+        className = [className, ...tokenClasses].filter(Boolean).join(" ");
+      }
+    }
+
+    return (
+      <span {...attributes} className={className}>
+        {children}
+      </span>
+    );
   }
 );
 

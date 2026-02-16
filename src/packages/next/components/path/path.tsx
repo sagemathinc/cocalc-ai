@@ -17,7 +17,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { join } from "path";
 import { useEffect, useState } from "react";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { Icon } from "@cocalc/frontend/components/icon";
 import {
   SHARE_AUTHENTICATED_EXPLANATION,
@@ -237,7 +237,7 @@ export default function PublicPath({
       <div>
         <Space.Compact>
           {btn}
-          <Button href={join(basePath, "stars")}>...</Button>
+          <Button href={join(ROOT_PATH, "stars")}>...</Button>
         </Space.Compact>
       </div>
     );
