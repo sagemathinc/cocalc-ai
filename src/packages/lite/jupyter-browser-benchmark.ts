@@ -366,15 +366,17 @@ async function runCellViaRunButton({
   const before = await readCellSnapshot(page);
   await cell.hover();
   const runButton = cell.getByRole("button", { name: /Run/ }).first();
-  if ((await runButton.count()) === 0) {
-    throw new Error("run button not found");
-  }
+  const hasRunButton = (await runButton.count()) > 0;
 
   const debugStartIndex = debugEvents.length;
   const runId = randomRunId(); // fallback if debug runId parsing fails
   const t0 = Date.now();
   const clickPerfNow = await page.evaluate(() => performance.now());
-  await runButton.click();
+  if (hasRunButton) {
+    await runButton.click();
+  } else {
+    await page.keyboard.press("Shift+Enter");
+  }
 
   let firstObsMs: number | null = null;
   let toStopMs: number | null = null;

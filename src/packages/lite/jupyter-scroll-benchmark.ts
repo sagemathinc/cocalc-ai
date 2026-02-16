@@ -872,6 +872,19 @@ async function measureTypingScenario({
   typing_timeout_ms: number;
   action_timeout_ms: number;
 }): Promise<TypingMetrics> {
+  if (chars <= 0) {
+    return {
+      chars: 0,
+      samples: 0,
+      timeout_count: 0,
+      p50_ms: null,
+      p95_ms: null,
+      p99_ms: null,
+      mean_ms: null,
+      max_ms: null,
+    };
+  }
+
   await prepareTypingProbe(page);
   await page.click('[cocalc-test="cell-input"] .CodeMirror', {
     timeout: action_timeout_ms,
@@ -1080,7 +1093,7 @@ Options:
   --path-prefix <path>      Notebook path prefix (default: $HOME/jupyter-scroll-benchmark)
   --cycles <n>              Down/up scroll cycles per scenario (profile default)
   --scroll-steps <n>        Steps per directional scroll sweep (default: 42)
-  --typing-chars <n>        Number of typed chars used for typing-latency metric (default: 40)
+  --typing-chars <n>        Number of typed chars used for typing-latency metric; 0 disables typing probe (default: 40)
   --typing-timeout-ms <n>   Per-keystroke typing timeout in ms (default: 1500)
   --timeout-ms <n>          Per-scenario timeout in ms (default: 45000)
   --headed                  Run browser with UI (default: headless)
@@ -1189,13 +1202,13 @@ function parseArgs(argv: string[]): Options {
         break;
       case "--scroll-steps":
         opts.scroll_steps = Number(next());
-        if (!Number.isInteger(opts.scroll_steps) || opts.scroll_steps < 8) {
+        if (!Number.isInteger(opts.scroll_steps) || opts.scroll_steps < 2) {
           throw new Error(`invalid --scroll-steps '${opts.scroll_steps}'`);
         }
         break;
       case "--typing-chars":
         opts.typing_chars = Number(next());
-        if (!Number.isInteger(opts.typing_chars) || opts.typing_chars < 1) {
+        if (!Number.isInteger(opts.typing_chars) || opts.typing_chars < 0) {
           throw new Error(`invalid --typing-chars '${opts.typing_chars}'`);
         }
         break;
