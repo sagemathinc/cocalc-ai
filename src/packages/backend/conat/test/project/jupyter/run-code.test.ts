@@ -281,4 +281,88 @@ describe("create mocked jupyter runner that does failover to backend output mana
   });
 });
 
+describe("fallback replay applies output limit correctly after disconnect", () => {
+  let client1, client2;
+  it("create two clients", async () => {
+    client1 = connect();
+    client2 = connect();
+  });
+
+  const path = "c.ipynb";
+  const project_id = uuid();
+  let server;
+  let handler: any = null;
+  let produced = 0;
+
+  it("create jupyter code run server", () => {
+    async function run({ cells }) {
+      async function* runner() {
+        for (const { id } of cells) {
+          for (let i = 0; i < 40; i++) {
+            produced += 1;
+            yield { id, output: i };
+            await delay(5);
+          }
+        }
+      }
+      return runner();
+    }
+
+    class OutputHandler {
+      messages: any[] = [];
+      process = (mesg: any) => {
+        this.messages.push(mesg);
+      };
+      done = () => {
+        this.messages.push({ done: true });
+      };
+    }
+
+    function outputHandler({ path: path0 }) {
+      if (path0 != path) {
+        throw Error(`path must be ${path}`);
+      }
+      handler = new OutputHandler();
+      return handler;
+    }
+
+    server = jupyterServer({
+      client: client1,
+      project_id,
+      run,
+      outputHandler,
+      getKernelStatus,
+    });
+  });
+
+  let client;
+  it("disconnect after limit is exceeded, then replay through fallback", async () => {
+    client = jupyterClient({
+      path,
+      project_id,
+      client: client2,
+    });
+
+    await client.run([{ id: "cell-a", input: "x" }], { limit: 5 });
+    await wait({
+      until: () => produced >= 20,
+    });
+
+    client.close();
+
+    await wait({
+      until: () => handler?.messages?.some((m) => m?.done),
+    });
+
+    expect(handler.messages).toContainEqual({ id: "cell-a", output: 0 });
+    expect(handler.messages).toContainEqual({ id: "cell-a", more_output: true });
+    expect(handler.messages).toContainEqual({ done: true });
+  });
+
+  it("cleans up", () => {
+    server.close();
+    client.close();
+  });
+});
+
 afterAll(after);

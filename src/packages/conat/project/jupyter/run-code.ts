@@ -16,10 +16,26 @@ import { Throttle } from "@cocalc/util/throttle";
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_JUPYTER_MAX_MSGS_PER_SECOND ?? "20",
 );
+const SOCKET_KEEP_ALIVE = parsePositiveInt(
+  process.env.COCALC_JUPYTER_SOCKET_KEEP_ALIVE,
+  25_000,
+);
+const SOCKET_KEEP_ALIVE_TIMEOUT = parsePositiveInt(
+  process.env.COCALC_JUPYTER_SOCKET_KEEP_ALIVE_TIMEOUT,
+  10_000,
+);
 const logger = getLogger("conat:project:jupyter:run-code");
 
 function getSubject({ project_id }: { project_id: string }) {
   return `jupyter.project-${project_id}.0`;
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = parseInt(value ?? "", 10);
+  if (Number.isFinite(n) && n > 0) {
+    return n;
+  }
+  return fallback;
 }
 
 export interface InputCell {
@@ -101,8 +117,8 @@ export function jupyterServer({
 }) {
   const subject = getSubject({ project_id });
   const server: ConatSocketServer = client.socket.listen(subject, {
-    keepAlive: 5000,
-    keepAliveTimeout: 5000,
+    keepAlive: SOCKET_KEEP_ALIVE,
+    keepAliveTimeout: SOCKET_KEEP_ALIVE_TIMEOUT,
   });
   logger.debug("server: listening on ", { subject });
   const moreOutput: { [path: string]: { [id: string]: any[] } } = {};
@@ -205,6 +221,8 @@ async function handleRequest({
   try {
     let handler: OutputHandler | null = null;
     let process: ((mesg: any) => void) | null = null;
+    let fallbackOutputCount = 0;
+    let fallbackMoreOutputMode = false;
 
     for await (const mesg of runner) {
       if (socket.state == "closed") {
@@ -220,15 +238,21 @@ async function handleRequest({
           }
           process = (mesg) => {
             if (handler == null) return;
-            if (limit == null || output.length < limit) {
+            // Replay must enforce the output limit based on how many messages
+            // we have replayed so far, not the final size of the pre-close
+            // output buffer.
+            const replayedCount = fallbackOutputCount + 1;
+            if (limit == null || replayedCount < limit) {
               handler.process(mesg);
             } else {
-              if (output.length == limit) {
+              if (!fallbackMoreOutputMode) {
                 handler.process({ id: mesg.id, more_output: true });
                 moreOutput[mesg.id] = [];
+                fallbackMoreOutputMode = true;
               }
               moreOutput[mesg.id].push(mesg);
             }
+            fallbackOutputCount += 1;
           };
 
           for (const prev of output) {
