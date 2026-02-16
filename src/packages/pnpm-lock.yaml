@@ -1552,9 +1552,6 @@ importers:
       '@node-saml/passport-saml':
         specifier: ^5.1.0
         version: 5.1.0
-      '@openai/agents':
-        specifier: ^0.3.7
-        version: 0.3.7(@cfworker/json-schema@4.1.1)(bufferutil@4.0.9)(hono@4.11.4)(utf-8-validate@6.0.5)(ws@8.18.3(bufferutil@4.0.9)(utf-8-validate@6.0.5))(zod@4.3.6)
       '@passport-js/passport-twitter':
         specifier: ^1.0.8
         version: 1.0.10
@@ -1687,9 +1684,6 @@ importers:
       uuid:
         specifier: ^8.3.2
         version: 8.3.2
-      zod:
-        specifier: 4.3.6
-        version: 4.3.6
     devDependencies:
       '@types/async':
         specifier: ^2.0.43
@@ -17942,7 +17936,7 @@ snapshots:
 
   axios@1.13.2:
     dependencies:
-      follow-redirects: 1.15.11(debug@4.4.3)
+      follow-redirects: 1.15.11
       form-data: 4.0.5
       proxy-from-env: 1.1.0
     transitivePeerDependencies:
@@ -20322,6 +20316,8 @@ snapshots:
   flatten-vertex-data@1.0.2:
     dependencies:
       dtype: 2.0.0
+
+  follow-redirects@1.15.11: {}
 
   follow-redirects@1.15.11(debug@4.4.3):
     optionalDependencies:

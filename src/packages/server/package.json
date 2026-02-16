@@ -33,7 +33,10 @@
     "./test": "./dist/test/index.js",
     "./test/*": "./dist/test/*.js"
   },
-  "keywords": ["utilities", "cocalc"],
+  "keywords": [
+    "utilities",
+    "cocalc"
+  ],
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "clean": "rm -rf node_modules dist tsconfig.tsbuildinfo",
@@ -64,7 +67,6 @@
     "@langchain/ollama": "^1.0.1",
     "@langchain/openai": "^1.1.2",
     "@node-saml/passport-saml": "^5.1.0",
-    "@openai/agents": "^0.3.7",
     "@passport-js/passport-twitter": "^1.0.8",
     "@passport-next/passport-google-oauth2": "^1.0.0",
     "@passport-next/passport-oauth2": "^2.1.4",
@@ -108,8 +110,7 @@
     "safe-json-stringify": "^1.2.0",
     "sanitize-html": "^2.17.0",
     "stripe": "^17.5.0",
-    "uuid": "^8.3.2",
-    "zod": "4.3.6"
+    "uuid": "^8.3.2"
   },
   "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/server",
   "repository": {
