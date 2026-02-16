@@ -453,9 +453,14 @@ export class JupyterClient {
     return data;
   };
 
-  run = async (
+  run = (
     cells: InputCell[],
-    opts: { noHalt?: boolean; limit?: number; run_id?: string } = {},
+    opts: {
+      noHalt?: boolean;
+      limit?: number;
+      run_id?: string;
+      waitForAck?: boolean;
+    } = {},
   ) => {
     if (this.iter) {
       // one evaluation at a time -- starting a new one ends the previous one.
@@ -464,32 +469,46 @@ export class JupyterClient {
       this.iter.end();
       delete this.iter;
     }
-    this.iter = new EventIterator<OutputMessage[]>(this.socket, "data", {
+    const iter = new EventIterator<OutputMessage[]>(this.socket, "data", {
       map: (args) => {
         if (args[1]?.error) {
-          this.iter?.throw(Error(args[1].error));
+          iter.throw(Error(args[1].error));
           return;
         }
         if (args[0] == null) {
-          this.iter?.end();
+          iter.end();
           return;
         } else {
           return args[0];
         }
       },
     });
+    this.iter = iter;
     // get rid of any fields except id and input from the cells, since, e.g.,
     // if there is a lot of output in a cell, there is no need to send that to the backend.
     const cells1 = cells.map(({ id, input }) => {
       return { id, input };
     });
-    await this.socket.request({
+    const { waitForAck = true, ...requestOpts } = opts;
+    const request = this.socket.request({
       cmd: "run",
-      ...opts,
+      ...requestOpts,
       path: this.path,
       cells: cells1,
     });
-    return this.iter;
+    if (waitForAck) {
+      return request.then(() => iter);
+    }
+    // Important latency optimization: optionally don't wait for the
+    // request/response ack before returning the iterator. This lets the caller
+    // start consuming output immediately and can remove one RTT from the
+    // critical path.
+    void request.catch((err) => {
+      if (this.iter === iter && !iter.ended) {
+        iter.throw(err);
+      }
+    });
+    return Promise.resolve(iter);
   };
 }
 

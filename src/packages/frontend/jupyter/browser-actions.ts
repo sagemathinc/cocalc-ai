@@ -1900,7 +1900,12 @@ export class JupyterActions extends JupyterActions0 {
         });
         return;
       }
-      const runner = await client.run(cells, { ...opts, limit, run_id: runId });
+      const runner = await client.run(cells, {
+        ...opts,
+        limit,
+        run_id: runId,
+        waitForAck: false,
+      });
       runnerStartedAt = Date.now();
       this.runDebug("runCells.runner.start", {
         runId,
