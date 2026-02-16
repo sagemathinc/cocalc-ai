@@ -1766,6 +1766,41 @@ export class JupyterActions extends JupyterActions0 {
 
   private runQueue: any[] = [];
   private runningNow = false;
+  private toPlainJs = (value: any) => {
+    if (value != null && typeof value.toJS == "function") {
+      return value.toJS();
+    }
+    return value;
+  };
+
+  private outputMessageCount = (output: any): number => {
+    if (output == null) {
+      return 0;
+    }
+    if (typeof output.size == "number") {
+      return output.size;
+    }
+    return Object.keys(output).length;
+  };
+
+  private outputPreviewFirstMessage = (output: any): { [n: string]: any } => {
+    if (output == null) {
+      return {};
+    }
+    if (typeof output.get == "function") {
+      const first = output.get("0") ?? output.get(0);
+      if (first == null) {
+        return {};
+      }
+      return { "0": this.toPlainJs(first) };
+    }
+    const first = output["0"] ?? output[0];
+    if (first == null) {
+      return {};
+    }
+    return { "0": first };
+  };
+
   runCells = async (
     ids: string[],
     opts: { noHalt?: boolean; limit?: number } = {},
@@ -1801,15 +1836,23 @@ export class JupyterActions extends JupyterActions0 {
 
       this.clearMoreOutput(ids);
       for (const id of ids) {
-        const cell = this.store.getIn(["cells", id])?.toJS() as InputCell;
-        if ((cell?.cell_type ?? "code") != "code") {
+        const cellMap = this.store.getIn(["cells", id]);
+        if (cellMap == null) {
+          continue;
+        }
+        if ((cellMap.get("cell_type") ?? "code") != "code") {
           // code is the default type
           continue;
         }
-        const last = cell.start && cell.end ? cell.end - cell.start : null;
-        if (!cell?.input?.trim()) {
+        const input = `${cellMap.get("input") ?? ""}`;
+        const start = cellMap.get("start");
+        const end = cellMap.get("end");
+        const last = start && end ? end - start : null;
+        const output = cellMap.get("output");
+        const outputCount = this.outputMessageCount(output);
+        if (!input.trim()) {
           // nothing to do but clear output
-          this._set({ id: cell.id, last, output: null });
+          this._set({ id, last, output: null });
           this.runDebug("runCells.cell.skip.empty_input", { runId, id });
 
           continue;
@@ -1819,20 +1862,22 @@ export class JupyterActions extends JupyterActions0 {
           this.runDebug("runCells.cell.skip.no_kernel", { runId, id });
           continue;
         }
-        if (cell.output) {
+        if (outputCount > 0) {
+          const previewOutput = this.outputPreviewFirstMessage(output);
           // trick to avoid flicker
-          for (const n in cell.output) {
-            if (n == "0") continue;
-            cell.output[n] = null;
-          }
           // time last evaluation took
-          this._set({ id: cell.id, last, output: cell.output }, false);
+          this._set({ id, last, output: previewOutput }, false);
         }
+        const cell: InputCell & { pos?: number } = {
+          id,
+          input,
+          pos: cellMap.get("pos"),
+        };
         this.runDebug("runCells.cell.enqueue", {
           runId,
           id,
-          inputLen: cell.input?.length ?? 0,
-          outputCount: Object.keys(cell.output ?? {}).length,
+          inputLen: input.length,
+          outputCount,
         });
         cells.push(cell);
       }

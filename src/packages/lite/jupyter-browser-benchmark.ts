@@ -39,6 +39,8 @@ type RunMetric = {
   run_id: string;
   total_ms: number;
   first_chunk_ms: number | null;
+  to_stop_ms: number | null;
+  to_exec_count_ms: number | null;
 };
 
 type Quantiles = {
@@ -60,6 +62,8 @@ type BrowserBenchmarkResult = {
   warmup_iterations: number;
   total_ms: Quantiles;
   first_chunk_ms: Quantiles | null;
+  to_stop_ms: Quantiles | null;
+  to_exec_count_ms: Quantiles | null;
   runs: RunMetric[];
   started_at: string;
   finished_at: string;
@@ -290,6 +294,8 @@ async function runCellViaRunButton({
   await runButton.click();
 
   let firstChunkMs: number | null = null;
+  let toStopMs: number | null = null;
+  let toExecCountMs: number | null = null;
   let sawStop = false;
   let last = before;
   const deadline = t0 + timeout_ms;
@@ -306,17 +312,25 @@ async function runCellViaRunButton({
     }
     if (last.run_button_label === "Stop") {
       sawStop = true;
+      if (toStopMs == null) {
+        toStopMs = elapsed;
+      }
     }
 
     const execChanged =
       last.input_exec_count != null &&
       last.input_exec_count !== before.input_exec_count;
+    if (execChanged && toExecCountMs == null) {
+      toExecCountMs = elapsed;
+    }
     const runCycleFinished = sawStop && last.run_button_label === "Run";
     if ((execChanged || runCycleFinished) && last.run_button_label !== "Stop") {
       return {
         run_id: runId,
         total_ms: elapsed,
         first_chunk_ms: firstChunkMs,
+        to_stop_ms: toStopMs,
+        to_exec_count_ms: toExecCountMs,
       };
     }
     await page.waitForTimeout(20);
@@ -648,6 +662,12 @@ async function runBrowserBenchmark(
   const firstChunkMs = runs
     .map((x) => x.first_chunk_ms)
     .filter((x): x is number => x != null);
+  const toStopMs = runs
+    .map((x) => x.to_stop_ms)
+    .filter((x): x is number => x != null);
+  const toExecCountMs = runs
+    .map((x) => x.to_exec_count_ms)
+    .filter((x): x is number => x != null);
   const finished_at = new Date().toISOString();
 
   return {
@@ -660,6 +680,9 @@ async function runBrowserBenchmark(
     warmup_iterations: opts.warmup_iterations,
     total_ms: quantiles(totalMs),
     first_chunk_ms: firstChunkMs.length > 0 ? quantiles(firstChunkMs) : null,
+    to_stop_ms: toStopMs.length > 0 ? quantiles(toStopMs) : null,
+    to_exec_count_ms:
+      toExecCountMs.length > 0 ? quantiles(toExecCountMs) : null,
     runs,
     started_at,
     finished_at,
@@ -672,18 +695,24 @@ function printResultTable(result: BrowserBenchmarkResult) {
     "Iterations",
     "Warmup",
     "Total p50/p95/p99",
-    "FirstChunk p50/p95/p99",
+    "FirstObs p50/p95/p99",
+    "Stop p50/p95/p99",
+    "ExecCount p50/p95/p99",
   );
   table.addRow(
     String(result.iterations),
     String(result.warmup_iterations),
     fmtQuantile(result.total_ms),
     result.first_chunk_ms ? fmtQuantile(result.first_chunk_ms) : "n/a",
+    result.to_stop_ms ? fmtQuantile(result.to_stop_ms) : "n/a",
+    result.to_exec_count_ms ? fmtQuantile(result.to_exec_count_ms) : "n/a",
   );
   table.setAlignLeft(0);
   table.setAlignRight(1);
   table.setAlignRight(2);
   table.setAlignRight(3);
+  table.setAlignRight(4);
+  table.setAlignRight(5);
   console.log(table.toString());
 }
 
