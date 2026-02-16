@@ -60,6 +60,31 @@ for i in range(10000):
 3. There is still architectural opportunity to reduce patch churn and avoid full output rewrites.
 4. Conat virtual sockets already provide reliability/ordering semantics (seq/ack/missing/resend) at the transport layer.
 
+## Progress Snapshot (2026-02-16)
+
+Completed:
+
+1. [x] Benchmark harness exists in lite mode via [src/packages/lite/jupyter-benchmark.ts](./src/packages/lite/jupyter-benchmark.ts).
+2. [x] Benchmark launcher now uses compiled dist script (not ts-node) for fast startup in [src/packages/lite/package.json](./src/packages/lite/package.json).
+3. [x] Lite server connection discovery for benchmark is deterministic via pid/port connection-info:
+   1. [src/packages/lite/main.ts](./src/packages/lite/main.ts)
+   2. [src/packages/lite/connection-info.ts](./src/packages/lite/connection-info.ts)
+4. [x] Server-side coalescing of adjacent `stream` messages is implemented in [src/packages/conat/project/jupyter/run-code.ts](./src/packages/conat/project/jupyter/run-code.ts).
+5. [x] Coalescing behavior is covered by tests in [src/packages/backend/conat/test/project/jupyter/run-code.test.ts](./src/packages/backend/conat/test/project/jupyter/run-code.test.ts).
+
+Observed benchmark impact from coalescing (output profile):
+
+1. `burst_flush_write` message count dropped significantly (about `500 -> ~40-110` depending on settings/run).
+2. `more_output` truncation for `burst_flush_write` was eliminated in measured runs (`1 -> 0`).
+3. First-output latency stayed low.
+4. Total wall-clock for `burst_flush_write` remains high (~1.5-1.8s), so more work is needed beyond transport-layer coalescing.
+
+Next high-value focus:
+
+1. Coalesce earlier in the project/kernel path (before run-code transport handling), so we reduce per-message processing overhead upstream.
+2. Revisit throttling policy (`COCALC_JUPYTER_MAX_MSGS_PER_SECOND`) and whether it should be dynamic.
+3. Continue append-oriented output updates in frontend/backend to reduce rewrite churn and flicker.
+
 ## Optimization Backlog
 
 ## A. Correctness and Protocol Robustness
@@ -91,8 +116,9 @@ for i in range(10000):
    1. Never clear output once first chunk arrived unless explicit `clear_output` from kernel.
    2. Preserve DOM container and append text to avoid layout jumps.
 4. Coalesce stream messages server-side:
-   1. Merge adjacent stdout/stderr chunks in short windows (e.g. 15-30ms).
-   2. Reduce message count significantly for print storms.
+   1. [x] Merge adjacent stdout/stderr chunks.
+   2. [x] Reduce message count for print storms.
+   3. [ ] Consider short-window/timer-based coalescing (e.g. 15-30ms) if needed after upstream coalescing work.
 5. Add max-render budget per frame:
    1. Consume chunks in `requestAnimationFrame` batches.
    2. Backpressure UI rendering without losing backend stream data.
@@ -255,14 +281,14 @@ Remaining questions:
 
 ## M. Initial Task List (Actionable)
 
-1. Add run summary timing logs with stable `run_id`.
-2. Add protocol `cell_done` and frontend handler for authoritative completion.
-3. Change output update path to append without clear/repaint.
-4. Add benchmark notebook/script and record baseline for:
+1. [x] Add run summary timing logs with stable `run_id`.
+2. [ ] Add protocol `cell_done` and frontend handler for authoritative completion.
+3. [ ] Change output update path to append without clear/repaint.
+4. [x] Add benchmark notebook/script and record baseline for:
    1. `2+3` p50/p95.
    2. three high-output scenarios above.
-5. Audit and migrate ephemeral runtime syncdb fields (kernel state, telemetry) to ephemeral channels.
-6. Add first-pass output policy UI entry point for per-cell truncation/retention controls.
+5. [ ] Audit and migrate ephemeral runtime syncdb fields (kernel state, telemetry) to ephemeral channels.
+6. [ ] Add first-pass output policy UI entry point for per-cell truncation/retention controls.
 
 ## N. Notebook Virtualization (React-Virtuoso) and Stateful HTML Outputs
 
