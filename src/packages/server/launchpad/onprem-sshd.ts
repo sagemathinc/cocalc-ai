@@ -291,6 +291,12 @@ async function startSshd(): Promise<SshdState | null> {
   });
   child.on("exit", (code, signal) => {
     logger.error("local sshd exited", { code, signal });
+    if (sshdState?.child === child) {
+      if (sshdState.refreshTimer) {
+        clearInterval(sshdState.refreshTimer);
+      }
+      sshdState = null;
+    }
   });
   const refreshTimer = setInterval(() => {
     refreshLaunchpadOnPremAuthorizedKeys().catch((err) => {

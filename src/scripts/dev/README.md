@@ -16,6 +16,10 @@ Notes:
 
 - `pnpm --dir src smoke:self-host` will auto-create this config on first run if missing and continue with defaults.
 - Set `SMOKE_REQUIRE_EXISTING_CONFIG=1` to keep the old fail-fast behavior that requires manual config editing first.
+- Smoke defaults to cleanup on failure (`SMOKE_CLEANUP_FAILURE=1`) so failed runs do not leave Multipass VMs consuming RAM.
+- Smoke auto-selects a free local pairing sshd port when `COCALC_SSHD_PORT` is unset; disable this with `SMOKE_AUTO_SSHD_PORT=0`.
+- Smoke rebuilds hub by default (`SMOKE_BUILD_HUB=1`) so software-manifest changes are picked up before each run.
+- Smoke now ensures full `tools-linux-*` artifacts are built (not `tools-minimal`) because project-start in smoke requires `dropbear`.
 
 ## Hub daemon control
 

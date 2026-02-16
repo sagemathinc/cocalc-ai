@@ -26,28 +26,54 @@ source "$CONFIG_FILE"
 
 SMOKE_BUILD_BUNDLES="${SMOKE_BUILD_BUNDLES:-1}"
 SMOKE_BUILD_SERVER="${SMOKE_BUILD_SERVER:-1}"
+SMOKE_BUILD_HUB="${SMOKE_BUILD_HUB:-1}"
 SMOKE_CLEANUP_SUCCESS="${SMOKE_CLEANUP_SUCCESS:-1}"
-SMOKE_CLEANUP_FAILURE="${SMOKE_CLEANUP_FAILURE:-0}"
+SMOKE_CLEANUP_FAILURE="${SMOKE_CLEANUP_FAILURE:-1}"
 SMOKE_VERIFY_INDEX="${SMOKE_VERIFY_INDEX:-1}"
 SMOKE_VERIFY_COPY_BETWEEN_PROJECTS="${SMOKE_VERIFY_COPY_BETWEEN_PROJECTS:-1}"
 SMOKE_VERIFY_DEPROVISION="${SMOKE_VERIFY_DEPROVISION:-1}"
 SMOKE_RESTART_HUB="${SMOKE_RESTART_HUB:-1}"
 SMOKE_RESET_BACKUP_QUEUE="${SMOKE_RESET_BACKUP_QUEUE:-1}"
+SMOKE_AUTO_SSHD_PORT="${SMOKE_AUTO_SSHD_PORT:-1}"
 SMOKE_ACCOUNT_ID="${SMOKE_ACCOUNT_ID:-}"
 SMOKE_VM_NAME="${SMOKE_VM_NAME:-}"
+
+if [ "$SMOKE_AUTO_SSHD_PORT" = "1" ] && [ -z "${COCALC_SSHD_PORT:-}" ]; then
+  COCALC_SSHD_PORT="$(
+    node -e '
+      const net = require("node:net");
+      const s = net.createServer();
+      s.listen(0, "127.0.0.1", () => {
+        const addr = s.address();
+        if (!addr || typeof addr !== "object") process.exit(1);
+        process.stdout.write(String(addr.port));
+        s.close();
+      });
+    '
+  )"
+  export COCALC_SSHD_PORT
+  echo "smoke: using dynamic local sshd port $COCALC_SSHD_PORT"
+fi
 
 if [ "$SMOKE_BUILD_BUNDLES" = "1" ]; then
   echo "building local project-host and project bundles..."
   pnpm --dir "$SRC_DIR/packages/project-host" build:bundle
   pnpm --dir "$SRC_DIR/packages/project" build:bundle
-  if [ ! -f "$SRC_DIR/packages/project/build/tools-linux-x64.tar.xz" ]; then
-    pnpm --dir "$SRC_DIR/packages/project" build:tools-minimal
+  if [ ! -f "$SRC_DIR/packages/project/build/tools-linux-x64.tar.xz" ] \
+    && [ ! -f "$SRC_DIR/packages/project/build/tools-linux-amd64.tar.xz" ]; then
+    echo "building full project tools bundle (required for project ssh/dropbear)..."
+    pnpm --dir "$SRC_DIR/packages/project" build:tools
   fi
 fi
 
 if [ "$SMOKE_BUILD_SERVER" = "1" ]; then
   echo "building server package..."
   pnpm --dir "$SRC_DIR/packages/server" build
+fi
+
+if [ "$SMOKE_BUILD_HUB" = "1" ]; then
+  echo "building hub package..."
+  pnpm --dir "$SRC_DIR/packages/hub" build
 fi
 
 if [ "$SMOKE_RESTART_HUB" = "1" ]; then
