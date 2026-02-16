@@ -37,7 +37,6 @@
     "@cocalc/project": "workspace:*",
     "@cocalc/static": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "@openai/agents": "^0.3.7",
     "@types/compression": "^1.8.1",
     "@types/express": "^4.17.23",
     "@types/lodash": "^4.17.20",
@@ -47,8 +46,7 @@
     "formidable": "^3.5.4",
     "http-proxy-3": "^1.23.2",
     "lodash": "^4.17.21",
-    "selfsigned": "^3.0.1",
-    "zod": "4.3.6"
+    "selfsigned": "^3.0.1"
   },
   "repository": {
     "type": "git",
