@@ -81,7 +81,12 @@ type ScrollMetrics = {
   top_marker_visible_after: boolean;
   bottom_marker_visible_after: boolean;
   windowed_list_attr: boolean | null;
-  windowed_list_source: "runtime" | "attr" | "virtuoso" | "unknown";
+  windowed_list_source:
+    | "runtime"
+    | "attr"
+    | "root-attr"
+    | "virtuoso"
+    | "unknown";
 };
 
 type OpenMetrics = {
@@ -664,20 +669,37 @@ async function measureScrollScenario({
           : windowedAttrRaw === "0"
             ? false
             : null;
+      const rootWindowedAttrRaw = document.documentElement.getAttribute(
+        "data-cocalc-jupyter-windowed-list",
+      );
+      const windowedListAttrFromRoot =
+        rootWindowedAttrRaw === "1"
+          ? true
+          : rootWindowedAttrRaw === "0"
+            ? false
+            : null;
       const hasVirtuoso =
         document.querySelector("[data-virtuoso-scroller]") != null ||
         document.querySelector("[data-virtuoso-item-list]") != null;
       const windowedListAttr = (() => {
         if (typeof runtimeWindowed === "boolean") return runtimeWindowed;
         if (windowedListAttrFromMarker != null) return windowedListAttrFromMarker;
+        if (windowedListAttrFromRoot != null) return windowedListAttrFromRoot;
         if (hasVirtuoso) return true;
         return false;
       })();
-      const windowedListSource: "runtime" | "attr" | "virtuoso" | "unknown" =
+      const windowedListSource:
+        | "runtime"
+        | "attr"
+        | "root-attr"
+        | "virtuoso"
+        | "unknown" =
         typeof runtimeWindowed === "boolean"
           ? "runtime"
           : windowedListAttrFromMarker != null
             ? "attr"
+            : windowedListAttrFromRoot != null
+              ? "root-attr"
             : hasVirtuoso
               ? "virtuoso"
               : "unknown";
@@ -1277,6 +1299,16 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
   const { chromium } = await import("@playwright/test");
   const browser = await chromium.launch({ headless: opts.headless });
   const context = await browser.newContext();
+  if (opts.virtualization !== "keep") {
+    await context.addInitScript((virtualizationMode: "on" | "off") => {
+      try {
+        localStorage.setItem("cocalc_jupyter_virtualization", virtualizationMode);
+        localStorage.setItem("jupyter_virtualization", virtualizationMode);
+      } catch {
+        // ignore storage failures in restricted contexts
+      }
+    }, opts.virtualization);
+  }
   const page = await context.newPage();
 
   const runs: ScenarioResult[] = [];

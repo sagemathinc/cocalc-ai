@@ -53,28 +53,60 @@ export const ERROR_STYLE: CSS = {
   overflow: "auto",
 } as const;
 
-function forceWindowedListFromUrl():
-  | { enabled: boolean }
-  | { enabled?: undefined } {
+type WindowedForceSource = "url" | "localStorage";
+
+const WINDOWED_LIST_OVERRIDE_STORAGE_KEYS = [
+  "cocalc_jupyter_virtualization",
+  "jupyter_virtualization",
+] as const;
+
+function parseWindowedOverride(raw: string | null): boolean | undefined {
+  if (raw == null) {
+    return;
+  }
+  const value = raw.trim().toLowerCase();
+  if (
+    value === "1" ||
+    value === "true" ||
+    value === "on" ||
+    value === "yes"
+  ) {
+    return true;
+  }
+  if (
+    value === "0" ||
+    value === "false" ||
+    value === "off" ||
+    value === "no"
+  ) {
+    return false;
+  }
+}
+
+function forceWindowedList():
+  | { enabled: boolean; source: WindowedForceSource }
+  | { enabled?: undefined; source?: undefined } {
   try {
     if (typeof window === "undefined") {
       return {};
     }
-    const raw = new URLSearchParams(window.location.search).get(
-      "jupyter_virtualization",
+    const urlOverride = parseWindowedOverride(
+      new URLSearchParams(window.location.search).get("jupyter_virtualization"),
     );
-    if (raw == null) {
-      return {};
+    if (urlOverride != null) {
+      return { enabled: urlOverride, source: "url" };
     }
-    const value = raw.trim().toLowerCase();
-    if (value === "1" || value === "true" || value === "on") {
-      return { enabled: true };
-    }
-    if (value === "0" || value === "false" || value === "off") {
-      return { enabled: false };
+    const storage = window.localStorage;
+    if (storage != null) {
+      for (const key of WINDOWED_LIST_OVERRIDE_STORAGE_KEYS) {
+        const storageOverride = parseWindowedOverride(storage.getItem(key));
+        if (storageOverride != null) {
+          return { enabled: storageOverride, source: "localStorage" };
+        }
+      }
     }
   } catch {
-    // ignore malformed URL/search param
+    // ignore malformed URL/search param / storage access issues
   }
   return {};
 }
@@ -252,7 +284,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
   const defaultWindowedEnabled = !redux
     .getStore("account")
     .getIn(["editor_settings", "disable_jupyter_virtualization"]);
-  const forcedWindowed = forceWindowedListFromUrl();
+  const forcedWindowed = forceWindowedList();
   const useWindowedListRef = useRef<boolean>(
     forcedWindowed.enabled ?? defaultWindowedEnabled,
   );
@@ -261,15 +293,21 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     if (typeof window === "undefined") return;
     const enabled = useWindowedListRef.current;
     const forced = forcedWindowed.enabled ?? null;
+    const forceSource = forcedWindowed.source ?? null;
     (window as any).__cocalcJupyterRuntime = {
       ...(window as any).__cocalcJupyterRuntime,
       windowed_list_enabled: enabled,
       windowed_list_forced: forced,
       windowed_list_default: defaultWindowedEnabled,
+      windowed_list_force_source: forceSource,
     };
     document.documentElement.setAttribute(
       "data-cocalc-jupyter-windowed-list",
       enabled ? "1" : "0",
+    );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-windowed-list-source",
+      forceSource ?? "account-setting",
     );
     if (forced == null) {
       document.documentElement.removeAttribute(
@@ -283,10 +321,10 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     }
     if (forced != null) {
       console.info(
-        `[jupyter-virt] use_windowed_list=${enabled} (forced=${forced})`,
+        `[jupyter-virt] use_windowed_list=${enabled} (forced=${forced}, source=${forceSource})`,
       );
     }
-  }, [defaultWindowedEnabled, forcedWindowed.enabled]);
+  }, [defaultWindowedEnabled, forcedWindowed.enabled, forcedWindowed.source]);
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);
 
