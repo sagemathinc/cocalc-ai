@@ -71,6 +71,7 @@ Completed:
    2. [src/packages/lite/connection-info.ts](./src/packages/lite/connection-info.ts)
 4. [x] Server-side coalescing of adjacent `stream` messages is implemented in [src/packages/conat/project/jupyter/run-code.ts](./src/packages/conat/project/jupyter/run-code.ts).
 5. [x] Coalescing behavior is covered by tests in [src/packages/backend/conat/test/project/jupyter/run-code.test.ts](./src/packages/backend/conat/test/project/jupyter/run-code.test.ts).
+6. [x] Browser-path benchmark harness exists in lite mode via Playwright in [src/packages/lite/jupyter-browser-benchmark.ts](./src/packages/lite/jupyter-browser-benchmark.ts), with explicit `--base-url` / `--port` targeting.
 
 Observed benchmark impact from coalescing (output profile):
 
@@ -229,6 +230,7 @@ Large-output behavior should be robust and easy to control.
 
 1. Add run summary metrics and trace ids.
 2. Create repeatable benchmark script and baseline results table.
+3. Add browser-path benchmark that targets a real running lite server (not only conat-level runs).
 
 ### Phase 1: Correctness Hardening
 

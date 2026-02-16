@@ -17,7 +17,8 @@
     "test": "pnpm exec jest --forceExit",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores @types/debug,@types/jest,@types/node,ts-node,@cocalc/plus",
     "app": "pnpm exec cocalc-lite",
-    "jupyter:bench": "node ./dist/jupyter-benchmark.js"
+    "jupyter:bench": "node ./dist/jupyter-benchmark.js",
+    "jupyter:bench:browser": "node ./dist/jupyter-browser-benchmark.js"
   },
   "bin": {
     "cocalc-lite": "./bin/start.js"
@@ -56,6 +57,7 @@
   },
   "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/test",
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.10",
     "jest": "^30.0.5",
