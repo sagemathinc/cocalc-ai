@@ -67,6 +67,44 @@ export interface OutputMessage {
   more_output?: boolean;
 }
 
+function isCoalescableStreamMessage(mesg: OutputMessage | undefined): boolean {
+  if (mesg == null || mesg.msg_type !== "stream") return false;
+  if (mesg.more_output || mesg.done) return false;
+  if (typeof mesg.id !== "string") return false;
+  if (mesg.buffers != null && mesg.buffers.length > 0) return false;
+  const content = mesg.content;
+  if (content == null || typeof content !== "object") return false;
+  if (typeof content.name !== "string") return false;
+  if (typeof content.text !== "string") return false;
+  return true;
+}
+
+function appendOutputMessage(
+  output: OutputMessage[],
+  mesg: OutputMessage,
+): boolean {
+  const prev = output[output.length - 1];
+  if (
+    isCoalescableStreamMessage(prev) &&
+    isCoalescableStreamMessage(mesg) &&
+    prev.id === mesg.id &&
+    prev.content.name === mesg.content.name
+  ) {
+    prev.content.text += mesg.content.text;
+    return false;
+  }
+  output.push(mesg);
+  return true;
+}
+
+function coalesceOutputBatch(mesgs: OutputMessage[]): OutputMessage[] {
+  const output: OutputMessage[] = [];
+  for (const mesg of mesgs) {
+    appendOutputMessage(output, mesg);
+  }
+  return output;
+}
+
 export interface RunOptions {
   // syncdb path
   path: string;
@@ -236,14 +274,15 @@ async function handleRequest({
   let unhandledClientWriteError: any = undefined;
   throttle.on("data", async (mesgs) => {
     totalBatches += 1;
+    const coalescedMesgs = coalesceOutputBatch(mesgs);
     try {
-      socket.write(mesgs);
+      socket.write(coalescedMesgs);
     } catch (err) {
       if (err.code == "ENOBUFS") {
         enobufs += 1;
         // wait for the over-filled socket to finish writing out data.
         await socket.drain();
-        socket.write(mesgs);
+        socket.write(coalescedMesgs);
       } else {
         unhandledClientWriteError = err;
       }
@@ -287,7 +326,7 @@ async function handleRequest({
                 moreOutput[mesg.id] = [];
                 fallbackMoreOutputMode = true;
               }
-              moreOutput[mesg.id].push(mesg);
+              appendOutputMessage(moreOutput[mesg.id], mesg);
               moreOutputBuffered += 1;
             }
             fallbackOutputCount += 1;
@@ -305,7 +344,7 @@ async function handleRequest({
         if (unhandledClientWriteError) {
           throw unhandledClientWriteError;
         }
-        output.push(mesg);
+        appendOutputMessage(output, mesg);
         if (limit == null || output.length < limit) {
           throttle.write(mesg);
         } else {
@@ -317,7 +356,7 @@ async function handleRequest({
             moreOutput[mesg.id] = [];
           }
           // save the more output
-          moreOutput[mesg.id].push(mesg);
+          appendOutputMessage(moreOutput[mesg.id], mesg);
           moreOutputBuffered += 1;
         }
       }

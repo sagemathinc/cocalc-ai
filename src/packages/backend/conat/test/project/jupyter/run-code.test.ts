@@ -365,4 +365,69 @@ describe("fallback replay applies output limit correctly after disconnect", () =
   });
 });
 
+describe("coalesces adjacent stream messages before applying limit", () => {
+  let client1, client2;
+  it("create two clients", async () => {
+    client1 = connect();
+    client2 = connect();
+  });
+
+  const path = "d.ipynb";
+  const project_id = uuid();
+  let server;
+
+  it("create jupyter code run server", () => {
+    async function run({ cells }) {
+      async function* runner() {
+        for (const { id } of cells) {
+          for (let i = 0; i < 200; i++) {
+            yield {
+              id,
+              msg_type: "stream",
+              content: { name: "stdout", text: `${i} ` },
+            };
+          }
+        }
+      }
+      return runner();
+    }
+
+    server = jupyterServer({
+      client: client1,
+      project_id,
+      run,
+      getKernelStatus,
+    });
+  });
+
+  let client;
+  it("stream output is coalesced so tiny flushes do not trigger more_output", async () => {
+    client = jupyterClient({
+      path,
+      project_id,
+      client: client2,
+    });
+    const outputs: any[] = [];
+    const iter = await client.run([{ id: "cell-a", input: "x" }], { limit: 5 });
+    for await (const batch of iter) {
+      outputs.push(...batch);
+    }
+    const stream = outputs.filter((x) => x.msg_type === "stream");
+    expect(stream.length).toBe(1);
+    expect(stream[0]).toMatchObject({
+      id: "cell-a",
+      msg_type: "stream",
+      content: { name: "stdout" },
+    });
+    expect(stream[0].content.text).toContain("0 ");
+    expect(stream[0].content.text).toContain("199 ");
+    expect(outputs.some((x) => x.more_output)).toBe(false);
+  });
+
+  it("cleans up", () => {
+    server.close();
+    client.close();
+  });
+});
+
 afterAll(after);
