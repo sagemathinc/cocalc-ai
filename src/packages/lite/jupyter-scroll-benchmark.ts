@@ -89,6 +89,13 @@ type ScrollMetrics = {
     | "unknown";
 };
 
+type FrontendInstrumentationProbe = {
+  has_runtime: boolean;
+  has_root_attr: boolean;
+  has_mode_marker: boolean;
+  has_virtuoso: boolean;
+};
+
 type OpenMetrics = {
   goto_ms: number;
   first_cell_ms: number;
@@ -522,6 +529,50 @@ async function openNotebookPage({
   return { goto_ms, first_cell_ms, first_input_ms, ready_ms };
 }
 
+async function probeFrontendInstrumentation(
+  page: any,
+): Promise<FrontendInstrumentationProbe> {
+  return (await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    return {
+      has_runtime: runtime != null,
+      has_root_attr: document.documentElement.hasAttribute(
+        "data-cocalc-jupyter-windowed-list",
+      ),
+      has_mode_marker:
+        document.querySelector('[cocalc-test="jupyter-cell-list-mode"]') != null,
+      has_virtuoso:
+        document.querySelector("[data-virtuoso-scroller]") != null ||
+        document.querySelector("[data-virtuoso-item-list]") != null,
+    };
+  })) as FrontendInstrumentationProbe;
+}
+
+function assertFrontendInstrumentation({
+  probe,
+  opts,
+  scenario_name,
+}: {
+  probe: FrontendInstrumentationProbe;
+  opts: Options;
+  scenario_name: string;
+}) {
+  if (opts.virtualization === "keep" && !opts.require_active_virtualization) {
+    return;
+  }
+  if (
+    probe.has_runtime ||
+    probe.has_root_attr ||
+    probe.has_mode_marker ||
+    probe.has_virtuoso
+  ) {
+    return;
+  }
+  throw new Error(
+    `unable to detect jupyter virtualization instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build-dev' then 'pnpm -C src/packages/lite app'`,
+  );
+}
+
 async function measureScrollScenario({
   page,
   cycles,
@@ -654,7 +705,14 @@ async function measureScrollScenario({
       await sleep(140);
       await tick();
 
-      const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      let maxScrollSeen = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const refreshMaxScroll = () => {
+        const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+        if (max > maxScrollSeen) {
+          maxScrollSeen = max;
+        }
+        return max;
+      };
       const runtimeWindowed = (window as any).__cocalcJupyterRuntime
         ?.windowed_list_enabled;
       const modeNode = document.querySelector(
@@ -703,39 +761,77 @@ async function measureScrollScenario({
             : hasVirtuoso
               ? "virtuoso"
               : "unknown";
-      const domTop = countVisibleCellDomNodes(scroller);
-      const topVisibleInitially = markerVisible(top_marker);
+      const settleEdge = async ({
+        edge,
+        marker,
+        attempts,
+      }: {
+        edge: "top" | "bottom";
+        marker: string;
+        attempts: number;
+      }): Promise<boolean> => {
+        for (let i = 0; i < attempts; i += 1) {
+          const max = refreshMaxScroll();
+          scroller.scrollTop = edge === "top" ? 0 : max;
+          await sleep(100 + i * 40);
+          await tick();
+          await tick();
+          const maxAfter = refreshMaxScroll();
+          const nearEdge =
+            edge === "top"
+              ? scroller.scrollTop <= 2
+              : maxAfter <= 2 || maxAfter - scroller.scrollTop <= 2;
+          const markerNow = markerVisible(marker);
+          if (markerNow && nearEdge) {
+            return true;
+          }
+          // Avoid false negatives when virtualization settles one frame later.
+          if (markerNow && i >= 1) {
+            return true;
+          }
+        }
+        return false;
+      };
 
-      await scrollTo(maxScroll * 0.5, Math.max(10, Math.floor(scroll_steps / 2)));
+      const topVisibleInitially = await settleEdge({
+        edge: "top",
+        marker: top_marker,
+        attempts: 4,
+      });
+      const domTop = countVisibleCellDomNodes(scroller);
+
+      await scrollTo(
+        refreshMaxScroll() * 0.5,
+        Math.max(10, Math.floor(scroll_steps / 2)),
+      );
       await sleep(90);
       await tick();
       const domMid = countVisibleCellDomNodes(scroller);
 
-      await scrollTo(maxScroll, scroll_steps);
-      await sleep(140);
-      await tick();
+      await settleEdge({ edge: "bottom", marker: bottom_marker, attempts: 6 });
       const domBottom = countVisibleCellDomNodes(scroller);
       const bottomVisibleInitially = markerVisible(bottom_marker);
 
       for (let i = 0; i < cycles; i += 1) {
         await scrollTo(0, scroll_steps);
         await sleep(60);
-        await scrollTo(maxScroll, scroll_steps);
+        await scrollTo(refreshMaxScroll(), scroll_steps);
         await sleep(60);
         if (performance.now() - startTs > timeout_ms) {
           throw new Error(`scroll cycle timed out after ${timeout_ms}ms`);
         }
       }
 
-      await scrollTo(0, scroll_steps);
-      await sleep(140);
-      await tick();
-      const topVisibleAfter = markerVisible(top_marker);
-
-      await scrollTo(maxScroll, scroll_steps);
-      await sleep(140);
-      await tick();
-      const bottomVisibleAfter = markerVisible(bottom_marker);
+      const topVisibleAfter = await settleEdge({
+        edge: "top",
+        marker: top_marker,
+        attempts: 6,
+      });
+      const bottomVisibleAfter = await settleEdge({
+        edge: "bottom",
+        marker: bottom_marker,
+        attempts: 8,
+      });
 
       observer?.disconnect();
 
@@ -749,7 +845,7 @@ async function measureScrollScenario({
 
       return {
         duration_ms: elapsed,
-        max_scroll_px: maxScroll,
+        max_scroll_px: maxScrollSeen,
         dom_cells_top: domTop,
         dom_cells_mid: domMid,
         dom_cells_bottom: domBottom,
@@ -1336,6 +1432,12 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         page,
         url,
         timeout_ms: opts.timeout_ms,
+      });
+      const instrumentationProbe = await probeFrontendInstrumentation(page);
+      assertFrontendInstrumentation({
+        probe: instrumentationProbe,
+        opts,
+        scenario_name: scenario.name,
       });
       const typing_metrics = await measureTypingScenario({
         page,
