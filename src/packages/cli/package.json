@@ -1,0 +1,38 @@
+{
+  "name": "@cocalc/cli",
+  "version": "0.1.0",
+  "description": "CoCalc command line interface",
+  "bin": {
+    "cocalc": "./dist/bin/cocalc.js"
+  },
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "build": "pnpm exec tsc --build",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "exit 0"
+  },
+  "files": [
+    "dist/**",
+    "package.json",
+    "README.md"
+  ],
+  "author": "SageMath, Inc.",
+  "license": "SEE LICENSE.md",
+  "dependencies": {
+    "@cocalc/backend": "workspace:*",
+    "@cocalc/conat": "workspace:*",
+    "@cocalc/database": "workspace:*",
+    "@cocalc/server": "workspace:*",
+    "@cocalc/util": "workspace:*",
+    "ascii-table3": "^1.0.1",
+    "commander": "^14.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.10"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sagemathinc/cocalc"
+  },
+  "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/cli"
+}
