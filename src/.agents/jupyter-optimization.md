@@ -73,6 +73,10 @@ Completed:
 5. [x] Coalescing behavior is covered by tests in [src/packages/backend/conat/test/project/jupyter/run-code.test.ts](./src/packages/backend/conat/test/project/jupyter/run-code.test.ts).
 6. [x] Browser-path benchmark harness exists in lite mode via Playwright in [src/packages/lite/jupyter-browser-benchmark.ts](./src/packages/lite/jupyter-browser-benchmark.ts), with explicit `--base-url` / `--port` targeting.
 7. [x] Playwright scroll/virtualization benchmark harness exists in lite mode in [src/packages/lite/jupyter-scroll-benchmark.ts](./src/packages/lite/jupyter-scroll-benchmark.ts), with scenario profiles and reliability checks.
+8. [x] Scroll harness now also reports interaction metrics:
+   1. open-to-first-cell / open-to-first-input / open-ready timings.
+   2. typing-latency percentiles (`p50/p95/p99`) with timeout counts.
+   3. CLI controls for typing sample size/timeouts.
 
 Observed benchmark impact from coalescing (output profile):
 
@@ -199,6 +203,7 @@ Keep logging for now, but make it structured and cheap.
    2. `print('x'*1000000)` single massive output.
    3. `for i in range(100000): print(i,end=' ')` bursty stream.
    4. `sleep` loop stream (flicker reproducer).
+   5. open-to-first-view and typing-latency benchmarks on large notebooks.
 4. Add network shaping test profile:
    1. 20ms, 80ms, 150ms RTT.
    2. modest packet loss/jitter profile.

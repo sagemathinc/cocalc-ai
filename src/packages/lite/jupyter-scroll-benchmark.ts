@@ -31,6 +31,8 @@ type Options = {
   path_prefix: string;
   cycles?: number;
   scroll_steps: number;
+  typing_chars: number;
+  typing_timeout_ms: number;
   timeout_ms: number;
   headless: boolean;
   json: boolean;
@@ -81,6 +83,24 @@ type ScrollMetrics = {
   windowed_list_source: "attr" | "virtuoso" | "unknown";
 };
 
+type OpenMetrics = {
+  goto_ms: number;
+  first_cell_ms: number;
+  first_input_ms: number;
+  ready_ms: number;
+};
+
+type TypingMetrics = {
+  chars: number;
+  samples: number;
+  timeout_count: number;
+  p50_ms: number | null;
+  p95_ms: number | null;
+  p99_ms: number | null;
+  mean_ms: number | null;
+  max_ms: number | null;
+};
+
 type ScenarioResult = {
   name: string;
   description: string;
@@ -94,6 +114,8 @@ type ScenarioResult = {
   reliability_ok: boolean;
   virtualization_mode: Options["virtualization"];
   virtualization_active: boolean | null;
+  open_metrics: OpenMetrics;
+  typing_metrics: TypingMetrics;
 };
 
 type ScrollBenchmarkResult = {
@@ -104,6 +126,8 @@ type ScrollBenchmarkResult = {
   scenario_filter?: string;
   cycles: number;
   scroll_steps: number;
+  typing_chars: number;
+  typing_timeout_ms: number;
   timeout_ms: number;
   runs: ScenarioResult[];
   started_at: string;
@@ -113,6 +137,8 @@ type ScrollBenchmarkResult = {
 const DEFAULT_TIMEOUT_MS = 45_000;
 const DEFAULT_PROFILE: Options["profile"] = "quick";
 const DEFAULT_SCROLL_STEPS = 42;
+const DEFAULT_TYPING_CHARS = 40;
+const DEFAULT_TYPING_TIMEOUT_MS = 1_500;
 
 function requireHomeDir(): string {
   const home = process.env.HOME;
@@ -460,20 +486,8 @@ async function ensureNotebook(path_ipynb: string, cells: any[]): Promise<void> {
   await writeFile(path_ipynb, notebookTemplate(cells), "utf8");
 }
 
-async function waitForNotebookReady({
-  page,
-  timeout_ms,
-}: {
-  page: any;
-  timeout_ms: number;
-}): Promise<void> {
-  await page.waitForSelector('[cocalc-test="jupyter-cell"]', {
-    timeout: timeout_ms,
-  });
-  await page.waitForSelector('[cocalc-test="cell-input"] .CodeMirror', {
-    timeout: timeout_ms,
-  });
-  await page.waitForTimeout(300);
+function monotonicNowMs(): number {
+  return Number(process.hrtime.bigint()) / 1e6;
 }
 
 async function openNotebookPage({
@@ -484,9 +498,21 @@ async function openNotebookPage({
   page: any;
   url: string;
   timeout_ms: number;
-}): Promise<void> {
+}): Promise<OpenMetrics> {
+  const t0 = monotonicNowMs();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeout_ms });
-  await waitForNotebookReady({ page, timeout_ms });
+  const goto_ms = monotonicNowMs() - t0;
+  await page.waitForSelector('[cocalc-test="jupyter-cell"]', {
+    timeout: timeout_ms,
+  });
+  const first_cell_ms = monotonicNowMs() - t0;
+  await page.waitForSelector('[cocalc-test="cell-input"] .CodeMirror', {
+    timeout: timeout_ms,
+  });
+  const first_input_ms = monotonicNowMs() - t0;
+  await page.waitForTimeout(300);
+  const ready_ms = monotonicNowMs() - t0;
+  return { goto_ms, first_cell_ms, first_input_ms, ready_ms };
 }
 
 async function measureScrollScenario({
@@ -722,6 +748,172 @@ async function measureScrollScenario({
   return result as ScrollMetrics;
 }
 
+function percentileValue(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const clamped = Math.min(1, Math.max(0, p));
+  const index = Math.max(0, Math.ceil(sorted.length * clamped) - 1);
+  return sorted[Math.min(sorted.length - 1, index)];
+}
+
+function meanValue(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sum = values.reduce((acc, x) => acc + x, 0);
+  return sum / values.length;
+}
+
+async function prepareTypingProbe(page: any): Promise<void> {
+  await page.evaluate(() => {
+    const g = window as any;
+    if (g.__cocalcTypingProbe != null) return;
+
+    const root = document.querySelector(
+      '[cocalc-test="cell-input"] .CodeMirror',
+    ) as HTMLElement | null;
+    if (root == null) {
+      throw new Error("unable to find CodeMirror for typing probe");
+    }
+    const target = (root.querySelector(".CodeMirror-code") as HTMLElement | null) ?? root;
+    const state: {
+      waiting: boolean;
+      keyTs: number;
+      resolve: ((value: number) => void) | null;
+      reject: ((reason: Error) => void) | null;
+      timeout: number | null;
+    } = {
+      waiting: false,
+      keyTs: 0,
+      resolve: null,
+      reject: null,
+      timeout: null,
+    };
+
+    const cleanup = () => {
+      if (state.timeout != null) {
+        clearTimeout(state.timeout);
+      }
+      state.waiting = false;
+      state.keyTs = 0;
+      state.resolve = null;
+      state.reject = null;
+      state.timeout = null;
+    };
+
+    root.addEventListener(
+      "keydown",
+      () => {
+        if (!state.waiting || state.keyTs !== 0) return;
+        state.keyTs = performance.now();
+      },
+      true,
+    );
+
+    const onDocumentChange = () => {
+      if (!state.waiting || state.keyTs === 0 || state.resolve == null) return;
+      const ms = performance.now() - state.keyTs;
+      const resolve = state.resolve;
+      cleanup();
+      resolve(ms);
+    };
+
+    const getCM = () => (root as any).CodeMirror;
+    const cmForEvents = getCM();
+    if (cmForEvents?.on) {
+      cmForEvents.on("changes", onDocumentChange);
+    } else {
+      const observer = new MutationObserver(onDocumentChange);
+      observer.observe(target, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+
+    g.__cocalcTypingProbe = {
+      focus() {
+        const cm = getCM();
+        cm?.focus?.();
+        const textarea = root.querySelector("textarea") as HTMLTextAreaElement | null;
+        textarea?.focus();
+      },
+      reset() {
+        const cm = getCM();
+        cm?.setValue?.("");
+        cm?.focus?.();
+      },
+      begin(timeoutMs: number): Promise<number> {
+        if (state.waiting) {
+          throw new Error("typing probe already waiting");
+        }
+        state.waiting = true;
+        state.keyTs = 0;
+        return new Promise<number>((resolve, reject) => {
+          state.resolve = resolve;
+          state.reject = reject;
+          state.timeout = window.setTimeout(() => {
+            const rejectFn = state.reject;
+            cleanup();
+            rejectFn?.(new Error("typing mutation timeout"));
+          }, timeoutMs);
+        });
+      },
+    };
+  });
+}
+
+async function measureTypingScenario({
+  page,
+  chars,
+  typing_timeout_ms,
+  action_timeout_ms,
+}: {
+  page: any;
+  chars: number;
+  typing_timeout_ms: number;
+  action_timeout_ms: number;
+}): Promise<TypingMetrics> {
+  await prepareTypingProbe(page);
+  await page.click('[cocalc-test="cell-input"] .CodeMirror', {
+    timeout: action_timeout_ms,
+  });
+  await page.evaluate(() => {
+    const probe = (window as any).__cocalcTypingProbe;
+    probe.reset();
+    probe.focus();
+  });
+
+  const samples: number[] = [];
+  let timeout_count = 0;
+
+  for (let i = 0; i < chars; i += 1) {
+    await page.evaluate(() => (window as any).__cocalcTypingProbe.focus());
+    const wait = page.evaluate((typingTimeoutMs) => {
+      return (window as any).__cocalcTypingProbe.begin(typingTimeoutMs);
+    }, typing_timeout_ms);
+    await page.keyboard.type("x");
+    try {
+      const latency = (await wait) as number;
+      if (Number.isFinite(latency)) {
+        samples.push(latency);
+      }
+    } catch {
+      timeout_count += 1;
+      await page.evaluate(() => (window as any).__cocalcTypingProbe.focus());
+    }
+  }
+
+  return {
+    chars,
+    samples: samples.length,
+    timeout_count,
+    p50_ms: percentileValue(samples, 0.5),
+    p95_ms: percentileValue(samples, 0.95),
+    p99_ms: percentileValue(samples, 0.99),
+    mean_ms: meanValue(samples),
+    max_ms: samples.length > 0 ? Math.max(...samples) : null,
+  };
+}
+
 function fmtMs(value: number): string {
   return `${value.toFixed(1)} ms`;
 }
@@ -829,6 +1021,50 @@ function printReliabilityMatrix(result: ScrollBenchmarkResult) {
   console.log(table.toString());
 }
 
+function printInteractionTable(result: ScrollBenchmarkResult) {
+  const table = new AsciiTable3("Notebook Interaction Metrics");
+  table.setHeading(
+    "Scenario",
+    "VirtMode",
+    "Active",
+    "Open Cell",
+    "Open Input",
+    "Open Ready",
+    "Type p50",
+    "Type p95",
+    "Type p99",
+    "Type max",
+    "Timeouts",
+  );
+  for (const run of result.runs) {
+    table.addRow(
+      run.name,
+      run.virtualization_mode,
+      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
+      fmtMs(run.open_metrics.first_cell_ms),
+      fmtMs(run.open_metrics.first_input_ms),
+      fmtMs(run.open_metrics.ready_ms),
+      fmtMaybeMs(run.typing_metrics.p50_ms),
+      fmtMaybeMs(run.typing_metrics.p95_ms),
+      fmtMaybeMs(run.typing_metrics.p99_ms),
+      fmtMaybeMs(run.typing_metrics.max_ms),
+      String(run.typing_metrics.timeout_count),
+    );
+  }
+  table.setAlignLeft(0);
+  table.setAlignLeft(1);
+  table.setAlignLeft(2);
+  table.setAlignRight(3);
+  table.setAlignRight(4);
+  table.setAlignRight(5);
+  table.setAlignRight(6);
+  table.setAlignRight(7);
+  table.setAlignRight(8);
+  table.setAlignRight(9);
+  table.setAlignRight(10);
+  console.log(table.toString());
+}
+
 function printUsage() {
   console.log(`Usage: pnpm -C src/packages/lite jupyter:bench:scroll -- [options]
 
@@ -844,6 +1080,8 @@ Options:
   --path-prefix <path>      Notebook path prefix (default: $HOME/jupyter-scroll-benchmark)
   --cycles <n>              Down/up scroll cycles per scenario (profile default)
   --scroll-steps <n>        Steps per directional scroll sweep (default: 42)
+  --typing-chars <n>        Number of typed chars used for typing-latency metric (default: 40)
+  --typing-timeout-ms <n>   Per-keystroke typing timeout in ms (default: 1500)
   --timeout-ms <n>          Per-scenario timeout in ms (default: 45000)
   --headed                  Run browser with UI (default: headless)
   --json                    Print raw JSON result
@@ -858,6 +1096,8 @@ function parseArgs(argv: string[]): Options {
     virtualization: "keep",
     path_prefix: DEFAULT_PATH_PREFIX,
     scroll_steps: DEFAULT_SCROLL_STEPS,
+    typing_chars: DEFAULT_TYPING_CHARS,
+    typing_timeout_ms: DEFAULT_TYPING_TIMEOUT_MS,
     timeout_ms: DEFAULT_TIMEOUT_MS,
     headless: true,
     json: false,
@@ -953,6 +1193,23 @@ function parseArgs(argv: string[]): Options {
           throw new Error(`invalid --scroll-steps '${opts.scroll_steps}'`);
         }
         break;
+      case "--typing-chars":
+        opts.typing_chars = Number(next());
+        if (!Number.isInteger(opts.typing_chars) || opts.typing_chars < 1) {
+          throw new Error(`invalid --typing-chars '${opts.typing_chars}'`);
+        }
+        break;
+      case "--typing-timeout-ms":
+        opts.typing_timeout_ms = Number(next());
+        if (
+          !Number.isInteger(opts.typing_timeout_ms) ||
+          opts.typing_timeout_ms < 100
+        ) {
+          throw new Error(
+            `invalid --typing-timeout-ms '${opts.typing_timeout_ms}'`,
+          );
+        }
+        break;
       case "--timeout-ms":
         opts.timeout_ms = Number(next());
         if (!Number.isInteger(opts.timeout_ms) || opts.timeout_ms < 2000) {
@@ -1004,7 +1261,17 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         auth_token,
         virtualization: opts.virtualization,
       });
-      await openNotebookPage({ page, url, timeout_ms: opts.timeout_ms });
+      const open_metrics = await openNotebookPage({
+        page,
+        url,
+        timeout_ms: opts.timeout_ms,
+      });
+      const typing_metrics = await measureTypingScenario({
+        page,
+        chars: opts.typing_chars,
+        typing_timeout_ms: opts.typing_timeout_ms,
+        action_timeout_ms: opts.timeout_ms,
+      });
       const cycles = opts.cycles ?? (opts.profile === "full" ? 4 : 2);
       const metrics = await measureScrollScenario({
         page,
@@ -1036,14 +1303,18 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         reliability_ok,
         virtualization_mode: opts.virtualization,
         virtualization_active,
+        open_metrics,
+        typing_metrics,
       };
       runs.push(run);
 
       if (!opts.quiet) {
         const fps = metrics.approx_fps == null ? "n/a" : metrics.approx_fps.toFixed(1);
+        const typingP95 =
+          typing_metrics.p95_ms == null ? "n/a" : `${typing_metrics.p95_ms.toFixed(1)}ms`;
         const status = reliability_ok ? "PASS" : "FAIL";
         console.log(
-          `[jupyter-scroll-bench] ${scenario.name} (virt=${opts.virtualization}): dur=${fmtMs(metrics.duration_ms)}, fps=${fps}, longtasks=${metrics.longtask_count}, status=${status}`,
+          `[jupyter-scroll-bench] ${scenario.name} (virt=${opts.virtualization}): open=${fmtMs(open_metrics.first_input_ms)}, typing_p95=${typingP95}, dur=${fmtMs(metrics.duration_ms)}, fps=${fps}, longtasks=${metrics.longtask_count}, status=${status}`,
         );
       }
     }
@@ -1060,6 +1331,8 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
     scenario_filter: opts.scenario,
     cycles: opts.cycles ?? (opts.profile === "full" ? 4 : 2),
     scroll_steps: opts.scroll_steps,
+    typing_chars: opts.typing_chars,
+    typing_timeout_ms: opts.typing_timeout_ms,
     timeout_ms: opts.timeout_ms,
     runs,
     started_at,
@@ -1076,10 +1349,13 @@ async function main() {
       return;
     }
     printSummaryTable(result);
+    printInteractionTable(result);
     printReliabilityMatrix(result);
     console.log(`base_url: ${result.base_url}`);
     console.log(`profile: ${result.profile}`);
     console.log(`virtualization: ${result.virtualization}`);
+    console.log(`typing_chars: ${result.typing_chars}`);
+    console.log(`typing_timeout_ms: ${result.typing_timeout_ms}`);
     if (result.scenario_filter) {
       console.log(`scenario: ${result.scenario_filter}`);
     }
