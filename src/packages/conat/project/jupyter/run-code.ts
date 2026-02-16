@@ -16,10 +16,32 @@ import { Throttle } from "@cocalc/util/throttle";
 const MAX_MSGS_PER_SECOND = parseInt(
   process.env.COCALC_JUPYTER_MAX_MSGS_PER_SECOND ?? "20",
 );
+const SOCKET_KEEP_ALIVE = parsePositiveInt(
+  process.env.COCALC_JUPYTER_SOCKET_KEEP_ALIVE,
+  25_000,
+);
+const SOCKET_KEEP_ALIVE_TIMEOUT = parsePositiveInt(
+  process.env.COCALC_JUPYTER_SOCKET_KEEP_ALIVE_TIMEOUT,
+  10_000,
+);
 const logger = getLogger("conat:project:jupyter:run-code");
 
 function getSubject({ project_id }: { project_id: string }) {
   return `jupyter.project-${project_id}.0`;
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = parseInt(value ?? "", 10);
+  if (Number.isFinite(n) && n > 0) {
+    return n;
+  }
+  return fallback;
+}
+
+let runIdCounter = 0;
+function nextRunId(): string {
+  runIdCounter += 1;
+  return `run-${Date.now().toString(36)}-${runIdCounter.toString(36)}`;
 }
 
 export interface InputCell {
@@ -50,6 +72,8 @@ export interface RunOptions {
   path: string;
   // array of input cells to run
   cells: InputCell[];
+  // application-level id used for cross-layer timing correlation
+  run_id?: string;
   // if true do not halt running the cells, even if one fails with an error
   noHalt?: boolean;
   // the socket is used for raw_input, to communicate between the client
@@ -101,8 +125,8 @@ export function jupyterServer({
 }) {
   const subject = getSubject({ project_id });
   const server: ConatSocketServer = client.socket.listen(subject, {
-    keepAlive: 5000,
-    keepAliveTimeout: 5000,
+    keepAlive: SOCKET_KEEP_ALIVE,
+    keepAliveTimeout: SOCKET_KEEP_ALIVE_TIMEOUT,
   });
   logger.debug("server: listening on ", { subject });
   const moreOutput: { [path: string]: { [id: string]: any[] } } = {};
@@ -123,12 +147,23 @@ export function jupyterServer({
         mesg.respondSync(await getKernelStatus({ path }));
       } else if (cmd == "run") {
         const { cells, noHalt, limit } = data;
+        const run_id =
+          typeof data.run_id == "string" ? data.run_id : nextRunId();
         try {
           mesg.respondSync(null);
           if (moreOutput[path] == null) {
             moreOutput[path] = {};
           }
+          logger.debug("run request", {
+            run_id,
+            path,
+            cells: cells?.length,
+            limit,
+            noHalt,
+            socket_id: socket.id,
+          });
           await handleRequest({
+            run_id,
             socket,
             run,
             outputHandler,
@@ -168,6 +203,7 @@ export function jupyterServer({
 }
 
 async function handleRequest({
+  run_id,
   socket,
   run,
   outputHandler,
@@ -177,7 +213,17 @@ async function handleRequest({
   limit,
   moreOutput,
 }) {
-  const runner = await run({ path, cells, noHalt, socket });
+  const startedAt = Date.now();
+  let firstMesgAt: number | null = null;
+  let totalMesgs = 0;
+  let totalBatches = 0;
+  let enobufs = 0;
+  let fallbackActivated = false;
+  let fallbackReplayed = 0;
+  let fallbackProcessed = 0;
+  let moreOutputBuffered = 0;
+  let summaryError: string | undefined;
+  const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
   for (const cell of cells) {
     moreOutput[cell.id] = [];
@@ -189,10 +235,12 @@ async function handleRequest({
   const throttle = new Throttle<OutputMessage>(MAX_MSGS_PER_SECOND);
   let unhandledClientWriteError: any = undefined;
   throttle.on("data", async (mesgs) => {
+    totalBatches += 1;
     try {
       socket.write(mesgs);
     } catch (err) {
       if (err.code == "ENOBUFS") {
+        enobufs += 1;
         // wait for the over-filled socket to finish writing out data.
         await socket.drain();
         socket.write(mesgs);
@@ -205,11 +253,18 @@ async function handleRequest({
   try {
     let handler: OutputHandler | null = null;
     let process: ((mesg: any) => void) | null = null;
+    let fallbackOutputCount = 0;
+    let fallbackMoreOutputMode = false;
 
     for await (const mesg of runner) {
+      totalMesgs += 1;
+      if (firstMesgAt == null) {
+        firstMesgAt = Date.now();
+      }
       if (socket.state == "closed") {
         // client socket has closed -- the backend server must take over!
         if (handler == null || process == null) {
+          fallbackActivated = true;
           logger.debug("socket closed -- server must handle output");
           if (outputHandler == null) {
             throw Error("no output handler available");
@@ -220,17 +275,26 @@ async function handleRequest({
           }
           process = (mesg) => {
             if (handler == null) return;
-            if (limit == null || output.length < limit) {
+            // Replay must enforce the output limit based on how many messages
+            // we have replayed so far, not the final size of the pre-close
+            // output buffer.
+            const replayedCount = fallbackOutputCount + 1;
+            if (limit == null || replayedCount < limit) {
               handler.process(mesg);
             } else {
-              if (output.length == limit) {
+              if (!fallbackMoreOutputMode) {
                 handler.process({ id: mesg.id, more_output: true });
                 moreOutput[mesg.id] = [];
+                fallbackMoreOutputMode = true;
               }
               moreOutput[mesg.id].push(mesg);
+              moreOutputBuffered += 1;
             }
+            fallbackOutputCount += 1;
+            fallbackProcessed += 1;
           };
 
+          fallbackReplayed += output.length;
           for (const prev of output) {
             process(prev);
           }
@@ -254,6 +318,7 @@ async function handleRequest({
           }
           // save the more output
           moreOutput[mesg.id].push(mesg);
+          moreOutputBuffered += 1;
         }
       }
     }
@@ -264,8 +329,29 @@ async function handleRequest({
       throttle.flush();
       socket.write(null);
     }
+  } catch (err) {
+    summaryError = `${err}`;
+    throw err;
   } finally {
     throttle.close();
+    logger.debug("run summary", {
+      run_id,
+      path,
+      cells: cells.length,
+      limit: limit ?? null,
+      duration_ms: Date.now() - startedAt,
+      first_message_ms:
+        firstMesgAt == null ? null : Math.max(0, firstMesgAt - startedAt),
+      total_messages: totalMesgs,
+      total_batches: totalBatches,
+      more_output_buffered: moreOutputBuffered,
+      fallback_activated: fallbackActivated,
+      fallback_replayed: fallbackReplayed,
+      fallback_processed: fallbackProcessed,
+      enobufs,
+      socket_state: socket.state,
+      error: summaryError,
+    });
   }
 }
 
@@ -330,7 +416,7 @@ export class JupyterClient {
 
   run = async (
     cells: InputCell[],
-    opts: { noHalt?: boolean; limit?: number } = {},
+    opts: { noHalt?: boolean; limit?: number; run_id?: string } = {},
   ) => {
     if (this.iter) {
       // one evaluation at a time -- starting a new one ends the previous one.
