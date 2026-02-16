@@ -27,6 +27,7 @@ type Options = {
   auth_token?: string;
   profile: "quick" | "full";
   virtualization: "on" | "off" | "keep";
+  require_active_virtualization: boolean;
   scenario?: string;
   path_prefix: string;
   cycles?: number;
@@ -80,7 +81,7 @@ type ScrollMetrics = {
   top_marker_visible_after: boolean;
   bottom_marker_visible_after: boolean;
   windowed_list_attr: boolean | null;
-  windowed_list_source: "attr" | "virtuoso" | "unknown";
+  windowed_list_source: "runtime" | "attr" | "virtuoso" | "unknown";
 };
 
 type OpenMetrics = {
@@ -123,6 +124,7 @@ type ScrollBenchmarkResult = {
   base_url: string;
   profile: "quick" | "full";
   virtualization: Options["virtualization"];
+  require_active_virtualization: boolean;
   scenario_filter?: string;
   cycles: number;
   scroll_steps: number;
@@ -648,6 +650,8 @@ async function measureScrollScenario({
       await tick();
 
       const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const runtimeWindowed = (window as any).__cocalcJupyterRuntime
+        ?.windowed_list_enabled;
       const modeNode = document.querySelector(
         '[cocalc-test="jupyter-cell-list-mode"]',
       ) as HTMLElement | null;
@@ -663,14 +667,20 @@ async function measureScrollScenario({
       const hasVirtuoso =
         document.querySelector("[data-virtuoso-scroller]") != null ||
         document.querySelector("[data-virtuoso-item-list]") != null;
-      const windowedListAttr =
-        windowedListAttrFromMarker ?? (hasVirtuoso ? true : false);
-      const windowedListSource: "attr" | "virtuoso" | "unknown" =
-        windowedListAttrFromMarker != null
-          ? "attr"
-          : hasVirtuoso
-            ? "virtuoso"
-            : "unknown";
+      const windowedListAttr = (() => {
+        if (typeof runtimeWindowed === "boolean") return runtimeWindowed;
+        if (windowedListAttrFromMarker != null) return windowedListAttrFromMarker;
+        if (hasVirtuoso) return true;
+        return false;
+      })();
+      const windowedListSource: "runtime" | "attr" | "virtuoso" | "unknown" =
+        typeof runtimeWindowed === "boolean"
+          ? "runtime"
+          : windowedListAttrFromMarker != null
+            ? "attr"
+            : hasVirtuoso
+              ? "virtuoso"
+              : "unknown";
       const domTop = countVisibleCellDomNodes(scroller);
       const topVisibleInitially = markerVisible(top_marker);
 
@@ -1089,6 +1099,7 @@ Options:
   --auth-token <token>      Auth token (default: from connection-info.json)
   --profile <quick|full>    Scenario profile (default: quick)
   --virtualization <mode>   Force notebook virtualization: on|off|keep (default: keep)
+  --require-active-virtualization  Fail if requested virtualization mode is not active
   --scenario <name>         Run one scenario from the selected profile
   --path-prefix <path>      Notebook path prefix (default: $HOME/jupyter-scroll-benchmark)
   --cycles <n>              Down/up scroll cycles per scenario (profile default)
@@ -1107,6 +1118,7 @@ function parseArgs(argv: string[]): Options {
   const opts: Options = {
     profile: DEFAULT_PROFILE,
     virtualization: "keep",
+    require_active_virtualization: false,
     path_prefix: DEFAULT_PATH_PREFIX,
     scroll_steps: DEFAULT_SCROLL_STEPS,
     typing_chars: DEFAULT_TYPING_CHARS,
@@ -1188,6 +1200,9 @@ function parseArgs(argv: string[]): Options {
         opts.virtualization = mode;
         break;
       }
+      case "--require-active-virtualization":
+        opts.require_active_virtualization = true;
+        break;
       case "--scenario":
         opts.scenario = next();
         break;
@@ -1265,6 +1280,17 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
   const page = await context.newPage();
 
   const runs: ScenarioResult[] = [];
+  const expectedVirtualization =
+    opts.virtualization === "on"
+      ? true
+      : opts.virtualization === "off"
+        ? false
+        : null;
+  if (opts.require_active_virtualization && expectedVirtualization == null) {
+    throw new Error(
+      "--require-active-virtualization requires --virtualization on or off",
+    );
+  }
   try {
     for (const scenario of scenarios) {
       await ensureNotebook(scenario.path_ipynb, scenario.cells);
@@ -1320,6 +1346,15 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         typing_metrics,
       };
       runs.push(run);
+      if (
+        opts.require_active_virtualization &&
+        expectedVirtualization != null &&
+        run.virtualization_active !== expectedVirtualization
+      ) {
+        throw new Error(
+          `virtualization mismatch in scenario '${scenario.name}': expected ${expectedVirtualization ? "active" : "inactive"}, got ${run.virtualization_active ? "active" : "inactive"} (source=${run.metrics.windowed_list_source})`,
+        );
+      }
 
       if (!opts.quiet) {
         const fps = metrics.approx_fps == null ? "n/a" : metrics.approx_fps.toFixed(1);
@@ -1341,6 +1376,7 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
     base_url,
     profile: opts.profile,
     virtualization: opts.virtualization,
+    require_active_virtualization: opts.require_active_virtualization,
     scenario_filter: opts.scenario,
     cycles: opts.cycles ?? (opts.profile === "full" ? 4 : 2),
     scroll_steps: opts.scroll_steps,
@@ -1367,6 +1403,9 @@ async function main() {
     console.log(`base_url: ${result.base_url}`);
     console.log(`profile: ${result.profile}`);
     console.log(`virtualization: ${result.virtualization}`);
+    console.log(
+      `require_active_virtualization: ${result.require_active_virtualization}`,
+    );
     console.log(`typing_chars: ${result.typing_chars}`);
     console.log(`typing_timeout_ms: ${result.typing_timeout_ms}`);
     if (result.scenario_filter) {

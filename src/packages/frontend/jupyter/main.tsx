@@ -257,6 +257,37 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     forcedWindowed.enabled ?? defaultWindowedEnabled,
   );
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const enabled = useWindowedListRef.current;
+    const forced = forcedWindowed.enabled ?? null;
+    (window as any).__cocalcJupyterRuntime = {
+      ...(window as any).__cocalcJupyterRuntime,
+      windowed_list_enabled: enabled,
+      windowed_list_forced: forced,
+      windowed_list_default: defaultWindowedEnabled,
+    };
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-windowed-list",
+      enabled ? "1" : "0",
+    );
+    if (forced == null) {
+      document.documentElement.removeAttribute(
+        "data-cocalc-jupyter-windowed-list-forced",
+      );
+    } else {
+      document.documentElement.setAttribute(
+        "data-cocalc-jupyter-windowed-list-forced",
+        forced ? "1" : "0",
+      );
+    }
+    if (forced != null) {
+      console.info(
+        `[jupyter-virt] use_windowed_list=${enabled} (forced=${forced})`,
+      );
+    }
+  }, [defaultWindowedEnabled, forcedWindowed.enabled]);
+
   const { usage, expected_cell_runtime } = useKernelUsage(name);
 
   const jupyterClassic = useRedux([
