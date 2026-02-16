@@ -79,8 +79,8 @@ export async function getKernelStatus({ path }) {
 }
 
 // Returns async iterator over outputs
-export async function run({ path, cells, noHalt, socket }: RunOptions) {
-  logger.debug("run:", { path, noHalt });
+export async function run({ path, cells, noHalt, socket, run_id }: RunOptions) {
+  logger.debug("run:", { path, noHalt, run_id });
 
   const actions = jupyterActions[ipynbPath(path)];
   if (actions == null) {

@@ -1771,6 +1771,13 @@ export class JupyterActions extends JupyterActions0 {
     opts: { noHalt?: boolean; limit?: number } = {},
   ) => {
     const runId = `${Date.now().toString(36)}-${++this.runDebugCounter}`;
+    const runStartedAt = Date.now();
+    let cellsPrepared = 0;
+    let runnerStartedAt: number | null = null;
+    let firstChunkAt: number | null = null;
+    let totalChunks = 0;
+    let totalMesgs = 0;
+    let runError: string | undefined;
     this.runDebug("runCells.call", { runId, ids, opts });
     if (this.store?.get("read_only")) {
       this.runDebug("runCells.skip.read_only", { runId });
@@ -1830,6 +1837,7 @@ export class JupyterActions extends JupyterActions0 {
         cells.push(cell);
       }
       this.addPendingCells(cells.map(({ id }) => id));
+      cellsPrepared = cells.length;
       this.runDebug("runCells.cells.prepared", {
         runId,
         ids: cells.map((x) => x.id),
@@ -1847,7 +1855,8 @@ export class JupyterActions extends JupyterActions0 {
         });
         return;
       }
-      const runner = await client.run(cells, { limit, ...opts });
+      const runner = await client.run(cells, { ...opts, limit, run_id: runId });
+      runnerStartedAt = Date.now();
       this.runDebug("runCells.runner.start", {
         runId,
         limit,
@@ -1859,12 +1868,15 @@ export class JupyterActions extends JupyterActions0 {
       if (this.isClosed()) return;
       let handler: null | OutputHandler = null;
       let id: null | string = null;
-      let chunkNo = 0;
       for await (const mesgs of runner) {
-        chunkNo += 1;
+        totalChunks += 1;
+        totalMesgs += mesgs.length;
+        if (firstChunkAt == null) {
+          firstChunkAt = Date.now();
+        }
         this.runDebug("runCells.runner.chunk", () => ({
           runId,
-          chunkNo,
+          chunkNo: totalChunks,
           count: mesgs.length,
           mesgs: mesgs.slice(0, 12).map(this.summarizeMesg),
           truncated: mesgs.length > 12,
@@ -1906,7 +1918,11 @@ export class JupyterActions extends JupyterActions0 {
         }
       }
       handler?.done();
-      this.runDebug("runCells.runner.done", { runId, chunkNo });
+      this.runDebug("runCells.runner.done", {
+        runId,
+        chunkNo: totalChunks,
+        totalMesgs,
+      });
       if (this.isClosed()) {
         return;
       }
@@ -1917,6 +1933,7 @@ export class JupyterActions extends JupyterActions0 {
         }
       }, 1000);
     } catch (err) {
+      runError = `${err}`;
       this.runDebug("runCells.error", {
         runId,
         err: `${err}`,
@@ -1934,6 +1951,26 @@ export class JupyterActions extends JupyterActions0 {
       this.runDebug("runCells.finally", {
         runId,
         queuedRuns: this.runQueue.length,
+      });
+      this.runDebug("runCells.summary", {
+        runId,
+        cellsPrepared,
+        durationMs: Date.now() - runStartedAt,
+        toRunnerStartMs:
+          runnerStartedAt == null
+            ? null
+            : Math.max(0, runnerStartedAt - runStartedAt),
+        toFirstChunkMs:
+          firstChunkAt == null
+            ? null
+            : Math.max(0, firstChunkAt - runStartedAt),
+        runnerDurationMs:
+          runnerStartedAt == null
+            ? null
+            : Math.max(0, Date.now() - runnerStartedAt),
+        totalChunks,
+        totalMesgs,
+        error: runError,
       });
       if (this.runQueue.length > 0) {
         const [ids, opts] = this.runQueue.shift();
