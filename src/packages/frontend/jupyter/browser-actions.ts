@@ -104,6 +104,103 @@ export class JupyterActions extends JupyterActions0 {
   private hasUnsavedChanges: boolean = false;
   private optimisticFastOpenToken: number = 0;
   private optimisticFastOpenApplied: boolean = false;
+  private runDebugCounter: number = 0;
+
+  private isRunDebugEnabled = (): boolean => {
+    try {
+      const value = get_local_storage("jupyter_run_debug");
+      if (value === "1" || value === "true") {
+        return true;
+      }
+      if (typeof window !== "undefined") {
+        const q = new URLSearchParams(window.location.search).get(
+          "jupyter_run_debug",
+        );
+        if (q === "1" || q === "true") {
+          return true;
+        }
+      }
+    } catch {
+      // ignore logging configuration errors
+    }
+    return false;
+  };
+
+  private runDebug = (event: string, data: Record<string, any> = {}): void => {
+    if (!this.isRunDebugEnabled()) {
+      return;
+    }
+    let jsonMode = false;
+    try {
+      const value = get_local_storage("jupyter_run_debug");
+      if (value === "json") {
+        jsonMode = true;
+      }
+      if (typeof window !== "undefined") {
+        const q = new URLSearchParams(window.location.search).get(
+          "jupyter_run_debug",
+        );
+        if (q === "json") {
+          jsonMode = true;
+        }
+      }
+    } catch {
+      // ignore logging configuration errors
+    }
+    const pendingSize = this.store?.get("pendingCells")?.size ?? 0;
+    const payload = {
+      t: new Date().toISOString(),
+      path: this.path,
+      runningNow: this.runningNow,
+      runQueue: this.runQueue.length,
+      pendingSize,
+      syncdbState: this.syncdb?.get_state?.(),
+      readOnly: this.store?.get?.("read_only") ?? undefined,
+      ...data,
+    };
+    if (jsonMode) {
+      console.log(`[jupyter-run-debug] ${event} ${JSON.stringify(payload)}`);
+      return;
+    }
+    console.log(`[jupyter-run-debug] ${event}`, payload);
+  };
+
+  private summarizeMesg = (mesg: any) => {
+    const content = mesg?.content;
+    return {
+      id: mesg?.id,
+      msg_type: mesg?.msg_type,
+      done: !!mesg?.done,
+      more_output: !!mesg?.more_output,
+      execution_state: content?.execution_state,
+      name: content?.name,
+      text_len: typeof content?.text === "string" ? content.text.length : 0,
+      data_types:
+        content?.data != null && typeof content.data === "object"
+          ? Object.keys(content.data)
+          : undefined,
+    };
+  };
+
+  private summarizePatch = (patch: any) => {
+    if (patch == null) {
+      return { hasPatch: false };
+    }
+    if (typeof patch === "string") {
+      return { hasPatch: true, patchType: "string", patchLen: patch.length };
+    }
+    if (Array.isArray(patch)) {
+      return { hasPatch: true, patchType: "array", patchLen: patch.length };
+    }
+    return {
+      hasPatch: true,
+      patchType: typeof patch,
+      keys:
+        typeof patch === "object" && patch != null
+          ? Object.keys(patch).slice(0, 8)
+          : undefined,
+    };
+  };
 
   private startOptimisticIpynbFastOpen = (): void => {
     if (!this.path?.toLowerCase().endsWith(".ipynb")) return;
@@ -1539,15 +1636,20 @@ export class JupyterActions extends JupyterActions0 {
     const handler = new OutputHandler({ cell });
 
     // save first time, so that other clients know this cell is running.
+    // Under heavy output we throttle updates, but on "done" we force an
+    // immediate flush to avoid leaving the cell in a stale running state.
     let first = true;
-    const f = throttle(
+    const writeCell = (save: boolean) => {
+      // we ONLY set certain fields; e.g., setting the input would be
+      // extremely annoying since the user can edit the input while the
+      // cell is running.
+      const { id, state, output, start, end, exec_count } = cell;
+      this._set({ id, state, output, start, end, exec_count }, save);
+      first = false;
+    };
+    const writeCellThrottled = throttle(
       () => {
-        // we ONLY set certain fields; e.g., setting the input would be
-        // extremely annoying since the user can edit the input while the
-        // cell is running.
-        const { id, state, output, start, end, exec_count } = cell;
-        this._set({ id, state, output, start, end, exec_count }, first);
-        first = false;
+        writeCell(first);
       },
       1000 / OUTPUT_FPS,
       {
@@ -1555,16 +1657,28 @@ export class JupyterActions extends JupyterActions0 {
         trailing: true,
       },
     );
-    handler.on("change", f);
+    handler.on("change", writeCellThrottled);
+    handler.on("done", () => {
+      writeCellThrottled.flush();
+      writeCell(true);
+      this.runDebug("runCells.handler.done.flush", {
+        id: cell.id,
+        state: cell.state,
+      });
+    });
     return handler;
   };
 
   private addPendingCells = (ids: string[]) => {
+    if (ids.length == 0) {
+      return;
+    }
     let pendingCells = this.store.get("pendingCells") ?? iSet();
     for (const id of ids) {
       pendingCells = pendingCells.add(id);
     }
     this.store.setState({ pendingCells });
+    this.runDebug("pending.add", { ids });
 
     // to avoid ugly flicker, we don't clear output until
     // waiting a little while first (since often the output
@@ -1574,11 +1688,18 @@ export class JupyterActions extends JupyterActions0 {
         return;
       }
       const p = this.store.get("pendingCells") ?? iSet();
-      this.clear_outputs(ids.filter((id) => p.has(id)));
+      const stillPending = ids.filter((id) => p.has(id));
+      this.runDebug("pending.clear_outputs.delay", { ids, stillPending });
+      if (stillPending.length > 0) {
+        this.clear_outputs(stillPending);
+      }
     }, 250);
   };
 
   private deletePendingCells = (ids: string[]) => {
+    if (ids.length == 0) {
+      return;
+    }
     let pendingCells = this.store.get("pendingCells");
     if (pendingCells == null) {
       return;
@@ -1587,10 +1708,14 @@ export class JupyterActions extends JupyterActions0 {
       pendingCells = pendingCells.delete(id);
     }
     this.store.setState({ pendingCells });
+    this.runDebug("pending.delete", { ids });
   };
 
   // uses inheritence so NOT arrow function
   protected clearRunQueue() {
+    this.runDebug("runQueue.clear", {
+      queuedRuns: this.runQueue.length,
+    });
     this.store?.setState({ pendingCells: iSet() });
     this.runQueue.length = 0;
   }
@@ -1600,10 +1725,12 @@ export class JupyterActions extends JupyterActions0 {
     if (this.isClosed()) return null;
     let c = this.jupyterClient;
     if (c != null && c.socket.state != "closed") {
+      this.runDebug("client.reuse", { socketState: c.socket.state });
       return c;
     }
     await this.waitUntilProjectIsRunning();
     if (this.isClosed()) return null;
+    this.runDebug("client.create.start");
     c = jupyterClient({
       path: this.syncdbPath,
       client: webapp_client.conat_client.conat(),
@@ -1622,12 +1749,16 @@ export class JupyterActions extends JupyterActions0 {
       },
     });
     c.socket.on("closed", () => {
+      this.runDebug("client.socket.closed", {
+        previousState: c?.socket?.state,
+      });
       this.jupyterClient = undefined;
       // TODO: doing this is not ideal, but it's probably less confusing.
       this.clearRunQueue();
       this.runningNow = false;
     });
     this.jupyterClient = c;
+    this.runDebug("client.create.done", { socketState: c.socket.state });
     return c;
   };
 
@@ -1637,17 +1768,25 @@ export class JupyterActions extends JupyterActions0 {
     ids: string[],
     opts: { noHalt?: boolean; limit?: number } = {},
   ) => {
+    const runId = `${Date.now().toString(36)}-${++this.runDebugCounter}`;
+    this.runDebug("runCells.call", { runId, ids, opts });
     if (this.store?.get("read_only")) {
+      this.runDebug("runCells.skip.read_only", { runId });
       return;
     }
     if (this.runningNow) {
       this.runQueue.push([ids, opts]);
       this.addPendingCells(ids);
+      this.runDebug("runCells.queued", {
+        runId,
+        queuedRuns: this.runQueue.length,
+      });
       return;
     }
     let client: null | JupyterClient = null;
     try {
       this.runningNow = true;
+      this.runDebug("runCells.start", { runId });
       const cells: InputCell[] = [];
       const kernel = this.store.get("kernel");
 
@@ -1662,11 +1801,13 @@ export class JupyterActions extends JupyterActions0 {
         if (!cell?.input?.trim()) {
           // nothing to do but clear output
           this._set({ id: cell.id, last, output: null });
+          this.runDebug("runCells.cell.skip.empty_input", { runId, id });
 
           continue;
         }
         if (!kernel) {
           this._set({ type: "cell", id, state: "done" });
+          this.runDebug("runCells.cell.skip.no_kernel", { runId, id });
           continue;
         }
         if (cell.output) {
@@ -1678,32 +1819,70 @@ export class JupyterActions extends JupyterActions0 {
           // time last evaluation took
           this._set({ id: cell.id, last, output: cell.output }, false);
         }
+        this.runDebug("runCells.cell.enqueue", {
+          runId,
+          id,
+          inputLen: cell.input?.length ?? 0,
+          outputCount: Object.keys(cell.output ?? {}).length,
+        });
         cells.push(cell);
       }
       this.addPendingCells(cells.map(({ id }) => id));
+      this.runDebug("runCells.cells.prepared", {
+        runId,
+        ids: cells.map((x) => x.id),
+      });
 
       // ensures cells run in order:
       cells.sort(field_cmp("pos"));
 
       const limit = opts.limit ?? this.getMessageLimit();
       client = await this.getJupyterClient();
-      if (client == null || this.isClosed()) return;
+      if (client == null || this.isClosed()) {
+        this.runDebug("runCells.abort.no_client_or_closed", {
+          runId,
+          hasClient: client != null,
+        });
+        return;
+      }
       const runner = await client.run(cells, { limit, ...opts });
+      this.runDebug("runCells.runner.start", {
+        runId,
+        limit,
+        socketState: client.socket.state,
+      });
       if (!this.store.get("trust")) {
         this.set_trust_notebook(true);
       }
       if (this.isClosed()) return;
       let handler: null | OutputHandler = null;
       let id: null | string = null;
+      let chunkNo = 0;
       for await (const mesgs of runner) {
+        chunkNo += 1;
+        this.runDebug("runCells.runner.chunk", {
+          runId,
+          chunkNo,
+          count: mesgs.length,
+          mesgs: mesgs.slice(0, 12).map(this.summarizeMesg),
+          truncated: mesgs.length > 12,
+        });
         if (this.isClosed()) return;
         for (const mesg of mesgs) {
           if (!opts.noHalt && mesg.msg_type == "error") {
+            this.runDebug("runCells.runner.error_msg", {
+              runId,
+              mesg: this.summarizeMesg(mesg),
+            });
             this.clearRunQueue();
           }
           if (mesg.id !== id || handler == null) {
             id = mesg.id;
             if (id == null) {
+              this.runDebug("runCells.runner.skip.missing_id", {
+                runId,
+                mesg: this.summarizeMesg(mesg),
+              });
               continue;
             }
             this.deletePendingCells([id]);
@@ -1715,11 +1894,17 @@ export class JupyterActions extends JupyterActions0 {
             cell.kernel = kernel;
             handler?.done();
             handler = this.getOutputHandler(cell);
+            this.runDebug("runCells.handler.switch", {
+              runId,
+              id,
+              hadOutput: Object.keys(cell.output ?? {}).length > 0,
+            });
           }
           handler.process(mesg);
         }
       }
       handler?.done();
+      this.runDebug("runCells.runner.done", { runId, chunkNo });
       if (this.isClosed()) {
         return;
       }
@@ -1730,6 +1915,11 @@ export class JupyterActions extends JupyterActions0 {
         }
       }, 1000);
     } catch (err) {
+      this.runDebug("runCells.error", {
+        runId,
+        err: `${err}`,
+        socketState: client?.socket?.state,
+      });
       if (client?.socket?.state == "ready") {
         // very strange err that wasn't just caused by the socket closing:
         console.warn("runCells", err);
@@ -1739,8 +1929,18 @@ export class JupyterActions extends JupyterActions0 {
     } finally {
       if (this.isClosed()) return;
       this.runningNow = false;
+      this.runDebug("runCells.finally", {
+        runId,
+        queuedRuns: this.runQueue.length,
+      });
       if (this.runQueue.length > 0) {
         const [ids, opts] = this.runQueue.shift();
+        this.runDebug("runCells.dequeue", {
+          runId,
+          nextIds: ids,
+          nextOpts: opts,
+          queuedRuns: this.runQueue.length,
+        });
         this.runCells(ids, opts);
       }
     }
@@ -2116,15 +2316,18 @@ export class JupyterActions extends JupyterActions0 {
 
   // load the ipynb version of this notebook from disk
   loadFromDisk = async () => {
+    this.runDebug("ipynb.load.start");
     const fs = this.syncdb.fs;
     const content = Buffer.from(await fs.readFile(this.path));
     if (content.length == 0) {
       // support empty file to make creating new easy
+      this.runDebug("ipynb.load.empty");
       return;
     }
     const ipynb = JSON.parse(content.toString());
     await this.setToIpynb(ipynb);
     this.hasUnsavedChanges = false;
+    this.runDebug("ipynb.load.done", { bytes: content.length });
     // good time to refresh status
     await this.refreshKernelStatus();
   };
@@ -2133,6 +2336,7 @@ export class JupyterActions extends JupyterActions0 {
   saveIpynb = async () => {
     if (this.isClosed() || this.syncdb?.get_state() != "ready") return;
 
+    this.runDebug("ipynb.save.start");
     const ipynb = await this.toIpynb();
     if (this.isClosed()) return;
 
@@ -2141,6 +2345,7 @@ export class JupyterActions extends JupyterActions0 {
     this.hasUnsavedChanges = false;
     this.setState({ has_unsaved_changes: false });
     this.store.emit("has-unsaved-changes", false);
+    this.runDebug("ipynb.save.done", { bytes: serialize.length });
   };
 
   private isIpynbDeleted = false;
@@ -2149,6 +2354,11 @@ export class JupyterActions extends JupyterActions0 {
     patch,
     patchSeq,
   }: { patch?; patchSeq?: number } = {}) => {
+    this.runDebug("watch.load.start", {
+      patchSeq,
+      expectedPatchSeq: this.expectedPatchSeq,
+      ...this.summarizePatch(patch),
+    });
     let usedPatch = false;
     if (patch != null && this.expectedPatchSeq == patchSeq) {
       // use patch
@@ -2167,7 +2377,12 @@ export class JupyterActions extends JupyterActions0 {
         const ipynb = JSON.parse(newValue);
         await this.setToIpynb(ipynb);
         usedPatch = true;
+        this.runDebug("watch.load.patch.applied", { patchSeq });
       } catch (err) {
+        this.runDebug("watch.load.patch.failed", {
+          patchSeq,
+          err: `${err}`,
+        });
         console.log(
           "WARNING: error loading from disk using patch (fallback to full load)",
           err,
@@ -2179,12 +2394,18 @@ export class JupyterActions extends JupyterActions0 {
       try {
         await this.loadFromDisk();
         this.isIpynbDeleted = false;
+        this.runDebug("watch.load.full.done", { patchSeq });
       } catch {
         this.isIpynbDeleted = true;
+        this.runDebug("watch.load.full.failed", { patchSeq });
       }
     }
     if (patchSeq != null) {
       this.expectedPatchSeq = patchSeq + 1;
+      this.runDebug("watch.load.expected_patch_seq", {
+        patchSeq,
+        expectedPatchSeq: this.expectedPatchSeq,
+      });
     }
   };
 
@@ -2194,6 +2415,7 @@ export class JupyterActions extends JupyterActions0 {
   // tests, I should refactor it into a separate module that both use.
   private fileWatcher?: WatchIterator;
   watchIpynb = async () => {
+    this.runDebug("watch.start");
     const done = () => this.isClosed();
     if (done()) return;
     // one initial load right when we open the document
@@ -2202,8 +2424,10 @@ export class JupyterActions extends JupyterActions0 {
         if (this.isClosed()) return true;
         try {
           await this.watchLoadFromDisk();
+          this.runDebug("watch.initial_load.done");
           return true;
         } catch (err) {
+          this.runDebug("watch.initial_load.failed", { err: `${err}` });
           console.warn(`Issue watching ipynb file`, err);
           return false;
         }
@@ -2229,22 +2453,38 @@ export class JupyterActions extends JupyterActions0 {
             unique: true,
             patch: true,
           });
+          this.runDebug("watch.stream.opened");
           this.expectedPatchSeq = 0;
           for await (const { event, ignore, patch, patchSeq } of this
             .fileWatcher) {
             if (done()) return true;
+            this.runDebug("watch.event", {
+              event,
+              ignore,
+              patchSeq,
+              ...this.summarizePatch(patch),
+            });
             if (event == "unlink") {
               // deleted
+              this.runDebug("watch.event.unlink");
               break;
             }
             if (!ignore) {
               await this.watchLoadFromDisk({ patch, patchSeq });
+            } else {
+              this.runDebug("watch.event.ignored", {
+                patchSeq,
+                expectedPatchSeq: this.expectedPatchSeq,
+              });
             }
           }
-        } catch {}
+        } catch (err) {
+          this.runDebug("watch.stream.failed", { err: `${err}` });
+        }
         // check if file was deleted
         this.signalIfFileDeleted();
         this.fileWatcher?.close();
+        this.runDebug("watch.stream.closed");
         delete this.fileWatcher;
         return false;
       },
