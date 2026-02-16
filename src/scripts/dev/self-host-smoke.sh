@@ -11,10 +11,14 @@ if [ ! -x "$HUB_DAEMON" ]; then
   exit 1
 fi
 
+SMOKE_REQUIRE_EXISTING_CONFIG="${SMOKE_REQUIRE_EXISTING_CONFIG:-0}"
 if [ ! -f "$CONFIG_FILE" ]; then
   "$HUB_DAEMON" init
-  echo "edit config first: $CONFIG_FILE" >&2
-  exit 1
+  if [ "$SMOKE_REQUIRE_EXISTING_CONFIG" = "1" ]; then
+    echo "edit config first: $CONFIG_FILE" >&2
+    exit 1
+  fi
+  echo "using generated config: $CONFIG_FILE"
 fi
 
 # shellcheck source=/dev/null
@@ -25,6 +29,7 @@ SMOKE_BUILD_SERVER="${SMOKE_BUILD_SERVER:-1}"
 SMOKE_CLEANUP_SUCCESS="${SMOKE_CLEANUP_SUCCESS:-1}"
 SMOKE_CLEANUP_FAILURE="${SMOKE_CLEANUP_FAILURE:-0}"
 SMOKE_VERIFY_INDEX="${SMOKE_VERIFY_INDEX:-1}"
+SMOKE_VERIFY_COPY_BETWEEN_PROJECTS="${SMOKE_VERIFY_COPY_BETWEEN_PROJECTS:-1}"
 SMOKE_VERIFY_DEPROVISION="${SMOKE_VERIFY_DEPROVISION:-1}"
 SMOKE_RESTART_HUB="${SMOKE_RESTART_HUB:-1}"
 SMOKE_RESET_BACKUP_QUEUE="${SMOKE_RESET_BACKUP_QUEUE:-1}"
@@ -107,15 +112,17 @@ export BASE_URL="${BASE_URL:-http://127.0.0.1:${HUB_PORT}}"
 cleanup_success_bool="true"
 cleanup_failure_bool="false"
 verify_index_bool="true"
+verify_copy_between_projects_bool="true"
 verify_deprovision_bool="true"
 
 [ "$SMOKE_CLEANUP_SUCCESS" = "1" ] || cleanup_success_bool="false"
 [ "$SMOKE_CLEANUP_FAILURE" = "1" ] && cleanup_failure_bool="true"
 [ "$SMOKE_VERIFY_INDEX" = "1" ] || verify_index_bool="false"
+[ "$SMOKE_VERIFY_COPY_BETWEEN_PROJECTS" = "1" ] || verify_copy_between_projects_bool="false"
 [ "$SMOKE_VERIFY_DEPROVISION" = "1" ] || verify_deprovision_bool="false"
 
 export SMOKE_ACCOUNT_ID SMOKE_VM_NAME cleanup_success_bool cleanup_failure_bool
-export verify_index_bool verify_deprovision_bool
+export verify_index_bool verify_copy_between_projects_bool verify_deprovision_bool
 
 cd "$SRC_DIR"
 node - <<'NODE'
@@ -125,6 +132,8 @@ const fn = async () => {
     cleanup_on_success: process.env.cleanup_success_bool === "true",
     cleanup_on_failure: process.env.cleanup_failure_bool === "true",
     verify_backup_index_contents: process.env.verify_index_bool === "true",
+    verify_copy_between_projects:
+      process.env.verify_copy_between_projects_bool === "true",
     verify_deprovision: process.env.verify_deprovision_bool === "true",
   };
   if (process.env.SMOKE_ACCOUNT_ID) {

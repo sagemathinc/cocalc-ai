@@ -7,11 +7,12 @@ What it does:
 3. Starts the host and waits for running.
 4. Creates/starts a project on that host.
 5. Writes a sentinel file.
-6. Creates a backup and waits until an indexed snapshot is visible.
-7. Optionally verifies the sentinel file is browseable in backup index.
-8. Optionally creates a second VM host, moves the project there, and verifies
+6. Optionally creates a second project and verifies cross-project copy works.
+7. Creates a backup and waits until an indexed snapshot is visible.
+8. Optionally verifies the sentinel file is browseable in backup index.
+9. Optionally creates a second VM host, moves the project there, and verifies
    the sentinel file is restored and readable on the destination host.
-9. Optionally deprovisions all created hosts.
+10. Optionally deprovisions all created hosts.
 
 Typical usage from a node REPL:
 
@@ -30,6 +31,7 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import admins from "@cocalc/server/accounts/admins";
 import {
+  copyPathBetweenProjects,
   createProject,
   moveProject,
   start as startProject,
@@ -85,12 +87,14 @@ export type SelfHostMultipassSmokeOptions = {
   cleanup_on_failure?: boolean;
   verify_deprovision?: boolean;
   verify_backup_index_contents?: boolean;
+  verify_copy_between_projects?: boolean;
   verify_move_restore_on_second_host?: boolean;
   wait?: Partial<{
     ssh_ready: Partial<WaitOptions>;
     host_running: Partial<WaitOptions>;
     host_deprovisioned: Partial<WaitOptions>;
     backup_indexed: Partial<WaitOptions>;
+    copy_completed: Partial<WaitOptions>;
     move_completed: Partial<WaitOptions>;
     restored_file: Partial<WaitOptions>;
   }>;
@@ -109,8 +113,11 @@ export type SelfHostMultipassSmokeResult = {
   second_ssh_target?: string;
   second_host_id?: string;
   project_id?: string;
+  copy_project_id?: string;
   backup_id?: string;
   backup_op_id?: string;
+  copy_op_id?: string;
+  copy_dest_path?: string;
   move_op_id?: string;
   restore_op_id?: string;
   sentinel_path: string;
@@ -129,6 +136,10 @@ const DEFAULT_HOST_RUNNING_WAIT: WaitOptions = { intervalMs: 5000, attempts: 120
 const DEFAULT_BACKUP_INDEXED_WAIT: WaitOptions = {
   intervalMs: 3000,
   attempts: 80,
+};
+const DEFAULT_COPY_COMPLETED_WAIT: WaitOptions = {
+  intervalMs: 2000,
+  attempts: 90,
 };
 const DEFAULT_MOVE_COMPLETED_WAIT: WaitOptions = {
   intervalMs: 3000,
@@ -546,6 +557,7 @@ export async function runSelfHostMultipassBackupSmoke(
   const cleanupOnFailure = opts.cleanup_on_failure ?? false;
   const verifyDeprovision = opts.verify_deprovision ?? true;
   const verifyBackupIndexContents = opts.verify_backup_index_contents ?? true;
+  const verifyCopyBetweenProjects = opts.verify_copy_between_projects ?? true;
   const verifyMoveRestoreOnSecondHost =
     opts.verify_move_restore_on_second_host ?? true;
   const secondVmName = verifyMoveRestoreOnSecondHost
@@ -559,6 +571,10 @@ export async function runSelfHostMultipassBackupSmoke(
   const waitBackupIndexed = resolveWait(
     opts.wait?.backup_indexed,
     DEFAULT_BACKUP_INDEXED_WAIT,
+  );
+  const waitCopyCompleted = resolveWait(
+    opts.wait?.copy_completed,
+    DEFAULT_COPY_COMPLETED_WAIT,
   );
   const waitHostDeprovisioned = resolveWait(
     opts.wait?.host_deprovisioned,
@@ -576,6 +592,7 @@ export async function runSelfHostMultipassBackupSmoke(
   const tempDirs: string[] = [];
   const createdVmNames: string[] = [];
   const cleanupHostIds = new Set<string>();
+  const cleanupProjectIds = new Set<string>();
   const smokeTmpBase = join(homedir(), "cocalc-smoke-runner");
   let vmIp: string | undefined;
   let sshTarget: string | undefined;
@@ -584,12 +601,15 @@ export async function runSelfHostMultipassBackupSmoke(
   let host_id: string | undefined;
   let second_host_id: string | undefined;
   let project_id: string | undefined;
+  let copy_project_id: string | undefined;
   let backup_id: string | undefined;
   let backup_op_id: string | undefined;
+  let copy_op_id: string | undefined;
   let move_op_id: string | undefined;
   let restore_op_id: string | undefined;
   const sentinelPath = "smoke-self-host-backup/self-host-backup.txt";
   const sentinelValue = `self-host-smoke:${Date.now()}:${randomUUID()}`;
+  const copyDestPath = "smoke-self-host-backup/copied-from-project-1.txt";
   const debug_hints = {
     host_log: "/mnt/cocalc/data/log",
     project_host_log: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
@@ -625,12 +645,15 @@ export async function runSelfHostMultipassBackupSmoke(
   };
 
   const cleanup = async () => {
-    if (project_id) {
+    for (const cleanupProjectId of cleanupProjectIds) {
       try {
-        await deleteProject({ project_id, skipPermissionCheck: true });
+        await deleteProject({
+          project_id: cleanupProjectId,
+          skipPermissionCheck: true,
+        });
       } catch (err) {
         logger.warn("self-host smoke cleanup project failed", {
-          project_id,
+          project_id: cleanupProjectId,
           err: `${err}`,
         });
       }
@@ -724,6 +747,8 @@ export async function runSelfHostMultipassBackupSmoke(
         host_id,
         start: false,
       });
+      if (!project_id) throw new Error("failed to create project");
+      cleanupProjectIds.add(project_id);
     });
 
     await runStep("start_project", async () => {
@@ -740,6 +765,73 @@ export async function runSelfHostMultipassBackupSmoke(
       await client.mkdir(dirname(sentinelPath), { recursive: true });
       await client.writeFile(sentinelPath, sentinelValue);
     });
+
+    if (verifyCopyBetweenProjects) {
+      await runStep("create_second_project_for_copy", async () => {
+        if (!host_id) throw new Error("missing host_id");
+        copy_project_id = await createProject({
+          account_id,
+          title: `self-host copy smoke ${vmName}`,
+          host_id,
+          start: false,
+        });
+        if (!copy_project_id) {
+          throw new Error("failed to create copy destination project");
+        }
+        cleanupProjectIds.add(copy_project_id);
+      });
+
+      await runStep("start_second_project_for_copy", async () => {
+        if (!copy_project_id) throw new Error("missing copy_project_id");
+        await startProject({ account_id, project_id: copy_project_id, wait: true });
+      });
+
+      await runStep("copy_file_between_projects", async () => {
+        if (!project_id || !copy_project_id) {
+          throw new Error("missing cross-project copy context");
+        }
+        const destClient = fsClient({
+          client: conatWithProjectRouting(),
+          subject: fsSubject({ project_id: copy_project_id }),
+        });
+        await destClient.mkdir(dirname(copyDestPath), { recursive: true });
+        const op = await copyPathBetweenProjects({
+          account_id,
+          src: { project_id, path: sentinelPath },
+          dest: { project_id: copy_project_id, path: copyDestPath },
+        });
+        copy_op_id = op.op_id;
+      });
+
+      await runStep("wait_copy_between_projects_completed", async () => {
+        if (!copy_op_id) throw new Error("missing copy_op_id");
+        const summary = await waitForLroDone({
+          op_id: copy_op_id,
+          wait: waitCopyCompleted,
+        });
+        if (summary.status !== "succeeded") {
+          throw new Error(
+            `copy lro did not succeed: status=${summary.status} error=${summary.error ?? ""}`,
+          );
+        }
+      });
+
+      await runStep("verify_copied_file_in_second_project", async () => {
+        if (!copy_project_id) throw new Error("missing copy_project_id");
+        await waitForProjectFileValue({
+          project_id: copy_project_id,
+          path: copyDestPath,
+          expected: sentinelValue,
+          wait: waitRestoredFile,
+        });
+      });
+
+      await runStep("delete_second_project_for_copy", async () => {
+        if (!copy_project_id) return;
+        await deleteProject({ project_id: copy_project_id, skipPermissionCheck: true });
+        cleanupProjectIds.delete(copy_project_id);
+      });
+    }
 
     await runStep("create_backup", async () => {
       if (!project_id) throw new Error("missing project_id");
@@ -934,8 +1026,11 @@ export async function runSelfHostMultipassBackupSmoke(
       second_ssh_target: secondSshTarget,
       second_host_id,
       project_id,
+      copy_project_id,
       backup_id,
       backup_op_id,
+      copy_op_id,
+      copy_dest_path: copyDestPath,
       move_op_id,
       restore_op_id,
       sentinel_path: sentinelPath,
@@ -960,8 +1055,11 @@ export async function runSelfHostMultipassBackupSmoke(
       second_ssh_target: secondSshTarget,
       second_host_id,
       project_id,
+      copy_project_id,
       backup_id,
       backup_op_id,
+      copy_op_id,
+      copy_dest_path: copyDestPath,
       move_op_id,
       restore_op_id,
       sentinel_path: sentinelPath,
