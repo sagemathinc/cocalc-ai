@@ -17,7 +17,7 @@
     "test": "pnpm exec jest --forceExit",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores @types/debug,@types/jest,@types/node,ts-node,@cocalc/plus",
     "app": "pnpm exec cocalc-lite",
-    "jupyter:bench": "pnpm exec ts-node ./jupyter-benchmark.ts"
+    "jupyter:bench": "node ./dist/jupyter-benchmark.js"
   },
   "bin": {
     "cocalc-lite": "./bin/start.js"
