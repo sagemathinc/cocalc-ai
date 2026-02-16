@@ -413,14 +413,20 @@ describe("coalesces adjacent stream messages before applying limit", () => {
       outputs.push(...batch);
     }
     const stream = outputs.filter((x) => x.msg_type === "stream");
-    expect(stream.length).toBe(1);
-    expect(stream[0]).toMatchObject({
-      id: "cell-a",
-      msg_type: "stream",
-      content: { name: "stdout" },
-    });
-    expect(stream[0].content.text).toContain("0 ");
-    expect(stream[0].content.text).toContain("199 ");
+    // The first chunk may be fast-laned for latency, so stream output can
+    // arrive split into two coalesced chunks instead of one.
+    expect(stream.length).toBeGreaterThan(0);
+    expect(stream.length).toBeLessThanOrEqual(2);
+    for (const s of stream) {
+      expect(s).toMatchObject({
+        id: "cell-a",
+        msg_type: "stream",
+        content: { name: "stdout" },
+      });
+    }
+    const allText = stream.map((x) => x.content?.text ?? "").join("");
+    expect(allText).toContain("0 ");
+    expect(allText).toContain("199 ");
     expect(outputs.some((x) => x.more_output)).toBe(false);
   });
 

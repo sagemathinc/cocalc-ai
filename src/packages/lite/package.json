@@ -18,7 +18,8 @@
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores @types/debug,@types/jest,@types/node,ts-node,@cocalc/plus",
     "app": "pnpm exec cocalc-lite",
     "jupyter:bench": "node ./dist/jupyter-benchmark.js",
-    "jupyter:bench:browser": "node ./dist/jupyter-browser-benchmark.js"
+    "jupyter:bench:browser": "node ./dist/jupyter-browser-benchmark.js",
+    "jupyter:bench:scroll": "node ./dist/jupyter-scroll-benchmark.js"
   },
   "bin": {
     "cocalc-lite": "./bin/start.js"

@@ -53,6 +53,32 @@ export const ERROR_STYLE: CSS = {
   overflow: "auto",
 } as const;
 
+function forceWindowedListFromUrl():
+  | { enabled: boolean }
+  | { enabled?: undefined } {
+  try {
+    if (typeof window === "undefined") {
+      return {};
+    }
+    const raw = new URLSearchParams(window.location.search).get(
+      "jupyter_virtualization",
+    );
+    if (raw == null) {
+      return {};
+    }
+    const value = raw.trim().toLowerCase();
+    if (value === "1" || value === "true" || value === "on") {
+      return { enabled: true };
+    }
+    if (value === "0" || value === "false" || value === "off") {
+      return { enabled: false };
+    }
+  } catch {
+    // ignore malformed URL/search param
+  }
+  return {};
+}
+
 interface Props {
   error?: string;
   actions: JupyterActions;
@@ -223,10 +249,12 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
   // NOTE: we get this once from the account store and do NOT
   // load it again, since we didn't implement switching between
   // rendering modes on the fly and such a switch will crash for sure.
+  const defaultWindowedEnabled = !redux
+    .getStore("account")
+    .getIn(["editor_settings", "disable_jupyter_virtualization"]);
+  const forcedWindowed = forceWindowedListFromUrl();
   const useWindowedListRef = useRef<boolean>(
-    !redux
-      .getStore("account")
-      .getIn(["editor_settings", "disable_jupyter_virtualization"]),
+    forcedWindowed.enabled ?? defaultWindowedEnabled,
   );
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);

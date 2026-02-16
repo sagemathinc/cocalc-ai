@@ -72,6 +72,7 @@ Completed:
 4. [x] Server-side coalescing of adjacent `stream` messages is implemented in [src/packages/conat/project/jupyter/run-code.ts](./src/packages/conat/project/jupyter/run-code.ts).
 5. [x] Coalescing behavior is covered by tests in [src/packages/backend/conat/test/project/jupyter/run-code.test.ts](./src/packages/backend/conat/test/project/jupyter/run-code.test.ts).
 6. [x] Browser-path benchmark harness exists in lite mode via Playwright in [src/packages/lite/jupyter-browser-benchmark.ts](./src/packages/lite/jupyter-browser-benchmark.ts), with explicit `--base-url` / `--port` targeting.
+7. [x] Playwright scroll/virtualization benchmark harness exists in lite mode in [src/packages/lite/jupyter-scroll-benchmark.ts](./src/packages/lite/jupyter-scroll-benchmark.ts), with scenario profiles and reliability checks.
 
 Observed benchmark impact from coalescing (output profile):
 
@@ -291,6 +292,7 @@ Remaining questions:
    2. three high-output scenarios above.
 5. [ ] Audit and migrate ephemeral runtime syncdb fields (kernel state, telemetry) to ephemeral channels.
 6. [ ] Add first-pass output policy UI entry point for per-cell truncation/retention controls.
+7. [x] Add Playwright scroll benchmark harness for large notebook virtualization reliability checks.
 
 ## N. Notebook Virtualization (React-Virtuoso) and Stateful HTML Outputs
 
@@ -393,3 +395,73 @@ Add measurements specifically for virtualized mode:
 3. Integrate host geometry sync with virtuoso row measurements.
 4. Add notebook-level watchdog + graceful fallback.
 5. Run benchmark matrix and flip default for large notebooks.
+
+## O. Virtualization Reliability Matrix (Playwright)
+
+Harness:
+
+1. [src/packages/lite/jupyter-scroll-benchmark.ts](./src/packages/lite/jupyter-scroll-benchmark.ts)
+2. Script entrypoint in [src/packages/lite/package.json](./src/packages/lite/package.json): `jupyter:bench:scroll`
+
+Run commands:
+
+1. Quick profile:
+
+```bash
+pnpm -C src/packages/lite jupyter:bench:scroll -- --profile quick
+```
+
+2. Full profile:
+
+```bash
+pnpm -C src/packages/lite jupyter:bench:scroll -- --profile full
+```
+
+3. Single-scenario debugging:
+
+```bash
+pnpm -C src/packages/lite jupyter:bench:scroll -- --profile quick --scenario mixed_280 --headed
+```
+
+4. Force virtualization mode for A/B testing:
+
+```bash
+pnpm -C src/packages/lite jupyter:bench:scroll -- --profile quick --virtualization on
+pnpm -C src/packages/lite jupyter:bench:scroll -- --profile quick --virtualization off
+```
+
+The harness forces mode by adding `jupyter_virtualization=on|off` to notebook URLs.
+
+Current matrix dimensions:
+
+1. `text_400` (quick)
+2. `mixed_280` (quick)
+3. `text_1200` (full)
+4. `mixed_700` (full)
+
+For each scenario, the harness reports:
+
+1. Scroll duration.
+2. Approximate FPS and frame p95.
+3. Long task count/max.
+4. DOM cell counts at top/mid/bottom positions.
+5. Marker visibility at top/bottom before and after repeated scroll cycles.
+6. A `virtualization_likely` heuristic and overall reliability pass/fail.
+
+Initial interpretation guidance:
+
+1. If `DOM T/M/B` is much lower than total cell count, virtualization is likely active.
+2. Reliability requires:
+   1. top marker visible after cycles,
+   2. bottom marker visible after cycles,
+   3. nonzero max scroll range.
+3. Regressions worth immediate investigation:
+   1. marker disappears after cycles,
+   2. long task spikes with low FPS,
+   3. DOM counts unexpectedly near full cell count when virtualization should be active.
+
+Sample run notes (2026-02-16, single local machine):
+
+1. `text_400` and `mixed_280` both passed reliability checks.
+2. DOM counts were equal to total cell count (`T/M/B ~= total`), indicating virtualization was not active in that run configuration.
+3. This harness is therefore already useful to validate reliability and to confirm whether virtualization is actually engaged.

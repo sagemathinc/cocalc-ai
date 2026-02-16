@@ -557,7 +557,12 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
       <StableHtmlContext.Provider
         value={{ cellListDivRef, scrollOrResize, enabled: true }}
       >
-        <div ref={cellListDivRef} className="smc-vfill">
+        <div
+          ref={cellListDivRef}
+          className="smc-vfill"
+          data-jupyter-windowed-list="1"
+          cocalc-test="jupyter-cell-list-mode"
+        >
           <StatefulVirtuoso
             ref={virtuosoRef}
             cacheId={
@@ -671,6 +676,8 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
         <div
           key="cells"
           className="smc-vfill"
+          data-jupyter-windowed-list="0"
+          cocalc-test="jupyter-cell-list-mode"
           style={{
             fontSize: `${font_size}px`,
             paddingLeft: "5px",

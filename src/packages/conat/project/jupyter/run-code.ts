@@ -261,6 +261,7 @@ async function handleRequest({
   let fallbackProcessed = 0;
   let moreOutputBuffered = 0;
   let summaryError: string | undefined;
+  let firstClientBatchFastLane = false;
   const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
   for (const cell of cells) {
@@ -272,21 +273,36 @@ async function handleRequest({
 
   const throttle = new Throttle<OutputMessage>(MAX_MSGS_PER_SECOND);
   let unhandledClientWriteError: any = undefined;
-  throttle.on("data", async (mesgs) => {
+  const writeBatchToClient = async (
+    mesgs: OutputMessage[],
+    opts?: { fastLane?: boolean },
+  ) => {
+    if (mesgs.length == 0) {
+      return;
+    }
     totalBatches += 1;
     const coalescedMesgs = coalesceOutputBatch(mesgs);
     try {
       socket.write(coalescedMesgs);
+      if (opts?.fastLane) {
+        firstClientBatchFastLane = true;
+      }
     } catch (err) {
       if (err.code == "ENOBUFS") {
         enobufs += 1;
         // wait for the over-filled socket to finish writing out data.
         await socket.drain();
         socket.write(coalescedMesgs);
+        if (opts?.fastLane) {
+          firstClientBatchFastLane = true;
+        }
       } else {
         unhandledClientWriteError = err;
       }
     }
+  };
+  throttle.on("data", async (mesgs) => {
+    await writeBatchToClient(mesgs);
   });
 
   try {
@@ -346,7 +362,13 @@ async function handleRequest({
         }
         appendOutputMessage(output, mesg);
         if (limit == null || output.length < limit) {
-          throttle.write(mesg);
+          if (totalBatches == 0) {
+            // Fast-lane the very first output batch for lower latency.
+            // We keep existing throttling for all subsequent output.
+            await writeBatchToClient([mesg], { fastLane: true });
+          } else {
+            throttle.write(mesg);
+          }
         } else {
           if (output.length == limit) {
             throttle.write({
@@ -384,6 +406,7 @@ async function handleRequest({
       total_messages: totalMesgs,
       total_batches: totalBatches,
       more_output_buffered: moreOutputBuffered,
+      first_batch_fast_lane: firstClientBatchFastLane,
       fallback_activated: fallbackActivated,
       fallback_replayed: fallbackReplayed,
       fallback_processed: fallbackProcessed,

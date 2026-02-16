@@ -152,6 +152,7 @@ export class JupyterActions extends JupyterActions0 {
     const pendingSize = this.store?.get("pendingCells")?.size ?? 0;
     const payload = {
       t: new Date().toISOString(),
+      perfNow: typeof performance !== "undefined" ? performance.now() : undefined,
       path: this.path,
       runningNow: this.runningNow,
       runQueue: this.runQueue.length,
@@ -1634,24 +1635,24 @@ export class JupyterActions extends JupyterActions0 {
     await api.stop(this.syncdbPath);
   };
 
-  private getOutputHandler = (cell) => {
+  private getOutputHandler = (cell, runId?: string) => {
     const handler = new OutputHandler({ cell });
 
-    // save first time, so that other clients know this cell is running.
     // Under heavy output we throttle updates, but on "done" we force an
     // immediate flush to avoid leaving the cell in a stale running state.
-    let first = true;
+    // The first visible output update is written immediately (local only)
+    // so the initiating browser sees feedback without waiting for throttle.
+    let wroteFirstChange = false;
     const writeCell = (save: boolean) => {
       // we ONLY set certain fields; e.g., setting the input would be
       // extremely annoying since the user can edit the input while the
       // cell is running.
       const { id, state, output, start, end, exec_count } = cell;
       this._set({ id, state, output, start, end, exec_count }, save);
-      first = false;
     };
     const writeCellThrottled = throttle(
       () => {
-        writeCell(first);
+        writeCell(false);
       },
       1000 / OUTPUT_FPS,
       {
@@ -1659,11 +1660,23 @@ export class JupyterActions extends JupyterActions0 {
         trailing: true,
       },
     );
-    handler.on("change", writeCellThrottled);
+    handler.on("change", () => {
+      if (!wroteFirstChange) {
+        wroteFirstChange = true;
+        this.runDebug("runCells.output.first_write", {
+          runId,
+          id: cell.id,
+        });
+        writeCell(false);
+        return;
+      }
+      writeCellThrottled();
+    });
     handler.on("done", () => {
       writeCellThrottled.flush();
       writeCell(true);
       this.runDebug("runCells.handler.done.flush", {
+        runId,
         id: cell.id,
         state: cell.state,
       });
@@ -1957,7 +1970,7 @@ export class JupyterActions extends JupyterActions0 {
             }
             cell.kernel = kernel;
             handler?.done();
-            handler = this.getOutputHandler(cell);
+            handler = this.getOutputHandler(cell, runId);
             this.runDebug("runCells.handler.switch", {
               runId,
               id,
