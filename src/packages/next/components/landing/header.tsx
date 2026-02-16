@@ -16,7 +16,7 @@ import LiveDemo from "components/landing/live-demo";
 import Logo from "components/logo";
 import A from "components/misc/A";
 import ChatGPTHelp from "components/openai/chatgpt-help";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { useCustomize } from "lib/customize";
 import SubNav, { Page, SubPage } from "./sub-nav";
 
@@ -55,8 +55,6 @@ export default function Header(props: Props) {
     openaiEnabled,
     enabledPages,
   } = useCustomize();
-
-  if (basePath == null) return null;
 
   function ask() {
     if (onCoCalcCom && !IS_MOBILE) {
@@ -120,7 +118,7 @@ export default function Header(props: Props) {
         </A>
         {account && (
           <Tooltip title={"Browse all of your projects"}>
-            <a style={LinkStyle} href={join(basePath, "projects")}>
+            <a style={LinkStyle} href={join(ROOT_PATH, "projects")}>
               Your Projects
             </a>
           </Tooltip>

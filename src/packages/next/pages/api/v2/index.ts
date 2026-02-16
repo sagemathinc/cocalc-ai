@@ -1,7 +1,7 @@
 import { docsApiRoute } from "next-rest-framework";
 import { join } from "node:path";
 
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 
 
 export default docsApiRoute({
@@ -60,7 +60,7 @@ export default docsApiRoute({
       },
     ],
   },
-  openApiJsonPath: join(basePath, "openapi.json"),
+  openApiJsonPath: join(ROOT_PATH, "openapi.json"),
   docsConfig: {
     provider: "redoc", // redoc | swagger-ui
     title: "CoCalc API",

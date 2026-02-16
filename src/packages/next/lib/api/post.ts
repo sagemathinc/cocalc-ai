@@ -1,4 +1,4 @@
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import LRU from "lru-cache";
 import { join } from "path";
 
@@ -18,7 +18,7 @@ export default async function apiPost(
     }
   }
 
-  const response = await fetch(join(basePath, "api", VERSION, path), {
+  const response = await fetch(join(ROOT_PATH, "api", VERSION, path), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),

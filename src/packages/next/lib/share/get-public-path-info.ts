@@ -7,7 +7,6 @@ import getPool from "@cocalc/database/pool";
 import getContents, { getSizeLimit } from "./get-contents";
 import getProjectInfo from "./get-project";
 import { join } from "path";
-import basePath from "lib/base-path";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import getAccountId from "lib/account/get-account";
 import { isStarred as getIsStarred } from "@cocalc/server/public-paths/star";
@@ -124,7 +123,6 @@ export default async function getPublicPathInfo({
       id,
       ...rows[0],
       relativePath,
-      basePath,
       isStarred,
       ...details,
       created: rows[0].created?.toISOString() ?? null,

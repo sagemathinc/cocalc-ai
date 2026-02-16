@@ -14,6 +14,34 @@ const version = "${VERSION}";
 const name = "${NAME}";
 const mainScript = "${MAIN}";
 
+function installWarningFilter() {
+  const originalEmitWarning = process.emitWarning.bind(process);
+  process.emitWarning = (warning, ...args) => {
+    const message =
+      typeof warning === "string" ? warning : warning?.message ?? "";
+    const objectCode =
+      warning && typeof warning === "object" ? warning.code : undefined;
+    const argCode = typeof args[1] === "string" ? args[1] : undefined;
+    const code = objectCode ?? argCode;
+
+    if (
+      code === "DEP0040" ||
+      code === "DEP0169" ||
+      message.includes("SQLite is an experimental feature")
+    ) {
+      return;
+    }
+
+    return originalEmitWarning(warning, ...args);
+  };
+}
+
+function defaultLaunchpadDataDir() {
+  const dataHome =
+    process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+  return path.join(dataHome, "cocalc", "launchpad");
+}
+
 function extractAssetsSync() {
   const { getRawAsset } = require("node:sea");
   const { spawnSync } = require("node:child_process");
@@ -55,6 +83,7 @@ function extractAssetsSync() {
 }
 
 const Module = require("node:module");
+installWarningFilter();
 
 if (path.basename(process.argv[1]) == "node") {
   const noUserScript =
@@ -91,15 +120,17 @@ if (path.basename(process.argv[1]) == "node") {
   }
 
   process.chdir(path.dirname(script));
-  const argv = process.argv.slice(1);
-  if (argv[0] === process.argv[0]) {
-    argv.shift();
-  }
+  const argv = process.argv.slice(2);
   process.argv = [process.execPath, script, ...argv];
   process.env.COCALC_BIN_PATH = path.join(destDir, `src/packages/${name}/bin/`);
 
   process.env.PATH =
     process.env.COCALC_BIN_PATH + path.delimiter + process.env.PATH;
+
+  // In SEA deployments there is often no source checkout to infer a root dir
+  // from, which can otherwise lead to DATA resolving to "/data".
+  process.env.COCALC_DATA_DIR ??= defaultLaunchpadDataDir();
+  process.env.DATA ??= process.env.COCALC_DATA_DIR;
 
   process.env.AUTH_TOKEN ??= "random";
   process.env.COCALC_BUNDLE_DIR ??= path.dirname(script);

@@ -28,6 +28,7 @@ import { getAuthToken } from "./auth-token";
 import getLogger from "@cocalc/backend/logger";
 import compression from "compression";
 import { enableMemoryUseLogger } from "@cocalc/backend/memory";
+import { connectionInfoPath } from "./connection-info";
 
 const logger = getLogger("lite:main");
 
@@ -147,8 +148,7 @@ async function writeConnectionInfo({
   isHttps: boolean;
   hostname: string;
 }) {
-  const output = process.env.COCALC_WRITE_CONNECTION_INFO;
-  if (!output) return;
+  const output = connectionInfoPath();
   try {
     const { mkdir, writeFile, chmod } = await import("node:fs/promises");
     const { dirname } = await import("node:path");
@@ -164,6 +164,7 @@ async function writeConnectionInfo({
     await mkdir(dirname(output), { recursive: true });
     await writeFile(output, JSON.stringify(info, null, 2), "utf8");
     await chmod(output, 0o600);
+    logger.debug("wrote connection info", { output, port, pid: process.pid });
   } catch (err) {
     logger.warn("failed to write connection info", err);
   }

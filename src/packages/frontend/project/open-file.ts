@@ -22,7 +22,6 @@ import {
 } from "@cocalc/util/misc";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
 import { normalize } from "./utils";
-import { syncdbPath as ipynbSyncdbPath } from "@cocalc/util/jupyter/names";
 import { termPath } from "@cocalc/util/terminal/names";
 
 // if true, PRELOAD_BACKGROUND_TABS makes it so all tabs have their file editing
@@ -88,13 +87,15 @@ export async function open_file(
     return;
   }
 
+  const foreground = opts.foreground ?? true;
+  const foreground_project = opts.foreground_project ?? foreground;
   opts = defaults(opts, {
     path: required,
     ext: undefined,
     line: undefined,
     fragmentId: undefined,
-    foreground: true,
-    foreground_project: true,
+    foreground,
+    foreground_project,
     chat: undefined,
     chat_width: undefined,
     ignore_kiosk: false,
@@ -123,12 +124,15 @@ export async function open_file(
     return;
   }
 
-  // ensure the project is opened -- otherwise the modal to start
-  // the project won't appear.
-  redux.getActions("projects").open_project({
-    project_id: actions.project_id,
-    switch_to: opts.foreground_project,
-  });
+  // For foreground opens, ensure the project is opened so startup UI appears.
+  // For background opens, do not call open_project here since it can alter
+  // the current file listing target.
+  if (opts.foreground_project) {
+    redux.getActions("projects").open_project({
+      project_id: actions.project_id,
+      switch_to: true,
+    });
+  }
 
   const tabIsOpened = () =>
     !!actions.get_store()?.get("open_files")?.has(displayPath);
@@ -223,7 +227,10 @@ export async function open_file(
     });
     return;
   }
-  let ext = opts.ext ?? filename_extension(syncPath).toLowerCase();
+  // Editor selection must use the user-facing file path extension.
+  // syncPath may be canonicalized to backend identities, which are not
+  // necessarily editor extensions.
+  let ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
 
   let store = actions.get_store();
   if (store == null) {
@@ -232,7 +239,7 @@ export async function open_file(
 
   // Wait for the project to start opening.
   try {
-    await actions.ensureProjectIsOpen();
+    await actions.ensureProjectIsOpen(opts.foreground_project);
     if (!tabIsOpened()) {
       return;
     }
@@ -366,13 +373,140 @@ async function file_exists(project_id: string, path: string): Promise<boolean> {
   }
 }
 
-const log_open_time: { [path: string]: { id: string; start: number } } = {};
+export type OpenPhase =
+  | "open_start"
+  | "optimistic_ready"
+  | "sync_ready"
+  | "handoff_done"
+  | "handoff_differs";
+
+type OpenPhaseDetails = {
+  [key: string]: string | number | boolean | undefined;
+};
+
+interface OpenTiming {
+  id: string;
+  path: string;
+  start: number;
+  marks: Partial<Record<OpenPhase, number>>;
+  lastPhase?: OpenPhase;
+  lastPhaseDetails?: OpenPhaseDetails;
+  opened_time_ms?: number;
+  deleted?: number;
+  opened_time_logged: boolean;
+}
+
+const log_open_time: { [path: string]: OpenTiming } = {};
+
+function openTimingKey(project_id: string, path: string): string {
+  return `${project_id}-${normalize(path)}`;
+}
+
+function getOpenTiming(
+  project_id: string,
+  path: string,
+): OpenTiming | undefined {
+  const normalizedPath = normalize(path);
+  const normalizedKey = `${project_id}-${normalizedPath}`;
+  const direct = log_open_time[normalizedKey];
+  if (direct != null) {
+    return direct;
+  }
+  // Backward-compat for entries keyed before normalization.
+  const legacyKey = `${project_id}-${path}`;
+  const legacy = log_open_time[legacyKey];
+  if (legacy != null) {
+    log_open_time[normalizedKey] = legacy;
+    delete log_open_time[legacyKey];
+    return legacy;
+  }
+  return undefined;
+}
+
+function maybeCleanupOpenTiming(project_id: string, path: string): void {
+  const key = openTimingKey(project_id, path);
+  const data = log_open_time[key];
+  if (data == null || !data.opened_time_logged) return;
+  const hasOptimistic = data.marks.optimistic_ready != null;
+  const finalPhase =
+    data.marks.handoff_done != null ||
+    (!hasOptimistic && data.marks.sync_ready != null);
+  if (finalPhase) {
+    delete log_open_time[key];
+  }
+}
+
+function buildOpenUpdateEvent(
+  data: OpenTiming,
+  phase?: OpenPhase,
+  elapsed_ms?: number,
+): any {
+  const event: any = {
+    event: "open",
+    action: "open",
+    filename: data.path,
+    open_phase_marks_ms: { ...data.marks },
+  };
+  const effectivePhase = phase ?? data.lastPhase;
+  if (effectivePhase != null) {
+    event.open_phase = effectivePhase;
+    event.open_phase_elapsed_ms = elapsed_ms ?? data.marks[effectivePhase];
+  }
+  if (data.lastPhaseDetails != null) {
+    event.open_phase_details = data.lastPhaseDetails;
+  }
+  if (data.opened_time_ms != null) {
+    event.time = data.opened_time_ms;
+  }
+  if (data.deleted != null) {
+    event.deleted = data.deleted;
+  }
+  return event;
+}
+
+export function restart_open_timer(
+  project_id: string,
+  path: string,
+  details?: OpenPhaseDetails,
+): void {
+  const data = getOpenTiming(project_id, path);
+  if (data == null) return;
+  data.start = Date.now();
+  data.marks = {};
+  data.lastPhase = undefined;
+  data.lastPhaseDetails = details;
+  data.opened_time_ms = undefined;
+  data.marks.open_start = 0;
+  data.opened_time_logged = false;
+}
+
+export function mark_open_phase(
+  project_id: string,
+  path: string,
+  phase: OpenPhase,
+  details?: OpenPhaseDetails,
+): void {
+  path = normalize(path);
+  const data = getOpenTiming(project_id, path);
+  if (data == null) return;
+  const now = Date.now();
+  const elapsed_ms = now - data.start;
+  data.marks[phase] = elapsed_ms;
+  data.lastPhase = phase;
+  if (details != null) {
+    data.lastPhaseDetails = details;
+  }
+  const event = buildOpenUpdateEvent(data, phase, elapsed_ms);
+  redux.getProjectActions(project_id).log(event, data.id);
+  maybeCleanupOpenTiming(project_id, path);
+}
 
 export function log_file_open(
   project_id: string,
   path: string,
   deleted?: number,
 ): void {
+  path = normalize(path);
   // Only do this if the file isn't
   // deleted, since if it *is* deleted, then user sees a dialog
   // and we only log the open if they select to recreate the file.
@@ -396,10 +530,17 @@ export function log_file_open(
   // since the idea of "finishing opening and rendering" is
   // not simple to define.
   if (id !== undefined) {
-    const key = `${project_id}-${path}`;
+    const key = openTimingKey(project_id, path);
     log_open_time[key] = {
       id,
+      path,
       start: Date.now(),
+      marks: { open_start: 0 },
+      lastPhaseDetails: undefined,
+      lastPhase: undefined,
+      opened_time_ms: undefined,
+      deleted,
+      opened_time_logged: false,
     };
   }
 }
@@ -409,18 +550,22 @@ export function log_opened_time(project_id: string, path: string): void {
   // this file successfully opened and rendered so that the user can
   // actually see it.  This is used to get a sense for how long things
   // are taking...
-  const key = `${project_id}-${path}`;
-  const data = log_open_time[key];
+  path = normalize(path);
+  const data = getOpenTiming(project_id, path);
   if (data == null) {
     // never setup log event recording the start of open (this would get set in @open_file)
     return;
   }
+  if (data.opened_time_logged) {
+    return;
+  }
   const { id, start } = data;
-  // do not allow recording the time more than once, which would be weird.
-  delete log_open_time[key];
   const actions = redux.getProjectActions(project_id);
   const time = Date.now() - start;
-  actions.log({ time }, id);
+  data.opened_time_logged = true;
+  data.opened_time_ms = time;
+  actions.log(buildOpenUpdateEvent(data), id);
+  maybeCleanupOpenTiming(project_id, path);
 }
 
 // This modifies the opts object passed into it:
@@ -449,9 +594,6 @@ function get_side_chat_state(
 
 export function canonicalPath(path: string) {
   const ext = filename_extension(path).toLowerCase();
-  if (ext === "ipynb") {
-    return ipynbSyncdbPath(path);
-  }
   if (ext === "term" && !path_split(path).tail.startsWith(".")) {
     return termPath({ path, cmd: "", number: 0 });
   }

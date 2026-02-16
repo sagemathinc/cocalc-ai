@@ -435,7 +435,7 @@ export function networkArgument() {
   if (defaultNetwork === "pasta") {
     const pastaOptionsRaw = `${
       process.env.COCALC_PROJECT_RUNNER_PASTA_OPTIONS ??
-      "--map-gw,--map-guest-addr,169.254.1.2"
+      "--map-gw"
     }`.trim();
     if (!pastaOptionsRaw) {
       return "--network=pasta";
@@ -457,42 +457,107 @@ export function networkArgument() {
     : "--network=slirp4netns";
 }
 
-function hasExplicitNetworkOverride(): boolean {
-  return !!`${process.env.COCALC_PROJECT_RUNNER_NETWORK ?? ""}`.trim();
-}
-
-function allowNetworkFallback(): boolean {
-  const raw = `${process.env.COCALC_PROJECT_RUNNER_NETWORK_FALLBACK ?? "true"}`
-    .trim()
-    .toLowerCase();
-  return !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
-}
-
-function slirpNetworkArgument(): string {
-  const allowHostLoopbackRaw = `${process.env.COCALC_PROJECT_RUNNER_ALLOW_HOST_LOOPBACK ?? "true"}`
-    .trim()
-    .toLowerCase();
-  const allowHostLoopback = !(
-    allowHostLoopbackRaw === "0" ||
-    allowHostLoopbackRaw === "false" ||
-    allowHostLoopbackRaw === "no"
-  );
-  return allowHostLoopback
-    ? "--network=slirp4netns:allow_host_loopback=true"
-    : "--network=slirp4netns";
-}
-
 function pastaConatHost(): string | undefined {
   const host = `${process.env.COCALC_PROJECT_RUNNER_PASTA_CONAT_HOST ?? ""}`
     .trim();
   return host || undefined;
 }
 
-function pastaHostAliasDefaultAddr(): string | undefined {
-  const addr = `${
-    process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ?? "169.254.1.2"
+function slirpConatHost(): string {
+  const host = `${process.env.COCALC_PROJECT_RUNNER_SLIRP_CONAT_HOST ?? "10.0.2.2"}`
+    .trim();
+  return host || "10.0.2.2";
+}
+
+// Parse Linux /proc/net/route content and return the default gateway IPv4.
+//
+// Why we do this:
+// - With pasta --map-gw, host services bound on host loopback are reachable
+//   from the container via the container's default gateway.
+// - This avoids hardcoding host aliases such as 169.254.1.2, which are not
+//   universally valid across pasta versions/configurations.
+//
+// /proc/net/route stores Destination and Gateway as little-endian hex. For the
+// default route Destination is 00000000, and Gateway must be byte-reversed when
+// converting to dotted-decimal IPv4.
+function defaultGatewayFromProcNetRouteContent(
+  content: string,
+): string | undefined {
+  const lines = content.trim().split("\n");
+  for (const line of lines.slice(1)) {
+    const cols = line.trim().split(/\s+/);
+    // Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
+    if (cols.length < 4) continue;
+    const destination = cols[1];
+    const gatewayHex = cols[2];
+    const flagsHex = cols[3];
+    if (destination !== "00000000") continue;
+    const flags = Number.parseInt(flagsHex, 16);
+    // RTF_GATEWAY bit must be set.
+    if (Number.isNaN(flags) || (flags & 0x2) === 0) continue;
+    if (!/^[0-9a-fA-F]{8}$/.test(gatewayHex)) continue;
+    const bytes = gatewayHex.match(/../g);
+    if (!bytes || bytes.length !== 4) continue;
+    // Example: C0A80401 -> 192.168.4.1 (reverse byte order first).
+    const octets = bytes.reverse().map((x) => Number.parseInt(x, 16));
+    if (octets.some((x) => Number.isNaN(x))) continue;
+    return octets.join(".");
+  }
+  return undefined;
+}
+
+async function defaultGatewayFromProcNetRoute(): Promise<string | undefined> {
+  try {
+    const content = await readFile("/proc/net/route", "utf8");
+    return defaultGatewayFromProcNetRouteContent(content);
+  } catch {
+    return undefined;
+  }
+}
+
+async function pastaHostAliasDefaultAddr(
+  selectedNetwork: string,
+): Promise<string | undefined> {
+  // Explicit override always wins.
+  const explicit = `${
+    process.env.COCALC_PROJECT_RUNNER_PASTA_HOST_ALIAS_ADDR ?? ""
   }`.trim();
+  if (explicit) {
+    return explicit;
+  }
+  // Only synthesize a default host alias when pasta is configured with
+  // --map-guest-addr. Otherwise we may force host.containers.internal to an
+  // unroutable address on older pasta versions.
+  if (!selectedNetwork.includes("--map-guest-addr")) {
+    if (!selectedNetwork.includes("--map-gw")) {
+      return undefined;
+    }
+    // With --map-gw (and without --map-guest-addr support), host loopback is
+    // reachable via the guest default gateway address.
+    const gateway = await defaultGatewayFromProcNetRoute();
+    if (!gateway) return undefined;
+    return gateway;
+  }
+  const addr = "169.254.1.2";
   return addr || undefined;
+}
+
+function replaceUrlHostname(value: string, hostname: string): string {
+  try {
+    const url = new URL(value);
+    url.hostname = hostname;
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function getUrlHostname(value: string): string | undefined {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return undefined;
+  }
 }
 
 export function publishHost(): string {
@@ -726,29 +791,38 @@ export async function start({
     const originalConatServer = env.CONAT_SERVER;
     const selectedNetwork = networkArgument();
     args.push(selectedNetwork);
-    let pastaHostAliasArgIndex: number | undefined;
+    const originalConatHost = getUrlHostname(originalConatServer);
+    const conatUsesDefaultHostAlias =
+      originalConatHost === "host.containers.internal";
+    const explicitPastaConatHost = pastaConatHost();
+    const slirpConatServer = conatUsesDefaultHostAlias
+      ? replaceUrlHostname(originalConatServer, slirpConatHost())
+      : originalConatServer;
     if (selectedNetwork.startsWith("--network=pasta")) {
-      const explicitPastaConatHost = pastaConatHost();
-      try {
-        const url = new URL(originalConatServer);
-        if (
-          explicitPastaConatHost &&
-          url.hostname === "host.containers.internal"
-        ) {
-          url.hostname = explicitPastaConatHost;
-          env.CONAT_SERVER = url.toString();
-          logger.debug("using pasta conat host override", {
-            project_id,
-            conat_server: env.CONAT_SERVER,
-          });
-        }
-      } catch {
-        // Keep original conat server on parse failure.
+      const resolvedPastaConatHost =
+        explicitPastaConatHost ??
+        (conatUsesDefaultHostAlias
+          ? await pastaHostAliasDefaultAddr(selectedNetwork)
+          : undefined);
+      if (resolvedPastaConatHost && conatUsesDefaultHostAlias) {
+        env.CONAT_SERVER = replaceUrlHostname(
+          originalConatServer,
+          resolvedPastaConatHost,
+        );
+        logger.debug("using pasta conat host", {
+          project_id,
+          conat_server: env.CONAT_SERVER,
+          host: resolvedPastaConatHost,
+          explicit: !!explicitPastaConatHost,
+        });
       }
-      const pastaHostAliasAddr = pastaHostAliasDefaultAddr();
+
+      const pastaHostAliasAddr = conatUsesDefaultHostAlias
+        ? resolvedPastaConatHost
+        : undefined;
       if (pastaHostAliasAddr) {
-        // Ensure a stable host alias for conat under pasta.
-        pastaHostAliasArgIndex = args.length;
+        // Preserve host.containers.internal for software inside the project that
+        // expects this alias, but point it at an actually routable address.
         args.push(
           "--add-host",
           `host.containers.internal:${pastaHostAliasAddr}`,
@@ -768,7 +842,8 @@ export async function start({
         // keep defaults on parse failure
       }
       const expectedPastaHost =
-        explicitPastaConatHost ?? "host.containers.internal";
+        explicitPastaConatHost ??
+        (conatUsesDefaultHostAlias ? pastaHostAliasAddr : conatHost);
       const assumptionsOk =
         !!conatHost &&
         conatHost === expectedPastaHost &&
@@ -798,6 +873,15 @@ export async function start({
           },
         );
       }
+    } else if (
+      selectedNetwork.startsWith("--network=slirp4netns") &&
+      conatUsesDefaultHostAlias
+    ) {
+      env.CONAT_SERVER = slirpConatServer;
+      logger.debug("using slirp conat host", {
+        project_id,
+        conat_server: env.CONAT_SERVER,
+      });
     }
     const publishHostValue = publishHost();
     args.push("-p", `${publishHostValue}:${ssh_port}:22`);
@@ -830,12 +914,8 @@ export async function start({
       args.push(mountArg({ source: join(scratch, "tmp"), target: "/tmp" }));
     }
 
-    let conatServerArgIndex: number | undefined;
     for (const key in env) {
       args.push("-e", `${key}=${env[key]}`);
-      if (key === "CONAT_SERVER") {
-        conatServerArgIndex = args.length - 1;
-      }
     }
 
     args.push(...(await podmanLimits(config)));
@@ -848,45 +928,7 @@ export async function start({
     args.push(projectScript, "--init", "project_init.sh");
 
     logger.debug("start: launching container - ", name);
-
-    const canFallback =
-      !hasExplicitNetworkOverride() &&
-      allowNetworkFallback() &&
-      selectedNetwork.startsWith("--network=pasta");
-    const fallbackNetwork = slirpNetworkArgument();
-    const networkArgIndex = args.findIndex((x) => x === selectedNetwork);
-    const setNetworkArg = (networkArg: string) => {
-      if (networkArgIndex !== -1) {
-        args[networkArgIndex] = networkArg;
-      } else {
-        args.push(networkArg);
-      }
-    };
-
-    try {
-      await podman(args);
-    } catch (err) {
-      // Start with pasta by default, but retry with slirp4netns automatically
-      // when runtime doesn't support pasta yet.
-      if (!canFallback) throw err;
-      logger.warn(
-        "podman run failed with pasta; retrying with slirp4netns fallback",
-        {
-          project_id,
-          selectedNetwork,
-          fallbackNetwork,
-          err: `${err}`,
-        },
-      );
-      if (pastaHostAliasArgIndex != null) {
-        args.splice(pastaHostAliasArgIndex, 2);
-      }
-      if (conatServerArgIndex != null) {
-        args[conatServerArgIndex] = `CONAT_SERVER=${originalConatServer}`;
-      }
-      setNetworkArg(fallbackNetwork);
-      await podman(args);
-    }
+    await podman(args);
 
     report({
       type: "start-project",

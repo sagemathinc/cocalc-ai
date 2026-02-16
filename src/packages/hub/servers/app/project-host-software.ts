@@ -17,6 +17,7 @@ type FileMeta = {
 const logger = getLogger("hub:software-endpoint");
 const fileMetaCache = new Map<string, FileMeta>();
 const normalizedBasePath = basePath === "/" ? "" : basePath;
+const SAFE_PLATFORM_TOKEN = /^[A-Za-z0-9._-]{1,64}$/;
 
 function softwareBaseFromReq(req: Request): string {
   return `${req.protocol}://${req.get("host")}${normalizedBasePath}/software`;
@@ -59,6 +60,8 @@ function resolveBundlePath(
   os: string,
   arch?: string,
 ): string | undefined {
+  if (!SAFE_PLATFORM_TOKEN.test(os)) return undefined;
+  if (arch != null && !SAFE_PLATFORM_TOKEN.test(arch)) return undefined;
   if (artifact === "project-host" || artifact === "project") {
     const file = join(packagesRoot, artifact, "build", `bundle-${os}.tar.xz`);
     return existsSync(file) ? file : undefined;
@@ -101,11 +104,27 @@ function sendShaResponse(res: Response, sha256: string, filename: string): void 
   res.send(`${sha256}  ${filename}\n`);
 }
 
+function validatePlatformTokens(
+  res: Response,
+  opts: { os: string; arch?: string },
+): boolean {
+  if (!SAFE_PLATFORM_TOKEN.test(opts.os)) {
+    sendNotFound(res, "invalid os selector");
+    return false;
+  }
+  if (opts.arch != null && !SAFE_PLATFORM_TOKEN.test(opts.arch)) {
+    sendNotFound(res, "invalid arch selector");
+    return false;
+  }
+  return true;
+}
+
 async function sendLatestBundleManifest(
   req: Request,
   res: Response,
   opts: { artifact: BundleArtifact; os: string; arch?: string },
 ): Promise<void> {
+  if (!validatePlatformTokens(res, opts)) return;
   const packagesRoot = resolvePackagesRoot();
   if (!packagesRoot) {
     sendNotFound(
@@ -153,6 +172,7 @@ async function sendBundleFile(
   res: Response,
   opts: { artifact: BundleArtifact; os: string; arch?: string; version: string },
 ): Promise<void> {
+  if (!validatePlatformTokens(res, opts)) return;
   const packagesRoot = resolvePackagesRoot();
   if (!packagesRoot) {
     sendNotFound(
@@ -193,6 +213,7 @@ async function sendBundleSha(
   res: Response,
   opts: { artifact: BundleArtifact; os: string; arch?: string; version: string },
 ): Promise<void> {
+  if (!validatePlatformTokens(res, opts)) return;
   const packagesRoot = resolvePackagesRoot();
   if (!packagesRoot) {
     sendNotFound(

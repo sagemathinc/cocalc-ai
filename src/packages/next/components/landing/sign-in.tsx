@@ -11,7 +11,7 @@ import { CSSProperties, ReactNode } from "react";
 import { Icon } from "@cocalc/frontend/components/icon";
 import SSO from "components/auth/sso";
 import { Paragraph } from "components/misc";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { useCustomize } from "lib/customize";
 
 interface Props {
@@ -37,7 +37,7 @@ export default function SignIn({ hideFree, style, emphasize }: Props) {
       <Paragraph style={style}>
         <Button
           size="large"
-          onClick={() => (window.location.href = join(basePath, "projects"))}
+          onClick={() => (window.location.href = join(ROOT_PATH, "projects"))}
           title={`Open the ${siteName} app and view your projects.`}
           type="primary"
           icon={<Icon name="edit" />}

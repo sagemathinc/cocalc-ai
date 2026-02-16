@@ -167,6 +167,9 @@ importers:
       '@cocalc/conat':
         specifier: workspace:*
         version: link:../conat
+      '@cocalc/openat2':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@cocalc/sync':
         specifier: workspace:*
         version: link:../sync
@@ -228,6 +231,9 @@ importers:
       '@types/node':
         specifier: ^22.10.10
         version: 22.18.13
+      socket.io-client:
+        specifier: ^4.8.3
+        version: 4.8.3(bufferutil@4.0.9)(utf-8-validate@6.0.5)
 
   cdn:
     devDependencies:
@@ -1083,6 +1089,9 @@ importers:
       '@types/lodash':
         specifier: ^4.17.20
         version: 4.17.20
+      ascii-table3:
+        specifier: ^1.0.1
+        version: 1.0.1
       compression:
         specifier: ^1.8.1
         version: 1.8.1
@@ -2544,6 +2553,22 @@ packages:
 
   '@cocalc/local-storage-lru@2.5.0':
     resolution: {integrity: sha512-hTBh1LxKxWD6q8NCj0xZthT/T4b6hJC1dxaM89CEoAW5pPV9q30NeKugL/Of8oKfC1mHYIPU96LV9miXtDGq0Q==}
+
+  '@cocalc/openat2-linux-arm64-gnu@0.1.0':
+    resolution: {integrity: sha512-ySAcw9gLqQT+AvcXzBZma0hHKMoZS2KB5mZpTVvXa1rlCCQHQecLRojWRWRJI3D5kMgwPKFmHpVDv4lZ73MyCA==}
+    engines: {node: '>=18'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cocalc/openat2-linux-x64-gnu@0.1.0':
+    resolution: {integrity: sha512-X0bBB3+6L4t7jmVaI7bqZtJYmja4xMC6Gn7XK/nDxaHaNUdNh+Npz5v4yBIq34GPpvAAHIt3Pc00PZElW3Zdgw==}
+    engines: {node: '>=18'}
+    cpu: [x64]
+    os: [linux]
+
+  '@cocalc/openat2@0.1.0':
+    resolution: {integrity: sha512-kil1KsVI4GKEKYAl0xFI6rwpL8sDd+I9hGOZhSdUOoRXVxa11W3c3mm6mpVKNNpo7PFc8wjEd9uRCWjAfeMlIg==}
+    engines: {node: '>=18'}
 
   '@cocalc/primus-multiplex@1.1.0':
     resolution: {integrity: sha512-o8AOFVs996NQ2nvCjoSzNkBJRkPYi5XVPw0BbtMZUz+hnegSCfGawT59S++wta0CzGdFPWnyPtQqVJpobQlT4w==}
@@ -13658,6 +13683,17 @@ snapshots:
       - supports-color
 
   '@cocalc/local-storage-lru@2.5.0': {}
+
+  '@cocalc/openat2-linux-arm64-gnu@0.1.0':
+    optional: true
+
+  '@cocalc/openat2-linux-x64-gnu@0.1.0':
+    optional: true
+
+  '@cocalc/openat2@0.1.0':
+    optionalDependencies:
+      '@cocalc/openat2-linux-arm64-gnu': 0.1.0
+      '@cocalc/openat2-linux-x64-gnu': 0.1.0
 
   '@cocalc/primus-multiplex@1.1.0':
     dependencies:

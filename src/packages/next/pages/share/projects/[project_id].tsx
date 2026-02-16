@@ -9,7 +9,7 @@ Show all the public paths in a given project, and maybe other information about 
 */
 
 import { join } from "path";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { isUUID } from "lib/share/util";
 import withCustomize from "lib/with-customize";
 import getProject from "lib/share/get-project";
@@ -38,7 +38,7 @@ export async function getServerSideProps(context) {
       const owner_id = await getProjectOwner(project_id);
       const owner = await getOwnerName(owner_id);
       if (owner) {
-        return { props: { redirect: join(basePath, owner, project.name) } };
+        return { props: { redirect: join(ROOT_PATH, owner, project.name) } };
       }
     }
     props = {

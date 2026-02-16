@@ -38,8 +38,17 @@ export interface Sync {
     project_id: string;
     path: string;
   }) => Promise<{ patches: Patch[] }>;
+  purgeHistory: (opts: {
+    account_id?: string;
+    project_id: string;
+    path: string;
+  }) => Promise<{
+    deleted: number;
+    history_epoch: number;
+  }>;
 }
 
 export const sync = {
   history: authFirst,
+  purgeHistory: authFirst,
 };

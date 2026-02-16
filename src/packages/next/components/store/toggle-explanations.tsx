@@ -17,7 +17,7 @@ export function ToggleExplanations({ showExplanations, setShowExplanations }) {
           checked={showExplanations}
           onChange={(show) => {
             setShowExplanations(show);
-            // ugly and ignores basePath -- change later:
+            // TODO: move this key to a centralized constants module.
             set_local_storage("store_show_explanations", show ? "t" : "");
           }}
         />{" "}

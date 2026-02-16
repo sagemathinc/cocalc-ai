@@ -14,6 +14,7 @@ export let fs: Filesystem;
 let tempDir;
 
 const TEMP_PREFIX = "cocalc-test-btrfs-";
+jest.setTimeout(30_000);
 
 export async function before() {
   const tmp = tmpdir();
@@ -48,13 +49,26 @@ export async function before() {
 }
 
 export async function after() {
-  await until(async () => {
-    try {
-      await fs.unmount();
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  try {
+    fs?.close?.();
+  } catch {
+    // best effort
+  }
+  const mount = tempDir ? join(tempDir, "mnt") : undefined;
+  await until(
+    async () => {
+      try {
+        await fs.unmount();
+        return true;
+      } catch {
+        if (mount) {
+          await sudo({ command: "umount", args: ["-l", mount] });
+          return true;
+        }
+        return false;
+      }
+    },
+    { timeout: 20_000, start: 100, max: 2000 },
+  );
   await rm(tempDir, { force: true, recursive: true });
 }

@@ -1,23 +1,13 @@
-// next.js defines / to be an invalid basepath, whereas in cocalc it is valid:
-const BASE_PATH = process.env.BASE_PATH ?? "/";
-
-// next.js definition:
-const basePath = BASE_PATH == "/" ? "" : BASE_PATH;
-
 const { join, resolve, sep } = require("path");
 
-// Important!  We include resolve('.') and basePath to avoid
-// any possibility of multiple cocalc installs or different base
-// paths conflicting with each other and causing corruption.
+// Important!  We include resolve('.') to avoid any possibility of multiple
+// cocalc installs conflicting with each other and causing corruption.
 const cacheDirectory = join(
   `/tmp/nextjs-${require("os").userInfo().username}`,
-  basePath,
   resolve("."),
 );
 
 const config = {
-  basePath,
-  env: { BASE_PATH },
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: true },
   // Keep pglite in node_modules so its .data/.wasm assets resolve at runtime.
@@ -26,8 +16,8 @@ const config = {
     // Webpack breaks without this pg-native alias, even though it's dead code,
     // due to how the pg module does package detection internally.
     config.resolve.alias["pg-native"] = ".";
-    // Some backend code uses @lydell/node-pty but it won't be used in next:
-    config.resolve.alias["@lydell/node-pty"] = ".";
+    // Some backend code uses node-pty but it won't be used in next:
+    config.resolve.alias["node-pty"] = ".";
     // These aliases are so we don't end up with two distinct copies
     // of React in our application, since this doesn't work at all!
     config.resolve.alias["react"] = resolve(__dirname, "node_modules", "react");

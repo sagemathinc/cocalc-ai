@@ -24,4 +24,10 @@ describe("fd files", () => {
     expect(truncated).toBe(false);
     expect(stdout.toString()).toEqual("a.txt\n");
   });
+
+  it("rejects absolute ignore-file paths", async () => {
+    await expect(
+      fd(tempDir, { options: ["--ignore-file", "/tmp/ignore-file"] }),
+    ).rejects.toThrow("path must be relative");
+  });
 });

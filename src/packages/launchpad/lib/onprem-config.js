@@ -1,6 +1,7 @@
 const { existsSync } = require("fs");
 const { join } = require("path");
 const { resolveOnPremHost } = require("@cocalc/server/onprem");
+const resolveLaunchpadHost = resolveOnPremHost;
 
 function parsePort(value) {
   if (value == null || value === "") {
@@ -63,7 +64,7 @@ function applyLaunchpadDefaults() {
 
 module.exports = {
   applyLaunchpadDefaults,
-  resolveLaunchpadHost: resolveOnPremHost,
+  resolveLaunchpadHost,
   logLaunchpadConfig() {
     const summary = {
       host: resolveOnPremHost(),

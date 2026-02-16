@@ -120,6 +120,7 @@ import {
   moveDestinationPath,
   normalizeDirectoryDestination,
 } from "@cocalc/frontend/project/action-paths";
+import { isJupyterPath } from "@cocalc/util/jupyter/names";
 
 const { defaults, required } = misc;
 
@@ -537,12 +538,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
-  ensureProjectIsOpen = async () => {
+  ensureProjectIsOpen = async (switch_to: boolean = true) => {
     const s = this.redux.getStore("projects");
     if (!s.is_project_open(this.project_id)) {
       this.redux.getActions("projects").open_project({
         project_id: this.project_id,
-        switch_to: true,
+        switch_to,
       });
       await s.waitUntilProjectIsOpen(this.project_id, 30);
     }
@@ -624,9 +625,23 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return "/root";
     }
     const store = this.get_store();
-    const homeDirectory = store?.get("available_features")?.get("homeDirectory");
+    const homeDirectory = store
+      ?.get("available_features")
+      ?.get("homeDirectory");
     if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
       return normalizeAbsolutePath(homeDirectory);
+    }
+    const configuredHomeDirectory = store?.getIn([
+      "configuration",
+      "main",
+      "capabilities",
+      "homeDirectory",
+    ]);
+    if (
+      typeof configuredHomeDirectory === "string" &&
+      configuredHomeDirectory.length > 0
+    ) {
+      return normalizeAbsolutePath(configuredHomeDirectory);
     }
     return "/";
   };
@@ -652,82 +667,40 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
   };
 
-  private getPathRoute = (
-    path: string,
-  ): { source: "files" | "home"; relativePath: string } => {
+  private getPathRoute = (path: string): { relativePath: string } => {
     const normalized = normalize(path);
     if (this.isVirtualListingPath(normalized)) {
-      const source: "files" | "home" = normalized.startsWith("/")
-        ? "files"
-        : "home";
       return {
-        source,
         relativePath: normalized.replace(/^\/+/, "").replace(/\/+$/, ""),
       };
     }
     if (normalized === "/") {
-      return { source: "files", relativePath: "" };
+      return { relativePath: "" };
     }
-    const home = this.getHomeDirectoryForPaths();
-    const absolute = normalizeAbsolutePath(normalized, home);
-    if (
-      home !== "/" &&
-      (absolute === home || absolute.startsWith(`${home}/`))
-    ) {
-      return {
-        source: "home",
-        relativePath: absolute === home ? "" : absolute.slice(home.length + 1),
-      };
-    }
+    const absolute = normalizeAbsolutePath(
+      normalized,
+      this.getHomeDirectoryForPaths(),
+    );
     return {
-      source: "files",
       relativePath: absolute === "/" ? "" : absolute.slice(1),
     };
   };
 
   private toUrlPath = (path: string, isDirectory: boolean): string => {
-    const { source, relativePath } = this.getPathRoute(path);
+    const { relativePath } = this.getPathRoute(path);
     if (relativePath.length === 0) {
-      return `${source}/`;
+      return "files/";
     }
-    return `${source}/${relativePath}${isDirectory ? "/" : ""}`;
+    return `files/${relativePath}${isDirectory ? "/" : ""}`;
   };
 
-  private fromUrlDirectoryPath = (
-    path: string,
-    source: "files" | "home" = "files",
-  ): string => {
+  private fromUrlDirectoryPath = (path: string): string => {
     let normalized = normalize(path);
-    const stripSourcePrefix = (
-      value: string,
-      prefix: "files" | "home",
-    ): string => {
-      const trimmed = value.replace(/^\/+/, "");
-      if (trimmed === prefix) return "";
-      if (trimmed.startsWith(`${prefix}/`)) {
-        return trimmed.slice(prefix.length + 1);
-      }
-      return value;
-    };
-    normalized = stripSourcePrefix(normalized, source);
-    if (source === "home") {
-      const home = this.getHomeDirectoryForPaths();
-      if (normalized === "" || normalized === "." || normalized === "/") {
-        return home;
-      }
-      if (this.isVirtualListingPath(normalized)) {
-        return normalized;
-      }
-      // Defensive decode for URLs that accidentally encoded absolute /home/*
-      // paths as /home/<home-tail>/..., which would otherwise duplicate.
-      const homeTail = home.startsWith("/home/") ? home.slice("/home/".length) : "";
-      if (
-        homeTail.length > 0 &&
-        (normalized === homeTail || normalized.startsWith(`${homeTail}/`))
-      ) {
-        return normalizeAbsolutePath(`/home/${normalized}`);
-      }
-      return normalizeAbsolutePath(normalized, home);
+    const trimmed = normalized.replace(/^\/+/, "");
+    if (trimmed === "files") {
+      normalized = "";
+    } else if (trimmed.startsWith("files/")) {
+      normalized = trimmed.slice("files/".length);
     }
     if (normalized === "" || normalized === "." || normalized === "/") {
       return "/";
@@ -739,12 +712,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   private toAuxTabPath = (tab: "new" | "search", path: string): string => {
-    const { source, relativePath } = this.getPathRoute(path);
-    if (source === "home") {
-      return relativePath.length === 0
-        ? `${tab}/home/`
-        : `${tab}/home/${relativePath}`;
-    }
+    const { relativePath } = this.getPathRoute(path);
     return relativePath.length === 0 ? `${tab}/` : `${tab}/${relativePath}`;
   };
 
@@ -758,7 +726,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
   push_state(local_url?: string, hash?: string): void {
     if (local_url == null) {
-      local_url = this._last_history_state ?? (lite ? "home/" : "files/");
+      local_url = this._last_history_state ?? "files/";
     }
     this._last_history_state = local_url;
     set_url(this._url_in_project(local_url), hash);
@@ -848,11 +816,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     const change: any = { active_project_tab: key };
     switch (key) {
       case "files":
+        // From project-home, opening Explorer should default to HOME instead of "/".
+        // Keep "/" if user already explicitly navigated there.
+        const currentPathAbs = store.get("current_path_abs") ?? "/";
+        const filesPathAbs =
+          prev_active_project_tab === "home" && currentPathAbs === "/"
+            ? this.getHomeDirectoryForPaths()
+            : currentPathAbs;
+        if (filesPathAbs !== currentPathAbs) {
+          this.set_current_path(filesPathAbs);
+        }
         if (opts.change_history) {
-          this.set_url_to_path(
-            store.get("current_path_abs") ?? "/",
-            "",
-          );
+          this.set_url_to_path(filesPathAbs, "");
         }
         break;
 
@@ -902,6 +877,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         break;
 
       case "home":
+        this.set_current_path(this.getHomeDirectoryForPaths());
         if (opts.change_history) {
           this.push_state("project-home", "");
         }
@@ -961,13 +937,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
                 syncPath,
                 this.open_files?.get(path, "ext"),
               );
-              if (this.open_files == null) return;
-              info.redux_name = name;
-              info.Editor = Editor;
+              const current_info = this.get_store()
+                ?.get("open_files")
+                .getIn([path, "component"]) as any;
+              if (this.open_files == null || current_info == null) return;
+              current_info.redux_name = name;
+              current_info.Editor = Editor;
               // IMPORTANT: we make a *copy* of info below to trigger an update
               // of the component that displays this editor.  Otherwise, the user
               // would just see a spinner until they tab away and tab back.
-              this.open_files.set(path, "component", { ...info });
+              this.open_files.set(path, "component", { ...current_info });
               // just like in the case where it is already loaded, we have to "show" it.
               // this is important, because e.g. the store has a "visible" field, which stays undefined
               // which in turn causes e.g. https://github.com/sagemathinc/cocalc/issues/5398
@@ -987,14 +966,17 @@ export class ProjectActions extends Actions<ProjectStoreState> {
             } catch (err) {
               // Error already reported to user by alert_message in file-editors.ts
               // Show error component in the editor area
-              if (this.open_files == null) return;
+              const current_info = this.get_store()
+                ?.get("open_files")
+                .getIn([path, "component"]) as any;
+              if (this.open_files == null || current_info == null) return;
               const error = err as Error;
-              info.Editor = () =>
+              current_info.Editor = () =>
                 require("react").createElement(EditorLoadError, {
                   path,
                   error,
                 });
-              this.open_files.set(path, "component", { ...info });
+              this.open_files.set(path, "component", { ...current_info });
               if (!opts.noFocus) {
                 this.show_file(path);
               }
@@ -1245,7 +1227,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   public open_in_new_browser_window(path: string, fullscreen = "kiosk"): void {
-    let url = join(appBasePath, this._url_in_project(this.toUrlPath(path, false)));
+    let url = join(
+      appBasePath,
+      this._url_in_project(this.toUrlPath(path, false)),
+    );
     url += "?session=";
     if (fullscreen) {
       url += `&fullscreen=${fullscreen}`;
@@ -1332,6 +1317,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   private get_sync_path(path: string): string {
     const sync_path = this.open_files?.get(path, "sync_path");
     if (typeof sync_path === "string" && sync_path.length > 0) {
+      // Backward-compat: old sessions may persist ipynb tabs with sync_path
+      // set to .<name>.ipynb.sage-jupyter2. For editor actions/state, notebooks
+      // must be keyed by the user-visible .ipynb path.
+      if (
+        misc.filename_extension(path).toLowerCase() === "ipynb" &&
+        isJupyterPath(sync_path)
+      ) {
+        return path;
+      }
       return sync_path;
     }
     return path;
@@ -1661,11 +1655,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     } else if (path.startsWith("files/")) {
       const rel = path.replace(/^files\/+/, "");
       path = rel.length === 0 ? "/" : `/${rel}`;
-    } else if (path === "home") {
-      path = this.getHomeDirectoryForPaths();
-    } else if (path.startsWith("home/")) {
-      const rel = path.replace(/^home\/+/, "");
-      path = normalizeAbsolutePath(rel, this.getHomeDirectoryForPaths());
     }
     try {
       await this.ensureProjectIsOpen();
@@ -1719,8 +1708,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
     let history_path_abs = store.get("history_path_abs") || "/";
     const is_adjacent_abs =
-      pathAbs.length > 0 &&
-      !(history_path_abs + "/").startsWith(pathAbs + "/");
+      pathAbs.length > 0 && !(history_path_abs + "/").startsWith(pathAbs + "/");
     const is_nested_abs = pathAbs.length > history_path_abs.length;
     if (is_adjacent_abs || is_nested_abs) {
       history_path_abs = pathAbs;
@@ -2173,6 +2161,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         } as any),
       );
 
+      // Keep project-home aligned with HOME once capabilities arrive.
+      if (store.get("active_project_tab") === "home") {
+        const homeDirectory = (next.get("main") as any)?.capabilities
+          ?.homeDirectory;
+        if (typeof homeDirectory === "string" && homeDirectory.length > 0) {
+          this.set_current_path(homeDirectory);
+        }
+      }
+
       return next.get(aspect) as Configuration;
     },
   );
@@ -2336,7 +2333,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   // using listings cache, attempt to tell if path is a directory;
   // undefined if no data about path in the cache.
   isDirViaCache = (path: string): boolean | undefined => {
-    if (!path || path === "." || path === "/" || this.isVirtualListingPath(path)) {
+    if (
+      !path ||
+      path === "." ||
+      path === "/" ||
+      this.isVirtualListingPath(path)
+    ) {
       return true;
     }
     const { head: dir, tail: base } = misc.path_split(path);
@@ -2399,11 +2401,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   };
 
-  deleteFiles = async ({
-    paths,
-  }: {
-    paths: string[];
-  }): Promise<void> => {
+  deleteFiles = async ({ paths }: { paths: string[] }): Promise<void> => {
     if (paths.length == 0) {
       // nothing to do
       return;
@@ -2564,10 +2562,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
     }
     const store = this.get_store();
-    const basePath =
-      current_path ??
-      store?.get("current_path_abs") ??
-      "/";
+    const basePath = current_path ?? store?.get("current_path_abs") ?? "/";
     let s = misc.path_to_file(this.toAbsoluteCurrentPath(basePath), name);
     if (ext != null && misc.filename_extension(s) !== ext) {
       s = `${s}.${ext}`;
@@ -2587,9 +2582,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }): Promise<void> => {
     const store = this.get_store();
     const basePath = this.toAbsoluteCurrentPath(
-      current_path ??
-        store?.get("current_path_abs") ??
-        "/",
+      current_path ?? store?.get("current_path_abs") ?? "/",
     );
     const path = join(basePath, name);
     const fs = this.fs();
@@ -2626,9 +2619,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (misc.is_only_downloadable(name)) {
       const store = this.get_store();
       const basePath = this.toAbsoluteCurrentPath(
-        current_path ??
-          store?.get("current_path_abs") ??
-          "/",
+        current_path ?? store?.get("current_path_abs") ?? "/",
       );
       this.new_file_from_web(name, basePath);
       return;
@@ -2648,9 +2639,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
     const store = this.get_store();
     const basePath = this.toAbsoluteCurrentPath(
-      current_path ??
-        store?.get("current_path_abs") ??
-        "/",
+      current_path ?? store?.get("current_path_abs") ?? "/",
     );
     let path = join(basePath, name);
     if (ext) {
@@ -2860,39 +2849,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     fragmentId?: FragmentId,
   ): Promise<void> => {
     const segments = target.split("/");
-    const main_segment = segments[0] as FixedTab | "home" | "project-home";
+    const main_segment = segments[0] as FixedTab | "project-home";
     const hasScopedPathSource =
       (main_segment === "new" || main_segment === "search") &&
-      (segments[1] === "home" || segments[1] === "files");
-    const scopedPathSource: "files" | "home" =
-      hasScopedPathSource && segments[1] === "home" ? "home" : "files";
+      segments[1] === "files";
     const scopedPathIndex = hasScopedPathSource ? 2 : 1;
-    // Reserve /home for filesystem routes. Project home tab lives at /project-home.
-    const isHomeFileRoute = main_segment === "home";
-    const fileRouteSource: "files" | "home" = isHomeFileRoute ? "home" : "files";
-    // In lite mode, /home/* URL resolution depends on homeDirectory capability.
-    // Ensure configuration is loaded before mapping home-scoped routes.
-    if (lite && (fileRouteSource === "home" || scopedPathSource === "home")) {
-      const store = this.get_store();
-      const homeDirectory = store?.get("available_features")?.get("homeDirectory");
-      if (typeof homeDirectory !== "string" || homeDirectory.length === 0) {
-        try {
-          await this.init_configuration("main");
-        } catch (err) {
-          console.warn("project/load_target: unable to preload configuration", err);
-        }
-      }
-    }
-
-    const full_path = this.fromUrlDirectoryPath(
-      segments.slice(1).join("/"),
-      fileRouteSource,
-    );
+    const full_path = this.fromUrlDirectoryPath(segments.slice(1).join("/"));
     const parent_path = this.fromUrlDirectoryPath(
       segments.slice(1, segments.length - 1).join("/"),
-      fileRouteSource,
     );
-    if (main_segment === "files" || isHomeFileRoute) {
+    if (main_segment === "files") {
       if (target.endsWith("/")) {
         this.open_directory(parent_path, change_history);
         return;
@@ -2902,9 +2868,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         return; // project closed already
       }
       // Provisional directory context to avoid flashing "/" while stat is in flight.
-      // If this turns out to be a file, open_file will set the correct active tab/path.
+      // If this turns out to be a file, use its parent directory context.
       if (this.isDirViaCache(full_path) !== false) {
-        this.set_current_path(full_path);
+        this.set_current_path(parent_path);
         this.set_active_tab("files", {
           update_file_listing: false,
           change_history: false,
@@ -2934,10 +2900,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "new": // ignore foreground for these and below, since would be nonsense
         this.set_current_path(
-          this.fromUrlDirectoryPath(
-            segments.slice(scopedPathIndex).join("/"),
-            scopedPathSource,
-          ),
+          this.fromUrlDirectoryPath(segments.slice(scopedPathIndex).join("/")),
         );
         this.set_active_tab("new", { change_history: change_history });
         break;
@@ -2960,10 +2923,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
 
       case "search":
         this.set_current_path(
-          this.fromUrlDirectoryPath(
-            segments.slice(scopedPathIndex).join("/"),
-            scopedPathSource,
-          ),
+          this.fromUrlDirectoryPath(segments.slice(scopedPathIndex).join("/")),
         );
         this.set_active_tab("search", { change_history: change_history });
         break;
@@ -3214,10 +3174,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       this.setState(x);
     };
-    const path =
-      opts?.path ??
-      store.get("current_path_abs") ??
-      "/";
+    const path = opts?.path ?? store.get("current_path_abs") ?? "/";
     const options = getSearch({
       project_id: this.project_id,
       path,

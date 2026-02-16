@@ -13,7 +13,7 @@ import Head from "components/landing/head";
 import Header from "components/landing/header";
 import { Paragraph, Title } from "components/misc";
 import { TESTIMONIALS, TestimonialComponent } from "components/testimonials";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import { MAX_WIDTH } from "lib/config";
 import { Customize, CustomizeType } from "lib/customize";
 import withCustomize from "lib/with-customize";
@@ -41,7 +41,7 @@ export default function AllNews(props: Props) {
         <Paragraph style={{ textAlign: "center", margin: "40px 0" }}>
           <Button
             size="large"
-            onClick={() => (window.location.href = join(basePath, "/"))}
+            onClick={() => (window.location.href = join(ROOT_PATH, "/"))}
             title={`Open the ${siteName} homepage.`}
             type="primary"
           >

@@ -19,6 +19,7 @@ the old viewer, which is a convenient fallback if somebody needs it for some rea
 import { debounce } from "lodash";
 import { List } from "immutable";
 import { once } from "@cocalc/util/async-utils";
+import { alert_message } from "@cocalc/frontend/alerts";
 import {
   filename_extension,
   history_path,
@@ -185,6 +186,10 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
       }
     }
     this.syncdoc.on("change", debounce(this.syncdoc_changed, 750));
+    this.syncdoc.on("history-purged", () => {
+      this.setState({ has_full_history: true });
+      this.syncdoc_changed();
+    });
     // cause initial load -- we could be plugging into an already loaded syncdoc,
     // so there wouldn't be any change event, so we have to trigger this.
     this.syncdoc_changed();
@@ -371,6 +376,66 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     const actions = this.redux.getProjectActions(this.project_id);
     await actions.open_file({ path, foreground: true });
     return path;
+  };
+
+  purgeHistory = async (): Promise<{
+    deleted: number;
+    history_epoch: number;
+  }> => {
+    const result = await webapp_client.conat_client.hub.sync.purgeHistory({
+      project_id: this.project_id,
+      path: this.docpath,
+    });
+    const projectActions: any = this.redux.getProjectActions(this.project_id);
+    const store = projectActions?.get_store?.();
+    const openFiles = store?.get?.("open_files");
+    const timeTravelPath = history_path(this.docpath);
+    const toClose = new Set<string>();
+    if (openFiles?.has?.(this.docpath)) {
+      toClose.add(this.docpath);
+    }
+    if (openFiles?.has?.(timeTravelPath)) {
+      toClose.add(timeTravelPath);
+    }
+    if (openFiles?.has?.(this.path)) {
+      toClose.add(this.path);
+    }
+    openFiles?.forEach?.((_obj, displayPath) => {
+      const syncPath = openFiles.getIn([displayPath, "sync_path"]);
+      if (
+        syncPath === this.docpath ||
+        syncPath === timeTravelPath ||
+        displayPath === this.path
+      ) {
+        toClose.add(displayPath);
+      }
+    });
+    // Close .time-travel tabs first, then the document tab.
+    const closeOrder = [...toClose].sort((a, b) => {
+      const aIsHistory = a.endsWith(EXTENSION) || a === this.path;
+      const bIsHistory = b.endsWith(EXTENSION) || b === this.path;
+      if (aIsHistory === bIsHistory) return 0;
+      return aIsHistory ? -1 : 1;
+    });
+    for (const displayPath of closeOrder) {
+      projectActions?.close_tab?.(displayPath);
+    }
+    // This state is conservative until syncdoc metadata change propagates.
+    this.setState({ has_full_history: true });
+    this.syncdoc_changed();
+    return result;
+  };
+
+  export_history = async (): Promise<void> => {
+    await this.exportEditHistory();
+  };
+
+  purge_history = async (): Promise<void> => {
+    const result = await this.purgeHistory();
+    alert_message({
+      type: "success",
+      message: `Purged ${result.deleted} history entries.`,
+    });
   };
 
   // We have not implemented any way to do programmatical_goto_line this for time travel yet.

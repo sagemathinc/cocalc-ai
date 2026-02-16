@@ -9,7 +9,6 @@ Support for virtual hosts.
 
 import type { Request, Response } from "express";
 
-import basePath from "@cocalc/backend/base-path";
 import { getLogger } from "@cocalc/backend/logger";
 import isAuthenticated from "./authenticate";
 import getVirtualHostInfo from "./get-vhost-info";
@@ -48,11 +47,6 @@ export default function virtualHostsMiddleware() {
     }
 
     let path = req.url;
-    if (basePath && basePath != "/") {
-      // This is only going to happen in case of doing
-      // cc-in-cc development.
-      path = req.url.slice(basePath.length);
-    }
     if (path == "") {
       path = "/";
     }

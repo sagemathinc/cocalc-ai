@@ -24,12 +24,12 @@ export function init(redux, configuration: CustomizeState) {
     .getActions("projects")
     .open_project({
       project_id,
-      target: "home/",
+      target: "project-home",
       switch_to: true,
       restore_session: false,
     })
     .catch((err) => {
-      console.warn("lite/init: failed to open default home target", err);
+      console.warn("lite/init: failed to open default project-home target", err);
     });
 
   if (configuration.remote_sync) {

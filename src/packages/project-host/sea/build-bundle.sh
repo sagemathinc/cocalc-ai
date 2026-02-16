@@ -92,6 +92,44 @@ fetch_native_pkg() {
   rm -rf "$tmp"
 }
 
+fetch_openat_binary() {
+  local pkg="$1"
+  local filename="$2"
+  local dest_root="$3"
+  local tmp
+  tmp=$(mktemp -d)
+  echo "  (fetching ${pkg} binary ${filename} from npm)"
+  (
+    cd "$tmp"
+    npm pack --silent "$pkg" >/dev/null
+    local tgz
+    tgz=$(ls *.tgz | head -n1)
+    if [ -z "$tgz" ]; then
+      echo "ERROR: failed to download ${pkg} via npm pack"
+      exit 1
+    fi
+    tar -xzf "$tgz"
+  )
+  if [ ! -f "$tmp/package/$filename" ]; then
+    echo "ERROR: ${pkg} did not contain ${filename}" >&2
+    rm -rf "$tmp"
+    exit 1
+  fi
+  cp "$tmp/package/$filename" "$dest_root/$filename"
+  rm -rf "$tmp"
+}
+
+ensure_openat_binary() {
+  local triple="$1"
+  local dest_root="$2"
+  local filename="cocalc_openat2.${triple}.node"
+  local pkg="@cocalc/openat2-${triple}"
+  if [ -f "$dest_root/$filename" ]; then
+    return
+  fi
+  fetch_openat_binary "$pkg" "$filename" "$dest_root"
+}
+
 copy_native_pkg() {
   local pkg="$1"
   local dest_root="$2"
@@ -167,6 +205,24 @@ for dest_root in "$OUT/bundle" "$OUT/main"; do
   fi
   if [ ! -f "$dest_root/node_modules/node-pty/prebuilds/linux-arm64/pty.node" ]; then
     echo "ERROR: missing node-pty linux-arm64 prebuild in $dest_root" >&2
+    exit 1
+  fi
+done
+
+echo "- Ensure openat2 binaries (linux x64 + arm64)"
+for dest_root in "$OUT/bundle" "$OUT/main"; do
+  ensure_openat_binary "linux-x64-gnu" "$dest_root"
+  ensure_openat_binary "linux-arm64-gnu" "$dest_root"
+done
+
+echo "- Verify openat2 binaries (linux x64 + arm64)"
+for dest_root in "$OUT/bundle" "$OUT/main"; do
+  if [ ! -f "$dest_root/cocalc_openat2.linux-x64-gnu.node" ]; then
+    echo "ERROR: missing openat2 linux-x64-gnu binary in $dest_root" >&2
+    exit 1
+  fi
+  if [ ! -f "$dest_root/cocalc_openat2.linux-arm64-gnu.node" ]; then
+    echo "ERROR: missing openat2 linux-arm64-gnu binary in $dest_root" >&2
     exit 1
   fi
 done

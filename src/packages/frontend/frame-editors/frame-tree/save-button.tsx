@@ -19,6 +19,7 @@ interface Props {
   has_unsaved_changes?: boolean;
   has_uncommitted_changes?: boolean;
   read_only?: boolean;
+  is_connecting?: boolean;
   is_saving?: boolean;
   no_labels?: boolean;
   size?: ButtonProps["size"];
@@ -33,6 +34,7 @@ export function SaveButton({
   has_unsaved_changes,
   has_uncommitted_changes,
   read_only,
+  is_connecting,
   is_saving,
   no_labels,
   size,
@@ -45,14 +47,17 @@ export function SaveButton({
   const intl = useIntl();
 
   const label = useMemo(() => {
-    if (!no_labels || read_only) {
+    if (!no_labels || read_only || is_connecting) {
+      if (is_connecting) {
+        return intl.formatMessage(labels.frame_editors_title_bar_connecting);
+      }
       return intl.formatMessage(labels.frame_editors_title_bar_save_label, {
         type: read_only ? "read_only" : "save",
       });
     } else {
       return null;
     }
-  }, [no_labels, read_only]);
+  }, [no_labels, read_only, is_connecting]);
 
   const disabled = useMemo(
     () => !has_unsaved_changes || !!read_only,
@@ -60,8 +65,9 @@ export function SaveButton({
   );
 
   const icon = useMemo(
-    () => (is_saving ? "arrow-circle-o-left" : "save"),
-    [is_saving],
+    () =>
+      is_connecting ? "spinner" : is_saving ? "arrow-circle-o-left" : "save",
+    [is_connecting, is_saving],
   );
 
   function renderLabel() {
@@ -87,7 +93,11 @@ export function SaveButton({
         ...style,
       }}
     >
-      <Icon name={icon} style={{ display: "inline-block" }} />
+      <Icon
+        name={icon}
+        spin={!!is_connecting || !!is_saving}
+        style={{ display: "inline-block" }}
+      />
       {renderLabel()}
       <UncommittedChanges
         has_uncommitted_changes={has_uncommitted_changes}

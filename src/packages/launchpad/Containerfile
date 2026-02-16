@@ -2,7 +2,7 @@ FROM node:24-bookworm-slim
 
 ENV NODE_ENV=production \
     COCALC_BUNDLE_DIR=/opt/cocalc \
-    COCALC_PGLITE_BUNDLE_DIR=/opt/cocalc/pglite \
+    COCALC_PGLITE_BUNDLE_DIR=/opt/cocalc/bundle/node_modules/@electric-sql/pglite/dist \
     COCALC_API_V2_ROOT=/opt/cocalc/next-dist/pages/api/v2
 
 WORKDIR /opt/cocalc

@@ -58,12 +58,15 @@ function makeAuthCookie(
   return attrs.join("; ");
 }
 
-/** remove ?auth_token=... from a path+query without knowing full origin */
-function stripAuthTokenFromUrlPath(originalPath: string): string {
+// Return a query-only redirect target that strips auth_token while keeping all
+// other query params. Using query-only Location preserves path prefixes used by
+// strip-prefix proxies.
+function stripAuthTokenFromQuery(originalPath: string): string {
   // Use a fake origin to leverage URL parsing safely.
   const u = new URL(originalPath, "http://x");
   u.searchParams.delete("auth_token");
-  return u.pathname + (u.search ? u.search : "") + (u.hash || "");
+  const query = u.searchParams.toString();
+  return query ? `?${query}` : "?";
 }
 
 export async function initAuth({ app, AUTH_TOKEN, isHttps }) {
@@ -82,7 +85,7 @@ export async function initAuth({ app, AUTH_TOKEN, isHttps }) {
 
     if (hasCookie) {
       if (token) {
-        const clean = stripAuthTokenFromUrlPath(req.url);
+        const clean = stripAuthTokenFromQuery(req.url);
         res.status(303).setHeader("Location", clean).end();
         return;
       } else {
@@ -96,7 +99,7 @@ export async function initAuth({ app, AUTH_TOKEN, isHttps }) {
         "Set-Cookie",
         makeAuthCookie(isHttps, AUTH_COOKIE_VALUE, req.headers.host),
       );
-      const clean = stripAuthTokenFromUrlPath(req.url);
+      const clean = stripAuthTokenFromQuery(req.url);
       // 303 avoids issues with non-GET replays
       res.status(303).setHeader("Location", clean).end();
       return;

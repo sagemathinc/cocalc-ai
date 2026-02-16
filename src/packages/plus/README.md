@@ -20,6 +20,24 @@ CoCalc Plus is the productized wrapper around the lightweight core shipped in `@
 - Build with `pnpm --filter @cocalc/plus build`.
 - At runtime this package re-uses Lite’s entry points; product-specific CLI and packaging live here.
 
+## Base URL / Proxy Behavior
+
+`cocalc-plus` now follows a code-server style model for URL prefixing:
+
+- The app does **not** require compile-time `BASE_PATH` configuration.
+- It works when a reverse proxy strips a fixed prefix and forwards to the Plus server.
+- Redirects from non-SPA routes preserve the current prefix (using relative redirects), so deep links under a proxy continue to work.
+
+Examples:
+
+- Direct access: `http://localhost:30002`
+- Behind strip-prefix proxy: external `https://example.com/tools/cocalc/...` forwarded to `http://127.0.0.1:30002/...`
+
+Notes:
+
+- This behavior is for Lite/Plus static app routing and project routes.
+- `/port/...` style proxying remains a separate mechanism (primarily used for JupyterLab-style apps), and is not the target model for Plus base-URL behavior.
+
 ## Packaging & Distribution
 
 - **Bundle**: `pnpm --filter @cocalc/plus build:bundle` (uses ncc to bundle `bin/start.js` and copies static assets).

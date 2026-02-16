@@ -12,7 +12,7 @@ import { join } from "path";
 import { CSSProperties } from "react";
 
 import InPlaceSignInOrUp from "components/auth/in-place-sign-in-or-up";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import editURL from "lib/share/edit-url";
 import useCustomize from "lib/use-customize";
 import IFrame from "./iframe";
@@ -51,7 +51,7 @@ export default function Path(props: Props) {
 
   const src = embed
     ? join(
-        basePath,
+        ROOT_PATH,
         `static/embed.html?target=projects/${project_id}/files/${path ?? ""}`
       )
     : appURL + "?fullscreen=project&session=";

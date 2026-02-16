@@ -1,7 +1,9 @@
 import { conat } from "@cocalc/backend/conat";
-import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
 import { type Patch, type HistoryInfo } from "@cocalc/conat/hub/api/sync";
-import { client_db } from "@cocalc/util/db-schema/client-db";
+import {
+  history as historyImpl,
+  purgeHistory as purgeHistoryImpl,
+} from "@cocalc/conat/hub/api/sync-impl";
 import { assertCollab } from "./util";
 
 export async function history({
@@ -17,34 +19,31 @@ export async function history({
   start_seq?: number;
   end_seq?: number;
 }): Promise<{ patches: Patch[]; info: HistoryInfo }> {
-  await assertCollab({ account_id, project_id });
-
-  const client = conat();
-  const name = patchesStreamName({ path });
-  const astream = client.sync.astream({
-    name,
+  return await historyImpl({
+    account_id,
     project_id,
-    noInventory: true,
-  });
-  const patches: Patch[] = [];
-  for await (const patch of await astream.getAll({
+    path,
     start_seq,
     end_seq,
-  })) {
-    patches.push(patch as any);
-  }
-
-  const akv = client.sync.akv({
-    name: `__dko__syncstrings:${client_db.sha1(project_id, path)}`,
-    project_id,
-    noInventory: true,
+    client: conat(),
+    assertAccess: assertCollab,
   });
-  const keys = await akv.keys();
-  const info: Partial<HistoryInfo> = {};
-  for (const key of keys) {
-    if (key[0] != "[") continue;
-    info[JSON.parse(key)[1]] = await akv.get(key);
-  }
+}
 
-  return { patches, info: info as HistoryInfo };
+export async function purgeHistory({
+  account_id,
+  project_id,
+  path,
+}: {
+  account_id?: string;
+  project_id: string;
+  path: string;
+}): Promise<{ deleted: number; history_epoch: number }> {
+  return await purgeHistoryImpl({
+    account_id,
+    project_id,
+    path,
+    client: conat(),
+    assertAccess: assertCollab,
+  });
 }

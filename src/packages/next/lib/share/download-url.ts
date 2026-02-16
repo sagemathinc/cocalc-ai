@@ -2,7 +2,7 @@
 
 import { encodePath } from "./raw-url";
 import { join } from "path";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 
 export default function downloadURL(
   id: string,
@@ -10,7 +10,7 @@ export default function downloadURL(
   relativePath: string
 ): string {
   return join(
-    basePath,
+    ROOT_PATH,
     `share/download/${id}/${encodePath(join(path, relativePath))}`
   );
 }

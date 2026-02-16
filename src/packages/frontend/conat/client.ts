@@ -341,13 +341,9 @@ export class ConatClient extends EventEmitter {
     if (!url) return url;
     const routing = this.getProjectRoutingInfo(project_id);
     if (!routing) return url;
-    // Local proxy path continues to be authenticated by the hub proxy path.
-    if (
-      typeof window !== "undefined" &&
-      routing.address.startsWith(window.location.origin)
-    ) {
-      return url;
-    }
+    // Project-host HTTP/WS proxy auth is enforced on the target host, including
+    // local-proxy paths through the hub. Always attach a short-lived bootstrap
+    // token so project-host can mint its own HttpOnly session cookie.
     const token = await this.getProjectHostToken({
       host_id: routing.host_id,
       project_id,

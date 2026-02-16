@@ -16,7 +16,7 @@ import { Paragraph, Text, Title } from "components/misc";
 import A from "components/misc/A";
 import Loading from "components/share/loading";
 import SiteName from "components/share/site-name";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import useIsBrowser from "lib/hooks/is-browser";
 import useProfile from "lib/hooks/profile";
 import { useRouter } from "next/router";
@@ -120,7 +120,7 @@ export default function ConfigLayout({ page }: Props) {
             <Paragraph>
               This page is under construction. To configure your <SiteName />{" "}
               account, visit{" "}
-              <A href={join(basePath, "settings")} external>
+              <A href={join(ROOT_PATH, "settings")} external>
                 Account Preferences
               </A>
               .

@@ -17,6 +17,8 @@ export async function localPathFileserver({
   project_id,
   unsafeMode,
   rootfs,
+  allowSafeModeHardlink,
+  allowSafeModeSymlink,
   onMutation,
 }: {
   service?: string;
@@ -30,6 +32,8 @@ export async function localPathFileserver({
   path?: string;
   unsafeMode?: boolean;
   rootfs?: string;
+  allowSafeModeHardlink?: boolean;
+  allowSafeModeSymlink?: boolean;
   onMutation?: (opts: { subject: string; op: string; path?: string }) => void | Promise<void>;
 } = {}) {
   logger.debug("localPathFileserver", {
@@ -38,6 +42,8 @@ export async function localPathFileserver({
     unsafeMode,
     path,
     rootfs,
+    allowSafeModeHardlink,
+    allowSafeModeSymlink,
   });
   client ??= conat();
   logger.debug("localPathFileserver: got client");
@@ -75,6 +81,8 @@ export async function localPathFileserver({
         // In unsafe mode (e.g. lite / local dev), default to true absolute
         // path resolution from filesystem root unless explicitly overridden.
         rootfs: rootfs ?? (unsafeMode ? "/" : undefined),
+        allowSafeModeHardlink,
+        allowSafeModeSymlink,
       });
     },
     onMutation,

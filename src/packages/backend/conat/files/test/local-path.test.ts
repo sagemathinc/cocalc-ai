@@ -235,9 +235,7 @@ describe("use all the standard api functions of fs", () => {
 
   it("rm a directory", async () => {
     await fs.mkdir("rm-dir");
-    expect(async () => {
-      await fs.rm("rm-dir");
-    }).rejects.toThrow("Path is a directory");
+    await expect(fs.rm("rm-dir")).rejects.toThrow("Path is a directory");
     await fs.rm("rm-dir", { recursive: true });
     expect(await fs.exists("rm-dir")).toBe(false);
   });

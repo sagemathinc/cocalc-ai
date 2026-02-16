@@ -58,6 +58,7 @@ function subjectForHost(host_id: string): string {
 }
 
 const STATUS_SUBJECT = "project-hosts.status";
+export const ONPREM_REST_TUNNEL_LOCAL_PORT = 9345;
 
 export function createHostControlClient({
   host_id,

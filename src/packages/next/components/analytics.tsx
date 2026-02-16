@@ -4,7 +4,7 @@
  */
 
 import { join } from "path";
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 import useCustomize from "lib/use-customize";
 
 import type { JSX } from "react";
@@ -40,7 +40,7 @@ function CoCalcAnalytics() {
       key="cocalc-analytics"
       async={true}
       defer={true}
-      src={join(basePath, "analytics.js")}
+      src={join(ROOT_PATH, "analytics.js")}
     />,
   ];
 }

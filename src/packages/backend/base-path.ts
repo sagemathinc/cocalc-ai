@@ -53,6 +53,10 @@ function isValidBasePath(s: string): boolean {
 }
 
 function basePath(): string {
+  // Launchpad is intentionally served at URL root.
+  if (process.env.COCALC_PRODUCT === "launchpad") {
+    return "/";
+  }
   if (process.env.BASE_PATH) {
     if (!isValidBasePath(process.env.BASE_PATH)) {
       throw Error(

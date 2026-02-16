@@ -101,7 +101,7 @@ const whitelist = {
   "-E": validate.str,
   "--exclude": validate.str,
 
-  "--ignore-file": validate.str,
+  "--ignore-file": validate.relativePath,
 
   "-c": validate.set(["never", "always", "auto"]),
   "--color": validate.set(["never", "always", "auto"]),

@@ -12,9 +12,6 @@ import "antd/dist/reset.css";
 import { ConfigProvider } from "antd";
 import { Locale } from "locales/misc";
 
-// Initialize the appBasePath for the frontend codebase.
-import "@cocalc/frontend/customize/app-base-path";
-
 // CoCalc 3rd party libraries
 import "@cocalc/cdn/dist/codemirror/lib/codemirror.css";
 import "@cocalc/cdn/dist/katex/katex.min.css";

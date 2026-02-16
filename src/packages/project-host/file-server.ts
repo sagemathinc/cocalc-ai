@@ -710,7 +710,21 @@ async function listBackupIndexSnapshots(project_id: string): Promise<
       host: backupIndexHost(project_id),
     }),
   );
-  const raw = JSON.parse(stdout);
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return [];
+  }
+  let raw;
+  try {
+    raw = JSON.parse(trimmed);
+  } catch (err) {
+    logger.warn("backup index snapshots JSON parse failed", {
+      project_id,
+      err,
+      stdout: trimmed.slice(0, 500),
+    });
+    return [];
+  }
   const groups = Array.isArray(raw) ? raw : [];
   const snapshots: any[] = [];
   for (const group of groups) {
@@ -1339,7 +1353,7 @@ async function updateBackups({
   limit?: number;
 }): Promise<void> {
   const vol = await getVolumeForBackup(project_id);
-  await vol.rustic.update(counts, { limit });
+  await vol.rustic.update(counts, { limit, index: { project_id } });
   try {
     const backups = await vol.rustic.snapshots();
     await syncBackupIndexCache(project_id, {

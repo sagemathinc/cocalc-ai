@@ -37,7 +37,6 @@ const HTTP_SESSION_TTL_SECONDS = Math.max(
     30 * 24 * 60 * 60,
   ),
 );
-const QUERY_TOKEN_REDEEM_TTL_MS = 2 * 60 * 60 * 1000;
 const HTTP_UPGRADE_REVOKE_SWEEP_MS = Math.max(
   5_000,
   envNumber("COCALC_PROJECT_HOST_HTTP_REVOKE_SWEEP_MS", 30_000),
@@ -279,10 +278,6 @@ export function createProjectHostHttpProxyAuth({
   startUpgradeRevocationKickLoop: () => () => void;
   clearCaches: () => void;
 } {
-  const redeemedQueryTokenJti = new TTL<string, true>({
-    max: 100_000,
-    ttl: QUERY_TOKEN_REDEEM_TTL_MS,
-  });
   const trackedUpgradeSockets = new Set<{
     socket: Socket | Duplex;
     account_id: string;
@@ -410,9 +405,6 @@ export function createProjectHostHttpProxyAuth({
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
-    if (fromQuery && redeemedQueryTokenJti.has(claims.jti)) {
-      throw new HttpAuthError(401, "auth token already used");
-    }
     const account_id = verifyClaimsAndGetAccountId(claims);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
     authorizeAccountForProject({ account_id, project_id });
@@ -422,7 +414,6 @@ export function createProjectHostHttpProxyAuth({
     });
     setSessionCookie(req, res, account_id);
     if (fromQuery) {
-      redeemedQueryTokenJti.set(claims.jti, true);
       // Clean the browser URL and avoid forwarding a bearer query parameter.
       const cleaned = urlWithoutQueryToken(req);
       if (cleaned && /^(GET|HEAD)$/i.test(req.method ?? "GET")) {
@@ -456,20 +447,14 @@ export function createProjectHostHttpProxyAuth({
       setAuthContext(req, context);
       return context;
     }
-    const { token, fromQuery } = readBearerToken(req);
+    const { token } = readBearerToken(req);
     if (!token) {
       throw new HttpAuthError(401, "missing project-host HTTP auth token");
     }
     const claims = verifyBearerClaims(token);
-    if (fromQuery && redeemedQueryTokenJti.has(claims.jti)) {
-      throw new HttpAuthError(401, "auth token already used");
-    }
     const account_id = verifyClaimsAndGetAccountId(claims);
     assertNotRevoked({ account_id, issued_at_s: claims.iat });
     authorizeAccountForProject({ account_id, project_id });
-    if (fromQuery) {
-      redeemedQueryTokenJti.set(claims.jti, true);
-    }
     const context = {
       account_id,
       issued_at_s: claims.iat,
@@ -539,7 +524,6 @@ export function createProjectHostHttpProxyAuth({
     startUpgradeRevocationKickLoop,
     clearCaches: () => {
       clearProjectHostHttpProxyAuthCaches();
-      redeemedQueryTokenJti.clear();
     },
   };
 }

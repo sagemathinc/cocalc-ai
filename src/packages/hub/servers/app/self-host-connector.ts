@@ -3,6 +3,8 @@
 // VM lifecycle commands, and acknowledging results, all without inbound
 // access to the user’s machine.
 import express, { Router, type Request } from "express";
+import { createHash } from "node:crypto";
+import LRU from "lru-cache";
 
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/hub/logger";
@@ -22,6 +24,112 @@ const logger = getLogger("hub:servers:app:self-host-connector");
 
 function pool() {
   return getPool();
+}
+
+function envNumber(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const CONNECTOR_SHORT_WINDOW_MS = envNumber(
+  "COCALC_SELF_HOST_CONNECTOR_SHORT_WINDOW_MS",
+  1000 * 60,
+);
+const CONNECTOR_LONG_WINDOW_MS = envNumber(
+  "COCALC_SELF_HOST_CONNECTOR_LONG_WINDOW_MS",
+  1000 * 60 * 60,
+);
+const CONNECTOR_TOKEN_SHORT_LIMIT = envNumber(
+  "COCALC_SELF_HOST_CONNECTOR_TOKEN_SHORT_LIMIT",
+  180,
+);
+const CONNECTOR_TOKEN_LONG_LIMIT = envNumber(
+  "COCALC_SELF_HOST_CONNECTOR_TOKEN_LONG_LIMIT",
+  4000,
+);
+const CONNECTOR_IP_SHORT_LIMIT = envNumber(
+  "COCALC_SELF_HOST_CONNECTOR_IP_SHORT_LIMIT",
+  300,
+);
+const CONNECTOR_IP_LONG_LIMIT = envNumber(
+  "COCALC_SELF_HOST_CONNECTOR_IP_LONG_LIMIT",
+  8000,
+);
+
+const tokenShort = new LRU<string, number>({
+  max: 50000,
+  ttl: CONNECTOR_SHORT_WINDOW_MS,
+});
+const tokenLong = new LRU<string, number>({
+  max: 100000,
+  ttl: CONNECTOR_LONG_WINDOW_MS,
+});
+const ipShort = new LRU<string, number>({
+  max: 50000,
+  ttl: CONNECTOR_SHORT_WINDOW_MS,
+});
+const ipLong = new LRU<string, number>({
+  max: 100000,
+  ttl: CONNECTOR_LONG_WINDOW_MS,
+});
+
+function checkAndRecordCount(
+  cache: LRU<string, number>,
+  key: string,
+  limit: number,
+): boolean {
+  const next = (cache.get(key) ?? 0) + 1;
+  cache.set(key, next);
+  return next <= limit;
+}
+
+function normalizeIp(ip?: string): string {
+  let v = `${ip ?? ""}`.trim();
+  if (!v) return "";
+  if (v.startsWith("::ffff:")) {
+    v = v.slice("::ffff:".length);
+  }
+  const zoneIndex = v.indexOf("%");
+  if (zoneIndex >= 0) {
+    v = v.slice(0, zoneIndex);
+  }
+  return v;
+}
+
+function tokenRateKey(token: string): string {
+  // Avoid storing raw secrets in in-memory keys.
+  return createHash("sha256").update(token).digest("base64url").slice(0, 24);
+}
+
+function ensureConnectorRateLimit({
+  route,
+  token,
+  ip,
+}: {
+  route: "pair" | "next" | "ack";
+  token?: string;
+  ip?: string;
+}): string | undefined {
+  const normalizedIp = normalizeIp(ip);
+  if (normalizedIp) {
+    const ipKey = `${route}:ip:${normalizedIp}`;
+    if (!checkAndRecordCount(ipShort, ipKey, CONNECTOR_IP_SHORT_LIMIT)) {
+      return "too many connector requests from this IP; try again shortly";
+    }
+    if (!checkAndRecordCount(ipLong, ipKey, CONNECTOR_IP_LONG_LIMIT)) {
+      return "too many connector requests from this IP; try again later";
+    }
+  }
+
+  if (token) {
+    const tokenKey = `${route}:token:${tokenRateKey(token)}`;
+    if (!checkAndRecordCount(tokenShort, tokenKey, CONNECTOR_TOKEN_SHORT_LIMIT)) {
+      return "too many connector requests for this token; try again shortly";
+    }
+    if (!checkAndRecordCount(tokenLong, tokenKey, CONNECTOR_TOKEN_LONG_LIMIT)) {
+      return "too many connector requests for this token; try again later";
+    }
+  }
 }
 
 function extractToken(req: Request): string | undefined {
@@ -146,6 +254,15 @@ export default function init(router: Router) {
   router.post("/self-host/pair", jsonParser, async (req, res) => {
     try {
       const pairingToken = String(req.body?.pairing_token ?? "");
+      const pairLimitError = ensureConnectorRateLimit({
+        route: "pair",
+        token: pairingToken || undefined,
+        ip: req.ip,
+      });
+      if (pairLimitError) {
+        res.status(429).send(pairLimitError);
+        return;
+      }
       if (!pairingToken) {
         res.status(400).send("missing pairing token");
         return;
@@ -172,6 +289,15 @@ export default function init(router: Router) {
   router.get("/self-host/next", async (req, res) => {
     try {
       const token = extractToken(req);
+      const nextLimitError = ensureConnectorRateLimit({
+        route: "next",
+        token,
+        ip: req.ip,
+      });
+      if (nextLimitError) {
+        res.status(429).send(nextLimitError);
+        return;
+      }
       if (!token) {
         res.status(401).send("missing connector token");
         return;
@@ -271,6 +397,15 @@ export default function init(router: Router) {
   router.post("/self-host/ack", jsonParser, async (req, res) => {
     try {
       const token = extractToken(req);
+      const ackLimitError = ensureConnectorRateLimit({
+        route: "ack",
+        token,
+        ip: req.ip,
+      });
+      if (ackLimitError) {
+        res.status(429).send(ackLimitError);
+        return;
+      }
       if (!token) {
         res.status(401).send("missing connector token");
         return;

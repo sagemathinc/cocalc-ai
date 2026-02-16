@@ -153,15 +153,15 @@ function CoCalcURL({ href, title, children, project_id }) {
       href == children?.[0]?.props?.element?.text ||
       decodeURI(href) == children?.[0]?.props?.element?.text;
 
-    if (target == "files" || target == "files/" || target == "home/") {
+    if (target == "files" || target == "files/") {
       if (replaceChildren) {
-        children = <>{target === "home/" ? "Home" : "Files"}</>;
+        children = <>Files</>;
       }
       icon = "folder-open";
-      heading = target === "home/" ? "Home" : "Files";
+      heading = "Files";
       message = (
         <>
-          Browse {target === "home/" ? "home files" : "files"} in{" "}
+          Browse files in{" "}
           {project_id == target_project_id ? (
             "this project"
           ) : (
@@ -170,16 +170,9 @@ function CoCalcURL({ href, title, children, project_id }) {
           .
         </>
       );
-    } else if (target.startsWith("files/") || target.startsWith("home/")) {
-      const fromHome = target.startsWith("home/");
-      const rawPath = decodeURI(
-        target).slice(fromHome ? "home/".length : "files/".length);
-      targetPath =
-        fromHome && rawPath.length > 0
-          ? `~/${rawPath}`
-          : fromHome
-            ? "~"
-            : rawPath;
+    } else if (target.startsWith("files/")) {
+      const rawPath = decodeURI(target).slice("files/".length);
+      targetPath = rawPath;
       const filename = path_split(targetPath).tail;
       const hash = fragmentId ? `#${Fragment.encode(fragmentId)}` : "";
       if (project_id == target_project_id) {
@@ -293,7 +286,8 @@ function CoCalcURL({ href, title, children, project_id }) {
           ) : (
             <ProjectTitle project_id={target_project_id} />
           )}{" "}
-          in the {targetPath ? <>directory "{targetPath}"</> : "home directory"}
+          in the{" "}
+          {targetPath ? <>directory "{targetPath}"</> : "project root directory"}
           .
         </>
       );

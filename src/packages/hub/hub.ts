@@ -10,6 +10,8 @@
 import { callback } from "awaiting";
 import blocked from "blocked";
 import { program as commander } from "commander";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import basePath from "@cocalc/backend/base-path";
 import {
   pgConcurrentWarn as DEFAULT_DB_CONCURRENT_WARN,
@@ -76,6 +78,34 @@ export { program };
 
 const REGISTER_INTERVAL_S = 20;
 const DEFAULT_DELETE_EXPIRED_INTERVAL_S = 7200;
+
+function openUrlIfRequested(url: string): void {
+  const flag = (process.env.COCALC_OPEN_BROWSER || "").toLowerCase();
+  if (flag !== "1" && flag !== "true" && flag !== "yes") {
+    return;
+  }
+  const cmd =
+    process.platform === "darwin" && existsSync("/usr/bin/open")
+      ? "/usr/bin/open"
+      : process.platform === "darwin"
+        ? "open"
+        : "xdg-open";
+  try {
+    const child = spawn(cmd, [url], { stdio: "ignore", detached: true });
+    child.once("error", (err) => {
+      logger.debug("browser auto-open failed", {
+        cmd,
+        message: (err as any)?.message,
+      });
+    });
+    child.unref();
+  } catch (err: any) {
+    logger.debug("browser auto-open failed to spawn", {
+      cmd,
+      message: err?.message,
+    });
+  }
+}
 
 async function reset_password(email_address: string): Promise<void> {
   try {
@@ -331,6 +361,7 @@ async function startServer(): Promise<void> {
     const msg = `PORT=${port}\nBASE_PATH=${basePath}\nPROTOCOL=${protocol}\n\n\n\nStarted HUB!\n\n-----------\n\n\n\n    ${displayUrl}\n\n\n\n-----------\n\n`;
     logger.info(msg);
     console.log(msg);
+    openUrlIfRequested(displayUrl);
   }
 
   if (program.all || program.mentions) {

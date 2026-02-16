@@ -6,7 +6,7 @@
 import Link from "next/link";
 import { join } from "path";
 
-import basePath from "lib/base-path";
+import ROOT_PATH from "lib/root-path";
 
 export default function A(props: any) {
   const { href } = props;
@@ -28,9 +28,9 @@ export default function A(props: any) {
     href.startsWith("/settings")
   ) {
     const props2 = copyWithout(props, new Set(["external"]));
-    if (!href.startsWith(basePath)) {
+    if (!href.startsWith(ROOT_PATH)) {
       // @ts-ignore
-      props2.href = join(basePath, href);
+      props2.href = join(ROOT_PATH, href);
     }
     return <a {...props2} target={"_blank"} rel={"noopener"} />;
   }
