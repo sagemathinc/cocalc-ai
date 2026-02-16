@@ -105,48 +105,50 @@ export class JupyterActions extends JupyterActions0 {
   private optimisticFastOpenToken: number = 0;
   private optimisticFastOpenApplied: boolean = false;
   private runDebugCounter: number = 0;
+  private runDebugMode: "off" | "on" | "json" | undefined;
 
-  private isRunDebugEnabled = (): boolean => {
-    try {
-      const value = get_local_storage("jupyter_run_debug");
-      if (value === "1" || value === "true") {
-        return true;
-      }
-      if (typeof window !== "undefined") {
-        const q = new URLSearchParams(window.location.search).get(
-          "jupyter_run_debug",
-        );
-        if (q === "1" || q === "true") {
-          return true;
-        }
-      }
-    } catch {
-      // ignore logging configuration errors
-    }
-    return false;
-  };
-
-  private runDebug = (event: string, data: Record<string, any> = {}): void => {
-    if (!this.isRunDebugEnabled()) {
-      return;
-    }
-    let jsonMode = false;
+  private resolveRunDebugMode = (): "off" | "on" | "json" => {
     try {
       const value = get_local_storage("jupyter_run_debug");
       if (value === "json") {
-        jsonMode = true;
+        return "json";
+      }
+      if (value === "1" || value === "true") {
+        return "on";
       }
       if (typeof window !== "undefined") {
         const q = new URLSearchParams(window.location.search).get(
           "jupyter_run_debug",
         );
         if (q === "json") {
-          jsonMode = true;
+          return "json";
+        }
+        if (q === "1" || q === "true") {
+          return "on";
         }
       }
     } catch {
       // ignore logging configuration errors
     }
+    return "off";
+  };
+
+  private getRunDebugMode = (): "off" | "on" | "json" => {
+    if (this.runDebugMode == null) {
+      this.runDebugMode = this.resolveRunDebugMode();
+    }
+    return this.runDebugMode;
+  };
+
+  private runDebug = (
+    event: string,
+    data: Record<string, any> | (() => Record<string, any>) = {},
+  ): void => {
+    const mode = this.getRunDebugMode();
+    if (mode === "off") {
+      return;
+    }
+    const extra = typeof data === "function" ? data() : data;
     const pendingSize = this.store?.get("pendingCells")?.size ?? 0;
     const payload = {
       t: new Date().toISOString(),
@@ -156,9 +158,9 @@ export class JupyterActions extends JupyterActions0 {
       pendingSize,
       syncdbState: this.syncdb?.get_state?.(),
       readOnly: this.store?.get?.("read_only") ?? undefined,
-      ...data,
+      ...extra,
     };
-    if (jsonMode) {
+    if (mode === "json") {
       console.log(`[jupyter-run-debug] ${event} ${JSON.stringify(payload)}`);
       return;
     }
@@ -1860,13 +1862,13 @@ export class JupyterActions extends JupyterActions0 {
       let chunkNo = 0;
       for await (const mesgs of runner) {
         chunkNo += 1;
-        this.runDebug("runCells.runner.chunk", {
+        this.runDebug("runCells.runner.chunk", () => ({
           runId,
           chunkNo,
           count: mesgs.length,
           mesgs: mesgs.slice(0, 12).map(this.summarizeMesg),
           truncated: mesgs.length > 12,
-        });
+        }));
         if (this.isClosed()) return;
         for (const mesg of mesgs) {
           if (!opts.noHalt && mesg.msg_type == "error") {
@@ -2354,11 +2356,11 @@ export class JupyterActions extends JupyterActions0 {
     patch,
     patchSeq,
   }: { patch?; patchSeq?: number } = {}) => {
-    this.runDebug("watch.load.start", {
+    this.runDebug("watch.load.start", () => ({
       patchSeq,
       expectedPatchSeq: this.expectedPatchSeq,
       ...this.summarizePatch(patch),
-    });
+    }));
     let usedPatch = false;
     if (patch != null && this.expectedPatchSeq == patchSeq) {
       // use patch
@@ -2458,12 +2460,12 @@ export class JupyterActions extends JupyterActions0 {
           for await (const { event, ignore, patch, patchSeq } of this
             .fileWatcher) {
             if (done()) return true;
-            this.runDebug("watch.event", {
+            this.runDebug("watch.event", () => ({
               event,
               ignore,
               patchSeq,
               ...this.summarizePatch(patch),
-            });
+            }));
             if (event == "unlink") {
               // deleted
               this.runDebug("watch.event.unlink");
