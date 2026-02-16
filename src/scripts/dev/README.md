@@ -44,7 +44,9 @@ By default this script:
 4. Runs self-host multipass smoke tests end-to-end, including:
    - cross-project file copy (project A -> project B),
    - backup indexing,
-   - optional move/restore to a second host.
+   - optional second VM/host provisioning,
+   - optional move/restore to a second host,
+   - optional cross-host project copy after move.
 
 You can override behavior via variables in `src/.local/hub-daemon.env`.
 For smoke-only toggles, set environment variables when invoking, e.g.:
