@@ -64,6 +64,7 @@ packages/lite/
 │   └── README.md             # SEA documentation
 ├── auth-token.ts            # Cookie/token authentication
 ├── http.ts                   # Express HTTP server setup
+├── jupyter-benchmark.ts      # Jupyter latency/output benchmark harness
 ├── main.ts                   # Application entry point & initialization
 ├── index.js                  # Electron wrapper for desktop app
 └── package.json              # Dependencies and build scripts
@@ -174,6 +175,9 @@ packages/lite/
 
 - Distribution-focused workflows (bundle, tarball, SEA, Electron) now live in [../plus](../plus/README.md) to keep Lite lean. Use the Plus package for shipping artifacts.
 - For local development, run Lite directly with `pnpm app` (requires Node.js 22+).
+- For Jupyter latency/output measurements in lite mode, use:
+  - `pnpm -C src/packages/lite jupyter:bench -- --profile quick`
+  - `pnpm -C src/packages/lite jupyter:bench -- --profile full --json`
 
 ## Key Technologies
 
