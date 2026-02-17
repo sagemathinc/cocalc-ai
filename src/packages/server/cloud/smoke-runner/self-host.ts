@@ -23,34 +23,13 @@ Typical usage from a node REPL:
 import { randomUUID } from "node:crypto";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import getLogger from "@cocalc/backend/logger";
-import getPool from "@cocalc/database/pool";
-import admins from "@cocalc/server/accounts/admins";
-import {
-  copyPathBetweenProjects,
-  createProject,
-  moveProject,
-  start as startProject,
-} from "@cocalc/server/conat/api/projects";
-import {
-  createBackup as createProjectBackup,
-  getBackupFiles,
-  getBackups,
-  restoreBackup as restoreProjectBackup,
-} from "@cocalc/server/conat/api/project-backups";
-import {
-  createHost,
-  deleteHost,
-  deleteHostInternal,
-  startHostInternal,
-} from "@cocalc/server/conat/api/hosts";
-import deleteProject from "@cocalc/server/projects/delete";
-import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
-import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
+import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("server:cloud:smoke-runner:self-host");
 const execFile = promisify(execFileCb);
@@ -76,6 +55,9 @@ type LogEvent = {
 
 export type SelfHostMultipassSmokeOptions = {
   account_id?: string;
+  api_url?: string;
+  hub_password?: string;
+  cocalc_cli_path?: string;
   vm_name?: string;
   vm_image?: string;
   vm_user?: string;
@@ -166,16 +148,29 @@ function resolveWait(
   };
 }
 
-async function resolveSmokeAccountId(account_id?: string): Promise<string> {
-  if (account_id) return account_id;
-  const ids = await admins();
-  if (!ids.length) {
-    throw new Error(
-      "no admin account found; pass account_id explicitly or create an admin account",
-    );
-  }
-  return ids[0];
-}
+type CliContext = {
+  nodePath: string;
+  cliPath: string;
+  apiUrl: string;
+  hubPassword?: string;
+  accountId?: string;
+  timeoutMs: number;
+  pollMs: number;
+};
+
+type CliEnvelope<T = any> = {
+  ok?: boolean;
+  command?: string;
+  data?: T;
+  meta?: {
+    api?: string;
+    account_id?: string;
+  };
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
 
 function quoteYamlSingle(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
@@ -231,6 +226,161 @@ async function runCommand(
 
 async function requireCommand(name: string): Promise<void> {
   await runCommand("which", [name]);
+}
+
+function normalizeApiUrl(raw: string): string {
+  const value = raw.trim();
+  if (!value) {
+    throw new Error("empty api url");
+  }
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return value.replace(/\/+$/, "");
+  }
+  return `http://${value.replace(/\/+$/, "")}`;
+}
+
+function resolveApiUrl(pathHint?: string): string {
+  const explicit = pathHint?.trim() || process.env.COCALC_API_URL || process.env.BASE_URL;
+  if (explicit) {
+    return normalizeApiUrl(explicit);
+  }
+  const port = process.env.PORT || "9100";
+  return `http://127.0.0.1:${port}`;
+}
+
+function resolveHubPassword(pathHint?: string): string | undefined {
+  const candidates = [
+    pathHint,
+    process.env.COCALC_HUB_PASSWORD,
+    process.env.SECRETS ? join(process.env.SECRETS, "conat-password") : undefined,
+    join(process.cwd(), "data", "app", "postgres", "secrets", "conat-password"),
+  ].filter((x): x is string => !!x && !!x.trim());
+
+  const first = candidates[0]?.trim();
+  for (const value of candidates) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (existsSync(trimmed)) {
+      return trimmed;
+    }
+    if (!trimmed.includes("/") && !trimmed.includes("\\")) {
+      return trimmed;
+    }
+  }
+  return first;
+}
+
+function resolveCliPath(pathHint?: string): string {
+  const candidates = [
+    pathHint,
+    process.env.COCALC_CLI_PATH,
+    join(process.cwd(), "packages", "cli", "dist", "bin", "cocalc.js"),
+    resolve(__dirname, "../../../../cli/dist/bin/cocalc.js"),
+  ].filter((x): x is string => !!x && !!x.trim());
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `unable to find cocalc CLI binary; looked in: ${candidates.join(", ")}`,
+  );
+}
+
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function quoteShellSingle(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function commandTimeoutMs(cli: CliContext): number {
+  // Allow enough room for potentially long-running operations while keeping
+  // child process timeouts finite to avoid hung smoke runs.
+  return Math.max(cli.timeoutMs + 30_000, 120_000);
+}
+
+function parseCliEnvelope<T>(stdout: string, stderr: string, command: string): CliEnvelope<T> {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    throw new Error(`empty CLI output for '${command}'${stderr ? ` (stderr: ${stderr})` : ""}`);
+  }
+  try {
+    return JSON.parse(trimmed) as CliEnvelope<T>;
+  } catch (err) {
+    throw new Error(
+      `invalid CLI JSON for '${command}': ${getErrorMessage(err)}${stderr ? ` (stderr: ${stderr})` : ""}`,
+    );
+  }
+}
+
+async function runCli<T>(cli: CliContext, args: string[]): Promise<T> {
+  const timeoutSeconds = Math.max(1, Math.ceil(cli.timeoutMs / 1000));
+  const pollMs = Math.max(50, cli.pollMs);
+  const fullArgs = [
+    cli.cliPath,
+    "--json",
+    "--api",
+    cli.apiUrl,
+    "--timeout",
+    `${timeoutSeconds}s`,
+    "--poll-ms",
+    `${pollMs}ms`,
+  ];
+
+  if (cli.accountId) {
+    fullArgs.push("--account-id", cli.accountId);
+  }
+  if (cli.hubPassword) {
+    fullArgs.push("--hub-password", cli.hubPassword);
+  }
+  fullArgs.push(...args);
+
+  const cmd = `cocalc ${args.join(" ")}`;
+  const { stdout, stderr } = await runCommand(cli.nodePath, fullArgs, {
+    timeoutMs: commandTimeoutMs(cli),
+  });
+  const envelope = parseCliEnvelope<T>(stdout, stderr, cmd);
+  const responseAccountId = envelope.meta?.account_id;
+  if (!cli.accountId && typeof responseAccountId === "string" && isValidUUID(responseAccountId)) {
+    cli.accountId = responseAccountId;
+  }
+  if (!envelope.ok) {
+    throw new Error(
+      envelope.error?.message ||
+        `command failed (${cmd})${envelope.error?.code ? ` [${envelope.error.code}]` : ""}`,
+    );
+  }
+  return envelope.data as T;
+}
+
+async function resolveSmokeAccountId(
+  cli: CliContext,
+  requested?: string,
+): Promise<string> {
+  if (requested) {
+    return requested;
+  }
+  const rows = await runCli<Array<{ workspace_id: string }>>(cli, [
+    "workspace",
+    "list",
+    "--limit",
+    "1",
+  ]);
+  if (rows.length === 0 && !cli.accountId) {
+    throw new Error(
+      "unable to determine account_id from CLI session; pass account_id explicitly",
+    );
+  }
+  if (!cli.accountId) {
+    throw new Error(
+      "CLI did not report account_id metadata; pass account_id explicitly",
+    );
+  }
+  return cli.accountId;
 }
 
 async function getMultipassIp(vmName: string): Promise<string> {
@@ -289,27 +439,34 @@ async function waitForSshReady({
 }
 
 async function waitForHostStatus({
+  cli,
   host_id,
   allowed,
   wait,
 }: {
+  cli: CliContext;
   host_id: string;
   allowed: string[];
   wait: WaitOptions;
 }): Promise<void> {
   let lastStatus = "unknown";
   for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
-    const { rows } = await getPool().query<{ status: string | null }>(
-      "SELECT status FROM project_hosts WHERE id=$1 AND deleted IS NULL",
-      [host_id],
-    );
-    const status = String(rows[0]?.status ?? "unknown");
-    lastStatus = status;
-    if (allowed.includes(status)) {
-      return;
-    }
-    if (status === "error") {
-      throw new Error("host status became error");
+    try {
+      const host = await runCli<{ status?: string }>(cli, ["host", "get", host_id]);
+      const status = String(host?.status ?? "unknown");
+      lastStatus = status;
+      if (allowed.includes(status)) {
+        return;
+      }
+      if (status === "error") {
+        throw new Error("host status became error");
+      }
+    } catch (err) {
+      logger.debug("self-host smoke host status retry", {
+        host_id,
+        attempt,
+        err: getErrorMessage(err),
+      });
     }
     await sleep(wait.intervalMs);
   }
@@ -319,79 +476,51 @@ async function waitForHostStatus({
 }
 
 async function waitForBackupIndexed({
-  account_id,
+  cli,
   project_id,
   wait,
 }: {
-  account_id: string;
+  cli: CliContext;
   project_id: string;
   wait: WaitOptions;
 }): Promise<{ id: string }> {
   let lastCount = 0;
   for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
-    const backups = (await getBackups({
-      account_id,
-      project_id,
-      indexed_only: true,
-    })) as any[];
+    const backups = await runCli<
+      Array<{ backup_id?: string; time?: string | Date | null }>
+    >(cli, ["workspace", "backup", "list", project_id, "--indexed-only", "--limit", "100"]);
     lastCount = backups.length;
-    if (backups.length > 0 && backups[0]?.id) {
+    if (backups.length > 0 && backups[0]?.backup_id) {
       const sorted = [...backups].sort((a, b) =>
-        String(b?.time ?? "").localeCompare(String(a?.time ?? "")),
+        String(b?.time ?? "").localeCompare(String(a?.time ?? "")) ||
+        String(a?.backup_id ?? "").localeCompare(String(b?.backup_id ?? "")),
       );
-      return { id: sorted[0].id };
+      return { id: String(sorted[0].backup_id) };
     }
     await sleep(wait.intervalMs);
   }
   throw new Error(`backup index never appeared (indexed backups=${lastCount})`);
 }
 
-async function waitForLroDone({
-  op_id,
-  wait,
-}: {
-  op_id: string;
-  wait: WaitOptions;
-}): Promise<{ status: string; error?: string | null }> {
-  let lastStatus = "unknown";
-  let lastError: string | null | undefined;
-  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
-    const { rows } = await getPool().query<{
-      status: string | null;
-      error: string | null;
-    }>("SELECT status, error FROM long_running_operations WHERE op_id=$1", [
-      op_id,
-    ]);
-    const row = rows[0];
-    const status = String(row?.status ?? "unknown");
-    lastStatus = status;
-    lastError = row?.error;
-    if (["succeeded", "failed", "canceled", "expired"].includes(status)) {
-      return { status, error: row?.error };
-    }
-    await sleep(wait.intervalMs);
-  }
-  throw new Error(
-    `timeout waiting for lro ${op_id}; last status=${lastStatus} error=${lastError ?? ""}`,
-  );
-}
-
 async function waitForProjectPlacement({
+  cli,
   project_id,
   host_id,
   wait,
 }: {
+  cli: CliContext;
   project_id: string;
   host_id: string;
   wait: WaitOptions;
 }): Promise<void> {
   let lastHost = "unknown";
   for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
-    const { rows } = await getPool().query<{ host_id: string | null }>(
-      "SELECT host_id FROM projects WHERE project_id=$1",
-      [project_id],
-    );
-    const current = String(rows[0]?.host_id ?? "");
+    const workspace = await runCli<{ host_id?: string | null }>(cli, [
+      "workspace",
+      "get",
+      project_id,
+    ]);
+    const current = String(workspace?.host_id ?? "");
     lastHost = current || "none";
     if (current === host_id) return;
     await sleep(wait.intervalMs);
@@ -402,11 +531,13 @@ async function waitForProjectPlacement({
 }
 
 async function waitForProjectFileValue({
+  cli,
   project_id,
   path,
   expected,
   wait,
 }: {
+  cli: CliContext;
   project_id: string;
   path: string;
   expected: string;
@@ -414,18 +545,31 @@ async function waitForProjectFileValue({
 }): Promise<void> {
   for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
     try {
-      const client = fsClient({
-        client: conatWithProjectRouting(),
-        subject: fsSubject({ project_id }),
-      });
-      const value = await client.readFile(path, "utf8");
+      const out = await runCli<{
+        stdout?: string;
+        stderr?: string;
+        exit_code?: number;
+      }>(cli, [
+        "workspace",
+        "exec",
+        project_id,
+        "--timeout",
+        "30",
+        "cat",
+        path,
+      ]);
+      const exitCode = Number(out?.exit_code ?? 1);
+      const value = String(out?.stdout ?? "").replace(/\r?\n$/, "");
+      if (exitCode !== 0) {
+        throw new Error(`cat failed: ${out?.stderr ?? `exit_code=${exitCode}`}`);
+      }
       if (value === expected) return;
     } catch (err) {
       logger.debug("self-host smoke readFile retry", {
         project_id,
         path,
         attempt,
-        err: `${err}`,
+        err: getErrorMessage(err),
       });
     }
     await sleep(wait.intervalMs);
@@ -546,7 +690,7 @@ export async function runSelfHostMultipassBackupSmoke(
     ((event: LogEvent) => {
       logger.info("self-host smoke", event);
     });
-  const account_id = await resolveSmokeAccountId(opts.account_id);
+  let account_id = opts.account_id ?? "";
   const vmName = opts.vm_name ?? `cocalc-smoke-${Date.now().toString(36)}`;
   const vmImage = opts.vm_image ?? "24.04";
   const vmUser = opts.vm_user ?? "ubuntu";
@@ -588,6 +732,34 @@ export async function runSelfHostMultipassBackupSmoke(
     opts.wait?.restored_file,
     DEFAULT_RESTORED_FILE_WAIT,
   );
+  const waitWindowMs = (w: WaitOptions) => w.attempts * w.intervalMs;
+  const maxWaitCandidates = [
+    waitWindowMs(waitSshReady),
+    waitWindowMs(waitHostRunning),
+    waitWindowMs(waitBackupIndexed),
+  ];
+  if (verifyCopyBetweenProjects || verifyMoveRestoreOnSecondHost) {
+    maxWaitCandidates.push(waitWindowMs(waitRestoredFile));
+  }
+  if (verifyCopyBetweenProjects) {
+    maxWaitCandidates.push(waitWindowMs(waitCopyCompleted));
+  }
+  if (verifyDeprovision) {
+    maxWaitCandidates.push(waitWindowMs(waitHostDeprovisioned));
+  }
+  if (verifyMoveRestoreOnSecondHost) {
+    maxWaitCandidates.push(waitWindowMs(waitMoveCompleted));
+  }
+  const maxWaitMs = Math.max(...maxWaitCandidates);
+  const cli: CliContext = {
+    nodePath: process.execPath,
+    cliPath: resolveCliPath(opts.cocalc_cli_path),
+    apiUrl: resolveApiUrl(opts.api_url),
+    hubPassword: resolveHubPassword(opts.hub_password),
+    accountId: account_id || undefined,
+    timeoutMs: Math.max(maxWaitMs + 60_000, 180_000),
+    pollMs: 1_000,
+  };
 
   const tempDirs: string[] = [];
   const createdVmNames: string[] = [];
@@ -644,27 +816,63 @@ export async function runSelfHostMultipassBackupSmoke(
     }
   };
 
+  const runWorkspaceExec = async (
+    workspaceId: string,
+    args: string[],
+    opts: { timeoutSeconds?: number; bash?: boolean } = {},
+  ): Promise<{ stdout?: string; stderr?: string; exit_code?: number }> => {
+    const cmd = [
+      "workspace",
+      "exec",
+      workspaceId,
+      "--timeout",
+      String(opts.timeoutSeconds ?? 60),
+    ];
+    if (opts.bash) {
+      cmd.push("--bash");
+    }
+    cmd.push(...args);
+    return await runCli<{ stdout?: string; stderr?: string; exit_code?: number }>(cli, cmd);
+  };
+
+  const writeWorkspaceFile = async (
+    workspaceId: string,
+    path: string,
+    value: string,
+  ): Promise<void> => {
+    const command = `mkdir -p ${quoteShellSingle(dirname(path))} && printf %s ${quoteShellSingle(
+      value,
+    )} > ${quoteShellSingle(path)}`;
+    const result = await runWorkspaceExec(workspaceId, [command], {
+      timeoutSeconds: 120,
+      bash: true,
+    });
+    const exitCode = Number(result?.exit_code ?? 1);
+    if (exitCode !== 0) {
+      throw new Error(
+        `failed writing sentinel file: ${result?.stderr ?? `exit_code=${exitCode}`}`,
+      );
+    }
+  };
+
   const cleanup = async () => {
     for (const cleanupProjectId of cleanupProjectIds) {
       try {
-        await deleteProject({
-          project_id: cleanupProjectId,
-          skipPermissionCheck: true,
-        });
+        await runCli(cli, ["workspace", "delete", cleanupProjectId]);
       } catch (err) {
         logger.warn("self-host smoke cleanup project failed", {
           project_id: cleanupProjectId,
-          err: `${err}`,
+          err: getErrorMessage(err),
         });
       }
     }
     for (const cleanupHostId of cleanupHostIds) {
       try {
-        await deleteHostInternal({ account_id, id: cleanupHostId });
+        await runCli(cli, ["host", "delete", cleanupHostId, "--skip-backups", "--wait"]);
       } catch (err) {
         logger.warn("self-host smoke cleanup host failed", {
           host_id: cleanupHostId,
-          err: `${err}`,
+          err: getErrorMessage(err),
         });
       }
     }
@@ -678,8 +886,11 @@ export async function runSelfHostMultipassBackupSmoke(
     await runStep("preflight", async () => {
       await requireCommand("multipass");
       await requireCommand("ssh");
+      await requireCommand("node");
       await cleanupExistingSmokeVms();
       sshPublicKey = await resolveSshPublicKey(opts.ssh_public_key_path);
+      account_id = await resolveSmokeAccountId(cli, opts.account_id);
+      cli.accountId = account_id;
     });
 
     await runStep("launch_multipass_vm", async () => {
@@ -706,33 +917,32 @@ export async function runSelfHostMultipassBackupSmoke(
 
     await runStep("create_self_host_record", async () => {
       if (!sshTarget) throw new Error("missing ssh target");
-      const host = await createHost({
-        account_id,
-        name: `Self-host smoke ${vmName}`,
-        region: "pending",
-        size: "custom",
-        gpu: false,
-        machine: {
-          cloud: "self-host",
-          storage_mode: "persistent",
-          disk_gb: vmDiskGb,
-          metadata: {
-            cpu: vmCpus,
-            ram_gb: vmMemoryGb,
-            self_host_mode: "local",
-            self_host_kind: "direct",
-            self_host_ssh_target: sshTarget,
-          },
-        },
-      });
-      host_id = host.id;
-      cleanupHostIds.add(host.id);
+      const host = await runCli<{ host_id: string }>(cli, [
+        "host",
+        "create-self",
+        `Self-host smoke ${vmName}`,
+        "--ssh-target",
+        sshTarget,
+        "--region",
+        "pending",
+        "--size",
+        "custom",
+        "--cpu",
+        String(vmCpus),
+        "--ram-gb",
+        String(vmMemoryGb),
+        "--disk-gb",
+        String(vmDiskGb),
+      ]);
+      host_id = host.host_id;
+      cleanupHostIds.add(host.host_id);
     });
 
     await runStep("start_host", async () => {
       if (!host_id) throw new Error("missing host_id");
-      await startHostInternal({ account_id, id: host_id });
+      await runCli(cli, ["host", "start", host_id, "--wait"]);
       await waitForHostStatus({
+        cli,
         host_id,
         allowed: ["running", "active"],
         wait: waitHostRunning,
@@ -767,33 +977,32 @@ export async function runSelfHostMultipassBackupSmoke(
         if (!secondSshTarget || !secondVmName) {
           throw new Error("missing second host context");
         }
-        const host = await createHost({
-          account_id,
-          name: `Self-host smoke ${secondVmName}`,
-          region: "pending",
-          size: "custom",
-          gpu: false,
-          machine: {
-            cloud: "self-host",
-            storage_mode: "persistent",
-            disk_gb: vmDiskGb,
-            metadata: {
-              cpu: vmCpus,
-              ram_gb: vmMemoryGb,
-              self_host_mode: "local",
-              self_host_kind: "direct",
-              self_host_ssh_target: secondSshTarget,
-            },
-          },
-        });
-        second_host_id = host.id;
-        cleanupHostIds.add(host.id);
+        const host = await runCli<{ host_id: string }>(cli, [
+          "host",
+          "create-self",
+          `Self-host smoke ${secondVmName}`,
+          "--ssh-target",
+          secondSshTarget,
+          "--region",
+          "pending",
+          "--size",
+          "custom",
+          "--cpu",
+          String(vmCpus),
+          "--ram-gb",
+          String(vmMemoryGb),
+          "--disk-gb",
+          String(vmDiskGb),
+        ]);
+        second_host_id = host.host_id;
+        cleanupHostIds.add(host.host_id);
       });
 
       await runStep("start_second_host", async () => {
         if (!second_host_id) throw new Error("missing second_host_id");
-        await startHostInternal({ account_id, id: second_host_id });
+        await runCli(cli, ["host", "start", second_host_id, "--wait"]);
         await waitForHostStatus({
+          cli,
           host_id: second_host_id,
           allowed: ["running", "active"],
           wait: waitHostRunning,
@@ -803,40 +1012,39 @@ export async function runSelfHostMultipassBackupSmoke(
 
     await runStep("create_project", async () => {
       if (!host_id) throw new Error("missing host_id");
-      project_id = await createProject({
-        account_id,
-        title: `self-host backup smoke ${vmName}`,
+      const workspace = await runCli<{ workspace_id: string }>(cli, [
+        "workspace",
+        "create",
+        `self-host backup smoke ${vmName}`,
+        "--host",
         host_id,
-        start: false,
-      });
+      ]);
+      project_id = workspace.workspace_id;
       if (!project_id) throw new Error("failed to create project");
       cleanupProjectIds.add(project_id);
     });
 
     await runStep("start_project", async () => {
       if (!project_id) throw new Error("missing project_id");
-      await startProject({ account_id, project_id, wait: true });
+      await runCli(cli, ["workspace", "start", project_id, "--wait"]);
     });
 
     await runStep("write_sentinel_file", async () => {
       if (!project_id) throw new Error("missing project_id");
-      const client = fsClient({
-        client: conatWithProjectRouting(),
-        subject: fsSubject({ project_id }),
-      });
-      await client.mkdir(dirname(sentinelPath), { recursive: true });
-      await client.writeFile(sentinelPath, sentinelValue);
+      await writeWorkspaceFile(project_id, sentinelPath, sentinelValue);
     });
 
     if (verifyCopyBetweenProjects) {
       await runStep("create_second_project_for_copy", async () => {
         if (!host_id) throw new Error("missing host_id");
-        copy_project_id = await createProject({
-          account_id,
-          title: `self-host copy smoke ${vmName}`,
+        const workspace = await runCli<{ workspace_id: string }>(cli, [
+          "workspace",
+          "create",
+          `self-host copy smoke ${vmName}`,
+          "--host",
           host_id,
-          start: false,
-        });
+        ]);
+        copy_project_id = workspace.workspace_id;
         if (!copy_project_id) {
           throw new Error("failed to create copy destination project");
         }
@@ -845,42 +1053,38 @@ export async function runSelfHostMultipassBackupSmoke(
 
       await runStep("start_second_project_for_copy", async () => {
         if (!copy_project_id) throw new Error("missing copy_project_id");
-        await startProject({ account_id, project_id: copy_project_id, wait: true });
+        await runCli(cli, ["workspace", "start", copy_project_id, "--wait"]);
       });
       if (!verifyMoveRestoreOnSecondHost) {
         await runStep("copy_file_between_projects", async () => {
           if (!project_id || !copy_project_id) {
             throw new Error("missing cross-project copy context");
           }
-          const destClient = fsClient({
-            client: conatWithProjectRouting(),
-            subject: fsSubject({ project_id: copy_project_id }),
-          });
-          await destClient.mkdir(dirname(copyDestPath), { recursive: true });
-          const op = await copyPathBetweenProjects({
-            account_id,
-            src: { project_id, path: sentinelPath },
-            dest: { project_id: copy_project_id, path: copyDestPath },
-          });
+          await runWorkspaceExec(copy_project_id, [
+            "mkdir",
+            "-p",
+            dirname(copyDestPath),
+          ]);
+          const op = await runCli<{ op_id?: string }>(cli, [
+            "workspace",
+            "copy-path",
+            "--src-workspace",
+            project_id,
+            "--src",
+            sentinelPath,
+            "--dest-workspace",
+            copy_project_id,
+            "--dest",
+            copyDestPath,
+            "--wait",
+          ]);
           copy_op_id = op.op_id;
-        });
-
-        await runStep("wait_copy_between_projects_completed", async () => {
-          if (!copy_op_id) throw new Error("missing copy_op_id");
-          const summary = await waitForLroDone({
-            op_id: copy_op_id,
-            wait: waitCopyCompleted,
-          });
-          if (summary.status !== "succeeded") {
-            throw new Error(
-              `copy lro did not succeed: status=${summary.status} error=${summary.error ?? ""}`,
-            );
-          }
         });
 
         await runStep("verify_copied_file_in_second_project", async () => {
           if (!copy_project_id) throw new Error("missing copy_project_id");
           await waitForProjectFileValue({
+            cli,
             project_id: copy_project_id,
             path: copyDestPath,
             expected: sentinelValue,
@@ -890,10 +1094,7 @@ export async function runSelfHostMultipassBackupSmoke(
 
         await runStep("delete_second_project_for_copy", async () => {
           if (!copy_project_id) return;
-          await deleteProject({
-            project_id: copy_project_id,
-            skipPermissionCheck: true,
-          });
+          await runCli(cli, ["workspace", "delete", copy_project_id]);
           cleanupProjectIds.delete(copy_project_id);
         });
       }
@@ -901,14 +1102,19 @@ export async function runSelfHostMultipassBackupSmoke(
 
     await runStep("create_backup", async () => {
       if (!project_id) throw new Error("missing project_id");
-      const op = await createProjectBackup({ account_id, project_id });
+      const op = await runCli<{ op_id?: string }>(cli, [
+        "workspace",
+        "backup",
+        "create",
+        project_id,
+      ]);
       backup_op_id = op.op_id;
     });
 
     await runStep("wait_backup_indexed", async () => {
       if (!project_id) throw new Error("missing project_id");
       const backup = await waitForBackupIndexed({
-        account_id,
+        cli,
         project_id,
         wait: waitBackupIndexed,
       });
@@ -920,18 +1126,17 @@ export async function runSelfHostMultipassBackupSmoke(
         if (!project_id || !backup_id) {
           throw new Error("missing backup context");
         }
-        const listing = (await getBackupFiles({
-          account_id,
+        const children = await runCli<Array<{ name?: string }>>(cli, [
+          "workspace",
+          "backup",
+          "files",
           project_id,
-          id: backup_id,
-          path: dirname(sentinelPath),
-        })) as any;
-        const children = Array.isArray(listing)
-          ? listing
-          : Array.isArray(listing?.children)
-            ? listing.children
-            : [];
-        const found = children.some((entry: any) =>
+          "--backup-id",
+          backup_id,
+          "--path",
+          dirname(sentinelPath),
+        ]);
+        const found = children.some((entry) =>
           String(entry?.name ?? "").includes("self-host-backup.txt"),
         );
         if (!found) {
@@ -945,30 +1150,17 @@ export async function runSelfHostMultipassBackupSmoke(
         if (!project_id || !second_host_id) {
           throw new Error("missing move context");
         }
-        const op = await moveProject({
-          account_id,
+        const op = await runCli<{ op_id?: string }>(cli, [
+          "workspace",
+          "move",
           project_id,
-          dest_host_id: second_host_id,
-        });
+          "--host",
+          second_host_id,
+          "--wait",
+        ]);
         move_op_id = op.op_id;
-        const summary = await waitForLroDone({
-          op_id: op.op_id,
-          wait: waitMoveCompleted,
-        });
-        if (summary.status !== "succeeded") {
-          // We occasionally observe a timeout-marked move LRO even though the
-          // destination host assignment has already completed. For smoke
-          // reliability, treat host placement and file checks as the source of
-          // truth and only fail if those postconditions do not hold.
-          logger.warn("self-host smoke move LRO not succeeded, validating via postconditions", {
-            op_id: op.op_id,
-            status: summary.status,
-            error: summary.error,
-            project_id,
-            second_host_id,
-          });
-        }
         await waitForProjectPlacement({
+          cli,
           project_id,
           host_id: second_host_id,
           wait: waitMoveCompleted,
@@ -978,6 +1170,7 @@ export async function runSelfHostMultipassBackupSmoke(
       await runStep("verify_project_file_after_move", async () => {
         if (!project_id) throw new Error("missing project_id");
         await waitForProjectFileValue({
+          cli,
           project_id,
           path: sentinelPath,
           expected: sentinelValue,
@@ -989,26 +1182,22 @@ export async function runSelfHostMultipassBackupSmoke(
         if (!project_id || !backup_id) {
           throw new Error("missing restore context");
         }
-        const op = await restoreProjectBackup({
-          account_id,
+        const op = await runCli<{ op_id?: string }>(cli, [
+          "workspace",
+          "backup",
+          "restore",
           project_id,
-          id: backup_id,
-        });
+          "--backup-id",
+          backup_id,
+          "--wait",
+        ]);
         restore_op_id = op.op_id;
-        const summary = await waitForLroDone({
-          op_id: op.op_id,
-          wait: waitMoveCompleted,
-        });
-        if (summary.status !== "succeeded") {
-          throw new Error(
-            `restore lro did not succeed: status=${summary.status} error=${summary.error ?? ""}`,
-          );
-        }
       });
 
       await runStep("verify_restored_file_on_second_host", async () => {
         if (!project_id) throw new Error("missing project_id");
         await waitForProjectFileValue({
+          cli,
           project_id,
           path: sentinelPath,
           expected: sentinelValue,
@@ -1021,35 +1210,31 @@ export async function runSelfHostMultipassBackupSmoke(
           if (!project_id || !copy_project_id) {
             throw new Error("missing cross-host copy context");
           }
-          const destClient = fsClient({
-            client: conatWithProjectRouting(),
-            subject: fsSubject({ project_id: copy_project_id }),
-          });
-          await destClient.mkdir(dirname(copyDestPath), { recursive: true });
-          const op = await copyPathBetweenProjects({
-            account_id,
-            src: { project_id, path: sentinelPath },
-            dest: { project_id: copy_project_id, path: copyDestPath },
-          });
+          await runWorkspaceExec(copy_project_id, [
+            "mkdir",
+            "-p",
+            dirname(copyDestPath),
+          ]);
+          const op = await runCli<{ op_id?: string }>(cli, [
+            "workspace",
+            "copy-path",
+            "--src-workspace",
+            project_id,
+            "--src",
+            sentinelPath,
+            "--dest-workspace",
+            copy_project_id,
+            "--dest",
+            copyDestPath,
+            "--wait",
+          ]);
           copy_op_id = op.op_id;
-        });
-
-        await runStep("wait_copy_between_projects_completed", async () => {
-          if (!copy_op_id) throw new Error("missing copy_op_id");
-          const summary = await waitForLroDone({
-            op_id: copy_op_id,
-            wait: waitCopyCompleted,
-          });
-          if (summary.status !== "succeeded") {
-            throw new Error(
-              `copy lro did not succeed: status=${summary.status} error=${summary.error ?? ""}`,
-            );
-          }
         });
 
         await runStep("verify_copied_file_in_second_project", async () => {
           if (!copy_project_id) throw new Error("missing copy_project_id");
           await waitForProjectFileValue({
+            cli,
             project_id: copy_project_id,
             path: copyDestPath,
             expected: sentinelValue,
@@ -1059,10 +1244,7 @@ export async function runSelfHostMultipassBackupSmoke(
 
         await runStep("delete_second_project_for_copy", async () => {
           if (!copy_project_id) return;
-          await deleteProject({
-            project_id: copy_project_id,
-            skipPermissionCheck: true,
-          });
+          await runCli(cli, ["workspace", "delete", copy_project_id]);
           cleanupProjectIds.delete(copy_project_id);
         });
       }
@@ -1072,12 +1254,7 @@ export async function runSelfHostMultipassBackupSmoke(
       await runStep("deprovision_hosts", async () => {
         const hostIds = [second_host_id, host_id].filter(Boolean) as string[];
         for (const id of hostIds) {
-          await deleteHost({ account_id, id, skip_backups: true });
-          await waitForHostStatus({
-            host_id: id,
-            allowed: ["deprovisioned"],
-            wait: waitHostDeprovisioned,
-          });
+          await runCli(cli, ["host", "delete", id, "--skip-backups", "--wait"]);
           cleanupHostIds.delete(id);
         }
       });
@@ -1114,7 +1291,7 @@ export async function runSelfHostMultipassBackupSmoke(
       debug_hints,
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = getErrorMessage(err);
     if (cleanupOnFailure) {
       await cleanup();
     }

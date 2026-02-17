@@ -15,6 +15,13 @@ import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-h
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
+import {
+  durationToMs,
+  extractCookie,
+  isRedirect,
+  normalizeUrl,
+  parseSshServer,
+} from "../core/utils";
 
 const cliDebugEnabled =
   process.env.COCALC_CLI_DEBUG === "1" || process.env.COCALC_CLI_DEBUG === "true";
@@ -76,6 +83,12 @@ type WorkspaceRow = {
 type HostRow = {
   id: string;
   name: string;
+  status?: string | null;
+  region?: string | null;
+  size?: string | null;
+  gpu?: boolean;
+  scope?: string | null;
+  last_seen?: string | null;
   public_ip?: string | null;
   machine?: Record<string, any> | null;
 };
@@ -95,34 +108,6 @@ type LroSummary = {
 
 const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expired"]);
 
-function durationToMs(value: string | undefined, fallbackMs: number): number {
-  if (!value) return fallbackMs;
-  const raw = value.trim().toLowerCase();
-  if (!raw) return fallbackMs;
-  const match = raw.match(/^(\d+)\s*(ms|s|m|h)?$/);
-  if (!match) {
-    throw new Error(`invalid duration '${value}'`);
-  }
-  const amount = Number(match[1]);
-  const unit = match[2] ?? "s";
-  const mult: Record<string, number> = {
-    ms: 1,
-    s: 1000,
-    m: 60_000,
-    h: 3_600_000,
-  };
-  return amount * mult[unit];
-}
-
-function normalizeUrl(url: string): string {
-  const trimmed = `${url}`.trim();
-  if (!trimmed) throw new Error("empty url");
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-    return trimmed.replace(/\/+$/, "");
-  }
-  return `http://${trimmed.replace(/\/+$/, "")}`;
-}
-
 function defaultApiBaseUrl(): string {
   const raw =
     process.env.COCALC_API_URL ??
@@ -131,24 +116,6 @@ function defaultApiBaseUrl(): string {
   return normalizeUrl(raw);
 }
 
-function parseSshServer(sshServer: string): { host: string; port?: number } {
-  const value = sshServer.trim();
-  if (!value) {
-    throw new Error("host has no ssh_server configured");
-  }
-  if (value.startsWith("[")) {
-    const match = value.match(/^\[(.*)\]:(\d+)$/);
-    if (match) {
-      return { host: match[1], port: Number(match[2]) };
-    }
-    return { host: value };
-  }
-  const match = value.match(/^(.*):(\d+)$/);
-  if (match) {
-    return { host: match[1], port: Number(match[2]) };
-  }
-  return { host: value };
-}
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -681,6 +648,21 @@ async function resolveHost(ctx: CommandContext, identifier: string): Promise<Hos
   return matches[0];
 }
 
+async function listHosts(
+  ctx: CommandContext,
+  opts: { include_deleted?: boolean; catalog?: boolean; admin_view?: boolean } = {},
+): Promise<HostRow[]> {
+  const hosts = await hubCallAccount<HostRow[]>(ctx, "hosts.listHosts", [
+    {
+      include_deleted: !!opts.include_deleted,
+      catalog: !!opts.catalog,
+      admin_view: !!opts.admin_view,
+    },
+  ]);
+  if (!Array.isArray(hosts)) return [];
+  return hosts;
+}
+
 async function waitForLro(
   ctx: CommandContext,
   opId: string,
@@ -752,19 +734,6 @@ async function runSsh(args: string[]): Promise<number> {
       resolve(code ?? 1);
     });
   });
-}
-
-function extractCookie(setCookie: string | null, cookieName: string): string | undefined {
-  if (!setCookie) return undefined;
-  const escaped = cookieName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`${escaped}=([^;]+)`);
-  const match = setCookie.match(re);
-  if (!match?.[1]) return undefined;
-  return `${cookieName}=${match[1]}`;
-}
-
-function isRedirect(status: number): boolean {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
 async function fetchWithTimeout(
@@ -897,6 +866,22 @@ workspace
   );
 
 workspace
+  .command("get <workspace>")
+  .description("get one workspace by id or name")
+  .action(async (workspaceIdentifier: string, command: Command) => {
+    await withContext(command, "workspace get", async (ctx) => {
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      return {
+        workspace_id: ws.project_id,
+        title: ws.title,
+        host_id: ws.host_id,
+        state: workspaceState(ws.state),
+        last_edited: toIso(ws.last_edited),
+      };
+    });
+  });
+
+workspace
   .command("create [name]")
   .description("create a workspace")
   .option("--host <host>", "host id or name")
@@ -914,6 +899,27 @@ workspace
         workspace_id: workspaceId,
         title: name ?? "New Workspace",
         host_id: host?.id ?? null,
+      };
+    });
+  });
+
+workspace
+  .command("delete <workspace>")
+  .description("soft-delete a workspace")
+  .action(async (workspaceIdentifier: string, command: Command) => {
+    await withContext(command, "workspace delete", async (ctx) => {
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      await hubCallAccount(ctx, "db.userQuery", [
+        {
+          query: {
+            projects: [{ project_id: ws.project_id, deleted: true }],
+          },
+          options: [],
+        },
+      ]);
+      return {
+        workspace_id: ws.project_id,
+        status: "deleted",
       };
     });
   });
@@ -1211,6 +1217,162 @@ workspace
     },
   );
 
+const backup = workspace.command("backup").description("workspace backups");
+
+backup
+  .command("create <workspace>")
+  .description("create a backup")
+  .option("--wait", "wait for completion")
+  .action(async (workspaceIdentifier: string, opts: { wait?: boolean }, command: Command) => {
+    await withContext(command, "workspace backup create", async (ctx) => {
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.createBackup", [
+        {
+          project_id: ws.project_id,
+        },
+      ]);
+      if (!opts.wait) {
+        return {
+          workspace_id: ws.project_id,
+          op_id: op.op_id,
+          status: "queued",
+        };
+      }
+      const summary = await waitForLro(ctx, op.op_id, {
+        timeoutMs: ctx.timeoutMs,
+        pollMs: ctx.pollMs,
+      });
+      if (summary.timedOut) {
+        throw new Error(`backup timed out (op=${op.op_id}, last_status=${summary.status})`);
+      }
+      if (summary.status !== "succeeded") {
+        throw new Error(`backup failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
+      }
+      return {
+        workspace_id: ws.project_id,
+        op_id: op.op_id,
+        status: summary.status,
+      };
+    });
+  });
+
+backup
+  .command("list <workspace>")
+  .description("list backups")
+  .option("--indexed-only", "only list indexed backups")
+  .option("--limit <n>", "max rows", "100")
+  .action(
+    async (
+      workspaceIdentifier: string,
+      opts: { indexedOnly?: boolean; limit?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace backup list", async (ctx) => {
+        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const backups = await hubCallAccount<
+          Array<{ id: string; time: string | Date; summary?: Record<string, any> }>
+        >(ctx, "projects.getBackups", [
+          {
+            project_id: ws.project_id,
+            indexed_only: !!opts.indexedOnly,
+          },
+        ]);
+        const limitNum = Math.max(1, Math.min(10000, Number(opts.limit ?? "100") || 100));
+        return (backups ?? []).slice(0, limitNum).map((b) => ({
+          workspace_id: ws.project_id,
+          backup_id: b.id,
+          time: toIso(b.time),
+          summary: b.summary ?? null,
+        }));
+      });
+    },
+  );
+
+backup
+  .command("files <workspace>")
+  .description("list files for one backup")
+  .requiredOption("--backup-id <id>", "backup id")
+  .option("--path <path>", "path inside backup")
+  .action(
+    async (
+      workspaceIdentifier: string,
+      opts: { backupId: string; path?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace backup files", async (ctx) => {
+        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const files = await hubCallAccount<
+          Array<{ name: string; isDir: boolean; mtime: number; size: number }>
+        >(ctx, "projects.getBackupFiles", [
+          {
+            project_id: ws.project_id,
+            id: opts.backupId,
+            path: opts.path,
+          },
+        ]);
+        return (files ?? []).map((f) => ({
+          workspace_id: ws.project_id,
+          backup_id: opts.backupId,
+          name: f.name,
+          is_dir: !!f.isDir,
+          mtime: f.mtime,
+          size: f.size,
+        }));
+      });
+    },
+  );
+
+backup
+  .command("restore <workspace>")
+  .description("restore backup content")
+  .requiredOption("--backup-id <id>", "backup id")
+  .option("--path <path>", "source path in backup")
+  .option("--dest <path>", "destination path in workspace")
+  .option("--wait", "wait for completion")
+  .action(
+    async (
+      workspaceIdentifier: string,
+      opts: { backupId: string; path?: string; dest?: string; wait?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace backup restore", async (ctx) => {
+        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.restoreBackup", [
+          {
+            project_id: ws.project_id,
+            id: opts.backupId,
+            path: opts.path,
+            dest: opts.dest,
+          },
+        ]);
+        if (!opts.wait) {
+          return {
+            workspace_id: ws.project_id,
+            backup_id: opts.backupId,
+            op_id: op.op_id,
+            status: "queued",
+          };
+        }
+        const summary = await waitForLro(ctx, op.op_id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (summary.timedOut) {
+          throw new Error(`restore timed out (op=${op.op_id}, last_status=${summary.status})`);
+        }
+        if (summary.status !== "succeeded") {
+          throw new Error(`restore failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
+        }
+        return {
+          workspace_id: ws.project_id,
+          backup_id: opts.backupId,
+          op_id: op.op_id,
+          status: summary.status,
+        };
+      });
+    },
+  );
+
 const snapshot = workspace.command("snapshot").description("workspace snapshots");
 
 snapshot
@@ -1372,6 +1534,199 @@ proxy
   );
 
 const host = program.command("host").description("host operations");
+
+host
+  .command("list")
+  .description("list hosts")
+  .option("--include-deleted", "include deleted hosts")
+  .option("--catalog", "include catalog-visible hosts")
+  .option("--admin-view", "admin view")
+  .option("--limit <n>", "max rows", "500")
+  .action(
+    async (
+      opts: { includeDeleted?: boolean; catalog?: boolean; adminView?: boolean; limit?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "host list", async (ctx) => {
+        const rows = await listHosts(ctx, {
+          include_deleted: !!opts.includeDeleted,
+          catalog: !!opts.catalog,
+          admin_view: !!opts.adminView,
+        });
+        const limitNum = Math.max(1, Math.min(10000, Number(opts.limit ?? "500") || 500));
+        return rows.slice(0, limitNum).map((row) => ({
+          host_id: row.id,
+          name: row.name,
+          status: row.status ?? "",
+          region: row.region ?? "",
+          size: row.size ?? "",
+          gpu: !!row.gpu,
+          scope: row.scope ?? "",
+          last_seen: row.last_seen ?? null,
+          public_ip: row.public_ip ?? null,
+        }));
+      });
+    },
+  );
+
+host
+  .command("get <host>")
+  .description("get one host by id or name")
+  .action(async (hostIdentifier: string, command: Command) => {
+    await withContext(command, "host get", async (ctx) => {
+      const h = await resolveHost(ctx, hostIdentifier);
+      return {
+        host_id: h.id,
+        name: h.name,
+        status: h.status ?? "",
+        region: h.region ?? "",
+        size: h.size ?? "",
+        gpu: !!h.gpu,
+        scope: h.scope ?? "",
+        last_seen: h.last_seen ?? null,
+        public_ip: h.public_ip ?? null,
+        machine: h.machine ?? null,
+      };
+    });
+  });
+
+host
+  .command("create-self <name>")
+  .description("create a self-host host record")
+  .requiredOption("--ssh-target <target>", "ssh target, e.g. ubuntu@10.0.0.2")
+  .option("--region <region>", "region label", "pending")
+  .option("--size <size>", "size label", "custom")
+  .option("--cpu <count>", "cpu count", "2")
+  .option("--ram-gb <gb>", "ram in GB", "8")
+  .option("--disk-gb <gb>", "disk in GB", "40")
+  .option("--gpu", "mark host as having gpu")
+  .action(
+    async (
+      name: string,
+      opts: {
+        sshTarget: string;
+        region?: string;
+        size?: string;
+        cpu?: string;
+        ramGb?: string;
+        diskGb?: string;
+        gpu?: boolean;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "host create-self", async (ctx) => {
+        const cpu = Math.max(1, Number(opts.cpu ?? "2") || 2);
+        const ram_gb = Math.max(1, Number(opts.ramGb ?? "8") || 8);
+        const disk_gb = Math.max(10, Number(opts.diskGb ?? "40") || 40);
+        const host = await hubCallAccount<HostRow>(ctx, "hosts.createHost", [
+          {
+            name,
+            region: opts.region ?? "pending",
+            size: opts.size ?? "custom",
+            gpu: !!opts.gpu,
+            machine: {
+              cloud: "self-host",
+              storage_mode: "persistent",
+              disk_gb,
+              metadata: {
+                cpu,
+                ram_gb,
+                self_host_mode: "local",
+                self_host_kind: "direct",
+                self_host_ssh_target: opts.sshTarget,
+              },
+            },
+          },
+        ]);
+        return {
+          host_id: host.id,
+          name: host.name,
+          status: host.status ?? "",
+          region: host.region ?? "",
+          size: host.size ?? "",
+          gpu: !!host.gpu,
+        };
+      });
+    },
+  );
+
+host
+  .command("start <host>")
+  .description("start a host")
+  .option("--wait", "wait for completion")
+  .action(async (hostIdentifier: string, opts: { wait?: boolean }, command: Command) => {
+    await withContext(command, "host start", async (ctx) => {
+      const h = await resolveHost(ctx, hostIdentifier);
+      const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.startHost", [{ id: h.id }]);
+      if (!opts.wait) {
+        return {
+          host_id: h.id,
+          op_id: op.op_id,
+          status: "queued",
+        };
+      }
+      const summary = await waitForLro(ctx, op.op_id, {
+        timeoutMs: ctx.timeoutMs,
+        pollMs: ctx.pollMs,
+      });
+      if (summary.timedOut) {
+        throw new Error(`host start timed out (op=${op.op_id}, last_status=${summary.status})`);
+      }
+      if (summary.status !== "succeeded") {
+        throw new Error(`host start failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
+      }
+      return {
+        host_id: h.id,
+        op_id: op.op_id,
+        status: summary.status,
+      };
+    });
+  });
+
+host
+  .command("delete <host>")
+  .description("deprovision a host")
+  .option("--skip-backups", "skip creating backups before deprovision")
+  .option("--wait", "wait for completion")
+  .action(
+    async (
+      hostIdentifier: string,
+      opts: { skipBackups?: boolean; wait?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "host delete", async (ctx) => {
+        const h = await resolveHost(ctx, hostIdentifier);
+        const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.deleteHost", [
+          {
+            id: h.id,
+            skip_backups: !!opts.skipBackups,
+          },
+        ]);
+        if (!opts.wait) {
+          return {
+            host_id: h.id,
+            op_id: op.op_id,
+            status: "queued",
+          };
+        }
+        const summary = await waitForLro(ctx, op.op_id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (summary.timedOut) {
+          throw new Error(`host delete timed out (op=${op.op_id}, last_status=${summary.status})`);
+        }
+        if (summary.status !== "succeeded") {
+          throw new Error(`host delete failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
+        }
+        return {
+          host_id: h.id,
+          op_id: op.op_id,
+          status: summary.status,
+        };
+      });
+    },
+  );
 
 host
   .command("resolve-connection <host>")

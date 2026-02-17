@@ -40,8 +40,9 @@ By default this script:
 
 1. Builds local `project-host` + `project` bundles (and tools if missing).
 2. Builds `@cocalc/server`.
-3. Starts hub daemon (if not running).
-4. Runs self-host multipass smoke tests end-to-end, including:
+3. Builds `@cocalc/cli` (used by smoke-runner for host/workspace actions).
+4. Starts hub daemon (if not running).
+5. Runs self-host multipass smoke tests end-to-end, including:
    - cross-project file copy (project A -> project B),
    - backup indexing,
    - optional second VM/host provisioning,

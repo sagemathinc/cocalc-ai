@@ -9,7 +9,7 @@
     "preinstall": "npx only-allow pnpm",
     "build": "pnpm exec tsc --build",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "test": "exit 0"
+    "test": "pnpm build && node --test dist/core/*.test.js"
   },
   "files": [
     "dist/**",

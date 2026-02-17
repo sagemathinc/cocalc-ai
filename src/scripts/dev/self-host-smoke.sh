@@ -27,6 +27,7 @@ source "$CONFIG_FILE"
 SMOKE_BUILD_BUNDLES="${SMOKE_BUILD_BUNDLES:-1}"
 SMOKE_BUILD_SERVER="${SMOKE_BUILD_SERVER:-1}"
 SMOKE_BUILD_HUB="${SMOKE_BUILD_HUB:-1}"
+SMOKE_BUILD_CLI="${SMOKE_BUILD_CLI:-1}"
 SMOKE_CLEANUP_SUCCESS="${SMOKE_CLEANUP_SUCCESS:-1}"
 SMOKE_CLEANUP_FAILURE="${SMOKE_CLEANUP_FAILURE:-1}"
 SMOKE_VERIFY_INDEX="${SMOKE_VERIFY_INDEX:-1}"
@@ -76,6 +77,11 @@ if [ "$SMOKE_BUILD_HUB" = "1" ]; then
   pnpm --dir "$SRC_DIR/packages/hub" build
 fi
 
+if [ "$SMOKE_BUILD_CLI" = "1" ]; then
+  echo "building cli package..."
+  pnpm --dir "$SRC_DIR/packages/cli" build
+fi
+
 if [ "$SMOKE_RESTART_HUB" = "1" ]; then
   "$HUB_DAEMON" restart
 else
@@ -92,6 +98,10 @@ if [ -f "$LOCAL_PG_ENV" ]; then
 else
   echo "missing local postgres env file: $LOCAL_PG_ENV" >&2
   exit 1
+fi
+
+if [ -z "${COCALC_HUB_PASSWORD:-}" ] && [ -n "${SECRETS:-}" ] && [ -f "$SECRETS/conat-password" ]; then
+  export COCALC_HUB_PASSWORD="$SECRETS/conat-password"
 fi
 
 if [ "$SMOKE_RESET_BACKUP_QUEUE" = "1" ]; then
