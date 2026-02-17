@@ -19,10 +19,7 @@
   "author": "SageMath, Inc.",
   "license": "SEE LICENSE.md",
   "dependencies": {
-    "@cocalc/backend": "workspace:*",
     "@cocalc/conat": "workspace:*",
-    "@cocalc/database": "workspace:*",
-    "@cocalc/server": "workspace:*",
     "@cocalc/util": "workspace:*",
     "ascii-table3": "^1.0.1",
     "commander": "^14.0.1"

@@ -5,14 +5,8 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@cocalc/backend": ["../backend"],
-      "@cocalc/backend/*": ["../backend/*"],
       "@cocalc/conat": ["../conat"],
       "@cocalc/conat/*": ["../conat/*"],
-      "@cocalc/database": ["../database"],
-      "@cocalc/database/*": ["../database/*"],
-      "@cocalc/server": ["../server"],
-      "@cocalc/server/*": ["../server/*"],
       "@cocalc/util": ["../util"],
       "@cocalc/util/*": ["../util/*"]
     }
@@ -20,10 +14,7 @@
   "include": ["src/**/*.ts"],
   "exclude": ["dist", "node_modules"],
   "references": [
-    { "path": "../backend" },
     { "path": "../conat" },
-    { "path": "../database" },
-    { "path": "../server" },
     { "path": "../util" }
   ]
 }

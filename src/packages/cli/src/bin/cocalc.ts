@@ -1,35 +1,58 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { networkInterfaces } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { URL } from "node:url";
 import { AsciiTable3 } from "ascii-table3";
 import { Command } from "commander";
 
 import pkg from "../../package.json";
 
-import { issueProjectHostAuthToken as issueProjectHostAuthTokenJwt } from "@cocalc/conat/auth/project-host-token";
-import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
-import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
-import { isValidUUID } from "@cocalc/util/misc";
+import { connect as connectConat, type Client as ConatClient } from "@cocalc/conat/core/client";
+import callHub from "@cocalc/conat/hub/call-hub";
+import { projectApiClient } from "@cocalc/conat/project/api";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
+import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
+import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
 
 const cliDebugEnabled =
   process.env.COCALC_CLI_DEBUG === "1" || process.env.COCALC_CLI_DEBUG === "true";
 if (!cliDebugEnabled) {
-  // Keep CLI stdout clean (especially for --json) even when DEBUG is set globally.
+  // Keep CLI stdout/stderr clean (especially with --json) even if DEBUG is globally enabled.
   process.env.SMC_TEST ??= "1";
   process.env.DEBUG_CONSOLE ??= "no";
   process.env.DEBUG_FILE ??= "";
+
+  // conat/core/client currently emits this warning via console.log on auth failures;
+  // suppress it so CLI JSON output remains parseable.
+  const origLog = console.log.bind(console);
+  console.log = (...args: any[]) => {
+    const first = args[0];
+    if (typeof first === "string" && first.startsWith("WARNING: inbox not available --")) {
+      return;
+    }
+    origLog(...args);
+  };
 }
 
 type GlobalOptions = {
   json?: boolean;
   output?: "table" | "json" | "yaml";
   accountId?: string;
+  account_id?: string;
   api?: string;
   timeout?: string;
   pollMs?: string;
+  apiKey?: string;
+  cookie?: string;
+  bearer?: string;
+  hubPassword?: string;
+};
+
+type RemoteConnection = {
+  client: ConatClient;
+  user?: Record<string, unknown> | null;
 };
 
 type CommandContext = {
@@ -38,6 +61,7 @@ type CommandContext = {
   timeoutMs: number;
   pollMs: number;
   apiBaseUrl: string;
+  remote: RemoteConnection;
 };
 
 type WorkspaceRow = {
@@ -51,9 +75,11 @@ type HostRow = {
   name: string;
   public_url: string | null;
   internal_url: string | null;
-  ssh_server: string | null;
   metadata: Record<string, any> | null;
-  tier?: number | null;
+};
+
+type UserQueryResult<T> = {
+  rows: T[];
 };
 
 type LroStatus = {
@@ -63,161 +89,13 @@ type LroStatus = {
   timedOut?: boolean;
 };
 
+type LroSummary = {
+  op_id: string;
+  status: string;
+  error?: string | null;
+};
+
 const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expired"]);
-
-function requireAccount(accountId?: string): string {
-  if (!accountId) {
-    throw new Error("must be signed in");
-  }
-  return accountId;
-}
-
-async function getDbPool() {
-  const mod = await import("@cocalc/database/pool");
-  return mod.default();
-}
-
-async function listAdminAccountIds(): Promise<string[]> {
-  const mod = await import("@cocalc/server/accounts/admins");
-  return mod.default();
-}
-
-async function apiCreateProject(args: {
-  account_id?: string;
-  title?: string;
-  host_id?: string;
-  start?: boolean;
-}): Promise<string> {
-  const mod = await import("@cocalc/server/conat/api/projects");
-  return await mod.createProject(args);
-}
-
-async function apiStartWorkspace(args: {
-  account_id: string;
-  project_id: string;
-  wait?: boolean;
-}): Promise<{ op_id: string }> {
-  const mod = await import("@cocalc/server/conat/api/projects");
-  return await mod.start(args);
-}
-
-async function apiMoveWorkspace(args: {
-  account_id: string;
-  project_id: string;
-  dest_host_id: string;
-}): Promise<{ op_id: string }> {
-  const mod = await import("@cocalc/server/conat/api/projects");
-  return await mod.moveProject(args);
-}
-
-async function apiCopyPathBetweenWorkspaces(args: {
-  account_id?: string;
-  src: { project_id: string; path: string };
-  dest: { project_id: string; path: string };
-}): Promise<{ op_id: string }> {
-  const mod = await import("@cocalc/server/conat/api/projects");
-  return await mod.copyPathBetweenProjects(args);
-}
-
-async function apiCreateSnapshot(args: {
-  account_id?: string;
-  project_id: string;
-  name?: string;
-}): Promise<void> {
-  const mod = await import("@cocalc/server/conat/api/projects");
-  await mod.createSnapshot(args);
-}
-
-async function apiAllSnapshotUsage(args: {
-  account_id?: string;
-  project_id: string;
-}): Promise<
-  {
-    name: string;
-    used: number;
-    exclusive: number;
-    quota: number;
-  }[]
-> {
-  const mod = await import("@cocalc/server/conat/api/projects");
-  return await mod.allSnapshotUsage(args);
-}
-
-async function apiExecInWorkspace(args: {
-  account_id: string;
-  project_id: string;
-  execOpts: {
-    command: string;
-    args?: string[];
-    bash?: boolean;
-    timeout?: number;
-    err_on_exit?: boolean;
-    path?: string;
-  };
-}): Promise<{
-  stdout?: string;
-  stderr?: string;
-  exit_code: number;
-  command?: string;
-  time?: number;
-}> {
-  const mod = await import("@cocalc/server/projects/exec");
-  return await mod.default(args);
-}
-
-function isLocalHost(host: string): boolean {
-  const value = host.trim().toLowerCase();
-  return value === "localhost" || value === "127.0.0.1" || value === "::1";
-}
-
-function isPrivateIpv4(address: string): boolean {
-  if (address.startsWith("10.")) return true;
-  if (address.startsWith("192.168.")) return true;
-  if (address.startsWith("172.")) {
-    const octet = Number.parseInt(address.split(".")[1] ?? "", 10);
-    return octet >= 16 && octet <= 31;
-  }
-  return false;
-}
-
-function detectLanIp(): string | undefined {
-  const nets = networkInterfaces();
-  const candidates: string[] = [];
-  for (const addrs of Object.values(nets)) {
-    if (!addrs) continue;
-    for (const addr of addrs) {
-      if (addr.family !== "IPv4" || addr.internal) continue;
-      candidates.push(addr.address);
-    }
-  }
-  return candidates.find(isPrivateIpv4) ?? candidates[0];
-}
-
-function resolveOnPremHostLocal(fallbackHost?: string | null): string {
-  const explicit =
-    process.env.COCALC_PUBLIC_HOST ??
-    process.env.COCALC_LAUNCHPAD_HOST ??
-    process.env.COCALC_ONPREM_HOST;
-  const raw =
-    explicit ??
-    process.env.HOST ??
-    process.env.COCALC_HUB_HOSTNAME ??
-    fallbackHost ??
-    "localhost";
-  const value = String(raw).trim();
-  if (!value) return "localhost";
-  if (value.startsWith("http://") || value.startsWith("https://")) {
-    try {
-      return new URL(value).hostname || "localhost";
-    } catch {
-      return "localhost";
-    }
-  }
-  if (!explicit && isLocalHost(value)) {
-    return detectLanIp() ?? value;
-  }
-  return value;
-}
 
 function durationToMs(value: string | undefined, fallbackMs: number): number {
   if (!value) return fallbackMs;
@@ -359,6 +237,7 @@ function emitError(
     }
   }
   const accountId = ctx.accountId ?? ctx.globals?.accountId;
+
   if (ctx.globals?.json || ctx.globals?.output === "json") {
     const payload = {
       ok: false,
@@ -376,16 +255,6 @@ function emitError(
     return;
   }
   console.error(`ERROR: ${message}`);
-}
-
-async function resolveAccountId(globals: GlobalOptions): Promise<string> {
-  if (globals.accountId) return globals.accountId;
-  if (process.env.COCALC_ACCOUNT_ID) return process.env.COCALC_ACCOUNT_ID;
-  const ids = await listAdminAccountIds();
-  if (!ids.length) {
-    throw new Error("unable to determine account_id; pass --account-id");
-  }
-  return ids[0];
 }
 
 function globalsFrom(command: unknown): GlobalOptions {
@@ -410,14 +279,168 @@ function globalsFrom(command: unknown): GlobalOptions {
   return {};
 }
 
+function getExplicitAccountId(globals: GlobalOptions): string | undefined {
+  return globals.accountId ?? globals.account_id;
+}
+
+function normalizeSecretValue(raw: string | undefined): string | undefined {
+  const value = `${raw ?? ""}`.trim();
+  if (!value) return undefined;
+  if (existsSync(value)) {
+    try {
+      const data = readFileSync(value, "utf8").trim();
+      if (data) return data;
+    } catch {
+      // fall through and use raw value
+    }
+  }
+  return value;
+}
+
+function cookieNameFor(baseUrl: string, name: string): string {
+  const pathname = new URL(baseUrl).pathname || "/";
+  const basePath = pathname.replace(/\/+$/, "") || "/";
+  return basePathCookieName({ basePath, name });
+}
+
+function buildCookieHeader(baseUrl: string, globals: GlobalOptions): string | undefined {
+  const parts: string[] = [];
+  if (globals.cookie?.trim()) {
+    parts.push(globals.cookie.trim());
+  }
+
+  const apiKey = globals.apiKey ?? process.env.COCALC_API_KEY;
+  if (apiKey?.trim()) {
+    const scopedName = cookieNameFor(baseUrl, "api_key");
+    parts.push(`${scopedName}=${apiKey}`);
+    if (scopedName !== "api_key") {
+      parts.push(`api_key=${apiKey}`);
+    }
+  }
+
+  const hubPassword = normalizeSecretValue(globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD);
+  if (hubPassword?.trim()) {
+    const scopedName = cookieNameFor(baseUrl, "hub_password");
+    parts.push(`${scopedName}=${hubPassword}`);
+    if (scopedName !== "hub_password") {
+      parts.push(`hub_password=${hubPassword}`);
+    }
+  }
+
+  if (!parts.length) return undefined;
+  return parts.join("; ");
+}
+
+function hasHubPassword(globals: GlobalOptions): boolean {
+  return !!normalizeSecretValue(globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD);
+}
+
+async function connectRemote({
+  globals,
+  apiBaseUrl,
+  timeoutMs,
+}: {
+  globals: GlobalOptions;
+  apiBaseUrl: string;
+  timeoutMs: number;
+}): Promise<RemoteConnection> {
+  const extraHeaders: Record<string, string> = {};
+  const cookie = buildCookieHeader(apiBaseUrl, globals);
+  if (cookie) {
+    extraHeaders.Cookie = cookie;
+  }
+  const bearer = globals.bearer ?? process.env.COCALC_BEARER_TOKEN;
+  if (bearer?.trim()) {
+    extraHeaders.Authorization = `Bearer ${bearer.trim()}`;
+  }
+
+  const client = connectConat({
+    address: apiBaseUrl,
+    noCache: true,
+    ...(Object.keys(extraHeaders).length ? { extraHeaders } : undefined),
+  });
+
+  await client.waitUntilSignedIn({ timeout: timeoutMs });
+
+  return {
+    client,
+    user: (client.info as any)?.user,
+  };
+}
+
+async function resolveDefaultAdminAccountId({
+  remote,
+  timeoutMs,
+}: {
+  remote: RemoteConnection;
+  timeoutMs: number;
+}): Promise<string | undefined> {
+  const candidates = Array.from(
+    new Set(
+      [process.env.COCALC_ACCOUNT_ID, FALLBACK_ACCOUNT_UUID].filter(
+        (x): x is string => typeof x === "string" && isValidUUID(x),
+      ),
+    ),
+  );
+  const query =
+    "SELECT account_id FROM accounts WHERE 'admin' = ANY(groups) AND coalesce(deleted,false)=false ORDER BY account_id LIMIT 1";
+
+  for (const candidate of candidates) {
+    try {
+      const result = (await callHub({
+        client: remote.client,
+        account_id: candidate,
+        name: "db.userQuery",
+        args: [{ query, options: [] }],
+        timeout: timeoutMs,
+      })) as UserQueryResult<{ account_id: string }>;
+      const found = result?.rows?.[0]?.account_id;
+      if (isValidUUID(found)) {
+        return found;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+  return candidates[0];
+}
+
+function resolveAccountIdFromRemote(remote: RemoteConnection): string | undefined {
+  const value = remote.user?.account_id;
+  if (typeof value === "string" && isValidUUID(value)) {
+    return value;
+  }
+  return undefined;
+}
+
 async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext> {
-  const accountId = await resolveAccountId(globals);
+  const timeoutMs = durationToMs(globals.timeout, 600_000);
+  const pollMs = durationToMs(globals.pollMs, 1_000);
+  const apiBaseUrl = globals.api ? normalizeUrl(globals.api) : defaultApiBaseUrl();
+  const remote = await connectRemote({ globals, apiBaseUrl, timeoutMs });
+
+  let accountId =
+    getExplicitAccountId(globals) ??
+    process.env.COCALC_ACCOUNT_ID ??
+    resolveAccountIdFromRemote(remote);
+
+  if (!accountId && hasHubPassword(globals)) {
+    accountId = await resolveDefaultAdminAccountId({ remote, timeoutMs });
+  }
+
+  if (!accountId || !isValidUUID(accountId)) {
+    throw new Error(
+      "unable to determine account_id; pass --account-id or authenticate with an account api key/cookie",
+    );
+  }
+
   return {
     globals,
     accountId,
-    timeoutMs: durationToMs(globals.timeout, 600_000),
-    pollMs: durationToMs(globals.pollMs, 1_000),
-    apiBaseUrl: globals.api ? normalizeUrl(globals.api) : defaultApiBaseUrl(),
+    timeoutMs,
+    pollMs,
+    apiBaseUrl,
+    remote,
   };
 }
 
@@ -427,242 +450,108 @@ async function withContext(
   fn: (ctx: CommandContext) => Promise<unknown>,
 ): Promise<void> {
   let globals: GlobalOptions = {};
+  let ctx: CommandContext | undefined;
   try {
     globals = globalsFrom(command);
-    const ctx = await contextForGlobals(globals);
+    ctx = await contextForGlobals(globals);
     const data = await fn(ctx);
     emitSuccess(ctx, commandName, data);
   } catch (error) {
-    emitError({ globals }, commandName, error);
+    emitError(
+      { globals, apiBaseUrl: ctx?.apiBaseUrl, accountId: ctx?.accountId },
+      commandName,
+      error,
+    );
     process.exitCode = 1;
+  } finally {
+    try {
+      ctx?.remote.client.close();
+    } catch {
+      // ignore
+    }
   }
 }
 
-async function resolveWorkspace(identifier: string): Promise<WorkspaceRow> {
-  const pool = await getDbPool();
+async function hubCallAccount<T>(
+  ctx: CommandContext,
+  name: string,
+  args: any[] = [],
+  timeout?: number,
+): Promise<T> {
+  return (await callHub({
+    client: ctx.remote.client,
+    account_id: ctx.accountId,
+    name,
+    args,
+    timeout: timeout ?? ctx.timeoutMs,
+  })) as T;
+}
+
+async function userQuery<T>(
+  ctx: CommandContext,
+  query: string,
+  options: any[] = [],
+): Promise<UserQueryResult<T>> {
+  return await hubCallAccount<UserQueryResult<T>>(ctx, "db.userQuery", [
+    {
+      query,
+      options,
+    },
+  ]);
+}
+
+async function resolveWorkspace(ctx: CommandContext, identifier: string): Promise<WorkspaceRow> {
   if (isValidUUID(identifier)) {
-    const { rows } = await pool.query<WorkspaceRow>(
+    const result = await userQuery<WorkspaceRow>(
+      ctx,
       "SELECT project_id, title, host_id FROM projects WHERE project_id=$1 AND deleted IS NOT true",
       [identifier],
     );
-    if (rows[0]) return rows[0];
+    if (result.rows[0]) return result.rows[0];
   }
 
-  const { rows } = await pool.query<WorkspaceRow>(
+  const result = await userQuery<WorkspaceRow>(
+    ctx,
     "SELECT project_id, title, host_id FROM projects WHERE title=$1 AND deleted IS NOT true ORDER BY created DESC LIMIT 3",
     [identifier],
   );
-  if (!rows.length) {
+  if (!result.rows.length) {
     throw new Error(`workspace '${identifier}' not found`);
   }
-  if (rows.length > 1) {
+  if (result.rows.length > 1) {
     throw new Error(
-      `workspace name '${identifier}' is ambiguous: ${rows.map((x) => x.project_id).join(", ")}`,
+      `workspace name '${identifier}' is ambiguous: ${result.rows.map((x) => x.project_id).join(", ")}`,
     );
   }
-  return rows[0];
+  return result.rows[0];
 }
 
-async function resolveHost(identifier: string): Promise<HostRow> {
-  const pool = await getDbPool();
+async function resolveHost(ctx: CommandContext, identifier: string): Promise<HostRow> {
   if (isValidUUID(identifier)) {
-    const { rows } = await pool.query<HostRow>(
-      "SELECT id, name, public_url, internal_url, ssh_server, metadata, tier FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+    const result = await userQuery<HostRow>(
+      ctx,
+      "SELECT id, name, public_url, internal_url, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
       [identifier],
     );
-    if (rows[0]) return rows[0];
+    if (result.rows[0]) return result.rows[0];
   }
-  const { rows } = await pool.query<HostRow>(
-    "SELECT id, name, public_url, internal_url, ssh_server, metadata, tier FROM project_hosts WHERE name=$1 AND deleted IS NULL ORDER BY created DESC LIMIT 3",
+
+  const result = await userQuery<HostRow>(
+    ctx,
+    "SELECT id, name, public_url, internal_url, metadata FROM project_hosts WHERE name=$1 AND deleted IS NULL ORDER BY created DESC LIMIT 3",
     [identifier],
   );
-  if (!rows.length) {
+  if (!result.rows.length) {
     throw new Error(`host '${identifier}' not found`);
   }
-  if (rows.length > 1) {
-    throw new Error(
-      `host name '${identifier}' is ambiguous: ${rows.map((x) => x.id).join(", ")}`,
-    );
+  if (result.rows.length > 1) {
+    throw new Error(`host name '${identifier}' is ambiguous: ${result.rows.map((x) => x.id).join(", ")}`);
   }
-  return rows[0];
-}
-
-async function requireHostById(hostId: string): Promise<HostRow> {
-  const pool = await getDbPool();
-  const { rows } = await pool.query<HostRow>(
-    "SELECT id, name, public_url, internal_url, ssh_server, metadata, tier FROM project_hosts WHERE id=$1 AND deleted IS NULL",
-    [hostId],
-  );
-  const row = rows[0];
-  if (!row) {
-    throw new Error("host not found");
-  }
-  return row;
-}
-
-function hostAllowsDirectAccess(host: HostRow, accountId: string): boolean {
-  const owner = host.metadata?.owner ?? "";
-  const collaborators = Array.isArray(host.metadata?.collaborators)
-    ? host.metadata?.collaborators
-    : [];
-  return owner === accountId || collaborators.includes(accountId) || host.tier != null;
-}
-
-async function assertCanAccessHost(host: HostRow, accountId: string): Promise<void> {
-  if (hostAllowsDirectAccess(host, accountId)) {
-    return;
-  }
-  const pool = await getDbPool();
-  const { rowCount } = await pool.query(
-    `
-      SELECT 1
-      FROM projects
-      WHERE host_id=$1
-        AND deleted IS NOT true
-        AND users ? $2::text
-      LIMIT 1
-    `,
-    [host.id, accountId],
-  );
-  if (!rowCount) {
-    throw new Error("not authorized");
-  }
-}
-
-async function resolveHostConnectionLocal({
-  account_id,
-  host_id,
-}: {
-  account_id?: string;
-  host_id: string;
-}): Promise<HostConnectionInfo> {
-  const owner = requireAccount(account_id);
-  if (!host_id) {
-    throw new Error("host_id must be specified");
-  }
-  const host = await requireHostById(host_id);
-  await assertCanAccessHost(host, owner);
-
-  const machine = host.metadata?.machine ?? {};
-  const selfHostMode = machine?.metadata?.self_host_mode;
-  const effectiveSelfHostMode =
-    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
-  const isLocalSelfHost =
-    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
-
-  let connect_url: string | null = null;
-  let ssh_server: string | null = host.ssh_server ?? null;
-  let local_proxy = false;
-  let ready = false;
-  if (isLocalSelfHost) {
-    local_proxy = true;
-    ready = !!host.metadata?.self_host?.http_tunnel_port;
-    const sshPort = host.metadata?.self_host?.ssh_tunnel_port;
-    if (sshPort) {
-      const sshHost = resolveOnPremHostLocal();
-      ssh_server = `${sshHost}:${sshPort}`;
-    }
-  } else {
-    connect_url = host.public_url ?? host.internal_url ?? null;
-    ready = !!connect_url;
-  }
-
-  return {
-    host_id: host.id,
-    name: host.name ?? null,
-    ssh_server,
-    connect_url,
-    local_proxy,
-    ready,
-  };
-}
-
-async function assertAccountNotBanned(accountId: string): Promise<void> {
-  const pool = await getDbPool();
-  const { rows } = await pool.query<{ banned: boolean | null }>(
-    "SELECT banned FROM accounts WHERE account_id=$1::UUID",
-    [accountId],
-  );
-  if (rows[0]?.banned) {
-    throw new Error("account is banned");
-  }
-}
-
-async function assertCanIssueProjectHostToken({
-  accountId,
-  hostId,
-  projectId,
-}: {
-  accountId: string;
-  hostId: string;
-  projectId?: string;
-}): Promise<void> {
-  const host = await requireHostById(hostId);
-  if (projectId) {
-    const pool = await getDbPool();
-    const { rows } = await pool.query<{
-      host_id: string;
-      group: string | null;
-    }>(
-      `
-        SELECT host_id, users -> $2::text ->> 'group' AS "group"
-        FROM projects
-        WHERE project_id=$1
-          AND deleted IS NOT true
-        LIMIT 1
-      `,
-      [projectId, accountId],
-    );
-    const row = rows[0];
-    if (!row) {
-      throw new Error("project not found");
-    }
-    if (row.host_id !== hostId) {
-      throw new Error("project is not assigned to the requested host");
-    }
-    if (row.group === "owner" || row.group === "collaborator") {
-      return;
-    }
-  }
-  await assertCanAccessHost(host, accountId);
-}
-
-async function issueProjectHostAuthTokenLocal({
-  account_id,
-  host_id,
-  project_id,
-  ttl_seconds,
-}: {
-  account_id?: string;
-  host_id: string;
-  project_id?: string;
-  ttl_seconds?: number;
-}): Promise<{
-  host_id: string;
-  token: string;
-  expires_at: number;
-}> {
-  const accountId = requireAccount(account_id);
-  if (!host_id) {
-    throw new Error("host_id must be specified");
-  }
-  await assertAccountNotBanned(accountId);
-  await assertCanIssueProjectHostToken({
-    accountId,
-    hostId: host_id,
-    projectId: project_id,
-  });
-
-  const { token, expires_at } = issueProjectHostAuthTokenJwt({
-    account_id: accountId,
-    host_id,
-    ttl_seconds,
-    private_key: getProjectHostAuthTokenPrivateKey(),
-  });
-  return { host_id, token, expires_at };
+  return result.rows[0];
 }
 
 async function waitForLro(
+  ctx: CommandContext,
   opId: string,
   {
     timeoutMs,
@@ -672,24 +561,23 @@ async function waitForLro(
     pollMs: number;
   },
 ): Promise<LroStatus> {
-  const pool = await getDbPool();
-  const start = Date.now();
+  const started = Date.now();
   let lastStatus = "unknown";
   let lastError: string | null | undefined;
-  while (Date.now() - start <= timeoutMs) {
-    const { rows } = await pool.query<{ status: string | null; error: string | null }>(
-      "SELECT status, error FROM long_running_operations WHERE op_id=$1",
-      [opId],
-    );
-    const row = rows[0];
-    const status = row?.status ?? "unknown";
+
+  while (Date.now() - started <= timeoutMs) {
+    const summary = await hubCallAccount<LroSummary | undefined>(ctx, "lro.get", [{ op_id: opId }]);
+    const status = summary?.status ?? "unknown";
     lastStatus = status;
-    lastError = row?.error;
+    lastError = summary?.error;
+
     if (TERMINAL_LRO_STATUSES.has(status)) {
-      return { op_id: opId, status, error: row?.error };
+      return { op_id: opId, status, error: summary?.error ?? null };
     }
+
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
+
   return {
     op_id: opId,
     status: lastStatus,
@@ -699,6 +587,7 @@ async function waitForLro(
 }
 
 async function waitForProjectPlacement(
+  ctx: CommandContext,
   projectId: string,
   hostId: string,
   {
@@ -709,14 +598,16 @@ async function waitForProjectPlacement(
     pollMs: number;
   },
 ): Promise<boolean> {
-  const pool = await getDbPool();
-  const start = Date.now();
-  while (Date.now() - start <= timeoutMs) {
-    const { rows } = await pool.query<{ host_id: string | null }>(
+  const started = Date.now();
+  while (Date.now() - started <= timeoutMs) {
+    const result = await userQuery<{ host_id: string | null }>(
+      ctx,
       "SELECT host_id FROM projects WHERE project_id=$1",
       [projectId],
     );
-    if (rows[0]?.host_id === hostId) return true;
+    if (result.rows[0]?.host_id === hostId) {
+      return true;
+    }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   return false;
@@ -778,20 +669,19 @@ async function resolveProxyUrl({
   url: string;
   local_proxy: boolean;
 }> {
-  const workspace = await resolveWorkspace(workspaceIdentifier);
+  const workspace = await resolveWorkspace(ctx, workspaceIdentifier);
   const host = hostIdentifier
-    ? await resolveHost(hostIdentifier)
+    ? await resolveHost(ctx, hostIdentifier)
     : workspace.host_id
-      ? await resolveHost(workspace.host_id)
+      ? await resolveHost(ctx, workspace.host_id)
       : null;
   if (!host) {
     throw new Error("workspace has no assigned host; specify --host or start/move the workspace first");
   }
 
-  const connection = await resolveHostConnectionLocal({
-    account_id: ctx.accountId,
-    host_id: host.id,
-  });
+  const connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
+    { host_id: host.id },
+  ]);
 
   let base = connection.connect_url ? normalizeUrl(connection.connect_url) : "";
   if (!base && connection.local_proxy) {
@@ -829,12 +719,69 @@ program
   .option("--json", "output machine-readable JSON")
   .option("--output <format>", "output format (table|json|yaml)", "table")
   .option("--account-id <uuid>", "account id to use for API calls")
-  .option("--api <url>", "hub base URL (used for proxy URL composition)")
+  .option("--account_id <uuid>", "alias for --account-id")
+  .option("--api <url>", "hub base URL")
   .option("--timeout <duration>", "wait timeout (default: 600s)", "600s")
   .option("--poll-ms <duration>", "poll interval (default: 1s)", "1s")
+  .option("--api-key <key>", "account api key (also read from COCALC_API_KEY)")
+  .option("--cookie <cookie>", "raw Cookie header value")
+  .option("--bearer <token>", "bearer token for conat authorization")
+  .option("--hub-password <password-or-file>", "hub system password for local dev")
   .showHelpAfterError();
 
 const workspace = program.command("workspace").alias("ws").description("workspace operations");
+
+workspace
+  .command("list")
+  .description("list workspaces")
+  .option("--host <host>", "filter by host id or name")
+  .option("--prefix <prefix>", "filter title by prefix")
+  .option("--limit <n>", "max rows", "100")
+  .action(
+    async (
+      opts: { host?: string; prefix?: string; limit?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace list", async (ctx) => {
+        const hostId = opts.host ? (await resolveHost(ctx, opts.host)).id : null;
+        const limitNum = Math.max(1, Math.min(10000, Number(opts.limit ?? "100") || 100));
+        const prefix = opts.prefix?.trim() ? `${opts.prefix.trim()}%` : null;
+        const result = await userQuery<{
+          project_id: string;
+          title: string;
+          host_id: string | null;
+          state: string | null;
+          last_edited: string | null;
+        }>(
+          ctx,
+          `
+            SELECT
+              p.project_id,
+              p.title,
+              p.host_id,
+              COALESCE(p.state->>'state', '') AS state,
+              p.last_edited::text AS last_edited
+            FROM projects p
+            WHERE p.deleted IS NOT true
+              AND (p.users -> $1::text ->> 'group') IN ('owner','collaborator')
+              AND ($2::uuid IS NULL OR p.host_id = $2::uuid)
+              AND ($3::text IS NULL OR p.title ILIKE $3::text)
+            ORDER BY COALESCE(p.last_edited, p.created) DESC
+            LIMIT $4
+          `,
+          [ctx.accountId, hostId, prefix, limitNum],
+        );
+
+        return result.rows.map((row) => ({
+          workspace_id: row.project_id,
+          title: row.title,
+          host_id: row.host_id,
+          state: row.state ?? "",
+          last_edited: row.last_edited,
+        }));
+      });
+    },
+  );
 
 workspace
   .command("create [name]")
@@ -842,13 +789,14 @@ workspace
   .option("--host <host>", "host id or name")
   .action(async (name: string | undefined, opts: { host?: string }, command: Command) => {
     await withContext(command, "workspace create", async (ctx) => {
-      const host = opts.host ? await resolveHost(opts.host) : null;
-      const workspaceId = await apiCreateProject({
-        account_id: ctx.accountId,
-        title: name ?? "New Workspace",
-        host_id: host?.id,
-        start: false,
-      });
+      const host = opts.host ? await resolveHost(ctx, opts.host) : null;
+      const workspaceId = await hubCallAccount<string>(ctx, "projects.createProject", [
+        {
+          title: name ?? "New Workspace",
+          host_id: host?.id,
+          start: false,
+        },
+      ]);
       return {
         workspace_id: workspaceId,
         title: name ?? "New Workspace",
@@ -863,14 +811,16 @@ workspace
   .option("--wait", "wait for completion")
   .action(async (workspaceIdentifier: string, opts: { wait?: boolean }, command: Command) => {
     await withContext(command, "workspace start", async (ctx) => {
-      const ws = await resolveWorkspace(workspaceIdentifier);
-      const op = await apiStartWorkspace({
-        account_id: ctx.accountId,
-        project_id: ws.project_id,
-        wait: false,
-      });
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.start", [
+        {
+          project_id: ws.project_id,
+          wait: false,
+        },
+      ]);
+
       if (opts.wait) {
-        const summary = await waitForLro(op.op_id, {
+        const summary = await waitForLro(ctx, op.op_id, {
           timeoutMs: ctx.timeoutMs,
           pollMs: ctx.pollMs,
         });
@@ -878,9 +828,7 @@ workspace
           throw new Error(`timeout waiting for start op ${op.op_id}; last status=${summary.status}`);
         }
         if (summary.status !== "succeeded") {
-          throw new Error(
-            `start failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
-          );
+          throw new Error(`start failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
         }
         return {
           workspace_id: ws.project_id,
@@ -888,6 +836,7 @@ workspace
           status: summary.status,
         };
       }
+
       return {
         workspace_id: ws.project_id,
         op_id: op.op_id,
@@ -913,7 +862,7 @@ workspace
         if (!commandArgs.length) {
           throw new Error("command is required");
         }
-        const ws = await resolveWorkspace(workspaceIdentifier);
+        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
         const timeout = Number(opts.timeout ?? "60");
         const [first, ...rest] = commandArgs;
         const execOpts = opts.bash
@@ -932,11 +881,13 @@ workspace
               err_on_exit: false,
               path: opts.path,
             };
-        const result = await apiExecInWorkspace({
-          account_id: ctx.accountId,
+
+        const projectApi = projectApiClient({
           project_id: ws.project_id,
-          execOpts,
+          client: ctx.remote.client,
+          timeout: ctx.timeoutMs,
         });
+        const result = await projectApi.system.exec(execOpts as any);
 
         if (!ctx.globals.json && ctx.globals.output !== "json") {
           if (result.stdout) process.stdout.write(result.stdout);
@@ -968,14 +919,15 @@ workspace
       command: Command,
     ) => {
       await withContext(command, "workspace ssh", async (ctx) => {
-        const ws = await resolveWorkspace(workspaceIdentifier);
+        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
         if (!ws.host_id) {
           throw new Error("workspace has no assigned host");
         }
-        const connection = await resolveHostConnectionLocal({
-          account_id: ctx.accountId,
-          host_id: ws.host_id,
-        });
+
+        const connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
+          { host_id: ws.host_id },
+        ]);
+
         if (!connection.ssh_server) {
           throw new Error("host has no ssh server endpoint");
         }
@@ -1023,13 +975,14 @@ workspace
       command: Command,
     ) => {
       await withContext(command, "workspace move", async (ctx) => {
-        const ws = await resolveWorkspace(workspaceIdentifier);
-        const host = await resolveHost(opts.host);
-        const op = await apiMoveWorkspace({
-          account_id: ctx.accountId,
-          project_id: ws.project_id,
-          dest_host_id: host.id,
-        });
+        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const host = await resolveHost(ctx, opts.host);
+        const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.moveProject", [
+          {
+            project_id: ws.project_id,
+            dest_host_id: host.id,
+          },
+        ]);
 
         if (!opts.wait) {
           return {
@@ -1040,7 +993,7 @@ workspace
           };
         }
 
-        const summary = await waitForLro(op.op_id, {
+        const summary = await waitForLro(ctx, op.op_id, {
           timeoutMs: ctx.timeoutMs,
           pollMs: ctx.pollMs,
         });
@@ -1054,7 +1007,7 @@ workspace
           };
         }
 
-        const placementOk = await waitForProjectPlacement(ws.project_id, host.id, {
+        const placementOk = await waitForProjectPlacement(ctx, ws.project_id, host.id, {
           timeoutMs: ctx.timeoutMs,
           pollMs: ctx.pollMs,
         });
@@ -1102,13 +1055,14 @@ workspace
       command: Command,
     ) => {
       await withContext(command, "workspace copy-path", async (ctx) => {
-        const srcWs = await resolveWorkspace(opts.srcWorkspace);
-        const destWs = await resolveWorkspace(opts.destWorkspace);
-        const op = await apiCopyPathBetweenWorkspaces({
-          account_id: ctx.accountId,
-          src: { project_id: srcWs.project_id, path: opts.src },
-          dest: { project_id: destWs.project_id, path: opts.dest },
-        });
+        const srcWs = await resolveWorkspace(ctx, opts.srcWorkspace);
+        const destWs = await resolveWorkspace(ctx, opts.destWorkspace);
+        const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.copyPathBetweenProjects", [
+          {
+            src: { project_id: srcWs.project_id, path: opts.src },
+            dest: { project_id: destWs.project_id, path: opts.dest },
+          },
+        ]);
 
         if (!opts.wait) {
           return {
@@ -1121,7 +1075,7 @@ workspace
           };
         }
 
-        const summary = await waitForLro(op.op_id, {
+        const summary = await waitForLro(ctx, op.op_id, {
           timeoutMs: ctx.timeoutMs,
           pollMs: ctx.pollMs,
         });
@@ -1129,9 +1083,7 @@ workspace
           throw new Error(`copy timed out (op=${op.op_id}, last_status=${summary.status})`);
         }
         if (summary.status !== "succeeded") {
-          throw new Error(
-            `copy failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
-          );
+          throw new Error(`copy failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
         }
 
         return {
@@ -1152,38 +1104,34 @@ snapshot
   .command("create <workspace>")
   .description("create a btrfs snapshot")
   .option("--name <name>", "snapshot name")
-  .action(
-    async (
-      workspaceIdentifier: string,
-      opts: { name?: string },
-      command: Command,
-    ) => {
-      await withContext(command, "workspace snapshot create", async (ctx) => {
-        const ws = await resolveWorkspace(workspaceIdentifier);
-        await apiCreateSnapshot({
-          account_id: ctx.accountId,
+  .action(async (workspaceIdentifier: string, opts: { name?: string }, command: Command) => {
+    await withContext(command, "workspace snapshot create", async (ctx) => {
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      await hubCallAccount<void>(ctx, "projects.createSnapshot", [
+        {
           project_id: ws.project_id,
           name: opts.name,
-        });
-        return {
-          workspace_id: ws.project_id,
-          snapshot_name: opts.name ?? "(auto)",
-          status: "created",
-        };
-      });
-    },
-  );
+        },
+      ]);
+      return {
+        workspace_id: ws.project_id,
+        snapshot_name: opts.name ?? "(auto)",
+        status: "created",
+      };
+    });
+  });
 
 snapshot
   .command("list <workspace>")
   .description("list snapshot usage")
   .action(async (workspaceIdentifier: string, command: Command) => {
     await withContext(command, "workspace snapshot list", async (ctx) => {
-      const ws = await resolveWorkspace(workspaceIdentifier);
-      const snapshots = await apiAllSnapshotUsage({
-        account_id: ctx.accountId,
-        project_id: ws.project_id,
-      });
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const snapshots = await hubCallAccount<SnapshotUsage[]>(ctx, "projects.allSnapshotUsage", [
+        {
+          project_id: ws.project_id,
+        },
+      ]);
       return snapshots.map((snap) => ({
         workspace_id: ws.project_id,
         name: snap.name,
@@ -1294,10 +1242,7 @@ proxy
         if (expectMode === "ok" && (response.status < 200 || response.status >= 400)) {
           throw new Error(`expected success response, got status ${response.status}`);
         }
-        if (
-          expectMode === "denied" &&
-          !(response.status >= 400 && response.status < 500)
-        ) {
+        if (expectMode === "denied" && !(response.status >= 400 && response.status < 500)) {
           throw new Error(`expected denied (4xx) response, got status ${response.status}`);
         }
 
@@ -1320,12 +1265,10 @@ host
   .description("resolve host connection info")
   .action(async (hostIdentifier: string, command: Command) => {
     await withContext(command, "host resolve-connection", async (ctx) => {
-      const h = await resolveHost(hostIdentifier);
-      const info = await resolveHostConnectionLocal({
-        account_id: ctx.accountId,
-        host_id: h.id,
-      });
-      return info;
+      const h = await resolveHost(ctx, hostIdentifier);
+      return await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
+        { host_id: h.id },
+      ]);
     });
   });
 
@@ -1341,15 +1284,20 @@ host
       command: Command,
     ) => {
       await withContext(command, "host issue-http-token", async (ctx) => {
-        const h = await resolveHost(opts.host);
-        const ws = opts.workspace ? await resolveWorkspace(opts.workspace) : null;
+        const h = await resolveHost(ctx, opts.host);
+        const ws = opts.workspace ? await resolveWorkspace(ctx, opts.workspace) : null;
         const ttl = opts.ttl ? Number(opts.ttl) : undefined;
-        const token = await issueProjectHostAuthTokenLocal({
-          account_id: ctx.accountId,
-          host_id: h.id,
-          project_id: ws?.project_id,
-          ttl_seconds: ttl,
-        });
+        const token = await hubCallAccount<{ host_id: string; token: string; expires_at: number }>(
+          ctx,
+          "hosts.issueProjectHostAuthToken",
+          [
+            {
+              host_id: h.id,
+              project_id: ws?.project_id,
+              ttl_seconds: ttl,
+            },
+          ],
+        );
         return {
           host_id: token.host_id,
           workspace_id: ws?.project_id ?? null,
