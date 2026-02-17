@@ -120,9 +120,12 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
   useEffect(cm_update_font_size, [props.font_size]);
 
   useEffect(() => {
-    if (cmRef.current == null || props.value == null) return;
-    const value =
-      typeof props.value == "function" ? props.value() ?? "" : props.value;
+    if (cmRef.current == null) return;
+    if (typeof props.value !== "function") return;
+    // Live editors are synchronized through sync/merge actions; mirroring
+    // string-valued Redux snapshots here can clobber fresh local edits.
+    // Function-valued props.value is used by static external views (e.g. time travel).
+    const value = props.value() ?? "";
     if (cmRef.current.getValue() !== value) {
       cmRef.current.setValue(value);
     }
