@@ -490,11 +490,14 @@ export function useNotebookMinimap({
         : Math.max(
             ...rawRows.map((row) => Math.max(1, row.rawTop + row.rawHeight)),
           );
-    const rawTotalHeight = Math.max(
-      1,
-      scroller?.scrollHeight ?? 1,
-      maxRawBottom + 1,
-    );
+    // Use the actual scroll container height as the authoritative notebook
+    // content height. Lazy placeholders can temporarily overestimate raw row
+    // bottoms; clamping to scrollHeight keeps viewport math stable.
+    const measuredScrollHeight = Math.max(1, scroller?.scrollHeight ?? 0);
+    const rawTotalHeight =
+      measuredScrollHeight > 1
+        ? measuredScrollHeight
+        : Math.max(1, maxRawBottom + 1);
     let scale = MINIMAP_BASE_SCALE;
     const minScaleForViewport =
       (viewportHeight * MINIMAP_MIN_TRACK_VIEWPORT_MULTIPLIER) / rawTotalHeight;
@@ -505,8 +508,17 @@ export function useNotebookMinimap({
     scale = Math.max(minScaleBound, Math.min(MINIMAP_MAX_SCALE, scale));
 
     for (const row of rawRows) {
-      const top = row.rawTop * scale;
-      const h = Math.max(7, row.rawHeight * scale);
+      const topRaw = Math.min(
+        Math.max(0, row.rawTop),
+        Math.max(0, rawTotalHeight - 1),
+      );
+      const bottomRaw = Math.min(
+        rawTotalHeight,
+        Math.max(topRaw + 1, row.rawTop + row.rawHeight),
+      );
+      const clampedHeight = Math.max(1, bottomRaw - topRaw);
+      const top = topRaw * scale;
+      const h = Math.max(7, clampedHeight * scale);
       rows.push({
         id: row.id,
         top,
@@ -523,7 +535,7 @@ export function useNotebookMinimap({
       Math.min(MINIMAP_MAX_TRACK_HEIGHT, scaledTotalContentHeight + 1),
     );
     const railHeight = Math.max(180, viewportHeight - 16);
-    const notebookContentHeight = Math.max(1, maxRawBottom);
+    const notebookContentHeight = rawTotalHeight;
     return { railHeight, totalContentHeight, notebookContentHeight, rows };
   }, [
     cellList,
@@ -638,11 +650,21 @@ export function useNotebookMinimap({
     const viewport = minimapViewportRef.current;
     const rail = minimapRailRef.current;
     const miniScroll = minimapScrollRef.current;
-    if (scroller == null || viewport == null || rail == null || miniScroll == null) {
+    const track = minimapTrackRef.current;
+    if (
+      scroller == null ||
+      viewport == null ||
+      rail == null ||
+      miniScroll == null ||
+      track == null
+    ) {
       return;
     }
 
-    const notebookContentHeight = Math.max(1, minimapData.notebookContentHeight);
+    const notebookContentHeight = Math.max(
+      1,
+      scroller.scrollHeight || minimapData.notebookContentHeight,
+    );
     const maxNotebookScroll = Math.max(1, notebookContentHeight - scroller.clientHeight);
     const clampedNotebookScrollTop = Math.min(
       Math.max(0, scroller.scrollTop),
@@ -654,6 +676,7 @@ export function useNotebookMinimap({
     );
 
     const contentHeight = Math.max(
+      track.scrollHeight,
       minimapData.totalContentHeight,
       minimapData.railHeight,
     );
@@ -773,9 +796,13 @@ export function useNotebookMinimap({
       const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
       if (rect.height <= 0) return;
       const y = Math.min(Math.max(0, e.clientY - rect.top), rect.height);
+      const notebookContentHeight = Math.max(
+        1,
+        scroller.scrollHeight || minimapData.notebookContentHeight,
+      );
       const maxNotebookScroll = Math.max(
         1,
-        minimapData.notebookContentHeight - scroller.clientHeight,
+        notebookContentHeight - scroller.clientHeight,
       );
       const miniScrollTop = miniScroll.scrollTop;
       const yContent = Math.min(

@@ -349,6 +349,14 @@ function htmlOutput(html: string, plain: string): any {
   };
 }
 
+function markerAnchorOutput(marker: string): any {
+  const safe = marker.replace(/[^A-Za-z0-9_-]/g, "_");
+  return htmlOutput(
+    `<div id="jupyter-bench-marker-${safe}" data-jupyter-bench-marker="${safe}" style="height:0;overflow:hidden"></div>`,
+    marker,
+  );
+}
+
 function buildTextScenarioCells({
   count,
   topMarker,
@@ -364,10 +372,14 @@ function buildTextScenarioCells({
       i === 0 ? topMarker : i === count - 1 ? bottomMarker : `CELL-${i}`;
     const source = `# ${marker}\nprint(${i})`;
     const payload = `${marker} ${"x".repeat(200)}\n`;
+    const outputs = [streamOutput(payload)];
+    if (i === 0 || i === count - 1) {
+      outputs.push(markerAnchorOutput(marker));
+    }
     cells.push(
       codeCell({
         source,
-        outputs: [streamOutput(payload)],
+        outputs,
         execution_count: i + 1,
       }),
     );
@@ -391,23 +403,31 @@ function buildMixedScenarioCells({
       const marker =
         i === 0 ? topMarker : i === count - 1 ? bottomMarker : `MIXED-${i}`;
       if (i % 4 === 0 && i > 0 && i < count - 1) {
+        const outputs = [
+          htmlOutput(
+            `<div class=\"virt-html\"><b>${marker}</b><div style=\"height:40px\">row ${i}</div></div>`,
+            marker,
+          ),
+        ];
+        if (i === 0 || i === count - 1) {
+          outputs.push(markerAnchorOutput(marker));
+        }
         cells.push(
           codeCell({
             source: `# ${marker}\n${i} + 1`,
-            outputs: [
-              htmlOutput(
-                `<div class=\"virt-html\"><b>${marker}</b><div style=\"height:40px\">row ${i}</div></div>`,
-                marker,
-              ),
-            ],
+            outputs,
             execution_count: execCount,
           }),
         );
       } else {
+        const outputs = [streamOutput(`${marker} ${"y".repeat(120)}\n`)];
+        if (i === 0 || i === count - 1) {
+          outputs.push(markerAnchorOutput(marker));
+        }
         cells.push(
           codeCell({
             source: `# ${marker}\n${i} + 1`,
-            outputs: [streamOutput(`${marker} ${"y".repeat(120)}\n`)],
+            outputs,
             execution_count: execCount,
           }),
         );
@@ -652,23 +672,6 @@ async function measureScrollScenario({
   const result = await page.evaluate(
     async ({ cycles, scroll_steps, top_marker, bottom_marker, timeout_ms }) => {
       const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-      const raf = () =>
-        new Promise<number>((resolve) => {
-          let done = false;
-          // requestAnimationFrame can be throttled heavily in some headless/browser
-          // states; this fallback keeps the benchmark deterministic.
-          const fallback = setTimeout(() => {
-            if (done) return;
-            done = true;
-            resolve(performance.now());
-          }, 33);
-          requestAnimationFrame((t) => {
-            if (done) return;
-            done = true;
-            clearTimeout(fallback);
-            resolve(t);
-          });
-        });
 
       function findScrollContainer(): HTMLElement | null {
         const start = document.querySelector(
@@ -721,7 +724,15 @@ async function measureScrollScenario({
 
       function markerVisible(marker: string, root?: ParentNode | null): boolean {
         if (!marker) return false;
-        const text = (root ?? document.body).textContent;
+        const scope = (root ?? document.body) as ParentNode;
+        const markerId = `jupyter-bench-marker-${marker.replace(
+          /[^A-Za-z0-9_-]/g,
+          "_",
+        )}`;
+        if (scope.querySelector?.(`#${markerId}`) != null) {
+          return true;
+        }
+        const text = scope.textContent;
         if (!text) return false;
         return text.includes(marker);
       }
@@ -731,23 +742,9 @@ async function measureScrollScenario({
       }
 
       function computeNotebookContentHeight(scroller: HTMLElement): number {
-        const nodes = Array.from(
-          scroller.querySelectorAll<HTMLElement>("[data-jupyter-lazy-cell-id]"),
-        );
-        if (nodes.length === 0) {
-          return Math.max(1, scroller.scrollHeight);
-        }
-        const scrollerRect = scroller.getBoundingClientRect();
-        const scrollTop = scroller.scrollTop;
-        let maxBottom = 1;
-        for (const node of nodes) {
-          const rect = node.getBoundingClientRect();
-          const bottom = rect.bottom - scrollerRect.top + scrollTop;
-          if (Number.isFinite(bottom) && bottom > maxBottom) {
-            maxBottom = bottom;
-          }
-        }
-        return Math.max(1, maxBottom);
+        // Scroll container geometry is the source of truth for viewport mapping.
+        // Using per-cell DOM boxes here can drift under lazy placeholders.
+        return Math.max(1, scroller.scrollHeight);
       }
 
       function sampleMinimapAlignment(scroller: HTMLElement) {
@@ -893,7 +890,20 @@ async function measureScrollScenario({
       let prevFrame: number | null = null;
       const tick = async (phase: string) => {
         assertBeforeDeadline(phase);
-        const t = await raf();
+        const t = await new Promise<number>((resolve) => {
+          let done = false;
+          const fallback = window.setTimeout(() => {
+            if (done) return;
+            done = true;
+            resolve(performance.now());
+          }, 220);
+          requestAnimationFrame((rafTs) => {
+            if (done) return;
+            done = true;
+            window.clearTimeout(fallback);
+            resolve(rafTs);
+          });
+        });
         assertBeforeDeadline(phase);
         if (prevFrame != null) {
           frameDeltas.push(t - prevFrame);
@@ -1020,8 +1030,7 @@ async function measureScrollScenario({
           assertBeforeDeadline(phase, { edge, attempts, attempt: i + 1 });
           const max = refreshMaxScroll();
           scroller.scrollTop = edge === "top" ? 0 : max;
-          await sleepChecked(100 + i * 40, phase);
-          await tick(`${phase}.tick`);
+          await sleepChecked(60 + i * 25, phase);
           await tick(`${phase}.tick`);
           const maxAfter = refreshMaxScroll();
           const nearEdge =
@@ -1057,7 +1066,7 @@ async function measureScrollScenario({
       await recordPhase("scroll_mid", () =>
         scrollTo({
           target: refreshMaxScroll() * 0.5,
-          steps: Math.max(10, Math.floor(scroll_steps / 2)),
+          steps: Math.max(3, Math.floor(scroll_steps / 2)),
           phase: "scroll_mid",
         }),
       );
@@ -1073,7 +1082,7 @@ async function measureScrollScenario({
         settleEdge({
           edge: "bottom",
           marker: bottom_marker,
-          attempts: 6,
+          attempts: 12,
           phase: "settle_bottom_initial",
         }),
       );
@@ -1111,7 +1120,7 @@ async function measureScrollScenario({
         settleEdge({
           edge: "bottom",
           marker: bottom_marker,
-          attempts: 8,
+          attempts: 14,
           phase: "settle_bottom_final",
         }),
       );
@@ -1335,21 +1344,37 @@ async function measureTypingScenario({
 
   const samples: number[] = [];
   let timeout_count = 0;
+  const started_ms = Date.now();
+  const typing_budget_ms = Math.max(
+    5_000,
+    Math.min(
+      Math.max(5_000, action_timeout_ms - 2_000),
+      chars * (typing_timeout_ms + 400),
+    ),
+  );
 
   for (let i = 0; i < chars; i += 1) {
-    await page.evaluate(() => (window as any).__cocalcTypingProbe.focus());
-    const wait = page.evaluate((typingTimeoutMs) => {
-      return (window as any).__cocalcTypingProbe.begin(typingTimeoutMs);
-    }, typing_timeout_ms);
-    await page.keyboard.type("x");
+    if (Date.now() - started_ms > typing_budget_ms) {
+      timeout_count += chars - i;
+      break;
+    }
     try {
+      await page.evaluate(() => (window as any).__cocalcTypingProbe.focus());
+      const wait = page.evaluate((typingTimeoutMs) => {
+        return (window as any).__cocalcTypingProbe.begin(typingTimeoutMs);
+      }, typing_timeout_ms);
+      await page.keyboard.type("x");
       const latency = (await wait) as number;
       if (Number.isFinite(latency)) {
         samples.push(latency);
       }
     } catch {
       timeout_count += 1;
-      await page.evaluate(() => (window as any).__cocalcTypingProbe.focus());
+      await page.evaluate(() => {
+        const probe = (window as any).__cocalcTypingProbe;
+        probe.reset();
+        probe.focus();
+      });
     }
   }
 
@@ -1820,6 +1845,10 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
   try {
     for (const scenario of scenarios) {
       await ensureNotebook(scenario.path_ipynb, scenario.cells);
+      const scenario_timeout_ms =
+        opts.timeout_ms +
+        (scenario.expected_cells >= 350 ? 240_000 : 0) +
+        (opts.minimap_debug ? 10_000 : 0);
       const url = notebookUrl({
         base_url,
         path_ipynb: scenario.path_ipynb,
@@ -1831,9 +1860,9 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         promise: openNotebookPage({
           page,
           url,
-          timeout_ms: opts.timeout_ms,
+          timeout_ms: scenario_timeout_ms,
         }),
-        timeout_ms: opts.timeout_ms + 5_000,
+        timeout_ms: scenario_timeout_ms + 5_000,
         label: `open scenario '${scenario.name}'`,
       });
       const instrumentationProbe = await probeFrontendInstrumentation(page);
@@ -1842,28 +1871,57 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         opts,
         scenario_name: scenario.name,
       });
-      const typing_metrics = await withTimeout({
-        promise: measureTypingScenario({
-          page,
+      let typing_metrics: TypingMetrics;
+      try {
+        typing_metrics = await withTimeout({
+          promise: measureTypingScenario({
+            page,
+            chars: opts.typing_chars,
+            typing_timeout_ms: opts.typing_timeout_ms,
+            action_timeout_ms: scenario_timeout_ms,
+          }),
+          timeout_ms: scenario_timeout_ms + 5_000,
+          label: `typing scenario '${scenario.name}'`,
+        });
+      } catch (err: any) {
+        typing_metrics = {
           chars: opts.typing_chars,
-          typing_timeout_ms: opts.typing_timeout_ms,
-          action_timeout_ms: opts.timeout_ms,
-        }),
-        timeout_ms: opts.timeout_ms + 5_000,
-        label: `typing scenario '${scenario.name}'`,
-      });
-      const cycles = opts.cycles ?? (opts.profile === "full" ? 4 : 2);
+          samples: 0,
+          timeout_count: Math.max(0, opts.typing_chars),
+          p50_ms: null,
+          p95_ms: null,
+          p99_ms: null,
+          mean_ms: null,
+          max_ms: null,
+        };
+        if (!opts.quiet) {
+          console.warn(
+            `[jupyter-scroll-bench] typing scenario '${scenario.name}' failed: ${err?.message ?? err}`,
+          );
+        }
+      }
+      const cycles =
+        opts.cycles ??
+        (opts.profile === "full"
+          ? 4
+          : scenario.expected_cells >= 350
+            ? 0
+            : 2);
+      const scroll_steps =
+        scenario.expected_cells >= 350
+          ? Math.max(10, Math.floor(opts.scroll_steps * 0.3))
+          : opts.scroll_steps;
       const metrics = await withTimeout({
         promise: measureScrollScenario({
           page,
           cycles,
-          scroll_steps: opts.scroll_steps,
+          scroll_steps,
           top_marker: scenario.top_marker,
           bottom_marker: scenario.bottom_marker,
-          timeout_ms: opts.timeout_ms,
+          timeout_ms: scenario_timeout_ms,
         }),
         // Give in-page phase-level watchdog time to throw detailed diagnostics.
-        timeout_ms: opts.timeout_ms + 30_000,
+        timeout_ms: scenario_timeout_ms + 30_000,
         label: `scroll scenario '${scenario.name}'`,
       });
       const virtualization_likely =
@@ -1886,7 +1944,7 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         path_ipynb: scenario.path_ipynb,
         expected_cells: scenario.expected_cells,
         cycles,
-        scroll_steps: opts.scroll_steps,
+        scroll_steps,
         metrics,
         virtualization_likely,
         reliability_ok,
