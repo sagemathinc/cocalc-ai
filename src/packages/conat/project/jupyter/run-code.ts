@@ -57,7 +57,11 @@ export interface InputCell {
 
 export interface OutputMessage {
   // id = id of the cell
-  id: string;
+  id?: string;
+  // application-level run id for dropping stale messages.
+  run_id?: string;
+  // explicit lifecycle marker used by frontend/backend handlers.
+  lifecycle?: LifecycleMessageType;
   // everything below is exactly from Jupyter
   metadata?;
   content?;
@@ -67,8 +71,56 @@ export interface OutputMessage {
   more_output?: boolean;
 }
 
+export type LifecycleMessageType =
+  | "run_start"
+  | "run_done"
+  | "cell_start"
+  | "cell_done";
+
+const LIFECYCLE_MSG_TYPES = new Set<LifecycleMessageType>([
+  "run_start",
+  "run_done",
+  "cell_start",
+  "cell_done",
+]);
+
+function getLifecycleType(
+  mesg: OutputMessage | undefined,
+): LifecycleMessageType | null {
+  const lifecycle = mesg?.lifecycle;
+  if (typeof lifecycle === "string" && LIFECYCLE_MSG_TYPES.has(lifecycle as any)) {
+    return lifecycle as LifecycleMessageType;
+  }
+  const msg_type = mesg?.msg_type;
+  if (typeof msg_type === "string" && LIFECYCLE_MSG_TYPES.has(msg_type as any)) {
+    return msg_type as LifecycleMessageType;
+  }
+  return null;
+}
+
+function isLifecycleMessage(mesg: OutputMessage | undefined): boolean {
+  return getLifecycleType(mesg) != null;
+}
+
+function normalizeOutputMessage(mesg: OutputMessage, run_id: string): OutputMessage {
+  const normalized: OutputMessage =
+    mesg.run_id === run_id ? mesg : { ...mesg, run_id };
+  const lifecycle = getLifecycleType(normalized);
+  if (lifecycle == null) {
+    return normalized;
+  }
+  if (
+    normalized.lifecycle === lifecycle &&
+    normalized.msg_type === lifecycle
+  ) {
+    return normalized;
+  }
+  return { ...normalized, lifecycle, msg_type: lifecycle };
+}
+
 function isCoalescableStreamMessage(mesg: OutputMessage | undefined): boolean {
   if (mesg == null || mesg.msg_type !== "stream") return false;
+  if (isLifecycleMessage(mesg)) return false;
   if (mesg.more_output || mesg.done) return false;
   if (typeof mesg.id !== "string") return false;
   if (mesg.buffers != null && mesg.buffers.length > 0) return false;
@@ -87,6 +139,7 @@ function appendOutputMessage(
   if (
     isCoalescableStreamMessage(prev) &&
     isCoalescableStreamMessage(mesg) &&
+    prev.run_id === mesg.run_id &&
     prev.id === mesg.id &&
     prev.content.name === mesg.content.name
   ) {
@@ -264,6 +317,7 @@ async function handleRequest({
   let firstClientBatchFastLane = false;
   const runner = await run({ path, cells, noHalt, socket, run_id });
   const output: OutputMessage[] = [];
+  let outputVisibleCount = 0;
   for (const cell of cells) {
     moreOutput[cell.id] = [];
   }
@@ -307,11 +361,12 @@ async function handleRequest({
 
   try {
     let handler: OutputHandler | null = null;
-    let process: ((mesg: any) => void) | null = null;
+    let process: ((mesg: OutputMessage) => void) | null = null;
     let fallbackOutputCount = 0;
     let fallbackMoreOutputMode = false;
 
-    for await (const mesg of runner) {
+    for await (const mesg0 of runner) {
+      const mesg = normalizeOutputMessage(mesg0, run_id);
       totalMesgs += 1;
       if (firstMesgAt == null) {
         firstMesgAt = Date.now();
@@ -330,6 +385,26 @@ async function handleRequest({
           }
           process = (mesg) => {
             if (handler == null) return;
+            const lifecycle = getLifecycleType(mesg);
+            if (lifecycle != null) {
+              if (lifecycle == "cell_start" && typeof mesg.id == "string") {
+                handler.process({
+                  id: mesg.id,
+                  content: { execution_state: "busy" },
+                });
+              } else if (
+                lifecycle == "cell_done" &&
+                typeof mesg.id == "string"
+              ) {
+                handler.process({ id: mesg.id, done: true });
+              }
+              fallbackProcessed += 1;
+              return;
+            }
+            if (typeof mesg.id != "string") {
+              fallbackProcessed += 1;
+              return;
+            }
             // Replay must enforce the output limit based on how many messages
             // we have replayed so far, not the final size of the pre-close
             // output buffer.
@@ -341,6 +416,9 @@ async function handleRequest({
                 handler.process({ id: mesg.id, more_output: true });
                 moreOutput[mesg.id] = [];
                 fallbackMoreOutputMode = true;
+              }
+              if (moreOutput[mesg.id] == null) {
+                moreOutput[mesg.id] = [];
               }
               appendOutputMessage(moreOutput[mesg.id], mesg);
               moreOutputBuffered += 1;
@@ -360,8 +438,18 @@ async function handleRequest({
         if (unhandledClientWriteError) {
           throw unhandledClientWriteError;
         }
-        appendOutputMessage(output, mesg);
-        if (limit == null || output.length < limit) {
+        const wasAppended = appendOutputMessage(output, mesg);
+        if (isLifecycleMessage(mesg)) {
+          await writeBatchToClient([mesg], { fastLane: totalBatches == 0 });
+          continue;
+        }
+        if (wasAppended) {
+          outputVisibleCount += 1;
+        }
+        if (typeof mesg.id != "string") {
+          continue;
+        }
+        if (limit == null || outputVisibleCount < limit) {
           if (totalBatches == 0) {
             // Fast-lane the very first output batch for lower latency.
             // We keep existing throttling for all subsequent output.
@@ -370,11 +458,15 @@ async function handleRequest({
             throttle.write(mesg);
           }
         } else {
-          if (output.length == limit) {
+          if (outputVisibleCount == limit) {
             throttle.write({
               id: mesg.id,
+              run_id,
               more_output: true,
             });
+            moreOutput[mesg.id] = [];
+          }
+          if (moreOutput[mesg.id] == null) {
             moreOutput[mesg.id] = [];
           }
           // save the more output
@@ -485,6 +577,7 @@ export class JupyterClient {
       waitForAck?: boolean;
     } = {},
   ) => {
+    const effectiveRunId = opts.run_id ?? nextRunId();
     if (this.iter) {
       // one evaluation at a time -- starting a new one ends the previous one.
       // Each client browser has a separate instance of JupyterClient, so
@@ -496,13 +589,20 @@ export class JupyterClient {
       map: (args) => {
         if (args[1]?.error) {
           iter.throw(Error(args[1].error));
-          return;
+          return [];
         }
         if (args[0] == null) {
           iter.end();
-          return;
+          return [];
         } else {
-          return args[0];
+          const batch = args[0];
+          const filtered = Array.isArray(batch)
+            ? batch.filter((mesg) => mesg?.run_id === effectiveRunId)
+            : [];
+          if (filtered.length == 0) {
+            return [];
+          }
+          return filtered;
         }
       },
     });
@@ -512,7 +612,11 @@ export class JupyterClient {
     const cells1 = cells.map(({ id, input }) => {
       return { id, input };
     });
-    const { waitForAck = true, ...requestOpts } = opts;
+    const { waitForAck = true, ...requestOpts0 } = opts;
+    const requestOpts = {
+      ...requestOpts0,
+      run_id: effectiveRunId,
+    };
     const request = this.socket.request({
       cmd: "run",
       ...requestOpts,
