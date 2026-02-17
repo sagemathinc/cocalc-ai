@@ -13,6 +13,7 @@ pnpm --dir src/packages/cli build
 ```bash
 pnpm --dir src/packages/cli build:bundle
 pnpm --dir src/packages/cli sea
+pnpm --dir src/packages/cli sea:signed
 ```
 
 SEA output binary:
@@ -24,6 +25,7 @@ Publish commands:
 
 ```bash
 pnpm --dir src/packages/cli publish:sea
+pnpm --dir src/packages/cli publish:sea:signed
 pnpm --dir src/packages/cli publish:site
 ```
 
@@ -57,6 +59,8 @@ an admin account for smoke-test workflows.
 
 ## Phase 0 Commands
 
+- `plus ...` (forward to `cocalc-plus`; installs if missing)
+- `launchpad ...` (forward to `cocalc-launchpad`; installs if missing)
 - `workspace create`
 - `workspace list`
 - `workspace start --wait`

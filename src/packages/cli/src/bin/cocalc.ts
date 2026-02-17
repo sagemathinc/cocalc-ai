@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { createInterface } from "node:readline/promises";
 import { URL } from "node:url";
 import { AsciiTable3 } from "ascii-table3";
 import { Command } from "commander";
@@ -106,6 +107,31 @@ type LroSummary = {
 };
 
 const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expired"]);
+
+type ProductCommand = "plus" | "launchpad";
+
+type ProductSpec = {
+  command: ProductCommand;
+  binary: string;
+  installUrl: string;
+};
+
+const PRODUCT_SPECS: Record<ProductCommand, ProductSpec> = {
+  plus: {
+    command: "plus",
+    binary: "cocalc-plus",
+    installUrl:
+      process.env.COCALC_PLUS_INSTALL_URL ??
+      "https://software.cocalc.ai/software/cocalc-plus/install.sh",
+  },
+  launchpad: {
+    command: "launchpad",
+    binary: "cocalc-launchpad",
+    installUrl:
+      process.env.COCALC_LAUNCHPAD_INSTALL_URL ??
+      "https://software.cocalc.ai/software/cocalc-launchpad/install.sh",
+  },
+};
 
 function defaultApiBaseUrl(): string {
   const raw =
@@ -735,6 +761,91 @@ async function runSsh(args: string[]): Promise<number> {
   });
 }
 
+async function runCommand(
+  command: string,
+  args: string[],
+  {
+    env,
+  }: {
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: "inherit",
+      env: env ?? process.env,
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      resolve(code ?? 1);
+    });
+  });
+}
+
+function commandExists(command: string): boolean {
+  const result = spawnSync(command, ["--version"], {
+    stdio: "ignore",
+    timeout: 3000,
+  });
+  if (!result.error) {
+    return true;
+  }
+  const message = (result.error as Error).message ?? "";
+  return !message.toLowerCase().includes("enoent");
+}
+
+async function shouldInstallProduct(spec: ProductSpec): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return false;
+  }
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = (
+      await rl.question(
+        `'${spec.binary}' is not installed. Install now from ${spec.installUrl}? [Y/n] `,
+      )
+    )
+      .trim()
+      .toLowerCase();
+    return answer === "" || answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
+async function ensureProductInstalled(spec: ProductSpec): Promise<void> {
+  if (commandExists(spec.binary)) {
+    return;
+  }
+
+  const approved = await shouldInstallProduct(spec);
+  if (!approved) {
+    throw new Error(
+      `'${spec.binary}' is required for 'cocalc ${spec.command}'. Install with: curl -fsSL ${spec.installUrl} | bash`,
+    );
+  }
+
+  console.error(`Installing ${spec.binary} ...`);
+  const code = await runCommand("bash", ["-lc", `curl -fsSL ${spec.installUrl} | bash`]);
+  if (code !== 0) {
+    throw new Error(`failed installing '${spec.binary}' (exit ${code})`);
+  }
+  if (!commandExists(spec.binary)) {
+    throw new Error(`installation completed but '${spec.binary}' is still not available in PATH`);
+  }
+}
+
+async function runProductCommand(spec: ProductSpec, args: string[]): Promise<void> {
+  await ensureProductInstalled(spec);
+  const code = await runCommand(spec.binary, args);
+  if (code !== 0) {
+    process.exitCode = code;
+  }
+}
+
 async function runSshCheck(
   args: string[],
   timeoutMs: number,
@@ -862,6 +973,7 @@ async function resolveProxyUrl({
 }
 
 const program = new Command();
+program.enablePositionalOptions();
 
 program
   .name("cocalc")
@@ -879,6 +991,26 @@ program
   .option("--bearer <token>", "bearer token for conat authorization")
   .option("--hub-password <password-or-file>", "hub system password for local dev")
   .showHelpAfterError();
+
+for (const spec of Object.values(PRODUCT_SPECS)) {
+  program
+    .command(`${spec.command} [args...]`)
+    .description(`run ${spec.binary} (installs it if missing)`)
+    .allowUnknownOption(true)
+    .allowExcessArguments(true)
+    .action(async (args: string[] | undefined, command: Command) => {
+      try {
+        await runProductCommand(spec, args ?? []);
+      } catch (error) {
+        emitError(
+          { globals: globalsFrom(command) },
+          `cocalc ${spec.command}`,
+          error,
+        );
+        process.exitCode = 1;
+      }
+    });
+}
 
 const workspace = program.command("workspace").alias("ws").description("workspace operations");
 

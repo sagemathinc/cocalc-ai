@@ -12,7 +12,9 @@
     "build:bundle": "bash ./sea/build-bundle.sh",
     "run:bundle": "node ./build/bundle/index.js",
     "sea": "bash ./sea/build-sea.sh",
+    "sea:signed": "cd sea && make signed-tar",
     "publish:sea": "cd sea && ./publish-sea.sh",
+    "publish:sea:signed": "pnpm sea:signed && pnpm publish:sea",
     "publish:site": "cd site && ./publish-site.sh",
     "test": "pnpm build && node --test dist/core/*.test.js"
   },
