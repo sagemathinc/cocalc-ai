@@ -186,15 +186,8 @@ src/packages/lite/sea/cocalc*gnu
 *.pkg
 *.zip
 
-src/packages/plus/build/
-src/packages/project/build/
-src/packages/project-runner/build/
-src/packages/project-host/build/
-src/packages/launchpad/build/
-src/packages/cloud/build/
+src/packages/*/build/
 
-
-codex.sh
 g
 g-cs
 g-cs2
