@@ -68,6 +68,7 @@ type FrameDeltaStats = {
 
 type ScrollMetrics = {
   duration_ms: number;
+  phase_durations_ms: { [phase: string]: number };
   max_scroll_px: number;
   dom_cells_top: number;
   dom_cells_mid: number;
@@ -504,6 +505,32 @@ function monotonicNowMs(): number {
   return Number(process.hrtime.bigint()) / 1e6;
 }
 
+async function withTimeout<T>({
+  promise,
+  timeout_ms,
+  label,
+}: {
+  promise: Promise<T>;
+  timeout_ms: number;
+  label: string;
+}): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return (await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`timeout after ${timeout_ms}ms during ${label}`));
+        }, timeout_ms);
+      }),
+    ])) as T;
+  } finally {
+    if (timer != null) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function openNotebookPage({
   page,
   url,
@@ -593,7 +620,20 @@ async function measureScrollScenario({
       const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
       const raf = () =>
         new Promise<number>((resolve) => {
-          requestAnimationFrame((t) => resolve(t));
+          let done = false;
+          // requestAnimationFrame can be throttled heavily in some headless/browser
+          // states; this fallback keeps the benchmark deterministic.
+          const fallback = setTimeout(() => {
+            if (done) return;
+            done = true;
+            resolve(performance.now());
+          }, 33);
+          requestAnimationFrame((t) => {
+            if (done) return;
+            done = true;
+            clearTimeout(fallback);
+            resolve(t);
+          });
         });
 
       function findScrollContainer(): HTMLElement | null {
@@ -645,9 +685,11 @@ async function measureScrollScenario({
         return nodes.length;
       }
 
-      function markerVisible(marker: string): boolean {
+      function markerVisible(marker: string, root?: ParentNode | null): boolean {
         if (!marker) return false;
-        return document.body.innerText.includes(marker);
+        const text = (root ?? document.body).textContent;
+        if (!text) return false;
+        return text.includes(marker);
       }
 
       function percentile(v: number[], p: number): number {
@@ -661,10 +703,57 @@ async function measureScrollScenario({
       }
 
       const startTs = performance.now();
+      const deadlineTs = startTs + timeout_ms;
+      const phaseDurations: { [phase: string]: number } = {};
       const scroller = findScrollContainer();
       if (scroller == null) {
         throw new Error("failed to detect notebook scroll container");
       }
+
+      const timeoutDetail = (
+        phase: string,
+        extra?: { [key: string]: number | string | boolean | null | undefined },
+      ): never => {
+        const payload = {
+          phase,
+          elapsed_ms: performance.now() - startTs,
+          deadline_ms: timeout_ms,
+          scroll_top: scroller.scrollTop,
+          scroll_height: scroller.scrollHeight,
+          client_height: scroller.clientHeight,
+          phase_durations_ms: phaseDurations,
+          ...(extra ?? {}),
+        };
+        throw new Error(`scroll timed out: ${JSON.stringify(payload)}`);
+      };
+
+      const assertBeforeDeadline = (
+        phase: string,
+        extra?: { [key: string]: number | string | boolean | null | undefined },
+      ) => {
+        if (performance.now() > deadlineTs) {
+          timeoutDetail(phase, extra);
+        }
+      };
+
+      const recordPhase = async <T>(
+        phase: string,
+        f: () => Promise<T>,
+      ): Promise<T> => {
+        assertBeforeDeadline(phase);
+        const t0 = performance.now();
+        const out = await f();
+        phaseDurations[phase] = performance.now() - t0;
+        assertBeforeDeadline(phase);
+        return out;
+      };
+
+      const sleepChecked = async (ms: number, phase: string) => {
+        assertBeforeDeadline(phase);
+        const remaining = Math.max(0, deadlineTs - performance.now());
+        await sleep(Math.min(ms, remaining));
+        assertBeforeDeadline(phase);
+      };
 
       const longtasks: number[] = [];
       let observer: PerformanceObserver | null = null;
@@ -683,27 +772,42 @@ async function measureScrollScenario({
 
       const frameDeltas: number[] = [];
       let prevFrame: number | null = null;
-      const tick = async () => {
+      const tick = async (phase: string) => {
+        assertBeforeDeadline(phase);
         const t = await raf();
+        assertBeforeDeadline(phase);
         if (prevFrame != null) {
           frameDeltas.push(t - prevFrame);
         }
         prevFrame = t;
       };
 
-      const scrollTo = async (target: number, steps: number) => {
+      const scrollTo = async ({
+        target,
+        steps,
+        phase,
+      }: {
+        target: number;
+        steps: number;
+        phase: string;
+      }) => {
         const start = scroller.scrollTop;
         for (let i = 1; i <= steps; i += 1) {
+          assertBeforeDeadline(phase, {
+            step: i,
+            steps,
+            target,
+          });
           const x = start + ((target - start) * i) / steps;
           scroller.scrollTop = x;
-          await tick();
+          await tick(`${phase}.tick`);
         }
       };
 
-      await tick();
+      await tick("init");
       scroller.scrollTop = 0;
-      await sleep(140);
-      await tick();
+      await sleepChecked(140, "init");
+      await tick("init");
 
       let maxScrollSeen = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
       const refreshMaxScroll = () => {
@@ -765,23 +869,26 @@ async function measureScrollScenario({
         edge,
         marker,
         attempts,
+        phase,
       }: {
         edge: "top" | "bottom";
         marker: string;
         attempts: number;
+        phase: string;
       }): Promise<boolean> => {
         for (let i = 0; i < attempts; i += 1) {
+          assertBeforeDeadline(phase, { edge, attempts, attempt: i + 1 });
           const max = refreshMaxScroll();
           scroller.scrollTop = edge === "top" ? 0 : max;
-          await sleep(100 + i * 40);
-          await tick();
-          await tick();
+          await sleepChecked(100 + i * 40, phase);
+          await tick(`${phase}.tick`);
+          await tick(`${phase}.tick`);
           const maxAfter = refreshMaxScroll();
           const nearEdge =
             edge === "top"
               ? scroller.scrollTop <= 2
               : maxAfter <= 2 || maxAfter - scroller.scrollTop <= 2;
-          const markerNow = markerVisible(marker);
+          const markerNow = markerVisible(marker, scroller);
           if (markerNow && nearEdge) {
             return true;
           }
@@ -793,45 +900,78 @@ async function measureScrollScenario({
         return false;
       };
 
-      const topVisibleInitially = await settleEdge({
-        edge: "top",
-        marker: top_marker,
-        attempts: 4,
-      });
-      const domTop = countVisibleCellDomNodes(scroller);
-
-      await scrollTo(
-        refreshMaxScroll() * 0.5,
-        Math.max(10, Math.floor(scroll_steps / 2)),
+      const topVisibleInitially = await recordPhase("settle_top_initial", () =>
+        settleEdge({
+          edge: "top",
+          marker: top_marker,
+          attempts: 4,
+          phase: "settle_top_initial",
+        }),
       );
-      await sleep(90);
-      await tick();
-      const domMid = countVisibleCellDomNodes(scroller);
+      const domTop = await recordPhase("count_top_dom", async () => {
+        assertBeforeDeadline("count_top_dom");
+        return countVisibleCellDomNodes(scroller);
+      });
 
-      await settleEdge({ edge: "bottom", marker: bottom_marker, attempts: 6 });
-      const domBottom = countVisibleCellDomNodes(scroller);
-      const bottomVisibleInitially = markerVisible(bottom_marker);
+      await recordPhase("scroll_mid", () =>
+        scrollTo({
+          target: refreshMaxScroll() * 0.5,
+          steps: Math.max(10, Math.floor(scroll_steps / 2)),
+          phase: "scroll_mid",
+        }),
+      );
+      await sleepChecked(90, "scroll_mid");
+      await tick("scroll_mid");
+      const domMid = await recordPhase("count_mid_dom", async () => {
+        assertBeforeDeadline("count_mid_dom");
+        return countVisibleCellDomNodes(scroller);
+      });
 
-      for (let i = 0; i < cycles; i += 1) {
-        await scrollTo(0, scroll_steps);
-        await sleep(60);
-        await scrollTo(refreshMaxScroll(), scroll_steps);
-        await sleep(60);
-        if (performance.now() - startTs > timeout_ms) {
-          throw new Error(`scroll cycle timed out after ${timeout_ms}ms`);
+      await recordPhase("settle_bottom_initial", () =>
+        settleEdge({
+          edge: "bottom",
+          marker: bottom_marker,
+          attempts: 6,
+          phase: "settle_bottom_initial",
+        }),
+      );
+      const domBottom = await recordPhase("count_bottom_dom", async () => {
+        assertBeforeDeadline("count_bottom_dom");
+        return countVisibleCellDomNodes(scroller);
+      });
+      const bottomVisibleInitially = markerVisible(bottom_marker, scroller);
+
+      await recordPhase("scroll_cycles", async () => {
+        for (let i = 0; i < cycles; i += 1) {
+          const phase = `scroll_cycles.${i + 1}`;
+          await scrollTo({ target: 0, steps: scroll_steps, phase: `${phase}.up` });
+          await sleepChecked(60, `${phase}.pause_up`);
+          await scrollTo({
+            target: refreshMaxScroll(),
+            steps: scroll_steps,
+            phase: `${phase}.down`,
+          });
+          await sleepChecked(60, `${phase}.pause_down`);
+          assertBeforeDeadline("scroll_cycles", { cycle: i + 1, cycles });
         }
-      }
+      });
 
-      const topVisibleAfter = await settleEdge({
-        edge: "top",
-        marker: top_marker,
-        attempts: 6,
-      });
-      const bottomVisibleAfter = await settleEdge({
-        edge: "bottom",
-        marker: bottom_marker,
-        attempts: 8,
-      });
+      const topVisibleAfter = await recordPhase("settle_top_final", () =>
+        settleEdge({
+          edge: "top",
+          marker: top_marker,
+          attempts: 6,
+          phase: "settle_top_final",
+        }),
+      );
+      const bottomVisibleAfter = await recordPhase("settle_bottom_final", () =>
+        settleEdge({
+          edge: "bottom",
+          marker: bottom_marker,
+          attempts: 8,
+          phase: "settle_bottom_final",
+        }),
+      );
 
       observer?.disconnect();
 
@@ -845,6 +985,7 @@ async function measureScrollScenario({
 
       return {
         duration_ms: elapsed,
+        phase_durations_ms: phaseDurations,
         max_scroll_px: maxScrollSeen,
         dom_cells_top: domTop,
         dom_cells_mid: domMid,
@@ -1428,10 +1569,14 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         auth_token,
         virtualization: opts.virtualization,
       });
-      const open_metrics = await openNotebookPage({
-        page,
-        url,
-        timeout_ms: opts.timeout_ms,
+      const open_metrics = await withTimeout({
+        promise: openNotebookPage({
+          page,
+          url,
+          timeout_ms: opts.timeout_ms,
+        }),
+        timeout_ms: opts.timeout_ms + 5_000,
+        label: `open scenario '${scenario.name}'`,
       });
       const instrumentationProbe = await probeFrontendInstrumentation(page);
       assertFrontendInstrumentation({
@@ -1439,20 +1584,29 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         opts,
         scenario_name: scenario.name,
       });
-      const typing_metrics = await measureTypingScenario({
-        page,
-        chars: opts.typing_chars,
-        typing_timeout_ms: opts.typing_timeout_ms,
-        action_timeout_ms: opts.timeout_ms,
+      const typing_metrics = await withTimeout({
+        promise: measureTypingScenario({
+          page,
+          chars: opts.typing_chars,
+          typing_timeout_ms: opts.typing_timeout_ms,
+          action_timeout_ms: opts.timeout_ms,
+        }),
+        timeout_ms: opts.timeout_ms + 5_000,
+        label: `typing scenario '${scenario.name}'`,
       });
       const cycles = opts.cycles ?? (opts.profile === "full" ? 4 : 2);
-      const metrics = await measureScrollScenario({
-        page,
-        cycles,
-        scroll_steps: opts.scroll_steps,
-        top_marker: scenario.top_marker,
-        bottom_marker: scenario.bottom_marker,
-        timeout_ms: opts.timeout_ms,
+      const metrics = await withTimeout({
+        promise: measureScrollScenario({
+          page,
+          cycles,
+          scroll_steps: opts.scroll_steps,
+          top_marker: scenario.top_marker,
+          bottom_marker: scenario.bottom_marker,
+          timeout_ms: opts.timeout_ms,
+        }),
+        // Give in-page phase-level watchdog time to throw detailed diagnostics.
+        timeout_ms: opts.timeout_ms + 30_000,
+        label: `scroll scenario '${scenario.name}'`,
       });
       const virtualization_likely =
         metrics.windowed_list_attr ??

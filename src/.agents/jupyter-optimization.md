@@ -77,6 +77,10 @@ Completed:
    1. open-to-first-cell / open-to-first-input / open-ready timings.
    2. typing-latency percentiles (`p50/p95/p99`) with timeout counts.
    3. CLI controls for typing sample size/timeouts.
+9. [x] Scroll harness now has stronger determinism diagnostics for heavy notebooks:
+   1. stale static-asset detection for virtualization instrumentation mismatch.
+   2. phase-level in-page timeout watchdogs with explicit phase/error payloads.
+   3. outer phase timeouts for open/typing/scroll so runs fail fast instead of hanging.
 
 Observed benchmark impact from coalescing (output profile):
 
