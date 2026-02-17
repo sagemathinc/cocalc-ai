@@ -1,11 +1,12 @@
 import { Alert, Typography } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   redux,
   useActions,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
+import { upsertAgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 import { Loading } from "@cocalc/frontend/components";
 import { lite } from "@cocalc/frontend/lite";
 import { initChat, remove as removeChat } from "@cocalc/frontend/chat/register";
@@ -53,6 +54,24 @@ function latestThreadKey(actions?: ChatActions): string | null {
   return bestKey;
 }
 
+function parseDateISOString(value: unknown): string | undefined {
+  if (!value) return undefined;
+  const d = value instanceof Date ? value : new Date(value as string | number);
+  if (!Number.isFinite(d.valueOf())) return undefined;
+  return d.toISOString();
+}
+
+function summarizeTitle(rootMessage: any): string {
+  const name =
+    typeof rootMessage?.name === "string" ? rootMessage.name.trim() : "";
+  if (name) return name;
+  const history0 = rootMessage?.history?.[0];
+  const content =
+    typeof history0?.content === "string" ? history0.content.trim() : "";
+  if (content) return content.slice(0, 140);
+  return "Navigator session";
+}
+
 export function NavigatorShell({
   project_id,
   defaultTargetProjectId,
@@ -65,6 +84,8 @@ export function NavigatorShell({
   const [actions, setActions] = useState<ChatActions | null>(null);
   const [error, setError] = useState<string>("");
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+  const [cacheVersion, setCacheVersion] = useState(0);
+  const lastIndexedValueRef = useRef<string>("");
 
   const homeDirectory = useMemo(() => {
     if (!lite) {
@@ -120,6 +141,7 @@ export function NavigatorShell({
     if (!actions?.messageCache) return;
     const onVersion = () => {
       setSelectedThreadKey((current) => current ?? latestThreadKey(actions));
+      setCacheVersion((v) => v + 1);
     };
     actions.messageCache.on("version", onVersion);
     onVersion();
@@ -135,6 +157,68 @@ export function NavigatorShell({
     }, 0);
     return () => clearTimeout(timer);
   }, [actions, selectedThreadKey]);
+
+  useEffect(() => {
+    if (!actions || !selectedThreadKey || typeof account_id !== "string") return;
+    const thread = actions.messageCache?.getThreadIndex().get(selectedThreadKey);
+    if (!thread) return;
+    const rootMessage: any = thread.rootMessage ?? {};
+    const acpConfig: any = rootMessage?.acp_config ?? {};
+    const sessionIdRaw =
+      typeof acpConfig?.sessionId === "string" && acpConfig.sessionId.trim()
+        ? acpConfig.sessionId.trim()
+        : selectedThreadKey;
+    const createdAt =
+      parseDateISOString(rootMessage?.date) ??
+      parseDateISOString(thread.newestTime) ??
+      new Date().toISOString();
+    const updatedAt =
+      parseDateISOString(thread.newestTime) ??
+      parseDateISOString(rootMessage?.date) ??
+      new Date().toISOString();
+    const status = (rootMessage?.generating ? "running" : "active") as
+      | "running"
+      | "active";
+    const nextRecord = {
+      session_id: sessionIdRaw,
+      project_id,
+      account_id,
+      chat_path: navigatorPath,
+      thread_key: selectedThreadKey,
+      title: summarizeTitle(rootMessage),
+      created_at: createdAt,
+      updated_at: updatedAt,
+      status,
+      entrypoint: "global" as const,
+      working_directory:
+        typeof acpConfig?.workingDirectory === "string"
+          ? acpConfig.workingDirectory
+          : undefined,
+      mode:
+        acpConfig?.sessionMode === "read-only" ||
+        acpConfig?.sessionMode === "workspace-write" ||
+        acpConfig?.sessionMode === "full-access"
+          ? acpConfig.sessionMode
+          : undefined,
+      model:
+        typeof acpConfig?.model === "string" ? acpConfig.model : undefined,
+      reasoning:
+        typeof acpConfig?.reasoning === "string" ? acpConfig.reasoning : undefined,
+    };
+    const serialized = JSON.stringify(nextRecord);
+    if (lastIndexedValueRef.current === serialized) return;
+    lastIndexedValueRef.current = serialized;
+    void upsertAgentSessionRecord(nextRecord).catch((err) => {
+      console.warn("unable to update agent session index", err);
+    });
+  }, [
+    actions,
+    account_id,
+    project_id,
+    navigatorPath,
+    selectedThreadKey,
+    cacheVersion,
+  ]);
 
   const desc = useMemo(() => {
     if (!selectedThreadKey) return undefined;
