@@ -30,6 +30,12 @@ import { open_new_tab } from "@cocalc/frontend/misc";
 import { NotebookMode } from "@cocalc/jupyter/types";
 import { JupyterActions } from "./browser-actions";
 import {
+  adjustMinimapWidth,
+  openMinimapSettingsDialog,
+  setMinimapEnabled,
+  toggleMinimapEnabled,
+} from "./minimap-settings";
+import {
   COPY_CELL_ICON,
   DELETE_CELL_ICON,
   RUN_ALL_CELLS_ABOVE_ICON,
@@ -1323,6 +1329,64 @@ export function commands(actions: AllActions): {
     "toggle toolbar": {
       m: "Toggle toolbar",
       f: () => actions.jupyter_actions?.toggle_toolbar(),
+      r: true,
+    },
+
+    "toggle minimap": {
+      m: defineMessage({
+        id: "jupyter.commands.toggle_minimap.menu",
+        defaultMessage: "Toggle Minimap",
+      }),
+      t: defineMessage({
+        id: "jupyter.commands.toggle_minimap.tooltip",
+        defaultMessage: "Show or hide the notebook minimap.",
+      }),
+      f: () => toggleMinimapEnabled(),
+      r: true,
+    },
+
+    "show minimap": {
+      m: defineMessage({
+        id: "jupyter.commands.show_minimap.menu",
+        defaultMessage: "Show Minimap",
+      }),
+      f: () => setMinimapEnabled(true),
+      r: true,
+    },
+
+    "hide minimap": {
+      m: defineMessage({
+        id: "jupyter.commands.hide_minimap.menu",
+        defaultMessage: "Hide Minimap",
+      }),
+      f: () => setMinimapEnabled(false),
+      r: true,
+    },
+
+    "increase minimap width": {
+      m: defineMessage({
+        id: "jupyter.commands.increase_minimap_width.menu",
+        defaultMessage: "Increase Minimap Width",
+      }),
+      f: () => adjustMinimapWidth(12),
+      r: true,
+    },
+
+    "decrease minimap width": {
+      m: defineMessage({
+        id: "jupyter.commands.decrease_minimap_width.menu",
+        defaultMessage: "Decrease Minimap Width",
+      }),
+      f: () => adjustMinimapWidth(-12),
+      r: true,
+    },
+
+    "minimap settings": {
+      m: defineMessage({
+        id: "jupyter.commands.minimap_settings.menu",
+        defaultMessage: "Minimap Settings...",
+      }),
+      f: () => openMinimapSettingsDialog(),
       r: true,
     },
 
