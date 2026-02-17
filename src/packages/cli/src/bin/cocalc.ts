@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir as mkdirLocal, readFile as readFileLocal, writeFile as writeFileLocal } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { dirname, join } from "node:path";
@@ -91,6 +91,27 @@ type CommandContext = {
   pollMs: number;
   apiBaseUrl: string;
   remote: RemoteConnection;
+  routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
+};
+
+type RoutedProjectHostClientState = {
+  host_id: string;
+  address: string;
+  client?: ConatClient;
+  token?: string;
+  expiresAt?: number;
+  tokenSource?: "cache" | "hub";
+  tokenInFlight?: Promise<string>;
+};
+
+type ProjectHostTokenCacheEntry = {
+  token: string;
+  expires_at: number;
+};
+
+type ProjectHostTokenCacheFile = {
+  version: 1;
+  entries: Record<string, ProjectHostTokenCacheEntry>;
 };
 
 type WorkspaceRow = {
@@ -132,6 +153,7 @@ const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expir
 const LRO_SCOPE_TYPES: LroScopeType[] = ["project", "account", "host", "hub"];
 const MAX_TRANSPORT_TIMEOUT_MS = 30_000;
 const WORKSPACE_CONTEXT_FILENAME = ".cocalc-workspace";
+const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 
 function cliDebug(...args: unknown[]): void {
   if (!cliDebugEnabled) return;
@@ -204,6 +226,115 @@ function clearWorkspaceContext(): boolean {
   if (!existsSync(path)) return false;
   unlinkSync(path);
   return true;
+}
+
+function projectHostTokenCachePath(env = process.env): string {
+  const explicit = env.COCALC_CLI_PROJECT_HOST_TOKEN_CACHE?.trim();
+  if (explicit) return explicit;
+  return join(dirname(authConfigPath(env)), "project-host-token-cache.json");
+}
+
+function loadProjectHostTokenCache(path = projectHostTokenCachePath()): ProjectHostTokenCacheFile {
+  if (!existsSync(path)) {
+    return { version: 1, entries: {} };
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    const entries: Record<string, ProjectHostTokenCacheEntry> = {};
+    if (parsed?.entries && typeof parsed.entries === "object" && !Array.isArray(parsed.entries)) {
+      for (const [key, value] of Object.entries(parsed.entries)) {
+        const token = `${(value as any)?.token ?? ""}`.trim();
+        const expires_at = Number((value as any)?.expires_at ?? NaN);
+        if (token && Number.isFinite(expires_at) && expires_at > 0) {
+          entries[key] = { token, expires_at };
+        }
+      }
+    }
+    return { version: 1, entries };
+  } catch {
+    return { version: 1, entries: {} };
+  }
+}
+
+function saveProjectHostTokenCache(
+  cache: ProjectHostTokenCacheFile,
+  path = projectHostTokenCachePath(),
+): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    `${JSON.stringify({ version: 1, entries: cache.entries ?? {} }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+function projectHostTokenCacheKey({
+  apiBaseUrl,
+  accountId,
+  host_id,
+}: {
+  apiBaseUrl: string;
+  accountId: string;
+  host_id: string;
+}): string {
+  return `${normalizeUrl(apiBaseUrl)}|${accountId}|${host_id}`;
+}
+
+function getCachedProjectHostToken({
+  apiBaseUrl,
+  accountId,
+  host_id,
+}: {
+  apiBaseUrl: string;
+  accountId: string;
+  host_id: string;
+}): ProjectHostTokenCacheEntry | undefined {
+  const key = projectHostTokenCacheKey({ apiBaseUrl, accountId, host_id });
+  const cache = loadProjectHostTokenCache();
+  const entry = cache.entries[key];
+  if (!entry) return undefined;
+  if (Date.now() >= entry.expires_at - PROJECT_HOST_TOKEN_TTL_LEEWAY_MS) {
+    delete cache.entries[key];
+    saveProjectHostTokenCache(cache);
+    return undefined;
+  }
+  return entry;
+}
+
+function setCachedProjectHostToken({
+  apiBaseUrl,
+  accountId,
+  host_id,
+  token,
+  expires_at,
+}: {
+  apiBaseUrl: string;
+  accountId: string;
+  host_id: string;
+  token: string;
+  expires_at: number;
+}): void {
+  if (!token || !Number.isFinite(expires_at)) return;
+  const key = projectHostTokenCacheKey({ apiBaseUrl, accountId, host_id });
+  const cache = loadProjectHostTokenCache();
+  cache.entries[key] = { token, expires_at };
+  saveProjectHostTokenCache(cache);
+}
+
+function deleteCachedProjectHostToken({
+  apiBaseUrl,
+  accountId,
+  host_id,
+}: {
+  apiBaseUrl: string;
+  accountId: string;
+  host_id: string;
+}): void {
+  const key = projectHostTokenCacheKey({ apiBaseUrl, accountId, host_id });
+  const cache = loadProjectHostTokenCache();
+  if (!(key in cache.entries)) return;
+  delete cache.entries[key];
+  saveProjectHostTokenCache(cache);
 }
 
 type ProductCommand = "plus" | "launchpad";
@@ -711,6 +842,7 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
     pollMs,
     apiBaseUrl,
     remote,
+    routedProjectHostClients: {},
   };
 }
 
@@ -734,6 +866,11 @@ async function withContext(
     );
     process.exitCode = 1;
   } finally {
+    if (ctx) {
+      for (const host_id of Object.keys(ctx.routedProjectHostClients)) {
+        closeRoutedProjectHostClient(ctx, host_id);
+      }
+    }
     try {
       ctx?.remote.client.close();
     } catch {
@@ -932,13 +1069,224 @@ async function resolveWorkspaceFromArgOrContext(
   return await resolveWorkspace(ctx, context.workspace_id);
 }
 
+function isProjectHostAuthError(err: unknown): boolean {
+  const mesg = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    mesg.includes("missing project-host bearer token") ||
+    mesg.includes("project-host auth token") ||
+    mesg.includes("jwt") ||
+    mesg.includes("unauthorized")
+  );
+}
+
+function localProxyProjectHostAddress(apiBaseUrl: string, host_id: string): string {
+  const url = new URL(normalizeUrl(apiBaseUrl));
+  const base = url.pathname.replace(/\/+$/, "");
+  url.pathname = `${base}/${host_id}`.replace(/\/+/g, "/");
+  if (!url.pathname.startsWith("/")) {
+    url.pathname = `/${url.pathname}`;
+  }
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/+$/, "");
+}
+
+async function issueProjectHostAuthToken(
+  ctx: CommandContext,
+  state: RoutedProjectHostClientState,
+  project_id: string,
+): Promise<string> {
+  const now = Date.now();
+  if (
+    state.token &&
+    state.expiresAt &&
+    now < state.expiresAt - PROJECT_HOST_TOKEN_TTL_LEEWAY_MS
+  ) {
+    return state.token;
+  }
+  if (state.tokenInFlight) {
+    return await state.tokenInFlight;
+  }
+
+  state.tokenInFlight = (async () => {
+    const cached = getCachedProjectHostToken({
+      apiBaseUrl: ctx.apiBaseUrl,
+      accountId: ctx.accountId,
+      host_id: state.host_id,
+    });
+    if (cached) {
+      state.token = cached.token;
+      state.expiresAt = cached.expires_at;
+      state.tokenSource = "cache";
+      return cached.token;
+    }
+
+    const issued = await hubCallAccount<{ host_id: string; token: string; expires_at: number }>(
+      ctx,
+      "hosts.issueProjectHostAuthToken",
+      [
+        {
+          host_id: state.host_id,
+          project_id,
+        },
+      ],
+    );
+    state.token = issued.token;
+    state.expiresAt = issued.expires_at;
+    state.tokenSource = "hub";
+    setCachedProjectHostToken({
+      apiBaseUrl: ctx.apiBaseUrl,
+      accountId: ctx.accountId,
+      host_id: state.host_id,
+      token: issued.token,
+      expires_at: issued.expires_at,
+    });
+    return issued.token;
+  })().finally(() => {
+    delete state.tokenInFlight;
+  });
+
+  return await state.tokenInFlight;
+}
+
+function invalidateProjectHostAuthToken(
+  ctx: CommandContext,
+  state: RoutedProjectHostClientState,
+): void {
+  delete state.token;
+  delete state.expiresAt;
+  delete state.tokenSource;
+  delete state.tokenInFlight;
+  deleteCachedProjectHostToken({
+    apiBaseUrl: ctx.apiBaseUrl,
+    accountId: ctx.accountId,
+    host_id: state.host_id,
+  });
+}
+
+function closeRoutedProjectHostClient(
+  ctx: CommandContext,
+  host_id: string,
+): void {
+  const current = ctx.routedProjectHostClients[host_id];
+  if (!current) return;
+  try {
+    current.client?.close();
+  } catch {
+    // ignore close errors
+  }
+  delete ctx.routedProjectHostClients[host_id];
+}
+
+async function getOrCreateRoutedProjectHostClient(
+  ctx: CommandContext,
+  workspace: WorkspaceRow,
+  allowTokenRetry = true,
+): Promise<RoutedProjectHostClientState> {
+  const host_id = workspace.host_id;
+  if (!host_id) {
+    throw new Error("workspace has no assigned host");
+  }
+
+  const connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
+    { host_id },
+  ]);
+  const address = connection.local_proxy
+    ? localProxyProjectHostAddress(ctx.apiBaseUrl, host_id)
+    : connection.connect_url
+      ? normalizeUrl(connection.connect_url)
+      : "";
+  if (!address) {
+    throw new Error(`host '${host_id}' has no connect_url and is not local_proxy`);
+  }
+
+  const existing = ctx.routedProjectHostClients[host_id];
+  if (existing && existing.address === address && existing.client) {
+    return existing;
+  }
+  if (existing) {
+    closeRoutedProjectHostClient(ctx, host_id);
+  }
+
+  const state: RoutedProjectHostClientState = {
+    host_id,
+    address,
+  };
+  const routed = connectConat({
+    address,
+    noCache: true,
+    reconnection: false,
+    auth: async (cb) => {
+      try {
+        const token = await issueProjectHostAuthToken(ctx, state, workspace.project_id);
+        cb({ bearer: token });
+      } catch (err) {
+        cliDebug("project-host token issuance failed", {
+          host_id,
+          err: err instanceof Error ? err.message : `${err}`,
+        });
+        cb({});
+      }
+    },
+  });
+  state.client = routed;
+  routed.inboxPrefixHook = (info) => {
+    const user = info?.user as
+      | {
+          account_id?: string;
+          project_id?: string;
+          hub_id?: string;
+          host_id?: string;
+        }
+      | undefined;
+    if (!user) return undefined;
+    return inboxPrefix({
+      account_id: user.account_id,
+      project_id: user.project_id,
+      hub_id: user.hub_id,
+      host_id: user.host_id,
+    });
+  };
+  routed.conn.on("connect_error", (err: unknown) => {
+    if (isProjectHostAuthError(err)) {
+      invalidateProjectHostAuthToken(ctx, state);
+    }
+  });
+  ctx.routedProjectHostClients[host_id] = state;
+
+  const signInTimeoutMs = Math.min(ctx.timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
+  try {
+    await withTimeout(
+      routed.waitUntilSignedIn({ timeout: signInTimeoutMs }),
+      signInTimeoutMs,
+      `timeout while waiting for project-host sign-in (${signInTimeoutMs}ms)`,
+    );
+  } catch (err) {
+    const shouldRetryWithFreshToken =
+      allowTokenRetry &&
+      (state.tokenSource === "cache" || isProjectHostAuthError(err));
+    closeRoutedProjectHostClient(ctx, host_id);
+    if (shouldRetryWithFreshToken) {
+      invalidateProjectHostAuthToken(ctx, state);
+      return await getOrCreateRoutedProjectHostClient(ctx, workspace, false);
+    }
+    throw err;
+  }
+
+  return state;
+}
+
 async function resolveWorkspaceFilesystem(
   ctx: CommandContext,
   workspaceIdentifier?: string,
 ): Promise<{ workspace: WorkspaceRow; fs: FilesystemClient }> {
   const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier);
+  const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
+  if (!routed.client) {
+    throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
+  }
   const fs = fsClient({
-    client: ctx.remote.client,
+    client: routed.client,
     subject: fsSubject({ project_id: workspace.project_id }),
     timeout: Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000)),
   });
