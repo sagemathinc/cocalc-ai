@@ -11,6 +11,8 @@ MACHINE="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 NODE_BIN="$(command -v node)"
 TARGET="$BUILD_DIR/$NAME-$VERSION-$MACHINE-$OS"
+SIGN_ID="${COCALC_CLI_SIGN_ID:-}"
+ENTITLEMENTS="${COCALC_CLI_ENTITLEMENTS:-entitlements.plist}"
 
 echo "Building CoCalc CLI SEA for $OS/$MACHINE"
 
@@ -49,7 +51,14 @@ case "$OS" in
       npx -y postject "$TARGET" NODE_SEA_BLOB ./sea-prep.blob \
       --sentinel-fuse "$FUSE" \
       --macho-segment-name NODE_SEA
-    codesign --force --sign - "$TARGET"
+    if [[ -n "$SIGN_ID" ]]; then
+      codesign --force --sign "$SIGN_ID" \
+        --options runtime \
+        --entitlements "$ENTITLEMENTS" \
+        "$TARGET"
+    else
+      codesign --force --sign - "$TARGET"
+    fi
     ;;
   linux)
     env -u npm_config_npm_globalconfig \

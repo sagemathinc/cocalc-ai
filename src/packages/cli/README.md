@@ -27,6 +27,14 @@ pnpm --dir src/packages/cli publish:sea
 pnpm --dir src/packages/cli publish:site
 ```
 
+macOS dev signing (optional):
+
+```bash
+COCALC_CLI_SIGN_ID="Developer ID Application: Your Name (TEAMID)" \
+COCALC_CLI_ENTITLEMENTS="src/packages/cli/sea/entitlements.plist" \
+pnpm --dir src/packages/cli sea
+```
+
 ## Run
 
 ```bash
