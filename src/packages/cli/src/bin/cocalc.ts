@@ -10,6 +10,7 @@ import { Command } from "commander";
 import pkg from "../../package.json";
 
 import { connect as connectConat, type Client as ConatClient } from "@cocalc/conat/core/client";
+import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
@@ -435,6 +436,25 @@ async function connectRemote({
     noCache: true,
     ...(Object.keys(extraHeaders).length ? { extraHeaders } : undefined),
   });
+  // Ensure request/reply inbox subscriptions use the authenticated identity prefix
+  // (_INBOX.account-..., _INBOX.project-..., etc.), which matches server policy.
+  client.inboxPrefixHook = (info) => {
+    const user = info?.user as
+      | {
+          account_id?: string;
+          project_id?: string;
+          hub_id?: string;
+          host_id?: string;
+        }
+      | undefined;
+    if (!user) return undefined;
+    return inboxPrefix({
+      account_id: user.account_id,
+      project_id: user.project_id,
+      hub_id: user.hub_id,
+      host_id: user.host_id,
+    });
+  };
 
   try {
     await withTimeout(
