@@ -96,6 +96,8 @@ an admin account for smoke-test workflows.
 - `workspace file get`
 - `workspace file rm`
 - `workspace file mkdir`
+- `workspace file rg`
+- `workspace file fd`
 - `workspace snapshot create`
 - `workspace snapshot list`
 - `host resolve-connection`

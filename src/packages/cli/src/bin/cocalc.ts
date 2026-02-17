@@ -254,6 +254,14 @@ function formatValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function asUtf8(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (Buffer.isBuffer(value)) return value.toString("utf8");
+  if (value instanceof Uint8Array) return Buffer.from(value).toString("utf8");
+  return String(value);
+}
+
 function printKeyValueTable(data: Record<string, unknown>): void {
   const table = new AsciiTable3("Result");
   table.setStyle("unicode-round");
@@ -2296,6 +2304,109 @@ file
           path,
           parents: opts.parents !== false,
           status: "created",
+        };
+      });
+    },
+  );
+
+file
+  .command("rg <pattern> [path]")
+  .description("search workspace files using ripgrep")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--timeout <seconds>", "ripgrep timeout seconds", "30")
+  .option("--max-bytes <bytes>", "max combined output bytes", "20000000")
+  .option("--rg-option <arg>", "additional ripgrep option (repeatable)", (value, prev: string[] = []) => [...prev, value], [])
+  .action(
+    async (
+      pattern: string,
+      path: string | undefined,
+      opts: {
+        workspace?: string;
+        timeout?: string;
+        maxBytes?: string;
+        rgOption?: string[];
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace file rg", async (ctx) => {
+        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
+        const result = await fs.ripgrep(path?.trim() || ".", pattern, {
+          options: opts.rgOption,
+          timeout: Math.max(1, Number(opts.timeout ?? "30") || 30),
+          maxSize: Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000),
+        });
+        const stdout = asUtf8((result as any)?.stdout);
+        const stderr = asUtf8((result as any)?.stderr);
+        const exit_code = Number((result as any)?.code ?? 1);
+
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          if (stdout) process.stdout.write(stdout);
+          if (stderr) process.stderr.write(stderr);
+          if (exit_code !== 0) {
+            process.exitCode = exit_code;
+          }
+          return null;
+        }
+        return {
+          workspace_id: workspace.project_id,
+          path: path?.trim() || ".",
+          pattern,
+          stdout,
+          stderr,
+          exit_code,
+          truncated: !!(result as any)?.truncated,
+        };
+      });
+    },
+  );
+
+file
+  .command("fd [pattern] [path]")
+  .description("find files in a workspace using fd")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--timeout <seconds>", "fd timeout seconds", "30")
+  .option("--max-bytes <bytes>", "max combined output bytes", "20000000")
+  .option("--fd-option <arg>", "additional fd option (repeatable)", (value, prev: string[] = []) => [...prev, value], [])
+  .action(
+    async (
+      pattern: string | undefined,
+      path: string | undefined,
+      opts: {
+        workspace?: string;
+        timeout?: string;
+        maxBytes?: string;
+        fdOption?: string[];
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace file fd", async (ctx) => {
+        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
+        const result = await fs.fd(path?.trim() || ".", {
+          pattern: pattern?.trim() || undefined,
+          options: opts.fdOption,
+          timeout: Math.max(1, Number(opts.timeout ?? "30") || 30),
+          maxSize: Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000),
+        });
+        const stdout = asUtf8((result as any)?.stdout);
+        const stderr = asUtf8((result as any)?.stderr);
+        const exit_code = Number((result as any)?.code ?? 1);
+
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          if (stdout) process.stdout.write(stdout);
+          if (stderr) process.stderr.write(stderr);
+          if (exit_code !== 0) {
+            process.exitCode = exit_code;
+          }
+          return null;
+        }
+        return {
+          workspace_id: workspace.project_id,
+          path: path?.trim() || ".",
+          pattern: pattern?.trim() || null,
+          stdout,
+          stderr,
+          exit_code,
+          truncated: !!(result as any)?.truncated,
         };
       });
     },
