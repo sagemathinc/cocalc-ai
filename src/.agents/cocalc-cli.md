@@ -333,6 +333,27 @@ Notes:
 - Destructive operations (e.g., message deletion) should require explicit confirmation flags (`--yes`) and support dry-run previews where possible.
 - Chatroom APIs should be exposed in a way that supports both human workflows and agent automation.
 
+### 13) Product launcher subcommands (future)
+
+```bash
+cocalc plus [args...]
+cocalc launchpad [args...]
+```
+
+Behavior:
+
+- If `cocalc-plus` / `cocalc-launchpad` is not installed, prompt and install it via the corresponding installer.
+- Then forward all remaining arguments to the installed binary.
+- Provide non-interactive flags for automation:
+  - `--install-if-missing`
+  - `--yes`
+  - `--channel latest|stable|...`
+
+Rationale:
+
+- A user can install only `cocalc` first, discover additional products via `cocalc --help`, and immediately launch UI products with minimal friction.
+- This improves first-run conversion from CLI users to Plus/Launchpad usage.
+
 ## Sprites CLI Mapping
 
 High-level parity mapping:

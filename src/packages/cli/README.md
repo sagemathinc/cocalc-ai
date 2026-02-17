@@ -20,6 +20,13 @@ SEA output binary:
 - `src/packages/cli/build/sea/cocalc-cli-<version>-<arch>-<os>`
 - symlink: `src/packages/cli/build/sea/cocalc-cli`
 
+Publish commands:
+
+```bash
+pnpm --dir src/packages/cli publish:sea
+pnpm --dir src/packages/cli publish:site
+```
+
 ## Run
 
 ```bash

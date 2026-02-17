@@ -1,6 +1,6 @@
 {
   "name": "@cocalc/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CoCalc command line interface",
   "bin": {
     "cocalc": "./dist/bin/cocalc.js"
@@ -12,11 +12,15 @@
     "build:bundle": "bash ./sea/build-bundle.sh",
     "run:bundle": "node ./build/bundle/index.js",
     "sea": "bash ./sea/build-sea.sh",
+    "publish:sea": "cd sea && ./publish-sea.sh",
+    "publish:site": "cd site && ./publish-site.sh",
     "test": "pnpm build && node --test dist/core/*.test.js"
   },
   "files": [
     "dist/**",
     "sea/**",
+    "site/**",
+    "install.sh",
     "package.json",
     "README.md"
   ],
