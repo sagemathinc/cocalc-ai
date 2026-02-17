@@ -8,6 +8,10 @@ import {
   type RestoreMode,
   type RestoreStagingHandle,
 } from "@cocalc/conat/files/file-server";
+import type {
+  ExecuteCodeOptions,
+  ExecuteCodeOutput,
+} from "@cocalc/util/types/execute-code";
 
 export type ProjectCopyState =
   | "queued"
@@ -55,6 +59,7 @@ export const projects = {
   setQuotas: authFirstRequireAccount,
 
   getDiskQuota: authFirstRequireAccount,
+  exec: authFirstRequireAccount,
 
   createBackup: authFirstRequireAccount,
   deleteBackup: authFirstRequireAccount,
@@ -207,6 +212,12 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<{ used: number; size: number }>;
+
+  exec: (opts: {
+    account_id?: string;
+    project_id: string;
+    execOpts: ExecuteCodeOptions;
+  }) => Promise<ExecuteCodeOutput>;
 
   /////////////
   // BACKUPS

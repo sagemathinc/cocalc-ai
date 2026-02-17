@@ -10,7 +10,6 @@ import pkg from "../../package.json";
 
 import { connect as connectConat, type Client as ConatClient } from "@cocalc/conat/core/client";
 import callHub from "@cocalc/conat/hub/call-hub";
-import { projectApiClient } from "@cocalc/conat/project/api";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
@@ -1001,12 +1000,16 @@ workspace
               path: opts.path,
             };
 
-        const projectApi = projectApiClient({
-          project_id: ws.project_id,
-          client: ctx.remote.client,
-          timeout: ctx.timeoutMs,
-        });
-        const result = await projectApi.system.exec(execOpts as any);
+        const result = await hubCallAccount<{
+          stdout?: string;
+          stderr?: string;
+          exit_code?: number;
+        }>(ctx, "projects.exec", [
+          {
+            project_id: ws.project_id,
+            execOpts,
+          },
+        ]);
 
         if (!ctx.globals.json && ctx.globals.output !== "json") {
           if (result.stdout) process.stdout.write(result.stdout);

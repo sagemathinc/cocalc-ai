@@ -1,5 +1,6 @@
 import createProject from "@cocalc/server/projects/create";
 export { createProject };
+import execProject from "@cocalc/server/projects/exec";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
@@ -12,6 +13,10 @@ import {
   updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl,
 } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control";
+import type {
+  ExecuteCodeOptions,
+  ExecuteCodeOutput,
+} from "@cocalc/util/types/execute-code";
 import {
   cancelCopy as cancelCopyDb,
   listCopiesForProject,
@@ -161,6 +166,18 @@ export async function getDiskQuota({
   // the correct btrfs volume.
   const client = filesystemClient({ project_id });
   return await client.getQuota({ project_id });
+}
+
+export async function exec({
+  account_id,
+  project_id,
+  execOpts,
+}: {
+  account_id: string;
+  project_id: string;
+  execOpts: ExecuteCodeOptions;
+}): Promise<ExecuteCodeOutput> {
+  return await execProject({ account_id, project_id, execOpts });
 }
 
 export async function start({
