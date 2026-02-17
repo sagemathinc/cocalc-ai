@@ -181,6 +181,7 @@ function formatValue(value: unknown): string {
 
 function printKeyValueTable(data: Record<string, unknown>): void {
   const table = new AsciiTable3("Result");
+  table.setStyle("unicode-round");
   table.setHeading("Field", "Value");
   for (const [key, value] of Object.entries(data)) {
     table.addRow(key, formatValue(value));
@@ -200,6 +201,7 @@ function printArrayTable(rows: Record<string, unknown>[]): void {
     }, new Set<string>()),
   );
   const table = new AsciiTable3("Result");
+  table.setStyle("unicode-round");
   table.setHeading(...cols);
   for (const row of rows) {
     table.addRow(...cols.map((col) => formatValue(row[col])));
