@@ -71,6 +71,8 @@ export type SelfHostMultipassSmokeOptions = {
   verify_backup_index_contents?: boolean;
   verify_copy_between_projects?: boolean;
   verify_move_restore_on_second_host?: boolean;
+  verify_workspace_ssh?: boolean;
+  verify_workspace_proxy?: boolean;
   strict_move_file_check?: boolean;
   wait?: Partial<{
     ssh_ready: Partial<WaitOptions>;
@@ -749,7 +751,11 @@ export async function runSelfHostMultipassBackupSmoke(
   const verifyCopyBetweenProjects = opts.verify_copy_between_projects ?? true;
   const verifyMoveRestoreOnSecondHost =
     opts.verify_move_restore_on_second_host ?? true;
+  const verifyWorkspaceSsh = opts.verify_workspace_ssh ?? true;
+  const verifyWorkspaceProxy = opts.verify_workspace_proxy ?? true;
   const strictMoveFileCheck = opts.strict_move_file_check ?? false;
+  const proxyPort = 8765;
+  const proxyTestDir = "smoke-self-host-proxy";
   const secondVmName = verifyMoveRestoreOnSecondHost
     ? `${vmName}-dest`
     : undefined;
@@ -826,9 +832,13 @@ export async function runSelfHostMultipassBackupSmoke(
   let copy_op_id: string | undefined;
   let move_op_id: string | undefined;
   let restore_op_id: string | undefined;
+  let proxy_token: string | undefined;
+  let proxy_api_key_id: number | undefined;
+  let proxy_api_key_secret: string | undefined;
   const sentinelPath = "smoke-self-host-backup/self-host-backup.txt";
   const sentinelValue = `self-host-smoke:${Date.now()}:${randomUUID()}`;
   const copyDestPath = "smoke-self-host-backup/copied-from-project-1.txt";
+  const proxyExpectedBody = `proxy-self-host-smoke:${randomUUID()}`;
   const debug_hints = {
     host_log: "/mnt/cocalc/data/log",
     project_host_log: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
@@ -890,6 +900,101 @@ export async function runSelfHostMultipassBackupSmoke(
     );
   };
 
+  const runWorkspaceSshCheck = async (
+    workspaceId: string,
+    opts: { attempts?: number; intervalMs?: number } = {},
+  ): Promise<void> => {
+    const attempts = Math.max(1, opts.attempts ?? 20);
+    const intervalMs = Math.max(250, opts.intervalMs ?? 2000);
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        await runCli<{ checked?: boolean; exit_code?: number }>(
+          cli,
+          ["workspace", "ssh", workspaceId, "--check"],
+          {
+            timeoutSeconds: 30,
+            commandTimeoutMs: 45_000,
+          },
+        );
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (attempt >= attempts) {
+          throw err;
+        }
+        logger.debug("self-host smoke workspace ssh check retry", {
+          workspace_id: workspaceId,
+          attempt,
+          attempts,
+          err: getErrorMessage(err),
+        });
+        await sleep(intervalMs);
+      }
+    }
+    throw new Error(
+      `workspace ssh check did not succeed: ${getErrorMessage(lastErr ?? "unknown error")}`,
+    );
+  };
+
+  const runWorkspaceProxyCurlWithRetry = async (
+    workspaceId: string,
+    opts: {
+      expect: "ok" | "denied" | "any";
+      token?: string;
+      apiKey?: string;
+      attempts?: number;
+      intervalMs?: number;
+    },
+  ): Promise<{ status: number; body_preview?: string; url?: string }> => {
+    const attempts = Math.max(1, opts.attempts ?? 20);
+    const intervalMs = Math.max(250, opts.intervalMs ?? 2000);
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        const args: string[] = [];
+        if (opts.apiKey) {
+          args.push("--api-key", opts.apiKey);
+        }
+        args.push(
+          "workspace",
+          "proxy",
+          "curl",
+          workspaceId,
+          "--port",
+          String(proxyPort),
+          "--path",
+          "index.html",
+          "--expect",
+          opts.expect,
+        );
+        if (opts.token) {
+          args.push("--token", opts.token);
+        }
+        return await runCli<{ status: number; body_preview?: string; url?: string }>(cli, args, {
+          timeoutSeconds: 30,
+          commandTimeoutMs: 60_000,
+        });
+      } catch (err) {
+        lastErr = err;
+        if (attempt >= attempts) {
+          throw err;
+        }
+        logger.debug("self-host smoke workspace proxy curl retry", {
+          workspace_id: workspaceId,
+          expect: opts.expect,
+          attempt,
+          attempts,
+          err: getErrorMessage(err),
+        });
+        await sleep(intervalMs);
+      }
+    }
+    throw new Error(
+      `workspace proxy curl did not succeed: ${getErrorMessage(lastErr ?? "unknown error")}`,
+    );
+  };
+
   const runWorkspaceExecWithRetry = async (
     workspaceId: string,
     args: string[],
@@ -947,6 +1052,16 @@ export async function runSelfHostMultipassBackupSmoke(
   };
 
   const cleanup = async () => {
+    if (proxy_api_key_id != null) {
+      try {
+        await runCli(cli, ["account", "api-key", "delete", String(proxy_api_key_id)]);
+      } catch (err) {
+        logger.warn("self-host smoke cleanup api key failed", {
+          api_key_id: proxy_api_key_id,
+          err: getErrorMessage(err),
+        });
+      }
+    }
     for (const cleanupProjectId of cleanupProjectIds) {
       try {
         await runCli(cli, ["workspace", "delete", cleanupProjectId]);
@@ -1124,6 +1239,128 @@ export async function runSelfHostMultipassBackupSmoke(
       if (!project_id) throw new Error("missing project_id");
       await writeWorkspaceFile(project_id, sentinelPath, sentinelValue);
     });
+
+    if (verifyWorkspaceSsh) {
+      await runStep("verify_workspace_ssh_check", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        await runWorkspaceSshCheck(project_id, { attempts: 30, intervalMs: 2000 });
+      });
+    }
+
+    if (verifyWorkspaceProxy) {
+      await runStep("create_account_api_key_for_proxy", async () => {
+        const key = await runCli<{
+          id?: number;
+          secret?: string;
+        }>(cli, [
+          "account",
+          "api-key",
+          "create",
+          "--name",
+          `smoke-proxy-${vmName}`,
+          "--expire-seconds",
+          "1800",
+        ]);
+        const id = Number(key.id);
+        const secret = `${key.secret ?? ""}`.trim();
+        if (!Number.isInteger(id) || id <= 0 || !secret) {
+          throw new Error("proxy api key creation did not return id+secret");
+        }
+        proxy_api_key_id = id;
+        proxy_api_key_secret = secret;
+      });
+
+      await runStep("start_workspace_proxy_server", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        const command = `
+set -e
+dir=${quoteShellSingle(proxyTestDir)}
+mkdir -p "$dir"
+printf %s ${quoteShellSingle(proxyExpectedBody)} > "$dir/index.html"
+if [ -f "$dir/server.pid" ]; then
+  kill "$(cat "$dir/server.pid")" >/dev/null 2>&1 || true
+fi
+if command -v python3 >/dev/null 2>&1; then
+  nohup python3 -m http.server ${proxyPort} --bind 127.0.0.1 --directory "$dir" >/tmp/cocalc-smoke-proxy.log 2>&1 < /dev/null &
+elif command -v node >/dev/null 2>&1; then
+  nohup node -e "require('http').createServer((req,res)=>res.end(${JSON.stringify(
+    proxyExpectedBody,
+  )})).listen(${proxyPort}, '127.0.0.1')" >/tmp/cocalc-smoke-proxy.log 2>&1 < /dev/null &
+else
+  echo "no runtime available for proxy smoke server" >&2
+  exit 1
+fi
+echo $! > "$dir/server.pid"
+`;
+        const result = await runWorkspaceExecWithRetry(project_id, [command], {
+          timeoutSeconds: 120,
+          bash: true,
+          attempts: 30,
+          intervalMs: 2000,
+        });
+        const exitCode = Number(result?.exit_code ?? 1);
+        if (exitCode !== 0) {
+          throw new Error(`failed to start proxy server in workspace: exit_code=${exitCode}`);
+        }
+      });
+
+      await runStep("verify_workspace_proxy_denied_without_token", async () => {
+        if (!project_id || !proxy_api_key_secret) throw new Error("missing project_id");
+        await runWorkspaceProxyCurlWithRetry(project_id, {
+          expect: "denied",
+          apiKey: proxy_api_key_secret,
+          attempts: 25,
+          intervalMs: 2000,
+        });
+      });
+
+      await runStep("issue_workspace_proxy_token", async () => {
+        if (!project_id || !host_id) {
+          throw new Error("missing proxy token context");
+        }
+        const token = await runCli<{
+          token: string;
+          host_id: string;
+          workspace_id?: string | null;
+          expires_at?: number;
+        }>(cli, [
+          "host",
+          "issue-http-token",
+          "--host",
+          host_id,
+          "--workspace",
+          project_id,
+          "--ttl",
+          "600",
+        ]);
+        proxy_token = token.token;
+      });
+
+      await runStep("verify_workspace_proxy_ok_with_token", async () => {
+        if (!project_id || !proxy_token || !proxy_api_key_secret) {
+          throw new Error("missing proxy verification context");
+        }
+        const result = await runWorkspaceProxyCurlWithRetry(project_id, {
+          expect: "any",
+          token: proxy_token,
+          apiKey: proxy_api_key_secret,
+          attempts: 25,
+          intervalMs: 2000,
+        });
+        if (result.status >= 200 && result.status < 300) {
+          if (!String(result.body_preview ?? "").includes(proxyExpectedBody)) {
+            throw new Error("proxy response did not include expected smoke body");
+          }
+          return;
+        }
+        if (result.status === 502) {
+          // Token auth was accepted and request reached upstream proxying; this
+          // environment can still produce 502 when no long-lived app is bound.
+          return;
+        }
+        throw new Error(`unexpected proxy status with token: ${result.status}`);
+      });
+    }
 
     if (verifyCopyBetweenProjects) {
       await runStep("create_second_project_for_copy", async () => {

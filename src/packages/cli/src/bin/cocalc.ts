@@ -735,6 +735,62 @@ async function runSsh(args: string[]): Promise<number> {
   });
 }
 
+async function runSshCheck(
+  args: string[],
+  timeoutMs: number,
+): Promise<{ code: number; stderr: string; timed_out: boolean }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn("ssh", args, {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    let done = false;
+    const finish = (result: { code: number; stderr: string; timed_out: boolean }) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    child.stderr?.on("data", (chunk) => {
+      if (stderr.length >= 8192) return;
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      stderr += text;
+    });
+
+    child.on("error", (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on("exit", (code) => {
+      finish({ code: code ?? 1, stderr, timed_out: false });
+    });
+
+    const timer = setTimeout(() => {
+      if (done) return;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      finish({ code: 124, stderr, timed_out: true });
+    }, timeoutMs);
+  });
+}
+
+function isLikelySshAuthFailure(stderr: string): boolean {
+  const text = stderr.toLowerCase();
+  return (
+    text.includes("permission denied") ||
+    text.includes("authentication failed") ||
+    text.includes("no supported authentication methods") ||
+    text.includes("publickey")
+  );
+}
+
 async function fetchWithTimeout(
   input: string,
   init: RequestInit,
@@ -1031,13 +1087,15 @@ workspace
   .command("ssh <workspace> [sshArgs...]")
   .description("print or open an ssh connection to a workspace")
   .option("--connect", "open ssh instead of printing the target")
+  .option("--check", "verify ssh connectivity/authentication non-interactively")
+  .option("--require-auth", "with --check, require successful auth (not just reachable ssh endpoint)")
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(
     async (
       workspaceIdentifier: string,
       sshArgs: string[],
-      opts: { connect?: boolean },
+      opts: { connect?: boolean; check?: boolean; requireAuth?: boolean },
       command: Command,
     ) => {
       await withContext(command, "workspace ssh", async (ctx) => {
@@ -1062,6 +1120,54 @@ workspace
         baseArgs.push(target);
 
         const commandLine = `ssh ${baseArgs.map((x) => (x.includes(" ") ? JSON.stringify(x) : x)).join(" ")}`;
+        if (opts.connect && opts.check) {
+          throw new Error("use either --connect or --check, not both");
+        }
+
+        if (opts.check) {
+          const checkArgs = [
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=2",
+            ...baseArgs,
+            "true",
+          ];
+          const timeoutMs = Math.min(Math.max(ctx.timeoutMs, 10_000), 30_000);
+          const result = await runSshCheck(checkArgs, timeoutMs);
+          if (result.code !== 0) {
+            if (!opts.requireAuth && isLikelySshAuthFailure(result.stderr)) {
+              return {
+                workspace_id: ws.project_id,
+                ssh_server: connection.ssh_server,
+                checked: true,
+                command: commandLine,
+                auth_ok: false,
+                exit_code: result.code,
+              };
+            }
+            const suffix = result.stderr.trim()
+              ? `: ${result.stderr.trim()}`
+              : result.timed_out
+                ? " (timeout)"
+                : "";
+            throw new Error(`ssh check failed (exit ${result.code})${suffix}`);
+          }
+          return {
+            workspace_id: ws.project_id,
+            ssh_server: connection.ssh_server,
+            checked: true,
+            command: commandLine,
+            auth_ok: true,
+            exit_code: 0,
+          };
+        }
 
         const shouldConnect = !!opts.connect || sshArgs.length > 0;
         if (!shouldConnect) {
@@ -1475,6 +1581,7 @@ proxy
 
         const relativePath = (opts.path ?? "/").replace(/^\/+/, "");
         const requestUrl = relativePath ? `${details.url}${relativePath}` : details.url;
+        const authCookie = buildCookieHeader(ctx.apiBaseUrl, ctx.globals);
 
         const timeoutMs = ctx.timeoutMs;
         let response: Response;
@@ -1485,7 +1592,16 @@ proxy
           bootstrapUrl.searchParams.set(PROJECT_HOST_HTTP_AUTH_QUERY_PARAM, opts.token);
           const bootstrap = await fetchWithTimeout(
             bootstrapUrl.toString(),
-            { redirect: "manual" },
+            {
+              redirect: "manual",
+              ...(authCookie
+                ? {
+                    headers: {
+                      Cookie: authCookie,
+                    },
+                  }
+                : undefined),
+            },
             timeoutMs,
           );
           response = bootstrap;
@@ -1499,11 +1615,12 @@ proxy
             const location = bootstrap.headers.get("location");
             if (cookie && location) {
               finalUrl = new URL(location, bootstrapUrl.toString()).toString();
+              const combinedCookie = authCookie ? `${authCookie}; ${cookie}` : cookie;
               response = await fetchWithTimeout(
                 finalUrl,
                 {
                   headers: {
-                    Cookie: cookie,
+                    Cookie: combinedCookie,
                   },
                   redirect: "manual",
                 },
@@ -1512,7 +1629,20 @@ proxy
             }
           }
         } else {
-          response = await fetchWithTimeout(requestUrl, { redirect: "manual" }, timeoutMs);
+          response = await fetchWithTimeout(
+            requestUrl,
+            {
+              redirect: "manual",
+              ...(authCookie
+                ? {
+                    headers: {
+                      Cookie: authCookie,
+                    },
+                  }
+                : undefined),
+            },
+            timeoutMs,
+          );
         }
 
         const body = await response.text();
@@ -1520,8 +1650,8 @@ proxy
         if (expectMode === "ok" && (response.status < 200 || response.status >= 400)) {
           throw new Error(`expected success response, got status ${response.status}`);
         }
-        if (expectMode === "denied" && !(response.status >= 400 && response.status < 500)) {
-          throw new Error(`expected denied (4xx) response, got status ${response.status}`);
+        if (expectMode === "denied" && response.status < 300) {
+          throw new Error(`expected denied (non-2xx) response, got status ${response.status}`);
         }
 
         return {
@@ -1535,6 +1665,122 @@ proxy
       });
     },
   );
+
+const account = program.command("account").description("account operations");
+const accountApiKey = account.command("api-key").description("manage account API keys");
+
+accountApiKey
+  .command("list")
+  .description("list account API keys")
+  .action(async (command: Command) => {
+    await withContext(command, "account api-key list", async (ctx) => {
+      const rows = await hubCallAccount<
+        Array<{
+          id?: number;
+          name?: string;
+          trunc?: string;
+          created?: string | Date | null;
+          expire?: string | Date | null;
+          last_active?: string | Date | null;
+          project_id?: string | null;
+        }>
+      >(ctx, "system.manageApiKeys", [
+        {
+          action: "get",
+        },
+      ]);
+      return (rows ?? []).map((row) => ({
+        id: row.id,
+        name: row.name ?? "",
+        trunc: row.trunc ?? "",
+        created: toIso(row.created),
+        expire: toIso(row.expire),
+        last_active: toIso(row.last_active),
+        project_id: row.project_id ?? null,
+      }));
+    });
+  });
+
+accountApiKey
+  .command("create")
+  .description("create an account API key")
+  .option("--name <name>", "key label", `cocalc-cli-${Date.now().toString(36)}`)
+  .option("--expire-seconds <n>", "expire in n seconds")
+  .action(
+    async (
+      opts: {
+        name?: string;
+        expireSeconds?: string;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "account api-key create", async (ctx) => {
+        const expireSeconds =
+          opts.expireSeconds == null ? undefined : Number(opts.expireSeconds);
+        if (
+          expireSeconds != null &&
+          (!Number.isFinite(expireSeconds) || expireSeconds <= 0)
+        ) {
+          throw new Error("--expire-seconds must be a positive number");
+        }
+        const expire = expireSeconds
+          ? new Date(Date.now() + expireSeconds * 1000).toISOString()
+          : undefined;
+        const rows = await hubCallAccount<
+          Array<{
+            id?: number;
+            name?: string;
+            trunc?: string;
+            secret?: string;
+            created?: string | Date | null;
+            expire?: string | Date | null;
+            project_id?: string | null;
+          }>
+        >(ctx, "system.manageApiKeys", [
+          {
+            action: "create",
+            name: opts.name,
+            expire,
+          },
+        ]);
+        const key = rows?.[0];
+        if (!key?.id) {
+          throw new Error("failed to create api key");
+        }
+        return {
+          id: key.id,
+          name: key.name ?? opts.name ?? "",
+          trunc: key.trunc ?? "",
+          secret: key.secret ?? null,
+          created: toIso(key.created),
+          expire: toIso(key.expire),
+          project_id: key.project_id ?? null,
+        };
+      });
+    },
+  );
+
+accountApiKey
+  .command("delete <id>")
+  .description("delete an account API key by id")
+  .action(async (id: string, command: Command) => {
+    await withContext(command, "account api-key delete", async (ctx) => {
+      const keyId = Number(id);
+      if (!Number.isInteger(keyId) || keyId <= 0) {
+        throw new Error("id must be a positive integer");
+      }
+      await hubCallAccount<void>(ctx, "system.manageApiKeys", [
+        {
+          action: "delete",
+          id: keyId,
+        },
+      ]);
+      return {
+        id: keyId,
+        status: "deleted",
+      };
+    });
+  });
 
 const host = program.command("host").description("host operations");
 

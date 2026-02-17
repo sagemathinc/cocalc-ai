@@ -45,6 +45,8 @@ By default this script:
 5. Runs self-host multipass smoke tests end-to-end, including:
    - cross-project file copy (project A -> project B),
    - backup indexing,
+   - workspace SSH connectivity check (`workspace ssh --check`),
+   - workspace HTTP proxy denied/allowed checks (`workspace proxy curl` + issued token),
    - optional second VM/host provisioning,
    - optional move/restore to a second host,
    - optional cross-host project copy after move.

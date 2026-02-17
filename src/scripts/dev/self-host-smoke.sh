@@ -33,6 +33,8 @@ SMOKE_CLEANUP_FAILURE="${SMOKE_CLEANUP_FAILURE:-1}"
 SMOKE_VERIFY_INDEX="${SMOKE_VERIFY_INDEX:-1}"
 SMOKE_VERIFY_COPY_BETWEEN_PROJECTS="${SMOKE_VERIFY_COPY_BETWEEN_PROJECTS:-1}"
 SMOKE_VERIFY_DEPROVISION="${SMOKE_VERIFY_DEPROVISION:-1}"
+SMOKE_VERIFY_WORKSPACE_SSH="${SMOKE_VERIFY_WORKSPACE_SSH:-1}"
+SMOKE_VERIFY_WORKSPACE_PROXY="${SMOKE_VERIFY_WORKSPACE_PROXY:-1}"
 SMOKE_STRICT_MOVE_FILE_CHECK="${SMOKE_STRICT_MOVE_FILE_CHECK:-0}"
 SMOKE_RESTART_HUB="${SMOKE_RESTART_HUB:-1}"
 SMOKE_RESET_BACKUP_QUEUE="${SMOKE_RESET_BACKUP_QUEUE:-1}"
@@ -294,6 +296,8 @@ cleanup_failure_bool="false"
 verify_index_bool="true"
 verify_copy_between_projects_bool="true"
 verify_deprovision_bool="true"
+verify_workspace_ssh_bool="true"
+verify_workspace_proxy_bool="true"
 strict_move_file_check_bool="false"
 
 [ "$SMOKE_CLEANUP_SUCCESS" = "1" ] || cleanup_success_bool="false"
@@ -301,10 +305,13 @@ strict_move_file_check_bool="false"
 [ "$SMOKE_VERIFY_INDEX" = "1" ] || verify_index_bool="false"
 [ "$SMOKE_VERIFY_COPY_BETWEEN_PROJECTS" = "1" ] || verify_copy_between_projects_bool="false"
 [ "$SMOKE_VERIFY_DEPROVISION" = "1" ] || verify_deprovision_bool="false"
+[ "$SMOKE_VERIFY_WORKSPACE_SSH" = "1" ] || verify_workspace_ssh_bool="false"
+[ "$SMOKE_VERIFY_WORKSPACE_PROXY" = "1" ] || verify_workspace_proxy_bool="false"
 [ "$SMOKE_STRICT_MOVE_FILE_CHECK" = "1" ] && strict_move_file_check_bool="true"
 
 export SMOKE_ACCOUNT_ID SMOKE_VM_NAME cleanup_success_bool cleanup_failure_bool
 export verify_index_bool verify_copy_between_projects_bool verify_deprovision_bool
+export verify_workspace_ssh_bool verify_workspace_proxy_bool
 export strict_move_file_check_bool
 
 cd "$SRC_DIR"
@@ -318,6 +325,8 @@ const fn = async () => {
     verify_copy_between_projects:
       process.env.verify_copy_between_projects_bool === "true",
     verify_deprovision: process.env.verify_deprovision_bool === "true",
+    verify_workspace_ssh: process.env.verify_workspace_ssh_bool === "true",
+    verify_workspace_proxy: process.env.verify_workspace_proxy_bool === "true",
     strict_move_file_check: process.env.strict_move_file_check_bool === "true",
   };
   if (process.env.SMOKE_ACCOUNT_ID) {

@@ -35,6 +35,8 @@ an admin account for smoke-test workflows.
 - `workspace start --wait`
 - `workspace exec`
 - `workspace ssh`
+- `workspace ssh --check`
+- `workspace ssh --check --require-auth`
 - `workspace move --host --wait`
 - `workspace copy-path --wait`
 - `workspace snapshot create`
