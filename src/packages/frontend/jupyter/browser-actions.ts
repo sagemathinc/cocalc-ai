@@ -79,6 +79,10 @@ import { DiffMatchPatch, decompressPatch } from "@cocalc/util/dmp";
 import { mark_open_phase } from "@cocalc/frontend/project/open-file";
 import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
 import { IPynbImporter } from "@cocalc/jupyter/ipynb/import-from-ipynb";
+import {
+  classifyRunStreamMessage,
+  type RunLifecycleType,
+} from "./run-protocol";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -1935,20 +1939,6 @@ export class JupyterActions extends JupyterActions0 {
       if (this.isClosed()) return;
       const handlers = new globalThis.Map<string, OutputHandler>();
       const finalizedCells = new Set<string>();
-      const lifecycleType = (
-        mesg: any,
-      ): "run_start" | "run_done" | "cell_start" | "cell_done" | null => {
-        const value = mesg?.lifecycle ?? mesg?.msg_type;
-        switch (value) {
-          case "run_start":
-          case "run_done":
-          case "cell_start":
-          case "cell_done":
-            return value;
-          default:
-            return null;
-        }
-      };
       const ensureHandler = (id: string): OutputHandler => {
         const existing = handlers.get(id);
         if (existing != null) {
@@ -2035,18 +2025,46 @@ export class JupyterActions extends JupyterActions0 {
         }));
         if (this.isClosed()) return;
         for (const mesg of mesgs) {
-          if (typeof mesg?.run_id === "string" && mesg.run_id !== runId) {
+          const decision = classifyRunStreamMessage({
+            message: mesg,
+            activeRunId: runId,
+            finalizedCells,
+          });
+          if (decision.kind === "drop_stale_run_id") {
             staleMesgsDropped += 1;
             this.runDebug("runCells.runner.drop.stale_run_id", {
               runId,
-              mesgRunId: mesg.run_id,
+              mesgRunId: decision.mesgRunId,
               mesg: this.summarizeMesg(mesg),
             });
             continue;
           }
-          const lifecycle = lifecycleType(mesg);
-          if (lifecycle != null) {
+          if (decision.kind === "drop_missing_id") {
+            if (decision.source === "lifecycle") {
+              this.runDebug("runCells.runner.skip.lifecycle_missing_id", {
+                runId,
+                mesg: this.summarizeMesg(mesg),
+              });
+            } else {
+              this.runDebug("runCells.runner.skip.missing_id", {
+                runId,
+                mesg: this.summarizeMesg(mesg),
+              });
+            }
+            continue;
+          }
+          if (decision.kind === "drop_after_finalize") {
+            droppedAfterFinalize += 1;
+            this.runDebug("runCells.runner.drop.after_finalize", {
+              runId,
+              id: decision.id,
+              mesg: this.summarizeMesg(mesg),
+            });
+            continue;
+          }
+          if (decision.kind === "lifecycle") {
             lifecycleMesgs += 1;
+            const lifecycle: RunLifecycleType = decision.lifecycle;
             if (lifecycle == "run_done") {
               finalizeOpenHandlers("run_done");
               continue;
@@ -2054,15 +2072,7 @@ export class JupyterActions extends JupyterActions0 {
             if (lifecycle == "run_start") {
               continue;
             }
-            const id = mesg?.id;
-            if (typeof id != "string") {
-              this.runDebug("runCells.runner.skip.lifecycle_missing_id", {
-                runId,
-                lifecycle,
-                mesg: this.summarizeMesg(mesg),
-              });
-              continue;
-            }
+            const id = decision.id!;
             if (lifecycle == "cell_start") {
               ensureHandler(id);
               continue;
@@ -2077,23 +2087,7 @@ export class JupyterActions extends JupyterActions0 {
             });
             this.clearRunQueue();
           }
-          const id = mesg?.id;
-          if (typeof id != "string") {
-            this.runDebug("runCells.runner.skip.missing_id", {
-              runId,
-              mesg: this.summarizeMesg(mesg),
-            });
-            continue;
-          }
-          if (finalizedCells.has(id)) {
-            droppedAfterFinalize += 1;
-            this.runDebug("runCells.runner.drop.after_finalize", {
-              runId,
-              id,
-              mesg: this.summarizeMesg(mesg),
-            });
-            continue;
-          }
+          const id = decision.id;
           const handler = ensureHandler(id);
           handler.process(mesg);
         }

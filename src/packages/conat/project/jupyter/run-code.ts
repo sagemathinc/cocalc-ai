@@ -327,6 +327,7 @@ async function handleRequest({
 
   const throttle = new Throttle<OutputMessage>(MAX_MSGS_PER_SECOND);
   let unhandledClientWriteError: any = undefined;
+  let writeQueue: Promise<void> = Promise.resolve();
   const writeBatchToClient = async (
     mesgs: OutputMessage[],
     opts?: { fastLane?: boolean },
@@ -355,8 +356,17 @@ async function handleRequest({
       }
     }
   };
-  throttle.on("data", async (mesgs) => {
-    await writeBatchToClient(mesgs);
+  const enqueueWriteBatch = (
+    mesgs: OutputMessage[],
+    opts?: { fastLane?: boolean },
+  ) => {
+    writeQueue = writeQueue.then(async () => {
+      await writeBatchToClient(mesgs, opts);
+    });
+    return writeQueue;
+  };
+  throttle.on("data", (mesgs) => {
+    void enqueueWriteBatch(mesgs);
   });
 
   try {
@@ -440,7 +450,14 @@ async function handleRequest({
         }
         const wasAppended = appendOutputMessage(output, mesg);
         if (isLifecycleMessage(mesg)) {
-          await writeBatchToClient([mesg], { fastLane: totalBatches == 0 });
+          const lifecycle = getLifecycleType(mesg);
+          if (lifecycle == "cell_done" || lifecycle == "run_done") {
+            // Keep completion lifecycle in the same throttled stream as output
+            // so done events cannot overtake buffered output.
+            throttle.write(mesg);
+            continue;
+          }
+          await enqueueWriteBatch([mesg], { fastLane: totalBatches == 0 });
           continue;
         }
         if (wasAppended) {
@@ -453,7 +470,7 @@ async function handleRequest({
           if (totalBatches == 0) {
             // Fast-lane the very first output batch for lower latency.
             // We keep existing throttling for all subsequent output.
-            await writeBatchToClient([mesg], { fastLane: true });
+            await enqueueWriteBatch([mesg], { fastLane: true });
           } else {
             throttle.write(mesg);
           }
@@ -480,6 +497,7 @@ async function handleRequest({
     handler?.done();
     if (socket.state != "closed") {
       throttle.flush();
+      await writeQueue;
       socket.write(null);
     }
   } catch (err) {
