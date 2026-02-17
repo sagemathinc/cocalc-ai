@@ -1,630 +1,376 @@
-# CoCalc UI Agent RFC (Navigator + Builder)
+# CoCalc Agent-First UI RFC (Codex-First)
 
-Status: Draft
+Status: Draft (reset)
 Owner: CoCalc team
-Date: 2026-02-06
+Date: 2026-02-17
 
-## 1. Problem
+## 1. Executive Summary
 
-CoCalc already supports powerful coding-agent workflows in `.chat` threads (e.g., Codex sessions), but there is still too much friction between "I want to do something in CoCalc" and "the agent is now helping me do it".
+CoCalc should become an agent-first collaborative platform by making one runtime path dominant:
 
-We need an agent-first product surface where:
+- Codex session runtime (existing, robust, persistent)
+- chat-thread-backed state (existing)
+- typed CoCalc capability surface (evolving)
 
-- users immediately discover agent capabilities
-- common CoCalc tasks are fast and reliable
-- complex/long-running coding work escalates naturally to a coding agent thread
-- the model works in both `cocalc-plus` and `launchpad/rocket`
+The immediate product strategy is:
 
-## 2. Product Goals
+1. Reuse existing chat/Codex infrastructure everywhere possible.
+2. Replace one-off LLM UI features with agent intents routed into Codex sessions.
+3. Make sessions first-class in the workspace UI (global, contextual, and flyout).
+4. Optimize for subscription-backed usage economics by prioritizing Codex-only flows.
 
-- Users can use natural language for common CoCalc actions from anywhere.
-- Agent can perform meaningful UI/control-plane tasks with high reliability.
-- Agent can escalate to deep coding work without losing context.
-- System remains safe, auditable, and policy-driven in multiuser mode.
-- Billing model supports "users pay OpenAI; users pay CoCalc for software".
+## 2. Why This Reset
 
-## 3. Non-Goals
+We already have a production-usable Codex/chat integration with long-running turn robustness, refresh resilience, and practical UX. Building a second parallel agent harness would slow delivery and reduce reliability.
 
-- No fully autonomous background agent that can mutate arbitrary state without policy checks.
-- No first-pass support for many different agent providers in the UI.
-- No requirement to solve every install/build workflow in v1.
+The right move is to standardize on the existing substrate and expand it.
 
-## 4. Proposal: Two-Tier Agent Model
+Relevant current code:
 
-### 4.1 Navigator Agent (UI/control-plane)
+- [src/packages/frontend/chat/chatroom.tsx](./src/packages/frontend/chat/chatroom.tsx)
+- [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts)
+- [src/packages/frontend/chat/register.ts](./src/packages/frontend/chat/register.ts)
+- [src/packages/frontend/project/new/navigator-shell.tsx](./src/packages/frontend/project/new/navigator-shell.tsx)
+- [src/packages/frontend/project/page/home-page/index.tsx](./src/packages/frontend/project/page/home-page/index.tsx)
 
-Primary role:
+## 3. Core Assumptions (Feb 2026)
 
-- handle short CoCalc operations
-- navigate/open/set/configure
-- perform scoped actions through typed tools
-- ask for confirmation for side effects
+1. Subscription-backed access is critical for adoption and unit economics.
+2. For SDK-integrated workflows, Codex is the practical subscription-backed path.
+3. Metered API-key-only flows should be fallback, not primary UX.
+4. In launchpad mode, sandboxing and snapshots enable stronger default execution permissions.
+5. In lite mode, mode controls and approvals remain more important.
+
+## 4. Product Principles
+
+1. One session system across all surfaces.
+2. One execution runtime for agent tasks (Codex).
+3. One policy layer for approvals and auditing.
+4. Context-aware entrypoints, not duplicate implementations.
+5. Replace special-case LLM helpers with general agent intents over time.
+
+## 5. Goal and Non-Goals
+
+### 5.1 Goal
+
+Make CoCalc feel like an environment where users ask for outcomes, and agents execute them safely with persistent context.
+
+### 5.2 Non-Goals (v1)
+
+- Multi-provider model orchestration in core agent UX.
+- Fully autonomous background agents without user-visible policy controls.
+- Immediate replacement of every legacy helper in one release.
+
+## 6. Agent Session as First-Class Primitive
+
+Define:
+
+- agent session = Codex session = chat thread-backed execution context
+
+A session has:
+
+- identity
+- scope
+- runtime mode
+- working directory policy
+- provenance (how started)
+- lifecycle (active, archived)
+
+## 7. UI Surfaces
+
+### 7.1 Global Navigator
+
+A globally available session UI, decoupled from user-created `.chat` files, but still backed by a hidden chat file.
+
+Current anchor:
+
+- [src/packages/frontend/project/new/navigator-shell.tsx](./src/packages/frontend/project/new/navigator-shell.tsx)
+
+### 7.2 Contextual Agent Entry
+
+From notebook/editor/error states, entrypoints should start or resume a session with pre-filled context and intent.
 
 Examples:
 
-- Open last five files.
-- Set workspace color to orange.
-- Add quick launcher entry for `rmd`.
-- Launch JupyterLab server.
-- Add collaborator to a workspace.
+- "Fix this notebook error"
+- "Explain this traceback"
+- "Refactor this function"
 
-### 4.2 Builder Agent (coding/deep execution)
+### 7.3 Agents Flyout
 
-Primary role:
+Add an "Agents" flyout listing recent sessions for this workspace/user, with status and resume actions.
 
-- code edits, shell workflows, repo operations, debugging
-- long multi-turn tasks with real execution context
+Use existing flyout patterns in:
 
-Examples:
+- [src/packages/frontend/project/page/flyouts](./src/packages/frontend/project/page/flyouts)
 
-- clone/build/install workflows
-- notebook/script generation plus dependency setup
-- grading pipelines and rubric automation
+## 8. Session Backing Storage
 
-### 4.3 Handoff Rule
+Use two layers:
 
-Navigator should hand off to Builder when:
+1. Chat file: authoritative conversation + detailed trace rendering.
+2. AKV index: lightweight session metadata for fast listing/filtering and cross-surface discovery.
 
-- task requires multi-file code edits or shell-heavy work
-- task duration exceeds short-action budget
-- user requests deep implementation explicitly
+AKV reference:
 
-Handoff must preserve:
+- [src/packages/conat/sync/akv.ts](./src/packages/conat/sync/akv.ts)
 
-- user intent summary
-- relevant object ids (workspace/project/file/thread)
-- permission context and pending approvals
+### 8.1 Chat Backing Path Policy
 
-## 5. Runtime Architecture
+- Lite: single navigator file per user runtime.
+- Launchpad/project: per-user navigator file in project home.
 
-Single logical architecture, different runtime constraints.
+Path must be absolute and directory-created before opening sync.
 
-### 5.1 Shared layers
+### 8.2 AKV Metadata Schema (v1)
 
-- Agent UI surface
-- Orchestrator/router
-- Tool gateway
-- Policy/approval engine
-- Thread/task store with audit log
+Store one row per session key plus optional event keys.
 
-### 5.2 cocalc-plus
+Session record fields:
 
-- Runtime local to user machine/session.
-- Default trust posture similar to JupyterLab/VS Code.
-- Still enforce action checkpoints for destructive operations.
+- `session_id`
+- `project_id`
+- `account_id`
+- `chat_path`
+- `thread_key`
+- `title`
+- `created_at`
+- `updated_at`
+- `status` (`active|idle|running|archived|failed`)
+- `entrypoint` (`global|file|notebook|error-button|command-palette|api`)
+- `working_directory`
+- `mode` (`read-only|workspace-write|full-access`)
+- `model`
+- `reasoning`
+- `last_error`
 
-### 5.3 launchpad/rocket
+Suggested key shape:
 
-- Per-user isolated runtime (podman/vm scoped).
-- Strict capability boundary between control-plane and workspace runtime.
-- Short-lived credentials, explicit approvals, complete audit trail.
+- `agent/session/<account_id>/<project_id>/<session_id>`
 
-## 6. UI Entry Points
+Optional append-only event keys:
 
-Make the agent obvious and continuously available.
+- `agent/event/<account_id>/<project_id>/<session_id>/<timestamp>`
 
-- Global top-bar entry: "Ask CoCalc".
-- Command palette (`Cmd/Ctrl+K`) with NL task input.
-- Launcher card in `+New`: "Describe what you want to do".
-- Existing `.chat` for deep sessions remains first-class.
-- Contextual empty-state prompts (files/projects/settings).
+Use `sqlite(...)` queries on AKV stream for efficient flyout list operations.
 
-## 7. Task and Thread Model
+(COMMENT: there's basically one thing to do which is "get all data" -- it'll send it all in a single MsgPack chunk efficiently; that should be fine for this application since it's not much data.  You can also get updates on change.  The dkv.ts thing right next to akv.ts automates all this.)
 
-Unify quick actions and long sessions under one task abstraction.
+## 9. Working Directory Policy
 
-- Quick action task:
-  - small panel
-  - action preview
-  - short log
-- Escalated thread task:
-  - full `.chat`/agent session
-  - resumable and shareable
-- Searchable history:
-  - by workspace/project/user
-  - by object ids and action type
+Default resolution:
 
-## 8. Capability and Action Model
+1. If file is inside a git repo: repo root.
+2. Else if file is under HOME: HOME.
+3. Else: containing directory.
 
-Use typed actions with policy checks.
+Rules:
 
-### 8.1 Core action shape
+- Always visible in UI.
+- User can override per session.
+- Override persists with session metadata.
 
-- `action_type`
-- `target`
-- `args`
-- `risk_level`
-- `requires_confirmation`
-- `idempotency_key`
-- `audit_context`
+(COMMENT: I think we had trouble implementing setting a different workspace root after starting the session so right now changing the working directory is disabled. But we should just assume we'll be able to figure this out somehow, e.g,. worse case, we can make a new session and copy the context from the old session.)
 
-### 8.2 Categories
+## 10. Safety and Execution Policy
 
-- Read-only inspect/search/list
-- UI/navigation state changes
-- Workspace/project metadata updates
-- collaborator/access changes
-- file/server operations
-- shell/install operations (Builder domain)
+### 10.1 Launchpad
 
-### 8.3 Policy defaults
-
-- Read-only actions: auto-allow.
-- Non-destructive writes: allow with logging.
-- Destructive/billing/network/install/collaborator changes: explicit confirm.
-
-## 9. Billing and Authentication Model
-
-Target model:
-
-- Users pay OpenAI for model usage.
-- Users pay CoCalc for software/platform value.
-
-Practical model options:
-
-- Primary: user signs in and authorizes OpenAI-backed usage path.
-- Fallback A: BYO API key.
-- Fallback B: site/org-managed key.
-- Fallback C: limited free tier or read-only assistant.
-
-Product requirement:
-
-- clear per-task usage visibility
-- no surprising hidden spend paths
-
-## 10. Why Coding-Agent Navigator (with constraints)
-
-### Pros
-
-- Composable and general, fewer one-off tools required.
-- Can solve long-tail workflows by writing/running small code via SDK.
-- Better leverage of coding-agent capabilities users already value.
-
-### Cons
-
-- Latency can be higher.
-- More safety risk without strict execution policy.
-- Less deterministic for simple tasks if used for everything.
-
-### Decision
-
-Use a hybrid:
-
-- fast-path deterministic tool routing for common intents
-- coding-agent fallback for complex intents
-- policy engine executes side effects, not raw model output
-
-## 11. Detailed Implementation Plan
-
-This plan is architecture-first and API-surface-first. The key idea is to avoid hand-writing dozens of brittle one-off adapters and instead expose a typed, policy-gated CoCalc control plane that a coding agent can compose.
-
-### 11.1 Package and Ownership
-
-Primary location:
-
-- `@cocalc/ai/agent-sdk` (recommended)
-
-Concrete path options:
-
-- [src/packages/ai/agent-sdk](./src/packages/ai/agent-sdk) in the existing `@cocalc/ai` module
-- or a dedicated package if boundaries become cleaner later
+Default mode target: `full-access` in sandbox.
 
 Rationale:
 
-- keeps agent-specific contracts near other AI features
-- makes SDK discoverable for both Navigator and Builder integration
-- avoids scattering action definitions across frontend-only code
+- stronger isolation
+- upcoming btrfs snapshot-before/after-turn model
 
-### 11.2 Source-of-Truth API Surfaces
+### 10.2 Lite
 
-SDK capabilities should be generated/derived from these surfaces first:
+Default mode target: conservative (`read-only` or `workspace-write`), with escalation prompts.
 
-- [src/packages/conat/hub/api](./src/packages/conat/hub/api)
-- [src/packages/conat/project/api](./src/packages/conat/project/api)
-- [src/packages/frontend/project_actions.ts](./src/packages/frontend/project_actions.ts)
-- [src/packages/frontend/frame-editors](./src/packages/frontend/frame-editors)
+### 10.3 Approvals
 
-Design rule:
+Keep explicit approvals for:
 
-- if a user can do it in CoCalc, it should either be directly represented in the SDK or intentionally excluded with a documented reason.
+- destructive operations
+- dependency/install actions
+- credential-sensitive actions
+- cross-project/account mutations
 
-### 11.3 Control Plane Contract (what the model executes)
+## 11. Replace Legacy LLM Features with Agent Intents
 
-Define a single action envelope:
+Inventory and migrate existing LLM touchpoints under one intent adapter layer.
 
-- `action_type`
-- `target`
-- `args`
-- `risk_level`
-- `requires_confirmation`
-- `idempotency_key`
-- `audit_context`
+Scope to survey:
 
-Define deterministic task states:
+- mention flows and assistants across editors
+- notebook helper buttons
+- context-specific explain/fix UIs
 
-- `created -> planned -> awaiting_confirmation -> running -> completed|failed|cancelled`
+Intent adapter contract:
 
-Define risk classes:
+- `intent_type`
+- `context_collectors`
+- `preflight_actions`
+- `prompt_template`
+- `mode_hint`
+- `working_dir_hint`
 
-- `read`, `write`, `destructive`, `access`, `billing`, `network`, `install`
+Example notebook-error intent:
 
-### 11.4 Metadata-Driven Capability Registry
+1. Save notebook.
+2. Capture traceback/cell context.
+3. Start or reuse agent session.
+4. Ask agent to reproduce and fix.
+5. If install/upgrade needed, request user approval.
 
-Build a registry generator that outputs:
+(COMMENT: we should remember to add to the UI that users _can_ paste images in and the AI will see them. That's something we never had before.  E.g., for latex user can draw a diagram and ask for a tikz to be added to a file.) 
 
-- `CapabilityDescriptor[]` (typed)
-- machine-readable JSON manifest for planner grounding
-- docs pages for humans
+## 12. Reuse Strategy (Do Not Fork Runtime)
 
-Each descriptor includes:
+Reuse existing components and behavior where possible:
 
-- name, namespace, summary
-- argument schema (zod/json-schema)
-- preconditions (e.g., requires active file/editor)
-- side-effect scope (UI-only, project, account, system)
-- undo availability
-- launchpad safety notes and required capability token scopes
+- [src/packages/frontend/chat/chatroom.tsx](./src/packages/frontend/chat/chatroom.tsx)
+- [src/packages/frontend/chat/side-chat.tsx](./src/packages/frontend/chat/side-chat.tsx)
+- [src/packages/frontend/chat/chatroom-layout.tsx](./src/packages/frontend/chat/chatroom-layout.tsx)
+- [src/packages/frontend/chat/codex.tsx](./src/packages/frontend/chat/codex.tsx)
+- [src/packages/frontend/chat/acp-api.ts](./src/packages/frontend/chat/acp-api.ts)
 
-### 11.5 Adapter Strategy: thin wrappers, not bespoke workflows
+Do not create a second planner/executor stack for navigator.
 
-Implement adapters as thin typed wrappers over existing APIs:
+## 13. UX Plan
 
-- `hub.*` wrappers over `conat/hub/api`
-- `project.*` wrappers over `conat/project/api`
-- `ui.*` wrappers over frontend action surfaces
-- `editor.*` wrappers by editor domain (chat, whiteboard, notebook, etc.)
+### 13.1 Baseline
 
-Do not encode business workflows in adapters. Workflows stay in planner scripts that compose these primitives.
+- Project home includes global navigator session view.
+- `+New` no longer hosts navigator.
+  - Right now "+new" does have a "Create with AI" input form; this will be replaced by an agent, with the context telling it that you want to create a file.  You'll type a sentence to describe what you want.  The agent may scan the current directory, look at installed software, install software, etc., etc., in the course of making your new file.  So this isn't the navigator, but will be an agent UI point.
+- Session always opens at most recent thread and scrolls bottom.
+  - (NOTE: there's a bug where often chats scroll to the top when you hide/show them, which is annoying.  We'll fix this. Basically our chatlog scroll preservation code has a bug.)
 
-### 11.6 Planner Architecture (hybrid)
+### 13.2 Next UX Additions
 
-Two routing paths:
+- session header with:  (NOTE: we have most of this already)
+  - model/reasoning/mode badges
+  - working directory display
+  - clear/new/archive/open-thread actions
+- rich trace panel toggle for advanced users
+- "handoff to workspace agent" action
 
-- Fast path:
-  - deterministic mapping for common intents
-  - low latency and predictable UX
-- Coding path:
-  - coding agent writes/executes small TS/JS plans against `agent-sdk`
-  - mandatory execution through policy executor (no raw side effects)
+### 13.3 Agents Flyout
 
-Handoff to Builder/Codex thread when:
+- show recent sessions with status and updated time
+- one-click resume
+- archive/unarchive
+- filter by entrypoint and mode
 
-- task is long-running, shell-heavy, or deep coding
-- user requests implementation work explicitly
+## 14. Collaboration Model
 
-### 11.7 Policy and Execution Kernel
+Near-term:
 
-Build a runtime executor that:
+- sessions are user-scoped by default
 
-- validates actions against schemas
-- checks policy + capability token scope
-- requests confirmations when needed
-- executes and logs every action with correlation id
-- supports dry-run/preview mode
+Future:
 
-This is the hard safety boundary:
+- opt-in shared sessions per workspace
+- explicit ownership and visibility controls
+- immutable audit trail for shared sessions
 
-- models can propose plans
-- only executor can mutate state
+In a full chatroom (a .chat file) sessions are collaborative. That's already implemented.
 
-### 11.8 UX for Low-Typing and Accessibility-First Use
+Each turn is user scoped which is important for properly respecting the terms of usage of subscriptions.
 
-Required surfaces:
+## 15. Implementation Phases
 
-- global "Ask CoCalc" entry (always visible)
-- command palette NL input
-- voice input option
-- task panel with:
-  - readable plan preview
-  - one-click confirm/deny
-  - progress stream
-  - undo where possible
+### Phase 0: Inventory and Mapping
 
-For users who mostly click/scroll:
+- Enumerate all current frontend LLM features.
+- Classify each as `replace`, `keep temporary`, or `drop`.
+- Define top 10 intents.
 
-- support "one prompt -> many structured actions"
-- keep all non-trivial actions inspectable before execution
+### Phase 1: Session Index + Agents Flyout Skeleton
 
-### 11.9 Persistence, Memory, and Replay
+- Add AKV metadata writer on session creation/update.
+- Build flyout list UI backed by AKV query (actually, use DKV and get realtime updates on any change).
+- Add resume/open controls.
 
-Store task records with:
+### Phase 2: Intent Adapters (High Value)
 
-- prompt
-- planned actions
-- confirmations
-- execution results
-- object ids touched
+Migrate first:
 
-Capabilities:
+- notebook error help  (this is by far the most popular feature)
+- explain/fix current file
+- dependency/install assistance
 
-- searchable history
-- "run again with small edits"
-- quick recipe creation from successful runs
-
-### 11.10 Milestones
+### Phase 3: Context Entry Standardization
 
-M1: SDK foundation
+- command palette agent entry
+- editor toolbar actions
+- notebook output/error action hooks
 
-- action envelope + task state machine + registry format
-- generator scaffolding over hub/project surfaces
+### Phase 4: Legacy LLM UI Decommission
 
-M2: End-to-end Navigator slice
+- progressively route remaining one-off helpers to intents
+- keep temporary compatibility flags
 
-- top-bar Ask CoCalc
-- fast-path + executor + confirmation UI
-- first meaningful cross-surface tasks
+### Phase 5: Launchpad Safety Tightening
 
-M3: Coding-path composability
+- snapshot-integrated approval UX
+- post-turn diff and rollback affordances
+- decision about how many snapshots to retain
 
-- coding planner scripts against `@cocalc/ai/agent-sdk`
-- handoff protocol into Builder/Codex threads
+## 16. Metrics
 
-M4: Full-surface expansion
+Primary:
 
-- expand registry across frontend/editor action domains
-- add coverage for chat, whiteboard, notebook, launcher, collaborators
+- task success rate
+- time-to-first-useful-action
+- median time-to-resolution for notebook errors
+- percentage of legacy LLM interactions replaced by session-based agent intents
 
-M5: Launchpad hardening
+Operational:
 
-- per-user capability tokens
-- strict multi-tenant policy validation
-- full auditability for admin environments
+- approval prompt frequency and acceptance rate
+- failure categories (tooling, policy, runtime)
+- session resume rate
 
-### 11.11 Test Plan
+Economic:
 
-- Unit tests:
-  - schema validation
-  - policy decisions
-  - registry generation
-- Integration tests:
-  - adapters against test projects/workspaces
-- Golden tests:
-  - NL prompt -> planned action sequence
-- Security tests:
-  - token scope violations
-  - forbidden cross-tenant attempts
-- Regression tests:
-  - editor/domain-specific action contracts
+- subscription-backed turn ratio
+- metered-key fallback ratio
 
-### 11.12 MVP Exit Criteria
+## 17. Risks and Mitigations
 
-MVP is complete when:
+Risk: inconsistent behavior across entrypoints.
 
-- users can reliably complete representative cross-surface tasks from prompts
-- coding-path plans can compose primitives without bypassing policy
-- action transparency (preview/log/replay) is good enough for trust
-- launchpad mode passes isolation and audit requirements
-- overall UX is meaningfully usable for low-typing workflows
+- Mitigation: route all entrypoints through intent adapter + same session runtime.
 
-### 11.13 Execution Plan V2 (Reactive Loop + Catalog + Script)
+Risk: AKV metadata drift from chat truth.
 
-This supersedes the old "static list plan then run first action" approach.
-The target runtime is an observe-act loop with retrieval-based tool grounding.
+- Mitigation: periodic reconcile job and lightweight repair on session open.
 
-#### 11.13.1 Architecture Decisions
+Risk: excessive complexity in UI.
 
-- Use Codex-first planning/execution in `cocalc-plus` (subscription-backed path).
-- Keep execution policy-gated via SDK executor; model never mutates state directly.
-- Replace full-manifest-in-context with retrieval:
-  - `catalog.search(query)` for ranked action ids
-  - `catalog.describe(actionType)` for exact schema/examples
-- Keep full manifest available for debug/admin only, not default model context.
-- Add `script.run` for branching/loops/composition, still under policy controls.
-- Treat runtime location as a first-class routing dimension:
-  - `browser`
-  - `project`
-  - `project-host`
-  - `hub`
+- Mitigation: default simple view, advanced trace behind toggle.
 
-#### 11.13.2 Runtime Protocol (single turn)
+Risk: permission confusion in lite vs launchpad.
 
-Loop until done/cancel/error/max-steps:
+- Mitigation: explicit mode badges + clear escalation prompts.
 
-1. observe
-  - current goal
-  - prior steps + observations
-  - selected capability context (from catalog tools)
-2. decide
-  - `next_action` or `done`
-3. execute
-  - validate args
-  - policy check
-  - run action
-4. observe result
-  - structured observation payload
-  - append to loop history
+## 18. Immediate Next Tasks
 
-Stop conditions:
+1. Implement DKV session index writer/reader module under frontend AI/chat integration layer.
+2. Add "Agents" flyout panel shell with recent-session list.
+3. Define first three intent adapters with notebook/file context collectors.
+4. Wire one notebook error button to intent adapter path.
+5. Add session header controls (new/archive/open-thread).
 
-- `done`
-- blocked awaiting confirmation
-- hard error
-- step budget exceeded
+## 19. Open Questions
 
-#### 11.13.3 API Changes
+1. Should archived sessions stay in same backing chat file or rotate to archive file sets?  (ANS: cocalc seems to do fine even with 1000's of messages in a single file... but 10K would probably start to be too much.  But imagine a project that's been in heavy use for a year: definitely the file contents should get rotated out.  That could be done in a generic way that works for any .chat file, e.g., if the file is foo.chat, then periodically old messages get rotated out to another file, e.g., .foo.0.chat, .foo.1.chat, etc., and in the chat UI at the top of each thread with rotated out messages, there is a link to open .foo.0.chat, etc.   The old messages are also still in TimeTravel history.    Basically the answer is in the longrun not everything can be stored forever in one .chat file... but I don't know the best strategy.   It _is_ really nice and transparent that chat history is just a jsonl file though.)
+2. How aggressive should auto-reuse be versus creating new sessions for contextual actions?  (ANS: I think this is somewhat hard to answer without using it a lot.  My feeling so far is that codex is amazingly good at autocompaction and handling context. Amazing.  So this might be something where the default is very often to use an existing session, but the user can explicitly request a new one.   I feel like the context built up over weeks of usage of a single session is itself **very valuable**. It's almost like training a student or employee. It's important to allow various customization so users can keep track of these: editing the title, color, icon, custom image file -- we have most of this already for chat threads).
+3. What is the default retention policy for session metadata and traces in lite mode?  (ANS: traces are stored in an AKV and it might have a ttl.  I don't know.  It seems like this should be something users can customize in account/project settings.)
+4. Which collaboration model should be first for shared sessions in launchpad?  (ANS: I think it already exists in chatrooms - each turn is initiated by a specific user. ??)
 
-Add to `hub.agent.*`:
+## 20. Decision
 
-- `run`
-  - starts/continues reactive loop
-  - returns step stream or step batch + final status
-- `catalog_search`
-  - query + filters -> ranked action summaries
-- `catalog_describe`
-  - action type -> full schema/examples/risk/policy info
-
-Keep existing:
-
-- `manifest` (debug)
-- `execute` (single action executor boundary)
-
-#### 11.13.4 Catalog Model
-
-Each action descriptor includes:
-
-- `actionType`, namespace, summary
-- arg schema (JSON schema from zod input schema)
-- usage examples (at least 1 happy-path)
-- risk/scope/confirmation defaults
-- tags/keywords for retrieval
-
-Catalog storage:
-
-- in-memory index (startup built from registry)
-- deterministic ranking function (keyword + namespace + risk filters)
-- no LLM dependency for search
-
-#### 11.13.5 Script Mode
-
-New capability:
-
-- `script.run` (TypeScript only, first version)
-
-Execution model:
-
-- script receives a minimal SDK object (`cc`) with approved primitives
-- all side-effectful calls go through the same policy executor
-- supports dry-run and confirmation checkpoints
-
-Runtime model (required):
-
-- `script.run` accepts an explicit runtime target:
-  - `browser` for UI state work (tabs, layout, focused editor)
-  - `project` for workspace file/process tasks
-  - `project-host` for host-local project operations with better locality
-  - `hub` for control-plane/database-local tasks
-- action descriptors must declare allowed runtimes; orchestrator rejects invalid placements.
-
-Use cases:
-
-- conditional logic ("if exists then ... else ...")
-- loops over many projects/files
-- mixed operations requiring intermediate computation
-
-#### 11.13.6 Frontend UX Plan
-
-Navigator shell should show:
-
-- live step timeline (`plan`, `execute`, `observe`)
-- current step index and status
-- confirmation pauses with resume
-- final summary
-
-Debug mode:
-
-- full raw planner output
-- chosen catalog calls (`search`, `describe`)
-- per-step action envelopes
-
-Default mode:
-
-- concise task progress + user-safe details
-- progressive disclosure:
-  - collapsed by default
-  - expandable details for advanced/debug users
-
-#### 11.13.7 Implementation Phases
-
-P1: Loop engine foundation (lite mode first)
-
-- implement `hub.agent.run` using Codex in a step loop
-- keep using existing `execute` for actual actions
-- wire confirmations and resume token/state
-
-Acceptance:
-
-- can solve conditional prompt patterns without precomputed static plan
-- blocked steps pause and can resume
-
-P2: Catalog tools
-
-- implement `catalog_search` and `catalog_describe`
-- planner prompt updated to use catalog tools before proposing actions
-
-Acceptance:
-
-- no full manifest required in planner context
-- rename/move args use canonical names consistently
-
-P3: Script mode MVP
-
-- add `script.run` action and runtime
-- include policy interception and dry-run
-
-Acceptance:
-
-- "if/else + loop" prompts execute correctly via script mode
-- all writes still audited and policy-gated
-
-P4: UI action surface (`ui.tabs.*`) in plus mode
-
-- `ui.tabs.list`, `ui.tabs.close`, `ui.tabs.reorder`
-- bridge frontend state actions into executor-safe adapters
-
-Acceptance:
-
-- prompts like "close non-chat tabs" and "sort tabs by mtime" work end-to-end
-
-P5: Launchpad adaptation
-
-- capability token scoping
-- strict tenant boundary checks
-- audit hardening
-- snapshot-backed policy mode for eligible filesystem mutations:
-  - pre-action btrfs snapshot
-  - execute
-  - verify/review window
-  - TTL-based snapshot cleanup
-  - exclude irreversible cross-boundary actions (billing/access/network-external)
-
-Acceptance:
-
-- same API contract works with launchpad constraints
-- security tests pass for cross-tenant denial
-
-#### 11.13.8 Testing Plan (concrete)
-
-- unit:
-  - loop state transitions
-  - catalog ranking/describe correctness
-  - script policy interception
-- integration (lite):
-  - conditional file tasks
-  - multi-step tasks with confirmation
-  - recovery after interrupted run
-- UI:
-  - timeline renders full step sequence
-  - pause/resume UX
-
-#### 11.13.9 Immediate Build Queue
-
-1. Add `hub.agent.run` (lite) with step-loop state.
-2. Add `catalog_search` and `catalog_describe` over registry.
-3. Update navigator shell to consume `run` stream and timeline.
-4. Add `script.run` scaffolding and first guarded runtime.
-5. Add first `ui.tabs.*` adapters in plus mode.
-
-## 12. Success Metrics
-
-- Time-to-first-successful-agent-task.
-- % of users who use agent in first session.
-- completion rate by action class.
-- escalation rate (Navigator -> Builder) and success after handoff.
-- user-reported trust and usefulness.
-
-## 13. Open Questions
-
-- Exact OpenAI auth path to align with ChatGPT subscription expectations.
-- Best UI for mixed quick tasks + long threads.
-- policy defaults for educational multiuser deployments.
-- how much local install management to include in Navigator vs Builder.
-
-## 14. Immediate Next Steps
-
-- Stand up `@cocalc/ai/agent-sdk` package skeleton.
-- Implement capability registry generator for hub/project APIs first.
-- Define action envelope + policy executor + confirmation flow.
-- Implement thin wrapper adapters (`hub`, `project`, `ui`) with strict typing.
-- Add Navigator shell UI wired to plan preview and executor.
-- Add coding-path planner that can script against the SDK.
-- Add Builder/Codex handoff preserving full task context.
+Proceed with Codex-first, session-first architecture using chat runtime reuse and AKV metadata indexing. Replace one-off LLM helpers incrementally via intent adapters.
