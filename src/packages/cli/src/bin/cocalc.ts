@@ -71,6 +71,7 @@ if (!cliDebugEnabled) {
 type GlobalOptions = GlobalAuthOptions & {
   json?: boolean;
   output?: "table" | "json" | "yaml";
+  quiet?: boolean;
   verbose?: boolean;
   timeout?: string;
   pollMs?: string;
@@ -161,6 +162,39 @@ function saveWorkspaceContext(context: WorkspaceContextRecord): void {
     `${JSON.stringify({ ...context, set_at: new Date().toISOString() }, null, 2)}\n`,
     "utf8",
   );
+}
+
+function readWorkspaceContext(): WorkspaceContextRecord | undefined {
+  const path = workspaceContextPath();
+  if (!existsSync(path)) return undefined;
+  const raw = readFileSync(path, "utf8").trim();
+  if (!raw) return undefined;
+
+  if (isValidUUID(raw)) {
+    return { workspace_id: raw };
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `invalid workspace context file at ${path}: ${
+        err instanceof Error ? err.message : `${err}`
+      }`,
+    );
+  }
+  const workspace_id = parsed?.workspace_id;
+  if (typeof workspace_id !== "string" || !isValidUUID(workspace_id)) {
+    throw new Error(
+      `invalid workspace context file at ${path}: expected JSON with workspace_id UUID`,
+    );
+  }
+  return {
+    workspace_id,
+    title: typeof parsed?.title === "string" ? parsed.title : undefined,
+    set_at: typeof parsed?.set_at === "string" ? parsed.set_at : undefined,
+  };
 }
 
 function clearWorkspaceContext(): boolean {
@@ -264,6 +298,10 @@ function emitSuccess(
       },
     };
     console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+
+  if (ctx.globals.quiet) {
     return;
   }
 
@@ -867,6 +905,23 @@ async function resolveWorkspace(ctx: CommandContext, identifier: string): Promis
   return rows[0];
 }
 
+async function resolveWorkspaceFromArgOrContext(
+  ctx: CommandContext,
+  identifier?: string,
+): Promise<WorkspaceRow> {
+  const value = identifier?.trim();
+  if (value) {
+    return await resolveWorkspace(ctx, value);
+  }
+  const context = readWorkspaceContext();
+  if (!context?.workspace_id) {
+    throw new Error(
+      `missing --workspace and no workspace context is set at ${workspaceContextPath()}; run 'cocalc ws use --workspace <workspace>'`,
+    );
+  }
+  return await resolveWorkspace(ctx, context.workspace_id);
+}
+
 async function resolveHost(ctx: CommandContext, identifier: string): Promise<HostRow> {
   const hosts = await hubCallAccount<HostRow[]>(ctx, "hosts.listHosts", [
     { include_deleted: false, catalog: true },
@@ -1229,6 +1284,7 @@ program
   .version(pkg.version)
   .option("--json", "output machine-readable JSON")
   .option("--output <format>", "output format (table|json|yaml)", "table")
+  .option("-q, --quiet", "suppress human-formatted success output")
   .option("--verbose", "enable verbose debug logging to stderr")
   .option("--profile <name>", "auth profile name (default: current profile)")
   .option("--account-id <uuid>", "account id to use for API calls")
@@ -1497,11 +1553,12 @@ workspace
   );
 
 workspace
-  .command("get <workspace>")
-  .description("get one workspace by id or name")
-  .action(async (workspaceIdentifier: string, command: Command) => {
+  .command("get")
+  .description("get one workspace by id or name (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(async (opts: { workspace?: string }, command: Command) => {
     await withContext(command, "workspace get", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
       return {
         workspace_id: ws.project_id,
         title: ws.title,
@@ -1535,15 +1592,16 @@ workspace
   });
 
 workspace
-  .command("rename <workspace> <title>")
-  .description("rename a workspace")
-  .action(async (workspaceIdentifier: string, title: string, command: Command) => {
+  .command("rename <title>")
+  .description("rename a workspace (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(async (title: string, opts: { workspace?: string }, command: Command) => {
     await withContext(command, "workspace rename", async (ctx) => {
       const nextTitle = title.trim();
       if (!nextTitle) {
         throw new Error("title must be non-empty");
       }
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
       await hubCallAccount(ctx, "db.userQuery", [
         {
           query: {
@@ -1560,11 +1618,12 @@ workspace
   });
 
 workspace
-  .command("use <workspace>")
+  .command("use")
   .description("set default workspace for this directory")
-  .action(async (workspaceIdentifier: string, command: Command) => {
+  .requiredOption("-w, --workspace <workspace>", "workspace id or name")
+  .action(async (opts: { workspace: string }, command: Command) => {
     await withContext(command, "workspace use", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspace(ctx, opts.workspace);
       saveWorkspaceContext({
         workspace_id: ws.project_id,
         title: ws.title,
@@ -1591,11 +1650,12 @@ workspace
   });
 
 workspace
-  .command("delete <workspace>")
-  .description("soft-delete a workspace")
-  .action(async (workspaceIdentifier: string, command: Command) => {
+  .command("delete")
+  .description("soft-delete a workspace (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(async (opts: { workspace?: string }, command: Command) => {
     await withContext(command, "workspace delete", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
       await hubCallAccount(ctx, "db.userQuery", [
         {
           query: {
@@ -1612,12 +1672,13 @@ workspace
   });
 
 workspace
-  .command("start <workspace>")
-  .description("start a workspace")
+  .command("start")
+  .description("start a workspace (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--wait", "wait for completion")
-  .action(async (workspaceIdentifier: string, opts: { wait?: boolean }, command: Command) => {
+  .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
     await withContext(command, "workspace start", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
       const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.start", [
         {
           project_id: ws.project_id,
@@ -1652,12 +1713,13 @@ workspace
   });
 
 workspace
-  .command("stop <workspace>")
-  .description("stop a workspace")
+  .command("stop")
+  .description("stop a workspace (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--wait", "wait until the workspace is not running")
-  .action(async (workspaceIdentifier: string, opts: { wait?: boolean }, command: Command) => {
+  .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
     await withContext(command, "workspace stop", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
       await hubCallAccount<void>(ctx, "projects.stop", [
         {
           project_id: ws.project_id,
@@ -1688,12 +1750,13 @@ workspace
   });
 
 workspace
-  .command("restart <workspace>")
-  .description("restart a workspace")
+  .command("restart")
+  .description("restart a workspace (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--wait", "wait for restart completion")
-  .action(async (workspaceIdentifier: string, opts: { wait?: boolean }, command: Command) => {
+  .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
     await withContext(command, "workspace restart", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
       await hubCallAccount<void>(ctx, "projects.stop", [
         {
           project_id: ws.project_id,
@@ -1738,28 +1801,33 @@ workspace
   });
 
 workspace
-  .command("exec <workspace> [command...]")
-  .description("execute a command in a workspace")
+  .command("exec [command...]")
+  .description("execute a command in a workspace (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--timeout <seconds>", "command timeout seconds", "60")
   .option("--path <path>", "working path inside workspace")
   .option("--bash", "treat command as a bash command string")
   .action(
     async (
-      workspaceIdentifier: string,
       commandArgs: string[],
-      opts: { timeout?: string; path?: string; bash?: boolean },
+      opts: { workspace?: string; timeout?: string; path?: string; bash?: boolean },
       command: Command,
     ) => {
       await withContext(command, "workspace exec", async (ctx) => {
-        if (!commandArgs.length) {
+        const execArgs = Array.isArray(commandArgs)
+          ? commandArgs
+          : commandArgs
+            ? [commandArgs]
+            : [];
+        if (!execArgs.length) {
           throw new Error("command is required");
         }
-        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const timeout = Number(opts.timeout ?? "60");
-        const [first, ...rest] = commandArgs;
+        const [first, ...rest] = execArgs;
         const execOpts = opts.bash
           ? {
-              command: commandArgs.join(" "),
+              command: execArgs.join(" "),
               bash: true,
               timeout,
               err_on_exit: false,
@@ -1802,8 +1870,9 @@ workspace
   );
 
 workspace
-  .command("ssh <workspace> [sshArgs...]")
-  .description("print or open an ssh connection to a workspace")
+  .command("ssh [sshArgs...]")
+  .description("print or open an ssh connection to a workspace (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--connect", "open ssh instead of printing the target")
   .option("--check", "verify ssh connectivity/authentication non-interactively")
   .option("--require-auth", "with --check, require successful auth (not just reachable ssh endpoint)")
@@ -1811,13 +1880,12 @@ workspace
   .allowExcessArguments(true)
   .action(
     async (
-      workspaceIdentifier: string,
       sshArgs: string[],
-      opts: { connect?: boolean; check?: boolean; requireAuth?: boolean },
+      opts: { workspace?: string; connect?: boolean; check?: boolean; requireAuth?: boolean },
       command: Command,
     ) => {
       await withContext(command, "workspace ssh", async (ctx) => {
-        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         if (!ws.host_id) {
           throw new Error("workspace has no assigned host");
         }
@@ -1910,18 +1978,15 @@ workspace
   );
 
 workspace
-  .command("move <workspace>")
-  .description("move a workspace to another host")
+  .command("move")
+  .description("move a workspace to another host (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .requiredOption("--host <host>", "destination host id or name")
   .option("--wait", "wait for completion")
   .action(
-    async (
-      workspaceIdentifier: string,
-      opts: { host: string; wait?: boolean },
-      command: Command,
-    ) => {
+    async (opts: { workspace?: string; host: string; wait?: boolean }, command: Command) => {
       await withContext(command, "workspace move", async (ctx) => {
-        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const host = await resolveHost(ctx, opts.host);
         const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.moveProject", [
           {
@@ -2047,12 +2112,13 @@ workspace
 const backup = workspace.command("backup").description("workspace backups");
 
 backup
-  .command("create <workspace>")
-  .description("create a backup")
+  .command("create")
+  .description("create a backup (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--wait", "wait for completion")
-  .action(async (workspaceIdentifier: string, opts: { wait?: boolean }, command: Command) => {
+  .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
     await withContext(command, "workspace backup create", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
       const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.createBackup", [
         {
           project_id: ws.project_id,
@@ -2084,18 +2150,15 @@ backup
   });
 
 backup
-  .command("list <workspace>")
-  .description("list backups")
+  .command("list")
+  .description("list backups (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--indexed-only", "only list indexed backups")
   .option("--limit <n>", "max rows", "100")
   .action(
-    async (
-      workspaceIdentifier: string,
-      opts: { indexedOnly?: boolean; limit?: string },
-      command: Command,
-    ) => {
+    async (opts: { workspace?: string; indexedOnly?: boolean; limit?: string }, command: Command) => {
       await withContext(command, "workspace backup list", async (ctx) => {
-        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const backups = await hubCallAccount<
           Array<{ id: string; time: string | Date; summary?: Record<string, any> }>
         >(ctx, "projects.getBackups", [
@@ -2116,18 +2179,15 @@ backup
   );
 
 backup
-  .command("files <workspace>")
-  .description("list files for one backup")
+  .command("files")
+  .description("list files for one backup (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .requiredOption("--backup-id <id>", "backup id")
   .option("--path <path>", "path inside backup")
   .action(
-    async (
-      workspaceIdentifier: string,
-      opts: { backupId: string; path?: string },
-      command: Command,
-    ) => {
+    async (opts: { workspace?: string; backupId: string; path?: string }, command: Command) => {
       await withContext(command, "workspace backup files", async (ctx) => {
-        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const files = await hubCallAccount<
           Array<{ name: string; isDir: boolean; mtime: number; size: number }>
         >(ctx, "projects.getBackupFiles", [
@@ -2150,20 +2210,20 @@ backup
   );
 
 backup
-  .command("restore <workspace>")
-  .description("restore backup content")
+  .command("restore")
+  .description("restore backup content (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .requiredOption("--backup-id <id>", "backup id")
   .option("--path <path>", "source path in backup")
   .option("--dest <path>", "destination path in workspace")
   .option("--wait", "wait for completion")
   .action(
     async (
-      workspaceIdentifier: string,
-      opts: { backupId: string; path?: string; dest?: string; wait?: boolean },
+      opts: { workspace?: string; backupId: string; path?: string; dest?: string; wait?: boolean },
       command: Command,
     ) => {
       await withContext(command, "workspace backup restore", async (ctx) => {
-        const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.restoreBackup", [
           {
             project_id: ws.project_id,
@@ -2203,12 +2263,13 @@ backup
 const snapshot = workspace.command("snapshot").description("workspace snapshots");
 
 snapshot
-  .command("create <workspace>")
-  .description("create a btrfs snapshot")
+  .command("create")
+  .description("create a btrfs snapshot (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--name <name>", "snapshot name")
-  .action(async (workspaceIdentifier: string, opts: { name?: string }, command: Command) => {
+  .action(async (opts: { workspace?: string; name?: string }, command: Command) => {
     await withContext(command, "workspace snapshot create", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
       await hubCallAccount<void>(ctx, "projects.createSnapshot", [
         {
           project_id: ws.project_id,
@@ -2224,11 +2285,12 @@ snapshot
   });
 
 snapshot
-  .command("list <workspace>")
-  .description("list snapshot usage")
-  .action(async (workspaceIdentifier: string, command: Command) => {
+  .command("list")
+  .description("list snapshot usage (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(async (opts: { workspace?: string }, command: Command) => {
     await withContext(command, "workspace snapshot list", async (ctx) => {
-      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
       const snapshots = await hubCallAccount<SnapshotUsage[]>(ctx, "projects.allSnapshotUsage", [
         {
           project_id: ws.project_id,
@@ -2247,20 +2309,17 @@ snapshot
 const proxy = workspace.command("proxy").description("workspace proxy operations");
 
 proxy
-  .command("url <workspace>")
-  .description("compute proxy URL for a workspace port")
+  .command("url")
+  .description("compute proxy URL for a workspace port (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .requiredOption("--port <port>", "port number")
   .option("--host <host>", "host override")
-  .action(
-    async (
-      workspaceIdentifier: string,
-      opts: { port: string; host?: string },
-      command: Command,
-    ) => {
+  .action(async (opts: { workspace?: string; port: string; host?: string }, command: Command) => {
       await withContext(command, "workspace proxy url", async (ctx) => {
+        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const details = await resolveProxyUrl({
           ctx,
-          workspaceIdentifier,
+          workspaceIdentifier: ws.project_id,
           port: Number(opts.port),
           hostIdentifier: opts.host,
         });
@@ -2270,8 +2329,9 @@ proxy
   );
 
 proxy
-  .command("curl <workspace>")
-  .description("request a workspace proxied URL")
+  .command("curl")
+  .description("request a workspace proxied URL (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
   .requiredOption("--port <port>", "port number")
   .option("--host <host>", "host override")
   .option("--path <path>", "path relative to proxied app", "/")
@@ -2279,8 +2339,8 @@ proxy
   .option("--expect <mode>", "expected outcome: ok|denied|any", "any")
   .action(
     async (
-      workspaceIdentifier: string,
       opts: {
+        workspace?: string;
         port: string;
         host?: string;
         path?: string;
@@ -2290,9 +2350,10 @@ proxy
       command: Command,
     ) => {
       await withContext(command, "workspace proxy curl", async (ctx) => {
+        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const details = await resolveProxyUrl({
           ctx,
-          workspaceIdentifier,
+          workspaceIdentifier: ws.project_id,
           port: Number(opts.port),
           hostIdentifier: opts.host,
         });

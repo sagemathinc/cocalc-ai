@@ -510,7 +510,16 @@ async function waitForBackupIndexed({
   for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
     const indexedBackups = await runCli<
       Array<{ backup_id?: string; time?: string | Date | null }>
-    >(cli, ["workspace", "backup", "list", project_id, "--indexed-only", "--limit", "100"]);
+    >(cli, [
+      "workspace",
+      "backup",
+      "list",
+      "--workspace",
+      project_id,
+      "--indexed-only",
+      "--limit",
+      "100",
+    ]);
     lastIndexedCount = indexedBackups.length;
     if (indexedBackups.length > 0 && indexedBackups[0]?.backup_id) {
       const sorted = [...indexedBackups].sort((a, b) =>
@@ -525,7 +534,7 @@ async function waitForBackupIndexed({
     // smoke can continue to restore/copy validation.
     const backups = await runCli<Array<{ backup_id?: string; time?: string | Date | null }>>(
       cli,
-      ["workspace", "backup", "list", project_id, "--limit", "100"],
+      ["workspace", "backup", "list", "--workspace", project_id, "--limit", "100"],
     );
     lastAnyCount = backups.length;
     if (backups.length > 0 && backups[0]?.backup_id) {
@@ -558,6 +567,7 @@ async function waitForProjectPlacement({
     const workspace = await runCli<{ host_id?: string | null }>(cli, [
       "workspace",
       "get",
+      "--workspace",
       project_id,
     ]);
     const current = String(workspace?.host_id ?? "");
@@ -596,9 +606,11 @@ async function waitForProjectFileValue({
       }>(cli, [
         "workspace",
         "exec",
+        "--workspace",
         project_id,
         "--timeout",
         String(execTimeoutSeconds),
+        "--",
         "cat",
         path,
       ], {
@@ -882,6 +894,7 @@ export async function runSelfHostMultipassBackupSmoke(
     const cmd = [
       "workspace",
       "exec",
+      "--workspace",
       workspaceId,
       "--timeout",
       String(execTimeoutSeconds),
@@ -889,7 +902,7 @@ export async function runSelfHostMultipassBackupSmoke(
     if (opts.bash) {
       cmd.push("--bash");
     }
-    cmd.push(...args);
+    cmd.push("--", ...args);
     return await runCli<{ stdout?: string; stderr?: string; exit_code?: number }>(
       cli,
       cmd,
@@ -911,7 +924,7 @@ export async function runSelfHostMultipassBackupSmoke(
       try {
         await runCli<{ checked?: boolean; exit_code?: number }>(
           cli,
-          ["workspace", "ssh", workspaceId, "--check"],
+          ["workspace", "ssh", "--workspace", workspaceId, "--check"],
           {
             timeoutSeconds: 30,
             commandTimeoutMs: 45_000,
@@ -960,6 +973,7 @@ export async function runSelfHostMultipassBackupSmoke(
           "workspace",
           "proxy",
           "curl",
+          "--workspace",
           workspaceId,
           "--port",
           String(proxyPort),
@@ -1064,7 +1078,7 @@ export async function runSelfHostMultipassBackupSmoke(
     }
     for (const cleanupProjectId of cleanupProjectIds) {
       try {
-        await runCli(cli, ["workspace", "delete", cleanupProjectId]);
+        await runCli(cli, ["workspace", "delete", "--workspace", cleanupProjectId]);
       } catch (err) {
         logger.warn("self-host smoke cleanup project failed", {
           project_id: cleanupProjectId,
@@ -1232,7 +1246,7 @@ export async function runSelfHostMultipassBackupSmoke(
 
     await runStep("start_project", async () => {
       if (!project_id) throw new Error("missing project_id");
-      await runCli(cli, ["workspace", "start", project_id, "--wait"]);
+      await runCli(cli, ["workspace", "start", "--workspace", project_id, "--wait"]);
     });
 
     await runStep("write_sentinel_file", async () => {
@@ -1381,7 +1395,13 @@ echo $! > "$dir/server.pid"
 
       await runStep("start_second_project_for_copy", async () => {
         if (!copy_project_id) throw new Error("missing copy_project_id");
-        await runCli(cli, ["workspace", "start", copy_project_id, "--wait"]);
+        await runCli(cli, [
+          "workspace",
+          "start",
+          "--workspace",
+          copy_project_id,
+          "--wait",
+        ]);
       });
       if (!verifyMoveRestoreOnSecondHost) {
         await runStep("copy_file_between_projects", async () => {
@@ -1422,7 +1442,7 @@ echo $! > "$dir/server.pid"
 
         await runStep("delete_second_project_for_copy", async () => {
           if (!copy_project_id) return;
-          await runCli(cli, ["workspace", "delete", copy_project_id]);
+          await runCli(cli, ["workspace", "delete", "--workspace", copy_project_id]);
           cleanupProjectIds.delete(copy_project_id);
         });
       }
@@ -1434,6 +1454,7 @@ echo $! > "$dir/server.pid"
         "workspace",
         "backup",
         "create",
+        "--workspace",
         project_id,
       ]);
       backup_op_id = op.op_id;
@@ -1466,6 +1487,7 @@ echo $! > "$dir/server.pid"
           "workspace",
           "backup",
           "files",
+          "--workspace",
           project_id,
           "--backup-id",
           backup_id,
@@ -1489,6 +1511,7 @@ echo $! > "$dir/server.pid"
         const op = await runCli<{ op_id?: string }>(cli, [
           "workspace",
           "move",
+          "--workspace",
           project_id,
           "--host",
           second_host_id,
@@ -1541,6 +1564,7 @@ echo $! > "$dir/server.pid"
           "workspace",
           "backup",
           "restore",
+          "--workspace",
           project_id,
           "--backup-id",
           backup_id,
@@ -1562,7 +1586,14 @@ echo $! > "$dir/server.pid"
 
       await runStep("create_backup_for_copy_source", async () => {
         if (!project_id) throw new Error("missing project_id");
-        await runCli(cli, ["workspace", "backup", "create", project_id, "--wait"]);
+        await runCli(cli, [
+          "workspace",
+          "backup",
+          "create",
+          "--workspace",
+          project_id,
+          "--wait",
+        ]);
       });
 
       await runStep("wait_backup_indexed_for_copy_source", async () => {
@@ -1613,7 +1644,7 @@ echo $! > "$dir/server.pid"
 
         await runStep("delete_second_project_for_copy", async () => {
           if (!copy_project_id) return;
-          await runCli(cli, ["workspace", "delete", copy_project_id]);
+          await runCli(cli, ["workspace", "delete", "--workspace", copy_project_id]);
           cleanupProjectIds.delete(copy_project_id);
         });
       }

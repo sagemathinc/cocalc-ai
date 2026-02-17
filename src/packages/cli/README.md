@@ -50,6 +50,7 @@ pnpm --dir src/packages/cli exec cocalc-cli --help
 This CLI connects to a hub over websocket/conat and supports:
 
 - `--verbose` (or `COCALC_CLI_DEBUG=1`) for debug diagnostics on stderr
+- `-q, --quiet` to suppress the final human-formatted result block
 - `--profile <name>` (or `COCALC_PROFILE`) to select a saved auth profile
 - `--api <url>` (or `COCALC_API_URL`)
 - `--api-key <key>` (or `COCALC_API_KEY`)
