@@ -217,7 +217,8 @@ const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
         ),
       );
       const rowHeight = cssHeight / sampledRows;
-      let lastDrawnLineNo: number | null = null;
+      let previousLineNo: number | null = null;
+      let wrappedChunkIndex = 0;
       for (let i = 0; i < sampledRows; i += 1) {
         const y = i * rowHeight;
         const editorY = (y / Math.max(1, cssHeight)) * editorContentHeight;
@@ -225,9 +226,15 @@ const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
           lastLine,
           Math.max(firstLine, cm.lineAtHeight(editorY, "local")),
         );
-        if (lineNo === lastDrawnLineNo) continue;
-        lastDrawnLineNo = lineNo;
-        const text = cm.getLine(lineNo) ?? "";
+        if (lineNo === previousLineNo) {
+          wrappedChunkIndex += 1;
+        } else {
+          previousLineNo = lineNo;
+          wrappedChunkIndex = 0;
+        }
+        const fullLine = cm.getLine(lineNo) ?? "";
+        const start = wrappedChunkIndex * maxChars;
+        const text = fullLine.slice(start, start + maxChars);
         drawCodeMirrorMinimapTextLine(
           ctx,
           text,
