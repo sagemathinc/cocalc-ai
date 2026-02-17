@@ -47,6 +47,7 @@ node src/packages/cli/dist/bin/cocalc.js --help
 
 This CLI connects to a hub over websocket/conat and supports:
 
+- `--verbose` (or `COCALC_CLI_DEBUG=1`) for debug diagnostics on stderr
 - `--profile <name>` (or `COCALC_PROFILE`) to select a saved auth profile
 - `--api <url>` (or `COCALC_API_URL`)
 - `--api-key <key>` (or `COCALC_API_KEY`)

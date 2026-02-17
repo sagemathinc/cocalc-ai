@@ -33,29 +33,42 @@ import {
   parseSshServer,
 } from "../core/utils";
 
+const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
-  process.env.COCALC_CLI_DEBUG === "1" || process.env.COCALC_CLI_DEBUG === "true";
+  cliVerboseFlag ||
+  process.env.COCALC_CLI_DEBUG === "1" ||
+  process.env.COCALC_CLI_DEBUG === "true";
+
+// conat/core/client may emit this warning via console.log on auth failures.
+// Keep it off stdout so table/json output remains parseable.
+const origLog = console.log.bind(console);
+console.log = (...args: any[]) => {
+  const first = args[0];
+  if (typeof first === "string" && first.startsWith("WARNING: inbox not available --")) {
+    if (cliDebugEnabled) {
+      console.error(...args);
+    }
+    return;
+  }
+  origLog(...args);
+};
+
 if (!cliDebugEnabled) {
   // Keep CLI stdout/stderr clean (especially with --json) even if DEBUG is globally enabled.
   process.env.SMC_TEST ??= "1";
   process.env.DEBUG_CONSOLE ??= "no";
   process.env.DEBUG_FILE ??= "";
-
-  // conat/core/client currently emits this warning via console.log on auth failures;
-  // suppress it so CLI JSON output remains parseable.
-  const origLog = console.log.bind(console);
-  console.log = (...args: any[]) => {
-    const first = args[0];
-    if (typeof first === "string" && first.startsWith("WARNING: inbox not available --")) {
-      return;
-    }
-    origLog(...args);
-  };
+} else {
+  // Enable module-level debug logging to stderr when verbose mode is requested.
+  process.env.DEBUG ??= "cocalc:*";
+  process.env.DEBUG_CONSOLE ??= "yes";
+  process.env.DEBUG_FILE ??= "";
 }
 
 type GlobalOptions = GlobalAuthOptions & {
   json?: boolean;
   output?: "table" | "json" | "yaml";
+  verbose?: boolean;
   timeout?: string;
   pollMs?: string;
 };
@@ -110,6 +123,12 @@ type LroSummary = {
 };
 
 const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expired"]);
+const MAX_TRANSPORT_TIMEOUT_MS = 30_000;
+
+function cliDebug(...args: unknown[]): void {
+  if (!cliDebugEnabled) return;
+  console.error("[cocalc:cli]", ...args);
+}
 
 type ProductCommand = "plus" | "launchpad";
 
@@ -391,6 +410,7 @@ async function connectRemote({
   apiBaseUrl: string;
   timeoutMs: number;
 }): Promise<RemoteConnection> {
+  const signInTimeoutMs = Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
   const extraHeaders: Record<string, string> = {};
   const cookie = buildCookieHeader(apiBaseUrl, globals);
   if (cookie) {
@@ -400,6 +420,15 @@ async function connectRemote({
   if (bearer?.trim()) {
     extraHeaders.Authorization = `Bearer ${bearer.trim()}`;
   }
+  cliDebug("connectRemote", {
+    apiBaseUrl,
+    timeoutMs,
+    signInTimeoutMs,
+    hasCookie: !!cookie,
+    hasBearer: !!bearer?.trim(),
+    hasApiKey: !!(globals.apiKey ?? process.env.COCALC_API_KEY),
+    hasHubPassword: hasHubPassword(globals),
+  });
 
   const client = connectConat({
     address: apiBaseUrl,
@@ -407,7 +436,20 @@ async function connectRemote({
     ...(Object.keys(extraHeaders).length ? { extraHeaders } : undefined),
   });
 
-  await client.waitUntilSignedIn({ timeout: timeoutMs });
+  try {
+    await withTimeout(
+      client.waitUntilSignedIn({ timeout: signInTimeoutMs }),
+      signInTimeoutMs,
+      `timeout while waiting for conat sign-in (${signInTimeoutMs}ms)`,
+    );
+  } catch (err) {
+    try {
+      client.close();
+    } catch {
+      // ignore
+    }
+    throw err;
+  }
 
   return {
     client,
@@ -591,19 +633,50 @@ async function withContext(
   }
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  if (!(timeoutMs > 0)) {
+    return await promise;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 async function hubCallAccount<T>(
   ctx: CommandContext,
   name: string,
   args: any[] = [],
   timeout?: number,
 ): Promise<T> {
-  return (await callHub({
-    client: ctx.remote.client,
-    account_id: ctx.accountId,
+  const timeoutMs = timeout ?? ctx.timeoutMs;
+  const rpcTimeoutMs = Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
+  cliDebug("hubCallAccount", {
     name,
-    args,
-    timeout: timeout ?? ctx.timeoutMs,
-  })) as T;
+    timeoutMs,
+    rpcTimeoutMs,
+    account_id: ctx.accountId,
+  });
+  return (await withTimeout(
+    callHub({
+      client: ctx.remote.client,
+      account_id: ctx.accountId,
+      name,
+      args,
+      timeout: rpcTimeoutMs,
+    }),
+    rpcTimeoutMs,
+    `timeout waiting for hub response: ${name} (${rpcTimeoutMs}ms)`,
+  )) as T;
 }
 
 async function userQueryTable<T>(
@@ -1041,6 +1114,7 @@ program
   .version(pkg.version)
   .option("--json", "output machine-readable JSON")
   .option("--output <format>", "output format (table|json|yaml)", "table")
+  .option("--verbose", "enable verbose debug logging to stderr")
   .option("--profile <name>", "auth profile name (default: current profile)")
   .option("--account-id <uuid>", "account id to use for API calls")
   .option("--account_id <uuid>", "alias for --account-id")
