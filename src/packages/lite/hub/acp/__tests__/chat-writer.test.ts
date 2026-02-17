@@ -288,6 +288,45 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("keeps streamed final message when error arrives before summary", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "final answer text" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "error",
+      error: "connection reset",
+      seq: 1,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "final answer text",
+      threadId: "thread-after-connection-error",
+      seq: 2,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect((writer as any).content).toContain("final answer text");
+    expect((writer as any).content).not.toContain("connection reset");
+    expect((writer as any).getKnownThreadIds()).toContain(
+      "thread-after-connection-error",
+    );
+    (writer as any).dispose?.(true);
+  });
+
   it("addLocalEvent writes an in-flight commit", async () => {
     const { syncdb, sets } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
