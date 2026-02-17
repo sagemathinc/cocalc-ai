@@ -154,36 +154,36 @@ type MinimapTheme = {
 
 const MINIMAP_THEME: Record<MinimapCellKind, MinimapTheme> = {
   code: {
-    cellBackground: "rgba(71,85,105,0.2)",
-    textColor: "rgba(241,245,249,0.88)",
-    keywordColor: "rgba(129,140,248,0.96)",
-    numberColor: "rgba(96,165,250,0.95)",
-    stringColor: "rgba(251,191,36,0.96)",
-    commentColor: "rgba(74,222,128,0.95)",
+    cellBackground: "rgba(226,232,240,0.78)",
+    textColor: "rgba(15,23,42,0.92)",
+    keywordColor: "rgba(79,70,229,0.96)",
+    numberColor: "rgba(37,99,235,0.96)",
+    stringColor: "rgba(180,83,9,0.96)",
+    commentColor: "rgba(21,128,61,0.96)",
   },
   markdown: {
-    cellBackground: "rgba(16,185,129,0.2)",
-    textColor: "rgba(220,252,231,0.92)",
-    keywordColor: "rgba(167,243,208,0.96)",
-    numberColor: "rgba(110,231,183,0.95)",
-    stringColor: "rgba(251,191,36,0.95)",
-    commentColor: "rgba(110,231,183,0.95)",
+    cellBackground: "rgba(220,252,231,0.82)",
+    textColor: "rgba(17,24,39,0.9)",
+    keywordColor: "rgba(5,150,105,0.96)",
+    numberColor: "rgba(4,120,87,0.96)",
+    stringColor: "rgba(180,83,9,0.96)",
+    commentColor: "rgba(21,128,61,0.96)",
   },
   raw: {
-    cellBackground: "rgba(168,85,247,0.2)",
-    textColor: "rgba(245,243,255,0.9)",
-    keywordColor: "rgba(196,181,253,0.96)",
-    numberColor: "rgba(167,139,250,0.95)",
-    stringColor: "rgba(251,191,36,0.95)",
-    commentColor: "rgba(196,181,253,0.92)",
+    cellBackground: "rgba(243,232,255,0.82)",
+    textColor: "rgba(30,27,75,0.92)",
+    keywordColor: "rgba(109,40,217,0.96)",
+    numberColor: "rgba(124,58,237,0.96)",
+    stringColor: "rgba(180,83,9,0.96)",
+    commentColor: "rgba(126,34,206,0.9)",
   },
   unknown: {
-    cellBackground: "rgba(100,116,139,0.2)",
-    textColor: "rgba(226,232,240,0.88)",
-    keywordColor: "rgba(148,163,184,0.9)",
-    numberColor: "rgba(148,163,184,0.9)",
-    stringColor: "rgba(148,163,184,0.9)",
-    commentColor: "rgba(148,163,184,0.9)",
+    cellBackground: "rgba(241,245,249,0.82)",
+    textColor: "rgba(30,41,59,0.9)",
+    keywordColor: "rgba(71,85,105,0.92)",
+    numberColor: "rgba(71,85,105,0.92)",
+    stringColor: "rgba(71,85,105,0.92)",
+    commentColor: "rgba(71,85,105,0.92)",
   },
 };
 
@@ -753,6 +753,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
   const minimapViewportRef = useRef<HTMLDivElement>(null);
   const minimapTrackRef = useRef<HTMLDivElement>(null);
   const minimapRailRef = useRef<HTMLDivElement>(null);
+  const minimapScrollRef = useRef<HTMLDivElement>(null);
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -905,7 +906,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssWidth, cssHeight);
-    ctx.fillStyle = "rgba(15,23,42,0.34)";
+    ctx.fillStyle = "rgba(248,250,252,0.96)";
     ctx.fillRect(0, 0, cssWidth, cssHeight);
 
     ctx.font = `${MINIMAP_FONT_SIZE}px Menlo, Monaco, "Courier New", monospace`;
@@ -923,7 +924,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     for (const row of minimapData.rows) {
       const theme = MINIMAP_THEME[row.kind];
       ctx.fillStyle = row.isCurrent
-        ? "rgba(59,130,246,0.3)"
+        ? "rgba(59,130,246,0.22)"
         : theme.cellBackground;
       ctx.fillRect(0, row.top, cssWidth, row.height);
 
@@ -933,7 +934,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
       }
 
       if (row.isCurrent) {
-        ctx.strokeStyle = "rgba(125,211,252,0.95)";
+        ctx.strokeStyle = "rgba(37,99,235,0.8)";
         ctx.lineWidth = 0.9;
         ctx.strokeRect(0.5, row.top + 0.5, cssWidth - 1, Math.max(1, row.height - 1));
       }
@@ -967,23 +968,35 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     const scroller = cellListDivRef.current as HTMLElement | null;
     const viewport = minimapViewportRef.current;
     const rail = minimapRailRef.current;
-    if (scroller == null || viewport == null || rail == null) return;
+    const miniScroll = minimapScrollRef.current;
+    if (scroller == null || viewport == null || rail == null || miniScroll == null) {
+      return;
+    }
 
-    const maxNotebookScroll = Math.max(1, scroller.scrollHeight - scroller.clientHeight);
+    const notebookScrollHeight = Math.max(1, scroller.scrollHeight);
+    const maxNotebookScroll = Math.max(1, notebookScrollHeight - scroller.clientHeight);
     const notebookRatio = Math.min(1, Math.max(0, scroller.scrollTop / maxNotebookScroll));
-    const maxMiniScroll = Math.max(0, minimapData.totalContentHeight - minimapData.railHeight);
+    // Keep viewport mapping stable even when minimap content is shorter than the rail.
+    const contentHeight = Math.max(
+      minimapData.totalContentHeight,
+      minimapData.railHeight,
+    );
+    const maxMiniScroll = Math.max(0, contentHeight - minimapData.railHeight);
     const miniScrollTop = notebookRatio * maxMiniScroll;
 
-    rail.scrollTop = miniScrollTop;
+    miniScroll.scrollTop = miniScrollTop;
 
     const thumbHeight = Math.max(
-      12,
-      (scroller.clientHeight / Math.max(scroller.scrollHeight, 1)) *
-        minimapData.railHeight,
+      16,
+      (scroller.clientHeight / notebookScrollHeight) * minimapData.railHeight,
     );
-    const thumbTravel = Math.max(0, minimapData.totalContentHeight - thumbHeight);
+    const thumbTravel = Math.max(0, contentHeight - thumbHeight);
     const thumbTopInTrack = notebookRatio * thumbTravel;
-    viewport.style.top = `${thumbTopInTrack - miniScrollTop}px`;
+    const thumbTopInRail = Math.min(
+      Math.max(0, thumbTopInTrack - miniScrollTop),
+      Math.max(0, minimapData.railHeight - thumbHeight),
+    );
+    viewport.style.top = `${thumbTopInRail}px`;
     viewport.style.height = `${thumbHeight}px`;
   }, [minimapData]);
 
@@ -1011,13 +1024,16 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
   const onMinimapTrackMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const scroller = cellListDivRef.current as HTMLElement | null;
-      const rail = minimapRailRef.current;
-      if (scroller == null || minimapData == null || rail == null) return;
+      const miniScroll = minimapScrollRef.current;
+      if (scroller == null || minimapData == null || miniScroll == null) return;
       const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
       if (rect.height <= 0) return;
       const y = Math.min(Math.max(0, e.clientY - rect.top), rect.height);
-      const maxNotebookScroll = Math.max(1, scroller.scrollHeight - scroller.clientHeight);
-      const miniScrollTop = rail.scrollTop;
+      const maxNotebookScroll = Math.max(
+        1,
+        scroller.scrollHeight - scroller.clientHeight,
+      );
+      const miniScrollTop = miniScroll.scrollTop;
       const yContent = Math.min(
         minimapData.totalContentHeight,
         Math.max(0, miniScrollTop + y),
@@ -1120,33 +1136,37 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
                 width: "100%",
                 height: `${minimapData.railHeight}px`,
                 borderRadius: "4px",
-                background: "rgba(148,163,184,0.18)",
-                border: "1px solid rgba(148,163,184,0.5)",
+                background: "rgba(255,255,255,0.92)",
+                border: "1px solid rgba(148,163,184,0.68)",
                 cursor: "pointer",
-                overflowY: "auto",
-                overflowX: "hidden",
+                overflow: "hidden",
               }}
             >
               <div
-                ref={minimapTrackRef}
+                ref={minimapScrollRef}
                 style={{
                   position: "absolute",
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  height: `${minimapData.totalContentHeight}px`,
-                  transform: "translateY(0px)",
-                  willChange: "transform",
+                  inset: 0,
+                  overflowY: "auto",
+                  overflowX: "hidden",
                 }}
               >
-                <canvas
-                  ref={minimapCanvasRef}
+                <div
+                  ref={minimapTrackRef}
                   style={{
-                    display: "block",
-                    width: "100%",
+                    position: "relative",
                     height: `${minimapData.totalContentHeight}px`,
                   }}
-                />
+                >
+                  <canvas
+                    ref={minimapCanvasRef}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      height: `${minimapData.totalContentHeight}px`,
+                    }}
+                  />
+                </div>
               </div>
               <div
                 ref={minimapViewportRef}
@@ -1156,8 +1176,8 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
                   right: 0,
                   top: 0,
                   height: "10px",
-                  border: "1px solid rgba(14,116,144,0.75)",
-                  background: "rgba(56,189,248,0.2)",
+                  border: "1px solid rgba(37,99,235,0.75)",
+                  background: "rgba(59,130,246,0.12)",
                   borderRadius: "3px",
                   pointerEvents: "none",
                 }}
