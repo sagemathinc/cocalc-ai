@@ -229,6 +229,11 @@ interface UseNotebookMinimapResult {
 }
 
 let minimapSettingsModalOwner: symbol | null = null;
+// Shared listener registry: multiple notebook panes can mount minimaps, but
+// we keep exactly one browser listener per minimap event type.
+const minimapSettingsChangedCallbacks = new Set<() => void>();
+const minimapOpenSettingsCallbacks = new Set<() => void>();
+let minimapWindowListenersAttached = false;
 
 function claimMinimapSettingsModal(owner: symbol): boolean {
   if (minimapSettingsModalOwner == null || minimapSettingsModalOwner === owner) {
@@ -242,6 +247,69 @@ function releaseMinimapSettingsModal(owner: symbol): void {
   if (minimapSettingsModalOwner === owner) {
     minimapSettingsModalOwner = null;
   }
+}
+
+function emitMinimapCallbacks(callbacks: Set<() => void>): void {
+  for (const cb of Array.from(callbacks)) {
+    try {
+      cb();
+    } catch {
+      // avoid one broken subscriber preventing others from updating
+    }
+  }
+}
+
+function onWindowMinimapSettingsChanged(): void {
+  emitMinimapCallbacks(minimapSettingsChangedCallbacks);
+}
+
+function onWindowOpenMinimapSettings(): void {
+  emitMinimapCallbacks(minimapOpenSettingsCallbacks);
+}
+
+function attachMinimapWindowListeners(): void {
+  if (minimapWindowListenersAttached) return;
+  if (typeof window === "undefined") return;
+  window.addEventListener(
+    MINIMAP_SETTINGS_CHANGED_EVENT,
+    onWindowMinimapSettingsChanged,
+  );
+  window.addEventListener(MINIMAP_OPEN_SETTINGS_EVENT, onWindowOpenMinimapSettings);
+  minimapWindowListenersAttached = true;
+}
+
+function detachMinimapWindowListenersIfUnused(): void {
+  if (!minimapWindowListenersAttached) return;
+  if (
+    minimapSettingsChangedCallbacks.size > 0 ||
+    minimapOpenSettingsCallbacks.size > 0
+  ) {
+    return;
+  }
+  if (typeof window === "undefined") return;
+  window.removeEventListener(
+    MINIMAP_SETTINGS_CHANGED_EVENT,
+    onWindowMinimapSettingsChanged,
+  );
+  window.removeEventListener(MINIMAP_OPEN_SETTINGS_EVENT, onWindowOpenMinimapSettings);
+  minimapWindowListenersAttached = false;
+}
+
+function registerMinimapWindowCallbacks({
+  onSettingsChanged,
+  onOpenSettings,
+}: {
+  onSettingsChanged: () => void;
+  onOpenSettings: () => void;
+}): () => void {
+  minimapSettingsChangedCallbacks.add(onSettingsChanged);
+  minimapOpenSettingsCallbacks.add(onOpenSettings);
+  attachMinimapWindowListeners();
+  return () => {
+    minimapSettingsChangedCallbacks.delete(onSettingsChanged);
+    minimapOpenSettingsCallbacks.delete(onOpenSettings);
+    detachMinimapWindowListenersIfUnused();
+  };
 }
 
 export function useNotebookMinimap({
@@ -287,14 +355,12 @@ export function useNotebookMinimap({
       setMinimapDraftWidth(current.width);
       setShowMinimapSettingsModal(true);
     };
-    window.addEventListener(MINIMAP_SETTINGS_CHANGED_EVENT, onSettingsChanged);
-    window.addEventListener(MINIMAP_OPEN_SETTINGS_EVENT, onOpenSettings);
+    const unregister = registerMinimapWindowCallbacks({
+      onSettingsChanged,
+      onOpenSettings,
+    });
     return () => {
-      window.removeEventListener(
-        MINIMAP_SETTINGS_CHANGED_EVENT,
-        onSettingsChanged,
-      );
-      window.removeEventListener(MINIMAP_OPEN_SETTINGS_EVENT, onOpenSettings);
+      unregister();
       releaseMinimapSettingsModal(minimapModalOwnerRef.current);
     };
   }, []);
@@ -319,6 +385,7 @@ export function useNotebookMinimap({
   const minimapRailRef = useRef<HTMLDivElement>(null);
   const minimapScrollRef = useRef<HTMLDivElement>(null);
   const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
+  const minimapViewportRafRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -579,7 +646,7 @@ export function useNotebookMinimap({
     }
   }, [minimapData]);
 
-  const updateMinimapViewport = useCallback(() => {
+  const updateMinimapViewportNow = useCallback(() => {
     if (minimapData == null) return;
     const scroller = cellListDivRef.current as HTMLElement | null;
     const viewport = minimapViewportRef.current;
@@ -672,6 +739,32 @@ export function useNotebookMinimap({
       String(thumbHeight),
     );
   }, [cellListDivRef, minimapData]);
+
+  const updateMinimapViewportNowRef = useRef(updateMinimapViewportNow);
+  useEffect(() => {
+    updateMinimapViewportNowRef.current = updateMinimapViewportNow;
+  }, [updateMinimapViewportNow]);
+
+  const updateMinimapViewport = useCallback(() => {
+    if (typeof window === "undefined") {
+      updateMinimapViewportNow();
+      return;
+    }
+    if (minimapViewportRafRef.current != null) return;
+    minimapViewportRafRef.current = window.requestAnimationFrame(() => {
+      minimapViewportRafRef.current = null;
+      updateMinimapViewportNowRef.current();
+    });
+  }, [updateMinimapViewportNow]);
+
+  useEffect(() => {
+    return () => {
+      const rafId = minimapViewportRafRef.current;
+      if (rafId == null || typeof window === "undefined") return;
+      minimapViewportRafRef.current = null;
+      window.cancelAnimationFrame(rafId);
+    };
+  }, []);
 
   useEffect(() => {
     updateMinimapViewport();
