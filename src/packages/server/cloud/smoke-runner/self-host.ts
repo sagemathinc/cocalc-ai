@@ -600,28 +600,16 @@ async function waitForProjectFileValue({
   for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
     try {
       const out = await runCli<{
-        stdout?: string;
-        stderr?: string;
-        exit_code?: number;
-      }>(cli, [
-        "workspace",
-        "exec",
-        "--workspace",
-        project_id,
-        "--timeout",
-        String(execTimeoutSeconds),
-        "--",
-        "cat",
-        path,
-      ], {
+        content?: string;
+      }>(
+        cli,
+        ["workspace", "file", "cat", "--workspace", project_id, path],
+        {
         timeoutSeconds: Math.max(execTimeoutSeconds + 15, 20),
         commandTimeoutMs,
-      });
-      const exitCode = Number(out?.exit_code ?? 1);
-      const value = String(out?.stdout ?? "").replace(/\r?\n$/, "");
-      if (exitCode !== 0) {
-        throw new Error(`cat failed: ${out?.stderr ?? `exit_code=${exitCode}`}`);
-      }
+      },
+      );
+      const value = String(out?.content ?? "").replace(/\r?\n$/, "");
       if (value === expected) return;
     } catch (err) {
       logger.debug("self-host smoke readFile retry", {
@@ -847,6 +835,7 @@ export async function runSelfHostMultipassBackupSmoke(
   let proxy_token: string | undefined;
   let proxy_api_key_id: number | undefined;
   let proxy_api_key_secret: string | undefined;
+  let workspaceFileTempDir: string | undefined;
   const sentinelPath = "smoke-self-host-backup/self-host-backup.txt";
   const sentinelValue = `self-host-smoke:${Date.now()}:${randomUUID()}`;
   const copyDestPath = "smoke-self-host-backup/copied-from-project-1.txt";
@@ -1043,25 +1032,80 @@ export async function runSelfHostMultipassBackupSmoke(
     );
   };
 
+  const runWorkspaceFileCommandWithRetry = async <T>(
+    args: string[],
+    opts: { timeoutSeconds?: number; attempts?: number; intervalMs?: number; commandTimeoutMs?: number } = {},
+  ): Promise<T> => {
+    const attempts = Math.max(1, opts.attempts ?? 20);
+    const intervalMs = Math.max(250, opts.intervalMs ?? 2000);
+    const timeoutSeconds = Math.max(1, opts.timeoutSeconds ?? 60);
+    const commandTimeoutMs =
+      opts.commandTimeoutMs ??
+      Math.max((timeoutSeconds + 45) * 1000, 120_000);
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await runCli<T>(cli, ["workspace", "file", ...args], {
+          timeoutSeconds,
+          commandTimeoutMs,
+        });
+      } catch (err) {
+        lastErr = err;
+        const message = getErrorMessage(err);
+        const retryable =
+          message.includes("subject:project.") ||
+          message.includes("timeout - Error: operation has timed out");
+        if (!retryable || attempt >= attempts) {
+          throw err;
+        }
+        logger.debug("self-host smoke workspace file retry", {
+          args,
+          attempt,
+          attempts,
+          err: message,
+        });
+        await sleep(intervalMs);
+      }
+    }
+    throw new Error(
+      `workspace file command did not become ready: ${getErrorMessage(lastErr ?? "unknown error")}`,
+    );
+  };
+
+  const ensureWorkspaceFileTempDir = async (): Promise<string> => {
+    if (workspaceFileTempDir) {
+      return workspaceFileTempDir;
+    }
+    await mkdir(smokeTmpBase, { recursive: true });
+    workspaceFileTempDir = await mkdtemp(join(smokeTmpBase, "cocalc-smoke-workspace-file-"));
+    tempDirs.push(workspaceFileTempDir);
+    return workspaceFileTempDir;
+  };
+
   const writeWorkspaceFile = async (
     workspaceId: string,
     path: string,
     value: string,
   ): Promise<void> => {
-    const command = `mkdir -p ${quoteShellSingle(dirname(path))} && printf %s ${quoteShellSingle(
-      value,
-    )} > ${quoteShellSingle(path)}`;
-    const result = await runWorkspaceExecWithRetry(workspaceId, [command], {
-      timeoutSeconds: 120,
-      bash: true,
-      attempts: 30,
-      intervalMs: 2000,
-    });
-    const exitCode = Number(result?.exit_code ?? 1);
-    if (exitCode !== 0) {
-      throw new Error(
-        `failed writing sentinel file: ${result?.stderr ?? `exit_code=${exitCode}`}`,
+    const tempDir = await ensureWorkspaceFileTempDir();
+    const localPath = join(tempDir, `${Date.now()}-${randomUUID()}.txt`);
+    await writeFile(localPath, value, "utf8");
+    try {
+      await runWorkspaceFileCommandWithRetry(
+        ["put", "--workspace", workspaceId, localPath, path],
+        {
+          timeoutSeconds: 120,
+          attempts: 30,
+          intervalMs: 2000,
+          commandTimeoutMs: 180_000,
+        },
       );
+    } finally {
+      try {
+        await rm(localPath, { force: true });
+      } catch {
+        // ignore cleanup errors for temp files
+      }
     }
   };
 
@@ -1408,10 +1452,18 @@ echo $! > "$dir/server.pid"
           if (!project_id || !copy_project_id) {
             throw new Error("missing cross-project copy context");
           }
-          await runWorkspaceExecWithRetry(
-            copy_project_id,
-            [`mkdir -p ${quoteShellSingle(dirname(copyDestPath))}`],
-            { bash: true, timeoutSeconds: 60, attempts: 30, intervalMs: 2000 },
+          await runWorkspaceFileCommandWithRetry(
+            [
+              "mkdir",
+              "--workspace",
+              copy_project_id,
+              dirname(copyDestPath),
+            ],
+            {
+              timeoutSeconds: 60,
+              attempts: 30,
+              intervalMs: 2000,
+            },
           );
           const op = await runCli<{ op_id?: string }>(cli, [
             "workspace",
@@ -1610,10 +1662,18 @@ echo $! > "$dir/server.pid"
           if (!project_id || !copy_project_id) {
             throw new Error("missing cross-host copy context");
           }
-          await runWorkspaceExecWithRetry(
-            copy_project_id,
-            [`mkdir -p ${quoteShellSingle(dirname(copyDestPath))}`],
-            { bash: true, timeoutSeconds: 60, attempts: 30, intervalMs: 2000 },
+          await runWorkspaceFileCommandWithRetry(
+            [
+              "mkdir",
+              "--workspace",
+              copy_project_id,
+              dirname(copyDestPath),
+            ],
+            {
+              timeoutSeconds: 60,
+              attempts: 30,
+              intervalMs: 2000,
+            },
           );
           const op = await runCli<{ op_id?: string }>(cli, [
             "workspace",
