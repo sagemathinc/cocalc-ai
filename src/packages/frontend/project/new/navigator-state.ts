@@ -5,6 +5,10 @@ const SESSION_KEY_PREFIX = "cocalc:navigator:acp-session";
 const CONFIG_KEY_GLOBAL = "cocalc:navigator:acp-config";
 const CONFIG_KEY_PREFIX = "cocalc:navigator:acp-config";
 const TARGET_PROJECT_KEY = "cocalc:navigator:target-project-id";
+const THREAD_KEY_GLOBAL = "cocalc:navigator:selected-thread";
+const THREAD_KEY_PREFIX = "cocalc:navigator:selected-thread";
+export const NAVIGATOR_SELECTED_THREAD_EVENT =
+  "cocalc:navigator:selected-thread-change";
 
 type StoredNavigatorConfig = {
   model?: string;
@@ -18,6 +22,10 @@ function projectSessionKey(projectId: string): string {
 
 function projectConfigKey(projectId: string): string {
   return `${CONFIG_KEY_PREFIX}:${projectId}`;
+}
+
+function projectThreadKey(projectId: string): string {
+  return `${THREAD_KEY_PREFIX}:${projectId}`;
 }
 
 export function loadNavigatorSessionId(projectId: string): string {
@@ -96,3 +104,37 @@ export function clearNavigatorTargetProjectId(): void {
   } catch {}
 }
 
+export function loadNavigatorSelectedThreadKey(
+  projectId: string,
+): string | undefined {
+  try {
+    const globalValue = localStorage.getItem(THREAD_KEY_GLOBAL);
+    if (globalValue?.trim()) {
+      return globalValue.trim();
+    }
+    const legacy = localStorage.getItem(projectThreadKey(projectId));
+    if (legacy?.trim()) {
+      localStorage.setItem(THREAD_KEY_GLOBAL, legacy.trim());
+      return legacy.trim();
+    }
+  } catch {}
+  return undefined;
+}
+
+export function saveNavigatorSelectedThreadKey(value?: string): void {
+  const next = value?.trim() ?? "";
+  try {
+    if (next) {
+      localStorage.setItem(THREAD_KEY_GLOBAL, next);
+    } else {
+      localStorage.removeItem(THREAD_KEY_GLOBAL);
+    }
+    if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+      window.dispatchEvent(
+        new CustomEvent(NAVIGATOR_SELECTED_THREAD_EVENT, {
+          detail: { threadKey: next || undefined },
+        }),
+      );
+    }
+  } catch {}
+}

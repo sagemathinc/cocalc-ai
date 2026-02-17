@@ -32,6 +32,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { useProjectContext } from "../context";
 import { TITLE as SERVERS_TITLE } from "../servers";
 import {
+  AgentsFlyout,
   CollabsFlyout,
   FilesFlyout,
   LogFlyout,
@@ -49,6 +50,7 @@ import { file_options } from "@cocalc/frontend/editor-tmp";
 
 export type FixedTab =
   | "active"
+  | "agents"
   | "files"
   | "new"
   | "log"
@@ -87,6 +89,20 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     flyoutTitle: "File Tabs",
     icon: "edit",
     flyout: ActiveFlyout,
+    noAnonymous: false,
+    noFullPage: true,
+  },
+  agents: {
+    label: defineMessage({
+      id: "project.page.file-tab.agents.label",
+      defaultMessage: "Agents",
+    }),
+    flyoutTitle: defineMessage({
+      id: "project.page.flyout.agents.title",
+      defaultMessage: "Agents",
+    }),
+    icon: "comment",
+    flyout: AgentsFlyout,
     noAnonymous: false,
     noFullPage: true,
   },

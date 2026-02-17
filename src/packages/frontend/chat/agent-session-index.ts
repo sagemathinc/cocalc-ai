@@ -36,6 +36,8 @@ export interface AgentSessionRecord {
   last_error?: string;
 }
 
+type SessionListListener = (records: AgentSessionRecord[]) => void;
+
 let kv: DKV<AgentSessionRecord> | null = null;
 let kvAccountId: string | null = null;
 let kvInFlight: Promise<DKV<AgentSessionRecord>> | null = null;
@@ -92,9 +94,15 @@ export async function listAgentSessionsForProject(opts: {
   project_id: string;
 }): Promise<AgentSessionRecord[]> {
   const store = await getStore(opts.account_id);
-  const prefix = `${opts.project_id}::`;
-  const all = store.getAll();
-  return Object.entries(all)
+  return getProjectSessions(store.getAll(), opts.project_id);
+}
+
+function getProjectSessions(
+  entries: Record<string, AgentSessionRecord>,
+  project_id: string,
+): AgentSessionRecord[] {
+  const prefix = `${project_id}::`;
+  return Object.entries(entries)
     .filter(([key]) => key.startsWith(prefix))
     .map(([, value]) => value as AgentSessionRecord)
     .sort((a, b) => {
@@ -104,3 +112,22 @@ export async function listAgentSessionsForProject(opts: {
     });
 }
 
+export async function watchAgentSessionsForProject(
+  opts: { account_id: string; project_id: string },
+  listener: SessionListListener,
+): Promise<() => void> {
+  const store = await getStore(opts.account_id);
+  const prefix = `${opts.project_id}::`;
+  const emit = () => {
+    listener(getProjectSessions(store.getAll(), opts.project_id));
+  };
+  const onChange = (changeEvent?: { key?: string }) => {
+    const key = changeEvent?.key;
+    if (typeof key !== "string" || key.startsWith(prefix)) {
+      emit();
+    }
+  };
+  store.on("change", onChange);
+  emit();
+  return () => store.removeListener("change", onChange);
+}

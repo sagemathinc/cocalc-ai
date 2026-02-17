@@ -14,6 +14,11 @@ import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import {
+  NAVIGATOR_SELECTED_THREAD_EVENT,
+  loadNavigatorSelectedThreadKey,
+  saveNavigatorSelectedThreadKey,
+} from "./navigator-state";
 
 interface NavigatorShellProps {
   project_id: string;
@@ -54,6 +59,18 @@ function latestThreadKey(actions?: ChatActions): string | null {
   return bestKey;
 }
 
+function chooseThreadKey(
+  actions: ChatActions,
+  preferredThreadKey?: string | null,
+): string | null {
+  const index = actions.messageCache?.getThreadIndex();
+  if (!index?.size) return null;
+  if (preferredThreadKey && index.has(preferredThreadKey)) {
+    return preferredThreadKey;
+  }
+  return latestThreadKey(actions);
+}
+
 function parseDateISOString(value: unknown): string | undefined {
   if (!value) return undefined;
   const d = value instanceof Date ? value : new Date(value as string | number);
@@ -86,6 +103,9 @@ export function NavigatorShell({
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
   const [cacheVersion, setCacheVersion] = useState(0);
   const lastIndexedValueRef = useRef<string>("");
+  const preferredThreadKeyRef = useRef<string | undefined>(
+    loadNavigatorSelectedThreadKey(project_id),
+  );
 
   const homeDirectory = useMemo(() => {
     if (!lite) {
@@ -140,13 +160,52 @@ export function NavigatorShell({
   useEffect(() => {
     if (!actions?.messageCache) return;
     const onVersion = () => {
-      setSelectedThreadKey((current) => current ?? latestThreadKey(actions));
+      const preferred = preferredThreadKeyRef.current;
+      setSelectedThreadKey((current) => {
+        const index = actions.messageCache?.getThreadIndex();
+        if (current && index?.has(current)) {
+          return current;
+        }
+        return chooseThreadKey(actions, preferred);
+      });
+      preferredThreadKeyRef.current = undefined;
       setCacheVersion((v) => v + 1);
     };
     actions.messageCache.on("version", onVersion);
     onVersion();
     return () => {
       actions.messageCache?.removeListener("version", onVersion);
+    };
+  }, [actions]);
+
+  useEffect(() => {
+    saveNavigatorSelectedThreadKey(selectedThreadKey ?? undefined);
+  }, [selectedThreadKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onThreadRequested = (evt: Event) => {
+      const threadKey =
+        (evt as CustomEvent<{ threadKey?: string }>).detail?.threadKey?.trim() ||
+        null;
+      preferredThreadKeyRef.current = threadKey ?? undefined;
+      if (!actions) {
+        if (threadKey) {
+          setSelectedThreadKey(threadKey);
+        }
+        return;
+      }
+      setSelectedThreadKey(chooseThreadKey(actions, threadKey));
+    };
+    window.addEventListener(
+      NAVIGATOR_SELECTED_THREAD_EVENT,
+      onThreadRequested as EventListener,
+    );
+    return () => {
+      window.removeEventListener(
+        NAVIGATOR_SELECTED_THREAD_EVENT,
+        onThreadRequested as EventListener,
+      );
     };
   }, [actions]);
 

@@ -2928,6 +2928,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         this.set_active_tab("search", { change_history: change_history });
         break;
 
+      case "agents":
+        this.set_active_tab("home", { change_history: change_history });
+        this.setFlyoutExpanded("agents", true, false);
+        break;
+
       case "info":
         this.set_active_tab("info", { change_history: change_history });
         break;
