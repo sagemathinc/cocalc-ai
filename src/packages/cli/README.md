@@ -8,6 +8,18 @@ Commander-based CoCalc CLI (network transport via conat).
 pnpm --dir src/packages/cli build
 ```
 
+## Bundle + SEA
+
+```bash
+pnpm --dir src/packages/cli build:bundle
+pnpm --dir src/packages/cli sea
+```
+
+SEA output binary:
+
+- `src/packages/cli/build/sea/cocalc-cli-<version>-<arch>-<os>`
+- symlink: `src/packages/cli/build/sea/cocalc-cli`
+
 ## Run
 
 ```bash

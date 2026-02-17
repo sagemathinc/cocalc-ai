@@ -277,6 +277,9 @@ importers:
       '@types/node':
         specifier: ^22.10.10
         version: 22.19.1
+      '@vercel/ncc':
+        specifier: ^0.38.4
+        version: 0.38.4
 
   cloud:
     dependencies:

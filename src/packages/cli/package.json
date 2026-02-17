@@ -8,11 +8,15 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "build": "pnpm exec tsc --build",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "clean": "rm -rf dist build tsconfig.tsbuildinfo sea/sea-prep.blob sea/cocalc.js sea/sea.term",
+    "build:bundle": "bash ./sea/build-bundle.sh",
+    "run:bundle": "node ./build/bundle/index.js",
+    "sea": "bash ./sea/build-sea.sh",
     "test": "pnpm build && node --test dist/core/*.test.js"
   },
   "files": [
     "dist/**",
+    "sea/**",
     "package.json",
     "README.md"
   ],
@@ -25,7 +29,8 @@
     "commander": "^14.0.1"
   },
   "devDependencies": {
-    "@types/node": "^22.10.10"
+    "@types/node": "^22.10.10",
+    "@vercel/ncc": "^0.38.4"
   },
   "repository": {
     "type": "git",
