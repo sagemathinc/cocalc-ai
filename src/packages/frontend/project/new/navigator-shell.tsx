@@ -1,11 +1,18 @@
 import { Alert, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useActions,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { Loading } from "@cocalc/frontend/components";
 import { lite } from "@cocalc/frontend/lite";
 import { initChat, remove as removeChat } from "@cocalc/frontend/chat/register";
+import type { ProjectActions } from "@cocalc/frontend/project_actions";
 import SideChat from "@cocalc/frontend/chat/side-chat";
+import { path_split } from "@cocalc/util/misc";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 
 interface NavigatorShellProps {
   project_id: string;
@@ -17,11 +24,18 @@ function sanitizeAccountId(accountId: string): string {
 }
 
 function navigatorChatPath(accountId?: string): string {
-  if (lite) {
-    return ".local/share/cocalc/navigator.chat";
-  }
+  if (lite) return ".local/share/cocalc/navigator.chat";
   const key = sanitizeAccountId(accountId?.trim() || "unknown-account");
   return `.local/share/cocalc/navigator-${key}.chat`;
+}
+
+function getLiteHomeDirectory(availableFeatures: any): string {
+  const homeFromFeatures =
+    availableFeatures?.homeDirectory ?? availableFeatures?.get?.("homeDirectory");
+  if (typeof homeFromFeatures === "string" && homeFromFeatures.length > 0) {
+    return normalizeAbsolutePath(homeFromFeatures);
+  }
+  return "/";
 }
 
 function latestThreadKey(actions?: ChatActions): string | null {
@@ -45,36 +59,62 @@ export function NavigatorShell({
 }: NavigatorShellProps) {
   void defaultTargetProjectId;
 
+  const projectActions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
+  const available_features = useTypedRedux({ project_id }, "available_features");
   const [actions, setActions] = useState<ChatActions | null>(null);
   const [error, setError] = useState<string>("");
   const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+
+  const homeDirectory = useMemo(() => {
+    if (!lite) {
+      return "/root";
+    }
+    return getLiteHomeDirectory(available_features);
+  }, [available_features]);
 
   const navigatorPath = useMemo(() => {
     if (!lite && typeof account_id !== "string") {
       return "";
     }
-    return navigatorChatPath(account_id);
-  }, [account_id]);
+    return normalizeAbsolutePath(navigatorChatPath(account_id), homeDirectory);
+  }, [account_id, homeDirectory]);
 
   useEffect(() => {
-    if (!navigatorPath) return;
+    if (!navigatorPath || !projectActions) return;
+    let mounted = true;
+    let chatActions: ChatActions | undefined;
     setError("");
-    let chatActions: ChatActions;
-    try {
-      chatActions = initChat(project_id, navigatorPath);
-    } catch (err) {
-      setActions(null);
-      setError(`${err}`);
-      return;
-    }
-    setActions(chatActions);
+    setActions(null);
     setSelectedThreadKey(null);
-    return () => {
-      setActions((current) => (current === chatActions ? null : current));
-      removeChat(navigatorPath, redux, project_id);
+
+    const run = async () => {
+      try {
+        const fs = projectActions.fs();
+        await fs.mkdir(path_split(navigatorPath).head, { recursive: true });
+        if (!mounted) return;
+        chatActions = initChat(project_id, navigatorPath);
+        if (!mounted) {
+          removeChat(navigatorPath, redux, project_id);
+          return;
+        }
+        setActions(chatActions);
+      } catch (err) {
+        if (!mounted) return;
+        setActions(null);
+        setError(`${err}`);
+      }
     };
-  }, [project_id, navigatorPath]);
+    void run();
+
+    return () => {
+      mounted = false;
+      if (chatActions) {
+        setActions((current) => (current === chatActions ? null : current));
+        removeChat(navigatorPath, redux, project_id);
+      }
+    };
+  }, [projectActions, project_id, navigatorPath]);
 
   useEffect(() => {
     if (!actions?.messageCache) return;
@@ -102,6 +142,10 @@ export function NavigatorShell({
   }, [selectedThreadKey]);
 
   if (!navigatorPath) {
+    return <Loading theme="medium" />;
+  }
+
+  if (!projectActions) {
     return <Loading theme="medium" />;
   }
 

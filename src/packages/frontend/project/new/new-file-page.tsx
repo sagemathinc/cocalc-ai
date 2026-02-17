@@ -59,8 +59,6 @@ import {
 } from "./launcher-preferences";
 import { LauncherCustomizeModal } from "./launcher-customize-modal";
 import { NamedServerPanel } from "../named-server-panel";
-import { lite } from "@cocalc/frontend/lite";
-import { NavigatorShell } from "./navigator-shell";
 
 const CREATE_MSG = defineMessage({
   id: "project.new.new-file-page.create.title",
@@ -169,9 +167,6 @@ export default function NewFilePage(props: Props) {
   const userLauncherLayers = getUserLauncherLayers(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
     project_id,
-  );
-  const navigator_target_project_id = other_settings?.get?.(
-    "navigator_target_project_id",
   );
   const inheritedForProjectUser = mergeLauncherSettings({
     globalDefaults: siteLauncherDefaults,
@@ -718,16 +713,6 @@ export default function NewFilePage(props: Props) {
               </Button>
             )}
           </Space>
-          {lite ? (
-            <NavigatorShell
-              project_id={project_id}
-              defaultTargetProjectId={
-                typeof navigator_target_project_id === "string"
-                  ? navigator_target_project_id
-                  : undefined
-              }
-            />
-          ) : null}
         </Col>
       </Row>
       <LauncherCustomizeModal
