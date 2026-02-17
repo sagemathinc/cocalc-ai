@@ -3,12 +3,16 @@
   "version": "0.1.1",
   "description": "CoCalc command line interface",
   "bin": {
-    "cocalc": "./dist/bin/cocalc.js"
+    "cocalc": "./dist/bin/cocalc.js",
+    "cocalc-cli": "./dist/bin/cocalc.js",
+    "cli": "./dist/bin/cocalc.js"
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "build": "pnpm exec tsc --build",
+    "build": "pnpm exec tsc --build && pnpm run link:bins",
     "clean": "rm -rf dist build tsconfig.tsbuildinfo sea/sea-prep.blob sea/cocalc.js sea/sea.term",
+    "link:bins": "node ./scripts/link-bins.js",
+    "postinstall": "pnpm run link:bins",
     "build:bundle": "bash ./sea/build-bundle.sh",
     "run:bundle": "node ./build/bundle/index.js",
     "sea": "bash ./sea/build-sea.sh",

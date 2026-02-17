@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
+import { join } from "node:path";
 import { URL } from "node:url";
 import { AsciiTable3 } from "ascii-table3";
 import { Command } from "commander";
@@ -127,6 +128,7 @@ type LroStatusSummary = {
 const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expired"]);
 const LRO_SCOPE_TYPES: LroScopeType[] = ["project", "account", "host", "hub"];
 const MAX_TRANSPORT_TIMEOUT_MS = 30_000;
+const WORKSPACE_CONTEXT_FILENAME = ".cocalc-workspace";
 
 function cliDebug(...args: unknown[]): void {
   if (!cliDebugEnabled) return;
@@ -141,6 +143,31 @@ function parseLroScopeType(value: string): LroScopeType {
   throw new Error(
     `invalid --scope-type '${value}'; expected one of: ${LRO_SCOPE_TYPES.join(", ")}`,
   );
+}
+
+type WorkspaceContextRecord = {
+  workspace_id: string;
+  title?: string;
+  set_at?: string;
+};
+
+function workspaceContextPath(): string {
+  return join(process.cwd(), WORKSPACE_CONTEXT_FILENAME);
+}
+
+function saveWorkspaceContext(context: WorkspaceContextRecord): void {
+  writeFileSync(
+    workspaceContextPath(),
+    `${JSON.stringify({ ...context, set_at: new Date().toISOString() }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+function clearWorkspaceContext(): boolean {
+  const path = workspaceContextPath();
+  if (!existsSync(path)) return false;
+  unlinkSync(path);
+  return true;
 }
 
 type ProductCommand = "plus" | "launchpad";
@@ -1503,6 +1530,62 @@ workspace
         workspace_id: workspaceId,
         title: name ?? "New Workspace",
         host_id: host?.id ?? null,
+      };
+    });
+  });
+
+workspace
+  .command("rename <workspace> <title>")
+  .description("rename a workspace")
+  .action(async (workspaceIdentifier: string, title: string, command: Command) => {
+    await withContext(command, "workspace rename", async (ctx) => {
+      const nextTitle = title.trim();
+      if (!nextTitle) {
+        throw new Error("title must be non-empty");
+      }
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      await hubCallAccount(ctx, "db.userQuery", [
+        {
+          query: {
+            projects: [{ project_id: ws.project_id, title: nextTitle }],
+          },
+          options: [],
+        },
+      ]);
+      return {
+        workspace_id: ws.project_id,
+        title: nextTitle,
+      };
+    });
+  });
+
+workspace
+  .command("use <workspace>")
+  .description("set default workspace for this directory")
+  .action(async (workspaceIdentifier: string, command: Command) => {
+    await withContext(command, "workspace use", async (ctx) => {
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      saveWorkspaceContext({
+        workspace_id: ws.project_id,
+        title: ws.title,
+      });
+      return {
+        context_path: workspaceContextPath(),
+        workspace_id: ws.project_id,
+        title: ws.title,
+      };
+    });
+  });
+
+workspace
+  .command("unuse")
+  .description("clear default workspace for this directory")
+  .action(async (command: Command) => {
+    await runLocalCommand(command, "workspace unuse", async () => {
+      const removed = clearWorkspaceContext();
+      return {
+        context_path: workspaceContextPath(),
+        removed,
       };
     });
   });

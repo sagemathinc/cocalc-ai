@@ -41,6 +41,8 @@ pnpm --dir src/packages/cli sea
 
 ```bash
 node src/packages/cli/dist/bin/cocalc.js --help
+pnpm --dir src/packages/cli exec cli --help
+pnpm --dir src/packages/cli exec cocalc-cli --help
 ```
 
 ## Auth
@@ -74,6 +76,9 @@ an admin account for smoke-test workflows.
 - `plus ...` (forward to `cocalc-plus`; installs if missing)
 - `launchpad ...` (forward to `cocalc-launchpad`; installs if missing)
 - `workspace create`
+- `workspace rename`
+- `workspace use`
+- `workspace unuse`
 - `workspace list`
 - `workspace start --wait`
 - `workspace stop`
