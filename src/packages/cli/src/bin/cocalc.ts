@@ -14,6 +14,7 @@ import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
+import type { LroScopeType, LroSummary as HubLroSummary } from "@cocalc/conat/hub/api/lro";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
 import {
@@ -117,18 +118,29 @@ type LroStatus = {
   timedOut?: boolean;
 };
 
-type LroSummary = {
+type LroStatusSummary = {
   op_id: string;
   status: string;
   error?: string | null;
 };
 
 const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expired"]);
+const LRO_SCOPE_TYPES: LroScopeType[] = ["project", "account", "host", "hub"];
 const MAX_TRANSPORT_TIMEOUT_MS = 30_000;
 
 function cliDebug(...args: unknown[]): void {
   if (!cliDebugEnabled) return;
   console.error("[cocalc:cli]", ...args);
+}
+
+function parseLroScopeType(value: string): LroScopeType {
+  const normalized = value.trim().toLowerCase();
+  if (LRO_SCOPE_TYPES.includes(normalized as LroScopeType)) {
+    return normalized as LroScopeType;
+  }
+  throw new Error(
+    `invalid --scope-type '${value}'; expected one of: ${LRO_SCOPE_TYPES.join(", ")}`,
+  );
 }
 
 type ProductCommand = "plus" | "launchpad";
@@ -733,6 +745,31 @@ function toIso(value: unknown): string | null {
   return String(value);
 }
 
+function serializeLroSummary(summary: HubLroSummary): Record<string, unknown> {
+  return {
+    op_id: summary.op_id,
+    kind: summary.kind,
+    scope_type: summary.scope_type,
+    scope_id: summary.scope_id,
+    status: summary.status,
+    error: summary.error ?? null,
+    created_by: summary.created_by ?? null,
+    owner_type: summary.owner_type ?? null,
+    owner_id: summary.owner_id ?? null,
+    attempt: summary.attempt,
+    progress_summary: summary.progress_summary ?? null,
+    result: summary.result ?? null,
+    input: summary.input ?? null,
+    created_at: toIso(summary.created_at),
+    started_at: toIso(summary.started_at),
+    finished_at: toIso(summary.finished_at),
+    updated_at: toIso(summary.updated_at),
+    expires_at: toIso(summary.expires_at),
+    dismissed_at: toIso(summary.dismissed_at),
+    dismissed_by: summary.dismissed_by ?? null,
+  };
+}
+
 function workspaceState(value: WorkspaceRow["state"]): string {
   return typeof value?.state === "string" ? value.state : "";
 }
@@ -860,7 +897,7 @@ async function waitForLro(
   let lastError: string | null | undefined;
 
   while (Date.now() - started <= timeoutMs) {
-    const summary = await hubCallAccount<LroSummary | undefined>(ctx, "lro.get", [{ op_id: opId }]);
+    const summary = await hubCallAccount<LroStatusSummary | undefined>(ctx, "lro.get", [{ op_id: opId }]);
     const status = summary?.status ?? "unknown";
     lastStatus = status;
     lastError = summary?.error;
@@ -905,6 +942,35 @@ async function waitForProjectPlacement(
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   return false;
+}
+
+async function waitForWorkspaceNotRunning(
+  ctx: CommandContext,
+  projectId: string,
+  {
+    timeoutMs,
+    pollMs,
+  }: {
+    timeoutMs: number;
+    pollMs: number;
+  },
+): Promise<{ ok: boolean; state: string }> {
+  const started = Date.now();
+  let lastState = "";
+  while (Date.now() - started <= timeoutMs) {
+    const rows = await queryProjects({
+      ctx,
+      project_id: projectId,
+      limit: 1,
+    });
+    const state = workspaceState(rows[0]?.state);
+    lastState = state;
+    if (state !== "running") {
+      return { ok: true, state };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return { ok: false, state: lastState };
 }
 
 async function runSsh(args: string[]): Promise<number> {
@@ -1486,6 +1552,92 @@ workspace
         }
         if (summary.status !== "succeeded") {
           throw new Error(`start failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
+        }
+        return {
+          workspace_id: ws.project_id,
+          op_id: op.op_id,
+          status: summary.status,
+        };
+      }
+
+      return {
+        workspace_id: ws.project_id,
+        op_id: op.op_id,
+        status: "queued",
+      };
+    });
+  });
+
+workspace
+  .command("stop <workspace>")
+  .description("stop a workspace")
+  .option("--wait", "wait until the workspace is not running")
+  .action(async (workspaceIdentifier: string, opts: { wait?: boolean }, command: Command) => {
+    await withContext(command, "workspace stop", async (ctx) => {
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      await hubCallAccount<void>(ctx, "projects.stop", [
+        {
+          project_id: ws.project_id,
+        },
+      ]);
+
+      if (opts.wait) {
+        const wait = await waitForWorkspaceNotRunning(ctx, ws.project_id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (!wait.ok) {
+          throw new Error(
+            `timeout waiting for workspace to stop (workspace=${ws.project_id}, last_state=${wait.state || "running"})`,
+          );
+        }
+        return {
+          workspace_id: ws.project_id,
+          status: wait.state || "stopped",
+        };
+      }
+
+      return {
+        workspace_id: ws.project_id,
+        status: "stop_requested",
+      };
+    });
+  });
+
+workspace
+  .command("restart <workspace>")
+  .description("restart a workspace")
+  .option("--wait", "wait for restart completion")
+  .action(async (workspaceIdentifier: string, opts: { wait?: boolean }, command: Command) => {
+    await withContext(command, "workspace restart", async (ctx) => {
+      const ws = await resolveWorkspace(ctx, workspaceIdentifier);
+      await hubCallAccount<void>(ctx, "projects.stop", [
+        {
+          project_id: ws.project_id,
+        },
+      ]);
+
+      const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.start", [
+        {
+          project_id: ws.project_id,
+          wait: false,
+        },
+      ]);
+
+      if (opts.wait) {
+        const summary = await waitForLro(ctx, op.op_id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (summary.timedOut) {
+          throw new Error(
+            `timeout waiting for restart op ${op.op_id}; last status=${summary.status}`,
+          );
+        }
+        if (summary.status !== "succeeded") {
+          throw new Error(
+            `restart failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+          );
         }
         return {
           workspace_id: ws.project_id,
@@ -2148,6 +2300,139 @@ proxy
       });
     },
   );
+
+const op = program.command("op").description("long-running operation management");
+
+op
+  .command("list")
+  .description("list operations for a scope")
+  .option("--scope-type <type>", "scope type: project|account|host|hub")
+  .option("--scope-id <id>", "scope id")
+  .option("--workspace <workspace>", "workspace id or name")
+  .option("--host <host>", "host id or name")
+  .option("--include-completed", "include completed operations")
+  .option("--limit <n>", "max rows", "100")
+  .action(
+    async (
+      opts: {
+        scopeType?: string;
+        scopeId?: string;
+        workspace?: string;
+        host?: string;
+        includeCompleted?: boolean;
+        limit?: string;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "op list", async (ctx) => {
+        const haveExplicitScope = !!opts.scopeType || !!opts.scopeId;
+        const haveWorkspace = !!opts.workspace;
+        const haveHost = !!opts.host;
+        const scopeModes = Number(haveExplicitScope) + Number(haveWorkspace) + Number(haveHost);
+        if (scopeModes > 1) {
+          throw new Error(
+            "use only one scope selector: (--scope-type + --scope-id) OR --workspace OR --host",
+          );
+        }
+
+        let scope_type: LroScopeType;
+        let scope_id: string;
+
+        if (haveWorkspace) {
+          const ws = await resolveWorkspace(ctx, opts.workspace!);
+          scope_type = "project";
+          scope_id = ws.project_id;
+        } else if (haveHost) {
+          const h = await resolveHost(ctx, opts.host!);
+          scope_type = "host";
+          scope_id = h.id;
+        } else if (haveExplicitScope) {
+          if (!opts.scopeType || !opts.scopeId) {
+            throw new Error("--scope-type and --scope-id must be used together");
+          }
+          scope_type = parseLroScopeType(opts.scopeType);
+          scope_id = opts.scopeId;
+        } else {
+          scope_type = "account";
+          scope_id = ctx.accountId;
+        }
+
+        const rows = await hubCallAccount<HubLroSummary[]>(ctx, "lro.list", [
+          {
+            scope_type,
+            scope_id,
+            include_completed: !!opts.includeCompleted,
+          },
+        ]);
+        const limitNum = Math.max(1, Math.min(10000, Number(opts.limit ?? "100") || 100));
+        return (rows ?? [])
+          .slice(0, limitNum)
+          .map((summary) => serializeLroSummary(summary));
+      });
+    },
+  );
+
+op
+  .command("get <op-id>")
+  .description("get one operation by id")
+  .action(async (opId: string, command: Command) => {
+    await withContext(command, "op get", async (ctx) => {
+      const summary = await hubCallAccount<HubLroSummary | undefined>(ctx, "lro.get", [
+        { op_id: opId },
+      ]);
+      if (!summary) {
+        throw new Error(`operation '${opId}' not found`);
+      }
+      return serializeLroSummary(summary);
+    });
+  });
+
+op
+  .command("wait <op-id>")
+  .description("wait until an operation reaches a terminal state")
+  .action(async (opId: string, command: Command) => {
+    await withContext(command, "op wait", async (ctx) => {
+      const waited = await waitForLro(ctx, opId, {
+        timeoutMs: ctx.timeoutMs,
+        pollMs: ctx.pollMs,
+      });
+      if (waited.timedOut) {
+        throw new Error(
+          `timeout waiting for operation ${opId}; last status=${waited.status}`,
+        );
+      }
+      const summary = await hubCallAccount<HubLroSummary | undefined>(ctx, "lro.get", [
+        { op_id: opId },
+      ]);
+      if (!summary) {
+        return {
+          op_id: opId,
+          status: waited.status,
+          error: waited.error ?? null,
+        };
+      }
+      return serializeLroSummary(summary);
+    });
+  });
+
+op
+  .command("cancel <op-id>")
+  .description("cancel an operation")
+  .action(async (opId: string, command: Command) => {
+    await withContext(command, "op cancel", async (ctx) => {
+      await hubCallAccount<void>(ctx, "lro.cancel", [{ op_id: opId }]);
+      const summary = await hubCallAccount<HubLroSummary | undefined>(ctx, "lro.get", [
+        { op_id: opId },
+      ]);
+      if (!summary) {
+        return {
+          op_id: opId,
+          status: "canceled",
+        };
+      }
+      return serializeLroSummary(summary);
+    });
+  });
 
 const account = program.command("account").description("account operations");
 const accountApiKey = account.command("api-key").description("manage account API keys");

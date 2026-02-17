@@ -76,6 +76,8 @@ an admin account for smoke-test workflows.
 - `workspace create`
 - `workspace list`
 - `workspace start --wait`
+- `workspace stop`
+- `workspace restart --wait`
 - `workspace exec`
 - `workspace ssh`
 - `workspace ssh --check`
@@ -88,3 +90,7 @@ an admin account for smoke-test workflows.
 - `host issue-http-token`
 - `workspace proxy url`
 - `workspace proxy curl`
+- `op list`
+- `op get`
+- `op wait`
+- `op cancel`
