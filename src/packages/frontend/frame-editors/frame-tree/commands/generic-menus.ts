@@ -41,6 +41,7 @@ addMenus({
     groups: [
       "zoom",
       "scroll",
+      "minimap",
       "fold",
       "frame-control",
       "show-frames",

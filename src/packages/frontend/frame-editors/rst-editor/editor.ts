@@ -40,6 +40,12 @@ const cm: EditorDescription = {
     "redo",
     "reload",
     "settings",
+    "toggle_minimap",
+    "show_minimap",
+    "hide_minimap",
+    "increase_minimap_width",
+    "decrease_minimap_width",
+    "minimap_settings",
   ]),
 } as const;
 
