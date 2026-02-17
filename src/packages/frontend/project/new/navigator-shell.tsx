@@ -280,8 +280,13 @@ export function NavigatorShell({
   ]);
 
   const desc = useMemo(() => {
-    if (!selectedThreadKey) return undefined;
-    return { "data-selectedThreadKey": selectedThreadKey };
+    const data: Record<string, any> = {
+      "data-preferLatestThread": true,
+    };
+    if (selectedThreadKey) {
+      data["data-selectedThreadKey"] = selectedThreadKey;
+    }
+    return data;
   }, [selectedThreadKey]);
 
   if (!navigatorPath) {
