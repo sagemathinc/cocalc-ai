@@ -118,6 +118,7 @@ export class ChatStreamWriter {
   private events: AcpStreamMessage[] = [];
   private usage: AcpStreamUsage | null = null;
   private content = "";
+  private lastErrorText: string | null = null;
   private threadId: string | null = null;
   private seq = 0;
   private finished = false;
@@ -375,29 +376,37 @@ export class ChatStreamWriter {
     }
     if (payload.type === "summary") {
       const finishedFromError = this.finishedBy === "error";
-      if (!finishedFromError) {
-        const latestMessage = getLatestMessageText(this.events);
-        const candidate =
-          (latestMessage && latestMessage.trim().length > 0
-            ? latestMessage
-            : payload.finalResponse) ??
-          this.interruptedMessage ??
-          this.content;
-        if (candidate != null) {
-          if (
-            this.content &&
-            this.content.length > 0 &&
-            candidate.length > 0 &&
-            candidate !== this.content &&
-            !candidate.startsWith(this.content)
-          ) {
-            // Multiple summaries can arrive; append new text if it doesn't already
-            // include the existing accumulated content.
-            this.content = `${this.content}${candidate}`;
-          } else {
-            this.content = candidate;
-          }
+      const latestMessage = getLatestMessageText(this.events);
+      const hasStreamedMessage =
+        typeof latestMessage === "string" && latestMessage.trim().length > 0;
+      const candidate =
+        (hasStreamedMessage
+          ? latestMessage
+          : payload.finalResponse) ??
+        this.interruptedMessage ??
+        this.content;
+      const shouldApplySummary =
+        !finishedFromError ||
+        (hasStreamedMessage &&
+          typeof candidate === "string" &&
+          candidate.trim().length > 0 &&
+          !looksLikeErrorEcho(candidate, this.lastErrorText));
+      if (candidate != null && shouldApplySummary) {
+        if (
+          this.content &&
+          this.content.length > 0 &&
+          candidate.length > 0 &&
+          candidate !== this.content &&
+          !candidate.startsWith(this.content) &&
+          this.finishedBy !== "error"
+        ) {
+          // Multiple summaries can arrive; append new text if it doesn't already
+          // include the existing accumulated content.
+          this.content = `${this.content}${candidate}`;
+        } else {
+          this.content = candidate;
         }
+        this.finishedBy = "summary";
       }
       if (payload.usage) {
         this.usage = payload.usage;
@@ -409,15 +418,13 @@ export class ChatStreamWriter {
       }
       clearAcpPayloads(this.metadata);
       this.finished = true;
-      if (!finishedFromError) {
-        this.finishedBy = "summary";
-      }
       void this.timeTravel?.finalizeTurn(this.metadata.message_date);
       void this.persistLog();
       return;
     }
     if (payload.type === "error") {
       this.content = `\n\n<span style='color:#b71c1c'>${payload.error}</span>\n\n`;
+      this.lastErrorText = payload.error;
       clearAcpPayloads(this.metadata);
       this.finished = true;
       this.finishedBy = "error";
@@ -642,6 +649,26 @@ function getLatestMessageText(events: AcpStreamMessage[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function normalizeSummaryText(text: string | null | undefined): string {
+  if (typeof text !== "string") return "";
+  return text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function looksLikeErrorEcho(
+  summaryText: string,
+  errorText: string | null | undefined,
+): boolean {
+  const summary = normalizeSummaryText(summaryText);
+  const error = normalizeSummaryText(errorText);
+  if (!summary || !error) return false;
+  if (summary === error) return true;
+  return summary.includes(error) || error.includes(summary);
 }
 
 type ExecutorAdapters = {
