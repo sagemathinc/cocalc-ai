@@ -1,526 +1,142 @@
-import {
-  Alert,
-  Button,
-  Collapse,
-  Input,
-  Select,
-  Space,
-  Tag,
-  Typography,
-} from "antd";
-import { useEffect, useRef, useState } from "react";
-import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { CodexActivity } from "@cocalc/frontend/chat/codex-activity";
-import {
-  DEFAULT_CODEX_MODELS,
-  type CodexReasoningId,
-  type CodexSessionConfig,
-  type CodexSessionMode,
-} from "@cocalc/util/ai/codex";
-import {
-  clearNavigatorTargetProjectId,
-  loadNavigatorConfig,
-  loadNavigatorSessionId,
-  loadNavigatorTargetProjectId,
-  saveNavigatorConfig,
-  saveNavigatorSessionId,
-  saveNavigatorTargetProjectId,
-} from "./navigator-state";
-
-type TurnStatus = "running" | "completed" | "failed" | "interrupted";
-
-type TurnEntry = {
-  id: string;
-  prompt: string;
-  status: TurnStatus;
-  startedAt: string;
-  finishedAt?: string;
-  elapsedMs?: number;
-  sessionIdAtStart?: string;
-  sessionIdAtEnd?: string;
-  requestConfig?: CodexSessionConfig;
-  finalResponse?: string;
-  error?: string;
-  events: AcpStreamMessage[];
-};
-
-const SESSION_MODE_OPTIONS: Array<{
-  value: CodexSessionMode;
-  label: string;
-}> = [
-  { value: "read-only", label: "Read only" },
-  { value: "workspace-write", label: "Workspace write" },
-  { value: "full-access", label: "Full access" },
-];
-const NAVIGATOR_MODELS = DEFAULT_CODEX_MODELS.filter((m) =>
-  m.name.includes("codex"),
-);
-
-function defaultModelName(): string {
-  return NAVIGATOR_MODELS[0]?.name ?? DEFAULT_CODEX_MODELS[0]?.name ?? "";
-}
-
-function defaultReasoningForModel(modelName: string): CodexReasoningId | undefined {
-  const model = NAVIGATOR_MODELS.find((m) => m.name === modelName);
-  const reasoning =
-    model?.reasoning?.find((entry) => entry.default)?.id ??
-    model?.reasoning?.[0]?.id;
-  return reasoning;
-}
-
-function prettify(value: unknown): string {
-  return JSON.stringify(value, null, 2);
-}
-
-function formatElapsed(ms?: number): string {
-  if (ms == null) return "n/a";
-  if (ms < 1000) return `${ms} ms`;
-  if (ms < 10_000) return `${(ms / 1000).toFixed(2)} s`;
-  return `${(ms / 1000).toFixed(1)} s`;
-}
+import { Alert, Typography } from "antd";
+import { useEffect, useMemo, useState } from "react";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import type { ChatActions } from "@cocalc/frontend/chat/actions";
+import { Loading } from "@cocalc/frontend/components";
+import { lite } from "@cocalc/frontend/lite";
+import { initChat, remove as removeChat } from "@cocalc/frontend/chat/register";
+import SideChat from "@cocalc/frontend/chat/side-chat";
 
 interface NavigatorShellProps {
   project_id: string;
   defaultTargetProjectId?: string;
 }
 
+function sanitizeAccountId(accountId: string): string {
+  return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
+}
+
+function navigatorChatPath(accountId?: string): string {
+  if (lite) {
+    return ".local/share/cocalc/navigator.chat";
+  }
+  const key = sanitizeAccountId(accountId?.trim() || "unknown-account");
+  return `.local/share/cocalc/navigator-${key}.chat`;
+}
+
+function latestThreadKey(actions?: ChatActions): string | null {
+  const index = actions?.messageCache?.getThreadIndex();
+  if (!index?.size) return null;
+  let bestKey: string | null = null;
+  let bestTime = -Infinity;
+  for (const entry of index.values()) {
+    const newest = Number(entry?.newestTime ?? -Infinity);
+    if (newest > bestTime && typeof entry?.key === "string") {
+      bestTime = newest;
+      bestKey = entry.key;
+    }
+  }
+  return bestKey;
+}
+
 export function NavigatorShell({
   project_id,
   defaultTargetProjectId,
 }: NavigatorShellProps) {
-  const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [turns, setTurns] = useState<TurnEntry[]>([]);
-  const [sessionId, setSessionId] = useState<string>("");
-  const [targetProjectId, setTargetProjectId] = useState<string>(project_id);
-  const [model, setModel] = useState<string>(defaultModelName());
-  const [reasoning, setReasoning] = useState<CodexReasoningId | undefined>(
-    defaultReasoningForModel(defaultModelName()),
-  );
-  const [sessionMode, setSessionMode] = useState<CodexSessionMode>("read-only");
-  const [showAdvancedTrace, setShowAdvancedTrace] = useState(false);
-  const stopRequestedRef = useRef(false);
-  const latestTurn = turns[0];
+  void defaultTargetProjectId;
+
+  const account_id = useTypedRedux("account", "account_id");
+  const [actions, setActions] = useState<ChatActions | null>(null);
+  const [error, setError] = useState<string>("");
+  const [selectedThreadKey, setSelectedThreadKey] = useState<string | null>(null);
+
+  const navigatorPath = useMemo(() => {
+    if (!lite && typeof account_id !== "string") {
+      return "";
+    }
+    return navigatorChatPath(account_id);
+  }, [account_id]);
 
   useEffect(() => {
-    const loadedSession = loadNavigatorSessionId(project_id);
-    setSessionId(loadedSession);
-    const loadedTarget = loadNavigatorTargetProjectId(
-      defaultTargetProjectId?.trim() || project_id,
-    );
-    setTargetProjectId(loadedTarget);
-    const cfg = loadNavigatorConfig(project_id);
-    if (!cfg) return;
-    const model0 =
-      typeof cfg.model === "string" && cfg.model.trim()
-        ? cfg.model
-        : defaultModelName();
-    const sessionMode0 =
-      cfg.sessionMode === "read-only" ||
-      cfg.sessionMode === "workspace-write" ||
-      cfg.sessionMode === "full-access"
-        ? cfg.sessionMode
-        : "read-only";
-    const modelInfo = NAVIGATOR_MODELS.find((m) => m.name === model0);
-    const reasoning0 = modelInfo?.reasoning?.some((entry) => entry.id === cfg.reasoning)
-      ? cfg.reasoning
-      : defaultReasoningForModel(model0);
-    setModel(model0);
-    setReasoning(reasoning0);
-    setSessionMode(sessionMode0);
-  }, [project_id, defaultTargetProjectId]);
-
-  function saveSessionId(value?: string) {
-    const next = value?.trim() ?? "";
-    setSessionId(next);
-    saveNavigatorSessionId(next);
-  }
-
-  function updateTurn(id: string, update: (turn: TurnEntry) => TurnEntry) {
-    setTurns((cur) => cur.map((turn) => (turn.id === id ? update(turn) : turn)));
-  }
-
-  function saveConfig(next: {
-    model: string;
-    reasoning?: CodexReasoningId;
-    sessionMode: CodexSessionMode;
-  }) {
-    saveNavigatorConfig(next);
-  }
-
-  function onChangeModel(value: string) {
-    const nextReasoning = defaultReasoningForModel(value);
-    setModel(value);
-    setReasoning(nextReasoning);
-    saveConfig({
-      model: value,
-      reasoning: nextReasoning,
-      sessionMode,
-    });
-  }
-
-  function onChangeReasoning(value?: CodexReasoningId) {
-    setReasoning(value);
-    saveConfig({
-      model,
-      reasoning: value,
-      sessionMode,
-    });
-  }
-
-  function onChangeSessionMode(value: CodexSessionMode) {
-    setSessionMode(value);
-    saveConfig({
-      model,
-      reasoning,
-      sessionMode: value,
-    });
-  }
-
-  function onSetTargetToCurrentProject() {
-    setTargetProjectId(project_id);
-    saveNavigatorTargetProjectId(project_id);
-  }
-
-  function onUseGlobalDefaultTarget() {
-    clearNavigatorTargetProjectId();
-    setTargetProjectId(project_id);
-  }
-
-  async function runAction() {
-    const text = prompt.trim();
-    if (!text || busy) return;
+    if (!navigatorPath) return;
     setError("");
-    setBusy(true);
-    stopRequestedRef.current = false;
-
-    const startedMs = Date.now();
-    const startedAt = new Date(startedMs).toISOString();
-    const turnId = `nav-${startedMs}-${Math.random().toString(36).slice(2, 8)}`;
-    const sessionAtStart = sessionId || undefined;
-    let sessionAtEnd = sessionAtStart;
-    let finalResponse = "";
-    const events: AcpStreamMessage[] = [];
-    const requestConfig: CodexSessionConfig = {
-      model,
-      reasoning,
-      sessionMode,
-      allowWrite: sessionMode !== "read-only",
+    let chatActions: ChatActions;
+    try {
+      chatActions = initChat(project_id, navigatorPath);
+    } catch (err) {
+      setActions(null);
+      setError(`${err}`);
+      return;
+    }
+    setActions(chatActions);
+    setSelectedThreadKey(null);
+    return () => {
+      setActions((current) => (current === chatActions ? null : current));
+      removeChat(navigatorPath, redux, project_id);
     };
+  }, [project_id, navigatorPath]);
 
-    setTurns((cur) => [
-      {
-        id: turnId,
-        prompt: text,
-        status: "running",
-        startedAt,
-        sessionIdAtStart: sessionAtStart,
-        requestConfig,
-        events: [],
-      },
-      ...cur,
-    ]);
+  useEffect(() => {
+    if (!actions?.messageCache) return;
+    const onVersion = () => {
+      setSelectedThreadKey((current) => current ?? latestThreadKey(actions));
+    };
+    actions.messageCache.on("version", onVersion);
+    onVersion();
+    return () => {
+      actions.messageCache?.removeListener("version", onVersion);
+    };
+  }, [actions]);
 
-    try {
-      const stream = await webapp_client.conat_client.streamAcp({
-        project_id: targetProjectId || project_id,
-        prompt: text,
-        session_id: sessionAtStart,
-        config: requestConfig,
-      });
-      for await (const message of stream) {
-        events.push(message);
-        if (message.type === "summary") {
-          finalResponse = message.finalResponse ?? finalResponse;
-          const threadId =
-            typeof message.threadId === "string" ? message.threadId : "";
-          if (threadId) {
-            sessionAtEnd = threadId;
-            saveSessionId(threadId);
-          }
-        }
-        if (message.type === "error") {
-          setError(message.error);
-        }
-        updateTurn(turnId, (turn) => ({
-          ...turn,
-          events: [...events],
-          finalResponse: finalResponse || turn.finalResponse,
-          sessionIdAtEnd: sessionAtEnd,
-        }));
-      }
+  useEffect(() => {
+    if (!actions || !selectedThreadKey) return;
+    const timer = setTimeout(() => {
+      actions.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [actions, selectedThreadKey]);
 
-      const finishedMs = Date.now();
-      const finishedAt = new Date(finishedMs).toISOString();
-      const hasError = events.some((message) => message.type === "error");
-      updateTurn(turnId, (turn) => ({
-        ...turn,
-        status: hasError
-          ? stopRequestedRef.current
-            ? "interrupted"
-            : "failed"
-          : "completed",
-        finishedAt,
-        elapsedMs: finishedMs - startedMs,
-        events: [...events],
-        finalResponse,
-        sessionIdAtEnd: sessionAtEnd,
-      }));
-    } catch (err) {
-      const finishedMs = Date.now();
-      const finishedAt = new Date(finishedMs).toISOString();
-      const message = `${err}`;
-      setError(message);
-      updateTurn(turnId, (turn) => ({
-        ...turn,
-        status: stopRequestedRef.current ? "interrupted" : "failed",
-        finishedAt,
-        elapsedMs: finishedMs - startedMs,
-        error: message,
-        events: [...events],
-        finalResponse,
-        sessionIdAtEnd: sessionAtEnd,
-      }));
-    } finally {
-      setBusy(false);
-      stopRequestedRef.current = false;
-    }
+  const desc = useMemo(() => {
+    if (!selectedThreadKey) return undefined;
+    return { "data-selectedThreadKey": selectedThreadKey };
+  }, [selectedThreadKey]);
+
+  if (!navigatorPath) {
+    return <Loading theme="medium" />;
   }
-
-  async function stopAction() {
-    if (!busy) return;
-    stopRequestedRef.current = true;
-    setError("");
-    const threadId =
-      sessionId || latestTurn?.sessionIdAtEnd || latestTurn?.sessionIdAtStart;
-    try {
-      await webapp_client.conat_client.interruptAcp({
-        project_id: targetProjectId || project_id,
-        threadId,
-        note: "navigator-shell interrupt",
-      });
-    } catch (err) {
-      setError(`Unable to stop current run: ${err}`);
-    }
-  }
-
-  function resetSession() {
-    saveSessionId("");
-  }
-
-  const latestStatusColor: Record<TurnStatus, string> = {
-    running: "processing",
-    completed: "success",
-    failed: "error",
-    interrupted: "warning",
-  };
 
   return (
-    <div style={{ marginTop: "16px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <h4 style={{ margin: 0 }}>Ask CoCalc</h4>
-        <Tag color="blue">Lite</Tag>
-        <Tag color="cyan">Codex</Tag>
-      </div>
-      <Typography.Paragraph
-        type="secondary"
-        style={{ marginBottom: "8px", marginTop: "6px" }}
-      >
-        Global navigator shell using the same ACP/Codex runtime as chat, but not
-        tied to a .chat file.
+    <div>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+        Global navigator shell using the same chat/Codex runtime, backed by a
+        hidden chat file.
       </Typography.Paragraph>
       {error ? (
-        <Alert
-          type="error"
-          showIcon
-          message="Navigator request failed"
-          description={error}
-          style={{ marginBottom: 8 }}
-        />
+        <Alert type="error" message={error} showIcon style={{ marginBottom: 8 }} />
       ) : null}
-      <div style={{ display: "flex", gap: 8 }}>
-        <Input
-          size="large"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="Describe what you want to do, e.g. move b.txt to archive/"
-          onPressEnter={() => runAction()}
-        />
-        <Button
-          size="large"
-          type="primary"
-          onClick={runAction}
-          loading={busy}
-          disabled={busy}
-        >
-          Run
-        </Button>
-        <Button
-          size="large"
-          danger
-          onClick={stopAction}
-          disabled={!busy}
-        >
-          Stop
-        </Button>
-      </div>
       <div
         style={{
-          display: "flex",
-          gap: 8,
-          marginTop: 8,
-          flexWrap: "wrap",
+          border: "1px solid #eee",
+          borderRadius: 8,
+          overflow: "hidden",
+          background: "white",
+          height: "min(70vh, 760px)",
         }}
       >
-        <Select
-          size="small"
-          style={{ minWidth: 220 }}
-          value={model}
-          options={NAVIGATOR_MODELS.map((entry) => ({
-            value: entry.name,
-            label: entry.name,
-          }))}
-          onChange={(value) => onChangeModel(value)}
-          disabled={busy}
-        />
-        <Select
-          size="small"
-          style={{ minWidth: 160 }}
-          value={reasoning}
-          options={
-            NAVIGATOR_MODELS.find((entry) => entry.name === model)?.reasoning?.map(
-              (entry) => ({
-                value: entry.id,
-                label: entry.label,
-              }),
-            ) ?? []
-          }
-          onChange={(value) => onChangeReasoning(value)}
-          disabled={busy}
-          placeholder="Reasoning"
-        />
-        <Select
-          size="small"
-          style={{ minWidth: 170 }}
-          value={sessionMode}
-          options={SESSION_MODE_OPTIONS}
-          onChange={(value) => onChangeSessionMode(value)}
-          disabled={busy}
-        />
-      </div>
-      <Space style={{ marginTop: 8 }} size={8} wrap>
-        {latestTurn ? (
-          <>
-            <Tag color={latestStatusColor[latestTurn.status]}>
-              {latestTurn.status}
-            </Tag>
-            <Tag>Elapsed: {formatElapsed(latestTurn.elapsedMs)}</Tag>
-          </>
+        {actions ? (
+          <SideChat
+            actions={actions}
+            project_id={project_id}
+            path={navigatorPath}
+            hideSidebar
+            desc={desc}
+          />
         ) : (
-          <Tag color="orange">No runs yet</Tag>
+          <Loading theme="medium" />
         )}
-        <Tag color={sessionId ? "green" : "default"}>
-          Session: {sessionId || "new"}
-        </Tag>
-        <Tag>
-          Target: {targetProjectId || project_id}
-          {targetProjectId !== project_id ? " (global override)" : ""}
-        </Tag>
-        <Tag>{model}</Tag>
-        <Tag>{reasoning ?? "default reasoning"}</Tag>
-        <Tag>Mode: {sessionMode}</Tag>
-        <Button
-          size="small"
-          onClick={onSetTargetToCurrentProject}
-          disabled={busy || targetProjectId === project_id}
-        >
-          Use current project
-        </Button>
-        <Button
-          size="small"
-          onClick={onUseGlobalDefaultTarget}
-          disabled={busy || targetProjectId === project_id}
-        >
-          Clear target override
-        </Button>
-        <Button size="small" onClick={resetSession} disabled={busy || !sessionId}>
-          Reset session
-        </Button>
-        <Button size="small" onClick={() => setShowAdvancedTrace((v) => !v)}>
-          {showAdvancedTrace ? "Hide advanced trace" : "Advanced trace"}
-        </Button>
-      </Space>
-      {latestTurn?.finalResponse ? (
-        <Input.TextArea
-          style={{ marginTop: 8 }}
-          value={latestTurn.finalResponse}
-          readOnly
-          autoSize={{ minRows: 5, maxRows: 16 }}
-          placeholder="Final response appears here..."
-        />
-      ) : null}
-      {latestTurn?.events?.length ? (
-        <div style={{ marginTop: 8 }}>
-          <CodexActivity
-            events={latestTurn.events}
-            generating={busy && latestTurn.status === "running"}
-            durationLabel={formatElapsed(latestTurn.elapsedMs)}
-            persistKey={`navigator-shell:${project_id}:${latestTurn.id}`}
-            projectId={project_id}
-            expanded={false}
-          />
-        </div>
-      ) : null}
-      {showAdvancedTrace && turns.length > 0 ? (
-        <Collapse
-          style={{ marginTop: 8 }}
-          size="small"
-          items={turns.map((turn) => ({
-            key: turn.id,
-            label: `${turn.status.toUpperCase()} • ${turn.prompt}`,
-            extra: `${turn.startedAt} • ${formatElapsed(turn.elapsedMs)}`,
-            children: (
-              <Input.TextArea
-                value={prettify({
-                  startedAt: turn.startedAt,
-                  finishedAt: turn.finishedAt,
-                  elapsedMs: turn.elapsedMs,
-                  status: turn.status,
-                  prompt: turn.prompt,
-                  sessionIdAtStart: turn.sessionIdAtStart,
-                  sessionIdAtEnd: turn.sessionIdAtEnd,
-                  requestConfig: turn.requestConfig,
-                  finalResponse: turn.finalResponse,
-                  error: turn.error,
-                  events: turn.events,
-                })}
-                readOnly
-                autoSize={{ minRows: 8, maxRows: 18 }}
-              />
-            ),
-          }))}
-        />
-      ) : null}
-      {showAdvancedTrace ? (
-        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <Input
-            size="small"
-            value={targetProjectId}
-            onChange={(e) => setTargetProjectId(e.target.value.trim())}
-            placeholder="Navigator target project id"
-            disabled={busy}
-          />
-          <Button
-            size="small"
-            onClick={() => saveNavigatorTargetProjectId(targetProjectId)}
-            disabled={busy || !targetProjectId}
-          >
-            Save target
-          </Button>
-        </div>
-      ) : null}
+      </div>
     </div>
   );
 }
+
+export default NavigatorShell;

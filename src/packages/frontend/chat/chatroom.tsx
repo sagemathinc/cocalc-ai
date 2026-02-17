@@ -101,6 +101,7 @@ export interface ChatPanelProps {
   fontSize?: number;
   desc?: NodeDesc;
   variant?: "default" | "compact";
+  hideSidebar?: boolean;
 }
 
 function getDescValue(desc: NodeDesc | undefined, key: string) {
@@ -121,6 +122,7 @@ export function ChatPanel({
   fontSize = 13,
   desc,
   variant = "default",
+  hideSidebar = false,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   const activity: undefined | immutable.Map<string, number> =
@@ -490,6 +492,7 @@ export function ChatPanel({
         sidebarVisible={sidebarVisible}
         setSidebarVisible={setSidebarVisible}
         totalUnread={totalUnread}
+        hideSidebar={hideSidebar}
         sidebarContent={
           <ChatRoomSidebarContent
             actions={actions}

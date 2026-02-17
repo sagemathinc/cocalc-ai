@@ -77,6 +77,10 @@ export const DEFAULT_CODEX_MODELS: CodexModelInfo[] = [
     ],
   },
   {
+    name: "gpt-5.3-codex-spark",
+    description: "Ultra-fast Codex model for interactive turns.",
+  },
+  {
     name: "gpt-5.2-codex",
     description: "Frontier agentic coding model.",
     reasoning: [
