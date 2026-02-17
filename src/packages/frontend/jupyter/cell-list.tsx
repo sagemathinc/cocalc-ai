@@ -50,6 +50,20 @@ const MINIMAP_DEFAULT_MIN_CELL_COUNT = 1;
 const MINIMAP_DEFAULT_WIDTH = 84;
 const MINIMAP_MIN_WIDTH = 48;
 const MINIMAP_MAX_WIDTH = 220;
+const MINIMAP_BASE_SCALE = 0.11;
+const MINIMAP_MIN_SCALE = 0.02;
+const MINIMAP_MAX_SCALE = 0.36;
+const MINIMAP_MAX_TRACK_HEIGHT = 32_000;
+const MINIMAP_MIN_TRACK_VIEWPORT_MULTIPLIER = 1.2;
+const MINIMAP_TEXT_LEFT_PADDING = 3;
+const MINIMAP_TEXT_RIGHT_PADDING = 4;
+const MINIMAP_FONT_SIZE = 3.8;
+const MINIMAP_LINE_HEIGHT = 4.4;
+const MINIMAP_MAX_PREVIEW_LINES_PER_CELL = 180;
+const MINIMAP_MAX_DRAWN_LINES = 12_000;
+
+const MINIMAP_CODE_TOKEN_RE =
+  /(#.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|(\b(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)\b)/g;
 
 const MINIMAP_OVERRIDE_STORAGE_KEYS = [
   "cocalc_jupyter_minimap",
@@ -124,6 +138,105 @@ function forceMinimapWidth(): number | undefined {
     }
   } catch {
     // ignore malformed URL/localStorage access failures
+  }
+}
+
+type MinimapCellKind = "code" | "markdown" | "raw" | "unknown";
+
+type MinimapTheme = {
+  cellBackground: string;
+  textColor: string;
+  keywordColor: string;
+  numberColor: string;
+  stringColor: string;
+  commentColor: string;
+};
+
+const MINIMAP_THEME: Record<MinimapCellKind, MinimapTheme> = {
+  code: {
+    cellBackground: "rgba(71,85,105,0.2)",
+    textColor: "rgba(241,245,249,0.88)",
+    keywordColor: "rgba(129,140,248,0.96)",
+    numberColor: "rgba(96,165,250,0.95)",
+    stringColor: "rgba(251,191,36,0.96)",
+    commentColor: "rgba(74,222,128,0.95)",
+  },
+  markdown: {
+    cellBackground: "rgba(16,185,129,0.2)",
+    textColor: "rgba(220,252,231,0.92)",
+    keywordColor: "rgba(167,243,208,0.96)",
+    numberColor: "rgba(110,231,183,0.95)",
+    stringColor: "rgba(251,191,36,0.95)",
+    commentColor: "rgba(110,231,183,0.95)",
+  },
+  raw: {
+    cellBackground: "rgba(168,85,247,0.2)",
+    textColor: "rgba(245,243,255,0.9)",
+    keywordColor: "rgba(196,181,253,0.96)",
+    numberColor: "rgba(167,139,250,0.95)",
+    stringColor: "rgba(251,191,36,0.95)",
+    commentColor: "rgba(196,181,253,0.92)",
+  },
+  unknown: {
+    cellBackground: "rgba(100,116,139,0.2)",
+    textColor: "rgba(226,232,240,0.88)",
+    keywordColor: "rgba(148,163,184,0.9)",
+    numberColor: "rgba(148,163,184,0.9)",
+    stringColor: "rgba(148,163,184,0.9)",
+    commentColor: "rgba(148,163,184,0.9)",
+  },
+};
+
+function getMinimapCellKind(cellType: string | undefined): MinimapCellKind {
+  if (cellType === "code" || cellType === "markdown" || cellType === "raw") {
+    return cellType;
+  }
+  return "unknown";
+}
+
+function getMinimapPreviewLines(
+  input: unknown,
+  hasOutput: boolean,
+): string[] {
+  const raw =
+    typeof input === "string" && input.length > 0 ? input : hasOutput ? " " : "";
+  const lines = raw
+    .replace(/\t/g, "  ")
+    .split("\n")
+    .slice(0, MINIMAP_MAX_PREVIEW_LINES_PER_CELL);
+  if (lines.length === 0) lines.push("");
+  return lines;
+}
+
+function drawMinimapTextLine(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  charWidth: number,
+  maxChars: number,
+  theme: MinimapTheme,
+): void {
+  const line = text.slice(0, maxChars);
+  if (line.length === 0) return;
+  ctx.fillStyle = theme.textColor;
+  ctx.fillText(line, x, y);
+
+  MINIMAP_CODE_TOKEN_RE.lastIndex = 0;
+  let match: RegExpExecArray | null = MINIMAP_CODE_TOKEN_RE.exec(line);
+  while (match != null) {
+    const token = match[0];
+    let color = "";
+    if (match[1]) color = theme.commentColor;
+    else if (match[2]) color = theme.stringColor;
+    else if (match[3]) color = theme.numberColor;
+    else if (match[4]) color = theme.keywordColor;
+    if (color.length > 0) {
+      const index = match.index ?? 0;
+      ctx.fillStyle = color;
+      ctx.fillText(token, x + index * charWidth, y);
+    }
+    match = MINIMAP_CODE_TOKEN_RE.exec(line);
   }
 }
 
@@ -640,6 +753,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
   const minimapViewportRef = useRef<HTMLDivElement>(null);
   const minimapTrackRef = useRef<HTMLDivElement>(null);
   const minimapRailRef = useRef<HTMLDivElement>(null);
+  const minimapCanvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -659,7 +773,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     const showMinimap =
       (minimapOptIn || cell_list.size >= MINIMAP_DEFAULT_MIN_CELL_COUNT) &&
       viewportHeight >= 140 &&
-      viewportWidth >= (minimapOptIn ? 280 : 700);
+      viewportWidth >= (minimapOptIn ? 220 : 520);
     if (!showMinimap) return null;
 
     const rows: {
@@ -667,26 +781,28 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
       top: number;
       height: number;
       isCurrent: boolean;
-      fill: string;
-      edge: string;
       hasOutput: boolean;
       title: string;
+      kind: MinimapCellKind;
+      previewLines: string[];
     }[] = [];
-    let y = 0;
+    const rawRows: Array<{
+      id: string;
+      rawHeight: number;
+      isCurrent: boolean;
+      hasOutput: boolean;
+      title: string;
+      kind: MinimapCellKind;
+      previewLines: string[];
+    }> = [];
     let rawY = 0;
-    const rawRows: Array<
-      Omit<(typeof rows)[number], "top" | "height"> & {
-        rawTop: number;
-        rawHeight: number;
-      }
-    > = [];
     for (let i = 0; i < cell_list.size; i += 1) {
       const id = cell_list.get(i);
       if (id == null) continue;
       const cell = cells.get(id);
       const cellType = (cell?.get?.("cell_type") as string | undefined) ?? "code";
+      const kind = getMinimapCellKind(cellType);
       const input = cell?.get?.("input");
-      const inputLen = typeof input === "string" ? input.length : 0;
       const output = cell?.get?.("output");
       const outputWeight =
         typeof output === "string"
@@ -695,62 +811,49 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
             ? output.size * 24
             : 0;
       const hasOutput = outputWeight > 0;
-      const density = Math.min(
-        1,
-        Math.log1p(inputLen + outputWeight + 1) / Math.log(2500),
-      );
-      let fill = "rgba(71,85,105,0.45)";
-      let edge = "rgba(226,232,240,0.35)";
-      if (cellType === "markdown") {
-        fill = `rgba(16,185,129,${0.35 + 0.5 * density})`;
-        edge = "rgba(110,231,183,0.7)";
-      } else if (cellType === "raw") {
-        fill = `rgba(168,85,247,${0.35 + 0.45 * density})`;
-        edge = "rgba(221,214,254,0.7)";
-      } else {
-        fill = `rgba(71,85,105,${0.35 + 0.45 * density})`;
-        edge = "rgba(226,232,240,0.35)";
-      }
       const rawHeight = Math.max(
         24,
         lazyHeightsRef.current[id] ?? LAZY_RENDER_PLACEHOLDER_MIN_HEIGHT,
       );
       rawRows.push({
         id,
+        rawHeight,
         isCurrent: id === cur_id,
-        fill,
-        edge,
         hasOutput,
         title: `${cellType} #${i + 1}`,
-        rawTop: rawY,
-        rawHeight,
+        kind,
+        previewLines: getMinimapPreviewLines(input, hasOutput),
       });
       rawY += rawHeight + 10;
     }
 
     const rawTotalHeight = Math.max(1, rawY + 1);
-    // Keep minimap scrollable for large notebooks while avoiding enormous tracks.
-    const targetTrackHeight = Math.max(
-      viewportHeight * 1.25,
-      Math.min(viewportHeight * 3.5, rawTotalHeight * 0.06),
-    );
-    const scale = Math.max(0.02, Math.min(1, targetTrackHeight / rawTotalHeight));
+    let scale = MINIMAP_BASE_SCALE;
+    const minScaleForViewport =
+      (viewportHeight * MINIMAP_MIN_TRACK_VIEWPORT_MULTIPLIER) / rawTotalHeight;
+    const maxScaleForTrack = MINIMAP_MAX_TRACK_HEIGHT / rawTotalHeight;
+    scale = Math.max(scale, minScaleForViewport);
+    scale = Math.min(scale, maxScaleForTrack);
+    const minScaleBound = Math.min(MINIMAP_MIN_SCALE, maxScaleForTrack);
+    scale = Math.max(minScaleBound, Math.min(MINIMAP_MAX_SCALE, scale));
 
+    let y = 0;
     for (const row of rawRows) {
-      const h = Math.max(2, row.rawHeight * scale);
+      const h = Math.max(7, row.rawHeight * scale);
       rows.push({
         id: row.id,
         top: y,
         height: h,
         isCurrent: row.isCurrent,
-        fill: row.fill,
-        edge: row.edge,
         hasOutput: row.hasOutput,
         title: row.title,
+        kind: row.kind,
+        previewLines: row.previewLines,
       });
-      y += h + 1;
+      const gap = Math.max(1, Math.min(6, h * 0.12));
+      y += h + gap;
     }
-    const totalContentHeight = Math.max(1, y + 1);
+    const totalContentHeight = Math.max(1, Math.min(MINIMAP_MAX_TRACK_HEIGHT, y + 1));
     const railHeight = Math.max(180, viewportHeight - 16);
 
     return {
@@ -780,13 +883,91 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     );
   }, [minimapData, cell_list.size]);
 
+  useEffect(() => {
+    if (minimapData == null) return;
+    const canvas = minimapCanvasRef.current;
+    const track = minimapTrackRef.current;
+    if (canvas == null || track == null) return;
+    const cssWidth = Math.max(1, track.clientWidth);
+    const cssHeight = Math.max(1, minimapData.totalContentHeight);
+    const dpr =
+      typeof window === "undefined"
+        ? 1
+        : Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const targetWidth = Math.max(1, Math.round(cssWidth * dpr));
+    const targetHeight = Math.max(1, Math.round(cssHeight * dpr));
+    if (canvas.width !== targetWidth) canvas.width = targetWidth;
+    if (canvas.height !== targetHeight) canvas.height = targetHeight;
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
+    const ctx = canvas.getContext("2d");
+    if (ctx == null) return;
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+    ctx.fillStyle = "rgba(15,23,42,0.34)";
+    ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+    ctx.font = `${MINIMAP_FONT_SIZE}px Menlo, Monaco, "Courier New", monospace`;
+    ctx.textBaseline = "top";
+    ctx.imageSmoothingEnabled = false;
+    const charWidth = Math.max(1, ctx.measureText("M").width);
+    const maxChars = Math.max(
+      8,
+      Math.floor(
+        (cssWidth - MINIMAP_TEXT_LEFT_PADDING - MINIMAP_TEXT_RIGHT_PADDING) /
+          charWidth,
+      ),
+    );
+    let drawnLines = 0;
+    for (const row of minimapData.rows) {
+      const theme = MINIMAP_THEME[row.kind];
+      ctx.fillStyle = row.isCurrent
+        ? "rgba(59,130,246,0.3)"
+        : theme.cellBackground;
+      ctx.fillRect(0, row.top, cssWidth, row.height);
+
+      if (row.hasOutput) {
+        ctx.fillStyle = "rgba(245,158,11,0.8)";
+        ctx.fillRect(cssWidth - 2, row.top, 2, row.height);
+      }
+
+      if (row.isCurrent) {
+        ctx.strokeStyle = "rgba(125,211,252,0.95)";
+        ctx.lineWidth = 0.9;
+        ctx.strokeRect(0.5, row.top + 0.5, cssWidth - 1, Math.max(1, row.height - 1));
+      }
+
+      const visibleLineCount = Math.min(
+        row.previewLines.length,
+        Math.max(1, Math.floor((row.height - 2) / MINIMAP_LINE_HEIGHT)),
+      );
+      let lineY = row.top + 1;
+      for (let i = 0; i < visibleLineCount; i += 1) {
+        drawMinimapTextLine(
+          ctx,
+          row.previewLines[i],
+          MINIMAP_TEXT_LEFT_PADDING,
+          lineY,
+          charWidth,
+          maxChars,
+          theme,
+        );
+        drawnLines += 1;
+        if (drawnLines >= MINIMAP_MAX_DRAWN_LINES) {
+          return;
+        }
+        lineY += MINIMAP_LINE_HEIGHT;
+      }
+    }
+  }, [minimapData]);
+
   const updateMinimapViewport = useCallback(() => {
     if (minimapData == null) return;
     const scroller = cellListDivRef.current as HTMLElement | null;
     const viewport = minimapViewportRef.current;
     const rail = minimapRailRef.current;
-    const track = minimapTrackRef.current;
-    if (scroller == null || viewport == null || track == null || rail == null) return;
+    if (scroller == null || viewport == null || rail == null) return;
 
     const maxNotebookScroll = Math.max(1, scroller.scrollHeight - scroller.clientHeight);
     const notebookRatio = Math.min(1, Math.max(0, scroller.scrollTop / maxNotebookScroll));
@@ -794,7 +975,6 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     const miniScrollTop = notebookRatio * maxMiniScroll;
 
     rail.scrollTop = miniScrollTop;
-    track.style.transform = "translateY(0px)";
 
     const thumbHeight = Math.max(
       12,
@@ -842,14 +1022,27 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
         minimapData.totalContentHeight,
         Math.max(0, miniScrollTop + y),
       );
-      const targetRatio = yContent / Math.max(1, minimapData.totalContentHeight);
-      scroller.scrollTop = targetRatio * maxNotebookScroll;
-      hydrateVisibleCells();
-      updateMinimapViewport();
-      saveScrollDebounce();
+      const row = minimapData.rows.find(
+        (r) => yContent >= r.top && yContent <= r.top + r.height,
+      );
+      if (row != null) {
+        scrollToCellById(row.id);
+      } else {
+        const targetRatio = yContent / Math.max(1, minimapData.totalContentHeight);
+        scroller.scrollTop = targetRatio * maxNotebookScroll;
+        hydrateVisibleCells();
+        updateMinimapViewport();
+        saveScrollDebounce();
+      }
       e.preventDefault();
     },
-    [hydrateVisibleCells, minimapData, saveScrollDebounce, updateMinimapViewport],
+    [
+      hydrateVisibleCells,
+      minimapData,
+      saveScrollDebounce,
+      scrollToCellById,
+      updateMinimapViewport,
+    ],
   );
 
   const v: (React.JSX.Element | null)[] = [];
@@ -946,31 +1139,14 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
                   willChange: "transform",
                 }}
               >
-                {minimapData.rows.map((row) => (
-                  <div
-                    key={`minimap-${row.id}`}
-                    title={row.title}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      scrollToCellById(row.id);
-                    }}
-                    style={{
-                      position: "absolute",
-                      left: "2px",
-                      right: "2px",
-                      top: `${row.top}px`,
-                      height: `${Math.max(2.2, row.height - 0.2)}px`,
-                      borderRadius: "1px",
-                      background: row.isCurrent
-                        ? "rgba(59,130,246,0.92)"
-                        : row.fill,
-                      borderTop: row.isCurrent ? "none" : `1px solid ${row.edge}`,
-                      boxShadow: row.hasOutput
-                        ? "inset -2px 0 0 rgba(245,158,11,0.8)"
-                        : undefined,
-                    }}
-                  />
-                ))}
+                <canvas
+                  ref={minimapCanvasRef}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    height: `${minimapData.totalContentHeight}px`,
+                  }}
+                />
               </div>
               <div
                 ref={minimapViewportRef}
