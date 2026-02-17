@@ -27,6 +27,7 @@ type Options = {
   auth_token?: string;
   profile: "quick" | "full";
   virtualization: "on" | "off" | "keep";
+  render_mode: "eager" | "lazy";
   require_active_virtualization: boolean;
   scenario?: string;
   path_prefix: string;
@@ -88,6 +89,8 @@ type ScrollMetrics = {
     | "root-attr"
     | "virtuoso"
     | "unknown";
+  lazy_render_once_attr: boolean | null;
+  lazy_render_once_source: "runtime" | "root-attr" | "unknown";
 };
 
 type FrontendInstrumentationProbe = {
@@ -95,6 +98,8 @@ type FrontendInstrumentationProbe = {
   has_root_attr: boolean;
   has_mode_marker: boolean;
   has_virtuoso: boolean;
+  has_lazy_runtime: boolean;
+  has_lazy_root_attr: boolean;
 };
 
 type OpenMetrics = {
@@ -127,7 +132,9 @@ type ScenarioResult = {
   virtualization_likely: boolean;
   reliability_ok: boolean;
   virtualization_mode: Options["virtualization"];
+  render_mode: Options["render_mode"];
   virtualization_active: boolean | null;
+  lazy_render_once_active: boolean | null;
   open_metrics: OpenMetrics;
   typing_metrics: TypingMetrics;
 };
@@ -137,6 +144,7 @@ type ScrollBenchmarkResult = {
   base_url: string;
   profile: "quick" | "full";
   virtualization: Options["virtualization"];
+  render_mode: Options["render_mode"];
   require_active_virtualization: boolean;
   scenario_filter?: string;
   cycles: number;
@@ -151,6 +159,7 @@ type ScrollBenchmarkResult = {
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 const DEFAULT_PROFILE: Options["profile"] = "quick";
+const DEFAULT_RENDER_MODE: Options["render_mode"] = "eager";
 const DEFAULT_SCROLL_STEPS = 42;
 const DEFAULT_TYPING_CHARS = 40;
 const DEFAULT_TYPING_TIMEOUT_MS = 1_500;
@@ -268,11 +277,13 @@ function notebookUrl({
   path_ipynb,
   auth_token,
   virtualization,
+  render_mode,
 }: {
   base_url: string;
   path_ipynb: string;
   auth_token?: string;
   virtualization: Options["virtualization"];
+  render_mode: Options["render_mode"];
 }): string {
   const base = new URL(base_url.endsWith("/") ? base_url : `${base_url}/`);
   const encodedPath = encodeNotebookPath(path_ipynb);
@@ -283,6 +294,7 @@ function notebookUrl({
   if (virtualization !== "keep") {
     url.searchParams.set("jupyter_virtualization", virtualization);
   }
+  url.searchParams.set("jupyter_lazy_render", render_mode === "lazy" ? "1" : "0");
   return url.toString();
 }
 
@@ -561,6 +573,8 @@ async function probeFrontendInstrumentation(
 ): Promise<FrontendInstrumentationProbe> {
   return (await page.evaluate(() => {
     const runtime = (window as any).__cocalcJupyterRuntime;
+    const hasLazyRuntime =
+      runtime != null && typeof runtime.lazy_render_once_enabled === "boolean";
     return {
       has_runtime: runtime != null,
       has_root_attr: document.documentElement.hasAttribute(
@@ -571,6 +585,10 @@ async function probeFrontendInstrumentation(
       has_virtuoso:
         document.querySelector("[data-virtuoso-scroller]") != null ||
         document.querySelector("[data-virtuoso-item-list]") != null,
+      has_lazy_runtime: hasLazyRuntime,
+      has_lazy_root_attr: document.documentElement.hasAttribute(
+        "data-cocalc-jupyter-lazy-render",
+      ),
     };
   })) as FrontendInstrumentationProbe;
 }
@@ -584,20 +602,30 @@ function assertFrontendInstrumentation({
   opts: Options;
   scenario_name: string;
 }) {
-  if (opts.virtualization === "keep" && !opts.require_active_virtualization) {
-    return;
+  const needsVirtualizationMarkers =
+    opts.virtualization !== "keep" || opts.require_active_virtualization;
+  if (needsVirtualizationMarkers) {
+    if (
+      probe.has_runtime ||
+      probe.has_root_attr ||
+      probe.has_mode_marker ||
+      probe.has_virtuoso
+    ) {
+      // ok
+    } else {
+      throw new Error(
+        `unable to detect jupyter virtualization instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build-dev' then 'pnpm -C src/packages/lite app'`,
+      );
+    }
   }
-  if (
-    probe.has_runtime ||
-    probe.has_root_attr ||
-    probe.has_mode_marker ||
-    probe.has_virtuoso
-  ) {
-    return;
+  if (opts.render_mode === "lazy") {
+    if (probe.has_lazy_runtime || probe.has_lazy_root_attr) {
+      return;
+    }
+    throw new Error(
+      `unable to detect jupyter lazy-render instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build-dev' then 'pnpm -C src/packages/lite app'`,
+    );
   }
-  throw new Error(
-    `unable to detect jupyter virtualization instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build-dev' then 'pnpm -C src/packages/lite app'`,
-  );
 }
 
 async function measureScrollScenario({
@@ -819,6 +847,8 @@ async function measureScrollScenario({
       };
       const runtimeWindowed = (window as any).__cocalcJupyterRuntime
         ?.windowed_list_enabled;
+      const runtimeLazyRenderOnce = (window as any).__cocalcJupyterRuntime
+        ?.lazy_render_once_enabled;
       const modeNode = document.querySelector(
         '[cocalc-test="jupyter-cell-list-mode"]',
       ) as HTMLElement | null;
@@ -865,6 +895,25 @@ async function measureScrollScenario({
             : hasVirtuoso
               ? "virtuoso"
               : "unknown";
+      const rootLazyRenderRaw = document.documentElement.getAttribute(
+        "data-cocalc-jupyter-lazy-render",
+      );
+      const lazyRenderFromRoot =
+        rootLazyRenderRaw === "1"
+          ? true
+          : rootLazyRenderRaw === "0"
+            ? false
+            : null;
+      const lazyRenderOnceAttr =
+        typeof runtimeLazyRenderOnce === "boolean"
+          ? runtimeLazyRenderOnce
+          : lazyRenderFromRoot;
+      const lazyRenderOnceSource: "runtime" | "root-attr" | "unknown" =
+        typeof runtimeLazyRenderOnce === "boolean"
+          ? "runtime"
+          : lazyRenderFromRoot != null
+            ? "root-attr"
+            : "unknown";
       const settleEdge = async ({
         edge,
         marker,
@@ -1009,6 +1058,8 @@ async function measureScrollScenario({
         bottom_marker_visible_after: bottomVisibleAfter,
         windowed_list_attr: windowedListAttr,
         windowed_list_source: windowedListSource,
+        lazy_render_once_attr: lazyRenderOnceAttr,
+        lazy_render_once_source: lazyRenderOnceSource,
       };
     },
     { cycles, scroll_steps, top_marker, bottom_marker, timeout_ms },
@@ -1217,8 +1268,11 @@ function printSummaryTable(result: ScrollBenchmarkResult) {
   table.setHeading(
     "Scenario",
     "VirtMode",
+    "Render",
     "Active",
     "ActSrc",
+    "Lazy",
+    "LazySrc",
     "Cells",
     "Dur",
     "FPS",
@@ -1232,8 +1286,13 @@ function printSummaryTable(result: ScrollBenchmarkResult) {
     table.addRow(
       run.name,
       run.virtualization_mode,
+      run.render_mode,
       run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
       run.metrics.windowed_list_source,
+      run.lazy_render_once_active == null
+        ? "n/a"
+        : yesNo(run.lazy_render_once_active),
+      run.metrics.lazy_render_once_source,
       String(run.expected_cells),
       fmtMs(run.metrics.duration_ms),
       fmtMaybeNum(run.metrics.approx_fps),
@@ -1244,6 +1303,109 @@ function printSummaryTable(result: ScrollBenchmarkResult) {
       `${run.metrics.dom_cells_top}/${run.metrics.dom_cells_mid}/${run.metrics.dom_cells_bottom}`,
       yesNo(run.virtualization_likely),
       yesNo(run.reliability_ok),
+    );
+  }
+  table.setAlignLeft(0);
+  table.setAlignLeft(1);
+  table.setAlignLeft(2);
+  table.setAlignLeft(3);
+  table.setAlignLeft(4);
+  table.setAlignRight(5);
+  table.setAlignLeft(6);
+  table.setAlignRight(7);
+  table.setAlignRight(8);
+  table.setAlignRight(9);
+  table.setAlignRight(10);
+  table.setAlignRight(11);
+  table.setAlignRight(12);
+  table.setAlignRight(13);
+  table.setAlignRight(14);
+  console.log(table.toString());
+}
+
+function printReliabilityMatrix(result: ScrollBenchmarkResult) {
+  const table = new AsciiTable3("Virtualization Reliability Matrix");
+  table.setHeading(
+    "Scenario",
+    "VirtMode",
+    "Render",
+    "Active",
+    "ActSrc",
+    "Lazy",
+    "LazySrc",
+    "Description",
+    "Top Marker",
+    "Bottom Marker",
+    "Max Scroll",
+    "Status",
+  );
+  for (const run of result.runs) {
+    const top = run.metrics.top_marker_visible_after;
+    const bottom = run.metrics.bottom_marker_visible_after;
+    const scrolled = run.metrics.max_scroll_px > 0;
+    const status = top && bottom && scrolled ? "PASS" : "FAIL";
+    table.addRow(
+      run.name,
+      run.virtualization_mode,
+      run.render_mode,
+      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
+      run.metrics.windowed_list_source,
+      run.lazy_render_once_active == null
+        ? "n/a"
+        : yesNo(run.lazy_render_once_active),
+      run.metrics.lazy_render_once_source,
+      run.description,
+      yesNo(top),
+      yesNo(bottom),
+      `${Math.round(run.metrics.max_scroll_px)} px`,
+      status,
+    );
+  }
+  table.setAlignLeft(0);
+  table.setAlignLeft(1);
+  table.setAlignLeft(2);
+  table.setAlignLeft(3);
+  table.setAlignLeft(4);
+  table.setAlignLeft(5);
+  table.setAlignLeft(6);
+  table.setAlignLeft(7);
+  table.setAlignRight(8);
+  table.setAlignRight(9);
+  table.setAlignRight(10);
+  table.setAlignRight(11);
+  console.log(table.toString());
+}
+
+function printInteractionTable(result: ScrollBenchmarkResult) {
+  const table = new AsciiTable3("Notebook Interaction Metrics");
+  table.setHeading(
+    "Scenario",
+    "VirtMode",
+    "Render",
+    "Active",
+    "Open Cell",
+    "Open Input",
+    "Open Ready",
+    "Type p50",
+    "Type p95",
+    "Type p99",
+    "Type max",
+    "Timeouts",
+  );
+  for (const run of result.runs) {
+    table.addRow(
+      run.name,
+      run.virtualization_mode,
+      run.render_mode,
+      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
+      fmtMs(run.open_metrics.first_cell_ms),
+      fmtMs(run.open_metrics.first_input_ms),
+      fmtMs(run.open_metrics.ready_ms),
+      fmtMaybeMs(run.typing_metrics.p50_ms),
+      fmtMaybeMs(run.typing_metrics.p95_ms),
+      fmtMaybeMs(run.typing_metrics.p99_ms),
+      fmtMaybeMs(run.typing_metrics.max_ms),
+      String(run.typing_metrics.timeout_count),
     );
   }
   table.setAlignLeft(0);
@@ -1261,92 +1423,6 @@ function printSummaryTable(result: ScrollBenchmarkResult) {
   console.log(table.toString());
 }
 
-function printReliabilityMatrix(result: ScrollBenchmarkResult) {
-  const table = new AsciiTable3("Virtualization Reliability Matrix");
-  table.setHeading(
-    "Scenario",
-    "VirtMode",
-    "Active",
-    "ActSrc",
-    "Description",
-    "Top Marker",
-    "Bottom Marker",
-    "Max Scroll",
-    "Status",
-  );
-  for (const run of result.runs) {
-    const top = run.metrics.top_marker_visible_after;
-    const bottom = run.metrics.bottom_marker_visible_after;
-    const scrolled = run.metrics.max_scroll_px > 0;
-    const status = top && bottom && scrolled ? "PASS" : "FAIL";
-    table.addRow(
-      run.name,
-      run.virtualization_mode,
-      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
-      run.metrics.windowed_list_source,
-      run.description,
-      yesNo(top),
-      yesNo(bottom),
-      `${Math.round(run.metrics.max_scroll_px)} px`,
-      status,
-    );
-  }
-  table.setAlignLeft(0);
-  table.setAlignLeft(1);
-  table.setAlignLeft(2);
-  table.setAlignLeft(3);
-  table.setAlignLeft(4);
-  table.setAlignRight(5);
-  table.setAlignRight(6);
-  table.setAlignRight(7);
-  table.setAlignRight(8);
-  console.log(table.toString());
-}
-
-function printInteractionTable(result: ScrollBenchmarkResult) {
-  const table = new AsciiTable3("Notebook Interaction Metrics");
-  table.setHeading(
-    "Scenario",
-    "VirtMode",
-    "Active",
-    "Open Cell",
-    "Open Input",
-    "Open Ready",
-    "Type p50",
-    "Type p95",
-    "Type p99",
-    "Type max",
-    "Timeouts",
-  );
-  for (const run of result.runs) {
-    table.addRow(
-      run.name,
-      run.virtualization_mode,
-      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
-      fmtMs(run.open_metrics.first_cell_ms),
-      fmtMs(run.open_metrics.first_input_ms),
-      fmtMs(run.open_metrics.ready_ms),
-      fmtMaybeMs(run.typing_metrics.p50_ms),
-      fmtMaybeMs(run.typing_metrics.p95_ms),
-      fmtMaybeMs(run.typing_metrics.p99_ms),
-      fmtMaybeMs(run.typing_metrics.max_ms),
-      String(run.typing_metrics.timeout_count),
-    );
-  }
-  table.setAlignLeft(0);
-  table.setAlignLeft(1);
-  table.setAlignLeft(2);
-  table.setAlignRight(3);
-  table.setAlignRight(4);
-  table.setAlignRight(5);
-  table.setAlignRight(6);
-  table.setAlignRight(7);
-  table.setAlignRight(8);
-  table.setAlignRight(9);
-  table.setAlignRight(10);
-  console.log(table.toString());
-}
-
 function printUsage() {
   console.log(`Usage: pnpm -C src/packages/lite jupyter:bench:scroll -- [options]
 
@@ -1358,6 +1434,7 @@ Options:
   --auth-token <token>      Auth token (default: from connection-info.json)
   --profile <quick|full>    Scenario profile (default: quick)
   --virtualization <mode>   Force notebook virtualization: on|off|keep (default: keep)
+  --render-mode <mode>      Non-windowed render mode: eager|lazy (default: eager)
   --require-active-virtualization  Fail if requested virtualization mode is not active
   --scenario <name>         Run one scenario from the selected profile
   --path-prefix <path>      Notebook path prefix (default: $HOME/jupyter-scroll-benchmark)
@@ -1377,6 +1454,7 @@ function parseArgs(argv: string[]): Options {
   const opts: Options = {
     profile: DEFAULT_PROFILE,
     virtualization: "keep",
+    render_mode: DEFAULT_RENDER_MODE,
     require_active_virtualization: false,
     path_prefix: DEFAULT_PATH_PREFIX,
     scroll_steps: DEFAULT_SCROLL_STEPS,
@@ -1459,6 +1537,14 @@ function parseArgs(argv: string[]): Options {
         opts.virtualization = mode;
         break;
       }
+      case "--render-mode": {
+        const mode = next().toLowerCase();
+        if (mode !== "eager" && mode !== "lazy") {
+          throw new Error(`--render-mode must be eager or lazy, got '${mode}'`);
+        }
+        opts.render_mode = mode;
+        break;
+      }
       case "--require-active-virtualization":
         opts.require_active_virtualization = true;
         break;
@@ -1536,15 +1622,32 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
   const { chromium } = await import("@playwright/test");
   const browser = await chromium.launch({ headless: opts.headless });
   const context = await browser.newContext();
-  if (opts.virtualization !== "keep") {
-    await context.addInitScript((virtualizationMode: "on" | "off") => {
+  if (opts.virtualization !== "keep" || opts.render_mode === "lazy") {
+    await context.addInitScript(
+      ({
+        virtualizationMode,
+        renderMode,
+      }: {
+        virtualizationMode: "on" | "off" | "keep";
+        renderMode: "eager" | "lazy";
+      }) => {
       try {
-        localStorage.setItem("cocalc_jupyter_virtualization", virtualizationMode);
-        localStorage.setItem("jupyter_virtualization", virtualizationMode);
+        if (virtualizationMode !== "keep") {
+          localStorage.setItem("cocalc_jupyter_virtualization", virtualizationMode);
+          localStorage.setItem("jupyter_virtualization", virtualizationMode);
+        }
+        const lazyValue = renderMode === "lazy" ? "on" : "off";
+        localStorage.setItem("cocalc_jupyter_lazy_render", lazyValue);
+        localStorage.setItem("jupyter_lazy_render", lazyValue);
       } catch {
         // ignore storage failures in restricted contexts
       }
-    }, opts.virtualization);
+    },
+      {
+        virtualizationMode: opts.virtualization,
+        renderMode: opts.render_mode,
+      },
+    );
   }
   const page = await context.newPage();
 
@@ -1568,6 +1671,7 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         path_ipynb: scenario.path_ipynb,
         auth_token,
         virtualization: opts.virtualization,
+        render_mode: opts.render_mode,
       });
       const open_metrics = await withTimeout({
         promise: openNotebookPage({
@@ -1613,6 +1717,7 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         (metrics.dom_cells_mid < scenario.expected_cells * 0.6 ||
           metrics.dom_cells_bottom < scenario.expected_cells * 0.6);
       const virtualization_active = metrics.windowed_list_attr;
+      const lazy_render_once_active = metrics.lazy_render_once_attr;
       const reliability_ok =
         metrics.top_marker_visible_after &&
         metrics.bottom_marker_visible_after &&
@@ -1629,7 +1734,9 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         virtualization_likely,
         reliability_ok,
         virtualization_mode: opts.virtualization,
+        render_mode: opts.render_mode,
         virtualization_active,
+        lazy_render_once_active,
         open_metrics,
         typing_metrics,
       };
@@ -1650,7 +1757,7 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
           typing_metrics.p95_ms == null ? "n/a" : `${typing_metrics.p95_ms.toFixed(1)}ms`;
         const status = reliability_ok ? "PASS" : "FAIL";
         console.log(
-          `[jupyter-scroll-bench] ${scenario.name} (virt=${opts.virtualization}): open=${fmtMs(open_metrics.first_input_ms)}, typing_p95=${typingP95}, dur=${fmtMs(metrics.duration_ms)}, fps=${fps}, longtasks=${metrics.longtask_count}, status=${status}`,
+          `[jupyter-scroll-bench] ${scenario.name} (virt=${opts.virtualization}, render=${opts.render_mode}): open=${fmtMs(open_metrics.first_input_ms)}, typing_p95=${typingP95}, dur=${fmtMs(metrics.duration_ms)}, fps=${fps}, longtasks=${metrics.longtask_count}, status=${status}`,
         );
       }
     }
@@ -1664,6 +1771,7 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
     base_url,
     profile: opts.profile,
     virtualization: opts.virtualization,
+    render_mode: opts.render_mode,
     require_active_virtualization: opts.require_active_virtualization,
     scenario_filter: opts.scenario,
     cycles: opts.cycles ?? (opts.profile === "full" ? 4 : 2),
@@ -1691,6 +1799,7 @@ async function main() {
     console.log(`base_url: ${result.base_url}`);
     console.log(`profile: ${result.profile}`);
     console.log(`virtualization: ${result.virtualization}`);
+    console.log(`render_mode: ${result.render_mode}`);
     console.log(
       `require_active_virtualization: ${result.require_active_virtualization}`,
     );

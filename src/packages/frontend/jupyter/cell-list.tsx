@@ -19,6 +19,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { VirtuosoHandle } from "react-virtuoso";
 import { CSS, React, useIsMountedRef } from "@cocalc/frontend/app-framework";
@@ -51,6 +52,8 @@ export const useStableHtmlContext: () => StableHtmlContextType = () => {
 //  - style cell   (hidden at top)
 //  - padding (at the bottom)
 const EXTRA_BOTTOM_CELLS = 1;
+const LAZY_RENDER_INITIAL_CELLS = 24;
+const LAZY_RENDER_PLACEHOLDER_MIN_HEIGHT = 96;
 
 const CELL_VISIBLE_THRESH = 50;
 
@@ -90,6 +93,7 @@ interface CellListProps {
   sel_ids?: immutable.Set<string>; // set of selected cells
   trust?: boolean;
   use_windowed_list?: boolean;
+  use_lazy_render_once?: boolean;
   llmTools?: LLMTools;
   read_only?: boolean;
   pendingCells?: immutable.Set<string>;
@@ -121,6 +125,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     sel_ids,
     trust,
     use_windowed_list,
+    use_lazy_render_once,
     llmTools,
     read_only,
     pendingCells,
@@ -183,6 +188,38 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
   if (cell_list == null) {
     return render_loading();
   }
+
+  const lazyRenderEnabled = !!use_lazy_render_once && !use_windowed_list;
+  const lazyHydratedIdsRef = useRef<Set<string>>(new Set());
+  const lazyHeightsRef = useRef<Record<string, number>>({});
+  const [lazyHydrationVersion, setLazyHydrationVersion] = useState<number>(0);
+
+  useEffect(() => {
+    if (!lazyRenderEnabled) return;
+    let changed = false;
+    const add = (id?: string) => {
+      if (id == null || lazyHydratedIdsRef.current.has(id)) return;
+      lazyHydratedIdsRef.current.add(id);
+      changed = true;
+    };
+    for (let i = 0; i < Math.min(LAZY_RENDER_INITIAL_CELLS, cell_list.size); i += 1) {
+      add(cell_list.get(i));
+    }
+    add(cur_id);
+    sel_ids?.forEach((id) => add(id));
+    md_edit_ids?.forEach((id) => add(id));
+    pendingCells?.forEach((id) => add(id));
+    if (changed) {
+      setLazyHydrationVersion((n) => n + 1);
+    }
+  }, [
+    lazyRenderEnabled,
+    cell_list,
+    cur_id,
+    sel_ids,
+    md_edit_ids,
+    pendingCells,
+  ]);
 
   const saveScroll = useCallback(() => {
     if (use_windowed_list) {
@@ -487,6 +524,115 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     );
   }
 
+  function placeholderTextForCell(id: string, index: number): string {
+    const cell = cells.get(id);
+    const input = cell?.get?.("input");
+    if (typeof input === "string" && input.trim()) {
+      return input.trim().split("\n")[0].slice(0, 160);
+    }
+    const cellType = cell?.get?.("cell_type");
+    if (typeof cellType === "string") {
+      return `${cellType} cell ${index + 1}`;
+    }
+    return `cell ${index + 1}`;
+  }
+
+  function renderLazyCell({
+    id,
+    index,
+    isFirst,
+    isLast,
+  }: {
+    id: string;
+    index: number;
+    isFirst: boolean;
+    isLast: boolean;
+  }): React.JSX.Element | null {
+    if (!lazyRenderEnabled) {
+      return renderCell({
+        id,
+        isScrolling: false,
+        index,
+        isFirst,
+        isLast,
+      });
+    }
+
+    const hydrated = lazyHydratedIdsRef.current.has(id);
+    if (hydrated) {
+      return (
+        <div
+          data-jupyter-lazy-cell-id={id}
+          data-jupyter-lazy-cell-hydrated="1"
+          ref={(node) => {
+            if (node == null) return;
+            const h = node.getBoundingClientRect().height;
+            if (h > 0) {
+              lazyHeightsRef.current[id] = h;
+            }
+          }}
+        >
+          {renderCell({
+            id,
+            isScrolling: false,
+            index,
+            isFirst,
+            isLast,
+          })}
+        </div>
+      );
+    }
+
+    const h = lazyHeightsRef.current[id] ?? LAZY_RENDER_PLACEHOLDER_MIN_HEIGHT;
+    return (
+      <div
+        id={id}
+        data-jupyter-lazy-cell-id={id}
+        data-jupyter-lazy-placeholder="1"
+        style={{
+          minHeight: `${h}px`,
+          marginBottom: "10px",
+          borderLeft: "2px solid #e2e8f0",
+          padding: "8px 10px",
+          color: "#64748b",
+          background: "#f8fafc",
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
+          fontSize: `${Math.max(11, Math.floor(font_size * 0.85))}px`,
+          lineHeight: 1.35,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {placeholderTextForCell(id, index)}
+      </div>
+    );
+  }
+
+  const hydrateVisibleCells = useCallback(() => {
+    if (!lazyRenderEnabled) return;
+    const scroller = cellListDivRef.current as HTMLElement | null;
+    if (scroller == null) return;
+    const minY = scroller.scrollTop - 1200;
+    const maxY = scroller.scrollTop + scroller.clientHeight + 1200;
+    let changed = false;
+    for (const node of Array.from(
+      scroller.querySelectorAll<HTMLElement>("[data-jupyter-lazy-cell-id]"),
+    )) {
+      const id = node.getAttribute("data-jupyter-lazy-cell-id");
+      if (id == null || lazyHydratedIdsRef.current.has(id)) continue;
+      const top = node.offsetTop;
+      const bottom = top + Math.max(node.offsetHeight, 1);
+      if (bottom < minY || top > maxY) continue;
+      lazyHydratedIdsRef.current.add(id);
+      changed = true;
+    }
+    if (changed) {
+      setLazyHydrationVersion((n) => n + 1);
+    }
+  }, [lazyRenderEnabled]);
+
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const virtuosoRangeRef = useRef<{ startIndex: number; endIndex: number }>({
     startIndex: 0,
@@ -551,6 +697,35 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
       scrollOrResize[key]();
     }
   }, [cellListResize]);
+
+  useEffect(() => {
+    if (!lazyRenderEnabled) return;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const schedule = (ms: number) => {
+      timers.push(
+        setTimeout(() => {
+          hydrateVisibleCells();
+        }, ms),
+      );
+    };
+    // Hydrate what's initially visible plus a small overscan window.
+    schedule(0);
+    schedule(120);
+    schedule(500);
+    return () => {
+      for (const timer of timers) {
+        clearTimeout(timer);
+      }
+    };
+  }, [
+    lazyRenderEnabled,
+    lazyHydrationVersion,
+    cell_list,
+    cur_id,
+    cellListResize.width,
+    cellListResize.height,
+    hydrateVisibleCells,
+  ]);
 
   if (use_windowed_list) {
     body = (
@@ -657,9 +832,8 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     cell_list.forEach((id: string) => {
       v.push(
         <SortableItem id={id} key={id}>
-          {renderCell({
+          {renderLazyCell({
             id,
-            isScrolling: false,
             index,
             isFirst,
             isLast: cell_list.get(-1) == id,
@@ -689,6 +863,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
           onClick={actions != null && complete != null ? on_click : undefined}
           onScroll={() => {
             updateScrollOrResize();
+            hydrateVisibleCells();
             saveScrollDebounce();
           }}
         >

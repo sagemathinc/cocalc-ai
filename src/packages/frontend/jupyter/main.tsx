@@ -54,6 +54,7 @@ export const ERROR_STYLE: CSS = {
 } as const;
 
 type WindowedForceSource = "url" | "localStorage";
+type LazyRenderForceSource = "url" | "localStorage";
 
 const WINDOWED_LIST_OVERRIDE_STORAGE_KEYS = [
   "cocalc_jupyter_virtualization",
@@ -99,6 +100,39 @@ function forceWindowedList():
     const storage = window.localStorage;
     if (storage != null) {
       for (const key of WINDOWED_LIST_OVERRIDE_STORAGE_KEYS) {
+        const storageOverride = parseWindowedOverride(storage.getItem(key));
+        if (storageOverride != null) {
+          return { enabled: storageOverride, source: "localStorage" };
+        }
+      }
+    }
+  } catch {
+    // ignore malformed URL/search param / storage access issues
+  }
+  return {};
+}
+
+const LAZY_RENDER_OVERRIDE_STORAGE_KEYS = [
+  "cocalc_jupyter_lazy_render",
+  "jupyter_lazy_render",
+] as const;
+
+function forceLazyRenderOnce():
+  | { enabled: boolean; source: LazyRenderForceSource }
+  | { enabled?: undefined; source?: undefined } {
+  try {
+    if (typeof window === "undefined") {
+      return {};
+    }
+    const urlOverride = parseWindowedOverride(
+      new URLSearchParams(window.location.search).get("jupyter_lazy_render"),
+    );
+    if (urlOverride != null) {
+      return { enabled: urlOverride, source: "url" };
+    }
+    const storage = window.localStorage;
+    if (storage != null) {
+      for (const key of LAZY_RENDER_OVERRIDE_STORAGE_KEYS) {
         const storageOverride = parseWindowedOverride(storage.getItem(key));
         if (storageOverride != null) {
           return { enabled: storageOverride, source: "localStorage" };
@@ -285,8 +319,12 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     .getStore("account")
     .getIn(["editor_settings", "disable_jupyter_virtualization"]);
   const forcedWindowed = forceWindowedList();
+  const forcedLazyRenderOnce = forceLazyRenderOnce();
   const useWindowedListRef = useRef<boolean>(
     forcedWindowed.enabled ?? defaultWindowedEnabled,
+  );
+  const useLazyRenderOnceRef = useRef<boolean>(
+    forcedLazyRenderOnce.enabled ?? false,
   );
 
   useEffect(() => {
@@ -294,12 +332,18 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     const enabled = useWindowedListRef.current;
     const forced = forcedWindowed.enabled ?? null;
     const forceSource = forcedWindowed.source ?? null;
+    const lazyEnabled = useLazyRenderOnceRef.current;
+    const lazyForced = forcedLazyRenderOnce.enabled ?? null;
+    const lazyForceSource = forcedLazyRenderOnce.source ?? null;
     (window as any).__cocalcJupyterRuntime = {
       ...(window as any).__cocalcJupyterRuntime,
       windowed_list_enabled: enabled,
       windowed_list_forced: forced,
       windowed_list_default: defaultWindowedEnabled,
       windowed_list_force_source: forceSource,
+      lazy_render_once_enabled: lazyEnabled,
+      lazy_render_once_forced: lazyForced,
+      lazy_render_once_force_source: lazyForceSource,
     };
     document.documentElement.setAttribute(
       "data-cocalc-jupyter-windowed-list",
@@ -308,6 +352,14 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     document.documentElement.setAttribute(
       "data-cocalc-jupyter-windowed-list-source",
       forceSource ?? "account-setting",
+    );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-lazy-render",
+      lazyEnabled ? "1" : "0",
+    );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-lazy-render-source",
+      lazyForceSource ?? "default",
     );
     if (forced == null) {
       document.documentElement.removeAttribute(
@@ -324,7 +376,18 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
         `[jupyter-virt] use_windowed_list=${enabled} (forced=${forced}, source=${forceSource})`,
       );
     }
-  }, [defaultWindowedEnabled, forcedWindowed.enabled, forcedWindowed.source]);
+    if (lazyForced != null) {
+      console.info(
+        `[jupyter-lazy] use_lazy_render_once=${lazyEnabled} (forced=${lazyForced}, source=${lazyForceSource})`,
+      );
+    }
+  }, [
+    defaultWindowedEnabled,
+    forcedWindowed.enabled,
+    forcedWindowed.source,
+    forcedLazyRenderOnce.enabled,
+    forcedLazyRenderOnce.source,
+  ]);
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);
 
@@ -402,6 +465,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
         sel_ids={sel_ids}
         trust={trust}
         use_windowed_list={useWindowedListRef.current}
+        use_lazy_render_once={useLazyRenderOnceRef.current}
         llmTools={llmTools}
         pendingCells={pendingCells}
       />
