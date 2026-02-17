@@ -180,6 +180,21 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
   const lazyHydratedIdsRef = useRef<Set<string>>(new Set());
   const lazyHeightsRef = useRef<Record<string, number>>({});
   const [lazyHydrationVersion, setLazyHydrationVersion] = useState<number>(0);
+  const lazyHeightRefreshScheduledRef = useRef<boolean>(false);
+
+  const scheduleLazyHeightRefresh = useCallback(() => {
+    if (lazyHeightRefreshScheduledRef.current) return;
+    lazyHeightRefreshScheduledRef.current = true;
+    const run = () => {
+      lazyHeightRefreshScheduledRef.current = false;
+      setLazyHydrationVersion((n) => n + 1);
+    };
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => run());
+      return;
+    }
+    setTimeout(run, 0);
+  }, []);
 
   useEffect(() => {
     if (!lazyRenderEnabled) return;
@@ -444,7 +459,11 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
             if (node == null) return;
             const h = node.getBoundingClientRect().height;
             if (h > 0) {
-              lazyHeightsRef.current[id] = h;
+              const prev = lazyHeightsRef.current[id] ?? 0;
+              if (Math.abs(prev - h) > 1) {
+                lazyHeightsRef.current[id] = h;
+                scheduleLazyHeightRefresh();
+              }
             }
           }}
         >

@@ -28,6 +28,7 @@ type Options = {
   profile: "quick" | "full";
   virtualization: "on" | "off" | "keep";
   render_mode: "eager" | "lazy";
+  minimap_debug: boolean;
   require_active_virtualization: boolean;
   scenario?: string;
   path_prefix: string;
@@ -91,6 +92,11 @@ type ScrollMetrics = {
     | "unknown";
   lazy_render_once_attr: boolean | null;
   lazy_render_once_source: "runtime" | "root-attr" | "unknown";
+  minimap_present: boolean;
+  minimap_alignment_top_error_max_px: number | null;
+  minimap_alignment_height_error_max_px: number | null;
+  minimap_alignment_max_error_px: number | null;
+  minimap_alignment_ok: boolean | null;
 };
 
 type FrontendInstrumentationProbe = {
@@ -720,6 +726,91 @@ async function measureScrollScenario({
         return text.includes(marker);
       }
 
+      function clamp(value: number, min: number, max: number): number {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function computeNotebookContentHeight(scroller: HTMLElement): number {
+        const nodes = Array.from(
+          scroller.querySelectorAll<HTMLElement>("[data-jupyter-lazy-cell-id]"),
+        );
+        if (nodes.length === 0) {
+          return Math.max(1, scroller.scrollHeight);
+        }
+        const scrollerRect = scroller.getBoundingClientRect();
+        const scrollTop = scroller.scrollTop;
+        let maxBottom = 1;
+        for (const node of nodes) {
+          const rect = node.getBoundingClientRect();
+          const bottom = rect.bottom - scrollerRect.top + scrollTop;
+          if (Number.isFinite(bottom) && bottom > maxBottom) {
+            maxBottom = bottom;
+          }
+        }
+        return Math.max(1, maxBottom);
+      }
+
+      function sampleMinimapAlignment(scroller: HTMLElement) {
+        const rail = document.querySelector(
+          '[data-cocalc-jupyter-minimap-rail="1"]',
+        ) as HTMLElement | null;
+        const viewport = document.querySelector(
+          '[data-cocalc-jupyter-minimap-viewport="1"]',
+        ) as HTMLElement | null;
+        const track = document.querySelector(
+          '[data-cocalc-jupyter-minimap-track="1"]',
+        ) as HTMLElement | null;
+        if (rail == null || viewport == null || track == null) {
+          return {
+            present: false,
+            top_error_px: null as number | null,
+            height_error_px: null as number | null,
+            max_error_px: null as number | null,
+            alignment_ok: null as boolean | null,
+          };
+        }
+
+        const railHeight = Math.max(1, rail.clientHeight);
+        const contentHeight = Math.max(railHeight, track.scrollHeight);
+        const notebookContentHeight = computeNotebookContentHeight(scroller);
+        const maxNotebookScroll = Math.max(
+          1,
+          notebookContentHeight - scroller.clientHeight,
+        );
+        const notebookScrollTop = clamp(scroller.scrollTop, 0, maxNotebookScroll);
+        const notebookRatio = notebookScrollTop / maxNotebookScroll;
+        const maxMiniScroll = Math.max(0, contentHeight - railHeight);
+        const miniScrollTop = notebookRatio * maxMiniScroll;
+        const viewportHeightInTrack = Math.min(
+          contentHeight,
+          Math.max(16, (scroller.clientHeight / notebookContentHeight) * contentHeight),
+        );
+        const expectedThumbHeight = Math.min(railHeight, viewportHeightInTrack);
+        const viewportTravelInTrack = Math.max(0, contentHeight - viewportHeightInTrack);
+        const viewportTopInTrack = notebookRatio * viewportTravelInTrack;
+        const expectedThumbTop = clamp(
+          viewportTopInTrack - miniScrollTop,
+          0,
+          Math.max(0, railHeight - expectedThumbHeight),
+        );
+
+        const actualThumbTop = viewport.offsetTop;
+        const actualThumbHeight = viewport.clientHeight;
+        const topError = Math.abs(actualThumbTop - expectedThumbTop);
+        const heightError = Math.abs(actualThumbHeight - expectedThumbHeight);
+        const maxError = Math.max(topError, heightError);
+        const topTolerance = Math.max(5, railHeight * 0.03);
+        const heightTolerance = Math.max(6, expectedThumbHeight * 0.2);
+
+        return {
+          present: true,
+          top_error_px: topError,
+          height_error_px: heightError,
+          max_error_px: maxError,
+          alignment_ok: topError <= topTolerance && heightError <= heightTolerance,
+        };
+      }
+
       function percentile(v: number[], p: number): number {
         if (v.length === 0) return 0;
         const sorted = [...v].sort((a, b) => a - b);
@@ -961,6 +1052,7 @@ async function measureScrollScenario({
         assertBeforeDeadline("count_top_dom");
         return countVisibleCellDomNodes(scroller);
       });
+      const minimapTopAlignment = sampleMinimapAlignment(scroller);
 
       await recordPhase("scroll_mid", () =>
         scrollTo({
@@ -975,6 +1067,7 @@ async function measureScrollScenario({
         assertBeforeDeadline("count_mid_dom");
         return countVisibleCellDomNodes(scroller);
       });
+      const minimapMidAlignment = sampleMinimapAlignment(scroller);
 
       await recordPhase("settle_bottom_initial", () =>
         settleEdge({
@@ -989,6 +1082,7 @@ async function measureScrollScenario({
         return countVisibleCellDomNodes(scroller);
       });
       const bottomVisibleInitially = markerVisible(bottom_marker, scroller);
+      const minimapBottomAlignment = sampleMinimapAlignment(scroller);
 
       await recordPhase("scroll_cycles", async () => {
         for (let i = 0; i < cycles; i += 1) {
@@ -1032,6 +1126,25 @@ async function measureScrollScenario({
       const frameMax = frameCount > 0 ? Math.max(...frameDeltas) : 0;
       const frameP95 = frameCount > 0 ? percentile(frameDeltas, 0.95) : 0;
 
+      const minimapSamples = [
+        minimapTopAlignment,
+        minimapMidAlignment,
+        minimapBottomAlignment,
+      ].filter((sample) => sample.present);
+      const minimapPresent = minimapSamples.length > 0;
+      const minimapTopErrorMax = minimapPresent
+        ? Math.max(...minimapSamples.map((sample) => sample.top_error_px ?? 0))
+        : null;
+      const minimapHeightErrorMax = minimapPresent
+        ? Math.max(...minimapSamples.map((sample) => sample.height_error_px ?? 0))
+        : null;
+      const minimapErrorMax = minimapPresent
+        ? Math.max(...minimapSamples.map((sample) => sample.max_error_px ?? 0))
+        : null;
+      const minimapAlignmentOk = minimapPresent
+        ? minimapSamples.every((sample) => sample.alignment_ok === true)
+        : null;
+
       return {
         duration_ms: elapsed,
         phase_durations_ms: phaseDurations,
@@ -1060,6 +1173,11 @@ async function measureScrollScenario({
         windowed_list_source: windowedListSource,
         lazy_render_once_attr: lazyRenderOnceAttr,
         lazy_render_once_source: lazyRenderOnceSource,
+        minimap_present: minimapPresent,
+        minimap_alignment_top_error_max_px: minimapTopErrorMax,
+        minimap_alignment_height_error_max_px: minimapHeightErrorMax,
+        minimap_alignment_max_error_px: minimapErrorMax,
+        minimap_alignment_ok: minimapAlignmentOk,
       };
     },
     { cycles, scroll_steps, top_marker, bottom_marker, timeout_ms },
@@ -1279,6 +1397,8 @@ function printSummaryTable(result: ScrollBenchmarkResult) {
     "Frame p95",
     "LongTasks",
     "DOM T/M/B",
+    "MiniMap",
+    "MiniErr",
     "Virt?",
     "Reliable?",
   );
@@ -1301,6 +1421,14 @@ function printSummaryTable(result: ScrollBenchmarkResult) {
         : "n/a",
       String(run.metrics.longtask_count),
       `${run.metrics.dom_cells_top}/${run.metrics.dom_cells_mid}/${run.metrics.dom_cells_bottom}`,
+      run.metrics.minimap_alignment_ok == null
+        ? run.metrics.minimap_present
+          ? "n/a"
+          : "none"
+        : yesNo(run.metrics.minimap_alignment_ok),
+      run.metrics.minimap_alignment_max_error_px == null
+        ? "n/a"
+        : `${run.metrics.minimap_alignment_max_error_px.toFixed(1)} px`,
       yesNo(run.virtualization_likely),
       yesNo(run.reliability_ok),
     );
@@ -1320,6 +1448,8 @@ function printSummaryTable(result: ScrollBenchmarkResult) {
   table.setAlignRight(12);
   table.setAlignRight(13);
   table.setAlignRight(14);
+  table.setAlignRight(15);
+  table.setAlignRight(16);
   console.log(table.toString());
 }
 
@@ -1336,6 +1466,7 @@ function printReliabilityMatrix(result: ScrollBenchmarkResult) {
     "Description",
     "Top Marker",
     "Bottom Marker",
+    "MiniMap",
     "Max Scroll",
     "Status",
   );
@@ -1343,7 +1474,11 @@ function printReliabilityMatrix(result: ScrollBenchmarkResult) {
     const top = run.metrics.top_marker_visible_after;
     const bottom = run.metrics.bottom_marker_visible_after;
     const scrolled = run.metrics.max_scroll_px > 0;
-    const status = top && bottom && scrolled ? "PASS" : "FAIL";
+    const minimapOk =
+      run.metrics.minimap_alignment_ok == null
+        ? true
+        : run.metrics.minimap_alignment_ok;
+    const status = top && bottom && scrolled && minimapOk ? "PASS" : "FAIL";
     table.addRow(
       run.name,
       run.virtualization_mode,
@@ -1357,6 +1492,11 @@ function printReliabilityMatrix(result: ScrollBenchmarkResult) {
       run.description,
       yesNo(top),
       yesNo(bottom),
+      run.metrics.minimap_alignment_ok == null
+        ? run.metrics.minimap_present
+          ? "n/a"
+          : "none"
+        : yesNo(run.metrics.minimap_alignment_ok),
       `${Math.round(run.metrics.max_scroll_px)} px`,
       status,
     );
@@ -1373,6 +1513,7 @@ function printReliabilityMatrix(result: ScrollBenchmarkResult) {
   table.setAlignRight(9);
   table.setAlignRight(10);
   table.setAlignRight(11);
+  table.setAlignRight(12);
   console.log(table.toString());
 }
 
@@ -1435,6 +1576,7 @@ Options:
   --profile <quick|full>    Scenario profile (default: quick)
   --virtualization <mode>   Force notebook virtualization: on|off|keep (default: off)
   --render-mode <mode>      Non-windowed render mode: lazy (default: lazy)
+  --minimap-debug           Enable minimap debug overlay instrumentation
   --require-active-virtualization  Fail if requested virtualization mode is not active
   --scenario <name>         Run one scenario from the selected profile
   --path-prefix <path>      Notebook path prefix (default: $HOME/jupyter-scroll-benchmark)
@@ -1455,6 +1597,7 @@ function parseArgs(argv: string[]): Options {
     profile: DEFAULT_PROFILE,
     virtualization: "off",
     render_mode: DEFAULT_RENDER_MODE,
+    minimap_debug: false,
     require_active_virtualization: false,
     path_prefix: DEFAULT_PATH_PREFIX,
     scroll_steps: DEFAULT_SCROLL_STEPS,
@@ -1547,6 +1690,9 @@ function parseArgs(argv: string[]): Options {
         opts.render_mode = mode;
         break;
       }
+      case "--minimap-debug":
+        opts.minimap_debug = true;
+        break;
       case "--require-active-virtualization":
         opts.require_active_virtualization = true;
         break;
@@ -1629,9 +1775,11 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
       ({
         virtualizationMode,
         renderMode,
+        minimapDebug,
       }: {
         virtualizationMode: "on" | "off" | "keep";
         renderMode: "eager" | "lazy";
+        minimapDebug: boolean;
       }) => {
       try {
         if (virtualizationMode !== "keep") {
@@ -1641,6 +1789,9 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         const lazyValue = renderMode === "lazy" ? "on" : "off";
         localStorage.setItem("cocalc_jupyter_lazy_render", lazyValue);
         localStorage.setItem("jupyter_lazy_render", lazyValue);
+        const minimapDebugValue = minimapDebug ? "on" : "off";
+        localStorage.setItem("cocalc_jupyter_minimap_debug", minimapDebugValue);
+        localStorage.setItem("jupyter_minimap_debug", minimapDebugValue);
       } catch {
         // ignore storage failures in restricted contexts
       }
@@ -1648,6 +1799,7 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
       {
         virtualizationMode: opts.virtualization,
         renderMode: opts.render_mode,
+        minimapDebug: opts.minimap_debug,
       },
     );
   }
@@ -1720,10 +1872,13 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
           metrics.dom_cells_bottom < scenario.expected_cells * 0.6);
       const virtualization_active = metrics.windowed_list_attr;
       const lazy_render_once_active = metrics.lazy_render_once_attr;
+      const minimapAlignmentOk =
+        metrics.minimap_alignment_ok == null ? true : metrics.minimap_alignment_ok;
       const reliability_ok =
         metrics.top_marker_visible_after &&
         metrics.bottom_marker_visible_after &&
-        metrics.max_scroll_px > 0;
+        metrics.max_scroll_px > 0 &&
+        minimapAlignmentOk;
       const run: ScenarioResult = {
         name: scenario.name,
         description: scenario.description,
@@ -1757,9 +1912,14 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         const fps = metrics.approx_fps == null ? "n/a" : metrics.approx_fps.toFixed(1);
         const typingP95 =
           typing_metrics.p95_ms == null ? "n/a" : `${typing_metrics.p95_ms.toFixed(1)}ms`;
+        const mini = metrics.minimap_alignment_ok == null
+          ? "n/a"
+          : metrics.minimap_alignment_ok
+            ? `ok (${fmtMaybeNum(metrics.minimap_alignment_max_error_px)}px)`
+            : `fail (${fmtMaybeNum(metrics.minimap_alignment_max_error_px)}px)`;
         const status = reliability_ok ? "PASS" : "FAIL";
         console.log(
-          `[jupyter-scroll-bench] ${scenario.name} (virt=${opts.virtualization}, render=${opts.render_mode}): open=${fmtMs(open_metrics.first_input_ms)}, typing_p95=${typingP95}, dur=${fmtMs(metrics.duration_ms)}, fps=${fps}, longtasks=${metrics.longtask_count}, status=${status}`,
+          `[jupyter-scroll-bench] ${scenario.name} (virt=${opts.virtualization}, render=${opts.render_mode}): open=${fmtMs(open_metrics.first_input_ms)}, typing_p95=${typingP95}, dur=${fmtMs(metrics.duration_ms)}, fps=${fps}, longtasks=${metrics.longtask_count}, minimap=${mini}, status=${status}`,
         );
       }
     }
