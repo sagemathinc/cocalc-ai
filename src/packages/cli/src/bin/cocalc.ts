@@ -68,18 +68,16 @@ type WorkspaceRow = {
   project_id: string;
   title: string;
   host_id: string | null;
+  state?: { state?: string } | null;
+  last_edited?: string | Date | null;
+  deleted?: string | Date | boolean | null;
 };
 
 type HostRow = {
   id: string;
   name: string;
-  public_url: string | null;
-  internal_url: string | null;
-  metadata: Record<string, any> | null;
-};
-
-type UserQueryResult<T> = {
-  rows: T[];
+  public_ip?: string | null;
+  machine?: Record<string, any> | null;
 };
 
 type LroStatus = {
@@ -382,27 +380,95 @@ async function resolveDefaultAdminAccountId({
       ),
     ),
   );
-  const query =
-    "SELECT account_id FROM accounts WHERE 'admin' = ANY(groups) AND coalesce(deleted,false)=false ORDER BY account_id LIMIT 1";
 
-  for (const candidate of candidates) {
+  async function accountExists(account_id: string): Promise<boolean> {
     try {
       const result = (await callHub({
         client: remote.client,
-        account_id: candidate,
+        account_id,
         name: "db.userQuery",
-        args: [{ query, options: [] }],
+        args: [
+          {
+            query: { accounts: [{ account_id: null }] },
+            options: [{ limit: 1 }],
+          },
+        ],
         timeout: timeoutMs,
-      })) as UserQueryResult<{ account_id: string }>;
-      const found = result?.rows?.[0]?.account_id;
-      if (isValidUUID(found)) {
-        return found;
-      }
+      })) as { accounts?: Array<{ account_id?: string }> };
+      return (
+        result?.accounts?.[0]?.account_id != null &&
+        isValidUUID(result.accounts[0].account_id)
+      );
     } catch {
-      // try next candidate
+      return false;
     }
   }
-  return candidates[0];
+
+  async function isAdminAccount(account_id: string): Promise<boolean> {
+    try {
+      await callHub({
+        client: remote.client,
+        account_id,
+        name: "system.userSearch",
+        args: [{ query: "a", limit: 1, admin: true }],
+        timeout: timeoutMs,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function discoverAccounts(account_id: string): Promise<string[]> {
+    const out = new Set<string>();
+    const probes = ["a", "e", "i", "o", "u", "w", "s", "n", "t", "r", "1"];
+    for (const query of probes) {
+      try {
+        const rows = (await callHub({
+          client: remote.client,
+          account_id,
+          name: "system.userSearch",
+          args: [{ query, limit: 25 }],
+          timeout: timeoutMs,
+        })) as Array<{ account_id?: string }>;
+        for (const row of rows ?? []) {
+          const id = row?.account_id;
+          if (typeof id === "string" && isValidUUID(id)) {
+            out.add(id);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return Array.from(out);
+  }
+
+  const existingCandidates: string[] = [];
+  for (const candidate of candidates) {
+    if (await accountExists(candidate)) {
+      existingCandidates.push(candidate);
+      if (await isAdminAccount(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    for (const discovered of await discoverAccounts(candidate)) {
+      if (existingCandidates.includes(discovered)) {
+        continue;
+      }
+      if (await accountExists(discovered)) {
+        existingCandidates.push(discovered);
+        if (await isAdminAccount(discovered)) {
+          return discovered;
+        }
+      }
+    }
+  }
+
+  return existingCandidates[0] ?? candidates[0];
 }
 
 function resolveAccountIdFromRemote(remote: RemoteConnection): string | undefined {
@@ -487,67 +553,132 @@ async function hubCallAccount<T>(
   })) as T;
 }
 
-async function userQuery<T>(
+async function userQueryTable<T>(
   ctx: CommandContext,
-  query: string,
+  table: string,
+  row: Record<string, unknown>,
   options: any[] = [],
-): Promise<UserQueryResult<T>> {
-  return await hubCallAccount<UserQueryResult<T>>(ctx, "db.userQuery", [
+): Promise<T[]> {
+  const query = {
+    [table]: [row],
+  };
+  const result = await hubCallAccount<Record<string, T[]>>(ctx, "db.userQuery", [
     {
       query,
       options,
     },
   ]);
+  const rows = result?.[table];
+  return Array.isArray(rows) ? rows : [];
+}
+
+function toIso(value: unknown): string | null {
+  if (value == null) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return String(value);
+}
+
+function workspaceState(value: WorkspaceRow["state"]): string {
+  return typeof value?.state === "string" ? value.state : "";
+}
+
+function isDeleted(value: WorkspaceRow["deleted"]): boolean {
+  return value != null && value !== false;
+}
+
+async function queryProjects({
+  ctx,
+  project_id,
+  title,
+  host_id,
+  limit,
+}: {
+  ctx: CommandContext;
+  project_id?: string;
+  title?: string;
+  host_id?: string | null;
+  limit: number;
+}): Promise<WorkspaceRow[]> {
+  const row: Record<string, unknown> = {
+    project_id: null,
+    title: null,
+    host_id: null,
+    state: null,
+    last_edited: null,
+    deleted: null,
+  };
+  if (project_id != null) {
+    row.project_id = project_id;
+  }
+  if (title != null) {
+    row.title = title;
+  }
+  if (host_id != null) {
+    row.host_id = host_id;
+  }
+  const rows = await userQueryTable<WorkspaceRow>(ctx, "projects_all", row, [
+    { limit, order_by: "-last_edited" },
+  ]);
+  return rows.filter((x) => !isDeleted(x.deleted));
 }
 
 async function resolveWorkspace(ctx: CommandContext, identifier: string): Promise<WorkspaceRow> {
   if (isValidUUID(identifier)) {
-    const result = await userQuery<WorkspaceRow>(
+    const rows = await queryProjects({
       ctx,
-      "SELECT project_id, title, host_id FROM projects WHERE project_id=$1 AND deleted IS NOT true",
-      [identifier],
-    );
-    if (result.rows[0]) return result.rows[0];
+      project_id: identifier,
+      limit: 3,
+    });
+    if (rows[0]) return rows[0];
   }
 
-  const result = await userQuery<WorkspaceRow>(
+  const rows = await queryProjects({
     ctx,
-    "SELECT project_id, title, host_id FROM projects WHERE title=$1 AND deleted IS NOT true ORDER BY created DESC LIMIT 3",
-    [identifier],
-  );
-  if (!result.rows.length) {
+    title: identifier,
+    limit: 25,
+  });
+  if (!rows.length) {
     throw new Error(`workspace '${identifier}' not found`);
   }
-  if (result.rows.length > 1) {
+  if (rows.length > 1) {
     throw new Error(
-      `workspace name '${identifier}' is ambiguous: ${result.rows.map((x) => x.project_id).join(", ")}`,
+      `workspace name '${identifier}' is ambiguous: ${rows.map((x) => x.project_id).join(", ")}`,
     );
   }
-  return result.rows[0];
+  return rows[0];
 }
 
 async function resolveHost(ctx: CommandContext, identifier: string): Promise<HostRow> {
-  if (isValidUUID(identifier)) {
-    const result = await userQuery<HostRow>(
-      ctx,
-      "SELECT id, name, public_url, internal_url, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
-      [identifier],
-    );
-    if (result.rows[0]) return result.rows[0];
+  const hosts = await hubCallAccount<HostRow[]>(ctx, "hosts.listHosts", [
+    { include_deleted: false, catalog: true },
+  ]);
+  if (!Array.isArray(hosts) || !hosts.length) {
+    throw new Error("no hosts are visible to this account");
   }
 
-  const result = await userQuery<HostRow>(
-    ctx,
-    "SELECT id, name, public_url, internal_url, metadata FROM project_hosts WHERE name=$1 AND deleted IS NULL ORDER BY created DESC LIMIT 3",
-    [identifier],
-  );
-  if (!result.rows.length) {
+  if (isValidUUID(identifier)) {
+    const match = hosts.find((x) => x.id === identifier);
+    if (match) {
+      return match;
+    }
     throw new Error(`host '${identifier}' not found`);
   }
-  if (result.rows.length > 1) {
-    throw new Error(`host name '${identifier}' is ambiguous: ${result.rows.map((x) => x.id).join(", ")}`);
+
+  const matches = hosts.filter((x) => x.name === identifier);
+  if (!matches.length) {
+    throw new Error(`host '${identifier}' not found`);
   }
-  return result.rows[0];
+  if (matches.length > 1) {
+    throw new Error(`host name '${identifier}' is ambiguous: ${matches.map((x) => x.id).join(", ")}`);
+  }
+  return matches[0];
 }
 
 async function waitForLro(
@@ -600,12 +731,12 @@ async function waitForProjectPlacement(
 ): Promise<boolean> {
   const started = Date.now();
   while (Date.now() - started <= timeoutMs) {
-    const result = await userQuery<{ host_id: string | null }>(
+    const rows = await queryProjects({
       ctx,
-      "SELECT host_id FROM projects WHERE project_id=$1",
-      [projectId],
-    );
-    if (result.rows[0]?.host_id === hostId) {
+      project_id: projectId,
+      limit: 1,
+    });
+    if (rows[0]?.host_id === hostId) {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
@@ -688,12 +819,8 @@ async function resolveProxyUrl({
     base = ctx.apiBaseUrl;
   }
   if (!base) {
-    base =
-      (host.public_url ? normalizeUrl(host.public_url) : "") ||
-      (host.internal_url ? normalizeUrl(host.internal_url) : "");
-  }
-  if (!base) {
-    const publicIp = host.metadata?.runtime?.public_ip ?? host.metadata?.machine?.metadata?.public_ip;
+    const machine = host.machine as Record<string, any> | undefined;
+    const publicIp = host.public_ip ?? machine?.metadata?.public_ip;
     if (publicIp) {
       base = normalizeUrl(String(publicIp));
     }
@@ -745,39 +872,25 @@ workspace
       await withContext(command, "workspace list", async (ctx) => {
         const hostId = opts.host ? (await resolveHost(ctx, opts.host)).id : null;
         const limitNum = Math.max(1, Math.min(10000, Number(opts.limit ?? "100") || 100));
-        const prefix = opts.prefix?.trim() ? `${opts.prefix.trim()}%` : null;
-        const result = await userQuery<{
-          project_id: string;
-          title: string;
-          host_id: string | null;
-          state: string | null;
-          last_edited: string | null;
-        }>(
+        const prefix = opts.prefix?.trim() || "";
+        // Deleted workspaces are still returned by projects_all; overfetch so we can
+        // filter locally and still satisfy requested limits.
+        const fetchLimit = Math.min(10000, Math.max(limitNum * 10, 200));
+        const rows = await queryProjects({
           ctx,
-          `
-            SELECT
-              p.project_id,
-              p.title,
-              p.host_id,
-              COALESCE(p.state->>'state', '') AS state,
-              p.last_edited::text AS last_edited
-            FROM projects p
-            WHERE p.deleted IS NOT true
-              AND (p.users -> $1::text ->> 'group') IN ('owner','collaborator')
-              AND ($2::uuid IS NULL OR p.host_id = $2::uuid)
-              AND ($3::text IS NULL OR p.title ILIKE $3::text)
-            ORDER BY COALESCE(p.last_edited, p.created) DESC
-            LIMIT $4
-          `,
-          [ctx.accountId, hostId, prefix, limitNum],
-        );
-
-        return result.rows.map((row) => ({
+          host_id: hostId,
+          limit: fetchLimit,
+        });
+        const normalizedPrefix = prefix.toLowerCase();
+        const filtered = normalizedPrefix
+          ? rows.filter((row) => row.title.toLowerCase().startsWith(normalizedPrefix))
+          : rows;
+        return filtered.slice(0, limitNum).map((row) => ({
           workspace_id: row.project_id,
           title: row.title,
           host_id: row.host_id,
-          state: row.state ?? "",
-          last_edited: row.last_edited,
+          state: workspaceState(row.state),
+          last_edited: toIso(row.last_edited),
         }));
       });
     },
@@ -1308,7 +1421,21 @@ host
     },
   );
 
-program.parseAsync(process.argv).catch((error) => {
-  emitError({ globals: globalsFrom(program as unknown as Command) }, "cocalc", error);
-  process.exit(1);
-});
+async function main() {
+  try {
+    await program.parseAsync(process.argv);
+  } catch (error) {
+    emitError(
+      { globals: globalsFrom(program as unknown as Command) },
+      "cocalc",
+      error,
+    );
+    process.exitCode = 1;
+  } finally {
+    // Conat/socket transports can keep handles open in short-lived CLI use.
+    // Force termination so commands behave like normal Unix CLIs.
+    process.exit(process.exitCode ?? 0);
+  }
+}
+
+void main();
