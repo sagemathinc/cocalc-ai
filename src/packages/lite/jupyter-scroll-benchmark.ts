@@ -1601,7 +1601,7 @@ Options:
   --profile <quick|full>    Scenario profile (default: quick)
   --virtualization <mode>   Force notebook virtualization: on|off|keep (default: off)
   --render-mode <mode>      Non-windowed render mode: lazy (default: lazy)
-  --minimap-debug           Enable minimap debug overlay instrumentation
+  --minimap-debug           Add extra timeout budget for minimap diagnostics
   --require-active-virtualization  Fail if requested virtualization mode is not active
   --scenario <name>         Run one scenario from the selected profile
   --path-prefix <path>      Notebook path prefix (default: $HOME/jupyter-scroll-benchmark)
@@ -1800,11 +1800,9 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
       ({
         virtualizationMode,
         renderMode,
-        minimapDebug,
       }: {
         virtualizationMode: "on" | "off" | "keep";
         renderMode: "eager" | "lazy";
-        minimapDebug: boolean;
       }) => {
       try {
         if (virtualizationMode !== "keep") {
@@ -1814,9 +1812,6 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
         const lazyValue = renderMode === "lazy" ? "on" : "off";
         localStorage.setItem("cocalc_jupyter_lazy_render", lazyValue);
         localStorage.setItem("jupyter_lazy_render", lazyValue);
-        const minimapDebugValue = minimapDebug ? "on" : "off";
-        localStorage.setItem("cocalc_jupyter_minimap_debug", minimapDebugValue);
-        localStorage.setItem("jupyter_minimap_debug", minimapDebugValue);
       } catch {
         // ignore storage failures in restricted contexts
       }
@@ -1824,7 +1819,6 @@ async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult>
       {
         virtualizationMode: opts.virtualization,
         renderMode: opts.render_mode,
-        minimapDebug: opts.minimap_debug,
       },
     );
   }

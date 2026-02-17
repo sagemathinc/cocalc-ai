@@ -207,18 +207,6 @@ interface MinimapData {
   rows: MinimapRow[];
 }
 
-interface MinimapDebugInfo {
-  notebookContentHeight: number;
-  notebookClientHeight: number;
-  contentHeight: number;
-  railHeight: number;
-  notebookScrollTop: number;
-  notebookRatio: number;
-  miniScrollTop: number;
-  thumbHeight: number;
-  thumbTop: number;
-}
-
 interface UseNotebookMinimapArgs {
   cellList: immutable.List<string>;
   cells: immutable.Map<string, any>;
@@ -256,43 +244,6 @@ function releaseMinimapSettingsModal(owner: symbol): void {
   }
 }
 
-function parseBooleanOverride(raw: string | null): boolean | undefined {
-  if (raw == null) return;
-  const value = raw.trim().toLowerCase();
-  if (
-    value === "1" ||
-    value === "true" ||
-    value === "on" ||
-    value === "yes"
-  ) {
-    return true;
-  }
-  if (
-    value === "0" ||
-    value === "false" ||
-    value === "off" ||
-    value === "no"
-  ) {
-    return false;
-  }
-}
-
-function readMinimapDebugEnabled(): boolean {
-  if (typeof window === "undefined") return false;
-  const urlOverride = parseBooleanOverride(
-    new URLSearchParams(window.location.search).get("jupyter_minimap_debug"),
-  );
-  if (urlOverride != null) return urlOverride;
-  const storage = window.localStorage;
-  if (storage != null) {
-    for (const key of ["cocalc_jupyter_minimap_debug", "jupyter_minimap_debug"]) {
-      const value = parseBooleanOverride(storage.getItem(key));
-      if (value != null) return value;
-    }
-  }
-  return false;
-}
-
 export function useNotebookMinimap({
   cellList,
   cells,
@@ -317,11 +268,6 @@ export function useNotebookMinimap({
     useState<boolean>(minimapOptIn);
   const [minimapDraftWidth, setMinimapDraftWidth] =
     useState<number>(minimapWidth);
-  const minimapDebugEnabled = useMemo(() => readMinimapDebugEnabled(), [minimapSettings]);
-  const [minimapDebugInfo, setMinimapDebugInfo] = useState<MinimapDebugInfo | null>(
-    null,
-  );
-  const minimapDebugInfoRef = useRef<MinimapDebugInfo | null>(null);
   const minimapModalOwnerRef = useRef<symbol>(Symbol("jupyter-minimap-modal-owner"));
 
   const closeMinimapSettingsModal = useCallback(() => {
@@ -333,11 +279,6 @@ export function useNotebookMinimap({
     const syncSettings = () => setMinimapSettings(readMinimapSettings());
     syncSettings();
     if (typeof window === "undefined") return;
-    const onStorage = (evt: StorageEvent) => {
-      if (!evt.key) return;
-      if (!evt.key.includes("jupyter_minimap")) return;
-      syncSettings();
-    };
     const onSettingsChanged = () => syncSettings();
     const onOpenSettings = () => {
       if (!claimMinimapSettingsModal(minimapModalOwnerRef.current)) return;
@@ -346,11 +287,9 @@ export function useNotebookMinimap({
       setMinimapDraftWidth(current.width);
       setShowMinimapSettingsModal(true);
     };
-    window.addEventListener("storage", onStorage);
     window.addEventListener(MINIMAP_SETTINGS_CHANGED_EVENT, onSettingsChanged);
     window.addEventListener(MINIMAP_OPEN_SETTINGS_EVENT, onOpenSettings);
     return () => {
-      window.removeEventListener("storage", onStorage);
       window.removeEventListener(
         MINIMAP_SETTINGS_CHANGED_EVENT,
         onSettingsChanged,
@@ -391,11 +330,7 @@ export function useNotebookMinimap({
       "data-cocalc-jupyter-minimap-width",
       String(minimapWidth),
     );
-    document.documentElement.setAttribute(
-      "data-cocalc-jupyter-minimap-debug",
-      minimapDebugEnabled ? "1" : "0",
-    );
-  }, [minimapDebugEnabled, minimapOptIn, minimapWidth]);
+  }, [minimapOptIn, minimapWidth]);
 
   const minimapData = useMemo<MinimapData | null>(() => {
     const viewportHeight = cellListHeight ?? 0;
@@ -736,35 +671,6 @@ export function useNotebookMinimap({
       "data-cocalc-jupyter-minimap-thumb-height",
       String(thumbHeight),
     );
-
-    if (minimapDebugEnabled) {
-      const nextInfo: MinimapDebugInfo = {
-        notebookContentHeight,
-        notebookClientHeight: scroller.clientHeight,
-        contentHeight,
-        railHeight: minimapData.railHeight,
-        notebookScrollTop: clampedNotebookScrollTop,
-        notebookRatio,
-        miniScrollTop,
-        thumbHeight,
-        thumbTop: thumbTopInRail,
-      };
-      const prev = minimapDebugInfoRef.current;
-      const changed =
-        prev == null ||
-        Math.abs(prev.thumbTop - nextInfo.thumbTop) > 0.5 ||
-        Math.abs(prev.thumbHeight - nextInfo.thumbHeight) > 0.5 ||
-        Math.abs(prev.notebookScrollTop - nextInfo.notebookScrollTop) > 1 ||
-        Math.abs(prev.notebookContentHeight - nextInfo.notebookContentHeight) > 1 ||
-        Math.abs(prev.contentHeight - nextInfo.contentHeight) > 1;
-      if (changed) {
-        minimapDebugInfoRef.current = nextInfo;
-        setMinimapDebugInfo(nextInfo);
-      }
-    } else if (minimapDebugInfoRef.current != null) {
-      minimapDebugInfoRef.current = null;
-      setMinimapDebugInfo(null);
-    }
   }, [cellListDivRef, minimapData]);
 
   useEffect(() => {
@@ -905,31 +811,6 @@ export function useNotebookMinimap({
             pointerEvents: "none",
           }}
         />
-        {minimapDebugEnabled && minimapDebugInfo != null && (
-          <div
-            style={{
-              position: "absolute",
-              left: "2px",
-              bottom: "2px",
-              maxWidth: "96%",
-              fontFamily:
-                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              fontSize: "9px",
-              lineHeight: 1.25,
-              color: "#0f172a",
-              background: "rgba(255,255,255,0.88)",
-              border: "1px solid rgba(148,163,184,0.8)",
-              borderRadius: "3px",
-              padding: "2px 4px",
-              pointerEvents: "none",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {`top=${minimapDebugInfo.thumbTop.toFixed(1)} h=${minimapDebugInfo.thumbHeight.toFixed(1)} ratio=${minimapDebugInfo.notebookRatio.toFixed(4)} scr=${Math.round(minimapDebugInfo.notebookScrollTop)}/${Math.round(Math.max(1, minimapDebugInfo.notebookContentHeight - minimapDebugInfo.notebookClientHeight))}`}
-          </div>
-        )}
       </div>
     </div>
   );

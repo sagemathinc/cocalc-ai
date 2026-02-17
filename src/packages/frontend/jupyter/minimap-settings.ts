@@ -12,14 +12,8 @@ export const MINIMAP_DEFAULT_WIDTH = 120;
 export const MINIMAP_MIN_WIDTH = 48;
 export const MINIMAP_MAX_WIDTH = 220;
 
-const MINIMAP_OVERRIDE_STORAGE_KEYS = [
-  "cocalc_jupyter_minimap",
-  "jupyter_minimap",
-] as const;
-const MINIMAP_WIDTH_OVERRIDE_STORAGE_KEYS = [
-  "cocalc_jupyter_minimap_width",
-  "jupyter_minimap_width",
-] as const;
+const MINIMAP_ENABLED_STORAGE_KEY = "cocalc_jupyter_minimap";
+const MINIMAP_WIDTH_STORAGE_KEY = "cocalc_jupyter_minimap_width";
 
 export interface MinimapSettings {
   enabled: boolean;
@@ -61,47 +55,24 @@ export function clampMinimapWidth(width: number): number {
 function readEnabledFromStorage(): boolean {
   if (typeof window === "undefined") return MINIMAP_DEFAULT_ENABLED;
   const storage = window.localStorage;
-  if (storage != null) {
-    for (const key of MINIMAP_OVERRIDE_STORAGE_KEYS) {
-      const override = parseBooleanOverride(storage.getItem(key));
-      if (override != null) return override;
-    }
-  }
+  if (storage == null) return MINIMAP_DEFAULT_ENABLED;
+  const override = parseBooleanOverride(storage.getItem(MINIMAP_ENABLED_STORAGE_KEY));
+  if (override != null) return override;
   return MINIMAP_DEFAULT_ENABLED;
 }
 
 function readWidthFromStorage(): number {
   if (typeof window === "undefined") return MINIMAP_DEFAULT_WIDTH;
   const storage = window.localStorage;
-  if (storage != null) {
-    for (const key of MINIMAP_WIDTH_OVERRIDE_STORAGE_KEYS) {
-      const override = parseNumberOverride(storage.getItem(key));
-      if (override != null) return override;
-    }
-  }
+  if (storage == null) return MINIMAP_DEFAULT_WIDTH;
+  const override = parseNumberOverride(storage.getItem(MINIMAP_WIDTH_STORAGE_KEY));
+  if (override != null) return override;
   return MINIMAP_DEFAULT_WIDTH;
 }
 
-function readEnabledFromUrl(): boolean | undefined {
-  if (typeof window === "undefined") return;
-  return parseBooleanOverride(
-    new URLSearchParams(window.location.search).get("jupyter_minimap"),
-  );
-}
-
-function readWidthFromUrl(): number | undefined {
-  if (typeof window === "undefined") return;
-  return parseNumberOverride(
-    new URLSearchParams(window.location.search).get("jupyter_minimap_width"),
-  );
-}
-
 export function readMinimapSettings(): MinimapSettings {
-  const urlEnabled = readEnabledFromUrl();
-  const urlWidth = readWidthFromUrl();
-  const enabled =
-    urlEnabled != null ? urlEnabled : readEnabledFromStorage();
-  const width = urlWidth != null ? urlWidth : readWidthFromStorage();
+  const enabled = readEnabledFromStorage();
+  const width = readWidthFromStorage();
   return { enabled, width };
 }
 
@@ -113,9 +84,7 @@ function dispatchSettingsChanged(): void {
 export function setMinimapEnabled(enabled: boolean): MinimapSettings {
   if (typeof window !== "undefined") {
     const value = enabled ? "1" : "0";
-    for (const key of MINIMAP_OVERRIDE_STORAGE_KEYS) {
-      window.localStorage.setItem(key, value);
-    }
+    window.localStorage.setItem(MINIMAP_ENABLED_STORAGE_KEY, value);
     dispatchSettingsChanged();
   }
   return readMinimapSettings();
@@ -129,9 +98,7 @@ export function toggleMinimapEnabled(): MinimapSettings {
 export function setMinimapWidth(width: number): MinimapSettings {
   if (typeof window !== "undefined") {
     const value = String(clampMinimapWidth(width));
-    for (const key of MINIMAP_WIDTH_OVERRIDE_STORAGE_KEYS) {
-      window.localStorage.setItem(key, value);
-    }
+    window.localStorage.setItem(MINIMAP_WIDTH_STORAGE_KEY, value);
     dispatchSettingsChanged();
   }
   return readMinimapSettings();
