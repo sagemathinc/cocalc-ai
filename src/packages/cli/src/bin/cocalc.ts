@@ -3,6 +3,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir as mkdirLocal, readFile as readFileLocal, writeFile as writeFileLocal } from "node:fs/promises";
+import { createServer as createNetServer, createConnection as createNetConnection, type Server as NetServer } from "node:net";
+import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { dirname, join } from "node:path";
 import { URL } from "node:url";
@@ -75,6 +77,8 @@ type GlobalOptions = GlobalAuthOptions & {
   output?: "table" | "json" | "yaml";
   quiet?: boolean;
   verbose?: boolean;
+  daemon?: boolean;
+  noDaemon?: boolean;
   timeout?: string;
   pollMs?: string;
 };
@@ -112,6 +116,34 @@ type ProjectHostTokenCacheEntry = {
 type ProjectHostTokenCacheFile = {
   version: 1;
   entries: Record<string, ProjectHostTokenCacheEntry>;
+};
+
+type DaemonAction =
+  | "ping"
+  | "shutdown"
+  | "workspace.file.list"
+  | "workspace.file.cat";
+
+type DaemonRequest = {
+  id: string;
+  action: DaemonAction;
+  cwd?: string;
+  globals?: GlobalOptions;
+  payload?: Record<string, unknown>;
+};
+
+type DaemonResponse = {
+  id: string;
+  ok: boolean;
+  data?: unknown;
+  error?: string;
+  meta?: {
+    api?: string | null;
+    account_id?: string | null;
+    pid?: number;
+    uptime_s?: number;
+    started_at?: string;
+  };
 };
 
 type WorkspaceRow = {
@@ -154,6 +186,8 @@ const LRO_SCOPE_TYPES: LroScopeType[] = ["project", "account", "host", "hub"];
 const MAX_TRANSPORT_TIMEOUT_MS = 30_000;
 const WORKSPACE_CONTEXT_FILENAME = ".cocalc-workspace";
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
+const DAEMON_CONNECT_TIMEOUT_MS = 3_000;
+const DAEMON_RPC_TIMEOUT_MS = 30_000;
 
 function cliDebug(...args: unknown[]): void {
   if (!cliDebugEnabled) return;
@@ -176,20 +210,20 @@ type WorkspaceContextRecord = {
   set_at?: string;
 };
 
-function workspaceContextPath(): string {
-  return join(process.cwd(), WORKSPACE_CONTEXT_FILENAME);
+function workspaceContextPath(cwd = process.cwd()): string {
+  return join(cwd, WORKSPACE_CONTEXT_FILENAME);
 }
 
-function saveWorkspaceContext(context: WorkspaceContextRecord): void {
+function saveWorkspaceContext(context: WorkspaceContextRecord, cwd = process.cwd()): void {
   writeFileSync(
-    workspaceContextPath(),
+    workspaceContextPath(cwd),
     `${JSON.stringify({ ...context, set_at: new Date().toISOString() }, null, 2)}\n`,
     "utf8",
   );
 }
 
-function readWorkspaceContext(): WorkspaceContextRecord | undefined {
-  const path = workspaceContextPath();
+function readWorkspaceContext(cwd = process.cwd()): WorkspaceContextRecord | undefined {
+  const path = workspaceContextPath(cwd);
   if (!existsSync(path)) return undefined;
   const raw = readFileSync(path, "utf8").trim();
   if (!raw) return undefined;
@@ -221,8 +255,8 @@ function readWorkspaceContext(): WorkspaceContextRecord | undefined {
   };
 }
 
-function clearWorkspaceContext(): boolean {
-  const path = workspaceContextPath();
+function clearWorkspaceContext(cwd = process.cwd()): boolean {
+  const path = workspaceContextPath(cwd);
   if (!existsSync(path)) return false;
   unlinkSync(path);
   return true;
@@ -335,6 +369,243 @@ function deleteCachedProjectHostToken({
   if (!(key in cache.entries)) return;
   delete cache.entries[key];
   saveProjectHostTokenCache(cache);
+}
+
+function daemonRuntimeDir(env = process.env): string {
+  const runtime = env.XDG_RUNTIME_DIR?.trim();
+  if (runtime) {
+    return join(runtime, "cocalc");
+  }
+  const cache = env.XDG_CACHE_HOME?.trim() || join(homedir(), ".cache");
+  return join(cache, "cocalc");
+}
+
+function daemonSocketPath(env = process.env): string {
+  const uid = typeof process.getuid === "function" ? String(process.getuid()) : "user";
+  return join(daemonRuntimeDir(env), `cli-daemon-${uid}.sock`);
+}
+
+function daemonPidPath(env = process.env): string {
+  const uid = typeof process.getuid === "function" ? String(process.getuid()) : "user";
+  return join(daemonRuntimeDir(env), `cli-daemon-${uid}.pid`);
+}
+
+function daemonLogPath(env = process.env): string {
+  const uid = typeof process.getuid === "function" ? String(process.getuid()) : "user";
+  return join(daemonRuntimeDir(env), `cli-daemon-${uid}.log`);
+}
+
+function daemonSpawnTarget(): { cmd: string; args: string[] } {
+  const scriptPath = process.argv[1];
+  if (scriptPath && existsSync(scriptPath)) {
+    return { cmd: process.execPath, args: [scriptPath] };
+  }
+  return { cmd: process.execPath, args: [] };
+}
+
+function daemonRequestId(): string {
+  return `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function readDaemonPid(path = daemonPidPath()): number | undefined {
+  if (!existsSync(path)) return undefined;
+  const raw = readFileSync(path, "utf8").trim();
+  const pid = Number(raw);
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  return pid;
+}
+
+function isDaemonTransportError(err: unknown): boolean {
+  const code = `${(err as any)?.code ?? ""}`.toUpperCase();
+  const msg = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    code === "ENOENT" ||
+    code === "ECONNREFUSED" ||
+    code === "EPIPE" ||
+    code === "ETIMEDOUT" ||
+    msg.includes("daemon transport") ||
+    msg.includes("daemon timeout")
+  );
+}
+
+async function sendDaemonRequest({
+  request,
+  socketPath = daemonSocketPath(),
+  timeoutMs = DAEMON_RPC_TIMEOUT_MS,
+}: {
+  request: DaemonRequest;
+  socketPath?: string;
+  timeoutMs?: number;
+}): Promise<DaemonResponse> {
+  return await new Promise<DaemonResponse>((resolve, reject) => {
+    let settled = false;
+    let buffer = "";
+    const socket = createNetConnection(socketPath);
+
+    const done = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.end();
+      } catch {
+        // ignore
+      }
+      try {
+        socket.destroy();
+      } catch {
+        // ignore
+      }
+      fn();
+    };
+
+    const timer = setTimeout(() => {
+      const err: any = new Error(`daemon timeout after ${timeoutMs}ms`);
+      err.code = "ETIMEDOUT";
+      done(() => reject(err));
+    }, timeoutMs);
+
+    socket.on("connect", () => {
+      try {
+        socket.write(`${JSON.stringify(request)}\n`);
+      } catch (err) {
+        done(() => reject(err));
+      }
+    });
+
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      while (true) {
+        const idx = buffer.indexOf("\n");
+        if (idx < 0) break;
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line) continue;
+        let parsed: DaemonResponse;
+        try {
+          parsed = JSON.parse(line) as DaemonResponse;
+        } catch (err) {
+          clearTimeout(timer);
+          done(() => reject(err));
+          return;
+        }
+        if (parsed.id !== request.id) {
+          continue;
+        }
+        clearTimeout(timer);
+        done(() => resolve(parsed));
+        return;
+      }
+    });
+
+    socket.on("error", (err: any) => {
+      clearTimeout(timer);
+      err.message = `daemon transport error: ${err?.message ?? err}`;
+      done(() => reject(err));
+    });
+
+    socket.on("close", () => {
+      if (settled) return;
+      clearTimeout(timer);
+      const err: any = new Error("daemon transport closed before response");
+      err.code = "ECONNRESET";
+      done(() => reject(err));
+    });
+  });
+}
+
+async function pingDaemon(socketPath = daemonSocketPath()): Promise<DaemonResponse> {
+  return await sendDaemonRequest({
+    socketPath,
+    timeoutMs: DAEMON_CONNECT_TIMEOUT_MS,
+    request: {
+      id: daemonRequestId(),
+      action: "ping",
+    },
+  });
+}
+
+async function startDaemonProcess({
+  socketPath = daemonSocketPath(),
+  timeoutMs = 8_000,
+}: {
+  socketPath?: string;
+  timeoutMs?: number;
+} = {}): Promise<{ started: boolean; pid?: number; already_running?: boolean }> {
+  try {
+    const pong = await pingDaemon(socketPath);
+    return {
+      started: true,
+      pid: pong.meta?.pid,
+      already_running: true,
+    };
+  } catch {
+    // not running
+  }
+
+  mkdirSync(dirname(socketPath), { recursive: true });
+  const { cmd, args } = daemonSpawnTarget();
+  const daemonArgs = [...args, "daemon", "serve", "--socket", socketPath];
+  const child = spawn(cmd, daemonArgs, {
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      COCALC_CLI_DAEMON_MODE: "1",
+    },
+  });
+  child.unref();
+
+  const start = Date.now();
+  let lastErr: unknown;
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    try {
+      const pong = await pingDaemon(socketPath);
+      return {
+        started: true,
+        pid: pong.meta?.pid,
+      };
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw new Error(
+    `daemon did not become ready in ${timeoutMs}ms: ${
+      lastErr instanceof Error ? lastErr.message : `${lastErr ?? "unknown"}`
+    }`,
+  );
+}
+
+async function daemonRequestWithAutoStart(
+  request: DaemonRequest,
+  {
+    timeoutMs = DAEMON_RPC_TIMEOUT_MS,
+  }: {
+    timeoutMs?: number;
+  } = {},
+): Promise<DaemonResponse> {
+  const socketPath = daemonSocketPath();
+  try {
+    return await sendDaemonRequest({ request, socketPath, timeoutMs });
+  } catch (err) {
+    if (!isDaemonTransportError(err)) {
+      throw err;
+    }
+    await startDaemonProcess({ socketPath });
+    return await sendDaemonRequest({ request, socketPath, timeoutMs });
+  }
+}
+
+function daemonContextKey(globals: GlobalOptions): string {
+  return JSON.stringify({
+    profile: globals.profile ?? null,
+    api: globals.api ?? null,
+    account_id: getExplicitAccountId(globals) ?? null,
+    api_key: globals.apiKey ?? null,
+    cookie: globals.cookie ?? null,
+    bearer: globals.bearer ?? null,
+    hub_password: globals.hubPassword ?? null,
+  });
 }
 
 type ProductCommand = "plus" | "launchpad";
@@ -846,6 +1117,18 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
   };
 }
 
+function closeCommandContext(ctx: CommandContext | undefined): void {
+  if (!ctx) return;
+  for (const host_id of Object.keys(ctx.routedProjectHostClients)) {
+    closeRoutedProjectHostClient(ctx, host_id);
+  }
+  try {
+    ctx.remote.client.close();
+  } catch {
+    // ignore
+  }
+}
+
 async function withContext(
   command: unknown,
   commandName: string,
@@ -866,16 +1149,7 @@ async function withContext(
     );
     process.exitCode = 1;
   } finally {
-    if (ctx) {
-      for (const host_id of Object.keys(ctx.routedProjectHostClients)) {
-        closeRoutedProjectHostClient(ctx, host_id);
-      }
-    }
-    try {
-      ctx?.remote.client.close();
-    } catch {
-      // ignore
-    }
+    closeCommandContext(ctx);
   }
 }
 
@@ -1055,15 +1329,16 @@ async function resolveWorkspace(ctx: CommandContext, identifier: string): Promis
 async function resolveWorkspaceFromArgOrContext(
   ctx: CommandContext,
   identifier?: string,
+  cwd = process.cwd(),
 ): Promise<WorkspaceRow> {
   const value = identifier?.trim();
   if (value) {
     return await resolveWorkspace(ctx, value);
   }
-  const context = readWorkspaceContext();
+  const context = readWorkspaceContext(cwd);
   if (!context?.workspace_id) {
     throw new Error(
-      `missing --workspace and no workspace context is set at ${workspaceContextPath()}; run 'cocalc ws use --workspace <workspace>'`,
+      `missing --workspace and no workspace context is set at ${workspaceContextPath(cwd)}; run 'cocalc ws use --workspace <workspace>'`,
     );
   }
   return await resolveWorkspace(ctx, context.workspace_id);
@@ -1279,8 +1554,9 @@ async function getOrCreateRoutedProjectHostClient(
 async function resolveWorkspaceFilesystem(
   ctx: CommandContext,
   workspaceIdentifier?: string,
+  cwd = process.cwd(),
 ): Promise<{ workspace: WorkspaceRow; fs: FilesystemClient }> {
-  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier);
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
   const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
   if (!routed.client) {
     throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
@@ -1291,6 +1567,56 @@ async function resolveWorkspaceFilesystem(
     timeout: Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000)),
   });
   return { workspace, fs };
+}
+
+async function workspaceFileListData({
+  ctx,
+  workspaceIdentifier,
+  path,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  path?: string;
+  cwd?: string;
+}): Promise<Array<Record<string, unknown>>> {
+  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+  const targetPath = path?.trim() || ".";
+  const listing = await fs.getListing(targetPath);
+  const files = listing?.files ?? {};
+  const names = Object.keys(files).sort((a, b) => a.localeCompare(b));
+  return names.map((name) => {
+    const info: any = files[name] ?? {};
+    return {
+      workspace_id: workspace.project_id,
+      path: targetPath,
+      name,
+      is_dir: !!info.isDir,
+      size: info.size ?? null,
+      mtime: info.mtime ?? null,
+    };
+  });
+}
+
+async function workspaceFileCatData({
+  ctx,
+  workspaceIdentifier,
+  path,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  path: string;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+  const content = String(await fs.readFile(path, "utf8"));
+  return {
+    workspace_id: workspace.project_id,
+    path,
+    content,
+    bytes: Buffer.byteLength(content),
+  };
 }
 
 async function resolveHost(ctx: CommandContext, identifier: string): Promise<HostRow> {
@@ -1647,6 +1973,230 @@ async function resolveProxyUrl({
   };
 }
 
+type DaemonServerState = {
+  startedAtMs: number;
+  socketPath: string;
+  pidPath: string;
+  contexts: Map<string, CommandContext>;
+  server?: NetServer;
+  closing: boolean;
+};
+
+function daemonContextMeta(ctx: CommandContext) {
+  return {
+    api: ctx.apiBaseUrl,
+    account_id: ctx.accountId,
+  };
+}
+
+async function getDaemonContext(
+  state: DaemonServerState,
+  globals: GlobalOptions,
+): Promise<CommandContext> {
+  const key = daemonContextKey(globals);
+  const existing = state.contexts.get(key);
+  if (existing) {
+    return existing;
+  }
+  const ctx = await contextForGlobals({ ...globals, noDaemon: true });
+  state.contexts.set(key, ctx);
+  return ctx;
+}
+
+function closeDaemonServerState(state: DaemonServerState): void {
+  for (const ctx of state.contexts.values()) {
+    closeCommandContext(ctx);
+  }
+  state.contexts.clear();
+  try {
+    state.server?.close();
+  } catch {
+    // ignore
+  }
+  try {
+    if (existsSync(state.socketPath)) unlinkSync(state.socketPath);
+  } catch {
+    // ignore
+  }
+  try {
+    if (existsSync(state.pidPath)) unlinkSync(state.pidPath);
+  } catch {
+    // ignore
+  }
+}
+
+async function handleDaemonAction(
+  state: DaemonServerState,
+  request: DaemonRequest,
+): Promise<DaemonResponse> {
+  const meta = {
+    pid: process.pid,
+    uptime_s: Math.max(0, Math.floor((Date.now() - state.startedAtMs) / 1000)),
+    started_at: new Date(state.startedAtMs).toISOString(),
+  };
+  try {
+    switch (request.action) {
+      case "ping":
+        return { id: request.id, ok: true, data: { status: "ok" }, meta };
+      case "shutdown":
+        state.closing = true;
+        setTimeout(() => {
+          closeDaemonServerState(state);
+          process.exit(0);
+        }, 10);
+        return { id: request.id, ok: true, data: { status: "shutting_down" }, meta };
+      case "workspace.file.list": {
+        const globals = request.globals ?? {};
+        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+        const ctx = await getDaemonContext(state, globals);
+        const data = await workspaceFileListData({
+          ctx,
+          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
+          path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
+          cwd,
+        });
+        return {
+          id: request.id,
+          ok: true,
+          data,
+          meta: {
+            ...meta,
+            ...daemonContextMeta(ctx),
+          },
+        };
+      }
+      case "workspace.file.cat": {
+        const globals = request.globals ?? {};
+        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+        const path = typeof request.payload?.path === "string" ? request.payload.path : "";
+        if (!path) {
+          throw new Error("workspace file cat requires path");
+        }
+        const ctx = await getDaemonContext(state, globals);
+        const data = await workspaceFileCatData({
+          ctx,
+          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
+          path,
+          cwd,
+        });
+        return {
+          id: request.id,
+          ok: true,
+          data,
+          meta: {
+            ...meta,
+            ...daemonContextMeta(ctx),
+          },
+        };
+      }
+      default:
+        throw new Error(`unsupported daemon action '${request.action}'`);
+    }
+  } catch (err) {
+    return {
+      id: request.id,
+      ok: false,
+      error: err instanceof Error ? err.message : `${err}`,
+      meta,
+    };
+  }
+}
+
+async function serveDaemon(socketPath = daemonSocketPath()): Promise<void> {
+  mkdirSync(dirname(socketPath), { recursive: true });
+  try {
+    if (existsSync(socketPath)) unlinkSync(socketPath);
+  } catch {
+    // ignore
+  }
+  const state: DaemonServerState = {
+    startedAtMs: Date.now(),
+    socketPath,
+    pidPath: daemonPidPath(),
+    contexts: new Map(),
+    closing: false,
+  };
+  writeFileSync(state.pidPath, `${process.pid}\n`, "utf8");
+
+  const server = createNetServer((socket) => {
+    let buffer = "";
+    socket.on("data", async (chunk) => {
+      buffer += chunk.toString("utf8");
+      while (true) {
+        const idx = buffer.indexOf("\n");
+        if (idx < 0) break;
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line) continue;
+        let request: DaemonRequest;
+        try {
+          request = JSON.parse(line) as DaemonRequest;
+        } catch (err) {
+          const response: DaemonResponse = {
+            id: daemonRequestId(),
+            ok: false,
+            error: `invalid daemon request JSON: ${err instanceof Error ? err.message : `${err}`}`,
+            meta: { pid: process.pid },
+          };
+          socket.write(`${JSON.stringify(response)}\n`);
+          continue;
+        }
+        const response = await handleDaemonAction(state, request);
+        socket.write(`${JSON.stringify(response)}\n`);
+      }
+    });
+  });
+  state.server = server;
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  const terminate = () => {
+    if (state.closing) return;
+    state.closing = true;
+    closeDaemonServerState(state);
+    process.exit(0);
+  };
+  process.on("SIGINT", terminate);
+  process.on("SIGTERM", terminate);
+
+  await new Promise<void>(() => {
+    // wait forever until signal/shutdown
+  });
+}
+
+async function runDaemonRequestFromCommand(
+  command: unknown,
+  request: Omit<DaemonRequest, "id" | "globals">,
+): Promise<DaemonResponse> {
+  const globals = globalsFrom(command);
+  return await daemonRequestWithAutoStart({
+    id: daemonRequestId(),
+    action: request.action,
+    payload: request.payload,
+    cwd: process.cwd(),
+    globals: { ...globals, noDaemon: true },
+  });
+}
+
+function shouldUseDaemonForFileOps(globals: GlobalOptions): boolean {
+  if (process.env.COCALC_CLI_DAEMON_MODE === "1") return false;
+  if (globals.daemon === false) return false;
+  return globals.noDaemon !== true;
+}
+
+function emitWorkspaceFileCatHumanContent(content: string): void {
+  process.stdout.write(content);
+  if (!content.endsWith("\n")) {
+    process.stdout.write("\n");
+  }
+}
+
 const program = new Command();
 
 program
@@ -1656,6 +2206,7 @@ program
   .option("--json", "output machine-readable JSON")
   .option("--output <format>", "output format (table|json|yaml)", "table")
   .option("-q, --quiet", "suppress human-formatted success output")
+  .option("--no-daemon", "disable CLI daemon usage")
   .option("--verbose", "enable verbose debug logging to stderr")
   .option("--profile <name>", "auth profile name (default: current profile)")
   .option("--account-id <uuid>", "account id to use for API calls")
@@ -1688,6 +2239,99 @@ for (const spec of Object.values(PRODUCT_SPECS)) {
       }
     });
 }
+
+const daemon = program.command("daemon").description("manage local cocalc-cli daemon");
+
+daemon
+  .command("start")
+  .description("start daemon if not already running")
+  .action(async (command: Command) => {
+    await runLocalCommand(command, "daemon start", async () => {
+      const result = await startDaemonProcess();
+      return {
+        socket: daemonSocketPath(),
+        pid_file: daemonPidPath(),
+        log_file: daemonLogPath(),
+        started: result.started,
+        already_running: !!result.already_running,
+        pid: result.pid ?? readDaemonPid() ?? null,
+      };
+    });
+  });
+
+daemon
+  .command("status")
+  .description("check daemon status")
+  .action(async (command: Command) => {
+    await runLocalCommand(command, "daemon status", async () => {
+      const pid = readDaemonPid() ?? null;
+      try {
+        const pong = await pingDaemon();
+        return {
+          socket: daemonSocketPath(),
+          pid_file: daemonPidPath(),
+          log_file: daemonLogPath(),
+          running: true,
+          pid: pong.meta?.pid ?? pid,
+          uptime_s: pong.meta?.uptime_s ?? null,
+          started_at: pong.meta?.started_at ?? null,
+        };
+      } catch {
+        return {
+          socket: daemonSocketPath(),
+          pid_file: daemonPidPath(),
+          log_file: daemonLogPath(),
+          running: false,
+          pid,
+        };
+      }
+    });
+  });
+
+daemon
+  .command("stop")
+  .description("stop daemon")
+  .action(async (command: Command) => {
+    await runLocalCommand(command, "daemon stop", async () => {
+      const pid = readDaemonPid() ?? null;
+      try {
+        const response = await sendDaemonRequest({
+          request: {
+            id: daemonRequestId(),
+            action: "shutdown",
+          },
+          timeoutMs: 5_000,
+        });
+        return {
+          stopped: !!response.ok,
+          pid: response.meta?.pid ?? pid,
+          socket: daemonSocketPath(),
+        };
+      } catch {
+        if (pid != null) {
+          try {
+            process.kill(pid, "SIGTERM");
+          } catch {
+            // ignore
+          }
+        }
+        return {
+          stopped: true,
+          pid,
+          socket: daemonSocketPath(),
+        };
+      }
+    });
+  });
+
+daemon
+  .command("serve")
+  .description("internal daemon server")
+  .option("--socket <path>", "daemon socket path")
+  .action(async (opts: { socket?: string }) => {
+    const socketPath = opts.socket?.trim() || daemonSocketPath();
+    await serveDaemon(socketPath);
+  });
 
 const auth = program.command("auth").description("auth profile management");
 
@@ -2492,22 +3136,45 @@ file
       opts: { workspace?: string },
       command: Command,
     ) => {
+      const globals = globalsFrom(command);
+      if (shouldUseDaemonForFileOps(globals)) {
+        try {
+          const response = await runDaemonRequestFromCommand(command, {
+            action: "workspace.file.list",
+            payload: {
+              workspace: opts.workspace,
+              path,
+            },
+          });
+          if (!response.ok) {
+            throw new Error(response.error ?? "daemon request failed");
+          }
+          emitSuccess(
+            {
+              globals,
+              apiBaseUrl: response.meta?.api ?? undefined,
+              accountId: response.meta?.account_id ?? undefined,
+            },
+            "workspace file list",
+            response.data,
+          );
+          return;
+        } catch (err) {
+          if (!isDaemonTransportError(err)) {
+            emitError({ globals }, "workspace file list", err);
+            process.exitCode = 1;
+            return;
+          }
+          cliDebug("workspace file list daemon unavailable; falling back to direct mode", {
+            err: err instanceof Error ? err.message : `${err}`,
+          });
+        }
+      }
       await withContext(command, "workspace file list", async (ctx) => {
-        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
-        const targetPath = path?.trim() || ".";
-        const listing = await fs.getListing(targetPath);
-        const files = listing?.files ?? {};
-        const names = Object.keys(files).sort((a, b) => a.localeCompare(b));
-        return names.map((name) => {
-          const info: any = files[name] ?? {};
-          return {
-            workspace_id: workspace.project_id,
-            path: targetPath,
-            name,
-            is_dir: !!info.isDir,
-            size: info.size ?? null,
-            mtime: info.mtime ?? null,
-          };
+        return await workspaceFileListData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          path,
         });
       });
     },
@@ -2523,22 +3190,58 @@ file
       opts: { workspace?: string },
       command: Command,
     ) => {
-      await withContext(command, "workspace file cat", async (ctx) => {
-        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
-        const content = String(await fs.readFile(path, "utf8"));
-        if (!ctx.globals.json && ctx.globals.output !== "json") {
-          process.stdout.write(content);
-          if (!content.endsWith("\n")) {
-            process.stdout.write("\n");
+      const globals = globalsFrom(command);
+      if (shouldUseDaemonForFileOps(globals)) {
+        try {
+          const response = await runDaemonRequestFromCommand(command, {
+            action: "workspace.file.cat",
+            payload: {
+              workspace: opts.workspace,
+              path,
+            },
+          });
+          if (!response.ok) {
+            throw new Error(response.error ?? "daemon request failed");
           }
+          const data = asObject(response.data);
+          const content = typeof data.content === "string" ? data.content : "";
+          if (!globals.json && globals.output !== "json") {
+            emitWorkspaceFileCatHumanContent(content);
+            return;
+          }
+          emitSuccess(
+            {
+              globals,
+              apiBaseUrl: response.meta?.api ?? undefined,
+              accountId: response.meta?.account_id ?? undefined,
+            },
+            "workspace file cat",
+            data,
+          );
+          return;
+        } catch (err) {
+          if (!isDaemonTransportError(err)) {
+            emitError({ globals }, "workspace file cat", err);
+            process.exitCode = 1;
+            return;
+          }
+          cliDebug("workspace file cat daemon unavailable; falling back to direct mode", {
+            err: err instanceof Error ? err.message : `${err}`,
+          });
+        }
+      }
+      await withContext(command, "workspace file cat", async (ctx) => {
+        const data = await workspaceFileCatData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          path,
+        });
+        const content = String(data.content ?? "");
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          emitWorkspaceFileCatHumanContent(content);
           return null;
         }
-        return {
-          workspace_id: workspace.project_id,
-          path,
-          content,
-          bytes: Buffer.byteLength(content),
-        };
+        return data;
       });
     },
   );

@@ -45,12 +45,21 @@ pnpm --dir src/packages/cli exec cli --help
 pnpm --dir src/packages/cli exec cocalc-cli --help
 ```
 
+Daemon controls:
+
+```bash
+pnpm --dir src/packages/cli exec cli daemon start
+pnpm --dir src/packages/cli exec cli daemon status
+pnpm --dir src/packages/cli exec cli daemon stop
+```
+
 ## Auth
 
 This CLI connects to a hub over websocket/conat and supports:
 
 - `--verbose` (or `COCALC_CLI_DEBUG=1`) for debug diagnostics on stderr
 - `-q, --quiet` to suppress the final human-formatted result block
+- `--no-daemon` to disable daemon usage for daemon-enabled commands
 - `--profile <name>` (or `COCALC_PROFILE`) to select a saved auth profile
 - `--api <url>` (or `COCALC_API_URL`)
 - `--api-key <key>` (or `COCALC_API_KEY`)
@@ -65,7 +74,9 @@ an admin account for smoke-test workflows.
 
 `workspace file ...` commands connect directly to the target project-host and use
 short-lived host tokens (cached locally on disk until near expiry) for low-latency
-file operations without proxying through hub RPC.
+file operations without proxying through hub RPC. `workspace file list` and
+`workspace file cat` are daemon-enabled and auto-start the daemon unless
+`--no-daemon` is set.
 
 ## Auth Commands
 
@@ -81,6 +92,9 @@ file operations without proxying through hub RPC.
 
 - `plus ...` (forward to `cocalc-plus`; installs if missing)
 - `launchpad ...` (forward to `cocalc-launchpad`; installs if missing)
+- `daemon start`
+- `daemon status`
+- `daemon stop`
 - `workspace create`
 - `workspace rename`
 - `workspace use`
