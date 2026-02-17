@@ -39,24 +39,24 @@ export interface AgentSessionRecord {
 type SessionListListener = (records: AgentSessionRecord[]) => void;
 
 let kv: DKV<AgentSessionRecord> | null = null;
-let kvAccountId: string | null = null;
+let kvProjectId: string | null = null;
 let kvInFlight: Promise<DKV<AgentSessionRecord>> | null = null;
 
 function sessionKey(project_id: string, session_id: string): string {
   return `${project_id}::${session_id}`;
 }
 
-async function getStore(account_id: string): Promise<DKV<AgentSessionRecord>> {
-  if (kv && kvAccountId === account_id) {
+async function getStore(project_id: string): Promise<DKV<AgentSessionRecord>> {
+  if (kv && kvProjectId === project_id) {
     return kv;
   }
-  if (kvInFlight && kvAccountId === account_id) {
+  if (kvInFlight && kvProjectId === project_id) {
     return await kvInFlight;
   }
-  kvAccountId = account_id;
+  kvProjectId = project_id;
   kvInFlight = webapp_client.conat_client
     .dkv<AgentSessionRecord>({
-      account_id,
+      project_id,
       name: AGENT_SESSION_STORE,
     })
     .then((store) => {
@@ -74,26 +74,24 @@ async function getStore(account_id: string): Promise<DKV<AgentSessionRecord>> {
 export async function upsertAgentSessionRecord(
   record: AgentSessionRecord,
 ): Promise<void> {
-  const store = await getStore(record.account_id);
+  const store = await getStore(record.project_id);
   const key = sessionKey(record.project_id, record.session_id);
   const prev = store.get(key);
   store.set(key, prev ? { ...prev, ...record } : record);
 }
 
 export async function deleteAgentSessionRecord(opts: {
-  account_id: string;
   project_id: string;
   session_id: string;
 }): Promise<void> {
-  const store = await getStore(opts.account_id);
+  const store = await getStore(opts.project_id);
   store.delete(sessionKey(opts.project_id, opts.session_id));
 }
 
 export async function listAgentSessionsForProject(opts: {
-  account_id: string;
   project_id: string;
 }): Promise<AgentSessionRecord[]> {
-  const store = await getStore(opts.account_id);
+  const store = await getStore(opts.project_id);
   return getProjectSessions(store.getAll(), opts.project_id);
 }
 
@@ -113,10 +111,10 @@ function getProjectSessions(
 }
 
 export async function watchAgentSessionsForProject(
-  opts: { account_id: string; project_id: string },
+  opts: { project_id: string },
   listener: SessionListListener,
 ): Promise<() => void> {
-  const store = await getStore(opts.account_id);
+  const store = await getStore(opts.project_id);
   const prefix = `${opts.project_id}::`;
   const emit = () => {
     listener(getProjectSessions(store.getAll(), opts.project_id));

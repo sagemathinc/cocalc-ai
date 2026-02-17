@@ -33,16 +33,27 @@ function formatUpdated(iso?: string): string {
   return date.toLocaleString();
 }
 
+function shortAccountId(accountId?: string): string {
+  if (!accountId) return "unknown";
+  if (accountId.length <= 12) return accountId;
+  return `${accountId.slice(0, 8)}...`;
+}
+
 interface AgentsFlyoutProps {
   project_id: string;
   wrap: (content: React.JSX.Element, style?: React.CSSProperties) => React.JSX.Element;
 }
 
-export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
+interface AgentsPanelProps {
+  project_id: string;
+}
+
+export function AgentsPanel({ project_id }: AgentsPanelProps) {
   const actions = useActions({ project_id }) as ProjectActions;
   const account_id = useTypedRedux("account", "account_id");
   const [sessions, setSessions] = useState<AgentSessionRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [scope, setScope] = useState<"mine" | "all">("mine");
   const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string>("");
   const [updatingSessionId, setUpdatingSessionId] = useState<string>("");
@@ -58,14 +69,11 @@ export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
     setError("");
     setLoading(true);
 
-    void watchAgentSessionsForProject(
-      { account_id, project_id },
-      (records: AgentSessionRecord[]) => {
+    void watchAgentSessionsForProject({ project_id }, (records: AgentSessionRecord[]) => {
         if (closed) return;
         setSessions(records);
         setLoading(false);
-      },
-    )
+      })
       .then((cleanup) => {
         if (closed) {
           cleanup();
@@ -86,9 +94,14 @@ export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
   }, [account_id, project_id]);
 
   const visibleSessions = useMemo(() => {
-    if (showArchived) return sessions;
-    return sessions.filter((session) => session.status !== "archived");
-  }, [sessions, showArchived]);
+    let visible = showArchived
+      ? sessions
+      : sessions.filter((session) => session.status !== "archived");
+    if (scope === "mine" && typeof account_id === "string" && account_id.trim()) {
+      visible = visible.filter((session) => session.account_id === account_id);
+    }
+    return visible;
+  }, [sessions, showArchived, scope, account_id]);
 
   function openNavigatorSession(record: AgentSessionRecord): void {
     saveNavigatorSelectedThreadKey(record.thread_key);
@@ -155,6 +168,7 @@ export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
           }
           description={
             <Space size="small" wrap>
+              <Tag>{shortAccountId(record.account_id)}</Tag>
               {record.model ? <Tag>{record.model}</Tag> : null}
               {record.mode ? <Tag>{record.mode}</Tag> : null}
               <Typography.Text type="secondary">
@@ -168,10 +182,10 @@ export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
   }
 
   if (loading) {
-    return wrap(<Loading theme="medium" />);
+    return <Loading theme="medium" />;
   }
 
-  return wrap(
+  return (
     <div>
       {error ? (
         <Alert
@@ -184,6 +198,20 @@ export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
       <div style={{ marginBottom: 8 }}>
         <Space>
           <Typography.Text strong>Recent agent sessions</Typography.Text>
+          <Button
+            size="small"
+            type={scope === "mine" ? "primary" : "default"}
+            onClick={() => setScope("mine")}
+          >
+            Mine
+          </Button>
+          <Button
+            size="small"
+            type={scope === "all" ? "primary" : "default"}
+            onClick={() => setScope("all")}
+          >
+            All Users
+          </Button>
           <Button
             size="small"
             type="link"
@@ -205,6 +233,10 @@ export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
           size="small"
         />
       )}
-    </div>,
+    </div>
   );
+}
+
+export function AgentsFlyout({ project_id, wrap }: AgentsFlyoutProps) {
+  return wrap(<AgentsPanel project_id={project_id} />);
 }

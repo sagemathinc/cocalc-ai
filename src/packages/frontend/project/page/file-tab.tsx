@@ -104,7 +104,6 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     icon: "comment",
     flyout: AgentsFlyout,
     noAnonymous: false,
-    noFullPage: true,
   },
   files: {
     label: labels.explorer,

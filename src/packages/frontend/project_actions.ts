@@ -889,6 +889,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         break;
 
+      case "agents":
+        if (opts.change_history) {
+          this.push_state("agents", "");
+        }
+        break;
+
       case "upgrades":
         if (opts.change_history) {
           this.push_state("upgrades", "");
@@ -2929,8 +2935,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         break;
 
       case "agents":
-        this.set_active_tab("home", { change_history: change_history });
-        this.setFlyoutExpanded("agents", true, false);
+        this.set_active_tab("agents", { change_history: change_history });
         break;
 
       case "info":
