@@ -2,8 +2,9 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdir as mkdirLocal, readFile as readFileLocal, writeFile as writeFileLocal } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { URL } from "node:url";
 import { AsciiTable3 } from "ascii-table3";
 import { Command } from "commander";
@@ -17,6 +18,7 @@ import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-h
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type { LroScopeType, LroSummary as HubLroSummary } from "@cocalc/conat/hub/api/lro";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
+import { fsClient, fsSubject, type FilesystemClient } from "@cocalc/conat/files/fs";
 import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
 import {
   applyAuthProfile,
@@ -920,6 +922,19 @@ async function resolveWorkspaceFromArgOrContext(
     );
   }
   return await resolveWorkspace(ctx, context.workspace_id);
+}
+
+async function resolveWorkspaceFilesystem(
+  ctx: CommandContext,
+  workspaceIdentifier?: string,
+): Promise<{ workspace: WorkspaceRow; fs: FilesystemClient }> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier);
+  const fs = fsClient({
+    client: ctx.remote.client,
+    subject: fsSubject({ project_id: workspace.project_id }),
+    timeout: Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000)),
+  });
+  return { workspace, fs };
 }
 
 async function resolveHost(ctx: CommandContext, identifier: string): Promise<HostRow> {
@@ -2104,6 +2119,183 @@ workspace
           dest_path: opts.dest,
           op_id: op.op_id,
           status: summary.status,
+        };
+      });
+    },
+  );
+
+const file = workspace.command("file").description("workspace file operations");
+
+file
+  .command("list [path]")
+  .description("list files in a workspace directory")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(
+    async (
+      path: string | undefined,
+      opts: { workspace?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace file list", async (ctx) => {
+        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
+        const targetPath = path?.trim() || ".";
+        const listing = await fs.getListing(targetPath);
+        const files = listing?.files ?? {};
+        const names = Object.keys(files).sort((a, b) => a.localeCompare(b));
+        return names.map((name) => {
+          const info: any = files[name] ?? {};
+          return {
+            workspace_id: workspace.project_id,
+            path: targetPath,
+            name,
+            is_dir: !!info.isDir,
+            size: info.size ?? null,
+            mtime: info.mtime ?? null,
+          };
+        });
+      });
+    },
+  );
+
+file
+  .command("cat <path>")
+  .description("print a text file from a workspace")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(
+    async (
+      path: string,
+      opts: { workspace?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace file cat", async (ctx) => {
+        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
+        const content = String(await fs.readFile(path, "utf8"));
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          process.stdout.write(content);
+          if (!content.endsWith("\n")) {
+            process.stdout.write("\n");
+          }
+          return null;
+        }
+        return {
+          workspace_id: workspace.project_id,
+          path,
+          content,
+          bytes: Buffer.byteLength(content),
+        };
+      });
+    },
+  );
+
+file
+  .command("put <src> <dest>")
+  .description("upload a local file to a workspace path")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--no-parents", "do not create destination parent directories")
+  .action(
+    async (
+      src: string,
+      dest: string,
+      opts: { workspace?: string; parents?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace file put", async (ctx) => {
+        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
+        const data = await readFileLocal(src);
+        if (opts.parents !== false) {
+          await fs.mkdir(dirname(dest), { recursive: true });
+        }
+        await fs.writeFile(dest, data);
+        return {
+          workspace_id: workspace.project_id,
+          src,
+          dest,
+          bytes: data.length,
+          status: "uploaded",
+        };
+      });
+    },
+  );
+
+file
+  .command("get <src> <dest>")
+  .description("download a workspace file to a local path")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--no-parents", "do not create destination parent directories")
+  .action(
+    async (
+      src: string,
+      dest: string,
+      opts: { workspace?: string; parents?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace file get", async (ctx) => {
+        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
+        const data = await fs.readFile(src);
+        const buffer = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
+        if (opts.parents !== false) {
+          await mkdirLocal(dirname(dest), { recursive: true });
+        }
+        await writeFileLocal(dest, buffer);
+        return {
+          workspace_id: workspace.project_id,
+          src,
+          dest,
+          bytes: buffer.length,
+          status: "downloaded",
+        };
+      });
+    },
+  );
+
+file
+  .command("rm <path>")
+  .description("remove a path in a workspace")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("-r, --recursive", "remove directories recursively")
+  .option("-f, --force", "do not fail if path is missing")
+  .action(
+    async (
+      path: string,
+      opts: { workspace?: string; recursive?: boolean; force?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace file rm", async (ctx) => {
+        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
+        await fs.rm(path, {
+          recursive: !!opts.recursive,
+          force: !!opts.force,
+        });
+        return {
+          workspace_id: workspace.project_id,
+          path,
+          recursive: !!opts.recursive,
+          force: !!opts.force,
+          status: "removed",
+        };
+      });
+    },
+  );
+
+file
+  .command("mkdir <path>")
+  .description("create a directory in a workspace")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--no-parents", "do not create parent directories")
+  .action(
+    async (
+      path: string,
+      opts: { workspace?: string; parents?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace file mkdir", async (ctx) => {
+        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
+        await fs.mkdir(path, { recursive: opts.parents !== false });
+        return {
+          workspace_id: workspace.project_id,
+          path,
+          parents: opts.parents !== false,
+          status: "created",
         };
       });
     },

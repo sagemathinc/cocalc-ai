@@ -90,6 +90,12 @@ an admin account for smoke-test workflows.
 - `workspace ssh --check --require-auth`
 - `workspace move --host --wait`
 - `workspace copy-path --wait`
+- `workspace file list`
+- `workspace file cat`
+- `workspace file put`
+- `workspace file get`
+- `workspace file rm`
+- `workspace file mkdir`
 - `workspace snapshot create`
 - `workspace snapshot list`
 - `host resolve-connection`
