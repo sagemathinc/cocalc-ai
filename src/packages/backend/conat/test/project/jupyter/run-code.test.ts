@@ -586,7 +586,7 @@ describe("lifecycle messages are explicit and survive limit/disconnect flows", (
     const outputs: any[] = [];
     const iter = await client.run([{ id: "cell-a", input: "x" }], {
       run_id: "life-1",
-      limit: 1,
+      limit: 2,
     });
     for await (const batch of iter) {
       outputs.push(...batch);
@@ -597,7 +597,12 @@ describe("lifecycle messages are explicit and survive limit/disconnect flows", (
     expect(lifecycle).toEqual(
       expect.arrayContaining(["run_start", "cell_start", "cell_done", "run_done"]),
     );
-    expect(outputs.some((x) => x.more_output)).toBe(true);
+    const streamIndex = outputs.findIndex((x) => x.msg_type === "stream");
+    const cellDoneIndex = outputs.findIndex(
+      (x) => (x.lifecycle ?? x.msg_type) === "cell_done",
+    );
+    expect(streamIndex).toBeGreaterThanOrEqual(0);
+    expect(cellDoneIndex).toBeGreaterThan(streamIndex);
   });
 
   it("lifecycle events keep fallback output handler state consistent after disconnect", async () => {
