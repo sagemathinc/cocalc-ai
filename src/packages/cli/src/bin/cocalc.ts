@@ -96,6 +96,8 @@ type CommandContext = {
   apiBaseUrl: string;
   remote: RemoteConnection;
   routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
+  workspaceCache: Map<string, { expiresAt: number; workspace: WorkspaceRow }>;
+  hostConnectionCache: Map<string, { expiresAt: number; connection: HostConnectionInfo }>;
 };
 
 type RoutedProjectHostClientState = {
@@ -104,25 +106,21 @@ type RoutedProjectHostClientState = {
   client?: ConatClient;
   token?: string;
   expiresAt?: number;
-  tokenSource?: "cache" | "hub";
+  tokenSource?: "memory" | "hub";
   tokenInFlight?: Promise<string>;
-};
-
-type ProjectHostTokenCacheEntry = {
-  token: string;
-  expires_at: number;
-};
-
-type ProjectHostTokenCacheFile = {
-  version: 1;
-  entries: Record<string, ProjectHostTokenCacheEntry>;
 };
 
 type DaemonAction =
   | "ping"
   | "shutdown"
   | "workspace.file.list"
-  | "workspace.file.cat";
+  | "workspace.file.cat"
+  | "workspace.file.put"
+  | "workspace.file.get"
+  | "workspace.file.rm"
+  | "workspace.file.mkdir"
+  | "workspace.file.rg"
+  | "workspace.file.fd";
 
 type DaemonRequest = {
   id: string;
@@ -186,6 +184,8 @@ const LRO_SCOPE_TYPES: LroScopeType[] = ["project", "account", "host", "hub"];
 const MAX_TRANSPORT_TIMEOUT_MS = 30_000;
 const WORKSPACE_CONTEXT_FILENAME = ".cocalc-workspace";
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
+const WORKSPACE_CACHE_TTL_MS = 15_000;
+const HOST_CONNECTION_CACHE_TTL_MS = 15_000;
 const DAEMON_CONNECT_TIMEOUT_MS = 3_000;
 const DAEMON_RPC_TIMEOUT_MS = 30_000;
 
@@ -260,115 +260,6 @@ function clearWorkspaceContext(cwd = process.cwd()): boolean {
   if (!existsSync(path)) return false;
   unlinkSync(path);
   return true;
-}
-
-function projectHostTokenCachePath(env = process.env): string {
-  const explicit = env.COCALC_CLI_PROJECT_HOST_TOKEN_CACHE?.trim();
-  if (explicit) return explicit;
-  return join(dirname(authConfigPath(env)), "project-host-token-cache.json");
-}
-
-function loadProjectHostTokenCache(path = projectHostTokenCachePath()): ProjectHostTokenCacheFile {
-  if (!existsSync(path)) {
-    return { version: 1, entries: {} };
-  }
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8"));
-    const entries: Record<string, ProjectHostTokenCacheEntry> = {};
-    if (parsed?.entries && typeof parsed.entries === "object" && !Array.isArray(parsed.entries)) {
-      for (const [key, value] of Object.entries(parsed.entries)) {
-        const token = `${(value as any)?.token ?? ""}`.trim();
-        const expires_at = Number((value as any)?.expires_at ?? NaN);
-        if (token && Number.isFinite(expires_at) && expires_at > 0) {
-          entries[key] = { token, expires_at };
-        }
-      }
-    }
-    return { version: 1, entries };
-  } catch {
-    return { version: 1, entries: {} };
-  }
-}
-
-function saveProjectHostTokenCache(
-  cache: ProjectHostTokenCacheFile,
-  path = projectHostTokenCachePath(),
-): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(
-    path,
-    `${JSON.stringify({ version: 1, entries: cache.entries ?? {} }, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-function projectHostTokenCacheKey({
-  apiBaseUrl,
-  accountId,
-  host_id,
-}: {
-  apiBaseUrl: string;
-  accountId: string;
-  host_id: string;
-}): string {
-  return `${normalizeUrl(apiBaseUrl)}|${accountId}|${host_id}`;
-}
-
-function getCachedProjectHostToken({
-  apiBaseUrl,
-  accountId,
-  host_id,
-}: {
-  apiBaseUrl: string;
-  accountId: string;
-  host_id: string;
-}): ProjectHostTokenCacheEntry | undefined {
-  const key = projectHostTokenCacheKey({ apiBaseUrl, accountId, host_id });
-  const cache = loadProjectHostTokenCache();
-  const entry = cache.entries[key];
-  if (!entry) return undefined;
-  if (Date.now() >= entry.expires_at - PROJECT_HOST_TOKEN_TTL_LEEWAY_MS) {
-    delete cache.entries[key];
-    saveProjectHostTokenCache(cache);
-    return undefined;
-  }
-  return entry;
-}
-
-function setCachedProjectHostToken({
-  apiBaseUrl,
-  accountId,
-  host_id,
-  token,
-  expires_at,
-}: {
-  apiBaseUrl: string;
-  accountId: string;
-  host_id: string;
-  token: string;
-  expires_at: number;
-}): void {
-  if (!token || !Number.isFinite(expires_at)) return;
-  const key = projectHostTokenCacheKey({ apiBaseUrl, accountId, host_id });
-  const cache = loadProjectHostTokenCache();
-  cache.entries[key] = { token, expires_at };
-  saveProjectHostTokenCache(cache);
-}
-
-function deleteCachedProjectHostToken({
-  apiBaseUrl,
-  accountId,
-  host_id,
-}: {
-  apiBaseUrl: string;
-  accountId: string;
-  host_id: string;
-}): void {
-  const key = projectHostTokenCacheKey({ apiBaseUrl, accountId, host_id });
-  const cache = loadProjectHostTokenCache();
-  if (!(key in cache.entries)) return;
-  delete cache.entries[key];
-  saveProjectHostTokenCache(cache);
 }
 
 function daemonRuntimeDir(env = process.env): string {
@@ -662,6 +553,16 @@ function asUtf8(value: unknown): string {
   if (Buffer.isBuffer(value)) return value.toString("utf8");
   if (value instanceof Uint8Array) return Buffer.from(value).toString("utf8");
   return String(value);
+}
+
+function normalizeProcessExitCode(raw: unknown, stdout: string, stderr: string): number {
+  const code = Number(raw);
+  if (Number.isFinite(code)) {
+    return code;
+  }
+  if (stdout.length > 0) return 0;
+  if (stderr.length > 0) return 2;
+  return 1;
 }
 
 function printKeyValueTable(data: Record<string, unknown>): void {
@@ -1114,6 +1015,8 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
     apiBaseUrl,
     remote,
     routedProjectHostClients: {},
+    workspaceCache: new Map(),
+    hostConnectionCache: new Map(),
   };
 }
 
@@ -1300,14 +1203,55 @@ async function queryProjects({
   return rows.filter((x) => !isDeleted(x.deleted));
 }
 
+function workspaceCacheKey(identifier: string): string {
+  const value = identifier.trim();
+  if (isValidUUID(value)) {
+    return `id:${value.toLowerCase()}`;
+  }
+  return `title:${value}`;
+}
+
+function getCachedWorkspace(
+  ctx: CommandContext,
+  identifier: string,
+): WorkspaceRow | undefined {
+  const key = workspaceCacheKey(identifier);
+  const cached = ctx.workspaceCache.get(key);
+  if (!cached) return undefined;
+  if (Date.now() >= cached.expiresAt) {
+    ctx.workspaceCache.delete(key);
+    return undefined;
+  }
+  return cached.workspace;
+}
+
+function setCachedWorkspace(
+  ctx: CommandContext,
+  workspace: WorkspaceRow,
+): void {
+  const expiresAt = Date.now() + WORKSPACE_CACHE_TTL_MS;
+  ctx.workspaceCache.set(workspaceCacheKey(workspace.project_id), { workspace, expiresAt });
+  if (workspace.title) {
+    ctx.workspaceCache.set(workspaceCacheKey(workspace.title), { workspace, expiresAt });
+  }
+}
+
 async function resolveWorkspace(ctx: CommandContext, identifier: string): Promise<WorkspaceRow> {
+  const cached = getCachedWorkspace(ctx, identifier);
+  if (cached) {
+    return cached;
+  }
+
   if (isValidUUID(identifier)) {
     const rows = await queryProjects({
       ctx,
       project_id: identifier,
       limit: 3,
     });
-    if (rows[0]) return rows[0];
+    if (rows[0]) {
+      setCachedWorkspace(ctx, rows[0]);
+      return rows[0];
+    }
   }
 
   const rows = await queryProjects({
@@ -1323,6 +1267,7 @@ async function resolveWorkspace(ctx: CommandContext, identifier: string): Promis
       `workspace name '${identifier}' is ambiguous: ${rows.map((x) => x.project_id).join(", ")}`,
     );
   }
+  setCachedWorkspace(ctx, rows[0]);
   return rows[0];
 }
 
@@ -1377,6 +1322,7 @@ async function issueProjectHostAuthToken(
     state.expiresAt &&
     now < state.expiresAt - PROJECT_HOST_TOKEN_TTL_LEEWAY_MS
   ) {
+    state.tokenSource = "memory";
     return state.token;
   }
   if (state.tokenInFlight) {
@@ -1384,18 +1330,6 @@ async function issueProjectHostAuthToken(
   }
 
   state.tokenInFlight = (async () => {
-    const cached = getCachedProjectHostToken({
-      apiBaseUrl: ctx.apiBaseUrl,
-      accountId: ctx.accountId,
-      host_id: state.host_id,
-    });
-    if (cached) {
-      state.token = cached.token;
-      state.expiresAt = cached.expires_at;
-      state.tokenSource = "cache";
-      return cached.token;
-    }
-
     const issued = await hubCallAccount<{ host_id: string; token: string; expires_at: number }>(
       ctx,
       "hosts.issueProjectHostAuthToken",
@@ -1409,13 +1343,6 @@ async function issueProjectHostAuthToken(
     state.token = issued.token;
     state.expiresAt = issued.expires_at;
     state.tokenSource = "hub";
-    setCachedProjectHostToken({
-      apiBaseUrl: ctx.apiBaseUrl,
-      accountId: ctx.accountId,
-      host_id: state.host_id,
-      token: issued.token,
-      expires_at: issued.expires_at,
-    });
     return issued.token;
   })().finally(() => {
     delete state.tokenInFlight;
@@ -1424,19 +1351,11 @@ async function issueProjectHostAuthToken(
   return await state.tokenInFlight;
 }
 
-function invalidateProjectHostAuthToken(
-  ctx: CommandContext,
-  state: RoutedProjectHostClientState,
-): void {
+function invalidateProjectHostAuthToken(state: RoutedProjectHostClientState): void {
   delete state.token;
   delete state.expiresAt;
   delete state.tokenSource;
   delete state.tokenInFlight;
-  deleteCachedProjectHostToken({
-    apiBaseUrl: ctx.apiBaseUrl,
-    accountId: ctx.accountId,
-    host_id: state.host_id,
-  });
 }
 
 function closeRoutedProjectHostClient(
@@ -1463,9 +1382,20 @@ async function getOrCreateRoutedProjectHostClient(
     throw new Error("workspace has no assigned host");
   }
 
-  const connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
-    { host_id },
-  ]);
+  let connection: HostConnectionInfo | undefined;
+  const cachedConnection = ctx.hostConnectionCache.get(host_id);
+  if (cachedConnection && Date.now() < cachedConnection.expiresAt) {
+    connection = cachedConnection.connection;
+  }
+  if (!connection) {
+    connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
+      { host_id },
+    ]);
+    ctx.hostConnectionCache.set(host_id, {
+      connection,
+      expiresAt: Date.now() + HOST_CONNECTION_CACHE_TTL_MS,
+    });
+  }
   const address = connection.local_proxy
     ? localProxyProjectHostAddress(ctx.apiBaseUrl, host_id)
     : connection.connect_url
@@ -1524,7 +1454,7 @@ async function getOrCreateRoutedProjectHostClient(
   };
   routed.conn.on("connect_error", (err: unknown) => {
     if (isProjectHostAuthError(err)) {
-      invalidateProjectHostAuthToken(ctx, state);
+      invalidateProjectHostAuthToken(state);
     }
   });
   ctx.routedProjectHostClients[host_id] = state;
@@ -1537,12 +1467,11 @@ async function getOrCreateRoutedProjectHostClient(
       `timeout while waiting for project-host sign-in (${signInTimeoutMs}ms)`,
     );
   } catch (err) {
-    const shouldRetryWithFreshToken =
-      allowTokenRetry &&
-      (state.tokenSource === "cache" || isProjectHostAuthError(err));
+    const hadToken = !!state.token;
+    const shouldRetryWithFreshToken = allowTokenRetry && (hadToken || isProjectHostAuthError(err));
     closeRoutedProjectHostClient(ctx, host_id);
     if (shouldRetryWithFreshToken) {
-      invalidateProjectHostAuthToken(ctx, state);
+      invalidateProjectHostAuthToken(state);
       return await getOrCreateRoutedProjectHostClient(ctx, workspace, false);
     }
     throw err;
@@ -1616,6 +1545,188 @@ async function workspaceFileCatData({
     path,
     content,
     bytes: Buffer.byteLength(content),
+  };
+}
+
+async function workspaceFilePutData({
+  ctx,
+  workspaceIdentifier,
+  dest,
+  data,
+  parents,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  dest: string;
+  data: Buffer;
+  parents: boolean;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+  if (parents) {
+    await fs.mkdir(dirname(dest), { recursive: true });
+  }
+  await fs.writeFile(dest, data);
+  return {
+    workspace_id: workspace.project_id,
+    dest,
+    bytes: data.length,
+    status: "uploaded",
+  };
+}
+
+async function workspaceFileGetData({
+  ctx,
+  workspaceIdentifier,
+  src,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  src: string;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+  const data = await fs.readFile(src);
+  const buffer = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
+  return {
+    workspace_id: workspace.project_id,
+    src,
+    bytes: buffer.length,
+    content_base64: buffer.toString("base64"),
+    status: "downloaded",
+  };
+}
+
+async function workspaceFileRmData({
+  ctx,
+  workspaceIdentifier,
+  path,
+  recursive,
+  force,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  path: string;
+  recursive: boolean;
+  force: boolean;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+  await fs.rm(path, {
+    recursive,
+    force,
+  });
+  return {
+    workspace_id: workspace.project_id,
+    path,
+    recursive,
+    force,
+    status: "removed",
+  };
+}
+
+async function workspaceFileMkdirData({
+  ctx,
+  workspaceIdentifier,
+  path,
+  parents,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  path: string;
+  parents: boolean;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+  await fs.mkdir(path, { recursive: parents });
+  return {
+    workspace_id: workspace.project_id,
+    path,
+    parents,
+    status: "created",
+  };
+}
+
+async function workspaceFileRgData({
+  ctx,
+  workspaceIdentifier,
+  pattern,
+  path,
+  timeoutSeconds,
+  maxBytes,
+  options,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  pattern: string;
+  path?: string;
+  timeoutSeconds: number;
+  maxBytes: number;
+  options?: string[];
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+  const result = await fs.ripgrep(path?.trim() || ".", pattern, {
+    options,
+    timeout: timeoutSeconds,
+    maxSize: maxBytes,
+  });
+  const stdout = asUtf8((result as any)?.stdout);
+  const stderr = asUtf8((result as any)?.stderr);
+  const exit_code = normalizeProcessExitCode((result as any)?.code, stdout, stderr);
+  return {
+    workspace_id: workspace.project_id,
+    path: path?.trim() || ".",
+    pattern,
+    stdout,
+    stderr,
+    exit_code,
+    truncated: !!(result as any)?.truncated,
+  };
+}
+
+async function workspaceFileFdData({
+  ctx,
+  workspaceIdentifier,
+  pattern,
+  path,
+  timeoutSeconds,
+  maxBytes,
+  options,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  pattern?: string;
+  path?: string;
+  timeoutSeconds: number;
+  maxBytes: number;
+  options?: string[];
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+  const result = await fs.fd(path?.trim() || ".", {
+    pattern: pattern?.trim() || undefined,
+    options,
+    timeout: timeoutSeconds,
+    maxSize: maxBytes,
+  });
+  const stdout = asUtf8((result as any)?.stdout);
+  const stderr = asUtf8((result as any)?.stderr);
+  const exit_code = normalizeProcessExitCode((result as any)?.code, stdout, stderr);
+  return {
+    workspace_id: workspace.project_id,
+    path: path?.trim() || ".",
+    pattern: pattern?.trim() || null,
+    stdout,
+    stderr,
+    exit_code,
+    truncated: !!(result as any)?.truncated,
   };
 }
 
@@ -2077,6 +2188,174 @@ async function handleDaemonAction(
           ctx,
           workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
           path,
+          cwd,
+        });
+        return {
+          id: request.id,
+          ok: true,
+          data,
+          meta: {
+            ...meta,
+            ...daemonContextMeta(ctx),
+          },
+        };
+      }
+      case "workspace.file.put": {
+        const globals = request.globals ?? {};
+        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+        const dest = typeof request.payload?.dest === "string" ? request.payload.dest : "";
+        const contentBase64 =
+          typeof request.payload?.content_base64 === "string"
+            ? request.payload.content_base64
+            : "";
+        if (!dest) {
+          throw new Error("workspace file put requires dest");
+        }
+        const data = Buffer.from(contentBase64, "base64");
+        const ctx = await getDaemonContext(state, globals);
+        const result = await workspaceFilePutData({
+          ctx,
+          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
+          dest,
+          data,
+          parents: request.payload?.parents !== false,
+          cwd,
+        });
+        return {
+          id: request.id,
+          ok: true,
+          data: result,
+          meta: {
+            ...meta,
+            ...daemonContextMeta(ctx),
+          },
+        };
+      }
+      case "workspace.file.get": {
+        const globals = request.globals ?? {};
+        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+        const src = typeof request.payload?.src === "string" ? request.payload.src : "";
+        if (!src) {
+          throw new Error("workspace file get requires src");
+        }
+        const ctx = await getDaemonContext(state, globals);
+        const data = await workspaceFileGetData({
+          ctx,
+          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
+          src,
+          cwd,
+        });
+        return {
+          id: request.id,
+          ok: true,
+          data,
+          meta: {
+            ...meta,
+            ...daemonContextMeta(ctx),
+          },
+        };
+      }
+      case "workspace.file.rm": {
+        const globals = request.globals ?? {};
+        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+        const path = typeof request.payload?.path === "string" ? request.payload.path : "";
+        if (!path) {
+          throw new Error("workspace file rm requires path");
+        }
+        const ctx = await getDaemonContext(state, globals);
+        const data = await workspaceFileRmData({
+          ctx,
+          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
+          path,
+          recursive: request.payload?.recursive === true,
+          force: request.payload?.force === true,
+          cwd,
+        });
+        return {
+          id: request.id,
+          ok: true,
+          data,
+          meta: {
+            ...meta,
+            ...daemonContextMeta(ctx),
+          },
+        };
+      }
+      case "workspace.file.mkdir": {
+        const globals = request.globals ?? {};
+        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+        const path = typeof request.payload?.path === "string" ? request.payload.path : "";
+        if (!path) {
+          throw new Error("workspace file mkdir requires path");
+        }
+        const ctx = await getDaemonContext(state, globals);
+        const data = await workspaceFileMkdirData({
+          ctx,
+          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
+          path,
+          parents: request.payload?.parents !== false,
+          cwd,
+        });
+        return {
+          id: request.id,
+          ok: true,
+          data,
+          meta: {
+            ...meta,
+            ...daemonContextMeta(ctx),
+          },
+        };
+      }
+      case "workspace.file.rg": {
+        const globals = request.globals ?? {};
+        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+        const pattern = typeof request.payload?.pattern === "string" ? request.payload.pattern : "";
+        if (!pattern) {
+          throw new Error("workspace file rg requires pattern");
+        }
+        const timeoutSeconds = Math.max(1, Number(request.payload?.timeout ?? 30) || 30);
+        const maxBytes = Math.max(1024, Number(request.payload?.max_bytes ?? 20000000) || 20000000);
+        const rgOptions = Array.isArray(request.payload?.rg_options)
+          ? request.payload?.rg_options.filter((x): x is string => typeof x === "string")
+          : undefined;
+        const ctx = await getDaemonContext(state, globals);
+        const data = await workspaceFileRgData({
+          ctx,
+          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
+          pattern,
+          path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
+          timeoutSeconds,
+          maxBytes,
+          options: rgOptions,
+          cwd,
+        });
+        return {
+          id: request.id,
+          ok: true,
+          data,
+          meta: {
+            ...meta,
+            ...daemonContextMeta(ctx),
+          },
+        };
+      }
+      case "workspace.file.fd": {
+        const globals = request.globals ?? {};
+        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
+        const timeoutSeconds = Math.max(1, Number(request.payload?.timeout ?? 30) || 30);
+        const maxBytes = Math.max(1024, Number(request.payload?.max_bytes ?? 20000000) || 20000000);
+        const fdOptions = Array.isArray(request.payload?.fd_options)
+          ? request.payload?.fd_options.filter((x): x is string => typeof x === "string")
+          : undefined;
+        const ctx = await getDaemonContext(state, globals);
+        const data = await workspaceFileFdData({
+          ctx,
+          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
+          pattern: typeof request.payload?.pattern === "string" ? request.payload.pattern : undefined,
+          path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
+          timeoutSeconds,
+          maxBytes,
+          options: fdOptions,
           cwd,
         });
         return {
@@ -3258,19 +3537,57 @@ file
       opts: { workspace?: string; parents?: boolean },
       command: Command,
     ) => {
-      await withContext(command, "workspace file put", async (ctx) => {
-        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
-        const data = await readFileLocal(src);
-        if (opts.parents !== false) {
-          await fs.mkdir(dirname(dest), { recursive: true });
+      const globals = globalsFrom(command);
+      const data = await readFileLocal(src);
+      if (shouldUseDaemonForFileOps(globals)) {
+        try {
+          const response = await runDaemonRequestFromCommand(command, {
+            action: "workspace.file.put",
+            payload: {
+              workspace: opts.workspace,
+              dest,
+              parents: opts.parents !== false,
+              content_base64: data.toString("base64"),
+            },
+          });
+          if (!response.ok) {
+            throw new Error(response.error ?? "daemon request failed");
+          }
+          const result = asObject(response.data);
+          result.src = src;
+          result.dest = dest;
+          emitSuccess(
+            {
+              globals,
+              apiBaseUrl: response.meta?.api ?? undefined,
+              accountId: response.meta?.account_id ?? undefined,
+            },
+            "workspace file put",
+            result,
+          );
+          return;
+        } catch (err) {
+          if (!isDaemonTransportError(err)) {
+            emitError({ globals }, "workspace file put", err);
+            process.exitCode = 1;
+            return;
+          }
+          cliDebug("workspace file put daemon unavailable; falling back to direct mode", {
+            err: err instanceof Error ? err.message : `${err}`,
+          });
         }
-        await fs.writeFile(dest, data);
-        return {
-          workspace_id: workspace.project_id,
-          src,
+      }
+      await withContext(command, "workspace file put", async (ctx) => {
+        const result = await workspaceFilePutData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
           dest,
-          bytes: data.length,
-          status: "uploaded",
+          data,
+          parents: opts.parents !== false,
+        });
+        return {
+          ...result,
+          src,
         };
       });
     },
@@ -3288,20 +3605,71 @@ file
       opts: { workspace?: string; parents?: boolean },
       command: Command,
     ) => {
+      const globals = globalsFrom(command);
+      if (shouldUseDaemonForFileOps(globals)) {
+        try {
+          const response = await runDaemonRequestFromCommand(command, {
+            action: "workspace.file.get",
+            payload: {
+              workspace: opts.workspace,
+              src,
+            },
+          });
+          if (!response.ok) {
+            throw new Error(response.error ?? "daemon request failed");
+          }
+          const data = asObject(response.data);
+          const encoded = typeof data.content_base64 === "string" ? data.content_base64 : "";
+          const buffer = Buffer.from(encoded, "base64");
+          if (opts.parents !== false) {
+            await mkdirLocal(dirname(dest), { recursive: true });
+          }
+          await writeFileLocal(dest, buffer);
+          emitSuccess(
+            {
+              globals,
+              apiBaseUrl: response.meta?.api ?? undefined,
+              accountId: response.meta?.account_id ?? undefined,
+            },
+            "workspace file get",
+            {
+              workspace_id: data.workspace_id ?? null,
+              src,
+              dest,
+              bytes: buffer.length,
+              status: data.status ?? "downloaded",
+            },
+          );
+          return;
+        } catch (err) {
+          if (!isDaemonTransportError(err)) {
+            emitError({ globals }, "workspace file get", err);
+            process.exitCode = 1;
+            return;
+          }
+          cliDebug("workspace file get daemon unavailable; falling back to direct mode", {
+            err: err instanceof Error ? err.message : `${err}`,
+          });
+        }
+      }
       await withContext(command, "workspace file get", async (ctx) => {
-        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
-        const data = await fs.readFile(src);
-        const buffer = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
+        const data = await workspaceFileGetData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          src,
+        });
+        const encoded = typeof data.content_base64 === "string" ? data.content_base64 : "";
+        const buffer = Buffer.from(encoded, "base64");
         if (opts.parents !== false) {
           await mkdirLocal(dirname(dest), { recursive: true });
         }
         await writeFileLocal(dest, buffer);
         return {
-          workspace_id: workspace.project_id,
+          workspace_id: data.workspace_id ?? null,
           src,
           dest,
           bytes: buffer.length,
-          status: "downloaded",
+          status: data.status ?? "downloaded",
         };
       });
     },
@@ -3319,19 +3687,50 @@ file
       opts: { workspace?: string; recursive?: boolean; force?: boolean },
       command: Command,
     ) => {
+      const globals = globalsFrom(command);
+      if (shouldUseDaemonForFileOps(globals)) {
+        try {
+          const response = await runDaemonRequestFromCommand(command, {
+            action: "workspace.file.rm",
+            payload: {
+              workspace: opts.workspace,
+              path,
+              recursive: !!opts.recursive,
+              force: !!opts.force,
+            },
+          });
+          if (!response.ok) {
+            throw new Error(response.error ?? "daemon request failed");
+          }
+          emitSuccess(
+            {
+              globals,
+              apiBaseUrl: response.meta?.api ?? undefined,
+              accountId: response.meta?.account_id ?? undefined,
+            },
+            "workspace file rm",
+            response.data,
+          );
+          return;
+        } catch (err) {
+          if (!isDaemonTransportError(err)) {
+            emitError({ globals }, "workspace file rm", err);
+            process.exitCode = 1;
+            return;
+          }
+          cliDebug("workspace file rm daemon unavailable; falling back to direct mode", {
+            err: err instanceof Error ? err.message : `${err}`,
+          });
+        }
+      }
       await withContext(command, "workspace file rm", async (ctx) => {
-        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
-        await fs.rm(path, {
-          recursive: !!opts.recursive,
-          force: !!opts.force,
-        });
-        return {
-          workspace_id: workspace.project_id,
+        return await workspaceFileRmData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
           path,
           recursive: !!opts.recursive,
           force: !!opts.force,
-          status: "removed",
-        };
+        });
       });
     },
   );
@@ -3347,15 +3746,48 @@ file
       opts: { workspace?: string; parents?: boolean },
       command: Command,
     ) => {
+      const globals = globalsFrom(command);
+      if (shouldUseDaemonForFileOps(globals)) {
+        try {
+          const response = await runDaemonRequestFromCommand(command, {
+            action: "workspace.file.mkdir",
+            payload: {
+              workspace: opts.workspace,
+              path,
+              parents: opts.parents !== false,
+            },
+          });
+          if (!response.ok) {
+            throw new Error(response.error ?? "daemon request failed");
+          }
+          emitSuccess(
+            {
+              globals,
+              apiBaseUrl: response.meta?.api ?? undefined,
+              accountId: response.meta?.account_id ?? undefined,
+            },
+            "workspace file mkdir",
+            response.data,
+          );
+          return;
+        } catch (err) {
+          if (!isDaemonTransportError(err)) {
+            emitError({ globals }, "workspace file mkdir", err);
+            process.exitCode = 1;
+            return;
+          }
+          cliDebug("workspace file mkdir daemon unavailable; falling back to direct mode", {
+            err: err instanceof Error ? err.message : `${err}`,
+          });
+        }
+      }
       await withContext(command, "workspace file mkdir", async (ctx) => {
-        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
-        await fs.mkdir(path, { recursive: opts.parents !== false });
-        return {
-          workspace_id: workspace.project_id,
+        return await workspaceFileMkdirData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
           path,
           parents: opts.parents !== false,
-          status: "created",
-        };
+        });
       });
     },
   );
@@ -3379,16 +3811,69 @@ file
       },
       command: Command,
     ) => {
+      const globals = globalsFrom(command);
+      const timeoutSeconds = Math.max(1, Number(opts.timeout ?? "30") || 30);
+      const maxBytes = Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000);
+      if (shouldUseDaemonForFileOps(globals)) {
+        try {
+          const response = await runDaemonRequestFromCommand(command, {
+            action: "workspace.file.rg",
+            payload: {
+              workspace: opts.workspace,
+              pattern,
+              path,
+              timeout: timeoutSeconds,
+              max_bytes: maxBytes,
+              rg_options: opts.rgOption ?? [],
+            },
+          });
+          if (!response.ok) {
+            throw new Error(response.error ?? "daemon request failed");
+          }
+          const data = asObject(response.data);
+          const stdout = typeof data.stdout === "string" ? data.stdout : "";
+          const stderr = typeof data.stderr === "string" ? data.stderr : "";
+          const exit_code = Number(data.exit_code ?? 1);
+          if (!globals.json && globals.output !== "json") {
+            if (stdout) process.stdout.write(stdout);
+            if (stderr) process.stderr.write(stderr);
+            if (exit_code !== 0) process.exitCode = exit_code;
+            return;
+          }
+          emitSuccess(
+            {
+              globals,
+              apiBaseUrl: response.meta?.api ?? undefined,
+              accountId: response.meta?.account_id ?? undefined,
+            },
+            "workspace file rg",
+            data,
+          );
+          return;
+        } catch (err) {
+          if (!isDaemonTransportError(err)) {
+            emitError({ globals }, "workspace file rg", err);
+            process.exitCode = 1;
+            return;
+          }
+          cliDebug("workspace file rg daemon unavailable; falling back to direct mode", {
+            err: err instanceof Error ? err.message : `${err}`,
+          });
+        }
+      }
       await withContext(command, "workspace file rg", async (ctx) => {
-        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
-        const result = await fs.ripgrep(path?.trim() || ".", pattern, {
+        const data = await workspaceFileRgData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          pattern,
+          path,
+          timeoutSeconds,
+          maxBytes,
           options: opts.rgOption,
-          timeout: Math.max(1, Number(opts.timeout ?? "30") || 30),
-          maxSize: Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000),
         });
-        const stdout = asUtf8((result as any)?.stdout);
-        const stderr = asUtf8((result as any)?.stderr);
-        const exit_code = Number((result as any)?.code ?? 1);
+        const stdout = typeof data.stdout === "string" ? data.stdout : "";
+        const stderr = typeof data.stderr === "string" ? data.stderr : "";
+        const exit_code = Number(data.exit_code ?? 1);
 
         if (!ctx.globals.json && ctx.globals.output !== "json") {
           if (stdout) process.stdout.write(stdout);
@@ -3398,15 +3883,7 @@ file
           }
           return null;
         }
-        return {
-          workspace_id: workspace.project_id,
-          path: path?.trim() || ".",
-          pattern,
-          stdout,
-          stderr,
-          exit_code,
-          truncated: !!(result as any)?.truncated,
-        };
+        return data;
       });
     },
   );
@@ -3430,17 +3907,69 @@ file
       },
       command: Command,
     ) => {
+      const globals = globalsFrom(command);
+      const timeoutSeconds = Math.max(1, Number(opts.timeout ?? "30") || 30);
+      const maxBytes = Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000);
+      if (shouldUseDaemonForFileOps(globals)) {
+        try {
+          const response = await runDaemonRequestFromCommand(command, {
+            action: "workspace.file.fd",
+            payload: {
+              workspace: opts.workspace,
+              pattern,
+              path,
+              timeout: timeoutSeconds,
+              max_bytes: maxBytes,
+              fd_options: opts.fdOption ?? [],
+            },
+          });
+          if (!response.ok) {
+            throw new Error(response.error ?? "daemon request failed");
+          }
+          const data = asObject(response.data);
+          const stdout = typeof data.stdout === "string" ? data.stdout : "";
+          const stderr = typeof data.stderr === "string" ? data.stderr : "";
+          const exit_code = Number(data.exit_code ?? 1);
+          if (!globals.json && globals.output !== "json") {
+            if (stdout) process.stdout.write(stdout);
+            if (stderr) process.stderr.write(stderr);
+            if (exit_code !== 0) process.exitCode = exit_code;
+            return;
+          }
+          emitSuccess(
+            {
+              globals,
+              apiBaseUrl: response.meta?.api ?? undefined,
+              accountId: response.meta?.account_id ?? undefined,
+            },
+            "workspace file fd",
+            data,
+          );
+          return;
+        } catch (err) {
+          if (!isDaemonTransportError(err)) {
+            emitError({ globals }, "workspace file fd", err);
+            process.exitCode = 1;
+            return;
+          }
+          cliDebug("workspace file fd daemon unavailable; falling back to direct mode", {
+            err: err instanceof Error ? err.message : `${err}`,
+          });
+        }
+      }
       await withContext(command, "workspace file fd", async (ctx) => {
-        const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, opts.workspace);
-        const result = await fs.fd(path?.trim() || ".", {
-          pattern: pattern?.trim() || undefined,
+        const data = await workspaceFileFdData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          pattern,
+          path,
+          timeoutSeconds,
+          maxBytes,
           options: opts.fdOption,
-          timeout: Math.max(1, Number(opts.timeout ?? "30") || 30),
-          maxSize: Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000),
         });
-        const stdout = asUtf8((result as any)?.stdout);
-        const stderr = asUtf8((result as any)?.stderr);
-        const exit_code = Number((result as any)?.code ?? 1);
+        const stdout = typeof data.stdout === "string" ? data.stdout : "";
+        const stderr = typeof data.stderr === "string" ? data.stderr : "";
+        const exit_code = Number(data.exit_code ?? 1);
 
         if (!ctx.globals.json && ctx.globals.output !== "json") {
           if (stdout) process.stdout.write(stdout);
@@ -3450,15 +3979,7 @@ file
           }
           return null;
         }
-        return {
-          workspace_id: workspace.project_id,
-          path: path?.trim() || ".",
-          pattern: pattern?.trim() || null,
-          stdout,
-          stderr,
-          exit_code,
-          truncated: !!(result as any)?.truncated,
-        };
+        return data;
       });
     },
   );

@@ -67,16 +67,14 @@ This CLI connects to a hub over websocket/conat and supports:
 - `--bearer <token>`
 - `--hub-password <password-or-file>` (local/dev mode; file contents are read if the path exists)
 - `--account-id <uuid>` or `--account_id <uuid>` (alias)
-- `COCALC_CLI_PROJECT_HOST_TOKEN_CACHE` to override routed project-host token cache path
 
 If `--hub-password` is provided without an account id, the CLI tries to auto-select
 an admin account for smoke-test workflows.
 
 `workspace file ...` commands connect directly to the target project-host and use
-short-lived host tokens (cached locally on disk until near expiry) for low-latency
-file operations without proxying through hub RPC. `workspace file list` and
-`workspace file cat` are daemon-enabled and auto-start the daemon unless
-`--no-daemon` is set.
+short-lived host tokens kept in-process (no on-disk token cache). All
+`workspace file` subcommands are daemon-enabled and auto-start the daemon unless
+`--no-daemon` is set, which keeps routed host connections warm for lower latency.
 
 ## Auth Commands
 

@@ -9,6 +9,8 @@
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
+    "cli": "node ./dist/bin/cocalc.js",
+    "cocalc": "node ./dist/bin/cocalc.js",
     "build": "pnpm exec tsc --build && pnpm run link:bins",
     "clean": "rm -rf dist build tsconfig.tsbuildinfo sea/sea-prep.blob sea/cocalc.js sea/sea.term",
     "link:bins": "node ./scripts/link-bins.js",
