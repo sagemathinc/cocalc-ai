@@ -48,6 +48,7 @@ import type { HostRuntime } from "@cocalc/cloud/types";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import getPool from "@cocalc/database/pool";
+import siteURL from "@cocalc/database/settings/site-url";
 import getLogger from "@cocalc/backend/logger";
 import { getServerProvider } from "./providers";
 import {
@@ -92,6 +93,59 @@ function normalizeSoftwareBaseUrl(raw: string): string {
   const trimmed = (raw || "").trim();
   const base = trimmed || DEFAULT_SOFTWARE_BASE_URL;
   return base.replace(/\/+$/, "");
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const host = `${hostname || ""}`.trim().toLowerCase();
+  return (
+    host === "localhost" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    host.startsWith("127.")
+  );
+}
+
+async function resolveSoftwareBaseUrl({
+  configured,
+  useOnPremSettings,
+  host_id,
+}: {
+  configured: string;
+  useOnPremSettings: boolean;
+  host_id: string;
+}): Promise<string> {
+  const normalized = normalizeSoftwareBaseUrl(configured);
+  if (useOnPremSettings) {
+    return normalized;
+  }
+  try {
+    const parsed = new URL(normalized);
+    if (!isLoopbackHostname(parsed.hostname)) {
+      return normalized;
+    }
+  } catch {
+    return normalized;
+  }
+  let replacement = DEFAULT_SOFTWARE_BASE_URL;
+  let source: "site-url" | "default" = "default";
+  try {
+    const publicSite = (await siteURL()).replace(/\/+$/, "");
+    const candidate = `${publicSite}/software`;
+    const parsedCandidate = new URL(candidate);
+    if (!isLoopbackHostname(parsedCandidate.hostname)) {
+      replacement = candidate.replace(/\/+$/, "");
+      source = "site-url";
+    }
+  } catch {
+    // keep default replacement
+  }
+  logger.warn("bootstrap host: replaced loopback software base url", {
+    host_id,
+    requested: normalized,
+    effective: replacement,
+    source,
+  });
+  return replacement;
 }
 
 type SoftwareArch = "amd64" | "arm64";
@@ -299,12 +353,16 @@ export async function buildBootstrapScripts(
   } = await getServerSettings();
   const forcedSoftwareBaseUrl =
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() || "";
-  const softwareBaseUrl = normalizeSoftwareBaseUrl(
+  const softwareBaseConfigured =
     forcedSoftwareBaseUrl ||
-      project_hosts_software_base_url ||
-      process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ||
-      "",
-  );
+    project_hosts_software_base_url ||
+    process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ||
+    "";
+  const softwareBaseUrl = await resolveSoftwareBaseUrl({
+    configured: softwareBaseConfigured,
+    useOnPremSettings,
+    host_id: row.id,
+  });
   if (!softwareBaseUrl) {
     throw new Error("project host software base URL is not configured");
   }
