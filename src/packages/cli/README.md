@@ -47,6 +47,7 @@ node src/packages/cli/dist/bin/cocalc.js --help
 
 This CLI connects to a hub over websocket/conat and supports:
 
+- `--profile <name>` (or `COCALC_PROFILE`) to select a saved auth profile
 - `--api <url>` (or `COCALC_API_URL`)
 - `--api-key <key>` (or `COCALC_API_KEY`)
 - `--cookie <cookie>`
@@ -56,6 +57,16 @@ This CLI connects to a hub over websocket/conat and supports:
 
 If `--hub-password` is provided without an account id, the CLI tries to auto-select
 an admin account for smoke-test workflows.
+
+## Auth Commands
+
+- `auth status [--check]`
+- `auth list`
+- `auth login [--profile <name>] [--api ...] [--api-key ...] [--account-id ...]`
+- `auth setup ...` (alias for `auth login`)
+- `auth use <profile>`
+- `auth logout [--target-profile <name>]`
+- `auth logout --all`
 
 ## Phase 0 Commands
 

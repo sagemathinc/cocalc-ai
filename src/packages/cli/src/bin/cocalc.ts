@@ -16,6 +16,16 @@ import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
 import {
+  applyAuthProfile,
+  authConfigPath,
+  loadAuthConfig,
+  sanitizeProfileName,
+  saveAuthConfig,
+  selectedProfileName,
+  type AuthProfile,
+  type GlobalAuthOptions,
+} from "../core/auth-config";
+import {
   durationToMs,
   extractCookie,
   isRedirect,
@@ -43,18 +53,11 @@ if (!cliDebugEnabled) {
   };
 }
 
-type GlobalOptions = {
+type GlobalOptions = GlobalAuthOptions & {
   json?: boolean;
   output?: "table" | "json" | "yaml";
-  accountId?: string;
-  account_id?: string;
-  api?: string;
   timeout?: string;
   pollMs?: string;
-  apiKey?: string;
-  cookie?: string;
-  bearer?: string;
-  hubPassword?: string;
 };
 
 type RemoteConnection = {
@@ -184,15 +187,19 @@ function printArrayTable(rows: Record<string, unknown>[]): void {
   console.log(table.toString());
 }
 
-function emitSuccess(ctx: CommandContext, commandName: string, data: unknown): void {
+function emitSuccess(
+  ctx: { globals: GlobalOptions; apiBaseUrl?: string; accountId?: string },
+  commandName: string,
+  data: unknown,
+): void {
   if (ctx.globals.json || ctx.globals.output === "json") {
     const payload = {
       ok: true,
       command: commandName,
       data,
       meta: {
-        api: ctx.apiBaseUrl,
-        account_id: ctx.accountId,
+        api: ctx.apiBaseUrl ?? null,
+        account_id: ctx.accountId ?? null,
       },
     };
     console.log(JSON.stringify(payload, null, 2));
@@ -323,6 +330,56 @@ function buildCookieHeader(baseUrl: string, globals: GlobalOptions): string | un
 
 function hasHubPassword(globals: GlobalOptions): boolean {
   return !!normalizeSecretValue(globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD);
+}
+
+function maskSecret(value: string | undefined): string | null {
+  if (!value) return null;
+  if (value.length <= 6) return "*".repeat(value.length);
+  return `${value.slice(0, 3)}...${value.slice(-3)}`;
+}
+
+function normalizeOptionalSecret(value: string | undefined): string | undefined {
+  const trimmed = `${value ?? ""}`.trim();
+  if (!trimmed) return undefined;
+  return trimmed;
+}
+
+function profileFromGlobals(globals: GlobalOptions): Partial<AuthProfile> {
+  const profile: Partial<AuthProfile> = {};
+  if (globals.api?.trim()) {
+    profile.api = normalizeUrl(globals.api);
+  }
+  const accountId = getExplicitAccountId(globals);
+  if (accountId?.trim()) {
+    if (!isValidUUID(accountId)) {
+      throw new Error(`invalid --account-id '${accountId}'`);
+    }
+    profile.account_id = accountId;
+  }
+  const apiKey = normalizeOptionalSecret(globals.apiKey);
+  if (apiKey) profile.api_key = apiKey;
+  const cookie = normalizeOptionalSecret(globals.cookie);
+  if (cookie) profile.cookie = cookie;
+  const bearer = normalizeOptionalSecret(globals.bearer);
+  if (bearer) profile.bearer = bearer;
+  const hubPassword = normalizeSecretValue(globals.hubPassword);
+  if (hubPassword) profile.hub_password = hubPassword;
+  return profile;
+}
+
+async function runLocalCommand(
+  command: unknown,
+  commandName: string,
+  fn: (globals: GlobalOptions) => Promise<unknown>,
+): Promise<void> {
+  const globals = globalsFrom(command);
+  try {
+    const data = await fn(globals);
+    emitSuccess({ globals }, commandName, data);
+  } catch (error) {
+    emitError({ globals }, commandName, error);
+    process.exitCode = 1;
+  }
 }
 
 async function connectRemote({
@@ -472,17 +529,21 @@ function resolveAccountIdFromRemote(remote: RemoteConnection): string | undefine
 }
 
 async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext> {
-  const timeoutMs = durationToMs(globals.timeout, 600_000);
-  const pollMs = durationToMs(globals.pollMs, 1_000);
-  const apiBaseUrl = globals.api ? normalizeUrl(globals.api) : defaultApiBaseUrl();
-  const remote = await connectRemote({ globals, apiBaseUrl, timeoutMs });
+  const config = loadAuthConfig();
+  const applied = applyAuthProfile(globals, config);
+  const effectiveGlobals = applied.globals as GlobalOptions;
+
+  const timeoutMs = durationToMs(effectiveGlobals.timeout, 600_000);
+  const pollMs = durationToMs(effectiveGlobals.pollMs, 1_000);
+  const apiBaseUrl = effectiveGlobals.api ? normalizeUrl(effectiveGlobals.api) : defaultApiBaseUrl();
+  const remote = await connectRemote({ globals: effectiveGlobals, apiBaseUrl, timeoutMs });
 
   let accountId =
-    getExplicitAccountId(globals) ??
+    getExplicitAccountId(effectiveGlobals) ??
     process.env.COCALC_ACCOUNT_ID ??
     resolveAccountIdFromRemote(remote);
 
-  if (!accountId && hasHubPassword(globals)) {
+  if (!accountId && hasHubPassword(effectiveGlobals)) {
     accountId = await resolveDefaultAdminAccountId({ remote, timeoutMs });
   }
 
@@ -493,7 +554,7 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
   }
 
   return {
-    globals,
+    globals: effectiveGlobals,
     accountId,
     timeoutMs,
     pollMs,
@@ -973,7 +1034,6 @@ async function resolveProxyUrl({
 }
 
 const program = new Command();
-program.enablePositionalOptions();
 
 program
   .name("cocalc")
@@ -981,6 +1041,7 @@ program
   .version(pkg.version)
   .option("--json", "output machine-readable JSON")
   .option("--output <format>", "output format (table|json|yaml)", "table")
+  .option("--profile <name>", "auth profile name (default: current profile)")
   .option("--account-id <uuid>", "account id to use for API calls")
   .option("--account_id <uuid>", "alias for --account-id")
   .option("--api <url>", "hub base URL")
@@ -1011,6 +1072,200 @@ for (const spec of Object.values(PRODUCT_SPECS)) {
       }
     });
 }
+
+const auth = program.command("auth").description("auth profile management");
+
+auth
+  .command("status")
+  .description("show effective auth/profile status")
+  .option("--check", "verify credentials by connecting to the configured hub")
+  .action(async (opts: { check?: boolean }, command: Command) => {
+    await runLocalCommand(command, "auth status", async (globals) => {
+      const configPath = authConfigPath();
+      const config = loadAuthConfig(configPath);
+      const selected = selectedProfileName(globals, config);
+      const profile = config.profiles[selected];
+      const applied = applyAuthProfile(globals, config);
+      const effective = applied.globals as GlobalOptions;
+      const accountId = getExplicitAccountId(effective) ?? process.env.COCALC_ACCOUNT_ID ?? null;
+      const apiBaseUrl = effective.api ? normalizeUrl(effective.api) : defaultApiBaseUrl();
+
+      let check: { ok: boolean; account_id?: string | null; error?: string } | undefined;
+      if (opts.check) {
+        try {
+          const timeoutMs = durationToMs(effective.timeout, 15_000);
+          const remote = await connectRemote({ globals: effective, apiBaseUrl, timeoutMs });
+          check = {
+            ok: true,
+            account_id: resolveAccountIdFromRemote(remote) ?? null,
+          };
+          remote.client.close();
+        } catch (err) {
+          check = {
+            ok: false,
+            error: err instanceof Error ? err.message : `${err}`,
+          };
+        }
+      }
+
+      return {
+        config_path: configPath,
+        current_profile: config.current_profile ?? null,
+        selected_profile: selected,
+        profile_found: !!profile,
+        using_profile_defaults: applied.fromProfile,
+        profiles_count: Object.keys(config.profiles).length,
+        api: apiBaseUrl,
+        account_id: accountId,
+        has_api_key: !!(effective.apiKey ?? process.env.COCALC_API_KEY),
+        has_cookie: !!effective.cookie,
+        has_bearer: !!(effective.bearer ?? process.env.COCALC_BEARER_TOKEN),
+        has_hub_password: !!normalizeSecretValue(
+          effective.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
+        ),
+        check: check ?? null,
+      };
+    });
+  });
+
+auth
+  .command("list")
+  .description("list auth profiles")
+  .action(async (command: Command) => {
+    await runLocalCommand(command, "auth list", async () => {
+      const config = loadAuthConfig();
+      return Object.entries(config.profiles)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, profile]) => ({
+          profile: name,
+          current: config.current_profile === name,
+          api: profile.api ?? null,
+          account_id: profile.account_id ?? null,
+          api_key: maskSecret(profile.api_key),
+          cookie: maskSecret(profile.cookie),
+          bearer: maskSecret(profile.bearer),
+          hub_password: maskSecret(profile.hub_password),
+        }));
+    });
+  });
+
+async function saveAuthProfile(
+  globals: GlobalOptions,
+  opts: { setCurrent?: boolean },
+): Promise<{
+  profile: string;
+  current_profile: string | null;
+  stored: Record<string, unknown>;
+}> {
+  const configPath = authConfigPath();
+  const config = loadAuthConfig(configPath);
+  const profileName = sanitizeProfileName(globals.profile);
+  const patch = profileFromGlobals(globals);
+  if (Object.keys(patch).length === 0) {
+    throw new Error(
+      "nothing to store; provide one of --api, --account-id, --api-key, --cookie, --bearer, --hub-password",
+    );
+  }
+  const current = config.profiles[profileName] ?? {};
+  const next: AuthProfile = { ...current, ...patch };
+  config.profiles[profileName] = next;
+  if (opts.setCurrent !== false) {
+    config.current_profile = profileName;
+  }
+  saveAuthConfig(config, configPath);
+  return {
+    profile: profileName,
+    current_profile: config.current_profile ?? null,
+    stored: {
+      api: next.api ?? null,
+      account_id: next.account_id ?? null,
+      api_key: maskSecret(next.api_key),
+      cookie: maskSecret(next.cookie),
+      bearer: maskSecret(next.bearer),
+      hub_password: maskSecret(next.hub_password),
+    },
+  };
+}
+
+auth
+  .command("login")
+  .description("store credentials in an auth profile")
+  .option("--no-set-current", "do not set this profile as current")
+  .action(async (opts: { setCurrent?: boolean }, command: Command) => {
+    await runLocalCommand(command, "auth login", async (globals) => {
+      return await saveAuthProfile(globals, opts);
+    });
+  });
+
+auth
+  .command("setup")
+  .description("alias for auth login")
+  .option("--no-set-current", "do not set this profile as current")
+  .action(async (opts: { setCurrent?: boolean }, command: Command) => {
+    await runLocalCommand(command, "auth setup", async (globals) => {
+      return await saveAuthProfile(globals, opts);
+    });
+  });
+
+auth
+  .command("use <profile>")
+  .description("set the current auth profile")
+  .action(async (profileName: string, command: Command) => {
+    await runLocalCommand(command, "auth use", async () => {
+      const configPath = authConfigPath();
+      const config = loadAuthConfig(configPath);
+      const profile = sanitizeProfileName(profileName);
+      if (!config.profiles[profile]) {
+        throw new Error(`auth profile '${profile}' not found`);
+      }
+      config.current_profile = profile;
+      saveAuthConfig(config, configPath);
+      return {
+        current_profile: profile,
+      };
+    });
+  });
+
+auth
+  .command("logout")
+  .description("remove stored auth profile(s)")
+  .option("--all", "remove all auth profiles")
+  .option("--target-profile <name>", "profile to remove (defaults to selected/current)")
+  .action(async (opts: { all?: boolean; targetProfile?: string }, command: Command) => {
+    await runLocalCommand(command, "auth logout", async (globals) => {
+      const configPath = authConfigPath();
+      const config = loadAuthConfig(configPath);
+
+      if (opts.all) {
+        config.profiles = {};
+        config.current_profile = undefined;
+        saveAuthConfig(config, configPath);
+        return {
+          removed: "all",
+          current_profile: null,
+          remaining_profiles: 0,
+        };
+      }
+
+      const target = sanitizeProfileName(
+        opts.targetProfile ?? globals.profile ?? config.current_profile,
+      );
+      if (!config.profiles[target]) {
+        throw new Error(`auth profile '${target}' not found`);
+      }
+      delete config.profiles[target];
+      if (config.current_profile === target) {
+        const next = Object.keys(config.profiles).sort()[0];
+        config.current_profile = next;
+      }
+      saveAuthConfig(config, configPath);
+      return {
+        removed: target,
+        current_profile: config.current_profile ?? null,
+        remaining_profiles: Object.keys(config.profiles).length,
+      };
+    });
+  });
 
 const workspace = program.command("workspace").alias("ws").description("workspace operations");
 
@@ -2159,6 +2414,22 @@ host
 
 async function main() {
   try {
+    const shortcut = process.argv[2] as ProductCommand | undefined;
+    if (shortcut && (shortcut === "plus" || shortcut === "launchpad")) {
+      const spec = PRODUCT_SPECS[shortcut];
+      try {
+        await runProductCommand(spec, process.argv.slice(3));
+      } catch (error) {
+        emitError(
+          { globals: globalsFrom(program as unknown as Command) },
+          `cocalc ${shortcut}`,
+          error,
+        );
+        process.exitCode = 1;
+      }
+      return;
+    }
+
     await program.parseAsync(process.argv);
   } catch (error) {
     emitError(
