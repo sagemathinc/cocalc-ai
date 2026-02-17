@@ -53,98 +53,6 @@ export const ERROR_STYLE: CSS = {
   overflow: "auto",
 } as const;
 
-type WindowedForceSource = "url" | "localStorage";
-type LazyRenderForceSource = "url" | "localStorage";
-
-const WINDOWED_LIST_OVERRIDE_STORAGE_KEYS = [
-  "cocalc_jupyter_virtualization",
-  "jupyter_virtualization",
-] as const;
-
-function parseWindowedOverride(raw: string | null): boolean | undefined {
-  if (raw == null) {
-    return;
-  }
-  const value = raw.trim().toLowerCase();
-  if (
-    value === "1" ||
-    value === "true" ||
-    value === "on" ||
-    value === "yes"
-  ) {
-    return true;
-  }
-  if (
-    value === "0" ||
-    value === "false" ||
-    value === "off" ||
-    value === "no"
-  ) {
-    return false;
-  }
-}
-
-function forceWindowedList():
-  | { enabled: boolean; source: WindowedForceSource }
-  | { enabled?: undefined; source?: undefined } {
-  try {
-    if (typeof window === "undefined") {
-      return {};
-    }
-    const urlOverride = parseWindowedOverride(
-      new URLSearchParams(window.location.search).get("jupyter_virtualization"),
-    );
-    if (urlOverride != null) {
-      return { enabled: urlOverride, source: "url" };
-    }
-    const storage = window.localStorage;
-    if (storage != null) {
-      for (const key of WINDOWED_LIST_OVERRIDE_STORAGE_KEYS) {
-        const storageOverride = parseWindowedOverride(storage.getItem(key));
-        if (storageOverride != null) {
-          return { enabled: storageOverride, source: "localStorage" };
-        }
-      }
-    }
-  } catch {
-    // ignore malformed URL/search param / storage access issues
-  }
-  return {};
-}
-
-const LAZY_RENDER_OVERRIDE_STORAGE_KEYS = [
-  "cocalc_jupyter_lazy_render",
-  "jupyter_lazy_render",
-] as const;
-
-function forceLazyRenderOnce():
-  | { enabled: boolean; source: LazyRenderForceSource }
-  | { enabled?: undefined; source?: undefined } {
-  try {
-    if (typeof window === "undefined") {
-      return {};
-    }
-    const urlOverride = parseWindowedOverride(
-      new URLSearchParams(window.location.search).get("jupyter_lazy_render"),
-    );
-    if (urlOverride != null) {
-      return { enabled: urlOverride, source: "url" };
-    }
-    const storage = window.localStorage;
-    if (storage != null) {
-      for (const key of LAZY_RENDER_OVERRIDE_STORAGE_KEYS) {
-        const storageOverride = parseWindowedOverride(storage.getItem(key));
-        if (storageOverride != null) {
-          return { enabled: storageOverride, source: "localStorage" };
-        }
-      }
-    }
-  } catch {
-    // ignore malformed URL/search param / storage access issues
-  }
-  return {};
-}
-
 interface Props {
   error?: string;
   actions: JupyterActions;
@@ -303,55 +211,35 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       }
     : undefined;
 
-  // We use react-virtuoso, which is an amazing library for
-  // doing windowing on dynamically sized content... like
-  // what comes up with Jupyter notebooks.
-  // We do have to ensure that this can be easily disabled
-  // by users, due to situations like this
-  //   https://github.com/sagemathinc/cocalc/issues/4727
-  // e.g., where maybe they want to use Javascript across all
-  // cells, or they want to preserve state in iframes, which
-  // requires keeping things rendered.
-  // NOTE: we get this once from the account store and do NOT
-  // load it again, since we didn't implement switching between
-  // rendering modes on the fly and such a switch will crash for sure.
-  const defaultWindowedEnabled = !redux
-    .getStore("account")
-    .getIn(["editor_settings", "disable_jupyter_virtualization"]);
-  const forcedWindowed = forceWindowedList();
-  const forcedLazyRenderOnce = forceLazyRenderOnce();
-  const useWindowedListRef = useRef<boolean>(
-    forcedWindowed.enabled ?? defaultWindowedEnabled,
-  );
-  const useLazyRenderOnceRef = useRef<boolean>(
-    forcedLazyRenderOnce.enabled ?? false,
-  );
+  // We now always render via lazy-hydrate-once semantics.
+  const useLazyRenderOnceRef = useRef<boolean>(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const enabled = useWindowedListRef.current;
-    const forced = forcedWindowed.enabled ?? null;
-    const forceSource = forcedWindowed.source ?? null;
     const lazyEnabled = useLazyRenderOnceRef.current;
-    const lazyForced = forcedLazyRenderOnce.enabled ?? null;
-    const lazyForceSource = forcedLazyRenderOnce.source ?? null;
+    const lazyForced = true;
+    const lazyForceSource = "hardcoded";
     (window as any).__cocalcJupyterRuntime = {
       ...(window as any).__cocalcJupyterRuntime,
-      windowed_list_enabled: enabled,
-      windowed_list_forced: forced,
-      windowed_list_default: defaultWindowedEnabled,
-      windowed_list_force_source: forceSource,
+      windowed_list_enabled: false,
+      windowed_list_forced: true,
+      windowed_list_default: false,
+      windowed_list_force_source: "hardcoded",
       lazy_render_once_enabled: lazyEnabled,
       lazy_render_once_forced: lazyForced,
       lazy_render_once_force_source: lazyForceSource,
     };
     document.documentElement.setAttribute(
       "data-cocalc-jupyter-windowed-list",
-      enabled ? "1" : "0",
+      "0",
     );
     document.documentElement.setAttribute(
       "data-cocalc-jupyter-windowed-list-source",
-      forceSource ?? "account-setting",
+      "hardcoded",
+    );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-windowed-list-forced",
+      "1",
     );
     document.documentElement.setAttribute(
       "data-cocalc-jupyter-lazy-render",
@@ -359,35 +247,9 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     );
     document.documentElement.setAttribute(
       "data-cocalc-jupyter-lazy-render-source",
-      lazyForceSource ?? "default",
+      lazyForceSource,
     );
-    if (forced == null) {
-      document.documentElement.removeAttribute(
-        "data-cocalc-jupyter-windowed-list-forced",
-      );
-    } else {
-      document.documentElement.setAttribute(
-        "data-cocalc-jupyter-windowed-list-forced",
-        forced ? "1" : "0",
-      );
-    }
-    if (forced != null) {
-      console.info(
-        `[jupyter-virt] use_windowed_list=${enabled} (forced=${forced}, source=${forceSource})`,
-      );
-    }
-    if (lazyForced != null) {
-      console.info(
-        `[jupyter-lazy] use_lazy_render_once=${lazyEnabled} (forced=${lazyForced}, source=${lazyForceSource})`,
-      );
-    }
-  }, [
-    defaultWindowedEnabled,
-    forcedWindowed.enabled,
-    forcedWindowed.source,
-    forcedLazyRenderOnce.enabled,
-    forcedLazyRenderOnce.source,
-  ]);
+  }, []);
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);
 
@@ -464,8 +326,6 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
         scrollTop={scrollTop}
         sel_ids={sel_ids}
         trust={trust}
-        use_windowed_list={useWindowedListRef.current}
-        use_lazy_render_once={useLazyRenderOnceRef.current}
         llmTools={llmTools}
         pendingCells={pendingCells}
       />

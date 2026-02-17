@@ -159,7 +159,7 @@ type ScrollBenchmarkResult = {
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 const DEFAULT_PROFILE: Options["profile"] = "quick";
-const DEFAULT_RENDER_MODE: Options["render_mode"] = "eager";
+const DEFAULT_RENDER_MODE: Options["render_mode"] = "lazy";
 const DEFAULT_SCROLL_STEPS = 42;
 const DEFAULT_TYPING_CHARS = 40;
 const DEFAULT_TYPING_TIMEOUT_MS = 1_500;
@@ -1433,8 +1433,8 @@ Options:
   --protocol <http|https>   Protocol with --port (default: http)
   --auth-token <token>      Auth token (default: from connection-info.json)
   --profile <quick|full>    Scenario profile (default: quick)
-  --virtualization <mode>   Force notebook virtualization: on|off|keep (default: keep)
-  --render-mode <mode>      Non-windowed render mode: eager|lazy (default: eager)
+  --virtualization <mode>   Force notebook virtualization: on|off|keep (default: off)
+  --render-mode <mode>      Non-windowed render mode: lazy (default: lazy)
   --require-active-virtualization  Fail if requested virtualization mode is not active
   --scenario <name>         Run one scenario from the selected profile
   --path-prefix <path>      Notebook path prefix (default: $HOME/jupyter-scroll-benchmark)
@@ -1453,7 +1453,7 @@ Options:
 function parseArgs(argv: string[]): Options {
   const opts: Options = {
     profile: DEFAULT_PROFILE,
-    virtualization: "keep",
+    virtualization: "off",
     render_mode: DEFAULT_RENDER_MODE,
     require_active_virtualization: false,
     path_prefix: DEFAULT_PATH_PREFIX,
@@ -1539,8 +1539,10 @@ function parseArgs(argv: string[]): Options {
       }
       case "--render-mode": {
         const mode = next().toLowerCase();
-        if (mode !== "eager" && mode !== "lazy") {
-          throw new Error(`--render-mode must be eager or lazy, got '${mode}'`);
+        if (mode !== "lazy") {
+          throw new Error(
+            `--render-mode only supports 'lazy' in this build, got '${mode}'`,
+          );
         }
         opts.render_mode = mode;
         break;
