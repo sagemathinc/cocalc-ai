@@ -75,6 +75,7 @@ an admin account for smoke-test workflows.
 short-lived host tokens kept in-process (no on-disk token cache). All
 `workspace file` subcommands are daemon-enabled and auto-start the daemon unless
 `--no-daemon` is set, which keeps routed host connections warm for lower latency.
+These file commands do not require the workspace to be running.
 
 ## Auth Commands
 

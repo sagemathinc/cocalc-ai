@@ -555,6 +555,22 @@ function asUtf8(value: unknown): string {
   return String(value);
 }
 
+function normalizeBoolean(value: unknown): boolean {
+  if (value === true) return true;
+  if (value === false || value == null) return false;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (!v || v === "0" || v === "false" || v === "no" || v === "off") {
+      return false;
+    }
+    if (v === "1" || v === "true" || v === "yes" || v === "on") {
+      return true;
+    }
+  }
+  return Boolean(value);
+}
+
 function normalizeProcessExitCode(raw: unknown, stdout: string, stderr: string): number {
   const code = Number(raw);
   if (Number.isFinite(code)) {
@@ -1656,7 +1672,7 @@ async function workspaceFileRgData({
   workspaceIdentifier,
   pattern,
   path,
-  timeoutSeconds,
+  timeoutMs,
   maxBytes,
   options,
   cwd,
@@ -1665,7 +1681,7 @@ async function workspaceFileRgData({
   workspaceIdentifier?: string;
   pattern: string;
   path?: string;
-  timeoutSeconds: number;
+  timeoutMs: number;
   maxBytes: number;
   options?: string[];
   cwd?: string;
@@ -1673,7 +1689,7 @@ async function workspaceFileRgData({
   const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
   const result = await fs.ripgrep(path?.trim() || ".", pattern, {
     options,
-    timeout: timeoutSeconds,
+    timeout: timeoutMs,
     maxSize: maxBytes,
   });
   const stdout = asUtf8((result as any)?.stdout);
@@ -1686,7 +1702,7 @@ async function workspaceFileRgData({
     stdout,
     stderr,
     exit_code,
-    truncated: !!(result as any)?.truncated,
+    truncated: normalizeBoolean((result as any)?.truncated),
   };
 }
 
@@ -1695,7 +1711,7 @@ async function workspaceFileFdData({
   workspaceIdentifier,
   pattern,
   path,
-  timeoutSeconds,
+  timeoutMs,
   maxBytes,
   options,
   cwd,
@@ -1704,7 +1720,7 @@ async function workspaceFileFdData({
   workspaceIdentifier?: string;
   pattern?: string;
   path?: string;
-  timeoutSeconds: number;
+  timeoutMs: number;
   maxBytes: number;
   options?: string[];
   cwd?: string;
@@ -1713,7 +1729,7 @@ async function workspaceFileFdData({
   const result = await fs.fd(path?.trim() || ".", {
     pattern: pattern?.trim() || undefined,
     options,
-    timeout: timeoutSeconds,
+    timeout: timeoutMs,
     maxSize: maxBytes,
   });
   const stdout = asUtf8((result as any)?.stdout);
@@ -1726,7 +1742,7 @@ async function workspaceFileFdData({
     stdout,
     stderr,
     exit_code,
-    truncated: !!(result as any)?.truncated,
+    truncated: normalizeBoolean((result as any)?.truncated),
   };
 }
 
@@ -2313,7 +2329,7 @@ async function handleDaemonAction(
         if (!pattern) {
           throw new Error("workspace file rg requires pattern");
         }
-        const timeoutSeconds = Math.max(1, Number(request.payload?.timeout ?? 30) || 30);
+        const timeoutMs = Math.max(1, Number(request.payload?.timeout_ms ?? 30_000) || 30_000);
         const maxBytes = Math.max(1024, Number(request.payload?.max_bytes ?? 20000000) || 20000000);
         const rgOptions = Array.isArray(request.payload?.rg_options)
           ? request.payload?.rg_options.filter((x): x is string => typeof x === "string")
@@ -2324,7 +2340,7 @@ async function handleDaemonAction(
           workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
           pattern,
           path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
-          timeoutSeconds,
+          timeoutMs,
           maxBytes,
           options: rgOptions,
           cwd,
@@ -2342,7 +2358,7 @@ async function handleDaemonAction(
       case "workspace.file.fd": {
         const globals = request.globals ?? {};
         const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-        const timeoutSeconds = Math.max(1, Number(request.payload?.timeout ?? 30) || 30);
+        const timeoutMs = Math.max(1, Number(request.payload?.timeout_ms ?? 30_000) || 30_000);
         const maxBytes = Math.max(1024, Number(request.payload?.max_bytes ?? 20000000) || 20000000);
         const fdOptions = Array.isArray(request.payload?.fd_options)
           ? request.payload?.fd_options.filter((x): x is string => typeof x === "string")
@@ -2353,7 +2369,7 @@ async function handleDaemonAction(
           workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
           pattern: typeof request.payload?.pattern === "string" ? request.payload.pattern : undefined,
           path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
-          timeoutSeconds,
+          timeoutMs,
           maxBytes,
           options: fdOptions,
           cwd,
@@ -3812,7 +3828,7 @@ file
       command: Command,
     ) => {
       const globals = globalsFrom(command);
-      const timeoutSeconds = Math.max(1, Number(opts.timeout ?? "30") || 30);
+      const timeoutMs = Math.max(1, (Number(opts.timeout ?? "30") || 30) * 1000);
       const maxBytes = Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000);
       if (shouldUseDaemonForFileOps(globals)) {
         try {
@@ -3822,7 +3838,7 @@ file
               workspace: opts.workspace,
               pattern,
               path,
-              timeout: timeoutSeconds,
+              timeout_ms: timeoutMs,
               max_bytes: maxBytes,
               rg_options: opts.rgOption ?? [],
             },
@@ -3867,7 +3883,7 @@ file
           workspaceIdentifier: opts.workspace,
           pattern,
           path,
-          timeoutSeconds,
+          timeoutMs,
           maxBytes,
           options: opts.rgOption,
         });
@@ -3908,7 +3924,7 @@ file
       command: Command,
     ) => {
       const globals = globalsFrom(command);
-      const timeoutSeconds = Math.max(1, Number(opts.timeout ?? "30") || 30);
+      const timeoutMs = Math.max(1, (Number(opts.timeout ?? "30") || 30) * 1000);
       const maxBytes = Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000);
       if (shouldUseDaemonForFileOps(globals)) {
         try {
@@ -3918,7 +3934,7 @@ file
               workspace: opts.workspace,
               pattern,
               path,
-              timeout: timeoutSeconds,
+              timeout_ms: timeoutMs,
               max_bytes: maxBytes,
               fd_options: opts.fdOption ?? [],
             },
@@ -3963,7 +3979,7 @@ file
           workspaceIdentifier: opts.workspace,
           pattern,
           path,
-          timeoutSeconds,
+          timeoutMs,
           maxBytes,
           options: opts.fdOption,
         });
