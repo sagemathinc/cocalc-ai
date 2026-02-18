@@ -51,14 +51,23 @@ import {
   listAcpPayloads,
   clearAcpPayloads,
 } from "../sqlite/acp-queue";
+import {
+  finalizeAcpTurnLease,
+  heartbeatAcpTurnLease,
+  listRunningAcpTurnLeases,
+  startAcpTurnLease,
+  updateAcpTurnLeaseSessionId,
+} from "../sqlite/acp-turns";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 
 // how many ms between saving output during a running turn
 // so that everybody sees it.
 const COMMIT_INTERVAL = 2_000;
+const LEASE_HEARTBEAT_INTERVAL = 2_000;
 
 const logger = getLogger("lite:hub:acp");
+const ACP_INSTANCE_ID = randomUUID();
 
 let blobStore: AKV | null = null;
 const agents = new Map<string, AcpAgent>();
@@ -168,6 +177,14 @@ export class ChatStreamWriter {
   private logSubject: string;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
+  private leaseFinalized = false;
+  private heartbeatLease = throttle(
+    () => {
+      this.touchLease();
+    },
+    LEASE_HEARTBEAT_INTERVAL,
+    { leading: true, trailing: true },
+  );
   private persistLogProgress = throttle(
     async () => {
       try {
@@ -188,6 +205,76 @@ export class ChatStreamWriter {
     if (record == null) return undefined;
     if (typeof record.get === "function") return record.get(key) as T;
     return (record as any)[key] as T;
+  }
+
+  private leaseKey() {
+    return {
+      project_id: this.metadata.project_id,
+      path: this.metadata.path,
+      message_date: this.metadata.message_date,
+    };
+  }
+
+  private startLease(): void {
+    try {
+      startAcpTurnLease({
+        context: this.metadata,
+        owner_instance_id: ACP_INSTANCE_ID,
+        pid: process.pid,
+        session_id: this.sessionKey ?? undefined,
+      });
+    } catch (err) {
+      logger.warn("failed to start acp turn lease", {
+        chatKey: this.chatKey,
+        err,
+      });
+    }
+  }
+
+  private touchLease(): void {
+    if (this.leaseFinalized) return;
+    try {
+      heartbeatAcpTurnLease({
+        key: this.leaseKey(),
+        owner_instance_id: ACP_INSTANCE_ID,
+        pid: process.pid,
+        session_id: this.threadId ?? this.sessionKey ?? undefined,
+      });
+    } catch (err) {
+      logger.debug("failed to heartbeat acp turn lease", {
+        chatKey: this.chatKey,
+        err,
+      });
+    }
+  }
+
+  private finalizeLease(
+    state: "completed" | "error" | "aborted",
+    reason?: string,
+  ): void {
+    if (this.leaseFinalized) return;
+    this.leaseFinalized = true;
+    try {
+      this.heartbeatLease.flush();
+    } catch {
+      // ignore
+    }
+    this.heartbeatLease.cancel();
+    try {
+      finalizeAcpTurnLease({
+        key: this.leaseKey(),
+        state,
+        reason,
+        owner_instance_id: ACP_INSTANCE_ID,
+      });
+    } catch (err) {
+      logger.warn("failed to finalize acp turn lease", {
+        chatKey: this.chatKey,
+        state,
+        reason,
+        err,
+      });
+    }
   }
 
   constructor({
@@ -232,6 +319,7 @@ export class ChatStreamWriter {
     chatWritersByChatKey.set(this.chatKey, this);
     logWriterCounts("create", { chatKey: this.chatKey });
     this.sessionKey = sessionKey;
+    this.startLease();
     if (sessionKey) {
       this.registerThreadKey(sessionKey);
     }
@@ -378,6 +466,7 @@ export class ChatStreamWriter {
     { persist }: { persist: boolean },
   ): void {
     if (this.closed) return;
+    this.heartbeatLease();
     if ((payload.seq ?? -1) >= this.seq) {
       this.seq = (payload.seq ?? -1) + 1;
     }
@@ -452,6 +541,7 @@ export class ChatStreamWriter {
       }
       clearAcpPayloads(this.metadata);
       this.finished = true;
+      this.finalizeLease("completed");
       void this.timeTravel?.finalizeTurn(this.metadata.message_date);
       void this.persistLog();
       return;
@@ -462,12 +552,14 @@ export class ChatStreamWriter {
       clearAcpPayloads(this.metadata);
       this.finished = true;
       this.finishedBy = "error";
+      this.finalizeLease("error", payload.error);
       void this.timeTravel?.finalizeTurn(this.metadata.message_date);
       void this.persistLog();
     }
   }
 
   private commit = throttle((generating: boolean): void => {
+    this.heartbeatLease();
     logger.debug("commit", {
       generating,
       closed: this.closed,
@@ -520,6 +612,16 @@ export class ChatStreamWriter {
       clearTimeout(this.disposeTimer);
       this.disposeTimer = undefined;
     }
+
+    if (!this.leaseFinalized) {
+      const reason = this.finished
+        ? "disposed after finished turn"
+        : this.interruptNotified
+          ? INTERRUPT_STATUS_TEXT
+          : "writer disposed before terminal payload";
+      this.finalizeLease("aborted", reason);
+    }
+
     this.commit(false);
     this.commit.flush();
     this.closed = true;
@@ -629,6 +731,19 @@ export class ChatStreamWriter {
     this.threadKeys.add(key);
     chatWritersByThreadId.set(key, this);
     logWriterCounts("register-thread", { threadId: key });
+    try {
+      updateAcpTurnLeaseSessionId({
+        key: this.leaseKey(),
+        session_id: key,
+      });
+    } catch (err) {
+      logger.debug("failed to persist acp turn session id", {
+        chatKey: this.chatKey,
+        key,
+        err,
+      });
+    }
+    this.heartbeatLease();
     void this.persistSessionId(key);
   }
 
@@ -717,6 +832,106 @@ function looksLikeErrorEcho(
   if (!summary || !error) return false;
   if (summary === error) return true;
   return summary.includes(error) || error.includes(summary);
+}
+
+function syncdbField<T = unknown>(record: any, key: string): T | undefined {
+  if (record == null) return undefined;
+  if (typeof record.get === "function") return record.get(key) as T;
+  return (record as any)[key] as T;
+}
+
+export async function recoverOrphanedAcpTurns(
+  client: ConatClient,
+): Promise<number> {
+  let running;
+  try {
+    running = listRunningAcpTurnLeases({
+      exclude_owner_instance_id: ACP_INSTANCE_ID,
+    });
+  } catch (err) {
+    logger.warn("failed to list running acp turn leases", err);
+    return 0;
+  }
+  if (!running.length) return 0;
+  logger.warn("recovering orphaned acp turns", {
+    instance: ACP_INSTANCE_ID,
+    count: running.length,
+  });
+  let recovered = 0;
+  for (const turn of running) {
+    const context: AcpChatContext = {
+      project_id: turn.project_id,
+      path: turn.path,
+      message_date: turn.message_date,
+      sender_id: turn.sender_id ?? "openai-codex-agent",
+      reply_to: turn.reply_to ?? undefined,
+    };
+    try {
+      clearAcpPayloads(context);
+    } catch (err) {
+      logger.debug("failed clearing acp queue during recovery", {
+        context,
+        err,
+      });
+    }
+    try {
+      const syncdb = await acquireChatSyncDB({
+        client,
+        project_id: turn.project_id,
+        path: turn.path,
+      });
+      try {
+        if (!syncdb.isReady()) {
+          await once(syncdb, "ready");
+        }
+        const current = syncdb.get_one({
+          event: "chat",
+          date: turn.message_date,
+        });
+        const generating = syncdbField<boolean>(current, "generating");
+        if (current != null && generating === true) {
+          syncdb.set({
+            event: "chat",
+            date: turn.message_date,
+            generating: false,
+          });
+          syncdb.commit();
+          await syncdb.save();
+        }
+      } finally {
+        await releaseChatSyncDB(turn.project_id, turn.path);
+      }
+    } catch (err) {
+      logger.warn("failed to recover orphaned acp chat row", {
+        turn,
+        err,
+      });
+    }
+    try {
+      finalizeAcpTurnLease({
+        key: {
+          project_id: turn.project_id,
+          path: turn.path,
+          message_date: turn.message_date,
+        },
+        state: "aborted",
+        reason: "server restart recovery",
+        owner_instance_id: ACP_INSTANCE_ID,
+      });
+      recovered += 1;
+    } catch (err) {
+      logger.warn("failed to finalize orphaned acp lease", {
+        turn,
+        err,
+      });
+    }
+  }
+  logger.warn("finished orphaned acp turn recovery", {
+    instance: ACP_INSTANCE_ID,
+    recovered,
+    total: running.length,
+  });
+  return recovered;
 }
 
 type ExecutorAdapters = {
@@ -1032,6 +1247,7 @@ export async function init(client: ConatClient): Promise<void> {
     }
   });
   blobStore = getBlobstore(client);
+  await recoverOrphanedAcpTurns(client);
   await initConatAcp(
     {
       evaluate,

@@ -7,6 +7,7 @@ import type {
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { ChatStreamWriter } from "../index";
 import * as queue from "../../sqlite/acp-queue";
+import * as turns from "../../sqlite/acp-turns";
 
 // Mock ACP pieces that pull in ESM deps we don't need for this unit.
 jest.mock("@cocalc/ai/acp", () => ({
@@ -33,6 +34,13 @@ jest.mock("../../sqlite/acp-queue", () => ({
   enqueueAcpPayload: jest.fn(),
   listAcpPayloads: jest.fn(() => []),
   clearAcpPayloads: jest.fn(),
+}));
+jest.mock("../../sqlite/acp-turns", () => ({
+  startAcpTurnLease: jest.fn(),
+  heartbeatAcpTurnLease: jest.fn(),
+  finalizeAcpTurnLease: jest.fn(),
+  updateAcpTurnLeaseSessionId: jest.fn(),
+  listRunningAcpTurnLeases: jest.fn(() => []),
 }));
 
 type RecordedSet = { generating?: boolean; content?: string };
@@ -87,6 +95,12 @@ beforeEach(() => {
   (queue.listAcpPayloads as any)?.mockImplementation?.(() => []);
   (queue.enqueueAcpPayload as any)?.mockReset?.();
   (queue.clearAcpPayloads as any)?.mockReset?.();
+  (turns.startAcpTurnLease as any)?.mockReset?.();
+  (turns.heartbeatAcpTurnLease as any)?.mockReset?.();
+  (turns.finalizeAcpTurnLease as any)?.mockReset?.();
+  (turns.updateAcpTurnLeaseSessionId as any)?.mockReset?.();
+  (turns.listRunningAcpTurnLeases as any)?.mockReset?.();
+  (turns.listRunningAcpTurnLeases as any)?.mockImplementation?.(() => []);
 });
 
 async function flush(writer: ChatStreamWriter) {
@@ -374,6 +388,83 @@ describe("ChatStreamWriter", () => {
 
     expect((writer as any).getKnownThreadIds()).toContain("thread-1");
     (writer as any).dispose?.(true);
+  });
+
+  it("tracks lease lifecycle from running to completed", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      sessionKey: "thread-seed",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "hello" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "done",
+      threadId: "thread-1",
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect((turns.startAcpTurnLease as any).mock.calls.length).toBe(1);
+    expect((turns.heartbeatAcpTurnLease as any).mock.calls.length).toBeGreaterThan(
+      0,
+    );
+    expect((turns.updateAcpTurnLeaseSessionId as any).mock.calls.length).toBeGreaterThan(
+      0,
+    );
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            state: "completed",
+          }),
+        ],
+      ]),
+    );
+    (writer as any).dispose?.(true);
+  });
+
+  it("marks lease aborted when disposed before terminal payload", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "still running" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    (writer as any).dispose?.(true);
+
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            state: "aborted",
+          }),
+        ],
+      ]),
+    );
   });
 
   it("uses interrupted text when summary arrives", async () => {
