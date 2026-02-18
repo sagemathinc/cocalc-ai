@@ -114,6 +114,7 @@ const DEFAULT_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
 const SOFTWARE_HISTORY_MAX_LIMIT = 50;
 const SOFTWARE_HISTORY_DEFAULT_LIMIT = 1;
 const NPM_VERSIONS_CACHE_TTL_MS = 5 * 60 * 1000;
+const SOFTWARE_FETCH_TIMEOUT_MS = 8_000;
 
 function logStatusUpdate(id: string, status: string, source: string) {
   const stack = new Error().stack;
@@ -2883,7 +2884,14 @@ function normalizeSoftwareArtifacts(
 }
 
 async function fetchSoftwareManifest(url: string): Promise<any> {
-  const response = await fetch(url);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOFTWARE_FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -2891,12 +2899,16 @@ async function fetchSoftwareManifest(url: string): Promise<any> {
 }
 
 async function fetchSoftwareUrlText(url: string): Promise<string | undefined> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOFTWARE_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) return undefined;
     return await response.text();
   } catch {
     return undefined;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -2956,19 +2968,37 @@ function artifactVersionUrl({
 }
 
 async function softwareArtifactExists(url: string): Promise<boolean> {
+  const headController = new AbortController();
+  const headTimer = setTimeout(
+    () => headController.abort(),
+    SOFTWARE_FETCH_TIMEOUT_MS,
+  );
   try {
-    const head = await fetch(url, { method: "HEAD" });
+    const head = await fetch(url, {
+      method: "HEAD",
+      signal: headController.signal,
+    });
     if (head.ok) return true;
   } catch {
     // Some endpoints disallow HEAD; fall back to GET.
+  } finally {
+    clearTimeout(headTimer);
   }
+  const getController = new AbortController();
+  const getTimer = setTimeout(
+    () => getController.abort(),
+    SOFTWARE_FETCH_TIMEOUT_MS,
+  );
   try {
     const get = await fetch(url, {
       headers: { Range: "bytes=0-0" },
+      signal: getController.signal,
     });
     return get.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(getTimer);
   }
 }
 
@@ -2979,7 +3009,14 @@ async function npmPackageVersions(pkg: string): Promise<string[]> {
   }
   const encoded = encodeURIComponent(pkg);
   const url = `https://registry.npmjs.org/${encoded}`;
-  const response = await fetch(url);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOFTWARE_FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) {
     throw new Error(`failed to fetch npm versions for ${pkg}: HTTP ${response.status}`);
   }
@@ -3081,6 +3118,14 @@ async function resolveHostSoftwareBaseUrl(base_url?: string): Promise<string> {
       ) {
         const publicSite = (await siteURL()).replace(/\/+$/, "");
         requestedBaseUrl = `${publicSite}/software`;
+      } else {
+        const path = parsed.pathname.replace(/\/+$/, "");
+        if (!path) {
+          parsed.pathname = "/software";
+          parsed.search = "";
+          parsed.hash = "";
+          requestedBaseUrl = parsed.toString();
+        }
       }
     } catch {
       // keep provided value as-is if it is not a valid URL

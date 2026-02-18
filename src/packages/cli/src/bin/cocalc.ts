@@ -2809,6 +2809,21 @@ async function resolveHostSshEndpoint(
   ssh_server: string | null;
 }> {
   const host = await resolveHost(ctx, hostIdentifier);
+  const machine = (host.machine ?? {}) as Record<string, any>;
+  const directHost = `${host.public_ip ?? machine?.metadata?.public_ip ?? ""}`.trim();
+  if (directHost) {
+    const configuredPort = Number(machine?.metadata?.ssh_port);
+    const directPort =
+      Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535
+        ? configuredPort
+        : 22;
+    return {
+      host,
+      ssh_host: directHost,
+      ssh_port: directPort,
+      ssh_server: `${directHost}:${directPort}`,
+    };
+  }
   let connection: HostConnectionInfo | null = null;
   try {
     connection = await Promise.race([
@@ -2842,17 +2857,7 @@ async function resolveHostSshEndpoint(
       ssh_server: connection.ssh_server,
     };
   }
-  const machine = (host.machine ?? {}) as Record<string, any>;
-  const fallbackHost = `${host.public_ip ?? machine?.metadata?.public_ip ?? ""}`.trim();
-  if (!fallbackHost) {
-    throw new Error("host has no ssh endpoint or public ip");
-  }
-  return {
-    host,
-    ssh_host: fallbackHost,
-    ssh_port: null,
-    ssh_server: null,
-  };
+  throw new Error("host has no direct public ip and no routed ssh endpoint");
 }
 
 async function waitForLro(
@@ -6843,7 +6848,7 @@ host
         const baseUrl = opts.hubSource
           ? `${ctx.apiBaseUrl.replace(/\/+$/, "")}/software`
           : opts.baseUrl;
-        return await hubCallAccount<HostSoftwareVersionRow[]>(
+        const rows = await hubCallAccount<HostSoftwareVersionRow[]>(
           ctx,
           "hosts.listHostSoftwareVersions",
           [
@@ -6857,6 +6862,10 @@ host
             },
           ],
         );
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          return rows.map(({ sha256: _sha256, ...rest }) => rest);
+        }
+        return rows;
       });
     },
   );
