@@ -83,6 +83,7 @@ import {
   classifyRunStreamMessage,
   type RunLifecycleType,
 } from "./run-protocol";
+import { shouldInitialWatchLoadFromDisk } from "./watch-policy";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -2640,22 +2641,31 @@ export class JupyterActions extends JupyterActions0 {
     this.runDebug("watch.start");
     const done = () => this.isClosed();
     if (done()) return;
-    // one initial load right when we open the document
-    await until(
-      async () => {
-        if (this.isClosed()) return true;
-        try {
-          await this.watchLoadFromDisk();
-          this.runDebug("watch.initial_load.done");
-          return true;
-        } catch (err) {
-          this.runDebug("watch.initial_load.failed", { err: `${err}` });
-          console.warn(`Issue watching ipynb file`, err);
-          return false;
-        }
-      },
-      { min: 3000 },
-    );
+    const hasRtcCells = this.syncdb.get_one({ type: "cell" }) != null;
+    if (shouldInitialWatchLoadFromDisk({ hasRtcCells })) {
+      // Only hydrate from disk when RTC has no notebook cells yet.
+      // If RTC already has data, disk is stale by design (unsaved edits),
+      // so reloading from disk would clobber the live collaborative state.
+      await until(
+        async () => {
+          if (this.isClosed()) return true;
+          try {
+            await this.watchLoadFromDisk();
+            this.runDebug("watch.initial_load.done");
+            return true;
+          } catch (err) {
+            this.runDebug("watch.initial_load.failed", { err: `${err}` });
+            console.warn(`Issue watching ipynb file`, err);
+            return false;
+          }
+        },
+        { min: 3000 },
+      );
+    } else {
+      this.runDebug("watch.initial_load.skipped", {
+        reason: "rtc_has_cells",
+      });
+    }
     if (done()) return;
     // if no kernel, let use select one:
     this.initKernel();
