@@ -2,6 +2,7 @@ import { watch as chokidarWatch, type FSWatcher } from "chokidar";
 import { readFile } from "node:fs/promises";
 import { EventEmitter } from "events";
 import { dirname } from "path";
+import { createHash } from "node:crypto";
 import { SyncFsWatchStore, type ExternalChange } from "./sync-fs-watch";
 import { AStream } from "@cocalc/conat/sync/astream";
 import { patchesStreamName } from "@cocalc/conat/sync/synctable-stream";
@@ -57,6 +58,12 @@ type StreamInfo = {
   lastSeq?: number;
 };
 
+type SuppressWriteMarker = {
+  timer: NodeJS.Timeout;
+  hash: string;
+  until: number;
+};
+
 /**
  * Centralized filesystem watcher that:
  * - Maintains a durable snapshot of last-on-disk content (via SyncFsWatchStore).
@@ -73,7 +80,7 @@ export class SyncFsService extends EventEmitter {
   private metaByPath: Map<string, WatchMeta> = new Map();
   private patchWriters: Map<string, AStream<any>> = new Map();
   private streamInfo: Map<string, StreamInfo> = new Map();
-  private suppressOnce: Map<string, NodeJS.Timeout> = new Map();
+  private suppressOnce: Map<string, SuppressWriteMarker> = new Map();
   private conatClient?: any;
   private readonly clientId: string;
 
@@ -83,6 +90,17 @@ export class SyncFsService extends EventEmitter {
     this.clientId = makeClientId();
     setInterval(this.pruneStale, HEARTBEAT_TTL);
   }
+
+  private sha256 = (content: string): string => {
+    return createHash("sha256").update(content, "utf8").digest("hex");
+  };
+
+  private clearSuppress = (path: string): void => {
+    const marker = this.suppressOnce.get(path);
+    if (!marker) return;
+    clearTimeout(marker.timer);
+    this.suppressOnce.delete(path);
+  };
 
   private async initPath(path: string, meta?: WatchMeta): Promise<void> {
     if (!meta?.project_id || !meta.relativePath) return;
@@ -118,9 +136,9 @@ export class SyncFsService extends EventEmitter {
               string_id,
             });
           }
-          return;
+        } else {
+          this.store.setContent(path, current);
         }
-        this.store.setContent(path, current);
       } else {
         // Explicitly reset to an empty baseline when stream history is empty.
         // This prevents cached snapshots from suppressing the initial patch.
@@ -155,6 +173,10 @@ export class SyncFsService extends EventEmitter {
       writer.close();
     }
     this.patchWriters.clear();
+    for (const marker of this.suppressOnce.values()) {
+      clearTimeout(marker.timer);
+    }
+    this.suppressOnce.clear();
     this.store.close();
     this.removeAllListeners();
   }
@@ -168,13 +190,13 @@ export class SyncFsService extends EventEmitter {
   ): void {
     this.store.setContent(path, content);
     if (!suppress) return;
-    if (this.suppressOnce.has(path)) {
-      clearTimeout(this.suppressOnce.get(path)!);
-    }
+    this.clearSuppress(path);
+    const hash = this.sha256(content);
+    const until = Date.now() + SUPPRESS_TTL_MS;
     const timer = setTimeout(() => {
       this.suppressOnce.delete(path);
     }, SUPPRESS_TTL_MS);
-    this.suppressOnce.set(path, timer);
+    this.suppressOnce.set(path, { timer, hash, until });
   }
 
   async recordLocalDelete(path: string): Promise<void> {
@@ -320,15 +342,31 @@ export class SyncFsService extends EventEmitter {
       }
       // add/change
       try {
-        if (this.suppressOnce.has(path)) {
-          clearTimeout(this.suppressOnce.get(path)!);
-          this.suppressOnce.delete(path);
-          return;
+        let preloaded: string | undefined;
+        const marker = this.suppressOnce.get(path);
+        if (marker != null) {
+          if (Date.now() <= marker.until) {
+            try {
+              preloaded = (await readFile(path, "utf8")) as string;
+            } catch {
+              preloaded = undefined;
+            }
+            if (
+              preloaded != null &&
+              this.sha256(preloaded) === marker.hash
+            ) {
+              // Exact-content echo from our own recent write.
+              return;
+            }
+          }
+          // Different content arrived while suppression marker was active:
+          // treat this as an external mutation.
+          this.clearSuppress(path);
         }
         const change = await this.store.handleExternalChange(
           path,
           async () => {
-            return (await readFile(path, "utf8")) as string;
+            return preloaded ?? ((await readFile(path, "utf8")) as string);
           },
           false,
           codec,
@@ -478,6 +516,7 @@ export class SyncFsService extends EventEmitter {
     if (!entry) return;
     for (const p of entry.paths) {
       this.metaByPath.delete(p);
+      this.clearSuppress(p);
     }
     entry.watcher.close();
     this.watchers.delete(dir);

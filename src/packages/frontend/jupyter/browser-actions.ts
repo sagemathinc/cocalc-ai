@@ -79,10 +79,6 @@ import { DiffMatchPatch, decompressPatch } from "@cocalc/util/dmp";
 import { mark_open_phase } from "@cocalc/frontend/project/open-file";
 import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
 import { IPynbImporter } from "@cocalc/jupyter/ipynb/import-from-ipynb";
-import {
-  classifyRunStreamMessage,
-  type RunLifecycleType,
-} from "./run-protocol";
 import { decideInitialWatchSource } from "./watch-policy";
 
 const dmpFileWatcher = new DiffMatchPatch({
@@ -363,6 +359,13 @@ export class JupyterActions extends JupyterActions0 {
         ipywidgets_state: ipywidgets_state!,
         actions: this,
       });
+      const rtcLastChangedMsAtReady = this.getRtcLastChangedMs();
+
+      // Start watch/bootstrap decision before local user heartbeat writes a
+      // metadata-only patch, which would otherwise make RTC appear spuriously
+      // "newer than disk" at open time.
+      this.watchIpynb(rtcLastChangedMsAtReady);
+
       // Stupid hack for now -- this just causes some activity so
       // that the syncdb syncs.
       // This should not be necessary, and may indicate a bug in the sync layer?
@@ -377,7 +380,6 @@ export class JupyterActions extends JupyterActions0 {
         // cell notebook that has nothing to do with nbgrader).
         this.nbgrader_actions.update_metadata();
       }
-      this.watchIpynb();
       this.refreshKernelStatus();
     };
 
@@ -1831,10 +1833,6 @@ export class JupyterActions extends JupyterActions0 {
     let totalChunks = 0;
     let totalMesgs = 0;
     let runError: string | undefined;
-    let staleMesgsDropped = 0;
-    let lifecycleMesgs = 0;
-    let droppedAfterFinalize = 0;
-    let finalizeOpenHandlers: null | ((reason: string) => void) = null;
     this.runDebug("runCells.call", { runId, ids, opts });
     if (this.store?.get("read_only")) {
       this.runDebug("runCells.skip.read_only", { runId });
@@ -1938,79 +1936,8 @@ export class JupyterActions extends JupyterActions0 {
         this.set_trust_notebook(true);
       }
       if (this.isClosed()) return;
-      const handlers = new globalThis.Map<string, OutputHandler>();
-      const finalizedCells = new Set<string>();
-      const ensureHandler = (id: string): OutputHandler => {
-        const existing = handlers.get(id);
-        if (existing != null) {
-          return existing;
-        }
-        this.deletePendingCells([id]);
-        let cell = this.store.getIn(["cells", id])?.toJS();
-        if (cell == null) {
-          // cell removed?
-          cell = { id };
-        }
-        cell.kernel = kernel;
-        const handler = this.getOutputHandler(cell, runId);
-        handlers.set(id, handler);
-        this.runDebug("runCells.handler.ensure", {
-          runId,
-          id,
-          hadOutput: Object.keys(cell.output ?? {}).length > 0,
-        });
-        return handler;
-      };
-      const finalizeCell = (id: string, reason: string): void => {
-        if (finalizedCells.has(id)) {
-          return;
-        }
-        finalizedCells.add(id);
-        this.deletePendingCells([id]);
-        const handler = handlers.get(id);
-        if (handler != null) {
-          handler.done();
-          handlers.delete(id);
-          this.runDebug("runCells.cell.finalize", {
-            runId,
-            id,
-            reason,
-            via: "handler",
-          });
-          return;
-        }
-        if (this.store.getIn(["cells", id]) == null) {
-          this.runDebug("runCells.cell.finalize.skip_missing_cell", {
-            runId,
-            id,
-            reason,
-          });
-          return;
-        }
-        const now = Date.now();
-        const start = this.store.getIn(["cells", id, "start"]) ?? now;
-        this._set(
-          {
-            type: "cell",
-            id,
-            state: "done",
-            start,
-            end: now,
-          },
-          true,
-        );
-        this.runDebug("runCells.cell.finalize", {
-          runId,
-          id,
-          reason,
-          via: "fallback_set",
-        });
-      };
-      finalizeOpenHandlers = (reason: string): void => {
-        for (const id of Array.from(handlers.keys())) {
-          finalizeCell(id, reason);
-        }
-      };
+      let handler: null | OutputHandler = null;
+      let id: null | string = null;
       for await (const mesgs of runner) {
         totalChunks += 1;
         totalMesgs += mesgs.length;
@@ -2026,61 +1953,6 @@ export class JupyterActions extends JupyterActions0 {
         }));
         if (this.isClosed()) return;
         for (const mesg of mesgs) {
-          const decision = classifyRunStreamMessage({
-            message: mesg,
-            activeRunId: runId,
-            finalizedCells,
-          });
-          if (decision.kind === "drop_stale_run_id") {
-            staleMesgsDropped += 1;
-            this.runDebug("runCells.runner.drop.stale_run_id", {
-              runId,
-              mesgRunId: decision.mesgRunId,
-              mesg: this.summarizeMesg(mesg),
-            });
-            continue;
-          }
-          if (decision.kind === "drop_missing_id") {
-            if (decision.source === "lifecycle") {
-              this.runDebug("runCells.runner.skip.lifecycle_missing_id", {
-                runId,
-                mesg: this.summarizeMesg(mesg),
-              });
-            } else {
-              this.runDebug("runCells.runner.skip.missing_id", {
-                runId,
-                mesg: this.summarizeMesg(mesg),
-              });
-            }
-            continue;
-          }
-          if (decision.kind === "drop_after_finalize") {
-            droppedAfterFinalize += 1;
-            this.runDebug("runCells.runner.drop.after_finalize", {
-              runId,
-              id: decision.id,
-              mesg: this.summarizeMesg(mesg),
-            });
-            continue;
-          }
-          if (decision.kind === "lifecycle") {
-            lifecycleMesgs += 1;
-            const lifecycle: RunLifecycleType = decision.lifecycle;
-            if (lifecycle == "run_done") {
-              finalizeOpenHandlers("run_done");
-              continue;
-            }
-            if (lifecycle == "run_start") {
-              continue;
-            }
-            const id = decision.id!;
-            if (lifecycle == "cell_start") {
-              ensureHandler(id);
-              continue;
-            }
-            finalizeCell(id, lifecycle);
-            continue;
-          }
           if (!opts.noHalt && mesg.msg_type == "error") {
             this.runDebug("runCells.runner.error_msg", {
               runId,
@@ -2088,19 +1960,38 @@ export class JupyterActions extends JupyterActions0 {
             });
             this.clearRunQueue();
           }
-          const id = decision.id;
-          const handler = ensureHandler(id);
+          if (mesg.id !== id || handler == null) {
+            id = mesg.id;
+            if (id == null) {
+              this.runDebug("runCells.runner.skip.missing_id", {
+                runId,
+                mesg: this.summarizeMesg(mesg),
+              });
+              continue;
+            }
+            this.deletePendingCells([id]);
+            let cell = this.store.getIn(["cells", mesg.id])?.toJS();
+            if (cell == null) {
+              // cell removed?
+              cell = { id };
+            }
+            cell.kernel = kernel;
+            handler?.done();
+            handler = this.getOutputHandler(cell, runId);
+            this.runDebug("runCells.handler.switch", {
+              runId,
+              id,
+              hadOutput: Object.keys(cell.output ?? {}).length > 0,
+            });
+          }
           handler.process(mesg);
         }
       }
-      finalizeOpenHandlers("runner_end");
+      handler?.done();
       this.runDebug("runCells.runner.done", {
         runId,
         chunkNo: totalChunks,
         totalMesgs,
-        lifecycleMesgs,
-        staleMesgsDropped,
-        droppedAfterFinalize,
       });
       if (this.isClosed()) {
         return;
@@ -2113,7 +2004,6 @@ export class JupyterActions extends JupyterActions0 {
       }, 1000);
     } catch (err) {
       runError = `${err}`;
-      finalizeOpenHandlers?.("run_error");
       this.runDebug("runCells.error", {
         runId,
         err: `${err}`,
@@ -2127,7 +2017,6 @@ export class JupyterActions extends JupyterActions0 {
       }
     } finally {
       if (this.isClosed()) return;
-      finalizeOpenHandlers?.("run_finally");
       this.runningNow = false;
       this.runDebug("runCells.finally", {
         runId,
@@ -2151,9 +2040,6 @@ export class JupyterActions extends JupyterActions0 {
             : Math.max(0, Date.now() - runnerStartedAt),
         totalChunks,
         totalMesgs,
-        lifecycleMesgs,
-        staleMesgsDropped,
-        droppedAfterFinalize,
         error: runError,
       });
       if (this.runQueue.length > 0) {
@@ -2662,12 +2548,17 @@ export class JupyterActions extends JupyterActions0 {
     }
   };
 
-  watchIpynb = async () => {
+  watchIpynb = async (rtcLastChangedMsAtReady?: number) => {
     this.runDebug("watch.start");
     const done = () => this.isClosed();
     if (done()) return;
     const hasRtcCells = this.syncdb.get_one({ type: "cell" }) != null;
-    const rtcLastChangedMs = this.getRtcLastChangedMs();
+    const rtcLastChangedMs =
+      typeof rtcLastChangedMsAtReady === "number" &&
+      Number.isFinite(rtcLastChangedMsAtReady) &&
+      rtcLastChangedMsAtReady > 0
+        ? rtcLastChangedMsAtReady
+        : this.getRtcLastChangedMs();
     const diskMtimeMs = await this.getDiskMtimeMs();
     const decision = decideInitialWatchSource({
       hasRtcCells,
