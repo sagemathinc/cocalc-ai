@@ -5000,10 +5000,8 @@ codex
         if (!prompt) {
           throw new Error("prompt is required (pass text or use --stdin)");
         }
-        if (opts.jsonl && (ctx.globals.json || ctx.globals.output === "json")) {
-          throw new Error("--jsonl cannot be combined with --json/--output json");
-        }
-        const streamJsonl = !!opts.jsonl;
+        const wantsJsonOutput = ctx.globals.json || ctx.globals.output === "json";
+        const streamJsonl = !!opts.jsonl || (!!opts.stream && wantsJsonOutput);
         const streamHuman = !streamJsonl && (!!opts.stream || !!ctx.globals.verbose);
         const config = buildCodexSessionConfig({
           model: opts.model,
@@ -5025,7 +5023,7 @@ codex
             }
           },
         });
-        if (streamJsonl) {
+        if (opts.jsonl) {
           return null;
         }
         if (ctx.globals.json || ctx.globals.output === "json") {
