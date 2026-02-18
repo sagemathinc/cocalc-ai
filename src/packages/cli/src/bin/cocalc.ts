@@ -3940,7 +3940,6 @@ program
   .option("--verbose", "enable verbose debug logging to stderr")
   .option("--profile <name>", "auth profile name (default: current profile)")
   .option("--account-id <uuid>", "account id to use for API calls")
-  .option("--account_id <uuid>", "alias for --account-id")
   .option("--api <url>", "hub base URL")
   .option("--timeout <duration>", "wait timeout (default: 600s)", "600s")
   .option("--poll-ms <duration>", "poll interval (default: 1s)", "1s")
@@ -6770,16 +6769,15 @@ host
   .command("logs <host>")
   .description("tail project-host runtime log")
   .option("--tail <n>", "number of log lines", "200")
-  .option("--lines <n>", "deprecated alias for --tail")
   .action(
     async (
       hostIdentifier: string,
-      opts: { tail?: string; lines?: string },
+      opts: { tail?: string },
       command: Command,
     ) => {
       await withContext(command, "host logs", async (ctx) => {
         const h = await resolveHost(ctx, hostIdentifier);
-        const lines = Number(opts.tail ?? opts.lines ?? "200");
+        const lines = Number(opts.tail ?? "200");
         if (!Number.isFinite(lines) || lines <= 0) {
           throw new Error("--tail must be a positive integer");
         }
