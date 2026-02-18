@@ -19,7 +19,10 @@ import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import type {
+  HostCatalog,
+  HostCatalogEntry,
   HostConnectionInfo,
+  HostMachine,
   HostSoftwareArtifact,
   HostSoftwareChannel,
 } from "@cocalc/conat/hub/api/hosts";
@@ -177,6 +180,9 @@ type HostRow = {
   version?: string | null;
   project_bundle_version?: string | null;
   tools_version?: string | null;
+  last_error?: string | null;
+  last_action_error?: string | null;
+  last_action_status?: string | null;
 };
 
 type HostRuntimeLogRow = {
@@ -2811,6 +2817,146 @@ function parseHostSoftwareChannelsOption(values?: string[]): HostSoftwareChannel
     );
   });
   return Array.from(new Set(channels));
+}
+
+const HOST_CREATE_DISK_TYPES = new Set(["ssd", "balanced", "standard", "ssd_io_m3"]);
+const HOST_CREATE_STORAGE_MODES = new Set(["persistent", "ephemeral"]);
+const HOST_CREATE_READY_STATUSES = new Set(["running", "active"]);
+const HOST_CREATE_FAILED_STATUSES = new Set(["error", "deprovisioned"]);
+
+function normalizeHostProviderValue(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    throw new Error("--provider must not be empty");
+  }
+  if (normalized === "google" || normalized === "google-cloud") {
+    return "gcp";
+  }
+  if (normalized === "self" || normalized === "self_host") {
+    return "self-host";
+  }
+  return normalized;
+}
+
+function parseHostMachineJson(value?: string): Partial<HostMachine> {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `--machine-json must be valid JSON object: ${
+        err instanceof Error ? err.message : `${err}`
+      }`,
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("--machine-json must be a JSON object");
+  }
+  return { ...(parsed as Partial<HostMachine>) };
+}
+
+function parseOptionalPositiveInteger(value: string | undefined, label: string): number | undefined {
+  if (value == null || `${value}`.trim() === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function inferRegionFromZone(zone: string | undefined): string | undefined {
+  const raw = `${zone ?? ""}`.trim();
+  if (!raw) return undefined;
+  const parts = raw.split("-").filter(Boolean);
+  if (parts.length >= 3 && parts[parts.length - 1].length === 1) {
+    return parts.slice(0, -1).join("-");
+  }
+  return undefined;
+}
+
+function summarizeCatalogPayload(payload: unknown): string {
+  if (payload == null) return "null";
+  if (Array.isArray(payload)) {
+    if (payload.length === 0) return "0 items";
+    const named = payload
+      .slice(0, 3)
+      .map((item) => (item && typeof item === "object" ? `${(item as any).name ?? ""}`.trim() : ""))
+      .filter(Boolean);
+    if (named.length > 0) {
+      return `${payload.length} items (${named.join(", ")}${payload.length > named.length ? ", ..." : ""})`;
+    }
+    return `${payload.length} items`;
+  }
+  if (typeof payload === "object") {
+    const keys = Object.keys(payload as Record<string, unknown>);
+    if (!keys.length) return "0 keys";
+    const preview = keys.slice(0, 4).join(", ");
+    return `${keys.length} keys (${preview}${keys.length > 4 ? ", ..." : ""})`;
+  }
+  return `${payload}`;
+}
+
+function summarizeHostCatalogEntries(
+  catalog: HostCatalog,
+  kinds?: string[],
+): Array<Record<string, unknown>> {
+  const wantedKinds = new Set(
+    (kinds ?? [])
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const entries = (catalog.entries ?? []).filter((entry) =>
+    wantedKinds.size ? wantedKinds.has(`${entry.kind ?? ""}`.toLowerCase()) : true,
+  );
+  return entries.map((entry: HostCatalogEntry) => ({
+    provider: catalog.provider,
+    kind: entry.kind,
+    scope: entry.scope,
+    summary: summarizeCatalogPayload(entry.payload),
+  }));
+}
+
+async function waitForHostCreateReady(
+  ctx: CommandContext,
+  hostId: string,
+  {
+    timeoutMs,
+    pollMs,
+  }: {
+    timeoutMs: number;
+    pollMs: number;
+  },
+): Promise<{ host: HostRow; timedOut: boolean }> {
+  const started = Date.now();
+  let lastHost: HostRow | undefined;
+  while (Date.now() - started <= timeoutMs) {
+    const hosts = await listHosts(ctx, {
+      include_deleted: true,
+      catalog: true,
+    });
+    const host = hosts.find((x) => x.id === hostId);
+    if (!host) {
+      throw new Error(`host '${hostId}' no longer exists`);
+    }
+    lastHost = host;
+    const status = `${host.status ?? ""}`.trim().toLowerCase();
+    if (HOST_CREATE_READY_STATUSES.has(status)) {
+      return { host, timedOut: false };
+    }
+    if (HOST_CREATE_FAILED_STATUSES.has(status)) {
+      const detail = `${host.last_action_error ?? host.last_error ?? ""}`.trim();
+      throw new Error(
+        `host create failed: status=${status}${detail ? ` error=${detail}` : ""}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  if (!lastHost) {
+    throw new Error(`host '${hostId}' not found`);
+  }
+  return { host: lastHost, timedOut: true };
 }
 
 async function resolveHostSshEndpoint(
@@ -7157,6 +7303,54 @@ host
   );
 
 host
+  .command("catalog")
+  .description("show cloud host catalog entries")
+  .option(
+    "--provider <provider>",
+    "provider id: gcp, nebius, hyperstack, lambda, self-host",
+    "gcp",
+  )
+  .option("--kind <kind...>", "filter catalog entries by kind")
+  .option("--update", "refresh cloud catalog before fetching (admin only)")
+  .action(
+    async (
+      opts: { provider?: string; kind?: string[]; update?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "host catalog", async (ctx) => {
+        const provider = normalizeHostProviderValue(`${opts.provider ?? "gcp"}`);
+        if (opts.update) {
+          await hubCallAccount<void>(ctx, "hosts.updateCloudCatalog", [{ provider }]);
+        }
+        const catalog = await hubCallAccount<HostCatalog>(ctx, "hosts.getCatalog", [{ provider }]);
+        const filteredEntries =
+          opts.kind && opts.kind.length
+            ? (catalog.entries ?? []).filter((entry) =>
+                opts.kind!.some(
+                  (kind) =>
+                    `${entry.kind ?? ""}`.trim().toLowerCase() ===
+                    `${kind}`.trim().toLowerCase(),
+                ),
+              )
+            : catalog.entries ?? [];
+        if (ctx.globals.json || ctx.globals.output === "json") {
+          return {
+            ...catalog,
+            entries: filteredEntries,
+          };
+        }
+        return summarizeHostCatalogEntries(
+          {
+            ...catalog,
+            entries: filteredEntries,
+          },
+          undefined,
+        );
+      });
+    },
+  );
+
+host
   .command("get <host>")
   .description("get one host by id or name")
   .action(async (hostIdentifier: string, command: Command) => {
@@ -7478,6 +7672,141 @@ host
           key_installed: installResult?.added ?? false,
           key_path: keyInfo?.public_key_path ?? null,
           status: "connected",
+        };
+      });
+    },
+  );
+
+host
+  .command("create <name>")
+  .description("create a cloud host record (non-self provider)")
+  .requiredOption("--provider <provider>", "provider id, e.g. gcp")
+  .option("--region <region>", "provider region (inferred from --zone when possible)")
+  .option("--size <size>", "size label (defaults to --machine-type when set)")
+  .option("--gpu", "mark host as gpu-enabled")
+  .option("--machine-type <machineType>", "provider machine type")
+  .option("--zone <zone>", "provider zone")
+  .option("--disk-gb <diskGb>", "boot disk size in GB")
+  .option("--disk-type <diskType>", "disk type: ssd|balanced|standard|ssd_io_m3")
+  .option("--storage-mode <storageMode>", "storage mode: persistent|ephemeral", "persistent")
+  .option("--machine-json <json>", "additional machine JSON object")
+  .option("--wait", "wait for host to become running")
+  .action(
+    async (
+      name: string,
+      opts: {
+        provider: string;
+        region?: string;
+        size?: string;
+        gpu?: boolean;
+        machineType?: string;
+        zone?: string;
+        diskGb?: string;
+        diskType?: string;
+        storageMode?: string;
+        machineJson?: string;
+        wait?: boolean;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "host create", async (ctx) => {
+        const provider = normalizeHostProviderValue(opts.provider);
+        if (provider === "self-host") {
+          throw new Error("non-self host create does not support provider 'self-host'; use host create-self");
+        }
+
+        const machine = parseHostMachineJson(opts.machineJson);
+        machine.cloud = provider;
+
+        const machineType = `${opts.machineType ?? ""}`.trim();
+        if (machineType) {
+          machine.machine_type = machineType;
+        }
+        const zone = `${opts.zone ?? ""}`.trim();
+        if (zone) {
+          machine.zone = zone;
+        }
+
+        const diskGb = parseOptionalPositiveInteger(opts.diskGb, "--disk-gb");
+        if (diskGb != null) {
+          machine.disk_gb = diskGb;
+        }
+
+        const diskTypeRaw = `${opts.diskType ?? ""}`.trim().toLowerCase();
+        if (diskTypeRaw) {
+          if (!HOST_CREATE_DISK_TYPES.has(diskTypeRaw)) {
+            throw new Error(
+              `--disk-type must be one of: ${Array.from(HOST_CREATE_DISK_TYPES).join(", ")}`,
+            );
+          }
+          machine.disk_type = diskTypeRaw as HostMachine["disk_type"];
+        }
+
+        const storageModeRaw = `${opts.storageMode ?? ""}`.trim().toLowerCase();
+        if (storageModeRaw) {
+          if (!HOST_CREATE_STORAGE_MODES.has(storageModeRaw)) {
+            throw new Error(
+              `--storage-mode must be one of: ${Array.from(HOST_CREATE_STORAGE_MODES).join(", ")}`,
+            );
+          }
+          machine.storage_mode = storageModeRaw as HostMachine["storage_mode"];
+        }
+
+        const region =
+          `${opts.region ?? ""}`.trim() || inferRegionFromZone(machine.zone);
+        if (!region) {
+          throw new Error(
+            "--region is required (or provide a zonal --zone like 'us-west1-a' to infer region)",
+          );
+        }
+
+        const size = `${opts.size ?? ""}`.trim() || `${machine.machine_type ?? ""}`.trim();
+        if (!size) {
+          throw new Error("--size is required (or provide --machine-type)");
+        }
+
+        const gpu = !!opts.gpu || Number(machine.gpu_count ?? 0) > 0;
+        const created = await hubCallAccount<HostRow>(ctx, "hosts.createHost", [
+          {
+            name,
+            region,
+            size,
+            gpu,
+            machine,
+          },
+        ]);
+
+        if (!opts.wait) {
+          return {
+            host_id: created.id,
+            name: created.name,
+            provider,
+            region: created.region ?? region,
+            size: created.size ?? size,
+            status: created.status ?? "",
+            gpu: !!created.gpu,
+          };
+        }
+
+        const waited = await waitForHostCreateReady(ctx, created.id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (waited.timedOut) {
+          throw new Error(
+            `host create timed out after ${ctx.timeoutMs}ms (host_id=${created.id}, last_status=${waited.host.status ?? "unknown"})`,
+          );
+        }
+
+        return {
+          host_id: waited.host.id,
+          name: waited.host.name,
+          provider,
+          region: waited.host.region ?? region,
+          size: waited.host.size ?? size,
+          status: waited.host.status ?? "",
+          gpu: !!waited.host.gpu,
+          waited: true,
         };
       });
     },
