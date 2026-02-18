@@ -1698,6 +1698,7 @@ export class JupyterActions extends JupyterActions0 {
     }
     this.store.setState({ pendingCells });
     this.runDebug("pending.add", { ids });
+    this.setQueuedCellState(ids);
 
     // to avoid ugly flicker, we don't clear output until
     // waiting a little while first (since often the output
@@ -1730,8 +1731,63 @@ export class JupyterActions extends JupyterActions0 {
     this.runDebug("pending.delete", { ids });
   };
 
+  private setQueuedCellState = (ids: string[]) => {
+    const cells = this.store.get("cells");
+    if (cells == null) {
+      return;
+    }
+    let changed = false;
+    for (const id of ids) {
+      const state = cells.getIn([id, "state"]);
+      if (state === "busy" || state === "run") {
+        continue;
+      }
+      this._set(
+        {
+          type: "cell",
+          id,
+          state: "run",
+        },
+        false,
+      );
+      changed = true;
+    }
+    if (changed) {
+      this._sync();
+    }
+  };
+
+  private clearQueuedCellState = (ids: string[]) => {
+    const cells = this.store.get("cells");
+    if (cells == null) {
+      return;
+    }
+    let changed = false;
+    for (const id of ids) {
+      if (cells.getIn([id, "state"]) !== "run") {
+        continue;
+      }
+      this._set(
+        {
+          type: "cell",
+          id,
+          state: "done",
+        },
+        false,
+      );
+      changed = true;
+    }
+    if (changed) {
+      this._sync();
+    }
+  };
+
   // uses inheritence so NOT arrow function
   protected clearRunQueue() {
+    const pending = this.store?.get("pendingCells");
+    if (pending != null && pending.size > 0) {
+      this.clearQueuedCellState(pending.toArray());
+    }
     this.runDebug("runQueue.clear", {
       queuedRuns: this.runQueue.length,
     });
