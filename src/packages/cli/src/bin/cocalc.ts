@@ -3107,6 +3107,69 @@ function syncKeyPublicPath(basePath: string): string {
   return `${basePath}.pub`;
 }
 
+function defaultWorkspaceSshConfigPath(): string {
+  return join(homedir(), ".ssh", "config");
+}
+
+function normalizeWorkspaceSshConfigPath(input?: string): string {
+  const raw = `${input ?? ""}`.trim();
+  if (!raw) {
+    return defaultWorkspaceSshConfigPath();
+  }
+  return expandUserPath(raw);
+}
+
+function normalizeWorkspaceSshHostAlias(input: string): string {
+  const alias = input.trim();
+  if (!alias) {
+    throw new Error("ssh config host alias cannot be empty");
+  }
+  if (alias.includes("@")) {
+    throw new Error(
+      `ssh config host alias '${alias}' cannot contain '@' (ssh parses user@host); use a host-only alias, e.g. '${alias.replace(/@/g, "-")}'`,
+    );
+  }
+  if (/\s/.test(alias)) {
+    throw new Error(`ssh config host alias '${alias}' cannot contain whitespace`);
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(alias)) {
+    throw new Error(
+      `ssh config host alias '${alias}' must match [a-zA-Z0-9._-]+`,
+    );
+  }
+  return alias;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function workspaceSshConfigBlockMarkers(alias: string): {
+  start: string;
+  end: string;
+} {
+  return {
+    start: `# >>> cocalc ws ssh ${alias} >>>`,
+    end: `# <<< cocalc ws ssh ${alias} <<<`,
+  };
+}
+
+function removeWorkspaceSshConfigBlock(
+  content: string,
+  alias: string,
+): { content: string; removed: boolean } {
+  const { start, end } = workspaceSshConfigBlockMarkers(alias);
+  const pattern = new RegExp(
+    `(?:^|\\n)${escapeRegExp(start)}\\n[\\s\\S]*?\\n${escapeRegExp(end)}(?:\\n|$)`,
+    "g",
+  );
+  const next = content.replace(pattern, "\n").replace(/\n{3,}/g, "\n\n");
+  return {
+    content: next,
+    removed: next !== content,
+  };
+}
+
 function readSyncPublicKey(basePath: string): string {
   const pubPath = syncKeyPublicPath(basePath);
   const publicKey = readFileSync(pubPath, "utf8").trim();
@@ -4710,12 +4773,18 @@ workspace
 
 workspace
   .command("ssh [sshArgs...]")
-  .description("print or open an ssh connection to a workspace (defaults to context)")
+  .description(
+    "connect to a workspace over ssh (defaults to context); pass remote command after '--'",
+  )
   .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--direct", "bypass Cloudflare Access and connect to host ssh endpoint directly")
-  .option("--connect", "open ssh instead of printing the target")
   .option("--check", "verify ssh connectivity/authentication non-interactively")
   .option("--require-auth", "with --check, require successful auth (not just reachable ssh endpoint)")
+  .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+  .option(
+    "--no-install-key",
+    "skip automatic local ssh key ensure + workspace authorized_keys install",
+  )
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(
@@ -4724,21 +4793,36 @@ workspace
       opts: {
         workspace?: string;
         direct?: boolean;
-        connect?: boolean;
         check?: boolean;
         requireAuth?: boolean;
+        keyPath?: string;
+        installKey?: boolean;
       },
       command: Command,
     ) => {
       await withContext(command, "workspace ssh", async (ctx) => {
-        if (opts.connect && opts.check) {
-          throw new Error("use either --connect or --check, not both");
+        if (opts.check && sshArgs.length > 0) {
+          throw new Error("--check does not accept ssh arguments");
         }
-        const shouldConnect = !!opts.connect || sshArgs.length > 0;
         const route = await resolveWorkspaceSshConnection(ctx, opts.workspace, {
           direct: !!opts.direct,
         });
+
+        let keyInfo: SyncKeyInfo | null = null;
+        let keyInstall: Record<string, unknown> | null = null;
+        if (opts.installKey !== false) {
+          keyInfo = await ensureSyncKeyPair(opts.keyPath);
+          keyInstall = await installSyncPublicKey({
+            ctx,
+            workspaceIdentifier: route.workspace.project_id,
+            publicKey: keyInfo.public_key,
+          });
+        }
+
         const baseArgs: string[] = [];
+        if (keyInfo?.private_key_path) {
+          baseArgs.push("-i", keyInfo.private_key_path, "-o", "IdentitiesOnly=yes");
+        }
         let sshServer = route.ssh_server;
         if (route.transport === "cloudflare-access-tcp") {
           const cloudflareHostname = route.cloudflare_hostname;
@@ -4746,7 +4830,7 @@ workspace
             throw new Error("workspace ssh route is missing cloudflare hostname");
           }
           const cloudflared =
-            opts.check || shouldConnect
+            opts.check
               ? resolveCloudflaredBinary()
               : `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
                 "cloudflared";
@@ -4810,14 +4894,12 @@ workspace
             command: commandLine,
             auth_ok: true,
             exit_code: 0,
-          };
-        }
-        if (!shouldConnect) {
-          return {
-            workspace_id: route.workspace.project_id,
-            ssh_transport: route.transport,
-            ssh_server: sshServer,
-            command: commandLine,
+            key_created: keyInfo?.created ?? false,
+            key_path: keyInfo?.private_key_path ?? null,
+            key_installed: keyInstall ? Boolean((keyInstall as any).installed) : false,
+            key_already_present: keyInstall
+              ? Boolean((keyInstall as any).already_present)
+              : false,
           };
         }
 
@@ -4825,11 +4907,217 @@ workspace
         if (code !== 0) {
           process.exitCode = code;
         }
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          return null;
+        }
         return {
           workspace_id: route.workspace.project_id,
           ssh_transport: route.transport,
           ssh_server: sshServer,
           exit_code: code,
+          key_created: keyInfo?.created ?? false,
+          key_path: keyInfo?.private_key_path ?? null,
+          key_installed: keyInstall ? Boolean((keyInstall as any).installed) : false,
+          key_already_present: keyInstall
+            ? Boolean((keyInstall as any).already_present)
+            : false,
+        };
+      });
+    },
+  );
+
+workspace
+  .command("ssh-info")
+  .description("print ssh connection info for a workspace (defaults to context)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--direct", "bypass Cloudflare Access and show direct host ssh endpoint")
+  .action(
+    async (
+      opts: { workspace?: string; direct?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace ssh-info", async (ctx) => {
+        const route = await resolveWorkspaceSshConnection(ctx, opts.workspace, {
+          direct: !!opts.direct,
+        });
+        const baseArgs: string[] = [];
+        let sshServer = route.ssh_server;
+        if (route.transport === "cloudflare-access-tcp") {
+          const cloudflareHostname = route.cloudflare_hostname;
+          if (!cloudflareHostname) {
+            throw new Error("workspace ssh route is missing cloudflare hostname");
+          }
+          const cloudflared = `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
+            "cloudflared";
+          const proxyCommand = `${cloudflared} access ssh --hostname ${cloudflareHostname}`;
+          baseArgs.push("-o", `ProxyCommand=${proxyCommand}`);
+          baseArgs.push(`${route.ssh_username}@${cloudflareHostname}`);
+          sshServer = `${cloudflareHostname}:443`;
+        } else {
+          if (!route.ssh_host) {
+            throw new Error("workspace ssh route is missing host endpoint");
+          }
+          if (route.ssh_port != null) {
+            baseArgs.push("-p", String(route.ssh_port));
+          }
+          baseArgs.push(`${route.ssh_username}@${route.ssh_host}`);
+        }
+        const commandLine = `ssh ${baseArgs.map((x) => (x.includes(" ") ? JSON.stringify(x) : x)).join(" ")}`;
+        return {
+          workspace_id: route.workspace.project_id,
+          ssh_transport: route.transport,
+          ssh_server: sshServer,
+          command: commandLine,
+        };
+      });
+    },
+  );
+
+const workspaceSshConfig = workspace
+  .command("ssh-config")
+  .description("manage local OpenSSH config entries for workspace ssh");
+
+workspaceSshConfig
+  .command("add")
+  .description(
+    "add/update a managed ~/.ssh/config entry for workspace ssh (Host defaults to exactly -w value)",
+  )
+  .requiredOption("-w, --workspace <workspace>", "workspace id or name")
+  .option("--alias <alias>", "Host alias in ssh config (defaults to exactly -w value)")
+  .option("--config <path>", "ssh config path (default: ~/.ssh/config)")
+  .option("--direct", "write direct-host ssh route instead of Cloudflare route")
+  .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+  .option(
+    "--no-install-key",
+    "skip automatic local ssh key ensure + workspace authorized_keys install",
+  )
+  .action(
+    async (
+      opts: {
+        workspace: string;
+        alias?: string;
+        config?: string;
+        direct?: boolean;
+        keyPath?: string;
+        installKey?: boolean;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace ssh-config add", async (ctx) => {
+        const alias = normalizeWorkspaceSshHostAlias(opts.alias ?? opts.workspace);
+        const route = await resolveWorkspaceSshConnection(ctx, opts.workspace, {
+          direct: !!opts.direct,
+        });
+        const configPath = normalizeWorkspaceSshConfigPath(opts.config);
+
+        let keyInfo: SyncKeyInfo | null = null;
+        let keyInstall: Record<string, unknown> | null = null;
+        if (opts.installKey !== false) {
+          keyInfo = await ensureSyncKeyPair(opts.keyPath);
+          keyInstall = await installSyncPublicKey({
+            ctx,
+            workspaceIdentifier: route.workspace.project_id,
+            publicKey: keyInfo.public_key,
+          });
+        }
+
+        const hostName =
+          route.transport === "cloudflare-access-tcp"
+            ? `${route.cloudflare_hostname ?? ""}`.trim()
+            : `${route.ssh_host ?? ""}`.trim();
+        if (!hostName) {
+          throw new Error("workspace ssh route is missing host endpoint");
+        }
+
+        const lines = [
+          `Host ${alias}`,
+          `  HostName ${hostName}`,
+          `  User ${route.ssh_username}`,
+        ];
+        if (route.transport === "cloudflare-access-tcp") {
+          const cloudflared = `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
+            "cloudflared";
+          lines.push(`  ProxyCommand ${cloudflared} access ssh --hostname %h`);
+        } else if (route.ssh_port != null) {
+          lines.push(`  Port ${route.ssh_port}`);
+        }
+        if (keyInfo?.private_key_path) {
+          lines.push(`  IdentityFile ${keyInfo.private_key_path}`);
+          lines.push("  IdentitiesOnly yes");
+        }
+        const markers = workspaceSshConfigBlockMarkers(alias);
+        const block = `${markers.start}\n${lines.join("\n")}\n${markers.end}\n`;
+
+        mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
+        const existing = existsSync(configPath) ? readFileSync(configPath, "utf8") : "";
+        const stripped = removeWorkspaceSshConfigBlock(existing, alias).content.trimEnd();
+        const next = stripped ? `${stripped}\n\n${block}` : block;
+        writeFileSync(configPath, next, { encoding: "utf8", mode: 0o600 });
+
+        return {
+          workspace_id: route.workspace.project_id,
+          workspace_title: route.workspace.title,
+          alias,
+          config_path: configPath,
+          ssh_transport: route.transport,
+          ssh_server:
+            route.transport === "cloudflare-access-tcp"
+              ? `${hostName}:443`
+              : route.ssh_server,
+          key_created: keyInfo?.created ?? false,
+          key_path: keyInfo?.private_key_path ?? null,
+          key_installed: keyInstall ? Boolean((keyInstall as any).installed) : false,
+          key_already_present: keyInstall
+            ? Boolean((keyInstall as any).already_present)
+            : false,
+          command: `ssh ${alias}`,
+        };
+      });
+    },
+  );
+
+workspaceSshConfig
+  .command("remove")
+  .description("remove a managed workspace ssh entry from ~/.ssh/config")
+  .requiredOption("-w, --workspace <workspace>", "workspace id or name")
+  .option("--alias <alias>", "Host alias in ssh config (defaults to exactly -w value)")
+  .option("--config <path>", "ssh config path (default: ~/.ssh/config)")
+  .action(
+    async (
+      opts: {
+        workspace: string;
+        alias?: string;
+        config?: string;
+      },
+      command: Command,
+    ) => {
+      await runLocalCommand(command, "workspace ssh-config remove", async () => {
+        const alias = normalizeWorkspaceSshHostAlias(opts.alias ?? opts.workspace);
+        const configPath = normalizeWorkspaceSshConfigPath(opts.config);
+        if (!existsSync(configPath)) {
+          return {
+            alias,
+            config_path: configPath,
+            removed: false,
+          };
+        }
+        const existing = readFileSync(configPath, "utf8");
+        const stripped = removeWorkspaceSshConfigBlock(existing, alias);
+        if (!stripped.removed) {
+          return {
+            alias,
+            config_path: configPath,
+            removed: false,
+          };
+        }
+        writeFileSync(configPath, stripped.content.trimEnd() + "\n", {
+          encoding: "utf8",
+          mode: 0o600,
+        });
+        return {
+          alias,
+          config_path: configPath,
+          removed: true,
         };
       });
     },
