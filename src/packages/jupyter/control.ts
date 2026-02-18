@@ -185,8 +185,9 @@ class MulticellOutputHandler {
       const f = throttle(
         () => {
           const { id, state, output, start, end, exec_count } = cell;
+          this.actions.set_runtime_cell_state(id, { state, start, end });
           this.actions._set(
-            { type: "cell", id, state, output, start, end, exec_count },
+            { type: "cell", id, output, exec_count },
             true,
           );
         },

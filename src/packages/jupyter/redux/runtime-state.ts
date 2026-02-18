@@ -13,6 +13,7 @@ export const JUPYTER_RUNTIME_SETTINGS_KEY = "settings";
 export const JUPYTER_RUNTIME_NBCONVERT_KEY = "nbconvert";
 export const JUPYTER_RUNTIME_LIMITS_KEY = "limits";
 export const JUPYTER_RUNTIME_USER_KEY = "user";
+export const JUPYTER_RUNTIME_CELL_KEY_PREFIX = "cell:";
 
 export interface JupyterRuntimeSettings {
   backend_state?: BackendState;
@@ -38,6 +39,12 @@ export interface JupyterRuntimeUserState {
   time?: number;
 }
 
+export interface JupyterRuntimeCellState {
+  state?: "done" | "busy" | "run" | null;
+  start?: number | null;
+  end?: number | null;
+}
+
 export interface JupyterRuntimeShape {
   settings?: JupyterRuntimeSettings;
   nbconvert?: JupyterRuntimeNbconvert;
@@ -46,6 +53,21 @@ export interface JupyterRuntimeShape {
 }
 
 export type JupyterRuntimeState = DKO<JupyterRuntimeShape[keyof JupyterRuntimeShape]>;
+
+export function jupyterRuntimeCellKey(id: string): string {
+  return `${JUPYTER_RUNTIME_CELL_KEY_PREFIX}${id}`;
+}
+
+export function isJupyterRuntimeCellKey(key: string): boolean {
+  return key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX);
+}
+
+export function jupyterRuntimeCellIdFromKey(key: string): string | undefined {
+  if (!isJupyterRuntimeCellKey(key)) {
+    return;
+  }
+  return key.slice(JUPYTER_RUNTIME_CELL_KEY_PREFIX.length) || undefined;
+}
 
 export function jupyterRuntimeStateName(path: string): string {
   return `jupyter-runtime-v${JUPYTER_RUNTIME_STATE_VERSION}:${ipynbPath(path)}`;

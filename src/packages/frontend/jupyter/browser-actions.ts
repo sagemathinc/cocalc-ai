@@ -366,9 +366,6 @@ export class JupyterActions extends JupyterActions0 {
       // "newer than disk" at open time.
       this.watchIpynb(rtcLastChangedMsAtReady);
 
-      // Stupid hack for now -- this just causes some activity so
-      // that the syncdb syncs.
-      // This should not be necessary, and may indicate a bug in the sync layer?
       this.set_runtime_user_state({ id: 0, time: Date.now() });
 
       // If using nbgrader ensure document is fully updated.
@@ -1651,7 +1648,8 @@ export class JupyterActions extends JupyterActions0 {
       // extremely annoying since the user can edit the input while the
       // cell is running.
       const { id, state, output, start, end, exec_count } = cell;
-      this._set({ id, state, output, start, end, exec_count }, save);
+      this.set_runtime_cell_state(id, { state, start, end });
+      this._set({ type: "cell", id, output, exec_count }, save);
     };
     const writeCellThrottled = throttle(
       () => {
@@ -1736,24 +1734,12 @@ export class JupyterActions extends JupyterActions0 {
     if (cells == null) {
       return;
     }
-    let changed = false;
     for (const id of ids) {
       const state = cells.getIn([id, "state"]);
       if (state === "busy" || state === "run") {
         continue;
       }
-      this._set(
-        {
-          type: "cell",
-          id,
-          state: "run",
-        },
-        false,
-      );
-      changed = true;
-    }
-    if (changed) {
-      this._sync();
+      this.set_runtime_cell_state(id, { state: "run", start: null, end: null });
     }
   };
 
@@ -1762,23 +1748,11 @@ export class JupyterActions extends JupyterActions0 {
     if (cells == null) {
       return;
     }
-    let changed = false;
     for (const id of ids) {
       if (cells.getIn([id, "state"]) !== "run") {
         continue;
       }
-      this._set(
-        {
-          type: "cell",
-          id,
-          state: "done",
-        },
-        false,
-      );
-      changed = true;
-    }
-    if (changed) {
-      this._sync();
+      this.set_runtime_cell_state(id, { state: "done", end: Date.now() });
     }
   };
 
@@ -1931,7 +1905,7 @@ export class JupyterActions extends JupyterActions0 {
           continue;
         }
         if (!kernel) {
-          this._set({ type: "cell", id, state: "done" });
+          this.set_runtime_cell_state(id, { state: "done", end: Date.now() });
           this.runDebug("runCells.cell.skip.no_kernel", { runId, id });
           continue;
         }
