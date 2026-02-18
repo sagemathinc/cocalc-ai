@@ -15,6 +15,59 @@ export { type ConatSocketServer };
 
 const logger = getLogger("hub:changefeeds:server");
 
+type CounterByAccount = Map<string, number>;
+
+const stats = {
+  serversCreated: 0,
+  serverClosed: 0,
+  connections: 0,
+  activeSockets: 0,
+  socketClosed: 0,
+  closeDueToNonAccount: 0,
+  closeDueToInvalidUuid: 0,
+  closeDueToUsageLimit: 0,
+  closeDueToMultipleQueries: 0,
+  closeDueToCreateQueryError: 0,
+  closeDueToCallbackError: 0,
+};
+
+const connectionsByAccount: CounterByAccount = new Map();
+const activeByAccount: CounterByAccount = new Map();
+
+function bumpCounterByAccount(
+  map: CounterByAccount,
+  accountId: string,
+  delta: number = 1,
+) {
+  if (!accountId) return;
+  const value = (map.get(accountId) ?? 0) + delta;
+  if (value <= 0) {
+    map.delete(accountId);
+  } else {
+    map.set(accountId, value);
+  }
+}
+
+function topCounters(map: CounterByAccount, limit: number) {
+  return Array.from(map.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([account_id, count]) => ({ account_id, count }));
+}
+
+export function getChangefeedServerDebugStats({
+  topN = 8,
+}: {
+  topN?: number;
+} = {}) {
+  const top = Math.max(1, topN);
+  return {
+    ...stats,
+    connectionsByAccountTop: topCounters(connectionsByAccount, top),
+    activeByAccountTop: topCounters(activeByAccount, top),
+  };
+}
+
 export function changefeedServer({
   client,
   userQuery,
@@ -45,12 +98,16 @@ export function changefeedServer({
     keepAlive: SERVER_KEEPALIVE,
     keepAliveTimeout: KEEPALIVE_TIMEOUT,
   });
+  stats.serversCreated += 1;
   logger.debug("created changefeed server with id", server.id);
 
   server.on("connection", (socket) => {
+    stats.connections += 1;
+    stats.activeSockets += 1;
     const v = socket.subject.split(".")[1];
     logger.debug(server.id, "connection from ", v);
     if (!v?.startsWith("account-")) {
+      stats.closeDueToNonAccount += 1;
       socket.write({ error: "only account users can create changefeeds" });
       logger.debug(
         "socket.close: due to changefeed request from non-account subject",
@@ -61,6 +118,7 @@ export function changefeedServer({
     }
     const account_id = v.slice("account-".length);
     if (!isValidUUID(account_id)) {
+      stats.closeDueToInvalidUuid += 1;
       logger.debug(
         "socket.close: due to invalid uuid",
         socket.subject,
@@ -76,7 +134,10 @@ export function changefeedServer({
     try {
       usage.add(account_id);
       added = true;
+      bumpCounterByAccount(connectionsByAccount, account_id, 1);
+      bumpCounterByAccount(activeByAccount, account_id, 1);
     } catch (err) {
+      stats.closeDueToUsageLimit += 1;
       socket.write({ error: `${err}`, code: err.code });
       logger.debug(
         "socket.close: due to usage error (limit exceeded?)",
@@ -90,12 +151,15 @@ export function changefeedServer({
     const changes = uuid();
 
     socket.on("closed", () => {
+      stats.socketClosed += 1;
+      stats.activeSockets = Math.max(0, stats.activeSockets - 1);
       logger.debug(
         "socket.close: cleaning up since socket closed for some external reason (timeout?)",
         socket.subject,
       );
       if (added) {
         usage.delete(account_id);
+        bumpCounterByAccount(activeByAccount, account_id, -1);
       }
       cancelQuery(changes);
     });
@@ -103,6 +167,7 @@ export function changefeedServer({
     let running = false;
     socket.on("data", (data) => {
       if (running) {
+        stats.closeDueToMultipleQueries += 1;
         socket.write({ error: "exactly one query per connection" });
         logger.debug(
           "socket.close: due to attempt to run more than one query",
@@ -136,12 +201,14 @@ export function changefeedServer({
               error = `${error ? error + "; " : ""}unable to send (buffer may be full -- closing) `;
             }
             if (error) {
+              stats.closeDueToCallbackError += 1;
               logger.debug(error, socket.subject);
               socket.close();
             }
           },
         });
       } catch (err) {
+        stats.closeDueToCreateQueryError += 1;
         logger.debug(
           "socket.close: due to error creating query",
           socket.subject,
@@ -155,6 +222,7 @@ export function changefeedServer({
     });
   });
   server.on("closed", () => {
+    stats.serverClosed += 1;
     logger.debug("shutting down changefeed server");
     usage.close();
   });

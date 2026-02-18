@@ -69,6 +69,40 @@ const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const chatWritersByChatKey = new Map<string, ChatStreamWriter>();
 const chatWritersByThreadId = new Map<string, ChatStreamWriter>();
 
+export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
+  const top = Math.max(1, topN);
+  const snapshots = Array.from(chatWritersByChatKey.values()).map((writer) =>
+    writer.watchdogSnapshot(),
+  );
+  const activeWriters = snapshots.filter((x) => !x.closed).length;
+  const finishedWriters = snapshots.filter((x) => x.finished).length;
+  const disposeScheduled = snapshots.filter((x) => x.disposeScheduled).length;
+  const syncdbErrors = snapshots.filter((x) => x.hasSyncdbError).length;
+  const totalBufferedEvents = snapshots.reduce((sum, x) => sum + x.events, 0);
+  const topWritersByEvents = [...snapshots]
+    .sort((a, b) => b.events - a.events)
+    .slice(0, top)
+    .map((x) => ({
+      chatKey: x.chatKey,
+      path: x.path,
+      messageDate: x.messageDate,
+      events: x.events,
+      finished: x.finished,
+      disposeScheduled: x.disposeScheduled,
+      threadIds: x.threadIds,
+    }));
+  return {
+    writersByChatKey: chatWritersByChatKey.size,
+    writersByThreadId: chatWritersByThreadId.size,
+    activeWriters,
+    finishedWriters,
+    disposeScheduled,
+    syncdbErrors,
+    totalBufferedEvents,
+    topWritersByEvents,
+  };
+}
+
 function logWriterCounts(
   reason: string,
   extra?: Record<string, unknown>,
@@ -574,6 +608,20 @@ export class ChatStreamWriter {
     if (this.threadId) ids.push(this.threadId);
     if (this.sessionKey) ids.push(this.sessionKey);
     return Array.from(new Set(ids));
+  }
+
+  watchdogSnapshot() {
+    return {
+      chatKey: this.chatKey,
+      path: this.metadata.path,
+      messageDate: this.metadata.message_date,
+      events: this.events.length,
+      finished: this.finished,
+      closed: this.closed,
+      disposeScheduled: this.disposeTimer != null,
+      hasSyncdbError: this.syncdbError != null,
+      threadIds: this.getKnownThreadIds(),
+    };
   }
 
   private registerThreadKey(key: string): void {

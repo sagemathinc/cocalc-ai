@@ -252,6 +252,10 @@ export class AgentTimeTravelRecorder {
     filePath: string,
   ): { absolutePath: string; relativePath: string } | undefined {
     if (!filePath || !this.workspaceRoot) return;
+    if (this.looksLikeGlobPath(filePath)) {
+      this.logger.debug("agent-tt skip glob-like path", { filePath });
+      return;
+    }
     const candidates: string[] = [];
     if (path.isAbsolute(filePath)) {
       candidates.push(path.normalize(filePath));
@@ -280,6 +284,10 @@ export class AgentTimeTravelRecorder {
       homeRoot: this.homeRoot,
     });
     return;
+  }
+
+  private looksLikeGlobPath(filePath: string): boolean {
+    return filePath.includes("*") || filePath.includes("?");
   }
 
   private isUnderRoot(candidate: string, root: string): boolean {
@@ -511,7 +519,16 @@ export class AgentTimeTravelRecorder {
         return true;
       }
     } catch (err) {
+      const code = (err as any)?.code;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        this.logger.debug("agent-tt skip (missing path)", {
+          relativePath,
+          code,
+        });
+        return true;
+      }
       this.logger.debug("agent-tt size check failed", { relativePath, err });
+      return true;
     }
     return false;
   }
