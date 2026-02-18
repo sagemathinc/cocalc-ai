@@ -83,7 +83,7 @@ import {
   classifyRunStreamMessage,
   type RunLifecycleType,
 } from "./run-protocol";
-import { shouldInitialWatchLoadFromDisk } from "./watch-policy";
+import { decideInitialWatchSource } from "./watch-policy";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -2637,15 +2637,51 @@ export class JupyterActions extends JupyterActions0 {
   // and it seems to work very well.  After writing some more
   // tests, I should refactor it into a separate module that both use.
   private fileWatcher?: WatchIterator;
+  private getRtcLastChangedMs = (): number | undefined => {
+    try {
+      const value = this.syncdb?.last_changed?.();
+      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        return;
+      }
+      return value;
+    } catch {
+      return;
+    }
+  };
+
+  private getDiskMtimeMs = async (): Promise<number | undefined> => {
+    try {
+      const stats = await this.syncdb.fs.stat(this.path);
+      const value = (stats as any)?.mtimeMs;
+      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        return;
+      }
+      return value;
+    } catch {
+      return;
+    }
+  };
+
   watchIpynb = async () => {
     this.runDebug("watch.start");
     const done = () => this.isClosed();
     if (done()) return;
     const hasRtcCells = this.syncdb.get_one({ type: "cell" }) != null;
-    if (shouldInitialWatchLoadFromDisk({ hasRtcCells })) {
-      // Only hydrate from disk when RTC has no notebook cells yet.
-      // If RTC already has data, disk is stale by design (unsaved edits),
-      // so reloading from disk would clobber the live collaborative state.
+    const rtcLastChangedMs = this.getRtcLastChangedMs();
+    const diskMtimeMs = await this.getDiskMtimeMs();
+    const decision = decideInitialWatchSource({
+      hasRtcCells,
+      rtcLastChangedMs,
+      diskMtimeMs,
+    });
+    this.runDebug("watch.initial_load.decision", {
+      hasRtcCells,
+      rtcLastChangedMs,
+      diskMtimeMs,
+      loadFromDisk: decision.loadFromDisk,
+      reason: decision.reason,
+    });
+    if (decision.loadFromDisk) {
       await until(
         async () => {
           if (this.isClosed()) return true;
@@ -2663,7 +2699,10 @@ export class JupyterActions extends JupyterActions0 {
       );
     } else {
       this.runDebug("watch.initial_load.skipped", {
-        reason: "rtc_has_cells",
+        reason: decision.reason,
+        hasRtcCells,
+        rtcLastChangedMs,
+        diskMtimeMs,
       });
     }
     if (done()) return;
