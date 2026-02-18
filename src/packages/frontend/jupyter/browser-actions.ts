@@ -1649,7 +1649,17 @@ export class JupyterActions extends JupyterActions0 {
       // cell is running.
       const { id, state, output, start, end, exec_count } = cell;
       this.set_runtime_cell_state(id, { state, start, end });
-      this._set({ type: "cell", id, output, exec_count }, save);
+      const patch: any = { type: "cell", id, output, exec_count };
+      if (
+        typeof start === "number" &&
+        Number.isFinite(start) &&
+        typeof end === "number" &&
+        Number.isFinite(end) &&
+        end >= start
+      ) {
+        patch.last = Math.round(end - start);
+      }
+      this._set(patch, save);
     };
     const writeCellThrottled = throttle(
       () => {
@@ -1899,7 +1909,7 @@ export class JupyterActions extends JupyterActions0 {
         const outputCount = this.outputMessageCount(output);
         if (!input.trim()) {
           // nothing to do but clear output
-          this._set({ id, last, output: null });
+          this._set({ type: "cell", id, last, output: null });
           this.runDebug("runCells.cell.skip.empty_input", { runId, id });
 
           continue;
@@ -1913,7 +1923,7 @@ export class JupyterActions extends JupyterActions0 {
           const previewOutput = this.outputPreviewFirstMessage(output);
           // trick to avoid flicker
           // time last evaluation took
-          this._set({ id, last, output: previewOutput }, false);
+          this._set({ type: "cell", id, last, output: previewOutput }, false);
         }
         const cell: InputCell & { pos?: number } = {
           id,

@@ -81,6 +81,50 @@ const CellDeleteProtectedException = new Error("CellDeleteProtectedException");
 
 type State = "init" | "load" | "ready" | "closed";
 
+const COCALC_LAST_RUNTIME_MS_KEY = "last_runtime_ms";
+
+function normalizeLastRuntimeMs(value: any): number | undefined {
+  if (value == null) {
+    return;
+  }
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    return;
+  }
+  return Math.round(n);
+}
+
+function patchCellMetadataWithLastRuntime(metadata: any, last: any): any {
+  let metadataPatch: any;
+  if (metadata == null) {
+    metadataPatch = {};
+  } else if (immutable.Map.isMap(metadata)) {
+    metadataPatch = metadata.toJS();
+  } else if (misc.is_object(metadata)) {
+    metadataPatch = { ...metadata };
+  } else {
+    metadataPatch = {};
+  }
+  const cocalc = misc.is_object(metadataPatch.cocalc)
+    ? { ...metadataPatch.cocalc }
+    : {};
+  cocalc[COCALC_LAST_RUNTIME_MS_KEY] = normalizeLastRuntimeMs(last) ?? null;
+  metadataPatch.cocalc = cocalc;
+  return metadataPatch;
+}
+
+function getCellMetadataLastRuntimeMs(cell: immutable.Map<string, any>): any {
+  const metadata = cell.get("metadata");
+  if (immutable.Map.isMap(metadata)) {
+    return metadata.getIn(["cocalc", COCALC_LAST_RUNTIME_MS_KEY]);
+  }
+  if (misc.is_object(metadata)) {
+    const md = metadata as any;
+    return md?.cocalc?.[COCALC_LAST_RUNTIME_MS_KEY];
+  }
+  return undefined;
+}
+
 export class JupyterActions extends Actions<JupyterStoreState> {
   public is_project: boolean;
   readonly path: string;
@@ -321,6 +365,21 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       }
     }
     return result;
+  };
+
+  private withPersistentCellMetadata = (
+    cell: immutable.Map<string, any>,
+  ): immutable.Map<string, any> => {
+    const persisted = normalizeLastRuntimeMs(getCellMetadataLastRuntimeMs(cell));
+    const legacy = normalizeLastRuntimeMs(cell.get("last"));
+    const last = persisted ?? legacy;
+    if (last == null) {
+      return cell.remove("last");
+    }
+    if (cell.get("last") === last) {
+      return cell;
+    }
+    return cell.set("last", last);
   };
 
   private applyRuntimeCellToStore = (id?: string) => {
@@ -636,7 +695,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       return;
     }
     const runtimeCell = this.getRuntimeCell(id);
+    if (Object.prototype.hasOwnProperty.call(cell, "last")) {
+      cell.metadata = patchCellMetadataWithLastRuntime(cell.metadata, cell.last);
+    }
     cell.id = newId;
+    delete cell.last;
     delete cell.state;
     delete cell.start;
     delete cell.end;
@@ -847,6 +910,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     } else {
       // change or add cell
       old_cell = cells.get(id);
+      new_cell = this.withPersistentCellMetadata(new_cell);
       new_cell = this.withRuntimeCell(id, new_cell);
       if (new_cell.equals(old_cell)) {
         return false; // nothing to do
@@ -919,7 +983,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       this.syncdb.get().forEach((record) => {
         switch (record.get("type")) {
           case "cell":
-            cells = cells.set(record.get("id"), record);
+            cells = cells.set(
+              record.get("id"),
+              this.withPersistentCellMetadata(record),
+            );
             break;
           case "settings":
             if (record == null) {
@@ -973,34 +1040,6 @@ export class JupyterActions extends Actions<JupyterStoreState> {
               cell_list_needs_recompute = true;
             }
             break;
-          case "fatal":
-            const error = record != null ? record.get("error") : undefined;
-            this.setState({ fatal: error });
-            // This check can be deleted in a few weeks:
-            if (
-              error != null &&
-              error.indexOf("file is currently being read or written") !== -1
-            ) {
-              // No longer relevant -- see https://github.com/sagemathinc/cocalc/issues/1742
-              this.syncdb.delete({ type: "fatal" });
-              this.syncdb.commit();
-            }
-            break;
-
-          case "nbconvert":
-            const runtimeNbconvert = this.get_runtime_nbconvert();
-            const effectiveRecord = immutable.fromJS(runtimeNbconvert ?? {});
-            if (this.is_project) {
-              // before setting in store, let backend start reacting to change
-              this.handle_nbconvert_change(
-                this.store.get("nbconvert"),
-                effectiveRecord,
-              );
-            }
-            // Now set in our store.
-            this.setState({ nbconvert: effectiveRecord });
-            break;
-
           case "settings":
             if (record == null) {
               return;
@@ -1101,6 +1140,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     }
     if (obj.type === "cell" && obj.id != null) {
       obj = { ...obj };
+      if (Object.prototype.hasOwnProperty.call(obj, "last")) {
+        obj.metadata = patchCellMetadataWithLastRuntime(obj.metadata, obj.last);
+        delete obj.last;
+      }
       const runtimePatch: JupyterRuntimeCellState = {};
       let hasRuntimePatch = false;
       for (const key of ["state", "start", "end"] as const) {
@@ -2448,6 +2491,14 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       // preserve trust state across file updates/loads
       trust = this.store.get("trust");
       set = (obj) => {
+        if (
+          obj?.type === "cell" &&
+          Object.prototype.hasOwnProperty.call(obj, "last")
+        ) {
+          obj = { ...obj };
+          obj.metadata = patchCellMetadataWithLastRuntime(obj.metadata, obj.last);
+          delete obj.last;
+        }
         this.syncdb.set(obj);
       };
     }
