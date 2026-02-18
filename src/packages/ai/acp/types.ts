@@ -35,6 +35,7 @@ export type AcpStreamHandler = (
 ) => Promise<void>;
 
 export interface AcpEvaluateRequest {
+  project_id: string;
   account_id: string;
   prompt: string;
   session_id?: string;

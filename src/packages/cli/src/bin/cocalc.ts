@@ -1754,7 +1754,7 @@ async function workspaceCodexExecData({
 
 function streamCodexHumanMessage(message: AcpStreamMessage): void {
   if (message.type === "status") {
-    process.stderr.write(`[codex:${message.state}]\n`);
+    process.stderr.write(`[acp:${message.state}]\n`);
     return;
   }
   if (message.type === "event") {
