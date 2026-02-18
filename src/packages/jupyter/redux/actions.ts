@@ -43,6 +43,7 @@ import { SyncDB } from "@cocalc/sync/editor/db/sync";
 import type { Client } from "@cocalc/sync/client/types";
 import latexEnvs from "@cocalc/util/latex-envs";
 import { type AKV, akv } from "@cocalc/conat/sync/akv";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import {
   JUPYTER_MIMETYPES,
   isJupyterBase64MimeType,
@@ -50,6 +51,17 @@ import {
 import { isSha1, sha1 } from "@cocalc/util/misc";
 import { shouldUseIframe } from "@cocalc/jupyter/util/iframe";
 import { join } from "path";
+import {
+  JUPYTER_RUNTIME_LIMITS_KEY,
+  JUPYTER_RUNTIME_NBCONVERT_KEY,
+  JUPYTER_RUNTIME_SETTINGS_KEY,
+  JUPYTER_RUNTIME_USER_KEY,
+  openJupyterRuntimeState,
+  type JupyterRuntimeLimits,
+  type JupyterRuntimeNbconvert,
+  type JupyterRuntimeSettings,
+  type JupyterRuntimeState,
+} from "./runtime-state";
 
 const { close, required, defaults } = misc;
 
@@ -79,6 +91,8 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   public store: JupyterStore;
   public syncdb: SyncDB;
+  private runtimeState?: JupyterRuntimeState;
+  private runtimeStateInitStarted = false;
   private labels?: {
     math: { [label: string]: { tag: string; id: string } };
     fig: { [label: string]: { tag: string; id: string } };
@@ -135,6 +149,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     this.syncdb.on("close", this.close);
 
     this.asyncBlobStore = akv(this.blobStoreOptions());
+    this.initRuntimeState();
 
     // Hook for additional initialization.
     this.init2();
@@ -155,6 +170,226 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   protected init2(): void {
     // this can be overloaded in a derived class
   }
+
+  private getConatClient = (): ConatClient | undefined => {
+    const client = this._client as any;
+    try {
+      if (typeof client?.conat === "function") {
+        return client.conat();
+      }
+      if (typeof client?.conat_client?.conat === "function") {
+        return client.conat_client.conat();
+      }
+    } catch {
+      // best effort only
+    }
+    return;
+  };
+
+  private initRuntimeState = (): void => {
+    if (this.runtimeStateInitStarted || this.is_closed()) {
+      return;
+    }
+    this.runtimeStateInitStarted = true;
+    void (async () => {
+      try {
+        const runtimeState = await openJupyterRuntimeState({
+          project_id: this.project_id,
+          path: this.path,
+          client: this.getConatClient(),
+        });
+        if (this.is_closed()) {
+          await runtimeState.close();
+          return;
+        }
+        this.runtimeState = runtimeState;
+        this.runtimeState.on("change", this.runtimeStateChange);
+        this.applyRuntimeStateSnapshot();
+      } catch (err) {
+        this.dbg("initRuntimeState")("failed to initialize runtime state", err);
+      }
+    })();
+  };
+
+  private runtimeStateChange = (change?: { key?: string }): void => {
+    if (this.is_closed()) {
+      return;
+    }
+    if (!change?.key) {
+      this.applyRuntimeStateSnapshot();
+      return;
+    }
+    switch (change.key) {
+      case JUPYTER_RUNTIME_SETTINGS_KEY:
+        this.applyRuntimeSettingsToStore();
+        return;
+      case JUPYTER_RUNTIME_NBCONVERT_KEY:
+        this.applyRuntimeNbconvertToStore();
+        return;
+    }
+  };
+
+  private applyRuntimeStateSnapshot = (): void => {
+    this.applyRuntimeSettingsToStore();
+    this.applyRuntimeNbconvertToStore();
+  };
+
+  private getRuntimeRecord<T extends object>(key: string): T | undefined {
+    const value = this.runtimeState?.get(key);
+    if (value == null || typeof value !== "object") {
+      return;
+    }
+    return value as T;
+  }
+
+  private patchRuntimeRecord = (key: string, patch: object): void => {
+    if (this.runtimeState == null) {
+      return;
+    }
+    const cur = this.getRuntimeRecord<object>(key) ?? {};
+    this.runtimeState.set(key, { ...cur, ...patch });
+  };
+
+  private setRuntimeRecord = (key: string, value: object): void => {
+    if (this.runtimeState == null) {
+      return;
+    }
+    this.runtimeState.set(key, value);
+  };
+
+  private applyRuntimeSettingsToStore = (): void => {
+    const runtimeSettings =
+      this.getRuntimeRecord<JupyterRuntimeSettings>(
+        JUPYTER_RUNTIME_SETTINGS_KEY,
+      ) ?? {};
+    const obj: Partial<JupyterRuntimeSettings> = {};
+    for (const key of [
+      "backend_state",
+      "kernel_state",
+      "last_backend_state",
+      "kernel_error",
+    ] as const) {
+      if (runtimeSettings[key] !== undefined) {
+        (obj as any)[key] = runtimeSettings[key];
+      }
+    }
+    if (misc.len(obj) == 0) {
+      return;
+    }
+    const prev_backend_state = this.store.get("backend_state");
+    this.setState(obj);
+    if (
+      !this.is_project &&
+      obj.backend_state === "running" &&
+      prev_backend_state !== "running"
+    ) {
+      this.set_cm_options();
+    }
+  };
+
+  private applyRuntimeNbconvertToStore = (): void => {
+    const runtimeNbconvert = this.getRuntimeRecord<JupyterRuntimeNbconvert>(
+      JUPYTER_RUNTIME_NBCONVERT_KEY,
+    );
+    if (runtimeNbconvert == null) {
+      return;
+    }
+    const currentState = this.store.getIn(["nbconvert", "state"]);
+    if (
+      this.is_project &&
+      runtimeNbconvert.state === "start" &&
+      currentState !== "start"
+    ) {
+      this.handle_nbconvert_change(
+        this.store.get("nbconvert"),
+        immutable.fromJS(runtimeNbconvert),
+      );
+    }
+    this.setState({ nbconvert: immutable.fromJS(runtimeNbconvert) });
+  };
+
+  public set_runtime_settings = (settings: JupyterRuntimeSettings): void => {
+    if (this.runtimeState != null) {
+      this.patchRuntimeRecord(JUPYTER_RUNTIME_SETTINGS_KEY, settings);
+      this.applyRuntimeSettingsToStore();
+      return;
+    }
+    this.setState(settings as any);
+    if (this.syncdb?.isReady?.()) {
+      this.syncdb.set({ type: "settings", ...settings });
+      this.syncdb.commit();
+    }
+  };
+
+  public get_runtime_setting = <K extends keyof JupyterRuntimeSettings>(
+    key: K,
+  ): JupyterRuntimeSettings[K] | undefined => {
+    const runtimeSettings = this.getRuntimeRecord<JupyterRuntimeSettings>(
+      JUPYTER_RUNTIME_SETTINGS_KEY,
+    );
+    if (runtimeSettings?.[key] !== undefined) {
+      return runtimeSettings[key];
+    }
+    return this.syncdb?.get_one({ type: "settings" })?.get(key as string);
+  };
+
+  public set_runtime_nbconvert = (nbconvert: JupyterRuntimeNbconvert): void => {
+    if (this.runtimeState != null) {
+      this.setRuntimeRecord(JUPYTER_RUNTIME_NBCONVERT_KEY, nbconvert);
+      this.applyRuntimeNbconvertToStore();
+      return;
+    }
+    this.setState({ nbconvert: immutable.fromJS(nbconvert) });
+    if (this.syncdb?.isReady?.()) {
+      this.syncdb.set({ type: "nbconvert", ...nbconvert });
+      this.syncdb.commit();
+    }
+  };
+
+  public get_runtime_nbconvert = (): JupyterRuntimeNbconvert | undefined => {
+    const runtimeNbconvert = this.getRuntimeRecord<JupyterRuntimeNbconvert>(
+      JUPYTER_RUNTIME_NBCONVERT_KEY,
+    );
+    if (runtimeNbconvert != null) {
+      return runtimeNbconvert;
+    }
+    return this.syncdb?.get_one({ type: "nbconvert" })?.toJS();
+  };
+
+  public set_runtime_limits = (limits: JupyterRuntimeLimits): void => {
+    if (this.runtimeState != null) {
+      this.setRuntimeRecord(JUPYTER_RUNTIME_LIMITS_KEY, limits);
+      return;
+    }
+    if (this.syncdb?.isReady?.()) {
+      this.syncdb.set({ type: "limits", ...limits });
+      this.syncdb.commit();
+    }
+  };
+
+  public get_runtime_limits = (): JupyterRuntimeLimits | undefined => {
+    const runtimeLimits = this.getRuntimeRecord<JupyterRuntimeLimits>(
+      JUPYTER_RUNTIME_LIMITS_KEY,
+    );
+    if (runtimeLimits != null) {
+      return runtimeLimits;
+    }
+    return this.syncdb?.get_one({ type: "limits" })?.toJS();
+  };
+
+  public set_runtime_user_state = (state: {
+    id?: number;
+    time?: number;
+  }): void => {
+    if (this.runtimeState != null) {
+      this.setRuntimeRecord(JUPYTER_RUNTIME_USER_KEY, state);
+      return;
+    }
+    if (this.syncdb?.isReady?.()) {
+      this.syncdb.set({ type: "user", ...state });
+      this.syncdb.commit();
+    }
+  };
 
   // Only use this on the frontend, of course.
   protected getFrameActions() {
@@ -195,6 +430,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         return;
       }
       this.syncdb?.close();
+      if (this.runtimeState != null) {
+        this.runtimeState.removeListener("change", this.runtimeStateChange);
+        void this.runtimeState.close();
+        delete this.runtimeState;
+      }
       this._file_watcher?.close();
       if (this.is_project) {
         this.close_project_only();
@@ -554,11 +794,20 @@ export class JupyterActions extends Actions<JupyterStoreState> {
             }
             const orig_kernel = this.store.get("kernel");
             const kernel = record.get("kernel");
+            const runtimeBackendState =
+              this.get_runtime_setting("backend_state");
+            const runtimeLastBackendState =
+              this.get_runtime_setting("last_backend_state");
+            const runtimeKernelState = this.get_runtime_setting("kernel_state");
+            const runtimeKernelError = this.get_runtime_setting("kernel_error");
             const obj: any = {
               trust: !!record.get("trust"), // case to boolean
-              backend_state: record.get("backend_state"),
-              last_backend_state: record.get("last_backend_state"),
-              kernel_state: record.get("kernel_state"),
+              backend_state:
+                runtimeBackendState ?? record.get("backend_state"),
+              last_backend_state:
+                runtimeLastBackendState ?? record.get("last_backend_state"),
+              kernel_state: runtimeKernelState ?? record.get("kernel_state"),
+              kernel_error: runtimeKernelError ?? record.get("kernel_error"),
               metadata: record.get("metadata"), // extra custom user-specified metadata
               max_output_length: bounded_integer(
                 record.get("max_output_length"),
@@ -608,12 +857,20 @@ export class JupyterActions extends Actions<JupyterStoreState> {
             break;
 
           case "nbconvert":
+            const runtimeNbconvert = this.get_runtime_nbconvert();
+            const effectiveRecord =
+              runtimeNbconvert != null
+                ? immutable.fromJS(runtimeNbconvert)
+                : record;
             if (this.is_project) {
               // before setting in store, let backend start reacting to change
-              this.handle_nbconvert_change(this.store.get("nbconvert"), record);
+              this.handle_nbconvert_change(
+                this.store.get("nbconvert"),
+                effectiveRecord,
+              );
             }
             // Now set in our store.
-            this.setState({ nbconvert: record });
+            this.setState({ nbconvert: effectiveRecord });
             break;
 
           case "settings":
@@ -622,12 +879,20 @@ export class JupyterActions extends Actions<JupyterStoreState> {
             }
             const orig_kernel = this.store.get("kernel", null);
             const kernel = record.get("kernel");
+            const runtimeBackendState =
+              this.get_runtime_setting("backend_state");
+            const runtimeLastBackendState =
+              this.get_runtime_setting("last_backend_state");
+            const runtimeKernelState = this.get_runtime_setting("kernel_state");
+            const runtimeKernelError = this.get_runtime_setting("kernel_error");
             const obj: any = {
               trust: !!record.get("trust"), // case to boolean
-              backend_state: record.get("backend_state"),
-              last_backend_state: record.get("last_backend_state"),
-              kernel_state: record.get("kernel_state"),
-              kernel_error: record.get("kernel_error"),
+              backend_state:
+                runtimeBackendState ?? record.get("backend_state"),
+              last_backend_state:
+                runtimeLastBackendState ?? record.get("last_backend_state"),
+              kernel_state: runtimeKernelState ?? record.get("kernel_state"),
+              kernel_error: runtimeKernelError ?? record.get("kernel_error"),
               metadata: record.get("metadata"), // extra custom user-specified metadata
               max_output_length: bounded_integer(
                 record.get("max_output_length"),
@@ -649,7 +914,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
               // heuristic sets the values and we end up with "C" formatting for custom python kernels.
               // @see https://github.com/sagemathinc/cocalc/issues/5478
               const started_running =
-                record.get("backend_state") === "running" &&
+                obj.backend_state === "running" &&
                 prev_backend_state !== "running";
               if (orig_kernel !== kernel || started_running) {
                 this.set_cm_options();
@@ -661,6 +926,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     }
     if (cell_list_needs_recompute) {
       this.set_cell_list();
+    }
+    if (doInit) {
+      this.applyRuntimeStateSnapshot();
     }
 
     this.__syncdb_change_post_hook(doInit);
@@ -1742,8 +2010,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   }
 
   set_kernel_error = (err) => {
-    this._set({
-      type: "settings",
+    this.set_runtime_settings({
       kernel_error: `${err}`,
     });
     this.save_asap();

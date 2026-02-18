@@ -369,9 +369,7 @@ export class JupyterActions extends JupyterActions0 {
       // Stupid hack for now -- this just causes some activity so
       // that the syncdb syncs.
       // This should not be necessary, and may indicate a bug in the sync layer?
-      // id has to be set here since it is a primary key
-      this.syncdb.set({ type: "user", id: 0, time: Date.now() });
-      this.syncdb.commit();
+      this.set_runtime_user_state({ id: 0, time: Date.now() });
 
       // If using nbgrader ensure document is fully updated.
       if (this.store.get("cell_toolbar") == "create_assignment") {
@@ -868,13 +866,11 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
 
-    this.syncdb.set({
-      type: "nbconvert",
+    this.set_runtime_nbconvert({
       args,
       state: "start",
       error: null,
     });
-    this.syncdb.commit();
   }
 
   public show_about(): void {
@@ -2082,23 +2078,18 @@ export class JupyterActions extends JupyterActions0 {
       backend_state: BackendState;
       kernel_state: KernelState;
     };
-    this.syncdb.set({
-      type: "settings",
+    this.set_runtime_settings({
       backend_state: kernelStatus.backend_state,
       kernel_state: kernelStatus.kernel_state,
     });
-    this.syncdb.commit();
   };
 
   getMessageLimit = () => {
-    return (
-      this.syncdb.get_one({ type: "limits" })?.get("limit") ??
-      DEFAULT_OUTPUT_MESSAGE_LIMIT
-    );
+    return this.get_runtime_limits()?.limit ?? DEFAULT_OUTPUT_MESSAGE_LIMIT;
   };
 
   setMessageLimit = (limit: number) => {
-    this.syncdb.set({ type: "limits", limit });
+    this.set_runtime_limits({ limit });
   };
 
   private clearMoreOutput = (ids: string[]) => {
@@ -2390,10 +2381,9 @@ export class JupyterActions extends JupyterActions0 {
     await this.signal("SIGKILL");
     // Wait a little, since SIGKILL has to really happen on backend,
     // and server has to respond and change state.
-    const not_running = (s): boolean => {
+    const not_running = (): boolean => {
       if (this._state === "closed") return true;
-      const t = s.get_one({ type: "settings" });
-      return t != null && t.get("backend_state") != "running";
+      return this.get_runtime_setting("backend_state") != "running";
     };
     try {
       await this.syncdb.wait(not_running, 30);
