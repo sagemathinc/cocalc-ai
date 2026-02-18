@@ -25,6 +25,7 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type { LroScopeType, LroSummary as HubLroSummary } from "@cocalc/conat/hub/api/lro";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
+import type { WorkspaceSshConnectionInfo } from "@cocalc/conat/hub/api/projects";
 import { fsClient, fsSubject, type FilesystemClient } from "@cocalc/conat/files/fs";
 import { acpSubject } from "@cocalc/conat/ai/acp/server";
 import type { AcpRequest, AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
@@ -2995,6 +2996,34 @@ function commandExists(command: string): boolean {
   return !message.toLowerCase().includes("enoent");
 }
 
+function cloudflaredInstallHint(): string {
+  if (process.platform === "darwin") {
+    return "brew install cloudflared";
+  }
+  if (process.platform === "linux") {
+    return "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/";
+  }
+  return "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/";
+}
+
+function resolveCloudflaredBinary(): string {
+  const configured = `${process.env.COCALC_CLI_CLOUDFLARED ?? ""}`.trim();
+  if (configured) {
+    if (!commandExists(configured)) {
+      throw new Error(
+        `COCALC_CLI_CLOUDFLARED is set but not executable: ${configured}`,
+      );
+    }
+    return configured;
+  }
+  if (commandExists("cloudflared")) {
+    return "cloudflared";
+  }
+  throw new Error(
+    `cloudflared is required for workspace ssh via Cloudflare Access; install it (${cloudflaredInstallHint()}) or use --direct`,
+  );
+}
+
 type CommandCaptureResult = {
   code: number;
   stdout: string;
@@ -3014,6 +3043,17 @@ type WorkspaceSshTarget = {
   ssh_host: string;
   ssh_port: number | null;
   ssh_target: string;
+};
+
+type WorkspaceSshRoute = {
+  workspace: WorkspaceRow;
+  host_id: string;
+  transport: "cloudflare-access-tcp" | "direct";
+  ssh_username: string;
+  ssh_server: string | null;
+  cloudflare_hostname: string | null;
+  ssh_host: string | null;
+  ssh_port: number | null;
 };
 
 type ReflectForwardRecord = {
@@ -3213,6 +3253,61 @@ async function resolveWorkspaceSshTarget(
     ssh_host: sshHost,
     ssh_port: parsed.port ?? null,
     ssh_target: sshTarget,
+  };
+}
+
+async function resolveWorkspaceSshConnection(
+  ctx: CommandContext,
+  workspaceIdentifier?: string,
+  {
+    cwd = process.cwd(),
+    direct = false,
+  }: {
+    cwd?: string;
+    direct?: boolean;
+  } = {},
+): Promise<WorkspaceSshRoute> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  if (!workspace.host_id) {
+    throw new Error("workspace has no assigned host");
+  }
+  const connection = await hubCallAccount<WorkspaceSshConnectionInfo>(
+    ctx,
+    "projects.resolveWorkspaceSshConnection",
+    [{ project_id: workspace.project_id, direct }],
+  );
+  const sshUsername = `${connection.ssh_username ?? workspace.project_id}`.trim() || workspace.project_id;
+  if (connection.transport === "cloudflare-access-tcp") {
+    const hostname = `${connection.cloudflare_hostname ?? ""}`.trim();
+    if (!hostname) {
+      throw new Error("workspace ssh route returned no cloudflare hostname");
+    }
+    return {
+      workspace,
+      host_id: connection.host_id,
+      transport: "cloudflare-access-tcp",
+      ssh_username: sshUsername,
+      ssh_server: connection.ssh_server ?? null,
+      cloudflare_hostname: hostname,
+      ssh_host: hostname,
+      ssh_port: null,
+    };
+  }
+  const sshServer = `${connection.ssh_server ?? ""}`.trim();
+  if (!sshServer) {
+    throw new Error("host has no ssh server endpoint");
+  }
+  const parsed = parseSshServer(sshServer);
+  return {
+    workspace,
+    host_id: connection.host_id,
+    transport: "direct",
+    ssh_username: sshUsername,
+    ssh_server: sshServer,
+    cloudflare_hostname:
+      `${connection.cloudflare_hostname ?? ""}`.trim() || null,
+    ssh_host: parsed.host,
+    ssh_port: parsed.port ?? null,
   };
 }
 
@@ -4617,6 +4712,7 @@ workspace
   .command("ssh [sshArgs...]")
   .description("print or open an ssh connection to a workspace (defaults to context)")
   .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--direct", "bypass Cloudflare Access and connect to host ssh endpoint directly")
   .option("--connect", "open ssh instead of printing the target")
   .option("--check", "verify ssh connectivity/authentication non-interactively")
   .option("--require-auth", "with --check, require successful auth (not just reachable ssh endpoint)")
@@ -4625,34 +4721,50 @@ workspace
   .action(
     async (
       sshArgs: string[],
-      opts: { workspace?: string; connect?: boolean; check?: boolean; requireAuth?: boolean },
+      opts: {
+        workspace?: string;
+        direct?: boolean;
+        connect?: boolean;
+        check?: boolean;
+        requireAuth?: boolean;
+      },
       command: Command,
     ) => {
       await withContext(command, "workspace ssh", async (ctx) => {
-        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-        if (!ws.host_id) {
-          throw new Error("workspace has no assigned host");
-        }
-
-        const connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
-          { host_id: ws.host_id },
-        ]);
-
-        if (!connection.ssh_server) {
-          throw new Error("host has no ssh server endpoint");
-        }
-        const parsed = parseSshServer(connection.ssh_server);
-        const target = `${ws.project_id}@${parsed.host}`;
-        const baseArgs: string[] = [];
-        if (parsed.port != null) {
-          baseArgs.push("-p", String(parsed.port));
-        }
-        baseArgs.push(target);
-
-        const commandLine = `ssh ${baseArgs.map((x) => (x.includes(" ") ? JSON.stringify(x) : x)).join(" ")}`;
         if (opts.connect && opts.check) {
           throw new Error("use either --connect or --check, not both");
         }
+        const shouldConnect = !!opts.connect || sshArgs.length > 0;
+        const route = await resolveWorkspaceSshConnection(ctx, opts.workspace, {
+          direct: !!opts.direct,
+        });
+        const baseArgs: string[] = [];
+        let sshServer = route.ssh_server;
+        if (route.transport === "cloudflare-access-tcp") {
+          const cloudflareHostname = route.cloudflare_hostname;
+          if (!cloudflareHostname) {
+            throw new Error("workspace ssh route is missing cloudflare hostname");
+          }
+          const cloudflared =
+            opts.check || shouldConnect
+              ? resolveCloudflaredBinary()
+              : `${process.env.COCALC_CLI_CLOUDFLARED ?? "cloudflared"}`.trim() ||
+                "cloudflared";
+          const proxyCommand = `${cloudflared} access ssh --hostname ${cloudflareHostname}`;
+          baseArgs.push("-o", `ProxyCommand=${proxyCommand}`);
+          baseArgs.push(`${route.ssh_username}@${cloudflareHostname}`);
+          sshServer = `${cloudflareHostname}:443`;
+        } else {
+          if (!route.ssh_host) {
+            throw new Error("workspace ssh route is missing host endpoint");
+          }
+          if (route.ssh_port != null) {
+            baseArgs.push("-p", String(route.ssh_port));
+          }
+          baseArgs.push(`${route.ssh_username}@${route.ssh_host}`);
+        }
+
+        const commandLine = `ssh ${baseArgs.map((x) => (x.includes(" ") ? JSON.stringify(x) : x)).join(" ")}`;
 
         if (opts.check) {
           const checkArgs = [
@@ -4674,8 +4786,9 @@ workspace
           if (result.code !== 0) {
             if (!opts.requireAuth && isLikelySshAuthFailure(result.stderr)) {
               return {
-                workspace_id: ws.project_id,
-                ssh_server: connection.ssh_server,
+                workspace_id: route.workspace.project_id,
+                ssh_transport: route.transport,
+                ssh_server: sshServer,
                 checked: true,
                 command: commandLine,
                 auth_ok: false,
@@ -4690,20 +4803,20 @@ workspace
             throw new Error(`ssh check failed (exit ${result.code})${suffix}`);
           }
           return {
-            workspace_id: ws.project_id,
-            ssh_server: connection.ssh_server,
+            workspace_id: route.workspace.project_id,
+            ssh_transport: route.transport,
+            ssh_server: sshServer,
             checked: true,
             command: commandLine,
             auth_ok: true,
             exit_code: 0,
           };
         }
-
-        const shouldConnect = !!opts.connect || sshArgs.length > 0;
         if (!shouldConnect) {
           return {
-            workspace_id: ws.project_id,
-            ssh_server: connection.ssh_server,
+            workspace_id: route.workspace.project_id,
+            ssh_transport: route.transport,
+            ssh_server: sshServer,
             command: commandLine,
           };
         }
@@ -4713,8 +4826,9 @@ workspace
           process.exitCode = code;
         }
         return {
-          workspace_id: ws.project_id,
-          ssh_server: connection.ssh_server,
+          workspace_id: route.workspace.project_id,
+          ssh_transport: route.transport,
+          ssh_server: sshServer,
           exit_code: code,
         };
       });

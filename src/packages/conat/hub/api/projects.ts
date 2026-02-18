@@ -59,6 +59,17 @@ export interface ProjectRuntimeLog {
   reason?: string;
 }
 
+export type WorkspaceSshTransport = "cloudflare-access-tcp" | "direct";
+
+export interface WorkspaceSshConnectionInfo {
+  workspace_id: string;
+  host_id: string;
+  transport: WorkspaceSshTransport;
+  ssh_username: string;
+  ssh_server: string | null;
+  cloudflare_hostname: string | null;
+}
+
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
@@ -73,6 +84,7 @@ export const projects = {
   getDiskQuota: authFirstRequireAccount,
   exec: authFirstRequireAccount,
   getRuntimeLog: authFirstRequireAccount,
+  resolveWorkspaceSshConnection: authFirstRequireAccount,
 
   createBackup: authFirstRequireAccount,
   deleteBackup: authFirstRequireAccount,
@@ -237,6 +249,12 @@ export interface Projects {
     project_id: string;
     lines?: number;
   }) => Promise<ProjectRuntimeLog>;
+
+  resolveWorkspaceSshConnection: (opts: {
+    account_id?: string;
+    project_id: string;
+    direct?: boolean;
+  }) => Promise<WorkspaceSshConnectionInfo>;
 
   /////////////
   // BACKUPS

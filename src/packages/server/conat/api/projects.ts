@@ -31,6 +31,7 @@ import { assertCollab } from "./util";
 import type {
   ProjectCopyRow,
   ProjectRuntimeLog,
+  WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 
 export async function copyPathBetweenProjects({
@@ -242,6 +243,61 @@ export async function getRuntimeLog({
         ? undefined
         : "workspace is not running"
       : "workspace container not found",
+  };
+}
+
+export async function resolveWorkspaceSshConnection({
+  account_id,
+  project_id,
+  direct,
+}: {
+  account_id?: string;
+  project_id: string;
+  direct?: boolean;
+}): Promise<WorkspaceSshConnectionInfo> {
+  await assertCollab({ account_id, project_id });
+  const { rows } = await getPool().query<{
+    host_id: string | null;
+    ssh_server: string | null;
+    metadata: any;
+  }>(
+    `SELECT p.host_id, h.ssh_server, h.metadata
+       FROM projects p
+       LEFT JOIN project_hosts h ON h.id=p.host_id AND h.deleted IS NULL
+      WHERE p.project_id=$1
+      LIMIT 1`,
+    [project_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("workspace not found");
+  }
+  if (!row.host_id) {
+    throw new Error("workspace has no assigned host");
+  }
+  const cloudflareHostname =
+    `${row.metadata?.cloudflare_tunnel?.ssh_hostname ?? ""}`.trim() || null;
+  const sshServer = row.ssh_server ?? null;
+  if (!direct && cloudflareHostname) {
+    return {
+      workspace_id: project_id,
+      host_id: row.host_id,
+      transport: "cloudflare-access-tcp",
+      ssh_username: project_id,
+      ssh_server: null,
+      cloudflare_hostname: cloudflareHostname,
+    };
+  }
+  if (!sshServer) {
+    throw new Error("host has no ssh server endpoint");
+  }
+  return {
+    workspace_id: project_id,
+    host_id: row.host_id,
+    transport: "direct",
+    ssh_username: project_id,
+    ssh_server: sshServer,
+    cloudflare_hostname: cloudflareHostname,
   };
 }
 

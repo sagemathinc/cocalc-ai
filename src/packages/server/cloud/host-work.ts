@@ -189,6 +189,8 @@ async function ensureDnsForHost(row: any) {
         existing.id !== tunnel.id ||
         existing.hostname !== tunnel.hostname ||
         existing.record_id !== tunnel.record_id ||
+        existing.ssh_hostname !== tunnel.ssh_hostname ||
+        existing.ssh_record_id !== tunnel.ssh_record_id ||
         existing.token !== tunnel.token;
       const nextMetadata = {
         ...(row.metadata ?? {}),

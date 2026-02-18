@@ -306,6 +306,8 @@ export type BootstrapScripts = {
     enabled: boolean;
     hostname?: string;
     port?: number;
+    sshHostname?: string;
+    sshPort?: number;
     token?: string;
     tunnelId?: string;
     credsJson?: string;
@@ -583,6 +585,8 @@ export async function buildBootstrapScripts(
         enabled: true,
         hostname: tunnel.hostname,
         port,
+        sshHostname: tunnel.ssh_hostname,
+        sshPort,
         token: useToken ? tunnel.token : undefined,
         tunnelId: tunnel.id,
         credsJson: useToken ? undefined : creds,
