@@ -9,10 +9,12 @@ import { client as filesystemClient } from "@cocalc/conat/files/file-server";
 export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
+import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import {
   updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl,
 } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control";
+import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
@@ -26,7 +28,10 @@ import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { assertCollab } from "./util";
-import type { ProjectCopyRow } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectCopyRow,
+  ProjectRuntimeLog,
+} from "@cocalc/conat/hub/api/projects";
 
 export async function copyPathBetweenProjects({
   src,
@@ -127,6 +132,12 @@ import { callback2 } from "@cocalc/util/async-utils";
 
 const log = getLogger("server:conat:api:projects");
 
+function normalizeLogTail(lines?: number): number {
+  const n = Number(lines ?? 200);
+  if (!Number.isFinite(n)) return 200;
+  return Math.max(1, Math.min(5000, Math.floor(n)));
+}
+
 
 export async function setQuotas(opts: {
   account_id: string;
@@ -178,6 +189,60 @@ export async function exec({
   execOpts: ExecuteCodeOptions;
 }): Promise<ExecuteCodeOutput> {
   return await execProject({ account_id, project_id, execOpts });
+}
+
+export async function getRuntimeLog({
+  account_id,
+  project_id,
+  lines,
+}: {
+  account_id: string;
+  project_id: string;
+  lines?: number;
+}): Promise<ProjectRuntimeLog> {
+  await assertCollab({ account_id, project_id });
+  const tail = normalizeLogTail(lines);
+  const { rows } = await getPool().query<{ host_id: string | null }>(
+    "SELECT host_id FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  const host_id = rows[0]?.host_id ?? null;
+  if (!host_id) {
+    return {
+      project_id,
+      host_id: null,
+      container: `project-${project_id}`,
+      lines: tail,
+      text: "",
+      found: false,
+      running: false,
+      available: false,
+      reason: "workspace has no assigned host",
+    };
+  }
+  const client = createHostControlClient({
+    host_id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.getProjectRuntimeLog({
+    project_id,
+    lines: tail,
+  });
+  return {
+    project_id,
+    host_id,
+    container: response.container,
+    lines: response.lines,
+    text: response.text,
+    found: response.found,
+    running: response.running,
+    available: response.found && response.running,
+    reason: response.found
+      ? response.running
+        ? undefined
+        : "workspace is not running"
+      : "workspace container not found",
+  };
 }
 
 export async function start({

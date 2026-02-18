@@ -47,6 +47,18 @@ export interface BackupFindResult {
   size: number;
 }
 
+export interface ProjectRuntimeLog {
+  project_id: string;
+  host_id: string | null;
+  container: string;
+  lines: number;
+  text: string;
+  found: boolean;
+  running: boolean;
+  available: boolean;
+  reason?: string;
+}
+
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
@@ -60,6 +72,7 @@ export const projects = {
 
   getDiskQuota: authFirstRequireAccount,
   exec: authFirstRequireAccount,
+  getRuntimeLog: authFirstRequireAccount,
 
   createBackup: authFirstRequireAccount,
   deleteBackup: authFirstRequireAccount,
@@ -218,6 +231,12 @@ export interface Projects {
     project_id: string;
     execOpts: ExecuteCodeOptions;
   }) => Promise<ExecuteCodeOutput>;
+
+  getRuntimeLog: (opts: {
+    account_id?: string;
+    project_id: string;
+    lines?: number;
+  }) => Promise<ProjectRuntimeLog>;
 
   /////////////
   // BACKUPS

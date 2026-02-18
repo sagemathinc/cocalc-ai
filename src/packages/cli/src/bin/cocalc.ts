@@ -18,7 +18,11 @@ import { connect as connectConat, type Client as ConatClient } from "@cocalc/con
 import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
-import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostConnectionInfo,
+  HostSoftwareArtifact,
+  HostSoftwareChannel,
+} from "@cocalc/conat/hub/api/hosts";
 import type { LroScopeType, LroSummary as HubLroSummary } from "@cocalc/conat/hub/api/lro";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { fsClient, fsSubject, type FilesystemClient } from "@cocalc/conat/files/fs";
@@ -169,6 +173,48 @@ type HostRow = {
   last_seen?: string | null;
   public_ip?: string | null;
   machine?: Record<string, any> | null;
+  version?: string | null;
+  project_bundle_version?: string | null;
+  tools_version?: string | null;
+};
+
+type HostRuntimeLogRow = {
+  host_id: string;
+  source: string;
+  lines: number;
+  text: string;
+};
+
+type HostSshAuthorizedKeysRow = {
+  host_id: string;
+  user: string;
+  home: string;
+  path: string;
+  keys: string[];
+};
+
+type HostSoftwareVersionRow = {
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+  version?: string;
+  url?: string;
+  sha256?: string;
+  available: boolean;
+  error?: string;
+};
+
+type WorkspaceRuntimeLogRow = {
+  project_id: string;
+  host_id: string | null;
+  container: string;
+  lines: number;
+  text: string;
+  running: boolean;
+  found: boolean;
+  available: boolean;
+  reason?: string;
 };
 
 type LroStatus = {
@@ -191,6 +237,7 @@ const WORKSPACE_CONTEXT_FILENAME = ".cocalc-workspace";
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const HOST_CONNECTION_CACHE_TTL_MS = 15_000;
+const HOST_SSH_RESOLVE_TIMEOUT_MS = 5_000;
 const DAEMON_CONNECT_TIMEOUT_MS = 3_000;
 const DAEMON_RPC_TIMEOUT_MS = 30_000;
 
@@ -2707,6 +2754,107 @@ async function listHosts(
   return hosts;
 }
 
+function normalizeHostSoftwareArtifactValue(value: string): HostSoftwareArtifact {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "project-host" || normalized === "host") {
+    return "project-host";
+  }
+  if (
+    normalized === "project" ||
+    normalized === "project-bundle" ||
+    normalized === "bundle"
+  ) {
+    return "project";
+  }
+  if (normalized === "tools" || normalized === "tool") {
+    return "tools";
+  }
+  throw new Error(
+    `invalid artifact '${value}'; expected one of: project-host, project, tools`,
+  );
+}
+
+function parseHostSoftwareArtifactsOption(values?: string[]): HostSoftwareArtifact[] {
+  if (!values?.length) {
+    return ["project-host", "project", "tools"];
+  }
+  const artifacts = values.map((value) =>
+    normalizeHostSoftwareArtifactValue(value),
+  );
+  return Array.from(new Set(artifacts));
+}
+
+function parseHostSoftwareChannelsOption(values?: string[]): HostSoftwareChannel[] {
+  if (!values?.length) {
+    return ["latest"];
+  }
+  const channels = values.map((value) => {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "latest" || normalized === "stable") return "latest";
+    if (normalized === "staging") return "staging";
+    throw new Error(
+      `invalid channel '${value}'; expected one of: latest, staging`,
+    );
+  });
+  return Array.from(new Set(channels));
+}
+
+async function resolveHostSshEndpoint(
+  ctx: CommandContext,
+  hostIdentifier: string,
+): Promise<{
+  host: HostRow;
+  ssh_host: string;
+  ssh_port: number | null;
+  ssh_server: string | null;
+}> {
+  const host = await resolveHost(ctx, hostIdentifier);
+  let connection: HostConnectionInfo | null = null;
+  try {
+    connection = await Promise.race([
+      hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
+        { host_id: host.id },
+      ]),
+      new Promise<HostConnectionInfo>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `hosts.resolveHostConnection timed out after ${HOST_SSH_RESOLVE_TIMEOUT_MS}ms`,
+              ),
+            ),
+          HOST_SSH_RESOLVE_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+  } catch (err) {
+    cliDebug("host ssh: resolveHostConnection failed, falling back to host ip", {
+      host_id: host.id,
+      err: err instanceof Error ? err.message : `${err}`,
+    });
+  }
+  if (connection?.ssh_server) {
+    const parsed = parseSshServer(connection.ssh_server);
+    return {
+      host,
+      ssh_host: parsed.host,
+      ssh_port: parsed.port ?? null,
+      ssh_server: connection.ssh_server,
+    };
+  }
+  const machine = (host.machine ?? {}) as Record<string, any>;
+  const fallbackHost = `${host.public_ip ?? machine?.metadata?.public_ip ?? ""}`.trim();
+  if (!fallbackHost) {
+    throw new Error("host has no ssh endpoint or public ip");
+  }
+  return {
+    host,
+    ssh_host: fallbackHost,
+    ssh_port: null,
+    ssh_server: null,
+  };
+}
+
 async function waitForLro(
   ctx: CommandContext,
   opId: string,
@@ -4565,6 +4713,38 @@ workspace
           ssh_server: connection.ssh_server,
           exit_code: code,
         };
+      });
+    },
+  );
+
+workspace
+  .command("logs")
+  .description("show workspace runtime logs from project-host (prints nothing if not running)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--tail <n>", "number of log lines", "200")
+  .action(
+    async (
+      opts: { workspace?: string; tail?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace logs", async (ctx) => {
+        const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+        const tail = Number(opts.tail ?? "200");
+        if (!Number.isFinite(tail) || tail <= 0) {
+          throw new Error("--tail must be a positive integer");
+        }
+        const log = await hubCallAccount<WorkspaceRuntimeLogRow>(
+          ctx,
+          "projects.getRuntimeLog",
+          [{ project_id: ws.project_id, lines: Math.floor(tail) }],
+        );
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          if (log.text) {
+            emitWorkspaceFileCatHumanContent(log.text);
+          }
+          return null;
+        }
+        return log;
       });
     },
   );
@@ -6574,9 +6754,310 @@ host
         last_seen: h.last_seen ?? null,
         public_ip: h.public_ip ?? null,
         machine: h.machine ?? null,
+        version: h.version ?? null,
+        project_bundle_version: h.project_bundle_version ?? null,
+        tools_version: h.tools_version ?? null,
       };
     });
   });
+
+host
+  .command("logs <host>")
+  .description("tail project-host runtime log")
+  .option("--tail <n>", "number of log lines", "200")
+  .option("--lines <n>", "deprecated alias for --tail")
+  .action(
+    async (
+      hostIdentifier: string,
+      opts: { tail?: string; lines?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "host logs", async (ctx) => {
+        const h = await resolveHost(ctx, hostIdentifier);
+        const lines = Number(opts.tail ?? opts.lines ?? "200");
+        if (!Number.isFinite(lines) || lines <= 0) {
+          throw new Error("--tail must be a positive integer");
+        }
+        const log = await hubCallAccount<HostRuntimeLogRow>(ctx, "hosts.getHostRuntimeLog", [
+          { id: h.id, lines: Math.floor(lines) },
+        ]);
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          emitWorkspaceFileCatHumanContent(log.text ?? "");
+          return null;
+        }
+        return log;
+      });
+    },
+  );
+
+host
+  .command("versions")
+  .description("show available software versions (latest plus optional history)")
+  .option(
+    "--artifact <artifact...>",
+    "artifact(s): project-host, project, tools (default: all)",
+  )
+  .option(
+    "--channel <channel...>",
+    "channel(s): latest, staging (default: latest)",
+  )
+  .option("--limit <n>", "max versions per artifact/channel", "10")
+  .option(
+    "--hub-source",
+    "use this CoCalc site's /software endpoint as base URL",
+  )
+  .option("--base-url <url>", "software base url override")
+  .option("--os <os>", "target OS: linux or darwin", "linux")
+  .option("--arch <arch>", "target arch: amd64 or arm64", "amd64")
+  .action(
+    async (
+      opts: {
+        artifact?: string[];
+        channel?: string[];
+        limit?: string;
+        hubSource?: boolean;
+        baseUrl?: string;
+        os?: string;
+        arch?: string;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "host versions", async (ctx) => {
+        const artifacts = parseHostSoftwareArtifactsOption(opts.artifact);
+        const channels = parseHostSoftwareChannelsOption(opts.channel);
+        const osValue = `${opts.os ?? "linux"}`.trim().toLowerCase();
+        if (osValue !== "linux" && osValue !== "darwin") {
+          throw new Error("--os must be one of: linux, darwin");
+        }
+        const archValue = `${opts.arch ?? "amd64"}`.trim().toLowerCase();
+        if (archValue !== "amd64" && archValue !== "arm64") {
+          throw new Error("--arch must be one of: amd64, arm64");
+        }
+        const limit = Number(opts.limit ?? "10");
+        if (!Number.isFinite(limit) || limit <= 0) {
+          throw new Error("--limit must be a positive integer");
+        }
+        if (opts.baseUrl && opts.hubSource) {
+          throw new Error("use either --base-url or --hub-source, not both");
+        }
+        const baseUrl = opts.hubSource
+          ? `${ctx.apiBaseUrl.replace(/\/+$/, "")}/software`
+          : opts.baseUrl;
+        return await hubCallAccount<HostSoftwareVersionRow[]>(
+          ctx,
+          "hosts.listHostSoftwareVersions",
+          [
+            {
+              base_url: baseUrl,
+              artifacts,
+              channels,
+              os: osValue,
+              arch: archValue,
+              history_limit: Math.floor(limit),
+            },
+          ],
+        );
+      });
+    },
+  );
+
+host
+  .command("upgrade <host>")
+  .description("upgrade host software")
+  .option(
+    "--artifact <artifact...>",
+    "artifact(s): project-host, project, tools (default: all)",
+  )
+  .option("--channel <channel>", "channel: latest or staging", "latest")
+  .option("--version <version>", "explicit version (overrides channel)")
+  .option(
+    "--hub-source",
+    "use this CoCalc site's /software endpoint as base URL",
+  )
+  .option("--base-url <url>", "software base url override")
+  .option("--wait", "wait for completion")
+  .action(
+    async (
+      hostIdentifier: string,
+      opts: {
+        artifact?: string[];
+        channel?: string;
+        version?: string;
+        hubSource?: boolean;
+        baseUrl?: string;
+        wait?: boolean;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "host upgrade", async (ctx) => {
+        const h = await resolveHost(ctx, hostIdentifier);
+        const artifacts = parseHostSoftwareArtifactsOption(opts.artifact);
+        const channelRaw = `${opts.channel ?? "latest"}`.trim().toLowerCase();
+        const channel: HostSoftwareChannel =
+          channelRaw === "staging" ? "staging" : "latest";
+        if (channelRaw !== "latest" && channelRaw !== "staging") {
+          throw new Error("--channel must be one of: latest, staging");
+        }
+        const version = `${opts.version ?? ""}`.trim() || undefined;
+        if (opts.baseUrl && opts.hubSource) {
+          throw new Error("use either --base-url or --hub-source, not both");
+        }
+        const baseUrl = opts.hubSource
+          ? `${ctx.apiBaseUrl.replace(/\/+$/, "")}/software`
+          : opts.baseUrl;
+        const targets = artifacts.map((artifact) => ({
+          artifact,
+          ...(version ? { version } : { channel }),
+        }));
+        const op = await hubCallAccount<{ op_id: string }>(
+          ctx,
+          "hosts.upgradeHostSoftware",
+          [{ id: h.id, targets, base_url: baseUrl }],
+        );
+        if (!opts.wait) {
+          return {
+            host_id: h.id,
+            op_id: op.op_id,
+            status: "queued",
+            targets,
+          };
+        }
+        const summary = await waitForLro(ctx, op.op_id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (summary.timedOut) {
+          throw new Error(
+            `host upgrade timed out (op=${op.op_id}, last_status=${summary.status})`,
+          );
+        }
+        if (summary.status !== "succeeded") {
+          throw new Error(
+            `host upgrade failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+          );
+        }
+        return {
+          host_id: h.id,
+          op_id: op.op_id,
+          status: summary.status,
+          targets,
+        };
+      });
+    },
+  );
+
+host
+  .command("ssh <host>")
+  .description("ssh into host (owner-only key install supported)")
+  .option("--user <user>", "ssh username", "ubuntu")
+  .option("--port <port>", "override ssh port")
+  .option("--identity <path>", "ssh private key path")
+  .option("--install-key", "install local public key into host authorized_keys")
+  .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+  .option("--print", "print ssh command without connecting")
+  .option("--no-connect", "do not open ssh session")
+  .action(
+    async (
+      hostIdentifier: string,
+      opts: {
+        user?: string;
+        port?: string;
+        identity?: string;
+        installKey?: boolean;
+        keyPath?: string;
+        print?: boolean;
+        connect?: boolean;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "host ssh", async (ctx) => {
+        const endpoint = await resolveHostSshEndpoint(ctx, hostIdentifier);
+        let installResult: (HostSshAuthorizedKeysRow & { added: boolean }) | null = null;
+        let keyInfo: SyncKeyInfo | null = null;
+        if (opts.installKey) {
+          keyInfo = await ensureSyncKeyPair(opts.keyPath);
+          installResult = await hubCallAccount<HostSshAuthorizedKeysRow & { added: boolean }>(
+            ctx,
+            "hosts.addHostSshAuthorizedKey",
+            [
+              {
+                id: endpoint.host.id,
+                public_key: keyInfo.public_key,
+              },
+            ],
+          );
+        }
+
+        const user = `${opts.user ?? "ubuntu"}`.trim() || "ubuntu";
+        const parsedPort = opts.port == null ? undefined : Number(opts.port);
+        if (
+          parsedPort != null &&
+          (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535)
+        ) {
+          throw new Error("--port must be an integer between 1 and 65535");
+        }
+        const port = parsedPort ?? endpoint.ssh_port ?? undefined;
+        const sshTarget = `${user}@${endpoint.ssh_host}`;
+        const sshArgs: string[] = [];
+        if (port != null) {
+          sshArgs.push("-p", String(port));
+        }
+        if (opts.identity) {
+          sshArgs.push("-i", expandUserPath(opts.identity));
+        }
+        sshArgs.push(sshTarget);
+        const sshCommand = `ssh ${sshArgs.map((arg) => JSON.stringify(arg)).join(" ")}`;
+
+        if (ctx.globals.json || ctx.globals.output === "json") {
+          if (opts.print === false && opts.connect !== false) {
+            throw new Error("interactive ssh is not supported with --json; use --print or --no-connect");
+          }
+          return {
+            host_id: endpoint.host.id,
+            host_name: endpoint.host.name,
+            ssh_server: endpoint.ssh_server,
+            ssh_host: endpoint.ssh_host,
+            ssh_port: port ?? null,
+            ssh_target: sshTarget,
+            command: sshCommand,
+            key_installed: installResult?.added ?? false,
+            key_path: keyInfo?.public_key_path ?? null,
+          };
+        }
+
+        if (opts.print || opts.connect === false) {
+          return {
+            host_id: endpoint.host.id,
+            host_name: endpoint.host.name,
+            ssh_server: endpoint.ssh_server,
+            ssh_host: endpoint.ssh_host,
+            ssh_port: port ?? null,
+            ssh_target: sshTarget,
+            command: sshCommand,
+            key_installed: installResult?.added ?? false,
+            key_path: keyInfo?.public_key_path ?? null,
+          };
+        }
+
+        const result = spawnSync("ssh", sshArgs, { stdio: "inherit" });
+        if (result.error) {
+          throw new Error(`failed to run ssh: ${result.error.message}`);
+        }
+        const status = result.status ?? 0;
+        if (status !== 0) {
+          throw new Error(`ssh exited with code ${status}`);
+        }
+        return {
+          host_id: endpoint.host.id,
+          host_name: endpoint.host.name,
+          ssh_target: sshTarget,
+          key_installed: installResult?.added ?? false,
+          key_path: keyInfo?.public_key_path ?? null,
+          status: "connected",
+        };
+      });
+    },
+  );
 
 host
   .command("create-self <name>")

@@ -22,6 +22,28 @@ export interface HostCreateProjectResponse {
   state?: ProjectState | string;
 }
 
+export interface HostRuntimeLogResponse {
+  source: string;
+  lines: number;
+  text: string;
+}
+
+export interface HostProjectRuntimeLogResponse {
+  project_id: string;
+  container: string;
+  lines: number;
+  text: string;
+  found: boolean;
+  running: boolean;
+}
+
+export interface HostSshAuthorizedKeysResponse {
+  user: string;
+  home: string;
+  path: string;
+  keys: string[];
+}
+
 export interface HostControlApi {
   createProject: (
     opts: HostCreateProjectRequest,
@@ -50,6 +72,18 @@ export interface HostControlApi {
     opts: UpgradeSoftwareRequest,
   ) => Promise<UpgradeSoftwareResponse>;
   growBtrfs: (opts: { disk_gb?: number }) => Promise<{ ok: boolean }>;
+  getRuntimeLog: (opts: { lines?: number }) => Promise<HostRuntimeLogResponse>;
+  getProjectRuntimeLog: (opts: {
+    project_id: string;
+    lines?: number;
+  }) => Promise<HostProjectRuntimeLogResponse>;
+  listHostSshAuthorizedKeys: () => Promise<HostSshAuthorizedKeysResponse>;
+  addHostSshAuthorizedKey: (opts: {
+    public_key: string;
+  }) => Promise<HostSshAuthorizedKeysResponse & { added: boolean }>;
+  removeHostSshAuthorizedKey: (opts: {
+    public_key: string;
+  }) => Promise<HostSshAuthorizedKeysResponse & { removed: boolean }>;
   // Later: updateProject to adjust title/users/etc.
 }
 
