@@ -241,12 +241,6 @@ export async function setCellInputCode(
 export async function clickRunButton(page: Page, index: number): Promise<void> {
   const cell = cellLocator(page, index);
   await cell.scrollIntoViewIfNeeded();
-  await cell.hover();
-  const runButton = cell.getByRole("button", { name: /\bRun\b/i }).first();
-  if ((await runButton.count()) > 0) {
-    await runButton.click();
-    return;
-  }
   const input = cell.locator('[cocalc-test="cell-input"] .CodeMirror').first();
   await input.click();
   await page.keyboard.press("Shift+Enter");

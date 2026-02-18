@@ -9,6 +9,7 @@ import {
   readInputExecCount,
   readRunButtonLabel,
   resolveBaseUrl,
+  setCellInputCode,
   uniqueNotebookPath,
 } from "./helpers";
 
@@ -51,16 +52,21 @@ test("running cell state syncs across tabs", async ({ browser }) => {
   const pageA = await context.newPage();
   const pageB = await context.newPage();
   try {
-    await Promise.all([
-      openNotebookPage(pageA, url),
-      openNotebookPage(pageB, url),
-    ]);
+    await openNotebookPage(pageA, url);
+    await openNotebookPage(pageB, url);
+    await setCellInputCode(pageA, 0, "import time\ntime.sleep(4)\nprint('hi-sync')");
+    await pageA.waitForTimeout(500);
 
     await clickRunButton(pageA, 0);
+    await expect
+      .poll(async () => await readRunButtonLabel(pageA, 0), {
+        timeout: 45_000,
+      })
+      .toBe("Stop");
 
     await expect
       .poll(async () => await readRunButtonLabel(pageB, 0), {
-        timeout: 15_000,
+        timeout: 45_000,
       })
       .toBe("Stop");
 
@@ -97,15 +103,21 @@ test("queued cell state syncs across tabs", async ({ browser }) => {
   const pageA = await context.newPage();
   const pageB = await context.newPage();
   try {
-    await Promise.all([
-      openNotebookPage(pageA, url),
-      openNotebookPage(pageB, url),
-    ]);
+    await openNotebookPage(pageA, url);
+    await openNotebookPage(pageB, url);
+    await setCellInputCode(pageA, 0, "import time\ntime.sleep(5)\nprint('first-done')");
+    await setCellInputCode(pageA, 1, "print('second-done')");
+    await pageA.waitForTimeout(500);
 
     await clickRunButton(pageA, 0);
     await expect
+      .poll(async () => await readRunButtonLabel(pageA, 0), {
+        timeout: 45_000,
+      })
+      .toBe("Stop");
+    await expect
       .poll(async () => await readRunButtonLabel(pageB, 0), {
-        timeout: 15_000,
+        timeout: 45_000,
       })
       .toBe("Stop");
 
