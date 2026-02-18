@@ -781,7 +781,12 @@ function cookieNameFor(baseUrl: string, name: string): string {
   return basePathCookieName({ basePath, name });
 }
 
-function buildCookieHeader(baseUrl: string, globals: GlobalOptions): string | undefined {
+function buildCookieHeader(
+  baseUrl: string,
+  globals: GlobalOptions,
+  options: { includeHubPassword?: boolean } = {},
+): string | undefined {
+  const includeHubPassword = options.includeHubPassword !== false;
   const parts: string[] = [];
   if (globals.cookie?.trim()) {
     parts.push(globals.cookie.trim());
@@ -796,12 +801,16 @@ function buildCookieHeader(baseUrl: string, globals: GlobalOptions): string | un
     }
   }
 
-  const hubPassword = normalizeSecretValue(globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD);
-  if (hubPassword?.trim()) {
-    const scopedName = cookieNameFor(baseUrl, "hub_password");
-    parts.push(`${scopedName}=${hubPassword}`);
-    if (scopedName !== "hub_password") {
-      parts.push(`hub_password=${hubPassword}`);
+  if (includeHubPassword) {
+    const hubPassword = normalizeSecretValue(
+      globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
+    );
+    if (hubPassword?.trim()) {
+      const scopedName = cookieNameFor(baseUrl, "hub_password");
+      parts.push(`${scopedName}=${hubPassword}`);
+      if (scopedName !== "hub_password") {
+        parts.push(`hub_password=${hubPassword}`);
+      }
     }
   }
 
@@ -1368,10 +1377,10 @@ function isProjectHostAuthError(err: unknown): boolean {
   );
 }
 
-function localProxyProjectHostAddress(apiBaseUrl: string, host_id: string): string {
+function localProxyProjectHostAddress(apiBaseUrl: string, routeId: string): string {
   const url = new URL(normalizeUrl(apiBaseUrl));
   const base = url.pathname.replace(/\/+$/, "");
-  url.pathname = `${base}/${host_id}`.replace(/\/+/g, "/");
+  url.pathname = `${base}/${routeId}`.replace(/\/+/g, "/");
   if (!url.pathname.startsWith("/")) {
     url.pathname = `/${url.pathname}`;
   }
@@ -1466,7 +1475,7 @@ async function getOrCreateRoutedProjectHostClient(
     });
   }
   const address = connection.local_proxy
-    ? localProxyProjectHostAddress(ctx.apiBaseUrl, host_id)
+    ? localProxyProjectHostAddress(ctx.apiBaseUrl, workspace.project_id)
     : connection.connect_url
       ? normalizeUrl(connection.connect_url)
       : "";
@@ -1486,10 +1495,14 @@ async function getOrCreateRoutedProjectHostClient(
     host_id,
     address,
   };
+  const cookie = connection.local_proxy
+    ? buildCookieHeader(ctx.apiBaseUrl, ctx.globals, { includeHubPassword: false })
+    : undefined;
   const routed = connectConat({
     address,
     noCache: true,
     reconnection: false,
+    ...(cookie ? { extraHeaders: { Cookie: cookie } } : undefined),
     auth: async (cb) => {
       try {
         const token = await issueProjectHostAuthToken(ctx, state, workspace.project_id);

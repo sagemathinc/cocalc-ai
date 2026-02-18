@@ -375,6 +375,7 @@ async function runCli<T>(
   const fullArgs = [
     cli.cliPath,
     "--json",
+    "--no-daemon",
     "--api",
     cli.apiUrl,
     "--timeout",
@@ -450,7 +451,7 @@ async function assertWorkspaceSshRouteMatchesLocalTunnel({
     ssh_server?: string | null;
     ssh_transport?: string;
     workspace_id?: string;
-  }>(cli, ["workspace", "ssh", "--workspace", workspaceId]);
+  }>(cli, ["workspace", "ssh-info", "--workspace", workspaceId]);
   const sshServer = `${route.ssh_server ?? ""}`.trim();
   if (!sshServer) {
     throw new Error("workspace ssh returned no ssh_server");
@@ -924,7 +925,7 @@ export async function runSelfHostMultipassBackupSmoke(
   let workspaceFileTempDir: string | undefined;
   const sentinelPath = "smoke-self-host-backup/self-host-backup.txt";
   const sentinelValue = `self-host-smoke:${Date.now()}:${randomUUID()}`;
-  const copyDestPath = "smoke-self-host-backup/copied-from-project-1.txt";
+  const copyDestPath = "copied-from-project-1.txt";
   const proxyExpectedBody = `proxy-self-host-smoke:${randomUUID()}`;
   const debug_hints = {
     host_log: "/mnt/cocalc/data/log",
@@ -999,7 +1000,14 @@ export async function runSelfHostMultipassBackupSmoke(
       try {
         await runCli<{ checked?: boolean; exit_code?: number }>(
           cli,
-          ["workspace", "ssh", "--workspace", workspaceId, "--check"],
+          [
+            "workspace",
+            "ssh",
+            "--workspace",
+            workspaceId,
+            "--check",
+            "--require-auth",
+          ],
           {
             timeoutSeconds: 30,
             commandTimeoutMs: 45_000,
@@ -1022,6 +1030,43 @@ export async function runSelfHostMultipassBackupSmoke(
     }
     throw new Error(
       `workspace ssh check did not succeed: ${getErrorMessage(lastErr ?? "unknown error")}`,
+    );
+  };
+
+  const runWorkspaceSshExecCheck = async (
+    workspaceId: string,
+    opts: { attempts?: number; intervalMs?: number } = {},
+  ): Promise<void> => {
+    const attempts = Math.max(1, opts.attempts ?? 20);
+    const intervalMs = Math.max(250, opts.intervalMs ?? 2000);
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        await runCli<{ exit_code?: number }>(
+          cli,
+          ["workspace", "ssh", "--workspace", workspaceId, "--", "true"],
+          {
+            timeoutSeconds: 45,
+            commandTimeoutMs: 60_000,
+          },
+        );
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (attempt >= attempts) {
+          throw err;
+        }
+        logger.debug("self-host smoke workspace ssh exec retry", {
+          workspace_id: workspaceId,
+          attempt,
+          attempts,
+          err: getErrorMessage(err),
+        });
+        await sleep(intervalMs);
+      }
+    }
+    throw new Error(
+      `workspace ssh command did not succeed: ${getErrorMessage(lastErr ?? "unknown error")}`,
     );
   };
 
@@ -1389,6 +1434,10 @@ export async function runSelfHostMultipassBackupSmoke(
         if (!project_id) throw new Error("missing project_id");
         await runWorkspaceSshCheck(project_id, { attempts: 30, intervalMs: 2000 });
       });
+      await runStep("verify_workspace_ssh_exec", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        await runWorkspaceSshExecCheck(project_id, { attempts: 20, intervalMs: 2000 });
+      });
       await runStep("verify_workspace_ssh_route", async () => {
         if (!project_id || !host_id) {
           throw new Error("missing workspace ssh route context");
@@ -1548,19 +1597,6 @@ echo $! > "$dir/server.pid"
           if (!project_id || !copy_project_id) {
             throw new Error("missing cross-project copy context");
           }
-          await runWorkspaceFileCommandWithRetry(
-            [
-              "mkdir",
-              "--workspace",
-              copy_project_id,
-              dirname(copyDestPath),
-            ],
-            {
-              timeoutSeconds: 60,
-              attempts: 30,
-              intervalMs: 2000,
-            },
-          );
           const op = await runCli<{ op_id?: string }>(cli, [
             "workspace",
             "copy-path",
@@ -1758,19 +1794,6 @@ echo $! > "$dir/server.pid"
           if (!project_id || !copy_project_id) {
             throw new Error("missing cross-host copy context");
           }
-          await runWorkspaceFileCommandWithRetry(
-            [
-              "mkdir",
-              "--workspace",
-              copy_project_id,
-              dirname(copyDestPath),
-            ],
-            {
-              timeoutSeconds: 60,
-              attempts: 30,
-              intervalMs: 2000,
-            },
-          );
           const op = await runCli<{ op_id?: string }>(cli, [
             "workspace",
             "copy-path",
