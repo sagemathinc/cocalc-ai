@@ -76,6 +76,8 @@ short-lived host tokens kept in-process (no on-disk token cache). All
 `workspace file` subcommands are daemon-enabled and auto-start the daemon unless
 `--no-daemon` is set, which keeps routed host connections warm for lower latency.
 These file commands do not require the workspace to be running.
+Use `workspace file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
+against the current workspace context or `--workspace`.
 
 ## Auth Commands
 
@@ -116,6 +118,7 @@ These file commands do not require the workspace to be running.
 - `workspace file mkdir`
 - `workspace file rg`
 - `workspace file fd`
+- `workspace file check`
 - `workspace snapshot create`
 - `workspace snapshot list`
 - `host resolve-connection`

@@ -1746,6 +1746,257 @@ async function workspaceFileFdData({
   };
 }
 
+type WorkspaceFileCheckResult = {
+  step: string;
+  status: "ok" | "fail" | "skip";
+  duration_ms: number;
+  detail: string;
+};
+
+type WorkspaceFileCheckReport = {
+  ok: boolean;
+  workspace_id: string;
+  workspace_title: string;
+  temp_path: string;
+  kept: boolean;
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  results: WorkspaceFileCheckResult[];
+};
+
+function normalizeWorkspacePathPrefix(value: string | undefined): string {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return ".cocalc-cli-check";
+  const trimmed = raw.replace(/^\/+/, "").replace(/\/+$/, "");
+  return trimmed || ".cocalc-cli-check";
+}
+
+function joinWorkspacePath(...parts: string[]): string {
+  const normalized = parts
+    .map((x) => `${x}`.trim())
+    .filter(Boolean)
+    .map((x) => x.replace(/^\/+/, "").replace(/\/+$/, ""))
+    .filter(Boolean);
+  return normalized.join("/");
+}
+
+function assertWorkspaceCheck(
+  condition: unknown,
+  message: string,
+): void {
+  if (!condition) throw new Error(message);
+}
+
+async function runWorkspaceFileCheck({
+  ctx,
+  workspaceIdentifier,
+  pathPrefix,
+  timeoutMs,
+  maxBytes,
+  keep,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  pathPrefix?: string;
+  timeoutMs: number;
+  maxBytes: number;
+  keep: boolean;
+}): Promise<WorkspaceFileCheckReport> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier);
+  const prefix = normalizeWorkspacePathPrefix(pathPrefix);
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const tempPath = joinWorkspacePath(prefix, runId);
+  const fileName = "probe.txt";
+  const filePath = joinWorkspacePath(tempPath, fileName);
+  const marker = `cocalc-cli-check-${runId}`;
+  const content = `${marker}\n`;
+  const results: WorkspaceFileCheckResult[] = [];
+
+  const record = async <T>(
+    step: string,
+    fn: () => Promise<T>,
+    onSuccess?: (value: T) => string,
+  ): Promise<T | undefined> => {
+    const started = Date.now();
+    try {
+      const value = await fn();
+      results.push({
+        step,
+        status: "ok",
+        duration_ms: Date.now() - started,
+        detail: onSuccess ? onSuccess(value) : "ok",
+      });
+      return value;
+    } catch (err) {
+      results.push({
+        step,
+        status: "fail",
+        duration_ms: Date.now() - started,
+        detail: err instanceof Error ? err.message : `${err}`,
+      });
+      return undefined;
+    }
+  };
+
+  await record(
+    "mkdir",
+    async () =>
+      await workspaceFileMkdirData({
+        ctx,
+        workspaceIdentifier: workspace.project_id,
+        path: tempPath,
+        parents: true,
+      }),
+    () => `created ${tempPath}`,
+  );
+
+  await record(
+    "put",
+    async () =>
+      await workspaceFilePutData({
+        ctx,
+        workspaceIdentifier: workspace.project_id,
+        dest: filePath,
+        data: Buffer.from(content),
+        parents: true,
+      }),
+    (value: any) => `uploaded ${value?.bytes ?? Buffer.byteLength(content)} bytes`,
+  );
+
+  await record("list", async () => {
+    const rows = await workspaceFileListData({
+      ctx,
+      workspaceIdentifier: workspace.project_id,
+      path: tempPath,
+    });
+    assertWorkspaceCheck(
+      rows.some((row) => `${row.name ?? ""}` === fileName),
+      `expected '${fileName}' in directory listing`,
+    );
+    return rows;
+  }, () => `found ${fileName}`);
+
+  await record("cat", async () => {
+    const data = await workspaceFileCatData({
+      ctx,
+      workspaceIdentifier: workspace.project_id,
+      path: filePath,
+    });
+    assertWorkspaceCheck(
+      `${data.content ?? ""}` === content,
+      "cat content mismatch",
+    );
+    return data;
+  }, () => `read ${filePath}`);
+
+  await record("get", async () => {
+    const data = await workspaceFileGetData({
+      ctx,
+      workspaceIdentifier: workspace.project_id,
+      src: filePath,
+    });
+    const decoded = Buffer.from(`${data.content_base64 ?? ""}`, "base64").toString("utf8");
+    assertWorkspaceCheck(decoded === content, "get content mismatch");
+    return data;
+  }, () => `downloaded ${filePath}`);
+
+  await record("rg", async () => {
+    const data = await workspaceFileRgData({
+      ctx,
+      workspaceIdentifier: workspace.project_id,
+      pattern: marker,
+      path: tempPath,
+      timeoutMs,
+      maxBytes,
+      options: ["-F"],
+    });
+    assertWorkspaceCheck(
+      Number(data.exit_code ?? 1) === 0,
+      `rg exit_code=${data.exit_code ?? "unknown"}`,
+    );
+    assertWorkspaceCheck(
+      `${data.stdout ?? ""}`.includes(fileName),
+      `rg output missing '${fileName}'`,
+    );
+    return data;
+  }, () => `matched ${fileName}`);
+
+  await record("fd", async () => {
+    const data = await workspaceFileFdData({
+      ctx,
+      workspaceIdentifier: workspace.project_id,
+      pattern: fileName,
+      path: tempPath,
+      timeoutMs,
+      maxBytes,
+    });
+    assertWorkspaceCheck(
+      Number(data.exit_code ?? 1) === 0,
+      `fd exit_code=${data.exit_code ?? "unknown"}`,
+    );
+    assertWorkspaceCheck(
+      `${data.stdout ?? ""}`.includes(fileName),
+      `fd output missing '${fileName}'`,
+    );
+    return data;
+  }, () => `matched ${fileName}`);
+
+  if (keep) {
+    results.push({
+      step: "rm",
+      status: "skip",
+      duration_ms: 0,
+      detail: "skipped (--keep)",
+    });
+  } else {
+    await record(
+      "rm",
+      async () =>
+        await workspaceFileRmData({
+          ctx,
+          workspaceIdentifier: workspace.project_id,
+          path: tempPath,
+          recursive: true,
+          force: true,
+        }),
+      () => `removed ${tempPath}`,
+    );
+  }
+
+  if (!keep) {
+    // Best-effort cleanup if rm check failed earlier.
+    try {
+      await workspaceFileRmData({
+        ctx,
+        workspaceIdentifier: workspace.project_id,
+        path: tempPath,
+        recursive: true,
+        force: true,
+      });
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+
+  const passed = results.filter((x) => x.status === "ok").length;
+  const failed = results.filter((x) => x.status === "fail").length;
+  const skipped = results.filter((x) => x.status === "skip").length;
+  return {
+    ok: failed === 0,
+    workspace_id: workspace.project_id,
+    workspace_title: workspace.title,
+    temp_path: tempPath,
+    kept: keep,
+    total: results.length,
+    passed,
+    failed,
+    skipped,
+    results,
+  };
+}
+
 async function resolveHost(ctx: CommandContext, identifier: string): Promise<HostRow> {
   const hosts = await hubCallAccount<HostRow[]>(ctx, "hosts.listHosts", [
     { include_deleted: false, catalog: true },
@@ -3997,6 +4248,68 @@ file
         }
         return data;
       });
+    },
+  );
+
+file
+  .command("check")
+  .description("run sanity checks for workspace file operations")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--path-prefix <path>", "temporary workspace path prefix", ".cocalc-cli-check")
+  .option("--timeout <seconds>", "timeout seconds for rg/fd checks", "30")
+  .option("--max-bytes <bytes>", "max combined output bytes for rg/fd checks", "20000000")
+  .option("--keep", "keep temporary check files in the workspace")
+  .action(
+    async (
+      opts: {
+        workspace?: string;
+        pathPrefix?: string;
+        timeout?: string;
+        maxBytes?: string;
+        keep?: boolean;
+      },
+      command: Command,
+    ) => {
+      let globals: GlobalOptions = {};
+      let ctx: CommandContext | undefined;
+      try {
+        globals = globalsFrom(command);
+        ctx = await contextForGlobals(globals);
+        const timeoutMs = Math.max(1, (Number(opts.timeout ?? "30") || 30) * 1000);
+        const maxBytes = Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000);
+        const report = await runWorkspaceFileCheck({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          pathPrefix: opts.pathPrefix,
+          timeoutMs,
+          maxBytes,
+          keep: !!opts.keep,
+        });
+
+        if (ctx.globals.json || ctx.globals.output === "json") {
+          emitSuccess(ctx, "workspace file check", report);
+        } else if (!ctx.globals.quiet) {
+          printArrayTable(report.results.map((x) => ({ ...x })));
+          console.log(
+            `summary: ${report.passed}/${report.total} passed (${report.failed} failed, ${report.skipped} skipped)`,
+          );
+          console.log(`workspace_id: ${report.workspace_id}`);
+          console.log(`temp_path: ${report.temp_path}${report.kept ? " (kept)" : ""}`);
+        }
+
+        if (!report.ok) {
+          process.exitCode = 1;
+        }
+      } catch (error) {
+        emitError(
+          { globals, apiBaseUrl: ctx?.apiBaseUrl, accountId: ctx?.accountId },
+          "workspace file check",
+          error,
+        );
+        process.exitCode = 1;
+      } finally {
+        closeCommandContext(ctx);
+      }
     },
   );
 
