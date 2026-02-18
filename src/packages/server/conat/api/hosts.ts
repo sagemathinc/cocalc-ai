@@ -113,7 +113,6 @@ const HOST_PROJECTS_MAX_LIMIT = 5000;
 const DEFAULT_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
 const SOFTWARE_HISTORY_MAX_LIMIT = 50;
 const SOFTWARE_HISTORY_DEFAULT_LIMIT = 1;
-const NPM_VERSIONS_CACHE_TTL_MS = 5 * 60 * 1000;
 const SOFTWARE_FETCH_TIMEOUT_MS = 8_000;
 
 function logStatusUpdate(id: string, status: string, source: string) {
@@ -2898,210 +2897,194 @@ async function fetchSoftwareManifest(url: string): Promise<any> {
   return await response.json();
 }
 
-async function fetchSoftwareUrlText(url: string): Promise<string | undefined> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SOFTWARE_FETCH_TIMEOUT_MS);
+async function fetchSoftwareManifestMaybe(url: string): Promise<any | undefined> {
   try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) return undefined;
-    return await response.text();
+    return await fetchSoftwareManifest(url);
   } catch {
     return undefined;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
-function isSemverTriplet(version?: string): boolean {
-  return /^\d+\.\d+\.\d+$/.test(`${version ?? ""}`);
-}
-
-function semverCompareDesc(a: string, b: string): number {
-  const pa = a.split(".").map((x) => Number(x));
-  const pb = b.split(".").map((x) => Number(x));
-  for (let i = 0; i < 3; i++) {
-    const da = pa[i] ?? 0;
-    const db = pb[i] ?? 0;
-    if (da !== db) return db - da;
-  }
-  return 0;
-}
-
-const npmVersionsCache = new Map<
-  string,
-  { expires_at: number; versions: string[] }
->();
-
-function packageForArtifact(artifact: "project-host" | "project" | "tools"): string {
-  if (artifact === "project-host") return "@cocalc/project-host";
-  // project and tools are built from @cocalc/project releases.
-  return "@cocalc/project";
-}
-
-function artifactFilename({
-  artifact,
-  os,
-  arch,
-}: {
-  artifact: "project-host" | "project" | "tools";
-  os: "linux" | "darwin";
-  arch: "amd64" | "arm64";
-}): string {
-  if (artifact === "tools") return `tools-${os}-${arch}.tar.xz`;
-  return `bundle-${os}.tar.xz`;
-}
-
-function artifactVersionUrl({
-  baseUrl,
-  artifact,
-  version,
-  os,
-  arch,
-}: {
-  baseUrl: string;
-  artifact: "project-host" | "project" | "tools";
-  version: string;
-  os: "linux" | "darwin";
-  arch: "amd64" | "arm64";
-}): string {
-  return `${baseUrl}/${artifact}/${version}/${artifactFilename({ artifact, os, arch })}`;
-}
-
-async function softwareArtifactExists(url: string): Promise<boolean> {
-  const headController = new AbortController();
-  const headTimer = setTimeout(
-    () => headController.abort(),
-    SOFTWARE_FETCH_TIMEOUT_MS,
-  );
-  try {
-    const head = await fetch(url, {
-      method: "HEAD",
-      signal: headController.signal,
-    });
-    if (head.ok) return true;
-  } catch {
-    // Some endpoints disallow HEAD; fall back to GET.
-  } finally {
-    clearTimeout(headTimer);
-  }
-  const getController = new AbortController();
-  const getTimer = setTimeout(
-    () => getController.abort(),
-    SOFTWARE_FETCH_TIMEOUT_MS,
-  );
-  try {
-    const get = await fetch(url, {
-      headers: { Range: "bytes=0-0" },
-      signal: getController.signal,
-    });
-    return get.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(getTimer);
-  }
-}
-
-async function npmPackageVersions(pkg: string): Promise<string[]> {
-  const cached = npmVersionsCache.get(pkg);
-  if (cached && cached.expires_at > Date.now()) {
-    return cached.versions;
-  }
-  const encoded = encodeURIComponent(pkg);
-  const url = `https://registry.npmjs.org/${encoded}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SOFTWARE_FETCH_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!response.ok) {
-    throw new Error(`failed to fetch npm versions for ${pkg}: HTTP ${response.status}`);
-  }
-  const body: any = await response.json();
-  const versions = Object.keys(body?.versions ?? {})
-    .filter((v) => isSemverTriplet(v))
-    .sort(semverCompareDesc);
-  npmVersionsCache.set(pkg, {
-    expires_at: Date.now() + NPM_VERSIONS_CACHE_TTL_MS,
-    versions,
-  });
-  return versions;
-}
-
-function normalizeSoftwareHistoryLimit(value?: number): number {
-  const n = Number(value ?? SOFTWARE_HISTORY_DEFAULT_LIMIT);
-  if (!Number.isFinite(n)) return SOFTWARE_HISTORY_DEFAULT_LIMIT;
-  return Math.max(1, Math.min(SOFTWARE_HISTORY_MAX_LIMIT, Math.floor(n)));
-}
-
-async function resolveHistoricalSoftwareRows({
+function softwareVersionsIndexUrl({
   baseUrl,
   artifact,
   channel,
   os,
   arch,
-  latestVersion,
+}: {
+  baseUrl: string;
+  artifact: "project-host" | "project" | "tools";
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+}): string {
+  if (artifact === "tools") {
+    return `${baseUrl}/${artifact}/versions-${channel}-${os}-${arch}.json`;
+  }
+  return `${baseUrl}/${artifact}/versions-${channel}-${os}.json`;
+}
+
+function normalizePublishedVersionRows(index: any): any[] {
+  if (Array.isArray(index?.versions)) {
+    return index.versions;
+  }
+  if (Array.isArray(index)) {
+    return index;
+  }
+  return [];
+}
+
+function softwareVersionRowKey({
+  version,
+  url,
+}: {
+  version?: string;
+  url?: string;
+}): string {
+  const v = `${version ?? ""}`.trim();
+  if (v) return `v:${v}`;
+  const u = `${url ?? ""}`.trim();
+  if (u) return `u:${u}`;
+  return "";
+}
+
+function mapPublishedVersionRow({
+  artifact,
+  channel,
+  os,
+  arch,
+  canonical,
+  row,
+}: {
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+  canonical: "project-host" | "project" | "tools";
+  row: any;
+}): HostSoftwareAvailableVersion | undefined {
+  const url = typeof row?.url === "string" ? row.url : undefined;
+  let version = typeof row?.version === "string" ? row.version : undefined;
+  if (!version && url) {
+    version = extractVersionFromSoftwareUrl(canonical, url);
+  }
+  const available = !!url;
+  if (!available && !version) return undefined;
+  return {
+    artifact,
+    channel,
+    os,
+    arch,
+    version,
+    url,
+    sha256: typeof row?.sha256 === "string" ? row.sha256 : undefined,
+    available,
+    error: available ? undefined : "version entry missing url",
+  };
+}
+
+async function resolvePublishedSoftwareRows({
+  baseUrl,
+  artifact,
+  channel,
+  os,
+  arch,
   limit,
+  latest,
 }: {
   baseUrl: string;
   artifact: HostSoftwareArtifact;
   channel: HostSoftwareChannel;
   os: "linux" | "darwin";
   arch: "amd64" | "arm64";
-  latestVersion?: string;
   limit: number;
+  latest: HostSoftwareAvailableVersion;
 }): Promise<HostSoftwareAvailableVersion[]> {
+  if (limit <= 1) return [latest];
   const canonical = canonicalizeSoftwareArtifact(artifact);
-  if (!latestVersion || !isSemverTriplet(latestVersion) || limit <= 1) return [];
-  const pkg = packageForArtifact(canonical);
-  let candidates: string[] = [];
-  try {
-    candidates = await npmPackageVersions(pkg);
-  } catch (err) {
-    logger.debug("host software versions: npm history lookup failed", {
-      package: pkg,
-      err: `${err}`,
-    });
-    return [];
-  }
-  const rows: HostSoftwareAvailableVersion[] = [];
-  let probes = 0;
-  const maxProbes = Math.max(limit * 5, 25);
-  for (const version of candidates) {
-    if (version === latestVersion) continue;
-    if (semverCompareDesc(version, latestVersion) < 0) {
-      // version is newer than latestVersion for this channel.
-      continue;
-    }
-    probes += 1;
-    if (probes > maxProbes) break;
-    const url = artifactVersionUrl({
-      baseUrl,
-      artifact: canonical,
-      version,
-      os,
-      arch,
-    });
-    const exists = await softwareArtifactExists(url);
-    if (!exists) continue;
-    const shaText = await fetchSoftwareUrlText(`${url}.sha256`);
-    const sha256 = shaText?.trim().split(/\s+/)[0] || undefined;
-    rows.push({
+  const indexUrl = softwareVersionsIndexUrl({
+    baseUrl,
+    artifact: canonical,
+    channel,
+    os,
+    arch,
+  });
+  const index = await fetchSoftwareManifestMaybe(indexUrl);
+  if (!index) return [latest];
+  const rows: HostSoftwareAvailableVersion[] = [latest];
+  const seen = new Set<string>();
+  const latestKey = softwareVersionRowKey(latest);
+  if (latestKey) seen.add(latestKey);
+  for (const candidate of normalizePublishedVersionRows(index)) {
+    const mapped = mapPublishedVersionRow({
       artifact,
       channel,
       os,
       arch,
-      version,
-      url,
-      sha256,
-      available: true,
+      canonical,
+      row: candidate,
     });
-    if (rows.length >= limit - 1) break;
+    if (!mapped) continue;
+    const key = softwareVersionRowKey(mapped);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    rows.push(mapped);
+    if (rows.length >= limit) break;
   }
   return rows;
+}
+
+async function resolveLatestSoftwareRow({
+  softwareBaseUrl,
+  artifact,
+  channel,
+  targetOs,
+  targetArch,
+}: {
+  softwareBaseUrl: string;
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  targetOs: "linux" | "darwin";
+  targetArch: "amd64" | "arm64";
+}): Promise<HostSoftwareAvailableVersion> {
+  const canonical = canonicalizeSoftwareArtifact(artifact);
+  const manifestUrl =
+    canonical === "tools"
+      ? `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}-${targetArch}.json`
+      : `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}.json`;
+  try {
+    const manifest = await fetchSoftwareManifest(manifestUrl);
+    const resolvedUrl =
+      typeof manifest?.url === "string" ? manifest.url : undefined;
+    const resolvedVersion = extractVersionFromSoftwareUrl(canonical, resolvedUrl);
+    return {
+      artifact,
+      channel,
+      os: targetOs,
+      arch: targetArch,
+      version: resolvedVersion,
+      url: resolvedUrl,
+      sha256:
+        typeof manifest?.sha256 === "string" ? manifest.sha256 : undefined,
+      available: !!resolvedUrl,
+      error: resolvedUrl ? undefined : "manifest missing url",
+    };
+  } catch (err) {
+    return {
+      artifact,
+      channel,
+      os: targetOs,
+      arch: targetArch,
+      available: false,
+      error: `${err instanceof Error ? err.message : err}`,
+    };
+  }
+}
+
+function normalizeSoftwareHistoryLimit(value?: number): number {
+  const n = Number(value ?? SOFTWARE_HISTORY_DEFAULT_LIMIT);
+  if (!Number.isFinite(n)) return SOFTWARE_HISTORY_DEFAULT_LIMIT;
+  return Math.max(1, Math.min(SOFTWARE_HISTORY_MAX_LIMIT, Math.floor(n)));
 }
 
 async function resolveHostSoftwareBaseUrl(base_url?: string): Promise<string> {
@@ -3173,51 +3156,28 @@ export async function listHostSoftwareVersions({
   const historyLimit = normalizeSoftwareHistoryLimit(history_limit);
   const rows: HostSoftwareAvailableVersion[] = [];
   for (const artifact of artifactList) {
-    const canonical = canonicalizeSoftwareArtifact(artifact);
     for (const channel of channelList) {
-      const manifestUrl =
-        canonical === "tools"
-          ? `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}-${targetArch}.json`
-          : `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}.json`;
-      try {
-        const manifest = await fetchSoftwareManifest(manifestUrl);
-        const resolvedUrl =
-          typeof manifest?.url === "string" ? manifest.url : undefined;
-        const resolvedVersion = extractVersionFromSoftwareUrl(canonical, resolvedUrl);
-        rows.push({
-          artifact,
-          channel,
-          os: targetOs,
-          arch: targetArch,
-          version: resolvedVersion,
-          url: resolvedUrl,
-          sha256:
-            typeof manifest?.sha256 === "string" ? manifest.sha256 : undefined,
-          available: !!resolvedUrl,
-          error: resolvedUrl ? undefined : "manifest missing url",
-        });
-        if (resolvedUrl && historyLimit > 1) {
-          const historical = await resolveHistoricalSoftwareRows({
-            baseUrl: softwareBaseUrl,
-            artifact,
-            channel,
-            os: targetOs,
-            arch: targetArch,
-            latestVersion: resolvedVersion,
-            limit: historyLimit,
-          });
-          rows.push(...historical);
-        }
-      } catch (err) {
-        rows.push({
-          artifact,
-          channel,
-          os: targetOs,
-          arch: targetArch,
-          available: false,
-          error: `${err instanceof Error ? err.message : err}`,
-        });
+      const latest = await resolveLatestSoftwareRow({
+        softwareBaseUrl,
+        artifact,
+        channel,
+        targetOs,
+        targetArch,
+      });
+      if (!latest.available) {
+        rows.push(latest);
+        continue;
       }
+      const resolved = await resolvePublishedSoftwareRows({
+        baseUrl: softwareBaseUrl,
+        artifact,
+        channel,
+        os: targetOs,
+        arch: targetArch,
+        limit: historyLimit,
+        latest,
+      });
+      rows.push(...resolved);
     }
   }
   return rows;

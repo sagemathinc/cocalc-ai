@@ -6797,7 +6797,9 @@ host
 
 host
   .command("versions")
-  .description("show available software versions (latest plus optional history)")
+  .description(
+    "show available software versions (latest plus source-published history)",
+  )
   .option(
     "--artifact <artifact...>",
     "artifact(s): project-host, project, tools (default: all)",
