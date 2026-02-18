@@ -128,6 +128,20 @@ export default function CellTiming({
         </Space>
       </Tooltip>
     );
+  } else if (last != null) {
+    return (
+      <Tooltip
+        title={
+          <>
+            Previous run took {humanReadableSeconds(last / 1000)}.
+            {kernel ? " " : ""}
+            {kernel ? `Kernel: ${capitalize(kernel)}.` : ""}
+          </>
+        }
+      >
+        <span style={{ cursor: "pointer" }}>{seconds2hms(last / 1000)}</span>
+      </Tooltip>
+    );
   } else {
     return null;
   }
