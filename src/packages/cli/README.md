@@ -76,6 +76,7 @@ short-lived host tokens kept in-process (no on-disk token cache). All
 `workspace file` subcommands are daemon-enabled and auto-start the daemon unless
 `--no-daemon` is set, which keeps routed host connections warm for lower latency.
 These file commands do not require the workspace to be running.
+`workspace sync forward ...` uses `reflect-sync` for SSH forward sessions.
 Use `workspace file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
 against the current workspace context or `--workspace`.
 Use `workspace file check --bench --bench-runs <n>` to run repeated checks with
@@ -112,6 +113,12 @@ per-run and per-step timing summaries.
 - `workspace ssh --check --require-auth`
 - `workspace move --host --wait`
 - `workspace copy-path --wait`
+- `workspace sync key ensure`
+- `workspace sync key show`
+- `workspace sync key install`
+- `workspace sync forward create`
+- `workspace sync forward list`
+- `workspace sync forward terminate`
 - `workspace file list`
 - `workspace file cat`
 - `workspace file put`

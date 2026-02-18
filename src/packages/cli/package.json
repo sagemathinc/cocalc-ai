@@ -38,7 +38,8 @@
     "@cocalc/conat": "workspace:*",
     "@cocalc/util": "workspace:*",
     "ascii-table3": "^1.0.1",
-    "commander": "^14.0.1"
+    "commander": "^14.0.1",
+    "reflect-sync": "0.15.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.10",

@@ -3,8 +3,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir as mkdirLocal, readFile as readFileLocal, writeFile as writeFileLocal } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { createServer as createNetServer, createConnection as createNetConnection, type Server as NetServer } from "node:net";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { dirname, join } from "node:path";
 import { URL } from "node:url";
@@ -45,6 +46,7 @@ const cliDebugEnabled =
   cliVerboseFlag ||
   process.env.COCALC_CLI_DEBUG === "1" ||
   process.env.COCALC_CLI_DEBUG === "true";
+const requireCjs = createRequire(__filename);
 
 // conat/core/client may emit this warning via console.log on auth failures.
 // Keep it off stdout so table/json output remains parseable.
@@ -2341,6 +2343,368 @@ function commandExists(command: string): boolean {
   return !message.toLowerCase().includes("enoent");
 }
 
+type CommandCaptureResult = {
+  code: number;
+  stdout: string;
+  stderr: string;
+};
+
+type SyncKeyInfo = {
+  private_key_path: string;
+  public_key_path: string;
+  public_key: string;
+  created: boolean;
+};
+
+type WorkspaceSshTarget = {
+  workspace: WorkspaceRow;
+  ssh_server: string;
+  ssh_host: string;
+  ssh_port: number | null;
+  ssh_target: string;
+};
+
+type ReflectForwardRecord = {
+  id: number;
+  name?: string | null;
+  direction?: "local_to_remote" | "remote_to_local";
+  ssh_host: string;
+  ssh_port?: number | null;
+  local_host: string;
+  local_port: number;
+  remote_host: string;
+  remote_port: number;
+  desired_state?: string;
+  actual_state?: string;
+  monitor_pid?: number | null;
+  last_error?: string | null;
+  ssh_args?: string | null;
+};
+
+function expandUserPath(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (trimmed === "~") {
+    return homedir();
+  }
+  if (trimmed.startsWith("~/")) {
+    return join(homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+
+function defaultSyncKeyBasePath(): string {
+  return join(homedir(), ".ssh", "id_ed25519");
+}
+
+function normalizeSyncKeyBasePath(input?: string): string {
+  const raw = `${input ?? ""}`.trim();
+  if (!raw) {
+    return defaultSyncKeyBasePath();
+  }
+  const expanded = expandUserPath(raw);
+  if (expanded.endsWith(".pub")) {
+    return expanded.slice(0, -4);
+  }
+  return expanded;
+}
+
+function syncKeyPublicPath(basePath: string): string {
+  return `${basePath}.pub`;
+}
+
+function readSyncPublicKey(basePath: string): string {
+  const pubPath = syncKeyPublicPath(basePath);
+  const publicKey = readFileSync(pubPath, "utf8").trim();
+  if (!publicKey) {
+    throw new Error(`ssh public key is empty: ${pubPath}`);
+  }
+  return publicKey;
+}
+
+async function ensureSyncKeyPair(keyPathInput?: string): Promise<SyncKeyInfo> {
+  const privateKeyPath = normalizeSyncKeyBasePath(keyPathInput);
+  const publicKeyPath = syncKeyPublicPath(privateKeyPath);
+  const privateExists = existsSync(privateKeyPath);
+  const publicExists = existsSync(publicKeyPath);
+  if (privateExists && publicExists) {
+    return {
+      private_key_path: privateKeyPath,
+      public_key_path: publicKeyPath,
+      public_key: readSyncPublicKey(privateKeyPath),
+      created: false,
+    };
+  }
+  if (privateExists !== publicExists) {
+    throw new Error(
+      `incomplete ssh keypair: expected both '${privateKeyPath}' and '${publicKeyPath}'`,
+    );
+  }
+
+  mkdirSync(dirname(privateKeyPath), { recursive: true, mode: 0o700 });
+  const comment = `cocalc-cli-sync-${hostname()}`;
+  const created = spawnSync(
+    "ssh-keygen",
+    ["-t", "ed25519", "-f", privateKeyPath, "-N", "", "-C", comment],
+    {
+      encoding: "utf8",
+    },
+  );
+  if (created.error) {
+    const message = (created.error as Error).message ?? `${created.error}`;
+    throw new Error(`failed to run ssh-keygen: ${message}`);
+  }
+  if (created.status !== 0) {
+    const stderr = `${created.stderr ?? ""}`.trim();
+    throw new Error(stderr || `ssh-keygen failed with exit code ${created.status}`);
+  }
+  if (!existsSync(privateKeyPath) || !existsSync(publicKeyPath)) {
+    throw new Error("ssh-keygen completed, but key files were not created");
+  }
+  return {
+    private_key_path: privateKeyPath,
+    public_key_path: publicKeyPath,
+    public_key: readSyncPublicKey(privateKeyPath),
+    created: true,
+  };
+}
+
+function isNotFoundLikeError(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    message.includes("enoent") ||
+    message.includes("not found") ||
+    message.includes("no such file") ||
+    message.includes("does not exist")
+  );
+}
+
+async function installSyncPublicKey({
+  ctx,
+  workspaceIdentifier,
+  publicKey,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  publicKey: string;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const trimmedKey = publicKey.trim();
+  if (!trimmedKey) {
+    throw new Error("public key is empty");
+  }
+
+  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
+  const sshDir = ".ssh";
+  const authorizedKeysPath = ".ssh/authorized_keys";
+  await fs.mkdir(sshDir, { recursive: true });
+
+  let existing = "";
+  try {
+    existing = String(await fs.readFile(authorizedKeysPath, "utf8"));
+  } catch (err) {
+    if (!isNotFoundLikeError(err)) {
+      throw err;
+    }
+  }
+
+  const existingKeys = existing
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (existingKeys.includes(trimmedKey)) {
+    return {
+      workspace_id: workspace.project_id,
+      workspace_title: workspace.title,
+      path: authorizedKeysPath,
+      installed: false,
+      already_present: true,
+    };
+  }
+
+  const prefix = existing.length === 0 || existing.endsWith("\n") ? existing : `${existing}\n`;
+  const next = `${prefix}${trimmedKey}\n`;
+  await fs.writeFile(authorizedKeysPath, Buffer.from(next, "utf8"));
+  return {
+    workspace_id: workspace.project_id,
+    workspace_title: workspace.title,
+    path: authorizedKeysPath,
+    installed: true,
+    already_present: false,
+  };
+}
+
+async function resolveWorkspaceSshTarget(
+  ctx: CommandContext,
+  workspaceIdentifier?: string,
+  cwd = process.cwd(),
+): Promise<WorkspaceSshTarget> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  if (!workspace.host_id) {
+    throw new Error("workspace has no assigned host");
+  }
+  const connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
+    { host_id: workspace.host_id },
+  ]);
+  if (!connection.ssh_server) {
+    throw new Error("host has no ssh server endpoint");
+  }
+  const parsed = parseSshServer(connection.ssh_server);
+  const sshHost = `${workspace.project_id}@${parsed.host}`;
+  const sshTarget = parsed.port != null ? `${sshHost}:${parsed.port}` : sshHost;
+  return {
+    workspace,
+    ssh_server: connection.ssh_server,
+    ssh_host: sshHost,
+    ssh_port: parsed.port ?? null,
+    ssh_target: sshTarget,
+  };
+}
+
+function reflectSyncHomeDir(): string {
+  return process.env.COCALC_REFLECT_HOME ?? join(dirname(authConfigPath()), "reflect-sync");
+}
+
+function reflectSyncSessionDbPath(): string {
+  return join(reflectSyncHomeDir(), "sessions.db");
+}
+
+function resolveReflectSyncCliEntry(): string {
+  try {
+    return requireCjs.resolve("reflect-sync/cli");
+  } catch {
+    throw new Error(
+      "reflect-sync is not installed in @cocalc/cli (add it to dependencies and run pnpm install)",
+    );
+  }
+}
+
+async function runCommandCapture(
+  command: string,
+  args: string[],
+  {
+    env,
+  }: {
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): Promise<CommandCaptureResult> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: env ?? process.env,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      resolve({
+        code: code ?? 1,
+        stdout,
+        stderr,
+      });
+    });
+  });
+}
+
+async function runReflectSyncCli(args: string[]): Promise<CommandCaptureResult> {
+  const reflectHome = reflectSyncHomeDir();
+  mkdirSync(reflectHome, { recursive: true, mode: 0o700 });
+  const cliEntry = resolveReflectSyncCliEntry();
+  const result = await runCommandCapture(
+    process.execPath,
+    [
+      cliEntry,
+      "--log-level",
+      "error",
+      "--session-db",
+      reflectSyncSessionDbPath(),
+      ...args,
+    ],
+    {
+      env: {
+        ...process.env,
+        REFLECT_HOME: reflectHome,
+      },
+    },
+  );
+  if (result.code !== 0) {
+    const message = result.stderr.trim() || result.stdout.trim();
+    throw new Error(message || `reflect-sync exited with code ${result.code}`);
+  }
+  return result;
+}
+
+function parseReflectForwardRows(raw: string): ReflectForwardRecord[] {
+  const text = raw.trim();
+  if (!text) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new Error(
+      `unable to parse reflect-sync forward list JSON: ${err instanceof Error ? err.message : `${err}`}`,
+    );
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("reflect-sync forward list did not return an array");
+  }
+  return parsed as ReflectForwardRecord[];
+}
+
+async function listReflectForwards(): Promise<ReflectForwardRecord[]> {
+  const result = await runReflectSyncCli(["forward", "list", "--json"]);
+  return parseReflectForwardRows(result.stdout);
+}
+
+function parseCreatedForwardId(output: string): number | null {
+  const match = output.match(/created forward\s+(\d+)/i);
+  if (!match?.[1]) return null;
+  const value = Number(match[1]);
+  if (!Number.isInteger(value) || value <= 0) return null;
+  return value;
+}
+
+function forwardsForWorkspace(
+  rows: ReflectForwardRecord[],
+  workspaceId: string,
+): ReflectForwardRecord[] {
+  const prefix = `${workspaceId}@`;
+  return rows.filter((row) => `${row.ssh_host ?? ""}`.startsWith(prefix));
+}
+
+function formatReflectForwardRow(row: ReflectForwardRecord): Record<string, unknown> {
+  const sshHost = `${row.ssh_host ?? ""}`;
+  const workspaceId = sshHost.includes("@") ? sshHost.split("@")[0] : null;
+  const target = row.ssh_port ? `${sshHost}:${row.ssh_port}` : sshHost;
+  return {
+    id: row.id,
+    name: row.name ?? null,
+    workspace_id: workspaceId,
+    direction: row.direction ?? null,
+    target,
+    local: `${row.local_host}:${row.local_port}`,
+    remote_port: row.remote_port,
+    state: row.actual_state ?? null,
+    desired_state: row.desired_state ?? null,
+    monitor_pid: row.monitor_pid ?? null,
+    last_error: row.last_error ?? null,
+  };
+}
+
+async function terminateReflectForwards(forwardRefs: string[]): Promise<void> {
+  if (!forwardRefs.length) return;
+  await runReflectSyncCli(["forward", "terminate", ...forwardRefs]);
+}
+
 async function shouldInstallProduct(spec: ProductSpec): Promise<boolean> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return false;
@@ -3833,6 +4197,256 @@ workspace
           dest_path: opts.dest,
           op_id: op.op_id,
           status: summary.status,
+        };
+      });
+    },
+  );
+
+const sync = workspace.command("sync").description("workspace sync and forwarding operations");
+
+const syncKey = sync.command("key").description("manage ssh keys for workspace sync");
+
+syncKey
+  .command("ensure")
+  .description("ensure a local ssh keypair exists for sync/forwarding")
+  .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+  .action(async (opts: { keyPath?: string }, command: Command) => {
+    await runLocalCommand(command, "workspace sync key ensure", async () => {
+      const key = await ensureSyncKeyPair(opts.keyPath);
+      return {
+        private_key_path: key.private_key_path,
+        public_key_path: key.public_key_path,
+        created: key.created,
+      };
+    });
+  });
+
+syncKey
+  .command("show")
+  .description("show the local ssh public key used for sync/forwarding")
+  .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+  .action(async (opts: { keyPath?: string }, command: Command) => {
+    await runLocalCommand(command, "workspace sync key show", async () => {
+      const keyBasePath = normalizeSyncKeyBasePath(opts.keyPath);
+      const publicKeyPath = syncKeyPublicPath(keyBasePath);
+      if (!existsSync(publicKeyPath)) {
+        throw new Error(
+          `ssh public key not found at ${publicKeyPath}; run 'cocalc ws sync key ensure'`,
+        );
+      }
+      return {
+        public_key_path: publicKeyPath,
+        public_key: readSyncPublicKey(keyBasePath),
+      };
+    });
+  });
+
+syncKey
+  .command("install")
+  .description("install a local ssh public key into workspace .ssh/authorized_keys")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+  .option("--no-ensure", "require key to already exist locally")
+  .action(
+    async (
+      opts: { workspace?: string; keyPath?: string; ensure?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace sync key install", async (ctx) => {
+        const keyBasePath = normalizeSyncKeyBasePath(opts.keyPath);
+        const key =
+          opts.ensure === false
+            ? {
+                private_key_path: keyBasePath,
+                public_key_path: syncKeyPublicPath(keyBasePath),
+                public_key: readSyncPublicKey(keyBasePath),
+                created: false,
+              }
+            : await ensureSyncKeyPair(keyBasePath);
+        const installed = await installSyncPublicKey({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          publicKey: key.public_key,
+        });
+        return {
+          ...installed,
+          private_key_path: key.private_key_path,
+          public_key_path: key.public_key_path,
+          key_created: key.created,
+        };
+      });
+    },
+  );
+
+const syncForward = sync
+  .command("forward")
+  .description("manage workspace port forwards via reflect-sync");
+
+syncForward
+  .command("create")
+  .description("forward a workspace port to localhost (reflect-sync managed)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .requiredOption("--remote-port <port>", "workspace port to expose locally")
+  .option("--local-port <port>", "local port (default: same as remote port)")
+  .option("--local-host <host>", "local bind host", "127.0.0.1")
+  .option("--name <name>", "forward name")
+  .option("--compress", "enable ssh compression")
+  .option("--ensure-key", "ensure local ssh key exists before creating forward")
+  .option("--install-key", "install local ssh public key into workspace before creating forward")
+  .option("--key-path <path>", "ssh key base path (default: ~/.ssh/id_ed25519)")
+  .action(
+    async (
+      opts: {
+        workspace?: string;
+        remotePort: string;
+        localPort?: string;
+        localHost?: string;
+        name?: string;
+        compress?: boolean;
+        ensureKey?: boolean;
+        installKey?: boolean;
+        keyPath?: string;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace sync forward create", async (ctx) => {
+        const remotePort = Number(opts.remotePort);
+        if (!Number.isInteger(remotePort) || remotePort <= 0 || remotePort > 65535) {
+          throw new Error("--remote-port must be an integer between 1 and 65535");
+        }
+        const localPort = opts.localPort == null ? remotePort : Number(opts.localPort);
+        if (!Number.isInteger(localPort) || localPort <= 0 || localPort > 65535) {
+          throw new Error("--local-port must be an integer between 1 and 65535");
+        }
+        const localHost = `${opts.localHost ?? "127.0.0.1"}`.trim() || "127.0.0.1";
+
+        const target = await resolveWorkspaceSshTarget(ctx, opts.workspace);
+        let keyInfo: SyncKeyInfo | null = null;
+        let keyInstall: Record<string, unknown> | null = null;
+        if (opts.ensureKey || opts.installKey) {
+          keyInfo = await ensureSyncKeyPair(opts.keyPath);
+        }
+        if (opts.installKey) {
+          keyInfo ??= await ensureSyncKeyPair(opts.keyPath);
+          keyInstall = await installSyncPublicKey({
+            ctx,
+            workspaceIdentifier: target.workspace.project_id,
+            publicKey: keyInfo.public_key,
+          });
+        }
+
+        const remoteEndpoint = `${target.ssh_target}:${remotePort}`;
+        const localEndpoint = `${localHost}:${localPort}`;
+        const forwardName =
+          opts.name ??
+          `ws-${target.workspace.project_id.slice(0, 8)}-${remotePort}-to-${localPort}`;
+        const createArgs = ["forward", "create", remoteEndpoint, localEndpoint];
+        if (forwardName.trim()) {
+          createArgs.push("--name", forwardName);
+        }
+        if (opts.compress) {
+          createArgs.push("--compress");
+        }
+        const created = await runReflectSyncCli(createArgs);
+        const createdId = parseCreatedForwardId(`${created.stdout}\n${created.stderr}`);
+        const rows = await listReflectForwards();
+        const createdRow =
+          createdId == null ? null : rows.find((row) => Number(row.id) === createdId) ?? null;
+
+        return {
+          workspace_id: target.workspace.project_id,
+          workspace_title: target.workspace.title,
+          ssh_server: target.ssh_server,
+          reflect_home: reflectSyncHomeDir(),
+          session_db: reflectSyncSessionDbPath(),
+          forward_id: createdRow?.id ?? createdId,
+          name: createdRow?.name ?? forwardName,
+          local: createdRow
+            ? `${createdRow.local_host}:${createdRow.local_port}`
+            : localEndpoint,
+          remote_port: createdRow?.remote_port ?? remotePort,
+          state: createdRow?.actual_state ?? "running",
+          key_created: keyInfo?.created ?? null,
+          key_path: keyInfo?.private_key_path ?? null,
+          key_installed: keyInstall ? keyInstall.installed : null,
+          key_already_present: keyInstall ? keyInstall.already_present : null,
+        };
+      });
+    },
+  );
+
+syncForward
+  .command("list")
+  .description("list workspace forwards managed by reflect-sync")
+  .option("-w, --workspace <workspace>", "workspace id or name (defaults to context)")
+  .option("--all", "list all local forwards (ignore workspace context)")
+  .action(
+    async (
+      opts: { workspace?: string; all?: boolean },
+      command: Command,
+    ) => {
+      if (opts.all) {
+        await runLocalCommand(command, "workspace sync forward list", async () => {
+          const rows = await listReflectForwards();
+          return rows.map((row) => formatReflectForwardRow(row));
+        });
+        return;
+      }
+      await withContext(command, "workspace sync forward list", async (ctx) => {
+        const target = await resolveWorkspaceSshTarget(ctx, opts.workspace);
+        const rows = await listReflectForwards();
+        return forwardsForWorkspace(rows, target.workspace.project_id).map((row) =>
+          formatReflectForwardRow(row),
+        );
+      });
+    },
+  );
+
+syncForward
+  .command("terminate [forward...]")
+  .alias("stop")
+  .description("terminate one or more forwards")
+  .option("-w, --workspace <workspace>", "workspace id or name (defaults to context)")
+  .option("--all", "terminate all local forwards")
+  .action(
+    async (
+      forwardRefs: string[],
+      opts: { workspace?: string; all?: boolean },
+      command: Command,
+    ) => {
+      const refs = (forwardRefs ?? []).map((x) => `${x}`.trim()).filter(Boolean);
+      if (refs.length > 0) {
+        await runLocalCommand(command, "workspace sync forward terminate", async () => {
+          await terminateReflectForwards(refs);
+          return {
+            terminated: refs.length,
+            refs,
+          };
+        });
+        return;
+      }
+      if (opts.all) {
+        await runLocalCommand(command, "workspace sync forward terminate", async () => {
+          const rows = await listReflectForwards();
+          const ids = rows.map((row) => String(row.id));
+          await terminateReflectForwards(ids);
+          return {
+            terminated: ids.length,
+            refs: ids,
+            scope: "all",
+          };
+        });
+        return;
+      }
+      await withContext(command, "workspace sync forward terminate", async (ctx) => {
+        const target = await resolveWorkspaceSshTarget(ctx, opts.workspace);
+        const rows = forwardsForWorkspace(await listReflectForwards(), target.workspace.project_id);
+        const ids = rows.map((row) => String(row.id));
+        await terminateReflectForwards(ids);
+        return {
+          workspace_id: target.workspace.project_id,
+          terminated: ids.length,
+          refs: ids,
         };
       });
     },
