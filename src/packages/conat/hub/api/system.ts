@@ -18,6 +18,7 @@ export const system = {
   revokeUserAuthToken: noAuth,
   userSearch: authFirst,
   getNames: requireSignedIn,
+  adminCreateUser: authFirst,
   adminResetPasswordLink: authFirst,
   sendEmailVerification: authFirst,
   deletePassport: authFirst,
@@ -129,6 +130,25 @@ export interface System {
           profile?: { color?: string; image?: string };
         }
       | undefined;
+  }>;
+
+  adminCreateUser: (opts: {
+    account_id?: string;
+    email: string;
+    password?: string;
+    first_name?: string;
+    last_name?: string;
+    no_first_project?: boolean;
+    tags?: string[];
+  }) => Promise<{
+    account_id: string;
+    email_address: string;
+    first_name: string;
+    last_name: string;
+    created_by: string;
+    no_first_project: boolean;
+    password_generated: boolean;
+    generated_password?: string;
   }>;
 
   // adminResetPasswordLink: Enables admins (and only admins!) to generate and get a password reset
