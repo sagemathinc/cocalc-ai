@@ -1663,14 +1663,15 @@ export class JupyterActions extends JupyterActions0 {
         trailing: true,
       },
     );
-    handler.on("change", () => {
+    handler.on("change", (save?: boolean) => {
       if (!wroteFirstChange) {
         wroteFirstChange = true;
         this.runDebug("runCells.output.first_write", {
           runId,
           id: cell.id,
+          save: !!save,
         });
-        writeCell(false);
+        writeCell(!!save);
         return;
       }
       writeCellThrottled();

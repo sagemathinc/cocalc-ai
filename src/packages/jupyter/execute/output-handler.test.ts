@@ -10,11 +10,20 @@ describe("OutputHandler", () => {
     ).not.toThrow();
     expect(() =>
       handler.process({
+        msg_type: "cell_start",
+        lifecycle: "cell_start",
+        id: "alpha",
+      } as any),
+    ).not.toThrow();
+    expect(cell.state).toBe("busy");
+    expect(() =>
+      handler.process({
         msg_type: "cell_done",
         lifecycle: "cell_done",
         id: "alpha",
       } as any),
     ).not.toThrow();
+    expect(cell.state).toBe("done");
 
     handler.close();
   });

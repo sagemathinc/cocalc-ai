@@ -161,8 +161,14 @@ export class OutputHandler extends EventEmitter {
 
     const content = mesg.content;
     if (content == null) {
-      // e.g., run lifecycle messages ("run_start", "cell_done", ...) and
-      // other transport markers that intentionally carry no content payload.
+      // e.g., run lifecycle messages and other transport markers that
+      // intentionally carry no content payload.
+      const lifecycle = mesg.msg_type ?? (mesg as any).lifecycle;
+      if (lifecycle === "cell_start") {
+        this.start();
+      } else if (lifecycle === "cell_done") {
+        this.done();
+      }
       return;
     }
 
