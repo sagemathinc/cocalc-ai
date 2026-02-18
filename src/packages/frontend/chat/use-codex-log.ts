@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import LRUCache from "lru-cache";
 import { appendStreamMessage } from "@cocalc/chat";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
@@ -7,6 +8,11 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 // fetch to let the first batch land, so mid-turn openings still see early
 // events. If the throttle changes, update this constant too.
 const LOG_PERSIST_THROTTLE_MS = 1000;
+const RECENT_LOG_CACHE_SIZE = 5;
+
+const recentLogCache = new LRUCache<string, any[]>({
+  max: RECENT_LOG_CACHE_SIZE,
+});
 
 export interface CodexLogOptions {
   projectId?: string;
@@ -23,6 +29,24 @@ export interface CodexLogResult {
   deleteLog: () => Promise<void>;
 }
 
+function recentLogCacheKey({
+  projectId,
+  logStore,
+  logKey,
+}: {
+  projectId?: string;
+  logStore?: string | null;
+  logKey?: string | null;
+}): string | undefined {
+  if (!projectId || !logStore || !logKey) return undefined;
+  return `${projectId}:${logStore}:${logKey}`;
+}
+
+function getEventTime(evt: any): number | undefined {
+  const value = evt?.time;
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 /**
  * Fetch Codex/ACP logs from AKV and live stream from conat during generation.
  * Resets state when the log key changes so logs don't bleed across turns.
@@ -36,9 +60,16 @@ export function useCodexLog({
   enabled = true,
 }: CodexLogOptions): CodexLogResult {
   const hasLogRef = Boolean(logStore && logKey);
+  const cacheKey = recentLogCacheKey({ projectId, logStore, logKey });
 
-  const [fetchedLog, setFetchedLog] = useState<any[] | null>(null);
-  const [liveLog, setLiveLog] = useState<any[]>([]);
+  const [fetchedLog, setFetchedLog] = useState<any[] | null>(() => {
+    if (!cacheKey) return null;
+    return recentLogCache.get(cacheKey) ?? null;
+  });
+  const [liveLog, setLiveLog] = useState<any[]>(() => {
+    if (!cacheKey) return [];
+    return recentLogCache.get(cacheKey) ?? [];
+  });
 
   const mergeLogs = useMemo(() => {
     return (a: any[] | null, b: any[]): any[] => {
@@ -55,8 +86,11 @@ export function useCodexLog({
           seen.set(`no-seq-${seen.size}`, evt);
           continue;
         }
-        if (!seen.has(key)) {
+        const prev = seen.get(key);
+        if (prev == null) {
           seen.set(key, evt);
+        } else if (getEventTime(prev) == null && getEventTime(evt) != null) {
+          seen.set(key, { ...prev, time: getEventTime(evt) });
         }
       }
       const ordered = Array.from(seen.values());
@@ -74,9 +108,15 @@ export function useCodexLog({
 
   // Reset when log ref changes.
   useEffect(() => {
-    setFetchedLog(null);
-    setLiveLog([]);
-  }, [logKey, logStore, logSubject]);
+    if (cacheKey) {
+      const cached = recentLogCache.get(cacheKey);
+      setFetchedLog(cached ?? null);
+      setLiveLog(cached ?? []);
+    } else {
+      setFetchedLog(null);
+      setLiveLog([]);
+    }
+  }, [cacheKey, logSubject]);
 
   // Load from AKV once per key.
   useEffect(() => {
@@ -128,7 +168,9 @@ export function useCodexLog({
           const evt = mesg?.data;
           //console.log("sub got ", evt);
           if (!evt) continue;
-          setLiveLog((prev) => appendStreamMessage(prev ?? [], evt));
+          const withTime =
+            getEventTime(evt) == null ? { ...evt, time: Date.now() } : evt;
+          setLiveLog((prev) => appendStreamMessage(prev ?? [], withTime));
         }
       } catch (err) {
         console.warn("live log subscribe failed", err);
@@ -153,6 +195,11 @@ export function useCodexLog({
     return generating ? liveLog : fetchedLog;
   }, [hasLogRef, fetchedLog, liveLog, generating, mergeLogs]);
 
+  useEffect(() => {
+    if (!cacheKey || !events || !events.length) return;
+    recentLogCache.set(cacheKey, events);
+  }, [cacheKey, events]);
+
   const deleteLog = async () => {
     if (!hasLogRef || !projectId || !logStore || !logKey) return;
     try {
@@ -161,6 +208,9 @@ export function useCodexLog({
       await kv.delete(logKey);
     } catch (err) {
       console.warn("failed to delete acp log", err);
+    }
+    if (cacheKey) {
+      recentLogCache.delete(cacheKey);
     }
     setFetchedLog(null);
     setLiveLog([]);

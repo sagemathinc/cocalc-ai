@@ -4,6 +4,7 @@ import {
   Popconfirm,
   Space,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type {
@@ -11,11 +12,14 @@ import type {
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import { React, redux, useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
+import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { plural } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+
+const VIRTUALIZE_THRESHOLD = 20;
 
 const { Text } = Typography;
 type ActivityEntry =
@@ -23,18 +27,21 @@ type ActivityEntry =
       kind: "reasoning";
       id: string;
       seq: number;
+      time?: number;
       text?: string;
     }
   | {
       kind: "agent";
       id: string;
       seq: number;
+      time?: number;
       text?: string;
     }
   | {
       kind: "status";
       id: string;
       seq: number;
+      time?: number;
       label: string;
       detail?: string;
       level?: "info" | "error";
@@ -43,6 +50,7 @@ type ActivityEntry =
       kind: "diff";
       id: string;
       seq: number;
+      time?: number;
       path: string;
       diff: LineDiffResult;
     }
@@ -50,6 +58,7 @@ type ActivityEntry =
       kind: "terminal";
       id: string;
       seq: number;
+      time?: number;
       terminalId: string;
       command?: string;
       args?: string[];
@@ -65,6 +74,7 @@ type ActivityEntry =
       kind: "file";
       id: string;
       seq: number;
+      time?: number;
       path: string;
       operation: "read" | "write";
       bytes?: number;
@@ -86,6 +96,8 @@ export interface CodexActivityProps {
   onDeleteAllEvents?: () => void;
   onJumpToBottom?: () => void;
   expanded?: boolean;
+  virtualizeEntries?: boolean;
+  scrollParent?: HTMLElement | null;
 }
 
 // Persist log visibility per chat message so Virtuoso remounts don’t reset it.
@@ -103,6 +115,8 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   onDeleteAllEvents,
   onJumpToBottom,
   expanded: initExpanded,
+  virtualizeEntries = false,
+  scrollParent,
 }): React.ReactElement | null => {
   const entries = useMemo(() => normalizeEvents(events ?? []), [events]);
   const [expanded, setExpanded] = useState<boolean>(() => {
@@ -139,6 +153,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   const toggleLabel = expanded ? "Hide log" : `${durationSummary} (show)`;
 
   const showCloseButton = IS_TOUCH || hovered;
+  const useVirtualizedEntries = virtualizeEntries && entries.length > VIRTUALIZE_THRESHOLD;
 
   if (!expanded) {
     return (
@@ -264,15 +279,35 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     >
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
         {header}
-        {entries.map((entry) => (
-          <ActivityRow
-            key={entry.id}
-            entry={entry}
-            fontSize={baseFontSize}
-            projectId={projectId}
-            basePath={basePath}
+        {useVirtualizedEntries ? (
+          <StatefulVirtuoso
+            cacheId={`codex-activity:${persistKey ?? "default"}`}
+            totalCount={entries.length}
+            customScrollParent={scrollParent ?? undefined}
+            itemContent={(index) => {
+              const entry = entries[index];
+              return (
+                <ActivityRow
+                  key={entry.id}
+                  entry={entry}
+                  fontSize={baseFontSize}
+                  projectId={projectId}
+                  basePath={basePath}
+                />
+              );
+            }}
           />
-        ))}
+        ) : (
+          entries.map((entry) => (
+            <ActivityRow
+              key={entry.id}
+              entry={entry}
+              fontSize={baseFontSize}
+              projectId={projectId}
+              basePath={basePath}
+            />
+          ))
+        )}
         {renderCloseButton({ position: "absolute", right: 6, bottom: 6 })}
       </Space>
     </Card>
@@ -291,6 +326,7 @@ function ActivityRow({
   basePath?: string;
 }) {
   const secondarySize = Math.max(11, fontSize - 2);
+  const timestamp = formatEntryTimestamp(entry.time);
   switch (entry.kind) {
     case "reasoning":
       return (
@@ -313,9 +349,11 @@ function ActivityRow({
     case "agent":
       return (
         <div>
-          <Tag color="cyan" style={{ marginBottom: 4 }}>
-            Agent
-          </Tag>
+          <TimestampTooltip timestamp={timestamp}>
+            <Tag color="cyan" style={{ marginBottom: 4 }}>
+              Agent
+            </Tag>
+          </TimestampTooltip>
           {entry.text ? (
             <StaticMarkdown
               value={entry.text}
@@ -334,12 +372,16 @@ function ActivityRow({
           {/* <Tag color="geekblue" style={{ marginBottom: 4 }}>
             Diff
           </Tag>*/}
-          <PathLink
-            path={entry.path}
-            projectId={projectId}
-            basePath={basePath}
-            bold
-          />
+          <TimestampTooltip timestamp={timestamp}>
+            <span>
+              <PathLink
+                path={entry.path}
+                projectId={projectId}
+                basePath={basePath}
+                bold
+              />
+            </span>
+          </TimestampTooltip>
           <DiffPreview diff={entry.diff} fontSize={fontSize} />
         </div>
       );
@@ -358,9 +400,11 @@ function ActivityRow({
     default:
       return (
         <Space size={6} align="center">
-          <Tag color={entry.level === "error" ? "red" : "default"}>
-            {entry.label}
-          </Tag>
+          <TimestampTooltip timestamp={timestamp}>
+            <Tag color={entry.level === "error" ? "red" : "default"}>
+              {entry.label}
+            </Tag>
+          </TimestampTooltip>
           {entry.detail ? (
             <Text
               type={entry.level === "error" ? "danger" : "secondary"}
@@ -380,11 +424,13 @@ function normalizeEvents(events: AcpStreamMessage[]): ActivityEntry[] {
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
   for (const message of events) {
     const seq = message.seq ?? ++fallbackId;
+    const time = getMessageTimestamp(message);
     if (message.type === "error") {
       rows.push({
         kind: "status",
         id: `error-${seq}`,
         seq,
+        time,
         label: "Error",
         detail: formatErrorDetail(message.error),
         level: "error",
@@ -396,6 +442,7 @@ function normalizeEvents(events: AcpStreamMessage[]): ActivityEntry[] {
         kind: "status",
         id: `summary-${seq}`,
         seq,
+        time,
         label: "Summary",
         detail: formatSummaryDetail(message),
       });
@@ -409,6 +456,7 @@ function normalizeEvents(events: AcpStreamMessage[]): ActivityEntry[] {
       const entry = createEventEntry({
         event: message.event,
         seq,
+        time,
         rows,
         terminals,
       });
@@ -488,11 +536,13 @@ function coalesceTextEntries(entries: ActivityEntry[]): ActivityEntry[] {
 function createEventEntry({
   event,
   seq,
+  time,
   rows,
   terminals,
 }: {
   event: AcpStreamEvent;
   seq: number;
+  time?: number;
   rows: ActivityEntry[];
   terminals: Map<string, ActivityEntry & { kind: "terminal" }>;
 }): ActivityEntry | undefined {
@@ -501,6 +551,7 @@ function createEventEntry({
       kind: "diff",
       id: `diff-${seq}`,
       seq,
+      time,
       path: stringifyPath(event.path),
       diff: event.diff,
     };
@@ -512,6 +563,7 @@ function createEventEntry({
         kind: "terminal",
         id: `terminal-${event.terminalId}`,
         seq,
+        time,
         terminalId: event.terminalId,
         command: event.command,
         args: event.args,
@@ -530,12 +582,14 @@ function createEventEntry({
     } else if (event.phase === "data") {
       entry.output = (entry.output ?? "") + (event.chunk ?? "");
       entry.truncated = event.truncated ?? entry.truncated;
+      entry.time = time ?? entry.time;
     } else if (event.phase === "exit") {
       entry.exitStatus = event.exitStatus ?? entry.exitStatus;
       if (event.output != null) {
         entry.output = event.output;
       }
       entry.truncated = event.truncated ?? entry.truncated;
+      entry.time = time ?? entry.time;
     }
     return undefined;
   }
@@ -544,6 +598,7 @@ function createEventEntry({
       kind: "file",
       id: `file-${seq}`,
       seq,
+      time,
       path: stringifyPath(event.path),
       operation: event.operation,
       bytes: event.bytes,
@@ -558,6 +613,7 @@ function createEventEntry({
       kind: "reasoning",
       id: `thinking-${seq}`,
       seq,
+      time,
       text: event.text ?? "",
     };
   }
@@ -565,6 +621,7 @@ function createEventEntry({
     kind: "agent",
     id: `agent-${seq}`,
     seq,
+    time,
     text: eventHasText(event) ? (event.text ?? "") : "",
   };
 }
@@ -778,6 +835,7 @@ function TerminalRow({
   const commandLine = formatCommand(entry.command, entry.args);
   const status = formatTerminalStatus(entry);
   const secondarySize = Math.max(11, fontSize - 2);
+  const timestamp = formatEntryTimestamp(entry.time);
   const cwdPrompt = entry.cwd ? shortenPath(entry.cwd) : "~";
   const promptLine = `${cwdPrompt}$${commandLine ? " " + commandLine : ""}`;
   const outputText = stripAnsi(entry.output ?? "").trimEnd();
@@ -795,9 +853,11 @@ function TerminalRow({
       <StaticMarkdown value={markdown} style={{ fontSize, marginTop: 4 }} />
       <Space size={8} wrap align="center" style={{ marginTop: 6 }}>
         {status ? (
-          <Text type="secondary" style={{ fontSize: secondarySize }}>
-            {status}
-          </Text>
+          <TimestampTooltip timestamp={timestamp}>
+            <Text type="secondary" style={{ fontSize: secondarySize }}>
+              {status}
+            </Text>
+          </TimestampTooltip>
         ) : null}
         {!outputText && !entry.truncated ? (
           <Text type="secondary" style={{ fontSize: secondarySize }}>
@@ -863,9 +923,11 @@ function FileRow({
     <div>
       <Space size={6} wrap align="center" style={{ marginBottom: 6 }}>
         {/*<Tag color={isRead ? "blue" : "green"}>File</Tag> */}
-        <Text strong style={{ fontSize }}>
-          {actionLabel}
-        </Text>
+        <TimestampTooltip timestamp={formatEntryTimestamp(entry.time)}>
+          <Text strong style={{ fontSize }}>
+            {actionLabel}
+          </Text>
+        </TimestampTooltip>
         {pathNode}
         {sizeLabel ? (
           <Text
@@ -945,6 +1007,44 @@ function stripOuterQuotes(value: string): string {
   if (!value) return value;
   const match = value.match(/^["']([\s\S]*)["']$/);
   return match ? match[1] : value;
+}
+
+function getMessageTimestamp(message: any): number | undefined {
+  const candidates = [
+    message?.time,
+    message?.timestamp,
+    message?.ts,
+    message?.wall,
+    message?.date,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const ms = Date.parse(value);
+      if (Number.isFinite(ms)) return ms;
+    }
+  }
+  return undefined;
+}
+
+function formatEntryTimestamp(time?: number): string | undefined {
+  if (typeof time !== "number" || !Number.isFinite(time)) return undefined;
+  return new Date(time).toLocaleString();
+}
+
+function TimestampTooltip({
+  timestamp,
+  children,
+}: {
+  timestamp?: string;
+  children: React.ReactNode;
+}) {
+  if (!timestamp) return children;
+  return (
+    <Tooltip title={timestamp}>
+      <span>{children}</span>
+    </Tooltip>
+  );
 }
 
 function stripAnsi(text: string): string {
