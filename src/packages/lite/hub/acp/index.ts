@@ -4,6 +4,7 @@ import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import getLogger from "@cocalc/backend/logger";
+import { data } from "@cocalc/backend/data";
 import {
   CodexExecAgent,
   EchoAgent,
@@ -51,6 +52,7 @@ import {
   listAcpPayloads,
   clearAcpPayloads,
 } from "../sqlite/acp-queue";
+import { initDatabase } from "../sqlite/database";
 import {
   finalizeAcpTurnLease,
   heartbeatAcpTurnLease,
@@ -74,6 +76,8 @@ const agents = new Map<string, AcpAgent>();
 let conatClient: ConatClient | null = null;
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
+const RESTART_INTERRUPTED_NOTICE =
+  "**Conversation interrupted because the backend server restarted.**";
 
 const chatWritersByChatKey = new Map<string, ChatStreamWriter>();
 const chatWritersByThreadId = new Map<string, ChatStreamWriter>();
@@ -840,6 +844,36 @@ function syncdbField<T = unknown>(record: any, key: string): T | undefined {
   return (record as any)[key] as T;
 }
 
+function historyToArray(value: any): MessageHistory[] {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value as MessageHistory[];
+  if (typeof value.toJS === "function") return value.toJS() as MessageHistory[];
+  return [];
+}
+
+function appendRestartNotice(historyValue: any): MessageHistory[] {
+  const history = historyToArray(historyValue);
+  if (history.length === 0) {
+    return [];
+  }
+  const first = history[0] as MessageHistory;
+  const content =
+    typeof first?.content === "string"
+      ? first.content
+      : `${(first as any)?.content ?? ""}`;
+  if (/conversation interrupted/i.test(content)) {
+    return history;
+  }
+  const sep = content.trim().length > 0 ? "\n\n" : "";
+  return [
+    {
+      ...first,
+      content: `${content}${sep}${RESTART_INTERRUPTED_NOTICE}`,
+    },
+    ...history.slice(1),
+  ];
+}
+
 export async function recoverOrphanedAcpTurns(
   client: ConatClient,
 ): Promise<number> {
@@ -890,11 +924,16 @@ export async function recoverOrphanedAcpTurns(
         });
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
-          syncdb.set({
+          const history = appendRestartNotice(syncdbField(current, "history"));
+          const update: any = {
             event: "chat",
             date: turn.message_date,
             generating: false,
-          });
+          };
+          if (history.length > 0) {
+            update.history = history;
+          }
+          syncdb.set(update);
           syncdb.commit();
           await syncdb.save();
         }
@@ -1235,6 +1274,11 @@ export async function init(client: ConatClient): Promise<void> {
     "preferContainerExecutor =",
     preferContainerExecutor(),
   );
+  // IMPORTANT: initialize sqlite with the same hub.db path used by hub api,
+  // before any ACP queue/lease tables are touched. Otherwise ACP can
+  // accidentally lock the sqlite module onto a fallback cwd-relative file.
+  const sqliteFilename = path.join(data, "hub.db");
+  initDatabase({ filename: sqliteFilename });
   conatClient = client;
   process.once("exit", () => {
     for (const agent of agents.values()) {

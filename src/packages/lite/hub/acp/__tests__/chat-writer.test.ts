@@ -5,9 +5,10 @@ import type {
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import { ChatStreamWriter } from "../index";
+import { ChatStreamWriter, recoverOrphanedAcpTurns } from "../index";
 import * as queue from "../../sqlite/acp-queue";
 import * as turns from "../../sqlite/acp-turns";
+import * as chatServer from "@cocalc/chat/server";
 
 // Mock ACP pieces that pull in ESM deps we don't need for this unit.
 jest.mock("@cocalc/ai/acp", () => ({
@@ -41,6 +42,10 @@ jest.mock("../../sqlite/acp-turns", () => ({
   finalizeAcpTurnLease: jest.fn(),
   updateAcpTurnLeaseSessionId: jest.fn(),
   listRunningAcpTurnLeases: jest.fn(() => []),
+}));
+jest.mock("@cocalc/chat/server", () => ({
+  acquireChatSyncDB: jest.fn(),
+  releaseChatSyncDB: jest.fn(),
 }));
 
 type RecordedSet = { generating?: boolean; content?: string };
@@ -101,6 +106,9 @@ beforeEach(() => {
   (turns.updateAcpTurnLeaseSessionId as any)?.mockReset?.();
   (turns.listRunningAcpTurnLeases as any)?.mockReset?.();
   (turns.listRunningAcpTurnLeases as any)?.mockImplementation?.(() => []);
+  (chatServer.acquireChatSyncDB as any)?.mockReset?.();
+  (chatServer.releaseChatSyncDB as any)?.mockReset?.();
+  (chatServer.releaseChatSyncDB as any)?.mockResolvedValue?.(undefined);
 });
 
 async function flush(writer: ChatStreamWriter) {
@@ -557,5 +565,53 @@ describe("ChatStreamWriter", () => {
     expect((writer as any).content).toContain("Hello");
     expect((writer as any).content).toContain("world");
     (writer as any).dispose?.(true);
+  });
+});
+
+describe("recoverOrphanedAcpTurns", () => {
+  it("marks stale generating turn as interrupted with restart notice", async () => {
+    const { syncdb, sets, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      date: "123",
+      generating: true,
+      history: [
+        {
+          author_id: "codex-agent",
+          content: "partial answer",
+          date: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        message_date: "123",
+        sender_id: "codex-agent",
+        reply_to: null,
+      },
+    ]);
+
+    const recovered = await recoverOrphanedAcpTurns(makeFakeClient() as any);
+
+    expect(recovered).toBe(1);
+    const final = sets[sets.length - 1] as any;
+    expect(final.generating).toBe(false);
+    expect(final.history?.[0]?.content).toContain(
+      "Conversation interrupted because the backend server restarted.",
+    );
+    expect((queue.clearAcpPayloads as any).mock.calls.length).toBe(1);
+    expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            state: "aborted",
+            reason: "server restart recovery",
+          }),
+        ],
+      ]),
+    );
   });
 });
