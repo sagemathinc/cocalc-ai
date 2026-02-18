@@ -78,6 +78,8 @@ short-lived host tokens kept in-process (no on-disk token cache). All
 These file commands do not require the workspace to be running.
 Use `workspace file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/rm)
 against the current workspace context or `--workspace`.
+Use `workspace file check --bench --bench-runs <n>` to run repeated checks with
+per-run and per-step timing summaries.
 
 ## Auth Commands
 

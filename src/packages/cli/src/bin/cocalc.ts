@@ -1766,6 +1766,52 @@ type WorkspaceFileCheckReport = {
   results: WorkspaceFileCheckResult[];
 };
 
+type WorkspaceFileCheckBenchRun = {
+  run: number;
+  ok: boolean;
+  duration_ms: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  temp_path: string;
+  first_failure: string | null;
+};
+
+type WorkspaceFileCheckBenchStepStat = {
+  step: string;
+  runs: number;
+  ok: number;
+  fail: number;
+  skip: number;
+  avg_ms: number;
+  min_ms: number;
+  max_ms: number;
+};
+
+type WorkspaceFileCheckBenchReport = {
+  ok: boolean;
+  workspace_id: string;
+  workspace_title: string;
+  runs: number;
+  ok_runs: number;
+  failed_runs: number;
+  total_duration_ms: number;
+  avg_duration_ms: number;
+  min_duration_ms: number;
+  max_duration_ms: number;
+  run_results: WorkspaceFileCheckBenchRun[];
+  step_stats: WorkspaceFileCheckBenchStepStat[];
+};
+
+function parsePositiveInteger(value: string | undefined, fallback: number, label: string): number {
+  if (value == null || `${value}`.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  return parsed;
+}
+
 function normalizeWorkspacePathPrefix(value: string | undefined): string {
   const raw = `${value ?? ""}`.trim();
   if (!raw) return ".cocalc-cli-check";
@@ -1994,6 +2040,128 @@ async function runWorkspaceFileCheck({
     failed,
     skipped,
     results,
+  };
+}
+
+async function runWorkspaceFileCheckBench({
+  ctx,
+  workspaceIdentifier,
+  pathPrefix,
+  timeoutMs,
+  maxBytes,
+  keep,
+  runs,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  pathPrefix?: string;
+  timeoutMs: number;
+  maxBytes: number;
+  keep: boolean;
+  runs: number;
+}): Promise<WorkspaceFileCheckBenchReport> {
+  const runResults: WorkspaceFileCheckBenchRun[] = [];
+  const stepStats = new Map<
+    string,
+    {
+      runs: number;
+      ok: number;
+      fail: number;
+      skip: number;
+      totalMs: number;
+      minMs: number;
+      maxMs: number;
+    }
+  >();
+
+  let workspaceId = "";
+  let workspaceTitle = "";
+
+  for (let run = 1; run <= runs; run++) {
+    const started = Date.now();
+    const report = await runWorkspaceFileCheck({
+      ctx,
+      workspaceIdentifier,
+      pathPrefix,
+      timeoutMs,
+      maxBytes,
+      keep,
+    });
+    const durationMs = Date.now() - started;
+    workspaceId = report.workspace_id;
+    workspaceTitle = report.workspace_title;
+
+    const firstFailure = report.results.find((x) => x.status === "fail");
+    runResults.push({
+      run,
+      ok: report.ok,
+      duration_ms: durationMs,
+      passed: report.passed,
+      failed: report.failed,
+      skipped: report.skipped,
+      temp_path: report.temp_path,
+      first_failure: firstFailure ? `${firstFailure.step}: ${firstFailure.detail}` : null,
+    });
+
+    for (const row of report.results) {
+      if (!stepStats.has(row.step)) {
+        stepStats.set(row.step, {
+          runs: 0,
+          ok: 0,
+          fail: 0,
+          skip: 0,
+          totalMs: 0,
+          minMs: Number.POSITIVE_INFINITY,
+          maxMs: 0,
+        });
+      }
+      const stats = stepStats.get(row.step)!;
+      stats.runs += 1;
+      if (row.status === "ok") stats.ok += 1;
+      if (row.status === "fail") stats.fail += 1;
+      if (row.status === "skip") stats.skip += 1;
+      stats.totalMs += row.duration_ms;
+      stats.minMs = Math.min(stats.minMs, row.duration_ms);
+      stats.maxMs = Math.max(stats.maxMs, row.duration_ms);
+    }
+  }
+
+  const totalDurationMs = runResults.reduce((sum, row) => sum + row.duration_ms, 0);
+  const okRuns = runResults.filter((x) => x.ok).length;
+  const failedRuns = runResults.length - okRuns;
+  const minDurationMs =
+    runResults.length > 0 ? Math.min(...runResults.map((x) => x.duration_ms)) : 0;
+  const maxDurationMs =
+    runResults.length > 0 ? Math.max(...runResults.map((x) => x.duration_ms)) : 0;
+
+  const aggregatedSteps: WorkspaceFileCheckBenchStepStat[] = Array.from(stepStats.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([step, stats]) => ({
+      step,
+      runs: stats.runs,
+      ok: stats.ok,
+      fail: stats.fail,
+      skip: stats.skip,
+      avg_ms: stats.runs ? Math.round(stats.totalMs / stats.runs) : 0,
+      min_ms: Number.isFinite(stats.minMs) ? stats.minMs : 0,
+      max_ms: stats.maxMs,
+    }));
+
+  return {
+    ok: failedRuns === 0,
+    workspace_id: workspaceId,
+    workspace_title: workspaceTitle,
+    runs: runResults.length,
+    ok_runs: okRuns,
+    failed_runs: failedRuns,
+    total_duration_ms: totalDurationMs,
+    avg_duration_ms: runResults.length
+      ? Math.round(totalDurationMs / runResults.length)
+      : 0,
+    min_duration_ms: minDurationMs,
+    max_duration_ms: maxDurationMs,
+    run_results: runResults,
+    step_stats: aggregatedSteps,
   };
 }
 
@@ -4259,6 +4427,8 @@ file
   .option("--timeout <seconds>", "timeout seconds for rg/fd checks", "30")
   .option("--max-bytes <bytes>", "max combined output bytes for rg/fd checks", "20000000")
   .option("--keep", "keep temporary check files in the workspace")
+  .option("--bench", "run repeated checks and include timing benchmark summaries")
+  .option("--bench-runs <n>", "number of benchmark runs when --bench is used", "3")
   .action(
     async (
       opts: {
@@ -4267,6 +4437,8 @@ file
         timeout?: string;
         maxBytes?: string;
         keep?: boolean;
+        bench?: boolean;
+        benchRuns?: string;
       },
       command: Command,
     ) => {
@@ -4277,28 +4449,57 @@ file
         ctx = await contextForGlobals(globals);
         const timeoutMs = Math.max(1, (Number(opts.timeout ?? "30") || 30) * 1000);
         const maxBytes = Math.max(1024, Number(opts.maxBytes ?? "20000000") || 20000000);
-        const report = await runWorkspaceFileCheck({
-          ctx,
-          workspaceIdentifier: opts.workspace,
-          pathPrefix: opts.pathPrefix,
-          timeoutMs,
-          maxBytes,
-          keep: !!opts.keep,
-        });
+        if (opts.bench) {
+          const benchRuns = parsePositiveInteger(opts.benchRuns, 3, "--bench-runs");
+          const report = await runWorkspaceFileCheckBench({
+            ctx,
+            workspaceIdentifier: opts.workspace,
+            pathPrefix: opts.pathPrefix,
+            timeoutMs,
+            maxBytes,
+            keep: !!opts.keep,
+            runs: benchRuns,
+          });
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            emitSuccess(ctx, "workspace file check", report);
+          } else if (!ctx.globals.quiet) {
+            printArrayTable(report.run_results.map((x) => ({ ...x })));
+            printArrayTable(report.step_stats.map((x) => ({ ...x })));
+            console.log(
+              `summary: ${report.ok_runs}/${report.runs} successful runs (${report.failed_runs} failed)`,
+            );
+            console.log(
+              `timing_ms: avg=${report.avg_duration_ms} min=${report.min_duration_ms} max=${report.max_duration_ms} total=${report.total_duration_ms}`,
+            );
+            console.log(`workspace_id: ${report.workspace_id}`);
+          }
+          if (!report.ok) {
+            process.exitCode = 1;
+          }
+        } else {
+          const report = await runWorkspaceFileCheck({
+            ctx,
+            workspaceIdentifier: opts.workspace,
+            pathPrefix: opts.pathPrefix,
+            timeoutMs,
+            maxBytes,
+            keep: !!opts.keep,
+          });
 
-        if (ctx.globals.json || ctx.globals.output === "json") {
-          emitSuccess(ctx, "workspace file check", report);
-        } else if (!ctx.globals.quiet) {
-          printArrayTable(report.results.map((x) => ({ ...x })));
-          console.log(
-            `summary: ${report.passed}/${report.total} passed (${report.failed} failed, ${report.skipped} skipped)`,
-          );
-          console.log(`workspace_id: ${report.workspace_id}`);
-          console.log(`temp_path: ${report.temp_path}${report.kept ? " (kept)" : ""}`);
-        }
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            emitSuccess(ctx, "workspace file check", report);
+          } else if (!ctx.globals.quiet) {
+            printArrayTable(report.results.map((x) => ({ ...x })));
+            console.log(
+              `summary: ${report.passed}/${report.total} passed (${report.failed} failed, ${report.skipped} skipped)`,
+            );
+            console.log(`workspace_id: ${report.workspace_id}`);
+            console.log(`temp_path: ${report.temp_path}${report.kept ? " (kept)" : ""}`);
+          }
 
-        if (!report.ok) {
-          process.exitCode = 1;
+          if (!report.ok) {
+            process.exitCode = 1;
+          }
         }
       } catch (error) {
         emitError(
