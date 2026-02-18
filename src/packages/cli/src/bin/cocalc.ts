@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { createServer as createNetServer, createConnection as createNetConnection, type Server as NetServer } from "node:net";
 import { homedir, hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { URL } from "node:url";
 import { AsciiTable3 } from "ascii-table3";
 import { Command } from "commander";
@@ -22,7 +22,10 @@ import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
 import type { LroScopeType, LroSummary as HubLroSummary } from "@cocalc/conat/hub/api/lro";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
 import { fsClient, fsSubject, type FilesystemClient } from "@cocalc/conat/files/fs";
+import { acpSubject } from "@cocalc/conat/ai/acp/server";
+import type { AcpRequest, AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
+import type { CodexReasoningId, CodexSessionConfig, CodexSessionMode } from "@cocalc/util/ai/codex";
 import {
   applyAuthProfile,
   authConfigPath,
@@ -1514,6 +1517,491 @@ async function resolveWorkspaceFilesystem(
     timeout: Math.max(30_000, Math.min(ctx.timeoutMs, 30 * 60_000)),
   });
   return { workspace, fs };
+}
+
+async function projectHostHubCallAccount<T>(
+  ctx: CommandContext,
+  workspace: WorkspaceRow,
+  name: string,
+  args: any[] = [],
+  timeout?: number,
+  allowAuthRetry = true,
+): Promise<T> {
+  const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
+  if (!routed.client) {
+    throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
+  }
+  const timeoutMs = timeout ?? ctx.timeoutMs;
+  const rpcTimeoutMs = Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
+  cliDebug("projectHostHubCallAccount", {
+    name,
+    timeoutMs,
+    rpcTimeoutMs,
+    account_id: ctx.accountId,
+    project_id: workspace.project_id,
+    host_id: workspace.host_id,
+  });
+  try {
+    return (await withTimeout(
+      callHub({
+        client: routed.client,
+        account_id: ctx.accountId,
+        name,
+        args,
+        timeout: rpcTimeoutMs,
+      }),
+      rpcTimeoutMs,
+      `timeout waiting for project-host response: ${name} (${rpcTimeoutMs}ms)`,
+    )) as T;
+  } catch (err) {
+    if (allowAuthRetry && isProjectHostAuthError(err) && workspace.host_id) {
+      closeRoutedProjectHostClient(ctx, workspace.host_id);
+      return await projectHostHubCallAccount(
+        ctx,
+        workspace,
+        name,
+        args,
+        timeout,
+        false,
+      );
+    }
+    throw err;
+  }
+}
+
+function parseCodexReasoning(value?: string): CodexReasoningId | undefined {
+  if (!value?.trim()) return undefined;
+  const reasoning = value.trim().toLowerCase();
+  if (
+    reasoning === "low" ||
+    reasoning === "medium" ||
+    reasoning === "high" ||
+    reasoning === "extra_high"
+  ) {
+    return reasoning;
+  }
+  throw new Error(
+    `invalid --reasoning '${value}'; expected low|medium|high|extra_high`,
+  );
+}
+
+function parseCodexSessionMode(value?: string): CodexSessionMode | undefined {
+  if (!value?.trim()) return undefined;
+  const mode = value.trim().toLowerCase();
+  if (
+    mode === "auto" ||
+    mode === "read-only" ||
+    mode === "workspace-write" ||
+    mode === "full-access"
+  ) {
+    return mode;
+  }
+  throw new Error(
+    `invalid --session-mode '${value}'; expected auto|read-only|workspace-write|full-access`,
+  );
+}
+
+async function readAllStdin(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function buildCodexSessionConfig(opts: {
+  model?: string;
+  reasoning?: string;
+  sessionMode?: string;
+  workdir?: string;
+}): CodexSessionConfig | undefined {
+  const config: CodexSessionConfig = {};
+  if (opts.model?.trim()) {
+    config.model = opts.model.trim();
+  }
+  const reasoning = parseCodexReasoning(opts.reasoning);
+  if (reasoning) {
+    config.reasoning = reasoning;
+  }
+  const sessionMode = parseCodexSessionMode(opts.sessionMode);
+  if (sessionMode) {
+    config.sessionMode = sessionMode;
+  }
+  if (opts.workdir?.trim()) {
+    config.workingDirectory = opts.workdir.trim();
+  }
+  return Object.keys(config).length ? config : undefined;
+}
+
+type WorkspaceCodexExecResult = {
+  workspace_id: string;
+  session_id: string | null;
+  thread_id: string | null;
+  final_response: string;
+  usage: Record<string, unknown> | null;
+  last_seq: number;
+  event_count: number;
+  event_types: Record<string, number>;
+  duration_ms: number;
+};
+
+async function workspaceCodexExecData({
+  ctx,
+  workspaceIdentifier,
+  prompt,
+  sessionId,
+  config,
+  onMessage,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  prompt: string;
+  sessionId?: string;
+  config?: CodexSessionConfig;
+  onMessage?: (message: AcpStreamMessage) => Promise<void> | void;
+  cwd?: string;
+}): Promise<WorkspaceCodexExecResult> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  const routed = await getOrCreateRoutedProjectHostClient(ctx, workspace);
+  if (!routed.client) {
+    throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
+  }
+
+  const request: AcpRequest = {
+    project_id: workspace.project_id,
+    account_id: ctx.accountId,
+    prompt,
+    ...(sessionId?.trim() ? { session_id: sessionId.trim() } : undefined),
+    ...(config ? { config } : undefined),
+  };
+  const subject = acpSubject({ project_id: workspace.project_id });
+  const startedAt = Date.now();
+  const maxWait = Math.max(30_000, ctx.timeoutMs);
+
+  let lastSeq = -1;
+  let eventCount = 0;
+  const eventTypes: Record<string, number> = {};
+  let usage: Record<string, unknown> | null = null;
+  let finalResponse = "";
+  let threadId: string | null = null;
+  let sawSummary = false;
+
+  const responses = await routed.client.requestMany(subject, request, {
+    maxWait,
+  });
+  for await (const resp of responses) {
+    if (resp.data == null) break;
+    const message = resp.data as AcpStreamMessage;
+    if (typeof message.seq === "number") {
+      if (message.seq !== lastSeq + 1) {
+        throw new Error("missed codex stream response");
+      }
+      lastSeq = message.seq;
+    }
+    if (onMessage) {
+      await onMessage(message);
+    }
+    if (message.type === "error") {
+      throw new Error(message.error || "codex exec failed");
+    }
+    if (message.type === "usage") {
+      usage = ((message as any).usage ?? null) as Record<string, unknown> | null;
+      continue;
+    }
+    if (message.type === "event") {
+      eventCount += 1;
+      const eventType = `${(message as any)?.event?.type ?? "unknown"}`;
+      eventTypes[eventType] = (eventTypes[eventType] ?? 0) + 1;
+      continue;
+    }
+    if (message.type === "summary") {
+      sawSummary = true;
+      finalResponse = `${message.finalResponse ?? ""}`;
+      threadId = typeof message.threadId === "string" ? message.threadId : null;
+      usage = ((message as any).usage ?? usage ?? null) as Record<string, unknown> | null;
+    }
+  }
+
+  if (!sawSummary) {
+    throw new Error("codex exec did not return a summary");
+  }
+
+  return {
+    workspace_id: workspace.project_id,
+    session_id: sessionId?.trim() || null,
+    thread_id: threadId,
+    final_response: finalResponse,
+    usage,
+    last_seq: lastSeq,
+    event_count: eventCount,
+    event_types: eventTypes,
+    duration_ms: Date.now() - startedAt,
+  };
+}
+
+function streamCodexHumanMessage(message: AcpStreamMessage): void {
+  if (message.type === "status") {
+    process.stderr.write(`[codex:${message.state}]\n`);
+    return;
+  }
+  if (message.type === "event") {
+    const event = (message as any).event;
+    const kind = `${event?.type ?? "event"}`;
+    if ((kind === "thinking" || kind === "message") && typeof event?.text === "string") {
+      process.stderr.write(event.text);
+      if (!event.text.endsWith("\n")) {
+        process.stderr.write("\n");
+      }
+      return;
+    }
+    if (kind === "terminal") {
+      const phase = `${event?.phase ?? "unknown"}`;
+      const terminalId = `${event?.terminalId ?? "terminal"}`;
+      if (phase === "data" && typeof event?.chunk === "string" && event.chunk.length > 0) {
+        process.stderr.write(event.chunk);
+        if (!event.chunk.endsWith("\n")) {
+          process.stderr.write("\n");
+        }
+        return;
+      }
+      process.stderr.write(`[codex:terminal:${phase}] ${terminalId}\n`);
+      return;
+    }
+    if (kind === "file") {
+      process.stderr.write(
+        `[codex:file] ${event?.operation ?? "op"} ${event?.path ?? ""}\n`,
+      );
+      return;
+    }
+    if (kind === "diff") {
+      process.stderr.write(`[codex:diff] ${event?.path ?? ""}\n`);
+      return;
+    }
+    process.stderr.write(`[codex:event] ${kind}\n`);
+    return;
+  }
+  if (message.type === "usage") {
+    const usage = (message as any).usage ?? {};
+    process.stderr.write(`[codex:usage] ${JSON.stringify(usage)}\n`);
+    return;
+  }
+  if (message.type === "summary") {
+    process.stderr.write("[codex:summary]\n");
+    return;
+  }
+  if (message.type === "error") {
+    process.stderr.write(`[codex:error] ${message.error ?? "unknown error"}\n`);
+  }
+}
+
+async function workspaceCodexAuthStatusData({
+  ctx,
+  workspaceIdentifier,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  const [paymentSource, keyStatus, subscriptionCreds] = await Promise.all([
+    hubCallAccount<any>(ctx, "system.getCodexPaymentSource", [
+      { project_id: workspace.project_id },
+    ]),
+    hubCallAccount<any>(ctx, "system.getOpenAiApiKeyStatus", [
+      { project_id: workspace.project_id },
+    ]),
+    hubCallAccount<any[]>(ctx, "system.listExternalCredentials", [
+      {
+        provider: "openai",
+        kind: "codex-subscription-auth-json",
+        scope: "account",
+      },
+    ]),
+  ]);
+
+  return {
+    workspace_id: workspace.project_id,
+    workspace_title: workspace.title,
+    payment_source: paymentSource?.source ?? "none",
+    has_subscription: !!paymentSource?.hasSubscription,
+    has_workspace_api_key: !!paymentSource?.hasProjectApiKey,
+    has_account_api_key: !!paymentSource?.hasAccountApiKey,
+    has_site_api_key: !!paymentSource?.hasSiteApiKey,
+    shared_home_mode: paymentSource?.sharedHomeMode ?? null,
+    account_api_key_configured: !!keyStatus?.account,
+    account_api_key_updated: toIso(keyStatus?.account?.updated),
+    account_api_key_last_used: toIso(keyStatus?.account?.last_used),
+    workspace_api_key_configured: !!keyStatus?.project,
+    workspace_api_key_updated: toIso(keyStatus?.project?.updated),
+    workspace_api_key_last_used: toIso(keyStatus?.project?.last_used),
+    subscription_credentials_count: Array.isArray(subscriptionCreds)
+      ? subscriptionCreds.length
+      : 0,
+  };
+}
+
+type WorkspaceCodexDeviceAuthStatus = {
+  id: string;
+  state: "pending" | "completed" | "failed" | "canceled";
+  verificationUrl?: string;
+  userCode?: string;
+  output?: string;
+  startedAt?: number;
+  updatedAt?: number;
+  exitCode?: number | null;
+  signal?: string | null;
+  error?: string;
+};
+
+function summarizeCodexDeviceAuth(
+  workspace: WorkspaceRow,
+  status: WorkspaceCodexDeviceAuthStatus,
+): Record<string, unknown> {
+  return {
+    workspace_id: workspace.project_id,
+    workspace_title: workspace.title,
+    auth_id: status.id,
+    state: status.state,
+    verification_url: status.verificationUrl ?? null,
+    user_code: status.userCode ?? null,
+    started_at: status.startedAt ? new Date(status.startedAt).toISOString() : null,
+    updated_at: status.updatedAt ? new Date(status.updatedAt).toISOString() : null,
+    exit_code: status.exitCode ?? null,
+    signal: status.signal ?? null,
+    error: status.error ?? null,
+    output: status.output ?? "",
+  };
+}
+
+async function workspaceCodexDeviceAuthStartData({
+  ctx,
+  workspaceIdentifier,
+  wait,
+  pollMs,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  wait: boolean;
+  pollMs: number;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  let status = await projectHostHubCallAccount<WorkspaceCodexDeviceAuthStatus>(
+    ctx,
+    workspace,
+    "projects.codexDeviceAuthStart",
+    [{ project_id: workspace.project_id }],
+  );
+
+  if (wait && status.state === "pending") {
+    const deadline = Date.now() + ctx.timeoutMs;
+    while (status.state === "pending") {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `timeout waiting for codex device auth completion (id=${status.id})`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      status = await projectHostHubCallAccount<WorkspaceCodexDeviceAuthStatus>(
+        ctx,
+        workspace,
+        "projects.codexDeviceAuthStatus",
+        [{ project_id: workspace.project_id, id: status.id }],
+      );
+    }
+  }
+
+  return summarizeCodexDeviceAuth(workspace, status);
+}
+
+async function workspaceCodexDeviceAuthStatusData({
+  ctx,
+  workspaceIdentifier,
+  id,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  id: string;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  const status = await projectHostHubCallAccount<WorkspaceCodexDeviceAuthStatus>(
+    ctx,
+    workspace,
+    "projects.codexDeviceAuthStatus",
+    [{ project_id: workspace.project_id, id }],
+  );
+  return summarizeCodexDeviceAuth(workspace, status);
+}
+
+async function workspaceCodexDeviceAuthCancelData({
+  ctx,
+  workspaceIdentifier,
+  id,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  id: string;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  const canceled = await projectHostHubCallAccount<{ id: string; canceled: boolean }>(
+    ctx,
+    workspace,
+    "projects.codexDeviceAuthCancel",
+    [{ project_id: workspace.project_id, id }],
+  );
+  const status = await projectHostHubCallAccount<WorkspaceCodexDeviceAuthStatus>(
+    ctx,
+    workspace,
+    "projects.codexDeviceAuthStatus",
+    [{ project_id: workspace.project_id, id }],
+  );
+  return {
+    ...summarizeCodexDeviceAuth(workspace, status),
+    canceled: canceled.canceled,
+  };
+}
+
+async function workspaceCodexAuthUploadFileData({
+  ctx,
+  workspaceIdentifier,
+  localPath,
+  cwd,
+}: {
+  ctx: CommandContext;
+  workspaceIdentifier?: string;
+  localPath: string;
+  cwd?: string;
+}): Promise<Record<string, unknown>> {
+  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
+  const content = await readFileLocal(localPath, "utf8");
+  const uploaded = await projectHostHubCallAccount<{
+    ok: true;
+    codexHome: string;
+    bytes: number;
+    synced?: boolean;
+  }>(ctx, workspace, "projects.codexUploadAuthFile", [
+    {
+      project_id: workspace.project_id,
+      filename: basename(localPath),
+      content,
+    },
+  ]);
+  return {
+    workspace_id: workspace.project_id,
+    workspace_title: workspace.title,
+    uploaded: uploaded.ok,
+    bytes: uploaded.bytes,
+    codex_home: uploaded.codexHome,
+    synced: uploaded.synced ?? null,
+  };
 }
 
 async function workspaceFileListData({
@@ -4447,6 +4935,317 @@ syncForward
           workspace_id: target.workspace.project_id,
           terminated: ids.length,
           refs: ids,
+        };
+      });
+    },
+  );
+
+const codex = workspace.command("codex").description("workspace codex operations");
+
+codex
+  .command("exec [prompt...]")
+  .description("run a codex turn in a workspace using project-host containerized codex exec")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--stdin", "append stdin to prompt text")
+  .option("--stream", "stream codex progress to stderr while running")
+  .option("--jsonl", "emit raw codex stream messages as JSONL on stdout")
+  .option("--session-id <id>", "reuse an existing codex session id")
+  .option("--model <model>", "codex model name")
+  .option("--reasoning <level>", "reasoning level (low|medium|high|extra_high)")
+  .option(
+    "--session-mode <mode>",
+    "session mode (auto|read-only|workspace-write|full-access)",
+  )
+  .option("--workdir <path>", "working directory inside workspace")
+  .action(
+    async (
+      promptArgs: string[],
+      opts: {
+        workspace?: string;
+        stdin?: boolean;
+        stream?: boolean;
+        jsonl?: boolean;
+        sessionId?: string;
+        model?: string;
+        reasoning?: string;
+        sessionMode?: string;
+        workdir?: string;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace codex exec", async (ctx) => {
+        const parts: string[] = [];
+        const inlinePrompt = (promptArgs ?? []).join(" ").trim();
+        if (inlinePrompt) {
+          parts.push(inlinePrompt);
+        }
+        if (opts.stdin) {
+          const stdinText = (await readAllStdin()).trim();
+          if (stdinText) {
+            parts.push(stdinText);
+          }
+        }
+        const prompt = parts.join("\n\n").trim();
+        if (!prompt) {
+          throw new Error("prompt is required (pass text or use --stdin)");
+        }
+        if (opts.jsonl && (ctx.globals.json || ctx.globals.output === "json")) {
+          throw new Error("--jsonl cannot be combined with --json/--output json");
+        }
+        const streamJsonl = !!opts.jsonl;
+        const streamHuman = !streamJsonl && !!opts.stream;
+        const config = buildCodexSessionConfig({
+          model: opts.model,
+          reasoning: opts.reasoning,
+          sessionMode: opts.sessionMode,
+          workdir: opts.workdir,
+        });
+        const result = await workspaceCodexExecData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          prompt,
+          sessionId: opts.sessionId,
+          config,
+          onMessage: (message) => {
+            if (streamJsonl) {
+              process.stdout.write(`${JSON.stringify(message)}\n`);
+            } else if (streamHuman) {
+              streamCodexHumanMessage(message);
+            }
+          },
+        });
+        if (streamJsonl) {
+          return null;
+        }
+        if (ctx.globals.json || ctx.globals.output === "json") {
+          return result;
+        }
+        return result.final_response;
+      });
+    },
+  );
+
+const codexAuth = codex.command("auth").description("workspace codex authentication");
+
+codexAuth
+  .command("status")
+  .description("show effective codex auth/payment source status for a workspace")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(async (opts: { workspace?: string }, command: Command) => {
+    await withContext(command, "workspace codex auth status", async (ctx) => {
+      return await workspaceCodexAuthStatusData({
+        ctx,
+        workspaceIdentifier: opts.workspace,
+      });
+    });
+  });
+
+const codexAuthSubscription = codexAuth
+  .command("subscription")
+  .description("manage ChatGPT subscription auth for codex");
+
+codexAuthSubscription
+  .command("login")
+  .description("start device auth login flow (waits for completion by default)")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--no-wait", "return immediately after starting the login flow")
+  .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
+  .action(
+    async (
+      opts: { workspace?: string; wait?: boolean; pollMs?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace codex auth subscription login", async (ctx) => {
+        const pollMs = Math.max(200, durationToMs(opts.pollMs, 1_500));
+        return await workspaceCodexDeviceAuthStartData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          wait: opts.wait !== false,
+          pollMs,
+        });
+      });
+    },
+  );
+
+codexAuthSubscription
+  .command("status")
+  .description("check a subscription device-auth login session")
+  .requiredOption("--id <id>", "device auth session id")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(
+    async (
+      opts: { id: string; workspace?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace codex auth subscription status", async (ctx) => {
+        return await workspaceCodexDeviceAuthStatusData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          id: opts.id,
+        });
+      });
+    },
+  );
+
+codexAuthSubscription
+  .command("cancel")
+  .description("cancel a pending subscription device-auth login session")
+  .requiredOption("--id <id>", "device auth session id")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(
+    async (
+      opts: { id: string; workspace?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace codex auth subscription cancel", async (ctx) => {
+        return await workspaceCodexDeviceAuthCancelData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          id: opts.id,
+        });
+      });
+    },
+  );
+
+codexAuthSubscription
+  .command("upload <authJsonPath>")
+  .description("upload an auth.json file for subscription auth")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(
+    async (
+      authJsonPath: string,
+      opts: { workspace?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace codex auth subscription upload", async (ctx) => {
+        return await workspaceCodexAuthUploadFileData({
+          ctx,
+          workspaceIdentifier: opts.workspace,
+          localPath: authJsonPath,
+        });
+      });
+    },
+  );
+
+const codexAuthApiKey = codexAuth
+  .command("api-key")
+  .description("manage OpenAI API keys used for codex auth");
+
+codexAuthApiKey
+  .command("status")
+  .description("show OpenAI API key status for account and workspace")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .action(async (opts: { workspace?: string }, command: Command) => {
+    await withContext(command, "workspace codex auth api-key status", async (ctx) => {
+      const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+      const status = await hubCallAccount<any>(ctx, "system.getOpenAiApiKeyStatus", [
+        { project_id: workspace.project_id },
+      ]);
+      return {
+        workspace_id: workspace.project_id,
+        workspace_title: workspace.title,
+        account_api_key_configured: !!status?.account,
+        account_api_key_updated: toIso(status?.account?.updated),
+        account_api_key_last_used: toIso(status?.account?.last_used),
+        workspace_api_key_configured: !!status?.project,
+        workspace_api_key_updated: toIso(status?.project?.updated),
+        workspace_api_key_last_used: toIso(status?.project?.last_used),
+      };
+    });
+  });
+
+codexAuthApiKey
+  .command("set")
+  .description("set an OpenAI API key for workspace (default) or account scope")
+  .requiredOption("--api-key <key>", "OpenAI API key")
+  .option("--scope <scope>", "workspace|account", "workspace")
+  .option("-w, --workspace <workspace>", "workspace id or name (for workspace scope)")
+  .action(
+    async (
+      opts: {
+        apiKey: string;
+        scope?: string;
+        workspace?: string;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace codex auth api-key set", async (ctx) => {
+        const scope = `${opts.scope ?? "workspace"}`.trim().toLowerCase();
+        const apiKey = `${opts.apiKey ?? ""}`.trim();
+        if (!apiKey) {
+          throw new Error("--api-key must be non-empty");
+        }
+        if (scope !== "workspace" && scope !== "account") {
+          throw new Error("scope must be 'workspace' or 'account'");
+        }
+        if (scope === "workspace") {
+          const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+          const result = await hubCallAccount<{ id: string; created: boolean }>(
+            ctx,
+            "system.setOpenAiApiKey",
+            [{ project_id: workspace.project_id, api_key: apiKey }],
+          );
+          return {
+            scope,
+            workspace_id: workspace.project_id,
+            workspace_title: workspace.title,
+            credential_id: result.id,
+            created: result.created,
+            status: "saved",
+          };
+        }
+        const result = await hubCallAccount<{ id: string; created: boolean }>(
+          ctx,
+          "system.setOpenAiApiKey",
+          [{ api_key: apiKey }],
+        );
+        return {
+          scope,
+          credential_id: result.id,
+          created: result.created,
+          status: "saved",
+        };
+      });
+    },
+  );
+
+codexAuthApiKey
+  .command("delete")
+  .description("delete OpenAI API key at workspace (default) or account scope")
+  .option("--scope <scope>", "workspace|account", "workspace")
+  .option("-w, --workspace <workspace>", "workspace id or name (for workspace scope)")
+  .action(
+    async (
+      opts: { scope?: string; workspace?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace codex auth api-key delete", async (ctx) => {
+        const scope = `${opts.scope ?? "workspace"}`.trim().toLowerCase();
+        if (scope !== "workspace" && scope !== "account") {
+          throw new Error("scope must be 'workspace' or 'account'");
+        }
+        if (scope === "workspace") {
+          const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+          const result = await hubCallAccount<{ revoked: boolean }>(
+            ctx,
+            "system.deleteOpenAiApiKey",
+            [{ project_id: workspace.project_id }],
+          );
+          return {
+            scope,
+            workspace_id: workspace.project_id,
+            workspace_title: workspace.title,
+            revoked: result.revoked,
+          };
+        }
+        const result = await hubCallAccount<{ revoked: boolean }>(
+          ctx,
+          "system.deleteOpenAiApiKey",
+          [{}],
+        );
+        return {
+          scope,
+          revoked: result.revoked,
         };
       });
     },

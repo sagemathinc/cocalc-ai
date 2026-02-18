@@ -81,6 +81,10 @@ Use `workspace file check` to run a sanity suite (mkdir/put/list/cat/get/rg/fd/r
 against the current workspace context or `--workspace`.
 Use `workspace file check --bench --bench-runs <n>` to run repeated checks with
 per-run and per-step timing summaries.
+`workspace codex ...` uses routed project-host APIs so codex device-auth and
+workspace codex execution run in the same project-host containerized path as the UI.
+`workspace codex exec --stream` prints progress events to stderr; `--jsonl`
+emits raw ACP stream messages as JSONL on stdout.
 
 ## Auth Commands
 
@@ -128,6 +132,15 @@ per-run and per-step timing summaries.
 - `workspace file rg`
 - `workspace file fd`
 - `workspace file check`
+- `workspace codex exec`
+- `workspace codex auth status`
+- `workspace codex auth subscription login`
+- `workspace codex auth subscription status`
+- `workspace codex auth subscription cancel`
+- `workspace codex auth subscription upload`
+- `workspace codex auth api-key status`
+- `workspace codex auth api-key set`
+- `workspace codex auth api-key delete`
 - `workspace snapshot create`
 - `workspace snapshot list`
 - `host resolve-connection`
