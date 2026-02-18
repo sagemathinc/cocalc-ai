@@ -1678,15 +1678,17 @@ async function workspaceCodexExecData({
   };
   const subject = acpSubject({ project_id: workspace.project_id });
   const startedAt = Date.now();
-  const maxWait = Math.max(30_000, ctx.timeoutMs);
+  const maxWait = Math.max(1_000, ctx.timeoutMs);
 
   let lastSeq = -1;
+  let lastType: string | null = null;
   let eventCount = 0;
   const eventTypes: Record<string, number> = {};
   let usage: Record<string, unknown> | null = null;
   let finalResponse = "";
   let threadId: string | null = null;
   let sawSummary = false;
+  let sawAnyMessage = false;
 
   const responses = await routed.client.requestMany(subject, request, {
     maxWait,
@@ -1694,6 +1696,8 @@ async function workspaceCodexExecData({
   for await (const resp of responses) {
     if (resp.data == null) break;
     const message = resp.data as AcpStreamMessage;
+    sawAnyMessage = true;
+    lastType = `${(message as any)?.type ?? "unknown"}`;
     if (typeof message.seq === "number") {
       if (message.seq !== lastSeq + 1) {
         throw new Error("missed codex stream response");
@@ -1725,7 +1729,14 @@ async function workspaceCodexExecData({
   }
 
   if (!sawSummary) {
-    throw new Error("codex exec did not return a summary");
+    if (sawAnyMessage) {
+      throw new Error(
+        `codex exec ended before summary (last_type=${lastType ?? "unknown"}, last_seq=${lastSeq}); likely timed out waiting for completion -- try --stream and/or increase --timeout`,
+      );
+    }
+    throw new Error(
+      "codex exec returned no stream messages; check project-host ACP availability and routing",
+    );
   }
 
   return {
@@ -4993,7 +5004,7 @@ codex
           throw new Error("--jsonl cannot be combined with --json/--output json");
         }
         const streamJsonl = !!opts.jsonl;
-        const streamHuman = !streamJsonl && !!opts.stream;
+        const streamHuman = !streamJsonl && (!!opts.stream || !!ctx.globals.verbose);
         const config = buildCodexSessionConfig({
           model: opts.model,
           reasoning: opts.reasoning,

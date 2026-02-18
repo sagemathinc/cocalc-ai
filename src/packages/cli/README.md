@@ -85,6 +85,7 @@ per-run and per-step timing summaries.
 workspace codex execution run in the same project-host containerized path as the UI.
 `workspace codex exec --stream` prints progress events to stderr; `--jsonl`
 emits raw ACP stream messages as JSONL on stdout.
+`--verbose` also enables codex progress streaming automatically.
 
 ## Auth Commands
 
