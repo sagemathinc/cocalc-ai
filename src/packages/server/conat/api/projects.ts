@@ -15,6 +15,7 @@ import {
 } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control";
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
+import { resolveOnPremHost } from "@cocalc/server/onprem";
 import type {
   ExecuteCodeOptions,
   ExecuteCodeOutput,
@@ -275,9 +276,23 @@ export async function resolveWorkspaceSshConnection({
   if (!row.host_id) {
     throw new Error("workspace has no assigned host");
   }
+  const metadata = row.metadata ?? {};
+  const machine = metadata?.machine ?? {};
+  const rawSelfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !rawSelfHostMode ? "local" : rawSelfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   const cloudflareHostname =
-    `${row.metadata?.cloudflare_tunnel?.ssh_hostname ?? ""}`.trim() || null;
-  const sshServer = row.ssh_server ?? null;
+    `${metadata?.cloudflare_tunnel?.ssh_hostname ?? ""}`.trim() || null;
+  let sshServer = row.ssh_server ?? null;
+  if (isLocalSelfHost) {
+    const sshPort = Number(metadata?.self_host?.ssh_tunnel_port);
+    if (Number.isInteger(sshPort) && sshPort > 0 && sshPort <= 65535) {
+      const sshHost = resolveOnPremHost();
+      sshServer = `${sshHost}:${sshPort}`;
+    }
+  }
   if (!direct && cloudflareHostname) {
     return {
       workspace_id: project_id,

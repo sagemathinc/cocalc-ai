@@ -29,6 +29,8 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import getLogger from "@cocalc/backend/logger";
+import getPool from "@cocalc/database/pool";
+import { resolveOnPremHost } from "@cocalc/server/onprem";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("server:cloud:smoke-runner:self-host");
@@ -326,6 +328,40 @@ type RunCliOptions = {
   commandTimeoutMs?: number;
 };
 
+function parseSshServer(server: string): { host: string; port: number | null } {
+  const value = server.trim();
+  if (!value) {
+    throw new Error("empty ssh_server");
+  }
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]");
+    if (end === -1) {
+      throw new Error(`invalid ssh_server '${value}'`);
+    }
+    const host = value.slice(1, end);
+    const rest = value.slice(end + 1);
+    if (!rest) return { host, port: null };
+    if (!rest.startsWith(":")) {
+      throw new Error(`invalid ssh_server '${value}'`);
+    }
+    const port = Number(rest.slice(1));
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw new Error(`invalid ssh_server '${value}'`);
+    }
+    return { host, port };
+  }
+  const idx = value.lastIndexOf(":");
+  if (idx <= 0 || idx === value.length - 1) {
+    return { host: value, port: null };
+  }
+  const host = value.slice(0, idx);
+  const port = Number(value.slice(idx + 1));
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    return { host: value, port: null };
+  }
+  return { host, port };
+}
+
 async function runCli<T>(
   cli: CliContext,
   args: string[],
@@ -376,6 +412,56 @@ async function runCli<T>(
     );
   }
   return envelope.data as T;
+}
+
+async function assertWorkspaceSshRouteMatchesLocalTunnel({
+  cli,
+  workspaceId,
+  hostId,
+}: {
+  cli: CliContext;
+  workspaceId: string;
+  hostId: string;
+}): Promise<void> {
+  const { rows } = await getPool().query<{ metadata: any }>(
+    `SELECT metadata
+       FROM project_hosts
+      WHERE id=$1 AND deleted IS NULL
+      LIMIT 1`,
+    [hostId],
+  );
+  const metadata = rows[0]?.metadata ?? {};
+  const machine = metadata?.machine ?? {};
+  const rawSelfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !rawSelfHostMode ? "local" : rawSelfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  if (!isLocalSelfHost) {
+    return;
+  }
+  const expectedPort = Number(metadata?.self_host?.ssh_tunnel_port);
+  if (!Number.isInteger(expectedPort) || expectedPort <= 0 || expectedPort > 65535) {
+    throw new Error(
+      `self-host local tunnel is missing ssh_tunnel_port (host=${hostId})`,
+    );
+  }
+  const route = await runCli<{
+    ssh_server?: string | null;
+    ssh_transport?: string;
+    workspace_id?: string;
+  }>(cli, ["workspace", "ssh", "--workspace", workspaceId]);
+  const sshServer = `${route.ssh_server ?? ""}`.trim();
+  if (!sshServer) {
+    throw new Error("workspace ssh returned no ssh_server");
+  }
+  const parsed = parseSshServer(sshServer);
+  const expectedHost = resolveOnPremHost();
+  if (parsed.host !== expectedHost || parsed.port !== expectedPort) {
+    throw new Error(
+      `workspace ssh route mismatch: got ${sshServer}, expected ${expectedHost}:${expectedPort}`,
+    );
+  }
 }
 
 async function resolveSmokeAccountId(
@@ -1302,6 +1388,16 @@ export async function runSelfHostMultipassBackupSmoke(
       await runStep("verify_workspace_ssh_check", async () => {
         if (!project_id) throw new Error("missing project_id");
         await runWorkspaceSshCheck(project_id, { attempts: 30, intervalMs: 2000 });
+      });
+      await runStep("verify_workspace_ssh_route", async () => {
+        if (!project_id || !host_id) {
+          throw new Error("missing workspace ssh route context");
+        }
+        await assertWorkspaceSshRouteMatchesLocalTunnel({
+          cli,
+          workspaceId: project_id,
+          hostId: host_id,
+        });
       });
     }
 
