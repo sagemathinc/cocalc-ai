@@ -167,6 +167,8 @@ src/.claude/settings.local.json
 junit.xml
 src/packages/frontend/test-results/
 src/packages/frontend/playwright-report/
+src/packages/lite/test-results/
+src/packages/lite/.playwright-jupyter/
 src/.local/
 
 

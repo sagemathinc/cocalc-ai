@@ -19,7 +19,9 @@
     "app": "pnpm exec cocalc-lite",
     "jupyter:bench": "node ./dist/jupyter-benchmark.js",
     "jupyter:bench:browser": "node ./dist/jupyter-browser-benchmark.js",
-    "jupyter:bench:scroll": "node ./dist/jupyter-scroll-benchmark.js"
+    "jupyter:bench:scroll": "node ./dist/jupyter-scroll-benchmark.js",
+    "jupyter:test:e2e": "playwright test -c playwright.jupyter.config.ts",
+    "jupyter:test:e2e:headed": "playwright test -c playwright.jupyter.config.ts --headed"
   },
   "bin": {
     "cocalc-lite": "./bin/start.js"
