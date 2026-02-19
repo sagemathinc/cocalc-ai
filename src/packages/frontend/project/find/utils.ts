@@ -118,7 +118,7 @@ export function getScopeContext(scopePath: string): FindScopeContext {
       kind: "backups",
       backupName,
       innerPath,
-      homePath: innerPath,
+      homePath: innerPath ? `/${innerPath}` : "/",
     };
   }
   if (isSnapshotsPath(clean)) {
@@ -129,8 +129,8 @@ export function getScopeContext(scopePath: string): FindScopeContext {
       kind: "snapshots",
       snapshotName,
       innerPath,
-      homePath: innerPath,
+      homePath: innerPath ? `/${innerPath}` : "/",
     };
   }
-  return { kind: "normal", homePath: scopePath };
+  return { kind: "normal", homePath: scopePath || "/" };
 }

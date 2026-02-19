@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { promises as fs } from "node:fs";
 
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { JSONValue } from "@cocalc/util/types";
@@ -123,13 +124,19 @@ describe("AgentTimeTravelRecorder", () => {
   };
 
   const originalHome = process.env.HOME;
+  let statMock: jest.SpyInstance;
 
   beforeEach(() => {
     process.env.HOME = homeRoot;
+    statMock = jest.spyOn(fs, "stat").mockResolvedValue({
+      isFile: () => true,
+      size: 1,
+    } as any);
   });
 
   afterEach(() => {
     process.env.HOME = originalHome;
+    statMock.mockRestore();
   });
 
   it("stores the latest patch id on read", async () => {
@@ -216,6 +223,31 @@ describe("AgentTimeTravelRecorder", () => {
     await recorder.recordWrite("src/file.txt", turnDate);
 
     expect(syncDoc.commitCalls).toHaveLength(0);
+    await recorder.dispose();
+  });
+
+  it("skips missing files without creating a syncdoc", async () => {
+    const syncFactory = jest.fn(async () =>
+      new FakeSyncDoc({
+        content: "",
+        versions: [],
+        versionMap: new Map(),
+      }),
+    );
+    const { map, store } = makeStore();
+    const recorder = new AgentTimeTravelRecorder({
+      ...baseOptions,
+      readStateStore: store,
+      syncFactory,
+    });
+    statMock.mockRejectedValueOnce(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+
+    await recorder.recordRead("src/missing.txt", turnDate);
+
+    expect(syncFactory).not.toHaveBeenCalled();
+    expect(map.size).toBe(0);
     await recorder.dispose();
   });
 });

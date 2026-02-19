@@ -225,4 +225,23 @@ describe("processLLM model resolution and Codex dispatch", () => {
     });
     expect(processAcpLLM).toHaveBeenCalled();
   });
+
+  it("adds immediate-send guidance for Codex turns", async () => {
+    const { actions } = makeActions();
+    const message = makeMessage();
+    message.history[0].content = "thanks";
+    const { processAcpLLM } = require("../acp-api");
+    await processLLM({
+      actions,
+      message,
+      reply_to: new Date("2025-02-02T01:00:00.000Z"),
+      threadModel: "codex-agent",
+      acpSendMode: "immediate",
+    });
+    expect(processAcpLLM).toHaveBeenCalledTimes(1);
+    const args = processAcpLLM.mock.calls[0][0];
+    expect(args.sendMode).toBe("immediate");
+    expect(args.input).toContain("CoCalc UI immediate-send note");
+    expect(args.input).toContain("thanks");
+  });
 });

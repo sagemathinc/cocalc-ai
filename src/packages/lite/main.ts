@@ -23,6 +23,7 @@ import { init as initChangefeeds } from "./hub/changefeeds";
 import { init as initHubApi } from "./hub/api";
 import { init as initLLM } from "./hub/llm";
 import { init as initAcp } from "./hub/acp";
+import { initWatchdog, closeWatchdog } from "./watchdog";
 import { account_id } from "@cocalc/backend/data";
 import { getAuthToken } from "./auth-token";
 import getLogger from "@cocalc/backend/logger";
@@ -104,6 +105,9 @@ export async function main(opts?: {
   logger.debug("start acp conat server");
   await initAcp(conatClient);
 
+  logger.debug("start watchdog");
+  initWatchdog();
+
   const path = process.cwd();
 
   logger.debug("start hub api");
@@ -122,6 +126,7 @@ export async function main(opts?: {
   });
 
   process.once("exit", () => {
+    closeWatchdog();
     conatServer?.close();
     conatServer = null;
     persistServer?.close?.();

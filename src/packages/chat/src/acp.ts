@@ -40,13 +40,33 @@ export function appendStreamMessage(
       ...last,
       event: {
         ...last.event,
-        text: last.event.text + nextEvent.text,
+        text: joinStreamText(last.event.text, nextEvent.text),
       },
       seq: message.seq ?? last.seq,
     };
     return [...events.slice(0, -1), merged];
   }
   return [...events, message];
+}
+
+function joinStreamText(previousText: string, nextText: string): string {
+  if (!previousText || !nextText) return previousText + nextText;
+  if (!needsMarkdownParagraphBreak(previousText, nextText)) {
+    return previousText + nextText;
+  }
+  const left = previousText.replace(/\s+$/, "");
+  const right = nextText.replace(/^\s+/, "");
+  return `${left}\n\n${right}`;
+}
+
+function needsMarkdownParagraphBreak(
+  previousText: string,
+  nextText: string,
+): boolean {
+  if (/\s$/.test(previousText) || /^\s/.test(nextText)) return false;
+  const left = previousText.replace(/\s+$/, "");
+  const right = nextText.replace(/^\s+/, "");
+  return left.endsWith("**") && right.startsWith("**");
 }
 
 export function extractEventText(
