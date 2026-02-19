@@ -4,6 +4,7 @@ import getLogger from "@cocalc/backend/logger";
 import { getPersistClientDebugStats } from "@cocalc/conat/persist/client";
 import { getChangefeedServerDebugStats } from "@cocalc/conat/hub/changefeeds";
 import { getAcpWatchdogStats } from "./hub/acp";
+import { info as getRefCacheInfo } from "@cocalc/util/refcache";
 
 const logger = getLogger("lite:watchdog");
 
@@ -14,6 +15,7 @@ const DEFAULT_ELU_WARN_PCT = 85;
 const DEFAULT_LOOP_DELAY_WARN_MS = 250;
 const DEFAULT_PERSIST_ACTIVE_WARN = 120;
 const DEFAULT_CHANGEFEED_ACTIVE_WARN = 200;
+const DEFAULT_CHANGEFEED_UNTRACKED_WARN = 100;
 const DEFAULT_ACP_ACTIVE_WRITERS_WARN = 20;
 const DEFAULT_TOP_N = 6;
 
@@ -54,6 +56,80 @@ function summarizeConstructors(values: any[], topN = 8) {
     .map(([type, count]) => ({ type, count }));
 }
 
+function topMapCounters(map: Map<string, number>, topN = 8) {
+  return Array.from(map.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, topN)
+    .map(([key, count]) => ({ key, count }));
+}
+
+function summarizeHandlePaths(
+  handles: any[],
+  type: string,
+  topN = 8,
+): Array<{ path: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const handle of handles) {
+    const handleType =
+      handle?.constructor?.name ??
+      Object.prototype.toString.call(handle).slice(8, -1);
+    if (handleType !== type) continue;
+    const path =
+      handle?._filename ??
+      handle?.filename ??
+      handle?.path ??
+      handle?._path ??
+      handle?.watchPath;
+    if (typeof path !== "string" || path.length === 0) continue;
+    counts.set(path, (counts.get(path) ?? 0) + 1);
+  }
+  return topMapCounters(counts, topN).map(({ key, count }) => ({
+    path: key,
+    count,
+  }));
+}
+
+function summarizePersistRefCache(topN = 8) {
+  const refcacheInfo = getRefCacheInfo();
+  const countObj = refcacheInfo?.["persistent-stream-client"]?.count as
+    | Record<string, number>
+    | undefined;
+  if (countObj == null || typeof countObj !== "object") {
+    return {
+      entries: 0,
+      totalRefs: 0,
+      parseErrors: 0,
+      byStorageTop: [] as Array<{ storage: string; count: number }>,
+    };
+  }
+  const byStorage = new Map<string, number>();
+  let entries = 0;
+  let totalRefs = 0;
+  let parseErrors = 0;
+  for (const [key, rawCount] of Object.entries(countObj)) {
+    const count = Number(rawCount) || 0;
+    entries += 1;
+    totalRefs += count;
+    let storage = "__parse_error__";
+    try {
+      const parsed = JSON.parse(key);
+      storage = parsed?.[1]?.path ?? "__unknown_storage__";
+    } catch {
+      parseErrors += 1;
+    }
+    byStorage.set(storage, (byStorage.get(storage) ?? 0) + count);
+  }
+  return {
+    entries,
+    totalRefs,
+    parseErrors,
+    byStorageTop: topMapCounters(byStorage, topN).map(({ key, count }) => ({
+      storage: key,
+      count,
+    })),
+  };
+}
+
 function getActiveHandleStats(topN = 8) {
   const handles =
     typeof (process as any)._getActiveHandles === "function"
@@ -67,6 +143,8 @@ function getActiveHandleStats(topN = 8) {
     handleCount: handles.length,
     requestCount: requests.length,
     handleTypesTop: summarizeConstructors(handles, topN),
+    fsWatcherPathsTop: summarizeHandlePaths(handles, "FSWatcher", topN),
+    statWatcherPathsTop: summarizeHandlePaths(handles, "StatWatcher", topN),
     requestTypesTop: summarizeConstructors(requests, topN),
   };
 }
@@ -105,6 +183,10 @@ export function initWatchdog() {
     "COCALC_WATCHDOG_CHANGEFEED_ACTIVE_WARN",
     DEFAULT_CHANGEFEED_ACTIVE_WARN,
   );
+  const changefeedUntrackedWarn = envNumber(
+    "COCALC_WATCHDOG_CHANGEFEED_UNTRACKED_WARN",
+    DEFAULT_CHANGEFEED_UNTRACKED_WARN,
+  );
   const acpActiveWritersWarn = envNumber(
     "COCALC_WATCHDOG_ACP_ACTIVE_WRITERS_WARN",
     DEFAULT_ACP_ACTIVE_WRITERS_WARN,
@@ -128,6 +210,7 @@ export function initWatchdog() {
     loopDelayWarnMs,
     persistActiveWarn,
     changefeedActiveWarn,
+    changefeedUntrackedWarn,
     acpActiveWritersWarn,
   });
 
@@ -158,6 +241,11 @@ export function initWatchdog() {
     const memory = process.memoryUsage();
     const persist = getPersistClientDebugStats({ topN });
     const changefeeds = getChangefeedServerDebugStats({ topN });
+    const persistRefCache = summarizePersistRefCache(topN);
+    const changefeedUntracked = Math.max(
+      0,
+      changefeeds.activeSockets - (changefeeds.activeByAccountTotal ?? 0),
+    );
     const acp = getAcpWatchdogStats({ topN });
 
     const reasons: string[] = [];
@@ -167,8 +255,12 @@ export function initWatchdog() {
       reasons.push(`loopDelayMax=${loopDelayMaxMs.toFixed(1)}ms`);
     if (persist.active >= persistActiveWarn)
       reasons.push(`persist.active=${persist.active}`);
+    if (persistRefCache.entries >= persistActiveWarn)
+      reasons.push(`persist.refcacheEntries=${persistRefCache.entries}`);
     if (changefeeds.activeSockets >= changefeedActiveWarn)
       reasons.push(`changefeeds.activeSockets=${changefeeds.activeSockets}`);
+    if (changefeedUntracked >= changefeedUntrackedWarn)
+      reasons.push(`changefeeds.untracked=${changefeedUntracked}`);
     if (acp.activeWriters >= acpActiveWritersWarn)
       reasons.push(`acp.activeWriters=${acp.activeWriters}`);
 
@@ -195,7 +287,9 @@ export function initWatchdog() {
       loadavg: os.loadavg().map((x) => Math.round(x * 100) / 100),
       acp,
       persist,
+      persistRefCache,
       changefeeds,
+      changefeedUntracked,
     };
 
     if (hot) {

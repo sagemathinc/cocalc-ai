@@ -55,6 +55,14 @@ function topCounters(map: CounterByAccount, limit: number) {
     .map(([account_id, count]) => ({ account_id, count }));
 }
 
+function sumCounters(map: CounterByAccount): number {
+  let total = 0;
+  for (const value of map.values()) {
+    total += value;
+  }
+  return total;
+}
+
 export function getChangefeedServerDebugStats({
   topN = 8,
 }: {
@@ -63,6 +71,8 @@ export function getChangefeedServerDebugStats({
   const top = Math.max(1, topN);
   return {
     ...stats,
+    connectionsByAccountTotal: sumCounters(connectionsByAccount),
+    activeByAccountTotal: sumCounters(activeByAccount),
     connectionsByAccountTop: topCounters(connectionsByAccount, top),
     activeByAccountTop: topCounters(activeByAccount, top),
   };
@@ -103,7 +113,6 @@ export function changefeedServer({
 
   server.on("connection", (socket) => {
     stats.connections += 1;
-    stats.activeSockets += 1;
     const v = socket.subject.split(".")[1];
     logger.debug(server.id, "connection from ", v);
     if (!v?.startsWith("account-")) {
@@ -130,10 +139,29 @@ export function changefeedServer({
       socket.close();
       return;
     }
+    const changes = uuid();
     let added = false;
+    let tracked = false;
+    socket.on("closed", () => {
+      if (tracked) {
+        stats.socketClosed += 1;
+        stats.activeSockets = Math.max(0, stats.activeSockets - 1);
+      }
+      logger.debug(
+        "socket.close: cleaning up since socket closed for some external reason (timeout?)",
+        socket.subject,
+      );
+      if (added) {
+        usage.delete(account_id);
+        bumpCounterByAccount(activeByAccount, account_id, -1);
+      }
+      cancelQuery(changes);
+    });
     try {
       usage.add(account_id);
       added = true;
+      tracked = true;
+      stats.activeSockets += 1;
       bumpCounterByAccount(connectionsByAccount, account_id, 1);
       bumpCounterByAccount(activeByAccount, account_id, 1);
     } catch (err) {
@@ -147,22 +175,6 @@ export function changefeedServer({
       socket.close();
       return;
     }
-
-    const changes = uuid();
-
-    socket.on("closed", () => {
-      stats.socketClosed += 1;
-      stats.activeSockets = Math.max(0, stats.activeSockets - 1);
-      logger.debug(
-        "socket.close: cleaning up since socket closed for some external reason (timeout?)",
-        socket.subject,
-      );
-      if (added) {
-        usage.delete(account_id);
-        bumpCounterByAccount(activeByAccount, account_id, -1);
-      }
-      cancelQuery(changes);
-    });
 
     let running = false;
     socket.on("data", (data) => {
