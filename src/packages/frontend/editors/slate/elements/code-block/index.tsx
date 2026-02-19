@@ -13,6 +13,7 @@ import { useChange } from "../../use-change";
 import { getHistory } from "./history";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { IS_TOUCH } from "@cocalc/frontend/feature";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
@@ -25,6 +26,7 @@ interface FloatingActionMenuProps {
   canEdit: boolean;
   info: string;
   content: string;
+  visible: boolean;
   onSaveOrEdit: () => void;
   onDownload: () => void;
   renderActions: (size?: "small" | "middle" | "large") => ReactNode;
@@ -64,6 +66,7 @@ function FloatingActionMenu({
   canEdit,
   info,
   content,
+  visible,
   onSaveOrEdit,
   onDownload,
   renderActions,
@@ -140,6 +143,9 @@ function FloatingActionMenu({
         border: "1px solid #ddd",
         borderRadius: "6px",
         padding: "2px 4px",
+        opacity: visible ? 1 : 0,
+        pointerEvents: visible ? "auto" : "none",
+        transition: "opacity 140ms ease",
       }}
     >
       {collapseToggle && (
@@ -250,8 +256,11 @@ export const StaticElement: React.FC<RenderElementProps> = ({
         ? `${hiddenChars} ${hiddenChars === 1 ? "character" : "characters"} hidden`
         : "collapsed";
   const [expanded, setExpanded] = useState<boolean>(false);
+  const [menuHovered, setMenuHovered] = useState<boolean>(false);
+  const [menuFocused, setMenuFocused] = useState<boolean>(false);
   const forceExpanded = editing;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
+  const showActionMenu = IS_TOUCH || editing || menuHovered || menuFocused;
 
   const save = (value: string | null, run: boolean) => {
     setEditing(false);
@@ -295,6 +304,21 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     <div
       {...attributes}
       style={{ marginBottom: "1em", textIndent: 0, position: "relative" }}
+      onMouseEnter={() => {
+        if (!IS_TOUCH) setMenuHovered(true);
+      }}
+      onMouseLeave={() => {
+        if (!IS_TOUCH) setMenuHovered(false);
+      }}
+      onFocusCapture={() => {
+        if (!IS_TOUCH) setMenuFocused(true);
+      }}
+      onBlurCapture={(event) => {
+        if (IS_TOUCH) return;
+        const next = event.relatedTarget as Node | null;
+        if (next && (event.currentTarget as HTMLElement).contains(next)) return;
+        setMenuFocused(false);
+      }}
     >
       {!disableMarkdownCodebar && (
         <FloatingActionMenu
@@ -309,6 +333,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
           }}
           canEdit={!!project_id}
           content={renderedValue}
+          visible={showActionMenu}
           onDownload={() => {
             const blob = new Blob([renderedValue], {
               type: "text/plain;charset=utf-8",
@@ -336,14 +361,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
             />
           )}
           collapseToggle={
-            shouldCollapse
-              ? {
-                  label: isCollapsed ? "Show all" : "Collapse",
-                  onClick: () => {
-                    setExpanded((prev) => !prev);
-                  },
-                }
-              : null
+            null
           }
         />
       )}
