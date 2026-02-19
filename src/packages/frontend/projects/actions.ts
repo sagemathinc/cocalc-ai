@@ -1091,7 +1091,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }
 
   public async delete_project(project_id: string): Promise<void> {
-    await this.projects_table_set({
+    await webapp_client.conat_client.hub.projects.setProjectDeleted({
       project_id,
       deleted: true,
     });
@@ -1102,7 +1102,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   public async toggle_delete_project(project_id: string): Promise<void> {
     const is_deleted = store.is_deleted(project_id);
 
-    await this.projects_table_set({
+    await webapp_client.conat_client.hub.projects.setProjectDeleted({
       project_id,
       deleted: !is_deleted,
     });
