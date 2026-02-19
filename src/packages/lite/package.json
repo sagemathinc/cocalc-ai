@@ -21,7 +21,8 @@
     "jupyter:bench:browser": "node ./dist/jupyter-browser-benchmark.js",
     "jupyter:bench:scroll": "node ./dist/jupyter-scroll-benchmark.js",
     "jupyter:test:e2e": "playwright test -c playwright.jupyter.config.ts",
-    "jupyter:test:e2e:headed": "playwright test -c playwright.jupyter.config.ts --headed"
+    "jupyter:test:e2e:headed": "playwright test -c playwright.jupyter.config.ts --headed",
+    "jupyter:test:e2e:strict": "COCALC_JUPYTER_E2E_REQUIRE_KERNEL=1 playwright test -c playwright.jupyter.config.ts"
   },
   "bin": {
     "cocalc-lite": "./bin/start.js"

@@ -21,6 +21,15 @@ import {
 
 test.describe.configure({ mode: "serial" });
 
+function envFlag(name: string): boolean {
+  const raw = process.env[name];
+  if (!raw) return false;
+  const v = raw.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+const REQUIRE_KERNEL = envFlag("COCALC_JUPYTER_E2E_REQUIRE_KERNEL") || envFlag("CI");
+
 function execCountAdvanced(
   before: number | undefined,
   after: number | undefined,
@@ -68,6 +77,13 @@ async function ensureKernelReadyOrSkip(
   try {
     await primeKernel(page, cellIndex);
   } catch (err: any) {
+    if (REQUIRE_KERNEL) {
+      throw new Error(
+        `kernel execution unavailable in strict mode: ${
+          err?.message ?? `${err}`
+        }`,
+      );
+    }
     test.skip(
       true,
       `kernel execution unavailable in current session: ${

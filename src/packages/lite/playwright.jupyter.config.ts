@@ -2,6 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "playwright/jupyter",
+  globalSetup: "playwright/jupyter/global-setup.ts",
   timeout: 120_000,
   expect: {
     timeout: 20_000,
