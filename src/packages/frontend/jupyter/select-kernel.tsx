@@ -508,7 +508,9 @@ export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
 
   const [refreshingKernels, setRefreshingKernels] = useState<boolean>(false);
   function renderRefreshButton(): Rendered | undefined {
-    const loading = kernel == null || kernel_info == null || refreshingKernels;
+    // Keep refresh available when kernel/kernel_info are missing or unknown:
+    // those are precisely the cases where forcing a kernel list reload helps.
+    const loading = refreshingKernels;
     return (
       <Button
         disabled={loading}
