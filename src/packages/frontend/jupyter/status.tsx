@@ -364,7 +364,7 @@ export function Kernel({
                 openKernelDrawer();
               }}
             >
-              (`${intl.formatMessage(labels.select)}...`)
+              ({intl.formatMessage(labels.select)}...)
             </a>
           </Tooltip>
         </>
