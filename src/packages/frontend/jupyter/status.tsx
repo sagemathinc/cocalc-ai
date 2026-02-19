@@ -22,6 +22,7 @@ import {
   Divider,
   Popconfirm,
   Progress,
+  Space,
   Tooltip,
   Typography,
 } from "antd";
@@ -158,6 +159,12 @@ export function Kernel({
 
   const backendIsStarting =
     backend_state === "starting" || backend_state === "spawning";
+  const haltTooltip = intl.formatMessage({
+    id: "jupyter.status.halt_idle_tooltip",
+    defaultMessage:
+      "Terminate the kernel process? All variable state will be lost.",
+    description: "Terminating the kernel of a Jupyter Notebook",
+  });
 
   const [isSpwarning, setIsSpawarning] = React.useState(false);
   useEffect(() => {
@@ -389,24 +396,18 @@ export function Kernel({
             </>
           );
         case "idle":
-          const tooltip = intl.formatMessage({
-            id: "jupyter.status.halt_idle_tooltip",
-            defaultMessage:
-              "Terminate the kernel process? All variable state will be lost.",
-            description: "Terminating the kernel of a Jupyter Notebook",
-          });
           return (
             <>
               Idle{" "}
               <Popconfirm
-                title={tooltip}
+                title={haltTooltip}
                 onConfirm={() => {
                   actions.shutdown();
                 }}
                 okText={intl.formatMessage(labels.halt)}
                 cancelText={intl.formatMessage(labels.cancel)}
               >
-                <Tooltip title={tooltip}>
+                <Tooltip title={haltTooltip}>
                   <a>(halt...)</a>
                 </Tooltip>
               </Popconfirm>
@@ -433,6 +434,35 @@ export function Kernel({
     } else {
       return <span />;
     }
+  }
+
+  function renderDrawerActions(): React.JSX.Element {
+    const canRestart = !read_only && kernel != null && !no_kernel;
+    const canHalt = !read_only && backend_state === "running";
+    return (
+      <Space size={8}>
+        <Button
+          size="small"
+          disabled={!canRestart}
+          onClick={() => void actions.confirm_restart()}
+        >
+          Restart
+        </Button>
+        <Popconfirm
+          title={haltTooltip}
+          onConfirm={() => {
+            actions.shutdown();
+          }}
+          okText={intl.formatMessage(labels.halt)}
+          cancelText={intl.formatMessage(labels.cancel)}
+          disabled={!canHalt}
+        >
+          <Button size="small" disabled={!canHalt}>
+            Halt
+          </Button>
+        </Popconfirm>
+      </Space>
+    );
   }
 
   function renderKernelState() {
@@ -783,6 +813,7 @@ export function Kernel({
         size={kernelDrawerWidth}
         resizable={{ onResize: handleDrawerResize }}
         title={get_kernel_name()}
+        extra={renderDrawerActions()}
       >
         {renderKernelDetails()}
         <Divider />
