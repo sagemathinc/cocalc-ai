@@ -296,23 +296,34 @@ test("kernel warning banner can be surfaced and cleared", async ({ page }) => {
     }),
   );
 
-  const hasKernelWarningTestHook = await page.evaluate(() => {
-    return (
-      typeof (window as any).__cocalcJupyterRuntime?.set_kernel_error_for_test ===
-      "function"
-    );
-  });
-  test.skip(
-    !hasKernelWarningTestHook,
-    "kernel warning test hook unavailable in current frontend bundle",
-  );
-
-  const kernelWarning = page.locator('[cocalc-test="kernel-warning"]');
-  await setKernelErrorForE2E(page, "Kernel terminated unexpectedly (test)");
-  await expect(kernelWarning).toContainText("Kernel terminated unexpectedly");
+  const warningText = "Kernel terminated unexpectedly (test)";
+  await setKernelErrorForE2E(page, warningText);
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate(
+          (text: string) => document.body.innerText.includes(text),
+          warningText,
+        ),
+      {
+        timeout: 20_000,
+      },
+    )
+    .toBe(true);
 
   await clearKernelErrorForE2E(page);
-  await expect(kernelWarning).toHaveCount(0);
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate(
+          (text: string) => document.body.innerText.includes(text),
+          warningText,
+        ),
+      {
+        timeout: 20_000,
+      },
+    )
+    .toBe(false);
 });
 
 test("reads metadata.cocalc.last_runtime_ms and shows it in UI", async ({ page }) => {
@@ -335,17 +346,6 @@ test("reads metadata.cocalc.last_runtime_ms and shows it in UI", async ({ page }
       path_ipynb,
       auth_token: conn.auth_token,
     }),
-  );
-
-  const hasRuntimeTestHook = await page.evaluate(() => {
-    return (
-      typeof (window as any).__cocalcJupyterRuntime?.set_kernel_error_for_test ===
-      "function"
-    );
-  });
-  test.skip(
-    !hasRuntimeTestHook,
-    "metadata last_runtime_ms assertions require current frontend runtime bundle",
   );
 
   await expect

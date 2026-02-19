@@ -357,7 +357,27 @@ export async function setKernelErrorForE2E(
   await page.evaluate((msg: string) => {
     const runtime = (window as any).__cocalcJupyterRuntime;
     if (typeof runtime?.set_kernel_error_for_test !== "function") {
-      throw new Error("missing __cocalcJupyterRuntime.set_kernel_error_for_test");
+      const redux = (window as any).cocalc?.redux;
+      const actions = redux?._actions ?? {};
+      const stores = redux?._stores ?? {};
+      const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
+      const currentPath = encodedPath
+        ? `/${decodeURIComponent(encodedPath)}`
+        : undefined;
+      const candidates = Object.keys(actions).filter(
+        (name) => typeof actions[name]?.set_kernel_error === "function",
+      );
+      if (candidates.length === 0) {
+        throw new Error(
+          "missing kernel error hooks (__cocalcJupyterRuntime/cocalc.redux actions)",
+        );
+      }
+      const bestMatch =
+        candidates.find(
+          (name) => currentPath != null && stores[name]?.get?.("path") === currentPath,
+        ) ?? candidates[0];
+      actions[bestMatch].set_kernel_error(msg);
+      return;
     }
     runtime.set_kernel_error_for_test(msg);
   }, message);
@@ -374,8 +394,23 @@ export async function clearKernelErrorForE2E(page: Page): Promise<void> {
       runtime.set_kernel_error_for_test("");
       return;
     }
-    throw new Error(
-      "missing __cocalcJupyterRuntime kernel warning test hooks",
+    const redux = (window as any).cocalc?.redux;
+    const actions = redux?._actions ?? {};
+    const stores = redux?._stores ?? {};
+    const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
+    const currentPath = encodedPath ? `/${decodeURIComponent(encodedPath)}` : undefined;
+    const candidates = Object.keys(actions).filter(
+      (name) => typeof actions[name]?.set_kernel_error === "function",
     );
+    if (candidates.length === 0) {
+      throw new Error(
+        "missing kernel error hooks (__cocalcJupyterRuntime/cocalc.redux actions)",
+      );
+    }
+    const bestMatch =
+      candidates.find(
+        (name) => currentPath != null && stores[name]?.get?.("path") === currentPath,
+      ) ?? candidates[0];
+    actions[bestMatch].set_kernel_error("");
   });
 }
