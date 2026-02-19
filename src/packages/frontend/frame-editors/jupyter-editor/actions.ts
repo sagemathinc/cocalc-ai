@@ -36,6 +36,8 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
   protected doctype: string = "none"; // actual document is managed elsewhere
   public jupyter_actions: JupyterActions;
   private frame_actions: { [id: string]: NotebookFrameActions } = {};
+  private syncConsoleTimer?: ReturnType<typeof setTimeout>;
+  private syncConsoleInFlight = false;
 
   _raw_default_frame_tree(): FrameTree {
     return { type: "jupyter_cell_notebook" };
@@ -61,6 +63,10 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
   }
 
   public close(): void {
+    if (this.syncConsoleTimer != null) {
+      clearTimeout(this.syncConsoleTimer);
+      this.syncConsoleTimer = undefined;
+    }
     this.close_jupyter_actions();
     super.close();
   }
@@ -123,6 +129,127 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
         this.setState({ read_only });
       }
     });
+    let backend_state = store.get("backend_state");
+    let kernel_state = store.get("kernel_state");
+    store.on("change", () => {
+      const backend = store.get("backend_state");
+      const kernel = store.get("kernel_state");
+      const backendChanged = backend !== backend_state;
+      const kernelChanged = kernel !== kernel_state;
+      if (
+        (backendChanged && backend === "running") ||
+        (backend === "running" &&
+          kernelChanged &&
+          (kernel === "idle" || kernel === "busy"))
+      ) {
+        this.scheduleSyncJupyterConsoleTerminals();
+      }
+      backend_state = backend;
+      kernel_state = kernel;
+    });
+  };
+
+  private normalizeTerminalArgs = (args: any): string[] => {
+    if (args == null) {
+      return [];
+    }
+    const raw =
+      typeof args?.toJS === "function"
+        ? args.toJS()
+        : Array.isArray(args)
+          ? args
+          : [];
+    return raw.map((x) => `${x}`);
+  };
+
+  private isJupyterConsoleTerminalNode = (node: any): boolean => {
+    if (node == null) {
+      return false;
+    }
+    const type = node.get("type");
+    if (typeof type !== "string" || type.slice(0, 8) !== "terminal") {
+      return false;
+    }
+    const command = node.get("command");
+    if (command !== "jupyter") {
+      return false;
+    }
+    const args = this.normalizeTerminalArgs(node.get("args"));
+    return args[0] === "console" && args[1] === "--existing";
+  };
+
+  private getJupyterConsoleTerminalIds = (): string[] => {
+    const ids: string[] = [];
+    for (const id in this._get_leaf_ids()) {
+      if (this.isJupyterConsoleTerminalNode(this._get_frame_node(id))) {
+        ids.push(id);
+      }
+    }
+    return ids;
+  };
+
+  private sameArgs = (a: string[], b: string[]): boolean => {
+    if (a.length !== b.length) {
+      return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  private scheduleSyncJupyterConsoleTerminals = (): void => {
+    if (this.syncConsoleTimer != null) {
+      clearTimeout(this.syncConsoleTimer);
+    }
+    this.syncConsoleTimer = setTimeout(() => {
+      this.syncConsoleTimer = undefined;
+      void this.syncJupyterConsoleTerminals();
+    }, 1000);
+  };
+
+  private syncJupyterConsoleTerminals = async (): Promise<void> => {
+    if (this.syncConsoleInFlight || this.isClosed()) {
+      return;
+    }
+    const ids = this.getJupyterConsoleTerminalIds();
+    if (ids.length == 0) {
+      return;
+    }
+    this.syncConsoleInFlight = true;
+    try {
+      const connectionFile = await this.jupyter_actions.getConnectionFile();
+      const command = "jupyter";
+      const args = ["console", "--existing", connectionFile];
+      for (const id of ids) {
+        if (this.isClosed()) {
+          return;
+        }
+        const node = this._get_frame_node(id);
+        if (node == null) {
+          continue;
+        }
+        if (!this.isJupyterConsoleTerminalNode(node)) {
+          continue;
+        }
+        const currentArgs = this.normalizeTerminalArgs(node.get("args"));
+        const currentCommand = node.get("command");
+        if (currentCommand === command && this.sameArgs(currentArgs, args)) {
+          continue;
+        }
+        // Keep the same terminal frame but retarget it to the new kernel
+        // session file, then force a restart of the backend process.
+        this.terminals.set_command(id, command, args);
+        this.set_frame_tree({ id, command, args });
+        this.terminals.kill(id);
+      }
+    } catch {
+      // Kernel may be between states; next lifecycle transition retries.
+    } finally {
+      this.syncConsoleInFlight = false;
+    }
   };
 
   public focus(id?: string): void {
