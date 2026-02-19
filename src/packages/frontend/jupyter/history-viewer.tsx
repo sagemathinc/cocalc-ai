@@ -40,7 +40,7 @@ export function HistoryViewer({ project_id, path, doc, font_size }) {
     options: cm_options(),
   });
 
-  const kernel_error = doc.get_one({ type: "settings" })?.get("kernel_error");
+  const kernel_error = undefined;
   const actions = redux.getEditorActions(project_id, path)?.jupyter_actions;
 
   return (

@@ -35,8 +35,9 @@ import { ChatDocProvider, useChatDoc } from "./doc-context";
 import { useChatComposerDraft } from "./use-chat-composer-draft";
 import * as immutable from "immutable";
 import { useChatThreadSelection } from "./thread-selection";
-import { dateValue } from "./access";
+import { dateValue, field } from "./access";
 import { useCodexPaymentSource } from "./use-codex-payment-source";
+import { resetAcpThreadState } from "./acp-api";
 
 const GRID_STYLE: React.CSSProperties = {
   display: "flex",
@@ -233,8 +234,35 @@ export function ChatPanel({
     [setInput],
   );
   const hasInput = input.trim().length > 0;
-
   const isSelectedThreadAI = selectedThread?.isAI ?? false;
+  const selectedThreadIso = useMemo(
+    () =>
+      selectedThreadDate && !isNaN(selectedThreadDate.valueOf())
+        ? selectedThreadDate.toISOString()
+        : undefined,
+    [selectedThreadDate],
+  );
+  const selectedThreadMessages = useMemo(
+    () =>
+      selectedThreadIso != null
+        ? actions.getMessagesInThread(selectedThreadIso) ?? []
+        : [],
+    [actions, selectedThreadIso, messages],
+  );
+  const hasActiveAcpTurn = useMemo(() => {
+    if (!isSelectedThreadAI) return false;
+    if (!selectedThreadMessages.length) return false;
+    const activeStates = new Set(["queue", "sending", "sent", "running"]);
+    for (const msg of selectedThreadMessages) {
+      const d = dateValue(msg);
+      if (!d) continue;
+      if (field<boolean>(msg, "generating") === true) return true;
+      const state = acpState?.get?.(`${d.valueOf()}`);
+      if (state && activeStates.has(state)) return true;
+    }
+    return false;
+  }, [isSelectedThreadAI, selectedThreadMessages, acpState]);
+
   const {
     paymentSource: codexPaymentSource,
     loading: codexPaymentSourceLoading,
@@ -354,39 +382,69 @@ export function ChatPanel({
     [actions, clearInput],
   );
 
+  function resolveReplyTarget(replyToOverride?: Date | null): Date | undefined {
+    if (replyToOverride !== undefined) {
+      return replyToOverride ?? undefined;
+    }
+    if (isCombinedFeedSelected) {
+      const key = composerTargetKey ?? threads[0]?.key;
+      if (key) {
+        const millis = parseInt(key, 10);
+        if (isFinite(millis)) {
+          return new Date(millis);
+        }
+      }
+      return undefined;
+    }
+    return selectedThreadDate;
+  }
+
+  function interruptThreadIfRunning(reply_to: Date): void {
+    const rootIso = reply_to.toISOString();
+    const threadMessages = actions.getMessagesInThread(rootIso) ?? [];
+    const sessionId =
+      field<any>(selectedThread?.rootMessage, "acp_config")?.sessionId ??
+      `${reply_to.valueOf()}`;
+    for (const msg of threadMessages) {
+      if (field<boolean>(msg, "generating") !== true) continue;
+      const msgDate = dateValue(msg);
+      if (!msgDate) continue;
+      const threadId = field<string>(msg, "acp_thread_id") ?? sessionId;
+      actions.languageModelStopGenerating(new Date(msgDate.valueOf()), {
+        threadId,
+        replyTo: reply_to,
+      });
+    }
+  }
+
   function sendMessage(
     replyToOverride?: Date | null,
     extraInput?: string,
+    opts?: { immediate?: boolean },
   ): void {
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
     advanceComposerSession();
-    let reply_to: Date | undefined;
-    if (replyToOverride !== undefined) {
-      reply_to = replyToOverride ?? undefined;
-    } else if (isCombinedFeedSelected) {
-      const key = composerTargetKey ?? threads[0]?.key;
-      if (key) {
-        const millis = parseInt(key, 10);
-        if (isFinite(millis)) {
-          reply_to = new Date(millis);
-        }
-      }
-    } else {
-      reply_to = selectedThreadDate;
-    }
+    const reply_to = resolveReplyTarget(replyToOverride);
     if (!reply_to) {
       setAllowAutoSelectThread(true);
     } else if (isCombinedFeedSelected) {
       setAllowAutoSelectThread(false);
     }
+
+    if (reply_to && opts?.immediate && isSelectedThreadAI) {
+      interruptThreadIfRunning(reply_to);
+      resetAcpThreadState({ actions, threadRootDate: reply_to });
+    }
+
     clearComposerNow(composerDraftKey);
 
     const timeStamp = actions.sendChat({
       submitMentionsRef,
       reply_to,
       extraInput,
+      send_mode: opts?.immediate ? "immediate" : undefined,
       preserveSelectedThread: isCombinedFeedSelected,
     });
     const threadKey = timeStamp ? toMsString(timeStamp) ?? timeStamp : null;
@@ -402,6 +460,10 @@ export function ChatPanel({
   }
   function on_send(value?: string): void {
     sendMessage(undefined, value);
+  }
+
+  function on_send_immediately(value?: string): void {
+    sendMessage(undefined, value, { immediate: true });
   }
 
   function onNewChat(): void {
@@ -453,9 +515,11 @@ export function ChatPanel({
         input={input}
         setInput={setComposerInput}
         on_send={on_send}
+        on_send_immediately={on_send_immediately}
         submitMentionsRef={submitMentionsRef}
         hasInput={hasInput}
         isSelectedThreadAI={isSelectedThreadAI}
+        hasActiveAcpTurn={hasActiveAcpTurn}
         combinedFeedSelected={isCombinedFeedSelected}
         composerTargetKey={composerTargetKey}
         threads={threads}

@@ -5,11 +5,13 @@ import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { type FilesystemClient } from "@cocalc/conat/files/fs";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { type FindScopeMode } from "./types";
 
 export function FindScopeBar({
   mode,
   project_id,
+  homePath,
   currentPath,
   scopePath,
   scopeMode,
@@ -21,6 +23,7 @@ export function FindScopeBar({
 }: {
   mode: "project" | "flyout";
   project_id: string;
+  homePath: string;
   currentPath: string;
   scopePath: string;
   scopeMode: FindScopeMode;
@@ -60,15 +63,35 @@ export function FindScopeBar({
 
   const setHome = useCallback(() => {
     onScopeModeChange("home");
-    onScopePathChange("");
+    onScopePathChange(homePath);
     setPathWarning(null);
-  }, [onScopeModeChange, onScopePathChange]);
+  }, [homePath, onScopeModeChange, onScopePathChange]);
 
   const setCurrent = useCallback(() => {
     onScopeModeChange("current");
     onScopePathChange(currentPath);
     setPathWarning(null);
   }, [onScopeModeChange, onScopePathChange, currentPath]);
+
+  const setParent = useCallback(() => {
+    const base = normalizeAbsolutePath(scopePath || currentPath || homePath);
+    const parent = normalizeAbsolutePath(dirname(base || "/") || "/");
+    if (parent === currentPath) {
+      onScopeModeChange("current");
+    } else if (parent === homePath) {
+      onScopeModeChange("home");
+    } else {
+      onScopeModeChange("custom");
+    }
+    onScopePathChange(parent);
+    setPathWarning(null);
+  }, [
+    currentPath,
+    homePath,
+    onScopeModeChange,
+    onScopePathChange,
+    scopePath,
+  ]);
 
   const setGitRoot = useCallback(async () => {
     setGitLoading(true);
@@ -91,36 +114,40 @@ export function FindScopeBar({
 
   const commitPath = useCallback(
     async (nextRaw: string) => {
-      const trimmed = nextRaw.trim().replace(/^\/+/, "");
-      if (trimmed === scopePath) return;
+      const trimmed = nextRaw.trim();
       if (!trimmed) {
         onScopeModeChange("home");
-        onScopePathChange("");
+        onScopePathChange(homePath);
         setPathWarning(null);
         return;
       }
+      const normalized = normalizeAbsolutePath(
+        trimmed,
+        scopePath || currentPath || homePath,
+      );
+      if (normalized === scopePath) return;
       onScopeModeChange("custom");
-      onScopePathChange(trimmed);
+      onScopePathChange(normalized);
       setPathWarning(null);
       setCheckingPath(true);
       try {
-        const ok = await fs.exists(trimmed);
+        const ok = await fs.exists(normalized);
         if (!ok) {
           setPathWarning({
-            path: trimmed,
-            message: `Path not found: ${trimmed}`,
+            path: normalized,
+            message: `Path not found: ${normalized}`,
           });
         }
       } catch (err) {
         setPathWarning({
-          path: trimmed,
+          path: normalized,
           message: `Could not verify path: ${err}`,
         });
       } finally {
         setCheckingPath(false);
       }
     },
-    [fs, onScopeModeChange, onScopePathChange, scopePath],
+    [currentPath, fs, homePath, onScopeModeChange, onScopePathChange, scopePath],
   );
 
   return (
@@ -154,6 +181,9 @@ export function FindScopeBar({
             onClick={setCurrent}
           >
             Current
+          </Button>
+          <Button size={size} onClick={setParent}>
+            Parent
           </Button>
           <Button
             size={size}
@@ -240,22 +270,14 @@ async function findGitRoot(
   fs: FilesystemClient,
   startPath: string,
 ): Promise<string | null> {
-  let path = startPath;
+  let path = normalizeAbsolutePath(startPath || "/");
   while (true) {
-    const candidate = path ? join(path, ".git") : ".git";
+    const candidate = join(path, ".git");
     if (await fs.exists(candidate)) {
       return path;
     }
-    if (!path) return null;
+    if (path === "/") return null;
     const next = dirname(path);
-    if (!next || next === path || next === ".") {
-      path = "";
-    } else {
-      path = next;
-    }
-    if (!path) {
-      if (await fs.exists(".git")) return "";
-      return null;
-    }
+    path = normalizeAbsolutePath(next || "/");
   }
 }

@@ -13,6 +13,7 @@ import { useChange } from "../../use-change";
 import { getHistory } from "./history";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { IS_TOUCH } from "@cocalc/frontend/feature";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
@@ -25,10 +26,39 @@ interface FloatingActionMenuProps {
   canEdit: boolean;
   info: string;
   content: string;
+  visible: boolean;
   onSaveOrEdit: () => void;
   onDownload: () => void;
   renderActions: (size?: "small" | "middle" | "large") => ReactNode;
   collapseToggle?: { label: string; onClick: () => void } | null;
+}
+
+const COLLAPSE_THRESHOLD_LINES = 6;
+const COLLAPSE_THRESHOLD_CHARS = 1200;
+const COLLAPSED_PREVIEW_MAX_LINES = 6;
+const COLLAPSED_PREVIEW_MAX_CHARS = 800;
+const COLLAPSED_PREVIEW_MAX_LINE_CHARS = 180;
+
+function truncateCollapsedLine(line: string): string {
+  if (line.length <= COLLAPSED_PREVIEW_MAX_LINE_CHARS) return line;
+  return `${line.slice(0, COLLAPSED_PREVIEW_MAX_LINE_CHARS - 3)}...`;
+}
+
+function getCollapsedPreview(value: string): string {
+  const previewLines = value
+    .split("\n")
+    .slice(0, COLLAPSED_PREVIEW_MAX_LINES)
+    .map(truncateCollapsedLine);
+  let preview = previewLines.join("\n");
+  if (preview.length <= COLLAPSED_PREVIEW_MAX_CHARS) {
+    return preview;
+  }
+  const trimmed = preview.slice(0, COLLAPSED_PREVIEW_MAX_CHARS - 3);
+  const newline = trimmed.lastIndexOf("\n");
+  if (newline > 0) {
+    return `${trimmed.slice(0, newline)}...`;
+  }
+  return `${trimmed}...`;
 }
 
 function FloatingActionMenu({
@@ -36,6 +66,7 @@ function FloatingActionMenu({
   canEdit,
   info,
   content,
+  visible,
   onSaveOrEdit,
   onDownload,
   renderActions,
@@ -112,6 +143,9 @@ function FloatingActionMenu({
         border: "1px solid #ddd",
         borderRadius: "6px",
         padding: "2px 4px",
+        opacity: visible ? 1 : 0,
+        pointerEvents: visible ? "auto" : "none",
+        transition: "opacity 140ms ease",
       }}
     >
       {collapseToggle && (
@@ -170,7 +204,6 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     throw Error("bug");
   }
 
-  const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar, project_id } = useFileContext();
 
   // we need both a ref and state, because editing is used both for the UI
@@ -206,10 +239,28 @@ export const StaticElement: React.FC<RenderElementProps> = ({
 
   const codeValue = newValue ?? getCodeBlockText(element);
   const lineCount = codeValue.split("\n").length;
-  const shouldCollapse = lineCount > COLLAPSE_THRESHOLD_LINES;
+  const characterCount = codeValue.length;
+  const shouldCollapse =
+    lineCount > COLLAPSE_THRESHOLD_LINES ||
+    characterCount > COLLAPSE_THRESHOLD_CHARS;
+  const collapsedPreview = shouldCollapse
+    ? getCollapsedPreview(codeValue)
+    : codeValue;
+  const collapsedPreviewLineCount = collapsedPreview.split("\n").length;
+  const hiddenLines = Math.max(0, lineCount - collapsedPreviewLineCount);
+  const hiddenChars = Math.max(0, characterCount - collapsedPreview.length);
+  const collapseDetail =
+    hiddenLines > 0
+      ? `${hiddenLines} ${hiddenLines === 1 ? "line" : "lines"} hidden`
+      : hiddenChars > 0
+        ? `${hiddenChars} ${hiddenChars === 1 ? "character" : "characters"} hidden`
+        : "collapsed";
   const [expanded, setExpanded] = useState<boolean>(false);
+  const [menuHovered, setMenuHovered] = useState<boolean>(false);
+  const [menuFocused, setMenuFocused] = useState<boolean>(false);
   const forceExpanded = editing;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
+  const showActionMenu = IS_TOUCH || editing || menuHovered || menuFocused;
 
   const save = (value: string | null, run: boolean) => {
     setEditing(false);
@@ -253,6 +304,21 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     <div
       {...attributes}
       style={{ marginBottom: "1em", textIndent: 0, position: "relative" }}
+      onMouseEnter={() => {
+        if (!IS_TOUCH) setMenuHovered(true);
+      }}
+      onMouseLeave={() => {
+        if (!IS_TOUCH) setMenuHovered(false);
+      }}
+      onFocusCapture={() => {
+        if (!IS_TOUCH) setMenuFocused(true);
+      }}
+      onBlurCapture={(event) => {
+        if (IS_TOUCH) return;
+        const next = event.relatedTarget as Node | null;
+        if (next && (event.currentTarget as HTMLElement).contains(next)) return;
+        setMenuFocused(false);
+      }}
     >
       {!disableMarkdownCodebar && (
         <FloatingActionMenu
@@ -267,6 +333,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
           }}
           canEdit={!!project_id}
           content={renderedValue}
+          visible={showActionMenu}
           onDownload={() => {
             const blob = new Blob([renderedValue], {
               type: "text/plain;charset=utf-8",
@@ -294,14 +361,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
             />
           )}
           collapseToggle={
-            shouldCollapse
-              ? {
-                  label: isCollapsed ? "Show all" : "Collapse",
-                  onClick: () => {
-                    setExpanded((prev) => !prev);
-                  },
-                }
-              : null
+            null
           }
         />
       )}
@@ -344,10 +404,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
             style={{ margin: 0 }}
             dangerouslySetInnerHTML={{
               __html: highlightCodeHtml(
-                renderedValue
-                  .split("\n")
-                  .slice(0, COLLAPSE_THRESHOLD_LINES)
-                  .join("\n"),
+                collapsedPreview,
                 temporaryInfo ?? element.info,
               ),
             }}
@@ -369,7 +426,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
               cursor: "pointer",
             }}
           >
-            {lineCount} lines (collapsed)
+            {lineCount} lines, {characterCount} characters ({collapseDetail})
           </div>
         </div>
       ) : (

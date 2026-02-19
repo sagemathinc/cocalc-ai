@@ -178,6 +178,8 @@ packages/lite/
 - For Jupyter latency/output measurements in lite mode, use:
   - `pnpm -C src/packages/lite jupyter:bench -- --profile quick`
   - `pnpm -C src/packages/lite jupyter:bench -- --profile full --json`
+  - `pnpm -C src/packages/lite jupyter:bench:browser -- --port 5173`
+  - `pnpm -C src/packages/lite jupyter:bench:browser -- --base-url http://127.0.0.1:5173`
 
 ## Key Technologies
 

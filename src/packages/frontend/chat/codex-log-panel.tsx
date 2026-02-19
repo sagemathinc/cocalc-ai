@@ -25,6 +25,8 @@ interface Props {
   onEventsChange?: (eventCount: number) => void;
   onDeleteEvents?: () => void;
   onDeleteAllEvents?: () => void;
+  virtualizeEntries?: boolean;
+  scrollParent?: HTMLElement | null;
 }
 
 export function CodexLogPanel({
@@ -44,6 +46,8 @@ export function CodexLogPanel({
   onEventsChange,
   onDeleteEvents,
   onDeleteAllEvents,
+  virtualizeEntries = false,
+  scrollParent,
 }: Props) {
   const codexLog = useCodexLog({
     projectId: logProjectId,
@@ -107,6 +111,8 @@ export function CodexLogPanel({
       onJumpToBottom={onJumpToBottom}
       onDeleteEvents={handleDeleteEvents}
       onDeleteAllEvents={handleDeleteAllEvents}
+      virtualizeEntries={virtualizeEntries}
+      scrollParent={scrollParent}
     />
   );
 }

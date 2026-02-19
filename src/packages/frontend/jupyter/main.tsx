@@ -211,23 +211,55 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       }
     : undefined;
 
-  // We use react-virtuoso, which is an amazing library for
-  // doing windowing on dynamically sized content... like
-  // what comes up with Jupyter notebooks.
-  // We do have to ensure that this can be easily disabled
-  // by users, due to situations like this
-  //   https://github.com/sagemathinc/cocalc/issues/4727
-  // e.g., where maybe they want to use Javascript across all
-  // cells, or they want to preserve state in iframes, which
-  // requires keeping things rendered.
-  // NOTE: we get this once from the account store and do NOT
-  // load it again, since we didn't implement switching between
-  // rendering modes on the fly and such a switch will crash for sure.
-  const useWindowedListRef = useRef<boolean>(
-    !redux
-      .getStore("account")
-      .getIn(["editor_settings", "disable_jupyter_virtualization"]),
-  );
+  // We now always render via lazy-hydrate-once semantics.
+  const useLazyRenderOnceRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const runtime = (window as any).__cocalcJupyterRuntime ?? {};
+    const lazyEnabled = useLazyRenderOnceRef.current;
+    const lazyForced = true;
+    const lazyForceSource = "hardcoded";
+    const setKernelErrorForTest = (message?: string) => {
+      actions.set_kernel_error(message ?? "");
+    };
+    (window as any).__cocalcJupyterRuntime = {
+      ...runtime,
+      windowed_list_enabled: false,
+      windowed_list_forced: true,
+      windowed_list_default: false,
+      windowed_list_force_source: "hardcoded",
+      lazy_render_once_enabled: lazyEnabled,
+      lazy_render_once_forced: lazyForced,
+      lazy_render_once_force_source: lazyForceSource,
+      set_kernel_error_for_test: (message?: string) => {
+        setKernelErrorForTest(message);
+      },
+      clear_kernel_error_for_test: () => {
+        setKernelErrorForTest("");
+      },
+    };
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-windowed-list",
+      "0",
+    );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-windowed-list-source",
+      "hardcoded",
+    );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-windowed-list-forced",
+      "1",
+    );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-lazy-render",
+      lazyEnabled ? "1" : "0",
+    );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-lazy-render-source",
+      lazyForceSource,
+    );
+  }, [actions]);
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);
 
@@ -304,7 +336,6 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
         scrollTop={scrollTop}
         sel_ids={sel_ids}
         trust={trust}
-        use_windowed_list={useWindowedListRef.current}
         llmTools={llmTools}
         pendingCells={pendingCells}
       />

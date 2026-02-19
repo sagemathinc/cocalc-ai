@@ -41,6 +41,62 @@ const logger = getLogger("persist:client");
 export type ChangefeedEvent = (SetOperation | DeleteOperation)[];
 export type Changefeed = EventIterator<ChangefeedEvent>;
 
+type CounterByStorage = Map<string, number>;
+
+const stats = {
+  created: 0,
+  closed: 0,
+  active: 0,
+  initCalls: 0,
+  reconnectScheduled: 0,
+  socketDisconnected: 0,
+  socketClosed: 0,
+  getMissedRuns: 0,
+  getMissedRetries: 0,
+  getAllCalls: 0,
+  getAllErrors: 0,
+  getAllCode503: 0,
+  getAllCode408: 0,
+  changefeedCalls: 0,
+};
+
+const activeByStorage: CounterByStorage = new Map();
+const initByStorage: CounterByStorage = new Map();
+const reconnectByStorage: CounterByStorage = new Map();
+const getAllByStorage: CounterByStorage = new Map();
+
+function bumpCounterByStorage(
+  map: CounterByStorage,
+  key: string,
+  delta: number = 1,
+) {
+  if (!key) return;
+  const value = (map.get(key) ?? 0) + delta;
+  if (value <= 0) {
+    map.delete(key);
+  } else {
+    map.set(key, value);
+  }
+}
+
+function topCounters(map: CounterByStorage, limit: number) {
+  return Array.from(map.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([storage, count]) => ({ storage, count }));
+}
+
+export function getPersistClientDebugStats({ topN = 8 }: { topN?: number } = {}) {
+  const top = Math.max(1, topN);
+  return {
+    ...stats,
+    activeByStorageTop: topCounters(activeByStorage, top),
+    initByStorageTop: topCounters(initByStorage, top),
+    reconnectByStorageTop: topCounters(reconnectByStorage, top),
+    getAllByStorageTop: topCounters(getAllByStorage, top),
+  };
+}
+
 export { type PersistStreamClient };
 class PersistStreamClient extends EventEmitter {
   public socket: ConatSocketClient;
@@ -51,6 +107,7 @@ class PersistStreamClient extends EventEmitter {
   private gettingMissed = false;
   private changesWhenGettingMissed: ChangefeedEvent[] = [];
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private readonly storageKey: string;
 
   constructor(
     private client: Client,
@@ -60,6 +117,10 @@ class PersistStreamClient extends EventEmitter {
   ) {
     super();
     this.setMaxListeners(100);
+    this.storageKey = storage.path;
+    stats.created += 1;
+    stats.active += 1;
+    bumpCounterByStorage(activeByStorage, this.storageKey, 1);
     // paths.add(this.storage.path);
     logger.debug("constructor", this.storage);
     this.init();
@@ -74,6 +135,8 @@ class PersistStreamClient extends EventEmitter {
       return;
     }
     this.socket?.close();
+    stats.initCalls += 1;
+    bumpCounterByStorage(initByStorage, this.storageKey, 1);
     const subject = persistSubject({ ...this.user, service: this.service });
     this.socket = this.client.socket.connect(subject, {
       desc: `persist: ${this.storage.path}`,
@@ -94,11 +157,13 @@ class PersistStreamClient extends EventEmitter {
     }
 
     this.socket.once("disconnected", () => {
+      stats.socketDisconnected += 1;
       this.reconnecting = true;
       this.socket.removeAllListeners();
       this.scheduleReconnect();
     });
     this.socket.once("closed", () => {
+      stats.socketClosed += 1;
       this.reconnecting = true;
       this.socket.removeAllListeners();
       this.scheduleReconnect();
@@ -126,6 +191,7 @@ class PersistStreamClient extends EventEmitter {
     if (this.changefeeds.length == 0 || this.state != "ready") {
       return;
     }
+    stats.getMissedRuns += 1;
     try {
       this.gettingMissed = true;
       this.changesWhenGettingMissed.length = 0;
@@ -160,6 +226,7 @@ class PersistStreamClient extends EventEmitter {
             this.changefeedEmit(updates);
             return true;
           } catch {
+            stats.getMissedRetries += 1;
             return false;
           }
         },
@@ -201,6 +268,8 @@ class PersistStreamClient extends EventEmitter {
     if (this.state == "closed") {
       return;
     }
+    stats.reconnectScheduled += 1;
+    bumpCounterByStorage(reconnectByStorage, this.storageKey, 1);
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
     }
@@ -209,9 +278,15 @@ class PersistStreamClient extends EventEmitter {
   };
 
   close = () => {
+    if (this.state == "closed") {
+      return;
+    }
     logger.debug("close", this.storage);
     // paths.delete(this.storage.path);
     this.state = "closed";
+    stats.closed += 1;
+    stats.active = Math.max(0, stats.active - 1);
+    bumpCounterByStorage(activeByStorage, this.storageKey, -1);
     this.emit("closed");
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
@@ -229,6 +304,7 @@ class PersistStreamClient extends EventEmitter {
   // are disconnects, failovers, etc.  Dealing with dropped messages,
   // duplicates, etc., is NOT the responsibility of clients.
   changefeed = async (): Promise<Changefeed> => {
+    stats.changefeedCalls += 1;
     // activate changefeed mode (so server publishes updates -- this is idempotent)
     const resp = await this.socket.request(null, {
       headers: {
@@ -426,6 +502,8 @@ class PersistStreamClient extends EventEmitter {
   }
 
   getAll = async (opts: GetAllOpts = {}): Promise<StoredMessage[]> => {
+    stats.getAllCalls += 1;
+    bumpCounterByStorage(getAllByStorage, this.storageKey, 1);
     // NOTE: We check messages.headers.seq (which has nothing to do with the stream seq numbers!)
     // and make sure it counts from 0 up until done, and that nothing was missed.
     // ONLY once that is done and we have everything do we call processPersistentMessages.
@@ -433,18 +511,29 @@ class PersistStreamClient extends EventEmitter {
     // any other guarantees that messages aren't dropped since this is requestMany,
     // and under load DEFINITELY messages can be dropped.
     // This throws with code=503 if something goes wrong due to sequence numbers.
-    let messages: StoredMessage[] = [];
-    const sub = await this.getAllIter(opts);
-    if (this.isClosed()) {
-      throw Error("closed");
+    try {
+      let messages: StoredMessage[] = [];
+      const sub = await this.getAllIter(opts);
+      if (this.isClosed()) {
+        throw Error("closed");
+      }
+      for await (const value of sub) {
+        messages = messages.concat(value);
+      }
+      if (this.isClosed()) {
+        throw Error("closed");
+      }
+      return messages;
+    } catch (err) {
+      stats.getAllErrors += 1;
+      const code = (err as any)?.code;
+      if (code === 503) {
+        stats.getAllCode503 += 1;
+      } else if (code === 408) {
+        stats.getAllCode408 += 1;
+      }
+      throw err;
     }
-    for await (const value of sub) {
-      messages = messages.concat(value);
-    }
-    if (this.isClosed()) {
-      throw Error("closed");
-    }
-    return messages;
   };
 
   keys = async ({ timeout }: { timeout?: number } = {}): Promise<string[]> => {

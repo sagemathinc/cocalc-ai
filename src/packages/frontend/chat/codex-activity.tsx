@@ -3,36 +3,23 @@ import {
   Card,
   Popconfirm,
   Space,
-  Switch,
   Tag,
+  Tooltip,
   Typography,
-  message,
 } from "antd";
-import { Icon } from "@cocalc/frontend/components";
 import type {
   AcpStreamEvent,
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
-import {
-  React,
-  redux,
-  useEffect,
-  useMemo,
-  useState,
-  useTypedRedux,
-} from "@cocalc/frontend/app-framework";
+import { React, redux, useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
+import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
-import { Terminal as XTerm } from "@xterm/xterm";
-import "@xterm/xterm/css/xterm.css";
-import {
-  background_color,
-  setTheme,
-} from "@cocalc/frontend/frame-editors/terminal-editor/themes";
-import { COLOR_THEMES } from "@cocalc/frontend/frame-editors/terminal-editor/theme-data";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { plural } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+
+const VIRTUALIZE_THRESHOLD = 20;
 
 const { Text } = Typography;
 type ActivityEntry =
@@ -40,18 +27,21 @@ type ActivityEntry =
       kind: "reasoning";
       id: string;
       seq: number;
+      time?: number;
       text?: string;
     }
   | {
       kind: "agent";
       id: string;
       seq: number;
+      time?: number;
       text?: string;
     }
   | {
       kind: "status";
       id: string;
       seq: number;
+      time?: number;
       label: string;
       detail?: string;
       level?: "info" | "error";
@@ -60,6 +50,7 @@ type ActivityEntry =
       kind: "diff";
       id: string;
       seq: number;
+      time?: number;
       path: string;
       diff: LineDiffResult;
     }
@@ -67,6 +58,7 @@ type ActivityEntry =
       kind: "terminal";
       id: string;
       seq: number;
+      time?: number;
       terminalId: string;
       command?: string;
       args?: string[];
@@ -82,6 +74,7 @@ type ActivityEntry =
       kind: "file";
       id: string;
       seq: number;
+      time?: number;
       path: string;
       operation: "read" | "write";
       bytes?: number;
@@ -103,6 +96,8 @@ export interface CodexActivityProps {
   onDeleteAllEvents?: () => void;
   onJumpToBottom?: () => void;
   expanded?: boolean;
+  virtualizeEntries?: boolean;
+  scrollParent?: HTMLElement | null;
 }
 
 // Persist log visibility per chat message so Virtuoso remounts don’t reset it.
@@ -120,6 +115,8 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   onDeleteAllEvents,
   onJumpToBottom,
   expanded: initExpanded,
+  virtualizeEntries = false,
+  scrollParent,
 }): React.ReactElement | null => {
   const entries = useMemo(() => normalizeEvents(events ?? []), [events]);
   const [expanded, setExpanded] = useState<boolean>(() => {
@@ -156,6 +153,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   const toggleLabel = expanded ? "Hide log" : `${durationSummary} (show)`;
 
   const showCloseButton = IS_TOUCH || hovered;
+  const useVirtualizedEntries = virtualizeEntries && entries.length > VIRTUALIZE_THRESHOLD;
 
   if (!expanded) {
     return (
@@ -281,15 +279,35 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
     >
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
         {header}
-        {entries.map((entry) => (
-          <ActivityRow
-            key={entry.id}
-            entry={entry}
-            fontSize={baseFontSize}
-            projectId={projectId}
-            basePath={basePath}
+        {useVirtualizedEntries ? (
+          <StatefulVirtuoso
+            cacheId={`codex-activity:${persistKey ?? "default"}`}
+            totalCount={entries.length}
+            customScrollParent={scrollParent ?? undefined}
+            itemContent={(index) => {
+              const entry = entries[index];
+              return (
+                <ActivityRow
+                  key={entry.id}
+                  entry={entry}
+                  fontSize={baseFontSize}
+                  projectId={projectId}
+                  basePath={basePath}
+                />
+              );
+            }}
           />
-        ))}
+        ) : (
+          entries.map((entry) => (
+            <ActivityRow
+              key={entry.id}
+              entry={entry}
+              fontSize={baseFontSize}
+              projectId={projectId}
+              basePath={basePath}
+            />
+          ))
+        )}
         {renderCloseButton({ position: "absolute", right: 6, bottom: 6 })}
       </Space>
     </Card>
@@ -308,6 +326,7 @@ function ActivityRow({
   basePath?: string;
 }) {
   const secondarySize = Math.max(11, fontSize - 2);
+  const timestamp = formatEntryTimestamp(entry.time);
   switch (entry.kind) {
     case "reasoning":
       return (
@@ -330,9 +349,11 @@ function ActivityRow({
     case "agent":
       return (
         <div>
-          <Tag color="cyan" style={{ marginBottom: 4 }}>
-            Agent
-          </Tag>
+          <TimestampTooltip timestamp={timestamp}>
+            <Tag color="cyan" style={{ marginBottom: 4 }}>
+              Agent
+            </Tag>
+          </TimestampTooltip>
           {entry.text ? (
             <StaticMarkdown
               value={entry.text}
@@ -351,12 +372,16 @@ function ActivityRow({
           {/* <Tag color="geekblue" style={{ marginBottom: 4 }}>
             Diff
           </Tag>*/}
-          <PathLink
-            path={entry.path}
-            projectId={projectId}
-            basePath={basePath}
-            bold
-          />
+          <TimestampTooltip timestamp={timestamp}>
+            <span>
+              <PathLink
+                path={entry.path}
+                projectId={projectId}
+                basePath={basePath}
+                bold
+              />
+            </span>
+          </TimestampTooltip>
           <DiffPreview diff={entry.diff} fontSize={fontSize} />
         </div>
       );
@@ -375,9 +400,11 @@ function ActivityRow({
     default:
       return (
         <Space size={6} align="center">
-          <Tag color={entry.level === "error" ? "red" : "default"}>
-            {entry.label}
-          </Tag>
+          <TimestampTooltip timestamp={timestamp}>
+            <Tag color={entry.level === "error" ? "red" : "default"}>
+              {entry.label}
+            </Tag>
+          </TimestampTooltip>
           {entry.detail ? (
             <Text
               type={entry.level === "error" ? "danger" : "secondary"}
@@ -397,11 +424,13 @@ function normalizeEvents(events: AcpStreamMessage[]): ActivityEntry[] {
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
   for (const message of events) {
     const seq = message.seq ?? ++fallbackId;
+    const time = getMessageTimestamp(message);
     if (message.type === "error") {
       rows.push({
         kind: "status",
         id: `error-${seq}`,
         seq,
+        time,
         label: "Error",
         detail: formatErrorDetail(message.error),
         level: "error",
@@ -413,6 +442,7 @@ function normalizeEvents(events: AcpStreamMessage[]): ActivityEntry[] {
         kind: "status",
         id: `summary-${seq}`,
         seq,
+        time,
         label: "Summary",
         detail: formatSummaryDetail(message),
       });
@@ -426,6 +456,7 @@ function normalizeEvents(events: AcpStreamMessage[]): ActivityEntry[] {
       const entry = createEventEntry({
         event: message.event,
         seq,
+        time,
         rows,
         terminals,
       });
@@ -505,11 +536,13 @@ function coalesceTextEntries(entries: ActivityEntry[]): ActivityEntry[] {
 function createEventEntry({
   event,
   seq,
+  time,
   rows,
   terminals,
 }: {
   event: AcpStreamEvent;
   seq: number;
+  time?: number;
   rows: ActivityEntry[];
   terminals: Map<string, ActivityEntry & { kind: "terminal" }>;
 }): ActivityEntry | undefined {
@@ -518,6 +551,7 @@ function createEventEntry({
       kind: "diff",
       id: `diff-${seq}`,
       seq,
+      time,
       path: stringifyPath(event.path),
       diff: event.diff,
     };
@@ -529,6 +563,7 @@ function createEventEntry({
         kind: "terminal",
         id: `terminal-${event.terminalId}`,
         seq,
+        time,
         terminalId: event.terminalId,
         command: event.command,
         args: event.args,
@@ -547,12 +582,14 @@ function createEventEntry({
     } else if (event.phase === "data") {
       entry.output = (entry.output ?? "") + (event.chunk ?? "");
       entry.truncated = event.truncated ?? entry.truncated;
+      entry.time = time ?? entry.time;
     } else if (event.phase === "exit") {
       entry.exitStatus = event.exitStatus ?? entry.exitStatus;
       if (event.output != null) {
         entry.output = event.output;
       }
       entry.truncated = event.truncated ?? entry.truncated;
+      entry.time = time ?? entry.time;
     }
     return undefined;
   }
@@ -561,6 +598,7 @@ function createEventEntry({
       kind: "file",
       id: `file-${seq}`,
       seq,
+      time,
       path: stringifyPath(event.path),
       operation: event.operation,
       bytes: event.bytes,
@@ -575,6 +613,7 @@ function createEventEntry({
       kind: "reasoning",
       id: `thinking-${seq}`,
       seq,
+      time,
       text: event.text ?? "",
     };
   }
@@ -582,6 +621,7 @@ function createEventEntry({
     kind: "agent",
     id: `agent-${seq}`,
     seq,
+    time,
     text: eventHasText(event) ? (event.text ?? "") : "",
   };
 }
@@ -792,73 +832,36 @@ function TerminalRow({
   entry: Extract<ActivityEntry, { kind: "terminal" }>;
   fontSize: number;
 }) {
-  const [hovered, setHovered] = React.useState(false);
-  const [showRaw, setShowRaw] = React.useState(false);
   const commandLine = formatCommand(entry.command, entry.args);
   const status = formatTerminalStatus(entry);
-  const hasOutput = Boolean(entry.output && entry.output.length > 0);
   const secondarySize = Math.max(11, fontSize - 2);
+  const timestamp = formatEntryTimestamp(entry.time);
   const cwdPrompt = entry.cwd ? shortenPath(entry.cwd) : "~";
-  const coloredCwd = `\u001b[01;34m${cwdPrompt}\u001b[0m`;
-  const promptLine = `${coloredCwd}$${commandLine ? " " + commandLine : ""}`;
-  const truncatedNote = entry.truncated ? "\n[output truncated]" : "";
-  const outputText = (entry.output ?? "").trimEnd();
-  const terminalText = hasOutput
-    ? `${promptLine}\n${outputText}${truncatedNote}`
-    : `${promptLine}${truncatedNote}`;
-  const placeholderText = entry.exitStatus
-    ? "No output."
-    : "Waiting for output…";
-
-  const copyOutput = React.useCallback(() => {
-    const textToCopy = hasOutput ? terminalText : promptLine;
-    if (!textToCopy) return;
-    const doCopy = async () => {
-      try {
-        if (navigator?.clipboard?.writeText) {
-          await navigator.clipboard.writeText(textToCopy);
-          message.success("Copied terminal output");
-          return;
-        }
-      } catch {
-        // fallback below
-      }
-      try {
-        const textarea = document.createElement("textarea");
-        textarea.value = textToCopy;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-        message.success("Copied terminal output");
-      } catch (err) {
-        message.error("Failed to copy");
-        console.warn("copy failed", err);
-      }
-    };
-    void doCopy();
-  }, [hasOutput, terminalText, promptLine]);
+  const promptLine = `${cwdPrompt}$${commandLine ? " " + commandLine : ""}`;
+  const outputText = stripAnsi(entry.output ?? "").trimEnd();
+  const lines = [promptLine];
+  if (outputText.length) {
+    lines.push(outputText);
+  }
+  if (entry.truncated) {
+    lines.push("[output truncated]");
+  }
+  const markdown = toFencedCodeBlock(lines.join("\n"), "sh");
 
   return (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{ position: "relative" }}
-    >
-      <TerminalPreview
-        text={terminalText}
-        fontSize={fontSize}
-        placeholder={!hasOutput}
-        placeholderText={placeholderText}
-        onCopyShortcut={showRaw ? undefined : copyOutput}
-        rawMode={showRaw}
-      />
+    <div>
+      <StaticMarkdown value={markdown} style={{ fontSize, marginTop: 4 }} />
       <Space size={8} wrap align="center" style={{ marginTop: 6 }}>
         {status ? (
+          <TimestampTooltip timestamp={timestamp}>
+            <Text type="secondary" style={{ fontSize: secondarySize }}>
+              {status}
+            </Text>
+          </TimestampTooltip>
+        ) : null}
+        {!outputText && !entry.truncated ? (
           <Text type="secondary" style={{ fontSize: secondarySize }}>
-            {status}
+            {entry.exitStatus ? "No output." : "Waiting for output…"}
           </Text>
         ) : null}
         {entry.truncated ? (
@@ -867,271 +870,6 @@ function TerminalRow({
           </Tag>
         ) : null}
       </Space>
-      <div
-        style={{
-          position: "absolute",
-          top: 6,
-          right: 6,
-          display: "flex",
-          gap: 6,
-          alignItems: "center",
-          opacity: hovered ? 1 : 0,
-          transition: "opacity 0.2s ease",
-          background: "white",
-        }}
-      >
-        <Button
-          size="small"
-          type="text"
-          onClick={copyOutput}
-          disabled={!hasOutput && !promptLine}
-        >
-          <Icon name="copy" />
-        </Button>
-        <Switch
-          size="small"
-          checked={showRaw}
-          onChange={() => setShowRaw((v) => !v)}
-          checkedChildren="Raw"
-          unCheckedChildren="Raw"
-        />
-      </div>
-    </div>
-  );
-}
-
-function TerminalPreview({
-  text,
-  fontSize,
-  placeholder = false,
-  placeholderText,
-  onCopyShortcut,
-  rawMode = false,
-}: {
-  text: string;
-  fontSize: number;
-  placeholder?: boolean;
-  placeholderText?: string;
-  onCopyShortcut?: () => void;
-  rawMode?: boolean;
-}) {
-  const containerRef = React.useRef<HTMLDivElement | null>(null);
-  const termRef = React.useRef<XTerm | null>(null);
-  const [showAll, setShowAll] = React.useState(false);
-  const terminalPrefs =
-    useTypedRedux("account", "terminal")?.toJS() ?? undefined;
-  const colorScheme = terminalPrefs?.color_scheme ?? "default";
-  const fontFamily = terminalPrefs?.font ?? "monospace";
-  const fontSizePref = Number.isFinite(fontSize)
-    ? fontSize
-    : (terminalPrefs?.font_size ?? 13);
-  const theme = COLOR_THEMES[colorScheme] ?? COLOR_THEMES["default"];
-  const background = background_color(colorScheme);
-  const foreground = theme?.colors?.[16] ?? "#e2e8f0";
-  const normalizedText = (text ?? "").trimEnd();
-  const allLines = normalizedText.length ? normalizedText.split(/\r?\n/) : [""];
-  const collapsedLines = 5;
-  const hasOverflow = !placeholder && allLines.length > collapsedLines;
-  const visibleLines =
-    showAll || !hasOverflow ? allLines : allLines.slice(0, collapsedLines);
-  const visibleText = visibleLines.join("\n");
-  const lineCount = Math.max(1, visibleLines.length);
-  const lineHeight = (fontSizePref || 13) * 1.45;
-  const rows = Math.max(1, lineCount);
-  const containerHeight = rows * lineHeight + 8;
-  const showExpandButton = hasOverflow && !showAll;
-  const expandButton = showExpandButton ? (
-    <Button
-      size="small"
-      type="text"
-      onClick={() => setShowAll(true)}
-      style={{
-        position: "absolute",
-        bottom: 4,
-        left: "50%",
-        transform: "translateX(-50%)",
-        fontSize: Math.max(10, fontSize - 3),
-        padding: "0 6px",
-        height: 20,
-        lineHeight: "18px",
-        border: `1px solid ${COLORS.GRAY_L}`,
-        borderRadius: 10,
-        background: COLORS.GRAY_LLL,
-        color: COLORS.GRAY_D,
-        zIndex: 1,
-      }}
-      aria-label="Show all terminal output"
-    >
-      Show all
-    </Button>
-  ) : null;
-
-  React.useEffect(() => {
-    // Tear down when entering raw mode.
-    if (rawMode) {
-      if (termRef.current) {
-        try {
-          termRef.current.dispose();
-        } catch {
-          // ignore
-        } finally {
-          termRef.current = null;
-        }
-      }
-      return;
-    }
-    const host = containerRef.current;
-    if (!host) return;
-    // Recreate terminal fresh when toggling back from raw.
-    if (termRef.current) {
-      try {
-        termRef.current.dispose();
-      } catch {
-        // ignore
-      }
-      termRef.current = null;
-    }
-    const term = new XTerm({
-      convertEol: true,
-      disableStdin: true,
-      fontFamily,
-      fontSize: fontSizePref,
-      scrollback: 0,
-      rows,
-      cols: 100,
-    });
-    setTheme(term, colorScheme);
-    termRef.current = term;
-    term.open(host);
-    const viewport = host.querySelector(
-      ".xterm-viewport",
-    ) as HTMLDivElement | null;
-    const rowsEl = host.querySelector(".xterm-rows") as HTMLDivElement | null;
-    if (viewport) {
-      viewport.style.overflow = "hidden";
-    }
-    if (rowsEl) {
-      rowsEl.style.userSelect = "text";
-    }
-    host.style.height = `${containerHeight}px`;
-    host.style.userSelect = "text";
-    return () => {
-      try {
-        term.dispose();
-      } catch {
-        // ignore
-      } finally {
-        termRef.current = null;
-      }
-    };
-  }, [colorScheme, fontFamily, fontSizePref, rows, rawMode, containerHeight]);
-
-  React.useEffect(() => {
-    if (rawMode) return;
-    const term = termRef.current;
-    if (!term) return;
-    let scrollTimer: any;
-    try {
-      term.reset();
-      setTheme(term, colorScheme);
-    } catch {
-      // ignore theme errors when disposed
-    }
-    const host = containerRef.current;
-    if (host) {
-      const viewport = host.querySelector(
-        ".xterm-viewport",
-      ) as HTMLDivElement | null;
-      const rowsEl = host.querySelector(".xterm-rows") as HTMLDivElement | null;
-      if (viewport?.style) {
-        viewport.style.overflow = "hidden";
-      }
-      if (rowsEl?.style) {
-        rowsEl.style.userSelect = "text";
-      }
-      host.style.height = `${containerHeight}px`;
-      host.style.userSelect = "text";
-    }
-    const rendered = visibleText.replace(/\r?\n/g, "\r\n");
-    if (rendered.length) {
-      term.write(rendered);
-    }
-    term.scrollToTop();
-    // xterm sometimes scrolls after write; ensure we stay at the top.
-    scrollTimer = setTimeout(() => {
-      try {
-        term.scrollToTop();
-      } catch {
-        // ignore
-      }
-    }, 0);
-    return () => {
-      if (scrollTimer) clearTimeout(scrollTimer);
-    };
-  }, [visibleText, colorScheme, placeholder, rawMode, containerHeight]);
-
-  return rawMode ? (
-    <div
-      style={{
-        border: `1px solid ${COLORS.GRAY_L}`,
-        borderRadius: 6,
-        background: COLORS.GRAY_LLL,
-        color: COLORS.GRAY_D,
-        padding: showExpandButton ? "8px 8px 26px" : "8px",
-        fontFamily: "monospace",
-        fontSize,
-        position: "relative",
-      }}
-    >
-      <pre
-        style={{
-          margin: 0,
-          fontFamily: "inherit",
-          fontSize: "inherit",
-          color: "inherit",
-          whiteSpace: "pre-wrap",
-        }}
-      >
-        {visibleText || placeholderText || ""}
-      </pre>
-      {expandButton}
-    </div>
-  ) : (
-    <div
-      style={{
-        border: `1px solid ${COLORS.GRAY_L}`,
-        borderRadius: 6,
-        background,
-        color: foreground,
-        overflow: "hidden",
-        padding: showExpandButton ? "4px 6px 26px" : "4px 6px",
-        fontFamily,
-        fontSize: Math.max(11, fontSize - 1),
-        position: "relative",
-      }}
-      onKeyDown={(e) => {
-        if (
-          onCopyShortcut &&
-          ((e.ctrlKey && e.key.toLowerCase() === "c") ||
-            (e.metaKey && e.key.toLowerCase() === "c"))
-        ) {
-          e.preventDefault();
-          onCopyShortcut();
-        }
-      }}
-      tabIndex={0}
-    >
-      <div
-        ref={containerRef}
-        style={{ minHeight: placeholder ? containerHeight - 8 : 0 }}
-        aria-label="terminal-output"
-      />
-      {placeholder ? (
-        <Text type="secondary" style={{ fontSize: Math.max(11, fontSize - 2) }}>
-          {placeholderText ?? text}
-        </Text>
-      ) : null}
-      {expandButton}
     </div>
   );
 }
@@ -1185,9 +923,11 @@ function FileRow({
     <div>
       <Space size={6} wrap align="center" style={{ marginBottom: 6 }}>
         {/*<Tag color={isRead ? "blue" : "green"}>File</Tag> */}
-        <Text strong style={{ fontSize }}>
-          {actionLabel}
-        </Text>
+        <TimestampTooltip timestamp={formatEntryTimestamp(entry.time)}>
+          <Text strong style={{ fontSize }}>
+            {actionLabel}
+          </Text>
+        </TimestampTooltip>
         {pathNode}
         {sizeLabel ? (
           <Text
@@ -1269,6 +1009,76 @@ function stripOuterQuotes(value: string): string {
   return match ? match[1] : value;
 }
 
+function getMessageTimestamp(message: any): number | undefined {
+  const candidates = [
+    message?.time,
+    message?.timestamp,
+    message?.ts,
+    message?.wall,
+    message?.date,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const ms = Date.parse(value);
+      if (Number.isFinite(ms)) return ms;
+    }
+  }
+  return undefined;
+}
+
+function formatEntryTimestamp(time?: number): string | undefined {
+  if (typeof time !== "number" || !Number.isFinite(time)) return undefined;
+  return new Date(time).toLocaleString();
+}
+
+function TimestampTooltip({
+  timestamp,
+  children,
+}: {
+  timestamp?: string;
+  children: React.ReactNode;
+}) {
+  if (!timestamp) return children;
+  return (
+    <Tooltip title={timestamp}>
+      <span>{children}</span>
+    </Tooltip>
+  );
+}
+
+function stripAnsi(text: string): string {
+  if (!text) return "";
+  // OSC (e.g., title) sequences.
+  const withoutOsc = text.replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, "");
+  // CSI and related ANSI escape sequences.
+  return withoutOsc.replace(
+    /[\u001B\u009B][[\]()#;?]*(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~])/g,
+    "",
+  );
+}
+
+function maxBacktickRun(text: string): number {
+  let run = 0;
+  let max = 0;
+  for (const ch of text) {
+    if (ch === "`") {
+      run += 1;
+      if (run > max) max = run;
+    } else {
+      run = 0;
+    }
+  }
+  return max;
+}
+
+function toFencedCodeBlock(content: string, language = ""): string {
+  const fenceLen = Math.max(3, maxBacktickRun(content) + 1);
+  const fence = "`".repeat(fenceLen);
+  const info = language.trim();
+  return `${fence}${info}\n${content}\n${fence}`;
+}
+
 function formatTerminalStatus(entry: {
   exitStatus?: { exitCode?: number; signal?: string };
 }): string | undefined {
@@ -1346,13 +1156,14 @@ export function codexEventsToMarkdown(events: AcpStreamMessage[]): string {
         const cwd = entry.cwd ? ` (cwd ${entry.cwd})` : "";
         const status = formatTerminalStatus(entry);
         let block = `- Terminal: ${cmd}${cwd}`;
-        if (entry.output && entry.output.length > 0) {
-          block += `\n\n\`\`\`\n${entry.output}\n\`\`\``;
-        }
+        const cwdPrompt = entry.cwd ? shortenPath(entry.cwd) : "~";
+        const promptLine = `${cwdPrompt}$${cmd ? " " + cmd : ""}`;
+        const output = stripAnsi(entry.output ?? "").trimEnd();
+        const blockLines = [promptLine];
+        if (output.length) blockLines.push(output);
+        if (entry.truncated) blockLines.push("[output truncated]");
+        block += `\n\n${toFencedCodeBlock(blockLines.join("\n"), "sh")}`;
         const tags: string[] = [];
-        if (entry.truncated) {
-          tags.push("output truncated");
-        }
         if (status) {
           tags.push(status);
         }

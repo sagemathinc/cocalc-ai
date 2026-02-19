@@ -1,0 +1,74 @@
+diff --git a/es/Portal.js b/es/Portal.js
+index 734b24b3b555ebb99dc7c783d6918b4dc5f4228c..360c306757455a972769c7434375889a82274253 100644
+--- a/es/Portal.js
++++ b/es/Portal.js
+@@ -50,15 +50,24 @@ const Portal = /*#__PURE__*/React.forwardRef((props, ref) => {
+ 
+   // ======================== Container ========================
+   const [innerContainer, setInnerContainer] = React.useState(() => getPortalContainer(getContainer));
++  const lastInnerContainerRef = React.useRef(innerContainer);
+   React.useEffect(() => {
+-    const customizeContainer = getPortalContainer(getContainer);
+-
+-    // Tell component that we check this in effect which is safe to be `null`
+-    setInnerContainer(() =>
+-    // React do the state update even the value is the same,
+-    // Use function call to force React to compare update
+-    customizeContainer ?? null);
+-  });
++    if (!mergedRender && !open) {
++      return;
++    }
++    const customizeContainer = getPortalContainer(getContainer) ?? null;
++    if (customizeContainer && customizeContainer !== document.body && customizeContainer.nodeType === 1 && !customizeContainer.isConnected) {
++      // Workaround for react-component/portal issue #27:
++      // https://github.com/react-component/portal/issues/27
++      // Some callsites can return a fresh detached node each render.
++      // Updating state with those nodes causes runaway re-render loops.
++      return;
++    }
++    if (lastInnerContainerRef.current !== customizeContainer) {
++      lastInnerContainerRef.current = customizeContainer;
++      setInnerContainer(customizeContainer);
++    }
++  }, [getContainer, mergedRender, open]);
+   const [defaultContainer, queueCreate] = useDom(mergedRender && !innerContainer, debug);
+   const mergedContainer = innerContainer ?? defaultContainer;
+ 
+diff --git a/lib/Portal.js b/lib/Portal.js
+index 258a2969397cac5d375bd936610296fac4efb277..ebc599d4408f2cf8505d219efee3febbd81566e2 100644
+--- a/lib/Portal.js
++++ b/lib/Portal.js
+@@ -59,15 +59,24 @@ const Portal = /*#__PURE__*/React.forwardRef((props, ref) => {
+ 
+   // ======================== Container ========================
+   const [innerContainer, setInnerContainer] = React.useState(() => getPortalContainer(getContainer));
++  const lastInnerContainerRef = React.useRef(innerContainer);
+   React.useEffect(() => {
+-    const customizeContainer = getPortalContainer(getContainer);
+-
+-    // Tell component that we check this in effect which is safe to be `null`
+-    setInnerContainer(() =>
+-    // React do the state update even the value is the same,
+-    // Use function call to force React to compare update
+-    customizeContainer ?? null);
+-  });
++    if (!mergedRender && !open) {
++      return;
++    }
++    const customizeContainer = getPortalContainer(getContainer) ?? null;
++    if (customizeContainer && customizeContainer !== document.body && customizeContainer.nodeType === 1 && !customizeContainer.isConnected) {
++      // Workaround for react-component/portal issue #27:
++      // https://github.com/react-component/portal/issues/27
++      // Some callsites can return a fresh detached node each render.
++      // Updating state with those nodes causes runaway re-render loops.
++      return;
++    }
++    if (lastInnerContainerRef.current !== customizeContainer) {
++      lastInnerContainerRef.current = customizeContainer;
++      setInnerContainer(customizeContainer);
++    }
++  }, [getContainer, mergedRender, open]);
+   const [defaultContainer, queueCreate] = (0, _useDom.default)(mergedRender && !innerContainer, debug);
+   const mergedContainer = innerContainer ?? defaultContainer;
+ 

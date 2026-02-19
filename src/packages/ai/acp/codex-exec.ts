@@ -52,6 +52,14 @@ const START_EVENT_TIMEOUT_MS = Math.max(
 );
 const FILE_LINK_GUIDANCE =
   "When referencing workspace files, output markdown links relative to the project root so they stay clickable in CoCalc, e.g., foo.py -> [foo.py](./foo.py) (no backticks around the link). For images use ![](./image.png).";
+const IMMEDIATE_SEND_GUIDANCE = [
+  "[CoCalc immediate-send behavior]",
+  "This user message was sent with 'Send Immediately' during an active run.",
+  "Treat it as additional context for the same task.",
+  "Do not stop or switch tasks unless the user explicitly asks to stop/cancel/switch.",
+  "If the message is short acknowledgement only (e.g., 'thanks'), acknowledge briefly and continue the interrupted task.",
+  "[/CoCalc immediate-send behavior]",
+].join(" ");
 const ANSI_ESCAPE_RE = /\u001b\[[0-9;]*m/g;
 
 function redactArgsForLog(args: string[]): string {
@@ -328,7 +336,9 @@ export class CodexExecAgent implements AcpAgent {
 
       if (!this.running.get(session.sessionId)?.interrupted) {
         // send prompt
-        proc.stdin?.write(this.decoratePrompt(prompt));
+        proc.stdin?.write(
+          this.decoratePrompt(prompt, { sendMode: request.chat?.send_mode }),
+        );
       }
       proc.stdin?.end();
 
@@ -712,9 +722,17 @@ export class CodexExecAgent implements AcpAgent {
     }
   }
 
-  private decoratePrompt(prompt: string): string {
+  private decoratePrompt(
+    prompt: string,
+    opts?: { sendMode?: "immediate" },
+  ): string {
     const isSlashCommand = /^\s*\/\w+/.test(prompt);
-    return isSlashCommand ? prompt : `${FILE_LINK_GUIDANCE}\n\n${prompt}`;
+    if (isSlashCommand) return prompt;
+    const prefix =
+      opts?.sendMode === "immediate"
+        ? `${FILE_LINK_GUIDANCE}\n\n${IMMEDIATE_SEND_GUIDANCE}`
+        : FILE_LINK_GUIDANCE;
+    return `${prefix}\n\n${prompt}`;
   }
 
   private async handleItem(

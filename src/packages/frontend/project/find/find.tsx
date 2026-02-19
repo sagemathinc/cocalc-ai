@@ -4,6 +4,7 @@ import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectSearchBody } from "@cocalc/frontend/project/search/body";
 import { lite } from "@cocalc/frontend/lite";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { FindScopeBar } from "./find-scope-bar";
 import { FilesTab } from "./find-tab-files";
 import { SnapshotsTab } from "./find-tab-snapshots";
@@ -25,6 +26,14 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
   const actions = useActions({ project_id });
   const currentPathAbs = useTypedRedux({ project_id }, "current_path_abs");
   const currentPath = currentPathAbs ?? "/";
+  const availableFeatures = useTypedRedux({ project_id }, "available_features");
+  const liteHome = availableFeatures?.get("homeDirectory");
+  const homePath = useMemo(() => {
+    if (lite && typeof liteHome === "string" && liteHome.length > 0) {
+      return normalizeAbsolutePath(liteHome);
+    }
+    return "/root";
+  }, [liteHome]);
   const storedTab = useTypedRedux({ project_id }, "find_tab") as
     | FindTab
     | undefined;
@@ -57,7 +66,11 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
   const scopeMode: FindScopeMode = storedScopeMode ?? "current";
   const scopePath =
     storedScopePath ??
-    (scopeMode === "home" ? "" : scopeMode === "current" ? currentPath : "");
+    (scopeMode === "home"
+      ? homePath
+      : scopeMode === "current"
+        ? currentPath
+        : homePath);
   const scopePinned = Boolean(storedScopePinned);
   const scopeHistory = storedScopeHistory ?? [];
 
@@ -244,8 +257,8 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
             type="primary"
             size="small"
             onClick={() => {
-              const nextPath = scopeContext.homePath ?? "";
-              updateScopeMode(nextPath ? "custom" : "home");
+              const nextPath = scopeContext.homePath ?? homePath;
+              updateScopeMode(nextPath === homePath ? "home" : "custom");
               updateScopePath(nextPath, true);
             }}
           >
@@ -301,6 +314,7 @@ export const ProjectFind: React.FC<{ mode: "project" | "flyout" }> = ({
       <FindScopeBar
         mode={mode}
         project_id={project_id}
+        homePath={homePath}
         currentPath={currentPath}
         scopePath={scopePath}
         scopeMode={scopeMode}
