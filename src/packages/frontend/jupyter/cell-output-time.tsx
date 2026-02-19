@@ -70,14 +70,27 @@ export default function CellTiming({
           </>
         }
       >
-        <span style={{ cursor: "pointer" }}>{seconds2hms(ms / 1000)}</span>
+        <span
+          style={{ cursor: "pointer" }}
+          cocalc-test="cell-timing"
+          data-cocalc-cell-timing-state="done"
+          data-cocalc-cell-runtime-ms={`${Math.round(ms)}`}
+          data-cocalc-cell-last-ms={last == null ? "" : `${Math.round(last)}`}
+        >
+          {seconds2hms(ms / 1000)}
+        </span>
       </Tooltip>
     );
   } else if (isLive && start == null && end == null && state == "run") {
     // it's waiting to run
     return (
       <Tooltip title="Waiting for another cell to finish running.">
-        <span>
+        <span
+          cocalc-test="cell-timing"
+          data-cocalc-cell-timing-state="queued"
+          data-cocalc-cell-runtime-ms=""
+          data-cocalc-cell-last-ms={last == null ? "" : `${Math.round(last)}`}
+        >
           <Icon
             name="hand"
             style={{
@@ -103,29 +116,36 @@ export default function CellTiming({
           </>
         }
       >
-        <Space style={{ cursor: "pointer", marginTop: "-2.5px" }}>
-          {(last ?? 0) > 0 && (
-            <Progress
-              percent={(100 * ms) / (last ?? 0)}
-              showInfo={false}
-              style={{ width: "100px" }}
-              strokeColor="green"
-            />
-          )}
-          <div
-            style={{ minWidth: "50px" /* to avoid jiggle when time small */ }}
-          >
-            <Icon
-              name="plus-circle-filled"
-              style={{
-                color: COLORS.GRAY_M,
-                animation: "loadingCircle 3s infinite linear",
-                marginRight: "5px",
-              }}
-            />
-            {seconds2hms(ms / 1000)}
-          </div>
-        </Space>
+        <span
+          cocalc-test="cell-timing"
+          data-cocalc-cell-timing-state="running"
+          data-cocalc-cell-runtime-ms={`${Math.round(ms)}`}
+          data-cocalc-cell-last-ms={last == null ? "" : `${Math.round(last)}`}
+        >
+          <Space style={{ cursor: "pointer", marginTop: "-2.5px" }}>
+            {(last ?? 0) > 0 && (
+              <Progress
+                percent={(100 * ms) / (last ?? 0)}
+                showInfo={false}
+                style={{ width: "100px" }}
+                strokeColor="green"
+              />
+            )}
+            <div
+              style={{ minWidth: "50px" /* to avoid jiggle when time small */ }}
+            >
+              <Icon
+                name="plus-circle-filled"
+                style={{
+                  color: COLORS.GRAY_M,
+                  animation: "loadingCircle 3s infinite linear",
+                  marginRight: "5px",
+                }}
+              />
+              {seconds2hms(ms / 1000)}
+            </div>
+          </Space>
+        </span>
       </Tooltip>
     );
   } else if (last != null) {
@@ -139,7 +159,15 @@ export default function CellTiming({
           </>
         }
       >
-        <span style={{ cursor: "pointer" }}>{seconds2hms(last / 1000)}</span>
+        <span
+          style={{ cursor: "pointer" }}
+          cocalc-test="cell-timing"
+          data-cocalc-cell-timing-state="last"
+          data-cocalc-cell-runtime-ms=""
+          data-cocalc-cell-last-ms={`${Math.round(last)}`}
+        >
+          {seconds2hms(last / 1000)}
+        </span>
       </Tooltip>
     );
   } else {

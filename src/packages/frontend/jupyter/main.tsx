@@ -216,11 +216,15 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const runtime = (window as any).__cocalcJupyterRuntime ?? {};
     const lazyEnabled = useLazyRenderOnceRef.current;
     const lazyForced = true;
     const lazyForceSource = "hardcoded";
+    const setKernelErrorForTest = (message?: string) => {
+      actions.set_kernel_error(message ?? "");
+    };
     (window as any).__cocalcJupyterRuntime = {
-      ...(window as any).__cocalcJupyterRuntime,
+      ...runtime,
       windowed_list_enabled: false,
       windowed_list_forced: true,
       windowed_list_default: false,
@@ -228,6 +232,12 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       lazy_render_once_enabled: lazyEnabled,
       lazy_render_once_forced: lazyForced,
       lazy_render_once_force_source: lazyForceSource,
+      set_kernel_error_for_test: (message?: string) => {
+        setKernelErrorForTest(message);
+      },
+      clear_kernel_error_for_test: () => {
+        setKernelErrorForTest("");
+      },
     };
     document.documentElement.setAttribute(
       "data-cocalc-jupyter-windowed-list",
@@ -249,7 +259,7 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       "data-cocalc-jupyter-lazy-render-source",
       lazyForceSource,
     );
-  }, []);
+  }, [actions]);
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);
 

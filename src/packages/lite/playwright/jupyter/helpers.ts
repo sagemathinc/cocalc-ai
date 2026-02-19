@@ -195,21 +195,6 @@ export async function openNotebookPage(
   await page.waitForSelector('[cocalc-test="cell-input"] .CodeMirror', {
     timeout: timeout_ms,
   });
-  const firstCell = page.locator('[cocalc-test="jupyter-cell"]').first();
-  const deadline = Date.now() + timeout_ms;
-  for (;;) {
-    await firstCell.hover();
-    const runButton = firstCell.getByRole("button", { name: /\bRun\b/i }).first();
-    if ((await runButton.count()) > 0) {
-      break;
-    }
-    if (Date.now() >= deadline) {
-      throw new Error(
-        "timed out waiting for notebook to become writable (Run button not visible)",
-      );
-    }
-    await page.waitForTimeout(200);
-  }
   // Fast-open can render cells before patchflow session initialization completes.
   // Give the sync layer a short settle window before mutating notebook state.
   await page.waitForTimeout(8_000);
@@ -309,4 +294,88 @@ export async function readInputExecCount(
   const n = Number(m[1]);
   if (!Number.isFinite(n)) return;
   return n;
+}
+
+export async function readInputPromptState(
+  page: Page,
+  index: number,
+): Promise<string | undefined> {
+  const cell = cellLocator(page, index);
+  await cell.scrollIntoViewIfNeeded();
+  await cell.hover();
+  const prompt = cell
+    .locator('[cocalc-test="cell-input-prompt"]')
+    .first();
+  if ((await prompt.count()) === 0) {
+    return;
+  }
+  const state = await prompt.getAttribute("data-cocalc-input-state");
+  return state == null || state === "" ? undefined : state;
+}
+
+export async function readCellTimingState(
+  page: Page,
+  index: number,
+): Promise<string | undefined> {
+  const cell = cellLocator(page, index);
+  await cell.scrollIntoViewIfNeeded();
+  await cell.hover();
+  const timing = cell.locator('[cocalc-test="cell-timing"]').first();
+  if ((await timing.count()) === 0) {
+    return;
+  }
+  const state = await timing.getAttribute("data-cocalc-cell-timing-state");
+  return state == null || state === "" ? undefined : state;
+}
+
+export async function readCellTimingLastMs(
+  page: Page,
+  index: number,
+): Promise<number | undefined> {
+  const cell = cellLocator(page, index);
+  await cell.scrollIntoViewIfNeeded();
+  await cell.hover();
+  const timing = cell.locator('[cocalc-test="cell-timing"]').first();
+  if ((await timing.count()) === 0) {
+    return;
+  }
+  const value = await timing.getAttribute("data-cocalc-cell-last-ms");
+  if (value == null || value === "") {
+    return;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return;
+  }
+  return n;
+}
+
+export async function setKernelErrorForE2E(
+  page: Page,
+  message: string,
+): Promise<void> {
+  await page.evaluate((msg: string) => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    if (typeof runtime?.set_kernel_error_for_test !== "function") {
+      throw new Error("missing __cocalcJupyterRuntime.set_kernel_error_for_test");
+    }
+    runtime.set_kernel_error_for_test(msg);
+  }, message);
+}
+
+export async function clearKernelErrorForE2E(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    if (typeof runtime?.clear_kernel_error_for_test === "function") {
+      runtime.clear_kernel_error_for_test();
+      return;
+    }
+    if (typeof runtime?.set_kernel_error_for_test === "function") {
+      runtime.set_kernel_error_for_test("");
+      return;
+    }
+    throw new Error(
+      "missing __cocalcJupyterRuntime kernel warning test hooks",
+    );
+  });
 }
