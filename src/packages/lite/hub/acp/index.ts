@@ -169,7 +169,7 @@ export class ChatStreamWriter {
   private threadId: string | null = null;
   private seq = 0;
   private finished = false;
-  private finishedBy?: "summary" | "error";
+  private finishedBy?: "summary" | "error" | "interrupt";
   private approverAccountId: string;
   private interruptedMessage?: string;
   private interruptNotified = false;
@@ -491,6 +491,10 @@ export class ChatStreamWriter {
     this.persistLogProgress();
     if (payload.type === "event") {
       this.handleAgentEvent(payload.event);
+      if (this.interruptNotified) {
+        // Preserve interruption state in chat even if late stream payloads arrive.
+        return;
+      }
       const text = extractEventText(payload.event);
       if (text) {
         const last = this.events[this.events.length - 1];
@@ -502,38 +506,49 @@ export class ChatStreamWriter {
       return;
     }
     if (payload.type === "summary") {
-      const finishedFromError = this.finishedBy === "error";
-      const latestMessage = getLatestMessageText(this.events);
-      const hasStreamedMessage =
-        typeof latestMessage === "string" && latestMessage.trim().length > 0;
-      const candidate =
-        (hasStreamedMessage
-          ? latestMessage
-          : payload.finalResponse) ??
-        this.interruptedMessage ??
-        this.content;
-      const shouldApplySummary =
-        !finishedFromError ||
-        (hasStreamedMessage &&
-          typeof candidate === "string" &&
-          candidate.trim().length > 0 &&
-          !looksLikeErrorEcho(candidate, this.lastErrorText));
-      if (candidate != null && shouldApplySummary) {
+      if (this.interruptNotified) {
         if (
-          this.content &&
-          this.content.length > 0 &&
-          candidate.length > 0 &&
-          candidate !== this.content &&
-          !candidate.startsWith(this.content) &&
-          this.finishedBy !== "error"
+          (!this.content || this.content.trim().length === 0) &&
+          this.interruptedMessage
         ) {
-          // Multiple summaries can arrive; append new text if it doesn't already
-          // include the existing accumulated content.
-          this.content = `${this.content}${candidate}`;
-        } else {
-          this.content = candidate;
+          this.content = this.interruptedMessage;
         }
-        this.finishedBy = "summary";
+        this.finishedBy = "interrupt";
+      } else {
+        const finishedFromError = this.finishedBy === "error";
+        const latestMessage = getLatestMessageText(this.events);
+        const hasStreamedMessage =
+          typeof latestMessage === "string" &&
+          latestMessage.trim().length > 0;
+        const candidate =
+          (hasStreamedMessage
+            ? latestMessage
+            : payload.finalResponse) ??
+          this.interruptedMessage ??
+          this.content;
+        const shouldApplySummary =
+          !finishedFromError ||
+          (hasStreamedMessage &&
+            typeof candidate === "string" &&
+            candidate.trim().length > 0 &&
+            !looksLikeErrorEcho(candidate, this.lastErrorText));
+        if (candidate != null && shouldApplySummary) {
+          if (
+            this.content &&
+            this.content.length > 0 &&
+            candidate.length > 0 &&
+            candidate !== this.content &&
+            !candidate.startsWith(this.content) &&
+            this.finishedBy !== "error"
+          ) {
+            // Multiple summaries can arrive; append new text if it doesn't already
+            // include the existing accumulated content.
+            this.content = `${this.content}${candidate}`;
+          } else {
+            this.content = candidate;
+          }
+          this.finishedBy = "summary";
+        }
       }
       if (payload.usage) {
         this.usage = payload.usage;
@@ -587,7 +602,13 @@ export class ChatStreamWriter {
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
     });
-    this.syncdb!.set({ ...message, reply_to2: this.metadata.reply_to });
+    const update: any = { ...message, reply_to2: this.metadata.reply_to };
+    if (this.interruptNotified) {
+      update.acp_interrupted = true;
+      update.acp_interrupted_reason = "interrupt";
+      update.acp_interrupted_text = this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
+    }
+    this.syncdb!.set(update);
     this.syncdb!.commit();
     (async () => {
       try {
@@ -703,6 +724,8 @@ export class ChatStreamWriter {
     if (this.interruptNotified) return;
     this.interruptNotified = true;
     this.interruptedMessage = text;
+    this.content = text;
+    this.finishedBy = "interrupt";
     this.addLocalEvent({
       type: "message",
       text,
@@ -929,6 +952,9 @@ export async function recoverOrphanedAcpTurns(
             event: "chat",
             date: turn.message_date,
             generating: false,
+            acp_interrupted: true,
+            acp_interrupted_reason: "server_restart",
+            acp_interrupted_text: RESTART_INTERRUPTED_NOTICE,
           };
           if (history.length > 0) {
             update.history = history;

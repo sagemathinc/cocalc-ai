@@ -231,6 +231,7 @@ export class ChatActions extends Actions<ChatState> {
     noNotification,
     submitMentionsRef,
     extraInput,
+    send_mode,
     name,
     preserveSelectedThread,
   }: {
@@ -241,6 +242,7 @@ export class ChatActions extends Actions<ChatState> {
     noNotification?: boolean;
     submitMentionsRef?;
     extraInput?: string;
+    send_mode?: "immediate";
     // if name is given, rename thread to have that name
     name?: string;
     // if true, don't switch selected thread (e.g., combined feed)
@@ -282,6 +284,9 @@ export class ChatActions extends Actions<ChatState> {
       reply_to: toISOString(reply_to),
       editing: {},
     } as ChatMessage;
+    if (send_mode === "immediate") {
+      (message as any).acp_send_mode = "immediate";
+    }
     if (trimmedName && !reply_to) {
       (message as any).name = trimmedName;
     }
@@ -352,6 +357,7 @@ export class ChatActions extends Actions<ChatState> {
         message,
         reply_to: reply_to ?? time_stamp,
         tag,
+        acpSendMode: send_mode,
       });
     })();
     return time_stamp_str;
@@ -854,12 +860,14 @@ export class ChatActions extends Actions<ChatState> {
     tag,
     llm,
     dateLimit,
+    acpSendMode,
   }: {
     message: ChatMessage;
     reply_to?: Date;
     tag?: string;
     llm?: LanguageModel;
     dateLimit?: Date; // only for regenerate, filter history
+    acpSendMode?: "immediate";
   }) => {
     if (this.syncdb == null || !this.store) {
       console.warn("processLLM called before chat actions initialized");
@@ -888,6 +896,7 @@ export class ChatActions extends Actions<ChatState> {
       llm,
       threadModel,
       dateLimit,
+      acpSendMode,
     });
   };
 

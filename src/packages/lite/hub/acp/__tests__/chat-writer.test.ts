@@ -499,6 +499,42 @@ describe("ChatStreamWriter", () => {
     expect((writer as any).content).toContain("Please fix X");
     const final = sets[sets.length - 1];
     expect(final.generating).toBe(false);
+    expect((final as any).acp_interrupted).toBe(true);
+    (writer as any).dispose?.(true);
+  });
+
+  it("keeps interrupted text when late payloads arrive", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    (writer as any).notifyInterrupted("Please fix X");
+    await (writer as any).handle({
+      type: "event",
+      event: { type: "message", text: "late streamed text" } as any,
+      seq: 0,
+    } as AcpStreamMessage);
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "late final response",
+      seq: 1,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    expect((writer as any).content).toContain("Please fix X");
+    expect((writer as any).content).not.toContain("late streamed text");
+    expect((writer as any).content).not.toContain("late final response");
+    const final = sets[sets.length - 1];
+    expect(final.generating).toBe(false);
+    expect((final as any).acp_interrupted).toBe(true);
     (writer as any).dispose?.(true);
   });
 
@@ -599,6 +635,8 @@ describe("recoverOrphanedAcpTurns", () => {
     expect(recovered).toBe(1);
     const final = sets[sets.length - 1] as any;
     expect(final.generating).toBe(false);
+    expect(final.acp_interrupted).toBe(true);
+    expect(final.acp_interrupted_reason).toBe("server_restart");
     expect(final.history?.[0]?.content).toContain(
       "Conversation interrupted because the backend server restarted.",
     );
