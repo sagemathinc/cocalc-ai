@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 
@@ -24,6 +24,13 @@ export type NotebookCell = {
   metadata?: Record<string, any>;
   outputs?: any[];
   source: string[];
+};
+
+export type NotebookFile = {
+  cells: NotebookCell[];
+  metadata: Record<string, any>;
+  nbformat: number;
+  nbformat_minor: number;
 };
 
 export type NotebookUrlOptions = {
@@ -154,7 +161,7 @@ export async function ensureNotebook(
   path_ipynb: string,
   cells: NotebookCell[],
 ): Promise<void> {
-  const ipynb = {
+  const ipynb: NotebookFile = {
     cells,
     metadata: {
       kernelspec: {
@@ -171,6 +178,18 @@ export async function ensureNotebook(
   };
   await mkdir(dirname(path_ipynb), { recursive: true });
   await writeFile(path_ipynb, JSON.stringify(ipynb, null, 2), "utf8");
+}
+
+export async function mutateNotebookOnDisk(
+  path_ipynb: string,
+  mutate: (ipynb: NotebookFile) => void,
+): Promise<void> {
+  const raw = await readFile(path_ipynb, "utf8");
+  const ipynb = JSON.parse(raw) as NotebookFile;
+  mutate(ipynb);
+  await writeFile(path_ipynb, JSON.stringify(ipynb, null, 2), "utf8");
+  const t = new Date(Date.now() + 2000);
+  await utimes(path_ipynb, t, t).catch(() => undefined);
 }
 
 export function uniqueNotebookPath(prefix: string): string {
@@ -202,6 +221,10 @@ export async function openNotebookPage(
 
 export function cellLocator(page: Page, index: number) {
   return page.locator('[cocalc-test="jupyter-cell"]').nth(index);
+}
+
+export async function countCells(page: Page): Promise<number> {
+  return await page.locator('[cocalc-test="jupyter-cell"]').count();
 }
 
 export async function setCellInputCode(
@@ -350,14 +373,24 @@ export async function readCellTimingLastMs(
   return n;
 }
 
-export async function setKernelErrorForE2E(
+async function setKernelErrorInternal(
   page: Page,
   message: string,
 ): Promise<void> {
-  await page.evaluate((msg: string) => {
-    const runtime = (window as any).__cocalcJupyterRuntime;
-    if (typeof runtime?.set_kernel_error_for_test !== "function") {
-      const redux = (window as any).cocalc?.redux;
+  const deadline = Date.now() + 20_000;
+  let lastReason = "unknown";
+  while (Date.now() < deadline) {
+    const result = await page.evaluate((msg: string) => {
+      const runtime = (window as any).__cocalcJupyterRuntime;
+      if (typeof runtime?.set_kernel_error_for_test === "function") {
+        runtime.set_kernel_error_for_test(msg);
+        return { ok: true, source: "runtime" as const };
+      }
+
+      const redux = (window as any).cocalc?.redux ?? (window as any).redux;
+      if (!redux) {
+        return { ok: false, reason: "missing-redux" };
+      }
       const actions = redux?._actions ?? {};
       const stores = redux?._stores ?? {};
       const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
@@ -368,49 +401,57 @@ export async function setKernelErrorForE2E(
         (name) => typeof actions[name]?.set_kernel_error === "function",
       );
       if (candidates.length === 0) {
-        throw new Error(
-          "missing kernel error hooks (__cocalcJupyterRuntime/cocalc.redux actions)",
-        );
+        return { ok: false, reason: "missing-actions" };
       }
       const bestMatch =
         candidates.find(
-          (name) => currentPath != null && stores[name]?.get?.("path") === currentPath,
+          (name) =>
+            currentPath != null && stores[name]?.get?.("path") === currentPath,
         ) ?? candidates[0];
       actions[bestMatch].set_kernel_error(msg);
+      return { ok: true, source: "redux" as const };
+    }, message);
+    if (result?.ok) {
       return;
     }
-    runtime.set_kernel_error_for_test(msg);
-  }, message);
+    lastReason = result?.reason ?? "unknown";
+    await page.waitForTimeout(250);
+  }
+  throw new Error(
+    `missing kernel error hooks (__cocalcJupyterRuntime/cocalc.redux actions): ${lastReason}`,
+  );
+}
+
+export async function canSetKernelErrorForE2E(
+  page: Page,
+  timeoutMs: number = 5000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const canSet = await page.evaluate(() => {
+      const runtime = (window as any).__cocalcJupyterRuntime;
+      if (typeof runtime?.set_kernel_error_for_test === "function") {
+        return true;
+      }
+      const redux = (window as any).cocalc?.redux ?? (window as any).redux;
+      const actions = redux?._actions ?? {};
+      return Object.keys(actions).some(
+        (name) => typeof actions[name]?.set_kernel_error === "function",
+      );
+    });
+    if (canSet) return true;
+    await page.waitForTimeout(200);
+  }
+  return false;
+}
+
+export async function setKernelErrorForE2E(
+  page: Page,
+  message: string,
+): Promise<void> {
+  await setKernelErrorInternal(page, message);
 }
 
 export async function clearKernelErrorForE2E(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const runtime = (window as any).__cocalcJupyterRuntime;
-    if (typeof runtime?.clear_kernel_error_for_test === "function") {
-      runtime.clear_kernel_error_for_test();
-      return;
-    }
-    if (typeof runtime?.set_kernel_error_for_test === "function") {
-      runtime.set_kernel_error_for_test("");
-      return;
-    }
-    const redux = (window as any).cocalc?.redux;
-    const actions = redux?._actions ?? {};
-    const stores = redux?._stores ?? {};
-    const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
-    const currentPath = encodedPath ? `/${decodeURIComponent(encodedPath)}` : undefined;
-    const candidates = Object.keys(actions).filter(
-      (name) => typeof actions[name]?.set_kernel_error === "function",
-    );
-    if (candidates.length === 0) {
-      throw new Error(
-        "missing kernel error hooks (__cocalcJupyterRuntime/cocalc.redux actions)",
-      );
-    }
-    const bestMatch =
-      candidates.find(
-        (name) => currentPath != null && stores[name]?.get?.("path") === currentPath,
-      ) ?? candidates[0];
-    actions[bestMatch].set_kernel_error("");
-  });
+  await setKernelErrorInternal(page, "");
 }

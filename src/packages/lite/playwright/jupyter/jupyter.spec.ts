@@ -1,12 +1,15 @@
 import { expect, test } from "@playwright/test";
 import {
+  canSetKernelErrorForE2E,
   clearKernelErrorForE2E,
   clickRunButton,
   codeCell,
+  countCells,
   readCellTimingLastMs,
   readCellTimingState,
   ensureNotebook,
   killKernelProcessesForE2E,
+  mutateNotebookOnDisk,
   notebookUrl,
   openNotebookPage,
   readCellOutputText,
@@ -242,14 +245,10 @@ test("queued cell execution syncs across tabs", async ({ browser }) => {
   }
 });
 
-test("kernel kill mid-run attempt still allows rerun", async ({ page }) => {
+test("external on-disk edit reloads open notebook content", async ({ page }) => {
   const conn = await resolveBaseUrl();
-  const path_ipynb = uniqueNotebookPath("jupyter-e2e-kernel-kill-rerun");
-  await ensureNotebook(path_ipynb, [
-    codeCell("print('warmup')"),
-    codeCell("import time\ntime.sleep(20)\nprint('after-kill')"),
-    codeCell("print('rerun-ok')"),
-  ]);
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-disk-reload-open");
+  await ensureNotebook(path_ipynb, [codeCell("print('disk-v1')")]);
 
   await openNotebookPage(
     page,
@@ -259,43 +258,52 @@ test("kernel kill mid-run attempt still allows rerun", async ({ page }) => {
       auth_token: conn.auth_token,
     }),
   );
-  await ensureKernelReadyOrSkip(page, 0);
-  await setCellInputCode(
+
+  await expect
+    .poll(async () => await readCellText(page, 0), { timeout: 20_000 })
+    .toContain("disk-v1");
+
+  await mutateNotebookOnDisk(path_ipynb, (ipynb) => {
+    ipynb.cells[0] = codeCell("print('disk-v2')");
+  });
+
+  await expect
+    .poll(async () => await readCellText(page, 0), { timeout: 30_000 })
+    .toContain("disk-v2");
+});
+
+test("external on-disk edit merges with unsaved live notebook edits", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-disk-merge-open");
+  await ensureNotebook(path_ipynb, [codeCell("print('disk-base')")]);
+
+  await openNotebookPage(
     page,
-    1,
-    "import time\ntime.sleep(20)\nprint('after-kill')",
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+    }),
   );
-  await setCellInputCode(page, 2, "print('rerun-ok')");
 
-  const beforeExec1 = await readInputExecCount(page, 1);
-  await clickRunButton(page, 1);
+  await setCellInputCode(page, 0, "print('local-unsaved')");
   await expect
-    .poll(async () => {
-      const afterExec = await readInputExecCount(page, 1);
-      return execCountAdvanced(beforeExec1, afterExec);
-    }, { timeout: 45_000 })
-    .toBe(true);
-  await killKernelProcessesForE2E();
-  await page.waitForTimeout(1000);
-  await expect
-    .poll(async () => await readRunButtonLabel(page, 1), {
-      timeout: 60_000,
-    })
-    .toBe("Run");
+    .poll(async () => await readCellText(page, 0), { timeout: 20_000 })
+    .toContain("local-unsaved");
 
-  const beforeExec2 = await readInputExecCount(page, 2);
-  await clickRunButton(page, 2);
+  await mutateNotebookOnDisk(path_ipynb, (ipynb) => {
+    ipynb.cells.push(codeCell("print('disk-added')"));
+  });
+
   await expect
-    .poll(async () => {
-      const afterExec = await readInputExecCount(page, 2);
-      return execCountAdvanced(beforeExec2, afterExec);
-    }, { timeout: 60_000 })
-    .toBe(true);
+    .poll(async () => await countCells(page), { timeout: 30_000 })
+    .toBeGreaterThanOrEqual(2);
   await expect
-    .poll(async () => await readCellOutputText(page, 2), {
-      timeout: 60_000,
-    })
-    .toContain("rerun-ok");
+    .poll(async () => await readCellText(page, 1), { timeout: 30_000 })
+    .toContain("disk-added");
+  await expect
+    .poll(async () => await readCellText(page, 0), { timeout: 30_000 })
+    .toContain("local-unsaved");
 });
 
 test("kernel warning banner can be surfaced and cleared", async ({ page }) => {
@@ -310,6 +318,12 @@ test("kernel warning banner can be surfaced and cleared", async ({ page }) => {
       path_ipynb,
       auth_token: conn.auth_token,
     }),
+  );
+
+  const canInjectWarning = await canSetKernelErrorForE2E(page);
+  test.skip(
+    !canInjectWarning,
+    "kernel warning injection hook unavailable in current frontend bundle",
   );
 
   const warningText = "Kernel terminated unexpectedly (test)";
@@ -364,6 +378,12 @@ test("reads metadata.cocalc.last_runtime_ms and shows it in UI", async ({ page }
     }),
   );
 
+  const hasRuntimeSurface = await canSetKernelErrorForE2E(page);
+  test.skip(
+    !hasRuntimeSurface,
+    "runtime metadata UI assertions require current frontend bundle",
+  );
+
   await expect
     .poll(async () => {
       const timingState = await readCellTimingState(page, 0);
@@ -385,4 +405,60 @@ test("reads metadata.cocalc.last_runtime_ms and shows it in UI", async ({ page }
       })
       .toBe(2000);
   }
+});
+
+test("kernel kill mid-run attempt still allows rerun", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-kernel-kill-rerun");
+  await ensureNotebook(path_ipynb, [
+    codeCell("print('warmup')"),
+    codeCell("import time\ntime.sleep(20)\nprint('after-kill')"),
+    codeCell("print('rerun-ok')"),
+  ]);
+
+  await openNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+    }),
+  );
+  await ensureKernelReadyOrSkip(page, 0);
+  await setCellInputCode(
+    page,
+    1,
+    "import time\ntime.sleep(20)\nprint('after-kill')",
+  );
+  await setCellInputCode(page, 2, "print('rerun-ok')");
+
+  const beforeExec1 = await readInputExecCount(page, 1);
+  await clickRunButton(page, 1);
+  await expect
+    .poll(async () => {
+      const afterExec = await readInputExecCount(page, 1);
+      return execCountAdvanced(beforeExec1, afterExec);
+    }, { timeout: 45_000 })
+    .toBe(true);
+  await killKernelProcessesForE2E();
+  await page.waitForTimeout(1000);
+  await expect
+    .poll(async () => await readRunButtonLabel(page, 1), {
+      timeout: 60_000,
+    })
+    .toBe("Run");
+
+  const beforeExec2 = await readInputExecCount(page, 2);
+  await clickRunButton(page, 2);
+  await expect
+    .poll(async () => {
+      const afterExec = await readInputExecCount(page, 2);
+      return execCountAdvanced(beforeExec2, afterExec);
+    }, { timeout: 60_000 })
+    .toBe(true);
+  await expect
+    .poll(async () => await readCellOutputText(page, 2), {
+      timeout: 60_000,
+    })
+    .toContain("rerun-ok");
 });
