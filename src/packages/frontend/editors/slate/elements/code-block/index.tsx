@@ -31,6 +31,34 @@ interface FloatingActionMenuProps {
   collapseToggle?: { label: string; onClick: () => void } | null;
 }
 
+const COLLAPSE_THRESHOLD_LINES = 6;
+const COLLAPSE_THRESHOLD_CHARS = 1200;
+const COLLAPSED_PREVIEW_MAX_LINES = 6;
+const COLLAPSED_PREVIEW_MAX_CHARS = 800;
+const COLLAPSED_PREVIEW_MAX_LINE_CHARS = 180;
+
+function truncateCollapsedLine(line: string): string {
+  if (line.length <= COLLAPSED_PREVIEW_MAX_LINE_CHARS) return line;
+  return `${line.slice(0, COLLAPSED_PREVIEW_MAX_LINE_CHARS - 3)}...`;
+}
+
+function getCollapsedPreview(value: string): string {
+  const previewLines = value
+    .split("\n")
+    .slice(0, COLLAPSED_PREVIEW_MAX_LINES)
+    .map(truncateCollapsedLine);
+  let preview = previewLines.join("\n");
+  if (preview.length <= COLLAPSED_PREVIEW_MAX_CHARS) {
+    return preview;
+  }
+  const trimmed = preview.slice(0, COLLAPSED_PREVIEW_MAX_CHARS - 3);
+  const newline = trimmed.lastIndexOf("\n");
+  if (newline > 0) {
+    return `${trimmed.slice(0, newline)}...`;
+  }
+  return `${trimmed}...`;
+}
+
 function FloatingActionMenu({
   editing,
   canEdit,
@@ -170,7 +198,6 @@ export const StaticElement: React.FC<RenderElementProps> = ({
     throw Error("bug");
   }
 
-  const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar, project_id } = useFileContext();
 
   // we need both a ref and state, because editing is used both for the UI
@@ -206,7 +233,22 @@ export const StaticElement: React.FC<RenderElementProps> = ({
 
   const codeValue = newValue ?? getCodeBlockText(element);
   const lineCount = codeValue.split("\n").length;
-  const shouldCollapse = lineCount > COLLAPSE_THRESHOLD_LINES;
+  const characterCount = codeValue.length;
+  const shouldCollapse =
+    lineCount > COLLAPSE_THRESHOLD_LINES ||
+    characterCount > COLLAPSE_THRESHOLD_CHARS;
+  const collapsedPreview = shouldCollapse
+    ? getCollapsedPreview(codeValue)
+    : codeValue;
+  const collapsedPreviewLineCount = collapsedPreview.split("\n").length;
+  const hiddenLines = Math.max(0, lineCount - collapsedPreviewLineCount);
+  const hiddenChars = Math.max(0, characterCount - collapsedPreview.length);
+  const collapseDetail =
+    hiddenLines > 0
+      ? `${hiddenLines} ${hiddenLines === 1 ? "line" : "lines"} hidden`
+      : hiddenChars > 0
+        ? `${hiddenChars} ${hiddenChars === 1 ? "character" : "characters"} hidden`
+        : "collapsed";
   const [expanded, setExpanded] = useState<boolean>(false);
   const forceExpanded = editing;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
@@ -344,10 +386,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
             style={{ margin: 0 }}
             dangerouslySetInnerHTML={{
               __html: highlightCodeHtml(
-                renderedValue
-                  .split("\n")
-                  .slice(0, COLLAPSE_THRESHOLD_LINES)
-                  .join("\n"),
+                collapsedPreview,
                 temporaryInfo ?? element.info,
               ),
             }}
@@ -369,7 +408,7 @@ export const StaticElement: React.FC<RenderElementProps> = ({
               cursor: "pointer",
             }}
           >
-            {lineCount} lines (collapsed)
+            {lineCount} lines, {characterCount} characters ({collapseDetail})
           </div>
         </div>
       ) : (
