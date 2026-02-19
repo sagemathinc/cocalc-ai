@@ -53,6 +53,9 @@ export const ERROR_STYLE: CSS = {
   overflow: "auto",
 } as const;
 
+const JUPYTER_TEST_SET_KERNEL_ERROR_EVENT =
+  "cocalc:jupyter:set-kernel-error-for-test";
+
 interface Props {
   error?: string;
   actions: JupyterActions;
@@ -223,8 +226,18 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     const setKernelErrorForTest = (message?: string) => {
       actions.set_kernel_error(message ?? "");
     };
+    const setKernelErrorFromEvent = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail
+        ?.message;
+      setKernelErrorForTest(message);
+    };
+    window.addEventListener(
+      JUPYTER_TEST_SET_KERNEL_ERROR_EVENT,
+      setKernelErrorFromEvent as EventListener,
+    );
     (window as any).__cocalcJupyterRuntime = {
       ...runtime,
+      test_surface_version: 2,
       windowed_list_enabled: false,
       windowed_list_forced: true,
       windowed_list_default: false,
@@ -259,6 +272,19 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       "data-cocalc-jupyter-lazy-render-source",
       lazyForceSource,
     );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-test-set-kernel-error",
+      "1",
+    );
+    return () => {
+      window.removeEventListener(
+        JUPYTER_TEST_SET_KERNEL_ERROR_EVENT,
+        setKernelErrorFromEvent as EventListener,
+      );
+      document.documentElement.removeAttribute(
+        "data-cocalc-jupyter-test-set-kernel-error",
+      );
+    };
   }, [actions]);
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);

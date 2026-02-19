@@ -1,10 +1,12 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import {
-  canSetKernelErrorForE2E,
   clearKernelErrorForE2E,
   clickRunButton,
   codeCell,
   countCells,
+  readKernelWarningText,
+  readKernelWarningVisible,
   readCellTimingLastMs,
   readCellTimingState,
   ensureNotebook,
@@ -47,7 +49,7 @@ function execCountAdvanced(
 }
 
 async function primeKernel(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   cellIndex = 0,
 ) {
   const marker = `warmup-${Date.now()}`;
@@ -74,7 +76,7 @@ async function primeKernel(
 }
 
 async function ensureKernelReadyOrSkip(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   cellIndex = 0,
 ) {
   try {
@@ -320,39 +322,18 @@ test("kernel warning banner can be surfaced and cleared", async ({ page }) => {
     }),
   );
 
-  const canInjectWarning = await canSetKernelErrorForE2E(page);
-  test.skip(
-    !canInjectWarning,
-    "kernel warning injection hook unavailable in current frontend bundle",
-  );
-
   const warningText = "Kernel terminated unexpectedly (test)";
   await setKernelErrorForE2E(page, warningText);
   await expect
-    .poll(
-      async () =>
-        await page.evaluate(
-          (text: string) => document.body.innerText.includes(text),
-          warningText,
-        ),
-      {
-        timeout: 20_000,
-      },
-    )
+    .poll(async () => await readKernelWarningVisible(page), { timeout: 20_000 })
     .toBe(true);
+  await expect
+    .poll(async () => await readKernelWarningText(page), { timeout: 20_000 })
+    .toContain(warningText);
 
   await clearKernelErrorForE2E(page);
   await expect
-    .poll(
-      async () =>
-        await page.evaluate(
-          (text: string) => document.body.innerText.includes(text),
-          warningText,
-        ),
-      {
-        timeout: 20_000,
-      },
-    )
+    .poll(async () => await readKernelWarningVisible(page), { timeout: 20_000 })
     .toBe(false);
 });
 
@@ -376,12 +357,6 @@ test("reads metadata.cocalc.last_runtime_ms and shows it in UI", async ({ page }
       path_ipynb,
       auth_token: conn.auth_token,
     }),
-  );
-
-  const hasRuntimeSurface = await canSetKernelErrorForE2E(page);
-  test.skip(
-    !hasRuntimeSurface,
-    "runtime metadata UI assertions require current frontend bundle",
   );
 
   await expect

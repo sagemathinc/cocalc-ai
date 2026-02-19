@@ -373,6 +373,25 @@ export async function readCellTimingLastMs(
   return n;
 }
 
+export async function readKernelWarningVisible(page: Page): Promise<boolean> {
+  const value = await page.evaluate(
+    () =>
+      document.documentElement.getAttribute(
+        "data-cocalc-jupyter-kernel-warning-visible",
+      ) ?? "",
+  );
+  return value === "1";
+}
+
+export async function readKernelWarningText(page: Page): Promise<string> {
+  return await page.evaluate(
+    () =>
+      document.documentElement.getAttribute(
+        "data-cocalc-jupyter-kernel-warning-text",
+      ) ?? "",
+  );
+}
+
 async function setKernelErrorInternal(
   page: Page,
   message: string,
@@ -381,6 +400,19 @@ async function setKernelErrorInternal(
   let lastReason = "unknown";
   while (Date.now() < deadline) {
     const result = await page.evaluate((msg: string) => {
+      const hasEventSurface =
+        document.documentElement.getAttribute(
+          "data-cocalc-jupyter-test-set-kernel-error",
+        ) === "1";
+      if (hasEventSurface) {
+        window.dispatchEvent(
+          new CustomEvent("cocalc:jupyter:set-kernel-error-for-test", {
+            detail: { message: msg },
+          }),
+        );
+        return { ok: true, source: "event" as const };
+      }
+
       const runtime = (window as any).__cocalcJupyterRuntime;
       if (typeof runtime?.set_kernel_error_for_test === "function") {
         runtime.set_kernel_error_for_test(msg);
@@ -429,6 +461,13 @@ export async function canSetKernelErrorForE2E(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const canSet = await page.evaluate(() => {
+      if (
+        document.documentElement.getAttribute(
+          "data-cocalc-jupyter-test-set-kernel-error",
+        ) === "1"
+      ) {
+        return true;
+      }
       const runtime = (window as any).__cocalcJupyterRuntime;
       if (typeof runtime?.set_kernel_error_for_test === "function") {
         return true;
