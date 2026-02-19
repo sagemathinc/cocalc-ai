@@ -28,10 +28,20 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type { LroScopeType, LroSummary as HubLroSummary } from "@cocalc/conat/hub/api/lro";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
-import type { WorkspaceSshConnectionInfo } from "@cocalc/conat/hub/api/projects";
+import type {
+  MyCollaboratorRow,
+  ProjectCollabInviteAction,
+  ProjectCollabInviteBlockRow,
+  ProjectCollabInviteDirection,
+  ProjectCollabInviteRow,
+  ProjectCollabInviteStatus,
+  ProjectCollaboratorRow,
+  WorkspaceSshConnectionInfo,
+} from "@cocalc/conat/hub/api/projects";
 import { fsClient, fsSubject, type FilesystemClient } from "@cocalc/conat/files/fs";
 import { acpSubject } from "@cocalc/conat/ai/acp/server";
 import type { AcpRequest, AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
+import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
 import type { CodexReasoningId, CodexSessionConfig, CodexSessionMode } from "@cocalc/util/ai/codex";
 import {
@@ -1371,6 +1381,113 @@ async function resolveWorkspaceFromArgOrContext(
     );
   }
   return await resolveWorkspace(ctx, context.workspace_id);
+}
+
+function normalizeUserSearchName(row: UserSearchResult): string {
+  const first = `${row.first_name ?? ""}`.trim();
+  const last = `${row.last_name ?? ""}`.trim();
+  const full = `${first} ${last}`.trim();
+  return `${row.name ?? full}`.trim() || row.account_id;
+}
+
+async function resolveAccountByIdentifier(
+  ctx: CommandContext,
+  identifier: string,
+): Promise<UserSearchResult> {
+  const value = `${identifier ?? ""}`.trim();
+  if (!value) {
+    throw new Error("user identifier must be non-empty");
+  }
+  if (isValidUUID(value)) {
+    return {
+      account_id: value,
+      name: value,
+    };
+  }
+
+  const queryIsEmail = value.includes("@");
+  const rows = await hubCallAccount<UserSearchResult[]>(ctx, "system.userSearch", [
+    {
+      query: value,
+      limit: 50,
+      ...(queryIsEmail ? { only_email: true } : undefined),
+    },
+  ]);
+  if (!rows?.length) {
+    throw new Error(`user '${value}' not found`);
+  }
+
+  const lowerValue = value.toLowerCase();
+  const exact = rows.filter((row) => {
+    if (`${row.account_id}`.toLowerCase() === lowerValue) return true;
+    if (`${row.email_address ?? ""}`.toLowerCase() === lowerValue) return true;
+    if (`${row.name ?? ""}`.toLowerCase() === lowerValue) return true;
+    const full = `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim().toLowerCase();
+    return full === lowerValue;
+  });
+
+  const candidates = exact.length ? exact : rows;
+  if (candidates.length > 1) {
+    const preview = candidates
+      .slice(0, 8)
+      .map((row) => `${normalizeUserSearchName(row)} (${row.account_id})`)
+      .join(", ");
+    throw new Error(`user '${value}' is ambiguous: ${preview}`);
+  }
+  return candidates[0];
+}
+
+function serializeInviteRow(invite: ProjectCollabInviteRow): Record<string, unknown> {
+  return {
+    invite_id: invite.invite_id,
+    project_id: invite.project_id,
+    project_title: invite.project_title ?? null,
+    inviter_account_id: invite.inviter_account_id,
+    inviter_name:
+      `${invite.inviter_name ?? ""}`.trim() ||
+      `${invite.inviter_first_name ?? ""} ${invite.inviter_last_name ?? ""}`.trim() ||
+      null,
+    inviter_email_address: invite.inviter_email_address ?? null,
+    invitee_account_id: invite.invitee_account_id,
+    invitee_name:
+      `${invite.invitee_name ?? ""}`.trim() ||
+      `${invite.invitee_first_name ?? ""} ${invite.invitee_last_name ?? ""}`.trim() ||
+      null,
+    invitee_email_address: invite.invitee_email_address ?? null,
+    status: invite.status,
+    message: invite.message ?? null,
+    responder_action: invite.responder_action ?? null,
+    created: toIso(invite.created),
+    updated: toIso(invite.updated),
+    responded: toIso(invite.responded),
+  };
+}
+
+function compactInviteRow(
+  invite: ProjectCollabInviteRow,
+  accountId: string,
+): Record<string, unknown> {
+  const inviterName =
+    `${invite.inviter_name ?? ""}`.trim() ||
+    `${invite.inviter_first_name ?? ""} ${invite.inviter_last_name ?? ""}`.trim() ||
+    invite.inviter_account_id;
+  const inviteeName =
+    `${invite.invitee_name ?? ""}`.trim() ||
+    `${invite.invitee_first_name ?? ""} ${invite.invitee_last_name ?? ""}`.trim() ||
+    invite.invitee_account_id;
+  const outbound = invite.inviter_account_id === accountId;
+  const inbound = invite.invitee_account_id === accountId;
+  const direction = outbound ? "outbound" : inbound ? "inbound" : "related";
+  const other = outbound ? inviteeName : inviterName;
+  return {
+    invite_id: invite.invite_id,
+    workspace: invite.project_title ?? invite.project_id,
+    direction,
+    with: other,
+    status: invite.status,
+    created: toIso(invite.created),
+    responded: toIso(invite.responded),
+  };
 }
 
 function isProjectHostAuthError(err: unknown): boolean {
@@ -6004,6 +6121,314 @@ codexAuthApiKey
       });
     },
   );
+
+const collab = workspace
+  .command("collab")
+  .description("workspace collaborator operations");
+
+collab
+  .command("search <query>")
+  .description("search for existing accounts by name/email/account id")
+  .option("--limit <n>", "max rows", "20")
+  .action(
+    async (query: string, opts: { limit?: string }, command: Command) => {
+      await withContext(command, "workspace collab search", async (ctx) => {
+        const limit = Math.max(1, Math.min(100, Number(opts.limit ?? "20") || 20));
+        const rows = await hubCallAccount<UserSearchResult[]>(ctx, "system.userSearch", [
+          {
+            query,
+            limit,
+            ...(query.includes("@") ? { only_email: true } : undefined),
+          },
+        ]);
+        return (rows ?? []).map((row) => ({
+          account_id: row.account_id,
+          name: normalizeUserSearchName(row),
+          first_name: row.first_name ?? null,
+          last_name: row.last_name ?? null,
+          email_address: row.email_address ?? null,
+          last_active: row.last_active ?? null,
+          created: row.created ?? null,
+        }));
+      });
+    },
+  );
+
+collab
+  .command("list")
+  .description("list collaborators for a workspace or all your collaborators")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option("--limit <n>", "max rows for account-wide listing", "500")
+  .action(
+    async (
+      opts: { workspace?: string; limit?: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace collab list", async (ctx) => {
+        if (opts.workspace) {
+          const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+          const rows = await hubCallAccount<ProjectCollaboratorRow[]>(
+            ctx,
+            "projects.listCollaborators",
+            [{ project_id: workspace.project_id }],
+          );
+          return (rows ?? []).map((row) => ({
+            workspace_id: workspace.project_id,
+            workspace_title: workspace.title,
+            account_id: row.account_id,
+            group: row.group,
+            name:
+              `${row.name ?? ""}`.trim() ||
+              `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+              null,
+            first_name: row.first_name ?? null,
+            last_name: row.last_name ?? null,
+            email_address: row.email_address ?? null,
+            last_active: toIso(row.last_active),
+          }));
+        }
+        const limit = Math.max(1, Math.min(1000, Number(opts.limit ?? "500") || 500));
+        const rows = await hubCallAccount<MyCollaboratorRow[]>(
+          ctx,
+          "projects.listMyCollaborators",
+          [{ limit }],
+        );
+        return (rows ?? []).map((row) => ({
+          account_id: row.account_id,
+          name:
+            `${row.name ?? ""}`.trim() ||
+            `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+            null,
+          first_name: row.first_name ?? null,
+          last_name: row.last_name ?? null,
+          email_address: row.email_address ?? null,
+          last_active: toIso(row.last_active),
+          shared_projects: row.shared_projects ?? 0,
+        }));
+      });
+    },
+  );
+
+collab
+  .command("add")
+  .description("invite (default) or directly add a collaborator to a workspace")
+  .requiredOption("-w, --workspace <workspace>", "workspace id or name")
+  .requiredOption("--user <user>", "target account id, username, or email")
+  .option("--message <message>", "optional invite message")
+  .option("--direct", "directly add collaborator instead of creating an invite")
+  .action(
+    async (
+      opts: {
+        workspace: string;
+        user: string;
+        message?: string;
+        direct?: boolean;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace collab add", async (ctx) => {
+        const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+        const target = await resolveAccountByIdentifier(ctx, opts.user);
+        const result = await hubCallAccount<{
+          created: boolean;
+          invite: ProjectCollabInviteRow;
+        }>(ctx, "projects.createCollabInvite", [
+          {
+            project_id: workspace.project_id,
+            invitee_account_id: target.account_id,
+            message: opts.message,
+            direct: !!opts.direct,
+          },
+        ]);
+        return {
+          workspace_id: workspace.project_id,
+          workspace_title: workspace.title,
+          target_account_id: target.account_id,
+          target_name: normalizeUserSearchName(target),
+          created: result.created,
+          invite: serializeInviteRow(result.invite),
+        };
+      });
+    },
+  );
+
+collab
+  .command("remove")
+  .description("remove a collaborator from a workspace")
+  .requiredOption("-w, --workspace <workspace>", "workspace id or name")
+  .requiredOption("--user <user>", "target account id, username, or email")
+  .action(
+    async (
+      opts: { workspace: string; user: string },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace collab remove", async (ctx) => {
+        const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+        const target = await resolveAccountByIdentifier(ctx, opts.user);
+        await hubCallAccount<void>(ctx, "projects.removeCollaborator", [
+          {
+            opts: {
+              project_id: workspace.project_id,
+              account_id: target.account_id,
+            },
+          },
+        ]);
+        return {
+          workspace_id: workspace.project_id,
+          workspace_title: workspace.title,
+          target_account_id: target.account_id,
+          target_name: normalizeUserSearchName(target),
+          status: "removed",
+        };
+      });
+    },
+  );
+
+const invite = workspace
+  .command("invite")
+  .description("manage workspace collaboration invites");
+
+invite
+  .command("list")
+  .description("list collaboration invites")
+  .option("-w, --workspace <workspace>", "workspace id or name")
+  .option(
+    "--direction <direction>",
+    "inbound, outbound, or all",
+    "all",
+  )
+  .option(
+    "--status <status>",
+    "pending, accepted, declined, blocked, canceled",
+    "pending",
+  )
+  .option("--limit <n>", "max rows", "200")
+  .option("--full", "include full invite metadata")
+  .action(
+    async (
+      opts: {
+        workspace?: string;
+        direction?: ProjectCollabInviteDirection;
+        status?: ProjectCollabInviteStatus;
+        limit?: string;
+        full?: boolean;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "workspace invite list", async (ctx) => {
+        const workspace = opts.workspace
+          ? await resolveWorkspaceFromArgOrContext(ctx, opts.workspace)
+          : null;
+        const limit = Math.max(1, Math.min(1000, Number(opts.limit ?? "200") || 200));
+        const rows = await hubCallAccount<ProjectCollabInviteRow[]>(
+          ctx,
+          "projects.listCollabInvites",
+          [
+            {
+              project_id: workspace?.project_id,
+              direction: opts.direction,
+              status: opts.status,
+              limit,
+            },
+          ],
+        );
+        if (opts.full) {
+          return (rows ?? []).map((row) => ({
+            ...serializeInviteRow(row),
+            workspace_id: row.project_id,
+            workspace_title: row.project_title ?? null,
+          }));
+        }
+        return (rows ?? []).map((row) => compactInviteRow(row, ctx.accountId));
+      });
+    },
+  );
+
+async function respondWorkspaceInvite(
+  command: Command,
+  inviteId: string,
+  action: ProjectCollabInviteAction,
+): Promise<void> {
+  await withContext(command, `workspace invite ${action}`, async (ctx) => {
+    const row = await hubCallAccount<ProjectCollabInviteRow>(
+      ctx,
+      "projects.respondCollabInvite",
+      [{ invite_id: inviteId, action }],
+    );
+    return serializeInviteRow(row);
+  });
+}
+
+invite
+  .command("accept <inviteId>")
+  .description("accept an invite")
+  .action(async (inviteId: string, command: Command) => {
+    await respondWorkspaceInvite(command, inviteId, "accept");
+  });
+
+invite
+  .command("decline <inviteId>")
+  .description("decline an invite")
+  .action(async (inviteId: string, command: Command) => {
+    await respondWorkspaceInvite(command, inviteId, "decline");
+  });
+
+invite
+  .command("block <inviteId>")
+  .description("block inviter and mark invite as blocked")
+  .action(async (inviteId: string, command: Command) => {
+    await respondWorkspaceInvite(command, inviteId, "block");
+  });
+
+invite
+  .command("revoke <inviteId>")
+  .description("revoke (cancel) an outstanding invite you sent")
+  .action(async (inviteId: string, command: Command) => {
+    await respondWorkspaceInvite(command, inviteId, "revoke");
+  });
+
+invite
+  .command("blocks")
+  .description("list accounts you have blocked from inviting you")
+  .option("--limit <n>", "max rows", "200")
+  .action(async (opts: { limit?: string }, command: Command) => {
+    await withContext(command, "workspace invite blocks", async (ctx) => {
+      const limit = Math.max(1, Math.min(1000, Number(opts.limit ?? "200") || 200));
+      const rows = await hubCallAccount<ProjectCollabInviteBlockRow[]>(
+        ctx,
+        "projects.listCollabInviteBlocks",
+        [{ limit }],
+      );
+      return (rows ?? []).map((row) => ({
+        blocker_account_id: row.blocker_account_id,
+        blocked_account_id: row.blocked_account_id,
+        blocked_name:
+          `${row.blocked_name ?? ""}`.trim() ||
+          `${row.blocked_first_name ?? ""} ${row.blocked_last_name ?? ""}`.trim() ||
+          null,
+        blocked_email_address: row.blocked_email_address ?? null,
+        created: toIso(row.created),
+        updated: toIso(row.updated),
+      }));
+    });
+  });
+
+invite
+  .command("unblock")
+  .description("unblock a previously blocked inviter")
+  .requiredOption("--user <user>", "blocked account id, username, or email")
+  .action(async (opts: { user: string }, command: Command) => {
+    await withContext(command, "workspace invite unblock", async (ctx) => {
+      const user = await resolveAccountByIdentifier(ctx, opts.user);
+      return await hubCallAccount<{
+        unblocked: boolean;
+        blocker_account_id: string;
+        blocked_account_id: string;
+      }>(ctx, "projects.unblockCollabInviteSender", [
+        { blocked_account_id: user.account_id },
+      ]);
+    });
+  });
 
 const file = workspace.command("file").description("workspace file operations");
 

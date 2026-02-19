@@ -70,6 +70,75 @@ export interface WorkspaceSshConnectionInfo {
   cloudflare_hostname: string | null;
 }
 
+export type ProjectCollabInviteStatus =
+  | "pending"
+  | "accepted"
+  | "declined"
+  | "blocked"
+  | "canceled";
+
+export type ProjectCollabInviteAction =
+  | "accept"
+  | "decline"
+  | "block"
+  | "revoke";
+
+export type ProjectCollabInviteDirection = "inbound" | "outbound" | "all";
+
+export interface ProjectCollabInviteRow {
+  invite_id: string;
+  project_id: string;
+  project_title?: string | null;
+  inviter_account_id: string;
+  inviter_name?: string | null;
+  inviter_first_name?: string | null;
+  inviter_last_name?: string | null;
+  inviter_email_address?: string | null;
+  invitee_account_id: string;
+  invitee_name?: string | null;
+  invitee_first_name?: string | null;
+  invitee_last_name?: string | null;
+  invitee_email_address?: string | null;
+  status: ProjectCollabInviteStatus;
+  message?: string | null;
+  responder_action?: ProjectCollabInviteAction | null;
+  created: Date;
+  updated: Date;
+  responded?: Date | null;
+}
+
+export interface ProjectCollabInviteBlockRow {
+  blocker_account_id: string;
+  blocker_name?: string | null;
+  blocked_account_id: string;
+  blocked_name?: string | null;
+  blocked_first_name?: string | null;
+  blocked_last_name?: string | null;
+  blocked_email_address?: string | null;
+  created: Date;
+  updated: Date;
+}
+
+export interface ProjectCollaboratorRow {
+  account_id: string;
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  email_address?: string | null;
+  last_active?: Date | null;
+  group: "owner" | "collaborator";
+}
+
+export interface MyCollaboratorRow {
+  account_id: string;
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  email_address?: string | null;
+  last_active?: Date | null;
+  shared_projects: number;
+}
+
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
@@ -77,6 +146,13 @@ export const projects = {
   cancelPendingCopy: authFirstRequireAccount,
   removeCollaborator: authFirstRequireAccount,
   addCollaborator: authFirstRequireAccount,
+  createCollabInvite: authFirstRequireAccount,
+  listCollabInvites: authFirstRequireAccount,
+  respondCollabInvite: authFirstRequireAccount,
+  listCollabInviteBlocks: authFirstRequireAccount,
+  unblockCollabInviteSender: authFirstRequireAccount,
+  listCollaborators: authFirstRequireAccount,
+  listMyCollaborators: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
@@ -183,6 +259,55 @@ export interface Projects {
     account_id?: string;
     opts: AddCollaborator;
   }) => Promise<{ project_id?: string | string[] }>;
+
+  createCollabInvite: (opts: {
+    account_id?: string;
+    project_id: string;
+    invitee_account_id: string;
+    message?: string;
+    direct?: boolean;
+  }) => Promise<{
+    created: boolean;
+    invite: ProjectCollabInviteRow;
+  }>;
+
+  listCollabInvites: (opts: {
+    account_id?: string;
+    project_id?: string;
+    direction?: ProjectCollabInviteDirection;
+    status?: ProjectCollabInviteStatus;
+    limit?: number;
+  }) => Promise<ProjectCollabInviteRow[]>;
+
+  respondCollabInvite: (opts: {
+    account_id?: string;
+    invite_id: string;
+    action: ProjectCollabInviteAction;
+  }) => Promise<ProjectCollabInviteRow>;
+
+  listCollabInviteBlocks: (opts: {
+    account_id?: string;
+    limit?: number;
+  }) => Promise<ProjectCollabInviteBlockRow[]>;
+
+  unblockCollabInviteSender: (opts: {
+    account_id?: string;
+    blocked_account_id: string;
+  }) => Promise<{
+    unblocked: boolean;
+    blocker_account_id: string;
+    blocked_account_id: string;
+  }>;
+
+  listCollaborators: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectCollaboratorRow[]>;
+
+  listMyCollaborators: (opts: {
+    account_id?: string;
+    limit?: number;
+  }) => Promise<MyCollaboratorRow[]>;
 
   inviteCollaborator: ({
     account_id,
