@@ -6215,7 +6215,7 @@ collab
   .requiredOption("-w, --workspace <workspace>", "workspace id or name")
   .requiredOption("--user <user>", "target account id, username, or email")
   .option("--message <message>", "optional invite message")
-  .option("--direct", "directly add collaborator instead of creating an invite")
+  .option("--direct", "directly add collaborator instead of creating an invite (admin only)")
   .action(
     async (
       opts: {

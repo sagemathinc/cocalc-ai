@@ -93,6 +93,12 @@ function ensureUuid(value: string, label: string): void {
   }
 }
 
+function isAlreadyCollaboratorError(err: unknown): boolean {
+  return `${(err as any)?.message ?? err ?? ""}`
+    .toLowerCase()
+    .includes("already a collaborator");
+}
+
 async function fetchInviteById(
   invite_id: string,
   includeEmail: boolean,
@@ -154,6 +160,9 @@ export async function addCollaborator({
   account_id: string;
   opts: AddCollaborator;
 }): Promise<{ project_id?: string | string[] }> {
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
   let projects: undefined | string | string[] = opts.project_id;
   let accounts: undefined | string | string[] = opts.account_id;
   let tokens: undefined | string | string[] = opts.token_id;
@@ -172,6 +181,18 @@ export async function addCollaborator({
   }
   if (!is_array(accounts)) {
     accounts = [accounts];
+  }
+
+  // Security: non-admin users may only direct-add themselves.
+  // Adding other collaborators must go through invite acceptance flow.
+  if (!(await isAdmin(account_id))) {
+    for (const target of accounts as string[]) {
+      if (target !== account_id) {
+        throw new Error(
+          "direct collaborator add is restricted to adding yourself; send an invite instead",
+        );
+      }
+    }
   }
 
   await add_collaborators_to_projects(
@@ -260,6 +281,9 @@ export async function createCollabInvite({
   }
 
   if (direct) {
+    if (!includeEmail) {
+      throw new Error("direct collaborator add requires admin privileges");
+    }
     const database = db();
     await callback2(database.add_user_to_project, {
       project_id,
@@ -697,14 +721,31 @@ export async function inviteCollaborator({
   }
   const dbg = (...args) => logger.debug("inviteCollaborator", ...args);
   const database = db();
+  const inviterIsAdmin = await isAdmin(account_id);
 
-  // Actually add user to project
-  await callback2(database.add_user_to_project, {
-    project_id: opts.project_id,
-    account_id: opts.account_id,
-    group: "collaborator", // in future: "invite_collaborator"
-  });
-  await syncProjectUsersOnHost({ project_id: opts.project_id });
+  if (inviterIsAdmin) {
+    // Admins keep legacy direct-add behavior.
+    await callback2(database.add_user_to_project, {
+      project_id: opts.project_id,
+      account_id: opts.account_id,
+      group: "collaborator",
+    });
+    await syncProjectUsersOnHost({ project_id: opts.project_id });
+  } else {
+    // Non-admin default: create invite, do not directly add.
+    try {
+      await createCollabInvite({
+        account_id,
+        project_id: opts.project_id,
+        invitee_account_id: opts.account_id,
+      });
+    } catch (err) {
+      if (isAlreadyCollaboratorError(err)) {
+        return;
+      }
+      throw err;
+    }
+  }
 
   // Everything else in this big function is about notifying the user that they
   // were added.
@@ -792,6 +833,7 @@ export async function inviteCollaboratorWithoutAccount({
   const dbg = (...args) =>
     logger.debug("inviteCollaboratorWithoutAccount", ...args);
   const database = db();
+  const inviterIsAdmin = await isAdmin(account_id);
 
   if (opts.to.length > 1024) {
     throw Error(
@@ -826,13 +868,29 @@ export async function inviteCollaboratorWithoutAccount({
 
     // 2. If user exists, add to project; otherwise, trigger later add
     if (to_account_id) {
-      dbg(`user ${email_address} already has an account -- add directly`);
-      await callback2(database.add_user_to_project, {
-        project_id: opts.project_id,
-        account_id: to_account_id,
-        group: "collaborator",
-      });
-      await syncProjectUsersOnHost({ project_id: opts.project_id });
+      if (inviterIsAdmin) {
+        dbg(`user ${email_address} already has an account -- add directly`);
+        await callback2(database.add_user_to_project, {
+          project_id: opts.project_id,
+          account_id: to_account_id,
+          group: "collaborator",
+        });
+        await syncProjectUsersOnHost({ project_id: opts.project_id });
+      } else {
+        dbg(`user ${email_address} already has an account -- create invite`);
+        try {
+          await createCollabInvite({
+            account_id,
+            project_id: opts.project_id,
+            invitee_account_id: to_account_id,
+          });
+        } catch (err) {
+          if (isAlreadyCollaboratorError(err)) {
+            return;
+          }
+          throw err;
+        }
+      }
     } else {
       dbg(
         `user ${email_address} doesn't have an account yet -- may send email (if we haven't recently)`,

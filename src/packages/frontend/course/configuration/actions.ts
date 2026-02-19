@@ -16,7 +16,6 @@ import {
 } from "@cocalc/frontend/custom-software/selector";
 import { Datastore, EnvVars } from "@cocalc/frontend/projects/actions";
 import { store as projects_store } from "@cocalc/frontend/projects/store";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { CourseActions, primary_key } from "../actions";
 import {
@@ -225,10 +224,9 @@ export class ConfigurationActions {
         for (const account_id of teachers.keys()) {
           const user = users_of_grade_project.get(account_id);
           if (user != null) continue;
-          await webapp_client.project_collaborators.add_collaborator({
-            account_id,
-            project_id,
-          });
+          await redux
+            .getActions("projects")
+            .invite_collaborator(project_id, account_id);
         }
       }
     } catch (err) {

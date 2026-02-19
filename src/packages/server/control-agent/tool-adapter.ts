@@ -34,7 +34,7 @@ import type {
 } from "@cocalc/ai/control-agent/tools";
 import searchAccounts from "@cocalc/server/accounts/search";
 import {
-  addCollaborator,
+  createCollabInvite,
   removeCollaborator,
 } from "@cocalc/server/projects/collaborators";
 import createProject from "@cocalc/server/projects/create";
@@ -188,9 +188,10 @@ async function handleWorkspaceCreate(
       if (!resolved) {
         continue;
       }
-      await addCollaborator({
+      await createCollabInvite({
         account_id: accountId,
-        opts: { project_id: projectId, account_id: resolved },
+        project_id: projectId,
+        invitee_account_id: resolved,
       });
     }
   }
@@ -276,9 +277,10 @@ async function handleWorkspaceAddCollaborator(
       "Unknown collaborator.",
     );
   }
-  await addCollaborator({
+  await createCollabInvite({
     account_id: accountId,
-    opts: { project_id: input.workspaceId, account_id: resolved },
+    project_id: input.workspaceId,
+    invitee_account_id: resolved,
   });
   return ok(input.requestId, {
     workspaceId: input.workspaceId,
