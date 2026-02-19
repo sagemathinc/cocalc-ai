@@ -45,7 +45,6 @@ import KernelWarning from "./kernel-warning";
 import { KeyboardShortcuts } from "./keyboard-shortcuts";
 import * as toolComponents from "./llm";
 import { NBConvert } from "./nbconvert";
-import { KernelSelector } from "./select-kernel";
 import { Kernel } from "./status";
 
 export const ERROR_STYLE: CSS = {
@@ -113,10 +112,6 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
   const find_and_replace: undefined | boolean = useRedux([
     name,
     "find_and_replace",
-  ]);
-  const show_kernel_selector: undefined | boolean = useRedux([
-    name,
-    "show_kernel_selector",
   ]);
   // string name of the kernel
   const kernelspec = useRedux([name, "kernel_info"]);
@@ -368,22 +363,18 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     );
   }
 
-  function render_select_kernel() {
-    return <KernelSelector actions={actions} />;
-  }
-
   function render_main() {
     if (!check_select_kernel_init) {
-      <Loading
-        style={{
-          fontSize: "24pt",
-          textAlign: "center",
-          marginTop: "15px",
-          color: COLORS.GRAY,
-        }}
-      />;
-    } else if (show_kernel_selector) {
-      return render_select_kernel();
+      return (
+        <Loading
+          style={{
+            fontSize: "24pt",
+            textAlign: "center",
+            marginTop: "15px",
+            color: COLORS.GRAY,
+          }}
+        />
+      );
     } else {
       return render_cells();
     }

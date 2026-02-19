@@ -18,8 +18,9 @@ import { capitalize, closest_kernel_match, rpad_html } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
   Button,
+  Drawer,
+  Divider,
   Popconfirm,
-  Popover,
   Progress,
   Tooltip,
   Typography,
@@ -31,6 +32,7 @@ import ProgressEstimate from "../components/progress-estimate";
 import { labels } from "../i18n";
 import { JupyterActions } from "./browser-actions";
 import Logo from "./logo";
+import { KernelSelector } from "./select-kernel";
 import { ALERT_COLS } from "./usage";
 
 const KERNEL_NAME_STYLE: CSS = {
@@ -76,6 +78,39 @@ const BACKEND_STATE_HUMAN = {
   running: "Running",
 } as const;
 
+const KERNEL_DRAWER_WIDTH_STORAGE_KEY = "cocalc:jupyter:kernelDrawerWidth";
+const MIN_KERNEL_DRAWER_WIDTH = 360;
+const MAX_KERNEL_DRAWER_WIDTH = 960;
+
+function clampKernelDrawerWidth(width: number): number {
+  return Math.min(MAX_KERNEL_DRAWER_WIDTH, Math.max(MIN_KERNEL_DRAWER_WIDTH, width));
+}
+
+function readKernelDrawerWidth(): number | undefined {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const raw = window.localStorage.getItem(KERNEL_DRAWER_WIDTH_STORAGE_KEY);
+  if (raw == null) {
+    return;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return;
+  }
+  return clampKernelDrawerWidth(parsed);
+}
+
+function persistKernelDrawerWidth(width: number) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(
+    KERNEL_DRAWER_WIDTH_STORAGE_KEY,
+    String(clampKernelDrawerWidth(width)),
+  );
+}
+
 interface KernelProps {
   actions: JupyterActions;
   usage?: Usage;
@@ -108,6 +143,10 @@ export function Kernel({
     name,
     "kernel_info",
   ]);
+  const show_kernel_selector: undefined | boolean = useRedux([
+    name,
+    "show_kernel_selector",
+  ]);
   const backend_state: undefined | BackendState = useRedux([
     name,
     "backend_state",
@@ -128,8 +167,31 @@ export function Kernel({
       setIsSpawarning(true);
     }
   }, [backend_state]);
+  const [kernelDrawerOpen, setKernelDrawerOpen] = React.useState<boolean>(false);
+  const [kernelDrawerWidth, setKernelDrawerWidth] = React.useState<
+    number | undefined
+  >(readKernelDrawerWidth);
+  useEffect(() => {
+    setKernelDrawerOpen(!!show_kernel_selector);
+  }, [show_kernel_selector]);
 
   // render functions start there
+
+  function openKernelDrawer() {
+    void actions.show_select_kernel("user request");
+  }
+
+  function closeKernelDrawer() {
+    actions.hide_select_kernel();
+  }
+
+  function handleDrawerResize(next: number) {
+    const clamped = clampKernelDrawerWidth(next);
+    setKernelDrawerWidth(clamped);
+    try {
+      persistKernelDrawerWidth(clamped);
+    } catch {}
+  }
 
   // wrap "Logo" component
   function renderLogo() {
@@ -172,7 +234,7 @@ export function Kernel({
       return (
         <div
           style={style}
-          onClick={() => actions.show_select_kernel("user request")}
+          onClick={openKernelDrawer}
         >
           {display_name}
         </div>
@@ -292,7 +354,7 @@ export function Kernel({
           <Tooltip title={intl.formatMessage(labels.select_a_kernel)}>
             <a
               onClick={() => {
-                actions.show_select_kernel("user request");
+                openKernelDrawer();
               }}
             >
               (`${intl.formatMessage(labels.select)}...`)
@@ -395,8 +457,8 @@ export function Kernel({
     );
   }
 
-  // a popover information, containin more in depth details about the kernel
-  function renderTip(title: any, body: any) {
+  // detailed kernel information displayed in the kernel drawer.
+  function renderKernelDetails() {
     const backend_tip =
       backend_state == null ? (
         ""
@@ -465,21 +527,12 @@ export function Kernel({
         {lang}
         {backend_tip}
         {kernel_tip}
-        <hr />
+        <Divider style={{ margin: "8px 0" }} />
         {render_usage_text()}
         {usage_tip}
       </span>
     );
-    return (
-      <Popover
-        mouseEnterDelay={1}
-        title={title}
-        content={<div style={{ maxWidth: "400px" }}>{tip}</div>}
-        placement={"bottom"}
-      >
-        {body}
-      </Popover>
-    );
+    return <div style={{ maxWidth: "100%" }}>{tip}</div>;
   }
 
   // show progress bar indicators for memory usage and the progress of the current cell (expected time)
@@ -681,42 +734,60 @@ export function Kernel({
         color: COLORS.GRAY_M,
         cursor: "pointer",
       }}
+      onClick={openKernelDrawer}
     >
       {info}
     </div>
   );
 
   return (
-    <div
-      style={{
-        overflow: "hidden",
-        width: "100%",
-        padding: "5px",
-        backgroundColor: COLORS.GRAY_LLL,
-        display: "flex",
-        borderBottom: "1px solid #ccc",
-        ...style,
-      }}
-    >
-      <div style={{ flex: 1, display: "flex", maxWidth: "100%" }}>
-        <div>{renderLogo()}</div>
-        <div
-          style={{
-            flex: 1,
-            fontSize: "10pt",
-            textAlign: "center",
-            marginTop: "3.5px",
-          }}
-        >
-          {IS_MOBILE ? body : renderTip(get_kernel_name(), body)}
-        </div>
-        {renderKernelState()}
-        {!IS_MOBILE && (
-          <div style={{ flex: 1, marginTop: "2.5px" }}>
-            {renderTip(get_kernel_name(), renderUsage())}
+    <>
+      <div
+        style={{
+          overflow: "hidden",
+          width: "100%",
+          padding: "5px",
+          backgroundColor: COLORS.GRAY_LLL,
+          display: "flex",
+          borderBottom: "1px solid #ccc",
+          ...style,
+        }}
+      >
+        <div style={{ flex: 1, display: "flex", maxWidth: "100%" }}>
+          <div>{renderLogo()}</div>
+          <div
+            style={{
+              flex: 1,
+              fontSize: "10pt",
+              textAlign: "center",
+              marginTop: "3.5px",
+            }}
+          >
+            {body}
           </div>
-        )}
+          {renderKernelState()}
+          {!IS_MOBILE && (
+            <div
+              style={{ flex: 1, marginTop: "2.5px", cursor: "pointer" }}
+              onClick={openKernelDrawer}
+            >
+              {renderUsage()}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+      <Drawer
+        open={kernelDrawerOpen}
+        onClose={closeKernelDrawer}
+        placement="right"
+        size={kernelDrawerWidth}
+        resizable={{ onResize: handleDrawerResize }}
+        title={get_kernel_name()}
+      >
+        {renderKernelDetails()}
+        <Divider />
+        <KernelSelector actions={actions} embedded />
+      </Drawer>
+    </>
   );
 }

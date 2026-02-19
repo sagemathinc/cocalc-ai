@@ -56,9 +56,10 @@ const ALL_LANGS_LABEL_STYLE: CSS = {
 
 interface KernelSelectorProps {
   actions: JupyterActions;
+  embedded?: boolean;
 }
 
-export function KernelSelector({ actions }: KernelSelectorProps) {
+export function KernelSelector({ actions, embedded }: KernelSelectorProps) {
   const intl = useIntl();
 
   const editor_settings = useTypedRedux("account", "editor_settings");
@@ -472,6 +473,9 @@ export function KernelSelector({ actions }: KernelSelectorProps) {
   }
 
   function render_footer(): Rendered {
+    if (embedded) {
+      return;
+    }
     return (
       <div style={{ color: COLORS.GRAY, paddingBottom: "2em" }}>
         <Paragraph>
@@ -489,6 +493,9 @@ export function KernelSelector({ actions }: KernelSelectorProps) {
   }
 
   function renderCloseButton(): Rendered | undefined {
+    if (embedded) {
+      return;
+    }
     return (
       <Button
         style={{ marginRight: "5px" }}
@@ -550,7 +557,7 @@ export function KernelSelector({ actions }: KernelSelectorProps) {
           {renderCloseButton()}
           {renderRefreshButton()}
         </div>
-        <h3>{intl.formatMessage(labels.select_a_kernel)}</h3>
+        <h3 style={{ marginTop: 0 }}>{intl.formatMessage(labels.select_a_kernel)}</h3>
       </div>
     );
   }
@@ -565,7 +572,7 @@ export function KernelSelector({ actions }: KernelSelectorProps) {
     return true;
   }
 
-  if (IS_MOBILE) {
+  if (!embedded && IS_MOBILE) {
     /*
 NOTE: I tried viewing this on mobile and it is so HORRIBLE!
 Something about the CSS and Typography components are just truly
@@ -591,6 +598,14 @@ a horrific disaster.  This one component though is maybe usable.
   if (checkObvious()) {
     // avoid flicker displaying big error.
     return null;
+  }
+  if (embedded) {
+    return (
+      <div style={{ padding: "0 4px 12px 4px" }}>
+        {render_head()}
+        {render_body()}
+      </div>
+    );
   }
   return (
     <div style={MAIN_STYLE} className={"smc-vfill"}>
