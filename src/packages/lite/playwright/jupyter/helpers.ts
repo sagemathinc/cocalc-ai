@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { promisify } from "node:util";
 
 import type { Page } from "@playwright/test";
 import { project_id } from "@cocalc/project/data";
 import { connectionInfoPath } from "../../connection-info";
+
+const execFileAsync = promisify(execFile);
 
 type ConnectionInfo = {
   pid?: number;
@@ -244,6 +248,19 @@ export async function clickRunButton(page: Page, index: number): Promise<void> {
   const input = cell.locator('[cocalc-test="cell-input"] .CodeMirror').first();
   await input.click();
   await page.keyboard.press("Shift+Enter");
+}
+
+export async function killKernelProcessesForE2E(): Promise<void> {
+  // Best-effort crash simulation for notebook kernels. Tests run serially,
+  // so killing all local kernel worker processes is acceptable here.
+  try {
+    await execFileAsync("bash", [
+      "-lc",
+      "pkill -f 'ipykernel_launcher|sage\\.repl\\.ipython_kernel|kernel-.*\\.json' >/dev/null 2>&1 || true",
+    ]);
+  } catch {
+    // ignore failures; callers verify behavior via UI state transitions
+  }
 }
 
 export async function readRunButtonLabel(
