@@ -502,14 +502,14 @@ export async function getBackupConfig({
     return { toml: "", ttl_seconds: 0 };
   }
   const accountId =
-    bucket.account_id ?? (await getSiteSetting("r2_account_id"));
+    (await getSiteSetting("r2_account_id")) ?? bucket.account_id;
   const accessKey =
-    bucket.access_key_id ?? (await getSiteSetting("r2_access_key_id"));
+    (await getSiteSetting("r2_access_key_id")) ?? bucket.access_key_id;
   const secretKey =
-    bucket.secret_access_key ?? (await getSiteSetting("r2_secret_access_key"));
+    (await getSiteSetting("r2_secret_access_key")) ?? bucket.secret_access_key;
   const endpoint =
-    bucket.endpoint ??
-    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined);
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined) ??
+    bucket.endpoint;
   if (!accountId || !accessKey || !secretKey || !endpoint) {
     return { toml: "", ttl_seconds: 0 };
   }
@@ -549,33 +549,10 @@ export async function getProjectBackupConfigForDeletion({
   if (!row) {
     throw new Error("project not found");
   }
-
-  if (row.host_id) {
-    try {
-      const config = await getBackupConfig({
-        host_id: row.host_id,
-        project_id,
-      });
-      if (config.toml.trim()) {
-        return { toml: config.toml };
-      }
-    } catch (err) {
-      logger.debug("getProjectBackupConfigForDeletion: host-based config failed", {
-        project_id,
-        host_id: row.host_id,
-        err: `${err}`,
-      });
-    }
-  }
-
-  const bucketId = row.backup_bucket_id ?? null;
-  if (!bucketId) {
-    return { toml: "" };
-  }
   return await getDeletedProjectBackupConfigForDeletion({
     project_id,
     host_id: row.host_id,
-    backup_bucket_id: bucketId,
+    backup_bucket_id: row.backup_bucket_id ?? null,
   });
 }
 
@@ -616,14 +593,14 @@ export async function getDeletedProjectBackupConfigForDeletion({
   }
 
   const accountId =
-    bucket.account_id ?? (await getSiteSetting("r2_account_id"));
+    (await getSiteSetting("r2_account_id")) ?? bucket.account_id;
   const accessKey =
-    bucket.access_key_id ?? (await getSiteSetting("r2_access_key_id"));
+    (await getSiteSetting("r2_access_key_id")) ?? bucket.access_key_id;
   const secretKey =
-    bucket.secret_access_key ?? (await getSiteSetting("r2_secret_access_key"));
+    (await getSiteSetting("r2_secret_access_key")) ?? bucket.secret_access_key;
   const endpoint =
-    bucket.endpoint ??
-    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined);
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined) ??
+    bucket.endpoint;
   if (!accountId || !accessKey || !secretKey || !endpoint) {
     return { toml: "" };
   }

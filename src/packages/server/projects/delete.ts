@@ -1,5 +1,4 @@
 import getPool from "@cocalc/database/pool";
-import userQuery from "@cocalc/database/user-query";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { getProject } from "@cocalc/server/projects/control";
 import { getLogger } from "@cocalc/backend/logger";
@@ -48,20 +47,12 @@ export default async function deleteProject({
     log.debug("problem stopping project", { project_id, err });
   }
 
-  if (!skipPermissionCheck && account_id) {
-    await userQuery({
-      account_id,
-      query: {
-        projects: {
-          project_id,
-          deleted: true,
-        },
-      },
-    });
-  } else {
-    const pool = getPool();
-    await pool.query("UPDATE projects SET deleted=true WHERE project_id=$1", [
-      project_id,
-    ]);
+  const pool = getPool();
+  const result = await pool.query(
+    "UPDATE projects SET deleted=true WHERE project_id=$1",
+    [project_id],
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw Error("project not found");
   }
 }

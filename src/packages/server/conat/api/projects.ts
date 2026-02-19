@@ -1,6 +1,7 @@
 import createProject from "@cocalc/server/projects/create";
 export { createProject };
 import execProject from "@cocalc/server/projects/exec";
+import deleteProjectControl from "@cocalc/server/projects/delete";
 import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-delete";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
@@ -450,6 +451,22 @@ export async function stop({
   log.debug("stop", { project_id });
   const project = await getProject(project_id);
   await project.stop();
+}
+
+export async function deleteProject({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<void> {
+  if (!account_id) {
+    throw new Error("must be signed in");
+  }
+  await deleteProjectControl({
+    project_id,
+    account_id,
+  });
 }
 
 export async function hardDeleteProject({

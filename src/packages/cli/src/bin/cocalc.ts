@@ -3835,7 +3835,7 @@ async function confirmHardWorkspaceDelete({
       "hard delete requires interactive confirmation; pass --yes to continue non-interactively",
     );
   }
-  const expected = `${title ?? ""}`.trim() || workspace_id;
+  const expected = workspace_id;
   const backupMessage = purgeBackupsNow
     ? "Backups will be purged immediately."
     : backupRetentionDays > 0
@@ -3844,7 +3844,7 @@ async function confirmHardWorkspaceDelete({
   console.error("WARNING: hard delete permanently removes workspace data and metadata.");
   console.error(backupMessage);
   console.error(
-    `Type '${expected}' to permanently delete workspace '${title?.trim() || workspace_id}'.`,
+    `Type project_id '${expected}' to permanently delete workspace '${title?.trim() || workspace_id}'.`,
   );
   const rl = createInterface({
     input: process.stdin,
@@ -4877,7 +4877,7 @@ workspace
 workspace
   .command("delete")
   .description("delete a workspace (soft by default; permanent with --hard)")
-  .option("-w, --workspace <workspace>", "workspace id or name")
+  .requiredOption("-w, --workspace <project_id>", "workspace project_id (UUID)")
   .option("--hard", "permanently delete workspace data and metadata")
   .option(
     "--backup-retention-days <days>",
@@ -4890,7 +4890,7 @@ workspace
   .action(
     async (
       opts: {
-        workspace?: string;
+        workspace: string;
         hard?: boolean;
         backupRetentionDays?: string;
         purgeBackupsNow?: boolean;
@@ -4900,14 +4900,15 @@ workspace
       command: Command,
     ) => {
     await withContext(command, "workspace delete", async (ctx) => {
-      const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
+      const projectId = `${opts.workspace ?? ""}`.trim();
+      if (!isValidUUID(projectId)) {
+        throw new Error("--workspace must be a workspace project_id UUID");
+      }
+      const ws = await resolveWorkspace(ctx, projectId);
       if (!opts.hard) {
-        await hubCallAccount(ctx, "db.userQuery", [
+        await hubCallAccount(ctx, "projects.deleteProject", [
           {
-            query: {
-              projects: [{ project_id: ws.project_id, deleted: true }],
-            },
-            options: [],
+            project_id: ws.project_id,
           },
         ]);
         return {
