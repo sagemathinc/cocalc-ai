@@ -455,11 +455,13 @@ export async function stop({
 export async function hardDeleteProject({
   account_id,
   project_id,
-  skip_backups,
+  backup_retention_days,
+  purge_backups_now,
 }: {
   account_id?: string;
   project_id: string;
-  skip_backups?: boolean;
+  backup_retention_days?: number;
+  purge_backups_now?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "account";
@@ -482,7 +484,8 @@ export async function hardDeleteProject({
     routing: "hub",
     input: {
       project_id,
-      skip_backups: !!skip_backups,
+      backup_retention_days,
+      purge_backups_now: !!purge_backups_now,
     },
     status: "queued",
     dedupe_key: `project-hard-delete:${project_id}`,

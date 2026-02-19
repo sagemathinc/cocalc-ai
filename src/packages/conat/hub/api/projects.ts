@@ -572,7 +572,8 @@ export interface Projects {
   hardDeleteProject: (opts: {
     account_id?: string;
     project_id: string;
-    skip_backups?: boolean;
+    backup_retention_days?: number;
+    purge_backups_now?: boolean;
   }) => Promise<{
     op_id: string;
     scope_type: "account";

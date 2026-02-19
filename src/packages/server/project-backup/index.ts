@@ -385,6 +385,78 @@ export async function recordProjectBackup({
   ]);
 }
 
+function isSelfHostLocalMachine(machine: HostMachine): boolean {
+  const selfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
+  return machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+}
+
+async function buildSelfHostLocalBackupConfig(): Promise<{
+  toml: string;
+  ttl_seconds: number;
+}> {
+  await maybeStartLaunchpadOnPremServices();
+  const config = getLaunchpadLocalConfig("local");
+  const restPort = getLaunchpadRestPort() ?? config.rest_port;
+  if (!restPort || !config.backup_root) {
+    return { toml: "", ttl_seconds: 0 };
+  }
+  const tunnelLocalPort =
+    Number.parseInt(process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT ?? "", 10) ||
+    ONPREM_REST_TUNNEL_LOCAL_PORT;
+  const root = DEFAULT_BACKUP_ROOT;
+  try {
+    await mkdir(join(config.backup_root, root), { recursive: true });
+  } catch {
+    // Best-effort; rustic will surface a clearer error if repo is unusable.
+  }
+  const password = await getSharedBackupSecret();
+  const auth = await getLaunchpadRestAuth();
+  const authPrefix = auth
+    ? `${encodeURIComponent(auth.user)}:${encodeURIComponent(auth.password)}@`
+    : "";
+  const endpoint = `http://${authPrefix}127.0.0.1:${tunnelLocalPort}/${root}`;
+  const toml = [
+    "[repository]",
+    `repository = \"rest:${endpoint}\"`,
+    `password = \"${password}\"`,
+    "",
+  ].join("\n");
+  return { toml, ttl_seconds: DEFAULT_BACKUP_TTL_SECONDS };
+}
+
+function buildS3ProjectBackupToml({
+  endpoint,
+  bucket,
+  accessKey,
+  secretKey,
+  password,
+  root,
+}: {
+  endpoint: string;
+  bucket: string;
+  accessKey: string;
+  secretKey: string;
+  password: string;
+  root: string;
+}): string {
+  return [
+    "[repository]",
+    'repository = "opendal:s3"',
+    `password = \"${password}\"`,
+    "",
+    "[repository.options]",
+    `endpoint = \"${endpoint}\"`,
+    'region = "auto"',
+    `bucket = \"${bucket}\"`,
+    `root = \"${root}\"`,
+    `access_key_id = \"${accessKey}\"`,
+    `secret_access_key = \"${secretKey}\"`,
+    "",
+  ].join("\n");
+}
+
 export async function getBackupConfig({
   host_id,
   project_id,
@@ -412,42 +484,8 @@ export async function getBackupConfig({
 
   const rowMetadata = rows[0]?.metadata ?? {};
   const machine: HostMachine = rowMetadata?.machine ?? {};
-  const selfHostMode = machine?.metadata?.self_host_mode;
-  const effectiveSelfHostMode =
-    machine?.cloud === "self-host" && !selfHostMode ? "local" : selfHostMode;
-  const isSelfHostLocal =
-    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
-  if (isSelfHostLocal) {
-    await maybeStartLaunchpadOnPremServices();
-    const config = getLaunchpadLocalConfig("local");
-    const restPort = getLaunchpadRestPort() ?? config.rest_port;
-    if (!restPort || !config.backup_root) {
-      return { toml: "", ttl_seconds: 0 };
-    }
-    const tunnelLocalPort =
-      Number.parseInt(
-        process.env.COCALC_ONPREM_REST_TUNNEL_LOCAL_PORT ?? "",
-        10,
-      ) || ONPREM_REST_TUNNEL_LOCAL_PORT;
-    const root = DEFAULT_BACKUP_ROOT;
-    try {
-      await mkdir(join(config.backup_root, root), { recursive: true });
-    } catch {
-      // Best-effort; rustic will surface a clearer error if repo is unusable.
-    }
-    const password = await getSharedBackupSecret();
-    const auth = await getLaunchpadRestAuth();
-    const authPrefix = auth
-      ? `${encodeURIComponent(auth.user)}:${encodeURIComponent(auth.password)}@`
-      : "";
-    const endpoint = `http://${authPrefix}127.0.0.1:${tunnelLocalPort}/${root}`;
-    const toml = [
-      "[repository]",
-      `repository = \"rest:${endpoint}\"`,
-      `password = \"${password}\"`,
-      "",
-    ].join("\n");
-    return { toml, ttl_seconds: DEFAULT_BACKUP_TTL_SECONDS };
+  if (isSelfHostLocalMachine(machine)) {
+    return await buildSelfHostLocalBackupConfig();
   }
 
   const hostRegion = rows[0]?.region ?? null;
@@ -480,21 +518,14 @@ export async function getBackupConfig({
     ? `${DEFAULT_BACKUP_ROOT}/project-${project_id}`
     : `${DEFAULT_BACKUP_ROOT}/host-${host_id}`;
   const password = project_id ? await getProjectBackupSecret(project_id) : "";
-
-  const toml = [
-    "[repository]",
-    'repository = "opendal:s3"',
-    `password = \"${password}\"`,
-    "",
-    "[repository.options]",
-    `endpoint = \"${endpoint}\"`,
-    'region = "auto"',
-    `bucket = \"${bucket.name}\"`,
-    `root = \"${root}\"`,
-    `access_key_id = \"${accessKey}\"`,
-    `secret_access_key = \"${secretKey}\"`,
-    "",
-  ].join("\n");
+  const toml = buildS3ProjectBackupToml({
+    endpoint,
+    bucket: bucket.name,
+    accessKey,
+    secretKey,
+    password,
+    root,
+  });
 
   return { toml, ttl_seconds: DEFAULT_BACKUP_TTL_SECONDS };
 }
@@ -541,6 +572,44 @@ export async function getProjectBackupConfigForDeletion({
   if (!bucketId) {
     return { toml: "" };
   }
+  return await getDeletedProjectBackupConfigForDeletion({
+    project_id,
+    host_id: row.host_id,
+    backup_bucket_id: bucketId,
+  });
+}
+
+export async function getDeletedProjectBackupConfigForDeletion({
+  project_id,
+  host_id,
+  backup_bucket_id,
+}: {
+  project_id: string;
+  host_id?: string | null;
+  backup_bucket_id?: string | null;
+}): Promise<{ toml: string }> {
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+
+  if (host_id) {
+    const { rows } = await pool().query<{ metadata: any }>(
+      "SELECT metadata FROM project_hosts WHERE id=$1 LIMIT 1",
+      [host_id],
+    );
+    const machine: HostMachine = rows[0]?.metadata?.machine ?? {};
+    if (isSelfHostLocalMachine(machine)) {
+      const config = await buildSelfHostLocalBackupConfig();
+      if (config.toml.trim()) {
+        return { toml: config.toml };
+      }
+    }
+  }
+
+  const bucketId = backup_bucket_id ?? null;
+  if (!bucketId) {
+    return { toml: "" };
+  }
   const bucket = await loadBucketById(bucketId);
   if (!bucket) {
     return { toml: "" };
@@ -559,22 +628,21 @@ export async function getProjectBackupConfigForDeletion({
     return { toml: "" };
   }
 
-  const password = await getProjectBackupSecret(project_id);
+  let password = "";
+  try {
+    password = await getProjectBackupSecret(project_id);
+  } catch {
+    return { toml: "" };
+  }
   const root = `${DEFAULT_BACKUP_ROOT}/project-${project_id}`;
-  const toml = [
-    "[repository]",
-    'repository = "opendal:s3"',
-    `password = \"${password}\"`,
-    "",
-    "[repository.options]",
-    `endpoint = \"${endpoint}\"`,
-    'region = "auto"',
-    `bucket = \"${bucket.name}\"`,
-    `root = \"${root}\"`,
-    `access_key_id = \"${accessKey}\"`,
-    `secret_access_key = \"${secretKey}\"`,
-    "",
-  ].join("\n");
+  const toml = buildS3ProjectBackupToml({
+    endpoint,
+    bucket: bucket.name,
+    accessKey,
+    secretKey,
+    password,
+    root,
+  });
   return { toml };
 }
 

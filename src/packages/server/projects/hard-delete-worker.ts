@@ -6,6 +6,7 @@ import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
 import {
   hardDeleteProject,
+  processDueDeletedProjectBackupPurges,
   type HardDeleteProjectProgressUpdate,
 } from "@cocalc/server/projects/hard-delete";
 
@@ -17,6 +18,7 @@ const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
 const MAX_PARALLEL = 1;
+const BACKUP_PURGE_BATCH_SIZE = 2;
 
 const WORKER_ID = randomUUID();
 
@@ -83,7 +85,11 @@ async function handleHardDeleteOp(op: LroSummary): Promise<void> {
   const input = op.input ?? {};
   const project_id = `${input.project_id ?? ""}`.trim();
   const account_id = `${op.created_by ?? input.account_id ?? ""}`.trim();
-  const skip_backups = !!input.skip_backups;
+  const backup_retention_days =
+    typeof input.backup_retention_days === "number"
+      ? input.backup_retention_days
+      : undefined;
+  const purge_backups_now = !!input.purge_backups_now;
 
   if (!project_id || !account_id) {
     const updated = await updateLro({
@@ -144,7 +150,8 @@ async function handleHardDeleteOp(op: LroSummary): Promise<void> {
     const result = await hardDeleteProject({
       project_id,
       account_id,
-      skip_backups,
+      backup_retention_days,
+      purge_backups_now,
       onProgress: progress,
     });
 
@@ -199,39 +206,48 @@ export function startProjectHardDeleteWorker({
   logger.info("starting project hard-delete worker", { worker_id: WORKER_ID });
 
   const tick = async () => {
-    if (inFlight >= maxParallel) return;
-    let ops: LroSummary[] = [];
-    try {
-      ops = await claimLroOps({
-        kind: HARD_DELETE_LRO_KIND,
-        owner_type: OWNER_TYPE,
-        owner_id: WORKER_ID,
-        limit: Math.max(1, maxParallel - inFlight),
-        lease_ms: LEASE_MS,
-      });
-    } catch (err) {
-      logger.warn("hard-delete claim failed", { err: `${err}` });
-      return;
-    }
-    if (!ops.length) return;
-
-    for (const op of ops) {
-      inFlight += 1;
-      void handleHardDeleteOp(op)
-        .catch(async (err) => {
-          logger.warn("hard-delete handler failed", { op_id: op.op_id, err: `${err}` });
-          const updated = await updateLro({
-            op_id: op.op_id,
-            status: "failed",
-            error: `${err}`,
-          });
-          if (updated) {
-            await publishSummarySafe(updated, "handler-catch");
-          }
-        })
-        .finally(() => {
-          inFlight = Math.max(0, inFlight - 1);
+    if (inFlight < maxParallel) {
+      let ops: LroSummary[] = [];
+      try {
+        ops = await claimLroOps({
+          kind: HARD_DELETE_LRO_KIND,
+          owner_type: OWNER_TYPE,
+          owner_id: WORKER_ID,
+          limit: Math.max(1, maxParallel - inFlight),
+          lease_ms: LEASE_MS,
         });
+      } catch (err) {
+        logger.warn("hard-delete claim failed", { err: `${err}` });
+      }
+      for (const op of ops) {
+        inFlight += 1;
+        void handleHardDeleteOp(op)
+          .catch(async (err) => {
+            logger.warn("hard-delete handler failed", { op_id: op.op_id, err: `${err}` });
+            const updated = await updateLro({
+              op_id: op.op_id,
+              status: "failed",
+              error: `${err}`,
+            });
+            if (updated) {
+              await publishSummarySafe(updated, "handler-catch");
+            }
+          })
+          .finally(() => {
+            inFlight = Math.max(0, inFlight - 1);
+          });
+      }
+    }
+
+    try {
+      const purge = await processDueDeletedProjectBackupPurges({
+        limit: BACKUP_PURGE_BATCH_SIZE,
+      });
+      if (purge.processed > 0) {
+        logger.info("processed deferred deleted-project backup purges", purge);
+      }
+    } catch (err) {
+      logger.warn("deleted-project backup purge pass failed", { err: `${err}` });
     }
   };
 

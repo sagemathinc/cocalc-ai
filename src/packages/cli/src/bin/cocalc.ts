@@ -3822,9 +3822,13 @@ async function shouldInstallProduct(spec: ProductSpec): Promise<boolean> {
 async function confirmHardWorkspaceDelete({
   workspace_id,
   title,
+  backupRetentionDays,
+  purgeBackupsNow,
 }: {
   workspace_id: string;
   title?: string;
+  backupRetentionDays: number;
+  purgeBackupsNow: boolean;
 }): Promise<void> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
@@ -3832,9 +3836,13 @@ async function confirmHardWorkspaceDelete({
     );
   }
   const expected = `${title ?? ""}`.trim() || workspace_id;
-  console.error(
-    "WARNING: hard delete permanently removes workspace data, backups, and metadata.",
-  );
+  const backupMessage = purgeBackupsNow
+    ? "Backups will be purged immediately."
+    : backupRetentionDays > 0
+      ? `Backups will be retained for ${backupRetentionDays} day(s), then purged.`
+      : "Backups will be purged immediately.";
+  console.error("WARNING: hard delete permanently removes workspace data and metadata.");
+  console.error(backupMessage);
   console.error(
     `Type '${expected}' to permanently delete workspace '${title?.trim() || workspace_id}'.`,
   );
@@ -4871,7 +4879,12 @@ workspace
   .description("delete a workspace (soft by default; permanent with --hard)")
   .option("-w, --workspace <workspace>", "workspace id or name")
   .option("--hard", "permanently delete workspace data and metadata")
-  .option("--skip-backups", "when --hard, skip backup snapshot deletion")
+  .option(
+    "--backup-retention-days <days>",
+    "when --hard, keep backups this many days before purge (default: 7)",
+    "7",
+  )
+  .option("--purge-backups-now", "when --hard, purge backups immediately")
   .option("--wait", "when --hard, wait for delete completion")
   .option("-y, --yes", "when --hard, skip interactive confirmation")
   .action(
@@ -4879,7 +4892,8 @@ workspace
       opts: {
         workspace?: string;
         hard?: boolean;
-        skipBackups?: boolean;
+        backupRetentionDays?: string;
+        purgeBackupsNow?: boolean;
         wait?: boolean;
         yes?: boolean;
       },
@@ -4903,17 +4917,27 @@ workspace
         };
       }
 
+      const retentionRaw = Number(opts.backupRetentionDays ?? "7");
+      if (!Number.isFinite(retentionRaw) || retentionRaw < 0) {
+        throw new Error("--backup-retention-days must be a non-negative number");
+      }
+      const backupRetentionDays = Math.floor(retentionRaw);
+      const purgeBackupsNow = !!opts.purgeBackupsNow || backupRetentionDays === 0;
+
       if (!opts.yes) {
         await confirmHardWorkspaceDelete({
           workspace_id: ws.project_id,
           title: ws.title,
+          backupRetentionDays,
+          purgeBackupsNow,
         });
       }
 
       const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.hardDeleteProject", [
         {
           project_id: ws.project_id,
-          skip_backups: !!opts.skipBackups,
+          backup_retention_days: backupRetentionDays,
+          purge_backups_now: purgeBackupsNow,
         },
       ]);
       if (!opts.wait) {
@@ -4922,6 +4946,8 @@ workspace
           op_id: op.op_id,
           status: "queued",
           mode: "hard",
+          backup_retention_days: backupRetentionDays,
+          purge_backups_now: purgeBackupsNow,
         };
       }
       const summary = await waitForLro(ctx, op.op_id, {
@@ -4943,6 +4969,8 @@ workspace
         op_id: op.op_id,
         status: summary.status,
         mode: "hard",
+        backup_retention_days: backupRetentionDays,
+        purge_backups_now: purgeBackupsNow,
       };
     });
     },

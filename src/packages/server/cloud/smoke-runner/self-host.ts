@@ -1259,6 +1259,7 @@ export async function runSelfHostMultipassBackupSmoke(
           "--workspace",
           cleanupProjectId,
           "--hard",
+          "--purge-backups-now",
           "--yes",
           "--wait",
         ]);
@@ -1640,6 +1641,7 @@ echo $! > "$dir/server.pid"
             "--workspace",
             copy_project_id,
             "--hard",
+            "--purge-backups-now",
             "--yes",
             "--wait",
           ]);
@@ -1845,6 +1847,7 @@ echo $! > "$dir/server.pid"
             "--workspace",
             copy_project_id,
             "--hard",
+            "--purge-backups-now",
             "--yes",
             "--wait",
           ]);
