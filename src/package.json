@@ -28,6 +28,7 @@
     "check-doc-urls": "cd scripts; python3 check_doc_urls.py",
     "check-all-urls": "cd scripts; python3 check_doc_urls.py --all --react",
     "test": "unset DEBUG && pnpm check-doc-urls && pnpm run depcheck && pnpm run version-check && ./workspaces.py test",
+    "test:e2e": "pnpm --dir packages/lite jupyter:test:e2e && pnpm --dir packages/frontend test:e2e && pnpm --dir packages/frontend test:e2e:chat",
     "depcheck": "cd packages && pnpm run -r --workspace-concurrency=4 depcheck",
     "python-api": "cd python/cocalc-api && PATH=$HOME/.local/bin:$PATH make all",
     "lint:py": "mypy packages/server/cloud/bootstrap/bootstrap.py",
