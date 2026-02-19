@@ -55,12 +55,66 @@ export default async function createProject(opts: CreateProjectOptions) {
     if (!account_id || !(await isAdmin(account_id))) {
       throw Error("only admins can specify the project_id");
     }
+    if (!isValidUUID(opts.project_id)) {
+      throw Error("if project_id is given, it must be a valid uuid v4");
+    }
     project_id = opts.project_id;
   } else {
     project_id = v4();
   }
 
   const pool = getPool();
+
+  async function projectIdConflictsDeleted(project_id: string): Promise<boolean> {
+    try {
+      const { rows } = await pool.query<{ project_id: string }>(
+        "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
+        [project_id],
+      );
+      return !!rows[0];
+    } catch (err: any) {
+      // Table may not exist until first hard-delete run.
+      if (err?.code === "42P01") {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async function projectIdExists(project_id: string): Promise<boolean> {
+    const { rows } = await pool.query<{ project_id: string }>(
+      "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
+      [project_id],
+    );
+    return !!rows[0];
+  }
+
+  if (opts.project_id) {
+    if (await projectIdConflictsDeleted(project_id)) {
+      throw Error(
+        "project_id belongs to a permanently deleted workspace; restore that workspace instead of reusing its project_id",
+      );
+    }
+    if (await projectIdExists(project_id)) {
+      throw Error("project_id already exists");
+    }
+  } else {
+    // Ensure generated id never collides with active or hard-deleted projects.
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      if (
+        !(await projectIdExists(project_id)) &&
+        !(await projectIdConflictsDeleted(project_id))
+      ) {
+        break;
+      }
+      project_id = v4();
+      if (attempt === 15) {
+        throw Error(
+          "failed to allocate a fresh project_id; please retry project creation",
+        );
+      }
+    }
+  }
   let host_id: string | undefined = requested_host_id;
   let requested_region_raw: string | undefined = requested_region_raw_input;
 

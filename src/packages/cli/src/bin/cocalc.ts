@@ -3837,11 +3837,16 @@ async function confirmHardWorkspaceDelete({
   }
   const expected = workspace_id;
   const backupMessage = purgeBackupsNow
-    ? "Backups will be purged immediately."
+    ? "File backups will be purged immediately."
     : backupRetentionDays > 0
-      ? `Backups will be retained for ${backupRetentionDays} day(s), then purged.`
-      : "Backups will be purged immediately.";
-  console.error("WARNING: hard delete permanently removes workspace data and metadata.");
+      ? `Only file backups are retained for ${backupRetentionDays} day(s), then purged.`
+      : "File backups will be purged immediately.";
+  console.error(
+    "WARNING: hard delete immediately and permanently removes workspace metadata (title/description, collaborators, invites, logs, API keys, shares, etc.).",
+  );
+  console.error(
+    "Only file backup data can be restored while retention is active.",
+  );
   console.error(backupMessage);
   console.error(
     `Type project_id '${expected}' to permanently delete workspace '${title?.trim() || workspace_id}'.`,

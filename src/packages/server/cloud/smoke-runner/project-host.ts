@@ -33,6 +33,7 @@ What it does:
 - Creates a host and waits for it to be running.
 - Creates and starts a project on that host.
 - Writes a sentinel file via the file-server RPC.
+- Creates a backup and verifies it becomes visible.
 - Stops the host, applies a machine edit, then starts it again.
 - Restarts the project and verifies the sentinel file still exists.
 
@@ -79,6 +80,10 @@ import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { createProject } from "@cocalc/server/conat/api/projects";
 import { start as startProject } from "@cocalc/server/conat/api/projects";
+import {
+  createBackup as createProjectBackup,
+  getBackups as getProjectBackups,
+} from "@cocalc/server/conat/api/project-backups";
 import { fsClient, fsSubject } from "@cocalc/conat/files/fs";
 import { terminalClient } from "@cocalc/conat/project/terminal";
 import {
@@ -95,6 +100,7 @@ import deleteProject from "@cocalc/server/projects/delete";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import admins from "@cocalc/server/accounts/admins";
+import { getLro } from "@cocalc/server/lro/lro-db";
 
 const logger = getLogger("server:cloud:smoke-runner:project-host");
 
@@ -113,8 +119,10 @@ type ProjectHostSmokeOptions = {
     host_running: Partial<WaitOptions>;
     host_stopped: Partial<WaitOptions>;
     project_ready: Partial<WaitOptions>;
+    backup_ready: Partial<WaitOptions>;
   }>;
   cleanup_on_success?: boolean;
+  verify_backup?: boolean;
   verify_terminal?: boolean;
   verify_proxy?: boolean;
   verify_provider_status?: boolean;
@@ -205,6 +213,7 @@ type ProjectHostSmokeResult = {
 const DEFAULT_HOST_RUNNING: WaitOptions = { intervalMs: 5000, attempts: 180 };
 const DEFAULT_HOST_STOPPED: WaitOptions = { intervalMs: 5000, attempts: 120 };
 const DEFAULT_PROJECT_READY: WaitOptions = { intervalMs: 3000, attempts: 60 };
+const DEFAULT_BACKUP_READY: WaitOptions = { intervalMs: 5000, attempts: 180 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -421,6 +430,97 @@ async function waitForProjectRouting(project_id: string, opts: WaitOptions) {
     await sleep(opts.intervalMs);
   }
   throw new Error("timeout waiting for project routing");
+}
+
+async function waitForLroTerminal(op_id: string, opts: WaitOptions) {
+  let lastStatus = "missing";
+  for (let attempt = 1; attempt <= opts.attempts; attempt += 1) {
+    const op = await getLro(op_id);
+    const status = `${op?.status ?? "missing"}`;
+    lastStatus = status;
+    if (status === "succeeded" || status === "failed" || status === "canceled") {
+      return op;
+    }
+    await sleep(opts.intervalMs);
+  }
+  throw new Error(
+    `timeout waiting for operation ${op_id} to finish (last_status=${lastStatus})`,
+  );
+}
+
+function normalizeBackupTime(value: unknown): number {
+  if (!value) return 0;
+  if (value instanceof Date) return value.valueOf();
+  const parsed = new Date(String(value));
+  const ms = parsed.valueOf();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+async function waitForBackupVisible({
+  account_id,
+  project_id,
+  opts,
+}: {
+  account_id: string;
+  project_id: string;
+  opts: WaitOptions;
+}): Promise<{ backup_id: string; indexed: boolean }> {
+  let lastIndexedCount = 0;
+  let lastAnyCount = 0;
+  for (let attempt = 1; attempt <= opts.attempts; attempt += 1) {
+    try {
+      const indexed = await getProjectBackups({
+        account_id,
+        project_id,
+        indexed_only: true,
+      });
+      lastIndexedCount = indexed.length;
+      if (indexed.length > 0) {
+        const sorted = [...indexed].sort(
+          (a, b) => normalizeBackupTime(b?.time) - normalizeBackupTime(a?.time),
+        );
+        const backup_id = `${sorted[0]?.id ?? ""}`.trim();
+        if (backup_id) {
+          return { backup_id, indexed: true };
+        }
+      }
+    } catch (err) {
+      logger.debug("smoke-runner indexed backup list retry", {
+        project_id,
+        attempt,
+        err: `${err}`,
+      });
+    }
+
+    try {
+      const backups = await getProjectBackups({
+        account_id,
+        project_id,
+        indexed_only: false,
+      });
+      lastAnyCount = backups.length;
+      if (backups.length > 0) {
+        const sorted = [...backups].sort(
+          (a, b) => normalizeBackupTime(b?.time) - normalizeBackupTime(a?.time),
+        );
+        const backup_id = `${sorted[0]?.id ?? ""}`.trim();
+        if (backup_id) {
+          return { backup_id, indexed: false };
+        }
+      }
+    } catch (err) {
+      logger.debug("smoke-runner backup list retry", {
+        project_id,
+        attempt,
+        err: `${err}`,
+      });
+    }
+
+    await sleep(opts.intervalMs);
+  }
+  throw new Error(
+    `backup never became visible (indexed_backups=${lastIndexedCount}, total_backups=${lastAnyCount})`,
+  );
 }
 
 type HostConnectionHints = {
@@ -693,6 +793,7 @@ async function runSmokeSteps({
   cleanup_host,
   verify_terminal,
   verify_proxy,
+  verify_backup,
   verify_provider_status,
   proxy_port,
   print_debug_hints,
@@ -710,6 +811,7 @@ async function runSmokeSteps({
   cleanup_host?: boolean;
   verify_terminal?: boolean;
   verify_proxy?: boolean;
+  verify_backup?: boolean;
   verify_provider_status?: boolean;
   proxy_port?: number;
   print_debug_hints?: boolean;
@@ -722,6 +824,7 @@ async function runSmokeSteps({
     wait?.project_ready,
     DEFAULT_PROJECT_READY,
   );
+  const waitBackupReady = resolveWait(wait?.backup_ready, DEFAULT_BACKUP_READY);
   const verifyProviderStatus = verify_provider_status ?? false;
   const strictProviderStatus =
     process.env.COCALC_SMOKE_STRICT_PROVIDER_STATUS === "yes";
@@ -886,6 +989,31 @@ async function runSmokeSteps({
         throw lastErr;
       }
     });
+
+    if ((verify_backup ?? true) && provider !== "lambda") {
+      await runStep("create_backup", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        const op = await createProjectBackup({ account_id, project_id });
+        const summary = await waitForLroTerminal(op.op_id, waitBackupReady);
+        const status = `${summary?.status ?? "missing"}`;
+        if (status !== "succeeded") {
+          const err = summary?.error ? ` error=${summary.error}` : "";
+          throw new Error(
+            `backup operation failed (op_id=${op.op_id}, status=${status}${err})`,
+          );
+        }
+        const backup = await waitForBackupVisible({
+          account_id,
+          project_id,
+          opts: waitBackupReady,
+        });
+        logger.info("smoke-runner backup verified", {
+          project_id,
+          backup_id: backup.backup_id,
+          indexed: backup.indexed,
+        });
+      });
+    }
 
     if ((verify_terminal ?? true) && provider !== "lambda") {
       await runStep("terminal_smoke", async () => {
@@ -1067,6 +1195,7 @@ export async function runProjectHostPersistenceSmokeTest(
     cleanup_host: true,
     verify_terminal: opts.verify_terminal,
     verify_proxy: opts.verify_proxy,
+    verify_backup: opts.verify_backup,
     verify_provider_status: opts.verify_provider_status,
     proxy_port: opts.proxy_port,
     print_debug_hints: opts.print_debug_hints,
@@ -1081,6 +1210,7 @@ export async function runProjectHostPersistenceSmokeTestForHostId({
   cleanup_on_success,
   verify_terminal,
   verify_proxy,
+  verify_backup,
   verify_provider_status,
   proxy_port,
   print_debug_hints,
@@ -1092,6 +1222,7 @@ export async function runProjectHostPersistenceSmokeTestForHostId({
   cleanup_on_success?: ProjectHostSmokeOptions["cleanup_on_success"];
   verify_terminal?: boolean;
   verify_proxy?: boolean;
+  verify_backup?: boolean;
   verify_provider_status?: boolean;
   proxy_port?: number;
   print_debug_hints?: boolean;
@@ -1136,6 +1267,7 @@ export async function runProjectHostPersistenceSmokeTestForHostId({
     cleanup_host: false,
     verify_terminal,
     verify_proxy,
+    verify_backup,
     verify_provider_status,
     proxy_port,
     print_debug_hints,

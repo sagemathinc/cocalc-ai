@@ -268,6 +268,8 @@ const backupConfigCache = new Map<
   { toml: string; expiresAt: number; path: string }
 >();
 let backupConfigInvalidationSub: any = null;
+const BACKUP_CONFIG_FETCH_RETRY_MS = 5000;
+const BACKUP_CONFIG_FETCH_TIMEOUT_MS = 2 * 60 * 1000;
 
 async function startBackupConfigInvalidation(client: ConatClient) {
   if (backupConfigInvalidationSub) return;
@@ -353,16 +355,22 @@ async function ensureBackupConfig(project_id: string): Promise<string | null> {
   if (cached && now < cached.expiresAt) {
     return cached.path;
   }
-  const retryDelayMs = 5000;
+  const deadline = Date.now() + BACKUP_CONFIG_FETCH_TIMEOUT_MS;
+  let attempt = 0;
   while (true) {
+    attempt += 1;
     try {
       const remoteConfig = await fetchBackupConfig(project_id);
       const toml = remoteConfig?.toml;
       if (!toml) return null;
       const ttlSeconds = remoteConfig?.ttl_seconds ?? 0;
+      const fetchedAt = Date.now();
       backupConfigCache.set(project_id, {
         toml,
-        expiresAt: ttlSeconds > 0 ? now + ttlSeconds * 1000 : now + 3600 * 1000,
+        expiresAt:
+          ttlSeconds > 0
+            ? fetchedAt + ttlSeconds * 1000
+            : fetchedAt + 3600 * 1000,
         path: profilePath,
       });
       await mkdir(profileDir, { recursive: true });
@@ -370,8 +378,21 @@ async function ensureBackupConfig(project_id: string): Promise<string | null> {
       await chmod(profilePath, 0o600);
       return profilePath;
     } catch (err) {
-      logger.warn("backup config fetch failed; retrying", err);
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(
+          `backup config fetch failed after ${attempt} attempt(s): ${err}`,
+        );
+      }
+      logger.warn("backup config fetch failed; retrying", {
+        project_id,
+        attempt,
+        remaining_ms: remainingMs,
+        err: `${err}`,
+      });
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(BACKUP_CONFIG_FETCH_RETRY_MS, remainingMs)),
+      );
     }
   }
 }
