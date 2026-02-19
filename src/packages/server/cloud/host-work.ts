@@ -270,21 +270,27 @@ async function refreshRuntimePublicIp(row: any) {
   return ip;
 }
 
-async function scheduleRuntimeRefresh(row: any) {
+async function scheduleRuntimeRefresh(
+  row: any,
+  opts?: { force?: boolean },
+) {
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(row.metadata?.machine?.cloud);
+  const force = !!opts?.force;
   if (!runtime?.instance_id) {
     logger.debug("scheduleRuntimeRefresh: skip (no instance_id)", {
       host_id: row.id,
       provider: providerId ?? row.metadata?.machine?.cloud,
+      force,
     });
     return;
   }
-  if (runtime.public_ip) {
+  if (runtime.public_ip && !force) {
     logger.debug("scheduleRuntimeRefresh: skip (already has public_ip)", {
       host_id: row.id,
       provider: providerId ?? row.metadata?.machine?.cloud,
       public_ip: runtime.public_ip,
+      force,
     });
     return;
   }
@@ -292,6 +298,7 @@ async function scheduleRuntimeRefresh(row: any) {
     host_id: row.id,
     provider: providerId ?? row.metadata?.machine?.cloud,
     instance_id: runtime.instance_id,
+    force,
   });
   const enqueued = await enqueueCloudVmWorkOnce({
     vm_id: row.id,
@@ -574,25 +581,31 @@ async function handleStart(row: any) {
       | "stopped"
       | "error"
       | undefined;
-    if (providerId === "nebius" || providerId === "hyperstack") {
+    if (
+      providerId === "gcp" ||
+      providerId === "nebius" ||
+      providerId === "hyperstack"
+    ) {
       statusAfterStart = await waitForProviderStatus({
         entry,
         creds,
         runtime,
         desired: ["running"],
       });
+      const normalizedStatus =
+        statusAfterStart === "stopped" ? "off" : statusAfterStart;
       const observedAtDone = new Date();
       const nextMetadataAfter = setRuntimeObservedAt(
         row.metadata ?? {},
         observedAtDone,
       );
       await updateHostRow(row.id, {
-        status: statusAfterStart ?? "starting",
+        status: normalizedStatus ?? "starting",
         metadata: nextMetadataAfter,
         last_seen: null,
       });
       row.metadata = nextMetadataAfter;
-      if (statusAfterStart !== "running") {
+      if (normalizedStatus !== "running") {
         await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
         return;
       }
@@ -606,7 +619,7 @@ async function handleStart(row: any) {
   });
   const nextRow = { ...row, status: "running", metadata: nextMetadata };
   await ensureDnsForHost(nextRow);
-  await scheduleRuntimeRefresh(nextRow);
+  await scheduleRuntimeRefresh(nextRow, { force: providerId === "gcp" });
   if (providerId) {
     await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
   }
@@ -804,7 +817,10 @@ async function handleRestart(row: any, mode: "reboot" | "hard") {
     status: "running",
     metadata: nextMetadataComplete,
   });
-  await scheduleRuntimeRefresh({ ...row, metadata: nextMetadataComplete });
+  await scheduleRuntimeRefresh(
+    { ...row, metadata: nextMetadataComplete },
+    { force: providerId === "gcp" },
+  );
   await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
   await logCloudVmEvent({
     vm_id: row.id,

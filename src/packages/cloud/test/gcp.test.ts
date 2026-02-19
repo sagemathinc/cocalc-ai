@@ -164,6 +164,42 @@ describe("GcpProvider", () => {
     });
   });
 
+  it("throws when start operation completes with an error", async () => {
+    startMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-start", status: "PENDING" } },
+    ]);
+    waitMock.mockResolvedValueOnce([
+      {
+        status: "DONE",
+        error: {
+          errors: [
+            {
+              code: "RESOURCE_NOT_READY",
+              message: "instance is not ready to start",
+            },
+          ],
+        },
+      },
+    ]);
+
+    const provider = new GcpProvider();
+    const runtime = {
+      provider: "gcp" as const,
+      instance_id: "ph-test",
+      zone: "us-west1-b",
+      ssh_user: "ubuntu",
+    };
+    const creds = {
+      project_id: "proj-1",
+      client_email: "svc@example.com",
+      private_key: "key",
+    };
+
+    await expect(provider.startHost(runtime, creds)).rejects.toThrow(
+      "RESOURCE_NOT_READY",
+    );
+  });
+
   it("respects custom zone and source image", async () => {
     insertMock.mockResolvedValueOnce([
       { latestResponse: { name: "op-3", status: "DONE" } },
