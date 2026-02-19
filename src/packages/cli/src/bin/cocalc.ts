@@ -4978,6 +4978,30 @@ workspace
   );
 
 workspace
+  .command("undelete")
+  .description("undelete a workspace")
+  .requiredOption("-w, --workspace <project_id>", "workspace project_id (UUID)")
+  .action(async (opts: { workspace: string }, command: Command) => {
+    await withContext(command, "workspace undelete", async (ctx) => {
+      const projectId = `${opts.workspace ?? ""}`.trim();
+      if (!isValidUUID(projectId)) {
+        throw new Error("--workspace must be a workspace project_id UUID");
+      }
+      await hubCallAccount(ctx, "projects.setProjectDeleted", [
+        {
+          project_id: projectId,
+          deleted: false,
+        },
+      ]);
+      return {
+        workspace_id: projectId,
+        status: "active",
+        mode: "soft",
+      };
+    });
+  });
+
+workspace
   .command("start")
   .description("start a workspace (defaults to context)")
   .option("-w, --workspace <workspace>", "workspace id or name")
