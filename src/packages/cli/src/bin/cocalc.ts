@@ -3819,6 +3819,39 @@ async function shouldInstallProduct(spec: ProductSpec): Promise<boolean> {
   }
 }
 
+async function confirmHardWorkspaceDelete({
+  workspace_id,
+  title,
+}: {
+  workspace_id: string;
+  title?: string;
+}): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      "hard delete requires interactive confirmation; pass --yes to continue non-interactively",
+    );
+  }
+  const expected = `${title ?? ""}`.trim() || workspace_id;
+  console.error(
+    "WARNING: hard delete permanently removes workspace data, backups, and metadata.",
+  );
+  console.error(
+    `Type '${expected}' to permanently delete workspace '${title?.trim() || workspace_id}'.`,
+  );
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = (await rl.question("Confirm: ")).trim();
+    if (answer !== expected) {
+      throw new Error("hard delete confirmation did not match; aborting");
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 async function ensureProductInstalled(spec: ProductSpec): Promise<void> {
   if (commandExists(spec.binary)) {
     return;
@@ -4835,25 +4868,85 @@ workspace
 
 workspace
   .command("delete")
-  .description("soft-delete a workspace (defaults to context)")
+  .description("delete a workspace (soft by default; permanent with --hard)")
   .option("-w, --workspace <workspace>", "workspace id or name")
-  .action(async (opts: { workspace?: string }, command: Command) => {
+  .option("--hard", "permanently delete workspace data and metadata")
+  .option("--skip-backups", "when --hard, skip backup snapshot deletion")
+  .option("--wait", "when --hard, wait for delete completion")
+  .option("-y, --yes", "when --hard, skip interactive confirmation")
+  .action(
+    async (
+      opts: {
+        workspace?: string;
+        hard?: boolean;
+        skipBackups?: boolean;
+        wait?: boolean;
+        yes?: boolean;
+      },
+      command: Command,
+    ) => {
     await withContext(command, "workspace delete", async (ctx) => {
       const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-      await hubCallAccount(ctx, "db.userQuery", [
-        {
-          query: {
-            projects: [{ project_id: ws.project_id, deleted: true }],
+      if (!opts.hard) {
+        await hubCallAccount(ctx, "db.userQuery", [
+          {
+            query: {
+              projects: [{ project_id: ws.project_id, deleted: true }],
+            },
+            options: [],
           },
-          options: [],
+        ]);
+        return {
+          workspace_id: ws.project_id,
+          status: "deleted",
+          mode: "soft",
+        };
+      }
+
+      if (!opts.yes) {
+        await confirmHardWorkspaceDelete({
+          workspace_id: ws.project_id,
+          title: ws.title,
+        });
+      }
+
+      const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.hardDeleteProject", [
+        {
+          project_id: ws.project_id,
+          skip_backups: !!opts.skipBackups,
         },
       ]);
+      if (!opts.wait) {
+        return {
+          workspace_id: ws.project_id,
+          op_id: op.op_id,
+          status: "queued",
+          mode: "hard",
+        };
+      }
+      const summary = await waitForLro(ctx, op.op_id, {
+        timeoutMs: ctx.timeoutMs,
+        pollMs: ctx.pollMs,
+      });
+      if (summary.timedOut) {
+        throw new Error(
+          `hard delete timed out (op=${op.op_id}, last_status=${summary.status})`,
+        );
+      }
+      if (summary.status !== "succeeded") {
+        throw new Error(
+          `hard delete failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+        );
+      }
       return {
         workspace_id: ws.project_id,
-        status: "deleted",
+        op_id: op.op_id,
+        status: summary.status,
+        mode: "hard",
       };
     });
-  });
+    },
+  );
 
 workspace
   .command("start")

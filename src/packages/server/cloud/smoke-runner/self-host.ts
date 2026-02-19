@@ -1253,7 +1253,15 @@ export async function runSelfHostMultipassBackupSmoke(
     }
     for (const cleanupProjectId of cleanupProjectIds) {
       try {
-        await runCli(cli, ["workspace", "delete", "--workspace", cleanupProjectId]);
+        await runCli(cli, [
+          "workspace",
+          "delete",
+          "--workspace",
+          cleanupProjectId,
+          "--hard",
+          "--yes",
+          "--wait",
+        ]);
       } catch (err) {
         logger.warn("self-host smoke cleanup project failed", {
           project_id: cleanupProjectId,
@@ -1626,7 +1634,15 @@ echo $! > "$dir/server.pid"
 
         await runStep("delete_second_project_for_copy", async () => {
           if (!copy_project_id) return;
-          await runCli(cli, ["workspace", "delete", "--workspace", copy_project_id]);
+          await runCli(cli, [
+            "workspace",
+            "delete",
+            "--workspace",
+            copy_project_id,
+            "--hard",
+            "--yes",
+            "--wait",
+          ]);
           cleanupProjectIds.delete(copy_project_id);
         });
       }
@@ -1823,7 +1839,15 @@ echo $! > "$dir/server.pid"
 
         await runStep("delete_second_project_for_copy", async () => {
           if (!copy_project_id) return;
-          await runCli(cli, ["workspace", "delete", "--workspace", copy_project_id]);
+          await runCli(cli, [
+            "workspace",
+            "delete",
+            "--workspace",
+            copy_project_id,
+            "--hard",
+            "--yes",
+            "--wait",
+          ]);
           cleanupProjectIds.delete(copy_project_id);
         });
       }
