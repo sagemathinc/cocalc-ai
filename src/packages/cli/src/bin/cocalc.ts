@@ -8412,6 +8412,104 @@ host
   });
 
 host
+  .command("stop <host>")
+  .description("stop a host")
+  .option("--skip-backups", "skip creating backups before stop")
+  .option("--wait", "wait for completion")
+  .action(
+    async (
+      hostIdentifier: string,
+      opts: { skipBackups?: boolean; wait?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "host stop", async (ctx) => {
+        const h = await resolveHost(ctx, hostIdentifier);
+        const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.stopHost", [
+          {
+            id: h.id,
+            skip_backups: !!opts.skipBackups,
+          },
+        ]);
+        if (!opts.wait) {
+          return {
+            host_id: h.id,
+            op_id: op.op_id,
+            status: "queued",
+          };
+        }
+        const summary = await waitForLro(ctx, op.op_id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (summary.timedOut) {
+          throw new Error(`host stop timed out (op=${op.op_id}, last_status=${summary.status})`);
+        }
+        if (summary.status !== "succeeded") {
+          throw new Error(`host stop failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
+        }
+        return {
+          host_id: h.id,
+          op_id: op.op_id,
+          status: summary.status,
+        };
+      });
+    },
+  );
+
+host
+  .command("restart <host>")
+  .description("restart a host")
+  .option("--mode <mode>", "restart mode: reboot or hard", "reboot")
+  .option("--hard", "same as --mode hard")
+  .option("--wait", "wait for completion")
+  .action(
+    async (
+      hostIdentifier: string,
+      opts: { mode?: string; hard?: boolean; wait?: boolean },
+      command: Command,
+    ) => {
+      await withContext(command, "host restart", async (ctx) => {
+        const h = await resolveHost(ctx, hostIdentifier);
+        const modeRaw = `${opts.mode ?? "reboot"}`.trim().toLowerCase();
+        const mode = opts.hard ? "hard" : modeRaw;
+        if (mode !== "reboot" && mode !== "hard") {
+          throw new Error(`invalid --mode '${opts.mode}' (expected reboot or hard)`);
+        }
+        const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.restartHost", [
+          {
+            id: h.id,
+            mode,
+          },
+        ]);
+        if (!opts.wait) {
+          return {
+            host_id: h.id,
+            op_id: op.op_id,
+            mode,
+            status: "queued",
+          };
+        }
+        const summary = await waitForLro(ctx, op.op_id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (summary.timedOut) {
+          throw new Error(`host restart timed out (op=${op.op_id}, last_status=${summary.status})`);
+        }
+        if (summary.status !== "succeeded") {
+          throw new Error(`host restart failed: status=${summary.status} error=${summary.error ?? "unknown"}`);
+        }
+        return {
+          host_id: h.id,
+          op_id: op.op_id,
+          mode,
+          status: summary.status,
+        };
+      });
+    },
+  );
+
+host
   .command("delete <host>")
   .description("deprovision a host")
   .option("--skip-backups", "skip creating backups before deprovision")
