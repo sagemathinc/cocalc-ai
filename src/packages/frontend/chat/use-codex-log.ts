@@ -66,6 +66,7 @@ export function useCodexLog({
     if (!cacheKey) return null;
     return recentLogCache.get(cacheKey) ?? null;
   });
+  const [akvLoaded, setAkvLoaded] = useState<boolean>(false);
   const [liveLog, setLiveLog] = useState<any[]>(() => {
     if (!cacheKey) return [];
     return recentLogCache.get(cacheKey) ?? [];
@@ -112,9 +113,13 @@ export function useCodexLog({
       const cached = recentLogCache.get(cacheKey);
       setFetchedLog(cached ?? null);
       setLiveLog(cached ?? []);
+      // Cached data may be partial (e.g., captured mid-turn before AKV persist).
+      // Force at least one AKV fetch for each key to backfill missing early events.
+      setAkvLoaded(false);
     } else {
       setFetchedLog(null);
       setLiveLog([]);
+      setAkvLoaded(false);
     }
   }, [cacheKey, logSubject]);
 
@@ -123,7 +128,7 @@ export function useCodexLog({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     async function fetchLog() {
-      if (!enabled || !hasLogRef || !projectId || fetchedLog != null) return;
+      if (!enabled || !hasLogRef || !projectId || akvLoaded) return;
       try {
         const cn = webapp_client.conat_client.conat();
         const kv = cn.sync.akv<any[]>({
@@ -135,9 +140,13 @@ export function useCodexLog({
           // If the log has not yet been persisted, leave fetchedLog as null so
           // we will retry (immediately below and on the delayed retry).
           if (data == null) {
+            if (!generating) {
+              setAkvLoaded(true);
+            }
             return;
           }
           setFetchedLog(data);
+          setAkvLoaded(true);
         }
         // console.log(data);
       } catch (err) {
@@ -152,7 +161,7 @@ export function useCodexLog({
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [hasLogRef, projectId, logStore, logKey, fetchedLog, enabled]);
+  }, [hasLogRef, projectId, logStore, logKey, enabled, akvLoaded, generating]);
 
   // Subscribe to live events while generating.
   useEffect(() => {
