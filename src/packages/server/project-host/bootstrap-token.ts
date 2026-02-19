@@ -128,6 +128,57 @@ export async function revokeProjectHostTokensForHost(
   await refreshLaunchpadOnPremAuthorizedKeys();
 }
 
+async function restoreLatestRevokedTokenForPurpose(
+  hostId: string,
+  purpose: string,
+): Promise<boolean> {
+  const { rows } = await pool().query<{ token_id: string }>(
+    `
+      WITH active AS (
+        SELECT token_id
+        FROM project_host_bootstrap_tokens
+        WHERE host_id=$1
+          AND purpose=$2
+          AND revoked IS NOT TRUE
+          AND expires > NOW()
+        LIMIT 1
+      ),
+      candidate AS (
+        SELECT token_id
+        FROM project_host_bootstrap_tokens
+        WHERE host_id=$1
+          AND purpose=$2
+          AND revoked IS TRUE
+          AND expires > NOW()
+        ORDER BY created DESC
+        LIMIT 1
+      )
+      UPDATE project_host_bootstrap_tokens
+      SET revoked=FALSE
+      WHERE token_id IN (SELECT token_id FROM candidate)
+        AND NOT EXISTS (SELECT 1 FROM active)
+      RETURNING token_id
+    `,
+    [hostId, purpose],
+  );
+  return rows.length > 0;
+}
+
+export async function restoreProjectHostTokensForRestart(
+  hostId: string,
+): Promise<{ restored: string[] }> {
+  const restored: string[] = [];
+  for (const purpose of ["bootstrap", "master-conat"]) {
+    if (await restoreLatestRevokedTokenForPurpose(hostId, purpose)) {
+      restored.push(purpose);
+    }
+  }
+  if (restored.length > 0) {
+    await refreshLaunchpadOnPremAuthorizedKeys();
+  }
+  return { restored };
+}
+
 export async function createProjectHostBootstrapToken(
   hostId: string,
   opts: { ttlMs?: number } = {},

@@ -18,6 +18,7 @@ import { getProviderContext } from "./provider-context";
 import {
   createProjectHostBootstrapToken,
   revokeProjectHostTokensForHost,
+  restoreProjectHostTokensForRestart,
 } from "@cocalc/server/project-host/bootstrap-token";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
@@ -306,6 +307,7 @@ async function scheduleRuntimeRefresh(
     payload: {
       provider: providerId ?? row.metadata?.machine?.cloud,
       attempt: 0,
+      force,
     },
   });
   if (enqueued) {
@@ -480,6 +482,22 @@ async function handleStart(row: any) {
     runtime,
     reprovision_required: reprovisionRequired,
   });
+  // One-time recovery: if stop previously revoked tokens, restore the latest
+  // unexpired bootstrap/master token so persistent VMs can reconnect on boot.
+  try {
+    const restored = await restoreProjectHostTokensForRestart(row.id);
+    if (restored.restored.length > 0) {
+      logger.info("handleStart: restored host tokens for restart", {
+        host_id: row.id,
+        restored: restored.restored,
+      });
+    }
+  } catch (err) {
+    logger.warn("handleStart: failed restoring host tokens for restart", {
+      host_id: row.id,
+      err,
+    });
+  }
   if (providerId) {
     if (!runtime?.instance_id || reprovisionRequired) {
       // If the VM was deprovisioned, treat "start" as "create" and provision now.
@@ -637,8 +655,9 @@ async function handleStop(row: any) {
   const machine: HostMachine = row.metadata?.machine ?? {};
   const runtime = row.metadata?.runtime;
   const providerId = normalizeProviderId(machine.cloud);
-  await revokeProjectHostTokensForHost(row.id, { purpose: "bootstrap" });
-  await revokeProjectHostTokensForHost(row.id, { purpose: "master-conat" });
+  // Do not revoke bootstrap/master-conat tokens on stop: a stopped VM may
+  // restart from the same persistent disk and must still authenticate.
+  // Token revocation is handled on deprovision/delete.
   let supportsStop = true;
   let stopConfirmed = false;
   if (providerId && runtime?.instance_id) {
@@ -888,19 +907,22 @@ async function handleRefreshRuntime(row: any) {
   const isLocalSelfHost =
     machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
   if (isLocalSelfHost) return;
-  if (runtime.public_ip) return;
+  const force = !!row.payload?.force;
+  if (runtime.public_ip && !force) return;
   const providerId = normalizeProviderId(host.metadata?.machine?.cloud);
   logger.debug("handleRefreshRuntime", {
     host_id: host.id,
     provider: providerId ?? host.metadata?.machine?.cloud,
     instance_id: runtime.instance_id,
     attempt: row.payload?.attempt ?? 0,
+    force,
   });
   logger.info("handleRefreshRuntime: attempt", {
     host_id: host.id,
     provider: providerId ?? host.metadata?.machine?.cloud,
     instance_id: runtime.instance_id,
     attempt: row.payload?.attempt ?? 0,
+    force,
   });
   const public_ip = await refreshRuntimePublicIp(host);
   if (!public_ip) {
