@@ -75,6 +75,7 @@ export type ProjectCollabInviteStatus =
   | "accepted"
   | "declined"
   | "blocked"
+  | "expired"
   | "canceled";
 
 export type ProjectCollabInviteAction =
@@ -89,6 +90,7 @@ export interface ProjectCollabInviteRow {
   invite_id: string;
   project_id: string;
   project_title?: string | null;
+  project_description?: string | null;
   inviter_account_id: string;
   inviter_name?: string | null;
   inviter_first_name?: string | null;
@@ -105,6 +107,11 @@ export interface ProjectCollabInviteRow {
   created: Date;
   updated: Date;
   responded?: Date | null;
+  expires?: Date | null;
+  shared_projects_count?: number;
+  shared_projects_sample?: string[] | null;
+  prior_invites_accepted?: number;
+  prior_invites_declined?: number;
 }
 
 export interface ProjectCollabInviteBlockRow {
@@ -187,6 +194,9 @@ export const projects = {
   start: authFirstRequireAccount,
   stop: authFirstRequireAccount,
   updateAuthorizedKeysOnHost: authFirstRequireAccount,
+  setProjectHidden: authFirstRequireAccount,
+  setProjectSshKey: authFirstRequireAccount,
+  deleteProjectSshKey: authFirstRequireAccount,
 
   getSshKeys: authFirstRequireProject,
 
@@ -323,6 +333,7 @@ export interface Projects {
       replyto_name?: string;
       email?: string;
       subject?: string;
+      message?: string;
     };
   }) => Promise<void>;
 
@@ -340,6 +351,7 @@ export interface Projects {
       to: string;
       email: string; // body in HTML format
       subject?: string;
+      message?: string;
     };
   }) => Promise<void>;
 
@@ -555,6 +567,25 @@ export interface Projects {
   updateAuthorizedKeysOnHost: (opts: {
     project_id: string;
     account_id?: string;
+  }) => Promise<void>;
+  setProjectHidden: (opts: {
+    account_id?: string;
+    project_id: string;
+    hide: boolean;
+  }) => Promise<void>;
+  setProjectSshKey: (opts: {
+    account_id?: string;
+    project_id: string;
+    fingerprint: string;
+    title: string;
+    value: string;
+    creation_date?: number;
+    last_use_date?: number;
+  }) => Promise<void>;
+  deleteProjectSshKey: (opts: {
+    account_id?: string;
+    project_id: string;
+    fingerprint: string;
   }) => Promise<void>;
 
   // get a list if all public ssh authorized keys that apply to

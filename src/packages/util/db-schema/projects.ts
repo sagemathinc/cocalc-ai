@@ -116,9 +116,6 @@ Table({
           description: true,
           deleted: true,
           invite_requests: true, // project collabs can modify this (e.g., to remove from it once user added or rejected)
-          users(obj, db, account_id) {
-            return db._user_set_query_project_users(obj, account_id);
-          },
           manage_users_owner_only(obj, db) {
             return db._user_set_query_project_manage_users_owner_only(obj);
           },

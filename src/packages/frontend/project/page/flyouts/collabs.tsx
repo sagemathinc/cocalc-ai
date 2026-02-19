@@ -57,7 +57,7 @@ export function CollabsFlyout({
             />
             <br />
             <Title level={3}>
-              <Icon name="UserAddOutlined" /> Add New Collaborators
+              <Icon name="UserAddOutlined" /> Invite Collaborators
             </Title>
             <AddCollaborators
               project_id={project.get("project_id")}

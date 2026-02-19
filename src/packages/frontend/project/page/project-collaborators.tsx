@@ -9,6 +9,7 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   AddCollaborators,
   CurrentCollaboratorsPanel,
+  InviteInboxPanel,
 } from "@cocalc/frontend/collaborators";
 import {
   Icon,
@@ -51,12 +52,17 @@ export function ProjectCollaboratorsPage(): React.JSX.Element {
     }
     return (
       <>
+        <InviteInboxPanel
+          project_id={project.get("project_id")}
+          mode="project"
+          showWhenEmpty
+        />
         <CurrentCollaboratorsPanel
           key="current-collabs"
           project={project}
           user_map={user_map}
         />
-        <SettingBox title="Add New Collaborators" icon="UserAddOutlined">
+        <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
           <AddCollaborators
             project_id={project.get("project_id")}
             where="project-settings"

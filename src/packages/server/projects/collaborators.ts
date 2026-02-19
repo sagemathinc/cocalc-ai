@@ -37,11 +37,14 @@ import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
 const COLLAB_GROUP_SET = new Set<string>(COLLAB_GROUPS);
+const COLLAB_INVITE_EXPIRES_DAYS = 30;
+const COLLAB_INVITE_EXPIRES_INTERVAL = `${COLLAB_INVITE_EXPIRES_DAYS} days`;
 const INVITE_STATUS_SET = new Set<string>([
   "pending",
   "accepted",
   "declined",
   "blocked",
+  "expired",
   "canceled",
 ]);
 
@@ -66,7 +69,7 @@ function normalizeInviteStatus(
     return status as ProjectCollabInviteStatus;
   }
   throw new Error(
-    `invalid status '${value}' (expected pending, accepted, declined, blocked, or canceled)`,
+    `invalid status '${value}' (expected pending, accepted, declined, blocked, expired, or canceled)`,
   );
 }
 
@@ -99,6 +102,30 @@ function isAlreadyCollaboratorError(err: unknown): boolean {
     .includes("already a collaborator");
 }
 
+async function syncProjectUsersOnHostBestEffort(
+  project_id: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await syncProjectUsersOnHost({ project_id });
+  } catch (err) {
+    logger.warn("project collaborator host sync skipped", {
+      project_id,
+      reason,
+      err: `${err}`,
+    });
+  }
+}
+
+async function expirePendingCollabInvites(pool: ReturnType<typeof getPool>) {
+  await pool.query(
+    `UPDATE project_collab_invites
+       SET status='expired', responded=COALESCE(responded, NOW()), updated=NOW()
+     WHERE status='pending'
+       AND created < NOW() - INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}'`,
+  );
+}
+
 async function fetchInviteById(
   invite_id: string,
   includeEmail: boolean,
@@ -109,6 +136,7 @@ async function fetchInviteById(
        i.invite_id,
        i.project_id,
        p.title AS project_title,
+       p.description AS project_description,
        i.inviter_account_id,
        inviter.name AS inviter_name,
        inviter.first_name AS inviter_first_name,
@@ -124,7 +152,8 @@ async function fetchInviteById(
        i.responder_action,
        i.created,
        i.updated,
-       i.responded
+       i.responded,
+       i.created + INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}' AS expires
      FROM project_collab_invites i
      LEFT JOIN projects p ON p.project_id=i.project_id
      LEFT JOIN accounts inviter ON inviter.account_id=i.inviter_account_id
@@ -243,6 +272,7 @@ export async function createCollabInvite({
 
   const pool = getPool();
   const includeEmail = await isAdmin(account_id);
+  await expirePendingCollabInvites(pool);
   const trimmedMessage = `${message ?? ""}`.trim();
   const normalizedMessage = trimmedMessage ? trimmedMessage.slice(0, 512) : null;
 
@@ -290,9 +320,12 @@ export async function createCollabInvite({
       account_id: invitee_account_id,
       group: "collaborator",
     });
-    await syncProjectUsersOnHost({ project_id });
+    await syncProjectUsersOnHostBestEffort(project_id, "create-collab-invite-direct");
     const syntheticId = uuid();
     const now = new Date();
+    const expires = new Date(
+      now.getTime() + COLLAB_INVITE_EXPIRES_DAYS * 24 * 60 * 60 * 1000,
+    );
     return {
       created: true,
       invite: {
@@ -306,6 +339,7 @@ export async function createCollabInvite({
         created: now,
         updated: now,
         responded: now,
+        expires,
       },
     };
   }
@@ -371,6 +405,8 @@ export async function listCollabInvites({
   const normalizedDirection = normalizeInviteDirection(direction);
   const normalizedStatus = normalizeInviteStatus(status);
   const maxRows = Math.max(1, Math.min(1000, Number(limit ?? 200) || 200));
+  const pool = getPool();
+  await expirePendingCollabInvites(pool);
 
   const params: any[] = [includeEmail];
   const where: string[] = [];
@@ -382,6 +418,7 @@ export async function listCollabInvites({
 
   params.push(account_id);
   const accountParam = `$${params.length}`;
+  const otherAccountExpr = `CASE WHEN i.inviter_account_id=${accountParam}::uuid THEN i.invitee_account_id ELSE i.inviter_account_id END`;
   if (normalizedDirection === "inbound") {
     where.push(`i.invitee_account_id=${accountParam}`);
   } else if (normalizedDirection === "outbound") {
@@ -402,6 +439,7 @@ export async function listCollabInvites({
       i.invite_id,
       i.project_id,
       p.title AS project_title,
+      p.description AS project_description,
       i.inviter_account_id,
       inviter.name AS inviter_name,
       inviter.first_name AS inviter_first_name,
@@ -417,7 +455,41 @@ export async function listCollabInvites({
       i.responder_action,
       i.created,
       i.updated,
-      i.responded
+      i.responded,
+      i.created + INTERVAL '${COLLAB_INVITE_EXPIRES_INTERVAL}' AS expires,
+      (
+        SELECT COUNT(*)::int
+        FROM project_collab_invites h
+        WHERE h.inviter_account_id=${otherAccountExpr}
+          AND h.invitee_account_id=${accountParam}::uuid
+          AND h.status='accepted'
+      ) AS prior_invites_accepted,
+      (
+        SELECT COUNT(*)::int
+        FROM project_collab_invites h
+        WHERE h.inviter_account_id=${otherAccountExpr}
+          AND h.invitee_account_id=${accountParam}::uuid
+          AND h.status='declined'
+      ) AS prior_invites_declined,
+      (
+        SELECT COUNT(*)::int
+        FROM projects sp
+        WHERE (sp.users -> ${accountParam}::text ->> 'group') IN ('owner','collaborator')
+          AND (sp.users -> (${otherAccountExpr})::text ->> 'group') IN ('owner','collaborator')
+      ) AS shared_projects_count,
+      (
+        SELECT COALESCE(array_agg(x.title), ARRAY[]::text[])
+        FROM (
+          SELECT sp.title
+          FROM projects sp
+          WHERE (sp.users -> ${accountParam}::text ->> 'group') IN ('owner','collaborator')
+            AND (sp.users -> (${otherAccountExpr})::text ->> 'group') IN ('owner','collaborator')
+            AND sp.title IS NOT NULL
+            AND sp.title <> ''
+          ORDER BY sp.last_edited DESC NULLS LAST
+          LIMIT 3
+        ) x
+      ) AS shared_projects_sample
     FROM project_collab_invites i
     LEFT JOIN projects p ON p.project_id=i.project_id
     LEFT JOIN accounts inviter ON inviter.account_id=i.inviter_account_id
@@ -426,7 +498,6 @@ export async function listCollabInvites({
     ORDER BY i.created DESC
     LIMIT $${params.length}`;
 
-  const pool = getPool();
   const { rows } = await pool.query<ProjectCollabInviteRow>(sql, params);
   return rows;
 }
@@ -447,6 +518,7 @@ export async function respondCollabInvite({
   const normalizedAction = normalizeInviteAction(action);
   const includeEmail = await isAdmin(account_id);
   const pool = getPool();
+  await expirePendingCollabInvites(pool);
 
   const { rows: existingRows } = await pool.query<{
     invite_id: string;
@@ -509,7 +581,10 @@ export async function respondCollabInvite({
         account_id,
         group: "collaborator",
       });
-      await syncProjectUsersOnHost({ project_id: invite.project_id });
+      await syncProjectUsersOnHostBestEffort(
+        invite.project_id,
+        "respond-collab-invite-accept",
+      );
     }
     nextStatus = "accepted";
   } else if (normalizedAction === "block") {
@@ -714,6 +789,7 @@ export async function inviteCollaborator({
     replyto_name?: string;
     email?: string;
     subject?: string;
+    message?: string;
   };
 }): Promise<void> {
   if (!(await isCollaborator({ account_id, project_id: opts.project_id }))) {
@@ -721,30 +797,18 @@ export async function inviteCollaborator({
   }
   const dbg = (...args) => logger.debug("inviteCollaborator", ...args);
   const database = db();
-  const inviterIsAdmin = await isAdmin(account_id);
-
-  if (inviterIsAdmin) {
-    // Admins keep legacy direct-add behavior.
-    await callback2(database.add_user_to_project, {
+  try {
+    await createCollabInvite({
+      account_id,
       project_id: opts.project_id,
-      account_id: opts.account_id,
-      group: "collaborator",
+      invitee_account_id: opts.account_id,
+      message: opts.message,
     });
-    await syncProjectUsersOnHost({ project_id: opts.project_id });
-  } else {
-    // Non-admin default: create invite, do not directly add.
-    try {
-      await createCollabInvite({
-        account_id,
-        project_id: opts.project_id,
-        invitee_account_id: opts.account_id,
-      });
-    } catch (err) {
-      if (isAlreadyCollaboratorError(err)) {
-        return;
-      }
-      throw err;
+  } catch (err) {
+    if (isAlreadyCollaboratorError(err)) {
+      return;
     }
+    throw err;
   }
 
   // Everything else in this big function is about notifying the user that they
@@ -825,6 +889,7 @@ export async function inviteCollaboratorWithoutAccount({
     to: string;
     email: string; // body in HTML format
     subject?: string;
+    message?: string;
   };
 }): Promise<void> {
   if (!(await isCollaborator({ account_id, project_id: opts.project_id }))) {
@@ -833,7 +898,6 @@ export async function inviteCollaboratorWithoutAccount({
   const dbg = (...args) =>
     logger.debug("inviteCollaboratorWithoutAccount", ...args);
   const database = db();
-  const inviterIsAdmin = await isAdmin(account_id);
 
   if (opts.to.length > 1024) {
     throw Error(
@@ -868,28 +932,19 @@ export async function inviteCollaboratorWithoutAccount({
 
     // 2. If user exists, add to project; otherwise, trigger later add
     if (to_account_id) {
-      if (inviterIsAdmin) {
-        dbg(`user ${email_address} already has an account -- add directly`);
-        await callback2(database.add_user_to_project, {
+      dbg(`user ${email_address} already has an account -- create invite`);
+      try {
+        await createCollabInvite({
+          account_id,
           project_id: opts.project_id,
-          account_id: to_account_id,
-          group: "collaborator",
+          invitee_account_id: to_account_id,
+          message: opts.message,
         });
-        await syncProjectUsersOnHost({ project_id: opts.project_id });
-      } else {
-        dbg(`user ${email_address} already has an account -- create invite`);
-        try {
-          await createCollabInvite({
-            account_id,
-            project_id: opts.project_id,
-            invitee_account_id: to_account_id,
-          });
-        } catch (err) {
-          if (isAlreadyCollaboratorError(err)) {
-            return;
-          }
-          throw err;
+      } catch (err) {
+        if (isAlreadyCollaboratorError(err)) {
+          return;
         }
+        throw err;
       }
     } else {
       dbg(

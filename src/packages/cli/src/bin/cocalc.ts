@@ -1442,6 +1442,7 @@ function serializeInviteRow(invite: ProjectCollabInviteRow): Record<string, unkn
     invite_id: invite.invite_id,
     project_id: invite.project_id,
     project_title: invite.project_title ?? null,
+    project_description: invite.project_description ?? null,
     inviter_account_id: invite.inviter_account_id,
     inviter_name:
       `${invite.inviter_name ?? ""}`.trim() ||
@@ -1460,6 +1461,11 @@ function serializeInviteRow(invite: ProjectCollabInviteRow): Record<string, unkn
     created: toIso(invite.created),
     updated: toIso(invite.updated),
     responded: toIso(invite.responded),
+    expires: toIso(invite.expires),
+    shared_projects_count: invite.shared_projects_count ?? 0,
+    shared_projects_sample: invite.shared_projects_sample ?? [],
+    prior_invites_accepted: invite.prior_invites_accepted ?? 0,
+    prior_invites_declined: invite.prior_invites_declined ?? 0,
   };
 }
 
@@ -6299,7 +6305,7 @@ invite
   )
   .option(
     "--status <status>",
-    "pending, accepted, declined, blocked, canceled",
+    "pending, accepted, declined, blocked, expired, canceled",
     "pending",
   )
   .option("--limit <n>", "max rows", "200")

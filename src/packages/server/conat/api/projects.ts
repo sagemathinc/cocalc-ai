@@ -462,6 +462,115 @@ export async function updateAuthorizedKeysOnHost({
   await updateAuthorizedKeysOnHostControl(project_id);
 }
 
+export async function setProjectHidden({
+  account_id,
+  project_id,
+  hide,
+}: {
+  account_id?: string;
+  project_id: string;
+  hide: boolean;
+}): Promise<void> {
+  if (typeof hide !== "boolean") {
+    throw Error("hide must be a boolean");
+  }
+  await assertCollab({ account_id, project_id });
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE projects
+        SET users = jsonb_set(
+          COALESCE(users, '{}'::jsonb),
+          ARRAY[$2::text, 'hide'],
+          to_jsonb($3::boolean),
+          true
+        )
+      WHERE project_id = $1
+        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
+    [project_id, account_id, hide],
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw Error("user must be a collaborator");
+  }
+}
+
+export async function setProjectSshKey({
+  account_id,
+  project_id,
+  fingerprint,
+  title,
+  value,
+  creation_date,
+  last_use_date,
+}: {
+  account_id?: string;
+  project_id: string;
+  fingerprint: string;
+  title: string;
+  value: string;
+  creation_date?: number;
+  last_use_date?: number;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  const fp = `${fingerprint ?? ""}`.trim();
+  if (!fp) {
+    throw Error("fingerprint must be non-empty");
+  }
+  const payload = {
+    title,
+    value,
+    creation_date: creation_date ?? Date.now(),
+    ...(last_use_date != null ? { last_use_date } : {}),
+  };
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE projects
+        SET users = jsonb_set(
+          COALESCE(users, '{}'::jsonb),
+          ARRAY[$2::text, 'ssh_keys', $3::text],
+          $4::jsonb,
+          true
+        )
+      WHERE project_id = $1
+        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
+    [project_id, account_id, fp, JSON.stringify(payload)],
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw Error("user must be a collaborator");
+  }
+}
+
+export async function deleteProjectSshKey({
+  account_id,
+  project_id,
+  fingerprint,
+}: {
+  account_id?: string;
+  project_id: string;
+  fingerprint: string;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  const fp = `${fingerprint ?? ""}`.trim();
+  if (!fp) {
+    throw Error("fingerprint must be non-empty");
+  }
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE projects
+        SET users = jsonb_set(
+          COALESCE(users, '{}'::jsonb),
+          ARRAY[$2::text, 'ssh_keys'],
+          COALESCE(users -> $2::text -> 'ssh_keys', '{}'::jsonb) - $3::text,
+          true
+        )
+      WHERE project_id = $1
+        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
+    [project_id, account_id, fp],
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw Error("user must be a collaborator");
+  }
+}
+
 export async function moveProject({
   account_id,
   project_id,

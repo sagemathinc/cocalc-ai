@@ -1064,21 +1064,13 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
         expect(result).toBeUndefined();
       });
 
-      test("should apply functional field values", () => {
-        const users = {
-          "12345678-1234-1234-1234-123456789012": { group: "owner" },
-        };
-        db._user_set_query_project_users = jest.fn(() => users);
-
+      test("should reject direct users field edits on projects", () => {
         const result = db._parse_set_query_opts({
           account_id: accountId,
           table: "projects",
           query: { project_id: "project-1", users: {} },
         });
-
-        expect(db._user_set_query_project_users).toHaveBeenCalled();
-        expect(result?.query.users).toEqual(users);
-        expect(result?.require_project_ids_write_access).toEqual(["project-1"]);
+        expect(result?.err).toContain("changing projects.users not allowed");
       });
 
       test("should reject delete option when not allowed", () => {

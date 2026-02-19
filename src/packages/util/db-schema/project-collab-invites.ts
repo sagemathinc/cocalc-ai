@@ -10,6 +10,7 @@ export type ProjectCollabInviteStatus =
   | "accepted"
   | "declined"
   | "blocked"
+  | "expired"
   | "canceled";
 
 Table({
@@ -34,7 +35,7 @@ Table({
     status: {
       type: "string",
       pg_type: "varchar(24)",
-      desc: "Invite status: pending, accepted, declined, blocked, or canceled.",
+      desc: "Invite status: pending, accepted, declined, blocked, expired, or canceled.",
     },
     message: {
       type: "string",
@@ -95,4 +96,3 @@ Table({
     pg_indexes: ["blocked_account_id", "updated"],
   },
 });
-
