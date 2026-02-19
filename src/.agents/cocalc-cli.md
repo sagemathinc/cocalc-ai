@@ -3,6 +3,7 @@
 TODO:
 
 - [ ] make sure to delete the whole "CURRENTLY NOT USED" thing in db-schema/projects.ts
+- [ ] implement "host stop".
 - [ ] Workspaces: name versus title.  Right now we're using the workspace title (which can have any characters in it and is easy to change at any time) for naming things, which isn't great.  There's also a "name" field associated to a workspace, which is much more constrained.  We should accept that for "-w" and also change the whole UI to strongly suggest choosing a name when making a workspace.
 - [ ] When making a workspace or host, show the corresponding cocalc cli command, like GCP does.   See http://localhost:7000/projects/00000000-1000-4000-8000-000000000000/files/home/wstein/build/cocalc-lite4/lite4.chat#chat=1771453636305
 - [ ] We really need some good documentation for all this... in a form that is extremely AI Agent friendly(!).  E.g., it's so important to point out that this is genuine full ssh, and fully supports port forwarding, X11 forwarding.  It's not just a half-broken "ssh gateway", but the real deal. 
