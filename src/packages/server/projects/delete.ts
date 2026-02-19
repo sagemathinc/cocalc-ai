@@ -1,7 +1,6 @@
 import getPool from "@cocalc/database/pool";
 import userQuery from "@cocalc/database/user-query";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
-import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import { getProject } from "@cocalc/server/projects/control";
 import { getLogger } from "@cocalc/backend/logger";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -28,11 +27,17 @@ export default async function deleteProject({
       throw Error("must be signed in");
     }
     const admin = await userIsInGroup(account_id, "admin");
-    const collaborator = admin
-      ? true
-      : await isCollaborator({ account_id, project_id });
-    if (!collaborator) {
-      throw Error("must be an owner to delete a project");
+    let owner = false;
+    if (!admin) {
+      const pool = getPool();
+      const { rows } = await pool.query<{ group: string | null }>(
+        "SELECT users #>> ARRAY[$2::text, 'group'] AS \"group\" FROM projects WHERE project_id=$1",
+        [project_id, account_id],
+      );
+      owner = rows[0]?.group === "owner";
+    }
+    if (!admin && !owner) {
+      throw Error("must be an owner (or admin) to delete a project");
     }
   }
 

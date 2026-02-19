@@ -1,6 +1,7 @@
 import createProject from "@cocalc/server/projects/create";
 export { createProject };
 import execProject from "@cocalc/server/projects/exec";
+import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-delete";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
@@ -449,6 +450,70 @@ export async function stop({
   log.debug("stop", { project_id });
   const project = await getProject(project_id);
   await project.stop();
+}
+
+export async function hardDeleteProject({
+  account_id,
+  project_id,
+  skip_backups,
+}: {
+  account_id?: string;
+  project_id: string;
+  skip_backups?: boolean;
+}): Promise<{
+  op_id: string;
+  scope_type: "account";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  if (!account_id) {
+    throw new Error("must be signed in");
+  }
+  await assertHardDeleteProjectPermission({
+    project_id,
+    account_id,
+  });
+  const op = await createLro({
+    kind: "project-hard-delete",
+    scope_type: "account",
+    scope_id: account_id,
+    created_by: account_id,
+    routing: "hub",
+    input: {
+      project_id,
+      skip_backups: !!skip_backups,
+    },
+    status: "queued",
+    dedupe_key: `project-hard-delete:${project_id}`,
+  });
+  await publishLroSummary({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    summary: op,
+  });
+  publishLroEvent({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    op_id: op.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase: "queued",
+      message: "queued",
+      progress: 0,
+      detail: {
+        project_id,
+      },
+    },
+  }).catch(() => {});
+  return {
+    op_id: op.op_id,
+    scope_type: "account",
+    scope_id: account_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(op.op_id),
+  };
 }
 
 export async function updateAuthorizedKeysOnHost({

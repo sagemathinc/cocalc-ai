@@ -114,7 +114,7 @@ Table({
           title: true,
           name: true,
           description: true,
-          deleted: true,
+          deleted: "project_owner",
           invite_requests: true, // project collabs can modify this (e.g., to remove from it once user added or rejected)
           manage_users_owner_only(obj, db) {
             return db._user_set_query_project_manage_users_owner_only(obj);

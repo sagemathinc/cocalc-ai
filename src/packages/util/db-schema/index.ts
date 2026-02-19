@@ -34,6 +34,7 @@ import "./cloud-vm-work";
 import "./collaborators";
 import "./compute-images";
 import "./crm";
+import "./deleted-projects";
 import "./email-counter";
 import "./external-credentials";
 import "./file-access-log";

@@ -499,6 +499,85 @@ export async function getBackupConfig({
   return { toml, ttl_seconds: DEFAULT_BACKUP_TTL_SECONDS };
 }
 
+export async function getProjectBackupConfigForDeletion({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<{ toml: string }> {
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  const { rows } = await pool().query<{
+    host_id: string | null;
+    backup_bucket_id: string | null;
+  }>(
+    "SELECT host_id, backup_bucket_id FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("project not found");
+  }
+
+  if (row.host_id) {
+    try {
+      const config = await getBackupConfig({
+        host_id: row.host_id,
+        project_id,
+      });
+      if (config.toml.trim()) {
+        return { toml: config.toml };
+      }
+    } catch (err) {
+      logger.debug("getProjectBackupConfigForDeletion: host-based config failed", {
+        project_id,
+        host_id: row.host_id,
+        err: `${err}`,
+      });
+    }
+  }
+
+  const bucketId = row.backup_bucket_id ?? null;
+  if (!bucketId) {
+    return { toml: "" };
+  }
+  const bucket = await loadBucketById(bucketId);
+  if (!bucket) {
+    return { toml: "" };
+  }
+
+  const accountId =
+    bucket.account_id ?? (await getSiteSetting("r2_account_id"));
+  const accessKey =
+    bucket.access_key_id ?? (await getSiteSetting("r2_access_key_id"));
+  const secretKey =
+    bucket.secret_access_key ?? (await getSiteSetting("r2_secret_access_key"));
+  const endpoint =
+    bucket.endpoint ??
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined);
+  if (!accountId || !accessKey || !secretKey || !endpoint) {
+    return { toml: "" };
+  }
+
+  const password = await getProjectBackupSecret(project_id);
+  const root = `${DEFAULT_BACKUP_ROOT}/project-${project_id}`;
+  const toml = [
+    "[repository]",
+    'repository = "opendal:s3"',
+    `password = \"${password}\"`,
+    "",
+    "[repository.options]",
+    `endpoint = \"${endpoint}\"`,
+    'region = "auto"',
+    `bucket = \"${bucket.name}\"`,
+    `root = \"${root}\"`,
+    `access_key_id = \"${accessKey}\"`,
+    `secret_access_key = \"${secretKey}\"`,
+    "",
+  ].join("\n");
+  return { toml };
+}
+
 async function assertHostProjectAccess(host_id: string, project_id: string) {
   await ensureProjectMovesSchema();
   const { rows } = await pool().query<{
