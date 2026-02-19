@@ -6,7 +6,11 @@ import {
   hasCloudflareTunnel,
   ensureCloudflareTunnelForHost,
 } from "./cloudflare-tunnel";
-import { enqueueCloudVmWorkOnce, logCloudVmEvent } from "./db";
+import {
+  enqueueCloudVmWork,
+  enqueueCloudVmWorkOnce,
+  logCloudVmEvent,
+} from "./db";
 import { provisionIfNeeded } from "./host-util";
 import type { CloudVmWorkHandlers } from "./worker";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
@@ -301,7 +305,8 @@ async function scheduleRuntimeRefresh(
     instance_id: runtime.instance_id,
     force,
   });
-  const enqueued = await enqueueCloudVmWorkOnce({
+  const enqueueFn = force ? enqueueCloudVmWork : enqueueCloudVmWorkOnce;
+  const enqueued = await enqueueFn({
     vm_id: row.id,
     action: "refresh_runtime",
     payload: {
@@ -310,11 +315,12 @@ async function scheduleRuntimeRefresh(
       force,
     },
   });
-  if (enqueued) {
+  if (enqueued || force) {
     logger.info("scheduleRuntimeRefresh: enqueue", {
       host_id: row.id,
       provider: providerId ?? row.metadata?.machine?.cloud,
       instance_id: runtime.instance_id,
+      force,
     });
   } else {
     logger.debug("scheduleRuntimeRefresh: already queued", {
@@ -322,6 +328,22 @@ async function scheduleRuntimeRefresh(
       provider: providerId ?? row.metadata?.machine?.cloud,
       instance_id: runtime.instance_id,
     });
+  }
+}
+
+function maybeReplaceIpInUrl(
+  urlValue: string | null | undefined,
+  previousIp: string | undefined,
+  nextIp: string,
+): string | null | undefined {
+  if (!urlValue || !previousIp || previousIp === nextIp) return urlValue;
+  try {
+    const parsed = new URL(urlValue);
+    if (parsed.hostname !== previousIp) return urlValue;
+    parsed.hostname = nextIp;
+    return parsed.toString();
+  } catch {
+    return urlValue;
   }
 }
 
@@ -959,8 +981,13 @@ async function handleRefreshRuntime(row: any) {
     ...(host.metadata ?? {}),
     runtime: { ...runtime, public_ip },
   };
-  const publicUrl = host.public_url ?? `http://${public_ip}`;
-  const internalUrl = host.internal_url ?? `http://${public_ip}`;
+  const previousIp = `${runtime.public_ip ?? ""}`.trim() || undefined;
+  const publicUrl =
+    maybeReplaceIpInUrl(host.public_url, previousIp, public_ip) ??
+    `http://${public_ip}`;
+  const internalUrl =
+    maybeReplaceIpInUrl(host.internal_url, previousIp, public_ip) ??
+    `http://${public_ip}`;
   const nextStatus = host.status === "starting" ? "running" : host.status;
   await updateHostRow(host.id, {
     metadata: nextMetadata,
