@@ -43,6 +43,8 @@ describe("chat helpers", () => {
       created_at: "2026-01-01T00:00:00.000Z",
     });
     expect(thread.event).toBe("chat-thread");
+    expect(thread.sender_id).toBe("__thread__");
+    expect(thread.date).toBe("2026-01-01T00:00:00.000Z");
     expect(thread.thread_id).toBe("thread-1");
     expect(thread.root_message_id).toBe("msg-1");
     expect(thread.schema_version).toBe(CHAT_SCHEMA_V2);
@@ -60,6 +62,8 @@ describe("chat helpers", () => {
       acp_config: { model: "gpt-5.3-codex", sessionId: "session-1" },
     });
     expect(cfg.event).toBe("chat-thread-config");
+    expect(cfg.sender_id).toBe("__thread_config__");
+    expect(typeof cfg.date).toBe("string");
     expect(cfg.thread_id).toBe("thread-1");
     expect(cfg.thread_image).toBe("https://example.com/image.png");
     expect(cfg.pin).toBe(true);
@@ -88,6 +92,8 @@ describe("chat helpers", () => {
       active_message_id: "msg-2",
     });
     expect(state.event).toBe("chat-thread-state");
+    expect(state.sender_id).toBe("__thread_state__");
+    expect(typeof state.date).toBe("string");
     expect(state.state).toBe("running");
     expect(state.active_message_id).toBe("msg-2");
     expect(state.schema_version).toBe(CHAT_SCHEMA_V2);

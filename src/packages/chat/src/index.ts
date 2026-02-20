@@ -113,8 +113,20 @@ function toISOStringDate(value?: Date | string): string {
   return value.toISOString();
 }
 
+function toOptionalISOStringDate(value?: Date | string): string | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return value.toISOString();
+}
+
 export interface ChatThreadRecord {
   event: "chat-thread";
+  sender_id: string;
+  date: string;
   thread_id: string;
   root_message_id: string;
   created_at: string;
@@ -127,24 +139,32 @@ export interface BuildThreadRecordOptions {
   root_message_id: string;
   created_by: string;
   created_at?: Date | string;
+  sender_id?: string;
+  date?: Date | string;
   schema_version?: number;
 }
 
 export function buildThreadRecord(
   options: BuildThreadRecordOptions,
 ): ChatThreadRecord {
+  const createdAt = toISOStringDate(options.created_at);
+  const date = toOptionalISOStringDate(options.date) ?? createdAt;
   return {
     event: "chat-thread",
+    sender_id: options.sender_id ?? "__thread__",
+    date,
     thread_id: options.thread_id,
     root_message_id: options.root_message_id,
     created_by: options.created_by,
-    created_at: toISOStringDate(options.created_at),
+    created_at: createdAt,
     schema_version: options.schema_version ?? CHAT_SCHEMA_V2,
   };
 }
 
 export interface ChatThreadConfigRecord {
   event: "chat-thread-config";
+  sender_id: string;
+  date: string;
   thread_id: string;
   name?: string;
   thread_color?: string;
@@ -161,6 +181,8 @@ export interface BuildThreadConfigRecordOptions {
   thread_id: string;
   updated_by: string;
   updated_at?: Date | string;
+  sender_id?: string;
+  date?: Date | string;
   name?: string;
   thread_color?: string;
   thread_icon?: string;
@@ -173,8 +195,12 @@ export interface BuildThreadConfigRecordOptions {
 export function buildThreadConfigRecord(
   options: BuildThreadConfigRecordOptions,
 ): ChatThreadConfigRecord {
+  const updatedAt = toISOStringDate(options.updated_at);
+  const date = toOptionalISOStringDate(options.date) ?? updatedAt;
   return {
     event: "chat-thread-config",
+    sender_id: options.sender_id ?? "__thread_config__",
+    date,
     thread_id: options.thread_id,
     name: options.name,
     thread_color: options.thread_color,
@@ -182,7 +208,7 @@ export function buildThreadConfigRecord(
     thread_image: options.thread_image,
     pin: options.pin,
     acp_config: options.acp_config,
-    updated_at: toISOStringDate(options.updated_at),
+    updated_at: updatedAt,
     updated_by: options.updated_by,
     schema_version: options.schema_version ?? CHAT_SCHEMA_V2,
   };
@@ -221,6 +247,8 @@ export type ChatThreadRuntimeState =
 
 export interface ChatThreadStateRecord {
   event: "chat-thread-state";
+  sender_id: string;
+  date: string;
   thread_id: string;
   state: ChatThreadRuntimeState;
   active_message_id?: string;
@@ -233,18 +261,24 @@ export interface BuildThreadStateRecordOptions {
   state: ChatThreadRuntimeState;
   active_message_id?: string;
   updated_at?: Date | string;
+  sender_id?: string;
+  date?: Date | string;
   schema_version?: number;
 }
 
 export function buildThreadStateRecord(
   options: BuildThreadStateRecordOptions,
 ): ChatThreadStateRecord {
+  const updatedAt = toISOStringDate(options.updated_at);
+  const date = toOptionalISOStringDate(options.date) ?? updatedAt;
   return {
     event: "chat-thread-state",
+    sender_id: options.sender_id ?? "__thread_state__",
+    date,
     thread_id: options.thread_id,
     state: options.state,
     active_message_id: options.active_message_id,
-    updated_at: toISOStringDate(options.updated_at),
+    updated_at: updatedAt,
     schema_version: options.schema_version ?? CHAT_SCHEMA_V2,
   };
 }
