@@ -247,6 +247,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     registerEditor,
     saveDebounceMs = SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
+    ignoreRemoteMergesWhileFocused,
     selectionRef,
     style,
     submitMentionsRef,
@@ -279,7 +280,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     typeof window === "undefined"
       ? {}
       : ((window as any).COCALC_SLATE_REMOTE_MERGE ?? {});
-  const ignoreRemoteWhileFocused = false;
+  const ignoreRemoteWhileFocused = !!ignoreRemoteMergesWhileFocused;
   const mergeIdleMs =
     remoteMergeConfig.idleMs ?? remoteMergeIdleMs ?? saveDebounceMs ?? SAVE_DEBOUNCE_MS;
 
@@ -287,6 +288,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   const lastLocalEditAtRef = useRef<number>(0);
   const pendingRemoteRef = useRef<string | null>(null);
   const pendingRemoteTimerRef = useRef<number | null>(null);
+  const pendingSlateValueRef = useRef<Descendant[] | null>(null);
   const mergeIdleMsRef = useRef<number>(mergeIdleMs);
   mergeIdleMsRef.current = mergeIdleMs;
   const [pendingRemoteIndicator, setPendingRemoteIndicator] =
@@ -528,6 +530,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       if (pendingRemoteTimerRef.current != null) {
         window.clearTimeout(pendingRemoteTimerRef.current);
       }
+      pendingSlateValueRef.current = null;
     };
   }, []);
 
@@ -863,6 +866,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
   useEffect(() => {
     if (value_slate != null) {
+      const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
+      if (
+        ignoreRemoteWhileFocused &&
+        isMergeFocused() &&
+        !allowFocusedValueUpdate &&
+        !isEqual(value_slate, editor.children)
+      ) {
+        pendingSlateValueRef.current = value_slate;
+        return;
+      }
+      pendingSlateValueRef.current = null;
       allowFocusedValueUpdateRef.current = false;
       setEditorToSlateValue(value_slate);
       if (value != "Loading...") {
@@ -1679,6 +1693,12 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
                 blurMergeTimerRef.current = null;
                 if (!isMergeFocused()) {
                   flushPendingRemoteMerge();
+                  const pendingSlate = pendingSlateValueRef.current;
+                  if (pendingSlate != null) {
+                    pendingSlateValueRef.current = null;
+                    allowFocusedValueUpdateRef.current = true;
+                    setEditorToSlateValue(pendingSlate);
+                  }
                 }
               }, 150);
             }
