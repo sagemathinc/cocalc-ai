@@ -6,7 +6,6 @@ import {
   codeCell,
   countSingleDocCodeCells,
   countCells,
-  appendSingleDocCellCode,
   blurSingleDocEditor,
   readKernelWarningText,
   readKernelWarningVisible,
