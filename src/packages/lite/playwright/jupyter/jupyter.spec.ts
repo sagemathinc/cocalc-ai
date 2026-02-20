@@ -6,6 +6,8 @@ import {
   codeCell,
   countSingleDocCodeCells,
   countCells,
+  appendSingleDocCellCode,
+  blurSingleDocEditor,
   readKernelWarningText,
   readKernelWarningVisible,
   readCellTimingLastMs,
@@ -17,6 +19,7 @@ import {
   openNotebookPage,
   openSingleDocNotebookPage,
   pressSingleDocRunShortcut,
+  readSingleDocCellText,
   readSingleDocOutputText,
   readCellOutputText,
   readCellText,
@@ -25,6 +28,7 @@ import {
   resolveBaseUrl,
   setKernelErrorForE2E,
   setCellInputCode,
+  setSingleDocCellCodeViaRuntime,
   uniqueNotebookPath,
 } from "./helpers";
 
@@ -77,6 +81,15 @@ async function primeKernel(
       }, { timeout: 45_000 })
       .toBe(true);
   }
+}
+
+async function readAllSingleDocCodeText(page: Page): Promise<string> {
+  const n = await countSingleDocCodeCells(page);
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(await readSingleDocCellText(page, i));
+  }
+  return parts.join("\n---\n");
 }
 
 async function ensureKernelReadyOrSkip(
@@ -168,6 +181,115 @@ test("single-doc editor handles Shift+Enter and Alt+Enter", async ({ page }) => 
       }`,
     );
   }
+});
+
+test("single-doc typing syncs into canonical notebook cell input", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-sync");
+  await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
+  const singleDocUrl = notebookUrl({
+    base_url: conn.base_url,
+    path_ipynb,
+    auth_token: conn.auth_token,
+    frame_type: "jupyter-singledoc",
+  });
+
+  await openSingleDocNotebookPage(page, singleDocUrl);
+
+  const marker = `single-doc-sync-${Date.now()}`;
+  await setSingleDocCellCodeViaRuntime(page, 0, `print('base')\nprint("${marker}")`);
+
+  await expect
+    .poll(async () => await readSingleDocCellText(page, 0), {
+      timeout: 30_000,
+    })
+    .toContain(marker);
+
+  const reopened = await page.context().newPage();
+  try {
+    await openSingleDocNotebookPage(reopened, singleDocUrl);
+    await expect
+      .poll(async () => await readAllSingleDocCodeText(reopened), {
+        timeout: 45_000,
+      })
+      .toContain(marker);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test("single-doc local edits and external disk edits merge without loss", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-merge");
+  await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
+
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const localMarker = `local-${Date.now()}`;
+  await setSingleDocCellCodeViaRuntime(
+    page,
+    0,
+    `print('base')\nprint("${localMarker}")`,
+  );
+  await expect
+    .poll(async () => await readSingleDocCellText(page, 0), {
+      timeout: 30_000,
+    })
+    .toContain(localMarker);
+
+  // Confirm local edit is durably synced before introducing external mutation.
+  const preMergeReopen = await page.context().newPage();
+  try {
+    await openSingleDocNotebookPage(
+      preMergeReopen,
+      notebookUrl({
+        base_url: conn.base_url,
+        path_ipynb,
+        auth_token: conn.auth_token,
+        frame_type: "jupyter-singledoc",
+      }),
+    );
+    await expect
+      .poll(async () => await readAllSingleDocCodeText(preMergeReopen), {
+        timeout: 45_000,
+      })
+      .toContain(localMarker);
+  } finally {
+    await preMergeReopen.close();
+  }
+
+  const diskCode = `print("disk-added-${Date.now()}")`;
+  await mutateNotebookOnDisk(path_ipynb, (ipynb) => {
+    ipynb.cells.push(codeCell(diskCode));
+  });
+  await blurSingleDocEditor(page);
+
+  await expect
+    .poll(async () => await countSingleDocCodeCells(page), {
+      timeout: 45_000,
+    })
+    .toBeGreaterThanOrEqual(2);
+
+  await expect
+    .poll(async () => await readAllSingleDocCodeText(page), {
+      timeout: 45_000,
+    })
+    .toContain(localMarker);
+
+  await expect
+    .poll(async () => await readAllSingleDocCodeText(page), {
+      timeout: 45_000,
+    })
+    .toContain(diskCode);
+
 });
 
 test("running cell execution syncs across tabs", async ({ browser }) => {

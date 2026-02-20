@@ -221,6 +221,21 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     const setKernelErrorForTest = (message?: string) => {
       actions.set_kernel_error(message ?? "");
     };
+    const setFrameTypeForTest = (nextType?: string) => {
+      const localViewState = editor_actions.store?.get?.("local_view_state");
+      const activeId = localViewState?.get?.("active_id");
+      const targetType =
+        nextType === "jupyter-singledoc"
+          ? "jupyter_slate_single_doc_notebook"
+          : nextType === "jupyter"
+            ? "jupyter_cell_notebook"
+            : nextType || "jupyter_slate_single_doc_notebook";
+      if (activeId != null) {
+        editor_actions.set_frame_type(activeId, targetType);
+        return;
+      }
+      editor_actions.replace_frame_tree({ type: targetType });
+    };
     const setKernelErrorFromEvent = (event: Event) => {
       const message = (event as CustomEvent<{ message?: string }>).detail
         ?.message;
@@ -245,6 +260,9 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       },
       clear_kernel_error_for_test: () => {
         setKernelErrorForTest("");
+      },
+      set_frame_type_for_test: (nextType?: string) => {
+        setFrameTypeForTest(nextType);
       },
     };
     document.documentElement.setAttribute(
@@ -271,6 +289,10 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       "data-cocalc-jupyter-test-set-kernel-error",
       "1",
     );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-test-set-frame-type",
+      "1",
+    );
     return () => {
       window.removeEventListener(
         JUPYTER_TEST_SET_KERNEL_ERROR_EVENT,
@@ -279,8 +301,11 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       document.documentElement.removeAttribute(
         "data-cocalc-jupyter-test-set-kernel-error",
       );
+      document.documentElement.removeAttribute(
+        "data-cocalc-jupyter-test-set-frame-type",
+      );
     };
-  }, [actions]);
+  }, [actions, editor_actions]);
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);
 

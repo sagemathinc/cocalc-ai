@@ -18,6 +18,7 @@ likely break this assumption and things will go to hell.  Be careful.""
 
 import { Editor, Element, Node, Path, Range, Text, Transforms } from "slate";
 import { isEqual } from "lodash";
+import { uuid } from "@cocalc/util/misc";
 
 import { getNodeAt } from "./slate-util";
 import { emptyParagraph, isWhitespaceParagraph } from "./padding";
@@ -45,6 +46,10 @@ function spacerParagraph(): Element {
     spacer: true,
     children: [{ text: "" }],
   } as Element;
+}
+
+function newJupyterCellId(): string {
+  return uuid().slice(0, 6);
 }
 
 export const withNormalize = (editor) => {
@@ -160,6 +165,30 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   });
   Transforms.insertNodes(editor, nextLines, { at: path.concat(0) });
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
+});
+SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
+
+// Ensure every jupyter_code_cell has a non-empty unique id.
+NORMALIZERS.push(function ensureUniqueJupyterCellIds({ editor, path }) {
+  if (path.length !== 0) return;
+  const seen = new Set<string>();
+  for (const [node, nodePath] of Node.nodes(editor)) {
+    if (!(Element.isElement(node) && (node as any).type === "jupyter_code_cell")) {
+      continue;
+    }
+    const id = `${(node as any).cell_id ?? ""}`.trim();
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      continue;
+    }
+    let next = newJupyterCellId();
+    while (seen.has(next)) {
+      next = newJupyterCellId();
+    }
+    seen.add(next);
+    Transforms.setNodes(editor, { cell_id: next } as any, { at: nodePath });
+    return;
+  }
 });
 SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 

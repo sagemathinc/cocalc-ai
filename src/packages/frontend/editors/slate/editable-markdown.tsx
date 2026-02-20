@@ -357,7 +357,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       if (!force && !editor.hasUnsavedChanges()) {
         return;
       }
-      setSyncstringFromSlate();
+      if (force) {
+        setSyncstringFromSlateNOW();
+      } else {
+        setSyncstringFromSlate();
+      }
       actions.ensure_syncstring_is_saved?.();
     };
 
@@ -1495,9 +1499,19 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       editor.lastSelection = ensureRange(editor, editor.lastSelection);
     }
 
-    if (editorValue === newEditorValue) {
-      // Editor didn't actually change value so nothing to do.
+    const onlySelectionOps =
+      editor.operations.length > 0 &&
+      editor.operations.every((op) => op.type === "set_selection");
+    if (editorValue === newEditorValue && onlySelectionOps) {
+      // Selection-only update with no value change.
       return;
+    }
+
+    // Slate can mutate the same top-level children array in place (notably for
+    // custom elements), which breaks pointer-based dirty checks. Mark local
+    // content edits as dirty explicitly so debounced save always persists them.
+    if (!onlySelectionOps && !editor.syncCausedUpdate) {
+      editor._hasUnsavedChanges = {};
     }
 
     if (!editor.syncCausedUpdate) {
@@ -1646,7 +1660,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
                 }
           }
           onBlur={() => {
-            editor.saveValue();
+            editor.saveValue(true);
             updateMarks();
             if (ignoreRemoteWhileFocused) {
               if (blurMergeTimerRef.current != null) {
