@@ -58,8 +58,15 @@ export interface Actions {
   change_font_size?: (delta?: number, id?: string, zoom?: number) => void;
   undo?: (id: string) => void;
   redo?: (id: string) => void;
-  shiftEnter?: (value: string) => void;
-  altEnter?: (value: string, id?: string) => void;
+  shiftEnter?: (
+    value: string,
+    context?: { selection?: Range | null; slateValue?: Descendant[] },
+  ) => void;
+  altEnter?: (
+    value: string,
+    id?: string,
+    context?: { selection?: Range | null; slateValue?: Descendant[] },
+  ) => void;
   registerBlockEditorControl?: (id: string, control: any) => void;
   unregisterBlockEditorControl?: (id: string) => void;
   _syncstring?: any;

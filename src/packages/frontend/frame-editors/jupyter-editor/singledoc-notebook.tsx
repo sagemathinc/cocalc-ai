@@ -50,6 +50,11 @@ type ParsedSlateCell = {
   cell_id?: string;
 };
 
+type RunContext = {
+  selection?: { focus?: { path?: number[] } } | null;
+  slateValue?: Descendant[];
+};
+
 function normalizeCellSource(text: string): string {
   const source = text.split("\n").map((line) => `${line}\n`);
   let i = source.length - 1;
@@ -214,6 +219,54 @@ function slateDocumentToCells(doc: Descendant[]): ParsedSlateCell[] {
   return ret;
 }
 
+function findCellIdFromSlateContext({
+  context,
+  cell_list,
+}: {
+  context?: RunContext;
+  cell_list: List<string>;
+}): string | undefined {
+  const topIndex = context?.selection?.focus?.path?.[0];
+  const doc = context?.slateValue;
+  if (
+    !Array.isArray(doc) ||
+    typeof topIndex !== "number" ||
+    !Number.isInteger(topIndex)
+  ) {
+    return;
+  }
+  const ids = new Set(cell_list.toArray());
+  const getIdAt = (index: number): string | undefined => {
+    const node = doc[index] as any;
+    if (!SlateElement.isElement(node) || node.type !== "jupyter_code_cell") {
+      return;
+    }
+    const id = `${node.cell_id ?? ""}`.trim();
+    if (!id || !ids.has(id)) {
+      return;
+    }
+    return id;
+  };
+
+  const direct = getIdAt(topIndex);
+  if (direct != null) {
+    return direct;
+  }
+  for (let i = topIndex - 1; i >= 0; i--) {
+    const id = getIdAt(i);
+    if (id != null) {
+      return id;
+    }
+  }
+  for (let i = topIndex + 1; i < doc.length; i++) {
+    const id = getIdAt(i);
+    if (id != null) {
+      return id;
+    }
+  }
+  return;
+}
+
 function SingleDocOutputs({
   cell_list,
   cells,
@@ -290,18 +343,30 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   }, [cell_list, cells, kernel]);
 
   const runCellAtCursor = React.useCallback(
-    ({ markdown, insertBelow }: { markdown: string; insertBelow: boolean }) => {
+    ({
+      markdown,
+      insertBelow,
+      context,
+    }: {
+      markdown: string;
+      insertBelow: boolean;
+      context?: RunContext;
+    }) => {
       if (frameActions == null || cell_list == null) {
         return;
       }
-      const pos = controlRef.current?.getMarkdownPositionForSelection?.();
-      const idx = positionToIndex({ markdown, pos }) ?? 0;
-      const parsed = parseTopLevelNotebookMarkdown(markdown);
-      let cellIndex = parsed.findIndex((cell) => idx >= cell.start && idx <= cell.end);
-      if (cellIndex === -1) {
-        cellIndex = Math.max(0, Math.min(parsed.length - 1, cell_list.size - 1));
+      const fromSlate = findCellIdFromSlateContext({ context, cell_list });
+      let targetId = fromSlate;
+      if (targetId == null) {
+        const pos = controlRef.current?.getMarkdownPositionForSelection?.();
+        const idx = positionToIndex({ markdown, pos }) ?? 0;
+        const parsed = parseTopLevelNotebookMarkdown(markdown);
+        let cellIndex = parsed.findIndex((cell) => idx >= cell.start && idx <= cell.end);
+        if (cellIndex === -1) {
+          cellIndex = Math.max(0, Math.min(parsed.length - 1, cell_list.size - 1));
+        }
+        targetId = cell_list.get(Math.min(cellIndex, cell_list.size - 1));
       }
-      const targetId = cell_list.get(Math.min(cellIndex, cell_list.size - 1));
       if (targetId == null) {
         return;
       }
@@ -370,10 +435,13 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         setError("Could not apply edits to notebook cells.");
       }
     };
-    proxy.shiftEnter = (markdown: string) =>
-      runCellAtCursor({ markdown, insertBelow: false });
-    proxy.altEnter = (markdown: string) =>
-      runCellAtCursor({ markdown, insertBelow: true });
+    proxy.shiftEnter = (markdown: string, context?: RunContext) =>
+      runCellAtCursor({ markdown, insertBelow: false, context });
+    proxy.altEnter = (
+      markdown: string,
+      _id?: string,
+      context?: RunContext,
+    ) => runCellAtCursor({ markdown, insertBelow: true, context });
     return proxy;
   }, [props.actions, read_only, cell_list, cells, applyNotebookSlate, runCellAtCursor]);
 

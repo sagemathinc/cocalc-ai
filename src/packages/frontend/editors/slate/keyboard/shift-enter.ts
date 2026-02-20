@@ -21,7 +21,10 @@ register({ key: "Enter", shift: true }, ({ editor, extra }) => {
     if (editorAny._hasUnsavedChanges === false) {
       editorAny._hasUnsavedChanges = undefined;
     }
-    shiftEnter(editor.getMarkdownValue());
+    shiftEnter(editor.getMarkdownValue(), {
+      selection: editor.selection ?? null,
+      slateValue: [...editor.children] as any,
+    });
     return true;
   }
   return softBreak({ editor });

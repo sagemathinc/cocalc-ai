@@ -13,7 +13,10 @@ register(
   ({ editor, extra }) => {
     const altEnter = extra?.actions?.altEnter;
     if (altEnter != null) {
-      altEnter(editor.getMarkdownValue(), extra?.id);
+      altEnter(editor.getMarkdownValue(), extra?.id, {
+        selection: editor.selection ?? null,
+        slateValue: [...editor.children] as any,
+      });
       return true;
     }
     editor.inverseSearch(true);
