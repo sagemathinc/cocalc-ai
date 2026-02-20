@@ -14,6 +14,7 @@ type HubClient = {
       dest_host_id?: string;
       force?: boolean;
       allow_offline?: boolean;
+      parallel?: number;
     }) => Promise<HostLroResponse>;
     deleteHost: (opts: { id: string; skip_backups?: boolean }) => Promise<HostLroResponse>;
     forceDeprovisionHost?: (opts: { id: string }) => Promise<HostLroResponse>;
@@ -129,6 +130,7 @@ export const useHostActions = ({
         dest_host_id: opts?.dest_host_id,
         force: opts?.force,
         allow_offline: opts?.allow_offline,
+        parallel: opts?.parallel,
       });
       onHostOp?.(id, op);
       await refresh();

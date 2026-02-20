@@ -8674,6 +8674,10 @@ host
   .option("--dest-host <host>", "destination host id or name (default: auto-select)")
   .option("--force", "force drain by setting host_id=null on assigned workspaces")
   .option(
+    "--parallel <n>",
+    "number of workspace moves to run concurrently (default: 10; non-admin max: 15)",
+  )
+  .option(
     "--allow-offline",
     "allow moves when source host is offline and backups may be stale",
   )
@@ -8684,6 +8688,7 @@ host
       opts: {
         destHost?: string;
         force?: boolean;
+        parallel?: string;
         allowOffline?: boolean;
         wait?: boolean;
       },
@@ -8692,6 +8697,14 @@ host
       await withContext(command, "host drain", async (ctx) => {
         const source = await resolveHost(ctx, hostIdentifier);
         const dest = opts.destHost ? await resolveHost(ctx, opts.destHost) : null;
+        let requestedParallel: number | undefined;
+        if (opts.parallel != null) {
+          const parsedParallel = Math.floor(Number(opts.parallel));
+          if (!Number.isFinite(parsedParallel) || parsedParallel < 1) {
+            throw new Error("--parallel must be a positive integer");
+          }
+          requestedParallel = parsedParallel;
+        }
         if (dest && dest.id === source.id) {
           throw new Error("destination host must differ from source host");
         }
@@ -8702,6 +8715,7 @@ host
             ...(dest ? { dest_host_id: dest.id } : {}),
             force: !!opts.force,
             allow_offline: !!opts.allowOffline,
+            ...(requestedParallel != null ? { parallel: requestedParallel } : {}),
           },
         ]);
 
@@ -8712,6 +8726,7 @@ host
             status: "queued",
             mode: opts.force ? "force" : "move",
             dest_host_id: dest?.id ?? null,
+            parallel: requestedParallel ?? 10,
           };
         }
 
@@ -8737,6 +8752,7 @@ host
           mode: opts.force ? "force" : "move",
           dest_host_id: dest?.id ?? null,
           drain: final?.result?.drain ?? null,
+          parallel: requestedParallel ?? 10,
         };
       });
     },

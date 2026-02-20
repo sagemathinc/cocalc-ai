@@ -569,6 +569,7 @@ async function runHostAction(
         dest_host_id: input?.dest_host_id,
         force: !!input?.force,
         allow_offline: !!input?.allow_offline,
+        parallel: input?.parallel,
         shouldCancel: helpers?.shouldCancel,
         onProgress: async (update) => {
           await helpers?.progressStep?.(

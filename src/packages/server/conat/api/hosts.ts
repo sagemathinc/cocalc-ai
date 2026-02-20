@@ -118,6 +118,8 @@ const DEFAULT_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
 const SOFTWARE_HISTORY_MAX_LIMIT = 50;
 const SOFTWARE_HISTORY_DEFAULT_LIMIT = 1;
 const SOFTWARE_FETCH_TIMEOUT_MS = 8_000;
+const HOST_DRAIN_DEFAULT_PARALLEL = 10;
+const HOST_DRAIN_OWNER_MAX_PARALLEL = 15;
 
 function logStatusUpdate(id: string, status: string, source: string) {
   const stack = new Error().stack;
@@ -134,6 +136,27 @@ function requireAccount(account_id?: string): string {
     throw new Error("must be signed in to manage hosts");
   }
   return account_id;
+}
+
+function parseDrainParallel(parallel?: number): number {
+  if (parallel == null) {
+    return HOST_DRAIN_DEFAULT_PARALLEL;
+  }
+  const n = Math.floor(Number(parallel));
+  if (!Number.isFinite(n) || n < 1) {
+    throw new Error("drain parallel must be a positive integer");
+  }
+  return n;
+}
+
+async function resolveDrainParallel(owner: string, parallel?: number): Promise<number> {
+  const requested = parseDrainParallel(parallel);
+  if (!(await isAdmin(owner)) && requested > HOST_DRAIN_OWNER_MAX_PARALLEL) {
+    throw new Error(
+      `drain parallel cannot exceed ${HOST_DRAIN_OWNER_MAX_PARALLEL} for non-admin users`,
+    );
+  }
+  return requested;
 }
 
 function parseRow(
@@ -2231,33 +2254,38 @@ export async function drainHost({
   dest_host_id,
   force,
   allow_offline,
+  parallel,
 }: {
   account_id?: string;
   id: string;
   dest_host_id?: string;
   force?: boolean;
   allow_offline?: boolean;
+  parallel?: number;
 }): Promise<HostLroResponse> {
-  const row = await loadOwnedHost(id, account_id);
+  const owner = requireAccount(account_id);
+  const row = await loadOwnedHost(id, owner);
   const destination = `${dest_host_id ?? ""}`.trim() || undefined;
+  const drainParallel = await resolveDrainParallel(owner, parallel);
   if (destination === row.id) {
     throw new Error("destination host must differ from source host");
   }
   if (destination) {
-    await loadHostForListing(destination, account_id);
+    await loadHostForListing(destination, owner);
   }
   return await createHostLro({
     kind: HOST_DRAIN_LRO_KIND,
     row,
-    account_id,
+    account_id: owner,
     input: {
       id: row.id,
-      account_id,
+      account_id: owner,
       dest_host_id: destination,
       force: !!force,
       allow_offline: !!allow_offline,
+      parallel: drainParallel,
     },
-    dedupe_key: `${HOST_DRAIN_LRO_KIND}:${row.id}:${destination ?? "auto"}:${force ? "force" : "safe"}:${allow_offline ? "allow-offline" : "strict"}`,
+    dedupe_key: `${HOST_DRAIN_LRO_KIND}:${row.id}:${destination ?? "auto"}:${force ? "force" : "safe"}:${allow_offline ? "allow-offline" : "strict"}:p${drainParallel}`,
   });
 }
 
@@ -2267,6 +2295,7 @@ export async function drainHostInternal({
   dest_host_id,
   force,
   allow_offline,
+  parallel,
   shouldCancel,
   onProgress,
 }: {
@@ -2275,6 +2304,7 @@ export async function drainHostInternal({
   dest_host_id?: string;
   force?: boolean;
   allow_offline?: boolean;
+  parallel?: number;
   shouldCancel?: () => Promise<boolean>;
   onProgress?: (update: {
     message: string;
@@ -2284,6 +2314,7 @@ export async function drainHostInternal({
 }): Promise<HostDrainResult> {
   const owner = requireAccount(account_id);
   const row = await loadOwnedHost(id, owner);
+  const drainParallel = await resolveDrainParallel(owner, parallel);
   const destination = `${dest_host_id ?? ""}`.trim() || undefined;
   if (destination === row.id) {
     throw new Error("destination host must differ from source host");
@@ -2301,6 +2332,7 @@ export async function drainHostInternal({
     moved: 0,
     unassigned: 0,
     failed: 0,
+    parallel: drainParallel,
     ...(destination ? { dest_host_id: destination } : {}),
   } satisfies HostDrainResult;
 
@@ -2352,40 +2384,96 @@ export async function drainHostInternal({
     };
   }
 
+  const maxParallel = Math.max(1, Math.min(drainParallel, total));
   let moved = 0;
-  for (const [index, project_id] of projectIds.entries()) {
-    if (await canceled()) {
-      throw new Error("host drain canceled");
+  let completed = 0;
+  let nextIndex = 0;
+  let firstError: Error | undefined;
+
+  await onProgress?.({
+    message: "starting host drain",
+    detail: {
+      host_id: row.id,
+      total,
+      parallel: maxParallel,
+      dest_host_id: destination,
+    },
+    progress: 5,
+  });
+
+  const worker = async () => {
+    while (true) {
+      if (firstError) return;
+      if (await canceled()) {
+        firstError = new Error("host drain canceled");
+        return;
+      }
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= total) return;
+      const project_id = projectIds[index];
+      try {
+        await moveProjectToHost(
+          {
+            project_id,
+            account_id: owner,
+            dest_host_id: destination,
+            allow_offline: !!allow_offline,
+          },
+          { shouldCancel },
+        );
+        moved += 1;
+        completed += 1;
+        const started = Math.min(total, nextIndex);
+        const in_flight = Math.max(0, started - completed);
+        await onProgress?.({
+          message: `drained ${completed}/${total}`,
+          detail: {
+            host_id: row.id,
+            project_id,
+            moved,
+            completed,
+            total,
+            parallel: maxParallel,
+            in_flight,
+            dest_host_id: destination,
+          },
+          progress: Math.min(95, Math.max(5, Math.round((completed / total) * 95))),
+        });
+      } catch (err) {
+        completed += 1;
+        if (await canceled()) {
+          firstError = new Error("host drain canceled");
+        } else if (!firstError) {
+          firstError = new Error(
+            `failed to drain workspace ${project_id}: ${
+              err instanceof Error ? err.message : `${err}`
+            }`,
+          );
+        }
+        await onProgress?.({
+          message: "host drain failed",
+          detail: {
+            host_id: row.id,
+            project_id,
+            completed,
+            total,
+            parallel: maxParallel,
+            error: `${err}`,
+          },
+          progress: Math.min(95, Math.max(5, Math.round((completed / total) * 95))),
+        });
+        return;
+      }
     }
-    await onProgress?.({
-      message: `moving workspace ${index + 1}/${total}`,
-      detail: {
-        host_id: row.id,
-        project_id,
-        moved,
-        total,
-        dest_host_id: destination,
-      },
-      progress: Math.min(95, Math.round((index / total) * 100)),
-    });
-    try {
-      await moveProjectToHost(
-        {
-          project_id,
-          account_id: owner,
-          dest_host_id: destination,
-          allow_offline: !!allow_offline,
-        },
-        { shouldCancel },
-      );
-      moved += 1;
-    } catch (err) {
-      throw new Error(
-        `failed to drain workspace ${project_id}: ${
-          err instanceof Error ? err.message : `${err}`
-        }`,
-      );
-    }
+  };
+
+  await Promise.all(
+    Array.from({ length: maxParallel }, () => worker()),
+  );
+
+  if (firstError) {
+    throw firstError;
   }
 
   await onProgress?.({
@@ -2394,6 +2482,7 @@ export async function drainHostInternal({
       host_id: row.id,
       total,
       moved,
+      parallel: maxParallel,
       dest_host_id: destination,
     },
     progress: 100,

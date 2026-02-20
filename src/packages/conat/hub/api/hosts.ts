@@ -42,6 +42,7 @@ export type HostDrainOptions = {
   dest_host_id?: string;
   force?: boolean;
   allow_offline?: boolean;
+  parallel?: number;
 };
 
 export type HostDrainResult = {
@@ -52,6 +53,7 @@ export type HostDrainResult = {
   unassigned: number;
   failed: number;
   dest_host_id?: string;
+  parallel?: number;
 };
 
 export interface HostMachine {
@@ -517,6 +519,7 @@ export interface Hosts {
     dest_host_id?: string;
     force?: boolean;
     allow_offline?: boolean;
+    parallel?: number;
   }) => Promise<HostLroResponse>;
   forceDeprovisionHost: (opts: {
     account_id?: string;
