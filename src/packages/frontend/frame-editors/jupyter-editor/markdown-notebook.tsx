@@ -249,8 +249,6 @@ function Row({
                   onFocus={() => {
                     if (frameActions != null) {
                       frameActions.set_cur_id(id);
-                    } else {
-                      actions.set_cur_id(id);
                     }
                   }}
                 />
