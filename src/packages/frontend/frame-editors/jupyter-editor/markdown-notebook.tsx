@@ -11,6 +11,7 @@ and reuses existing output/runtime components.
 import { List, Map } from "immutable";
 import React from "react";
 import { useRedux } from "@cocalc/frontend/app-framework";
+import { splitMarkdownToBlocks } from "@cocalc/frontend/editors/slate/block-chunking";
 import BlockMarkdownEditor from "@cocalc/frontend/editors/slate/block-markdown-editor";
 import MostlyStaticMarkdown from "@cocalc/frontend/editors/slate/mostly-static-markdown";
 import { positionToIndex } from "@cocalc/frontend/editors/slate/sync";
@@ -440,66 +441,75 @@ export function MarkdownNotebook(props: Props): React.JSX.Element {
   );
 }
 
-function TopLevelOutputs({
-  cell_list,
-  cells,
-  jupyter_actions,
-  more_output,
-  project_id,
-  directory,
-  trust,
+function hasVisibleOutput({
+  cell,
+  moreOutput,
 }: {
-  cell_list: List<string>;
-  cells: Map<string, Map<string, any>>;
-  jupyter_actions: JupyterActions;
-  more_output?: Map<string, any>;
-  project_id: string;
-  directory?: string;
-  trust: boolean;
-}) {
-  const visible = cell_list
-    .toArray()
-    .filter((id) => {
-      const cell = cells.get(id);
-      if (cell == null || `${cell.get("cell_type") ?? "code"}` !== "code") {
-        return false;
-      }
-      return (
-        cell.get("output") != null ||
-        cell.get("state") != null ||
-        more_output?.get(id) != null
-      );
-    });
-  if (visible.length === 0) {
-    return null;
-  }
+  cell?: Map<string, any>;
+  moreOutput?: any;
+}): boolean {
   return (
-    <div style={{ marginTop: "12px" }}>
-      <div style={{ color: "#888", fontSize: "11px", marginBottom: "6px" }}>
-        Code output
-      </div>
-      {visible.map((id) => {
-        const cell = cells.get(id);
-        if (cell == null) return null;
-        return (
-          <div key={`top-level-output-${id}`} style={{ marginBottom: "10px" }}>
-            <div style={{ color: "#777", fontSize: "11px", marginBottom: "4px" }}>
-              Cell {id}
-            </div>
-            <CellOutput
-              actions={jupyter_actions}
-              id={id}
-              cell={cell}
-              project_id={project_id}
-              directory={directory}
-              more_output={more_output?.get(id)}
-              trust={trust}
-            />
-          </div>
-        );
-      })}
-    </div>
+    cell?.get("output") != null || cell?.get("state") != null || moreOutput != null
   );
+}
+
+function computeOutputBlockMap({
+  blocks,
+  cellIds,
+  cells,
+  moreOutput,
+}: {
+  blocks: string[];
+  cellIds: string[];
+  cells: Map<string, Map<string, any>>;
+  moreOutput?: Map<string, any>;
+}): Record<number, string> {
+  const byBlock: Record<number, string> = {};
+  if (blocks.length === 0 || cellIds.length === 0) {
+    return byBlock;
+  }
+  const markdown = `${blocks.join("\n\n")}`;
+  const parsed = parseTopLevelNotebookMarkdown(markdown);
+  if (parsed.length === 0) {
+    return byBlock;
+  }
+
+  const blockStart: number[] = [];
+  let offset = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    blockStart.push(offset);
+    offset += blocks[i].length;
+    if (i < blocks.length - 1) {
+      offset += 2;
+    }
+  }
+
+  let cellIndex = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    const start = blockStart[i];
+    while (cellIndex < parsed.length - 1 && start > parsed[cellIndex].end) {
+      cellIndex += 1;
+    }
+    const parsedCell = parsed[cellIndex];
+    if (parsedCell == null || parsedCell.cell_type !== "code") {
+      continue;
+    }
+    const nextStart =
+      i + 1 < blockStart.length ? blockStart[i + 1] : Number.POSITIVE_INFINITY;
+    if (nextStart <= parsedCell.end) {
+      continue;
+    }
+    const id = cellIds[cellIndex];
+    if (id == null) {
+      continue;
+    }
+    const cell = cells.get(id);
+    if (!hasVisibleOutput({ cell, moreOutput: moreOutput?.get(id) })) {
+      continue;
+    }
+    byBlock[i] = id;
+  }
+  return byBlock;
 }
 
 export function MarkdownNotebookTopLevel(props: Props): React.JSX.Element {
@@ -607,6 +617,13 @@ export function MarkdownNotebookTopLevel(props: Props): React.JSX.Element {
   if (cell_list == null || cells == null) {
     return <div style={{ padding: "12px" }}>Loading notebook...</div>;
   }
+  const topLevelBlocks = splitMarkdownToBlocks(value, { targetChars: 1 });
+  const outputByBlock = computeOutputBlockMap({
+    blocks: topLevelBlocks,
+    cellIds: cell_list.toArray(),
+    cells,
+    moreOutput: more_output,
+  });
 
   return (
     <div
@@ -648,15 +665,26 @@ export function MarkdownNotebookTopLevel(props: Props): React.JSX.Element {
         ignoreRemoteMergesWhileFocused
         style={{ backgroundColor: "transparent" }}
         controlRef={controlRef}
-      />
-      <TopLevelOutputs
-        cell_list={cell_list}
-        cells={cells}
-        jupyter_actions={jupyter_actions}
-        more_output={more_output}
-        project_id={props.project_id}
-        directory={directory}
-        trust={!!trust}
+        blockChunkTargetChars={1}
+        renderAfterBlock={({ index }) => {
+          const id = outputByBlock[index];
+          if (id == null) return null;
+          const cell = cells.get(id);
+          if (cell == null) return null;
+          return (
+            <div style={{ margin: "2px 0 10px -15px" }}>
+              <CellOutput
+                actions={jupyter_actions}
+                id={id}
+                cell={cell}
+                project_id={props.project_id}
+                directory={directory}
+                more_output={more_output?.get(id)}
+                trust={!!trust}
+              />
+            </div>
+          );
+        }}
       />
     </div>
   );

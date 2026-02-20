@@ -78,6 +78,11 @@ type BlockRowRendererArgs = {
   handleSelectBlock: (index: number, opts: { shiftKey: boolean }) => void;
   lastLocalEditAtRef: React.MutableRefObject<number>;
   lastRemoteMergeAtRef: React.MutableRefObject<number>;
+  renderAfterBlock?: (args: {
+    index: number;
+    markdown: string;
+    blockCount: number;
+  }) => React.ReactNode;
 };
 
 export function useBlockRowRenderer(args: BlockRowRendererArgs) {
@@ -126,6 +131,7 @@ export function useBlockRowRenderer(args: BlockRowRendererArgs) {
     handleSelectBlock,
     lastLocalEditAtRef,
     lastRemoteMergeAtRef,
+    renderAfterBlock,
   } = args;
 
   return useCallback(
@@ -137,59 +143,66 @@ export function useBlockRowRenderer(args: BlockRowRendererArgs) {
         index >= selectedRange.start &&
         index <= selectedRange.end;
       return (
-        <BlockRowEditor
-          index={index}
-          markdown={markdown}
-          remoteVersion={remoteVersion}
-          isFocused={focusedIndex === index}
-          clearBlockSelection={clearBlockSelection}
-          onMergeWithPrevious={onMergeWithPrevious}
-          lastLocalEditAtRef={lastLocalEditAtRef}
-          lastRemoteMergeAtRef={lastRemoteMergeAtRef}
-          onChangeMarkdown={onChangeMarkdown}
-          onDeleteBlock={onDeleteBlock}
-          onFocus={() => {
-            setFocusedIndex(index);
-            setActiveEditorSignal((prev) => prev + 1);
-            if (blockSelection) {
-              setBlockSelection(null);
-            }
-            onFocus?.();
-          }}
-          onBlur={() => {
-            setFocusedIndex((prev) => (prev === index ? null : prev));
-            onBlur?.();
-          }}
-          onSelectBlock={handleSelectBlock}
-          autoFocus={autoFocus && index === 0}
-          read_only={read_only}
-          actions={actions}
-          id={id}
-          rowStyle={rowStyle}
-          gapCursor={gapCursor}
-          setGapCursor={setGapCursor}
-          gapCursorRef={gapCursorRef}
-          pendingGapInsertRef={pendingGapInsertRef}
-          pendingSelectionRef={pendingSelectionRef}
-          skipSelectionResetRef={skipSelectionResetRef}
-          onNavigate={onNavigate}
-          onInsertGap={onInsertGap}
-          onSetBlockText={onSetBlockText}
-          preserveBlankLines={preserveBlankLines}
-          saveNow={saveNow}
-          registerEditor={registerEditor}
-          unregisterEditor={unregisterEditor}
-          onEditorChange={onEditorChange}
-          getFullMarkdown={getFullMarkdown}
-          codeBlockExpandState={codeBlockExpandState}
-          blockCount={blockCount}
-          selected={isSelected}
-          gutterWidth={gutterWidth}
-          leafComponent={leafComponent}
-          searchHook={searchHook}
-          searchDecorate={searchDecorate}
-          searchQuery={searchQuery}
-        />
+        <>
+          <BlockRowEditor
+            index={index}
+            markdown={markdown}
+            remoteVersion={remoteVersion}
+            isFocused={focusedIndex === index}
+            clearBlockSelection={clearBlockSelection}
+            onMergeWithPrevious={onMergeWithPrevious}
+            lastLocalEditAtRef={lastLocalEditAtRef}
+            lastRemoteMergeAtRef={lastRemoteMergeAtRef}
+            onChangeMarkdown={onChangeMarkdown}
+            onDeleteBlock={onDeleteBlock}
+            onFocus={() => {
+              setFocusedIndex(index);
+              setActiveEditorSignal((prev) => prev + 1);
+              if (blockSelection) {
+                setBlockSelection(null);
+              }
+              onFocus?.();
+            }}
+            onBlur={() => {
+              setFocusedIndex((prev) => (prev === index ? null : prev));
+              onBlur?.();
+            }}
+            onSelectBlock={handleSelectBlock}
+            autoFocus={autoFocus && index === 0}
+            read_only={read_only}
+            actions={actions}
+            id={id}
+            rowStyle={rowStyle}
+            gapCursor={gapCursor}
+            setGapCursor={setGapCursor}
+            gapCursorRef={gapCursorRef}
+            pendingGapInsertRef={pendingGapInsertRef}
+            pendingSelectionRef={pendingSelectionRef}
+            skipSelectionResetRef={skipSelectionResetRef}
+            onNavigate={onNavigate}
+            onInsertGap={onInsertGap}
+            onSetBlockText={onSetBlockText}
+            preserveBlankLines={preserveBlankLines}
+            saveNow={saveNow}
+            registerEditor={registerEditor}
+            unregisterEditor={unregisterEditor}
+            onEditorChange={onEditorChange}
+            getFullMarkdown={getFullMarkdown}
+            codeBlockExpandState={codeBlockExpandState}
+            blockCount={blockCount}
+            selected={isSelected}
+            gutterWidth={gutterWidth}
+            leafComponent={leafComponent}
+            searchHook={searchHook}
+            searchDecorate={searchDecorate}
+            searchQuery={searchQuery}
+          />
+          {renderAfterBlock?.({
+            index,
+            markdown,
+            blockCount,
+          }) ?? null}
+        </>
       );
     },
     [
@@ -216,6 +229,7 @@ export function useBlockRowRenderer(args: BlockRowRendererArgs) {
       onMergeWithPrevious,
       onNavigate,
       onSetBlockText,
+      renderAfterBlock,
       pendingGapInsertRef,
       pendingSelectionRef,
       preserveBlankLines,
