@@ -86,7 +86,12 @@ Useful toggles:
 - `SMOKE_CLOUD_EXECUTION_MODE=cli|direct`: defaults to `cli`.
 - `SMOKE_CLOUD_VERIFY_BACKUP=1`: defaults to `1`.
 - `SMOKE_CLOUD_CLEANUP_SUCCESS=1`: defaults to `1`.
+- `SMOKE_CLOUD_CLEANUP_FAILURE=1`: defaults to `1`; now also does tag-based fallback cleanup.
 - `SMOKE_CLOUD_BACKUP_PREFLIGHT=1`: defaults to `1` (set `0` to skip auth preflight).
+- `SMOKE_CLOUD_RESULT_DIR`: directory for per-provider JSON results (default `src/.local/smoke-cloud`).
+
+Each provider run now gets a unique `run_tag` and writes a result JSON file, and
+the wrapper prints a PASS/FAIL matrix summary at the end.
 
 Examples:
 

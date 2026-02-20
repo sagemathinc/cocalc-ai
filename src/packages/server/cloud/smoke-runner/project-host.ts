@@ -77,15 +77,16 @@ a = require('../../dist/cloud/smoke-runner/project-host'); await a.runProjectHos
 
 */
 import { execFile as execFileCb } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { promisify } from "node:util";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
-import { createProject } from "@cocalc/server/conat/api/projects";
-import { start as startProject } from "@cocalc/server/conat/api/projects";
+import {
+  createProject,
+  exec as execProject,
+  start as startProject,
+} from "@cocalc/server/conat/api/projects";
 import {
   createBackup as createProjectBackup,
   getBackups as getProjectBackups,
@@ -119,6 +120,7 @@ type WaitOptions = {
 type ProjectHostSmokeOptions = {
   account_id: string;
   provider?: ProviderId;
+  run_tag?: string;
   create: Parameters<typeof createHost>[0];
   update?: Omit<Parameters<typeof updateHostMachine>[0], "id">;
   restart_after_stop?: boolean;
@@ -201,6 +203,9 @@ type ProjectHostSmokeResult = {
   host_id?: string;
   project_id?: string;
   debug?: {
+    run_tag?: string;
+    host_name?: string;
+    workspace_title?: string;
     ssh_target?: string;
     ssh_tail_log?: string;
     scp_log?: string;
@@ -450,6 +455,118 @@ function resolveWait(
     intervalMs: overrides?.intervalMs ?? fallback.intervalMs,
     attempts: overrides?.attempts ?? fallback.attempts,
   };
+}
+
+function sanitizeRunTag(raw?: string): string | undefined {
+  const value = `${raw ?? ""}`.trim().toLowerCase();
+  if (!value) return undefined;
+  const cleaned = value.replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
+  const trimmed = cleaned.replace(/^-+|-+$/g, "");
+  return trimmed ? trimmed.slice(0, 40) : undefined;
+}
+
+function withRunTagSuffix(base: string, runTag?: string): string {
+  if (!runTag) return base;
+  const suffix = sanitizeRunTag(runTag);
+  if (!suffix) return base;
+  const maxLen = 63;
+  const baseClean = `${base}`.trim().replace(/[^A-Za-z0-9-]/g, "-");
+  const room = Math.max(1, maxLen - suffix.length - 1);
+  const head = baseClean.slice(0, room).replace(/-+$/g, "");
+  return `${head}-${suffix}`;
+}
+
+type CliHostRow = {
+  host_id?: string;
+  name?: string;
+  status?: string;
+};
+
+type CliWorkspaceRow = {
+  workspace_id?: string;
+  title?: string;
+  host_id?: string | null;
+  last_edited?: string | null;
+};
+
+async function findHostByNameViaCli(
+  cli: CliContext,
+  name: string,
+): Promise<string | undefined> {
+  const hosts = await runCli<CliHostRow[]>(cli, [
+    "host",
+    "list",
+    "--limit",
+    "5000",
+  ]);
+  const match = hosts.find((h) => `${h?.name ?? ""}`.trim() === name);
+  const id = `${match?.host_id ?? ""}`.trim();
+  return id || undefined;
+}
+
+async function findWorkspaceByTitleViaCli({
+  cli,
+  title,
+  host_id,
+}: {
+  cli: CliContext;
+  title: string;
+  host_id?: string;
+}): Promise<string | undefined> {
+  const args = ["workspace", "list", "--prefix", title, "--limit", "5000"];
+  if (host_id) {
+    args.push("--host", host_id);
+  }
+  const rows = await runCli<CliWorkspaceRow[]>(cli, args);
+  const exact = rows.filter((row) => `${row?.title ?? ""}`.trim() === title);
+  if (!exact.length) return undefined;
+  const sorted = [...exact].sort((a, b) =>
+    String(b.last_edited ?? "").localeCompare(String(a.last_edited ?? "")),
+  );
+  const id = `${sorted[0]?.workspace_id ?? ""}`.trim();
+  return id || undefined;
+}
+
+async function listWorkspaceIdsByTitleViaCli({
+  cli,
+  title,
+  host_id,
+}: {
+  cli: CliContext;
+  title: string;
+  host_id?: string;
+}): Promise<string[]> {
+  const args = ["workspace", "list", "--prefix", title, "--limit", "5000"];
+  if (host_id) {
+    args.push("--host", host_id);
+  }
+  const rows = await runCli<CliWorkspaceRow[]>(cli, args);
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (`${row?.title ?? ""}`.trim() !== title) continue;
+    const id = `${row?.workspace_id ?? ""}`.trim();
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
+async function listHostIdsByNameViaCli(
+  cli: CliContext,
+  name: string,
+): Promise<string[]> {
+  const hosts = await runCli<CliHostRow[]>(cli, [
+    "host",
+    "list",
+    "--limit",
+    "5000",
+  ]);
+  const ids = new Set<string>();
+  for (const row of hosts) {
+    if (`${row?.name ?? ""}`.trim() !== name) continue;
+    const id = `${row?.host_id ?? ""}`.trim();
+    if (id) ids.add(id);
+  }
+  return [...ids];
 }
 
 type HostStatusSnapshot = {
@@ -863,6 +980,56 @@ async function waitForProjectFileValueViaCli({
   throw new Error(`timeout waiting for workspace file '${path}'`);
 }
 
+async function runWorkspaceExecSmokeViaCli({
+  cli,
+  project_id,
+  wait,
+}: {
+  cli: CliContext;
+  project_id: string;
+  wait: WaitOptions;
+}): Promise<void> {
+  const marker = `cocalc_smoke_exec_${Date.now()}`;
+  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
+    try {
+      const out = await runCli<{
+        stdout?: string;
+        stderr?: string;
+        exit_code?: number;
+      }>(
+        cli,
+        [
+          "workspace",
+          "exec",
+          "--workspace",
+          project_id,
+          "--timeout",
+          "45",
+          "--bash",
+          `echo ${marker}`,
+        ],
+        { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
+      );
+      const stdout = `${out?.stdout ?? ""}`;
+      const exitCode = Number(out?.exit_code ?? 0);
+      if (exitCode === 0 && stdout.includes(marker)) {
+        return;
+      }
+      throw new Error(
+        `workspace exec unexpected result (exit_code=${exitCode}, stdout='${stdout.trim()}')`,
+      );
+    } catch (err) {
+      logger.debug("cloud smoke workspace exec retry", {
+        project_id,
+        attempt,
+        err: getErrorMessage(err),
+      });
+      await sleep(wait.intervalMs);
+    }
+  }
+  throw new Error("timeout waiting for workspace exec marker");
+}
+
 function buildHostCreateCliArgs({
   provider,
   create,
@@ -1042,6 +1209,14 @@ async function waitForCondition(
   throw lastErr ?? new Error("condition wait failed");
 }
 
+function narrowProxyWait(wait: WaitOptions): WaitOptions {
+  return {
+    // Proxy smoke should fail fast enough for CI/smoke loops.
+    intervalMs: Math.max(1000, Math.min(wait.intervalMs, 2000)),
+    attempts: Math.max(4, Math.min(wait.attempts, 6)),
+  };
+}
+
 async function runTerminalSmoke({
   project_id,
   clientFactory,
@@ -1058,9 +1233,10 @@ async function runTerminalSmoke({
     client: clientFactory(),
   });
   try {
+    await waitForProjectRouting(project_id, wait);
     await term.spawn("bash", ["-lc", `echo ${marker}`], {
       id: termId,
-      timeout: 15000,
+      timeout: 30000,
       rows: 24,
       cols: 80,
     });
@@ -1093,31 +1269,31 @@ async function runProxySmoke({
   wait: WaitOptions;
   proxy_port: number;
 }) {
+  const proxyWait = narrowProxyWait(wait);
   const hints = await loadHostConnectionHints(host_id);
   if (!hints.host_url) {
     throw new Error("host has no public_url/internal_url/public_ip for proxy check");
   }
 
-  const term = terminalClient({
-    project_id,
-    client: conatWithProjectRouting(),
-  });
-  const termId = `.smoke/smoke-proxy-${Date.now()}.term`;
+  let serverPid: number | undefined;
   const appUrl = `${hints.host_url}/${project_id}/proxy/${proxy_port}/`;
   try {
-    await term.spawn(
-      "bash",
-      [
-        "-lc",
-        `python3 -m http.server ${proxy_port} --bind 0.0.0.0 || python -m SimpleHTTPServer ${proxy_port}`,
-      ],
-      {
-        id: termId,
-        rows: 24,
-        cols: 80,
-        timeout: 15000,
+    await waitForProjectRouting(project_id, wait);
+    const started = await execProject({
+      account_id,
+      project_id,
+      execOpts: {
+        command: `python3 -m http.server ${proxy_port} --bind 0.0.0.0 || python -m SimpleHTTPServer ${proxy_port}`,
+        bash: true,
+        timeout: 600,
+        err_on_exit: false,
+        async_call: true,
       },
-    );
+    });
+    const pid = Number((started as any)?.pid);
+    if (Number.isFinite(pid) && pid > 0) {
+      serverPid = Math.floor(pid);
+    }
 
     await waitForCondition(async () => {
       const unauth = await fetchWithTimeout(appUrl, {
@@ -1127,7 +1303,7 @@ async function runProxySmoke({
       if (unauth.status < 400 || unauth.status >= 500) {
         throw new Error(`unexpected unauth status ${unauth.status}`);
       }
-    }, wait);
+    }, proxyWait);
 
     const issued = await issueProjectHostAuthToken({
       account_id,
@@ -1174,20 +1350,38 @@ async function runProxySmoke({
       ) {
         throw new Error("authorized proxy response did not look like app content");
       }
-    }, wait);
+    }, proxyWait);
   } finally {
     try {
-      await term.destroy();
-    } catch {
+      const killByPid = serverPid
+        ? `kill ${serverPid} >/dev/null 2>&1 || true; `
+        : "";
+      await execProject({
+        account_id,
+        project_id,
+        execOpts: {
+          command: `${killByPid}pkill -f 'http.server ${proxy_port}' >/dev/null 2>&1 || true`,
+          bash: true,
+          timeout: 30,
+          err_on_exit: false,
+        },
+      });
+    } catch (err) {
       // ignore cleanup errors
+      logger.debug("proxy smoke server cleanup warning", {
+        project_id,
+        proxy_port,
+        serverPid,
+        err: getErrorMessage(err),
+      });
     }
-    term.close();
   }
 }
 
 async function runSmokeSteps({
   account_id,
   provider,
+  run_tag,
   host_id,
   createSpec,
   hostStatus,
@@ -1206,6 +1400,7 @@ async function runSmokeSteps({
 }: {
   account_id: string;
   provider?: ProviderId;
+  run_tag?: string;
   host_id?: string;
   createSpec?: Parameters<typeof createHost>[0];
   hostStatus?: string;
@@ -1239,11 +1434,15 @@ async function runSmokeSteps({
       logger.info("smoke-runner", event);
     });
 
-  let project_id: string | undefined;
   const routedClient = conatWithProjectRouting();
   const clientFactory = () => routedClient;
+  let project_id: string | undefined;
   const sentinelPath = ".smoke/persist.txt";
   const sentinelValue = `smoke:${Date.now()}`;
+  const workspaceTitle = run_tag
+    ? `Smoke test ${run_tag}`
+    : `Smoke test ${host_id ?? "host"}`;
+  const hostName = `${createSpec?.name ?? ""}`.trim() || undefined;
   let hostStartRequestedAt: Date | undefined;
   let createdHost = false;
   let debugHints: HostConnectionHints | undefined;
@@ -1352,7 +1551,7 @@ async function runSmokeSteps({
       if (!host_id) throw new Error("missing host_id");
       project_id = await createProject({
         account_id,
-        title: `Smoke test ${host_id}`,
+        title: workspaceTitle,
         host_id,
         start: true,
       });
@@ -1423,11 +1622,27 @@ async function runSmokeSteps({
     if ((verify_terminal ?? true) && provider !== "lambda") {
       await runStep("terminal_smoke", async () => {
         if (!project_id) throw new Error("missing project_id");
-        await runTerminalSmoke({
-          project_id,
-          clientFactory,
-          wait: waitProjectReady,
-        });
+        let lastErr: unknown;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            await runTerminalSmoke({
+              project_id,
+              clientFactory,
+              wait: waitProjectReady,
+            });
+            lastErr = undefined;
+            break;
+          } catch (err) {
+            lastErr = err;
+            logger.warn("smoke-runner terminal retry", {
+              project_id,
+              attempt,
+              err: `${err}`,
+            });
+            await sleep(waitProjectReady.intervalMs);
+          }
+        }
+        if (lastErr) throw lastErr;
       });
     }
 
@@ -1435,13 +1650,30 @@ async function runSmokeSteps({
       await runStep("proxy_smoke", async () => {
         if (!project_id) throw new Error("missing project_id");
         if (!host_id) throw new Error("missing host_id");
-        await runProxySmoke({
-          account_id,
-          host_id,
-          project_id,
-          wait: waitProjectReady,
-          proxy_port: proxy_port ?? 33117,
-        });
+        let lastErr: unknown;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            await runProxySmoke({
+              account_id,
+              host_id,
+              project_id,
+              wait: waitProjectReady,
+              proxy_port: proxy_port ?? 33117,
+            });
+            lastErr = undefined;
+            break;
+          } catch (err) {
+            lastErr = err;
+            logger.warn("smoke-runner proxy retry", {
+              project_id,
+              host_id,
+              attempt,
+              err: `${err}`,
+            });
+            await sleep(waitProjectReady.intervalMs);
+          }
+        }
+        if (lastErr) throw lastErr;
       });
     }
 
@@ -1545,6 +1777,9 @@ async function runSmokeSteps({
       project_id,
       debug: debugHints
         ? {
+            run_tag: run_tag ?? undefined,
+            host_name: hostName,
+            workspace_title: workspaceTitle,
             ssh_target: debugHints.ssh_target,
             ssh_tail_log: debugHints.ssh_tail_log,
             scp_log: debugHints.scp_log,
@@ -1553,6 +1788,9 @@ async function runSmokeSteps({
             host_url: debugHints.host_url,
           }
         : {
+            run_tag: run_tag ?? undefined,
+            host_name: hostName,
+            workspace_title: workspaceTitle,
             host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
@@ -1570,6 +1808,9 @@ async function runSmokeSteps({
       project_id,
       debug: debugHints
         ? {
+            run_tag: run_tag ?? undefined,
+            host_name: hostName,
+            workspace_title: workspaceTitle,
             ssh_target: debugHints.ssh_target,
             ssh_tail_log: debugHints.ssh_tail_log,
             scp_log: debugHints.scp_log,
@@ -1578,6 +1819,9 @@ async function runSmokeSteps({
             host_url: debugHints.host_url,
           }
         : {
+            run_tag: run_tag ?? undefined,
+            host_name: hostName,
+            workspace_title: workspaceTitle,
             host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
@@ -1589,6 +1833,7 @@ async function runSmokeSteps({
 async function runSmokeStepsViaCli({
   account_id,
   provider,
+  run_tag,
   host_id,
   createSpec,
   hostStatus,
@@ -1607,6 +1852,7 @@ async function runSmokeStepsViaCli({
 }: {
   account_id: string;
   provider?: ProviderId;
+  run_tag?: string;
   host_id?: string;
   createSpec?: Parameters<typeof createHost>[0];
   hostStatus?: string;
@@ -1637,10 +1883,12 @@ async function runSmokeStepsViaCli({
       logger.info("smoke-runner", event);
     });
 
-  const routedClient = conatWithProjectRouting();
-  const clientFactory = () => routedClient;
   const sentinelPath = ".smoke/persist.txt";
   const sentinelValue = `smoke:${Date.now()}`;
+  const workspaceTitle = run_tag
+    ? `Smoke test ${run_tag}`
+    : `Smoke test ${host_id ?? "host"}`;
+  const hostName = `${createSpec?.name ?? ""}`.trim() || undefined;
   let createdHost = false;
   let project_id: string | undefined;
   let debugHints: HostConnectionHints | undefined;
@@ -1712,18 +1960,39 @@ async function runSmokeStepsViaCli({
         if (!normalizedProvider) {
           throw new Error("unable to determine provider for smoke host create");
         }
-        const host = await runCli<{ host_id?: string }>(
-          cli,
-          buildHostCreateCliArgs({
+        try {
+          const host = await runCli<{ host_id?: string }>(
+            cli,
+            buildHostCreateCliArgs({
+              provider: normalizedProvider,
+              create: createSpec,
+            }),
+          );
+          host_id = `${host.host_id ?? ""}`.trim();
+          if (!host_id) {
+            throw new Error("host create did not return host_id");
+          }
+          createdHost = true;
+          return;
+        } catch (err) {
+          const msg = getErrorMessage(err);
+          logger.warn("cloud smoke host create failed; probing by name", {
             provider: normalizedProvider,
-            create: createSpec,
-          }),
-        );
-        host_id = `${host.host_id ?? ""}`.trim();
-        if (!host_id) {
-          throw new Error("host create did not return host_id");
+            host_name: createSpec.name,
+            err: msg,
+          });
+          const recoveredHostId = await findHostByNameViaCli(cli, createSpec.name);
+          if (!recoveredHostId) {
+            throw err;
+          }
+          host_id = recoveredHostId;
+          createdHost = true;
+          emit({
+            step: "create_host:recovered",
+            status: "ok",
+            message: `recovered host_id=${recoveredHostId} by name=${createSpec.name}`,
+          });
         }
-        createdHost = true;
       });
     }
 
@@ -1768,13 +2037,11 @@ async function runSmokeStepsViaCli({
         attempt += 1
       ) {
         try {
-          const workspace = await runCli<{ workspace_id?: string }>(cli, [
-            "workspace",
-            "create",
-            `Smoke test ${host_id}`,
-            "--host",
-            host_id,
-          ]);
+          const workspace = await runCli<{ workspace_id?: string }>(
+            cli,
+            ["workspace", "create", workspaceTitle, "--host", host_id],
+            { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
+          );
           project_id = `${workspace.workspace_id ?? ""}`.trim();
           if (!project_id) {
             throw new Error("workspace create did not return workspace_id");
@@ -1789,6 +2056,29 @@ async function runSmokeStepsViaCli({
             attempt,
             err: msg,
           });
+          try {
+            const recoveredProjectId = await findWorkspaceByTitleViaCli({
+              cli,
+              title: workspaceTitle,
+              host_id,
+            });
+            if (recoveredProjectId) {
+              project_id = recoveredProjectId;
+              lastErr = undefined;
+              emit({
+                step: "create_project:recovered",
+                status: "ok",
+                message: `recovered workspace_id=${recoveredProjectId} by title='${workspaceTitle}'`,
+              });
+              break;
+            }
+          } catch (recoverErr) {
+            logger.debug("cloud smoke workspace recovery probe failed", {
+              host_id,
+              attempt,
+              err: getErrorMessage(recoverErr),
+            });
+          }
           if (
             msg.includes("failed to initialize workspace on host") ||
             msg.includes("calling remote function 'createProject': timeout") ||
@@ -1850,21 +2140,41 @@ async function runSmokeStepsViaCli({
 
     await runStep("write_sentinel", async () => {
       if (!project_id) throw new Error("missing project_id");
-      const tempDir = await mkdtemp(join(tmpdir(), "cocalc-cloud-smoke-"));
-      const srcPath = join(tempDir, "sentinel.txt");
-      try {
-        await writeFile(srcPath, sentinelValue, "utf8");
-        await runCli(cli, [
-          "workspace",
-          "file",
-          "put",
-          srcPath,
-          sentinelPath,
-          "--workspace",
-          project_id,
-        ]);
-      } finally {
-        await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      let lastErr: unknown;
+      for (
+        let attempt = 1;
+        attempt <= Math.max(3, Math.min(10, waitProjectReady.attempts));
+        attempt += 1
+      ) {
+        try {
+          await runCli(
+            cli,
+            [
+              "workspace",
+              "exec",
+              "--workspace",
+              project_id,
+              "--timeout",
+              "45",
+              "--bash",
+              `mkdir -p .smoke && printf %s ${JSON.stringify(sentinelValue)} > ${sentinelPath}`,
+            ],
+            { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
+          );
+          lastErr = undefined;
+          break;
+        } catch (err) {
+          lastErr = err;
+          logger.debug("cloud smoke write_sentinel retry", {
+            project_id,
+            attempt,
+            err: getErrorMessage(err),
+          });
+          await sleep(waitProjectReady.intervalMs);
+        }
+      }
+      if (lastErr) {
+        throw lastErr;
       }
     });
 
@@ -1885,13 +2195,11 @@ async function runSmokeStepsViaCli({
     if ((verify_backup ?? true) && provider !== "lambda") {
       await runStep("create_backup", async () => {
         if (!project_id) throw new Error("missing project_id");
-        await runCli<{ op_id?: string }>(cli, [
-          "workspace",
-          "backup",
-          "create",
-          "--workspace",
-          project_id,
-        ]);
+        await runCli<{ op_id?: string }>(
+          cli,
+          ["workspace", "backup", "create", "--workspace", project_id],
+          { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
+        );
       });
 
       await runStep("wait_backup_indexed", async () => {
@@ -1943,9 +2251,9 @@ async function runSmokeStepsViaCli({
     if ((verify_terminal ?? true) && provider !== "lambda") {
       await runStep("terminal_smoke", async () => {
         if (!project_id) throw new Error("missing project_id");
-        await runTerminalSmoke({
+        await runWorkspaceExecSmokeViaCli({
+          cli,
           project_id,
-          clientFactory,
           wait: waitProjectReady,
         });
       });
@@ -1955,13 +2263,30 @@ async function runSmokeStepsViaCli({
       await runStep("proxy_smoke", async () => {
         if (!project_id) throw new Error("missing project_id");
         if (!host_id) throw new Error("missing host_id");
-        await runProxySmoke({
-          account_id,
-          host_id,
-          project_id,
-          wait: waitProjectReady,
-          proxy_port: proxy_port ?? 33117,
-        });
+        let lastErr: unknown;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            await runProxySmoke({
+              account_id,
+              host_id,
+              project_id,
+              wait: waitProjectReady,
+              proxy_port: proxy_port ?? 33117,
+            });
+            lastErr = undefined;
+            break;
+          } catch (err) {
+            lastErr = err;
+            logger.warn("cloud smoke proxy retry", {
+              project_id,
+              host_id,
+              attempt,
+              err: `${err}`,
+            });
+            await sleep(waitProjectReady.intervalMs);
+          }
+        }
+        if (lastErr) throw lastErr;
       });
     }
 
@@ -2004,13 +2329,11 @@ async function runSmokeStepsViaCli({
           attempt += 1
         ) {
           try {
-            await runCli(cli, [
-              "workspace",
-              "start",
-              "--workspace",
-              project_id,
-              "--wait",
-            ]);
+            await runCli(
+              cli,
+              ["workspace", "start", "--workspace", project_id, "--wait"],
+              { timeoutSeconds: 90, commandTimeoutMs: 180_000 },
+            );
             lastErr = undefined;
             break;
           } catch (err) {
@@ -2054,12 +2377,25 @@ async function runSmokeStepsViaCli({
 
     if (cleanup_on_success) {
       await runStep("cleanup", async () => {
+        const workspaceIds = new Set<string>();
         if (project_id) {
+          workspaceIds.add(project_id);
+        }
+        if (workspaceTitle) {
+          for (const id of await listWorkspaceIdsByTitleViaCli({
+            cli,
+            title: workspaceTitle,
+            host_id,
+          })) {
+            workspaceIds.add(id);
+          }
+        }
+        for (const workspaceId of workspaceIds) {
           await runCli(cli, [
             "workspace",
             "delete",
             "--workspace",
-            project_id,
+            workspaceId,
             "--hard",
             "--purge-backups-now",
             "--yes",
@@ -2067,8 +2403,21 @@ async function runSmokeStepsViaCli({
           ]);
         }
         if (cleanup_host ?? createdHost) {
-          if (!host_id) throw new Error("missing host_id for cleanup");
-          await runCli(cli, ["host", "delete", host_id, "--skip-backups", "--wait"]);
+          const hostIds = new Set<string>();
+          if (host_id) {
+            hostIds.add(host_id);
+          }
+          if (hostName) {
+            for (const id of await listHostIdsByNameViaCli(cli, hostName)) {
+              hostIds.add(id);
+            }
+          }
+          if (!hostIds.size) {
+            throw new Error("missing host_id for cleanup");
+          }
+          for (const id of hostIds) {
+            await runCli(cli, ["host", "delete", id, "--skip-backups", "--wait"]);
+          }
         }
       });
     }
@@ -2079,6 +2428,9 @@ async function runSmokeStepsViaCli({
       project_id,
       debug: debugHints
         ? {
+            run_tag: run_tag ?? undefined,
+            host_name: hostName,
+            workspace_title: workspaceTitle,
             ssh_target: debugHints.ssh_target,
             ssh_tail_log: debugHints.ssh_tail_log,
             scp_log: debugHints.scp_log,
@@ -2087,6 +2439,9 @@ async function runSmokeStepsViaCli({
             host_url: debugHints.host_url,
           }
         : {
+            run_tag: run_tag ?? undefined,
+            host_name: hostName,
+            workspace_title: workspaceTitle,
             host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
@@ -2104,6 +2459,9 @@ async function runSmokeStepsViaCli({
       project_id,
       debug: debugHints
         ? {
+            run_tag: run_tag ?? undefined,
+            host_name: hostName,
+            workspace_title: workspaceTitle,
             ssh_target: debugHints.ssh_target,
             ssh_tail_log: debugHints.ssh_tail_log,
             scp_log: debugHints.scp_log,
@@ -2112,6 +2470,9 @@ async function runSmokeStepsViaCli({
             host_url: debugHints.host_url,
           }
         : {
+            run_tag: run_tag ?? undefined,
+            host_name: hostName,
+            workspace_title: workspaceTitle,
             host_log_path: "/mnt/cocalc/data/log",
             bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
           },
@@ -2126,6 +2487,7 @@ export async function runProjectHostPersistenceSmokeTest(
   return await runSmokeSteps({
     account_id: opts.account_id,
     provider: opts.provider,
+    run_tag: opts.run_tag,
     createSpec: opts.create,
     update: opts.update,
     restart_after_stop: opts.restart_after_stop,
@@ -2144,6 +2506,7 @@ export async function runProjectHostPersistenceSmokeTest(
 
 export async function runProjectHostPersistenceSmokeTestForHostId({
   host_id,
+  run_tag,
   update,
   wait,
   cleanup_on_success,
@@ -2156,6 +2519,7 @@ export async function runProjectHostPersistenceSmokeTestForHostId({
   log,
 }: {
   host_id: string;
+  run_tag?: string;
   update?: ProjectHostSmokeOptions["update"];
   wait?: ProjectHostSmokeOptions["wait"];
   cleanup_on_success?: ProjectHostSmokeOptions["cleanup_on_success"];
@@ -2197,6 +2561,7 @@ export async function runProjectHostPersistenceSmokeTestForHostId({
   return await runSmokeSteps({
     account_id,
     provider,
+    run_tag,
     host_id,
     hostStatus: existingStatus,
     update,
@@ -2470,6 +2835,7 @@ export async function listProjectHostSmokePresets({
 export async function runProjectHostPersistenceSmokePreset({
   account_id,
   provider,
+  run_tag,
   preset,
   cleanup_on_success = true,
   verify_backup = true,
@@ -2479,9 +2845,12 @@ export async function runProjectHostPersistenceSmokePreset({
   execution_mode = "cli",
   proxy_port,
   print_debug_hints = true,
+  wait,
+  log,
 }: {
   account_id?: string;
   provider: ProviderId | string;
+  run_tag?: string;
   preset?: string;
   cleanup_on_success?: boolean;
   verify_backup?: boolean;
@@ -2491,6 +2860,8 @@ export async function runProjectHostPersistenceSmokePreset({
   execution_mode?: "cli" | "direct";
   proxy_port?: number;
   print_debug_hints?: boolean;
+  wait?: ProjectHostSmokeOptions["wait"];
+  log?: ProjectHostSmokeOptions["log"];
 }): Promise<ProjectHostSmokeResult> {
   const resolvedAccountId = await resolveSmokeAccountId(account_id);
   const normalizedProvider = normalizeProviderId(provider);
@@ -2509,13 +2880,15 @@ export async function runProjectHostPersistenceSmokePreset({
   const smokeInput = {
     account_id: resolvedAccountId,
     provider: normalizedProvider ?? undefined,
+    run_tag: sanitizeRunTag(run_tag),
     createSpec: {
       ...selected.create,
+      name: withRunTagSuffix(selected.create.name, run_tag),
       account_id: resolvedAccountId,
     },
     update: selected.update,
     restart_after_stop: selected.restart_after_stop,
-    wait: selected.wait,
+    wait: wait ?? selected.wait,
     cleanup_on_success,
     cleanup_host: true,
     verify_backup,
@@ -2524,6 +2897,7 @@ export async function runProjectHostPersistenceSmokePreset({
     verify_provider_status,
     proxy_port,
     print_debug_hints,
+    log,
   };
 
   if (execution_mode === "direct") {
@@ -2534,6 +2908,7 @@ export async function runProjectHostPersistenceSmokePreset({
 
 export async function runProjectHostGcpFlowSmoke({
   account_id,
+  run_tag,
   cleanup_on_success = false,
   verify_backup = true,
   verify_terminal = true,
@@ -2542,8 +2917,11 @@ export async function runProjectHostGcpFlowSmoke({
   execution_mode = "cli",
   proxy_port = 33117,
   print_debug_hints = true,
+  wait,
+  log,
 }: {
   account_id?: string;
+  run_tag?: string;
   cleanup_on_success?: boolean;
   verify_backup?: boolean;
   verify_terminal?: boolean;
@@ -2552,9 +2930,12 @@ export async function runProjectHostGcpFlowSmoke({
   execution_mode?: "cli" | "direct";
   proxy_port?: number;
   print_debug_hints?: boolean;
+  wait?: ProjectHostSmokeOptions["wait"];
+  log?: ProjectHostSmokeOptions["log"];
 }): Promise<ProjectHostSmokeResult> {
   return await runProjectHostPersistenceSmokePreset({
     account_id,
+    run_tag,
     provider: "gcp",
     preset: "gcp-cpu",
     cleanup_on_success,
@@ -2565,5 +2946,7 @@ export async function runProjectHostGcpFlowSmoke({
     execution_mode,
     proxy_port,
     print_debug_hints,
+    wait,
+    log,
   });
 }

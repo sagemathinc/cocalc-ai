@@ -46,6 +46,8 @@ SMOKE_CLOUD_BACKUP_PREFLIGHT="${SMOKE_CLOUD_BACKUP_PREFLIGHT:-1}"
 SMOKE_CLOUD_ACCOUNT_ID="${SMOKE_CLOUD_ACCOUNT_ID:-}"
 SMOKE_CLOUD_PRESET="${SMOKE_CLOUD_PRESET:-}"
 SMOKE_CLOUD_PROXY_PORT="${SMOKE_CLOUD_PROXY_PORT:-}"
+SMOKE_CLOUD_RUN_TAG_BASE="${SMOKE_CLOUD_RUN_TAG_BASE:-$(date +%Y%m%d%H%M%S)}"
+SMOKE_CLOUD_RESULT_DIR="${SMOKE_CLOUD_RESULT_DIR:-$SRC_DIR/.local/smoke-cloud}"
 
 if [ "$SMOKE_BUILD_BUNDLES" = "1" ]; then
   echo "building local project-host and project bundles..."
@@ -149,6 +151,8 @@ if [ "$providers_trimmed" = "all" ]; then
   providers_trimmed="gcp nebius hyperstack lambda"
 fi
 
+mkdir -p "$SMOKE_CLOUD_RESULT_DIR"
+
 validate_provider() {
   case "$1" in
     gcp|nebius|hyperstack|lambda) ;;
@@ -161,8 +165,13 @@ validate_provider() {
 
 run_provider_smoke() {
   local provider="$1"
-  echo "cloud smoke: running provider=${provider}"
+  local run_tag="${provider}-${SMOKE_CLOUD_RUN_TAG_BASE}-$RANDOM"
+  local result_file="$SMOKE_CLOUD_RESULT_DIR/${provider}-${run_tag}.json"
+  LAST_SMOKE_RESULT_FILE="$result_file"
+  echo "cloud smoke: running provider=${provider} run_tag=${run_tag}"
   SMOKE_PROVIDER="$provider" \
+  SMOKE_CLOUD_RUN_TAG="$run_tag" \
+  SMOKE_CLOUD_RESULT_FILE="$result_file" \
   SMOKE_CLOUD_ACCOUNT_ID="$SMOKE_CLOUD_ACCOUNT_ID" \
   SMOKE_CLOUD_PRESET="$SMOKE_CLOUD_PRESET" \
   SMOKE_CLOUD_PROXY_PORT="$SMOKE_CLOUD_PROXY_PORT" \
@@ -209,10 +218,13 @@ const proxyPort = proxyPortRaw == null ? undefined : Number(proxyPortRaw);
 if (proxyPortRaw != null && !Number.isFinite(proxyPort)) {
   throw new Error(`invalid SMOKE_CLOUD_PROXY_PORT='${proxyPortRaw}'`);
 }
+const runTag = envOptional("SMOKE_CLOUD_RUN_TAG");
+const resultFile = envOptional("SMOKE_CLOUD_RESULT_FILE");
 
 const opts = {
   account_id: envOptional("SMOKE_CLOUD_ACCOUNT_ID"),
   provider,
+  run_tag: runTag,
   preset: presetByProvider,
   cleanup_on_success: envBool("SMOKE_CLOUD_CLEANUP_SUCCESS", true),
   verify_backup: envBool("SMOKE_CLOUD_VERIFY_BACKUP", true),
@@ -228,10 +240,7 @@ const opts = {
   },
 };
 
-async function runCliCleanup(label, args) {
-  const { execFile } = require("node:child_process");
-  const { promisify } = require("node:util");
-  const run = promisify(execFile);
+function buildCliArgs(args) {
   const nodePath = process.execPath;
   const cliPath = require("node:path").join(process.cwd(), "../cli/dist/bin/cocalc.js");
   const timeout = envOptional("SMOKE_CLOUD_CLI_CLEANUP_TIMEOUT") ?? "1200s";
@@ -257,6 +266,36 @@ async function runCliCleanup(label, args) {
     full.push("--hub-password", hubPassword.trim());
   }
   full.push(...args);
+  return { nodePath, full };
+}
+
+async function runCliJson(label, args) {
+  const { execFile } = require("node:child_process");
+  const { promisify } = require("node:util");
+  const run = promisify(execFile);
+  const { nodePath, full } = buildCliArgs(args);
+  const { stdout, stderr } = await run(nodePath, full, {
+    timeout: 20 * 60 * 1000,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  let parsed;
+  try {
+    parsed = JSON.parse((stdout || "").trim() || "{}");
+  } catch (err) {
+    throw new Error(`[${label}] invalid JSON output: ${err}`);
+  }
+  if (!parsed?.ok) {
+    const msg = parsed?.error?.message || `command failed`;
+    throw new Error(`[${label}] ${msg}${stderr ? ` stderr=${stderr}` : ""}`);
+  }
+  return parsed?.data;
+}
+
+async function runCliCleanup(label, args) {
+  const { execFile } = require("node:child_process");
+  const { promisify } = require("node:util");
+  const run = promisify(execFile);
+  const { nodePath, full } = buildCliArgs(args);
   try {
     const { stdout, stderr } = await run(nodePath, full, {
       timeout: 20 * 60 * 1000,
@@ -277,45 +316,144 @@ async function runCliCleanup(label, args) {
   }
 }
 
-(async () => {
-  console.log(`[smoke:${provider}] starting ${new Date().toISOString()}`);
-  const result = await runProjectHostPersistenceSmokePreset(opts);
-  console.log(`[smoke:${provider}] finished ok=${result.ok}`);
-  console.log(JSON.stringify(result, null, 2));
-  if (!result.ok && envBool("SMOKE_CLOUD_CLEANUP_FAILURE", true)) {
-    if (result.project_id) {
-      const hardDeleted = await runCliCleanup("workspace-delete-hard", [
+async function collectWorkspaceIdsForCleanup(result) {
+  const ids = new Set();
+  if (result?.project_id) {
+    ids.add(String(result.project_id));
+  }
+  const title = `${result?.debug?.workspace_title ?? ""}`.trim();
+  if (!title) return [...ids];
+  try {
+    const args = ["workspace", "list", "--prefix", title, "--limit", "5000"];
+    if (result?.host_id) {
+      args.push("--host", String(result.host_id));
+    }
+    const rows = await runCliJson("workspace-list-cleanup", args);
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (`${row?.title ?? ""}`.trim() !== title) continue;
+      const id = `${row?.workspace_id ?? ""}`.trim();
+      if (id) ids.add(id);
+    }
+  } catch (err) {
+    console.error(`[smoke:${provider}] cleanup workspace discovery failed: ${err}`);
+  }
+  return [...ids];
+}
+
+async function collectHostIdsForCleanup(result) {
+  const ids = new Set();
+  if (result?.host_id) {
+    ids.add(String(result.host_id));
+  }
+  const hostName = `${result?.debug?.host_name ?? ""}`.trim();
+  const runTagForMatch = `${result?.debug?.run_tag ?? ""}`.trim().toLowerCase();
+  try {
+    const rows = await runCliJson("host-list-cleanup", ["host", "list", "--limit", "5000"]);
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const name = `${row?.name ?? ""}`.trim();
+      if (!name) continue;
+      if (hostName) {
+        if (name !== hostName) continue;
+      } else if (runTagForMatch) {
+        if (!name.toLowerCase().includes(runTagForMatch)) continue;
+      } else {
+        continue;
+      }
+      const id = `${row?.host_id ?? ""}`.trim();
+      if (id) ids.add(id);
+    }
+  } catch (err) {
+    console.error(`[smoke:${provider}] cleanup host discovery failed: ${err}`);
+  }
+  return [...ids];
+}
+
+async function cleanupFromResult(result) {
+  const workspaceIds = await collectWorkspaceIdsForCleanup(result);
+  for (const workspaceId of workspaceIds) {
+    const hardDeleted = await runCliCleanup("workspace-delete-hard", [
+      "workspace",
+      "delete",
+      "--workspace",
+      workspaceId,
+      "--hard",
+      "--yes",
+      "--wait",
+    ]);
+    if (!hardDeleted) {
+      await runCliCleanup("workspace-delete-soft-fallback", [
         "workspace",
         "delete",
         "--workspace",
-        result.project_id,
-        "--hard",
-        "--yes",
-        "--wait",
-      ]);
-      if (!hardDeleted) {
-        await runCliCleanup("workspace-delete-soft-fallback", [
-          "workspace",
-          "delete",
-          "--workspace",
-          result.project_id,
-        ]);
-      }
-    }
-    if (result.host_id) {
-      await runCliCleanup("host-delete", [
-        "host",
-        "delete",
-        result.host_id,
-        "--skip-backups",
-        "--wait",
+        workspaceId,
       ]);
     }
+  }
+  const hostIds = await collectHostIdsForCleanup(result);
+  for (const hostId of hostIds) {
+    await runCliCleanup("host-delete", [
+      "host",
+      "delete",
+      hostId,
+      "--skip-backups",
+      "--wait",
+    ]);
+  }
+}
+
+(async () => {
+  const startedAt = new Date().toISOString();
+  console.log(`[smoke:${provider}] starting ${startedAt}`);
+  let result = await runProjectHostPersistenceSmokePreset(opts);
+  result = {
+    ...result,
+    debug: {
+      ...(result.debug || {}),
+      run_tag: runTag,
+    },
+  };
+  console.log(`[smoke:${provider}] finished ok=${result.ok}`);
+  console.log(JSON.stringify(result, null, 2));
+  if (resultFile) {
+    const { writeFile, mkdir } = require("node:fs/promises");
+    const { dirname } = require("node:path");
+    await mkdir(dirname(resultFile), { recursive: true });
+    await writeFile(
+      resultFile,
+      JSON.stringify(
+        {
+          provider,
+          run_tag: runTag,
+          started_at: startedAt,
+          finished_at: new Date().toISOString(),
+          result,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    console.log(`[smoke:${provider}] wrote result ${resultFile}`);
+  }
+  if (!result.ok && envBool("SMOKE_CLOUD_CLEANUP_FAILURE", true)) {
+    await cleanupFromResult(result);
   }
   process.exit(result.ok ? 0 : 1);
 })().catch((err) => {
   console.error(`[smoke:${provider}] fatal error`);
   console.error(err?.stack || String(err));
+  if (envBool("SMOKE_CLOUD_CLEANUP_FAILURE", true)) {
+    const fallback = {
+      debug: {
+        run_tag: runTag,
+        workspace_title: runTag ? `Smoke test ${runTag}` : undefined,
+      },
+    };
+    cleanupFromResult(fallback).catch((cleanupErr) => {
+      console.error(`[smoke:${provider}] fatal cleanup failed: ${cleanupErr}`);
+    }).finally(() => process.exit(1));
+    return;
+  }
   process.exit(1);
 });
 NODE
@@ -413,17 +551,34 @@ NODE
 run_backup_preflight
 
 overall_status=0
+summary_lines=()
 for provider in $providers_trimmed; do
   validate_provider "$provider"
   if ! run_provider_smoke "$provider"; then
+    summary_lines+=("FAIL ${provider} ${LAST_SMOKE_RESULT_FILE:-}")
     overall_status=1
     if [ "$SMOKE_CLOUD_CONTINUE_ON_FAILURE" != "1" ]; then
       echo "cloud smoke: provider '${provider}' failed (stopping)" >&2
+      if [ "${#summary_lines[@]}" -gt 0 ]; then
+        echo "cloud smoke summary:"
+        for line in "${summary_lines[@]}"; do
+          echo "  $line"
+        done
+      fi
       exit 1
     fi
     echo "cloud smoke: provider '${provider}' failed (continuing)" >&2
+  else
+    summary_lines+=("PASS ${provider} ${LAST_SMOKE_RESULT_FILE:-}")
   fi
 done
+
+if [ "${#summary_lines[@]}" -gt 0 ]; then
+  echo "cloud smoke summary:"
+  for line in "${summary_lines[@]}"; do
+    echo "  $line"
+  done
+fi
 
 if [ "$overall_status" -eq 0 ]; then
   echo "cloud smoke: all requested providers passed (${providers_trimmed})"
