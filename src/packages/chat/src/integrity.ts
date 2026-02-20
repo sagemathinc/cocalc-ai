@@ -1,5 +1,3 @@
-import type { ChatMessage } from "./index";
-
 export interface ChatIntegrityCounters {
   orphan_messages: number;
   duplicate_root_messages: number;
