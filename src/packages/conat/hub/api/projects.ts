@@ -8,6 +8,10 @@ import {
   type RestoreMode,
   type RestoreStagingHandle,
 } from "@cocalc/conat/files/file-server";
+import type {
+  ExecuteCodeOptions,
+  ExecuteCodeOutput,
+} from "@cocalc/util/types/execute-code";
 
 export type ProjectCopyState =
   | "queued"
@@ -43,6 +47,105 @@ export interface BackupFindResult {
   size: number;
 }
 
+export interface ProjectRuntimeLog {
+  project_id: string;
+  host_id: string | null;
+  container: string;
+  lines: number;
+  text: string;
+  found: boolean;
+  running: boolean;
+  available: boolean;
+  reason?: string;
+}
+
+export type WorkspaceSshTransport = "cloudflare-access-tcp" | "direct";
+
+export interface WorkspaceSshConnectionInfo {
+  workspace_id: string;
+  host_id: string;
+  transport: WorkspaceSshTransport;
+  ssh_username: string;
+  ssh_server: string | null;
+  cloudflare_hostname: string | null;
+}
+
+export type ProjectCollabInviteStatus =
+  | "pending"
+  | "accepted"
+  | "declined"
+  | "blocked"
+  | "expired"
+  | "canceled";
+
+export type ProjectCollabInviteAction =
+  | "accept"
+  | "decline"
+  | "block"
+  | "revoke";
+
+export type ProjectCollabInviteDirection = "inbound" | "outbound" | "all";
+
+export interface ProjectCollabInviteRow {
+  invite_id: string;
+  project_id: string;
+  project_title?: string | null;
+  project_description?: string | null;
+  inviter_account_id: string;
+  inviter_name?: string | null;
+  inviter_first_name?: string | null;
+  inviter_last_name?: string | null;
+  inviter_email_address?: string | null;
+  invitee_account_id: string;
+  invitee_name?: string | null;
+  invitee_first_name?: string | null;
+  invitee_last_name?: string | null;
+  invitee_email_address?: string | null;
+  status: ProjectCollabInviteStatus;
+  message?: string | null;
+  responder_action?: ProjectCollabInviteAction | null;
+  created: Date;
+  updated: Date;
+  responded?: Date | null;
+  expires?: Date | null;
+  shared_projects_count?: number;
+  shared_projects_sample?: string[] | null;
+  prior_invites_accepted?: number;
+  prior_invites_declined?: number;
+}
+
+export interface ProjectCollabInviteBlockRow {
+  blocker_account_id: string;
+  blocker_name?: string | null;
+  blocked_account_id: string;
+  blocked_name?: string | null;
+  blocked_first_name?: string | null;
+  blocked_last_name?: string | null;
+  blocked_email_address?: string | null;
+  created: Date;
+  updated: Date;
+}
+
+export interface ProjectCollaboratorRow {
+  account_id: string;
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  email_address?: string | null;
+  last_active?: Date | null;
+  group: "owner" | "collaborator";
+}
+
+export interface MyCollaboratorRow {
+  account_id: string;
+  name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  email_address?: string | null;
+  last_active?: Date | null;
+  shared_projects: number;
+}
+
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
@@ -50,11 +153,21 @@ export const projects = {
   cancelPendingCopy: authFirstRequireAccount,
   removeCollaborator: authFirstRequireAccount,
   addCollaborator: authFirstRequireAccount,
+  createCollabInvite: authFirstRequireAccount,
+  listCollabInvites: authFirstRequireAccount,
+  respondCollabInvite: authFirstRequireAccount,
+  listCollabInviteBlocks: authFirstRequireAccount,
+  unblockCollabInviteSender: authFirstRequireAccount,
+  listCollaborators: authFirstRequireAccount,
+  listMyCollaborators: authFirstRequireAccount,
   inviteCollaborator: authFirstRequireAccount,
   inviteCollaboratorWithoutAccount: authFirstRequireAccount,
   setQuotas: authFirstRequireAccount,
 
   getDiskQuota: authFirstRequireAccount,
+  exec: authFirstRequireAccount,
+  getRuntimeLog: authFirstRequireAccount,
+  resolveWorkspaceSshConnection: authFirstRequireAccount,
 
   createBackup: authFirstRequireAccount,
   deleteBackup: authFirstRequireAccount,
@@ -80,7 +193,13 @@ export const projects = {
 
   start: authFirstRequireAccount,
   stop: authFirstRequireAccount,
+  deleteProject: authFirstRequireAccount,
+  setProjectDeleted: authFirstRequireAccount,
   updateAuthorizedKeysOnHost: authFirstRequireAccount,
+  hardDeleteProject: authFirstRequireAccount,
+  setProjectHidden: authFirstRequireAccount,
+  setProjectSshKey: authFirstRequireAccount,
+  deleteProjectSshKey: authFirstRequireAccount,
 
   getSshKeys: authFirstRequireProject,
 
@@ -154,6 +273,55 @@ export interface Projects {
     opts: AddCollaborator;
   }) => Promise<{ project_id?: string | string[] }>;
 
+  createCollabInvite: (opts: {
+    account_id?: string;
+    project_id: string;
+    invitee_account_id: string;
+    message?: string;
+    direct?: boolean;
+  }) => Promise<{
+    created: boolean;
+    invite: ProjectCollabInviteRow;
+  }>;
+
+  listCollabInvites: (opts: {
+    account_id?: string;
+    project_id?: string;
+    direction?: ProjectCollabInviteDirection;
+    status?: ProjectCollabInviteStatus;
+    limit?: number;
+  }) => Promise<ProjectCollabInviteRow[]>;
+
+  respondCollabInvite: (opts: {
+    account_id?: string;
+    invite_id: string;
+    action: ProjectCollabInviteAction;
+  }) => Promise<ProjectCollabInviteRow>;
+
+  listCollabInviteBlocks: (opts: {
+    account_id?: string;
+    limit?: number;
+  }) => Promise<ProjectCollabInviteBlockRow[]>;
+
+  unblockCollabInviteSender: (opts: {
+    account_id?: string;
+    blocked_account_id: string;
+  }) => Promise<{
+    unblocked: boolean;
+    blocker_account_id: string;
+    blocked_account_id: string;
+  }>;
+
+  listCollaborators: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectCollaboratorRow[]>;
+
+  listMyCollaborators: (opts: {
+    account_id?: string;
+    limit?: number;
+  }) => Promise<MyCollaboratorRow[]>;
+
   inviteCollaborator: ({
     account_id,
     opts,
@@ -168,6 +336,7 @@ export interface Projects {
       replyto_name?: string;
       email?: string;
       subject?: string;
+      message?: string;
     };
   }) => Promise<void>;
 
@@ -185,6 +354,7 @@ export interface Projects {
       to: string;
       email: string; // body in HTML format
       subject?: string;
+      message?: string;
     };
   }) => Promise<void>;
 
@@ -207,6 +377,24 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<{ used: number; size: number }>;
+
+  exec: (opts: {
+    account_id?: string;
+    project_id: string;
+    execOpts: ExecuteCodeOptions;
+  }) => Promise<ExecuteCodeOutput>;
+
+  getRuntimeLog: (opts: {
+    account_id?: string;
+    project_id: string;
+    lines?: number;
+  }) => Promise<ProjectRuntimeLog>;
+
+  resolveWorkspaceSshConnection: (opts: {
+    account_id?: string;
+    project_id: string;
+    direct?: boolean;
+  }) => Promise<WorkspaceSshConnectionInfo>;
 
   /////////////
   // BACKUPS
@@ -379,9 +567,49 @@ export interface Projects {
     stream_name: string;
   }>;
   stop: (opts: { account_id?: string; project_id: string }) => Promise<void>;
+  deleteProject: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<void>;
+  setProjectDeleted: (opts: {
+    account_id?: string;
+    project_id: string;
+    deleted: boolean;
+  }) => Promise<void>;
   updateAuthorizedKeysOnHost: (opts: {
     project_id: string;
     account_id?: string;
+  }) => Promise<void>;
+  hardDeleteProject: (opts: {
+    account_id?: string;
+    project_id: string;
+    backup_retention_days?: number;
+    purge_backups_now?: boolean;
+  }) => Promise<{
+    op_id: string;
+    scope_type: "account";
+    scope_id: string;
+    service: string;
+    stream_name: string;
+  }>;
+  setProjectHidden: (opts: {
+    account_id?: string;
+    project_id: string;
+    hide: boolean;
+  }) => Promise<void>;
+  setProjectSshKey: (opts: {
+    account_id?: string;
+    project_id: string;
+    fingerprint: string;
+    title: string;
+    value: string;
+    creation_date?: number;
+    last_use_date?: number;
+  }) => Promise<void>;
+  deleteProjectSshKey: (opts: {
+    account_id?: string;
+    project_id: string;
+    fingerprint: string;
   }) => Promise<void>;
 
   // get a list if all public ssh authorized keys that apply to

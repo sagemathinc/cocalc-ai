@@ -36,6 +36,7 @@ polling implementation, but reduces load and make sense for our use case.
 
 import { EventEmitter } from "node:events";
 import { getLogger } from "./logger";
+import { trackBackendWatcher } from "./watcher-debug";
 import { debounce as lodashDebounce } from "lodash";
 import { stat } from "fs/promises";
 
@@ -52,6 +53,7 @@ export class Watcher extends EventEmitter {
   private interval: number;
   private minInterval: number;
   private maxInterval: number;
+  private stopTrackingWatcher?: () => void;
 
   constructor(
     path: string,
@@ -70,6 +72,16 @@ export class Watcher extends EventEmitter {
     this.minInterval = interval;
     this.maxInterval = maxInterval;
     this.interval = interval;
+    this.stopTrackingWatcher = trackBackendWatcher({
+      source: "backend:watcher-poll",
+      type: "polling-loop",
+      path,
+      info: {
+        minInterval: interval,
+        maxInterval,
+        debounce: debounce ?? 0,
+      },
+    });
     this.init();
   }
 
@@ -125,6 +137,8 @@ export class Watcher extends EventEmitter {
 
   close = () => {
     logger.debug("close", this.path);
+    this.stopTrackingWatcher?.();
+    this.stopTrackingWatcher = undefined;
     this.removeAllListeners();
     delete this.path;
   };

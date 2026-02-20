@@ -3,6 +3,7 @@ import { URL } from "node:url";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
 import {
@@ -67,6 +68,7 @@ import { akv, type AKV } from "@cocalc/conat/sync/akv";
 // so that everybody sees it.
 const COMMIT_INTERVAL = 2_000;
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
+const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 
 const logger = getLogger("lite:hub:acp");
 const ACP_INSTANCE_ID = randomUUID();
@@ -92,6 +94,29 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const disposeScheduled = snapshots.filter((x) => x.disposeScheduled).length;
   const syncdbErrors = snapshots.filter((x) => x.hasSyncdbError).length;
   const totalBufferedEvents = snapshots.reduce((sum, x) => sum + x.events, 0);
+  const timeTravelSnapshots = snapshots
+    .map((x) => x.timeTravel)
+    .filter((x): x is NonNullable<(typeof snapshots)[number]["timeTravel"]> =>
+      x != null,
+    );
+  const timeTravelActiveRecorders = timeTravelSnapshots.filter(
+    (x) => !x.disposed,
+  ).length;
+  const timeTravelDisposePending = timeTravelSnapshots.filter(
+    (x) => x.disposePending,
+  ).length;
+  const timeTravelPendingOps = timeTravelSnapshots.reduce(
+    (sum, x) => sum + x.pendingOps,
+    0,
+  );
+  const timeTravelSyncDocs = timeTravelSnapshots.reduce(
+    (sum, x) => sum + x.syncDocs,
+    0,
+  );
+  const timeTravelInflightLoads = timeTravelSnapshots.reduce(
+    (sum, x) => sum + x.inflightLoads,
+    0,
+  );
   const topWritersByEvents = [...snapshots]
     .sort((a, b) => b.events - a.events)
     .slice(0, top)
@@ -103,6 +128,7 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       finished: x.finished,
       disposeScheduled: x.disposeScheduled,
       threadIds: x.threadIds,
+      timeTravel: x.timeTravel,
     }));
   return {
     writersByChatKey: chatWritersByChatKey.size,
@@ -112,6 +138,11 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
     disposeScheduled,
     syncdbErrors,
     totalBufferedEvents,
+    timeTravelActiveRecorders,
+    timeTravelDisposePending,
+    timeTravelPendingOps,
+    timeTravelSyncDocs,
+    timeTravelInflightLoads,
     topWritersByEvents,
   };
 }
@@ -181,6 +212,8 @@ export class ChatStreamWriter {
   private logSubject: string;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
+  private readonly timeTravelOps = new Set<Promise<void>>();
+  private timeTravelDisposePromise?: Promise<void>;
   private leaseFinalized = false;
   private heartbeatLease = throttle(
     () => {
@@ -320,6 +353,16 @@ export class ChatStreamWriter {
       this.syncdbError = err;
       this.closed = true;
     });
+    const existing = chatWritersByChatKey.get(this.chatKey);
+    if (existing != null && existing !== this) {
+      logger.warn("duplicate chat writer detected; replacing existing writer", {
+        chatKey: this.chatKey,
+        existingClosed: existing.isClosed(),
+        existingThreadIds: existing.getKnownThreadIds(),
+        replacingSessionKey: sessionKey,
+      });
+      existing.dispose(true);
+    }
     chatWritersByChatKey.set(this.chatKey, this);
     logWriterCounts("create", { chatKey: this.chatKey });
     this.sessionKey = sessionKey;
@@ -462,6 +505,9 @@ export class ChatStreamWriter {
       // Ensure the final "generating: false" state hits SyncDB immediately,
       // even if the throttle window is large.
       this.commit.flush();
+      await this.ensureTerminalChatCommitApplied(
+        message.type === "error" ? "error" : "summary",
+      );
     }
   }
 
@@ -561,7 +607,9 @@ export class ChatStreamWriter {
       clearAcpPayloads(this.metadata);
       this.finished = true;
       this.finalizeLease("completed");
-      void this.timeTravel?.finalizeTurn(this.metadata.message_date);
+      this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
+        this.timeTravel?.finalizeTurn(this.metadata.message_date),
+      );
       void this.persistLog();
       return;
     }
@@ -572,25 +620,14 @@ export class ChatStreamWriter {
       this.finished = true;
       this.finishedBy = "error";
       this.finalizeLease("error", payload.error);
-      void this.timeTravel?.finalizeTurn(this.metadata.message_date);
+      this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
+        this.timeTravel?.finalizeTurn(this.metadata.message_date),
+      );
       void this.persistLog();
     }
   }
 
-  private commit = throttle((generating: boolean): void => {
-    this.heartbeatLease();
-    logger.debug("commit", {
-      generating,
-      closed: this.closed,
-      content: this.content,
-      events: this.events.length,
-      metadata: this.metadata,
-    });
-    if (this.closed || this.syncdbError) return;
-    if (!this.syncdb) {
-      logger.warn("chat stream writer commit skipped: syncdb not ready");
-      return;
-    }
+  private buildChatUpdate(generating: boolean): Record<string, unknown> {
     const message = buildChatMessage({
       sender_id: this.metadata.sender_id,
       date: this.metadata.message_date,
@@ -608,15 +645,105 @@ export class ChatStreamWriter {
       update.acp_interrupted_reason = "interrupt";
       update.acp_interrupted_text = this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
     }
-    this.syncdb!.set(update);
-    this.syncdb!.commit();
+    return update;
+  }
+
+  private commitNow(
+    generating: boolean,
+    reason: "throttled" | "terminal-verify" | "dispose" = "throttled",
+  ): boolean {
+    if (this.closed || this.syncdbError) return false;
+    if (!this.syncdb) {
+      logger.warn("chat stream writer commit skipped: syncdb not ready", {
+        chatKey: this.chatKey,
+        reason,
+      });
+      return false;
+    }
+    try {
+      this.syncdb.set(this.buildChatUpdate(generating));
+      this.syncdb.commit();
+    } catch (err) {
+      logger.warn("chat syncdb commit failed", {
+        chatKey: this.chatKey,
+        reason,
+        generating,
+        err,
+      });
+      return false;
+    }
     (async () => {
       try {
         await this.syncdb!.save();
       } catch (err) {
-        logger.warn("chat syncdb save failed", err);
+        logger.warn("chat syncdb save failed", {
+          chatKey: this.chatKey,
+          reason,
+          generating,
+          err,
+        });
       }
     })();
+    return true;
+  }
+
+  private async ensureTerminalChatCommitApplied(
+    source: "summary" | "error",
+  ): Promise<void> {
+    if (this.closed || this.syncdbError || !this.syncdb) return;
+    let lastGenerating: boolean | undefined;
+    for (let i = 0; i < TERMINAL_CHAT_VERIFY_DELAYS_MS.length; i++) {
+      const delayMs = TERMINAL_CHAT_VERIFY_DELAYS_MS[i];
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
+      if (this.closed || this.syncdbError || !this.syncdb) return;
+      try {
+        const current = this.syncdb.get_one({
+          event: "chat",
+          date: this.metadata.message_date,
+        });
+        lastGenerating = this.recordField<boolean>(current, "generating");
+      } catch (err) {
+        logger.warn("chat syncdb readback failed during terminal verification", {
+          chatKey: this.chatKey,
+          source,
+          attempt: i + 1,
+          err,
+        });
+      }
+      if (lastGenerating === false) {
+        if (i > 0) {
+          logger.warn("chat terminal state recovered after verification retry", {
+            chatKey: this.chatKey,
+            source,
+            attempts: i + 1,
+          });
+        }
+        return;
+      }
+      this.commitNow(false, "terminal-verify");
+    }
+    logger.warn("chat terminal verification failed; chat remains generating", {
+      chatKey: this.chatKey,
+      source,
+      events: this.events.length,
+      finishedBy: this.finishedBy,
+      lastGenerating,
+      retries: TERMINAL_CHAT_VERIFY_DELAYS_MS.length,
+    });
+  }
+
+  private commit = throttle((generating: boolean): void => {
+    this.heartbeatLease();
+    logger.debug("commit", {
+      generating,
+      closed: this.closed,
+      content: this.content,
+      events: this.events.length,
+      metadata: this.metadata,
+    });
+    this.commitNow(generating, "throttled");
   }, COMMIT_INTERVAL);
 
   dispose(forceImmediate: boolean = false): void {
@@ -647,10 +774,10 @@ export class ChatStreamWriter {
       this.finalizeLease("aborted", reason);
     }
 
-    this.commit(false);
+    this.commitNow(false, "dispose");
     this.commit.flush();
     this.closed = true;
-    void this.timeTravel?.dispose();
+    this.startTimeTravelDispose();
     chatWritersByChatKey.delete(this.chatKey);
     logWriterCounts("dispose", { chatKey: this.chatKey });
     for (const key of this.threadKeys) {
@@ -709,15 +836,73 @@ export class ChatStreamWriter {
     const turnId = this.metadata.message_date;
     if (event.type === "file") {
       if (event.operation === "read") {
-        void this.timeTravel.recordRead(event.path, turnId);
+        this.trackTimeTravelOperation("read", event.path, () =>
+          this.timeTravel?.recordRead(event.path, turnId),
+        );
       } else {
-        void this.timeTravel.recordWrite(event.path, turnId);
+        this.trackTimeTravelOperation("write", event.path, () =>
+          this.timeTravel?.recordWrite(event.path, turnId),
+        );
       }
       return;
     }
     if (event.type === "diff") {
-      void this.timeTravel.recordWrite(event.path, turnId);
+      this.trackTimeTravelOperation("write", event.path, () =>
+        this.timeTravel?.recordWrite(event.path, turnId),
+      );
     }
+  }
+
+  private trackTimeTravelOperation(
+    operation: "read" | "write" | "finalize",
+    path: string,
+    action: () => Promise<void> | undefined,
+  ): void {
+    if (!this.timeTravel) return;
+    const op = (async () => {
+      try {
+        await action();
+      } catch (err) {
+        logger.warn("agent-tt operation failed", {
+          chatKey: this.chatKey,
+          operation,
+          path,
+          err,
+        });
+      }
+    })();
+    this.timeTravelOps.add(op);
+    void op.finally(() => {
+      this.timeTravelOps.delete(op);
+    });
+  }
+
+  private startTimeTravelDispose(): void {
+    if (!this.timeTravel || this.timeTravelDisposePromise != null) return;
+    const pending = [...this.timeTravelOps];
+    if (pending.length > 0) {
+      logger.debug("chat writer dispose waiting for agent-tt operations", {
+        chatKey: this.chatKey,
+        pendingOps: pending.length,
+      });
+    }
+    const timeTravel = this.timeTravel;
+    this.timeTravelDisposePromise = (async () => {
+      if (pending.length > 0) {
+        await Promise.allSettled(pending);
+      }
+      await timeTravel.dispose();
+    })()
+      .catch((err) => {
+        logger.warn("failed to dispose agent-tt recorder", {
+          chatKey: this.chatKey,
+          err,
+        });
+      })
+      .finally(() => {
+        this.timeTravelOps.clear();
+        this.timeTravelDisposePromise = undefined;
+      });
   }
 
   notifyInterrupted(text: string): void {
@@ -740,6 +925,7 @@ export class ChatStreamWriter {
   }
 
   watchdogSnapshot() {
+    const timeTravelStats = this.timeTravel?.debugStats();
     return {
       chatKey: this.chatKey,
       path: this.metadata.path,
@@ -750,6 +936,14 @@ export class ChatStreamWriter {
       disposeScheduled: this.disposeTimer != null,
       hasSyncdbError: this.syncdbError != null,
       threadIds: this.getKnownThreadIds(),
+      timeTravel:
+        timeTravelStats == null
+          ? undefined
+          : {
+              ...timeTravelStats,
+              pendingOps: this.timeTravelOps.size,
+              disposePending: this.timeTravelDisposePromise != null,
+            },
     };
   }
 

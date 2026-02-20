@@ -7,6 +7,7 @@ export { manageApiKeys };
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import search from "@cocalc/server/accounts/search";
+import createAccount from "@cocalc/server/accounts/create-account";
 export { getNames } from "@cocalc/server/accounts/get-name";
 import { callback2 } from "@cocalc/util/async-utils";
 import getLogger from "@cocalc/backend/logger";
@@ -21,6 +22,13 @@ import {
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
+import { is_valid_email_address } from "@cocalc/util/misc";
+import { v4 as uuid } from "uuid";
+import { secureRandomString } from "@cocalc/backend/misc";
+import {
+  testR2Credentials as testR2Credentials0,
+  type R2CredentialsTestResult,
+} from "@cocalc/server/project-backup/r2";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -114,6 +122,103 @@ export async function adminResetPasswordLink({
   }
   const id = await createReset(email, "", 60 * 60 * 24); // 24 hour ttl seems reasonable for this.
   return `/auth/password-reset/${id}`;
+}
+
+function defaultUserNameFromEmail(email: string): {
+  first_name: string;
+  last_name: string;
+} {
+  const local = (email.split("@")[0] ?? "").trim();
+  const cleaned = local.replace(/[._-]+/g, " ").trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return { first_name: "New", last_name: "User" };
+  }
+  if (parts.length === 1) {
+    return { first_name: parts[0], last_name: "User" };
+  }
+  return {
+    first_name: parts[0],
+    last_name: parts.slice(1).join(" "),
+  };
+}
+
+export async function adminCreateUser({
+  account_id,
+  email,
+  password,
+  first_name,
+  last_name,
+  no_first_project,
+  tags,
+}: {
+  account_id?: string;
+  email: string;
+  password?: string;
+  first_name?: string;
+  last_name?: string;
+  no_first_project?: boolean;
+  tags?: string[];
+}): Promise<{
+  account_id: string;
+  email_address: string;
+  first_name: string;
+  last_name: string;
+  created_by: string;
+  no_first_project: boolean;
+  password_generated: boolean;
+  generated_password?: string;
+}> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+
+  const emailAddress = `${email ?? ""}`.trim().toLowerCase();
+  if (!is_valid_email_address(emailAddress)) {
+    throw Error(`invalid email address '${email}'`);
+  }
+  const explicitPassword = typeof password === "string" ? password : "";
+  const generatedPassword =
+    explicitPassword.length > 0 ? undefined : await secureRandomString(24);
+  const finalPassword = explicitPassword.length > 0 ? explicitPassword : generatedPassword!;
+  if (!finalPassword) {
+    throw Error("password must be non-empty");
+  }
+
+  const defaultName = defaultUserNameFromEmail(emailAddress);
+  const firstName = `${first_name ?? ""}`.trim() || defaultName.first_name;
+  const lastName = `${last_name ?? ""}`.trim() || defaultName.last_name;
+  const nextAccountId = uuid();
+
+  try {
+    await createAccount({
+      email: emailAddress,
+      password: finalPassword,
+      firstName,
+      lastName,
+      account_id: nextAccountId,
+      owner_id: account_id,
+      noFirstProject: !!no_first_project,
+      tags: Array.isArray(tags) && tags.length ? tags : undefined,
+      signupReason: "Admin created account",
+    });
+  } catch (err: any) {
+    if (err?.code === "23505") {
+      throw Error(`an account with email '${emailAddress}' already exists`);
+    }
+    throw err;
+  }
+
+  return {
+    account_id: nextAccountId,
+    email_address: emailAddress,
+    first_name: firstName,
+    last_name: lastName,
+    created_by: account_id,
+    no_first_project: !!no_first_project,
+    password_generated: !!generatedPassword,
+    generated_password: generatedPassword,
+  };
 }
 
 import sendEmailVerification0 from "@cocalc/server/accounts/send-email-verification";
@@ -615,4 +720,48 @@ export async function getCodexPaymentSource({
     sharedHomeMode,
     project_id,
   };
+}
+
+function clean(v?: string): string | undefined {
+  const s = `${v ?? ""}`.trim();
+  return s.length > 0 ? s : undefined;
+}
+
+export async function testR2Credentials({
+  account_id,
+  overrides,
+}: {
+  account_id?: string;
+  overrides?: {
+    r2_account_id?: string;
+    r2_api_token?: string;
+    r2_access_key_id?: string;
+    r2_secret_access_key?: string;
+    r2_bucket_prefix?: string;
+    r2_endpoint?: string;
+  };
+}): Promise<R2CredentialsTestResult> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const settings = await getServerSettings();
+  const accountId =
+    clean(overrides?.r2_account_id) ??
+    clean(settings.r2_account_id) ??
+    clean(settings.project_hosts_cloudflare_tunnel_account_id);
+  const endpoint =
+    clean(overrides?.r2_endpoint) ??
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined);
+  return await testR2Credentials0({
+    accountId,
+    apiToken: clean(overrides?.r2_api_token) ?? clean(settings.r2_api_token),
+    accessKey:
+      clean(overrides?.r2_access_key_id) ?? clean(settings.r2_access_key_id),
+    secretKey:
+      clean(overrides?.r2_secret_access_key) ??
+      clean(settings.r2_secret_access_key),
+    bucketPrefix:
+      clean(overrides?.r2_bucket_prefix) ?? clean(settings.r2_bucket_prefix),
+    endpoint,
+  });
 }

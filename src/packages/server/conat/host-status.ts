@@ -173,24 +173,37 @@ export async function initHostStatusService() {
         }
         const pool = getPool();
         const checkedAt = checked_at ? new Date(checked_at) : new Date();
-        const { rows } = await pool.query<{ project_id: string }>(
+        const seen = new Set<string>();
+        const normalizedProjectIds: string[] = [];
+        for (const project_id of project_ids) {
+          const value = `${project_id ?? ""}`.trim();
+          if (!value || seen.has(value)) continue;
+          seen.add(value);
+          normalizedProjectIds.push(value);
+        }
+        const { rows } = await pool.query<{
+          project_id: string;
+          current_host_id: string | null;
+        }>(
           `
-            SELECT project_id
-            FROM projects
-            WHERE project_id = ANY($1)
-              AND host_id IS DISTINCT FROM $2
+            SELECT inv.project_id::text AS project_id,
+                   p.host_id::text AS current_host_id
+            FROM unnest($1::text[]) AS inv(project_id)
+            LEFT JOIN projects p ON p.project_id::text = inv.project_id
           `,
-          [project_ids, host_id],
+          [normalizedProjectIds],
         );
-        const delete_project_ids = rows.map((row) => row.project_id);
+        const delete_project_ids = rows
+          .filter((row) => !row.current_host_id || row.current_host_id !== host_id)
+          .map((row) => row.project_id);
         await pool.query(
           `
             UPDATE projects
-            SET provisioned = (project_id = ANY($2)),
+            SET provisioned = (project_id::text = ANY($2::text[])),
                 provisioned_checked_at = $3
             WHERE host_id = $1 AND deleted IS NOT TRUE
           `,
-          [host_id, project_ids, checkedAt],
+          [host_id, normalizedProjectIds, checkedAt],
         );
         return { delete_project_ids };
       },

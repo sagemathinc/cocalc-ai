@@ -454,7 +454,7 @@ function waitConfig(kind: HostOpKind) {
     case "host-start":
       return {
         desired: ["running"],
-        failOn: ["error", "off", "deprovisioned"],
+        failOn: ["error", "off", "stopped", "deprovisioned"],
         message: "waiting for host to be running",
       };
     case "host-stop":

@@ -8,6 +8,7 @@ import TTL from "@isaacs/ttlcache";
 import getLogger from "@cocalc/backend/logger";
 import { DiffMatchPatch, compressPatch } from "@cocalc/util/dmp";
 import { sha1 } from "@cocalc/backend/sha1";
+import { trackBackendWatcher } from "../watcher-debug";
 
 // this is used specifically for loading from disk, where the patch
 // explaining the last change on disk gets merged into the live version
@@ -65,6 +66,7 @@ class Watcher extends EventEmitter {
   private readonly readyPromise: Promise<void>;
   private readyResolve: (() => void) | null = null;
   private patchSeq: number = 0;
+  private stopTrackingWatcher?: () => void;
 
   constructor(
     private path: string,
@@ -94,6 +96,18 @@ class Watcher extends EventEmitter {
           }
         : undefined,
     };
+    this.stopTrackingWatcher = trackBackendWatcher({
+      source: "backend:sandbox/watch",
+      type: "chokidar",
+      path,
+      info: {
+        usePolling: !!pollInterval,
+        pollInterval,
+        stabilityThreshold,
+        closeOnUnlink: !!options.closeOnUnlink,
+        patch: !!options.patch,
+      },
+    });
     this.watcher = chokidarWatch(path, chokidarConfig);
 
     this.watcher.once("ready", () => {
@@ -185,6 +199,8 @@ class Watcher extends EventEmitter {
 
   close() {
     log(this.path, "close()");
+    this.stopTrackingWatcher?.();
+    this.stopTrackingWatcher = undefined;
     this.watcher?.close();
     this.emit("close");
     this.removeAllListeners();

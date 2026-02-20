@@ -18,6 +18,7 @@ export const system = {
   revokeUserAuthToken: noAuth,
   userSearch: authFirst,
   getNames: requireSignedIn,
+  adminCreateUser: authFirst,
   adminResetPasswordLink: authFirst,
   sendEmailVerification: authFirst,
   deletePassport: authFirst,
@@ -30,6 +31,7 @@ export const system = {
   deleteOpenAiApiKey: authFirst,
   getOpenAiApiKeyStatus: authFirst,
   getCodexPaymentSource: authFirst,
+  testR2Credentials: authFirst,
 
   adminSalesloftSync: authFirst,
   userSalesloftSync: authFirst,
@@ -70,6 +72,24 @@ export interface OpenAiApiKeyStatus {
   account?: ExternalCredentialInfo;
   project?: ExternalCredentialInfo;
   project_id?: string;
+}
+
+export interface R2CredentialCheck {
+  ok: boolean;
+  error?: string;
+  bucket_count?: number;
+}
+
+export interface R2CredentialsTestResult {
+  ok: boolean;
+  checked_at: string;
+  account_id: string;
+  endpoint: string;
+  bucket_prefix?: string;
+  api_token: R2CredentialCheck;
+  s3: R2CredentialCheck;
+  matched_buckets: string[];
+  notes: string[];
 }
 
 export interface System {
@@ -129,6 +149,25 @@ export interface System {
           profile?: { color?: string; image?: string };
         }
       | undefined;
+  }>;
+
+  adminCreateUser: (opts: {
+    account_id?: string;
+    email: string;
+    password?: string;
+    first_name?: string;
+    last_name?: string;
+    no_first_project?: boolean;
+    tags?: string[];
+  }) => Promise<{
+    account_id: string;
+    email_address: string;
+    first_name: string;
+    last_name: string;
+    created_by: string;
+    no_first_project: boolean;
+    password_generated: boolean;
+    generated_password?: string;
   }>;
 
   // adminResetPasswordLink: Enables admins (and only admins!) to generate and get a password reset
@@ -233,4 +272,16 @@ export interface System {
     account_id?: string;
     project_id?: string;
   }) => Promise<CodexPaymentSourceInfo>;
+
+  testR2Credentials: (opts: {
+    account_id?: string;
+    overrides?: {
+      r2_account_id?: string;
+      r2_api_token?: string;
+      r2_access_key_id?: string;
+      r2_secret_access_key?: string;
+      r2_bucket_prefix?: string;
+      r2_endpoint?: string;
+    };
+  }) => Promise<R2CredentialsTestResult>;
 }

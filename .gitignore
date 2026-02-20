@@ -188,15 +188,8 @@ src/packages/lite/sea/cocalc*gnu
 *.pkg
 *.zip
 
-src/packages/plus/build/
-src/packages/project/build/
-src/packages/project-runner/build/
-src/packages/project-host/build/
-src/packages/launchpad/build/
-src/packages/cloud/build/
+src/packages/*/build/
 
-
-codex.sh
 g
 g-cs
 g-cs2
@@ -217,6 +210,8 @@ data-1
 
 publish*.sh
 !src/packages/launchpad/sea/publish-sea.sh
+!src/packages/cli/sea/publish-sea.sh
+!src/packages/cli/site/publish-site.sh
 
 src/packages/next/lib/api-v2-manifest.ts
 src/create*.sh

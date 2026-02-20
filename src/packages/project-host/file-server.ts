@@ -268,6 +268,56 @@ const backupConfigCache = new Map<
   { toml: string; expiresAt: number; path: string }
 >();
 let backupConfigInvalidationSub: any = null;
+const BACKUP_CONFIG_FETCH_RETRY_MS = 5000;
+const BACKUP_CONFIG_FETCH_TIMEOUT_MS = 2 * 60 * 1000;
+
+function looksLikeMissingBackupBucketError(err: unknown): boolean {
+  const s = `${err ?? ""}`.toLowerCase();
+  return (
+    s.includes("nosuchbucket") ||
+    s.includes("specified bucket does not exist") ||
+    s.includes("path `config` does not exist")
+  );
+}
+
+async function invalidateBackupConfig(project_id: string): Promise<void> {
+  backupConfigCache.delete(project_id);
+  const profilePath = join(secrets, "rustic", `project-${project_id}.toml`);
+  try {
+    await rm(profilePath, { force: true });
+  } catch (err) {
+    logger.debug("backup profile removal failed (ignored)", {
+      project_id,
+      err: `${err}`,
+    });
+  }
+}
+
+async function withBackupConfigRefreshOnMissingBucket<T>({
+  project_id,
+  op,
+  run,
+}: {
+  project_id: string;
+  op: string;
+  run: () => Promise<T>;
+}): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!looksLikeMissingBackupBucketError(err)) {
+      throw err;
+    }
+    logger.warn("backup op detected missing bucket; refreshing config", {
+      project_id,
+      op,
+      err: `${err}`,
+    });
+    await invalidateBackupConfig(project_id);
+    await ensureBackupConfig(project_id);
+    return await run();
+  }
+}
 
 async function startBackupConfigInvalidation(client: ConatClient) {
   if (backupConfigInvalidationSub) return;
@@ -353,16 +403,22 @@ async function ensureBackupConfig(project_id: string): Promise<string | null> {
   if (cached && now < cached.expiresAt) {
     return cached.path;
   }
-  const retryDelayMs = 5000;
+  const deadline = Date.now() + BACKUP_CONFIG_FETCH_TIMEOUT_MS;
+  let attempt = 0;
   while (true) {
+    attempt += 1;
     try {
       const remoteConfig = await fetchBackupConfig(project_id);
       const toml = remoteConfig?.toml;
       if (!toml) return null;
       const ttlSeconds = remoteConfig?.ttl_seconds ?? 0;
+      const fetchedAt = Date.now();
       backupConfigCache.set(project_id, {
         toml,
-        expiresAt: ttlSeconds > 0 ? now + ttlSeconds * 1000 : now + 3600 * 1000,
+        expiresAt:
+          ttlSeconds > 0
+            ? fetchedAt + ttlSeconds * 1000
+            : fetchedAt + 3600 * 1000,
         path: profilePath,
       });
       await mkdir(profileDir, { recursive: true });
@@ -370,8 +426,21 @@ async function ensureBackupConfig(project_id: string): Promise<string | null> {
       await chmod(profilePath, 0o600);
       return profilePath;
     } catch (err) {
-      logger.warn("backup config fetch failed; retrying", err);
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error(
+          `backup config fetch failed after ${attempt} attempt(s): ${err}`,
+        );
+      }
+      logger.warn("backup config fetch failed; retrying", {
+        project_id,
+        attempt,
+        remaining_ms: remainingMs,
+        err: `${err}`,
+      });
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(BACKUP_CONFIG_FETCH_RETRY_MS, remainingMs)),
+      );
     }
   }
 }
@@ -1141,14 +1210,20 @@ async function createBackup({
   tags?: string[];
   lro?: LroRef;
 }): Promise<{ time: Date; id: string }> {
-  const vol = await getVolume(project_id);
-  vol.fs.rusticRepo = await resolveRusticRepo(project_id);
   const progress = createLroRusticReporter(lro, "backup");
-  const result = await vol.rustic.backup({
-    limit,
-    tags,
-    progress,
-    index: { project_id },
+  const result = await withBackupConfigRefreshOnMissingBucket({
+    project_id,
+    op: "createBackup",
+    run: async () => {
+      const vol = await getVolume(project_id);
+      vol.fs.rusticRepo = await resolveRusticRepo(project_id);
+      return await vol.rustic.backup({
+        limit,
+        tags,
+        progress,
+        index: { project_id },
+      });
+    },
   });
   if (result.index_path) {
     try {
@@ -1352,8 +1427,15 @@ async function updateBackups({
   counts?: Partial<SnapshotCounts>;
   limit?: number;
 }): Promise<void> {
-  const vol = await getVolumeForBackup(project_id);
-  await vol.rustic.update(counts, { limit, index: { project_id } });
+  const vol = await withBackupConfigRefreshOnMissingBucket({
+    project_id,
+    op: "updateBackups",
+    run: async () => {
+      const refreshed = await getVolumeForBackup(project_id);
+      await refreshed.rustic.update(counts, { limit, index: { project_id } });
+      return refreshed;
+    },
+  });
   try {
     const backups = await vol.rustic.snapshots();
     await syncBackupIndexCache(project_id, {

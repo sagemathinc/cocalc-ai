@@ -22,6 +22,7 @@ import {
   makeClientId,
   type PatchId,
 } from "patchflow";
+import { trackBackendWatcher } from "../watcher-debug";
 
 export interface WatchEvent {
   path: string;
@@ -45,6 +46,7 @@ interface WatchEntry {
   watcher: FSWatcher;
   lastHeartbeat: number;
   paths: Set<string>;
+  stopTrackingWatcher?: () => void;
 }
 
 const HEARTBEAT_TTL = 60_000; // ms to keep a watch alive without heartbeats
@@ -161,7 +163,8 @@ export class SyncFsService extends EventEmitter {
   }
 
   close(): void {
-    for (const { watcher } of this.watchers.values()) {
+    for (const { watcher, stopTrackingWatcher } of this.watchers.values()) {
+      stopTrackingWatcher?.();
       watcher.close();
     }
     this.watchers.clear();
@@ -267,10 +270,22 @@ export class SyncFsService extends EventEmitter {
           pollInterval: 100,
         },
       });
+      const stopTrackingWatcher = trackBackendWatcher({
+        source: "backend:sandbox/sync-fs-service",
+        type: "chokidar",
+        path: dir,
+        info: {
+          depth: 0,
+          ignoreInitial: true,
+          stabilityThreshold: 200,
+          pollInterval: 100,
+        },
+      });
       this.watchers.set(dir, {
         watcher,
         lastHeartbeat: Date.now(),
         paths: new Set([path]),
+        stopTrackingWatcher,
       });
 
       // Wait until the watcher is ready before returning so callers know the
@@ -518,6 +533,7 @@ export class SyncFsService extends EventEmitter {
       this.metaByPath.delete(p);
       this.clearSuppress(p);
     }
+    entry.stopTrackingWatcher?.();
     entry.watcher.close();
     this.watchers.delete(dir);
   }

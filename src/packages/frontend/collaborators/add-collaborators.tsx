@@ -335,7 +335,12 @@ export const AddCollaborators: React.FC<Props> = ({
       set_invite_result(errors);
       set_state("invited_errors");
     } else {
-      set_invite_result(`Successfully added ${selected_entries.length} users!`);
+      set_invite_result(
+        `Successfully sent ${selected_entries.length} ${plural(
+          selected_entries.length,
+          "invitation",
+        )}.`,
+      );
       set_state("invited");
     }
   }
@@ -642,13 +647,13 @@ export const AddCollaborators: React.FC<Props> = ({
       disabled = true;
     } else {
       if (number_selected == 0) {
-        label = "Add selected user";
+        label = "Invite selected user";
         disabled = true;
       } else if (number_selected == 1) {
-        label = "Add selected user";
+        label = "Invite selected user";
         disabled = false;
       } else {
-        label = `Add ${number_selected} selected users`;
+        label = `Invite ${number_selected} selected users`;
         disabled = false;
       }
     }

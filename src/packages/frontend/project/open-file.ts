@@ -22,6 +22,8 @@ import {
 } from "@cocalc/util/misc";
 import { isChatExtension } from "@cocalc/frontend/chat/paths";
 import { normalize } from "./utils";
+import { normalizeAbsolutePath } from "@cocalc/util/path-model";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { termPath } from "@cocalc/util/terminal/names";
 
 // if true, PRELOAD_BACKGROUND_TABS makes it so all tabs have their file editing
@@ -82,11 +84,6 @@ export async function open_file(
 ): Promise<void> {
   // console.log("open_file: ", opts);
 
-  if (opts.path.endsWith("/")) {
-    actions.open_directory(opts.path);
-    return;
-  }
-
   const foreground = opts.foreground ?? true;
   const foreground_project = opts.foreground_project ?? foreground;
   opts = defaults(opts, {
@@ -103,6 +100,12 @@ export async function open_file(
     change_history: true,
     explicit: false,
   });
+  const hadTrailingSlash = opts.path.endsWith("/");
+  opts.path = toAbsoluteOpenPath(opts.path, actions.project_id);
+  if (hadTrailingSlash) {
+    actions.open_directory(opts.path);
+    return;
+  }
   opts.path = normalize(opts.path);
   const displayPath = opts.path;
 
@@ -310,6 +313,20 @@ export async function open_file(
     // first time.
     actions.gotoFragment(displayPath, opts.fragmentId);
   }
+}
+
+function toAbsoluteOpenPath(path: string, projectId: string): string {
+  const home = getProjectHomeDirectory(projectId);
+  const normalized = normalize(path);
+  if (!normalized || normalized === ".") return home;
+  if (normalized === "~") return home;
+  if (normalized.startsWith("~/")) {
+    return normalizeAbsolutePath(normalized.slice(2), home);
+  }
+  if (normalized.startsWith("/")) {
+    return normalizeAbsolutePath(normalized);
+  }
+  return normalizeAbsolutePath(normalized, home);
 }
 
 async function open_sagews_worksheet(

@@ -17,6 +17,7 @@
  *
  * Optional env:
  *   COCALC_R2_PREFIX, COCALC_R2_LATEST_KEY,
+ *   COCALC_R2_VERSIONS_KEY, COCALC_R2_VERSIONS_LIMIT,
  *   COCALC_R2_CACHE_CONTROL, COCALC_R2_LATEST_CACHE_CONTROL,
  *   COCALC_R2_COPY_FROM, COCALC_R2_COPY_TO
  *
@@ -36,7 +37,7 @@ const path = require("node:path");
 
 function usage() {
   console.error(
-    "Usage: publish-r2.js --file <path> --bucket <bucket> [--key <key>] [--prefix <prefix>] [--public-base-url <url>] [--latest-key <key>] [--os <os>] [--arch <arch>] [--version <semver>] [--cache-control <value>] [--latest-cache-control <value>] [--copy-from <key> --copy-to <key>]",
+    "Usage: publish-r2.js --file <path> --bucket <bucket> [--key <key>] [--prefix <prefix>] [--public-base-url <url>] [--latest-key <key>] [--versions-key <key>] [--versions-limit <n>] [--os <os>] [--arch <arch>] [--version <semver>] [--cache-control <value>] [--latest-cache-control <value>] [--copy-from <key> --copy-to <key>]",
   );
   process.exit(2);
 }
@@ -87,6 +88,66 @@ function getSignatureKey(secret, dateStamp, region, service) {
 function joinKey(prefix, filename) {
   if (!prefix) return filename;
   return `${prefix.replace(/\/+$/, "")}/${filename}`;
+}
+
+function deriveVersionsKeyFromLatestKey(latestKey) {
+  if (!latestKey) return undefined;
+  const match = latestKey.match(
+    /^(software\/(?:project-host|project|tools)\/)(latest|staging)-([^/]+)\.json$/,
+  );
+  if (!match) return undefined;
+  const [, prefix, channel, suffix] = match;
+  return `${prefix}versions-${channel}-${suffix}.json`;
+}
+
+function parseVersionsKeyMetadata(key) {
+  if (!key) return {};
+  const match = key.match(
+    /^software\/(project-host|project|tools)\/versions-(latest|staging)-([^.]+)\.json$/,
+  );
+  if (!match) return {};
+  const [, artifact, channel, selector] = match;
+  const parts = selector.split("-").filter(Boolean);
+  const os = parts[0];
+  const arch = parts.length > 1 ? parts.slice(1).join("-") : undefined;
+  return { artifact, channel, os, arch };
+}
+
+function normalizeVersionsLimit(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 50;
+  return Math.max(1, Math.min(200, Math.floor(n)));
+}
+
+function normalizeVersionEntry(value) {
+  if (!value || typeof value !== "object") return undefined;
+  const url = typeof value.url === "string" ? value.url.trim() : "";
+  const version =
+    typeof value.version === "string" ? value.version.trim() : "";
+  if (!url && !version) return undefined;
+  const out = {};
+  if (version) out.version = version;
+  if (url) out.url = url;
+  if (typeof value.sha256 === "string" && value.sha256.trim()) {
+    out.sha256 = value.sha256.trim();
+  }
+  if (
+    typeof value.size_bytes === "number" &&
+    Number.isFinite(value.size_bytes) &&
+    value.size_bytes >= 0
+  ) {
+    out.size_bytes = Math.floor(value.size_bytes);
+  }
+  if (typeof value.built_at === "string" && value.built_at.trim()) {
+    out.built_at = value.built_at.trim();
+  }
+  return out;
+}
+
+function versionEntryKey(entry) {
+  if (entry.version) return `v:${entry.version}`;
+  if (entry.url) return `u:${entry.url}`;
+  return "";
 }
 
 function extractVersion(raw) {
@@ -284,6 +345,91 @@ async function copyObject({
   });
 }
 
+async function getObject({
+  host,
+  region,
+  accessKey,
+  secretKey,
+  bucket,
+  key,
+}) {
+  const method = "GET";
+  const service = "s3";
+  const now = new Date();
+  const amzDate = now
+    .toISOString()
+    .replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = hashHex("");
+  const headers = {
+    host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate,
+  };
+
+  const signedHeaderNames = Object.keys(headers).sort();
+  const canonicalHeaders = signedHeaderNames
+    .map((name) => `${name}:${String(headers[name]).trim()}\n`)
+    .join("");
+  const signedHeaders = signedHeaderNames.join(";");
+  const canonicalUri = canonicalizePath(bucket, key);
+  const canonicalRequest = [
+    method,
+    canonicalUri,
+    "",
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join("\n");
+  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    hashHex(canonicalRequest),
+  ].join("\n");
+  const signingKey = getSignatureKey(secretKey, dateStamp, region, service);
+  const signature = hmac(signingKey, stringToSign, "hex");
+  const authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  const requestHeaders = {
+    ...headers,
+    authorization,
+  };
+
+  return await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        method,
+        host,
+        path: canonicalUri,
+        headers: requestHeaders,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          if (res.statusCode === 404) {
+            resolve(undefined);
+            return;
+          }
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(Buffer.concat(chunks));
+            return;
+          }
+          reject(
+            new Error(
+              `R2 GET failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
+            ),
+          );
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const copyFrom = args["copy-from"] || process.env.COCALC_R2_COPY_FROM;
@@ -338,6 +484,13 @@ async function main() {
     process.env.COCALC_R2_LATEST_CACHE_CONTROL ||
     "public, max-age=300";
   const latestKey = args["latest-key"] || process.env.COCALC_R2_LATEST_KEY;
+  const versionsKey =
+    args["versions-key"] ||
+    process.env.COCALC_R2_VERSIONS_KEY ||
+    deriveVersionsKeyFromLatestKey(latestKey);
+  const versionsLimit = normalizeVersionsLimit(
+    args["versions-limit"] || process.env.COCALC_R2_VERSIONS_LIMIT || "50",
+  );
   const manifestOs = args.os || process.env.COCALC_R2_OS;
   const manifestArch = args.arch || process.env.COCALC_R2_ARCH;
   const filename = path.basename(filePath);
@@ -416,6 +569,71 @@ async function main() {
       contentType: "application/json",
       cacheControl: latestCacheControl,
     });
+
+    if (versionsKey) {
+      const latestEntry = normalizeVersionEntry(manifest);
+      if (latestEntry) {
+        let previous = [];
+        try {
+          const existingBody = await getObject({
+            host,
+            region,
+            accessKey,
+            secretKey,
+            bucket,
+            key: versionsKey,
+          });
+          if (existingBody) {
+            const parsed = JSON.parse(existingBody.toString("utf8"));
+            const versions = Array.isArray(parsed?.versions)
+              ? parsed.versions
+              : Array.isArray(parsed)
+                ? parsed
+                : [];
+            previous = versions
+              .map(normalizeVersionEntry)
+              .filter((v) => !!v);
+          }
+        } catch (err) {
+          process.stderr.write(
+            `warning: failed reading existing versions index ${versionsKey}: ${err.message || err}\n`,
+          );
+        }
+        const merged = [];
+        const seen = new Set();
+        for (const item of [latestEntry, ...previous]) {
+          const k = versionEntryKey(item);
+          if (!k || seen.has(k)) continue;
+          seen.add(k);
+          merged.push(item);
+          if (merged.length >= versionsLimit) break;
+        }
+        const metadata = parseVersionsKeyMetadata(versionsKey);
+        const index = {
+          ...metadata,
+          os: manifestOs || metadata.os,
+          arch: manifestArch || metadata.arch,
+          generated_at: new Date().toISOString(),
+          versions: merged,
+        };
+        if (!index.artifact) delete index.artifact;
+        if (!index.channel) delete index.channel;
+        if (!index.os) delete index.os;
+        if (!index.arch) delete index.arch;
+        const versionsBody = Buffer.from(JSON.stringify(index, null, 2));
+        await putObject({
+          host,
+          region,
+          accessKey,
+          secretKey,
+          bucket,
+          key: versionsKey,
+          body: versionsBody,
+          contentType: "application/json",
+          cacheControl: latestCacheControl,
+        });
+      }
+    }
   }
 
   process.stdout.write(`uploaded ${key}\n`);

@@ -104,6 +104,8 @@ export class AgentTimeTravelRecorder {
   private pruneTimer?: NodeJS.Timeout;
   private sessionId?: string;
   private threadId?: string;
+  private disposed = false;
+  private readonly pendingOps = new Set<Promise<void>>();
 
   constructor(options: AgentTimeTravelRecorderOptions) {
     this.projectId = options.project_id;
@@ -143,13 +145,25 @@ export class AgentTimeTravelRecorder {
     this.sessionId = sessionId;
   }
 
-  async recordRead(filePath: string, turnId?: string): Promise<void> {
+  recordRead(filePath: string, turnId?: string): Promise<void> {
+    return this.trackOperation("read", filePath, () =>
+      this.recordReadImpl(filePath, turnId),
+    );
+  }
+
+  private async recordReadImpl(
+    filePath: string,
+    turnId?: string,
+  ): Promise<void> {
+    if (this.disposed) return;
     const resolved = this.resolvePath(filePath);
     if (!resolved) return;
     const { relativePath, absolutePath } = resolved;
+    if (this.disposed) return;
     if (await this.isFileTooLarge(absolutePath, relativePath)) {
       return;
     }
+    if (this.disposed) return;
     const syncdoc = await this.getSyncDoc(relativePath);
     if (!syncdoc) {
       this.logger.debug("agent-tt skip read (no syncdoc)", { relativePath });
@@ -177,13 +191,25 @@ export class AgentTimeTravelRecorder {
     this.logger.debug("agent-tt read cached", { relativePath, patchId });
   }
 
-  async recordWrite(filePath: string, turnId?: string): Promise<void> {
+  recordWrite(filePath: string, turnId?: string): Promise<void> {
+    return this.trackOperation("write", filePath, () =>
+      this.recordWriteImpl(filePath, turnId),
+    );
+  }
+
+  private async recordWriteImpl(
+    filePath: string,
+    turnId?: string,
+  ): Promise<void> {
+    if (this.disposed) return;
     const resolved = this.resolvePath(filePath);
     if (!resolved) return;
     const { relativePath, absolutePath } = resolved;
+    if (this.disposed) return;
     if (await this.isFileTooLarge(absolutePath, relativePath)) {
       return;
     }
+    if (this.disposed) return;
     const syncdoc = await this.getSyncDoc(relativePath);
     if (!syncdoc) {
       this.logger.debug("agent-tt skip write (no syncdoc)", { relativePath });
@@ -215,17 +241,97 @@ export class AgentTimeTravelRecorder {
   }
 
   async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    const started = this.now();
     if (this.pruneTimer) {
       clearInterval(this.pruneTimer);
       this.pruneTimer = undefined;
+    }
+    const pending = [...this.pendingOps];
+    if (
+      pending.length > 0 ||
+      this.syncDocs.size > 0 ||
+      this.syncDocLoads.size > 0
+    ) {
+      this.logger.debug("agent-tt dispose begin", {
+        pendingOps: pending.length,
+        syncDocs: this.syncDocs.size,
+        inflightLoads: this.syncDocLoads.size,
+      });
+    }
+    if (pending.length > 0) {
+      await Promise.allSettled(pending);
     }
     for (const [relativePath, entry] of this.syncDocs.entries()) {
       await this.closeSyncDoc(relativePath, entry.doc);
     }
     this.syncDocs.clear();
+    this.syncDocLoads.clear();
+    this.pendingOps.clear();
     this.readCache.clear();
     this.docTypeCache.clear();
     this.store.close?.();
+    this.logger.debug("agent-tt dispose complete", {
+      durationMs: this.now() - started,
+    });
+  }
+
+  debugStats(): {
+    disposed: boolean;
+    syncDocs: number;
+    inflightLoads: number;
+    pendingOps: number;
+    readCache: number;
+    oldestDocAgeMs: number;
+  } {
+    const nowMs = this.now();
+    let oldestDocAgeMs = 0;
+    for (const entry of this.syncDocs.values()) {
+      const age = Math.max(0, nowMs - entry.lastUsedMs);
+      if (age > oldestDocAgeMs) {
+        oldestDocAgeMs = age;
+      }
+    }
+    return {
+      disposed: this.disposed,
+      syncDocs: this.syncDocs.size,
+      inflightLoads: this.syncDocLoads.size,
+      pendingOps: this.pendingOps.size,
+      readCache: this.readCache.size,
+      oldestDocAgeMs,
+    };
+  }
+
+  private trackOperation(
+    operation: "read" | "write",
+    filePath: string,
+    f: () => Promise<void>,
+  ): Promise<void> {
+    if (this.disposed) {
+      this.logger.debug("agent-tt skip operation after dispose", {
+        operation,
+        filePath,
+        pendingOps: this.pendingOps.size,
+        syncDocs: this.syncDocs.size,
+      });
+      return Promise.resolve();
+    }
+    const op = (async () => {
+      try {
+        await f();
+      } catch (err) {
+        this.logger.debug("agent-tt operation failed", {
+          operation,
+          filePath,
+          err,
+        });
+      }
+    })();
+    this.pendingOps.add(op);
+    return op.finally(() => {
+      this.pendingOps.delete(op);
+    });
   }
 
   private buildDefaultStore(opts: {
@@ -350,6 +456,7 @@ export class AgentTimeTravelRecorder {
   }
 
   private pruneSyncDocs(): void {
+    if (this.disposed) return;
     const nowMs = this.now();
     for (const [relativePath, entry] of this.syncDocs.entries()) {
       if (nowMs - entry.lastUsedMs <= this.syncDocCacheTtlMs) continue;
@@ -370,6 +477,7 @@ export class AgentTimeTravelRecorder {
   private async getSyncDoc(
     relativePath: string,
   ): Promise<AgentSyncDoc | undefined> {
+    if (this.disposed) return;
     const cached = this.syncDocs.get(relativePath);
     const nowMs = this.now();
     if (cached && nowMs - cached.lastUsedMs <= this.syncDocCacheTtlMs) {
@@ -392,6 +500,7 @@ export class AgentTimeTravelRecorder {
   private async loadSyncDoc(
     relativePath: string,
   ): Promise<AgentSyncDoc | undefined> {
+    if (this.disposed) return;
     if (this.syncFactory) {
       try {
         const syncdoc = await this.syncFactory(relativePath);
@@ -402,6 +511,10 @@ export class AgentTimeTravelRecorder {
             readyDoc.once("ready", () => resolve());
             readyDoc.once("error", (err) => reject(err));
           });
+        }
+        if (this.disposed) {
+          await this.closeSyncDoc(relativePath, readyDoc);
+          return undefined;
         }
         this.syncDocs.set(relativePath, {
           doc: readyDoc,
@@ -459,6 +572,10 @@ export class AgentTimeTravelRecorder {
           readyDoc.once("ready", () => resolve());
           readyDoc.once("error", (err) => reject(err));
         });
+      }
+      if (this.disposed) {
+        await this.closeSyncDoc(relativePath, readyDoc);
+        return undefined;
       }
     } catch (err) {
       this.logger.debug("agent-tt syncdoc init failed", {
@@ -537,7 +654,7 @@ export class AgentTimeTravelRecorder {
     syncdoc: AgentSyncDoc,
     startPatchId: PatchId | undefined,
   ): Promise<PatchId | undefined> {
-    if (this.writeCommitWaitMs <= 0) return;
+    if (this.writeCommitWaitMs <= 0 || this.disposed) return;
     return await new Promise<PatchId | undefined>((resolve) => {
       let settled = false;
       const finish = (patchId?: PatchId) => {
@@ -548,6 +665,10 @@ export class AgentTimeTravelRecorder {
         resolve(patchId);
       };
       const checkForCommit = () => {
+        if (this.disposed) {
+          finish(undefined);
+          return;
+        }
         const patchId = this.getLatestPatchId(syncdoc);
         if (patchId && patchId !== startPatchId) {
           finish(patchId);

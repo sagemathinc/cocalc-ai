@@ -1,5 +1,9 @@
 import createProject from "@cocalc/server/projects/create";
 export { createProject };
+import execProject from "@cocalc/server/projects/exec";
+import deleteProjectControl from "@cocalc/server/projects/delete";
+import { setProjectDeleted as setProjectDeletedControl } from "@cocalc/server/projects/delete";
+import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-delete";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
@@ -8,10 +12,17 @@ import { client as filesystemClient } from "@cocalc/conat/files/file-server";
 export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
 import getPool from "@cocalc/database/pool";
+import { createHostControlClient } from "@cocalc/conat/project-host/api";
 import {
   updateAuthorizedKeysOnHost as updateAuthorizedKeysOnHostControl,
 } from "@cocalc/server/project-host/control";
 import { getProject } from "@cocalc/server/projects/control";
+import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
+import { resolveOnPremHost } from "@cocalc/server/onprem";
+import type {
+  ExecuteCodeOptions,
+  ExecuteCodeOutput,
+} from "@cocalc/util/types/execute-code";
 import {
   cancelCopy as cancelCopyDb,
   listCopiesForProject,
@@ -21,7 +32,11 @@ import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
 import { assertCollab } from "./util";
-import type { ProjectCopyRow } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectCopyRow,
+  ProjectRuntimeLog,
+  WorkspaceSshConnectionInfo,
+} from "@cocalc/conat/hub/api/projects";
 
 export async function copyPathBetweenProjects({
   src,
@@ -122,6 +137,12 @@ import { callback2 } from "@cocalc/util/async-utils";
 
 const log = getLogger("server:conat:api:projects");
 
+function normalizeLogTail(lines?: number): number {
+  const n = Number(lines ?? 200);
+  if (!Number.isFinite(n)) return 200;
+  return Math.max(1, Math.min(5000, Math.floor(n)));
+}
+
 
 export async function setQuotas(opts: {
   account_id: string;
@@ -161,6 +182,141 @@ export async function getDiskQuota({
   // the correct btrfs volume.
   const client = filesystemClient({ project_id });
   return await client.getQuota({ project_id });
+}
+
+export async function exec({
+  account_id,
+  project_id,
+  execOpts,
+}: {
+  account_id: string;
+  project_id: string;
+  execOpts: ExecuteCodeOptions;
+}): Promise<ExecuteCodeOutput> {
+  return await execProject({ account_id, project_id, execOpts });
+}
+
+export async function getRuntimeLog({
+  account_id,
+  project_id,
+  lines,
+}: {
+  account_id: string;
+  project_id: string;
+  lines?: number;
+}): Promise<ProjectRuntimeLog> {
+  await assertCollab({ account_id, project_id });
+  const tail = normalizeLogTail(lines);
+  const { rows } = await getPool().query<{ host_id: string | null }>(
+    "SELECT host_id FROM projects WHERE project_id=$1",
+    [project_id],
+  );
+  const host_id = rows[0]?.host_id ?? null;
+  if (!host_id) {
+    return {
+      project_id,
+      host_id: null,
+      container: `project-${project_id}`,
+      lines: tail,
+      text: "",
+      found: false,
+      running: false,
+      available: false,
+      reason: "workspace has no assigned host",
+    };
+  }
+  const client = createHostControlClient({
+    host_id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.getProjectRuntimeLog({
+    project_id,
+    lines: tail,
+  });
+  return {
+    project_id,
+    host_id,
+    container: response.container,
+    lines: response.lines,
+    text: response.text,
+    found: response.found,
+    running: response.running,
+    available: response.found && response.running,
+    reason: response.found
+      ? response.running
+        ? undefined
+        : "workspace is not running"
+      : "workspace container not found",
+  };
+}
+
+export async function resolveWorkspaceSshConnection({
+  account_id,
+  project_id,
+  direct,
+}: {
+  account_id?: string;
+  project_id: string;
+  direct?: boolean;
+}): Promise<WorkspaceSshConnectionInfo> {
+  await assertCollab({ account_id, project_id });
+  const { rows } = await getPool().query<{
+    host_id: string | null;
+    ssh_server: string | null;
+    metadata: any;
+  }>(
+    `SELECT p.host_id, h.ssh_server, h.metadata
+       FROM projects p
+       LEFT JOIN project_hosts h ON h.id=p.host_id AND h.deleted IS NULL
+      WHERE p.project_id=$1
+      LIMIT 1`,
+    [project_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("workspace not found");
+  }
+  if (!row.host_id) {
+    throw new Error("workspace has no assigned host");
+  }
+  const metadata = row.metadata ?? {};
+  const machine = metadata?.machine ?? {};
+  const rawSelfHostMode = machine?.metadata?.self_host_mode;
+  const effectiveSelfHostMode =
+    machine?.cloud === "self-host" && !rawSelfHostMode ? "local" : rawSelfHostMode;
+  const isLocalSelfHost =
+    machine?.cloud === "self-host" && effectiveSelfHostMode === "local";
+  const cloudflareHostname =
+    `${metadata?.cloudflare_tunnel?.ssh_hostname ?? ""}`.trim() || null;
+  let sshServer = row.ssh_server ?? null;
+  if (isLocalSelfHost) {
+    const sshPort = Number(metadata?.self_host?.ssh_tunnel_port);
+    if (Number.isInteger(sshPort) && sshPort > 0 && sshPort <= 65535) {
+      const sshHost = resolveOnPremHost();
+      sshServer = `${sshHost}:${sshPort}`;
+    }
+  }
+  if (!direct && cloudflareHostname) {
+    return {
+      workspace_id: project_id,
+      host_id: row.host_id,
+      transport: "cloudflare-access-tcp",
+      ssh_username: project_id,
+      ssh_server: null,
+      cloudflare_hostname: cloudflareHostname,
+    };
+  }
+  if (!sshServer) {
+    throw new Error("host has no ssh server endpoint");
+  }
+  return {
+    workspace_id: project_id,
+    host_id: row.host_id,
+    transport: "direct",
+    ssh_username: project_id,
+    ssh_server: sshServer,
+    cloudflare_hostname: cloudflareHostname,
+  };
 }
 
 export async function start({
@@ -298,6 +454,108 @@ export async function stop({
   await project.stop();
 }
 
+export async function deleteProject({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<void> {
+  if (!account_id) {
+    throw new Error("must be signed in");
+  }
+  await deleteProjectControl({
+    project_id,
+    account_id,
+  });
+}
+
+export async function setProjectDeleted({
+  account_id,
+  project_id,
+  deleted,
+}: {
+  account_id?: string;
+  project_id: string;
+  deleted: boolean;
+}): Promise<void> {
+  if (!account_id) {
+    throw new Error("must be signed in");
+  }
+  await setProjectDeletedControl({
+    project_id,
+    account_id,
+    deleted: !!deleted,
+  });
+}
+
+export async function hardDeleteProject({
+  account_id,
+  project_id,
+  backup_retention_days,
+  purge_backups_now,
+}: {
+  account_id?: string;
+  project_id: string;
+  backup_retention_days?: number;
+  purge_backups_now?: boolean;
+}): Promise<{
+  op_id: string;
+  scope_type: "account";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  if (!account_id) {
+    throw new Error("must be signed in");
+  }
+  await assertHardDeleteProjectPermission({
+    project_id,
+    account_id,
+  });
+  const op = await createLro({
+    kind: "project-hard-delete",
+    scope_type: "account",
+    scope_id: account_id,
+    created_by: account_id,
+    routing: "hub",
+    input: {
+      project_id,
+      backup_retention_days,
+      purge_backups_now: !!purge_backups_now,
+    },
+    status: "queued",
+    dedupe_key: `project-hard-delete:${project_id}`,
+  });
+  await publishLroSummary({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    summary: op,
+  });
+  publishLroEvent({
+    scope_type: op.scope_type,
+    scope_id: op.scope_id,
+    op_id: op.op_id,
+    event: {
+      type: "progress",
+      ts: Date.now(),
+      phase: "queued",
+      message: "queued",
+      progress: 0,
+      detail: {
+        project_id,
+      },
+    },
+  }).catch(() => {});
+  return {
+    op_id: op.op_id,
+    scope_type: "account",
+    scope_id: account_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(op.op_id),
+  };
+}
+
 export async function updateAuthorizedKeysOnHost({
   account_id,
   project_id,
@@ -307,6 +565,115 @@ export async function updateAuthorizedKeysOnHost({
 }): Promise<void> {
   await assertCollab({ account_id, project_id });
   await updateAuthorizedKeysOnHostControl(project_id);
+}
+
+export async function setProjectHidden({
+  account_id,
+  project_id,
+  hide,
+}: {
+  account_id?: string;
+  project_id: string;
+  hide: boolean;
+}): Promise<void> {
+  if (typeof hide !== "boolean") {
+    throw Error("hide must be a boolean");
+  }
+  await assertCollab({ account_id, project_id });
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE projects
+        SET users = jsonb_set(
+          COALESCE(users, '{}'::jsonb),
+          ARRAY[$2::text, 'hide'],
+          to_jsonb($3::boolean),
+          true
+        )
+      WHERE project_id = $1
+        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
+    [project_id, account_id, hide],
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw Error("user must be a collaborator");
+  }
+}
+
+export async function setProjectSshKey({
+  account_id,
+  project_id,
+  fingerprint,
+  title,
+  value,
+  creation_date,
+  last_use_date,
+}: {
+  account_id?: string;
+  project_id: string;
+  fingerprint: string;
+  title: string;
+  value: string;
+  creation_date?: number;
+  last_use_date?: number;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  const fp = `${fingerprint ?? ""}`.trim();
+  if (!fp) {
+    throw Error("fingerprint must be non-empty");
+  }
+  const payload = {
+    title,
+    value,
+    creation_date: creation_date ?? Date.now(),
+    ...(last_use_date != null ? { last_use_date } : {}),
+  };
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE projects
+        SET users = jsonb_set(
+          COALESCE(users, '{}'::jsonb),
+          ARRAY[$2::text, 'ssh_keys', $3::text],
+          $4::jsonb,
+          true
+        )
+      WHERE project_id = $1
+        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
+    [project_id, account_id, fp, JSON.stringify(payload)],
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw Error("user must be a collaborator");
+  }
+}
+
+export async function deleteProjectSshKey({
+  account_id,
+  project_id,
+  fingerprint,
+}: {
+  account_id?: string;
+  project_id: string;
+  fingerprint: string;
+}): Promise<void> {
+  await assertCollab({ account_id, project_id });
+  const fp = `${fingerprint ?? ""}`.trim();
+  if (!fp) {
+    throw Error("fingerprint must be non-empty");
+  }
+  const pool = getPool();
+  const result = await pool.query(
+    `UPDATE projects
+        SET users = jsonb_set(
+          COALESCE(users, '{}'::jsonb),
+          ARRAY[$2::text, 'ssh_keys'],
+          COALESCE(users -> $2::text -> 'ssh_keys', '{}'::jsonb) - $3::text,
+          true
+        )
+      WHERE project_id = $1
+        AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
+    [project_id, account_id, fp],
+  );
+  if ((result.rowCount ?? 0) === 0) {
+    throw Error("user must be a collaborator");
+  }
 }
 
 export async function moveProject({

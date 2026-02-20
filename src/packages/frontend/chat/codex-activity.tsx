@@ -15,8 +15,10 @@ import { React, redux, useEffect, useMemo, useState } from "@cocalc/frontend/app
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { IS_TOUCH } from "@cocalc/frontend/feature";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import { plural } from "@cocalc/util/misc";
+import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { COLORS } from "@cocalc/util/theme";
 
 const VIRTUALIZE_THRESHOLD = 20;
@@ -119,6 +121,10 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
   scrollParent,
 }): React.ReactElement | null => {
   const entries = useMemo(() => normalizeEvents(events ?? []), [events]);
+  const resolvedBasePath = useMemo(
+    () => detectBasePath(basePath, entries),
+    [basePath, entries],
+  );
   const [expanded, setExpanded] = useState<boolean>(() => {
     if (persistKey) {
       const persisted = expandedState.get(persistKey);
@@ -292,7 +298,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
                   entry={entry}
                   fontSize={baseFontSize}
                   projectId={projectId}
-                  basePath={basePath}
+                  basePath={resolvedBasePath}
                 />
               );
             }}
@@ -304,7 +310,7 @@ export const CodexActivity: React.FC<CodexActivityProps> = ({
               entry={entry}
               fontSize={baseFontSize}
               projectId={projectId}
-              basePath={basePath}
+              basePath={resolvedBasePath}
             />
           ))
         )}
@@ -704,7 +710,7 @@ function PathLink({
 }) {
   const actions =
     projectId != null ? redux.getProjectActions(projectId) : undefined;
-  const resolvedPath = resolvePath(path, basePath);
+  const resolvedPath = resolvePath(path, basePath, projectId);
   const onClick = React.useCallback(
     (e: React.MouseEvent) => {
       if (!actions || !resolvedPath) return;
@@ -807,22 +813,59 @@ function DiffPreview({
   );
 }
 
-function resolvePath(path?: string, basePath?: string): string | undefined {
-  if (!path) return undefined;
-  const normalized = path.replace(/^\.\\/, "./").replace(/^\.\/+/, "");
-  const hasDrive = /^[a-zA-Z]:[\\/]/.test(normalized);
-  if (
-    normalized.startsWith("/") ||
-    hasDrive ||
-    normalized.startsWith("~") ||
-    normalized.startsWith("../")
-  ) {
-    return normalized;
+function resolvePath(
+  path?: string,
+  basePath?: string,
+  projectId?: string,
+): string | undefined {
+  const normalizedPath = normalizeSlashPath(path);
+  if (!normalizedPath) return undefined;
+  const absolutePath = normalizeAbsoluteMaybe(normalizedPath);
+  if (absolutePath) return absolutePath;
+  const homePath = normalizeAbsoluteMaybe(getProjectHomeDirectory(projectId));
+  if (normalizedPath === "~") return homePath;
+  if (normalizedPath.startsWith("~/")) {
+    return homePath
+      ? normalizeAbsolutePath(normalizedPath.slice(2), homePath)
+      : undefined;
   }
-  if (!basePath) return normalized;
-  const cleanBase = basePath.replace(/\/+$/, "");
-  if (!cleanBase) return normalized;
-  return `${cleanBase}/${normalized}`;
+  // Codex file events are currently HOME-relative, so resolve against HOME first.
+  if (homePath) {
+    return normalizeAbsolutePath(normalizedPath, homePath);
+  }
+  const normalizedBase = normalizeAbsoluteMaybe(basePath);
+  if (!normalizedBase) return undefined;
+  return normalizeAbsolutePath(normalizedPath, normalizedBase);
+}
+
+function normalizeSlashPath(path?: string): string | undefined {
+  if (typeof path !== "string") return undefined;
+  const trimmed = path.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/\\/g, "/");
+}
+
+function normalizeAbsoluteMaybe(path?: string): string | undefined {
+  const normalized = normalizeSlashPath(path);
+  if (!normalized) return undefined;
+  return isAbsolutePath(normalized)
+    ? normalizeAbsolutePath(normalized)
+    : undefined;
+}
+
+function detectBasePath(
+  configuredBasePath: string | undefined,
+  entries: ActivityEntry[],
+): string | undefined {
+  const explicit = normalizeAbsoluteMaybe(configuredBasePath);
+  if (explicit) return explicit;
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry.kind !== "terminal") continue;
+    const cwd = normalizeAbsoluteMaybe(entry.cwd);
+    if (cwd) return cwd;
+  }
+  return undefined;
 }
 
 function TerminalRow({

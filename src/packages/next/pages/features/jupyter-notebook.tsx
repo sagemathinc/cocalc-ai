@@ -266,7 +266,7 @@ export default function JupyterNotebook({ customize }) {
               .
             </Paragraph>
             <Paragraph>
-              Look at our <A href="/software">list of available software</A> for
+              Look at our <A href="/features/linux">list of available software</A> for
               more about what is available.
             </Paragraph>
           </Info>

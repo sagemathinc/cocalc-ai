@@ -152,6 +152,63 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("retries terminal commit verification when generating looks stale", async () => {
+    const sets: RecordedSet[] = [];
+    let commits = 0;
+    let saves = 0;
+    let staleReads = 2;
+    let current: any = {};
+    const syncdb: any = {
+      metadata: baseMetadata,
+      isReady: () => true,
+      get_one: () => {
+        if (staleReads > 0) {
+          staleReads -= 1;
+          return {
+            generating: true,
+            get: (key: string) => (key === "generating" ? true : undefined),
+          };
+        }
+        return current;
+      },
+      set: (val: any) => {
+        sets.push(val);
+        current = { ...(current ?? {}), ...val };
+      },
+      commit: () => {
+        commits += 1;
+      },
+      save: async () => {
+        saves += 1;
+      },
+      close: async () => {},
+    };
+
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const final = sets[sets.length - 1];
+    expect(final.generating).toBe(false);
+    expect(commits).toBeGreaterThan(1);
+    expect(saves).toBeGreaterThan(1);
+    (writer as any).dispose?.(true);
+  });
+
   it("keeps usage but commits final state", async () => {
     const { syncdb, sets } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
@@ -396,6 +453,50 @@ describe("ChatStreamWriter", () => {
 
     expect((writer as any).getKnownThreadIds()).toContain("thread-1");
     (writer as any).dispose?.(true);
+  });
+
+  it("replaces an existing writer for the same chat key", async () => {
+    const { syncdb: syncdb1 } = makeFakeSyncDB();
+    const { syncdb: syncdb2, sets } = makeFakeSyncDB();
+
+    const writer1: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb1 as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer1.waitUntilReady();
+    expect(writer1.isClosed()).toBe(false);
+
+    const writer2: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb2 as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer2.waitUntilReady();
+
+    expect(writer1.isClosed()).toBe(true);
+
+    await writer2.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer2);
+
+    const final = sets[sets.length - 1];
+    expect(final.generating).toBe(false);
+    writer1.dispose?.(true);
+    writer2.dispose?.(true);
   });
 
   it("tracks lease lifecycle from running to completed", async () => {

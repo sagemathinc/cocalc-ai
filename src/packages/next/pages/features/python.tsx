@@ -111,7 +111,7 @@ export default function Python({ customize }) {
                 </Paragraph>
                 <Paragraph>
                   Find more details in the{" "}
-                  <A href="/software/python">
+                  <A href="/features/python">
                     list of installed Python libraries
                   </A>
                   .
@@ -144,7 +144,7 @@ export default function Python({ customize }) {
                     </li>
                     <li>
                       CoCalc already{" "}
-                      <A href="/software/python">provides many packages</A> for
+                      <A href="/features/python">provides many packages</A> for
                       you.
                     </li>
                     <li>
@@ -227,7 +227,7 @@ export default function Python({ customize }) {
             </Paragraph>
             <Paragraph>
               There are several{" "}
-              <A href="/software/python">Python environments available</A>.
+              <A href="/features/python">Python environments available</A>.
             </Paragraph>
             <Paragraph>
               You can also easily run{" "}
@@ -373,7 +373,7 @@ export default function Python({ customize }) {
             <Paragraph>
               Terminals also give you access to{" "}
               <A href="https://www.git-scm.com">git</A> and{" "}
-              <A href="/software/executables">many more utilities</A>.
+              <A href="/features/terminal">many more utilities</A>.
             </Paragraph>
             <Paragraph>
               Regarding collaboration, terminals can be used{" "}

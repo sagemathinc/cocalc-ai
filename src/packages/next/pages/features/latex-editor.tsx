@@ -394,7 +394,7 @@ export default function LatexEditor({ customize }) {
               required.
             </Paragraph>
             <Paragraph>
-              Learn more on our <A href="/software">Available Software page</A>{" "}
+              Learn more on our <A href="/features/linux">Available Software page</A>{" "}
               or <A href="/features/jupyter-notebook">Jupyter Notebook page</A>.
             </Paragraph>
           </Info>
@@ -471,7 +471,7 @@ export default function LatexEditor({ customize }) {
               to compute "18" inline, leverage the entire Python ecosystem
               including NumPy, SciPy, and Matplotlib for plots, or perform
               symbolic math with SymPy. Access to{" "}
-              <A href="/software/python">hundreds of Python libraries</A> means
+              <A href="/features/python">hundreds of Python libraries</A> means
               you can analyze data, generate visualizations, and format results
               without leaving your document.
             </Paragraph>
@@ -503,7 +503,7 @@ export default function LatexEditor({ customize }) {
             <Paragraph>
               <ul>
                 <li>
-                  <A href="/software/r">Thousands of R packages</A>{" "}
+                  <A href="/features/r-statistical-software">Thousands of R packages</A>{" "}
                   pre-installed and maintained
                 </li>
                 <li>Full compilation pipeline from R code to final PDF</li>

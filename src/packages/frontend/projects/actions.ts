@@ -12,6 +12,7 @@ import { set_window_title } from "@cocalc/frontend/browser";
 import api from "@cocalc/frontend/client/api";
 import { COCALC_MINIMAL } from "@cocalc/frontend/fullscreen";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
+import { notifyCollabInvitesChanged } from "@cocalc/frontend/collaborators/invite-events";
 import type { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { allow_project_to_run } from "@cocalc/frontend/project/client-side-throttle";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -338,19 +339,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
     value: string;
   }): Promise<void> => {
     const { project_id } = opts;
-    await this.projects_table_set({
+    await webapp_client.conat_client.hub.projects.setProjectSshKey({
       project_id,
-      users: {
-        [this.redux.getStore("account").get_account_id()]: {
-          ssh_keys: {
-            [opts.fingerprint]: {
-              title: opts.title,
-              value: opts.value,
-              creation_date: Date.now(),
-            },
-          },
-        },
-      },
+      fingerprint: opts.fingerprint,
+      title: opts.title,
+      value: opts.value,
+      creation_date: Date.now(),
     });
     await this.updateAuthorizedKeys(project_id);
   };
@@ -360,15 +354,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
     fingerprint: string;
   }): Promise<void> => {
     const { project_id } = opts;
-    await this.projects_table_set({
+    await webapp_client.conat_client.hub.projects.deleteProjectSshKey({
       project_id,
-      users: {
-        [this.redux.getStore("account").get_account_id()]: {
-          ssh_keys: {
-            [opts.fingerprint]: null,
-          },
-        },
-      },
+      fingerprint: opts.fingerprint,
     });
     await this.updateAuthorizedKeys(project_id);
   };
@@ -742,7 +730,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
         replyto_name,
         email,
         subject,
+        message: body,
       });
+      notifyCollabInvitesChanged(project_id);
     } catch (err) {
       if (!silent) {
         const message = `Error inviting collaborator ${account_id} from ${project_id} -- ${err}`;
@@ -784,7 +774,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
         to,
         email,
         subject,
+        message: body,
       });
+      notifyCollabInvitesChanged(project_id);
       if (!silent) {
         alert_message({
           message: `Invited ${to} to collaborate on project.`,
@@ -1078,17 +1070,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
   // Explcitly set whether or not project is hidden for the given account
   // (hide=true means hidden)
   public async set_project_hide(
-    account_id: string,
+    _account_id: string,
     project_id: string,
     hide: boolean,
   ): Promise<void> {
-    await this.projects_table_set({
+    await webapp_client.conat_client.hub.projects.setProjectHidden({
       project_id,
-      users: {
-        [account_id]: {
-          hide,
-        },
-      },
+      hide,
     });
     await this.project_log(project_id, {
       event: hide ? "hide_project" : "unhide_project",
@@ -1103,7 +1091,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }
 
   public async delete_project(project_id: string): Promise<void> {
-    await this.projects_table_set({
+    await webapp_client.conat_client.hub.projects.setProjectDeleted({
       project_id,
       deleted: true,
     });
@@ -1114,7 +1102,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   public async toggle_delete_project(project_id: string): Promise<void> {
     const is_deleted = store.is_deleted(project_id);
 
-    await this.projects_table_set({
+    await webapp_client.conat_client.hub.projects.setProjectDeleted({
       project_id,
       deleted: !is_deleted,
     });

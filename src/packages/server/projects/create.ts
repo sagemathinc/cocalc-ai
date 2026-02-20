@@ -55,14 +55,69 @@ export default async function createProject(opts: CreateProjectOptions) {
     if (!account_id || !(await isAdmin(account_id))) {
       throw Error("only admins can specify the project_id");
     }
+    if (!isValidUUID(opts.project_id)) {
+      throw Error("if project_id is given, it must be a valid uuid v4");
+    }
     project_id = opts.project_id;
   } else {
     project_id = v4();
   }
 
   const pool = getPool();
+
+  async function projectIdConflictsDeleted(project_id: string): Promise<boolean> {
+    try {
+      const { rows } = await pool.query<{ project_id: string }>(
+        "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
+        [project_id],
+      );
+      return !!rows[0];
+    } catch (err: any) {
+      // Table may not exist until first hard-delete run.
+      if (err?.code === "42P01") {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async function projectIdExists(project_id: string): Promise<boolean> {
+    const { rows } = await pool.query<{ project_id: string }>(
+      "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
+      [project_id],
+    );
+    return !!rows[0];
+  }
+
+  if (opts.project_id) {
+    if (await projectIdConflictsDeleted(project_id)) {
+      throw Error(
+        "project_id belongs to a permanently deleted workspace; restore that workspace instead of reusing its project_id",
+      );
+    }
+    if (await projectIdExists(project_id)) {
+      throw Error("project_id already exists");
+    }
+  } else {
+    // Ensure generated id never collides with active or hard-deleted projects.
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      if (
+        !(await projectIdExists(project_id)) &&
+        !(await projectIdConflictsDeleted(project_id))
+      ) {
+        break;
+      }
+      project_id = v4();
+      if (attempt === 15) {
+        throw Error(
+          "failed to allocate a fresh project_id; please retry project creation",
+        );
+      }
+    }
+  }
   let host_id: string | undefined = requested_host_id;
   let requested_region_raw: string | undefined = requested_region_raw_input;
+  let hostStatus: string | null | undefined;
 
   async function resolveHostPlacement(host_id: string) {
     if (!account_id) {
@@ -102,7 +157,7 @@ export default async function createProject(opts: CreateProjectOptions) {
       host_id,
       isLocalSelfHost,
     });
-    return { host_id, hostRegion };
+    return { host_id, hostRegion, hostStatus: row.status as string | null | undefined };
   }
 
   if (src_project_id) {
@@ -139,7 +194,7 @@ export default async function createProject(opts: CreateProjectOptions) {
 
   let hostRegion: string | undefined;
   if (host_id) {
-    ({ host_id, hostRegion } = await resolveHostPlacement(host_id));
+    ({ host_id, hostRegion, hostStatus } = await resolveHostPlacement(host_id));
   }
 
   const projectRegion = requestedRegion ?? hostRegion ?? DEFAULT_R2_REGION;
@@ -169,25 +224,59 @@ export default async function createProject(opts: CreateProjectOptions) {
   // If this is a clone with a known host, register the project row on that host
   // so it is visible in its local sqlite/changefeeds without starting it.
   if (host_id) {
+    let lastErr: unknown;
     try {
-      const client = createHostControlClient({
-        host_id,
-        client: conatWithProjectRouting(),
-        timeout: 10000,
-      });
-      await client.createProject({
-        project_id,
-        title,
-        users,
-        image: rootfs_image ?? image,
-        start: false,
-      });
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        try {
+          const client = createHostControlClient({
+            host_id,
+            client: conatWithProjectRouting(),
+            timeout: 15000,
+          });
+          await client.createProject({
+            project_id,
+            title,
+            users,
+            image: rootfs_image ?? image,
+            start: false,
+          });
+          lastErr = undefined;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < 4) {
+            await delay(Math.min(8000, attempt * 2000));
+          }
+        }
+      }
+      if (lastErr) {
+        throw lastErr;
+      }
     } catch (err) {
       log.warn("createProject: failed to register clone on host", {
         project_id,
         host_id,
+        host_status: hostStatus ?? null,
         err: `${err}`,
       });
+      const mustFail =
+        hostStatus === "running" ||
+        hostStatus === "active" ||
+        hostStatus === "starting";
+      if (mustFail) {
+        try {
+          await pool.query("DELETE FROM projects WHERE project_id=$1", [project_id]);
+        } catch (cleanupErr) {
+          log.warn("createProject: failed to cleanup project row after host register error", {
+            project_id,
+            host_id,
+            err: `${cleanupErr}`,
+          });
+        }
+        throw Error(
+          `failed to initialize workspace on host ${host_id} (status=${hostStatus ?? "unknown"}): ${err}`,
+        );
+      }
     }
   }
 

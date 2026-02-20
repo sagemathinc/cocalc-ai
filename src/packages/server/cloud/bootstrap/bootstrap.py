@@ -50,6 +50,8 @@ class CloudflaredSpec:
     enabled: bool
     hostname: str | None = None
     port: int | None = None
+    ssh_hostname: str | None = None
+    ssh_port: int | None = None
     token: str | None = None
     tunnel_id: str | None = None
     creds_json: str | None = None
@@ -169,6 +171,9 @@ def load_config(path: str) -> BootstrapConfig:
             enabled=_ensure_bool(cloudflared.get("enabled"), "cloudflared.enabled"),
             hostname=cloudflared.get("hostname"),
             port=cloudflared.get("port"),
+            ssh_hostname=cloudflared.get("sshHostname")
+            or cloudflared.get("ssh_hostname"),
+            ssh_port=cloudflared.get("sshPort") or cloudflared.get("ssh_port"),
             token=cloudflared.get("token"),
             tunnel_id=cloudflared.get("tunnelId") or cloudflared.get("tunnel_id"),
             creds_json=cloudflared.get("credsJson") or cloudflared.get("creds_json"),
@@ -1397,11 +1402,20 @@ def configure_cloudflared(cfg: BootstrapConfig) -> None:
     if cfg.cloudflared.creds_json:
         Path(f"/etc/cloudflared/{cfg.cloudflared.tunnel_id}.json").write_text(cfg.cloudflared.creds_json, encoding="utf-8")
         os.chmod(f"/etc/cloudflared/{cfg.cloudflared.tunnel_id}.json", 0o600)
-    ingress = f"""ingress:
-  - hostname: {cfg.cloudflared.hostname}
-    service: http://localhost:{cfg.cloudflared.port}
-  - service: http_status:404
-"""
+    ingress_lines = [
+        "ingress:",
+        f"  - hostname: {cfg.cloudflared.hostname}",
+        f"    service: http://localhost:{cfg.cloudflared.port}",
+    ]
+    if cfg.cloudflared.ssh_hostname and cfg.cloudflared.ssh_port:
+        ingress_lines.extend(
+            [
+                f"  - hostname: {cfg.cloudflared.ssh_hostname}",
+                f"    service: ssh://localhost:{cfg.cloudflared.ssh_port}",
+            ]
+        )
+    ingress_lines.append("  - service: http_status:404")
+    ingress = "\n".join(ingress_lines)
     config_lines = []
     if not cfg.cloudflared.token:
         config_lines.append(f"tunnel: {cfg.cloudflared.tunnel_id}")

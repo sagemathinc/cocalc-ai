@@ -4,7 +4,14 @@
  */
 
 import type { ConatClient } from "@cocalc/frontend/conat/client";
-import type { AddCollaborator } from "@cocalc/conat/hub/api/projects";
+import type {
+  AddCollaborator,
+  ProjectCollabInviteAction,
+  ProjectCollabInviteBlockRow,
+  ProjectCollabInviteDirection,
+  ProjectCollabInviteRow,
+  ProjectCollabInviteStatus,
+} from "@cocalc/conat/hub/api/projects";
 
 export class ProjectCollaborators {
   private conat: ConatClient;
@@ -22,6 +29,7 @@ export class ProjectCollaborators {
     to: string;
     email: string; // body in HTML format
     subject?: string;
+    message?: string;
   }): Promise<any> {
     return await this.conat.hub.projects.inviteCollaboratorWithoutAccount({
       opts,
@@ -37,6 +45,7 @@ export class ProjectCollaborators {
     replyto_name?: string;
     email?: string;
     subject?: string;
+    message?: string;
   }): Promise<any> {
     return await this.conat.hub.projects.inviteCollaborator({
       opts,
@@ -62,5 +71,33 @@ export class ProjectCollaborators {
     return await this.conat.hub.projects.addCollaborator({
       opts,
     });
+  }
+
+  public async list_invites(opts: {
+    project_id?: string;
+    direction?: ProjectCollabInviteDirection;
+    status?: ProjectCollabInviteStatus;
+    limit?: number;
+  }): Promise<ProjectCollabInviteRow[]> {
+    return await this.conat.hub.projects.listCollabInvites(opts);
+  }
+
+  public async respond_invite(opts: {
+    invite_id: string;
+    action: ProjectCollabInviteAction;
+  }): Promise<ProjectCollabInviteRow> {
+    return await this.conat.hub.projects.respondCollabInvite(opts);
+  }
+
+  public async list_invite_blocks(opts?: {
+    limit?: number;
+  }): Promise<ProjectCollabInviteBlockRow[]> {
+    return await this.conat.hub.projects.listCollabInviteBlocks(opts ?? {});
+  }
+
+  public async unblock_inviter(opts: {
+    blocked_account_id: string;
+  }): Promise<{ unblocked: boolean }> {
+    return await this.conat.hub.projects.unblockCollabInviteSender(opts);
   }
 }

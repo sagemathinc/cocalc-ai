@@ -6,6 +6,9 @@ import type {
   HostMachine,
   HostStatus,
   HostCatalog,
+  HostSoftwareArtifact,
+  HostSoftwareAvailableVersion,
+  HostSoftwareChannel,
   HostSoftwareUpgradeTarget,
   HostSoftwareUpgradeResponse,
   HostLroResponse,
@@ -107,6 +110,10 @@ const logger = getLogger("server:conat:api:hosts");
 
 const HOST_PROJECTS_DEFAULT_LIMIT = 200;
 const HOST_PROJECTS_MAX_LIMIT = 5000;
+const DEFAULT_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
+const SOFTWARE_HISTORY_MAX_LIMIT = 50;
+const SOFTWARE_HISTORY_DEFAULT_LIMIT = 1;
+const SOFTWARE_FETCH_TIMEOUT_MS = 8_000;
 
 function logStatusUpdate(id: string, status: string, source: string) {
   const stack = new Error().stack;
@@ -1608,6 +1615,129 @@ export async function getHostLog({
   }));
 }
 
+function normalizeHostRuntimeLogLines(lines?: number): number {
+  const n = Number(lines ?? 200);
+  if (!Number.isFinite(n)) return 200;
+  return Math.max(1, Math.min(5000, Math.floor(n)));
+}
+
+export async function getHostRuntimeLog({
+  account_id,
+  id,
+  lines,
+}: {
+  account_id?: string;
+  id: string;
+  lines?: number;
+}): Promise<{ host_id: string; source: string; lines: number; text: string }> {
+  await loadOwnedHost(id, account_id);
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.getRuntimeLog({
+    lines: normalizeHostRuntimeLogLines(lines),
+  });
+  return {
+    host_id: id,
+    source: response.source,
+    lines: response.lines,
+    text: response.text,
+  };
+}
+
+export async function listHostSshAuthorizedKeys({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<{
+  host_id: string;
+  user: string;
+  home: string;
+  path: string;
+  keys: string[];
+}> {
+  await loadOwnedHost(id, account_id);
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.listHostSshAuthorizedKeys();
+  return {
+    host_id: id,
+    user: response.user,
+    home: response.home,
+    path: response.path,
+    keys: response.keys ?? [],
+  };
+}
+
+export async function addHostSshAuthorizedKey({
+  account_id,
+  id,
+  public_key,
+}: {
+  account_id?: string;
+  id: string;
+  public_key: string;
+}): Promise<{
+  host_id: string;
+  user: string;
+  home: string;
+  path: string;
+  keys: string[];
+  added: boolean;
+}> {
+  await loadOwnedHost(id, account_id);
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.addHostSshAuthorizedKey({ public_key });
+  return {
+    host_id: id,
+    user: response.user,
+    home: response.home,
+    path: response.path,
+    keys: response.keys ?? [],
+    added: !!response.added,
+  };
+}
+
+export async function removeHostSshAuthorizedKey({
+  account_id,
+  id,
+  public_key,
+}: {
+  account_id?: string;
+  id: string;
+  public_key: string;
+}): Promise<{
+  host_id: string;
+  user: string;
+  home: string;
+  path: string;
+  keys: string[];
+  removed: boolean;
+}> {
+  await loadOwnedHost(id, account_id);
+  const client = createHostControlClient({
+    host_id: id,
+    client: conatWithProjectRouting(),
+  });
+  const response = await client.removeHostSshAuthorizedKey({ public_key });
+  return {
+    host_id: id,
+    user: response.user,
+    home: response.home,
+    path: response.path,
+    keys: response.keys ?? [],
+    removed: !!response.removed,
+  };
+}
+
 export async function createHost({
   account_id,
   name,
@@ -2687,19 +2817,277 @@ function mapUpgradeArtifact(
   return undefined;
 }
 
-export async function upgradeHostSoftwareInternal({
-  account_id,
-  id,
-  targets,
-  base_url,
+function canonicalizeSoftwareArtifact(
+  artifact: HostSoftwareArtifact,
+): "project-host" | "project" | "tools" {
+  if (artifact === "project-bundle") return "project";
+  return artifact;
+}
+
+function extractVersionFromSoftwareUrl(
+  artifact: "project-host" | "project" | "tools",
+  url?: string,
+): string | undefined {
+  if (!url) return undefined;
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(new RegExp(`/${artifact}/([^/]+)/`));
+    return match?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeSoftwareOs(value?: string): "linux" | "darwin" {
+  const raw = `${value ?? "linux"}`.trim().toLowerCase();
+  if (raw === "darwin" || raw === "macos" || raw === "osx") return "darwin";
+  return "linux";
+}
+
+function normalizeSoftwareArch(value?: string): "amd64" | "arm64" {
+  const raw = `${value ?? "amd64"}`.trim().toLowerCase();
+  if (raw === "arm64" || raw === "aarch64") return "arm64";
+  return "amd64";
+}
+
+function normalizeSoftwareChannels(
+  channels?: HostSoftwareChannel[],
+): HostSoftwareChannel[] {
+  const values = (channels ?? ["latest"]).map((channel) =>
+    channel === "staging" ? "staging" : "latest",
+  );
+  return Array.from(new Set(values));
+}
+
+function normalizeSoftwareArtifacts(
+  artifacts?: HostSoftwareArtifact[],
+): HostSoftwareArtifact[] {
+  const defaults: HostSoftwareArtifact[] = [
+    "project-host",
+    "project",
+    "tools",
+  ];
+  if (!artifacts?.length) return defaults;
+  const out: HostSoftwareArtifact[] = [];
+  for (const artifact of artifacts) {
+    if (
+      artifact === "project-host" ||
+      artifact === "project" ||
+      artifact === "project-bundle" ||
+      artifact === "tools"
+    ) {
+      out.push(artifact);
+    }
+  }
+  return out.length ? Array.from(new Set(out)) : defaults;
+}
+
+async function fetchSoftwareManifest(url: string): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SOFTWARE_FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return await response.json();
+}
+
+async function fetchSoftwareManifestMaybe(url: string): Promise<any | undefined> {
+  try {
+    return await fetchSoftwareManifest(url);
+  } catch {
+    return undefined;
+  }
+}
+
+function softwareVersionsIndexUrl({
+  baseUrl,
+  artifact,
+  channel,
+  os,
+  arch,
 }: {
-  account_id?: string;
-  id: string;
-  targets: HostSoftwareUpgradeTarget[];
-  base_url?: string;
-}): Promise<HostSoftwareUpgradeResponse> {
-  const row = await loadHostForStartStop(id, account_id);
-  assertHostRunningForUpgrade(row);
+  baseUrl: string;
+  artifact: "project-host" | "project" | "tools";
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+}): string {
+  if (artifact === "tools") {
+    return `${baseUrl}/${artifact}/versions-${channel}-${os}-${arch}.json`;
+  }
+  return `${baseUrl}/${artifact}/versions-${channel}-${os}.json`;
+}
+
+function normalizePublishedVersionRows(index: any): any[] {
+  if (Array.isArray(index?.versions)) {
+    return index.versions;
+  }
+  if (Array.isArray(index)) {
+    return index;
+  }
+  return [];
+}
+
+function softwareVersionRowKey({
+  version,
+  url,
+}: {
+  version?: string;
+  url?: string;
+}): string {
+  const v = `${version ?? ""}`.trim();
+  if (v) return `v:${v}`;
+  const u = `${url ?? ""}`.trim();
+  if (u) return `u:${u}`;
+  return "";
+}
+
+function mapPublishedVersionRow({
+  artifact,
+  channel,
+  os,
+  arch,
+  canonical,
+  row,
+}: {
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+  canonical: "project-host" | "project" | "tools";
+  row: any;
+}): HostSoftwareAvailableVersion | undefined {
+  const url = typeof row?.url === "string" ? row.url : undefined;
+  let version = typeof row?.version === "string" ? row.version : undefined;
+  if (!version && url) {
+    version = extractVersionFromSoftwareUrl(canonical, url);
+  }
+  const available = !!url;
+  if (!available && !version) return undefined;
+  return {
+    artifact,
+    channel,
+    os,
+    arch,
+    version,
+    url,
+    sha256: typeof row?.sha256 === "string" ? row.sha256 : undefined,
+    available,
+    error: available ? undefined : "version entry missing url",
+  };
+}
+
+async function resolvePublishedSoftwareRows({
+  baseUrl,
+  artifact,
+  channel,
+  os,
+  arch,
+  limit,
+  latest,
+}: {
+  baseUrl: string;
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  os: "linux" | "darwin";
+  arch: "amd64" | "arm64";
+  limit: number;
+  latest: HostSoftwareAvailableVersion;
+}): Promise<HostSoftwareAvailableVersion[]> {
+  if (limit <= 1) return [latest];
+  const canonical = canonicalizeSoftwareArtifact(artifact);
+  const indexUrl = softwareVersionsIndexUrl({
+    baseUrl,
+    artifact: canonical,
+    channel,
+    os,
+    arch,
+  });
+  const index = await fetchSoftwareManifestMaybe(indexUrl);
+  if (!index) return [latest];
+  const rows: HostSoftwareAvailableVersion[] = [latest];
+  const seen = new Set<string>();
+  const latestKey = softwareVersionRowKey(latest);
+  if (latestKey) seen.add(latestKey);
+  for (const candidate of normalizePublishedVersionRows(index)) {
+    const mapped = mapPublishedVersionRow({
+      artifact,
+      channel,
+      os,
+      arch,
+      canonical,
+      row: candidate,
+    });
+    if (!mapped) continue;
+    const key = softwareVersionRowKey(mapped);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    rows.push(mapped);
+    if (rows.length >= limit) break;
+  }
+  return rows;
+}
+
+async function resolveLatestSoftwareRow({
+  softwareBaseUrl,
+  artifact,
+  channel,
+  targetOs,
+  targetArch,
+}: {
+  softwareBaseUrl: string;
+  artifact: HostSoftwareArtifact;
+  channel: HostSoftwareChannel;
+  targetOs: "linux" | "darwin";
+  targetArch: "amd64" | "arm64";
+}): Promise<HostSoftwareAvailableVersion> {
+  const canonical = canonicalizeSoftwareArtifact(artifact);
+  const manifestUrl =
+    canonical === "tools"
+      ? `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}-${targetArch}.json`
+      : `${softwareBaseUrl}/${canonical}/${channel}-${targetOs}.json`;
+  try {
+    const manifest = await fetchSoftwareManifest(manifestUrl);
+    const resolvedUrl =
+      typeof manifest?.url === "string" ? manifest.url : undefined;
+    const resolvedVersion = extractVersionFromSoftwareUrl(canonical, resolvedUrl);
+    return {
+      artifact,
+      channel,
+      os: targetOs,
+      arch: targetArch,
+      version: resolvedVersion,
+      url: resolvedUrl,
+      sha256:
+        typeof manifest?.sha256 === "string" ? manifest.sha256 : undefined,
+      available: !!resolvedUrl,
+      error: resolvedUrl ? undefined : "manifest missing url",
+    };
+  } catch (err) {
+    return {
+      artifact,
+      channel,
+      os: targetOs,
+      arch: targetArch,
+      available: false,
+      error: `${err instanceof Error ? err.message : err}`,
+    };
+  }
+}
+
+function normalizeSoftwareHistoryLimit(value?: number): number {
+  const n = Number(value ?? SOFTWARE_HISTORY_DEFAULT_LIMIT);
+  if (!Number.isFinite(n)) return SOFTWARE_HISTORY_DEFAULT_LIMIT;
+  return Math.max(1, Math.min(SOFTWARE_HISTORY_MAX_LIMIT, Math.floor(n)));
+}
+
+async function resolveHostSoftwareBaseUrl(base_url?: string): Promise<string> {
   let requestedBaseUrl = base_url;
   if (requestedBaseUrl) {
     try {
@@ -2713,11 +3101,14 @@ export async function upgradeHostSoftwareInternal({
       ) {
         const publicSite = (await siteURL()).replace(/\/+$/, "");
         requestedBaseUrl = `${publicSite}/software`;
-        logger.warn("upgrade host: replaced loopback software base url", {
-          host_id: id,
-          requested: base_url,
-          effective: requestedBaseUrl,
-        });
+      } else {
+        const path = parsed.pathname.replace(/\/+$/, "");
+        if (!path) {
+          parsed.pathname = "/software";
+          parsed.search = "";
+          parsed.hash = "";
+          requestedBaseUrl = parsed.toString();
+        }
       }
     } catch {
       // keep provided value as-is if it is not a valid URL
@@ -2727,12 +3118,85 @@ export async function upgradeHostSoftwareInternal({
   const forcedSoftwareBaseUrl =
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() ||
     undefined;
-  const resolvedBaseUrl =
+  return (
     requestedBaseUrl ??
     forcedSoftwareBaseUrl ??
     project_hosts_software_base_url ??
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
-    undefined;
+    DEFAULT_SOFTWARE_BASE_URL
+  );
+}
+
+export async function listHostSoftwareVersions({
+  account_id,
+  base_url,
+  artifacts,
+  channels,
+  os,
+  arch,
+  history_limit,
+}: {
+  account_id?: string;
+  base_url?: string;
+  artifacts?: HostSoftwareArtifact[];
+  channels?: HostSoftwareChannel[];
+  os?: "linux" | "darwin";
+  arch?: "amd64" | "arm64";
+  history_limit?: number;
+}): Promise<HostSoftwareAvailableVersion[]> {
+  requireAccount(account_id);
+  const softwareBaseUrl = (await resolveHostSoftwareBaseUrl(base_url)).replace(
+    /\/+$/,
+  "",
+  );
+  const targetOs = normalizeSoftwareOs(os);
+  const targetArch = normalizeSoftwareArch(arch);
+  const artifactList = normalizeSoftwareArtifacts(artifacts);
+  const channelList = normalizeSoftwareChannels(channels);
+  const historyLimit = normalizeSoftwareHistoryLimit(history_limit);
+  const rows: HostSoftwareAvailableVersion[] = [];
+  for (const artifact of artifactList) {
+    for (const channel of channelList) {
+      const latest = await resolveLatestSoftwareRow({
+        softwareBaseUrl,
+        artifact,
+        channel,
+        targetOs,
+        targetArch,
+      });
+      if (!latest.available) {
+        rows.push(latest);
+        continue;
+      }
+      const resolved = await resolvePublishedSoftwareRows({
+        baseUrl: softwareBaseUrl,
+        artifact,
+        channel,
+        os: targetOs,
+        arch: targetArch,
+        limit: historyLimit,
+        latest,
+      });
+      rows.push(...resolved);
+    }
+  }
+  return rows;
+}
+
+export async function upgradeHostSoftwareInternal({
+  account_id,
+  id,
+  targets,
+  base_url,
+}: {
+  account_id?: string;
+  id: string;
+  targets: HostSoftwareUpgradeTarget[];
+  base_url?: string;
+}): Promise<HostSoftwareUpgradeResponse> {
+  const row = await loadHostForStartStop(id, account_id);
+  assertHostRunningForUpgrade(row);
+  const resolvedBaseUrl = await resolveHostSoftwareBaseUrl(base_url);
   const client = createHostControlClient({
     host_id: id,
     client: conatWithProjectRouting(),

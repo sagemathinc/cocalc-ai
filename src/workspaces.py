@@ -126,6 +126,7 @@ def all_packages() -> List[str]:
         'packages/project-runner',
         'packages/project-host',
         'packages/plus',
+        'packages/cli',
         'packages/launchpad',
         'packages/cloud',
         'packages/server',  # packages/next assumes this is built
@@ -291,8 +292,8 @@ def is_github_ci() -> bool:
     return 'GITHUB_STEP_SUMMARY' in os.environ
 
 
-def write_github_summary(success: List[str], flaky: List[str], fails: List[str],
-                         elapsed_minutes: float) -> None:
+def write_github_summary(success: List[str], flaky: List[str],
+                         fails: List[str], elapsed_minutes: float) -> None:
     """Write a markdown summary to GitHub Actions step summary."""
     if not is_github_ci():
         return
@@ -330,8 +331,7 @@ def write_github_summary(success: List[str], flaky: List[str], fails: List[str],
     md.append(f"# {status_emoji} {status_text}\n")
     md.append(
         f"**{status_color} {success_count}/{total_packages} packages passed** • "
-        f"⏱️ {elapsed_minutes:.1f} minutes\n"
-    )
+        f"⏱️ {elapsed_minutes:.1f} minutes\n")
 
     # Summary stats table
     md.append("## 📊 Test Summary\n")
@@ -344,15 +344,15 @@ def write_github_summary(success: List[str], flaky: List[str], fails: List[str],
         f"| 🔄 Flaky (passed after retry) | {flaky_count} | {100*flaky_count/total_packages:.1f}% |"
     )
     md.append(
-        f"| ❌ Failed | {fail_count} | {100*fail_count/total_packages:.1f}% |"
-    )
+        f"| ❌ Failed | {fail_count} | {100*fail_count/total_packages:.1f}% |")
     md.append("")
 
     # Details for each category
     if success:
         md.append("## ✅ Passed on First Try\n")
         md.append("<details>")
-        md.append(f"<summary>View {len(success)} successful packages</summary>\n")
+        md.append(
+            f"<summary>View {len(success)} successful packages</summary>\n")
         for pkg in sorted(success):
             pkg_name = pkg.split('/')[-1]
             md.append(f"- `{pkg_name}`")
@@ -404,13 +404,11 @@ def test(args) -> None:
 
         if is_github_ci():
             # Format as GitHub Actions workflow command
-            msg = (
-                f"Test Status: "
-                f"{len(success)} passed, "
-                f"{len(flaky)} flaky, "
-                f"{len(fails)} failed "
-                f"({elapsed:.1f} minutes)"
-            )
+            msg = (f"Test Status: "
+                   f"{len(success)} passed, "
+                   f"{len(flaky)} flaky, "
+                   f"{len(fails)} failed "
+                   f"({elapsed:.1f} minutes)")
 
             # Add package name if provided
             if package:
@@ -446,7 +444,8 @@ def test(args) -> None:
             print(f"TESTING {n}/{len(v)}: {path}")
             status(path)
             print("*" * 40)
-            sys.stdout.flush()  # Ensure output appears before subprocess starts
+            sys.stdout.flush(
+            )  # Ensure output appears before subprocess starts
             if args.test_github_ci and 'test-github-ci' in package_json:
                 test_cmd = "pnpm run test-github-ci"
             elif 'test:all' in package_json:
