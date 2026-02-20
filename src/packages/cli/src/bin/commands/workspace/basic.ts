@@ -1,3 +1,9 @@
+/**
+ * Basic workspace lifecycle and metadata commands.
+ *
+ * Includes list/get/context management plus create/start/stop/restart/delete.
+ * This is the "core admin surface" for direct workspace operations.
+ */
 import { Command } from "commander";
 
 import type { WorkspaceCommandDeps } from "../workspace";

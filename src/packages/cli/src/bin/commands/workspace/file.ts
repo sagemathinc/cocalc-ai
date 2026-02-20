@@ -1,3 +1,9 @@
+/**
+ * Workspace file transfer and inspection commands.
+ *
+ * Handles list/cat/put/get/rm/mkdir plus search and benchmarks, with support
+ * for both direct hub calls and daemon-transported file operations.
+ */
 import { dirname } from "node:path";
 import { Command } from "commander";
 

@@ -1,3 +1,9 @@
+/**
+ * Workspace backup and service lifecycle commands.
+ *
+ * Focuses on backup create/list/restore flows and HTTP token/proxy checks used
+ * to validate host-side workspace service reachability.
+ */
 import { URL } from "node:url";
 import { Command } from "commander";
 

@@ -1,3 +1,9 @@
+/**
+ * Workspace command composition layer.
+ *
+ * This file owns shared dependency typing and registers each workspace
+ * subcommand module (basic, ops, sync, codex, collaborators, files, lifecycle).
+ */
 import { Command } from "commander";
 import { registerWorkspaceSyncCommands } from "./workspace/sync";
 import { registerWorkspaceCodexCommands } from "./workspace/codex";

@@ -1,3 +1,9 @@
+/**
+ * Workspace sync and forwarding commands.
+ *
+ * Handles sync key management and reflect-sync forward lifecycle so local tools
+ * can reach a workspace over stable tunnels.
+ */
 import { existsSync } from "node:fs";
 import { Command } from "commander";
 

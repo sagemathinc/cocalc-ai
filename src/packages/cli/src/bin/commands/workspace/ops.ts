@@ -1,3 +1,9 @@
+/**
+ * Workspace operational access commands.
+ *
+ * Covers ssh connectivity, local ssh config integration, runtime log streaming,
+ * and endpoint/proxy checks needed for debugging and operator workflows.
+ */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Command } from "commander";

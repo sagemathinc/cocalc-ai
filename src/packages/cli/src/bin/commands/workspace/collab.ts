@@ -1,3 +1,9 @@
+/**
+ * Workspace collaborator and invite management commands.
+ *
+ * Includes account search, collaborator listings, invite lifecycle operations,
+ * and block list controls for collaboration access.
+ */
 import { Command } from "commander";
 
 import type { WorkspaceCommandDeps } from "../workspace";

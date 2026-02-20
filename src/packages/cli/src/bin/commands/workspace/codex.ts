@@ -1,3 +1,9 @@
+/**
+ * Workspace Codex integration commands.
+ *
+ * Provides remote codex execution and authentication/device-flow helpers that
+ * run against workspace-hosted codex services.
+ */
 import { Command } from "commander";
 
 import type { WorkspaceCommandDeps } from "../workspace";
