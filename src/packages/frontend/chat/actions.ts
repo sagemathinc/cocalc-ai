@@ -1094,6 +1094,13 @@ export class ChatActions extends Actions<ChatState> {
     const rootMessage = entry?.message;
     if (!rootMessage) return;
     const cfg = field<CodexThreadConfig>(rootMessage, "acp_config");
+    if (cfg != null && this.syncdb != null) {
+      // One-time self-heal for legacy/root-only configs.
+      this.setThreadConfigRecord(`${rootMs}`, {
+        acp_config: cfg,
+      });
+      this.syncdb.commit();
+    }
     return cfg;
   };
 
