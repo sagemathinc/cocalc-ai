@@ -18,6 +18,7 @@ import { connect as connectConat, type Client as ConatClient } from "@cocalc/con
 import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import type { HubApi } from "@cocalc/conat/hub/api";
 import type {
   HostCatalog,
   HostCatalogEntry,
@@ -27,7 +28,6 @@ import type {
   HostSoftwareChannel,
 } from "@cocalc/conat/hub/api/hosts";
 import type { LroScopeType, LroSummary as HubLroSummary } from "@cocalc/conat/hub/api/lro";
-import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
 import type {
   MyCollaboratorRow,
   ProjectCollabInviteAction,
@@ -120,6 +120,7 @@ type CommandContext = {
   pollMs: number;
   apiBaseUrl: string;
   remote: RemoteConnection;
+  hub: HubApi;
   routedProjectHostClients: Record<string, RoutedProjectHostClientState>;
   workspaceCache: Map<string, { expiresAt: number; workspace: WorkspaceRow }>;
   hostConnectionCache: Map<string, { expiresAt: number; connection: HostConnectionInfo }>;
@@ -1107,7 +1108,7 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
     );
   }
 
-  return {
+  const ctx = {
     globals: effectiveGlobals,
     accountId,
     timeoutMs,
@@ -1115,10 +1116,13 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
     pollMs,
     apiBaseUrl,
     remote,
+    hub: undefined as unknown as HubApi,
     routedProjectHostClients: {},
     workspaceCache: new Map(),
     hostConnectionCache: new Map(),
   };
+  ctx.hub = createHubApiForContext(ctx);
+  return ctx;
 }
 
 function closeCommandContext(ctx: CommandContext | undefined): void {
@@ -1176,7 +1180,26 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
-async function hubCallAccount<T>(
+type HubGroupName = Extract<keyof HubApi, string>;
+
+const HUB_API_GROUPS: HubGroupName[] = [
+  "system",
+  "projects",
+  "db",
+  "purchases",
+  "sync",
+  "org",
+  "messages",
+  "fileSync",
+  "hosts",
+  "software",
+  "controlAgent",
+  "lro",
+  "ssh",
+  "reflect",
+];
+
+async function hubCallByName<T>(
   ctx: CommandContext,
   name: string,
   args: any[] = [],
@@ -1203,6 +1226,25 @@ async function hubCallAccount<T>(
   )) as T;
 }
 
+function createHubApiForContext(ctx: CommandContext): HubApi {
+  const hub = {} as Record<HubGroupName, Record<string, (...args: any[]) => Promise<any>>>;
+  for (const group of HUB_API_GROUPS) {
+    hub[group] = new Proxy(
+      {},
+      {
+        get: (_target, property) => {
+          if (typeof property !== "string") {
+            return undefined;
+          }
+          return async (...args: any[]) =>
+            await hubCallByName(ctx, `${group}.${property}`, args);
+        },
+      },
+    );
+  }
+  return hub as unknown as HubApi;
+}
+
 async function userQueryTable<T>(
   ctx: CommandContext,
   table: string,
@@ -1212,12 +1254,10 @@ async function userQueryTable<T>(
   const query = {
     [table]: [row],
   };
-  const result = await hubCallAccount<Record<string, T[]>>(ctx, "db.userQuery", [
-    {
-      query,
-      options,
-    },
-  ]);
+  const result = (await ctx.hub.db.userQuery({
+    query,
+    options,
+  })) as Record<string, T[]>;
   const rows = result?.[table];
   return Array.isArray(rows) ? rows : [];
 }
@@ -1413,13 +1453,11 @@ async function resolveAccountByIdentifier(
   }
 
   const queryIsEmail = value.includes("@");
-  const rows = await hubCallAccount<UserSearchResult[]>(ctx, "system.userSearch", [
-    {
-      query: value,
-      limit: 50,
-      ...(queryIsEmail ? { only_email: true } : undefined),
-    },
-  ]);
+  const rows = await ctx.hub.system.userSearch({
+    query: value,
+    limit: 50,
+    ...(queryIsEmail ? { only_email: true } : undefined),
+  });
   if (!rows?.length) {
     throw new Error(`user '${value}' not found`);
   }
@@ -1544,16 +1582,10 @@ async function issueProjectHostAuthToken(
   }
 
   state.tokenInFlight = (async () => {
-    const issued = await hubCallAccount<{ host_id: string; token: string; expires_at: number }>(
-      ctx,
-      "hosts.issueProjectHostAuthToken",
-      [
-        {
-          host_id: state.host_id,
-          project_id,
-        },
-      ],
-    );
+    const issued = await ctx.hub.hosts.issueProjectHostAuthToken({
+      host_id: state.host_id,
+      project_id,
+    });
     state.token = issued.token;
     state.expiresAt = issued.expires_at;
     state.tokenSource = "hub";
@@ -1602,9 +1634,7 @@ async function getOrCreateRoutedProjectHostClient(
     connection = cachedConnection.connection;
   }
   if (!connection) {
-    connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
-      { host_id },
-    ]);
+    connection = await ctx.hub.hosts.resolveHostConnection({ host_id });
     ctx.hostConnectionCache.set(host_id, {
       connection,
       expiresAt: Date.now() + HOST_CONNECTION_CACHE_TTL_MS,
@@ -2014,21 +2044,15 @@ async function workspaceCodexAuthStatusData({
   cwd?: string;
 }): Promise<Record<string, unknown>> {
   const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
-  const [paymentSource, keyStatus, subscriptionCreds] = await Promise.all([
-    hubCallAccount<any>(ctx, "system.getCodexPaymentSource", [
-      { project_id: workspace.project_id },
-    ]),
-    hubCallAccount<any>(ctx, "system.getOpenAiApiKeyStatus", [
-      { project_id: workspace.project_id },
-    ]),
-    hubCallAccount<any[]>(ctx, "system.listExternalCredentials", [
-      {
-        provider: "openai",
-        kind: "codex-subscription-auth-json",
-        scope: "account",
-      },
-    ]),
-  ]);
+  const [paymentSource, keyStatus, subscriptionCreds] = (await Promise.all([
+    ctx.hub.system.getCodexPaymentSource({ project_id: workspace.project_id }),
+    ctx.hub.system.getOpenAiApiKeyStatus({ project_id: workspace.project_id }),
+    ctx.hub.system.listExternalCredentials({
+      provider: "openai",
+      kind: "codex-subscription-auth-json",
+      scope: "account",
+    }),
+  ])) as [any, any, any[]];
 
   return {
     workspace_id: workspace.project_id,
@@ -2864,9 +2888,10 @@ async function runWorkspaceFileCheckBench({
 }
 
 async function resolveHost(ctx: CommandContext, identifier: string): Promise<HostRow> {
-  const hosts = await hubCallAccount<HostRow[]>(ctx, "hosts.listHosts", [
-    { include_deleted: false, catalog: true },
-  ]);
+  const hosts = (await ctx.hub.hosts.listHosts({
+    include_deleted: false,
+    catalog: true,
+  })) as HostRow[];
   if (!Array.isArray(hosts) || !hosts.length) {
     throw new Error("no hosts are visible to this account");
   }
@@ -2893,13 +2918,11 @@ async function listHosts(
   ctx: CommandContext,
   opts: { include_deleted?: boolean; catalog?: boolean; admin_view?: boolean } = {},
 ): Promise<HostRow[]> {
-  const hosts = await hubCallAccount<HostRow[]>(ctx, "hosts.listHosts", [
-    {
-      include_deleted: !!opts.include_deleted,
-      catalog: !!opts.catalog,
-      admin_view: !!opts.admin_view,
-    },
-  ]);
+  const hosts = (await ctx.hub.hosts.listHosts({
+    include_deleted: !!opts.include_deleted,
+    catalog: !!opts.catalog,
+    admin_view: !!opts.admin_view,
+  })) as HostRow[];
   if (!Array.isArray(hosts)) return [];
   return hosts;
 }
@@ -3117,9 +3140,7 @@ async function resolveHostSshEndpoint(
   let connection: HostConnectionInfo | null = null;
   try {
     connection = await Promise.race([
-      hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
-        { host_id: host.id },
-      ]),
+      ctx.hub.hosts.resolveHostConnection({ host_id: host.id }),
       new Promise<HostConnectionInfo>((_, reject) =>
         setTimeout(
           () =>
@@ -3166,7 +3187,7 @@ async function waitForLro(
   let lastError: string | null | undefined;
 
   while (Date.now() - started <= timeoutMs) {
-    const summary = await hubCallAccount<LroStatusSummary | undefined>(ctx, "lro.get", [{ op_id: opId }]);
+    const summary = (await ctx.hub.lro.get({ op_id: opId })) as LroStatusSummary | undefined;
     const status = summary?.status ?? "unknown";
     lastStatus = status;
     lastError = summary?.error;
@@ -3590,9 +3611,9 @@ async function resolveWorkspaceSshTarget(
   if (!workspace.host_id) {
     throw new Error("workspace has no assigned host");
   }
-  const connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
-    { host_id: workspace.host_id },
-  ]);
+  const connection = await ctx.hub.hosts.resolveHostConnection({
+    host_id: workspace.host_id,
+  });
   if (!connection.ssh_server) {
     throw new Error("host has no ssh server endpoint");
   }
@@ -3623,11 +3644,10 @@ async function resolveWorkspaceSshConnection(
   if (!workspace.host_id) {
     throw new Error("workspace has no assigned host");
   }
-  const connection = await hubCallAccount<WorkspaceSshConnectionInfo>(
-    ctx,
-    "projects.resolveWorkspaceSshConnection",
-    [{ project_id: workspace.project_id, direct }],
-  );
+  const connection = (await ctx.hub.projects.resolveWorkspaceSshConnection({
+    project_id: workspace.project_id,
+    direct,
+  })) as WorkspaceSshConnectionInfo;
   const sshUsername = `${connection.ssh_username ?? workspace.project_id}`.trim() || workspace.project_id;
   if (connection.transport === "cloudflare-access-tcp") {
     const hostname = `${connection.cloudflare_hostname ?? ""}`.trim();
@@ -4001,9 +4021,7 @@ async function resolveProxyUrl({
     throw new Error("workspace has no assigned host; specify --host or start/move the workspace first");
   }
 
-  const connection = await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
-    { host_id: host.id },
-  ]);
+  const connection = await ctx.hub.hosts.resolveHostConnection({ host_id: host.id });
 
   let base = connection.connect_url ? normalizeUrl(connection.connect_url) : "";
   if (!base && connection.local_proxy) {
@@ -4814,13 +4832,11 @@ workspace
   .action(async (name: string | undefined, opts: { host?: string }, command: Command) => {
     await withContext(command, "workspace create", async (ctx) => {
       const host = opts.host ? await resolveHost(ctx, opts.host) : null;
-      const workspaceId = await hubCallAccount<string>(ctx, "projects.createProject", [
-        {
-          title: name ?? "New Workspace",
-          host_id: host?.id,
-          start: false,
-        },
-      ]);
+      const workspaceId = await ctx.hub.projects.createProject({
+        title: name ?? "New Workspace",
+        host_id: host?.id,
+        start: false,
+      });
       return {
         workspace_id: workspaceId,
         title: name ?? "New Workspace",
@@ -4840,14 +4856,12 @@ workspace
         throw new Error("title must be non-empty");
       }
       const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-      await hubCallAccount(ctx, "db.userQuery", [
-        {
-          query: {
-            projects: [{ project_id: ws.project_id, title: nextTitle }],
-          },
-          options: [],
+      await ctx.hub.db.userQuery({
+        query: {
+          projects: [{ project_id: ws.project_id, title: nextTitle }],
         },
-      ]);
+        options: [],
+      });
       return {
         workspace_id: ws.project_id,
         title: nextTitle,
@@ -4919,11 +4933,9 @@ workspace
       }
       const ws = await resolveWorkspace(ctx, projectId);
       if (!opts.hard) {
-        await hubCallAccount(ctx, "projects.deleteProject", [
-          {
-            project_id: ws.project_id,
-          },
-        ]);
+        await ctx.hub.projects.deleteProject({
+          project_id: ws.project_id,
+        });
         return {
           workspace_id: ws.project_id,
           status: "deleted",
@@ -4947,13 +4959,11 @@ workspace
         });
       }
 
-      const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.hardDeleteProject", [
-        {
-          project_id: ws.project_id,
-          backup_retention_days: backupRetentionDays,
-          purge_backups_now: purgeBackupsNow,
-        },
-      ]);
+      const op = await ctx.hub.projects.hardDeleteProject({
+        project_id: ws.project_id,
+        backup_retention_days: backupRetentionDays,
+        purge_backups_now: purgeBackupsNow,
+      });
       if (!opts.wait) {
         return {
           workspace_id: ws.project_id,
@@ -5000,12 +5010,10 @@ workspace
       if (!isValidUUID(projectId)) {
         throw new Error("--workspace must be a workspace project_id UUID");
       }
-      await hubCallAccount(ctx, "projects.setProjectDeleted", [
-        {
-          project_id: projectId,
-          deleted: false,
-        },
-      ]);
+      await ctx.hub.projects.setProjectDeleted({
+        project_id: projectId,
+        deleted: false,
+      });
       return {
         workspace_id: projectId,
         status: "active",
@@ -5022,12 +5030,10 @@ workspace
   .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
     await withContext(command, "workspace start", async (ctx) => {
       const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-      const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.start", [
-        {
-          project_id: ws.project_id,
-          wait: false,
-        },
-      ]);
+      const op = await ctx.hub.projects.start({
+        project_id: ws.project_id,
+        wait: false,
+      });
 
       if (opts.wait) {
         const summary = await waitForLro(ctx, op.op_id, {
@@ -5063,11 +5069,9 @@ workspace
   .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
     await withContext(command, "workspace stop", async (ctx) => {
       const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-      await hubCallAccount<void>(ctx, "projects.stop", [
-        {
-          project_id: ws.project_id,
-        },
-      ]);
+      await ctx.hub.projects.stop({
+        project_id: ws.project_id,
+      });
 
       if (opts.wait) {
         const wait = await waitForWorkspaceNotRunning(ctx, ws.project_id, {
@@ -5100,18 +5104,14 @@ workspace
   .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
     await withContext(command, "workspace restart", async (ctx) => {
       const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-      await hubCallAccount<void>(ctx, "projects.stop", [
-        {
-          project_id: ws.project_id,
-        },
-      ]);
+      await ctx.hub.projects.stop({
+        project_id: ws.project_id,
+      });
 
-      const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.start", [
-        {
-          project_id: ws.project_id,
-          wait: false,
-        },
-      ]);
+      const op = await ctx.hub.projects.start({
+        project_id: ws.project_id,
+        wait: false,
+      });
 
       if (opts.wait) {
         const summary = await waitForLro(ctx, op.op_id, {
@@ -5185,16 +5185,10 @@ workspace
               path: opts.path,
             };
 
-        const result = await hubCallAccount<{
-          stdout?: string;
-          stderr?: string;
-          exit_code?: number;
-        }>(ctx, "projects.exec", [
-          {
-            project_id: ws.project_id,
-            execOpts,
-          },
-        ]);
+        const result = await ctx.hub.projects.exec({
+          project_id: ws.project_id,
+          execOpts,
+        });
 
         if (!ctx.globals.json && ctx.globals.output !== "json") {
           if (result.stdout) process.stdout.write(result.stdout);
@@ -5580,11 +5574,10 @@ workspace
         if (!Number.isFinite(tail) || tail <= 0) {
           throw new Error("--tail must be a positive integer");
         }
-        const log = await hubCallAccount<WorkspaceRuntimeLogRow>(
-          ctx,
-          "projects.getRuntimeLog",
-          [{ project_id: ws.project_id, lines: Math.floor(tail) }],
-        );
+        const log = (await ctx.hub.projects.getRuntimeLog({
+          project_id: ws.project_id,
+          lines: Math.floor(tail),
+        })) as WorkspaceRuntimeLogRow;
         if (!ctx.globals.json && ctx.globals.output !== "json") {
           if (log.text) {
             emitWorkspaceFileCatHumanContent(log.text);
@@ -5607,12 +5600,10 @@ workspace
       await withContext(command, "workspace move", async (ctx) => {
         const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const host = await resolveHost(ctx, opts.host);
-        const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.moveProject", [
-          {
-            project_id: ws.project_id,
-            dest_host_id: host.id,
-          },
-        ]);
+        const op = await ctx.hub.projects.moveProject({
+          project_id: ws.project_id,
+          dest_host_id: host.id,
+        });
 
         if (!opts.wait) {
           return {
@@ -5687,12 +5678,10 @@ workspace
       await withContext(command, "workspace copy-path", async (ctx) => {
         const srcWs = await resolveWorkspace(ctx, opts.srcWorkspace);
         const destWs = await resolveWorkspace(ctx, opts.destWorkspace);
-        const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.copyPathBetweenProjects", [
-          {
-            src: { project_id: srcWs.project_id, path: opts.src },
-            dest: { project_id: destWs.project_id, path: opts.dest },
-          },
-        ]);
+        const op = await ctx.hub.projects.copyPathBetweenProjects({
+          src: { project_id: srcWs.project_id, path: opts.src },
+          dest: { project_id: destWs.project_id, path: opts.dest },
+        });
 
         if (!opts.wait) {
           return {
@@ -6174,9 +6163,9 @@ codexAuthApiKey
   .action(async (opts: { workspace?: string }, command: Command) => {
     await withContext(command, "workspace codex auth api-key status", async (ctx) => {
       const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-      const status = await hubCallAccount<any>(ctx, "system.getOpenAiApiKeyStatus", [
-        { project_id: workspace.project_id },
-      ]);
+      const status = await ctx.hub.system.getOpenAiApiKeyStatus({
+        project_id: workspace.project_id,
+      });
       return {
         workspace_id: workspace.project_id,
         workspace_title: workspace.title,
@@ -6216,11 +6205,10 @@ codexAuthApiKey
         }
         if (scope === "workspace") {
           const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-          const result = await hubCallAccount<{ id: string; created: boolean }>(
-            ctx,
-            "system.setOpenAiApiKey",
-            [{ project_id: workspace.project_id, api_key: apiKey }],
-          );
+          const result = await ctx.hub.system.setOpenAiApiKey({
+            project_id: workspace.project_id,
+            api_key: apiKey,
+          });
           return {
             scope,
             workspace_id: workspace.project_id,
@@ -6230,11 +6218,9 @@ codexAuthApiKey
             status: "saved",
           };
         }
-        const result = await hubCallAccount<{ id: string; created: boolean }>(
-          ctx,
-          "system.setOpenAiApiKey",
-          [{ api_key: apiKey }],
-        );
+        const result = await ctx.hub.system.setOpenAiApiKey({
+          api_key: apiKey,
+        });
         return {
           scope,
           credential_id: result.id,
@@ -6262,11 +6248,9 @@ codexAuthApiKey
         }
         if (scope === "workspace") {
           const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-          const result = await hubCallAccount<{ revoked: boolean }>(
-            ctx,
-            "system.deleteOpenAiApiKey",
-            [{ project_id: workspace.project_id }],
-          );
+          const result = await ctx.hub.system.deleteOpenAiApiKey({
+            project_id: workspace.project_id,
+          });
           return {
             scope,
             workspace_id: workspace.project_id,
@@ -6274,11 +6258,7 @@ codexAuthApiKey
             revoked: result.revoked,
           };
         }
-        const result = await hubCallAccount<{ revoked: boolean }>(
-          ctx,
-          "system.deleteOpenAiApiKey",
-          [{}],
-        );
+        const result = await ctx.hub.system.deleteOpenAiApiKey({});
         return {
           scope,
           revoked: result.revoked,
@@ -6299,13 +6279,11 @@ collab
     async (query: string, opts: { limit?: string }, command: Command) => {
       await withContext(command, "workspace collab search", async (ctx) => {
         const limit = Math.max(1, Math.min(100, Number(opts.limit ?? "20") || 20));
-        const rows = await hubCallAccount<UserSearchResult[]>(ctx, "system.userSearch", [
-          {
-            query,
-            limit,
-            ...(query.includes("@") ? { only_email: true } : undefined),
-          },
-        ]);
+        const rows = await ctx.hub.system.userSearch({
+          query,
+          limit,
+          ...(query.includes("@") ? { only_email: true } : undefined),
+        });
         return (rows ?? []).map((row) => ({
           account_id: row.account_id,
           name: normalizeUserSearchName(row),
@@ -6332,11 +6310,9 @@ collab
       await withContext(command, "workspace collab list", async (ctx) => {
         if (opts.workspace) {
           const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-          const rows = await hubCallAccount<ProjectCollaboratorRow[]>(
-            ctx,
-            "projects.listCollaborators",
-            [{ project_id: workspace.project_id }],
-          );
+          const rows = (await ctx.hub.projects.listCollaborators({
+            project_id: workspace.project_id,
+          })) as ProjectCollaboratorRow[];
           return (rows ?? []).map((row) => ({
             workspace_id: workspace.project_id,
             workspace_title: workspace.title,
@@ -6353,11 +6329,9 @@ collab
           }));
         }
         const limit = Math.max(1, Math.min(1000, Number(opts.limit ?? "500") || 500));
-        const rows = await hubCallAccount<MyCollaboratorRow[]>(
-          ctx,
-          "projects.listMyCollaborators",
-          [{ limit }],
-        );
+        const rows = (await ctx.hub.projects.listMyCollaborators({
+          limit,
+        })) as MyCollaboratorRow[];
         return (rows ?? []).map((row) => ({
           account_id: row.account_id,
           name:
@@ -6394,17 +6368,15 @@ collab
       await withContext(command, "workspace collab add", async (ctx) => {
         const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const target = await resolveAccountByIdentifier(ctx, opts.user);
-        const result = await hubCallAccount<{
+        const result = (await ctx.hub.projects.createCollabInvite({
+          project_id: workspace.project_id,
+          invitee_account_id: target.account_id,
+          message: opts.message,
+          direct: !!opts.direct,
+        })) as {
           created: boolean;
           invite: ProjectCollabInviteRow;
-        }>(ctx, "projects.createCollabInvite", [
-          {
-            project_id: workspace.project_id,
-            invitee_account_id: target.account_id,
-            message: opts.message,
-            direct: !!opts.direct,
-          },
-        ]);
+        };
         return {
           workspace_id: workspace.project_id,
           workspace_title: workspace.title,
@@ -6430,14 +6402,12 @@ collab
       await withContext(command, "workspace collab remove", async (ctx) => {
         const workspace = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
         const target = await resolveAccountByIdentifier(ctx, opts.user);
-        await hubCallAccount<void>(ctx, "projects.removeCollaborator", [
-          {
-            opts: {
-              project_id: workspace.project_id,
-              account_id: target.account_id,
-            },
+        await ctx.hub.projects.removeCollaborator({
+          opts: {
+            project_id: workspace.project_id,
+            account_id: target.account_id,
           },
-        ]);
+        });
         return {
           workspace_id: workspace.project_id,
           workspace_title: workspace.title,
@@ -6485,18 +6455,12 @@ invite
           ? await resolveWorkspaceFromArgOrContext(ctx, opts.workspace)
           : null;
         const limit = Math.max(1, Math.min(1000, Number(opts.limit ?? "200") || 200));
-        const rows = await hubCallAccount<ProjectCollabInviteRow[]>(
-          ctx,
-          "projects.listCollabInvites",
-          [
-            {
-              project_id: workspace?.project_id,
-              direction: opts.direction,
-              status: opts.status,
-              limit,
-            },
-          ],
-        );
+        const rows = (await ctx.hub.projects.listCollabInvites({
+          project_id: workspace?.project_id,
+          direction: opts.direction,
+          status: opts.status,
+          limit,
+        })) as ProjectCollabInviteRow[];
         if (opts.full) {
           return (rows ?? []).map((row) => ({
             ...serializeInviteRow(row),
@@ -6515,11 +6479,10 @@ async function respondWorkspaceInvite(
   action: ProjectCollabInviteAction,
 ): Promise<void> {
   await withContext(command, `workspace invite ${action}`, async (ctx) => {
-    const row = await hubCallAccount<ProjectCollabInviteRow>(
-      ctx,
-      "projects.respondCollabInvite",
-      [{ invite_id: inviteId, action }],
-    );
+    const row = (await ctx.hub.projects.respondCollabInvite({
+      invite_id: inviteId,
+      action,
+    })) as ProjectCollabInviteRow;
     return serializeInviteRow(row);
   });
 }
@@ -6559,11 +6522,9 @@ invite
   .action(async (opts: { limit?: string }, command: Command) => {
     await withContext(command, "workspace invite blocks", async (ctx) => {
       const limit = Math.max(1, Math.min(1000, Number(opts.limit ?? "200") || 200));
-      const rows = await hubCallAccount<ProjectCollabInviteBlockRow[]>(
-        ctx,
-        "projects.listCollabInviteBlocks",
-        [{ limit }],
-      );
+      const rows = (await ctx.hub.projects.listCollabInviteBlocks({
+        limit,
+      })) as ProjectCollabInviteBlockRow[];
       return (rows ?? []).map((row) => ({
         blocker_account_id: row.blocker_account_id,
         blocked_account_id: row.blocked_account_id,
@@ -6585,13 +6546,13 @@ invite
   .action(async (opts: { user: string }, command: Command) => {
     await withContext(command, "workspace invite unblock", async (ctx) => {
       const user = await resolveAccountByIdentifier(ctx, opts.user);
-      return await hubCallAccount<{
+      return (await ctx.hub.projects.unblockCollabInviteSender({
+        blocked_account_id: user.account_id,
+      })) as {
         unblocked: boolean;
         blocker_account_id: string;
         blocked_account_id: string;
-      }>(ctx, "projects.unblockCollabInviteSender", [
-        { blocked_account_id: user.account_id },
-      ]);
+      };
     });
   });
 
@@ -7281,11 +7242,9 @@ backup
   .action(async (opts: { workspace?: string; wait?: boolean }, command: Command) => {
     await withContext(command, "workspace backup create", async (ctx) => {
       const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-      const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.createBackup", [
-        {
-          project_id: ws.project_id,
-        },
-      ]);
+      const op = await ctx.hub.projects.createBackup({
+        project_id: ws.project_id,
+      });
       if (!opts.wait) {
         return {
           workspace_id: ws.project_id,
@@ -7321,14 +7280,10 @@ backup
     async (opts: { workspace?: string; indexedOnly?: boolean; limit?: string }, command: Command) => {
       await withContext(command, "workspace backup list", async (ctx) => {
         const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-        const backups = await hubCallAccount<
-          Array<{ id: string; time: string | Date; summary?: Record<string, any> }>
-        >(ctx, "projects.getBackups", [
-          {
-            project_id: ws.project_id,
-            indexed_only: !!opts.indexedOnly,
-          },
-        ]);
+        const backups = (await ctx.hub.projects.getBackups({
+          project_id: ws.project_id,
+          indexed_only: !!opts.indexedOnly,
+        })) as Array<{ id: string; time: string | Date; summary?: Record<string, any> }>;
         const limitNum = Math.max(1, Math.min(10000, Number(opts.limit ?? "100") || 100));
         return (backups ?? []).slice(0, limitNum).map((b) => ({
           workspace_id: ws.project_id,
@@ -7350,15 +7305,11 @@ backup
     async (opts: { workspace?: string; backupId: string; path?: string }, command: Command) => {
       await withContext(command, "workspace backup files", async (ctx) => {
         const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-        const files = await hubCallAccount<
-          Array<{ name: string; isDir: boolean; mtime: number; size: number }>
-        >(ctx, "projects.getBackupFiles", [
-          {
-            project_id: ws.project_id,
-            id: opts.backupId,
-            path: opts.path,
-          },
-        ]);
+        const files = (await ctx.hub.projects.getBackupFiles({
+          project_id: ws.project_id,
+          id: opts.backupId,
+          path: opts.path,
+        })) as Array<{ name: string; isDir: boolean; mtime: number; size: number }>;
         return (files ?? []).map((f) => ({
           workspace_id: ws.project_id,
           backup_id: opts.backupId,
@@ -7386,14 +7337,12 @@ backup
     ) => {
       await withContext(command, "workspace backup restore", async (ctx) => {
         const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-        const op = await hubCallAccount<{ op_id: string }>(ctx, "projects.restoreBackup", [
-          {
-            project_id: ws.project_id,
-            id: opts.backupId,
-            path: opts.path,
-            dest: opts.dest,
-          },
-        ]);
+        const op = await ctx.hub.projects.restoreBackup({
+          project_id: ws.project_id,
+          id: opts.backupId,
+          path: opts.path,
+          dest: opts.dest,
+        });
         if (!opts.wait) {
           return {
             workspace_id: ws.project_id,
@@ -7432,12 +7381,10 @@ snapshot
   .action(async (opts: { workspace?: string; name?: string }, command: Command) => {
     await withContext(command, "workspace snapshot create", async (ctx) => {
       const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-      await hubCallAccount<void>(ctx, "projects.createSnapshot", [
-        {
-          project_id: ws.project_id,
-          name: opts.name,
-        },
-      ]);
+      await ctx.hub.projects.createSnapshot({
+        project_id: ws.project_id,
+        name: opts.name,
+      });
       return {
         workspace_id: ws.project_id,
         snapshot_name: opts.name ?? "(auto)",
@@ -7453,11 +7400,9 @@ snapshot
   .action(async (opts: { workspace?: string }, command: Command) => {
     await withContext(command, "workspace snapshot list", async (ctx) => {
       const ws = await resolveWorkspaceFromArgOrContext(ctx, opts.workspace);
-      const snapshots = await hubCallAccount<SnapshotUsage[]>(ctx, "projects.allSnapshotUsage", [
-        {
-          project_id: ws.project_id,
-        },
-      ]);
+      const snapshots = await ctx.hub.projects.allSnapshotUsage({
+        project_id: ws.project_id,
+      });
       return snapshots.map((snap) => ({
         workspace_id: ws.project_id,
         name: snap.name,
@@ -7663,13 +7608,11 @@ op
           scope_id = ctx.accountId;
         }
 
-        const rows = await hubCallAccount<HubLroSummary[]>(ctx, "lro.list", [
-          {
-            scope_type,
-            scope_id,
-            include_completed: !!opts.includeCompleted,
-          },
-        ]);
+        const rows = await ctx.hub.lro.list({
+          scope_type,
+          scope_id,
+          include_completed: !!opts.includeCompleted,
+        });
         const limitNum = Math.max(1, Math.min(10000, Number(opts.limit ?? "100") || 100));
         return (rows ?? [])
           .slice(0, limitNum)
@@ -7683,9 +7626,7 @@ op
   .description("get one operation by id")
   .action(async (opId: string, command: Command) => {
     await withContext(command, "op get", async (ctx) => {
-      const summary = await hubCallAccount<HubLroSummary | undefined>(ctx, "lro.get", [
-        { op_id: opId },
-      ]);
+      const summary = await ctx.hub.lro.get({ op_id: opId });
       if (!summary) {
         throw new Error(`operation '${opId}' not found`);
       }
@@ -7707,9 +7648,7 @@ op
           `timeout waiting for operation ${opId}; last status=${waited.status}`,
         );
       }
-      const summary = await hubCallAccount<HubLroSummary | undefined>(ctx, "lro.get", [
-        { op_id: opId },
-      ]);
+      const summary = await ctx.hub.lro.get({ op_id: opId });
       if (!summary) {
         return {
           op_id: opId,
@@ -7726,10 +7665,8 @@ op
   .description("cancel an operation")
   .action(async (opId: string, command: Command) => {
     await withContext(command, "op cancel", async (ctx) => {
-      await hubCallAccount<void>(ctx, "lro.cancel", [{ op_id: opId }]);
-      const summary = await hubCallAccount<HubLroSummary | undefined>(ctx, "lro.get", [
-        { op_id: opId },
-      ]);
+      await ctx.hub.lro.cancel({ op_id: opId });
+      const summary = await ctx.hub.lro.get({ op_id: opId });
       if (!summary) {
         return {
           op_id: opId,
@@ -7790,25 +7727,14 @@ adminUser
           }
         }
 
-        const created = await hubCallAccount<{
-          account_id: string;
-          email_address: string;
-          first_name: string;
-          last_name: string;
-          created_by: string;
-          no_first_project: boolean;
-          password_generated: boolean;
-          generated_password?: string;
-        }>(ctx, "system.adminCreateUser", [
-          {
-            email,
-            password: opts.password,
-            first_name: firstName,
-            last_name: lastName,
-            no_first_project: !!opts.noFirstProject,
-            tags: opts.tag && opts.tag.length ? opts.tag : undefined,
-          },
-        ]);
+        const created = await ctx.hub.system.adminCreateUser({
+          email,
+          password: opts.password,
+          first_name: firstName,
+          last_name: lastName,
+          no_first_project: !!opts.noFirstProject,
+          tags: opts.tag && opts.tag.length ? opts.tag : undefined,
+        });
 
         return created;
       });
@@ -7823,21 +7749,17 @@ accountApiKey
   .description("list account API keys")
   .action(async (command: Command) => {
     await withContext(command, "account api-key list", async (ctx) => {
-      const rows = await hubCallAccount<
-        Array<{
-          id?: number;
-          name?: string;
-          trunc?: string;
-          created?: string | Date | null;
-          expire?: string | Date | null;
-          last_active?: string | Date | null;
-          project_id?: string | null;
-        }>
-      >(ctx, "system.manageApiKeys", [
-        {
-          action: "get",
-        },
-      ]);
+      const rows = (await ctx.hub.system.manageApiKeys({
+        action: "get",
+      })) as Array<{
+        id?: number;
+        name?: string;
+        trunc?: string;
+        created?: string | Date | null;
+        expire?: string | Date | null;
+        last_active?: string | Date | null;
+        project_id?: string | null;
+      }>;
       return (rows ?? []).map((row) => ({
         id: row.id,
         name: row.name ?? "",
@@ -7873,25 +7795,21 @@ accountApiKey
           throw new Error("--expire-seconds must be a positive number");
         }
         const expire = expireSeconds
-          ? new Date(Date.now() + expireSeconds * 1000).toISOString()
+          ? new Date(Date.now() + expireSeconds * 1000)
           : undefined;
-        const rows = await hubCallAccount<
-          Array<{
-            id?: number;
-            name?: string;
-            trunc?: string;
-            secret?: string;
-            created?: string | Date | null;
-            expire?: string | Date | null;
-            project_id?: string | null;
-          }>
-        >(ctx, "system.manageApiKeys", [
-          {
-            action: "create",
-            name: opts.name,
-            expire,
-          },
-        ]);
+        const rows = (await ctx.hub.system.manageApiKeys({
+          action: "create",
+          name: opts.name,
+          expire,
+        })) as Array<{
+          id?: number;
+          name?: string;
+          trunc?: string;
+          secret?: string;
+          created?: string | Date | null;
+          expire?: string | Date | null;
+          project_id?: string | null;
+        }>;
         const key = rows?.[0];
         if (!key?.id) {
           throw new Error("failed to create api key");
@@ -7918,12 +7836,10 @@ accountApiKey
       if (!Number.isInteger(keyId) || keyId <= 0) {
         throw new Error("id must be a positive integer");
       }
-      await hubCallAccount<void>(ctx, "system.manageApiKeys", [
-        {
-          action: "delete",
-          id: keyId,
-        },
-      ]);
+      await ctx.hub.system.manageApiKeys({
+        action: "delete",
+        id: keyId,
+      });
       return {
         id: keyId,
         status: "deleted",
@@ -7985,9 +7901,9 @@ host
       await withContext(command, "host catalog", async (ctx) => {
         const provider = normalizeHostProviderValue(`${opts.provider ?? "gcp"}`);
         if (opts.update) {
-          await hubCallAccount<void>(ctx, "hosts.updateCloudCatalog", [{ provider }]);
+          await ctx.hub.hosts.updateCloudCatalog({ provider });
         }
-        const catalog = await hubCallAccount<HostCatalog>(ctx, "hosts.getCatalog", [{ provider }]);
+        const catalog = await ctx.hub.hosts.getCatalog({ provider });
         const filteredEntries =
           opts.kind && opts.kind.length
             ? (catalog.entries ?? []).filter((entry) =>
@@ -8055,9 +7971,10 @@ host
         if (!Number.isFinite(lines) || lines <= 0) {
           throw new Error("--tail must be a positive integer");
         }
-        const log = await hubCallAccount<HostRuntimeLogRow>(ctx, "hosts.getHostRuntimeLog", [
-          { id: h.id, lines: Math.floor(lines) },
-        ]);
+        const log = (await ctx.hub.hosts.getHostRuntimeLog({
+          id: h.id,
+          lines: Math.floor(lines),
+        })) as HostRuntimeLogRow;
         if (!ctx.globals.json && ctx.globals.output !== "json") {
           emitWorkspaceFileCatHumanContent(log.text ?? "");
           return null;
@@ -8122,20 +8039,14 @@ host
         const baseUrl = opts.hubSource
           ? `${ctx.apiBaseUrl.replace(/\/+$/, "")}/software`
           : opts.baseUrl;
-        const rows = await hubCallAccount<HostSoftwareVersionRow[]>(
-          ctx,
-          "hosts.listHostSoftwareVersions",
-          [
-            {
-              base_url: baseUrl,
-              artifacts,
-              channels,
-              os: osValue,
-              arch: archValue,
-              history_limit: Math.floor(limit),
-            },
-          ],
-        );
+        const rows = (await ctx.hub.hosts.listHostSoftwareVersions({
+          base_url: baseUrl,
+          artifacts,
+          channels,
+          os: osValue,
+          arch: archValue,
+          history_limit: Math.floor(limit),
+        })) as HostSoftwareVersionRow[];
         if (!ctx.globals.json && ctx.globals.output !== "json") {
           return rows.map(({ sha256: _sha256, ...rest }) => rest);
         }
@@ -8192,11 +8103,11 @@ host
           artifact,
           ...(version ? { version } : { channel }),
         }));
-        const op = await hubCallAccount<{ op_id: string }>(
-          ctx,
-          "hosts.upgradeHostSoftware",
-          [{ id: h.id, targets, base_url: baseUrl }],
-        );
+        const op = await ctx.hub.hosts.upgradeHostSoftware({
+          id: h.id,
+          targets,
+          base_url: baseUrl,
+        });
         if (!opts.wait) {
           return {
             host_id: h.id,
@@ -8259,16 +8170,10 @@ host
         let keyInfo: SyncKeyInfo | null = null;
         if (opts.installKey) {
           keyInfo = await ensureSyncKeyPair(opts.keyPath);
-          installResult = await hubCallAccount<HostSshAuthorizedKeysRow & { added: boolean }>(
-            ctx,
-            "hosts.addHostSshAuthorizedKey",
-            [
-              {
-                id: endpoint.host.id,
-                public_key: keyInfo.public_key,
-              },
-            ],
-          );
+          installResult = (await ctx.hub.hosts.addHostSshAuthorizedKey({
+            id: endpoint.host.id,
+            public_key: keyInfo.public_key,
+          })) as HostSshAuthorizedKeysRow & { added: boolean };
         }
 
         const user = `${opts.user ?? "ubuntu"}`.trim() || "ubuntu";
@@ -8431,15 +8336,13 @@ host
         }
 
         const gpu = !!opts.gpu || Number(machine.gpu_count ?? 0) > 0;
-        const created = await hubCallAccount<HostRow>(ctx, "hosts.createHost", [
-          {
-            name,
-            region,
-            size,
-            gpu,
-            machine,
-          },
-        ]);
+        const created = (await ctx.hub.hosts.createHost({
+          name,
+          region,
+          size,
+          gpu,
+          machine,
+        })) as HostRow;
 
         if (!opts.wait) {
           return {
@@ -8505,26 +8408,24 @@ host
         const cpu = Math.max(1, Number(opts.cpu ?? "2") || 2);
         const ram_gb = Math.max(1, Number(opts.ramGb ?? "8") || 8);
         const disk_gb = Math.max(10, Number(opts.diskGb ?? "40") || 40);
-        const host = await hubCallAccount<HostRow>(ctx, "hosts.createHost", [
-          {
-            name,
-            region: opts.region ?? "pending",
-            size: opts.size ?? "custom",
-            gpu: !!opts.gpu,
-            machine: {
-              cloud: "self-host",
-              storage_mode: "persistent",
-              disk_gb,
-              metadata: {
-                cpu,
-                ram_gb,
-                self_host_mode: "local",
-                self_host_kind: "direct",
-                self_host_ssh_target: opts.sshTarget,
-              },
+        const host = (await ctx.hub.hosts.createHost({
+          name,
+          region: opts.region ?? "pending",
+          size: opts.size ?? "custom",
+          gpu: !!opts.gpu,
+          machine: {
+            cloud: "self-host",
+            storage_mode: "persistent",
+            disk_gb,
+            metadata: {
+              cpu,
+              ram_gb,
+              self_host_mode: "local",
+              self_host_kind: "direct",
+              self_host_ssh_target: opts.sshTarget,
             },
           },
-        ]);
+        })) as HostRow;
         return {
           host_id: host.id,
           name: host.name,
@@ -8544,7 +8445,7 @@ host
   .action(async (hostIdentifier: string, opts: { wait?: boolean }, command: Command) => {
     await withContext(command, "host start", async (ctx) => {
       const h = await resolveHost(ctx, hostIdentifier);
-      const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.startHost", [{ id: h.id }]);
+      const op = await ctx.hub.hosts.startHost({ id: h.id });
       if (!opts.wait) {
         return {
           host_id: h.id,
@@ -8583,12 +8484,10 @@ host
     ) => {
       await withContext(command, "host stop", async (ctx) => {
         const h = await resolveHost(ctx, hostIdentifier);
-        const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.stopHost", [
-          {
-            id: h.id,
-            skip_backups: !!opts.skipBackups,
-          },
-        ]);
+        const op = await ctx.hub.hosts.stopHost({
+          id: h.id,
+          skip_backups: !!opts.skipBackups,
+        });
         if (!opts.wait) {
           return {
             host_id: h.id,
@@ -8634,12 +8533,10 @@ host
         if (mode !== "reboot" && mode !== "hard") {
           throw new Error(`invalid --mode '${opts.mode}' (expected reboot or hard)`);
         }
-        const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.restartHost", [
-          {
-            id: h.id,
-            mode,
-          },
-        ]);
+        const op = await ctx.hub.hosts.restartHost({
+          id: h.id,
+          mode,
+        });
         if (!opts.wait) {
           return {
             host_id: h.id,
@@ -8709,15 +8606,13 @@ host
           throw new Error("destination host must differ from source host");
         }
 
-        const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.drainHost", [
-          {
-            id: source.id,
-            ...(dest ? { dest_host_id: dest.id } : {}),
-            force: !!opts.force,
-            allow_offline: !!opts.allowOffline,
-            ...(requestedParallel != null ? { parallel: requestedParallel } : {}),
-          },
-        ]);
+        const op = await ctx.hub.hosts.drainHost({
+          id: source.id,
+          ...(dest ? { dest_host_id: dest.id } : {}),
+          force: !!opts.force,
+          allow_offline: !!opts.allowOffline,
+          ...(requestedParallel != null ? { parallel: requestedParallel } : {}),
+        });
 
         if (!opts.wait) {
           return {
@@ -8744,7 +8639,7 @@ host
             `host drain failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
           );
         }
-        const final = await hubCallAccount<any>(ctx, "lro.get", [{ op_id: op.op_id }]);
+        const final = await ctx.hub.lro.get({ op_id: op.op_id });
         return {
           host_id: source.id,
           op_id: op.op_id,
@@ -8771,12 +8666,10 @@ host
     ) => {
       await withContext(command, "host delete", async (ctx) => {
         const h = await resolveHost(ctx, hostIdentifier);
-        const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.deleteHost", [
-          {
-            id: h.id,
-            skip_backups: !!opts.skipBackups,
-          },
-        ]);
+        const op = await ctx.hub.hosts.deleteHost({
+          id: h.id,
+          skip_backups: !!opts.skipBackups,
+        });
         if (!opts.wait) {
           return {
             host_id: h.id,
@@ -8809,9 +8702,7 @@ host
   .action(async (hostIdentifier: string, command: Command) => {
     await withContext(command, "host resolve-connection", async (ctx) => {
       const h = await resolveHost(ctx, hostIdentifier);
-      return await hubCallAccount<HostConnectionInfo>(ctx, "hosts.resolveHostConnection", [
-        { host_id: h.id },
-      ]);
+      return await ctx.hub.hosts.resolveHostConnection({ host_id: h.id });
     });
   });
 
@@ -8830,17 +8721,11 @@ host
         const h = await resolveHost(ctx, opts.host);
         const ws = opts.workspace ? await resolveWorkspace(ctx, opts.workspace) : null;
         const ttl = opts.ttl ? Number(opts.ttl) : undefined;
-        const token = await hubCallAccount<{ host_id: string; token: string; expires_at: number }>(
-          ctx,
-          "hosts.issueProjectHostAuthToken",
-          [
-            {
-              host_id: h.id,
-              project_id: ws?.project_id,
-              ttl_seconds: ttl,
-            },
-          ],
-        );
+        const token = await ctx.hub.hosts.issueProjectHostAuthToken({
+          host_id: h.id,
+          project_id: ws?.project_id,
+          ttl_seconds: ttl,
+        });
         return {
           host_id: token.host_id,
           workspace_id: ws?.project_id ?? null,
