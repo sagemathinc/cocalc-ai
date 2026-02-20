@@ -206,6 +206,12 @@ export async function processAcpLLM({
   const config = actions.getCodexConfig?.(threadRootDate);
   const normalizedModel =
     typeof model === "string" ? normalizeCodexMention(model) : undefined;
+  const thread_id =
+    (message as any)?.thread_id ??
+    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`)?.thread_id;
+  const message_id = (message as any)?.message_id;
+  const reply_to_message_id =
+    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`)?.message_id;
 
   const id = uuid();
   chatStreams.add(id);
@@ -243,6 +249,9 @@ export async function processAcpLLM({
         sender_id,
         messageDate: newMessageDate,
         reply_to: threadRootDate,
+        thread_id,
+        message_id,
+        reply_to_message_id,
         sendMode,
       });
       console.log("Starting ACP turn for", { message, chatMetadata });
@@ -414,6 +423,9 @@ function buildChatMetadata({
   sender_id,
   messageDate,
   reply_to,
+  thread_id,
+  message_id,
+  reply_to_message_id,
   sendMode,
 }: {
   project_id?: string;
@@ -421,6 +433,9 @@ function buildChatMetadata({
   sender_id: string;
   messageDate: Date;
   reply_to?: Date;
+  thread_id?: string;
+  message_id?: string;
+  reply_to_message_id?: string;
   sendMode?: "immediate";
 }): AcpChatContext {
   if (!project_id) {
@@ -438,6 +453,9 @@ function buildChatMetadata({
     sender_id,
     message_date: messageDate.toISOString(),
     reply_to: reply_to?.toISOString(),
+    thread_id,
+    message_id,
+    reply_to_message_id,
     send_mode: sendMode,
   };
 }

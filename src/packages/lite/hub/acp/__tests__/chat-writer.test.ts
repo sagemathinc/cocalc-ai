@@ -704,6 +704,38 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("persists message and thread ids on chat updates", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+        reply_to_message_id: "root-msg-1",
+      } as any,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.message_id).toBe("msg-1");
+    expect(final.thread_id).toBe("thread-1");
+    expect(final.reply_to_message_id).toBe("root-msg-1");
+    writer.dispose?.(true);
+  });
+
   it("persists session id onto the actual thread root sender row", async () => {
     const metadata = {
       ...baseMetadata,

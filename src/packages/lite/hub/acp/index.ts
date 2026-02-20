@@ -244,6 +244,17 @@ export class ChatStreamWriter {
     return (record as any)[key] as T;
   }
 
+  private chatRowWhere(): Record<string, unknown> {
+    const where: Record<string, unknown> = { event: "chat" };
+    if (this.metadata.message_id) {
+      where.message_id = this.metadata.message_id;
+      return where;
+    }
+    where.date = this.metadata.message_date;
+    where.sender_id = this.metadata.sender_id;
+    return where;
+  }
+
   private leaseKey() {
     return {
       project_id: this.metadata.project_id,
@@ -440,11 +451,7 @@ export class ChatStreamWriter {
         throw err;
       }
     }
-    let current = db.get_one({
-      event: "chat",
-      date: this.metadata.message_date,
-      sender_id: this.metadata.sender_id,
-    });
+    let current = db.get_one(this.chatRowWhere());
     if (current == null) {
       // Create a placeholder chat row so backend-owned updates don’t race with a missing record.
       const placeholder = buildChatMessage({
@@ -454,6 +461,9 @@ export class ChatStreamWriter {
         content: ":robot: Thinking...",
         generating: true,
         reply_to: this.metadata.reply_to,
+        message_id: this.metadata.message_id,
+        thread_id: this.metadata.thread_id,
+        reply_to_message_id: this.metadata.reply_to_message_id,
       } as any);
       db.set(placeholder);
       db.commit();
@@ -462,11 +472,7 @@ export class ChatStreamWriter {
       } catch (err) {
         logger.warn("chat syncdb save failed during init", err);
       }
-      current = db.get_one({
-        event: "chat",
-        date: this.metadata.message_date,
-        sender_id: this.metadata.sender_id,
-      });
+      current = db.get_one(this.chatRowWhere());
     }
     const history = this.recordField(current, "history");
     const arr = this.historyToArray(history);
@@ -640,6 +646,9 @@ export class ChatStreamWriter {
       acp_thread_id: this.threadId,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
+      message_id: this.metadata.message_id,
+      thread_id: this.metadata.thread_id,
+      reply_to_message_id: this.metadata.reply_to_message_id,
     });
     const update: any = { ...message, reply_to2: this.metadata.reply_to };
     if (this.interruptNotified) {
@@ -701,11 +710,7 @@ export class ChatStreamWriter {
       }
       if (this.closed || this.syncdbError || !this.syncdb) return;
       try {
-        const current = this.syncdb.get_one({
-          event: "chat",
-          date: this.metadata.message_date,
-          sender_id: this.metadata.sender_id,
-        });
+        const current = this.syncdb.get_one(this.chatRowWhere());
         lastGenerating = this.recordField<boolean>(current, "generating");
       } catch (err) {
         logger.warn("chat syncdb readback failed during terminal verification", {

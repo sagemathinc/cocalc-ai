@@ -64,7 +64,14 @@ describe("processAcpLLM", () => {
       computeThreadKey: jest.fn(() => "1000"),
       getAllMessages: () =>
         new Map<string, any>([
-          ["1000", { date: new Date(1000) }],
+          [
+            "1000",
+            {
+              date: new Date(1000),
+              message_id: "root-msg-1",
+              thread_id: "thread-1",
+            },
+          ],
           ["1001", { date: new Date(1001) }],
           ["1002", { date: new Date(1002) }],
         ]),
@@ -76,6 +83,8 @@ describe("processAcpLLM", () => {
       event: "chat",
       sender_id: "user-1",
       date: new Date(1000),
+      message_id: "user-msg-1",
+      thread_id: "thread-1",
       history: [
         {
           author_id: "user-1",
@@ -96,5 +105,8 @@ describe("processAcpLLM", () => {
     const arg = mockStreamAcp.mock.calls[0][0];
     expect(arg.chat.message_date).toBe(new Date(1003).toISOString());
     expect(arg.chat.reply_to).toBe(new Date(1000).toISOString());
+    expect(arg.chat.message_id).toBe("user-msg-1");
+    expect(arg.chat.thread_id).toBe("thread-1");
+    expect(arg.chat.reply_to_message_id).toBe("root-msg-1");
   });
 });
