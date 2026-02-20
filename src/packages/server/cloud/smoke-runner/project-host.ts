@@ -261,6 +261,17 @@ function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function isRetryableWorkspaceStartError(message: string): boolean {
+  return (
+    message.includes("timeout waiting for hub response: projects.start") ||
+    message.includes("timeout waiting for start op") ||
+    message.includes("request timed out") ||
+    message.includes("operation has timed out") ||
+    message.includes("calling remote function 'start': timeout") ||
+    message.includes("no subscribers matching")
+  );
+}
+
 async function runCommand(
   command: string,
   args: string[],
@@ -2136,6 +2147,7 @@ async function runSmokeStepsViaCli({
     : `Smoke test ${host_id ?? "host"}`;
   const hostName = `${createSpec?.name ?? ""}`.trim() || undefined;
   let createdHost = false;
+  let hostStartRequestedAt: Date | undefined;
   let project_id: string | undefined;
   let debugHints: HostConnectionHints | undefined;
 
@@ -2245,6 +2257,7 @@ async function runSmokeStepsViaCli({
     if (host_id && !createSpec && hostStatus !== "running") {
       await runStep("start_existing_host", async () => {
         if (!host_id) throw new Error("missing host_id");
+        hostStartRequestedAt = new Date();
         await runCli(cli, ["host", "start", host_id, "--wait"]);
       });
     }
@@ -2273,6 +2286,13 @@ async function runSmokeStepsViaCli({
         });
       }
     });
+
+    if (hostStartRequestedAt) {
+      await runStep("wait_host_seen", async () => {
+        if (!host_id) throw new Error("missing host_id");
+        await waitForHostSeen(host_id, waitProjectReady, hostStartRequestedAt);
+      });
+    }
 
     await runStep("create_project", async () => {
       if (!host_id) throw new Error("missing host_id");
@@ -2368,11 +2388,7 @@ async function runSmokeStepsViaCli({
             attempt,
             err: msg,
           });
-          if (
-            msg.includes("timeout waiting for hub response: projects.start") ||
-            msg.includes("no subscribers matching") ||
-            msg.includes("timeout waiting for start op")
-          ) {
+          if (isRetryableWorkspaceStartError(msg)) {
             await sleep(waitProjectReady.intervalMs);
             continue;
           }
@@ -2564,7 +2580,13 @@ async function runSmokeStepsViaCli({
 
       await runStep("start_host", async () => {
         if (!host_id) throw new Error("missing host_id");
+        hostStartRequestedAt = new Date();
         await runCli(cli, ["host", "start", host_id, "--wait"]);
+      });
+
+      await runStep("wait_host_seen", async () => {
+        if (!host_id) throw new Error("missing host_id");
+        await waitForHostSeen(host_id, waitProjectReady, hostStartRequestedAt);
       });
 
       await runStep("start_project", async () => {
@@ -2591,11 +2613,7 @@ async function runSmokeStepsViaCli({
               attempt,
               err: msg,
             });
-            if (
-              msg.includes("timeout waiting for hub response: projects.start") ||
-              msg.includes("no subscribers matching") ||
-              msg.includes("timeout waiting for start op")
-            ) {
+            if (isRetryableWorkspaceStartError(msg)) {
               await sleep(waitProjectReady.intervalMs);
               continue;
             }

@@ -97,7 +97,8 @@ function ownerAccountIdFromUsers(usersRaw: any): string | null {
     if (
       info &&
       typeof info === "object" &&
-      (info as Record<string, unknown>).group === "owner"
+      (info as Record<string, unknown>).group === "owner" &&
+      isValidUUID(account_id)
     ) {
       return account_id;
     }
@@ -383,12 +384,17 @@ async function runDeleteMaybeMissingTable({
   params: any[];
   purged: string[];
 }): Promise<void> {
+  const savepoint = `hd_${table.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+  await client.query(`SAVEPOINT ${savepoint}`);
   try {
     const result = await client.query(query, params);
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`);
     if ((result.rowCount ?? 0) > 0) {
       purged.push(table);
     }
   } catch (err) {
+    await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`);
     if (isMissingTableError(err)) {
       return;
     }
@@ -597,6 +603,10 @@ async function purgeProjectRows({
     await client.query("COMMIT");
     return purged;
   } catch (err) {
+    log.error("purgeProjectRows failed", {
+      project_id: project.project_id,
+      err: `${err}`,
+    });
     await client.query("ROLLBACK");
     throw err;
   } finally {
