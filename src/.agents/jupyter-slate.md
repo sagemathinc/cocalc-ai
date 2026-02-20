@@ -2,270 +2,178 @@
 
 ## Goal
 
-Implement a new Slate-based Jupyter frame that:
+Build a Slate-based Jupyter frame that feels like editing one continuous document, while keeping `.ipynb` cell data canonical.
 
-1. Uses the existing Jupyter notebook data model as canonical (`cells`, `cell_list`, runtime state, kernel state).
-2. Reuses current Jupyter execution/output/rendering components and actions.
-3. Provides non-modal, Slate-native editing/navigation for markdown and code input.
-4. Does **not** introduce a new canonical storage format (no markdown/fenced-file source of truth).
+1. Canonical state stays in Jupyter (`cells`, `cell_list`, runtime/kernel state).
+2. Slate is an interaction surface, not a second source of truth.
+3. Code output/runtime UI continues to use existing Jupyter components/actions.
+4. Cursor/navigation should work across the whole notebook as one editor experience.
+
+## Strategy Pivot
+
+The initial row-per-cell Slate prototype was useful for proving compatibility, but it is not enough UX-wise.
+
+New primary direction:
+
+1. Use one Slate editor per notebook frame.
+2. Represent notebook cells as top-level Slate elements with stable `cell_id`.
+3. Render code output/prompt/tooling from existing Jupyter components attached to those elements.
+4. Map Slate structural edits back to canonical Jupyter cell operations.
+
+The current row prototype remains a bridge/fallback while implementing the single-document model.
 
 ## Non-Goals
 
-1. Replace the current cell notebook UI.
-2. Change `.ipynb` import/export semantics.
-3. Add true parallel cell execution.
-4. Rebuild kernel/runtime plumbing.
+1. Replacing the canonical ipynb model.
+2. Rebuilding kernel/runtime plumbing.
+3. Introducing parallel execution semantics in this project.
+4. Requiring CodeMirror per-cell for baseline editing.
 
-## Key Constraint
+## Canonical Mapping Requirements
 
-Notebook cell structure remains canonical in syncdb/ipynb.
+For every top-level Slate cell element:
 
-- Every edit from the Slate frame maps to `set_cell_input`, `set_cell_type`, insert/delete/move operations on existing cell ids.
-- Outputs remain cell-bound and rendered by existing Jupyter output components.
-- Kernel/run/queue/running states remain driven by existing Jupyter store/actions/runtime-state.
+1. `cell_id` maps to Jupyter cell id.
+2. `cell_type` maps to Jupyter cell type (`markdown`/`code`/`raw`).
+3. Input text maps to `set_cell_input(cell_id, input)`.
+4. Runtime/output metadata is read from canonical cell/runtime state.
+5. Structural operations map to insert/delete/move/type-change actions.
 
-## Existing Foundation (already in repo)
+No persisted notebook state should live only in Slate-specific structures.
 
-1. Jupyter frame and actions
+## Current Foundation
+
+1. Frame wiring and actions:
    - [src/packages/frontend/frame-editors/jupyter-editor/editor.ts](./src/packages/frontend/frame-editors/jupyter-editor/editor.ts)
    - [src/packages/frontend/frame-editors/jupyter-editor/actions.ts](./src/packages/frontend/frame-editors/jupyter-editor/actions.ts)
-   - [src/packages/frontend/frame-editors/jupyter-editor/cell-notebook/cell-notebook.tsx](./src/packages/frontend/frame-editors/jupyter-editor/cell-notebook/cell-notebook.tsx)
-   - [src/packages/frontend/frame-editors/jupyter-editor/cell-notebook/actions.ts](./src/packages/frontend/frame-editors/jupyter-editor/cell-notebook/actions.ts)
-2. Placeholder frame candidates
+2. Current Slate prototype frame:
    - [src/packages/frontend/frame-editors/jupyter-editor/markdown-notebook.tsx](./src/packages/frontend/frame-editors/jupyter-editor/markdown-notebook.tsx)
-   - [src/packages/frontend/frame-editors/jupyter-editor/singledoc-notebook.tsx](./src/packages/frontend/frame-editors/jupyter-editor/singledoc-notebook.tsx)
-3. Slate block editor stack
+3. Slate editor stack:
    - [src/packages/frontend/editors/slate/block-markdown-editor-core.tsx](./src/packages/frontend/editors/slate/block-markdown-editor-core.tsx)
    - [src/packages/frontend/editors/slate/block-row-editor.tsx](./src/packages/frontend/editors/slate/block-row-editor.tsx)
-   - [src/packages/frontend/editors/slate/use-block-row-renderer.tsx](./src/packages/frontend/editors/slate/use-block-row-renderer.tsx)
-4. Existing Jupyter input/output rendering
-   - [src/packages/frontend/jupyter/cell-input.tsx](./src/packages/frontend/jupyter/cell-input.tsx)
+   - [src/packages/frontend/editors/slate/editable-markdown.tsx](./src/packages/frontend/editors/slate/editable-markdown.tsx)
+4. Jupyter runtime/output components:
    - [src/packages/frontend/jupyter/cell-output.tsx](./src/packages/frontend/jupyter/cell-output.tsx)
-   - [src/packages/frontend/jupyter/output-messages/message.tsx](./src/packages/frontend/jupyter/output-messages/message.tsx)
-5. Canonical notebook model and runtime metadata
+   - [src/packages/frontend/jupyter/prompt/input.tsx](./src/packages/frontend/jupyter/prompt/input.tsx)
+5. Canonical model and ipynb I/O:
    - [src/packages/jupyter/redux/store.ts](./src/packages/jupyter/redux/store.ts)
    - [src/packages/jupyter/redux/actions.ts](./src/packages/jupyter/redux/actions.ts)
    - [src/packages/jupyter/ipynb/import-from-ipynb.ts](./src/packages/jupyter/ipynb/import-from-ipynb.ts)
    - [src/packages/jupyter/ipynb/export-to-ipynb.ts](./src/packages/jupyter/ipynb/export-to-ipynb.ts)
 
-## Proposed UX Model
-
-Single notebook view rendered as rows, one row per notebook cell.
-
-1. Markdown cell row
-   - Slate rich markdown editing always available (no double-click mode switch).
-2. Code cell row
-   - Slate code-block editing for input.
-   - Existing Jupyter prompt + run state badge/timing.
-   - Existing Jupyter `CellOutput` rendered immediately below input in-row.
-3. Raw cell row
-   - Slate/plain text editor row with no output.
-4. Notebook chrome
-   - Keep current top toolbar/menu commands and frame integration.
-
-## Data Model Mapping (critical)
-
-Define a row view-model projected from canonical notebook state:
-
-1. Row identity: `row.id = cell.id` (stable).
-2. Row kind: `cell_type`.
-3. Row input text: `cell.input`.
-4. Row runtime state: `state/start/end/exec_count/last` from canonical cell+runtime overlay.
-5. Row output: `cell.output` + `more_output`.
-
-No row owns persisted state outside canonical cell records.
-
 ## Implementation Plan
 
-## Phase 0: Plumbing + Frame Registration
+## Phase A: Stabilize Bridge Prototype
 
-1. Add a new Jupyter frame type in editor spec (e.g., `jupyter_slate_notebook`).
-2. Wire this frame into [src/packages/frontend/frame-editors/jupyter-editor/editor.ts](./src/packages/frontend/frame-editors/jupyter-editor/editor.ts) with commands/button set initially matching current Jupyter frame.
-3. Implement frame component in [src/packages/frontend/frame-editors/jupyter-editor/markdown-notebook.tsx](./src/packages/frontend/frame-editors/jupyter-editor/markdown-notebook.tsx) (or new dedicated file) that receives the same `jupyter_actions` and frame actions as `CellNotebook`.
+Purpose: keep momentum and safety while pivot work begins.
 
-Acceptance:
-
-1. User can switch to new frame type from frame tree.
-2. Frame mounts with notebook state available and no runtime regressions.
-
-## Phase 1: Read-Only Render Prototype (No Editing Yet)
-
-1. Build `SlateNotebookView` that maps `cell_list` + `cells` into ordered rows.
-2. For markdown/code/raw:
-   - Render static Slate markdown for input text.
-3. For code:
-   - Render existing [src/packages/frontend/jupyter/cell-output.tsx](./src/packages/frontend/jupyter/cell-output.tsx) using canonical cell record.
-4. Render existing prompt/timing state for code rows (reuse existing prompt/timing components where possible).
+1. Keep `jupyter-slate` frame selectable and usable.
+2. Keep canonical writeback path (`set_cell_input`) for edits.
+3. Keep shortcut plumbing through frame actions.
+4. Keep crash hardening in place (selection normalization + row error boundary).
 
 Acceptance:
 
-1. Visual row order exactly matches `cell_list`.
-2. Outputs update live as cells run in this frame.
-3. Multi-tab sync is correct for running/queued/done states in this frame.
+1. No notebook-wide crash from single-row Slate failure.
+2. Edits/run shortcuts continue to work as bridge mode.
 
-## Phase 2: Input Editing (Canonical Writes)
+## Phase B: Single-Document Slate Data Model
 
-1. Markdown rows:
-   - Enable Slate editing and write back via `jupyter_actions.set_cell_input(id, value, true)`.
-2. Code rows:
-   - Start with plain Slate code-block editing.
-   - Same writeback path: `set_cell_input`.
-3. Raw rows:
-   - Text editing via same writeback path.
-4. Preserve existing read-only protections:
-   - `metadata.editable=false`, notebook read-only state.
+1. Define top-level Slate element schema for notebook cells:
+   - `jupyter_cell_markdown`
+   - `jupyter_cell_code`
+   - `jupyter_cell_raw`
+2. Include `cell_id` and minimal cell metadata on each element.
+3. Build projection from canonical (`cell_list`, `cells`) -> Slate document.
+4. Build reverse mapping from Slate edits -> canonical actions.
 
 Acceptance:
 
-1. Editing any row updates canonical cell input and syncs cross-tab.
-2. Undo/redo and save behavior remain frame-tree consistent.
-3. No drift between this frame and classic cell notebook for input values.
+1. One Slate editor shows entire notebook.
+2. Every cell maps to canonical id and round-trips safely.
 
-## Phase 3: Row-Level Notebook Operations
+## Phase C: Single-Editor Rendering + Input UX
 
-Implement notebook operations using existing notebook actions, not local row hacks:
+1. Replace row-per-cell editor mounts with one editor instance.
+2. Implement renderers for the new cell elements.
+3. Use Prism/fenced-code style editing for code cells.
+4. Preserve markdown always-editable flow.
+
+Acceptance:
+
+1. Cursor and selection move naturally across cell boundaries.
+2. No per-cell focus/selection traps.
+
+## Phase D: Attach Existing Jupyter Runtime UI
+
+1. Render input prompt/execution state in cell element chrome.
+2. Render `CellOutput` below code cell content based on canonical cell state.
+3. Keep `more_output`/scrolled/collapsed semantics unchanged.
+
+Acceptance:
+
+1. Output/running indicators match classic notebook behavior.
+2. Runtime state still syncs across tabs.
+
+## Phase E: Structural Ops + Commands Parity
 
 1. Insert above/below.
-2. Delete cell.
-3. Move cell up/down.
-4. Change cell type (markdown/code/raw).
-5. Split/merge behavior:
-   - Markdown split/merge can map cleanly through input text.
-   - Code split/merge maps to existing cell ops and input updates.
+2. Delete/move cells.
+3. Type change (`markdown`/`code`/`raw`).
+4. Split/merge behaviors mapped to canonical operations.
+5. Run/interrupt/restart/halt command parity from single editor context.
 
 Acceptance:
 
-1. All operations preserve stable cell ids where expected.
-2. `cell_list` integrity preserved.
-3. Time travel/history remains valid.
+1. Cell list integrity maintained under all operations.
+2. Time travel/history stays coherent.
 
-## Phase 4: Run/Interrupt/Restart Semantics in Slate Frame
+## Phase F: Test Coverage
 
-1. Connect Shift+Enter / Alt+Enter semantics to existing run actions from notebook frame actions.
-2. Respect current behavior for:
-   - run current, run and advance, run selected.
-   - queued/running indicators.
-3. Ensure kernel commands (`interrupt`, `restart`, `halt`) are wired through existing actions.
-
-Acceptance:
-
-1. Behavior matches current notebook semantics.
-2. Existing Playwright run-sync tests can be adapted and pass for Slate frame.
-
-## Phase 5: Output UX Parity and Performance
-
-1. Keep output rendering delegated to existing Jupyter components.
-2. Ensure large output and more-output flow works unchanged.
-3. Add row virtualization strategy if needed:
-   - Virtualize rows, not output messages internals.
-   - Keep mounted row identity stable enough to avoid editor focus churn.
+1. Add Slate-Jupyter Playwright suite for:
+   - run state sync,
+   - queued/running transitions,
+   - kernel restart/interrupt behavior,
+   - external on-disk edits,
+   - metadata persistence (`last_runtime_ms`, etc.).
+2. Add focused unit tests for mapping logic and structural ops.
 
 Acceptance:
 
-1. No regression in big notebook scrolling or output rendering.
-2. No stale output artifacts while running.
+1. Failing regressions are reproducible quickly via tests.
 
-## Phase 6: Metadata + Attachments + Advanced Cell Features
+## Phase G: Rollout
 
-1. Preserve cell metadata behavior:
-   - tags, slideshow, nbgrader, attachments.
-2. For markdown attachments:
-   - keep existing `attachment:` URL transform behavior compatible.
-3. Ensure toolbar actions still operate on selected/current row id.
+1. Keep classic notebook default.
+2. Keep `jupyter-slate` as explicit mode while hardening.
+3. Gradually widen usage after parity + stability thresholds.
 
-Acceptance:
+## Progress Snapshot
 
-1. Metadata tools operate correctly in Slate frame.
-2. ipynb import/export unchanged and lossless relative to existing behavior.
+Implemented now:
 
-## Technical Design Notes
+1. `jupyter-slate` frame registration and typing.
+2. Bridge renderer with canonical output integration.
+3. Canonical input writeback from Slate rows.
+4. Shift+Enter/Alt+Enter bridge shortcut wiring.
+5. Selection and crash hardening patches.
+6. Deprecated notebook-level `set_cur_id` call removed.
 
-## 1. Reuse Jupyter actions/store directly
+Still outstanding (high priority):
 
-Do not add a second notebook state store.
+1. Single-editor (not per-row) architecture.
+2. Structural op parity in Slate context.
+3. Dedicated Playwright coverage for Slate Jupyter mode.
 
-- `jupyter_actions.store` remains source for rows.
-- `jupyter_actions` methods remain source for mutations.
-
-## 2. Row component structure
-
-Proposed components:
-
-1. `JupyterSlateNotebookFrame` (frame-level wiring).
-2. `JupyterSlateRowList` (maps canonical cells to rows, selection model).
-3. `JupyterSlateRow` (single cell row shell).
-4. `JupyterSlateInput` (Slate editing surface by cell type).
-5. Existing `CellOutput` for code outputs.
-
-## 3. Keyboard model
-
-Avoid reintroducing modal semantics in this frame.
-
-1. Normal typing/editing always works.
-2. Notebook commands use explicit shortcuts and row context.
-3. Keep shortcut conflicts deterministic and documented.
-
-## 4. Selection model
-
-Start simple:
-
-1. Single active row id + optional multi-row selection set.
-2. Integrate with existing frame actions gradually.
-3. Avoid attempting full cross-row text-range selection initially.
-
-## Risk Register
-
-1. Focus churn from row virtualization + Slate editors.
-   - Mitigation: start without virtualization; add only after correctness.
-2. Shortcut conflicts with existing Slate keyboard handlers.
-   - Mitigation: centralize Jupyter-specific bindings in frame container.
-3. Split/merge edge cases across code/markdown/raw.
-   - Mitigation: phase-gate and high-coverage tests.
-4. Output rendering performance if every row mounts heavy output.
-   - Mitigation: lazy render outputs for offscreen rows.
-
-## Test Plan
-
-## Unit tests
-
-1. Row mapping from canonical `cells` + `cell_list`.
-2. Writeback logic for `set_cell_input`.
-3. Cell operation adapters (insert/delete/move/type change).
-4. Shortcut dispatch (shift+enter/alt+enter/run selected).
-
-## Playwright e2e (new suite)
-
-1. Run state sync across tabs in Slate frame.
-2. Queued/running/done indicators in Slate frame.
-3. Kernel interrupt/restart and rerun in Slate frame.
-4. External on-disk edits while open (same policy as main frame).
-5. Metadata persistence checks (`last_runtime_ms`, tags, etc.).
-
-## Manual checks
-
-1. Large notebook scroll and responsiveness.
-2. Mixed markdown/code notebooks.
-3. Attachments and rich output types.
-4. Time travel opens and scrub behavior for Slate frame.
-
-## Rollout Strategy
-
-1. Hide behind feature flag/frame type initially.
-2. Keep classic frame default.
-3. Dogfood internally on selected notebooks.
-4. Promote to broader use after e2e parity threshold.
-
-## Concrete Task Breakdown (for execution tracking)
+## Concrete Task Checklist
 
 - [x] Add `jupyter_slate_notebook` frame type and wire editor spec.
-- [x] Implement read-only row list with code outputs.
-- [ ] Implement markdown/code/raw input editing with canonical writes.
-- [ ] Hook run/interrupt/restart/halt commands.
-- [ ] Implement row operations (insert/delete/move/type).
-- [ ] Add Playwright suite for Slate notebook frame.
-- [ ] Add performance pass (virtualization/lazy output if needed).
-- [ ] Add docs/help for keyboard and behavior differences.
-
-## Decision Summary
-
-This is feasible now and the architecture is clean **if** we keep notebook cells canonical and treat Slate as an alternative interaction surface over the same model.
+- [x] Implement bridge read/write prototype over canonical cells.
+- [x] Add crash/selection hardening needed for prototype viability.
+- [x] Remove deprecated notebook-level `set_cur_id` usage.
+- [ ] Implement single Slate editor with `jupyter_cell_*` top-level elements.
+- [ ] Attach prompt/output chrome to those elements.
+- [ ] Map structural edits to canonical insert/delete/move/type actions.
+- [ ] Reach run/interrupt/restart/halt parity in single-editor mode.
+- [ ] Add Playwright + unit tests for Slate Jupyter mode.
+- [ ] Document user-facing behavior differences and shortcuts.
