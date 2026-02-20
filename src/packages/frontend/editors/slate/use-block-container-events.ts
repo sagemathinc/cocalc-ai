@@ -8,6 +8,7 @@
 
 import { useCallback } from "react";
 import { Editor, Node, Range } from "slate";
+import { ReactEditor } from "./slate-react";
 import { formatSelectedText } from "./format/commands";
 import { IS_MACOS } from "./keyboard/register";
 import { getFontSizeDeltaFromKey } from "./keyboard/font-size-shortcut";
@@ -23,6 +24,7 @@ type UseBlockContainerEventsArgs = {
   id?: string;
   getFullMarkdown: () => string;
   focusedIndex: number | null;
+  lastFocusedIndex: number | null;
   editorMapRef: React.MutableRefObject<Map<number, SlateEditor>>;
   searchHook: SearchHook;
   selectionRange: SelectionRange | null;
@@ -49,6 +51,7 @@ export function useBlockContainerEvents({
   id,
   getFullMarkdown,
   focusedIndex,
+  lastFocusedIndex,
   editorMapRef,
   searchHook,
   selectionRange,
@@ -67,22 +70,71 @@ export function useBlockContainerEvents({
 }: UseBlockContainerEventsArgs) {
   const onMouseDownCapture = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
-      if (!event.shiftKey) return;
-      if (!blockSelectionRef.current) return;
       const target = event.target as HTMLElement | null;
       if (!target) return;
-      if (target.closest("[data-slate-block-gutter]")) return;
       const row = target.closest("[data-slate-block-index]");
-      if (!row) return;
-      const indexAttr = row.getAttribute("data-slate-block-index");
-      if (indexAttr == null) return;
-      const index = parseInt(indexAttr, 10);
-      if (!Number.isFinite(index)) return;
+
+      if (event.shiftKey && blockSelectionRef.current) {
+        if (target.closest("[data-slate-block-gutter]")) return;
+        if (!row) return;
+        const indexAttr = row.getAttribute("data-slate-block-index");
+        if (indexAttr == null) return;
+        const index = parseInt(indexAttr, 10);
+        if (!Number.isFinite(index)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handleSelectBlock(index, { shiftKey: true });
+        return;
+      }
+
+      // Clicking the empty Virtuoso scroller area should still focus Slate.
+      // Without this, only the rendered row content near the top is clickable.
+      if (row) return;
+      const inScrollerBackground =
+        target.closest('[data-testid="virtuoso-scroller"]') != null ||
+        target.closest(".virtuoso-scroller") != null;
+      if (!inScrollerBackground) return;
+      if (blocksRef.current.length === 0) return;
+
       event.preventDefault();
       event.stopPropagation();
-      handleSelectBlock(index, { shiftKey: true });
+      setBlockSelection(null);
+
+      const preferredIndex = (() => {
+        if (
+          focusedIndex != null &&
+          focusedIndex >= 0 &&
+          focusedIndex < blocksRef.current.length
+        ) {
+          return focusedIndex;
+        }
+        if (
+          lastFocusedIndex != null &&
+          lastFocusedIndex >= 0 &&
+          lastFocusedIndex < blocksRef.current.length
+        ) {
+          return lastFocusedIndex;
+        }
+        return 0;
+      })();
+
+      const editor = editorMapRef.current.get(preferredIndex);
+      if (editor?.selection) {
+        ReactEditor.focus(editor);
+        return;
+      }
+      focusBlock(preferredIndex, "end");
     },
-    [blockSelectionRef, handleSelectBlock],
+    [
+      blockSelectionRef,
+      blocksRef,
+      editorMapRef,
+      focusBlock,
+      focusedIndex,
+      handleSelectBlock,
+      lastFocusedIndex,
+      setBlockSelection,
+    ],
   );
 
   const onKeyDownCapture = useCallback(

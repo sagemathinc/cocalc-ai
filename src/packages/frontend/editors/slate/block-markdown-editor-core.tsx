@@ -387,6 +387,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     id,
     getFullMarkdown,
     focusedIndex,
+    lastFocusedIndex,
     editorMapRef,
     searchHook,
     selectionRange,
