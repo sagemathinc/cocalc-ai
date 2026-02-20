@@ -1,4 +1,4 @@
-import { Checkbox, Input, Modal, Typography } from "antd";
+import { Checkbox, Input, InputNumber, Modal, Typography } from "antd";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostDeleteOptions,
@@ -88,7 +88,7 @@ export function confirmHostDrain({
   const hostName = host.name ?? "Host";
   const { total, provisioned, running, upToDate, needsBackup } =
     getBackupCounts(host);
-  const state = { force: false };
+  const state = { force: false, parallel: 10 };
   Modal.confirm({
     title: `Drain ${hostName}?`,
     width: 900,
@@ -129,10 +129,36 @@ export function confirmHostDrain({
             Force drain (set workspace host assignment to null)
           </Checkbox>
         </div>
+        <div style={{ marginTop: 8 }}>
+          <Typography.Text type="secondary" style={{ marginRight: 8 }}>
+            Parallel moves:
+          </Typography.Text>
+          <InputNumber
+            min={1}
+            step={1}
+            precision={0}
+            defaultValue={10}
+            onChange={(value) => {
+              const n = Number(value);
+              if (Number.isFinite(n) && n >= 1) {
+                state.parallel = Math.floor(n);
+              } else {
+                state.parallel = 10;
+              }
+            }}
+          />
+          <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+            default 10; non-admin max 15; ignored with force drain
+          </Typography.Text>
+        </div>
       </div>
     ),
     okText: "Drain",
-    onOk: () => onConfirm({ force: state.force }),
+    onOk: () =>
+      onConfirm({
+        force: state.force,
+        parallel: state.force ? undefined : state.parallel,
+      }),
   });
 }
 

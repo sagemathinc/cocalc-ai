@@ -296,6 +296,25 @@ async function loadOwnedHost(id: string, account_id?: string): Promise<any> {
   return row;
 }
 
+async function loadHostForDrain(id: string, account_id?: string): Promise<any> {
+  const owner = requireAccount(account_id);
+  const { rows } = await pool().query(
+    `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("host not found");
+  }
+  if (await isAdmin(owner)) {
+    return row;
+  }
+  if (row.metadata?.owner && row.metadata.owner !== owner) {
+    throw new Error("not authorized");
+  }
+  return row;
+}
+
 async function loadHostForStartStop(
   id: string,
   account_id?: string,
@@ -2264,7 +2283,7 @@ export async function drainHost({
   parallel?: number;
 }): Promise<HostLroResponse> {
   const owner = requireAccount(account_id);
-  const row = await loadOwnedHost(id, owner);
+  const row = await loadHostForDrain(id, owner);
   const destination = `${dest_host_id ?? ""}`.trim() || undefined;
   const drainParallel = await resolveDrainParallel(owner, parallel);
   if (destination === row.id) {
@@ -2313,7 +2332,7 @@ export async function drainHostInternal({
   }) => Promise<void> | void;
 }): Promise<HostDrainResult> {
   const owner = requireAccount(account_id);
-  const row = await loadOwnedHost(id, owner);
+  const row = await loadHostForDrain(id, owner);
   const drainParallel = await resolveDrainParallel(owner, parallel);
   const destination = `${dest_host_id ?? ""}`.trim() || undefined;
   if (destination === row.id) {
@@ -2419,6 +2438,9 @@ export async function drainHostInternal({
             account_id: owner,
             dest_host_id: destination,
             allow_offline: !!allow_offline,
+            start_dest: true,
+            stop_dest_after_start: true,
+            skip_collab_check_for_backup: true,
           },
           { shouldCancel },
         );

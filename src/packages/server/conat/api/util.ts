@@ -6,7 +6,7 @@ export async function assertCollab({ account_id, project_id }) {
     throw Error("must be signed in");
   }
   if (!(await isCollaborator({ account_id, project_id }))) {
-    throw Error("user must be a collaborator on project");
+    throw Error("user must be a collaborator on workspace");
   }
   // Ensure we have a cached host for downstream conat routing. Best effort:
   // failures here should not block the caller.
