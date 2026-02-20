@@ -24,6 +24,22 @@ const logger = getLogger("sandbox:watch");
 export { type WatchOptions };
 export type WatchIterator = EventIterator<ChangeEvent>;
 
+const DEFAULT_POLL_INTERVAL = (() => {
+  const raw = process.env.COCALC_SANDBOX_WATCH_POLL_INTERVAL_MS;
+  if (raw == null || raw === "") {
+    return 0;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    logger.warn(
+      "invalid COCALC_SANDBOX_WATCH_POLL_INTERVAL_MS; expected nonnegative integer",
+      { value: raw },
+    );
+    return 0;
+  }
+  return parsed;
+})();
+
 // do NOT use patch for tracking file changes if the file exceeds
 // this size.  The reason is mainly because computing diffs of
 // large files on the server can take a long time!
@@ -80,15 +96,26 @@ class Watcher extends EventEmitter {
     });
 
     const stabilityThreshold = options.stabilityThreshold ?? 500;
-    const pollInterval = options.pollInterval ?? 250;
+    const pollInterval = Math.max(
+      0,
+      options.pollInterval ?? DEFAULT_POLL_INTERVAL,
+    );
+    const usePolling = pollInterval > 0;
+    const trackerInfo: Record<string, unknown> = {
+      usePolling,
+      pollInterval,
+      stabilityThreshold,
+      closeOnUnlink: !!options.closeOnUnlink,
+      patch: !!options.patch,
+    };
     const chokidarConfig = {
       depth: 0,
       ignoreInitial: true,
       followSymlinks: false,
       alwaysStat: options.stats ?? false,
       atomic: true,
-      usePolling: !!pollInterval,
-      interval: pollInterval,
+      usePolling,
+      interval: usePolling ? pollInterval : undefined,
       awaitWriteFinish: stabilityThreshold
         ? {
             stabilityThreshold,
@@ -100,18 +127,39 @@ class Watcher extends EventEmitter {
       source: "backend:sandbox/watch",
       type: "chokidar",
       path,
-      info: {
-        usePolling: !!pollInterval,
-        pollInterval,
-        stabilityThreshold,
-        closeOnUnlink: !!options.closeOnUnlink,
-        patch: !!options.patch,
-      },
+      info: trackerInfo,
     });
     this.watcher = chokidarWatch(path, chokidarConfig);
 
     this.watcher.once("ready", () => {
       this.ready = true;
+      const getWatched = (this.watcher as any).getWatched;
+      if (typeof getWatched === "function") {
+        try {
+          const watched = getWatched.call(this.watcher) as Record<
+            string,
+            string[]
+          >;
+          let watchedDirs = 0;
+          let watchedEntries = 0;
+          for (const names of Object.values(watched)) {
+            watchedDirs += 1;
+            watchedEntries += Array.isArray(names) ? names.length : 0;
+          }
+          trackerInfo.watchedDirs = watchedDirs;
+          trackerInfo.watchedEntries = watchedEntries;
+          if (usePolling && watchedEntries >= 500) {
+            logger.warn("polling sandbox watcher has large watch-set", {
+              path,
+              pollInterval,
+              watchedDirs,
+              watchedEntries,
+            });
+          }
+        } catch (err) {
+          trackerInfo.watchedStatsError = `${err}`;
+        }
+      }
       this.readyResolve?.();
       this.readyResolve = null;
     });
