@@ -43,7 +43,8 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
     return (
       type === "jupyter_cell_notebook" ||
       type === "jupyter-slate" ||
-      type === "jupyter-slate-top-level"
+      type === "jupyter-slate-top-level" ||
+      type === "jupyter-singledoc"
     );
   };
 
