@@ -58,6 +58,7 @@ import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import cpExec from "@cocalc/backend/sandbox/cp";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import rustic from "@cocalc/backend/sandbox/rustic";
+import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
@@ -88,9 +89,67 @@ type SshTarget = { type: "project"; project_id: string };
 const logger = getLogger("project-host:file-server");
 const RESTORE_STAGING_ROOT = ".restore-staging";
 const MAX_TEXT_PREVIEW_BYTES = 10 * 1024 * 1024;
+const BACKUP_MAX_PARALLEL = Math.max(
+  1,
+  Math.min(100, envToInt("COCALC_PROJECT_HOST_BACKUP_MAX_PARALLEL", 10)),
+);
+let backupInFlight = 0;
+const backupWaiters: Array<() => void> = [];
 
 function volName(project_id: string) {
   return `project-${project_id}`;
+}
+
+async function acquireBackupSlot(): Promise<void> {
+  if (backupInFlight < BACKUP_MAX_PARALLEL) {
+    backupInFlight += 1;
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    backupWaiters.push(() => {
+      backupInFlight += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseBackupSlot() {
+  backupInFlight = Math.max(0, backupInFlight - 1);
+  const next = backupWaiters.shift();
+  if (next) {
+    next();
+  }
+}
+
+async function withBackupParallelLimit<T>({
+  project_id,
+  op,
+  run,
+}: {
+  project_id: string;
+  op: string;
+  run: () => Promise<T>;
+}): Promise<T> {
+  await acquireBackupSlot();
+  logger.debug("backup slot acquired", {
+    project_id,
+    op,
+    in_flight: backupInFlight,
+    queued: backupWaiters.length,
+    max_parallel: BACKUP_MAX_PARALLEL,
+  });
+  try {
+    return await run();
+  } finally {
+    releaseBackupSlot();
+    logger.debug("backup slot released", {
+      project_id,
+      op,
+      in_flight: backupInFlight,
+      queued: backupWaiters.length,
+      max_parallel: BACKUP_MAX_PARALLEL,
+    });
+  }
 }
 
 function scratchVolName(project_id: string) {
@@ -1211,19 +1270,24 @@ async function createBackup({
   lro?: LroRef;
 }): Promise<{ time: Date; id: string }> {
   const progress = createLroRusticReporter(lro, "backup");
-  const result = await withBackupConfigRefreshOnMissingBucket({
+  const result = await withBackupParallelLimit({
     project_id,
     op: "createBackup",
-    run: async () => {
-      const vol = await getVolume(project_id);
-      vol.fs.rusticRepo = await resolveRusticRepo(project_id);
-      return await vol.rustic.backup({
-        limit,
-        tags,
-        progress,
-        index: { project_id },
-      });
-    },
+    run: async () =>
+      await withBackupConfigRefreshOnMissingBucket({
+        project_id,
+        op: "createBackup",
+        run: async () => {
+          const vol = await getVolume(project_id);
+          vol.fs.rusticRepo = await resolveRusticRepo(project_id);
+          return await vol.rustic.backup({
+            limit,
+            tags,
+            progress,
+            index: { project_id },
+          });
+        },
+      }),
   });
   if (result.index_path) {
     try {

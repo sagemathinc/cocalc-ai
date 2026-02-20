@@ -520,6 +520,13 @@ export async function buildBootstrapScripts(
     bindHost === "localhost" ||
     bindHost === "::1" ||
     bindHost.startsWith("127.");
+  const backupParallelRaw =
+    metadata.backup_max_parallel ?? machine.metadata?.backup_max_parallel;
+  const backupParallelParsed = Number(backupParallelRaw);
+  const backupParallel =
+    Number.isFinite(backupParallelParsed) && backupParallelParsed > 0
+      ? Math.max(1, Math.min(100, Math.floor(backupParallelParsed)))
+      : undefined;
 
   const envLines = [
     `MASTER_CONAT_SERVER=${masterAddress}`,
@@ -561,6 +568,9 @@ export async function buildBootstrapScripts(
   }
   if (isSelfHost) {
     envLines.push(`COCALC_SELF_HOST_MODE=${effectiveSelfHostMode ?? "local"}`);
+  }
+  if (backupParallel != null) {
+    envLines.push(`COCALC_PROJECT_HOST_BACKUP_MAX_PARALLEL=${backupParallel}`);
   }
   if (tlsEnabled) {
     envLines.push(`COCALC_PROJECT_HOST_HTTPS_HOSTNAME=${tlsHostname}`);
