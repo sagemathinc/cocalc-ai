@@ -376,7 +376,17 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         const newId = frameActions.insert_cell(1);
         frameActions.set_cur_id(newId);
       } else {
-        frameActions.shift_enter_run_current_cell();
+        frameActions.run_cell(targetId);
+        const idx = cell_list.indexOf(targetId);
+        if (idx >= 0 && idx < cell_list.size - 1) {
+          const nextId = cell_list.get(idx + 1);
+          if (nextId != null) {
+            frameActions.set_cur_id(nextId);
+          }
+        } else {
+          const newId = frameActions.insert_cell(1);
+          frameActions.set_cur_id(newId);
+        }
       }
     },
     [frameActions, cell_list],
