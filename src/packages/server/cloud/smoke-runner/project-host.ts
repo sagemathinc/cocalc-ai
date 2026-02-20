@@ -1030,6 +1030,232 @@ async function runWorkspaceExecSmokeViaCli({
   throw new Error("timeout waiting for workspace exec marker");
 }
 
+async function runProxySmokeViaCli({
+  cli,
+  host_id,
+  project_id,
+  wait,
+  proxy_port,
+}: {
+  cli: CliContext;
+  host_id: string;
+  project_id: string;
+  wait: WaitOptions;
+  proxy_port: number;
+}): Promise<void> {
+  const proxyWait = narrowProxyWait(wait);
+  const serverScript = `.smoke/proxy-${proxy_port}.server.js`;
+  const startScript = [
+    "set -euo pipefail",
+    `PORT=${proxy_port}`,
+    "mkdir -p .smoke",
+    `LOG=\".smoke/proxy-${proxy_port}.log\"`,
+    `PIDFILE=\".smoke/proxy-${proxy_port}.pid\"`,
+    "rm -f \"$PIDFILE\"",
+    "if ! command -v node >/dev/null 2>&1; then",
+    "  echo \"missing node runtime for proxy smoke\" >&2",
+    "  exit 1",
+    "fi",
+    `cat > ${JSON.stringify(serverScript)} <<'NODE'`,
+    'const http = require("node:http");',
+    'const port = Number(process.argv[2] || "0");',
+    "if (!Number.isFinite(port) || port <= 0) {",
+    '  process.stderr.write("invalid port\\n");',
+    "  process.exit(1);",
+    "}",
+    'const body = "proxy-smoke-ok\\n";',
+    "const server = http.createServer((_req, res) => {",
+    '  res.writeHead(200, {"content-type":"text/plain; charset=utf-8"});',
+    "  res.end(body);",
+    "});",
+    'server.listen(port, "0.0.0.0");',
+    "NODE",
+    `nohup node ${JSON.stringify(serverScript)} "$PORT" >"$LOG" 2>&1 < /dev/null &`,
+    "PID=$!",
+    "echo \"$PID\" > \"$PIDFILE\"",
+    "for i in $(seq 1 40); do",
+    "  if ! kill -0 \"$PID\" 2>/dev/null; then",
+    "    echo \"proxy smoke server exited early\" >&2",
+    "    tail -n 80 \"$LOG\" >&2 || true",
+    "    exit 1",
+    "  fi",
+    "  if node -e \"const net=require('node:net'); const p=Number(process.argv[1]); const s=net.createConnection({host:'127.0.0.1',port:p}); const done=(ok)=>{try{s.destroy();}catch{} process.exit(ok?0:1);}; s.on('connect',()=>done(true)); s.on('error',()=>done(false)); setTimeout(()=>done(false), 700);\" \"$PORT\" >/dev/null 2>&1; then",
+    "    exit 0",
+    "  fi",
+    "  sleep 0.25",
+    "done",
+    "echo \"proxy smoke server did not open port\" >&2",
+    "tail -n 80 \"$LOG\" >&2 || true",
+    "exit 1",
+  ].join("\n");
+
+  const cleanupScript = [
+    "set +e",
+    `PORT=${proxy_port}`,
+    `PIDFILE=\".smoke/proxy-${proxy_port}.pid\"`,
+    "if [ -f \"$PIDFILE\" ]; then",
+    "  PID=$(cat \"$PIDFILE\" 2>/dev/null || true)",
+    "  if [ -n \"$PID\" ]; then",
+    "    kill \"$PID\" >/dev/null 2>&1 || true",
+    "  fi",
+    "  rm -f \"$PIDFILE\"",
+    "fi",
+    `pkill -f ${JSON.stringify(serverScript)} >/dev/null 2>&1 || true`,
+  ].join("\n");
+
+  const readLogScript = [
+    "set +e",
+    `tail -n 120 .smoke/proxy-${proxy_port}.log 2>/dev/null || true`,
+  ].join("\n");
+
+  try {
+    await runCli(
+      cli,
+      [
+        "workspace",
+        "exec",
+        "--workspace",
+        project_id,
+        "--timeout",
+        "90",
+        "--bash",
+        startScript,
+      ],
+      { timeoutSeconds: 120, commandTimeoutMs: 180_000 },
+    );
+
+    await waitForCondition(async () => {
+      await runCli(
+        cli,
+        [
+          "workspace",
+          "proxy",
+          "curl",
+          "--workspace",
+          project_id,
+          "--host",
+          host_id,
+          "--port",
+          String(proxy_port),
+          "--expect",
+          "denied",
+        ],
+        { timeoutSeconds: 20, commandTimeoutMs: 45_000 },
+      );
+    }, proxyWait);
+
+    const issued = await runCli<{ token?: string }>(
+      cli,
+      [
+        "host",
+        "issue-http-token",
+        "--host",
+        host_id,
+        "--workspace",
+        project_id,
+        "--ttl",
+        "300",
+      ],
+      { timeoutSeconds: 30, commandTimeoutMs: 60_000 },
+    );
+    const token = `${issued?.token ?? ""}`.trim();
+    if (!token) {
+      throw new Error("host issue-http-token returned empty token");
+    }
+
+    await waitForCondition(async () => {
+      const response = await runCli<{ status?: number; body_preview?: string }>(
+        cli,
+        [
+          "workspace",
+          "proxy",
+          "curl",
+          "--workspace",
+          project_id,
+          "--host",
+          host_id,
+          "--port",
+          String(proxy_port),
+          "--token",
+          token,
+          "--expect",
+          "ok",
+        ],
+        { timeoutSeconds: 30, commandTimeoutMs: 60_000 },
+      );
+      const status = Number(response?.status ?? 0);
+      if (status !== 200) {
+        throw new Error(`unexpected authorized status ${status}`);
+      }
+      const body = `${response?.body_preview ?? ""}`;
+      if (
+        !body.includes("Directory listing for") &&
+        !body.includes("<html") &&
+        !body.includes("DOCTYPE") &&
+        !body.includes("proxy-smoke-ok")
+      ) {
+        throw new Error("authorized proxy response did not look like app content");
+      }
+    }, proxyWait);
+  } catch (err) {
+    try {
+      const logDump = await runCli<{ stdout?: string }>(
+        cli,
+        [
+          "workspace",
+          "exec",
+          "--workspace",
+          project_id,
+          "--timeout",
+          "30",
+          "--bash",
+          readLogScript,
+        ],
+        { timeoutSeconds: 45, commandTimeoutMs: 60_000 },
+      );
+      const logText = `${logDump?.stdout ?? ""}`.trim();
+      if (logText) {
+        throw new Error(
+          `${getErrorMessage(err)} | proxy-server-log=${logText.slice(0, 1500)}`,
+        );
+      }
+    } catch (logErr) {
+      if (logErr instanceof Error && logErr.message.includes("proxy-server-log=")) {
+        throw logErr;
+      }
+      logger.debug("proxy smoke log collection warning", {
+        project_id,
+        proxy_port,
+        err: getErrorMessage(logErr),
+      });
+    }
+    throw err;
+  } finally {
+    try {
+      await runCli(
+        cli,
+        [
+          "workspace",
+          "exec",
+          "--workspace",
+          project_id,
+          "--timeout",
+          "30",
+          "--bash",
+          cleanupScript,
+        ],
+        { timeoutSeconds: 45, commandTimeoutMs: 60_000 },
+      );
+    } catch (err) {
+      logger.debug("proxy smoke cli cleanup warning", {
+        project_id,
+        proxy_port,
+        err: getErrorMessage(err),
+      });
+    }
+  }
+}
+
 function buildHostCreateCliArgs({
   provider,
   create,
@@ -1276,6 +1502,7 @@ async function runProxySmoke({
   }
 
   let serverPid: number | undefined;
+  const serverScript = `.smoke/proxy-${proxy_port}.server.js`;
   const appUrl = `${hints.host_url}/${project_id}/proxy/${proxy_port}/`;
   try {
     await waitForProjectRouting(project_id, wait);
@@ -1283,7 +1510,25 @@ async function runProxySmoke({
       account_id,
       project_id,
       execOpts: {
-        command: `python3 -m http.server ${proxy_port} --bind 0.0.0.0 || python -m SimpleHTTPServer ${proxy_port}`,
+        command: [
+          "set -euo pipefail",
+          "mkdir -p .smoke",
+          `cat > ${JSON.stringify(serverScript)} <<'NODE'`,
+          'const http = require("node:http");',
+          'const port = Number(process.argv[2] || "0");',
+          "if (!Number.isFinite(port) || port <= 0) {",
+          '  process.stderr.write("invalid port\\n");',
+          "  process.exit(1);",
+          "}",
+          'const body = "proxy-smoke-ok\\n";',
+          "const server = http.createServer((_req, res) => {",
+          '  res.writeHead(200, {"content-type":"text/plain; charset=utf-8"});',
+          "  res.end(body);",
+          "});",
+          'server.listen(port, "0.0.0.0");',
+          "NODE",
+          `node ${JSON.stringify(serverScript)} ${proxy_port}`,
+        ].join("\n"),
         bash: true,
         timeout: 600,
         err_on_exit: false,
@@ -1346,7 +1591,8 @@ async function runProxySmoke({
       if (
         !body.includes("Directory listing for") &&
         !body.includes("<html") &&
-        !body.includes("DOCTYPE")
+        !body.includes("DOCTYPE") &&
+        !body.includes("proxy-smoke-ok")
       ) {
         throw new Error("authorized proxy response did not look like app content");
       }
@@ -1360,7 +1606,7 @@ async function runProxySmoke({
         account_id,
         project_id,
         execOpts: {
-          command: `${killByPid}pkill -f 'http.server ${proxy_port}' >/dev/null 2>&1 || true`,
+          command: `${killByPid}pkill -f ${JSON.stringify(serverScript)} >/dev/null 2>&1 || true`,
           bash: true,
           timeout: 30,
           err_on_exit: false,
@@ -2266,12 +2512,13 @@ async function runSmokeStepsViaCli({
         let lastErr: unknown;
         for (let attempt = 1; attempt <= 3; attempt += 1) {
           try {
-            await runProxySmoke({
-              account_id,
+            const attemptPort = (proxy_port ?? 33117) + (attempt - 1);
+            await runProxySmokeViaCli({
+              cli,
               host_id,
               project_id,
               wait: waitProjectReady,
-              proxy_port: proxy_port ?? 33117,
+              proxy_port: attemptPort,
             });
             lastErr = undefined;
             break;
@@ -2391,16 +2638,29 @@ async function runSmokeStepsViaCli({
           }
         }
         for (const workspaceId of workspaceIds) {
-          await runCli(cli, [
-            "workspace",
-            "delete",
-            "--workspace",
-            workspaceId,
-            "--hard",
-            "--purge-backups-now",
-            "--yes",
-            "--wait",
-          ]);
+          try {
+            await runCli(cli, [
+              "workspace",
+              "delete",
+              "--workspace",
+              workspaceId,
+              "--hard",
+              "--purge-backups-now",
+              "--yes",
+              "--wait",
+            ]);
+          } catch (hardErr) {
+            logger.warn("cloud smoke cleanup hard delete failed; falling back to soft delete", {
+              workspace_id: workspaceId,
+              err: getErrorMessage(hardErr),
+            });
+            await runCli(cli, [
+              "workspace",
+              "delete",
+              "--workspace",
+              workspaceId,
+            ]);
+          }
         }
         if (cleanup_host ?? createdHost) {
           const hostIds = new Set<string>();
