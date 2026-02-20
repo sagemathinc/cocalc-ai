@@ -5,9 +5,11 @@
 
 import { Range, Editor, Element, Path, Point, Text, Transforms, Node } from "slate";
 import { isWhitespaceParagraph } from "../padding";
+import { isCodeLikeBlockType } from "../elements/code-block/utils";
 
 const BACKWARD_DELETE_BLOCK_TYPES = new Set<string>([
   "code_block",
+  "jupyter_code_cell",
   "html_block",
   "meta",
   "math_block",
@@ -59,7 +61,7 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
     if (selection.anchor.offset === 0 && lineIndex === 0) {
       const codeBlockEntry = Editor.above(editor, {
         at: linePath,
-        match: (node) => Element.isElement(node) && node.type === "code_block",
+        match: (node) => Element.isElement(node) && isCodeLikeBlockType(node.type),
       });
       if (codeBlockEntry != null) {
         // Do nothing at the very start of a code block.
@@ -114,6 +116,7 @@ function customDeleteBackwards(editor: Editor): boolean | undefined {
   // element, so maybe do something special.
   switch (block.type) {
     case "code_block":
+    case "jupyter_code_cell":
       // Do not delete entire code blocks when backspacing at start.
       return true;
     case "heading":

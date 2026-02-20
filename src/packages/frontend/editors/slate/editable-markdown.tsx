@@ -764,6 +764,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         match: (n) =>
           SlateElement.isElement(n) &&
           (n.type === "code_block" ||
+            n.type === "jupyter_code_cell" ||
             n.type === "html_block" ||
             n.type === "meta"),
       });
@@ -773,7 +774,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       const cache = codeBlockCacheRef.current;
       const text = block.children.map((line) => Node.string(line)).join("\n");
       const info =
-        block.type === "code_block"
+        block.type === "code_block" || block.type === "jupyter_code_cell"
           ? (block as CodeBlock).info ?? ""
           : block.type === "html_block"
             ? "html"

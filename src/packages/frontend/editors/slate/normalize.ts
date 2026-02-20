@@ -22,7 +22,11 @@ import { isEqual } from "lodash";
 import { getNodeAt } from "./slate-util";
 import { emptyParagraph, isWhitespaceParagraph } from "./padding";
 import { isListElement } from "./elements/list";
-import { getCodeBlockText, toCodeLines } from "./elements/code-block/utils";
+import {
+  getCodeBlockText,
+  isCodeLikeBlockType,
+  toCodeLines,
+} from "./elements/code-block/utils";
 
 interface NormalizeInputs {
   editor?: Editor;
@@ -141,12 +145,12 @@ NORMALIZERS.push(function ensureBlockHasChild({ editor, node, path }) {
 
 // Normalize code blocks to use code_line children instead of legacy value.
 NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
-  if (!(Element.isElement(node) && node.type === "code_block")) return;
+  if (!(Element.isElement(node) && isCodeLikeBlockType(node.type))) return;
   const children = node.children ?? [];
   const hasOnlyCodeLines = children.every(
     (child) => Element.isElement(child) && child.type === "code_line"
   );
-  if (hasOnlyCodeLines && node.value == null) return;
+  if (hasOnlyCodeLines && (node as any).value == null) return;
 
   const code = getCodeBlockText(node as any);
   const nextLines = toCodeLines(code);
@@ -182,6 +186,7 @@ SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 
 const SPACER_BLOCK_TYPES = new Set<string>([
   "code_block",
+  "jupyter_code_cell",
   "blockquote",
   "html_block",
   "meta",
@@ -247,7 +252,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
       codePath = Path.next(path);
       if ((editor as any).__autoformatDidBlock) {
         const nextNode = getNodeAt(editor, codePath);
-        if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+        if (Element.isElement(nextNode) && isCodeLikeBlockType(nextNode.type)) {
           const focus = Editor.start(editor, codePath);
           Transforms.setSelection(editor, { anchor: focus, focus });
           (editor as any).__autoformatSelection = { anchor: focus, focus };
@@ -265,7 +270,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
     codePath = Path.next(path);
     if ((editor as any).__autoformatDidBlock) {
       const nextNode = getNodeAt(editor, codePath);
-      if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+      if (Element.isElement(nextNode) && isCodeLikeBlockType(nextNode.type)) {
         const focus = Editor.start(editor, codePath);
         Transforms.setSelection(editor, { anchor: focus, focus });
         (editor as any).__autoformatSelection = { anchor: focus, focus };
@@ -281,7 +286,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
   if (!(Element.isElement(nextNode) && nextNode.type === "paragraph")) {
     Transforms.insertNodes(editor, spacerParagraph(), { at: nextPath });
   }
-  if ((editor as any).__autoformatDidBlock && node.type === "code_block") {
+  if ((editor as any).__autoformatDidBlock && isCodeLikeBlockType(node.type)) {
     (editor as any).__autoformatDidBlock = false;
   }
 });

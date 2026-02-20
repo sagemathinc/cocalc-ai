@@ -27,7 +27,10 @@ import { getRules } from "../elements";
 import { ReactEditor } from "../slate-react";
 import { formatHeading, getFocus, setSelectionAndFocus } from "./commands";
 import { autoformatBlockquoteAtStart } from "./auto-format-quote";
-import { toCodeLines } from "../elements/code-block/utils";
+import {
+  isCodeLikeBlockType,
+  toCodeLines,
+} from "../elements/code-block/utils";
 import { ensureRange, getNodeAt, slateDebug } from "../slate-util";
 
 function rememberAutoformatSelection(editor: Editor, selection: Range): void {
@@ -937,7 +940,7 @@ function isSelectionInCodeBlock(editor: SlateEditor): boolean {
   if (!selection) return false;
   const entry = Editor.above(editor, {
     at: selection.focus,
-    match: (node) => Element.isElement(node) && node.type === "code_block",
+    match: (node) => Element.isElement(node) && isCodeLikeBlockType(node.type),
   });
   return !!entry;
 }

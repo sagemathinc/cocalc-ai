@@ -8,6 +8,7 @@ import { register, IS_MACOS } from "./register";
 import { rangeAll } from "../slate-util";
 import { withSelectionReason } from "../slate-utils/slate-debug";
 import { ReactEditor } from "../slate-react";
+import { isCodeLikeBlockType } from "../elements/code-block/utils";
 
 // We use this to support windowing.
 
@@ -36,7 +37,7 @@ register({ key: "a", meta: IS_MACOS, ctrl: !IS_MACOS }, ({ editor }) => {
   const codeEntry = selection
     ? Editor.above(editor, {
         at: selection.focus,
-        match: (node) => Element.isElement(node) && node.type === "code_block",
+        match: (node) => Element.isElement(node) && isCodeLikeBlockType(node.type),
       })
     : null;
   if (codeEntry) {
