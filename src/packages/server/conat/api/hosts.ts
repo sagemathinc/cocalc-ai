@@ -3419,7 +3419,7 @@ async function resolveHostSoftwareBaseUrl(base_url?: string): Promise<string> {
         }
       }
     } catch {
-      // keep provided value as-is if it is not a valid URL
+    // keep provided value as-is if it is not a valid URL
     }
   }
   const { project_hosts_software_base_url } = await getServerSettings();
@@ -3433,6 +3433,62 @@ async function resolveHostSoftwareBaseUrl(base_url?: string): Promise<string> {
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL ??
     DEFAULT_SOFTWARE_BASE_URL
   );
+}
+
+function isLoopbackHostName(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "[::1]"
+  );
+}
+
+function isLoopbackSoftwareBaseUrl(value: string): boolean {
+  try {
+    return isLoopbackHostName(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLocalSelfHost(row: any): boolean {
+  const machine: HostMachine = row?.metadata?.machine ?? {};
+  if (machine.cloud !== "self-host") return false;
+  const mode = machine.metadata?.self_host_mode;
+  return !mode || mode === "local";
+}
+
+async function resolveReachableUpgradeBaseUrl({
+  row,
+  baseUrl,
+}: {
+  row: any;
+  baseUrl: string;
+}): Promise<string> {
+  if (!isLoopbackSoftwareBaseUrl(baseUrl)) {
+    return baseUrl;
+  }
+  if (isLocalSelfHost(row)) {
+    return baseUrl;
+  }
+  let replacement = DEFAULT_SOFTWARE_BASE_URL;
+  try {
+    const publicSite = (await siteURL()).replace(/\/+$/, "");
+    const candidate = `${publicSite}/software`;
+    if (!isLoopbackSoftwareBaseUrl(candidate)) {
+      replacement = candidate;
+    }
+  } catch {
+    // keep default replacement
+  }
+  logger.warn("upgrade host software: replaced loopback base url for remote host", {
+    host_id: row.id,
+    requested: baseUrl,
+    effective: replacement,
+  });
+  return replacement;
 }
 
 export async function listHostSoftwareVersions({
@@ -3505,13 +3561,17 @@ export async function upgradeHostSoftwareInternal({
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   const resolvedBaseUrl = await resolveHostSoftwareBaseUrl(base_url);
+  const effectiveBaseUrl = await resolveReachableUpgradeBaseUrl({
+    row,
+    baseUrl: resolvedBaseUrl,
+  });
   const client = createHostControlClient({
     host_id: id,
     client: conatWithProjectRouting(),
   });
   const response = await client.upgradeSoftware({
     targets,
-    base_url: resolvedBaseUrl,
+    base_url: effectiveBaseUrl,
   });
   const results = response.results ?? [];
   if (results.length) {
