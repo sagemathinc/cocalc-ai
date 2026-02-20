@@ -92,6 +92,29 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const disposeScheduled = snapshots.filter((x) => x.disposeScheduled).length;
   const syncdbErrors = snapshots.filter((x) => x.hasSyncdbError).length;
   const totalBufferedEvents = snapshots.reduce((sum, x) => sum + x.events, 0);
+  const timeTravelSnapshots = snapshots
+    .map((x) => x.timeTravel)
+    .filter((x): x is NonNullable<(typeof snapshots)[number]["timeTravel"]> =>
+      x != null,
+    );
+  const timeTravelActiveRecorders = timeTravelSnapshots.filter(
+    (x) => !x.disposed,
+  ).length;
+  const timeTravelDisposePending = timeTravelSnapshots.filter(
+    (x) => x.disposePending,
+  ).length;
+  const timeTravelPendingOps = timeTravelSnapshots.reduce(
+    (sum, x) => sum + x.pendingOps,
+    0,
+  );
+  const timeTravelSyncDocs = timeTravelSnapshots.reduce(
+    (sum, x) => sum + x.syncDocs,
+    0,
+  );
+  const timeTravelInflightLoads = timeTravelSnapshots.reduce(
+    (sum, x) => sum + x.inflightLoads,
+    0,
+  );
   const topWritersByEvents = [...snapshots]
     .sort((a, b) => b.events - a.events)
     .slice(0, top)
@@ -103,6 +126,7 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       finished: x.finished,
       disposeScheduled: x.disposeScheduled,
       threadIds: x.threadIds,
+      timeTravel: x.timeTravel,
     }));
   return {
     writersByChatKey: chatWritersByChatKey.size,
@@ -112,6 +136,11 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
     disposeScheduled,
     syncdbErrors,
     totalBufferedEvents,
+    timeTravelActiveRecorders,
+    timeTravelDisposePending,
+    timeTravelPendingOps,
+    timeTravelSyncDocs,
+    timeTravelInflightLoads,
     topWritersByEvents,
   };
 }
@@ -181,6 +210,8 @@ export class ChatStreamWriter {
   private logSubject: string;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
+  private readonly timeTravelOps = new Set<Promise<void>>();
+  private timeTravelDisposePromise?: Promise<void>;
   private leaseFinalized = false;
   private heartbeatLease = throttle(
     () => {
@@ -561,7 +592,9 @@ export class ChatStreamWriter {
       clearAcpPayloads(this.metadata);
       this.finished = true;
       this.finalizeLease("completed");
-      void this.timeTravel?.finalizeTurn(this.metadata.message_date);
+      this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
+        this.timeTravel?.finalizeTurn(this.metadata.message_date),
+      );
       void this.persistLog();
       return;
     }
@@ -572,7 +605,9 @@ export class ChatStreamWriter {
       this.finished = true;
       this.finishedBy = "error";
       this.finalizeLease("error", payload.error);
-      void this.timeTravel?.finalizeTurn(this.metadata.message_date);
+      this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
+        this.timeTravel?.finalizeTurn(this.metadata.message_date),
+      );
       void this.persistLog();
     }
   }
@@ -650,7 +685,7 @@ export class ChatStreamWriter {
     this.commit(false);
     this.commit.flush();
     this.closed = true;
-    void this.timeTravel?.dispose();
+    this.startTimeTravelDispose();
     chatWritersByChatKey.delete(this.chatKey);
     logWriterCounts("dispose", { chatKey: this.chatKey });
     for (const key of this.threadKeys) {
@@ -709,15 +744,73 @@ export class ChatStreamWriter {
     const turnId = this.metadata.message_date;
     if (event.type === "file") {
       if (event.operation === "read") {
-        void this.timeTravel.recordRead(event.path, turnId);
+        this.trackTimeTravelOperation("read", event.path, () =>
+          this.timeTravel?.recordRead(event.path, turnId),
+        );
       } else {
-        void this.timeTravel.recordWrite(event.path, turnId);
+        this.trackTimeTravelOperation("write", event.path, () =>
+          this.timeTravel?.recordWrite(event.path, turnId),
+        );
       }
       return;
     }
     if (event.type === "diff") {
-      void this.timeTravel.recordWrite(event.path, turnId);
+      this.trackTimeTravelOperation("write", event.path, () =>
+        this.timeTravel?.recordWrite(event.path, turnId),
+      );
     }
+  }
+
+  private trackTimeTravelOperation(
+    operation: "read" | "write" | "finalize",
+    path: string,
+    action: () => Promise<void> | undefined,
+  ): void {
+    if (!this.timeTravel) return;
+    const op = (async () => {
+      try {
+        await action();
+      } catch (err) {
+        logger.warn("agent-tt operation failed", {
+          chatKey: this.chatKey,
+          operation,
+          path,
+          err,
+        });
+      }
+    })();
+    this.timeTravelOps.add(op);
+    void op.finally(() => {
+      this.timeTravelOps.delete(op);
+    });
+  }
+
+  private startTimeTravelDispose(): void {
+    if (!this.timeTravel || this.timeTravelDisposePromise != null) return;
+    const pending = [...this.timeTravelOps];
+    if (pending.length > 0) {
+      logger.debug("chat writer dispose waiting for agent-tt operations", {
+        chatKey: this.chatKey,
+        pendingOps: pending.length,
+      });
+    }
+    const timeTravel = this.timeTravel;
+    this.timeTravelDisposePromise = (async () => {
+      if (pending.length > 0) {
+        await Promise.allSettled(pending);
+      }
+      await timeTravel.dispose();
+    })()
+      .catch((err) => {
+        logger.warn("failed to dispose agent-tt recorder", {
+          chatKey: this.chatKey,
+          err,
+        });
+      })
+      .finally(() => {
+        this.timeTravelOps.clear();
+        this.timeTravelDisposePromise = undefined;
+      });
   }
 
   notifyInterrupted(text: string): void {
@@ -740,6 +833,7 @@ export class ChatStreamWriter {
   }
 
   watchdogSnapshot() {
+    const timeTravelStats = this.timeTravel?.debugStats();
     return {
       chatKey: this.chatKey,
       path: this.metadata.path,
@@ -750,6 +844,14 @@ export class ChatStreamWriter {
       disposeScheduled: this.disposeTimer != null,
       hasSyncdbError: this.syncdbError != null,
       threadIds: this.getKnownThreadIds(),
+      timeTravel:
+        timeTravelStats == null
+          ? undefined
+          : {
+              ...timeTravelStats,
+              pendingOps: this.timeTravelOps.size,
+              disposePending: this.timeTravelDisposePromise != null,
+            },
     };
   }
 
