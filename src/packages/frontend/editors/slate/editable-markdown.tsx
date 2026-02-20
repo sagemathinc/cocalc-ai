@@ -953,7 +953,23 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
     if (e.defaultPrevented) return;
 
-    if (!ReactEditor.isFocused(editor)) {
+    const isRunShortcut =
+      e.key === "Enter" && (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey);
+    const isFocused = ReactEditor.isFocused(editor);
+    if (isRunShortcut) {
+      // eslint-disable-next-line no-console
+      console.log("slate onKeyDown enter shortcut", {
+        key: e.key,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        isFocused,
+        selection: editor.selection ?? null,
+      });
+    }
+
+    if (!isFocused && !isRunShortcut) {
       // E.g., when typing into a codemirror editor embedded
       // in slate, we get the keystrokes, but at the same time
       // the (contenteditable) editor itself is not focused.

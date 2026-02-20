@@ -4,6 +4,7 @@ import {
   clearKernelErrorForE2E,
   clickRunButton,
   codeCell,
+  countSingleDocCodeCells,
   countCells,
   readKernelWarningText,
   readKernelWarningVisible,
@@ -14,6 +15,9 @@ import {
   mutateNotebookOnDisk,
   notebookUrl,
   openNotebookPage,
+  openSingleDocNotebookPage,
+  pressSingleDocRunShortcut,
+  readSingleDocOutputText,
   readCellOutputText,
   readCellText,
   readInputExecCount,
@@ -113,6 +117,57 @@ test("runs a cell and shows output", async ({ page }) => {
   );
 
   await ensureKernelReadyOrSkip(page, 0);
+});
+
+test("single-doc editor handles Shift+Enter and Alt+Enter", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-run-shortcuts");
+  const marker = `single-doc-${Date.now()}`;
+  await ensureNotebook(path_ipynb, [
+    codeCell(`print("${marker}")`),
+    codeCell("pass"),
+  ]);
+
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  try {
+    const beforeCount = await countSingleDocCodeCells(page);
+    await pressSingleDocRunShortcut(page, 0, "Shift+Enter");
+    await expect
+      .poll(async () => await readSingleDocOutputText(page, 0), {
+        timeout: 60_000,
+      })
+      .toContain(marker);
+
+    await pressSingleDocRunShortcut(page, 0, "Alt+Enter");
+    await expect
+      .poll(async () => await countSingleDocCodeCells(page), {
+        timeout: 45_000,
+      })
+      .toBeGreaterThan(beforeCount);
+  } catch (err: any) {
+    if (REQUIRE_KERNEL) {
+      throw new Error(
+        `single-doc run shortcuts unavailable in strict mode: ${
+          err?.message ?? `${err}`
+        }`,
+      );
+    }
+    test.skip(
+      true,
+      `single-doc run shortcuts unavailable in current session: ${
+        err?.message ?? `${err}`
+      }`,
+    );
+  }
 });
 
 test("running cell execution syncs across tabs", async ({ browser }) => {

@@ -229,6 +229,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   if (element.type != "code_block" && element.type != "jupyter_code_cell") {
     throw Error("bug");
   }
+  const isJupyterCodeCell = element.type === "jupyter_code_cell";
   const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar } = useFileContext();
   const editor = useSlate();
@@ -525,7 +526,15 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   );
 
   return (
-    <div {...attributes} spellCheck={false} style={{ textIndent: 0 }}>
+    <div
+      {...attributes}
+      spellCheck={false}
+      style={{ textIndent: 0 }}
+      data-cocalc-test={isJupyterCodeCell ? "jupyter-singledoc-code-cell" : undefined}
+      data-cocalc-cell-id={
+        isJupyterCodeCell ? `${(element as any).cell_id ?? ""}` : undefined
+      }
+    >
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1 }}>
           <div

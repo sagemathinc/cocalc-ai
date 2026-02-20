@@ -40,15 +40,20 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
   private syncConsoleInFlight = false;
 
   private isNotebookFrameType = (type?: string): boolean => {
-    return (
-      type === "jupyter_cell_notebook" ||
-      type === "jupyter-slate" ||
-      type === "jupyter-slate-top-level" ||
-      type === "jupyter-singledoc"
-    );
+    return type === "jupyter_cell_notebook" || type === "jupyter-singledoc";
   };
 
   _raw_default_frame_tree(): FrameTree {
+    if (typeof window !== "undefined") {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("cocalc-test-jupyter-frame") === "jupyter-singledoc") {
+          return { type: "jupyter-singledoc" };
+        }
+      } catch {
+        // fall through to default
+      }
+    }
     return { type: "jupyter_cell_notebook" };
   }
 
@@ -61,6 +66,7 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
   _init2(): void {
     this.init_new_frame();
     this.init_changes_state();
+    this.applyFrameTypeFromUrlForTests();
 
     this.store.on("close-frame", async ({ id }) => {
       if (this.frame_actions[id] != null) {
@@ -298,6 +304,25 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
 
   private close_jupyter_actions(): void {
     close_jupyter_actions(this.redux, this.name);
+  }
+
+  private applyFrameTypeFromUrlForTests(): void {
+    if (typeof window === "undefined") return;
+    let requested: string | null = null;
+    try {
+      requested = new URLSearchParams(window.location.search).get(
+        "cocalc-test-jupyter-frame",
+      );
+    } catch {
+      return;
+    }
+    if (requested !== "jupyter-singledoc") {
+      return;
+    }
+    setTimeout(() => {
+      if (this.isClosed()) return;
+      this.replace_frame_tree({ type: "jupyter-singledoc" });
+    }, 0);
   }
 
   public get_frame_actions(id?: string): NotebookFrameActions | undefined {

@@ -13,6 +13,13 @@ register(
   ({ editor, extra }) => {
     const altEnter = extra?.actions?.altEnter;
     if (altEnter != null) {
+      // eslint-disable-next-line no-console
+      console.log("slate alt/meta+enter handler", {
+        selection: editor.selection ?? null,
+        topPath: editor.selection?.focus?.path?.[0],
+        topNodeType: (editor.children?.[editor.selection?.focus?.path?.[0] ?? -1] as any)
+          ?.type,
+      });
       altEnter(editor.getMarkdownValue(), extra?.id, {
         selection: editor.selection ?? null,
         slateValue: [...editor.children] as any,

@@ -306,7 +306,12 @@ function SingleDocOutputs({
         const cell = cells.get(id);
         if (cell == null) return null;
         return (
-          <div key={`single-doc-output-${id}`} style={{ margin: "0 0 8px -15px" }}>
+          <div
+            key={`single-doc-output-${id}`}
+            style={{ margin: "0 0 8px -15px" }}
+            data-cocalc-test="jupyter-singledoc-output"
+            data-cocalc-cell-id={id}
+          >
             <CellOutput
               actions={jupyter_actions}
               id={id}
@@ -377,6 +382,12 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         });
         return;
       }
+      // eslint-disable-next-line no-console
+      console.log("jupyter-singledoc: run dispatch", {
+        targetId,
+        insertBelow,
+        fromSlate,
+      });
       frameActions.set_cur_id(targetId);
       if (insertBelow) {
         frameActions.run_cell(targetId);

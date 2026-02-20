@@ -37,6 +37,7 @@ export type NotebookUrlOptions = {
   base_url: string;
   path_ipynb: string;
   auth_token?: string;
+  frame_type?: "jupyter-singledoc";
 };
 
 function trimTrailingSlash(url: string): string {
@@ -130,12 +131,16 @@ export function notebookUrl({
   base_url,
   path_ipynb,
   auth_token,
+  frame_type,
 }: NotebookUrlOptions): string {
   const base = new URL(base_url.endsWith("/") ? base_url : `${base_url}/`);
   const encodedPath = encodeNotebookPath(path_ipynb);
   const url = new URL(`projects/${project_id}/files/${encodedPath}`, base);
   if (auth_token) {
     url.searchParams.set("auth_token", auth_token);
+  }
+  if (frame_type) {
+    url.searchParams.set("cocalc-test-jupyter-frame", frame_type);
   }
   return url.toString();
 }
@@ -219,6 +224,74 @@ export async function openNotebookPage(
   await page.waitForTimeout(8_000);
 }
 
+export async function openSingleDocNotebookPage(
+  page: Page,
+  url: string,
+  timeout_ms: number = 45_000,
+): Promise<void> {
+  await page.goto(trimTrailingSlash(url), {
+    waitUntil: "domcontentloaded",
+    timeout: timeout_ms,
+  });
+  const deadline = Date.now() + timeout_ms;
+  while (Date.now() < deadline) {
+    const switched = await page.evaluate(() => {
+      if (
+        document.querySelector('[data-cocalc-jupyter-slate-single-doc="1"]') !=
+        null
+      ) {
+        return { ok: true, mode: "already-singledoc" };
+      }
+      const redux = (window as any).cocalc?.redux ?? (window as any).redux;
+      const actions = redux?._actions ?? {};
+      const stores = redux?._stores ?? {};
+      const encodedPath = window.location.pathname.split("/files/")[1] ?? "";
+      const currentPath = encodedPath ? `/${decodeURIComponent(encodedPath)}` : undefined;
+      const candidates = Object.keys(actions).filter(
+        (name) =>
+          typeof actions[name]?.set_frame_tree === "function" &&
+          actions[name]?.jupyter_actions != null,
+      );
+      if (candidates.length === 0) {
+        return { ok: false, reason: "missing-actions" };
+      }
+      const bestMatch =
+        candidates.find(
+          (name) => currentPath != null && stores[name]?.get?.("path") === currentPath,
+        ) ?? candidates[0];
+      const localViewState = stores[bestMatch]?.get?.("local_view_state");
+      const activeId = localViewState?.get?.("active_id");
+      if (
+        activeId != null &&
+        typeof actions[bestMatch]?.set_frame_type === "function"
+      ) {
+        actions[bestMatch].set_frame_type(activeId, "jupyter-singledoc");
+      } else {
+        actions[bestMatch].set_frame_tree({ type: "jupyter-singledoc" });
+      }
+      return { ok: true, mode: "switched", action: bestMatch };
+    });
+    if (switched?.ok) {
+      try {
+        await page.waitForSelector('[data-cocalc-jupyter-slate-single-doc="1"]', {
+          timeout: 2_000,
+        });
+        break;
+      } catch {
+        // keep polling until selector appears
+      }
+    }
+    await page.waitForTimeout(250);
+  }
+  await page.waitForSelector('[data-cocalc-jupyter-slate-single-doc="1"]', {
+    timeout: timeout_ms,
+  });
+  await page.waitForSelector('[data-cocalc-test="jupyter-singledoc-code-cell"]', {
+    timeout: timeout_ms,
+  });
+  await page.waitForTimeout(8_000);
+}
+
 export function cellLocator(page: Page, index: number) {
   return page.locator('[cocalc-test="jupyter-cell"]').nth(index);
 }
@@ -256,6 +329,38 @@ export async function clickRunButton(page: Page, index: number): Promise<void> {
   const input = cell.locator('[cocalc-test="cell-input"] .CodeMirror').first();
   await input.click();
   await page.keyboard.press("Shift+Enter");
+}
+
+export function singleDocCodeCellLocator(page: Page, index: number) {
+  return page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').nth(index);
+}
+
+export async function countSingleDocCodeCells(page: Page): Promise<number> {
+  return await page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').count();
+}
+
+export async function pressSingleDocRunShortcut(
+  page: Page,
+  index: number,
+  shortcut: "Shift+Enter" | "Alt+Enter",
+): Promise<void> {
+  const cell = singleDocCodeCellLocator(page, index);
+  await cell.scrollIntoViewIfNeeded();
+  await cell.locator(".cocalc-slate-code-block").first().click();
+  await page.keyboard.press(shortcut);
+}
+
+export async function readSingleDocOutputText(
+  page: Page,
+  index: number,
+): Promise<string> {
+  const output = page
+    .locator('[data-cocalc-test="jupyter-singledoc-output"]')
+    .nth(index);
+  if ((await output.count()) === 0) {
+    return "";
+  }
+  return await output.innerText();
 }
 
 export async function killKernelProcessesForE2E(): Promise<void> {

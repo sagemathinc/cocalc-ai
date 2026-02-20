@@ -27,7 +27,6 @@ import { CellNotebook } from "./cell-notebook/cell-notebook";
 import { Introspect } from "./introspect/introspect";
 import JSONIPynb from "./json-ipynb";
 import KernelMenuItem from "./kernel-menu-item";
-import { MarkdownNotebook, MarkdownNotebookTopLevel } from "./markdown-notebook";
 import { RawIPynb } from "./raw-ipynb";
 import { search } from "./search";
 import { SingleDocNotebook } from "./singledoc-notebook";
@@ -98,40 +97,6 @@ const jupyterSlateCommands = set([
   "show_search",
 ]);
 
-const jupyter_slate_notebook: EditorDescription = {
-  type: "jupyter-slate",
-  short: "Slate (exp)",
-  name: "Jupyter Notebook (Slate, experimental)",
-  icon: "markdown",
-  component: MarkdownNotebook as any,
-  commands: jupyterSlateCommands,
-  buttons: set(["save", "time_travel", "halt_jupyter", "show_search"]),
-  customizeCommands: {
-    shell: {
-      label: jupyter.editor.console_label,
-      icon: "ipynb",
-      title: jupyter.editor.console_title,
-    },
-  },
-} as const;
-
-const jupyter_slate_top_level_notebook: EditorDescription = {
-  type: "jupyter-slate-top-level",
-  short: "Slate Top (exp)",
-  name: "Jupyter Notebook (Slate top-level, experimental)",
-  icon: "markdown",
-  component: MarkdownNotebookTopLevel as any,
-  commands: jupyterSlateCommands,
-  buttons: set(["save", "time_travel", "halt_jupyter", "show_search"]),
-  customizeCommands: {
-    shell: {
-      label: jupyter.editor.console_label,
-      icon: "ipynb",
-      title: jupyter.editor.console_title,
-    },
-  },
-} as const;
-
 const jupyter_slate_single_doc_notebook: EditorDescription = {
   type: "jupyter-singledoc",
   short: "Slate Doc (exp)",
@@ -197,8 +162,6 @@ const jupyter_raw: EditorDescription = {
 
 export const EDITOR_SPEC = {
   jupyter_cell_notebook,
-  jupyter_slate_notebook,
-  jupyter_slate_top_level_notebook,
   jupyter_slate_single_doc_notebook,
   jupyter_slideshow_revealjs,
   jupyter_table_of_contents,

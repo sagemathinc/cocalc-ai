@@ -70,11 +70,19 @@ function evt_to_shortcut(evt: any, mode: NotebookMode): string {
 }
 
 function isInsideSlateSingleDocNotebook(evt: any): boolean {
-  const target = evt?.target as HTMLElement | null;
-  if (target == null || typeof target.closest !== "function") {
-    return false;
+  const target = evt?.target as any;
+  if (target != null && typeof target.closest === "function") {
+    if (target.closest("[data-cocalc-jupyter-slate-single-doc]") != null) {
+      return true;
+    }
   }
-  return target.closest("[data-cocalc-jupyter-slate-single-doc]") != null;
+  const active = document.activeElement as any;
+  if (active != null && typeof active.closest === "function") {
+    if (active.closest("[data-cocalc-jupyter-slate-single-doc]") != null) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function create_key_handler(
@@ -137,6 +145,10 @@ export function create_key_handler(
     if (isInsideSlateSingleDocNotebook(evt)) {
       // Let the Slate editor own keyboard behavior (e.g., Shift+Enter / Alt+Enter)
       // inside the single-doc notebook frame.
+      if (evt?.which === 13) {
+        // eslint-disable-next-line no-console
+        console.log("jupyter global keyboard skipped Enter inside single-doc slate");
+      }
       return;
     }
     if (jupyter_actions.store.get("complete") != null) {
