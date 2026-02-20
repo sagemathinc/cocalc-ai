@@ -338,7 +338,6 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const more_output: Map<string, any> | undefined = useRedux([name, "more_output"]);
   const kernel: string | undefined = useRedux([name, "kernel"]);
   const directory: string | undefined = useRedux([name, "directory"]);
-  const frameActions = props.actions.get_frame_actions(props.id);
   const controlRef = React.useRef<any>(null);
   const [error, setError] = React.useState<string>("");
 
@@ -357,9 +356,10 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       insertBelow: boolean;
       context?: RunContext;
     }) => {
-      if (frameActions == null || cell_list == null) {
+      if (cell_list == null) {
         return;
       }
+      const frameActions = props.actions.get_frame_actions(props.id);
       const fromSlate = findCellIdFromSlateContext({ context, cell_list });
       let targetId = fromSlate;
       if (targetId == null) {
@@ -387,27 +387,47 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         targetId,
         insertBelow,
         fromSlate,
+        hasFrameActions: frameActions != null,
       });
-      frameActions.set_cur_id(targetId);
+      if (frameActions != null) {
+        frameActions.set_cur_id(targetId);
+      }
+      const runTarget = () => {
+        if (frameActions != null) {
+          frameActions.run_cell(targetId);
+        } else {
+          jupyter_actions.runCells([targetId]);
+        }
+      };
       if (insertBelow) {
-        frameActions.run_cell(targetId);
-        const newId = frameActions.insert_cell(1);
-        frameActions.set_cur_id(newId);
+        runTarget();
+        const newId =
+          frameActions != null
+            ? frameActions.insert_cell(1)
+            : jupyter_actions.insert_cell_adjacent(targetId, 1);
+        if (frameActions != null) {
+          frameActions.set_cur_id(newId);
+        }
       } else {
-        frameActions.run_cell(targetId);
+        runTarget();
         const idx = cell_list.indexOf(targetId);
         if (idx >= 0 && idx < cell_list.size - 1) {
           const nextId = cell_list.get(idx + 1);
-          if (nextId != null) {
+          if (frameActions != null && nextId != null) {
             frameActions.set_cur_id(nextId);
           }
         } else {
-          const newId = frameActions.insert_cell(1);
-          frameActions.set_cur_id(newId);
+          const newId =
+            frameActions != null
+              ? frameActions.insert_cell(1)
+              : jupyter_actions.insert_cell_adjacent(targetId, 1);
+          if (frameActions != null) {
+            frameActions.set_cur_id(newId);
+          }
         }
       }
     },
-    [frameActions, cell_list],
+    [props.actions, props.id, jupyter_actions, cell_list],
   );
 
   const applyNotebookSlate = React.useCallback(
@@ -457,6 +477,8 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     proxy.set_slate_value = (doc: Descendant[]) => {
       try {
         applyNotebookSlate(doc);
+        // eslint-disable-next-line no-console
+        console.log("jupyter-singledoc: applied slate changes");
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error("Failed to apply single-doc notebook slate", err);
@@ -511,6 +533,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         hidePath
         minimal
         noVfill
+        saveDebounceMs={0}
         height="auto"
         ignoreRemoteMergesWhileFocused
         style={{ backgroundColor: "transparent" }}
