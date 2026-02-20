@@ -216,15 +216,32 @@ export class ChatActions extends Actions<ChatState> {
     if (this.syncdb == null) return;
     const date = dateValue(message);
     if (!(date instanceof Date)) return;
+    const dateIso = toISOString(date);
+    if (!dateIso) return;
     const account_id = this.redux.getStore("account").get_account_id();
-    const cur = this.syncdb.get_one({ event: "chat", date });
+    const messageId = field<string>(message, "message_id");
+    const cur = this.syncdb.get_one(
+      messageId
+        ? { event: "chat", message_id: messageId }
+        : {
+            event: "chat",
+            date: dateIso,
+            sender_id: senderId(message),
+          },
+    );
     const feedbacksRaw = field<any>(cur, "feedback");
     const feedbacks =
       typeof (feedbacksRaw as any)?.toJS === "function"
         ? (feedbacksRaw as any).toJS()
         : (feedbacksRaw ?? {});
     const next = { ...feedbacks, [account_id]: feedback };
-    this.setSyncdb({ feedback: next, date });
+    this.setSyncdb({
+      event: "chat",
+      date: dateIso,
+      sender_id: senderId(message),
+      message_id: messageId,
+      feedback: next,
+    });
     this.syncdb.commit();
     const model = this.isLanguageModelThread(date);
     if (isLanguageModel(model)) {
