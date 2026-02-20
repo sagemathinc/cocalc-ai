@@ -39,6 +39,10 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
   private syncConsoleTimer?: ReturnType<typeof setTimeout>;
   private syncConsoleInFlight = false;
 
+  private isNotebookFrameType = (type?: string): boolean => {
+    return type === "jupyter_cell_notebook" || type === "jupyter-slate";
+  };
+
   _raw_default_frame_tree(): FrameTree {
     return { type: "jupyter_cell_notebook" };
   }
@@ -73,7 +77,7 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
 
   private init_new_frame(): void {
     this.store.on("new-frame", ({ id, type }) => {
-      if (type !== "jupyter_cell_notebook") {
+      if (!this.isNotebookFrameType(type)) {
         return;
       }
       // important to do this *before* the frame is rendered,
@@ -85,7 +89,7 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
       const node = this._get_frame_node(id);
       if (node == null) return;
       const type = node.get("type");
-      if (type === "jupyter_cell_notebook") {
+      if (this.isNotebookFrameType(type)) {
         this.get_frame_actions(id);
       }
     }
@@ -307,7 +311,7 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
       throw Error(`no frame ${id}`);
     }
     const type = node.get("type");
-    if (type === "jupyter_cell_notebook") {
+    if (this.isNotebookFrameType(type)) {
       return (this.frame_actions[id] = new NotebookFrameActions(this, id));
     } else {
       return;

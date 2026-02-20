@@ -18,6 +18,7 @@ import { CellOutput } from "@cocalc/frontend/jupyter/cell-output";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { InputPrompt } from "@cocalc/frontend/jupyter/prompt/input";
 import { EditorState } from "@cocalc/frontend/frame-editors/frame-tree/types";
+import type { NotebookFrameActions } from "./cell-notebook/actions";
 import { JupyterEditorActions } from "./actions";
 
 interface Props {
@@ -97,6 +98,7 @@ function Row({
   trust,
   readOnly,
   moreOutput,
+  frameActions,
 }: {
   id: string;
   index: number;
@@ -109,6 +111,7 @@ function Row({
   trust?: boolean;
   readOnly: boolean;
   moreOutput?: Map<string, any>;
+  frameActions?: NotebookFrameActions;
 }) {
   const cellType = `${cell.get("cell_type") ?? "code"}`;
   const markdown = inputAsEditorMarkdown({ cell, kernel });
@@ -128,8 +131,34 @@ function Row({
     }
     return {
       set_value: setInputFromMarkdown,
+      shiftEnter: (value: string) => {
+        setInputFromMarkdown(value);
+        if (frameActions != null) {
+          frameActions.set_cur_id(id);
+          frameActions.shift_enter_run_current_cell();
+          return;
+        }
+        if (cellType === "code") {
+          actions.runCells([id]);
+        }
+      },
+      altEnter: (value: string) => {
+        setInputFromMarkdown(value);
+        if (frameActions != null) {
+          frameActions.set_cur_id(id);
+          if (cellType === "code") {
+            frameActions.run_cell(id);
+          }
+          const newId = frameActions.insert_cell(1);
+          frameActions.set_cur_id(newId);
+          return;
+        }
+        if (cellType === "code") {
+          actions.runCells([id]);
+        }
+      },
     };
-  }, [readOnly, setInputFromMarkdown]);
+  }, [readOnly, setInputFromMarkdown, frameActions, id, cellType, actions]);
 
   return (
     <div
@@ -171,7 +200,13 @@ function Row({
                 noVfill
                 height="auto"
                 style={{ backgroundColor: "transparent" }}
-                onFocus={() => actions.set_cur_id(id)}
+                onFocus={() => {
+                  if (frameActions != null) {
+                    frameActions.set_cur_id(id);
+                  } else {
+                    actions.set_cur_id(id);
+                  }
+                }}
               />
             )}
           </div>
@@ -203,6 +238,7 @@ export function MarkdownNotebook(props: Props): React.JSX.Element {
   const more_output: Map<string, any> | undefined = useRedux([name, "more_output"]);
   const kernel: string | undefined = useRedux([name, "kernel"]);
   const directory: string | undefined = useRedux([name, "directory"]);
+  const frameActions = props.actions.get_frame_actions(props.id);
 
   if (cell_list == null || cells == null) {
     return <div style={{ padding: "12px" }}>Loading notebook...</div>;
@@ -237,6 +273,7 @@ export function MarkdownNotebook(props: Props): React.JSX.Element {
             trust={!!trust}
             readOnly={!!read_only}
             moreOutput={more_output?.get(id)}
+            frameActions={frameActions}
           />
         );
       })}
