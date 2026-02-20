@@ -416,11 +416,11 @@ export async function setSingleDocCellCode(
   index: number,
   code: string,
 ): Promise<void> {
-  const block = singleDocCodeCellLocator(page, index)
-    .locator(".cocalc-slate-code-block")
-    .first();
-  await block.scrollIntoViewIfNeeded();
-  await block.click();
+  const line = singleDocCodeCellLocator(page, index)
+    .locator(".cocalc-slate-code-line")
+    .last();
+  await line.scrollIntoViewIfNeeded();
+  await line.click();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.press("Backspace");
   const lines = code.split("\n");
@@ -439,11 +439,12 @@ export async function appendSingleDocCellCode(
   index: number,
   code: string,
 ): Promise<void> {
-  const block = singleDocCodeCellLocator(page, index)
-    .locator(".cocalc-slate-code-block")
-    .first();
-  await block.scrollIntoViewIfNeeded();
-  await block.click();
+  const line = singleDocCodeCellLocator(page, index)
+    .locator(".cocalc-slate-code-line")
+    .last();
+  await line.scrollIntoViewIfNeeded();
+  await line.click();
+  await page.keyboard.press("End");
   const lines = code.split("\n");
   for (let i = 0; i < lines.length; i++) {
     if (i > 0) {

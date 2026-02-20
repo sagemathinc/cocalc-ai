@@ -209,6 +209,10 @@ interface Props {
   showEditBar?: boolean;
   preserveBlankLines?: boolean;
   disableBlockEditor?: boolean;
+  onSlateChange?: (
+    value: Descendant[],
+    opts: { onlySelectionOps: boolean; syncCausedUpdate: boolean },
+  ) => void;
 }
 
 const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
@@ -252,6 +256,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     controlRef,
     showEditBar,
     preserveBlankLines: preserveBlankLinesProp,
+    onSlateChange,
   } = props;
   const { project_id, path, desc, isVisible } = useFrameContext();
   const isMountedRef = useIsMountedRef();
@@ -1520,6 +1525,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
     setEditorValue(newEditorValue);
     setChange(change + 1);
+    onSlateChange?.([...editor.children], {
+      onlySelectionOps,
+      syncCausedUpdate: !!editor.syncCausedUpdate,
+    });
 
     if (
       ignoreRemoteWhileFocused &&

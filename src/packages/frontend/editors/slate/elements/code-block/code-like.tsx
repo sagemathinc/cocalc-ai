@@ -27,6 +27,7 @@ interface CodeBlockBodyProps {
   className?: string;
   style?: React.CSSProperties;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
+  onInput?: React.FormEventHandler<HTMLDivElement>;
 }
 
 export function CodeBlockBody({
@@ -34,12 +35,14 @@ export function CodeBlockBody({
   className,
   style,
   onPaste,
+  onInput,
 }: CodeBlockBodyProps) {
   return (
     <div
       className={["cocalc-slate-code-block", className].filter(Boolean).join(" ")}
       style={style}
       onPaste={onPaste}
+      onInput={onInput}
     >
       {children}
     </div>

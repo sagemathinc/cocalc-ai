@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import {
+  appendSingleDocCellCode,
   clearKernelErrorForE2E,
   clickRunButton,
   codeCell,
@@ -23,6 +24,7 @@ import {
   readCellOutputText,
   readCellText,
   readInputExecCount,
+  readNotebookCellInputFromStore,
   readRunButtonLabel,
   resolveBaseUrl,
   setKernelErrorForE2E,
@@ -201,6 +203,71 @@ test("single-doc typing syncs into canonical notebook cell input", async ({ page
   await expect
     .poll(async () => await readSingleDocCellText(page, 0), {
       timeout: 30_000,
+    })
+    .toContain(marker);
+
+  const reopened = await page.context().newPage();
+  try {
+    await openSingleDocNotebookPage(reopened, singleDocUrl);
+    await expect
+      .poll(async () => await readAllSingleDocCodeText(reopened), {
+        timeout: 45_000,
+      })
+      .toContain(marker);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test("single-doc keyboard edits debounce-sync into canonical notebook input", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-keyboard-sync");
+  await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
+  const singleDocUrl = notebookUrl({
+    base_url: conn.base_url,
+    path_ipynb,
+    auth_token: conn.auth_token,
+    frame_type: "jupyter-singledoc",
+  });
+
+  await openSingleDocNotebookPage(page, singleDocUrl);
+
+  const marker = `single-doc-kbd-${Date.now()}`;
+  await appendSingleDocCellCode(page, 0, ` # ${marker}`);
+  await blurSingleDocEditor(page);
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate(() => {
+          const runtime = (window as any).__cocalcJupyterRuntime;
+          return Number(runtime?.get_single_doc_debug_for_test?.()?.onSlateChangeCalls ?? 0);
+        }),
+      { timeout: 20_000 },
+    )
+    .toBeGreaterThan(0);
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate(() => {
+          const runtime = (window as any).__cocalcJupyterRuntime;
+          return Number(runtime?.get_single_doc_debug_for_test?.()?.applyNotebookSlateCalls ?? 0);
+        }),
+      { timeout: 20_000 },
+    )
+    .toBeGreaterThan(0);
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate(() => {
+          const runtime = (window as any).__cocalcJupyterRuntime;
+          return Number(runtime?.get_single_doc_debug_for_test?.()?.applyNotebookSlateMutations ?? 0);
+        }),
+      { timeout: 20_000 },
+    )
+    .toBeGreaterThan(0);
+  await expect
+    .poll(async () => await readNotebookCellInputFromStore(page, 0), {
+      timeout: 45_000,
     })
     .toContain(marker);
 

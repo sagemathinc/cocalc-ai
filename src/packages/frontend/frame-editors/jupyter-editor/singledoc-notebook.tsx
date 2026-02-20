@@ -17,6 +17,7 @@ import { getCodeBlockText, toCodeLines } from "@cocalc/frontend/editors/slate/el
 import { markdown_to_slate } from "@cocalc/frontend/editors/slate/markdown-to-slate";
 import { slate_to_markdown } from "@cocalc/frontend/editors/slate/slate-to-markdown";
 import type { Actions as SlateActions } from "@cocalc/frontend/editors/slate/types";
+import { JupyterCellContext } from "@cocalc/frontend/editors/slate/jupyter-cell-context";
 import { CellOutput } from "@cocalc/frontend/jupyter/cell-output";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import type { EditorState } from "../frame-tree/types";
@@ -37,7 +38,7 @@ interface Props {
 }
 
 type ParsedSlateCell = {
-  cell_type: "markdown" | "code" | "raw";
+  cell_type: string;
   input: string;
   cell_id?: string;
 };
@@ -47,7 +48,9 @@ type RunContext = {
   slateValue?: Descendant[];
 };
 
-const SAVE_DEBOUNCE_MS = 120;
+// Keep this noticeably higher than per-keystroke cadence so focus is not
+// disrupted by immediate round-trips back through canonical notebook state.
+const SAVE_DEBOUNCE_MS = 800;
 
 function normalizeCellSource(text: string): string {
   const source = text.split("\n").map((line) => `${line}\n`);
@@ -77,27 +80,42 @@ function cellsToSlateDocument({
     if (cell == null) continue;
     const cellType = `${cell.get("cell_type") ?? "code"}`;
     const input = `${cell.get("input") ?? ""}`;
-    if (cellType === "code" || cellType === "raw") {
+    if (cellType === "markdown") {
+      const doc = markdown_to_slate(input, false, {});
       out.push({
-        type: "jupyter_code_cell",
-        fence: true,
-        info:
-          cellType === "raw"
-            ? "raw"
-            : `${cell.get("kernel") ?? kernel ?? ""}`,
+        type: "jupyter_markdown_cell",
         cell_id: id,
-        cell_meta: { cell_type: cellType },
-        children: toCodeLines(input),
+        cell_meta: { cell_type: "markdown" },
+        children:
+          doc.length > 0
+            ? (doc as Descendant[])
+            : ([{ type: "paragraph", children: [{ text: "" }] }] as any),
       } as any);
       continue;
     }
-    const doc = markdown_to_slate(input, false, {});
-    for (const node of doc) {
-      out.push(node as Descendant);
-    }
+    out.push({
+      type: "jupyter_code_cell",
+      fence: true,
+      info:
+        cellType === "raw"
+          ? "raw"
+          : cellType === "code"
+            ? `${cell.get("kernel") ?? kernel ?? ""}`
+            : cellType,
+      cell_id: id,
+      cell_meta: { cell_type: cellType },
+      children: toCodeLines(input),
+    } as any);
   }
   if (out.length === 0) {
-    return [{ type: "paragraph", children: [{ text: "" }] } as any];
+    return [
+      {
+        type: "jupyter_markdown_cell",
+        cell_id: "m0",
+        cell_meta: { cell_type: "markdown" },
+        children: [{ type: "paragraph", children: [{ text: "" }] }],
+      } as any,
+    ];
   }
   return out;
 }
@@ -105,6 +123,13 @@ function cellsToSlateDocument({
 function slateDocumentToCells(doc: Descendant[]): ParsedSlateCell[] {
   const ret: ParsedSlateCell[] = [];
   let markdownBuffer: Descendant[] = [];
+  const pushMarkdown = (input: string, cell_id?: string) => {
+    ret.push({
+      cell_type: "markdown",
+      input,
+      cell_id,
+    });
+  };
 
   const flushMarkdown = () => {
     const markdown = normalizeCellSource(
@@ -113,26 +138,39 @@ function slateDocumentToCells(doc: Descendant[]): ParsedSlateCell[] {
       }),
     );
     markdownBuffer = [];
-    if (!markdown.trim()) {
-      return;
-    }
-    ret.push({
-      cell_type: "markdown",
-      input: markdown,
-    });
+    if (!markdown.trim()) return;
+    pushMarkdown(markdown);
   };
 
   for (const node of doc) {
+    if (
+      SlateElement.isElement(node as any) &&
+      (node as any).type === "jupyter_markdown_cell"
+    ) {
+      flushMarkdown();
+      const children = (node as any).children ?? [];
+      const markdown = normalizeCellSource(
+        slate_to_markdown(children as Descendant[], {
+          preserveBlankLines: false,
+        }),
+      );
+      pushMarkdown(markdown, `${(node as any).cell_id ?? ""}`.trim() || undefined);
+      continue;
+    }
     if (
       SlateElement.isElement(node as any) &&
       (node as any).type === "jupyter_code_cell"
     ) {
       flushMarkdown();
       const input = getCodeBlockText(node as any);
-      const metaCellType = `${(node as any).cell_meta?.cell_type ?? ""}`;
+      const metaCellType = `${(node as any).cell_meta?.cell_type ?? ""}`.trim();
       const info = `${(node as any).info ?? ""}`.toLowerCase();
-      const cell_type: "code" | "raw" =
-        metaCellType === "raw" || info === "raw" ? "raw" : "code";
+      const cell_type =
+        metaCellType === ""
+          ? info === "raw"
+            ? "raw"
+            : "code"
+          : metaCellType;
       ret.push({
         cell_type,
         input,
@@ -145,7 +183,7 @@ function slateDocumentToCells(doc: Descendant[]): ParsedSlateCell[] {
   flushMarkdown();
 
   if (ret.length === 0) {
-    ret.push({ cell_type: "markdown", input: "" });
+    ret.push({ cell_type: "markdown", input: "", cell_id: undefined });
   }
   return ret;
 }
@@ -207,67 +245,6 @@ function findCellIdFromSlateContext({
   return;
 }
 
-function SingleDocOutputs({
-  cell_list,
-  cells,
-  jupyter_actions,
-  more_output,
-  project_id,
-  directory,
-  trust,
-}: {
-  cell_list: List<string>;
-  cells: Map<string, Map<string, any>>;
-  jupyter_actions: JupyterActions;
-  more_output?: Map<string, any>;
-  project_id: string;
-  directory?: string;
-  trust: boolean;
-}) {
-  const visible = cell_list
-    .toArray()
-    .filter((id) => {
-      const cell = cells.get(id);
-      if (cell == null || `${cell.get("cell_type") ?? "code"}` !== "code") {
-        return false;
-      }
-      return (
-        cell.get("output") != null ||
-        cell.get("state") != null ||
-        more_output?.get(id) != null
-      );
-    });
-  if (visible.length === 0) {
-    return null;
-  }
-  return (
-    <div style={{ marginTop: "8px" }}>
-      {visible.map((id) => {
-        const cell = cells.get(id);
-        if (cell == null) return null;
-        return (
-          <div
-            key={`single-doc-output-${id}`}
-            style={{ margin: "0 0 8px -15px" }}
-            data-cocalc-test="jupyter-singledoc-output"
-            data-cocalc-cell-id={id}
-          >
-            <CellOutput
-              actions={jupyter_actions}
-              id={id}
-              cell={cell}
-              project_id={project_id}
-              directory={directory}
-              more_output={more_output?.get(id)}
-              trust={trust}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 export function SingleDocNotebook(props: Props): React.JSX.Element {
   const jupyter_actions: JupyterActions = props.actions.jupyter_actions;
   const name = jupyter_actions.name;
@@ -281,9 +258,16 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const controlRef = React.useRef<any>(null);
   const [error, setError] = React.useState<string>("");
   const applyNotebookSlateRef = React.useRef<(doc: Descendant[]) => void>(() => {});
+  const pendingSlateSyncTimerRef = React.useRef<number | null>(null);
+  const pendingSlateDocRef = React.useRef<Descendant[] | null>(null);
   const transientIdMapRef = React.useRef<globalThis.Map<string, string>>(
     new globalThis.Map(),
   );
+  const debugCountersRef = React.useRef({
+    applyNotebookSlateCalls: 0,
+    applyNotebookSlateMutations: 0,
+    onSlateChangeCalls: 0,
+  });
 
   const slateValue = React.useMemo(() => {
     if (cell_list == null || cells == null) return [] as Descendant[];
@@ -301,8 +285,17 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       if (cell_list == null) {
         return;
       }
+      if (pendingSlateSyncTimerRef.current != null) {
+        window.clearTimeout(pendingSlateSyncTimerRef.current);
+        pendingSlateSyncTimerRef.current = null;
+      }
       if (context?.slateValue != null) {
+        pendingSlateDocRef.current = null;
         applyNotebookSlateRef.current(context.slateValue);
+      } else if (pendingSlateDocRef.current != null) {
+        const pending = pendingSlateDocRef.current;
+        pendingSlateDocRef.current = null;
+        applyNotebookSlateRef.current(pending);
       }
       const frameActions = props.actions.get_frame_actions(props.id);
       const fromSlate = findCellIdFromSlateContext({
@@ -321,7 +314,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         targetId =
           cell_list.find((id) => {
             const cellType = `${cells?.getIn([id, "cell_type"]) ?? "code"}`;
-            return cellType === "code" || cellType === "raw";
+            return cellType === "code";
           }) ?? cell_list.first();
       }
       if (targetId == null) {
@@ -384,6 +377,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
 
   const applyNotebookSlate = React.useCallback(
     (doc: Descendant[]) => {
+      debugCountersRef.current.applyNotebookSlateCalls += 1;
       if (read_only || cell_list == null || cells == null) {
         return;
       }
@@ -501,6 +495,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       }
 
       if (didMutate) {
+        debugCountersRef.current.applyNotebookSlateMutations += 1;
         (jupyter_actions as any)._sync?.();
         (jupyter_actions as any).save_asap?.();
       }
@@ -509,6 +504,70 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     [read_only, cell_list, cells, jupyter_actions],
   );
   applyNotebookSlateRef.current = applyNotebookSlate;
+
+  const scheduleApplyNotebookSlate = React.useCallback(
+    (doc: Descendant[]) => {
+      if (read_only) return;
+      pendingSlateDocRef.current = doc;
+      if (pendingSlateSyncTimerRef.current != null) {
+        window.clearTimeout(pendingSlateSyncTimerRef.current);
+      }
+      pendingSlateSyncTimerRef.current = window.setTimeout(() => {
+        pendingSlateSyncTimerRef.current = null;
+        const pending = pendingSlateDocRef.current;
+        pendingSlateDocRef.current = null;
+        if (pending != null) {
+          applyNotebookSlateRef.current(pending);
+        }
+      }, SAVE_DEBOUNCE_MS);
+    },
+    [read_only],
+  );
+
+  React.useEffect(() => {
+    return () => {
+      if (pendingSlateSyncTimerRef.current != null) {
+        window.clearTimeout(pendingSlateSyncTimerRef.current);
+      }
+      pendingSlateSyncTimerRef.current = null;
+      pendingSlateDocRef.current = null;
+    };
+  }, []);
+
+  const renderInlineOutput = React.useCallback(
+    (cellId: string) => {
+      if (cells == null) return null;
+      const cell = cells.get(cellId);
+      if (cell == null || `${cell.get("cell_type") ?? "code"}` !== "code") {
+        return null;
+      }
+      if (
+        cell.get("output") == null &&
+        cell.get("state") == null &&
+        more_output?.get(cellId) == null
+      ) {
+        return null;
+      }
+      return (
+        <div
+          style={{ margin: "2px 0 10px -15px" }}
+          data-cocalc-test="jupyter-singledoc-output"
+          data-cocalc-cell-id={cellId}
+        >
+          <CellOutput
+            actions={jupyter_actions}
+            id={cellId}
+            cell={cell}
+            project_id={props.project_id}
+            directory={directory}
+            more_output={more_output?.get(cellId)}
+            trust={!!trust}
+          />
+        </div>
+      );
+    },
+    [cells, more_output, jupyter_actions, props.project_id, directory, trust],
+  );
 
   const editorActions = React.useMemo<SlateActions | undefined>(() => {
     if (read_only || cell_list == null || cells == null) {
@@ -569,6 +628,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         }
         applyNotebookSlateRef.current(next);
       },
+      get_single_doc_debug_for_test: () => ({ ...debugCountersRef.current }),
     };
   }, [slateValue]);
 
@@ -603,29 +663,29 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           {error}
         </div>
       ) : null}
-      <EditableMarkdown
-        value_slate={slateValue}
-        actions={editorActions}
-        is_current={true}
-        read_only={!!read_only}
-        hidePath
-        minimal
-        noVfill
-        saveDebounceMs={SAVE_DEBOUNCE_MS}
-        height="auto"
-        ignoreRemoteMergesWhileFocused
-        style={{ backgroundColor: "transparent" }}
-        controlRef={controlRef}
-      />
-      <SingleDocOutputs
-        cell_list={cell_list}
-        cells={cells}
-        jupyter_actions={jupyter_actions}
-        more_output={more_output}
-        project_id={props.project_id}
-        directory={directory}
-        trust={!!trust}
-      />
+      <JupyterCellContext.Provider value={{ renderOutput: renderInlineOutput }}>
+        <EditableMarkdown
+          value_slate={slateValue}
+          actions={editorActions}
+          onSlateChange={(doc, opts) => {
+            if (opts.onlySelectionOps || opts.syncCausedUpdate) {
+              return;
+            }
+            debugCountersRef.current.onSlateChangeCalls += 1;
+            scheduleApplyNotebookSlate(doc);
+          }}
+          is_current={true}
+          read_only={!!read_only}
+          hidePath
+          minimal
+          noVfill
+          saveDebounceMs={SAVE_DEBOUNCE_MS}
+          height="auto"
+          ignoreRemoteMergesWhileFocused
+          style={{ backgroundColor: "transparent" }}
+          controlRef={controlRef}
+        />
+      </JupyterCellContext.Provider>
     </div>
   );
 }

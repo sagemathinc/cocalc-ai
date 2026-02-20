@@ -34,6 +34,7 @@ import { getCodeBlockLineCount, getCodeBlockText } from "./utils";
 import { CodeBlockBody, CodeLineElement } from "./code-like";
 import { guessPopularLanguage } from "@cocalc/frontend/misc/detect-language";
 import { pointAtPath } from "../../slate-util";
+import { useJupyterCellContext } from "../../jupyter-cell-context";
 
 interface FloatingActionMenuProps {
   info: string;
@@ -230,6 +231,10 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     throw Error("bug");
   }
   const isJupyterCodeCell = element.type === "jupyter_code_cell";
+  const { renderOutput: renderJupyterOutput } = useJupyterCellContext();
+  const jupyterCellId = isJupyterCodeCell
+    ? `${(element as any).cell_id ?? ""}`.trim()
+    : "";
   const COLLAPSE_THRESHOLD_LINES = 6;
   const { disableMarkdownCodebar } = useFileContext();
   const editor = useSlate();
@@ -313,6 +318,10 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     : null;
   const showPopularGuess =
     !!popularGuess && popularGuess.score >= 4;
+  const projectedJupyterOutput =
+    isJupyterCodeCell && jupyterCellId
+      ? renderJupyterOutput?.(jupyterCellId)
+      : null;
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -633,7 +642,19 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   .join("\n")}
               </pre>
             ) : (
-              <CodeBlockBody onPaste={handlePaste}>
+              <CodeBlockBody
+                onPaste={handlePaste}
+                onInput={() => {
+                  const ed = editor as any;
+                  if (ed._hasUnsavedChanges === false) {
+                    ed._hasUnsavedChanges = undefined;
+                  } else {
+                    ed._hasUnsavedChanges = {};
+                  }
+                  // Uses EditableMarkdown's debounced save path.
+                  ed.saveValue?.();
+                }}
+              >
                 {children}
               </CodeBlockBody>
             )}
@@ -724,6 +745,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
               >
                 {output}
               </div>
+            )}
+            {projectedJupyterOutput != null && (
+              <div contentEditable={false}>{projectedJupyterOutput}</div>
             )}
           </div>
         </div>
