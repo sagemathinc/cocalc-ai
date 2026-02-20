@@ -737,26 +737,28 @@ describe("ChatStreamWriter", () => {
   });
 
   it("persists session id onto the actual thread root sender row", async () => {
+    const rootIso = new Date(100).toISOString();
+    const turnIso = new Date(200).toISOString();
     const metadata = {
       ...baseMetadata,
-      message_date: "200",
+      message_date: turnIso,
       sender_id: "codex-agent",
-      reply_to: "100",
+      reply_to: rootIso,
     } as AcpChatContext;
     const rows: any[] = [
       {
         event: "chat",
-        date: "100",
+        date: rootIso,
         sender_id: "user-1",
         history: [],
         acp_config: { model: "gpt-5.3-codex" },
       },
       {
         event: "chat",
-        date: "100",
+        date: rootIso,
         sender_id: "codex-agent",
         history: [],
-        reply_to: "100",
+        reply_to: rootIso,
       },
     ];
     const sets: any[] = [];
@@ -802,10 +804,20 @@ describe("ChatStreamWriter", () => {
     await delay(0);
 
     const rootUpdate = sets.find(
-      (x) => x.date === "100" && x.sender_id === "user-1" && x.acp_config,
+      (x) => x.date === rootIso && x.sender_id === "user-1" && x.acp_config,
+    );
+    const threadCfgUpdate = sets.find(
+      (x) =>
+        x.event === "chat-thread-config" &&
+        x.sender_id === "__thread_config__" &&
+        x.date === rootIso,
     );
     expect(rootUpdate).toBeTruthy();
     expect(rootUpdate.acp_config).toEqual({
+      model: "gpt-5.3-codex",
+      sessionId: "session-123",
+    });
+    expect(threadCfgUpdate?.acp_config).toEqual({
       model: "gpt-5.3-codex",
       sessionId: "session-123",
     });
