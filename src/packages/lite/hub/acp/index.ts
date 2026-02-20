@@ -443,6 +443,7 @@ export class ChatStreamWriter {
     let current = db.get_one({
       event: "chat",
       date: this.metadata.message_date,
+      sender_id: this.metadata.sender_id,
     });
     if (current == null) {
       // Create a placeholder chat row so backend-owned updates don’t race with a missing record.
@@ -464,6 +465,7 @@ export class ChatStreamWriter {
       current = db.get_one({
         event: "chat",
         date: this.metadata.message_date,
+        sender_id: this.metadata.sender_id,
       });
     }
     const history = this.recordField(current, "history");
@@ -702,6 +704,7 @@ export class ChatStreamWriter {
         const current = this.syncdb.get_one({
           event: "chat",
           date: this.metadata.message_date,
+          sender_id: this.metadata.sender_id,
         });
         lastGenerating = this.recordField<boolean>(current, "generating");
       } catch (err) {
@@ -1001,17 +1004,88 @@ export class ChatStreamWriter {
     await this.ready;
     if (this.closed || !this.syncdb) return;
     const threadRoot = this.metadata.reply_to ?? this.metadata.message_date;
-    try {
-      const current = this.syncdb.get_one({
-        event: "chat",
-        date: threadRoot,
+    const normalizeDate = (value: unknown): string | undefined => {
+      if (value == null) return undefined;
+      const d = value instanceof Date ? value : new Date(value as any);
+      if (!Number.isFinite(d.valueOf())) return undefined;
+      return d.toISOString();
+    };
+    const toMs = (value: unknown): number | undefined => {
+      if (value == null) return undefined;
+      const d = value instanceof Date ? value : new Date(value as any);
+      const ms = d.valueOf();
+      return Number.isFinite(ms) ? ms : undefined;
+    };
+    const threadRootIso = normalizeDate(threadRoot);
+    if (!threadRootIso) {
+      logger.warn("persistSessionId skipped: invalid thread root date", {
+        chatKey: this.chatKey,
+        threadRoot,
       });
+      return;
+    }
+    try {
+      const threadRootMs = toMs(threadRootIso);
+      let candidates: any[] = [];
+      if (typeof (this.syncdb as any).get === "function") {
+        const rawRows = (this.syncdb as any).get();
+        if (Array.isArray(rawRows)) {
+          candidates = rawRows.filter((row) => {
+            if (this.recordField(row, "event") !== "chat") return false;
+            const ms = toMs(this.recordField(row, "date"));
+            return ms != null && threadRootMs != null && ms === threadRootMs;
+          });
+        }
+      }
+
+      let current =
+        candidates.find((row) => {
+          const reply_to = this.recordField<string | null>(row, "reply_to");
+          return reply_to == null || reply_to === "";
+        }) ??
+        (candidates.length === 1 ? candidates[0] : undefined);
+
+      if (!current) {
+        current = this.syncdb.get_one({
+          event: "chat",
+          date: threadRootIso,
+        });
+      }
+
+      const sender_id = this.recordField<string>(current, "sender_id");
+      if (!sender_id) {
+        logger.warn("persistSessionId skipped: unable to resolve root sender", {
+          chatKey: this.chatKey,
+          threadRoot: threadRootIso,
+          candidates: candidates.length,
+        });
+        return;
+      }
+      if (candidates.length > 1) {
+        logger.warn("persistSessionId found duplicate chat rows for root date", {
+          chatKey: this.chatKey,
+          threadRoot: threadRootIso,
+          candidateSenders: candidates
+            .map((row) => this.recordField<string>(row, "sender_id"))
+            .filter((x) => typeof x === "string"),
+          selectedSender: sender_id,
+        });
+      }
       const prevCfg = this.recordField<any>(current, "acp_config");
-      const cfg = prevCfg ?? {};
+      const cfg =
+        prevCfg && typeof prevCfg.toJS === "function"
+          ? prevCfg.toJS()
+          : (prevCfg ?? {});
       if (cfg.sessionId === sessionId) return;
+      const currentDate = this.recordField<any>(current, "date");
+      const dateForSet =
+        currentDate instanceof Date
+          ? currentDate.toISOString()
+          : currentDate ?? threadRootIso;
       this.syncdb.set({
         event: "chat",
-        date: threadRoot,
+        date: dateForSet,
+        sender_id,
         acp_config: { ...cfg, sessionId },
       });
       this.syncdb.commit();
@@ -1135,9 +1209,11 @@ export async function recoverOrphanedAcpTurns(
         if (!syncdb.isReady()) {
           await once(syncdb, "ready");
         }
+        const senderId = turn.sender_id ?? "openai-codex-agent";
         const current = syncdb.get_one({
           event: "chat",
           date: turn.message_date,
+          sender_id: senderId,
         });
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
@@ -1145,6 +1221,7 @@ export async function recoverOrphanedAcpTurns(
           const update: any = {
             event: "chat",
             date: turn.message_date,
+            sender_id: senderId,
             generating: false,
             acp_interrupted: true,
             acp_interrupted_reason: "server_restart",
