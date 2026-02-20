@@ -27,6 +27,7 @@ import { CellNotebook } from "./cell-notebook/cell-notebook";
 import { Introspect } from "./introspect/introspect";
 import JSONIPynb from "./json-ipynb";
 import KernelMenuItem from "./kernel-menu-item";
+import { MarkdownNotebook } from "./markdown-notebook";
 import { RawIPynb } from "./raw-ipynb";
 import { search } from "./search";
 import { Slideshow } from "./slideshow-revealjs/slideshow";
@@ -71,6 +72,39 @@ const jupyter_cell_notebook: EditorDescription = {
     "halt_jupyter",
     "show_search",
   ]),
+  customizeCommands: {
+    shell: {
+      label: jupyter.editor.console_label,
+      icon: "ipynb",
+      title: jupyter.editor.console_title,
+    },
+  },
+} as const;
+
+const jupyterSlateCommands = set([
+  "about",
+  "print",
+  "set_zoom",
+  "decrease_font_size",
+  "increase_font_size",
+  "save",
+  "time_travel",
+  "halt_jupyter",
+  "shell",
+  "terminal",
+  "help",
+  "settings",
+  "show_search",
+]);
+
+const jupyter_slate_notebook: EditorDescription = {
+  type: "jupyter-slate",
+  short: "Slate (exp)",
+  name: "Jupyter Notebook (Slate, experimental)",
+  icon: "markdown",
+  component: MarkdownNotebook as any,
+  commands: jupyterSlateCommands,
+  buttons: set(["save", "time_travel", "halt_jupyter", "show_search"]),
   customizeCommands: {
     shell: {
       label: jupyter.editor.console_label,
@@ -128,6 +162,7 @@ const jupyter_raw: EditorDescription = {
 
 export const EDITOR_SPEC = {
   jupyter_cell_notebook,
+  jupyter_slate_notebook,
   jupyter_slideshow_revealjs,
   jupyter_table_of_contents,
   introspect,

@@ -59,6 +59,7 @@ type EditorType =
   | "iframe"
   | "jupyter_json_edit"
   | "jupyter_json_view"
+  | "jupyter-slate"
   | "jupyter-introspect"
   | "jupyter-toc"
   | "jupyter"
