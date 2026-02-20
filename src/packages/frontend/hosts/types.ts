@@ -27,6 +27,12 @@ export type HostDeleteOptions = {
   skip_backups?: boolean;
 };
 
+export type HostDrainOptions = {
+  dest_host_id?: string;
+  force?: boolean;
+  allow_offline?: boolean;
+};
+
 export type HostRecommendation = {
   title?: string;
   provider: HostProvider;

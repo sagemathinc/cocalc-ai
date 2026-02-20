@@ -1,6 +1,10 @@
 import { Checkbox, Input, Modal, Typography } from "antd";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
-import type { HostDeleteOptions, HostStopOptions } from "../types";
+import type {
+  HostDeleteOptions,
+  HostDrainOptions,
+  HostStopOptions,
+} from "../types";
 import { HostProjectsTable } from "./host-projects-table";
 
 function getBackupCounts(host?: Host) {
@@ -71,6 +75,64 @@ export function confirmHostStop({
     ),
     okText: "Stop",
     onOk: () => onConfirm({ skip_backups: state.skip }),
+  });
+}
+
+export function confirmHostDrain({
+  host,
+  onConfirm,
+}: {
+  host: Host;
+  onConfirm: (opts?: HostDrainOptions) => void | Promise<void>;
+}) {
+  const hostName = host.name ?? "Host";
+  const { total, provisioned, running, upToDate, needsBackup } =
+    getBackupCounts(host);
+  const state = { force: false };
+  Modal.confirm({
+    title: `Drain ${hostName}?`,
+    width: 900,
+    content: (
+      <div>
+        <Typography.Text type="secondary">
+          Drain moves assigned workspaces off this host onto another running
+          host selected automatically.
+        </Typography.Text>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          Enable force drain only as a last resort. It directly clears
+          workspace host assignment (`host_id=null`) without performing safe
+          move operations.
+        </Typography.Paragraph>
+        {total > 0 && (
+          <div style={{ marginTop: 6 }}>
+            <Typography.Text type="secondary">
+              Assigned: {total} · Provisioned: {provisioned} · Running:{" "}
+              {running} · Backed up: {upToDate}/{provisioned}
+              {needsBackup > 0 ? ` · Needs backup: ${needsBackup}` : ""}
+            </Typography.Text>
+          </div>
+        )}
+        <div style={{ marginTop: 10 }}>
+          <Typography.Text strong>Assigned workspaces</Typography.Text>
+          <div style={{ marginTop: 6 }}>
+            <HostProjectsTable
+              host={host}
+              compact
+              showSummary={false}
+              pageSize={50}
+              showControls={false}
+            />
+          </div>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <Checkbox onChange={(event) => (state.force = event.target.checked)}>
+            Force drain (set workspace host assignment to null)
+          </Checkbox>
+        </div>
+      </div>
+    ),
+    okText: "Drain",
+    onOk: () => onConfirm({ force: state.force }),
   });
 }
 

@@ -8669,6 +8669,80 @@ host
   );
 
 host
+  .command("drain <host>")
+  .description("move all workspaces off a host (or unassign with --force)")
+  .option("--dest-host <host>", "destination host id or name (default: auto-select)")
+  .option("--force", "force drain by setting host_id=null on assigned workspaces")
+  .option(
+    "--allow-offline",
+    "allow moves when source host is offline and backups may be stale",
+  )
+  .option("--wait", "wait for completion")
+  .action(
+    async (
+      hostIdentifier: string,
+      opts: {
+        destHost?: string;
+        force?: boolean;
+        allowOffline?: boolean;
+        wait?: boolean;
+      },
+      command: Command,
+    ) => {
+      await withContext(command, "host drain", async (ctx) => {
+        const source = await resolveHost(ctx, hostIdentifier);
+        const dest = opts.destHost ? await resolveHost(ctx, opts.destHost) : null;
+        if (dest && dest.id === source.id) {
+          throw new Error("destination host must differ from source host");
+        }
+
+        const op = await hubCallAccount<{ op_id: string }>(ctx, "hosts.drainHost", [
+          {
+            id: source.id,
+            ...(dest ? { dest_host_id: dest.id } : {}),
+            force: !!opts.force,
+            allow_offline: !!opts.allowOffline,
+          },
+        ]);
+
+        if (!opts.wait) {
+          return {
+            host_id: source.id,
+            op_id: op.op_id,
+            status: "queued",
+            mode: opts.force ? "force" : "move",
+            dest_host_id: dest?.id ?? null,
+          };
+        }
+
+        const summary = await waitForLro(ctx, op.op_id, {
+          timeoutMs: ctx.timeoutMs,
+          pollMs: ctx.pollMs,
+        });
+        if (summary.timedOut) {
+          throw new Error(
+            `host drain timed out (op=${op.op_id}, last_status=${summary.status})`,
+          );
+        }
+        if (summary.status !== "succeeded") {
+          throw new Error(
+            `host drain failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+          );
+        }
+        const final = await hubCallAccount<any>(ctx, "lro.get", [{ op_id: op.op_id }]);
+        return {
+          host_id: source.id,
+          op_id: op.op_id,
+          status: summary.status,
+          mode: opts.force ? "force" : "move",
+          dest_host_id: dest?.id ?? null,
+          drain: final?.result?.drain ?? null,
+        };
+      });
+    },
+  );
+
+host
   .command("delete <host>")
   .description("deprovision a host")
   .option("--skip-backups", "skip creating backups before deprovision")

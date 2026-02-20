@@ -3,6 +3,7 @@ import type {
   Host,
   HostBackupStatus,
   HostConnectionInfo,
+  HostDrainResult,
   HostMachine,
   HostStatus,
   HostCatalog,
@@ -93,6 +94,8 @@ import { computeUsageUnits } from "@cocalc/server/llm/usage-units";
 import { saveResponse } from "@cocalc/server/llm/save-response";
 import { isCoreLanguageModel, type LanguageModelCore } from "@cocalc/util/db-schema/llm-utils";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
+import { moveProjectToHost } from "@cocalc/server/projects/move";
+import { notifyProjectHostUpdate } from "@cocalc/server/conat/route-project";
 function pool() {
   return getPool();
 }
@@ -101,6 +104,7 @@ const SELF_HOST_RESIZE_TIMEOUT_MS = 5 * 60 * 1000;
 const HOST_START_LRO_KIND = "host-start";
 const HOST_STOP_LRO_KIND = "host-stop";
 const HOST_RESTART_LRO_KIND = "host-restart";
+const HOST_DRAIN_LRO_KIND = "host-drain";
 const HOST_UPGRADE_LRO_KIND = "host-upgrade-software";
 const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
@@ -237,6 +241,20 @@ async function loadHostBackupStatus(
     });
   }
   return map;
+}
+
+async function loadProjectIdsAssignedToHost(host_id: string): Promise<string[]> {
+  const { rows } = await pool().query<{ project_id: string }>(
+    `
+      SELECT project_id
+      FROM projects
+      WHERE host_id=$1
+        AND deleted IS NOT true
+      ORDER BY COALESCE(last_edited, created) DESC NULLS LAST, project_id DESC
+    `,
+    [host_id],
+  );
+  return rows.map((row) => row.project_id);
 }
 
 async function loadOwnedHost(id: string, account_id?: string): Promise<any> {
@@ -2205,6 +2223,186 @@ export async function restartHostInternal({
   );
   if (!rows[0]) throw new Error("host not found");
   return parseRow(rows[0]);
+}
+
+export async function drainHost({
+  account_id,
+  id,
+  dest_host_id,
+  force,
+  allow_offline,
+}: {
+  account_id?: string;
+  id: string;
+  dest_host_id?: string;
+  force?: boolean;
+  allow_offline?: boolean;
+}): Promise<HostLroResponse> {
+  const row = await loadOwnedHost(id, account_id);
+  const destination = `${dest_host_id ?? ""}`.trim() || undefined;
+  if (destination === row.id) {
+    throw new Error("destination host must differ from source host");
+  }
+  if (destination) {
+    await loadHostForListing(destination, account_id);
+  }
+  return await createHostLro({
+    kind: HOST_DRAIN_LRO_KIND,
+    row,
+    account_id,
+    input: {
+      id: row.id,
+      account_id,
+      dest_host_id: destination,
+      force: !!force,
+      allow_offline: !!allow_offline,
+    },
+    dedupe_key: `${HOST_DRAIN_LRO_KIND}:${row.id}:${destination ?? "auto"}:${force ? "force" : "safe"}:${allow_offline ? "allow-offline" : "strict"}`,
+  });
+}
+
+export async function drainHostInternal({
+  account_id,
+  id,
+  dest_host_id,
+  force,
+  allow_offline,
+  shouldCancel,
+  onProgress,
+}: {
+  account_id?: string;
+  id: string;
+  dest_host_id?: string;
+  force?: boolean;
+  allow_offline?: boolean;
+  shouldCancel?: () => Promise<boolean>;
+  onProgress?: (update: {
+    message: string;
+    detail?: Record<string, any>;
+    progress?: number;
+  }) => Promise<void> | void;
+}): Promise<HostDrainResult> {
+  const owner = requireAccount(account_id);
+  const row = await loadOwnedHost(id, owner);
+  const destination = `${dest_host_id ?? ""}`.trim() || undefined;
+  if (destination === row.id) {
+    throw new Error("destination host must differ from source host");
+  }
+  if (destination) {
+    await loadHostForListing(destination, owner);
+  }
+
+  const projectIds = await loadProjectIdsAssignedToHost(row.id);
+  const total = projectIds.length;
+  const resultBase = {
+    host_id: row.id,
+    mode: force ? "force" : "move",
+    total,
+    moved: 0,
+    unassigned: 0,
+    failed: 0,
+    ...(destination ? { dest_host_id: destination } : {}),
+  } satisfies HostDrainResult;
+
+  if (!total) {
+    await onProgress?.({
+      message: "host already drained",
+      detail: { host_id: row.id, total: 0 },
+      progress: 100,
+    });
+    return resultBase;
+  }
+
+  const canceled = async () => {
+    if (!shouldCancel) return false;
+    return await shouldCancel();
+  };
+
+  if (force) {
+    if (await canceled()) {
+      throw new Error("host drain canceled");
+    }
+    await onProgress?.({
+      message: "force-unassigning workspaces",
+      detail: { host_id: row.id, total },
+      progress: 20,
+    });
+    const { rows } = await pool().query<{ project_id: string }>(
+      `
+        UPDATE projects
+        SET host_id=NULL
+        WHERE host_id=$1
+          AND deleted IS NOT true
+        RETURNING project_id
+      `,
+      [row.id],
+    );
+    for (const moved of rows) {
+      await notifyProjectHostUpdate({ project_id: moved.project_id });
+    }
+    await onProgress?.({
+      message: "force-unassign complete",
+      detail: { host_id: row.id, total, unassigned: rows.length },
+      progress: 100,
+    });
+    return {
+      ...resultBase,
+      unassigned: rows.length,
+      failed: Math.max(0, total - rows.length),
+    };
+  }
+
+  let moved = 0;
+  for (const [index, project_id] of projectIds.entries()) {
+    if (await canceled()) {
+      throw new Error("host drain canceled");
+    }
+    await onProgress?.({
+      message: `moving workspace ${index + 1}/${total}`,
+      detail: {
+        host_id: row.id,
+        project_id,
+        moved,
+        total,
+        dest_host_id: destination,
+      },
+      progress: Math.min(95, Math.round((index / total) * 100)),
+    });
+    try {
+      await moveProjectToHost(
+        {
+          project_id,
+          account_id: owner,
+          dest_host_id: destination,
+          allow_offline: !!allow_offline,
+        },
+        { shouldCancel },
+      );
+      moved += 1;
+    } catch (err) {
+      throw new Error(
+        `failed to drain workspace ${project_id}: ${
+          err instanceof Error ? err.message : `${err}`
+        }`,
+      );
+    }
+  }
+
+  await onProgress?.({
+    message: "host drain complete",
+    detail: {
+      host_id: row.id,
+      total,
+      moved,
+      dest_host_id: destination,
+    },
+    progress: 100,
+  });
+  return {
+    ...resultBase,
+    moved,
+    failed: Math.max(0, total - moved),
+  };
 }
 
 export async function forceDeprovisionHost({

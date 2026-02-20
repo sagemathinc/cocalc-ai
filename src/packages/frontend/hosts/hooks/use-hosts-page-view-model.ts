@@ -169,6 +169,7 @@ export const useHostsPageViewModel = () => {
   const {
     setStatus,
     restartHost,
+    drainHost,
     removeHost,
     renameHost,
     updateHostMachine,
@@ -705,6 +706,7 @@ export const useHostsPageViewModel = () => {
     onStart: (id: string) => setStatus(id, "start"),
     onStop: (id: string, opts) => setStatus(id, "stop", opts),
     onRestart: restartHost,
+    onDrain: (id: string, opts) => drainHost(id, opts),
     onDelete: (id: string, opts) => removeHost(id, opts),
     onRefresh: refreshHostsNow,
     onCancelOp: cancelHostOp,

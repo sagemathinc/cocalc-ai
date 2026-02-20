@@ -1,4 +1,5 @@
 import type { Host, HostLroResponse } from "@cocalc/conat/hub/api/hosts";
+import type { HostDrainOptions } from "../types";
 
 type HubClient = {
   hosts: {
@@ -7,6 +8,12 @@ type HubClient = {
     restartHost?: (opts: {
       id: string;
       mode?: "reboot" | "hard";
+    }) => Promise<HostLroResponse>;
+    drainHost?: (opts: {
+      id: string;
+      dest_host_id?: string;
+      force?: boolean;
+      allow_offline?: boolean;
     }) => Promise<HostLroResponse>;
     deleteHost: (opts: { id: string; skip_backups?: boolean }) => Promise<HostLroResponse>;
     forceDeprovisionHost?: (opts: { id: string }) => Promise<HostLroResponse>;
@@ -112,6 +119,24 @@ export const useHostActions = ({
     }
   };
 
+  const drainHost = async (id: string, opts?: HostDrainOptions) => {
+    if (!hub.hosts.drainHost) {
+      return;
+    }
+    try {
+      const op = await hub.hosts.drainHost({
+        id,
+        dest_host_id: opts?.dest_host_id,
+        force: opts?.force,
+        allow_offline: opts?.allow_offline,
+      });
+      onHostOp?.(id, op);
+      await refresh();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const renameHost = async (id: string, name: string) => {
     const cleaned = name?.trim();
     if (!cleaned) {
@@ -187,6 +212,7 @@ export const useHostActions = ({
   return {
     setStatus,
     restartHost,
+    drainHost,
     removeHost,
     renameHost,
     updateHostMachine,

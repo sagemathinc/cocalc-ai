@@ -15,6 +15,7 @@ import {
 import { publishLroEvent, publishLroSummary } from "@cocalc/conat/lro/stream";
 import {
   deleteHostInternal,
+  drainHostInternal,
   forceDeprovisionHostInternal,
   removeSelfHostConnectorInternal,
   restartHostInternal,
@@ -42,6 +43,7 @@ const HOST_OP_KINDS = [
   "host-start",
   "host-stop",
   "host-restart",
+  "host-drain",
   "host-upgrade-software",
   "host-deprovision",
   "host-delete",
@@ -56,6 +58,7 @@ const WORKER_ID = randomUUID();
 const progressSteps: Record<string, number> = {
   backups: 20,
   requesting: 35,
+  draining: 60,
   waiting: 75,
   done: 100,
   canceled: 100,
@@ -434,6 +437,8 @@ function opLabel(kind: HostOpKind, input: any): string {
       return "Stop";
     case "host-restart":
       return input?.mode === "hard" ? "Hard restart" : "Restart";
+    case "host-drain":
+      return input?.force ? "Force drain" : "Drain";
     case "host-upgrade-software":
       return "Upgrade";
     case "host-deprovision":
@@ -468,6 +473,21 @@ function waitConfig(kind: HostOpKind) {
         desired: ["running"],
         failOn: ["error", "deprovisioned"],
         message: "waiting for host to restart",
+      };
+    case "host-drain":
+      return {
+        desired: [
+          "running",
+          "starting",
+          "restarting",
+          "stopping",
+          "off",
+          "deprovisioning",
+          "deprovisioned",
+          "error",
+        ],
+        failOn: [],
+        message: "finalizing host drain",
       };
     case "host-deprovision":
       return {
@@ -513,31 +533,62 @@ function shouldStopTunnel(kind: HostOpKind): boolean {
   ].includes(kind);
 }
 
-async function runHostAction(kind: HostOpKind, host_id: string, account_id: string, input: any) {
+async function runHostAction(
+  kind: HostOpKind,
+  host_id: string,
+  account_id: string,
+  input: any,
+  helpers?: {
+    shouldCancel?: () => Promise<boolean>;
+    progressStep?: (
+      step: string,
+      message: string,
+      detail?: any,
+      progress?: number,
+    ) => Promise<void>;
+  },
+) {
   switch (kind) {
     case "host-start":
       await startHostInternal({ account_id, id: host_id });
-      return;
+      return undefined;
     case "host-stop":
       await stopHostInternal({ account_id, id: host_id });
-      return;
+      return undefined;
     case "host-restart":
       await restartHostInternal({
         account_id,
         id: host_id,
         mode: input?.mode === "hard" ? "hard" : "reboot",
       });
-      return;
+      return undefined;
+    case "host-drain":
+      return await drainHostInternal({
+        account_id,
+        id: host_id,
+        dest_host_id: input?.dest_host_id,
+        force: !!input?.force,
+        allow_offline: !!input?.allow_offline,
+        shouldCancel: helpers?.shouldCancel,
+        onProgress: async (update) => {
+          await helpers?.progressStep?.(
+            "draining",
+            update.message,
+            update.detail,
+            update.progress,
+          );
+        },
+      });
     case "host-deprovision":
     case "host-delete":
       await deleteHostInternal({ account_id, id: host_id });
-      return;
+      return undefined;
     case "host-force-deprovision":
       await forceDeprovisionHostInternal({ account_id, id: host_id });
-      return;
+      return undefined;
     case "host-remove-connector":
       await removeSelfHostConnectorInternal({ account_id, id: host_id });
-      return;
+      return undefined;
     default:
       throw new Error(`unsupported host op: ${kind}`);
   }
@@ -713,7 +764,10 @@ async function handleOp(op: LroSummary): Promise<void> {
       throw new HostOpCanceledError();
     }
 
-    await runHostAction(kind, host_id, account_id, input);
+    const actionResult = await runHostAction(kind, host_id, account_id, input, {
+      shouldCancel,
+      progressStep,
+    });
 
     const wait = waitConfig(kind);
     await progressStep("waiting", wait.message, { host_id });
@@ -741,7 +795,10 @@ async function handleOp(op: LroSummary): Promise<void> {
         host_id,
         status: final.status,
       },
-      result: { host_id, status: final.status },
+      result:
+        kind === "host-drain"
+          ? { host_id, status: final.status, drain: actionResult }
+          : { host_id, status: final.status },
       error: null,
     });
     if (updated) {
@@ -753,6 +810,7 @@ async function handleOp(op: LroSummary): Promise<void> {
     await progressStep("done", `${actionLower} complete`, {
       host_id,
       status: final.status,
+      ...(kind === "host-drain" ? { drain: actionResult } : {}),
     });
   } catch (err) {
     const canceled =

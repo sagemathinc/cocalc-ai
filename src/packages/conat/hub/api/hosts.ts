@@ -18,6 +18,7 @@ export const HOST_LRO_KINDS = [
   "host-start",
   "host-stop",
   "host-restart",
+  "host-drain",
   "host-upgrade-software",
   "host-deprovision",
   "host-delete",
@@ -34,6 +35,23 @@ export type HostLroResponse = {
   service: string;
   stream_name: string;
   kind: HostLroKind;
+};
+
+export type HostDrainOptions = {
+  id: string;
+  dest_host_id?: string;
+  force?: boolean;
+  allow_offline?: boolean;
+};
+
+export type HostDrainResult = {
+  host_id: string;
+  mode: "move" | "force";
+  total: number;
+  moved: number;
+  unassigned: number;
+  failed: number;
+  dest_host_id?: string;
 };
 
 export interface HostMachine {
@@ -293,6 +311,7 @@ export const hosts = {
   startHost: authFirstRequireAccount,
   stopHost: authFirstRequireAccount,
   restartHost: authFirstRequireAccount,
+  drainHost: authFirstRequireAccount,
   forceDeprovisionHost: authFirstRequireAccount,
   removeSelfHostConnector: authFirstRequireAccount,
   renameHost: authFirstRequireAccount,
@@ -491,6 +510,13 @@ export interface Hosts {
     account_id?: string;
     id: string;
     mode?: "reboot" | "hard";
+  }) => Promise<HostLroResponse>;
+  drainHost: (opts: {
+    account_id?: string;
+    id: string;
+    dest_host_id?: string;
+    force?: boolean;
+    allow_offline?: boolean;
   }) => Promise<HostLroResponse>;
   forceDeprovisionHost: (opts: {
     account_id?: string;

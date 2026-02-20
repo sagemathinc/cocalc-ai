@@ -47,6 +47,7 @@ type MoveProjectContext = {
   dest_region: string;
   project_host_id?: string | null;
   project_state?: string | null;
+  provisioned?: boolean | null;
   source_host_status?: string | null;
   source_host_deleted?: boolean;
   source_host_last_seen?: Date | null;
@@ -125,10 +126,11 @@ async function buildMoveProjectContext(
     host_id: string | null;
     region: string | null;
     project_state: string | null;
+    provisioned: boolean | null;
     last_backup: Date | null;
     last_edited: Date | null;
   }>(
-    "SELECT project_id, host_id, region, state->>'state' AS project_state, last_backup, last_edited FROM projects WHERE project_id=$1",
+    "SELECT project_id, host_id, region, state->>'state' AS project_state, provisioned, last_backup, last_edited FROM projects WHERE project_id=$1",
     [project_id],
   );
   const projectRow = projectResult.rows[0];
@@ -187,6 +189,7 @@ async function buildMoveProjectContext(
     dest_region,
     project_host_id: projectRow.host_id,
     project_state: projectRow.project_state,
+    provisioned: projectRow.provisioned,
     source_host_status,
     source_host_deleted,
     source_host_last_seen,
@@ -219,6 +222,11 @@ function hasStaleBackup(context: MoveProjectContext): boolean {
   return !lastBackup || lastEdited > lastBackup;
 }
 
+function isMissingProjectVolumeError(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return text.includes("project volume does not exist");
+}
+
 export async function moveProjectToHost(
   input: MoveProjectToHostInput,
   opts?: {
@@ -236,6 +244,7 @@ export async function moveProjectToHost(
     dest_region: context.dest_region,
     project_host_id: context.project_host_id,
     project_state: context.project_state,
+    provisioned: context.provisioned,
     source_host_status: context.source_host_status,
     source_host_last_seen: context.source_host_last_seen,
     last_backup: context.last_backup,
@@ -313,7 +322,18 @@ export async function moveProjectToHost(
       message: "source host offline; skipping stop",
       detail: { source_host_status: status },
     });
-    if (hasStaleBackup(context) && !input.allow_offline) {
+    if (context.provisioned === false) {
+      progress({
+        step: "backup",
+        message: "source project not provisioned; backup not required",
+        detail: {
+          source_host_status: status,
+          provisioned: context.provisioned,
+          last_backup: context.last_backup,
+          last_edited: context.last_edited,
+        },
+      });
+    } else if (hasStaleBackup(context) && !input.allow_offline) {
       const detail = `source host is offline (status=${status}) and last backup is older than last edit (last_backup=${
         context.last_backup?.toISOString?.() ?? context.last_backup ?? "none"
       }, last_edited=${
@@ -352,53 +372,76 @@ export async function moveProjectToHost(
     }
     await checkCanceled("stop-source");
 
-    progress({
-      step: "backup",
-      message: "creating final backup (always)",
-    });
-    log.info("moveProjectToHost creating final backup", {
-      project_id: context.project_id,
-    });
-    try {
-      const backupOp = await createBackup({
-        account_id: context.account_id,
-        project_id: context.project_id,
-      });
-      const backupStart = Date.now();
-      const summary = await waitForLroCompletion({
-        op_id: backupOp.op_id,
-        scope_type: backupOp.scope_type,
-        scope_id: backupOp.scope_id,
-        client: conat(),
-      });
-      if (summary.status !== "succeeded") {
-        const reason = summary.error ?? summary.status;
-        throw new Error(`backup failed: ${reason}`);
-      }
-      const result = summary.result ?? {};
-      const backup_id = result.id ?? result.backup_id;
-      const backup_time = result.time ?? result.backup_time;
-      const duration_ms = Date.now() - backupStart;
+    if (context.provisioned === false) {
       progress({
         step: "backup",
-        message: "final backup created",
-        detail: {
+        message: "project not provisioned; skipping final backup",
+        detail: { provisioned: context.provisioned },
+      });
+      log.info("moveProjectToHost skipping backup for unprovisioned project", {
+        project_id: context.project_id,
+      });
+    } else {
+      progress({
+        step: "backup",
+        message: "creating final backup (always)",
+      });
+      log.info("moveProjectToHost creating final backup", {
+        project_id: context.project_id,
+      });
+      try {
+        const backupOp = await createBackup({
+          account_id: context.account_id,
+          project_id: context.project_id,
+        });
+        const backupStart = Date.now();
+        const summary = await waitForLroCompletion({
+          op_id: backupOp.op_id,
+          scope_type: backupOp.scope_type,
+          scope_id: backupOp.scope_id,
+          client: conat(),
+        });
+        if (summary.status !== "succeeded") {
+          const reason = summary.error ?? summary.status;
+          throw new Error(`backup failed: ${reason}`);
+        }
+        const result = summary.result ?? {};
+        const backup_id = result.id ?? result.backup_id;
+        const backup_time = result.time ?? result.backup_time;
+        const duration_ms = Date.now() - backupStart;
+        progress({
+          step: "backup",
+          message: "final backup created",
+          detail: {
+            backup_id,
+            backup_time,
+            duration_ms,
+          },
+        });
+        log.info("moveProjectToHost backup created", {
+          project_id: context.project_id,
           backup_id,
-          backup_time,
           duration_ms,
-        },
-      });
-      log.info("moveProjectToHost backup created", {
-        project_id: context.project_id,
-        backup_id,
-        duration_ms,
-      });
-    } catch (err) {
-      log.error("moveProjectToHost backup failed", {
-        project_id: context.project_id,
-        err,
-      });
-      throw err;
+        });
+      } catch (err) {
+        if (isMissingProjectVolumeError(err)) {
+          progress({
+            step: "backup",
+            message: "source volume missing; skipping final backup",
+            detail: { error: `${err}` },
+          });
+          log.warn("moveProjectToHost skipping backup because volume is missing", {
+            project_id: context.project_id,
+            err,
+          });
+        } else {
+          log.error("moveProjectToHost backup failed", {
+            project_id: context.project_id,
+            err,
+          });
+          throw err;
+        }
+      }
     }
     await checkCanceled("backup");
   }
