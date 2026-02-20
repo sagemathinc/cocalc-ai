@@ -65,6 +65,18 @@ function normalizeCellSource(text: string): string {
   return source.join("");
 }
 
+function runtimeLabelFromMs(ms: number | undefined): string | undefined {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return;
+  if (ms < 1000) {
+    return `${Math.round(ms)}ms`;
+  }
+  const s = ms / 1000;
+  if (s < 10) {
+    return `${s.toFixed(1)}s`;
+  }
+  return `${Math.round(s)}s`;
+}
+
 function cellsToSlateDocument({
   cell_list,
   cells,
@@ -257,6 +269,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const directory: string | undefined = useRedux([name, "directory"]);
   const controlRef = React.useRef<any>(null);
   const [error, setError] = React.useState<string>("");
+  const [selectedCellId, setSelectedCellId] = React.useState<string | undefined>(
+    undefined,
+  );
   const applyNotebookSlateRef = React.useRef<(doc: Descendant[]) => void>(() => {});
   const pendingSlateSyncTimerRef = React.useRef<number | null>(null);
   const pendingSlateDocRef = React.useRef<Descendant[] | null>(null);
@@ -273,6 +288,13 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     if (cell_list == null || cells == null) return [] as Descendant[];
     return cellsToSlateDocument({ cell_list, cells, kernel });
   }, [cell_list, cells, kernel]);
+
+  React.useEffect(() => {
+    if (!selectedCellId || cell_list == null) return;
+    if (!cell_list.includes(selectedCellId)) {
+      setSelectedCellId(undefined);
+    }
+  }, [selectedCellId, cell_list]);
 
   const runCellAtCursor = React.useCallback(
     ({
@@ -337,6 +359,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       if (frameActions != null) {
         frameActions.set_cur_id(targetId);
       }
+      setSelectedCellId(targetId);
       const runTarget = () => {
         if (frameActions != null) {
           frameActions.run_cell(targetId);
@@ -353,6 +376,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         if (frameActions != null) {
           frameActions.set_cur_id(newId);
         }
+        setSelectedCellId(newId);
       } else {
         runTarget();
         const idx = cell_list.indexOf(targetId);
@@ -361,6 +385,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           if (frameActions != null && nextId != null) {
             frameActions.set_cur_id(nextId);
           }
+          setSelectedCellId(nextId ?? targetId);
         } else {
           const newId =
             frameActions != null
@@ -369,10 +394,52 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           if (frameActions != null) {
             frameActions.set_cur_id(newId);
           }
+          setSelectedCellId(newId);
         }
       }
     },
     [props.actions, props.id, jupyter_actions, cell_list, cells],
+  );
+
+  const runCellById = React.useCallback(
+    (cellId: string, opts?: { insertBelow?: boolean }) => {
+      if (!cellId) return;
+      if (pendingSlateSyncTimerRef.current != null) {
+        window.clearTimeout(pendingSlateSyncTimerRef.current);
+        pendingSlateSyncTimerRef.current = null;
+      }
+      if (pendingSlateDocRef.current != null) {
+        const pending = pendingSlateDocRef.current;
+        pendingSlateDocRef.current = null;
+        applyNotebookSlateRef.current(pending);
+      }
+      const frameActions = props.actions.get_frame_actions(props.id);
+      if (frameActions != null) {
+        frameActions.set_cur_id(cellId);
+      }
+      const runTarget = () => {
+        if (frameActions != null) {
+          frameActions.run_cell(cellId);
+        } else {
+          jupyter_actions.runCells([cellId]);
+        }
+      };
+      if (opts?.insertBelow) {
+        runTarget();
+        const newId =
+          frameActions != null
+            ? frameActions.insert_cell(1)
+            : jupyter_actions.insert_cell_adjacent(cellId, 1);
+        if (frameActions != null) {
+          frameActions.set_cur_id(newId);
+        }
+        setSelectedCellId(newId);
+      } else {
+        runTarget();
+        setSelectedCellId(cellId);
+      }
+    },
+    [props.actions, props.id, jupyter_actions],
   );
 
   const applyNotebookSlate = React.useCallback(
@@ -569,6 +636,28 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     [cells, more_output, jupyter_actions, props.project_id, directory, trust],
   );
 
+  const getCellChromeInfo = React.useCallback(
+    (cellId: string) => {
+      const cell = cells?.get(cellId);
+      if (cell == null) {
+        return {};
+      }
+      const execCountRaw = cell.get("exec_count");
+      const execCount =
+        execCountRaw == null || execCountRaw === ""
+          ? undefined
+          : `${execCountRaw}`;
+      const runtimeMs =
+        Number(cell.getIn(["metadata", "cocalc", "last_runtime_ms"])) ||
+        Number(cell.get("last_runtime_ms")) ||
+        undefined;
+      const runtimeLabel = runtimeLabelFromMs(runtimeMs);
+      const running = `${cell.get("state") ?? ""}` === "running";
+      return { execCount, runtimeLabel, running };
+    },
+    [cells],
+  );
+
   const editorActions = React.useMemo<SlateActions | undefined>(() => {
     if (read_only || cell_list == null || cells == null) {
       return;
@@ -663,7 +752,15 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           {error}
         </div>
       ) : null}
-      <JupyterCellContext.Provider value={{ renderOutput: renderInlineOutput }}>
+      <JupyterCellContext.Provider
+        value={{
+          renderOutput: renderInlineOutput,
+          selectedCellId,
+          setSelectedCellId,
+          runCell: runCellById,
+          getCellChromeInfo,
+        }}
+      >
         <EditableMarkdown
           value_slate={slateValue}
           actions={editorActions}

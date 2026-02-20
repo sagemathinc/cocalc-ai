@@ -231,7 +231,13 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     throw Error("bug");
   }
   const isJupyterCodeCell = element.type === "jupyter_code_cell";
-  const { renderOutput: renderJupyterOutput } = useJupyterCellContext();
+  const {
+    renderOutput: renderJupyterOutput,
+    selectedCellId,
+    setSelectedCellId,
+    runCell,
+    getCellChromeInfo,
+  } = useJupyterCellContext();
   const jupyterCellId = isJupyterCodeCell
     ? `${(element as any).cell_id ?? ""}`.trim()
     : "";
@@ -288,6 +294,14 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const shouldCollapse = false;
   const selected = useSelected();
   const selectionInBlock = !!focused && !!selected;
+  const isSelectedJupyterCell =
+    isJupyterCodeCell &&
+    !!jupyterCellId &&
+    `${selectedCellId ?? ""}`.trim() === jupyterCellId;
+  useEffect(() => {
+    if (!isJupyterCodeCell || !selectionInBlock || !jupyterCellId) return;
+    setSelectedCellId?.(jupyterCellId);
+  }, [isJupyterCodeCell, selectionInBlock, jupyterCellId, setSelectedCellId]);
   const syncSelectionFromDom = useCallback(() => {
     if (typeof window === "undefined") return;
     const domSelection = window.getSelection?.();
@@ -322,6 +336,11 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     isJupyterCodeCell && jupyterCellId
       ? renderJupyterOutput?.(jupyterCellId)
       : null;
+  const jupyterChromeInfo =
+    isJupyterCodeCell && jupyterCellId ? getCellChromeInfo?.(jupyterCellId) : undefined;
+  const showJupyterChrome =
+    isJupyterCodeCell &&
+    (selectionInBlock || menuHovered || menuFocused || isSelectedJupyterCell);
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -547,7 +566,17 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1 }}>
           <div
-            style={{ position: "relative" }}
+            style={{
+              position: "relative",
+              border: isJupyterCodeCell
+                ? isSelectedJupyterCell
+                  ? "1px solid #91caff"
+                  : "1px solid #d9d9d9"
+                : undefined,
+              borderRadius: isJupyterCodeCell ? "6px" : undefined,
+              paddingTop: isJupyterCodeCell ? "28px" : undefined,
+              background: isJupyterCodeCell ? "#fff" : undefined,
+            }}
             onMouseEnter={() => {
               if (!IS_TOUCH) setMenuHovered(true);
             }}
@@ -566,7 +595,75 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
               setMenuFocused(false);
             }}
           >
-            {!disableMarkdownCodebar && (
+            {showJupyterChrome && (
+              <div
+                contentEditable={false}
+                data-cocalc-test="jupyter-singledoc-cell-chrome"
+                data-cocalc-cell-id={jupyterCellId}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  minHeight: "26px",
+                  borderBottom: "1px solid #f0f0f0",
+                  background: "#fafafa",
+                  borderTopLeftRadius: "6px",
+                  borderTopRightRadius: "6px",
+                  padding: "2px 8px",
+                  fontSize: "12px",
+                  zIndex: 1,
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <Button
+                    size="small"
+                    type="text"
+                    style={{ color: "#333", padding: 0 }}
+                    onClick={() => {
+                      if (!jupyterCellId) return;
+                      runCell?.(jupyterCellId, { insertBelow: false });
+                    }}
+                  >
+                    <Icon name="play" /> Run
+                  </Button>
+                  <Button
+                    size="small"
+                    type="text"
+                    style={{ color: "#333", padding: 0 }}
+                    onClick={() => {
+                      if (!jupyterCellId) return;
+                      runCell?.(jupyterCellId, { insertBelow: true });
+                    }}
+                  >
+                    <Icon name="caret-down" />
+                  </Button>
+                  <span style={{ color: "#666" }}>
+                    <Icon name="robot" /> Assistant
+                  </span>
+                  <span style={{ color: "#666" }}>
+                    <Icon name="table" /> Format
+                  </span>
+                </div>
+                <div style={{ display: "flex", gap: "10px", color: "#666" }}>
+                  {jupyterChromeInfo?.runtimeLabel ? (
+                    <span>{jupyterChromeInfo.runtimeLabel}</span>
+                  ) : null}
+                  {jupyterChromeInfo?.running ? <span>running</span> : null}
+                  {jupyterChromeInfo?.execCount ? (
+                    <span>{jupyterChromeInfo.execCount}</span>
+                  ) : null}
+                </div>
+              </div>
+            )}
+            {!disableMarkdownCodebar && !isJupyterCodeCell && (
               <div contentEditable={false}>
                 <FloatingActionMenu
                   info={info}
