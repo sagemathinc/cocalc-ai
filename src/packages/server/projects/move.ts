@@ -20,6 +20,7 @@ import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/cli
 const log = getLogger("server:projects:move");
 const MAX_BACKUPS_PER_PROJECT = 30;
 const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+const MOVE_STOP_PROJECT_TIMEOUT_MS = 3 * 60 * 1000;
 
 export const MOVE_CANCELED_CODE = "move-canceled";
 
@@ -386,7 +387,9 @@ export async function moveProjectToHost(
       project_state: context.project_state,
     });
     try {
-      await stopProjectOnHost(context.project_id);
+      await stopProjectOnHost(context.project_id, {
+        timeout_ms: MOVE_STOP_PROJECT_TIMEOUT_MS,
+      });
     } catch (err) {
       log.error("moveProjectToHost failed to stop project", {
         project_id: context.project_id,
@@ -532,7 +535,9 @@ export async function moveProjectToHost(
           message: "stopping destination project after restore",
           detail: { dest_host_id: context.dest_host_id },
         });
-        await stopProjectOnHost(context.project_id);
+        await stopProjectOnHost(context.project_id, {
+          timeout_ms: MOVE_STOP_PROJECT_TIMEOUT_MS,
+        });
         progress({
           step: "start-dest",
           message: "destination project stopped after restore",

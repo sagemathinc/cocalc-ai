@@ -10,6 +10,7 @@ import { machineHasGpu } from "../cloud/host-gpu";
 const log = getLogger("server:project-host:control");
 // Project starts can include large restores, so allow a long RPC timeout.
 const START_PROJECT_TIMEOUT_MS = 60 * 60 * 1000;
+const STOP_PROJECT_TIMEOUT_MS = 30 * 1000;
 
 type HostPlacement = {
   host_id: string;
@@ -226,7 +227,10 @@ export async function startProjectOnHost(
   }
 }
 
-export async function stopProjectOnHost(project_id: string): Promise<void> {
+export async function stopProjectOnHost(
+  project_id: string,
+  opts?: { timeout_ms?: number },
+): Promise<void> {
   const meta = await loadProject(project_id);
   const host_id = meta.host_id;
   if (!host_id) {
@@ -252,6 +256,7 @@ export async function stopProjectOnHost(project_id: string): Promise<void> {
   const client = createHostControlClient({
     host_id,
     client: conatWithProjectRouting(),
+    timeout: opts?.timeout_ms ?? STOP_PROJECT_TIMEOUT_MS,
   });
   try {
     await client.stopProject({ project_id });

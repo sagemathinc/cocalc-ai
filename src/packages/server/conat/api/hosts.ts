@@ -159,6 +159,36 @@ async function resolveDrainParallel(owner: string, parallel?: number): Promise<n
   return requested;
 }
 
+async function resolveDrainMoveAccount({
+  project_id,
+  fallback_account_id,
+}: {
+  project_id: string;
+  fallback_account_id: string;
+}): Promise<string> {
+  const { rows } = await pool().query<{ account_id: string }>(
+    `
+      SELECT u.key AS account_id
+      FROM projects p
+      JOIN LATERAL jsonb_each(COALESCE(p.users, '{}'::jsonb)) u(key, value) ON true
+      WHERE p.project_id=$1
+        AND p.deleted IS NOT true
+        AND (u.value ->> 'group') IN ('owner', 'collaborator')
+      ORDER BY
+        CASE (u.value ->> 'group')
+          WHEN 'owner' THEN 0
+          WHEN 'collaborator' THEN 1
+          ELSE 2
+        END,
+        u.key
+      LIMIT 1
+    `,
+    [project_id],
+  );
+  const account_id = `${rows[0]?.account_id ?? ""}`.trim();
+  return account_id || fallback_account_id;
+}
+
 function parseRow(
   row: any,
   opts: {
@@ -2432,10 +2462,14 @@ export async function drainHostInternal({
       if (index >= total) return;
       const project_id = projectIds[index];
       try {
+        const moveAccountId = await resolveDrainMoveAccount({
+          project_id,
+          fallback_account_id: owner,
+        });
         await moveProjectToHost(
           {
             project_id,
-            account_id: owner,
+            account_id: moveAccountId,
             dest_host_id: destination,
             allow_offline: !!allow_offline,
             start_dest: true,

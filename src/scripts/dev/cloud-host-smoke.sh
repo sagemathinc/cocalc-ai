@@ -45,6 +45,7 @@ SMOKE_CLOUD_CONTINUE_ON_FAILURE="${SMOKE_CLOUD_CONTINUE_ON_FAILURE:-0}"
 SMOKE_CLOUD_BACKUP_PREFLIGHT="${SMOKE_CLOUD_BACKUP_PREFLIGHT:-1}"
 SMOKE_CLOUD_ACCOUNT_ID="${SMOKE_CLOUD_ACCOUNT_ID:-}"
 SMOKE_CLOUD_PRESET="${SMOKE_CLOUD_PRESET:-}"
+SMOKE_CLOUD_SCENARIO="${SMOKE_CLOUD_SCENARIO:-persistence}"
 SMOKE_CLOUD_PROXY_PORT="${SMOKE_CLOUD_PROXY_PORT:-}"
 SMOKE_CLOUD_RUN_TAG_BASE="${SMOKE_CLOUD_RUN_TAG_BASE:-$(date +%Y%m%d%H%M%S)}"
 SMOKE_CLOUD_RESULT_DIR="${SMOKE_CLOUD_RESULT_DIR:-$SRC_DIR/.local/smoke-cloud}"
@@ -174,6 +175,7 @@ run_provider_smoke() {
   SMOKE_CLOUD_RESULT_FILE="$result_file" \
   SMOKE_CLOUD_ACCOUNT_ID="$SMOKE_CLOUD_ACCOUNT_ID" \
   SMOKE_CLOUD_PRESET="$SMOKE_CLOUD_PRESET" \
+  SMOKE_CLOUD_SCENARIO="$SMOKE_CLOUD_SCENARIO" \
   SMOKE_CLOUD_PROXY_PORT="$SMOKE_CLOUD_PROXY_PORT" \
   SMOKE_CLOUD_CLEANUP_SUCCESS="$SMOKE_CLOUD_CLEANUP_SUCCESS" \
   SMOKE_CLOUD_CLEANUP_FAILURE="$SMOKE_CLOUD_CLEANUP_FAILURE" \
@@ -212,11 +214,18 @@ if (execution_mode !== "cli" && execution_mode !== "direct") {
 const presetByProvider =
   envOptional(`SMOKE_CLOUD_PRESET_${provider.toUpperCase().replace(/-/g, "_")}`) ??
   envOptional("SMOKE_CLOUD_PRESET");
+const scenarioByProvider =
+  envOptional(`SMOKE_CLOUD_SCENARIO_${provider.toUpperCase().replace(/-/g, "_")}`) ??
+  envOptional("SMOKE_CLOUD_SCENARIO") ??
+  "persistence";
 
 const proxyPortRaw = envOptional("SMOKE_CLOUD_PROXY_PORT");
 const proxyPort = proxyPortRaw == null ? undefined : Number(proxyPortRaw);
 if (proxyPortRaw != null && !Number.isFinite(proxyPort)) {
   throw new Error(`invalid SMOKE_CLOUD_PROXY_PORT='${proxyPortRaw}'`);
+}
+if (!["persistence", "drain"].includes(scenarioByProvider)) {
+  throw new Error(`invalid SMOKE_CLOUD_SCENARIO='${scenarioByProvider}'`);
 }
 const runTag = envOptional("SMOKE_CLOUD_RUN_TAG");
 const resultFile = envOptional("SMOKE_CLOUD_RESULT_FILE");
@@ -224,6 +233,7 @@ const resultFile = envOptional("SMOKE_CLOUD_RESULT_FILE");
 const opts = {
   account_id: envOptional("SMOKE_CLOUD_ACCOUNT_ID"),
   provider,
+  scenario: scenarioByProvider,
   run_tag: runTag,
   preset: presetByProvider,
   cleanup_on_success: envBool("SMOKE_CLOUD_CLEANUP_SUCCESS", true),
@@ -240,7 +250,7 @@ const opts = {
   },
 };
 
-function buildCliArgs(args) {
+function buildCliArgs(args, accountIdOverride) {
   const nodePath = process.execPath;
   const cliPath = require("node:path").join(process.cwd(), "../cli/dist/bin/cocalc.js");
   const timeout = envOptional("SMOKE_CLOUD_CLI_CLEANUP_TIMEOUT") ?? "1200s";
@@ -258,8 +268,9 @@ function buildCliArgs(args) {
     "--poll-ms",
     "1000ms",
   ];
-  if (opts.account_id) {
-    full.push("--account-id", opts.account_id);
+  const effectiveAccountId = `${accountIdOverride ?? opts.account_id ?? ""}`.trim();
+  if (effectiveAccountId) {
+    full.push("--account-id", effectiveAccountId);
   }
   const hubPassword = process.env.COCALC_HUB_PASSWORD;
   if (hubPassword && hubPassword.trim()) {
@@ -269,11 +280,11 @@ function buildCliArgs(args) {
   return { nodePath, full };
 }
 
-async function runCliJson(label, args) {
+async function runCliJson(label, args, runOptions = {}) {
   const { execFile } = require("node:child_process");
   const { promisify } = require("node:util");
   const run = promisify(execFile);
-  const { nodePath, full } = buildCliArgs(args);
+  const { nodePath, full } = buildCliArgs(args, runOptions.account_id);
   const { stdout, stderr } = await run(nodePath, full, {
     timeout: 20 * 60 * 1000,
     maxBuffer: 10 * 1024 * 1024,
@@ -291,11 +302,11 @@ async function runCliJson(label, args) {
   return parsed?.data;
 }
 
-async function runCliCleanup(label, args) {
+async function runCliCleanup(label, args, runOptions = {}) {
   const { execFile } = require("node:child_process");
   const { promisify } = require("node:util");
   const run = promisify(execFile);
-  const { nodePath, full } = buildCliArgs(args);
+  const { nodePath, full } = buildCliArgs(args, runOptions.account_id);
   try {
     const { stdout, stderr } = await run(nodePath, full, {
       timeout: 20 * 60 * 1000,
@@ -316,13 +327,32 @@ async function runCliCleanup(label, args) {
   }
 }
 
-async function collectWorkspaceIdsForCleanup(result) {
-  const ids = new Set();
-  if (result?.project_id) {
-    ids.add(String(result.project_id));
+async function collectWorkspaceTargetsForCleanup(result) {
+  const targets = new Map();
+  const addTarget = (workspace_id, account_id) => {
+    const id = `${workspace_id ?? ""}`.trim();
+    if (!id) return;
+    const current = targets.get(id) || { workspace_id: id, account_id: null };
+    const nextAccount = `${account_id ?? current.account_id ?? opts.account_id ?? ""}`.trim() || null;
+    targets.set(id, { workspace_id: id, account_id: nextAccount });
+  };
+
+  const cleanupEntries = Array.isArray(result?.cleanup?.workspaces)
+    ? result.cleanup.workspaces
+    : [];
+  for (const entry of cleanupEntries) {
+    addTarget(entry?.workspace_id, entry?.account_id);
   }
+
+  if (Array.isArray(result?.project_ids)) {
+    for (const projectId of result.project_ids) {
+      addTarget(projectId, null);
+    }
+  }
+  addTarget(result?.project_id, null);
+
   const title = `${result?.debug?.workspace_title ?? ""}`.trim();
-  if (!title) return [...ids];
+  if (!title) return [...targets.values()];
   try {
     const args = ["workspace", "list", "--prefix", title, "--limit", "5000"];
     if (result?.host_id) {
@@ -331,17 +361,28 @@ async function collectWorkspaceIdsForCleanup(result) {
     const rows = await runCliJson("workspace-list-cleanup", args);
     for (const row of Array.isArray(rows) ? rows : []) {
       if (`${row?.title ?? ""}`.trim() !== title) continue;
-      const id = `${row?.workspace_id ?? ""}`.trim();
-      if (id) ids.add(id);
+      addTarget(row?.workspace_id, null);
     }
   } catch (err) {
     console.error(`[smoke:${provider}] cleanup workspace discovery failed: ${err}`);
   }
-  return [...ids];
+  return [...targets.values()];
 }
 
 async function collectHostIdsForCleanup(result) {
   const ids = new Set();
+  if (Array.isArray(result?.cleanup?.host_ids)) {
+    for (const hostId of result.cleanup.host_ids) {
+      const id = `${hostId ?? ""}`.trim();
+      if (id) ids.add(id);
+    }
+  }
+  if (Array.isArray(result?.host_ids)) {
+    for (const hostId of result.host_ids) {
+      const id = `${hostId ?? ""}`.trim();
+      if (id) ids.add(id);
+    }
+  }
   if (result?.host_id) {
     ids.add(String(result.host_id));
   }
@@ -369,24 +410,28 @@ async function collectHostIdsForCleanup(result) {
 }
 
 async function cleanupFromResult(result) {
-  const workspaceIds = await collectWorkspaceIdsForCleanup(result);
-  for (const workspaceId of workspaceIds) {
+  const workspaceTargets = await collectWorkspaceTargetsForCleanup(result);
+  for (const target of workspaceTargets) {
     const hardDeleted = await runCliCleanup("workspace-delete-hard", [
       "workspace",
       "delete",
       "--workspace",
-      workspaceId,
+      target.workspace_id,
       "--hard",
       "--yes",
       "--wait",
-    ]);
+    ], {
+      account_id: target.account_id,
+    });
     if (!hardDeleted) {
       await runCliCleanup("workspace-delete-soft-fallback", [
         "workspace",
         "delete",
         "--workspace",
-        workspaceId,
-      ]);
+        target.workspace_id,
+      ], {
+        account_id: target.account_id,
+      });
     }
   }
   const hostIds = await collectHostIdsForCleanup(result);
