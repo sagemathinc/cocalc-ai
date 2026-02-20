@@ -63,6 +63,8 @@ import { processLLM as processLLMExternal } from "./actions/llm";
 import { addToHistory } from "@cocalc/chat";
 
 const AUTOSAVE_INTERVAL = 15_000;
+const THREAD_CONFIG_EVENT = "chat-thread-config";
+const THREAD_CONFIG_SENDER = "__thread_config__";
 
 export class ChatActions extends Actions<ChatState> {
   public syncdb?: ImmerDB;
@@ -635,6 +637,20 @@ export class ChatActions extends Actions<ChatState> {
         delete entry.doc.thread_icon;
       }
     }
+    const configPatch: Record<string, unknown> = {};
+    if ("name" in opts) {
+      const trimmed = (opts.name ?? "").trim();
+      configPatch.name = trimmed || null;
+    }
+    if ("color" in opts) {
+      const trimmed = (opts.color ?? "").trim();
+      configPatch.thread_color = trimmed || null;
+    }
+    if ("icon" in opts) {
+      const trimmed = (opts.icon ?? "").trim();
+      configPatch.thread_icon = trimmed || null;
+    }
+    this.setThreadConfigRecord(threadKey, configPatch);
     this.setSyncdb(entry.doc);
     this.syncdb.commit();
     return true;
@@ -653,6 +669,9 @@ export class ChatActions extends Actions<ChatState> {
     } else {
       entry.doc.pin = false;
     }
+    this.setThreadConfigRecord(threadKey, {
+      pin: pinned,
+    });
     this.setSyncdb(entry.doc);
     this.syncdb.commit();
     return true;
@@ -696,6 +715,36 @@ export class ChatActions extends Actions<ChatState> {
     if (!dateIso) return null;
     const doc = { ...(message as any), date: dateIso };
     return { doc, message };
+  };
+
+  private getThreadConfigRecord = (threadKey: string): any | null => {
+    if (this.syncdb == null) return null;
+    const dateIso = threadKeyToIso(threadKey);
+    if (!dateIso) return null;
+    return (
+      this.syncdb.get_one({
+        event: THREAD_CONFIG_EVENT,
+        sender_id: THREAD_CONFIG_SENDER,
+        date: dateIso,
+      }) ?? null
+    );
+  };
+
+  private setThreadConfigRecord = (
+    threadKey: string,
+    patch: Record<string, unknown>,
+  ): boolean => {
+    if (this.syncdb == null) return false;
+    const dateIso = threadKeyToIso(threadKey);
+    if (!dateIso) return false;
+    this.setSyncdb({
+      event: THREAD_CONFIG_EVENT,
+      sender_id: THREAD_CONFIG_SENDER,
+      date: dateIso,
+      thread_id: threadKey,
+      ...patch,
+    });
+    return true;
   };
 
   save_scroll_state = (position, height, offset): void => {
@@ -1013,6 +1062,11 @@ export class ChatActions extends Actions<ChatState> {
     const rootMs =
       getThreadRootDate({ date: reply_to.valueOf(), messages }) ||
       reply_to.valueOf();
+    const threadConfig = this.getThreadConfigRecord(`${rootMs}`);
+    const cfgFromThread = field<CodexThreadConfig>(threadConfig, "acp_config");
+    if (cfgFromThread != null) {
+      return cfgFromThread;
+    }
     const entry = this.getThreadRootDoc(`${rootMs}`);
     const rootMessage = entry?.message;
     if (!rootMessage) return;
@@ -1027,9 +1081,14 @@ export class ChatActions extends Actions<ChatState> {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
     const dateObj = new Date(dateNum);
+    // Transitional compatibility: mirror to root message.
     this.setSyncdb({
       event: "chat",
       date: dateObj.toISOString(),
+      acp_config: config,
+    });
+    // Preferred long-term storage for thread-level codex config.
+    this.setThreadConfigRecord(threadKey, {
       acp_config: config,
     });
     this.syncdb.commit();
@@ -1070,7 +1129,7 @@ export class ChatActions extends Actions<ChatState> {
 
     let nextConfig: CodexThreadConfig | undefined = undefined;
     if (isAI) {
-      const config = field<CodexThreadConfig>(rootMessage, "acp_config");
+      const config = this.getCodexConfig(rootDate);
       if (config?.sessionId && this.store) {
         const project_id = this.store.get("project_id");
         if (!project_id) {
