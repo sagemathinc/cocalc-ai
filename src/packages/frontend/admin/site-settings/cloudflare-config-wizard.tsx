@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Checkbox, Input, Modal, Radio, Space } from "antd";
+import { Alert, Button, Input, Modal, Radio, Space } from "antd";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
@@ -91,7 +91,6 @@ export default function CloudflareConfigWizard({
   const [r2TestError, setR2TestError] = useState("");
   const [r2TestResult, setR2TestResult] =
     useState<R2CredentialsTestResult | null>(null);
-  const [locationHeadersDone, setLocationHeadersDone] = useState(false);
   const [locationHeadersTesting, setLocationHeadersTesting] = useState(false);
   const [locationHeadersTestError, setLocationHeadersTestError] = useState("");
   const [locationHeadersResult, setLocationHeadersResult] =
@@ -113,7 +112,6 @@ export default function CloudflareConfigWizard({
       setR2Testing(false);
       setR2TestError("");
       setR2TestResult(null);
-      setLocationHeadersDone(false);
       setLocationHeadersTesting(false);
       setLocationHeadersTestError("");
       setLocationHeadersResult(null);
@@ -144,7 +142,6 @@ export default function CloudflareConfigWizard({
     setR2Testing(false);
     setR2TestError("");
     setR2TestResult(null);
-    setLocationHeadersDone(false);
     setLocationHeadersTesting(false);
     setLocationHeadersTestError("");
     setLocationHeadersResult(null);
@@ -158,15 +155,10 @@ export default function CloudflareConfigWizard({
   const invalidAccountId =
     accountIdTrimmed.length > 0 && !/^[a-f0-9]{32}$/.test(accountIdTrimmed);
   const zoneGuess = inferCloudflareZone(externalDomain);
-  const externalDomainNormalized = normalizedDomain(externalDomain);
   const managedTransformsUrl =
     accountIdTrimmed && zoneGuess
       ? `https://dash.cloudflare.com/${accountIdTrimmed}/${zoneGuess}/rules/settings/managed-transforms`
       : "https://dash.cloudflare.com/<account_id>/<zone>/rules/settings/managed-transforms";
-  const exactZoneUrl =
-    accountIdTrimmed && externalDomainNormalized
-      ? `https://dash.cloudflare.com/${accountIdTrimmed}/${externalDomainNormalized}/rules/settings/managed-transforms`
-      : "";
 
   function renderSecretNote(settingName: string) {
     if (!isSet?.[settingName]) return null;
@@ -286,7 +278,6 @@ export default function CloudflareConfigWizard({
         details,
       };
       setLocationHeadersResult(result);
-      if (result.ok) setLocationHeadersDone(true);
     } catch (err) {
       setLocationHeadersTestError(`${err}`);
     } finally {
@@ -418,18 +409,10 @@ export default function CloudflareConfigWizard({
 
 - ${managedTransformsUrl}
 
-Enable:
+Enable: **Add visitor location headers**.
 
-- **Add visitor location headers**
-- Adds HTTP request headers with location information for the visitor's IP address, including city, country, continent, longitude, and latitude.`}
+If the link above does not work, search in Cloudflare for **Managed Transforms** and select your domain.`}
                 />
-                {exactZoneUrl && exactZoneUrl !== managedTransformsUrl ? (
-                  <StaticMarkdown
-                    value={`If your zone is not **${zoneGuess}**, try this exact-domain link too:
-
-- ${exactZoneUrl}`}
-                  />
-                ) : null}
               </div>
               <img
                 src={cloudflareManagedTransformImg}
@@ -442,14 +425,6 @@ Enable:
                   borderRadius: "6px",
                 }}
               />
-              <div style={{ marginTop: "10px" }}>
-                <Checkbox
-                  checked={locationHeadersDone}
-                  onChange={(e) => setLocationHeadersDone(e.target.checked)}
-                >
-                  I enabled <b>Add visitor location headers</b> in Cloudflare.
-                </Checkbox>
-              </div>
               <div style={{ marginTop: "10px" }}>
                 <Space direction="vertical" size={8} style={{ width: "100%" }}>
                   <Button
