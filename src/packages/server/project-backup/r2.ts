@@ -46,7 +46,7 @@ async function cloudflareRequest<T>(
   return payload.result;
 }
 
-async function listBuckets(
+export async function listBuckets(
   token: string,
   accountId: string,
 ): Promise<string[]> {

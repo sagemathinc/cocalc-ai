@@ -16,7 +16,7 @@ import {
   mapCloudRegionToR2Region,
   parseR2Region,
 } from "@cocalc/util/consts";
-import { createBucket, R2BucketInfo } from "./r2";
+import { createBucket, listBuckets, R2BucketInfo } from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
 import { ONPREM_REST_TUNNEL_LOCAL_PORT } from "@cocalc/conat/project-host/api";
@@ -26,8 +26,15 @@ const DEFAULT_BACKUP_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 const DEFAULT_BACKUP_ROOT = "rustic";
 const BUCKET_PROVIDER = "r2";
 const BUCKET_PURPOSE = "project-backups";
+const BUCKET_LIST_CACHE_MS = 30 * 1000;
+const BUCKET_VERIFY_TTL_MS = 10 * 60 * 1000;
 
 const logger = getLogger("server:project-backup");
+const bucketListCache = new Map<
+  string,
+  { expires: number; names: Set<string> }
+>();
+const bucketVerifyCache = new Map<string, number>();
 
 function normalizeLocation(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -46,6 +53,22 @@ async function getSiteSetting(name: string): Promise<string | undefined> {
     return undefined;
   }
   return typeof value === "string" ? value : String(value);
+}
+
+async function getR2Settings(): Promise<{
+  accountId?: string;
+  apiToken?: string;
+  accessKey?: string;
+  secretKey?: string;
+  bucketPrefix?: string;
+}> {
+  return {
+    accountId: await getSiteSetting("r2_account_id"),
+    apiToken: await getSiteSetting("r2_api_token"),
+    accessKey: await getSiteSetting("r2_access_key_id"),
+    secretKey: await getSiteSetting("r2_secret_access_key"),
+    bucketPrefix: await getSiteSetting("r2_bucket_prefix"),
+  };
 }
 
 type BucketRow = {
@@ -68,6 +91,92 @@ async function loadBucketById(id: string): Promise<BucketRow | null> {
     [id],
   );
   return rows[0] ?? null;
+}
+
+async function loadBucketByName(name: string): Promise<BucketRow | null> {
+  const { rows } = await pool().query<BucketRow>(
+    "SELECT id, name, provider, purpose, region, location, account_id, access_key_id, secret_access_key, endpoint, status FROM buckets WHERE name=$1 ORDER BY created DESC LIMIT 1",
+    [name],
+  );
+  return rows[0] ?? null;
+}
+
+async function listBucketsCached(
+  accountId: string,
+  apiToken: string,
+  force = false,
+): Promise<Set<string>> {
+  const now = Date.now();
+  if (!force) {
+    const cached = bucketListCache.get(accountId);
+    if (cached && cached.expires > now) {
+      return cached.names;
+    }
+  }
+  const names = new Set(await listBuckets(apiToken, accountId));
+  bucketListCache.set(accountId, { names, expires: now + BUCKET_LIST_CACHE_MS });
+  return names;
+}
+
+function inferBucketRegion(name: string): string | undefined {
+  const i = name.lastIndexOf("-");
+  if (i <= 0) return undefined;
+  return parseR2Region(name.slice(i + 1)) ?? undefined;
+}
+
+function isAlreadyExistsError(err: string): boolean {
+  const lower = err.toLowerCase();
+  return (
+    lower.includes("already exists") ||
+    lower.includes("already in use") ||
+    lower.includes("bucketexists")
+  );
+}
+
+async function ensureBucketExistsInR2({
+  accountId,
+  apiToken,
+  name,
+  region,
+}: {
+  accountId: string;
+  apiToken: string;
+  name: string;
+  region: string;
+}) {
+  const verifyKey = `${accountId}:${name}`;
+  const now = Date.now();
+  if ((bucketVerifyCache.get(verifyKey) ?? 0) + BUCKET_VERIFY_TTL_MS > now) {
+    return;
+  }
+  let names = await listBucketsCached(accountId, apiToken);
+  if (!names.has(name)) {
+    let createdNow = false;
+    try {
+      await createBucket(apiToken, accountId, name, region);
+      createdNow = true;
+      logger.info("r2 bucket created", { name, region });
+    } catch (err) {
+      if (!isAlreadyExistsError(`${err}`)) {
+        throw err;
+      }
+    }
+    names = await listBucketsCached(accountId, apiToken, true);
+    if (!names.has(name)) {
+      if (createdNow) {
+        names.add(name);
+        bucketListCache.set(accountId, {
+          names,
+          expires: now + BUCKET_LIST_CACHE_MS,
+        });
+      } else {
+        throw new Error(
+          `bucket '${name}' is not present in account '${accountId}' after ensure`,
+        );
+      }
+    }
+  }
+  bucketVerifyCache.set(verifyKey, now);
 }
 
 async function findBucketForRegion(region: string): Promise<BucketRow | null> {
@@ -139,10 +248,8 @@ async function insertBucketRecord({
       status,
     ],
   );
-  const { rows } = await pool().query<BucketRow>(
-    "SELECT id, name, provider, purpose, region, location, account_id, access_key_id, secret_access_key, endpoint, status FROM buckets WHERE name=$1 ORDER BY created DESC LIMIT 1",
-    [name],
-  );
+  const row = await loadBucketByName(name);
+  const rows = row ? [row] : [];
   if (!rows[0]) {
     throw new Error(`failed to record bucket ${name}`);
   }
@@ -153,41 +260,40 @@ async function getOrCreateBucketForRegion(
   region: string,
 ): Promise<BucketRow | null> {
   const existing = await findBucketForRegion(region);
-  if (existing) return existing;
+  const { accountId, apiToken, accessKey, secretKey, bucketPrefix } =
+    await getR2Settings();
 
-  const accountId = await getSiteSetting("r2_account_id");
-  const apiToken = await getSiteSetting("r2_api_token");
-  const accessKey = await getSiteSetting("r2_access_key_id");
-  const secretKey = await getSiteSetting("r2_secret_access_key");
-  const bucketPrefix = await getSiteSetting("r2_bucket_prefix");
   if (!accountId || !accessKey || !secretKey || !bucketPrefix) {
-    return null;
+    return existing;
   }
+
+  const desiredName = `${bucketPrefix}-${region}`;
+  let desired = await loadBucketByName(desiredName);
+  if (!desired && existing?.name === desiredName) {
+    desired = existing;
+  }
+
   if (!apiToken) {
-    logger.warn("r2_api_token is missing; cannot create bucket", { region });
-    return null;
+    logger.warn("r2_api_token is missing; cannot verify/create bucket", {
+      region,
+      bucket: desiredName,
+    });
+    return desired ?? existing;
   }
 
   let created: R2BucketInfo | undefined;
-  try {
-    created = await createBucket(
-      apiToken,
-      accountId,
-      `${bucketPrefix}-${region}`,
-      region,
-    );
-    const createdLocation = normalizeLocation(created.location ?? null);
-    if (createdLocation && createdLocation !== region) {
-      logger.warn("r2 bucket location mismatch", {
-        name: created.name,
-        region,
-        location: created.location,
-      });
-    } else {
-      logger.info("r2 bucket created", { name: created.name, region });
-    }
-  } catch (err) {
-    logger.warn("r2 bucket creation failed", { region, err: `${err}` });
+  await ensureBucketExistsInR2({
+    accountId,
+    apiToken,
+    name: desiredName,
+    region,
+  });
+
+  if (!desired) {
+    created = {
+      name: desiredName,
+      location: region,
+    };
   }
 
   return await insertBucketRecord({
@@ -197,6 +303,27 @@ async function getOrCreateBucketForRegion(
     bucketPrefix,
     region,
     created,
+  });
+}
+
+async function ensureExistingBucketRowIsUsable({
+  bucket,
+  fallbackRegion,
+}: {
+  bucket: BucketRow;
+  fallbackRegion: string;
+}): Promise<void> {
+  const { accountId, apiToken } = await getR2Settings();
+  if (!accountId || !apiToken) {
+    return;
+  }
+  const region =
+    parseR2Region(bucket.region) ?? inferBucketRegion(bucket.name) ?? fallbackRegion;
+  await ensureBucketExistsInR2({
+    accountId,
+    apiToken,
+    name: bucket.name,
+    region,
   });
 }
 
@@ -211,7 +338,13 @@ async function getProjectBucket(
   const bucketId = rows[0]?.backup_bucket_id ?? null;
   if (bucketId) {
     const bucket = await loadBucketById(bucketId);
-    if (bucket) return bucket;
+    if (bucket) {
+      await ensureExistingBucketRowIsUsable({
+        bucket,
+        fallbackRegion: region,
+      });
+      return bucket;
+    }
   }
   const bucket = await getOrCreateBucketForRegion(region);
   if (!bucket) return null;

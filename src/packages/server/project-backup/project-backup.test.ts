@@ -4,6 +4,7 @@ let queryMock: jest.Mock;
 let readFileMock: jest.Mock;
 let writeFileMock: jest.Mock;
 let createBucketMock: jest.Mock;
+let listBucketsMock: jest.Mock;
 let settings: Record<string, string | undefined> = {};
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -23,6 +24,7 @@ jest.mock("fs/promises", () => ({
 
 jest.mock("./r2", () => ({
   createBucket: (...args: any[]) => createBucketMock(...args),
+  listBuckets: (...args: any[]) => listBucketsMock(...args),
 }));
 
 const HOST_ID = "11111111-1111-1111-1111-111111111111";
@@ -40,6 +42,7 @@ describe("project-backup", () => {
       name: "cocalc-backups-wnam",
       location: "wnam",
     }));
+    listBucketsMock = jest.fn(async () => ["cocalc-backups-wnam"]);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("SELECT backup_bucket_id FROM projects")) {
         return {
@@ -171,5 +174,30 @@ describe("project-backup", () => {
     expect(updateCall).toBeDefined();
     const params = updateCall?.[1] as [string, Date];
     expect(params?.[1]?.toISOString()).toBe(when.toISOString());
+  });
+
+  it("recreates missing remote bucket for existing project bucket rows", async () => {
+    settings = {
+      r2_account_id: "account",
+      r2_api_token: "token",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "cocalc-backups",
+      project_secret: "project-secret",
+      project_region: "wnam",
+      backup_bucket_id: BUCKET_ID,
+    };
+    listBucketsMock = jest.fn(async () => []);
+    const { getBackupConfig } = await import("./index");
+    await getBackupConfig({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(createBucketMock).toHaveBeenCalledWith(
+      "token",
+      "account",
+      "cocalc-backups-wnam",
+      "wnam",
+    );
   });
 });
