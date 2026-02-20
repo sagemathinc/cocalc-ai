@@ -68,6 +68,9 @@ export function classifyRunStreamMessage({
     if (typeof id !== "string" || id.length === 0) {
       return { kind: "drop_missing_id", source: "lifecycle" };
     }
+    if (finalizedCells.has(id)) {
+      return { kind: "drop_after_finalize", id };
+    }
     return { kind: "lifecycle", lifecycle, id };
   }
 
@@ -80,4 +83,3 @@ export function classifyRunStreamMessage({
   }
   return { kind: "data", id };
 }
-

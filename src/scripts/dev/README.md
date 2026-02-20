@@ -30,6 +30,36 @@ pnpm --dir src hub:daemon:logs
 pnpm --dir src hub:daemon:stop
 ```
 
+## Lite daemon control
+
+```bash
+pnpm --dir src lite:daemon:init
+pnpm --dir src lite:daemon:start
+pnpm --dir src lite:daemon:status
+pnpm --dir src lite:daemon:logs
+pnpm --dir src lite:daemon:stop
+```
+
+Run Jupyter Playwright tests against the daemon instance (auto-uses daemon
+connection info, so no long env prefix is needed):
+
+```bash
+pnpm --dir src lite:test:e2e -- --grep "single-doc"
+pnpm --dir src lite:test:e2e:headed -- --grep "single-doc"
+pnpm --dir src lite:test:e2e:strict -- --grep "single-doc"
+```
+
+Defaults:
+
+- config: `src/.local/lite-daemon.env`
+- state/logs: `src/.local/lite-daemon`
+- isolated home: `$HOME/scratch/<repo-name>-lite-daemon`
+- connection info: `src/.local/lite-daemon/connection-info.json`
+- sqlite db: `$LITE_HOME/.local/share/cocalc-lite/hub.db` (shown in `lite:daemon:status`)
+
+Safety note: `lite-daemon.sh` is PID-file scoped and only stops the exact process it started.
+It does not scan/kill other `node`/`cocalc-lite` processes.
+
 ## Self-host smoke test (multipass)
 
 ```bash

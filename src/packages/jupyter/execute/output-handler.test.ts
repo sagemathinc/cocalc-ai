@@ -39,4 +39,14 @@ describe("OutputHandler", () => {
 
     expect(cell.output?.["0"]?.text).toBe("hello");
   });
+
+  it("does not reset start time on repeated busy/start messages", () => {
+    const cell: any = { id: "alpha" };
+    const handler = new OutputHandler({ cell });
+    handler.start();
+    const firstStart = cell.start;
+    handler.start();
+    expect(cell.start).toBe(firstStart);
+    handler.done();
+  });
 });

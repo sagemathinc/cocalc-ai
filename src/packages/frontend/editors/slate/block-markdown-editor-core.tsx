@@ -59,6 +59,12 @@ interface BlockMarkdownEditorProps {
   getValueRef?: MutableRefObject<() => string>;
   disableBlockEditor?: boolean;
   disableVirtualization?: boolean;
+  blockChunkTargetChars?: number;
+  renderAfterBlock?: (args: {
+    index: number;
+    markdown: string;
+    blockCount: number;
+  }) => React.ReactNode;
 }
 
 export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
@@ -76,6 +82,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     onFocus,
     saveDebounceMs = DEFAULT_SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
+    ignoreRemoteMergesWhileFocused = false,
     style,
     value,
     minimal,
@@ -85,6 +92,8 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     renderPath,
     leafComponent,
     disableVirtualization = false,
+    blockChunkTargetChars,
+    renderAfterBlock,
   } = props;
   const internalControlRef = useRef<any>(null);
   const blockControlRef = controlRef ?? internalControlRef;
@@ -99,6 +108,11 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   // Block mode treats each block independently, so always disable significant
   // blank lines to avoid confusing per-block newline behavior.
   const preserveBlankLines = false;
+  const splitMarkdown = useCallback(
+    (markdown: string) =>
+      splitMarkdownToBlocks(markdown, { targetChars: blockChunkTargetChars }),
+    [blockChunkTargetChars],
+  );
 
   const {
     blocks,
@@ -115,6 +129,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   } = useBlockState({
     initialValue,
     valueRef,
+    blockChunkTargetChars,
   });
 
   const {
@@ -150,7 +165,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
   const getFullMarkdown = useCallback(() => joinBlocks(blocksRef.current), []);
-  const ignoreRemoteWhileFocused = false;
+  const ignoreRemoteWhileFocused = !!ignoreRemoteMergesWhileFocused;
 
   const {
     applyBlocksFromValue,
@@ -304,7 +319,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     is_current,
     containerRef,
     focusedIndex,
-    splitMarkdownToBlocks,
+    splitMarkdownToBlocks: splitMarkdown,
   });
 
 
@@ -374,6 +389,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     handleSelectBlock,
     lastLocalEditAtRef,
     lastRemoteMergeAtRef,
+    renderAfterBlock,
   });
 
   const {

@@ -13,7 +13,18 @@ import { normalizeBlockMarkdown } from "./block-markdown-utils";
 
 const BLOCK_CHUNK_TARGET_CHARS = 4000;
 
-function getBlockChunkTargetChars(): number {
+type SplitOptions = {
+  targetChars?: number;
+};
+
+function getBlockChunkTargetChars(targetChars?: number): number {
+  if (
+    typeof targetChars === "number" &&
+    Number.isFinite(targetChars) &&
+    targetChars > 0
+  ) {
+    return Math.floor(targetChars);
+  }
   if (typeof globalThis === "undefined") return BLOCK_CHUNK_TARGET_CHARS;
   const value = (globalThis as any).COCALC_SLATE_BLOCK_CHUNK_CHARS;
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
@@ -22,7 +33,10 @@ function getBlockChunkTargetChars(): number {
   return BLOCK_CHUNK_TARGET_CHARS;
 }
 
-export function splitMarkdownToBlocks(markdown: string): string[] {
+export function splitMarkdownToBlocks(
+  markdown: string,
+  options?: SplitOptions,
+): string[] {
   if (!markdown) return [""];
   const cache: { [node: string]: string } = {};
   const doc = markdown_to_slate(markdown, false, cache);
@@ -46,7 +60,7 @@ export function splitMarkdownToBlocks(markdown: string): string[] {
   const chunks: string[] = [];
   let current: string[] = [];
   let currentLength = 0;
-  const targetChars = getBlockChunkTargetChars();
+  const targetChars = getBlockChunkTargetChars(options?.targetChars);
   const flush = () => {
     if (current.length === 0) return;
     chunks.push(current.join("\n\n"));
@@ -161,9 +175,10 @@ export function splitMarkdownToBlocksIncremental(
   prevMarkdown: string,
   nextMarkdown: string,
   prevBlocks: string[],
+  options?: SplitOptions,
 ): string[] {
-  if (!prevMarkdown) return splitMarkdownToBlocks(nextMarkdown);
-  if (prevBlocks.length === 0) return splitMarkdownToBlocks(nextMarkdown);
+  if (!prevMarkdown) return splitMarkdownToBlocks(nextMarkdown, options);
+  if (prevBlocks.length === 0) return splitMarkdownToBlocks(nextMarkdown, options);
   if (prevMarkdown === nextMarkdown) return prevBlocks;
   const slices = computeIncrementalSlices(
     prevMarkdown,
@@ -171,11 +186,11 @@ export function splitMarkdownToBlocksIncremental(
     prevBlocks,
   );
   if (!slices) {
-    return splitMarkdownToBlocks(nextMarkdown);
+    return splitMarkdownToBlocks(nextMarkdown, options);
   }
   const { prefixBlocks, suffixBlocks, middleText } = slices;
   const middleBlocks =
-    middleText.length > 0 ? splitMarkdownToBlocks(middleText) : [];
+    middleText.length > 0 ? splitMarkdownToBlocks(middleText, options) : [];
   const nextBlocks = [...prefixBlocks, ...middleBlocks, ...suffixBlocks];
   return nextBlocks.length > 0 ? nextBlocks : [""];
 }

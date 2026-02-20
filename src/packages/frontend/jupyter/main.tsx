@@ -45,13 +45,15 @@ import KernelWarning from "./kernel-warning";
 import { KeyboardShortcuts } from "./keyboard-shortcuts";
 import * as toolComponents from "./llm";
 import { NBConvert } from "./nbconvert";
-import { KernelSelector } from "./select-kernel";
 import { Kernel } from "./status";
 
 export const ERROR_STYLE: CSS = {
   maxHeight: "30vh",
   overflow: "auto",
 } as const;
+
+const JUPYTER_TEST_SET_KERNEL_ERROR_EVENT =
+  "cocalc:jupyter:set-kernel-error-for-test";
 
 interface Props {
   error?: string;
@@ -110,10 +112,6 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
   const find_and_replace: undefined | boolean = useRedux([
     name,
     "find_and_replace",
-  ]);
-  const show_kernel_selector: undefined | boolean = useRedux([
-    name,
-    "show_kernel_selector",
   ]);
   // string name of the kernel
   const kernelspec = useRedux([name, "kernel_info"]);
@@ -223,8 +221,33 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     const setKernelErrorForTest = (message?: string) => {
       actions.set_kernel_error(message ?? "");
     };
+    const setFrameTypeForTest = (nextType?: string) => {
+      const localViewState = editor_actions.store?.get?.("local_view_state");
+      const activeId = localViewState?.get?.("active_id");
+      const targetType =
+        nextType === "jupyter-singledoc"
+          ? "jupyter_slate_single_doc_notebook"
+          : nextType === "jupyter"
+            ? "jupyter_cell_notebook"
+            : nextType || "jupyter_slate_single_doc_notebook";
+      if (activeId != null) {
+        editor_actions.set_frame_type(activeId, targetType);
+        return;
+      }
+      editor_actions.replace_frame_tree({ type: targetType });
+    };
+    const setKernelErrorFromEvent = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail
+        ?.message;
+      setKernelErrorForTest(message);
+    };
+    window.addEventListener(
+      JUPYTER_TEST_SET_KERNEL_ERROR_EVENT,
+      setKernelErrorFromEvent as EventListener,
+    );
     (window as any).__cocalcJupyterRuntime = {
       ...runtime,
+      test_surface_version: 2,
       windowed_list_enabled: false,
       windowed_list_forced: true,
       windowed_list_default: false,
@@ -237,6 +260,9 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       },
       clear_kernel_error_for_test: () => {
         setKernelErrorForTest("");
+      },
+      set_frame_type_for_test: (nextType?: string) => {
+        setFrameTypeForTest(nextType);
       },
     };
     document.documentElement.setAttribute(
@@ -259,7 +285,27 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
       "data-cocalc-jupyter-lazy-render-source",
       lazyForceSource,
     );
-  }, [actions]);
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-test-set-kernel-error",
+      "1",
+    );
+    document.documentElement.setAttribute(
+      "data-cocalc-jupyter-test-set-frame-type",
+      "1",
+    );
+    return () => {
+      window.removeEventListener(
+        JUPYTER_TEST_SET_KERNEL_ERROR_EVENT,
+        setKernelErrorFromEvent as EventListener,
+      );
+      document.documentElement.removeAttribute(
+        "data-cocalc-jupyter-test-set-kernel-error",
+      );
+      document.documentElement.removeAttribute(
+        "data-cocalc-jupyter-test-set-frame-type",
+      );
+    };
+  }, [actions, editor_actions]);
 
   const { usage, expected_cell_runtime } = useKernelUsage(name);
 
@@ -342,22 +388,18 @@ export const JupyterEditor: React.FC<Props> = React.memo((props: Props) => {
     );
   }
 
-  function render_select_kernel() {
-    return <KernelSelector actions={actions} />;
-  }
-
   function render_main() {
     if (!check_select_kernel_init) {
-      <Loading
-        style={{
-          fontSize: "24pt",
-          textAlign: "center",
-          marginTop: "15px",
-          color: COLORS.GRAY,
-        }}
-      />;
-    } else if (show_kernel_selector) {
-      return render_select_kernel();
+      return (
+        <Loading
+          style={{
+            fontSize: "24pt",
+            textAlign: "center",
+            marginTop: "15px",
+            color: COLORS.GRAY,
+          }}
+        />
+      );
     } else {
       return render_cells();
     }

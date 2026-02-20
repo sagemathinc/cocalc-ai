@@ -52,5 +52,14 @@ describe("jupyter run protocol classification", () => {
     });
     expect(decision).toEqual({ kind: "drop_after_finalize", id: "c1" });
   });
-});
 
+  it("drops lifecycle output after cell finalization", () => {
+    const finalized = new Set<string>(["c1"]);
+    const decision = classifyRunStreamMessage({
+      message: { id: "c1", run_id: "r1", lifecycle: "cell_done" },
+      activeRunId: "r1",
+      finalizedCells: finalized,
+    });
+    expect(decision).toEqual({ kind: "drop_after_finalize", id: "c1" });
+  });
+});

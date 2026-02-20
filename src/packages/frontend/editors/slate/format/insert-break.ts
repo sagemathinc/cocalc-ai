@@ -6,7 +6,10 @@
 
 import { Editor, Element, Range, Transforms } from "slate";
 import type { SlateEditor } from "../types";
-import { getCodeBlockText } from "../elements/code-block/utils";
+import {
+  getCodeBlockText,
+  isCodeLikeBlockType,
+} from "../elements/code-block/utils";
 import type { CodeBlock } from "../elements/code-block/types";
 
 const PYTHON_INFOS = new Set([
@@ -73,7 +76,7 @@ export const withInsertBreak = (editor: SlateEditor) => {
       if (lineEntry) {
         const codeBlockEntry = Editor.above(editor, {
           at: selection,
-          match: (n) => Element.isElement(n) && n.type === "code_block",
+          match: (n) => Element.isElement(n) && isCodeLikeBlockType(n.type),
         });
         if (!codeBlockEntry) {
           insertBreak();
