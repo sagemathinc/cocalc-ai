@@ -199,6 +199,7 @@ function Row({
                 minimal
                 noVfill
                 height="auto"
+                disableVirtualization
                 style={{ backgroundColor: "transparent" }}
                 onFocus={() => {
                   if (frameActions != null) {
