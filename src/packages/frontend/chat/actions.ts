@@ -627,34 +627,6 @@ export class ChatActions extends Actions<ChatState> {
     if (this.syncdb == null) {
       return false;
     }
-    const entry = this.getThreadRootDoc(threadKey);
-    if (entry == null) {
-      return false;
-    }
-    if ("name" in opts) {
-      const trimmed = (opts.name ?? "").trim();
-      if (trimmed) {
-        entry.doc.name = trimmed;
-      } else {
-        delete entry.doc.name;
-      }
-    }
-    if ("color" in opts) {
-      const trimmed = (opts.color ?? "").trim();
-      if (trimmed) {
-        entry.doc.thread_color = trimmed;
-      } else {
-        delete entry.doc.thread_color;
-      }
-    }
-    if ("icon" in opts) {
-      const trimmed = (opts.icon ?? "").trim();
-      if (trimmed) {
-        entry.doc.thread_icon = trimmed;
-      } else {
-        delete entry.doc.thread_icon;
-      }
-    }
     const configPatch: Record<string, unknown> = {};
     if ("name" in opts) {
       const trimmed = (opts.name ?? "").trim();
@@ -668,8 +640,9 @@ export class ChatActions extends Actions<ChatState> {
       const trimmed = (opts.icon ?? "").trim();
       configPatch.thread_icon = trimmed || null;
     }
-    this.setThreadConfigRecord(threadKey, configPatch);
-    this.setSyncdb(entry.doc);
+    if (!this.setThreadConfigRecord(threadKey, configPatch)) {
+      return false;
+    }
     this.syncdb.commit();
     return true;
   };
@@ -678,19 +651,13 @@ export class ChatActions extends Actions<ChatState> {
     if (this.syncdb == null) {
       return false;
     }
-    const entry = this.getThreadRootDoc(threadKey);
-    if (entry == null) {
+    if (
+      !this.setThreadConfigRecord(threadKey, {
+        pin: pinned,
+      })
+    ) {
       return false;
     }
-    if (pinned) {
-      entry.doc.pin = true;
-    } else {
-      entry.doc.pin = false;
-    }
-    this.setThreadConfigRecord(threadKey, {
-      pin: pinned,
-    });
-    this.setSyncdb(entry.doc);
     this.syncdb.commit();
     return true;
   };
