@@ -80,6 +80,9 @@ let conatClient: ConatClient | null = null;
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
 const RESTART_INTERRUPTED_NOTICE =
   "**Conversation interrupted because the backend server restarted.**";
+const THREAD_STATE_EVENT = "chat-thread-state";
+const THREAD_STATE_SENDER = "__thread_state__";
+const THREAD_STATE_SCHEMA_VERSION = 2;
 
 const chatWritersByChatKey = new Map<string, ChatStreamWriter>();
 const chatWritersByThreadId = new Map<string, ChatStreamWriter>();
@@ -253,6 +256,48 @@ export class ChatStreamWriter {
     where.date = this.metadata.message_date;
     where.sender_id = this.metadata.sender_id;
     return where;
+  }
+
+  private threadRootIso(): string {
+    const raw = this.metadata.reply_to ?? this.metadata.message_date;
+    const d = new Date(raw);
+    if (Number.isNaN(d.valueOf())) {
+      return new Date(this.metadata.message_date).toISOString();
+    }
+    return d.toISOString();
+  }
+
+  private resolvedThreadId(): string {
+    if (this.metadata.thread_id) return this.metadata.thread_id;
+    if (this.threadId) return this.threadId;
+    if (this.sessionKey) return this.sessionKey;
+    const root = this.threadRootIso();
+    return `legacy-thread-${root}`;
+  }
+
+  private setThreadState(
+    state: "idle" | "queued" | "running" | "interrupted" | "error" | "complete",
+  ): void {
+    if (this.closed || this.syncdbError || !this.syncdb) return;
+    try {
+      this.syncdb.set({
+        event: THREAD_STATE_EVENT,
+        sender_id: THREAD_STATE_SENDER,
+        date: this.threadRootIso(),
+        thread_id: this.resolvedThreadId(),
+        state,
+        active_message_id: this.metadata.message_id,
+        updated_at: new Date().toISOString(),
+        schema_version: THREAD_STATE_SCHEMA_VERSION,
+      });
+      this.syncdb.commit();
+    } catch (err) {
+      logger.debug("failed to update chat thread state", {
+        chatKey: this.chatKey,
+        state,
+        err,
+      });
+    }
   }
 
   private leaseKey() {
@@ -483,6 +528,7 @@ export class ChatStreamWriter {
     for (const payload of queued) {
       this.processPayload(payload, { persist: false });
     }
+    this.setThreadState("running");
   }
 
   private historyToArray(value: any): MessageHistory[] {
@@ -534,6 +580,10 @@ export class ChatStreamWriter {
       } catch (err) {
         logger.warn("failed to enqueue acp payload", err);
       }
+    }
+    if (payload.type === "status") {
+      this.setThreadState(payload.state === "running" ? "running" : "queued");
+      return;
     }
     if ((payload as any).type === "usage") {
       // Live usage updates from Codex; stash for commit and don't treat as a user-visible event.
@@ -614,6 +664,7 @@ export class ChatStreamWriter {
       }
       clearAcpPayloads(this.metadata);
       this.finished = true;
+      this.setThreadState(this.interruptNotified ? "interrupted" : "complete");
       this.finalizeLease("completed");
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
@@ -627,6 +678,7 @@ export class ChatStreamWriter {
       clearAcpPayloads(this.metadata);
       this.finished = true;
       this.finishedBy = "error";
+      this.setThreadState("error");
       this.finalizeLease("error", payload.error);
       this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
         this.timeTravel?.finalizeTurn(this.metadata.message_date),
@@ -779,6 +831,9 @@ export class ChatStreamWriter {
         : this.interruptNotified
           ? INTERRUPT_STATUS_TEXT
           : "writer disposed before terminal payload";
+      if (!this.finished) {
+        this.setThreadState(this.interruptNotified ? "interrupted" : "error");
+      }
       this.finalizeLease("aborted", reason);
     }
 
@@ -919,6 +974,7 @@ export class ChatStreamWriter {
     this.interruptedMessage = text;
     this.content = text;
     this.finishedBy = "interrupt";
+    this.setThreadState("interrupted");
     this.addLocalEvent({
       type: "message",
       text,
@@ -1236,6 +1292,26 @@ export async function recoverOrphanedAcpTurns(
             update.history = history;
           }
           syncdb.set(update);
+          const threadRootIso = (() => {
+            const raw = turn.reply_to ?? turn.message_date;
+            const d = new Date(raw);
+            if (Number.isNaN(d.valueOf())) return turn.message_date;
+            return d.toISOString();
+          })();
+          const threadId =
+            syncdbField<string>(current, "thread_id") ??
+            turn.session_id ??
+            `legacy-thread-${threadRootIso}`;
+          syncdb.set({
+            event: THREAD_STATE_EVENT,
+            sender_id: THREAD_STATE_SENDER,
+            date: threadRootIso,
+            thread_id: threadId,
+            state: "interrupted",
+            active_message_id: syncdbField<string>(current, "message_id"),
+            updated_at: new Date().toISOString(),
+            schema_version: THREAD_STATE_SCHEMA_VERSION,
+          });
           syncdb.commit();
           await syncdb.save();
         }

@@ -842,7 +842,13 @@ describe("recoverOrphanedAcpTurns", () => {
     const recovered = await recoverOrphanedAcpTurns(makeFakeClient() as any);
 
     expect(recovered).toBe(1);
-    const final = sets[sets.length - 1] as any;
+    const final = sets.find(
+      (row: any) => row.event === "chat" && row.generating === false,
+    ) as any;
+    const threadState = sets.find(
+      (row: any) =>
+        row.event === "chat-thread-state" && row.state === "interrupted",
+    ) as any;
     expect(final.generating).toBe(false);
     expect(final.sender_id).toBe("codex-agent");
     expect(final.acp_interrupted).toBe(true);
@@ -850,6 +856,7 @@ describe("recoverOrphanedAcpTurns", () => {
     expect(final.history?.[0]?.content).toContain(
       "Conversation interrupted because the backend server restarted.",
     );
+    expect(threadState).toBeTruthy();
     expect((queue.clearAcpPayloads as any).mock.calls.length).toBe(1);
     expect((turns.finalizeAcpTurnLease as any).mock.calls).toEqual(
       expect.arrayContaining([
