@@ -47,6 +47,7 @@ function execCountAdvanced(
 }
 
 async function primeKernel(
+	// @ts-ignore
   page: Parameters<typeof test>[0]["page"],
   cellIndex = 0,
 ) {
@@ -74,6 +75,7 @@ async function primeKernel(
 }
 
 async function ensureKernelReadyOrSkip(
+	// @ts-ignore
   page: Parameters<typeof test>[0]["page"],
   cellIndex = 0,
 ) {
