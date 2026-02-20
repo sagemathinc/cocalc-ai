@@ -11,7 +11,9 @@ and reuses existing output/runtime components.
 import { List, Map } from "immutable";
 import React from "react";
 import { useRedux } from "@cocalc/frontend/app-framework";
+import BlockMarkdownEditor from "@cocalc/frontend/editors/slate/block-markdown-editor";
 import MostlyStaticMarkdown from "@cocalc/frontend/editors/slate/mostly-static-markdown";
+import type { Actions as SlateActions } from "@cocalc/frontend/editors/slate/types";
 import { CellOutput } from "@cocalc/frontend/jupyter/cell-output";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { InputPrompt } from "@cocalc/frontend/jupyter/prompt/input";
@@ -48,15 +50,11 @@ function toCodeFence({
   return `${head}\n${input}\n${fence}`;
 }
 
-function inputAsMarkdown({
+function inputAsEditorMarkdown({
   cell,
-  id,
-  actions,
   kernel,
 }: {
   cell: Map<string, any>;
-  id: string;
-  actions: JupyterActions;
   kernel?: string | null;
 }): string {
   const cellType = `${cell.get("cell_type") ?? "code"}`;
@@ -65,14 +63,26 @@ function inputAsMarkdown({
     return toCodeFence({ input: rawInput, kernel });
   }
   if (cellType === "markdown") {
-    const trimmed = rawInput.trim();
-    const processed = actions.processRenderedMarkdown?.({
-      value: trimmed,
-      id,
-    });
-    return processed ?? trimmed;
+    return rawInput;
   }
   return toCodeFence({ input: rawInput, kernel: "text" });
+}
+
+function editorMarkdownToCellInput({
+  cellType,
+  markdown,
+}: {
+  cellType: string;
+  markdown: string;
+}): string {
+  if (cellType === "markdown") {
+    return markdown;
+  }
+  const fenced = markdown.match(/^(\s*)(`{3,})[^\n]*\n([\s\S]*?)\n\2\s*$/);
+  if (fenced != null) {
+    return fenced[3];
+  }
+  return markdown;
 }
 
 function Row({
@@ -101,7 +111,26 @@ function Row({
   moreOutput?: Map<string, any>;
 }) {
   const cellType = `${cell.get("cell_type") ?? "code"}`;
-  const markdown = inputAsMarkdown({ cell, id, actions, kernel });
+  const markdown = inputAsEditorMarkdown({ cell, kernel });
+  const setInputFromMarkdown = React.useCallback(
+    (value: string) => {
+      if (readOnly) {
+        return;
+      }
+      const input = editorMarkdownToCellInput({ cellType, markdown: value });
+      actions.set_cell_input(id, input, true);
+    },
+    [actions, id, cellType, readOnly],
+  );
+  const editorActions = React.useMemo<SlateActions | undefined>(() => {
+    if (readOnly) {
+      return;
+    }
+    return {
+      set_value: setInputFromMarkdown,
+    };
+  }, [readOnly, setInputFromMarkdown]);
+
   return (
     <div
       id={`slate-row-${id}`}
@@ -129,7 +158,22 @@ function Row({
             Cell {index + 1} ({cellType})
           </div>
           <div style={{ padding: "2px 0 4px 0" }}>
-            <MostlyStaticMarkdown value={markdown} />
+            {readOnly ? (
+              <MostlyStaticMarkdown value={markdown} />
+            ) : (
+              <BlockMarkdownEditor
+                key={`slate-cell-editor-${id}-${cellType}`}
+                value={markdown}
+                actions={editorActions}
+                read_only={readOnly}
+                hidePath
+                minimal
+                noVfill
+                height="auto"
+                style={{ backgroundColor: "transparent" }}
+                onFocus={() => actions.set_cur_id(id)}
+              />
+            )}
           </div>
         </div>
       </div>
