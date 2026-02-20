@@ -113,13 +113,14 @@ const FrameTreeEditor: React.FC<FrameTreeEditorProps> = React.memo(
 
     // if frameRootRef resizes, call actions.set_resize()
     useEffect(() => {
-      if (!frameRootRef.current) return;
+      const frameRoot = frameRootRef.current;
+      if (!frameRoot) return;
       const observer = new ResizeObserver(() => {
-        actions.set_resize?.();
+        actions?.set_resize?.();
       });
-      observer.observe(frameRootRef.current);
+      observer.observe(frameRoot);
       return () => observer.disconnect();
-    }, [frameRootRef.current]);
+    }, [actions]);
 
     function render_frame_tree(): Rendered {
       if (!is_loaded) return;

@@ -77,6 +77,7 @@ let program: { [option: string]: any } = {};
 export { program };
 
 const REGISTER_INTERVAL_S = 20;
+const DEFAULT_DELETE_EXPIRED_INTERVAL_S = 7200;
 
 function openUrlIfRequested(url: string): void {
   const flag = (process.env.COCALC_OPEN_BROWSER || "").toLowerCase();
@@ -127,6 +128,36 @@ async function init_update_stats(): Promise<void> {
   setInterval(() => update(), 60000);
   // Also do it once now:
   await update();
+}
+
+function initDeleteExpiredLoop(): void {
+  if (!isLaunchpadProduct()) {
+    return;
+  }
+  const intervalS = Number.parseInt(
+    process.env.COCALC_DELETE_EXPIRED_INTERVAL_S ??
+      `${DEFAULT_DELETE_EXPIRED_INTERVAL_S}`,
+    10,
+  );
+  const intervalMs =
+    Number.isFinite(intervalS) && intervalS > 0
+      ? intervalS * 1000
+      : DEFAULT_DELETE_EXPIRED_INTERVAL_S * 1000;
+  logger.info("starting periodic delete_expired maintenance loop", {
+    interval_ms: intervalMs,
+  });
+  const run = async () => {
+    try {
+      await callback2(getDatabase().delete_expired, {
+        count_only: false,
+      });
+    } catch (err) {
+      logger.error("periodic delete_expired failed", err);
+    } finally {
+      setTimeout(run, intervalMs);
+    }
+  };
+  void run();
 }
 
 async function initMetrics() {
@@ -343,6 +374,7 @@ async function startServer(): Promise<void> {
     initPurchasesMaintenanceLoop();
     initEphemeralMaintenance();
     initSalesloftMaintenance();
+    initDeleteExpiredLoop();
     setInterval(trimLogFileSize, 1000 * 60 * 3);
   }
 
@@ -455,6 +487,7 @@ async function main(): Promise<void> {
         true;
     // In daemon mode, do not run one-shot maintenance commands that
     // intentionally call process.exit() right after execution.
+    // Launchpad gets periodic delete_expired via initDeleteExpiredLoop().
     program.deleteExpired = false;
     program.blobMaintenance = false;
     program.updateStats = false;

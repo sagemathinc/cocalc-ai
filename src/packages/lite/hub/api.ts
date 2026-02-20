@@ -12,9 +12,9 @@ import {
 } from "@cocalc/util/misc";
 import { callRemoteHub, hasRemote, project_id } from "../remote";
 import { join } from "node:path";
-import { controlAgentDev } from "./control-agent";
 import { setSshUi, ssh } from "./ssh";
 import { setReflectUi, reflect } from "./reflect";
+import * as agent from "./agent";
 import {
   history as syncHistory,
   purgeHistory as syncPurgeHistory,
@@ -163,9 +163,9 @@ export const hubApi: HubApi = {
   projects: {},
   db: { touch: () => {}, userQuery },
   purchases: {},
+  agent,
   sync: { history: syncHistory, purgeHistory: syncPurgeHistory },
   jupyter: {},
-  controlAgent: { controlAgentDev },
   ssh,
   reflect,
 } as any;

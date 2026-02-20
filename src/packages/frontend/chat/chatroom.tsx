@@ -102,6 +102,7 @@ export interface ChatPanelProps {
   fontSize?: number;
   desc?: NodeDesc;
   variant?: "default" | "compact";
+  hideSidebar?: boolean;
 }
 
 function getDescValue(desc: NodeDesc | undefined, key: string) {
@@ -122,6 +123,7 @@ export function ChatPanel({
   fontSize = 13,
   desc,
   variant = "default",
+  hideSidebar = false,
 }: ChatPanelProps) {
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   const activity: undefined | immutable.Map<string, number> =
@@ -135,6 +137,14 @@ export function ChatPanel({
   const scrollToDate = getDescValue(desc, "data-scrollToDate") ?? null;
   const fragmentId = getDescValue(desc, "data-fragmentId") ?? null;
   const storedSidebarWidth = getDescValue(desc, "data-sidebarWidth");
+  const preferLatestThreadFromDescRaw = getDescValue(
+    desc,
+    "data-preferLatestThread",
+  );
+  const preferLatestThreadFromDesc =
+    preferLatestThreadFromDescRaw === true ||
+    preferLatestThreadFromDescRaw === "true" ||
+    preferLatestThreadFromDescRaw === 1;
   const [sidebarWidth, setSidebarWidth] = useState<number>(
     typeof storedSidebarWidth === "number" && storedSidebarWidth > 50
       ? storedSidebarWidth
@@ -186,6 +196,7 @@ export function ChatPanel({
     messages,
     fragmentId,
     storedThreadFromDesc,
+    preferLatestThread: preferLatestThreadFromDesc,
   });
 
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
@@ -554,6 +565,7 @@ export function ChatPanel({
         sidebarVisible={sidebarVisible}
         setSidebarVisible={setSidebarVisible}
         totalUnread={totalUnread}
+        hideSidebar={hideSidebar}
         sidebarContent={
           <ChatRoomSidebarContent
             actions={actions}

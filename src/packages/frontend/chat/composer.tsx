@@ -427,39 +427,6 @@ export function ChatRoomComposer({
         }}
       >
         <div style={{ flex: 1 }} />
-        {!hasInput && isSelectedThreadAI && (
-          <div
-            style={{
-              height: "47.5px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginBottom: "5px",
-            }}
-          >
-            {showSiteUsage ? (
-              <LLMUsageStatus
-                variant="compact"
-                showHelp={false}
-                compactWidth={115}
-              />
-            ) : (
-              <Tooltip title={`Likely source: ${codexSourceLongLabel}`}>
-                <Button
-                  size="small"
-                  style={{
-                    height: "auto",
-                    padding: "4px 6px",
-                    fontSize: "11px",
-                    minWidth: "115px",
-                  }}
-                >
-                  {codexSourceShortLabel}
-                </Button>
-              </Tooltip>
-            )}
-          </div>
-        )}
         {hasInput && (
           <>
             {isSelectedThreadAI ? (

@@ -20,8 +20,8 @@
     "./conat/file-server": "./dist/conat/file-server/index.js",
     "./conat/socketio": "./dist/conat/socketio/index.js",
     "./conat/project/*": "./dist/conat/project/*.js",
-    "./control-agent": "./dist/control-agent/index.js",
     "./project-backup": "./dist/project-backup/index.js",
+    "./llm": "./dist/llm/index.js",
     "./purchases/*": "./dist/purchases/*.js",
     "./stripe/*": "./dist/stripe/*.js",
     "./projects/control": "./dist/projects/control/index.js",
@@ -67,7 +67,6 @@
     "@langchain/ollama": "^1.0.1",
     "@langchain/openai": "^1.1.2",
     "@node-saml/passport-saml": "^5.1.0",
-    "@openai/agents": "^0.3.7",
     "@passport-js/passport-twitter": "^1.0.8",
     "@passport-next/passport-google-oauth2": "^1.0.0",
     "@passport-next/passport-oauth2": "^2.1.4",
@@ -111,8 +110,7 @@
     "safe-json-stringify": "^1.2.0",
     "sanitize-html": "^2.17.0",
     "stripe": "^17.5.0",
-    "uuid": "^8.3.2",
-    "zod": "^3.25.76"
+    "uuid": "^8.3.2"
   },
   "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/server",
   "repository": {

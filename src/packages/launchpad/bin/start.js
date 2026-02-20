@@ -18,6 +18,12 @@ function prependPath(dir) {
 (async () => {
   try {
     applyLaunchpadDefaults();
+    // Avoid inheriting stale postgres socket/user from a different checkout.
+    if (process.env.COCALC_DB === "pglite") {
+      delete process.env.PGHOST;
+      delete process.env.PGUSER;
+      delete process.env.PGDATABASE;
+    }
     logLaunchpadConfig();
     if (!process.env.NO_RSPACK_DEV_SERVER) {
       process.env.NO_RSPACK_DEV_SERVER = "1";
@@ -60,7 +66,6 @@ function prependPath(dir) {
     if (!process.argv.includes("--all")) {
       process.argv.push("--all");
     }
-
     require("@cocalc/hub/hub");
   } catch (err) {
     console.error("cocalc-launchpad failed to start:", err);

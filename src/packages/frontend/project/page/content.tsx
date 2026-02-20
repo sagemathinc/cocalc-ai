@@ -43,6 +43,7 @@ import { editor_id } from "@cocalc/frontend/project/utils";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { chatMetaFile } from "@cocalc/frontend/chat/paths";
 import { useProjectContext } from "../context";
+import { AgentsPanel } from "./flyouts/agents";
 import getAnchorTagComponent from "./anchor-tag-component";
 import HomePage from "./home-page";
 import { ProjectCollaboratorsPage } from "./project-collaborators";
@@ -59,7 +60,7 @@ const MAIN_STYLE: React.CSSProperties = {
 } as const;
 
 interface Props {
-  tab_name: string; // e.g., 'files', 'new', 'log', 'search', 'settings', or 'editor-<path>'
+  tab_name: string; // e.g., 'files', 'new', 'log', 'search', 'settings', 'agents', or 'editor-<path>'
   is_visible: boolean; // if false, editor is in the DOM (so all subtle DOM state preserved) but it is not visible on screen.
 }
 
@@ -180,6 +181,8 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
       return <ProjectInfo project_id={project_id} />;
     case "users":
       return <ProjectCollaboratorsPage />;
+    case "agents":
+      return <AgentsPanel project_id={project_id} />;
     default:
       // check for "editor-[filename]"
       if (!tab_name.startsWith("editor-")) {

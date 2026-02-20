@@ -20,15 +20,15 @@
       "require": "./dist/acp/index.js",
       "types": "./dist/acp/index.d.ts"
     },
-    "./control-agent": {
-      "import": "./dist/control-agent/index.js",
-      "require": "./dist/control-agent/index.js",
-      "types": "./dist/control-agent/index.d.ts"
-    },
     "./sync": {
       "import": "./dist/sync/index.js",
       "require": "./dist/sync/index.js",
       "types": "./dist/sync/index.d.ts"
+    },
+    "./agent-sdk": {
+      "import": "./dist/agent-sdk/index.js",
+      "require": "./dist/agent-sdk/index.js",
+      "types": "./dist/agent-sdk/index.d.ts"
     },
     "./package.json": "./package.json"
   },
@@ -51,7 +51,8 @@
     "@langchain/ollama": "^1.0.1",
     "@langchain/openai": "^1.1.2",
     "awaiting": "^3.0.0",
-    "lru-cache": "^7.18.3"
+    "lru-cache": "^7.18.3",
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

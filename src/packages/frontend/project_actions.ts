@@ -889,6 +889,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         }
         break;
 
+      case "agents":
+        if (opts.change_history) {
+          this.push_state("agents", "");
+        }
+        break;
+
       case "upgrades":
         if (opts.change_history) {
           this.push_state("upgrades", "");
@@ -2926,6 +2932,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           this.fromUrlDirectoryPath(segments.slice(scopedPathIndex).join("/")),
         );
         this.set_active_tab("search", { change_history: change_history });
+        break;
+
+      case "agents":
+        this.set_active_tab("agents", { change_history: change_history });
         break;
 
       case "info":

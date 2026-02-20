@@ -16,6 +16,7 @@ interface ThreadSelectionOptions {
   messages?: ChatMessages;
   fragmentId?: string | null;
   storedThreadFromDesc?: string | null;
+  preferLatestThread?: boolean;
 }
 
 export function useChatThreadSelection({
@@ -24,6 +25,7 @@ export function useChatThreadSelection({
   messages,
   fragmentId,
   storedThreadFromDesc,
+  preferLatestThread = false,
 }: ThreadSelectionOptions) {
   const [selectedThreadKey, setSelectedThreadKey0] = useState<string | null>(
     storedThreadFromDesc ?? COMBINED_FEED_KEY,
@@ -79,11 +81,19 @@ export function useChatThreadSelection({
     ) {
       return;
     }
+    if (preferLatestThread && allowAutoSelectThread) {
+      const latestThreadKey = threads[0]?.key;
+      if (latestThreadKey && latestThreadKey !== selectedThreadKey) {
+        setSelectedThreadKey(latestThreadKey);
+        setAllowAutoSelectThread(false);
+      }
+      return;
+    }
     const exists = threads.some((thread) => thread.key === selectedThreadKey);
     if (!exists && allowAutoSelectThread) {
       setSelectedThreadKey(COMBINED_FEED_KEY);
     }
-  }, [threads, selectedThreadKey, allowAutoSelectThread]);
+  }, [threads, selectedThreadKey, allowAutoSelectThread, preferLatestThread]);
 
   useEffect(() => {
     if (!fragmentId || messages == null) {

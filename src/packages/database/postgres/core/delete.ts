@@ -44,6 +44,17 @@ interface ConfirmDeleteOpts {
   cb: (err?: string | Error) => void;
 }
 
+function isMissingTableError(err: unknown): boolean {
+  if (!err) {
+    return false;
+  }
+  const e = err as { code?: string; message?: string };
+  if (e.code === "42P01") {
+    return true;
+  }
+  return String(e.message ?? err).includes("does not exist");
+}
+
 /**
  * Helper function to confirm destructive delete operations
  *
@@ -87,6 +98,10 @@ export function deleteExpired(db: PostgreSQL, opts: DeleteExpiredOpts): void {
       db._query({
         query: `SELECT COUNT(*) FROM ${table} WHERE expire <= NOW()`,
         cb: (err) => {
+          if (isMissingTableError(err)) {
+            tableCb();
+            return;
+          }
           // Note: CoffeeScript version logged counts via dbg()
           // We omit logging here for cleaner output
           tableCb(err);
@@ -97,6 +112,10 @@ export function deleteExpired(db: PostgreSQL, opts: DeleteExpiredOpts): void {
       db._query({
         query: `DELETE FROM ${table} WHERE expire <= NOW()`,
         cb: (err) => {
+          if (isMissingTableError(err)) {
+            tableCb();
+            return;
+          }
           tableCb(err);
         },
       });

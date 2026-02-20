@@ -12,6 +12,7 @@ interface Props {
   fontSize?: number;
   actions?: ChatActions;
   desc?;
+  hideSidebar?: boolean;
 }
 
 export default function SideChat({
@@ -21,6 +22,7 @@ export default function SideChat({
   style,
   fontSize,
   desc,
+  hideSidebar = false,
 }: Props) {
   const actionsViaContext = useActions(project_id, path);
   const actions: ChatActions = actions0 ?? actionsViaContext;
@@ -46,6 +48,7 @@ export default function SideChat({
           path={path}
           fontSize={fontSize}
           desc={desc}
+          hideSidebar={hideSidebar}
         />
       </div>
     </ChatDocProvider>
@@ -64,6 +67,7 @@ function SideChatInner(props: Props & { actions: ChatActions }) {
       fontSize={props.fontSize}
       desc={props.desc}
       variant="compact"
+      hideSidebar={props.hideSidebar}
     />
   );
 }
