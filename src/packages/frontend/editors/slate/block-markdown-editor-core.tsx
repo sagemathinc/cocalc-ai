@@ -76,6 +76,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
     onFocus,
     saveDebounceMs = DEFAULT_SAVE_DEBOUNCE_MS,
     remoteMergeIdleMs,
+    ignoreRemoteMergesWhileFocused = false,
     style,
     value,
     minimal,
@@ -150,7 +151,7 @@ export default function BlockMarkdownEditor(props: BlockMarkdownEditorProps) {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
   const getFullMarkdown = useCallback(() => joinBlocks(blocksRef.current), []);
-  const ignoreRemoteWhileFocused = false;
+  const ignoreRemoteWhileFocused = !!ignoreRemoteMergesWhileFocused;
 
   const {
     applyBlocksFromValue,

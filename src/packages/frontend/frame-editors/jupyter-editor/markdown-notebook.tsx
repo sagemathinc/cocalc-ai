@@ -35,6 +35,49 @@ interface Props {
   desc: Map<string, any>;
 }
 
+interface RowErrorBoundaryState {
+  hasError: boolean;
+}
+
+class RowErrorBoundary extends React.Component<
+  React.PropsWithChildren<{ id: string }>,
+  RowErrorBoundaryState
+> {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): RowErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(err: unknown) {
+    // Keep one bad Slate row from crashing the entire notebook frame.
+    // eslint-disable-next-line no-console
+    console.error("Jupyter Slate row crashed", this.props.id, err);
+  }
+
+  render() {
+    if (!this.state.hasError) {
+      return this.props.children;
+    }
+    return (
+      <div
+        style={{
+          border: "1px solid #ffd591",
+          background: "#fffbe6",
+          borderRadius: "6px",
+          padding: "8px 10px",
+          color: "#613400",
+        }}
+      >
+        This cell editor crashed. Reload the notebook tab to recover this row.
+      </div>
+    );
+  }
+}
+
 function toCodeFence({
   input,
   kernel,
@@ -190,25 +233,28 @@ function Row({
             {readOnly ? (
               <MostlyStaticMarkdown value={markdown} />
             ) : (
-              <BlockMarkdownEditor
-                key={`slate-cell-editor-${id}-${cellType}`}
-                value={markdown}
-                actions={editorActions}
-                read_only={readOnly}
-                hidePath
-                minimal
-                noVfill
-                height="auto"
-                disableVirtualization
-                style={{ backgroundColor: "transparent" }}
-                onFocus={() => {
-                  if (frameActions != null) {
-                    frameActions.set_cur_id(id);
-                  } else {
-                    actions.set_cur_id(id);
-                  }
-                }}
-              />
+              <RowErrorBoundary id={id}>
+                <BlockMarkdownEditor
+                  key={`slate-cell-editor-${id}-${cellType}`}
+                  value={markdown}
+                  actions={editorActions}
+                  read_only={readOnly}
+                  hidePath
+                  minimal
+                  noVfill
+                  height="auto"
+                  disableVirtualization
+                  ignoreRemoteMergesWhileFocused
+                  style={{ backgroundColor: "transparent" }}
+                  onFocus={() => {
+                    if (frameActions != null) {
+                      frameActions.set_cur_id(id);
+                    } else {
+                      actions.set_cur_id(id);
+                    }
+                  }}
+                />
+              </RowErrorBoundary>
             )}
           </div>
         </div>
