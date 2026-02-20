@@ -40,6 +40,7 @@ import {
 import { getBlobstore } from "../blobs/download";
 import {
   buildChatMessage,
+  computeChatIntegrityReport,
   deriveAcpLogRefs,
   type MessageHistory,
 } from "@cocalc/chat";
@@ -88,6 +89,8 @@ const THREAD_STATE_SCHEMA_VERSION = 2;
 
 const chatWritersByChatKey = new Map<string, ChatStreamWriter>();
 const chatWritersByThreadId = new Map<string, ChatStreamWriter>();
+let acpFinalizeMismatchCount = 0;
+let acpFinalizeRecoveredAfterRetryCount = 0;
 
 export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const top = Math.max(1, topN);
@@ -122,6 +125,33 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
     (sum, x) => sum + x.inflightLoads,
     0,
   );
+  const integrityTotals = snapshots.reduce(
+    (acc, snapshot) => {
+      const counters = snapshot.integrity;
+      if (!counters) return acc;
+      acc.orphan_messages += counters.orphan_messages ?? 0;
+      acc.duplicate_root_messages += counters.duplicate_root_messages ?? 0;
+      acc.missing_thread_config += counters.missing_thread_config ?? 0;
+      acc.invalid_reply_targets += counters.invalid_reply_targets ?? 0;
+      return acc;
+    },
+    {
+      orphan_messages: 0,
+      duplicate_root_messages: 0,
+      missing_thread_config: 0,
+      invalid_reply_targets: 0,
+    },
+  );
+  const integrityChatsWithViolations = snapshots.filter((snapshot) => {
+    const counters = snapshot.integrity;
+    if (!counters) return false;
+    return (
+      (counters.orphan_messages ?? 0) > 0 ||
+      (counters.duplicate_root_messages ?? 0) > 0 ||
+      (counters.missing_thread_config ?? 0) > 0 ||
+      (counters.invalid_reply_targets ?? 0) > 0
+    );
+  }).length;
   const topWritersByEvents = [...snapshots]
     .sort((a, b) => b.events - a.events)
     .slice(0, top)
@@ -133,6 +163,7 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       finished: x.finished,
       disposeScheduled: x.disposeScheduled,
       threadIds: x.threadIds,
+      integrity: x.integrity,
       timeTravel: x.timeTravel,
     }));
   return {
@@ -148,6 +179,19 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
     timeTravelPendingOps,
     timeTravelSyncDocs,
     timeTravelInflightLoads,
+    integrityChatsWithViolations,
+    integrityTotals: {
+      "chat.integrity.orphan_messages": integrityTotals.orphan_messages,
+      "chat.integrity.duplicate_root_messages":
+        integrityTotals.duplicate_root_messages,
+      "chat.integrity.missing_thread_config":
+        integrityTotals.missing_thread_config,
+      "chat.integrity.invalid_reply_targets":
+        integrityTotals.invalid_reply_targets,
+      "chat.acp.finalize_mismatch": acpFinalizeMismatchCount,
+      "chat.acp.finalize_recovered_after_retry":
+        acpFinalizeRecoveredAfterRetryCount,
+    },
     topWritersByEvents,
   };
 }
@@ -776,6 +820,7 @@ export class ChatStreamWriter {
       }
       if (lastGenerating === false) {
         if (i > 0) {
+          acpFinalizeRecoveredAfterRetryCount += 1;
           logger.warn("chat terminal state recovered after verification retry", {
             chatKey: this.chatKey,
             source,
@@ -786,6 +831,7 @@ export class ChatStreamWriter {
       }
       this.commitNow(false, "terminal-verify");
     }
+    acpFinalizeMismatchCount += 1;
     logger.warn("chat terminal verification failed; chat remains generating", {
       chatKey: this.chatKey,
       source,
@@ -992,6 +1038,22 @@ export class ChatStreamWriter {
 
   watchdogSnapshot() {
     const timeTravelStats = this.timeTravel?.debugStats();
+    let integrity:
+      | ReturnType<typeof computeChatIntegrityReport>["counters"]
+      | undefined;
+    if (this.syncdb && typeof (this.syncdb as any).get === "function") {
+      try {
+        const rows = (this.syncdb as any).get();
+        if (Array.isArray(rows) && rows.length > 0) {
+          integrity = computeChatIntegrityReport(rows).counters;
+        }
+      } catch (err) {
+        logger.debug("failed to compute chat integrity snapshot", {
+          chatKey: this.chatKey,
+          err,
+        });
+      }
+    }
     return {
       chatKey: this.chatKey,
       path: this.metadata.path,
@@ -1002,6 +1064,7 @@ export class ChatStreamWriter {
       disposeScheduled: this.disposeTimer != null,
       hasSyncdbError: this.syncdbError != null,
       threadIds: this.getKnownThreadIds(),
+      integrity,
       timeTravel:
         timeTravelStats == null
           ? undefined

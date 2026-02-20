@@ -254,6 +254,7 @@ export function initWatchdog() {
       changefeeds.activeSockets - (changefeeds.activeByAccountTotal ?? 0),
     );
     const acp = getAcpWatchdogStats({ topN });
+    const acpIntegrity = acp.integrityTotals ?? {};
     const backendWatchers = getBackendWatcherDebugStats({ topN });
 
     const reasons: string[] = [];
@@ -271,6 +272,31 @@ export function initWatchdog() {
       reasons.push(`changefeeds.untracked=${changefeedUntracked}`);
     if (acp.activeWriters >= acpActiveWritersWarn)
       reasons.push(`acp.activeWriters=${acp.activeWriters}`);
+    if ((acpIntegrity["chat.acp.finalize_mismatch"] ?? 0) > 0) {
+      reasons.push(
+        `chat.acp.finalize_mismatch=${acpIntegrity["chat.acp.finalize_mismatch"]}`,
+      );
+    }
+    if ((acpIntegrity["chat.integrity.orphan_messages"] ?? 0) > 0) {
+      reasons.push(
+        `chat.integrity.orphan_messages=${acpIntegrity["chat.integrity.orphan_messages"]}`,
+      );
+    }
+    if ((acpIntegrity["chat.integrity.duplicate_root_messages"] ?? 0) > 0) {
+      reasons.push(
+        `chat.integrity.duplicate_root_messages=${acpIntegrity["chat.integrity.duplicate_root_messages"]}`,
+      );
+    }
+    if ((acpIntegrity["chat.integrity.missing_thread_config"] ?? 0) > 0) {
+      reasons.push(
+        `chat.integrity.missing_thread_config=${acpIntegrity["chat.integrity.missing_thread_config"]}`,
+      );
+    }
+    if ((acpIntegrity["chat.integrity.invalid_reply_targets"] ?? 0) > 0) {
+      reasons.push(
+        `chat.integrity.invalid_reply_targets=${acpIntegrity["chat.integrity.invalid_reply_targets"]}`,
+      );
+    }
     if (backendWatchers.active >= backendWatcherActiveWarn)
       reasons.push(`backendWatchers.active=${backendWatchers.active}`);
 

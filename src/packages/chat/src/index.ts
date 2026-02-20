@@ -251,3 +251,4 @@ export function buildThreadStateRecord(
 
 export * from "./acp";
 export * from "./acp-log";
+export * from "./integrity";
