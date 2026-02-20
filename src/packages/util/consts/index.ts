@@ -19,7 +19,9 @@ export {
   R2_REGION_LABELS,
   R2_REGIONS,
   mapCloudRegionToR2Region,
+  mapCountryRegionToR2Region,
   parseR2Region,
+  rankR2RegionDistance,
   type R2Region,
 } from "./r2-regions";
 
