@@ -3,6 +3,13 @@ import { normalizeChatMessage } from "./normalize";
 
 export function initFromSyncDB({}: { syncdb: any; store: any }) {}
 
+const ignoredChatEvents = new Set([
+  "chat-thread",
+  "chat-thread-config",
+  "chat-thread-state",
+]);
+const warnedUnknownEvents = new Set<string>();
+
 export function handleSyncDBChange({
   syncdb,
   store,
@@ -57,7 +64,14 @@ export function handleSyncDBChange({
       continue;
     }
 
-    console.warn("unknown chat event: ", event);
+    if (ignoredChatEvents.has(event)) {
+      continue;
+    }
+    const key = typeof event === "string" ? event : String(event);
+    if (!warnedUnknownEvents.has(key)) {
+      warnedUnknownEvents.add(key);
+      console.warn("unknown chat event: ", event);
+    }
   }
 
   if (!activityReady) {
