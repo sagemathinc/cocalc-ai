@@ -422,17 +422,26 @@ export default function Message({
     [message],
   );
 
-  // Prefer the persisted sessionId on the thread root's acp_config; fall back
-  // to the thread id we get from the ACP payload, then the thread key.
-  const sessionIdForInterrupt = useMemo(() => {
+  const threadCodexConfig = useMemo(() => {
     const rootMessage =
       threadKeyForSession != null
         ? messages?.get(threadKeyForSession)
         : undefined;
-    const cfg = field<CodexThreadConfig>(rootMessage, "acp_config");
-    const sessionId = cfg?.sessionId;
-    return sessionId ?? acpThreadId ?? threadKeyForSession;
-  }, [messages, threadKeyForSession, acpThreadId]);
+    return field<CodexThreadConfig>(rootMessage, "acp_config");
+  }, [messages, threadKeyForSession]);
+
+  // Prefer the persisted sessionId on the thread root's acp_config; fall back
+  // to the thread id we get from the ACP payload, then the thread key.
+  const sessionIdForInterrupt = useMemo(
+    () =>
+      threadCodexConfig?.sessionId ?? acpThreadId ?? threadKeyForSession,
+    [threadCodexConfig, acpThreadId, threadKeyForSession],
+  );
+
+  const activityBasePath = useMemo(
+    () => threadCodexConfig?.workingDirectory,
+    [threadCodexConfig],
+  );
 
   const feedbackMap = useMemo(() => field<any>(message, "feedback"), [message]);
 
@@ -948,6 +957,7 @@ export default function Message({
           fontSize={font_size}
           project_id={project_id}
           path={path}
+          activityBasePath={activityBasePath}
           date={date}
           fallbackLogRefs={fallbackLogRefs}
           activityContext={{
