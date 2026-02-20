@@ -17,6 +17,9 @@ export interface AcpTurnLeaseKey {
 
 export interface AcpTurnLeaseRow extends AcpTurnLeaseKey {
   reply_to?: string | null;
+  message_id?: string | null;
+  thread_id?: string | null;
+  reply_to_message_id?: string | null;
   sender_id?: string | null;
   session_id?: string | null;
   state: AcpTurnLeaseState;
@@ -36,6 +39,9 @@ function init(): void {
       path TEXT NOT NULL,
       message_date TEXT NOT NULL,
       reply_to TEXT,
+      message_id TEXT,
+      thread_id TEXT,
+      reply_to_message_id TEXT,
       sender_id TEXT,
       session_id TEXT,
       state TEXT NOT NULL,
@@ -54,6 +60,20 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_turns_owner_state_idx ON ${TABLE}(owner_instance_id, state)`,
   );
+  const columns = db.prepare(`PRAGMA table_info(${TABLE})`).all() as Array<{
+    name: string;
+  }>;
+  const hasColumn = (name: string): boolean =>
+    columns.some((x) => x?.name === name);
+  if (!hasColumn("message_id")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN message_id TEXT`);
+  }
+  if (!hasColumn("thread_id")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN thread_id TEXT`);
+  }
+  if (!hasColumn("reply_to_message_id")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN reply_to_message_id TEXT`);
+  }
 }
 
 let initialized = false;
@@ -90,10 +110,13 @@ export function startAcpTurnLease({
   const now = Date.now();
   db.prepare(
     `INSERT INTO ${TABLE}
-      (project_id, path, message_date, reply_to, sender_id, session_id, state, owner_instance_id, pid, started_at, heartbeat_at, ended_at, reason)
-      VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, NULL, NULL)
+      (project_id, path, message_date, reply_to, message_id, thread_id, reply_to_message_id, sender_id, session_id, state, owner_instance_id, pid, started_at, heartbeat_at, ended_at, reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, NULL, NULL)
       ON CONFLICT(project_id, path, message_date) DO UPDATE SET
         reply_to = excluded.reply_to,
+        message_id = COALESCE(excluded.message_id, ${TABLE}.message_id),
+        thread_id = COALESCE(excluded.thread_id, ${TABLE}.thread_id),
+        reply_to_message_id = COALESCE(excluded.reply_to_message_id, ${TABLE}.reply_to_message_id),
         sender_id = excluded.sender_id,
         session_id = COALESCE(excluded.session_id, ${TABLE}.session_id),
         state = 'running',
@@ -108,6 +131,9 @@ export function startAcpTurnLease({
     key.path,
     key.message_date,
     context.reply_to ?? null,
+    context.message_id ?? null,
+    context.thread_id ?? null,
+    context.reply_to_message_id ?? null,
     context.sender_id ?? null,
     session_id ?? null,
     owner_instance_id,
@@ -219,6 +245,9 @@ export function listRunningAcpTurnLeases({
       path,
       message_date,
       reply_to,
+      message_id,
+      thread_id,
+      reply_to_message_id,
       sender_id,
       session_id,
       state,

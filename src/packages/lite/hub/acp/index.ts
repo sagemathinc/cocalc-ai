@@ -1319,6 +1319,9 @@ export async function recoverOrphanedAcpTurns(
       message_date: turn.message_date,
       sender_id: turn.sender_id ?? "openai-codex-agent",
       reply_to: turn.reply_to ?? undefined,
+      message_id: turn.message_id ?? undefined,
+      thread_id: turn.thread_id ?? undefined,
+      reply_to_message_id: turn.reply_to_message_id ?? undefined,
     };
     try {
       clearAcpPayloads(context);
@@ -1339,11 +1342,10 @@ export async function recoverOrphanedAcpTurns(
           await once(syncdb, "ready");
         }
         const senderId = turn.sender_id ?? "openai-codex-agent";
-        const current = syncdb.get_one({
-          event: "chat",
-          date: turn.message_date,
-          sender_id: senderId,
-        });
+        const where = turn.message_id
+          ? { event: "chat", message_id: turn.message_id }
+          : { event: "chat", date: turn.message_date, sender_id: senderId };
+        const current = syncdb.get_one(where);
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
           const history = appendRestartNotice(syncdbField(current, "history"));
@@ -1356,6 +1358,15 @@ export async function recoverOrphanedAcpTurns(
             acp_interrupted_reason: "server_restart",
             acp_interrupted_text: RESTART_INTERRUPTED_NOTICE,
           };
+          if (turn.message_id) {
+            update.message_id = turn.message_id;
+          }
+          if (turn.thread_id) {
+            update.thread_id = turn.thread_id;
+          }
+          if (turn.reply_to_message_id) {
+            update.reply_to_message_id = turn.reply_to_message_id;
+          }
           if (history.length > 0) {
             update.history = history;
           }
@@ -1368,6 +1379,7 @@ export async function recoverOrphanedAcpTurns(
           })();
           const threadId =
             syncdbField<string>(current, "thread_id") ??
+            turn.thread_id ??
             turn.session_id ??
             `legacy-thread-${threadRootIso}`;
           syncdb.set({
