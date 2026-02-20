@@ -19,6 +19,32 @@ type QueueItem = {
 };
 type QueueState = { running: boolean; items: QueueItem[] };
 const turnQueues: Map<QueueKey, QueueState> = new Map();
+let lastGeneratedAcpMessageMs = 0;
+
+function nextAcpMessageDate({
+  actions,
+  minMs,
+}: {
+  actions: ChatActions;
+  minMs: number;
+}): Date {
+  const messages = actions.getAllMessages?.();
+  let candidate = Math.max(Date.now(), minMs, lastGeneratedAcpMessageMs + 1);
+  let collisions = 0;
+  while (messages?.has(`${candidate}`)) {
+    collisions += 1;
+    candidate += 1;
+  }
+  if (collisions > 0) {
+    console.warn("ACP message_date collision avoided", {
+      minMs,
+      collisions,
+      candidate,
+    });
+  }
+  lastGeneratedAcpMessageMs = candidate;
+  return new Date(candidate);
+}
 
 function getQueue(key: QueueKey): QueueState {
   let q = turnQueues.get(key);
@@ -205,14 +231,12 @@ export async function processAcpLLM({
       // Generate a stable assistant-reply key for this turn, but do NOT write any
       // corresponding chat row here. The backend is the sole writer of the assistant
       // reply row (avoids frontend/backend sync races on the same row).
-      let newMessageDate = new Date();
-      if (newMessageDate.valueOf() <= messageDate.valueOf()) {
-        // ensure ai response message is after the message we're
-        // responding to.
-        newMessageDate = new Date(
-          messageDate.valueOf() + Math.round(100 * Math.random()),
-        );
-      }
+      // Chat cache and thread lookup currently key by millisecond timestamp.
+      // Never allow ACP assistant rows to reuse an existing timestamp.
+      const newMessageDate = nextAcpMessageDate({
+        actions,
+        minMs: Math.max(messageDate.valueOf(), threadRootDate.valueOf()) + 1,
+      });
       const chatMetadata = buildChatMetadata({
         project_id,
         path,
