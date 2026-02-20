@@ -56,6 +56,20 @@ find_primary_hub_pid() {
   find_hub_pids_on_config_port | tail -n 1
 }
 
+detect_hub_postgres_socket_dir() {
+  if [ ! -f "$HUB_STDOUT_LOG" ]; then
+    return 0
+  fi
+  sed -n "s/.*socketDir: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
+}
+
+detect_hub_postgres_data_dir() {
+  if [ ! -f "$HUB_STDOUT_LOG" ]; then
+    return 0
+  fi
+  sed -n "s/.*dataDir: '\\([^']*\\)'.*/\\1/p" "$HUB_STDOUT_LOG" | tail -n 1
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <init|start|stop|restart|status|logs|env>
@@ -280,6 +294,21 @@ show_status() {
   echo "state:  $STATE_DIR"
   echo "stdout: $HUB_STDOUT_LOG"
   echo "debug:  $HUB_DEBUG_FILE"
+  local pg_host pg_data
+  pg_host="$(detect_hub_postgres_socket_dir || true)"
+  pg_data="$(detect_hub_postgres_data_dir || true)"
+  if [ -n "$pg_host" ]; then
+    echo "postgres socket (PGHOST): $pg_host"
+    echo "postgres user   (PGUSER): smc"
+    echo "psql hint: export PGHOST='$pg_host' PGUSER='smc'"
+  else
+    echo "postgres socket (PGHOST): not detected from $HUB_STDOUT_LOG"
+    echo "postgres user   (PGUSER): smc"
+    echo "hint: grep socketDir in hub log, then export PGHOST and PGUSER=smc"
+  fi
+  if [ -n "$pg_data" ]; then
+    echo "postgres data dir: $pg_data"
+  fi
   if [ -n "$HUB_SOFTWARE_BASE_URL_FORCE" ]; then
     echo "software base (forced): $HUB_SOFTWARE_BASE_URL_FORCE"
   fi
