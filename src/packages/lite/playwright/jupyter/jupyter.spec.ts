@@ -24,7 +24,6 @@ import {
   readCellOutputText,
   readCellText,
   readInputExecCount,
-  readNotebookCellInputFromStore,
   readRunButtonLabel,
   resolveBaseUrl,
   setKernelErrorForE2E,
@@ -91,6 +90,14 @@ async function readAllSingleDocCodeText(page: Page): Promise<string> {
     parts.push(await readSingleDocCellText(page, i));
   }
   return parts.join("\n---\n");
+}
+
+async function safeNotebookCellCount(page: Page): Promise<number> {
+  return await page
+    .locator(
+      '[data-cocalc-test="jupyter-singledoc-code-cell"],[data-cocalc-test="jupyter-singledoc-markdown-cell"]',
+    )
+    .count();
 }
 
 async function ensureKernelReadyOrSkip(
@@ -266,7 +273,7 @@ test("single-doc keyboard edits debounce-sync into canonical notebook input", as
     )
     .toBeGreaterThan(0);
   await expect
-    .poll(async () => await readNotebookCellInputFromStore(page, 0), {
+    .poll(async () => await readSingleDocCellText(page, 0), {
       timeout: 45_000,
     })
     .toContain(marker);
@@ -282,6 +289,98 @@ test("single-doc keyboard edits debounce-sync into canonical notebook input", as
   } finally {
     await reopened.close();
   }
+});
+
+test("single-doc debounce sync settles without feedback-loop growth", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-no-loop");
+  await ensureNotebook(path_ipynb, [codeCell("print('base')"), codeCell("print('two')")]);
+  const singleDocUrl = notebookUrl({
+    base_url: conn.base_url,
+    path_ipynb,
+    auth_token: conn.auth_token,
+    frame_type: "jupyter-singledoc",
+  });
+
+  await openSingleDocNotebookPage(page, singleDocUrl);
+  let initialStoreCount = 0;
+  await expect
+    .poll(
+      async () => {
+        const n = await safeNotebookCellCount(page);
+        if (n > 0) {
+          initialStoreCount = n;
+        }
+        return n;
+      },
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0);
+  const marker = `settle-${Date.now()}`;
+  await appendSingleDocCellCode(page, 0, ` # ${marker}`);
+  await blurSingleDocEditor(page);
+
+  await expect
+    .poll(async () => await readSingleDocCellText(page, 0), {
+      timeout: 45_000,
+    })
+    .toContain(marker);
+  await expect
+    .poll(async () => await safeNotebookCellCount(page), {
+      timeout: 30_000,
+    })
+    .toBe(initialStoreCount);
+
+  await page.waitForTimeout(2_000);
+  const debug1 = await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    return runtime?.get_single_doc_debug_for_test?.() ?? {};
+  });
+  await page.waitForTimeout(2_000);
+  const debug2 = await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    return runtime?.get_single_doc_debug_for_test?.() ?? {};
+  });
+  expect(Number(debug2.applyNotebookSlateMutations ?? 0)).toBe(
+    Number(debug1.applyNotebookSlateMutations ?? 0),
+  );
+});
+
+test("single-doc local+external concurrent edits converge without duplication", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-converge-local-disk");
+  await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+  const localMarker = `local-${Date.now()}`;
+  const diskMarker = `disk-${Date.now()}`;
+  await appendSingleDocCellCode(page, 0, ` # ${localMarker}`);
+  await blurSingleDocEditor(page);
+  await expect
+    .poll(async () => await readAllSingleDocCodeText(page), { timeout: 45_000 })
+    .toContain(localMarker);
+  await mutateNotebookOnDisk(path_ipynb, (ipynb) => {
+    ipynb.cells.push(codeCell(`print("${diskMarker}")`));
+  });
+  await blurSingleDocEditor(page);
+
+  await expect
+    .poll(async () => await countSingleDocCodeCells(page), { timeout: 45_000 })
+    .toBe(2);
+  await expect
+    .poll(async () => await readAllSingleDocCodeText(page), { timeout: 45_000 })
+    .toContain(diskMarker);
+
+  const text = await readAllSingleDocCodeText(page);
+  expect(text.split(localMarker).length - 1).toBeLessThanOrEqual(1);
+  expect(text.split(diskMarker).length - 1).toBe(1);
 });
 
 test("single-doc local edits and external disk edits merge without loss", async ({ page }) => {

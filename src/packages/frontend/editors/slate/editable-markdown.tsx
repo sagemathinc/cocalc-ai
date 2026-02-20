@@ -1074,7 +1074,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (e.defaultPrevented) return;
 
     const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.shiftKey && !e.altKey) {
+    const jupyterCellShortcutMode =
+      (mod && e.shiftKey && !e.altKey) ||
+      (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey);
+    if (jupyterCellShortcutMode) {
       const key = e.key.toLowerCase();
       if (key === "b" && insertJupyterCellBelow("code")) {
         e.preventDefault();
@@ -1084,7 +1087,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         e.preventDefault();
         return;
       }
-      if ((key === "-" || e.code === "Minus") && splitJupyterCell()) {
+      if (
+        (key === "-" || key === "_" || key === "s" || e.code === "Minus") &&
+        splitJupyterCell()
+      ) {
         e.preventDefault();
         return;
       }

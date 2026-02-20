@@ -405,9 +405,22 @@ export async function pressSingleDocRunShortcut(
   index: number,
   shortcut: "Shift+Enter" | "Alt+Enter",
 ): Promise<void> {
+  await pressSingleDocShortcut(page, index, shortcut);
+}
+
+export async function pressSingleDocShortcut(
+  page: Page,
+  index: number,
+  shortcut: string,
+): Promise<void> {
   const cell = singleDocCodeCellLocator(page, index);
   await cell.scrollIntoViewIfNeeded();
-  await cell.locator(".cocalc-slate-code-block").first().click();
+  const line = cell.locator(".cocalc-slate-code-line").last();
+  if ((await line.count()) > 0) {
+    await line.click();
+  } else {
+    await cell.locator(".cocalc-slate-code-block").first().click();
+  }
   await page.keyboard.press(shortcut);
 }
 
