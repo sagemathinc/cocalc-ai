@@ -1,14 +1,11 @@
 #!/usr/bin/env node
 
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir as mkdirLocal, readFile as readFileLocal, writeFile as writeFileLocal } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { homedir, hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { URL } from "node:url";
-import { AsciiTable3 } from "ascii-table3";
 import { Command } from "commander";
 
 import pkg from "../../package.json";
@@ -19,17 +16,11 @@ import callHub from "@cocalc/conat/hub/call-hub";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type {
-  HostCatalog,
-  HostCatalogEntry,
   HostConnectionInfo,
-  HostMachine,
-  HostSoftwareArtifact,
-  HostSoftwareChannel,
 } from "@cocalc/conat/hub/api/hosts";
 import type { LroScopeType, LroSummary as HubLroSummary } from "@cocalc/conat/hub/api/lro";
 import type {
   ProjectCollabInviteRow,
-  WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
 import { fsClient, fsSubject, type FilesystemClient } from "@cocalc/conat/files/fs";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
@@ -68,6 +59,33 @@ import {
 } from "./core/workspace-resolve";
 import { createWorkspaceFileOps } from "./core/workspace-file";
 import { createWorkspaceCodexOps } from "./core/workspace-codex";
+import { createWorkspaceSyncOps } from "./core/workspace-sync";
+import {
+  commandExists,
+  isLikelySshAuthFailure,
+  resolveCloudflaredBinary,
+  runCommand,
+  runSsh,
+  runSshCheck,
+} from "./core/system-command";
+import {
+  asObject,
+  emitError as emitErrorCore,
+  emitSuccess,
+  printArrayTable,
+} from "./core/cli-output";
+import {
+  HOST_CREATE_DISK_TYPES,
+  HOST_CREATE_STORAGE_MODES,
+  createHostHelpers,
+  inferRegionFromZone,
+  normalizeHostProviderValue,
+  parseHostMachineJson,
+  parseHostSoftwareArtifactsOption,
+  parseHostSoftwareChannelsOption,
+  parseOptionalPositiveInteger,
+  summarizeHostCatalogEntries,
+} from "./core/host-helpers";
 import {
   daemonLogPath,
   daemonPidPath,
@@ -214,7 +232,6 @@ const WORKSPACE_CONTEXT_FILENAME = ".cocalc-workspace";
 const PROJECT_HOST_TOKEN_TTL_LEEWAY_MS = 60_000;
 const WORKSPACE_CACHE_TTL_MS = 15_000;
 const HOST_CONNECTION_CACHE_TTL_MS = 15_000;
-const HOST_SSH_RESOLVE_TIMEOUT_MS = 5_000;
 
 function cliDebug(...args: unknown[]): void {
   if (!cliDebugEnabled) return;
@@ -309,21 +326,6 @@ function defaultApiBaseUrl(): string {
   return normalizeUrl(raw);
 }
 
-
-function asObject(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { value };
-  }
-  return value as Record<string, unknown>;
-}
-
-function formatValue(value: unknown): string {
-  if (value == null) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value);
-}
-
 function asUtf8(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "string") return value;
@@ -358,105 +360,12 @@ function normalizeProcessExitCode(raw: unknown, stdout: string, stderr: string):
   return 1;
 }
 
-function printKeyValueTable(data: Record<string, unknown>): void {
-  const table = new AsciiTable3("Result");
-  table.setStyle("unicode-round");
-  table.setHeading("Field", "Value");
-  for (const [key, value] of Object.entries(data)) {
-    table.addRow(key, formatValue(value));
-  }
-  console.log(table.toString());
-}
-
-function printArrayTable(rows: Record<string, unknown>[]): void {
-  if (rows.length === 0) {
-    console.log("(no rows)");
-    return;
-  }
-  const cols = Array.from(
-    rows.reduce((set, row) => {
-      Object.keys(row).forEach((k) => set.add(k));
-      return set;
-    }, new Set<string>()),
-  );
-  const table = new AsciiTable3("Result");
-  table.setStyle("unicode-round");
-  table.setHeading(...cols);
-  for (const row of rows) {
-    table.addRow(...cols.map((col) => formatValue(row[col])));
-  }
-  console.log(table.toString());
-}
-
-function emitSuccess(
-  ctx: { globals: GlobalOptions; apiBaseUrl?: string; accountId?: string },
-  commandName: string,
-  data: unknown,
-): void {
-  if (ctx.globals.json || ctx.globals.output === "json") {
-    const payload = {
-      ok: true,
-      command: commandName,
-      data,
-      meta: {
-        api: ctx.apiBaseUrl ?? null,
-        account_id: ctx.accountId ?? null,
-      },
-    };
-    console.log(JSON.stringify(payload, null, 2));
-    return;
-  }
-
-  if (ctx.globals.quiet) {
-    return;
-  }
-
-  if (Array.isArray(data) && data.every((x) => x && typeof x === "object" && !Array.isArray(x))) {
-    printArrayTable(data as Record<string, unknown>[]);
-    return;
-  }
-  if (data && typeof data === "object" && !Array.isArray(data)) {
-    printKeyValueTable(asObject(data));
-    return;
-  }
-  if (data != null) {
-    console.log(String(data));
-  }
-}
-
 function emitError(
   ctx: { globals?: GlobalOptions; apiBaseUrl?: string; accountId?: string },
   commandName: string,
   error: unknown,
 ): void {
-  const message = error instanceof Error ? error.message : `${error}`;
-  let api = ctx.apiBaseUrl;
-  if (!api && ctx.globals?.api) {
-    try {
-      api = normalizeUrl(ctx.globals.api);
-    } catch {
-      api = ctx.globals.api;
-    }
-  }
-  const accountId = ctx.accountId ?? ctx.globals?.accountId;
-
-  if (ctx.globals?.json || ctx.globals?.output === "json") {
-    const payload = {
-      ok: false,
-      command: commandName,
-      error: {
-        code: "command_failed",
-        message,
-      },
-      meta: {
-        api,
-        account_id: accountId,
-      },
-    };
-    console.error(JSON.stringify(payload, null, 2));
-    return;
-  }
-  console.error(`ERROR: ${message}`);
+  emitErrorCore(ctx, commandName, error, normalizeUrl);
 }
 
 function globalsFrom(command: unknown): GlobalOptions {
@@ -1288,6 +1197,35 @@ const {
   readFileLocal,
 });
 
+const {
+  expandUserPath,
+  normalizeSyncKeyBasePath,
+  syncKeyPublicPath,
+  normalizeWorkspaceSshConfigPath,
+  normalizeWorkspaceSshHostAlias,
+  workspaceSshConfigBlockMarkers,
+  removeWorkspaceSshConfigBlock,
+  readSyncPublicKey,
+  ensureSyncKeyPair,
+  installSyncPublicKey,
+  resolveWorkspaceSshTarget,
+  resolveWorkspaceSshConnection,
+  runReflectSyncCli,
+  listReflectForwards,
+  parseCreatedForwardId,
+  forwardsForWorkspace,
+  formatReflectForwardRow,
+  terminateReflectForwards,
+  reflectSyncHomeDir,
+  reflectSyncSessionDbPath,
+} = createWorkspaceSyncOps<CommandContext, WorkspaceRow>({
+  resolveWorkspaceFilesystem,
+  resolveWorkspaceFromArgOrContext,
+  parseSshServer,
+  authConfigPath,
+  resolveModule: (specifier) => requireCjs.resolve(specifier),
+});
+
 async function projectHostHubCallAccount<T>(
   ctx: CommandContext,
   workspace: WorkspaceRow,
@@ -1348,250 +1286,13 @@ async function listHosts(
 ): Promise<HostRow[]> {
   return await listHostsCore<HostRow>(ctx, opts);
 }
-
-function normalizeHostSoftwareArtifactValue(value: string): HostSoftwareArtifact {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "project-host" || normalized === "host") {
-    return "project-host";
-  }
-  if (
-    normalized === "project" ||
-    normalized === "project-bundle" ||
-    normalized === "bundle"
-  ) {
-    return "project";
-  }
-  if (normalized === "tools" || normalized === "tool") {
-    return "tools";
-  }
-  throw new Error(
-    `invalid artifact '${value}'; expected one of: project-host, project, tools`,
-  );
-}
-
-function parseHostSoftwareArtifactsOption(values?: string[]): HostSoftwareArtifact[] {
-  if (!values?.length) {
-    return ["project-host", "project", "tools"];
-  }
-  const artifacts = values.map((value) =>
-    normalizeHostSoftwareArtifactValue(value),
-  );
-  return Array.from(new Set(artifacts));
-}
-
-function parseHostSoftwareChannelsOption(values?: string[]): HostSoftwareChannel[] {
-  if (!values?.length) {
-    return ["latest"];
-  }
-  const channels = values.map((value) => {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "latest" || normalized === "stable") return "latest";
-    if (normalized === "staging") return "staging";
-    throw new Error(
-      `invalid channel '${value}'; expected one of: latest, staging`,
-    );
+const { waitForHostCreateReady, resolveHostSshEndpoint } =
+  createHostHelpers<CommandContext, HostRow>({
+    listHosts,
+    resolveHost,
+    parseSshServer,
+    cliDebug,
   });
-  return Array.from(new Set(channels));
-}
-
-const HOST_CREATE_DISK_TYPES = new Set(["ssd", "balanced", "standard", "ssd_io_m3"]);
-const HOST_CREATE_STORAGE_MODES = new Set(["persistent", "ephemeral"]);
-const HOST_CREATE_READY_STATUSES = new Set(["running", "active"]);
-const HOST_CREATE_FAILED_STATUSES = new Set(["error", "deprovisioned"]);
-
-function normalizeHostProviderValue(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) {
-    throw new Error("--provider must not be empty");
-  }
-  if (normalized === "google" || normalized === "google-cloud") {
-    return "gcp";
-  }
-  if (normalized === "self" || normalized === "self_host") {
-    return "self-host";
-  }
-  return normalized;
-}
-
-function parseHostMachineJson(value?: string): Partial<HostMachine> {
-  const raw = `${value ?? ""}`.trim();
-  if (!raw) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(
-      `--machine-json must be valid JSON object: ${
-        err instanceof Error ? err.message : `${err}`
-      }`,
-    );
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("--machine-json must be a JSON object");
-  }
-  return { ...(parsed as Partial<HostMachine>) };
-}
-
-function parseOptionalPositiveInteger(value: string | undefined, label: string): number | undefined {
-  if (value == null || `${value}`.trim() === "") return undefined;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
-    throw new Error(`${label} must be a positive integer`);
-  }
-  return parsed;
-}
-
-function inferRegionFromZone(zone: string | undefined): string | undefined {
-  const raw = `${zone ?? ""}`.trim();
-  if (!raw) return undefined;
-  const parts = raw.split("-").filter(Boolean);
-  if (parts.length >= 3 && parts[parts.length - 1].length === 1) {
-    return parts.slice(0, -1).join("-");
-  }
-  return undefined;
-}
-
-function summarizeCatalogPayload(payload: unknown): string {
-  if (payload == null) return "null";
-  if (Array.isArray(payload)) {
-    if (payload.length === 0) return "0 items";
-    const named = payload
-      .slice(0, 3)
-      .map((item) => (item && typeof item === "object" ? `${(item as any).name ?? ""}`.trim() : ""))
-      .filter(Boolean);
-    if (named.length > 0) {
-      return `${payload.length} items (${named.join(", ")}${payload.length > named.length ? ", ..." : ""})`;
-    }
-    return `${payload.length} items`;
-  }
-  if (typeof payload === "object") {
-    const keys = Object.keys(payload as Record<string, unknown>);
-    if (!keys.length) return "0 keys";
-    const preview = keys.slice(0, 4).join(", ");
-    return `${keys.length} keys (${preview}${keys.length > 4 ? ", ..." : ""})`;
-  }
-  return `${payload}`;
-}
-
-function summarizeHostCatalogEntries(
-  catalog: HostCatalog,
-  kinds?: string[],
-): Array<Record<string, unknown>> {
-  const wantedKinds = new Set(
-    (kinds ?? [])
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean),
-  );
-  const entries = (catalog.entries ?? []).filter((entry) =>
-    wantedKinds.size ? wantedKinds.has(`${entry.kind ?? ""}`.toLowerCase()) : true,
-  );
-  return entries.map((entry: HostCatalogEntry) => ({
-    provider: catalog.provider,
-    kind: entry.kind,
-    scope: entry.scope,
-    summary: summarizeCatalogPayload(entry.payload),
-  }));
-}
-
-async function waitForHostCreateReady(
-  ctx: CommandContext,
-  hostId: string,
-  {
-    timeoutMs,
-    pollMs,
-  }: {
-    timeoutMs: number;
-    pollMs: number;
-  },
-): Promise<{ host: HostRow; timedOut: boolean }> {
-  const started = Date.now();
-  let lastHost: HostRow | undefined;
-  while (Date.now() - started <= timeoutMs) {
-    const hosts = await listHosts(ctx, {
-      include_deleted: true,
-      catalog: true,
-    });
-    const host = hosts.find((x) => x.id === hostId);
-    if (!host) {
-      throw new Error(`host '${hostId}' no longer exists`);
-    }
-    lastHost = host;
-    const status = `${host.status ?? ""}`.trim().toLowerCase();
-    if (HOST_CREATE_READY_STATUSES.has(status)) {
-      return { host, timedOut: false };
-    }
-    if (HOST_CREATE_FAILED_STATUSES.has(status)) {
-      const detail = `${host.last_action_error ?? host.last_error ?? ""}`.trim();
-      throw new Error(
-        `host create failed: status=${status}${detail ? ` error=${detail}` : ""}`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  if (!lastHost) {
-    throw new Error(`host '${hostId}' not found`);
-  }
-  return { host: lastHost, timedOut: true };
-}
-
-async function resolveHostSshEndpoint(
-  ctx: CommandContext,
-  hostIdentifier: string,
-): Promise<{
-  host: HostRow;
-  ssh_host: string;
-  ssh_port: number | null;
-  ssh_server: string | null;
-}> {
-  const host = await resolveHost(ctx, hostIdentifier);
-  const machine = (host.machine ?? {}) as Record<string, any>;
-  const directHost = `${host.public_ip ?? machine?.metadata?.public_ip ?? ""}`.trim();
-  if (directHost) {
-    const configuredPort = Number(machine?.metadata?.ssh_port);
-    const directPort =
-      Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535
-        ? configuredPort
-        : 22;
-    return {
-      host,
-      ssh_host: directHost,
-      ssh_port: directPort,
-      ssh_server: `${directHost}:${directPort}`,
-    };
-  }
-  let connection: HostConnectionInfo | null = null;
-  try {
-    connection = await Promise.race([
-      ctx.hub.hosts.resolveHostConnection({ host_id: host.id }),
-      new Promise<HostConnectionInfo>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                `hosts.resolveHostConnection timed out after ${HOST_SSH_RESOLVE_TIMEOUT_MS}ms`,
-              ),
-            ),
-          HOST_SSH_RESOLVE_TIMEOUT_MS,
-        ),
-      ),
-    ]);
-  } catch (err) {
-    cliDebug("host ssh: resolveHostConnection failed, falling back to host ip", {
-      host_id: host.id,
-      err: err instanceof Error ? err.message : `${err}`,
-    });
-  }
-  if (connection?.ssh_server) {
-    const parsed = parseSshServer(connection.ssh_server);
-    return {
-      host,
-      ssh_host: parsed.host,
-      ssh_port: parsed.port ?? null,
-      ssh_server: connection.ssh_server,
-    };
-  }
-  throw new Error("host has no direct public ip and no routed ssh endpoint");
-}
 
 async function waitForLro(
   ctx: CommandContext,
@@ -1659,567 +1360,6 @@ async function waitForWorkspaceNotRunning(
   });
 }
 
-async function runSsh(args: string[]): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const child = spawn("ssh", args, { stdio: "inherit" });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      resolve(code ?? 1);
-    });
-  });
-}
-
-async function runCommand(
-  command: string,
-  args: string[],
-  {
-    env,
-  }: {
-    env?: NodeJS.ProcessEnv;
-  } = {},
-): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: "inherit",
-      env: env ?? process.env,
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      resolve(code ?? 1);
-    });
-  });
-}
-
-function commandExists(command: string): boolean {
-  const result = spawnSync(command, ["--version"], {
-    stdio: "ignore",
-    timeout: 3000,
-  });
-  if (!result.error) {
-    return true;
-  }
-  const message = (result.error as Error).message ?? "";
-  return !message.toLowerCase().includes("enoent");
-}
-
-function cloudflaredInstallHint(): string {
-  if (process.platform === "darwin") {
-    return "brew install cloudflared";
-  }
-  if (process.platform === "linux") {
-    return "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/";
-  }
-  return "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/";
-}
-
-function resolveCloudflaredBinary(): string {
-  const configured = `${process.env.COCALC_CLI_CLOUDFLARED ?? ""}`.trim();
-  if (configured) {
-    if (!commandExists(configured)) {
-      throw new Error(
-        `COCALC_CLI_CLOUDFLARED is set but not executable: ${configured}`,
-      );
-    }
-    return configured;
-  }
-  if (commandExists("cloudflared")) {
-    return "cloudflared";
-  }
-  throw new Error(
-    `cloudflared is required for workspace ssh via Cloudflare Access; install it (${cloudflaredInstallHint()}) or use --direct`,
-  );
-}
-
-type CommandCaptureResult = {
-  code: number;
-  stdout: string;
-  stderr: string;
-};
-
-type SyncKeyInfo = {
-  private_key_path: string;
-  public_key_path: string;
-  public_key: string;
-  created: boolean;
-};
-
-type WorkspaceSshTarget = {
-  workspace: WorkspaceRow;
-  ssh_server: string;
-  ssh_host: string;
-  ssh_port: number | null;
-  ssh_target: string;
-};
-
-type WorkspaceSshRoute = {
-  workspace: WorkspaceRow;
-  host_id: string;
-  transport: "cloudflare-access-tcp" | "direct";
-  ssh_username: string;
-  ssh_server: string | null;
-  cloudflare_hostname: string | null;
-  ssh_host: string | null;
-  ssh_port: number | null;
-};
-
-type ReflectForwardRecord = {
-  id: number;
-  name?: string | null;
-  direction?: "local_to_remote" | "remote_to_local";
-  ssh_host: string;
-  ssh_port?: number | null;
-  local_host: string;
-  local_port: number;
-  remote_host: string;
-  remote_port: number;
-  desired_state?: string;
-  actual_state?: string;
-  monitor_pid?: number | null;
-  last_error?: string | null;
-  ssh_args?: string | null;
-};
-
-function expandUserPath(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    return trimmed;
-  }
-  if (trimmed === "~") {
-    return homedir();
-  }
-  if (trimmed.startsWith("~/")) {
-    return join(homedir(), trimmed.slice(2));
-  }
-  return trimmed;
-}
-
-function defaultSyncKeyBasePath(): string {
-  return join(homedir(), ".ssh", "id_ed25519");
-}
-
-function normalizeSyncKeyBasePath(input?: string): string {
-  const raw = `${input ?? ""}`.trim();
-  if (!raw) {
-    return defaultSyncKeyBasePath();
-  }
-  const expanded = expandUserPath(raw);
-  if (expanded.endsWith(".pub")) {
-    return expanded.slice(0, -4);
-  }
-  return expanded;
-}
-
-function syncKeyPublicPath(basePath: string): string {
-  return `${basePath}.pub`;
-}
-
-function defaultWorkspaceSshConfigPath(): string {
-  return join(homedir(), ".ssh", "config");
-}
-
-function normalizeWorkspaceSshConfigPath(input?: string): string {
-  const raw = `${input ?? ""}`.trim();
-  if (!raw) {
-    return defaultWorkspaceSshConfigPath();
-  }
-  return expandUserPath(raw);
-}
-
-function normalizeWorkspaceSshHostAlias(input: string): string {
-  const alias = input.trim();
-  if (!alias) {
-    throw new Error("ssh config host alias cannot be empty");
-  }
-  if (alias.includes("@")) {
-    throw new Error(
-      `ssh config host alias '${alias}' cannot contain '@' (ssh parses user@host); use a host-only alias, e.g. '${alias.replace(/@/g, "-")}'`,
-    );
-  }
-  if (/\s/.test(alias)) {
-    throw new Error(`ssh config host alias '${alias}' cannot contain whitespace`);
-  }
-  if (!/^[a-zA-Z0-9._-]+$/.test(alias)) {
-    throw new Error(
-      `ssh config host alias '${alias}' must match [a-zA-Z0-9._-]+`,
-    );
-  }
-  return alias;
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function workspaceSshConfigBlockMarkers(alias: string): {
-  start: string;
-  end: string;
-} {
-  return {
-    start: `# >>> cocalc ws ssh ${alias} >>>`,
-    end: `# <<< cocalc ws ssh ${alias} <<<`,
-  };
-}
-
-function removeWorkspaceSshConfigBlock(
-  content: string,
-  alias: string,
-): { content: string; removed: boolean } {
-  const { start, end } = workspaceSshConfigBlockMarkers(alias);
-  const pattern = new RegExp(
-    `(?:^|\\n)${escapeRegExp(start)}\\n[\\s\\S]*?\\n${escapeRegExp(end)}(?:\\n|$)`,
-    "g",
-  );
-  const next = content.replace(pattern, "\n").replace(/\n{3,}/g, "\n\n");
-  return {
-    content: next,
-    removed: next !== content,
-  };
-}
-
-function readSyncPublicKey(basePath: string): string {
-  const pubPath = syncKeyPublicPath(basePath);
-  const publicKey = readFileSync(pubPath, "utf8").trim();
-  if (!publicKey) {
-    throw new Error(`ssh public key is empty: ${pubPath}`);
-  }
-  return publicKey;
-}
-
-async function ensureSyncKeyPair(keyPathInput?: string): Promise<SyncKeyInfo> {
-  const privateKeyPath = normalizeSyncKeyBasePath(keyPathInput);
-  const publicKeyPath = syncKeyPublicPath(privateKeyPath);
-  const privateExists = existsSync(privateKeyPath);
-  const publicExists = existsSync(publicKeyPath);
-  if (privateExists && publicExists) {
-    return {
-      private_key_path: privateKeyPath,
-      public_key_path: publicKeyPath,
-      public_key: readSyncPublicKey(privateKeyPath),
-      created: false,
-    };
-  }
-  if (privateExists !== publicExists) {
-    throw new Error(
-      `incomplete ssh keypair: expected both '${privateKeyPath}' and '${publicKeyPath}'`,
-    );
-  }
-
-  mkdirSync(dirname(privateKeyPath), { recursive: true, mode: 0o700 });
-  const comment = `cocalc-cli-sync-${hostname()}`;
-  const created = spawnSync(
-    "ssh-keygen",
-    ["-t", "ed25519", "-f", privateKeyPath, "-N", "", "-C", comment],
-    {
-      encoding: "utf8",
-    },
-  );
-  if (created.error) {
-    const message = (created.error as Error).message ?? `${created.error}`;
-    throw new Error(`failed to run ssh-keygen: ${message}`);
-  }
-  if (created.status !== 0) {
-    const stderr = `${created.stderr ?? ""}`.trim();
-    throw new Error(stderr || `ssh-keygen failed with exit code ${created.status}`);
-  }
-  if (!existsSync(privateKeyPath) || !existsSync(publicKeyPath)) {
-    throw new Error("ssh-keygen completed, but key files were not created");
-  }
-  return {
-    private_key_path: privateKeyPath,
-    public_key_path: publicKeyPath,
-    public_key: readSyncPublicKey(privateKeyPath),
-    created: true,
-  };
-}
-
-function isNotFoundLikeError(err: unknown): boolean {
-  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
-  return (
-    message.includes("enoent") ||
-    message.includes("not found") ||
-    message.includes("no such file") ||
-    message.includes("does not exist")
-  );
-}
-
-async function installSyncPublicKey({
-  ctx,
-  workspaceIdentifier,
-  publicKey,
-  cwd,
-}: {
-  ctx: CommandContext;
-  workspaceIdentifier?: string;
-  publicKey: string;
-  cwd?: string;
-}): Promise<Record<string, unknown>> {
-  const trimmedKey = publicKey.trim();
-  if (!trimmedKey) {
-    throw new Error("public key is empty");
-  }
-
-  const { workspace, fs } = await resolveWorkspaceFilesystem(ctx, workspaceIdentifier, cwd);
-  const sshDir = ".ssh";
-  const authorizedKeysPath = ".ssh/authorized_keys";
-  await fs.mkdir(sshDir, { recursive: true });
-
-  let existing = "";
-  try {
-    existing = String(await fs.readFile(authorizedKeysPath, "utf8"));
-  } catch (err) {
-    if (!isNotFoundLikeError(err)) {
-      throw err;
-    }
-  }
-
-  const existingKeys = existing
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (existingKeys.includes(trimmedKey)) {
-    return {
-      workspace_id: workspace.project_id,
-      workspace_title: workspace.title,
-      path: authorizedKeysPath,
-      installed: false,
-      already_present: true,
-    };
-  }
-
-  const prefix = existing.length === 0 || existing.endsWith("\n") ? existing : `${existing}\n`;
-  const next = `${prefix}${trimmedKey}\n`;
-  await fs.writeFile(authorizedKeysPath, Buffer.from(next, "utf8"));
-  return {
-    workspace_id: workspace.project_id,
-    workspace_title: workspace.title,
-    path: authorizedKeysPath,
-    installed: true,
-    already_present: false,
-  };
-}
-
-async function resolveWorkspaceSshTarget(
-  ctx: CommandContext,
-  workspaceIdentifier?: string,
-  cwd = process.cwd(),
-): Promise<WorkspaceSshTarget> {
-  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
-  if (!workspace.host_id) {
-    throw new Error("workspace has no assigned host");
-  }
-  const connection = await ctx.hub.hosts.resolveHostConnection({
-    host_id: workspace.host_id,
-  });
-  if (!connection.ssh_server) {
-    throw new Error("host has no ssh server endpoint");
-  }
-  const parsed = parseSshServer(connection.ssh_server);
-  const sshHost = `${workspace.project_id}@${parsed.host}`;
-  const sshTarget = parsed.port != null ? `${sshHost}:${parsed.port}` : sshHost;
-  return {
-    workspace,
-    ssh_server: connection.ssh_server,
-    ssh_host: sshHost,
-    ssh_port: parsed.port ?? null,
-    ssh_target: sshTarget,
-  };
-}
-
-async function resolveWorkspaceSshConnection(
-  ctx: CommandContext,
-  workspaceIdentifier?: string,
-  {
-    cwd = process.cwd(),
-    direct = false,
-  }: {
-    cwd?: string;
-    direct?: boolean;
-  } = {},
-): Promise<WorkspaceSshRoute> {
-  const workspace = await resolveWorkspaceFromArgOrContext(ctx, workspaceIdentifier, cwd);
-  if (!workspace.host_id) {
-    throw new Error("workspace has no assigned host");
-  }
-  const connection = (await ctx.hub.projects.resolveWorkspaceSshConnection({
-    project_id: workspace.project_id,
-    direct,
-  })) as WorkspaceSshConnectionInfo;
-  const sshUsername = `${connection.ssh_username ?? workspace.project_id}`.trim() || workspace.project_id;
-  if (connection.transport === "cloudflare-access-tcp") {
-    const hostname = `${connection.cloudflare_hostname ?? ""}`.trim();
-    if (!hostname) {
-      throw new Error("workspace ssh route returned no cloudflare hostname");
-    }
-    return {
-      workspace,
-      host_id: connection.host_id,
-      transport: "cloudflare-access-tcp",
-      ssh_username: sshUsername,
-      ssh_server: connection.ssh_server ?? null,
-      cloudflare_hostname: hostname,
-      ssh_host: hostname,
-      ssh_port: null,
-    };
-  }
-  const sshServer = `${connection.ssh_server ?? ""}`.trim();
-  if (!sshServer) {
-    throw new Error("host has no ssh server endpoint");
-  }
-  const parsed = parseSshServer(sshServer);
-  return {
-    workspace,
-    host_id: connection.host_id,
-    transport: "direct",
-    ssh_username: sshUsername,
-    ssh_server: sshServer,
-    cloudflare_hostname:
-      `${connection.cloudflare_hostname ?? ""}`.trim() || null,
-    ssh_host: parsed.host,
-    ssh_port: parsed.port ?? null,
-  };
-}
-
-function reflectSyncHomeDir(): string {
-  return process.env.COCALC_REFLECT_HOME ?? join(dirname(authConfigPath()), "reflect-sync");
-}
-
-function reflectSyncSessionDbPath(): string {
-  return join(reflectSyncHomeDir(), "sessions.db");
-}
-
-function resolveReflectSyncCliEntry(): string {
-  try {
-    return requireCjs.resolve("reflect-sync/cli");
-  } catch {
-    throw new Error(
-      "reflect-sync is not installed in @cocalc/cli (add it to dependencies and run pnpm install)",
-    );
-  }
-}
-
-async function runCommandCapture(
-  command: string,
-  args: string[],
-  {
-    env,
-  }: {
-    env?: NodeJS.ProcessEnv;
-  } = {},
-): Promise<CommandCaptureResult> {
-  return await new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: env ?? process.env,
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk) => {
-      stdout += String(chunk);
-    });
-    child.stderr?.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({
-        code: code ?? 1,
-        stdout,
-        stderr,
-      });
-    });
-  });
-}
-
-async function runReflectSyncCli(args: string[]): Promise<CommandCaptureResult> {
-  const reflectHome = reflectSyncHomeDir();
-  mkdirSync(reflectHome, { recursive: true, mode: 0o700 });
-  const cliEntry = resolveReflectSyncCliEntry();
-  const result = await runCommandCapture(
-    process.execPath,
-    [
-      cliEntry,
-      "--log-level",
-      "error",
-      "--session-db",
-      reflectSyncSessionDbPath(),
-      ...args,
-    ],
-    {
-      env: {
-        ...process.env,
-        REFLECT_HOME: reflectHome,
-      },
-    },
-  );
-  if (result.code !== 0) {
-    const message = result.stderr.trim() || result.stdout.trim();
-    throw new Error(message || `reflect-sync exited with code ${result.code}`);
-  }
-  return result;
-}
-
-function parseReflectForwardRows(raw: string): ReflectForwardRecord[] {
-  const text = raw.trim();
-  if (!text) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    throw new Error(
-      `unable to parse reflect-sync forward list JSON: ${err instanceof Error ? err.message : `${err}`}`,
-    );
-  }
-  if (!Array.isArray(parsed)) {
-    throw new Error("reflect-sync forward list did not return an array");
-  }
-  return parsed as ReflectForwardRecord[];
-}
-
-async function listReflectForwards(): Promise<ReflectForwardRecord[]> {
-  const result = await runReflectSyncCli(["forward", "list", "--json"]);
-  return parseReflectForwardRows(result.stdout);
-}
-
-function parseCreatedForwardId(output: string): number | null {
-  const match = output.match(/created forward\s+(\d+)/i);
-  if (!match?.[1]) return null;
-  const value = Number(match[1]);
-  if (!Number.isInteger(value) || value <= 0) return null;
-  return value;
-}
-
-function forwardsForWorkspace(
-  rows: ReflectForwardRecord[],
-  workspaceId: string,
-): ReflectForwardRecord[] {
-  const prefix = `${workspaceId}@`;
-  return rows.filter((row) => `${row.ssh_host ?? ""}`.startsWith(prefix));
-}
-
-function formatReflectForwardRow(row: ReflectForwardRecord): Record<string, unknown> {
-  const sshHost = `${row.ssh_host ?? ""}`;
-  const workspaceId = sshHost.includes("@") ? sshHost.split("@")[0] : null;
-  const target = row.ssh_port ? `${sshHost}:${row.ssh_port}` : sshHost;
-  return {
-    id: row.id,
-    name: row.name ?? null,
-    workspace_id: workspaceId,
-    direction: row.direction ?? null,
-    target,
-    local: `${row.local_host}:${row.local_port}`,
-    remote_port: row.remote_port,
-    state: row.actual_state ?? null,
-    desired_state: row.desired_state ?? null,
-    monitor_pid: row.monitor_pid ?? null,
-    last_error: row.last_error ?? null,
-  };
-}
-
-async function terminateReflectForwards(forwardRefs: string[]): Promise<void> {
-  if (!forwardRefs.length) return;
-  await runReflectSyncCli(["forward", "terminate", ...forwardRefs]);
-}
-
 async function confirmHardWorkspaceDelete({
   workspace_id,
   title,
@@ -2264,62 +1404,6 @@ async function confirmHardWorkspaceDelete({
   } finally {
     rl.close();
   }
-}
-
-async function runSshCheck(
-  args: string[],
-  timeoutMs: number,
-): Promise<{ code: number; stderr: string; timed_out: boolean }> {
-  return await new Promise((resolve, reject) => {
-    const child = spawn("ssh", args, {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let stderr = "";
-    let done = false;
-    const finish = (result: { code: number; stderr: string; timed_out: boolean }) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-
-    child.stderr?.on("data", (chunk) => {
-      if (stderr.length >= 8192) return;
-      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-      stderr += text;
-    });
-
-    child.on("error", (err) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      reject(err);
-    });
-
-    child.on("exit", (code) => {
-      finish({ code: code ?? 1, stderr, timed_out: false });
-    });
-
-    const timer = setTimeout(() => {
-      if (done) return;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // ignore
-      }
-      finish({ code: 124, stderr, timed_out: true });
-    }, timeoutMs);
-  });
-}
-
-function isLikelySshAuthFailure(stderr: string): boolean {
-  const text = stderr.toLowerCase();
-  return (
-    text.includes("permission denied") ||
-    text.includes("authentication failed") ||
-    text.includes("no supported authentication methods") ||
-    text.includes("publickey")
-  );
 }
 
 async function fetchWithTimeout(
