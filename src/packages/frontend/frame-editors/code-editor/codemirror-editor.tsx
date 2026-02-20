@@ -13,6 +13,7 @@ codemirror editor instance mainly for use in a frame tree.
 */
 
 import * as CodeMirror from "codemirror";
+import { InputNumber, Modal, Slider, Switch } from "antd";
 import { Map, Set } from "immutable";
 import {
   CSS,
@@ -37,6 +38,16 @@ import { SAVE_DEBOUNCE_MS } from "./const";
 import { get_linked_doc, has_doc, set_doc } from "./doc";
 import { AccountState } from "../../account/types";
 import { attachSyncListeners } from "./cm-adapter";
+import {
+  clampCodeMirrorMinimapWidth,
+  CODEMIRROR_MINIMAP_MAX_WIDTH,
+  CODEMIRROR_MINIMAP_MIN_WIDTH,
+  CODEMIRROR_MINIMAP_OPEN_SETTINGS_EVENT,
+  CODEMIRROR_MINIMAP_SETTINGS_CHANGED_EVENT,
+  readCodeMirrorMinimapSettings,
+  setCodeMirrorMinimapEnabled,
+  setCodeMirrorMinimapWidth,
+} from "./minimap-settings";
 
 const STYLE: CSS = {
   width: "100%",
@@ -46,6 +57,537 @@ const STYLE: CSS = {
   border: "0px",
   background: "#fff",
 } as const;
+
+const CODEMIRROR_MINIMAP_MAX_TRACK_HEIGHT = 32_000;
+const CODEMIRROR_MINIMAP_MAX_SAMPLED_LINES = 8_000;
+const CODEMIRROR_MINIMAP_BASE_LINE_SCALE = 1.45;
+
+const CODEMIRROR_MINIMAP_TOKEN_RE =
+  /(#.*$)|(\/\/.*$)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b\d+(?:\.\d+)?\b)|(\b(?:abstract|and|as|assert|async|await|break|case|catch|class|const|continue|def|default|del|elif|else|enum|except|export|extends|False|finally|for|from|function|global|if|implements|import|in|interface|is|lambda|let|new|None|nonlocal|not|null|or|package|pass|private|protected|public|raise|return|static|switch|this|throw|True|try|type|typeof|var|void|while|with|yield)\b)/g;
+
+function getCodeMirrorMinimapTextMetrics(width: number): {
+  fontSize: number;
+  lineHeight: number;
+  leftPadding: number;
+  rightPadding: number;
+} {
+  if (width >= 190) {
+    return { fontSize: 8.2, lineHeight: 9.2, leftPadding: 5, rightPadding: 5 };
+  }
+  if (width >= 160) {
+    return { fontSize: 7.2, lineHeight: 8.2, leftPadding: 5, rightPadding: 5 };
+  }
+  if (width >= 132) {
+    return { fontSize: 6.2, lineHeight: 7.2, leftPadding: 5, rightPadding: 5 };
+  }
+  if (width >= 108) {
+    return { fontSize: 5.2, lineHeight: 6.2, leftPadding: 4, rightPadding: 4 };
+  }
+  if (width >= 84) {
+    return { fontSize: 4.4, lineHeight: 5.4, leftPadding: 4, rightPadding: 4 };
+  }
+  return { fontSize: 3.9, lineHeight: 4.8, leftPadding: 3, rightPadding: 3 };
+}
+
+function drawCodeMirrorMinimapTextLine(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  charWidth: number,
+  maxChars: number,
+): void {
+  const line = text.slice(0, maxChars);
+  if (line.length === 0) return;
+  ctx.fillStyle = "rgba(15,23,42,0.9)";
+  ctx.fillText(line, x, y);
+
+  CODEMIRROR_MINIMAP_TOKEN_RE.lastIndex = 0;
+  let match: RegExpExecArray | null = CODEMIRROR_MINIMAP_TOKEN_RE.exec(line);
+  while (match != null) {
+    let color = "";
+    if (match[1] || match[2]) {
+      color = "rgba(21,128,61,0.96)";
+    } else if (match[3]) {
+      color = "rgba(180,83,9,0.96)";
+    } else if (match[4]) {
+      color = "rgba(37,99,235,0.96)";
+    } else if (match[5]) {
+      color = "rgba(79,70,229,0.96)";
+    }
+    if (color.length > 0) {
+      const index = match.index ?? 0;
+      ctx.fillStyle = color;
+      ctx.fillText(match[0], x + index * charWidth, y);
+    }
+    match = CODEMIRROR_MINIMAP_TOKEN_RE.exec(line);
+  }
+}
+
+interface CodeMirrorMinimapProps {
+  cm: CodeMirror.Editor;
+  isCurrent: boolean;
+}
+
+const CodeMirrorMinimap: React.FC<CodeMirrorMinimapProps> = React.memo(
+  ({ cm, isCurrent }: CodeMirrorMinimapProps) => {
+    const [minimapSettings, setMinimapSettings] = useState(() =>
+      readCodeMirrorMinimapSettings(),
+    );
+    const [showMinimapSettingsModal, setShowMinimapSettingsModal] = useState(false);
+    const [minimapDraftEnabled, setMinimapDraftEnabled] = useState(
+      minimapSettings.enabled,
+    );
+    const [minimapDraftWidth, setMinimapDraftWidth] = useState(
+      minimapSettings.width,
+    );
+    const minimapEnabled = minimapSettings.enabled;
+
+    const railRef = useRef<HTMLDivElement>(null);
+    const scrollRef = useRef<HTMLDivElement>(null);
+    const trackRef = useRef<HTMLDivElement>(null);
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const drawRafRef = useRef<number | null>(null);
+    const viewportRafRef = useRef<number | null>(null);
+
+    const drawNow = () => {
+      const scroller = cm.getScrollerElement() as HTMLElement | null;
+      const rail = railRef.current;
+      const track = trackRef.current;
+      const canvas = canvasRef.current;
+      if (scroller == null || rail == null || track == null || canvas == null) return;
+
+      const lineCount = Math.max(1, cm.lineCount());
+      const cssWidth = Math.max(1, track.clientWidth || rail.clientWidth);
+      const metrics = getCodeMirrorMinimapTextMetrics(cssWidth);
+      const lineScale = Math.max(1.5, metrics.lineHeight);
+      const railHeight = Math.max(160, scroller.clientHeight - 10);
+      // Keep short files compact; expanding them to rail height makes rows look
+      // unnaturally far apart.
+      const naturalTrackHeight = Math.max(
+        24,
+        lineCount * Math.max(CODEMIRROR_MINIMAP_BASE_LINE_SCALE, lineScale),
+      );
+      const trackHeight = Math.max(
+        1,
+        Math.min(CODEMIRROR_MINIMAP_MAX_TRACK_HEIGHT, naturalTrackHeight),
+      );
+      track.style.height = `${trackHeight}px`;
+      rail.style.height = `${railHeight}px`;
+
+      const cssHeight = Math.max(1, trackHeight);
+      const dpr =
+        typeof window === "undefined"
+          ? 1
+          : Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      const targetWidth = Math.max(1, Math.round(cssWidth * dpr));
+      const targetHeight = Math.max(1, Math.round(cssHeight * dpr));
+      if (canvas.width !== targetWidth) canvas.width = targetWidth;
+      if (canvas.height !== targetHeight) canvas.height = targetHeight;
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
+
+      const ctx = canvas.getContext("2d");
+      if (ctx == null) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
+      ctx.fillStyle = "rgba(248,250,252,0.96)";
+      ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+      ctx.font = `${metrics.fontSize}px Menlo, Monaco, "Courier New", monospace`;
+      ctx.textBaseline = "top";
+      ctx.imageSmoothingEnabled = false;
+      const charWidth = Math.max(1, ctx.measureText("M").width);
+      const maxChars = Math.max(
+        8,
+        Math.floor((cssWidth - metrics.leftPadding - metrics.rightPadding) / charWidth),
+      );
+
+      const scrollInfo = cm.getScrollInfo();
+      const editorContentHeight = Math.max(1, scrollInfo.height);
+      const firstLine = cm.firstLine();
+      const lastLine = cm.lastLine();
+      const sampledRows = Math.max(
+        1,
+        Math.min(
+          lineCount,
+          CODEMIRROR_MINIMAP_MAX_SAMPLED_LINES,
+          Math.ceil(cssHeight / Math.max(1, metrics.lineHeight * 0.85)),
+        ),
+      );
+      const rowHeight = cssHeight / sampledRows;
+      let previousLineNo: number | null = null;
+      let wrappedChunkIndex = 0;
+      for (let i = 0; i < sampledRows; i += 1) {
+        const y = i * rowHeight;
+        const editorY = (y / Math.max(1, cssHeight)) * editorContentHeight;
+        const lineNo = Math.min(
+          lastLine,
+          Math.max(firstLine, cm.lineAtHeight(editorY, "local")),
+        );
+        if (lineNo === previousLineNo) {
+          wrappedChunkIndex += 1;
+        } else {
+          previousLineNo = lineNo;
+          wrappedChunkIndex = 0;
+        }
+        const fullLine = cm.getLine(lineNo) ?? "";
+        const start = wrappedChunkIndex * maxChars;
+        const text = fullLine.slice(start, start + maxChars);
+        drawCodeMirrorMinimapTextLine(
+          ctx,
+          text,
+          metrics.leftPadding,
+          y,
+          charWidth,
+          maxChars,
+        );
+      }
+
+      const currentLine = cm.getDoc().getCursor().line;
+      const currentLineTopPx = Math.max(0, cm.heightAtLine(currentLine, "local"));
+      const currentLineBottomPx =
+        currentLine + 1 < lineCount
+          ? Math.max(currentLineTopPx + 1, cm.heightAtLine(currentLine + 1, "local"))
+          : editorContentHeight;
+      const currentY = Math.max(
+        0,
+        Math.min(cssHeight, (currentLineTopPx / editorContentHeight) * cssHeight),
+      );
+      const currentH = Math.max(
+        1.5,
+        ((currentLineBottomPx - currentLineTopPx) / editorContentHeight) * cssHeight,
+      );
+      ctx.fillStyle = "rgba(59,130,246,0.28)";
+      ctx.fillRect(0, currentY, cssWidth, currentH);
+    };
+
+    const updateViewportNow = () => {
+      const scroller = cm.getScrollerElement() as HTMLElement | null;
+      const rail = railRef.current;
+      const scroll = scrollRef.current;
+      const track = trackRef.current;
+      const viewport = viewportRef.current;
+      if (
+        scroller == null ||
+        rail == null ||
+        scroll == null ||
+        track == null ||
+        viewport == null
+      ) {
+        return;
+      }
+
+      const railHeight = Math.max(1, rail.clientHeight);
+      const contentHeight = Math.max(1, track.scrollHeight);
+      const scrollInfo = cm.getScrollInfo();
+      const editorContentHeight = Math.max(1, scrollInfo.height);
+      const editorClientHeight = Math.max(1, scrollInfo.clientHeight);
+      const maxEditorScroll = Math.max(1, editorContentHeight - editorClientHeight);
+      const clampedEditorScroll = Math.min(
+        Math.max(0, scrollInfo.top),
+        maxEditorScroll,
+      );
+      const editorRatio = clampedEditorScroll / maxEditorScroll;
+
+      const maxMiniScroll = Math.max(0, contentHeight - railHeight);
+      const miniScrollTop = editorRatio * maxMiniScroll;
+      scroll.scrollTop = miniScrollTop;
+
+      const viewportTopInTrack =
+        (clampedEditorScroll / editorContentHeight) * contentHeight;
+      const viewportHeightInTrack = Math.min(
+        contentHeight,
+        (editorClientHeight / editorContentHeight) * contentHeight,
+      );
+      const thumbHeight = Math.min(railHeight, viewportHeightInTrack);
+      const thumbTop = Math.min(
+        Math.max(0, viewportTopInTrack - miniScrollTop),
+        Math.max(0, railHeight - thumbHeight),
+      );
+      viewport.style.top = `${thumbTop}px`;
+      viewport.style.height = `${thumbHeight}px`;
+    };
+
+    const scheduleDraw = () => {
+      if (typeof window === "undefined") {
+        drawNow();
+        updateViewportNow();
+        return;
+      }
+      if (drawRafRef.current != null) return;
+      drawRafRef.current = window.requestAnimationFrame(() => {
+        drawRafRef.current = null;
+        drawNow();
+        updateViewportNow();
+      });
+    };
+
+    const scheduleViewport = () => {
+      if (typeof window === "undefined") {
+        updateViewportNow();
+        return;
+      }
+      if (viewportRafRef.current != null) return;
+      viewportRafRef.current = window.requestAnimationFrame(() => {
+        viewportRafRef.current = null;
+        updateViewportNow();
+      });
+    };
+
+    useEffect(() => {
+      if (typeof window === "undefined") return;
+      const syncSettings = () =>
+        setMinimapSettings(readCodeMirrorMinimapSettings());
+      const onWindowOpenMinimapSettings = () => {
+        if (!isCurrent) return;
+        const current = readCodeMirrorMinimapSettings();
+        setMinimapSettings(current);
+        setMinimapDraftEnabled(current.enabled);
+        setMinimapDraftWidth(current.width);
+        setShowMinimapSettingsModal(true);
+      };
+      window.addEventListener(
+        CODEMIRROR_MINIMAP_SETTINGS_CHANGED_EVENT,
+        syncSettings,
+      );
+      window.addEventListener(
+        CODEMIRROR_MINIMAP_OPEN_SETTINGS_EVENT,
+        onWindowOpenMinimapSettings,
+      );
+      return () => {
+        window.removeEventListener(
+          CODEMIRROR_MINIMAP_SETTINGS_CHANGED_EVENT,
+          syncSettings,
+        );
+        window.removeEventListener(
+          CODEMIRROR_MINIMAP_OPEN_SETTINGS_EVENT,
+          onWindowOpenMinimapSettings,
+        );
+      };
+    }, [isCurrent]);
+
+    useEffect(() => {
+      setMinimapDraftEnabled(minimapSettings.enabled);
+      setMinimapDraftWidth(minimapSettings.width);
+    }, [minimapSettings.enabled, minimapSettings.width]);
+
+    useEffect(() => {
+      if (!minimapEnabled) return;
+      if (typeof window === "undefined") {
+        drawNow();
+        updateViewportNow();
+        return;
+      }
+      const raf = window.requestAnimationFrame(() => {
+        cm.refresh();
+        drawNow();
+        updateViewportNow();
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }, [cm, minimapEnabled, minimapSettings.width]);
+
+    useEffect(() => {
+      const onScroll = () => scheduleViewport();
+      const onChange = throttle(() => scheduleDraw(), 120, {
+        leading: true,
+        trailing: true,
+      });
+      const onCursorActivity = throttle(() => scheduleDraw(), 120, {
+        leading: true,
+        trailing: true,
+      });
+      const onRefresh = () => scheduleDraw();
+
+      cm.on("scroll", onScroll as any);
+      cm.on("change", onChange as any);
+      cm.on("cursorActivity", onCursorActivity as any);
+      cm.on("refresh", onRefresh as any);
+      cm.refresh();
+      scheduleDraw();
+      scheduleViewport();
+
+      return () => {
+        cm.off("scroll", onScroll as any);
+        cm.off("change", onChange as any);
+        cm.off("cursorActivity", onCursorActivity as any);
+        cm.off("refresh", onRefresh as any);
+        onChange.cancel();
+        onCursorActivity.cancel();
+        if (typeof window !== "undefined") {
+          if (drawRafRef.current != null) {
+            window.cancelAnimationFrame(drawRafRef.current);
+            drawRafRef.current = null;
+          }
+          if (viewportRafRef.current != null) {
+            window.cancelAnimationFrame(viewportRafRef.current);
+            viewportRafRef.current = null;
+          }
+        }
+      };
+    }, [cm]);
+
+    const onRailMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+      const scroller = cm.getScrollerElement() as HTMLElement | null;
+      const rail = railRef.current;
+      const scroll = scrollRef.current;
+      const track = trackRef.current;
+      if (scroller == null || rail == null || scroll == null || track == null) return;
+      const rect = rail.getBoundingClientRect();
+      if (rect.height <= 0) return;
+      const y = Math.min(Math.max(0, e.clientY - rect.top), rect.height);
+      const yContent = Math.max(0, Math.min(track.scrollHeight, scroll.scrollTop + y));
+      const ratio = yContent / Math.max(1, track.scrollHeight);
+      const maxEditorScroll = Math.max(
+        0,
+        scroller.scrollHeight - scroller.clientHeight,
+      );
+      cm.scrollTo(null, ratio * maxEditorScroll);
+      scheduleViewport();
+      e.preventDefault();
+    };
+
+    const closeMinimapSettingsModal = () => {
+      setShowMinimapSettingsModal(false);
+      setMinimapDraftEnabled(minimapSettings.enabled);
+      setMinimapDraftWidth(minimapSettings.width);
+    };
+
+    const applyMinimapSettings = () => {
+      setCodeMirrorMinimapEnabled(minimapDraftEnabled);
+      setCodeMirrorMinimapWidth(minimapDraftWidth);
+      setShowMinimapSettingsModal(false);
+    };
+
+    const settingsModal = (
+      <Modal
+        title="Code Minimap"
+        open={showMinimapSettingsModal}
+        okText="Apply"
+        onOk={applyMinimapSettings}
+        onCancel={closeMinimapSettingsModal}
+      >
+        <div style={{ display: "grid", rowGap: "14px" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>Show minimap</span>
+            <Switch
+              checked={minimapDraftEnabled}
+              onChange={(checked) => setMinimapDraftEnabled(checked)}
+            />
+          </div>
+          <div style={{ display: "grid", rowGap: "8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>Minimap width</span>
+              <InputNumber
+                min={CODEMIRROR_MINIMAP_MIN_WIDTH}
+                max={CODEMIRROR_MINIMAP_MAX_WIDTH}
+                value={minimapDraftWidth}
+                onChange={(value) => {
+                  if (typeof value !== "number" || !Number.isFinite(value)) return;
+                  setMinimapDraftWidth(clampCodeMirrorMinimapWidth(value));
+                }}
+              />
+            </div>
+            <Slider
+              min={CODEMIRROR_MINIMAP_MIN_WIDTH}
+              max={CODEMIRROR_MINIMAP_MAX_WIDTH}
+              value={minimapDraftWidth}
+              onChange={(value) =>
+                setMinimapDraftWidth(clampCodeMirrorMinimapWidth(Number(value)))
+              }
+            />
+          </div>
+        </div>
+      </Modal>
+    );
+
+    if (!minimapEnabled) return settingsModal;
+
+    return (
+      <>
+        <div
+          style={{
+            width: `${minimapSettings.width}px`,
+            flex: `0 0 ${minimapSettings.width}px`,
+            marginLeft: "8px",
+            marginRight: "6px",
+            display: "flex",
+            height: "100%",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            ref={railRef}
+            onMouseDown={onRailMouseDown}
+            style={{
+              position: "relative",
+              width: "100%",
+              borderRadius: "4px",
+              background: "rgba(255,255,255,0.92)",
+              border: "1px solid rgba(148,163,184,0.68)",
+              cursor: "pointer",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              ref={scrollRef}
+              style={{
+                position: "absolute",
+                inset: 0,
+                overflowY: "auto",
+                overflowX: "hidden",
+                // Keep the scrollbar in a dedicated gutter, not over the text.
+                scrollbarGutter: "stable",
+                boxSizing: "border-box",
+              }}
+            >
+              <div
+                ref={trackRef}
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  height: "100%",
+                }}
+              >
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    height: "100%",
+                  }}
+                />
+              </div>
+            </div>
+            <div
+              ref={viewportRef}
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: 0,
+                height: "10px",
+                border: "1px solid rgba(37,99,235,0.75)",
+                background: "rgba(59,130,246,0.12)",
+                borderRadius: "3px",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
+        </div>
+        {settingsModal}
+      </>
+    );
+  },
+);
 
 export interface Props {
   id: string;
@@ -120,9 +662,12 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
   useEffect(cm_update_font_size, [props.font_size]);
 
   useEffect(() => {
-    if (cmRef.current == null || props.value == null) return;
-    const value =
-      typeof props.value == "function" ? props.value() ?? "" : props.value;
+    if (cmRef.current == null) return;
+    if (typeof props.value !== "function") return;
+    // Live editors are synchronized through sync/merge actions; mirroring
+    // string-valued Redux snapshots here can clobber fresh local edits.
+    // Function-valued props.value is used by static external views (e.g. time travel).
+    const value = props.value() ?? "";
     if (cmRef.current.getValue() !== value) {
       cmRef.current.setValue(value);
     }
@@ -203,6 +748,7 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
     // that's how we can bring back this frame (with given id) very efficiently.
     $(cmRef.current.getWrapperElement()).remove();
     cmRef.current = undefined;
+    set_has_cm(false);
   }
 
   // Save the UI state of the CM (not the actual content) -- scroll position, selections, etc.
@@ -488,16 +1034,29 @@ export const CodemirrorEditor: React.FC<Props> = React.memo((props: Props) => {
         is_current={props.is_current}
       />
       <div
-        style={{ ...STYLE, fontSize: `${props.font_size}px` }}
+        style={{
+          ...STYLE,
+          fontSize: `${props.font_size}px`,
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "stretch",
+          minHeight: 0,
+          overflow: "hidden",
+        }}
         className="smc-vfill"
       >
-        {render_cursors()}
-        {render_gutter_markers()}
-        <textarea
-          ref={textareaRef}
-          style={{ display: "none" }}
-          placeholder={props.placeholder}
-        />
+        <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }} className="smc-vfill">
+          {render_cursors()}
+          {render_gutter_markers()}
+          <textarea
+            ref={textareaRef}
+            style={{ display: "none" }}
+            placeholder={props.placeholder}
+          />
+        </div>
+        {has_cm && cmRef.current != null ? (
+          <CodeMirrorMinimap cm={cmRef.current} isCurrent={props.is_current} />
+        ) : null}
       </div>
     </div>
   );

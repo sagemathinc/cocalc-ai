@@ -33,6 +33,71 @@ function makeQueueKey({ project_id, path, threadKey }): QueueKey {
   return `${project_id}::${path}::${threadKey}`;
 }
 
+type ThreadQueueRef = {
+  queueKey: QueueKey;
+  threadKey: string;
+  project_id: string;
+  path: string;
+};
+
+function resolveThreadQueueRef({
+  actions,
+  threadRootDate,
+}: {
+  actions: ChatActions;
+  threadRootDate: Date;
+}): ThreadQueueRef | undefined {
+  const store = actions.store;
+  if (!store) return undefined;
+  const project_id = store.get("project_id");
+  const path = store.get("path");
+  if (!project_id || !path) return undefined;
+  const threadKey = actions.computeThreadKey(threadRootDate.valueOf());
+  if (!threadKey) return undefined;
+  return {
+    queueKey: makeQueueKey({ project_id, path, threadKey }),
+    threadKey,
+    project_id,
+    path,
+  };
+}
+
+// Clear stale in-memory queue/running state for a thread.
+// This is important after backend restarts or interrupted turns so a new
+// "continue" can start immediately instead of remaining queued forever.
+export function resetAcpThreadState({
+  actions,
+  threadRootDate,
+}: {
+  actions: ChatActions;
+  threadRootDate: Date;
+}): void {
+  const store = actions.store;
+  if (!store) return;
+  const queueRef = resolveThreadQueueRef({ actions, threadRootDate });
+  if (queueRef) {
+    const q = turnQueues.get(queueRef.queueKey);
+    if (q) {
+      for (const item of q.items) {
+        item.canceled = true;
+      }
+      q.items = [];
+      q.running = false;
+      turnQueues.delete(queueRef.queueKey);
+    }
+  }
+
+  const threadIso = threadRootDate.toISOString();
+  const threadMessages = actions.getMessagesInThread(threadIso) ?? [];
+  let nextState = store.get("acpState");
+  for (const msg of threadMessages) {
+    const d = dateValue(msg);
+    if (!d) continue;
+    nextState = nextState.delete(`${d.valueOf()}`);
+  }
+  store.setState({ acpState: nextState });
+}
+
 async function runQueue(key: QueueKey): Promise<void> {
   const q = turnQueues.get(key);
   if (!q) return;
@@ -63,6 +128,7 @@ type ProcessAcpRequest = {
   input: string;
   actions: ChatActions;
   reply_to?: Date;
+  sendMode?: "immediate";
 };
 
 export async function processAcpLLM({
@@ -71,6 +137,7 @@ export async function processAcpLLM({
   input,
   actions,
   reply_to,
+  sendMode,
 }: ProcessAcpRequest): Promise<void> {
   const { syncdb, store, chatStreams } = actions;
   if (syncdb == null || store == null) return;
@@ -152,6 +219,7 @@ export async function processAcpLLM({
         sender_id,
         messageDate: newMessageDate,
         reply_to: threadRootDate,
+        sendMode,
       });
       console.log("Starting ACP turn for", { message, chatMetadata });
       const stream = await webapp_client.conat_client.streamAcp({
@@ -322,12 +390,14 @@ function buildChatMetadata({
   sender_id,
   messageDate,
   reply_to,
+  sendMode,
 }: {
   project_id?: string;
   path?: string;
   sender_id: string;
   messageDate: Date;
   reply_to?: Date;
+  sendMode?: "immediate";
 }): AcpChatContext {
   if (!project_id) {
     throw new Error("Codex requires a project context to run");
@@ -344,5 +414,6 @@ function buildChatMetadata({
     sender_id,
     message_date: messageDate.toISOString(),
     reply_to: reply_to?.toISOString(),
+    send_mode: sendMode,
   };
 }

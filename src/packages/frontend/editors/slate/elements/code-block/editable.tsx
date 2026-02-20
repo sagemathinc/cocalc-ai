@@ -22,6 +22,7 @@ import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import { isEqual } from "lodash";
 import Mermaid from "./mermaid";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { IS_TOUCH } from "@cocalc/frontend/feature";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { ReactEditor } from "../../slate-react";
 import { hash_string } from "@cocalc/util/misc";
@@ -37,6 +38,7 @@ import { pointAtPath } from "../../slate-util";
 interface FloatingActionMenuProps {
   info: string;
   setInfo: (info: string) => void;
+  visible: boolean;
   showInfoInput: boolean;
   onInfoFocus: () => void;
   onInfoBlur: () => void;
@@ -52,6 +54,7 @@ interface FloatingActionMenuProps {
 function FloatingActionMenu({
   info,
   setInfo,
+  visible,
   showInfoInput,
   onInfoFocus,
   onInfoBlur,
@@ -145,6 +148,9 @@ function FloatingActionMenu({
         border: "1px solid #ddd",
         borderRadius: "6px",
         padding: "2px 4px",
+        opacity: visible ? 1 : 0,
+        pointerEvents: visible ? "auto" : "none",
+        transition: "opacity 140ms ease",
       }}
     >
       {collapseToggle && (
@@ -255,6 +261,8 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   const [expanded, setExpanded] = useState<boolean>(
     () => expandState.get(collapseKey) ?? false,
   );
+  const [menuHovered, setMenuHovered] = useState<boolean>(false);
+  const [menuFocused, setMenuFocused] = useState<boolean>(false);
   useEffect(() => {
     setExpanded(expandState.get(collapseKey) ?? false);
   }, [collapseKey]);
@@ -294,6 +302,8 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   }, [editor]);
   const forceExpanded = selectionInBlock;
   const isCollapsed = shouldCollapse && !expanded && !forceExpanded;
+  const showActionMenu =
+    IS_TOUCH || selectionInBlock || menuHovered || menuFocused;
   const markdownCandidate = (element as any).markdownCandidate;
   const preferRichText =
     !!markdownCandidate && shouldPreferRichText(codeValue ?? "");
@@ -518,7 +528,26 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     <div {...attributes} spellCheck={false} style={{ textIndent: 0 }}>
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1 }}>
-          <div style={{ position: "relative" }}>
+          <div
+            style={{ position: "relative" }}
+            onMouseEnter={() => {
+              if (!IS_TOUCH) setMenuHovered(true);
+            }}
+            onMouseLeave={() => {
+              if (!IS_TOUCH) setMenuHovered(false);
+            }}
+            onFocusCapture={() => {
+              if (!IS_TOUCH) setMenuFocused(true);
+            }}
+            onBlurCapture={(event) => {
+              if (IS_TOUCH) return;
+              const next = event.relatedTarget as Node | null;
+              if (next && (event.currentTarget as HTMLElement).contains(next)) {
+                return;
+              }
+              setMenuFocused(false);
+            }}
+          >
             {!disableMarkdownCodebar && (
               <div contentEditable={false}>
                 <FloatingActionMenu
@@ -526,6 +555,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   setInfo={(info) => {
                     setInfo(info);
                   }}
+                  visible={showActionMenu}
                   showInfoInput={!!element.fence}
                   onInfoFocus={() => {
                     infoFocusedRef.current = true;
@@ -594,7 +624,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
                   .join("\n")}
               </pre>
             ) : (
-              <CodeBlockBody onPaste={handlePaste}>{children}</CodeBlockBody>
+              <CodeBlockBody onPaste={handlePaste}>
+                {children}
+              </CodeBlockBody>
             )}
             {markdownCandidate && (
               <div

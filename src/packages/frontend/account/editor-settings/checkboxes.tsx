@@ -89,11 +89,6 @@ const EDITOR_SETTINGS_CHECKBOXES = {
     defaultMessage: "ask which kernel to use for a new Jupyter Notebook",
   }),
   show_my_other_cursors: "when editing the same file in multiple browsers",
-  disable_jupyter_virtualization: defineMessage({
-    id: "account.editor-setting.checkbox.disable_jupyter_virtualization",
-    defaultMessage:
-      "render entire Jupyter Notebook instead of just visible part (slower but more reliable)",
-  }),
   disable_markdown_codebar: defineMessage({
     id: "account.other-settings.markdown_codebar",
     defaultMessage: `<strong>Disable the markdown code bar</strong> in all markdown documents.
@@ -142,7 +137,6 @@ const FILE_OPERATIONS: readonly CheckboxKey[] = [
 
 const JUPYTER_SETTINGS: readonly CheckboxKey[] = [
   "ask_jupyter_kernel",
-  "disable_jupyter_virtualization",
 ] as const;
 
 const UI_ELEMENTS: readonly CheckboxKey[] = [

@@ -70,6 +70,12 @@ const cm: EditorDescription = {
     "-format-SpecialChar", // disable this since not properly implemented for latex.  It could be though!
     "download_pdf",
     "settings",
+    "toggle_minimap",
+    "show_minimap",
+    "hide_minimap",
+    "increase_minimap_width",
+    "decrease_minimap_width",
+    "minimap_settings",
   ]),
   buttons: set([
     "format-ai_formula",

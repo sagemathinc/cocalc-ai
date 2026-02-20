@@ -86,6 +86,11 @@ export const InputPrompt: React.FC<InputPromptProps> = (props) => {
           marginTop: "8.5px",
           ...props.style,
         }}
+        cocalc-test="cell-input-prompt"
+        data-cocalc-input-state={state}
+        data-cocalc-input-exec-count={
+          props.exec_count == null ? "" : `${props.exec_count}`
+        }
       >
         <Tip tip={tip} placement="top">
           In [{n}]:

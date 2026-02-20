@@ -4,6 +4,7 @@ import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import getLogger from "@cocalc/backend/logger";
+import { data } from "@cocalc/backend/data";
 import {
   CodexExecAgent,
   EchoAgent,
@@ -51,23 +52,69 @@ import {
   listAcpPayloads,
   clearAcpPayloads,
 } from "../sqlite/acp-queue";
+import { initDatabase } from "../sqlite/database";
+import {
+  finalizeAcpTurnLease,
+  heartbeatAcpTurnLease,
+  listRunningAcpTurnLeases,
+  startAcpTurnLease,
+  updateAcpTurnLeaseSessionId,
+} from "../sqlite/acp-turns";
 import { throttle } from "lodash";
 import { akv, type AKV } from "@cocalc/conat/sync/akv";
 
 // how many ms between saving output during a running turn
 // so that everybody sees it.
 const COMMIT_INTERVAL = 2_000;
+const LEASE_HEARTBEAT_INTERVAL = 2_000;
 
 const logger = getLogger("lite:hub:acp");
+const ACP_INSTANCE_ID = randomUUID();
 
 let blobStore: AKV | null = null;
 const agents = new Map<string, AcpAgent>();
 let conatClient: ConatClient | null = null;
 
 const INTERRUPT_STATUS_TEXT = "Conversation interrupted.";
+const RESTART_INTERRUPTED_NOTICE =
+  "**Conversation interrupted because the backend server restarted.**";
 
 const chatWritersByChatKey = new Map<string, ChatStreamWriter>();
 const chatWritersByThreadId = new Map<string, ChatStreamWriter>();
+
+export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
+  const top = Math.max(1, topN);
+  const snapshots = Array.from(chatWritersByChatKey.values()).map((writer) =>
+    writer.watchdogSnapshot(),
+  );
+  const activeWriters = snapshots.filter((x) => !x.closed).length;
+  const finishedWriters = snapshots.filter((x) => x.finished).length;
+  const disposeScheduled = snapshots.filter((x) => x.disposeScheduled).length;
+  const syncdbErrors = snapshots.filter((x) => x.hasSyncdbError).length;
+  const totalBufferedEvents = snapshots.reduce((sum, x) => sum + x.events, 0);
+  const topWritersByEvents = [...snapshots]
+    .sort((a, b) => b.events - a.events)
+    .slice(0, top)
+    .map((x) => ({
+      chatKey: x.chatKey,
+      path: x.path,
+      messageDate: x.messageDate,
+      events: x.events,
+      finished: x.finished,
+      disposeScheduled: x.disposeScheduled,
+      threadIds: x.threadIds,
+    }));
+  return {
+    writersByChatKey: chatWritersByChatKey.size,
+    writersByThreadId: chatWritersByThreadId.size,
+    activeWriters,
+    finishedWriters,
+    disposeScheduled,
+    syncdbErrors,
+    totalBufferedEvents,
+    topWritersByEvents,
+  };
+}
 
 function logWriterCounts(
   reason: string,
@@ -118,10 +165,11 @@ export class ChatStreamWriter {
   private events: AcpStreamMessage[] = [];
   private usage: AcpStreamUsage | null = null;
   private content = "";
+  private lastErrorText: string | null = null;
   private threadId: string | null = null;
   private seq = 0;
   private finished = false;
-  private finishedBy?: "summary" | "error";
+  private finishedBy?: "summary" | "error" | "interrupt";
   private approverAccountId: string;
   private interruptedMessage?: string;
   private interruptNotified = false;
@@ -133,6 +181,14 @@ export class ChatStreamWriter {
   private logSubject: string;
   private client: ConatClient;
   private timeTravel?: AgentTimeTravelRecorder;
+  private leaseFinalized = false;
+  private heartbeatLease = throttle(
+    () => {
+      this.touchLease();
+    },
+    LEASE_HEARTBEAT_INTERVAL,
+    { leading: true, trailing: true },
+  );
   private persistLogProgress = throttle(
     async () => {
       try {
@@ -153,6 +209,76 @@ export class ChatStreamWriter {
     if (record == null) return undefined;
     if (typeof record.get === "function") return record.get(key) as T;
     return (record as any)[key] as T;
+  }
+
+  private leaseKey() {
+    return {
+      project_id: this.metadata.project_id,
+      path: this.metadata.path,
+      message_date: this.metadata.message_date,
+    };
+  }
+
+  private startLease(): void {
+    try {
+      startAcpTurnLease({
+        context: this.metadata,
+        owner_instance_id: ACP_INSTANCE_ID,
+        pid: process.pid,
+        session_id: this.sessionKey ?? undefined,
+      });
+    } catch (err) {
+      logger.warn("failed to start acp turn lease", {
+        chatKey: this.chatKey,
+        err,
+      });
+    }
+  }
+
+  private touchLease(): void {
+    if (this.leaseFinalized) return;
+    try {
+      heartbeatAcpTurnLease({
+        key: this.leaseKey(),
+        owner_instance_id: ACP_INSTANCE_ID,
+        pid: process.pid,
+        session_id: this.threadId ?? this.sessionKey ?? undefined,
+      });
+    } catch (err) {
+      logger.debug("failed to heartbeat acp turn lease", {
+        chatKey: this.chatKey,
+        err,
+      });
+    }
+  }
+
+  private finalizeLease(
+    state: "completed" | "error" | "aborted",
+    reason?: string,
+  ): void {
+    if (this.leaseFinalized) return;
+    this.leaseFinalized = true;
+    try {
+      this.heartbeatLease.flush();
+    } catch {
+      // ignore
+    }
+    this.heartbeatLease.cancel();
+    try {
+      finalizeAcpTurnLease({
+        key: this.leaseKey(),
+        state,
+        reason,
+        owner_instance_id: ACP_INSTANCE_ID,
+      });
+    } catch (err) {
+      logger.warn("failed to finalize acp turn lease", {
+        chatKey: this.chatKey,
+        state,
+        reason,
+        err,
+      });
+    }
   }
 
   constructor({
@@ -197,6 +323,7 @@ export class ChatStreamWriter {
     chatWritersByChatKey.set(this.chatKey, this);
     logWriterCounts("create", { chatKey: this.chatKey });
     this.sessionKey = sessionKey;
+    this.startLease();
     if (sessionKey) {
       this.registerThreadKey(sessionKey);
     }
@@ -343,6 +470,7 @@ export class ChatStreamWriter {
     { persist }: { persist: boolean },
   ): void {
     if (this.closed) return;
+    this.heartbeatLease();
     if ((payload.seq ?? -1) >= this.seq) {
       this.seq = (payload.seq ?? -1) + 1;
     }
@@ -363,6 +491,10 @@ export class ChatStreamWriter {
     this.persistLogProgress();
     if (payload.type === "event") {
       this.handleAgentEvent(payload.event);
+      if (this.interruptNotified) {
+        // Preserve interruption state in chat even if late stream payloads arrive.
+        return;
+      }
       const text = extractEventText(payload.event);
       if (text) {
         const last = this.events[this.events.length - 1];
@@ -374,22 +506,40 @@ export class ChatStreamWriter {
       return;
     }
     if (payload.type === "summary") {
-      const finishedFromError = this.finishedBy === "error";
-      if (!finishedFromError) {
+      if (this.interruptNotified) {
+        if (
+          (!this.content || this.content.trim().length === 0) &&
+          this.interruptedMessage
+        ) {
+          this.content = this.interruptedMessage;
+        }
+        this.finishedBy = "interrupt";
+      } else {
+        const finishedFromError = this.finishedBy === "error";
         const latestMessage = getLatestMessageText(this.events);
+        const hasStreamedMessage =
+          typeof latestMessage === "string" &&
+          latestMessage.trim().length > 0;
         const candidate =
-          (latestMessage && latestMessage.trim().length > 0
+          (hasStreamedMessage
             ? latestMessage
             : payload.finalResponse) ??
           this.interruptedMessage ??
           this.content;
-        if (candidate != null) {
+        const shouldApplySummary =
+          !finishedFromError ||
+          (hasStreamedMessage &&
+            typeof candidate === "string" &&
+            candidate.trim().length > 0 &&
+            !looksLikeErrorEcho(candidate, this.lastErrorText));
+        if (candidate != null && shouldApplySummary) {
           if (
             this.content &&
             this.content.length > 0 &&
             candidate.length > 0 &&
             candidate !== this.content &&
-            !candidate.startsWith(this.content)
+            !candidate.startsWith(this.content) &&
+            this.finishedBy !== "error"
           ) {
             // Multiple summaries can arrive; append new text if it doesn't already
             // include the existing accumulated content.
@@ -397,6 +547,7 @@ export class ChatStreamWriter {
           } else {
             this.content = candidate;
           }
+          this.finishedBy = "summary";
         }
       }
       if (payload.usage) {
@@ -409,24 +560,25 @@ export class ChatStreamWriter {
       }
       clearAcpPayloads(this.metadata);
       this.finished = true;
-      if (!finishedFromError) {
-        this.finishedBy = "summary";
-      }
+      this.finalizeLease("completed");
       void this.timeTravel?.finalizeTurn(this.metadata.message_date);
       void this.persistLog();
       return;
     }
     if (payload.type === "error") {
       this.content = `\n\n<span style='color:#b71c1c'>${payload.error}</span>\n\n`;
+      this.lastErrorText = payload.error;
       clearAcpPayloads(this.metadata);
       this.finished = true;
       this.finishedBy = "error";
+      this.finalizeLease("error", payload.error);
       void this.timeTravel?.finalizeTurn(this.metadata.message_date);
       void this.persistLog();
     }
   }
 
   private commit = throttle((generating: boolean): void => {
+    this.heartbeatLease();
     logger.debug("commit", {
       generating,
       closed: this.closed,
@@ -450,7 +602,13 @@ export class ChatStreamWriter {
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
     });
-    this.syncdb!.set({ ...message, reply_to2: this.metadata.reply_to });
+    const update: any = { ...message, reply_to2: this.metadata.reply_to };
+    if (this.interruptNotified) {
+      update.acp_interrupted = true;
+      update.acp_interrupted_reason = "interrupt";
+      update.acp_interrupted_text = this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
+    }
+    this.syncdb!.set(update);
     this.syncdb!.commit();
     (async () => {
       try {
@@ -479,6 +637,16 @@ export class ChatStreamWriter {
       clearTimeout(this.disposeTimer);
       this.disposeTimer = undefined;
     }
+
+    if (!this.leaseFinalized) {
+      const reason = this.finished
+        ? "disposed after finished turn"
+        : this.interruptNotified
+          ? INTERRUPT_STATUS_TEXT
+          : "writer disposed before terminal payload";
+      this.finalizeLease("aborted", reason);
+    }
+
     this.commit(false);
     this.commit.flush();
     this.closed = true;
@@ -556,6 +724,8 @@ export class ChatStreamWriter {
     if (this.interruptNotified) return;
     this.interruptNotified = true;
     this.interruptedMessage = text;
+    this.content = text;
+    this.finishedBy = "interrupt";
     this.addLocalEvent({
       type: "message",
       text,
@@ -569,11 +739,38 @@ export class ChatStreamWriter {
     return Array.from(new Set(ids));
   }
 
+  watchdogSnapshot() {
+    return {
+      chatKey: this.chatKey,
+      path: this.metadata.path,
+      messageDate: this.metadata.message_date,
+      events: this.events.length,
+      finished: this.finished,
+      closed: this.closed,
+      disposeScheduled: this.disposeTimer != null,
+      hasSyncdbError: this.syncdbError != null,
+      threadIds: this.getKnownThreadIds(),
+    };
+  }
+
   private registerThreadKey(key: string): void {
     if (!key) return;
     this.threadKeys.add(key);
     chatWritersByThreadId.set(key, this);
     logWriterCounts("register-thread", { threadId: key });
+    try {
+      updateAcpTurnLeaseSessionId({
+        key: this.leaseKey(),
+        session_id: key,
+      });
+    } catch (err) {
+      logger.debug("failed to persist acp turn session id", {
+        chatKey: this.chatKey,
+        key,
+        err,
+      });
+    }
+    this.heartbeatLease();
     void this.persistSessionId(key);
   }
 
@@ -642,6 +839,164 @@ function getLatestMessageText(events: AcpStreamMessage[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function normalizeSummaryText(text: string | null | undefined): string {
+  if (typeof text !== "string") return "";
+  return text
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function looksLikeErrorEcho(
+  summaryText: string,
+  errorText: string | null | undefined,
+): boolean {
+  const summary = normalizeSummaryText(summaryText);
+  const error = normalizeSummaryText(errorText);
+  if (!summary || !error) return false;
+  if (summary === error) return true;
+  return summary.includes(error) || error.includes(summary);
+}
+
+function syncdbField<T = unknown>(record: any, key: string): T | undefined {
+  if (record == null) return undefined;
+  if (typeof record.get === "function") return record.get(key) as T;
+  return (record as any)[key] as T;
+}
+
+function historyToArray(value: any): MessageHistory[] {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value as MessageHistory[];
+  if (typeof value.toJS === "function") return value.toJS() as MessageHistory[];
+  return [];
+}
+
+function appendRestartNotice(historyValue: any): MessageHistory[] {
+  const history = historyToArray(historyValue);
+  if (history.length === 0) {
+    return [];
+  }
+  const first = history[0] as MessageHistory;
+  const content =
+    typeof first?.content === "string"
+      ? first.content
+      : `${(first as any)?.content ?? ""}`;
+  if (/conversation interrupted/i.test(content)) {
+    return history;
+  }
+  const sep = content.trim().length > 0 ? "\n\n" : "";
+  return [
+    {
+      ...first,
+      content: `${content}${sep}${RESTART_INTERRUPTED_NOTICE}`,
+    },
+    ...history.slice(1),
+  ];
+}
+
+export async function recoverOrphanedAcpTurns(
+  client: ConatClient,
+): Promise<number> {
+  let running;
+  try {
+    running = listRunningAcpTurnLeases({
+      exclude_owner_instance_id: ACP_INSTANCE_ID,
+    });
+  } catch (err) {
+    logger.warn("failed to list running acp turn leases", err);
+    return 0;
+  }
+  if (!running.length) return 0;
+  logger.warn("recovering orphaned acp turns", {
+    instance: ACP_INSTANCE_ID,
+    count: running.length,
+  });
+  let recovered = 0;
+  for (const turn of running) {
+    const context: AcpChatContext = {
+      project_id: turn.project_id,
+      path: turn.path,
+      message_date: turn.message_date,
+      sender_id: turn.sender_id ?? "openai-codex-agent",
+      reply_to: turn.reply_to ?? undefined,
+    };
+    try {
+      clearAcpPayloads(context);
+    } catch (err) {
+      logger.debug("failed clearing acp queue during recovery", {
+        context,
+        err,
+      });
+    }
+    try {
+      const syncdb = await acquireChatSyncDB({
+        client,
+        project_id: turn.project_id,
+        path: turn.path,
+      });
+      try {
+        if (!syncdb.isReady()) {
+          await once(syncdb, "ready");
+        }
+        const current = syncdb.get_one({
+          event: "chat",
+          date: turn.message_date,
+        });
+        const generating = syncdbField<boolean>(current, "generating");
+        if (current != null && generating === true) {
+          const history = appendRestartNotice(syncdbField(current, "history"));
+          const update: any = {
+            event: "chat",
+            date: turn.message_date,
+            generating: false,
+            acp_interrupted: true,
+            acp_interrupted_reason: "server_restart",
+            acp_interrupted_text: RESTART_INTERRUPTED_NOTICE,
+          };
+          if (history.length > 0) {
+            update.history = history;
+          }
+          syncdb.set(update);
+          syncdb.commit();
+          await syncdb.save();
+        }
+      } finally {
+        await releaseChatSyncDB(turn.project_id, turn.path);
+      }
+    } catch (err) {
+      logger.warn("failed to recover orphaned acp chat row", {
+        turn,
+        err,
+      });
+    }
+    try {
+      finalizeAcpTurnLease({
+        key: {
+          project_id: turn.project_id,
+          path: turn.path,
+          message_date: turn.message_date,
+        },
+        state: "aborted",
+        reason: "server restart recovery",
+        owner_instance_id: ACP_INSTANCE_ID,
+      });
+      recovered += 1;
+    } catch (err) {
+      logger.warn("failed to finalize orphaned acp lease", {
+        turn,
+        err,
+      });
+    }
+  }
+  logger.warn("finished orphaned acp turn recovery", {
+    instance: ACP_INSTANCE_ID,
+    recovered,
+    total: running.length,
+  });
+  return recovered;
 }
 
 type ExecutorAdapters = {
@@ -945,6 +1300,11 @@ export async function init(client: ConatClient): Promise<void> {
     "preferContainerExecutor =",
     preferContainerExecutor(),
   );
+  // IMPORTANT: initialize sqlite with the same hub.db path used by hub api,
+  // before any ACP queue/lease tables are touched. Otherwise ACP can
+  // accidentally lock the sqlite module onto a fallback cwd-relative file.
+  const sqliteFilename = path.join(data, "hub.db");
+  initDatabase({ filename: sqliteFilename });
   conatClient = client;
   process.once("exit", () => {
     for (const agent of agents.values()) {
@@ -957,6 +1317,7 @@ export async function init(client: ConatClient): Promise<void> {
     }
   });
   blobStore = getBlobstore(client);
+  await recoverOrphanedAcpTurns(client);
   await initConatAcp(
     {
       evaluate,

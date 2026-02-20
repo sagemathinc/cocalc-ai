@@ -303,12 +303,11 @@ export class JupyterKernel
     backend_state?: BackendState;
     kernel_state?: KernelState;
   }): void => {
-    const syncdb = this._actions?.syncdb;
-    if (!syncdb || !syncdb.isReady()) {
+    const actions = this._actions;
+    if (actions == null) {
       return;
     }
-    syncdb.set({ type: "settings", ...settings });
-    syncdb.commit();
+    actions.set_runtime_settings(settings);
   };
 
   get_path = () => {

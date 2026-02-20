@@ -66,11 +66,18 @@ load_config() {
   HUB_SELF_HOST_PAIR_URL="${HUB_SELF_HOST_PAIR_URL:-}"
 
   if [ -z "$HUB_SOFTWARE_BASE_URL_FORCE" ] && [ "$HUB_USE_LOCAL_SOFTWARE" = "1" ]; then
-    if [ -z "$HUB_HOST_IP" ]; then
-      HUB_HOST_IP="$(detect_host_ip || true)"
-    fi
-    if [ -n "$HUB_HOST_IP" ]; then
-      HUB_SOFTWARE_BASE_URL_FORCE="http://$HUB_HOST_IP:$HUB_PORT/software"
+    if [ -n "$HUB_SELF_HOST_PAIR_URL" ]; then
+      HUB_SOFTWARE_BASE_URL_FORCE="${HUB_SELF_HOST_PAIR_URL%/}/software"
+    elif [ "$HUB_BIND_HOST" = "localhost" ] || [ "$HUB_BIND_HOST" = "127.0.0.1" ] || [ "$HUB_BIND_HOST" = "::1" ]; then
+      # Hub is loopback-only, so local software URLs must also be loopback.
+      HUB_SOFTWARE_BASE_URL_FORCE="http://127.0.0.1:$HUB_PORT/software"
+    else
+      if [ -z "$HUB_HOST_IP" ]; then
+        HUB_HOST_IP="$(detect_host_ip || true)"
+      fi
+      if [ -n "$HUB_HOST_IP" ]; then
+        HUB_SOFTWARE_BASE_URL_FORCE="http://$HUB_HOST_IP:$HUB_PORT/software"
+      fi
     fi
   fi
 }
