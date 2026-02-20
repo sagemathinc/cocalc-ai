@@ -65,6 +65,15 @@ const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_CONFIG_SENDER = "__thread_config__";
 
+export interface ThreadMetadataSnapshot {
+  name?: string;
+  thread_color?: string;
+  thread_icon?: string;
+  thread_image?: string;
+  pin?: boolean;
+  acp_config?: CodexThreadConfig | null;
+}
+
 export class ChatActions extends Actions<ChatState> {
   public syncdb?: ImmerDB;
   public store?: ChatStore;
@@ -769,6 +778,40 @@ export class ChatActions extends Actions<ChatState> {
       ...patch,
     });
     return true;
+  };
+
+  getThreadMetadata = (threadKey: string): ThreadMetadataSnapshot => {
+    const cfgRow = this.getThreadConfigRecord(threadKey);
+    const cfg =
+      cfgRow && typeof cfgRow.toJS === "function" ? cfgRow.toJS() : cfgRow;
+    const root = this.getThreadRootDoc(threadKey)?.message;
+    const readString = (
+      key: "name" | "thread_color" | "thread_icon" | "thread_image",
+    ): string | undefined => {
+      const fromCfg = field<string>(cfg, key);
+      if (typeof fromCfg === "string" && fromCfg.trim()) return fromCfg.trim();
+      const fromRoot = field<string>(root, key);
+      if (typeof fromRoot === "string" && fromRoot.trim()) return fromRoot.trim();
+      return undefined;
+    };
+    const pinRaw = field<any>(cfg, "pin") ?? field<any>(root, "pin");
+    const pin =
+      pinRaw === true || pinRaw === "true" || pinRaw === 1 || pinRaw === "1"
+        ? true
+        : pinRaw === false || pinRaw === "false" || pinRaw === 0 || pinRaw === "0"
+          ? false
+          : undefined;
+    const acp_config =
+      field<CodexThreadConfig | null>(cfg, "acp_config") ??
+      field<CodexThreadConfig | null>(root, "acp_config");
+    return {
+      name: readString("name"),
+      thread_color: readString("thread_color"),
+      thread_icon: readString("thread_icon"),
+      thread_image: readString("thread_image"),
+      pin,
+      acp_config,
+    };
   };
 
   save_scroll_state = (position, height, offset): void => {

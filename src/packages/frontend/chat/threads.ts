@@ -193,18 +193,19 @@ export function useThreadSections({
   const threads = React.useMemo<ThreadMeta[]>(() => {
     return rawThreads.map((thread) => {
       const rootMessage = thread.rootMessage;
-      const storedName = field<string>(rootMessage, "name")?.trim();
+      const threadMeta = actions?.getThreadMetadata?.(thread.key);
+      const storedName =
+        threadMeta?.name ?? field<string>(rootMessage, "name")?.trim();
       const hasCustomName = !!storedName;
-      const threadColor = field<string>(rootMessage, "thread_color")?.trim();
-      const threadIcon = field<string>(rootMessage, "thread_icon")?.trim();
+      const threadColor =
+        threadMeta?.thread_color ??
+        field<string>(rootMessage, "thread_color")?.trim();
+      const threadIcon =
+        threadMeta?.thread_icon ??
+        field<string>(rootMessage, "thread_icon")?.trim();
       const hasCustomAppearance = Boolean(threadColor || threadIcon);
       const displayLabel = storedName || thread.label;
-      const pinValue = field<any>(rootMessage, "pin");
-      const isPinned =
-        pinValue === true ||
-        pinValue === "true" ||
-        pinValue === 1 ||
-        pinValue === "1";
+      const isPinned = threadMeta?.pin ?? false;
       const readField =
         accountId && rootMessage
           ? field<any>(rootMessage, `read-${accountId}`)

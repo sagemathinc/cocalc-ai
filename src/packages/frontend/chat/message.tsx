@@ -55,7 +55,6 @@ import {
   replyTo,
   editingArray,
 } from "./access";
-import type { CodexThreadConfig } from "@cocalc/chat";
 import { SyncOutlined } from "@ant-design/icons";
 import { AgentMessageStatus } from "./agent-message-status";
 
@@ -423,12 +422,9 @@ export default function Message({
   );
 
   const threadCodexConfig = useMemo(() => {
-    const rootMessage =
-      threadKeyForSession != null
-        ? messages?.get(threadKeyForSession)
-        : undefined;
-    return field<CodexThreadConfig>(rootMessage, "acp_config");
-  }, [messages, threadKeyForSession]);
+    if (threadKeyForSession == null) return undefined;
+    return actions?.getThreadMetadata(threadKeyForSession)?.acp_config ?? undefined;
+  }, [actions, threadKeyForSession]);
 
   // Prefer the persisted sessionId on the thread root's acp_config; fall back
   // to the thread id we get from the ACP payload, then the thread key.
