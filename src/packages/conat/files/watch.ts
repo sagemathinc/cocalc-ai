@@ -19,6 +19,19 @@ const logger = getLogger("conat:files:watch");
 
 // (path:string, options:WatchOptions) => AsyncIterator
 type AsyncWatchFunction = any;
+type IgnoreState = { ignoreUntil: number };
+
+interface SharedNonUniqueWatcher {
+  key: string;
+  watcher: any;
+  subscribers: Map<
+    string,
+    {
+      socket: ServerSocket;
+      ignore: IgnoreState;
+    }
+  >;
+}
 
 // This is NOT the nodejs watcher, but uses
 //   https://github.com/paulmillr/chokidar
@@ -62,7 +75,108 @@ export function watchServer({
   logger.debug("server: listening on ", { subject });
 
   const unique: { [path: string]: ServerSocket[] } = {};
-  const ignores: { [path: string]: { ignoreUntil: number }[] } = {};
+  const ignores: { [path: string]: IgnoreState[] } = {};
+  const sharedNonUnique = new Map<string, SharedNonUniqueWatcher>();
+  const sharedNonUniqueInFlight = new Map<
+    string,
+    Promise<SharedNonUniqueWatcher>
+  >();
+
+  const normalizeNonUniqueOptions = (options?: WatchOptions): WatchOptions => {
+    return {
+      maxQueue: options?.maxQueue,
+      overflow: options?.overflow,
+      closeOnUnlink: options?.closeOnUnlink,
+      stats: options?.stats,
+      patch: options?.patch,
+      stabilityThreshold: options?.stabilityThreshold,
+      pollInterval: options?.pollInterval,
+    };
+  };
+
+  const nonUniqueWatchKey = (path: string, options?: WatchOptions): string => {
+    const normalized = normalizeNonUniqueOptions(options);
+    return JSON.stringify({
+      path,
+      maxQueue: normalized.maxQueue ?? null,
+      overflow: normalized.overflow ?? null,
+      closeOnUnlink: !!normalized.closeOnUnlink,
+      stats: !!normalized.stats,
+      patch: !!normalized.patch,
+      stabilityThreshold: normalized.stabilityThreshold ?? null,
+      pollInterval: normalized.pollInterval ?? null,
+    });
+  };
+
+  const ensureSharedNonUniqueWatcher = async (
+    path: string,
+    options?: WatchOptions,
+  ): Promise<SharedNonUniqueWatcher> => {
+    const key = nonUniqueWatchKey(path, options);
+    const existing = sharedNonUnique.get(key);
+    if (existing) {
+      return existing;
+    }
+    const inflight = sharedNonUniqueInFlight.get(key);
+    if (inflight) {
+      return await inflight;
+    }
+    const create = (async () => {
+      const normalizedOptions = normalizeNonUniqueOptions(options);
+      const watcher = await watch(path, normalizedOptions);
+      const shared: SharedNonUniqueWatcher = {
+        key,
+        watcher,
+        subscribers: new Map(),
+      };
+      sharedNonUnique.set(key, shared);
+      logger.debug("created shared non-unique watch", {
+        path,
+        options: normalizedOptions,
+      });
+      (async () => {
+        try {
+          for await (const event of watcher) {
+            const now = Date.now();
+            for (const { socket, ignore } of shared.subscribers.values()) {
+              if (socket.state != "ready") continue;
+              if (ignore.ignoreUntil >= now) continue;
+              socket.write(event);
+            }
+          }
+        } catch (err) {
+          logger.warn("shared non-unique watch failed", {
+            path,
+            options: normalizedOptions,
+            error: `${err}`,
+          });
+        } finally {
+          if (sharedNonUnique.get(key) === shared) {
+            sharedNonUnique.delete(key);
+          }
+          try {
+            watcher.close?.();
+          } catch {}
+          for (const { socket } of shared.subscribers.values()) {
+            try {
+              socket.close();
+            } catch {}
+          }
+          shared.subscribers.clear();
+        }
+      })();
+      return shared;
+    })();
+    sharedNonUniqueInFlight.set(key, create);
+    try {
+      return await create;
+    } finally {
+      if (sharedNonUniqueInFlight.get(key) === create) {
+        sharedNonUniqueInFlight.delete(key);
+      }
+    }
+  };
+
   async function handleUnique({ mesg, socket, path, options, ignore }) {
     let w: any = undefined;
 
@@ -117,17 +231,20 @@ export function watchServer({
   }
 
   async function handleNonUnique({ mesg, socket, path, options, ignore }) {
-    const w = await watch(path, options);
+    const shared = await ensureSharedNonUniqueWatcher(path, options);
+    shared.subscribers.set(socket.id, { socket, ignore });
     socket.once("closed", () => {
-      w.close();
+      shared.subscribers.delete(socket.id);
+      if (shared.subscribers.size === 0) {
+        if (sharedNonUnique.get(shared.key) === shared) {
+          sharedNonUnique.delete(shared.key);
+        }
+        try {
+          shared.watcher.close?.();
+        } catch {}
+      }
     });
     await mesg.respond();
-    for await (const event of w) {
-      if (ignore.ignoreUntil >= Date.now()) {
-        continue;
-      }
-      socket.write(event);
-    }
   }
 
   server.on("connection", (socket: ServerSocket) => {
@@ -136,7 +253,7 @@ export function watchServer({
       subject: socket.subject,
     });
     let initialized = false;
-    const ignore = { ignoreUntil: 0 };
+    const ignore: IgnoreState = { ignoreUntil: 0 };
     socket.on("request", async (mesg) => {
       const data = mesg.data;
       if (data.ignore != null) {
