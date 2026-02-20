@@ -125,7 +125,7 @@ const dataSource = [
       <>
         Use Jupyter notebooks with the R kernel, the R command line, X11
         graphics, <LaTeX /> with Knitr and RMarkdown, and more. Many{" "}
-        <A href="/software/r">R packages are included in CoCalc</A>!
+        <A href="/features/r-statistical-software">R packages are included in CoCalc</A>!
       </>
     ),
   },
@@ -160,7 +160,7 @@ const dataSource = [
         CoCalc – the syntax is largely compatible with MATLAB
         <sup>®</sup>. Use Jupyter notebooks, write programs, and display X11
         graphics. Many{" "}
-        <A href="/software/octave">Octave packages are included in CoCalc</A>!
+        <A href="/features/octave">Octave packages are included in CoCalc</A>!
       </>
     ),
   },
@@ -174,7 +174,7 @@ const dataSource = [
       <>
         Use Python in CoCalc for data science, statistics, mathematics, physics,
         machine learning. Many{" "}
-        <A href="/software/python">Python packages are included in CoCalc</A>!
+        <A href="/features/python">Python packages are included in CoCalc</A>!
       </>
     ),
   },
@@ -192,7 +192,7 @@ const dataSource = [
         code and run it in <A href="/features/terminal">a terminal</A> or
         notebook. <A href="/features/teaching">Teach classes using nbgrader</A>{" "}
         with the Julia kernel. Many{" "}
-        <A href="/software/julia">Julia packages are included in CoCalc</A>!
+        <A href="/features/julia">Julia packages are included in CoCalc</A>!
       </>
     ),
   },
@@ -301,7 +301,7 @@ export default function Features({ customize }) {
               also
               <ul>
                 <li>
-                  browse <A href="/software">installed software</A>,
+                  browse <A href="/features/linux">installed software</A>,
                 </li>
                 <li>
                   see how <A href="/share">other people are using CoCalc</A>,

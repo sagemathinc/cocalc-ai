@@ -98,7 +98,7 @@ export default function Julia({ customize }) {
                 <Title level={2}>Packages</Title>
                 <Paragraph>
                   CoCalc includes over 500{" "}
-                  <A href="/software/julia">pre-installed Julia packages,</A>{" "}
+                  <A href="/features/julia">pre-installed Julia packages,</A>{" "}
                   and if something is missing you can{" "}
                   <A href="https://doc.cocalc.com/howto/install-julia-package.html">
                     easily install more packages.

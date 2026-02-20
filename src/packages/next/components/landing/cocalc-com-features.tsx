@@ -135,7 +135,7 @@ export function CoCalcComFeatures() {
         </Paragraph>
         <Paragraph>
           <Text strong>Pre-installed Software</Text> like in a computer lab,{" "}
-          <A href={"/software"}>all software you need</A> is already installed
+          <A href={"/features/linux"}>all software you need</A> is already installed
           and ready to use.
         </Paragraph>
         <Paragraph>
@@ -178,7 +178,9 @@ export function CoCalcComFeatures() {
     const software = (
       <Paragraph style={{ textAlign: "center" }}>
         <Button
-          onClick={() => (window.location.href = join(ROOT_PATH, "/software"))}
+          onClick={() =>
+            (window.location.href = join(ROOT_PATH, "/features/linux"))
+          }
           title={text.software}
         >
           {text.software}
@@ -219,9 +221,9 @@ export function CoCalcComFeatures() {
           <Col md={8}>
             <Tool
               icon={SOFTWARE_ENVIRONMENT_ICON}
-              href="/software"
-              title="Available Software"
-              alt="Available Software"
+              href="/features/linux"
+              title="Linux Environment"
+              alt="Linux Environment"
             >
               <Paragraph>
                 {siteName} comes with a variety of software pre-installed,
