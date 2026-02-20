@@ -46,7 +46,7 @@ import type {
   Feedback,
   MessageHistory,
 } from "./types";
-import type { CodexThreadConfig } from "@cocalc/chat";
+import { CHAT_SCHEMA_V2, addToHistory, type CodexThreadConfig } from "@cocalc/chat";
 import { getThreadRootDate, toISOString, toMsString, newest_content } from "./utils";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import {
@@ -60,7 +60,6 @@ import {
 } from "./access";
 import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processLLM as processLLMExternal } from "./actions/llm";
-import { addToHistory } from "@cocalc/chat";
 
 const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
@@ -740,6 +739,12 @@ export class ChatActions extends Actions<ChatState> {
     );
   };
 
+  private resolveThreadIdForKey = (threadKey: string): string => {
+    const entry = this.getThreadRootDoc(threadKey);
+    const existing = field<string>(entry?.message, "thread_id");
+    return existing || threadKey;
+  };
+
   private setThreadConfigRecord = (
     threadKey: string,
     patch: Record<string, unknown>,
@@ -747,11 +752,20 @@ export class ChatActions extends Actions<ChatState> {
     if (this.syncdb == null) return false;
     const dateIso = threadKeyToIso(threadKey);
     if (!dateIso) return false;
+    const current = this.getThreadConfigRecord(threadKey);
+    const currentObj =
+      current && typeof current.toJS === "function" ? current.toJS() : current;
+    const updated_by =
+      this.redux.getStore("account").get_account_id() || "__thread_config__";
     this.setSyncdb({
+      ...(currentObj ?? {}),
       event: THREAD_CONFIG_EVENT,
       sender_id: THREAD_CONFIG_SENDER,
       date: dateIso,
-      thread_id: threadKey,
+      thread_id: this.resolveThreadIdForKey(threadKey),
+      updated_at: new Date().toISOString(),
+      updated_by,
+      schema_version: CHAT_SCHEMA_V2,
       ...patch,
     });
     return true;
@@ -1089,14 +1103,6 @@ export class ChatActions extends Actions<ChatState> {
     if (!dateNum || Number.isNaN(dateNum)) {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
-    const dateObj = new Date(dateNum);
-    // Transitional compatibility: mirror to root message.
-    this.setSyncdb({
-      event: "chat",
-      date: dateObj.toISOString(),
-      acp_config: config,
-    });
-    // Preferred long-term storage for thread-level codex config.
     this.setThreadConfigRecord(threadKey, {
       acp_config: config,
     });
@@ -1115,12 +1121,6 @@ export class ChatActions extends Actions<ChatState> {
       throw Error(`setThreadAgentMode: invalid threadKey ${threadKey}`);
     }
     if (mode === "none") {
-      const dateIso = new Date(dateNum).toISOString();
-      this.setSyncdb({
-        event: "chat",
-        date: dateIso,
-        acp_config: null,
-      });
       this.setThreadConfigRecord(threadKey, {
         acp_config: null,
       });
