@@ -1,6 +1,7 @@
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
+import { client as fileServerClient } from "@cocalc/conat/files/file-server";
 import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
@@ -13,11 +14,12 @@ import {
   savePlacement,
   stopProjectOnHost,
 } from "../project-host/control";
-import { createBackup } from "../conat/api/project-backups";
 import { start as startProjectLro } from "../conat/api/projects";
 import { waitForCompletion as waitForLroCompletion } from "@cocalc/conat/lro/client";
 
 const log = getLogger("server:projects:move");
+const MAX_BACKUPS_PER_PROJECT = 30;
+const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 export const MOVE_CANCELED_CODE = "move-canceled";
 
@@ -39,7 +41,6 @@ export type MoveProjectToHostInput = {
   allow_offline?: boolean;
   start_dest?: boolean;
   stop_dest_after_start?: boolean;
-  skip_collab_check_for_backup?: boolean;
 };
 
 type MoveProjectContext = {
@@ -230,6 +231,25 @@ function isMissingProjectVolumeError(err: unknown): boolean {
   return text.includes("project volume does not exist");
 }
 
+async function createFinalBackup({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<{ id: string; time: string }> {
+  const fileServer = fileServerClient({
+    project_id,
+    timeout: BACKUP_TIMEOUT_MS,
+  });
+  const backup = await fileServer.createBackup({
+    project_id,
+    limit: MAX_BACKUPS_PER_PROJECT,
+  });
+  const backupTime = backup.time instanceof Date
+    ? backup.time.toISOString()
+    : new Date(backup.time as any).toISOString();
+  return { id: backup.id, time: backupTime };
+}
+
 export async function moveProjectToHost(
   input: MoveProjectToHostInput,
   opts?: {
@@ -395,26 +415,12 @@ export async function moveProjectToHost(
         project_id: context.project_id,
       });
       try {
-        const backupOp = await createBackup({
-          account_id: context.account_id,
-          project_id: context.project_id,
-        }, {
-          skip_collab_check: !!input.skip_collab_check_for_backup,
-        });
         const backupStart = Date.now();
-        const summary = await waitForLroCompletion({
-          op_id: backupOp.op_id,
-          scope_type: backupOp.scope_type,
-          scope_id: backupOp.scope_id,
-          client: conat(),
+        const result = await createFinalBackup({
+          project_id: context.project_id,
         });
-        if (summary.status !== "succeeded") {
-          const reason = summary.error ?? summary.status;
-          throw new Error(`backup failed: ${reason}`);
-        }
-        const result = summary.result ?? {};
-        const backup_id = result.id ?? result.backup_id;
-        const backup_time = result.time ?? result.backup_time;
+        const backup_id = result.id;
+        const backup_time = result.time;
         const duration_ms = Date.now() - backupStart;
         progress({
           step: "backup",

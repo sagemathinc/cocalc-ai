@@ -2440,7 +2440,6 @@ export async function drainHostInternal({
             allow_offline: !!allow_offline,
             start_dest: true,
             stop_dest_after_start: true,
-            skip_collab_check_for_backup: true,
           },
           { shouldCancel },
         );
