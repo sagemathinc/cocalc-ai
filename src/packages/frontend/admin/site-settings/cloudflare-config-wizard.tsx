@@ -3,13 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, Modal, Radio, Space } from "antd";
+import { Alert, Button, Checkbox, Input, Modal, Radio, Space } from "antd";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { R2CredentialsTestResult } from "@cocalc/conat/hub/api/system";
 import cloudflareApiTokenImg from "./assets/cloudflare-api-token.png";
+import cloudflareManagedTransformImg from "./assets/cloudflare-managed-transform-location-headers.png";
 
 interface WizardProps {
   open: boolean;
@@ -21,6 +22,52 @@ interface WizardProps {
 
 function trimOrEmpty(val: string | undefined): string {
   return (val ?? "").trim();
+}
+
+function normalizedDomain(val: string | undefined): string {
+  return trimOrEmpty(val).toLowerCase().replace(/\.+$/, "");
+}
+
+function inferCloudflareZone(domain: string | undefined): string {
+  const normalized = normalizedDomain(domain);
+  if (!normalized) return "";
+  const labels = normalized.split(".").filter(Boolean);
+  if (labels.length <= 2) return normalized;
+  const secondLevelPublicSuffixes = new Set([
+    "ac",
+    "co",
+    "com",
+    "edu",
+    "gov",
+    "net",
+    "org",
+  ]);
+  const penultimate = labels[labels.length - 2];
+  const last = labels[labels.length - 1];
+  if (
+    last.length === 2 &&
+    penultimate.length <= 3 &&
+    secondLevelPublicSuffixes.has(penultimate) &&
+    labels.length >= 3
+  ) {
+    return labels.slice(-3).join(".");
+  }
+  return labels.slice(-2).join(".");
+}
+
+interface VisitorLocationHeaderResult {
+  ok: boolean;
+  missing: string[];
+  details: {
+    country: string;
+    region: string;
+    regionCode: string;
+    city: string;
+    continent: string;
+    timezone: string;
+    latitude: string;
+    longitude: string;
+  };
 }
 
 export default function CloudflareConfigWizard({
@@ -44,6 +91,11 @@ export default function CloudflareConfigWizard({
   const [r2TestError, setR2TestError] = useState("");
   const [r2TestResult, setR2TestResult] =
     useState<R2CredentialsTestResult | null>(null);
+  const [locationHeadersDone, setLocationHeadersDone] = useState(false);
+  const [locationHeadersTesting, setLocationHeadersTesting] = useState(false);
+  const [locationHeadersTestError, setLocationHeadersTestError] = useState("");
+  const [locationHeadersResult, setLocationHeadersResult] =
+    useState<VisitorLocationHeaderResult | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -61,6 +113,10 @@ export default function CloudflareConfigWizard({
       setR2Testing(false);
       setR2TestError("");
       setR2TestResult(null);
+      setLocationHeadersDone(false);
+      setLocationHeadersTesting(false);
+      setLocationHeadersTestError("");
+      setLocationHeadersResult(null);
       setNotice("");
       return;
     }
@@ -88,6 +144,10 @@ export default function CloudflareConfigWizard({
     setR2Testing(false);
     setR2TestError("");
     setR2TestResult(null);
+    setLocationHeadersDone(false);
+    setLocationHeadersTesting(false);
+    setLocationHeadersTestError("");
+    setLocationHeadersResult(null);
   }, [open, data]);
 
   const showSelfConfig = mode === "self";
@@ -97,6 +157,16 @@ export default function CloudflareConfigWizard({
   const accountIdTrimmed = accountId.trim();
   const invalidAccountId =
     accountIdTrimmed.length > 0 && !/^[a-f0-9]{32}$/.test(accountIdTrimmed);
+  const zoneGuess = inferCloudflareZone(externalDomain);
+  const externalDomainNormalized = normalizedDomain(externalDomain);
+  const managedTransformsUrl =
+    accountIdTrimmed && zoneGuess
+      ? `https://dash.cloudflare.com/${accountIdTrimmed}/${zoneGuess}/rules/settings/managed-transforms`
+      : "https://dash.cloudflare.com/<account_id>/<zone>/rules/settings/managed-transforms";
+  const exactZoneUrl =
+    accountIdTrimmed && externalDomainNormalized
+      ? `https://dash.cloudflare.com/${accountIdTrimmed}/${externalDomainNormalized}/rules/settings/managed-transforms`
+      : "";
 
   function renderSecretNote(settingName: string) {
     if (!isSet?.[settingName]) return null;
@@ -175,6 +245,52 @@ export default function CloudflareConfigWizard({
       setR2TestError(`${err}`);
     } finally {
       setR2Testing(false);
+    }
+  }
+
+  async function testVisitorLocationHeaders() {
+    setLocationHeadersTesting(true);
+    setLocationHeadersTestError("");
+    setLocationHeadersResult(null);
+    try {
+      const response = await fetch("/customize", {
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        throw new Error(
+          `GET /customize failed: ${response.status} ${response.statusText}`,
+        );
+      }
+      const payload = await response.json();
+      const configuration = payload?.configuration ?? {};
+      const details = {
+        country: trimOrEmpty(configuration.country),
+        region: trimOrEmpty(configuration.cloudflare_region),
+        regionCode: trimOrEmpty(configuration.cloudflare_region_code),
+        city: trimOrEmpty(configuration.cloudflare_city),
+        continent: trimOrEmpty(configuration.cloudflare_continent),
+        timezone: trimOrEmpty(configuration.cloudflare_timezone),
+        latitude: trimOrEmpty(configuration.cloudflare_latitude),
+        longitude: trimOrEmpty(configuration.cloudflare_longitude),
+      };
+      const missing: string[] = [];
+      if (!details.country) missing.push("country");
+      if (!details.city) missing.push("city");
+      if (!details.continent) missing.push("continent");
+      if (!details.latitude) missing.push("latitude");
+      if (!details.longitude) missing.push("longitude");
+      const result = {
+        ok: missing.length === 0,
+        missing,
+        details,
+      };
+      setLocationHeadersResult(result);
+      if (result.ok) setLocationHeadersDone(true);
+    } catch (err) {
+      setLocationHeadersTestError(`${err}`);
+    } finally {
+      setLocationHeadersTesting(false);
     }
   }
 
@@ -290,7 +406,156 @@ export default function CloudflareConfigWizard({
               {renderSecretNote("project_hosts_cloudflare_tunnel_api_token")}
             </div>
             <div>
-              <strong>Step 5 - R2 backups (required)</strong>
+              <strong>Step 5 - Enable Visitor Location Headers</strong>
+              <div style={{ marginTop: "6px", color: "#666" }}>
+                Enable this managed transform in Cloudflare so CoCalc can pick
+                good default regions for users and sort host regions by
+                distance.
+              </div>
+              <div style={{ marginTop: "8px" }}>
+                <StaticMarkdown
+                  value={`Open this Cloudflare page:
+
+- ${managedTransformsUrl}
+
+Enable:
+
+- **Add visitor location headers**
+- Adds HTTP request headers with location information for the visitor's IP address, including city, country, continent, longitude, and latitude.`}
+                />
+                {exactZoneUrl && exactZoneUrl !== managedTransformsUrl ? (
+                  <StaticMarkdown
+                    value={`If your zone is not **${zoneGuess}**, try this exact-domain link too:
+
+- ${exactZoneUrl}`}
+                  />
+                ) : null}
+              </div>
+              <img
+                src={cloudflareManagedTransformImg}
+                alt='Cloudflare managed transform "Add visitor location headers"'
+                style={{
+                  marginTop: "10px",
+                  width: "100%",
+                  maxWidth: "900px",
+                  border: "1px solid #d9d9d9",
+                  borderRadius: "6px",
+                }}
+              />
+              <div style={{ marginTop: "10px" }}>
+                <Checkbox
+                  checked={locationHeadersDone}
+                  onChange={(e) => setLocationHeadersDone(e.target.checked)}
+                >
+                  I enabled <b>Add visitor location headers</b> in Cloudflare.
+                </Checkbox>
+              </div>
+              <div style={{ marginTop: "10px" }}>
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  <Button
+                    onClick={testVisitorLocationHeaders}
+                    loading={locationHeadersTesting}
+                    icon={<Icon name="check" />}
+                  >
+                    Test Visitor Location Headers
+                  </Button>
+                  <div style={{ color: "#666" }}>
+                    Checks <code>/customize</code> right now to confirm that
+                    Cloudflare location fields are reaching the hub.
+                  </div>
+                  {locationHeadersTestError ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      title="Visitor location header test failed"
+                      description={locationHeadersTestError}
+                    />
+                  ) : null}
+                  {locationHeadersResult ? (
+                    <Alert
+                      type={locationHeadersResult.ok ? "success" : "warning"}
+                      showIcon
+                      title={
+                        locationHeadersResult.ok
+                          ? "Visitor location headers are present"
+                          : "Location headers are incomplete"
+                      }
+                      description={
+                        <div style={{ display: "grid", rowGap: "4px" }}>
+                          <div>
+                            <b>Country:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.country ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Region:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.region ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Region code:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.regionCode ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>City:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.city || "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Continent:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.continent ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Timezone:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.timezone ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Latitude:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.latitude ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          <div>
+                            <b>Longitude:</b>{" "}
+                            <code>
+                              {locationHeadersResult.details.longitude ||
+                                "(missing)"}
+                            </code>
+                          </div>
+                          {locationHeadersResult.missing.length > 0 ? (
+                            <div>
+                              Missing required fields:{" "}
+                              <code>
+                                {locationHeadersResult.missing.join(", ")}
+                              </code>
+                            </div>
+                          ) : (
+                            <div>All required location fields are present.</div>
+                          )}
+                        </div>
+                      }
+                    />
+                  ) : null}
+                </Space>
+              </div>
+            </div>
+            <div>
+              <strong>Step 6 - R2 backups (required)</strong>
               <div style={{ marginTop: "6px", color: "#666" }}>
                 R2 is required for Launchpad backups. You must create a separate
                 R2 API token with full Admin Read &amp; Write access.
@@ -473,7 +738,7 @@ Required R2 token permissions:
               </div>
             </div>
             <div>
-              <strong>Step 6 - Tunnel settings (optional)</strong>
+              <strong>Step 7 - Tunnel settings (optional)</strong>
               <div style={{ marginTop: "6px", color: "#666" }}>
                 These control how CoCalc names Cloudflare tunnel resources for
                 project hosts. Defaults are fine.
