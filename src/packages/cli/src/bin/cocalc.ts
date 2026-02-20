@@ -78,6 +78,10 @@ import {
 import { registerOpCommand } from "./commands/op";
 import { registerHostCommand } from "./commands/host";
 import { registerWorkspaceCommand } from "./commands/workspace";
+import { registerAuthCommand } from "./commands/auth";
+import { registerDaemonCommand } from "./commands/daemon";
+import { registerAdminCommand } from "./commands/admin";
+import { registerAccountCommand } from "./commands/account";
 
 const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
@@ -4197,293 +4201,37 @@ for (const spec of Object.values(PRODUCT_SPECS)) {
     });
 }
 
-const daemon = program.command("daemon").description("manage local cocalc-cli daemon");
+registerDaemonCommand(program, {
+  runLocalCommand,
+  startDaemonProcess,
+  daemonSocketPath,
+  daemonPidPath,
+  daemonLogPath,
+  readDaemonPid,
+  pingDaemon,
+  sendDaemonRequest,
+  daemonRequestId,
+  serveDaemon,
+});
 
-daemon
-  .command("start")
-  .description("start daemon if not already running")
-  .action(async (command: Command) => {
-    await runLocalCommand(command, "daemon start", async () => {
-      const result = await startDaemonProcess();
-      return {
-        socket: daemonSocketPath(),
-        pid_file: daemonPidPath(),
-        log_file: daemonLogPath(),
-        started: result.started,
-        already_running: !!result.already_running,
-        pid: result.pid ?? readDaemonPid() ?? null,
-      };
-    });
-  });
-
-daemon
-  .command("status")
-  .description("check daemon status")
-  .action(async (command: Command) => {
-    await runLocalCommand(command, "daemon status", async () => {
-      const pid = readDaemonPid() ?? null;
-      try {
-        const pong = await pingDaemon();
-        return {
-          socket: daemonSocketPath(),
-          pid_file: daemonPidPath(),
-          log_file: daemonLogPath(),
-          running: true,
-          pid: pong.meta?.pid ?? pid,
-          uptime_s: pong.meta?.uptime_s ?? null,
-          started_at: pong.meta?.started_at ?? null,
-        };
-      } catch {
-        return {
-          socket: daemonSocketPath(),
-          pid_file: daemonPidPath(),
-          log_file: daemonLogPath(),
-          running: false,
-          pid,
-        };
-      }
-    });
-  });
-
-daemon
-  .command("stop")
-  .description("stop daemon")
-  .action(async (command: Command) => {
-    await runLocalCommand(command, "daemon stop", async () => {
-      const pid = readDaemonPid() ?? null;
-      try {
-        const response = await sendDaemonRequest({
-          request: {
-            id: daemonRequestId(),
-            action: "shutdown",
-          },
-          timeoutMs: 5_000,
-        });
-        return {
-          stopped: !!response.ok,
-          pid: response.meta?.pid ?? pid,
-          socket: daemonSocketPath(),
-        };
-      } catch {
-        if (pid != null) {
-          try {
-            process.kill(pid, "SIGTERM");
-          } catch {
-            // ignore
-          }
-        }
-        return {
-          stopped: true,
-          pid,
-          socket: daemonSocketPath(),
-        };
-      }
-    });
-  });
-
-daemon
-  .command("serve")
-  .description("internal daemon server")
-  .option("--socket <path>", "daemon socket path")
-  .action(async (opts: { socket?: string }) => {
-    const socketPath = opts.socket?.trim() || daemonSocketPath();
-    await serveDaemon(socketPath);
-  });
-
-const auth = program.command("auth").description("auth profile management");
-
-auth
-  .command("status")
-  .description("show effective auth/profile status")
-  .option("--check", "verify credentials by connecting to the configured hub")
-  .action(async (opts: { check?: boolean }, command: Command) => {
-    await runLocalCommand(command, "auth status", async (globals) => {
-      const configPath = authConfigPath();
-      const config = loadAuthConfig(configPath);
-      const selected = selectedProfileName(globals, config);
-      const profile = config.profiles[selected];
-      const applied = applyAuthProfile(globals, config);
-      const effective = applied.globals as GlobalOptions;
-      const accountId = getExplicitAccountId(effective) ?? process.env.COCALC_ACCOUNT_ID ?? null;
-      const apiBaseUrl = effective.api ? normalizeUrl(effective.api) : defaultApiBaseUrl();
-
-      let check: { ok: boolean; account_id?: string | null; error?: string } | undefined;
-      if (opts.check) {
-        try {
-          const timeoutMs = durationToMs(effective.timeout, 15_000);
-          const remote = await connectRemote({ globals: effective, apiBaseUrl, timeoutMs });
-          check = {
-            ok: true,
-            account_id: resolveAccountIdFromRemote(remote) ?? null,
-          };
-          remote.client.close();
-        } catch (err) {
-          check = {
-            ok: false,
-            error: err instanceof Error ? err.message : `${err}`,
-          };
-        }
-      }
-
-      return {
-        config_path: configPath,
-        current_profile: config.current_profile ?? null,
-        selected_profile: selected,
-        profile_found: !!profile,
-        using_profile_defaults: applied.fromProfile,
-        profiles_count: Object.keys(config.profiles).length,
-        api: apiBaseUrl,
-        account_id: accountId,
-        has_api_key: !!(effective.apiKey ?? process.env.COCALC_API_KEY),
-        has_cookie: !!effective.cookie,
-        has_bearer: !!(effective.bearer ?? process.env.COCALC_BEARER_TOKEN),
-        has_hub_password: !!normalizeSecretValue(
-          effective.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
-        ),
-        check: check ?? null,
-      };
-    });
-  });
-
-auth
-  .command("list")
-  .description("list auth profiles")
-  .action(async (command: Command) => {
-    await runLocalCommand(command, "auth list", async () => {
-      const config = loadAuthConfig();
-      return Object.entries(config.profiles)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([name, profile]) => ({
-          profile: name,
-          current: config.current_profile === name,
-          api: profile.api ?? null,
-          account_id: profile.account_id ?? null,
-          api_key: maskSecret(profile.api_key),
-          cookie: maskSecret(profile.cookie),
-          bearer: maskSecret(profile.bearer),
-          hub_password: maskSecret(profile.hub_password),
-        }));
-    });
-  });
-
-async function saveAuthProfile(
-  globals: GlobalOptions,
-  opts: { setCurrent?: boolean },
-): Promise<{
-  profile: string;
-  current_profile: string | null;
-  stored: Record<string, unknown>;
-}> {
-  const configPath = authConfigPath();
-  const config = loadAuthConfig(configPath);
-  const profileName = sanitizeProfileName(globals.profile);
-  const patch = profileFromGlobals(globals);
-  if (Object.keys(patch).length === 0) {
-    throw new Error(
-      "nothing to store; provide one of --api, --account-id, --api-key, --cookie, --bearer, --hub-password",
-    );
-  }
-  const current = config.profiles[profileName] ?? {};
-  const next: AuthProfile = { ...current, ...patch };
-  config.profiles[profileName] = next;
-  if (opts.setCurrent !== false) {
-    config.current_profile = profileName;
-  }
-  saveAuthConfig(config, configPath);
-  return {
-    profile: profileName,
-    current_profile: config.current_profile ?? null,
-    stored: {
-      api: next.api ?? null,
-      account_id: next.account_id ?? null,
-      api_key: maskSecret(next.api_key),
-      cookie: maskSecret(next.cookie),
-      bearer: maskSecret(next.bearer),
-      hub_password: maskSecret(next.hub_password),
-    },
-  };
-}
-
-auth
-  .command("login")
-  .description("store credentials in an auth profile")
-  .option("--no-set-current", "do not set this profile as current")
-  .action(async (opts: { setCurrent?: boolean }, command: Command) => {
-    await runLocalCommand(command, "auth login", async (globals) => {
-      return await saveAuthProfile(globals, opts);
-    });
-  });
-
-auth
-  .command("setup")
-  .description("alias for auth login")
-  .option("--no-set-current", "do not set this profile as current")
-  .action(async (opts: { setCurrent?: boolean }, command: Command) => {
-    await runLocalCommand(command, "auth setup", async (globals) => {
-      return await saveAuthProfile(globals, opts);
-    });
-  });
-
-auth
-  .command("use <profile>")
-  .description("set the current auth profile")
-  .action(async (profileName: string, command: Command) => {
-    await runLocalCommand(command, "auth use", async () => {
-      const configPath = authConfigPath();
-      const config = loadAuthConfig(configPath);
-      const profile = sanitizeProfileName(profileName);
-      if (!config.profiles[profile]) {
-        throw new Error(`auth profile '${profile}' not found`);
-      }
-      config.current_profile = profile;
-      saveAuthConfig(config, configPath);
-      return {
-        current_profile: profile,
-      };
-    });
-  });
-
-auth
-  .command("logout")
-  .description("remove stored auth profile(s)")
-  .option("--all", "remove all auth profiles")
-  .option("--target-profile <name>", "profile to remove (defaults to selected/current)")
-  .action(async (opts: { all?: boolean; targetProfile?: string }, command: Command) => {
-    await runLocalCommand(command, "auth logout", async (globals) => {
-      const configPath = authConfigPath();
-      const config = loadAuthConfig(configPath);
-
-      if (opts.all) {
-        config.profiles = {};
-        config.current_profile = undefined;
-        saveAuthConfig(config, configPath);
-        return {
-          removed: "all",
-          current_profile: null,
-          remaining_profiles: 0,
-        };
-      }
-
-      const target = sanitizeProfileName(
-        opts.targetProfile ?? globals.profile ?? config.current_profile,
-      );
-      if (!config.profiles[target]) {
-        throw new Error(`auth profile '${target}' not found`);
-      }
-      delete config.profiles[target];
-      if (config.current_profile === target) {
-        const next = Object.keys(config.profiles).sort()[0];
-        config.current_profile = next;
-      }
-      saveAuthConfig(config, configPath);
-      return {
-        removed: target,
-        current_profile: config.current_profile ?? null,
-        remaining_profiles: Object.keys(config.profiles).length,
-      };
-    });
-  });
-
+registerAuthCommand(program, {
+  runLocalCommand,
+  authConfigPath,
+  loadAuthConfig,
+  selectedProfileName,
+  applyAuthProfile,
+  normalizeUrl,
+  defaultApiBaseUrl,
+  getExplicitAccountId,
+  durationToMs,
+  connectRemote,
+  resolveAccountIdFromRemote,
+  normalizeSecretValue,
+  maskSecret,
+  sanitizeProfileName,
+  profileFromGlobals,
+  saveAuthConfig,
+});
 registerWorkspaceCommand(program, {
   withContext,
   resolveHost,
@@ -4580,176 +4328,14 @@ registerOpCommand(program, {
   waitForLro,
 });
 
-const admin = program.command("admin").description("site admin operations");
-const adminUser = admin.command("user").description("admin user management");
+registerAdminCommand(program, {
+  withContext,
+});
 
-adminUser
-  .command("create")
-  .description("create an account (admin only)")
-  .requiredOption("--email <email>", "email address")
-  .option(
-    "--password <password>",
-    "password (omit to auto-generate a random 24-character password)",
-  )
-  .option("--first-name <firstName>", "first name")
-  .option("--last-name <lastName>", "last name")
-  .option("--name <name>", "full name shorthand (split into first/last)")
-  .option("--tag <tag...>", "optional account tags")
-  .option("--no-first-project", "do not create/start an initial workspace")
-  .action(
-    async (
-      opts: {
-        email: string;
-        password?: string;
-        firstName?: string;
-        lastName?: string;
-        name?: string;
-        tag?: string[];
-        noFirstProject?: boolean;
-      },
-      command: Command,
-    ) => {
-      await withContext(command, "admin user create", async (ctx) => {
-        const email = `${opts.email ?? ""}`.trim();
-        if (!email) {
-          throw new Error("--email is required");
-        }
-
-        let firstName = opts.firstName?.trim();
-        let lastName = opts.lastName?.trim();
-        if (opts.name?.trim()) {
-          const parts = opts.name
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean);
-          if (!firstName && parts.length) {
-            firstName = parts[0];
-          }
-          if (!lastName && parts.length > 1) {
-            lastName = parts.slice(1).join(" ");
-          }
-        }
-
-        const created = await ctx.hub.system.adminCreateUser({
-          email,
-          password: opts.password,
-          first_name: firstName,
-          last_name: lastName,
-          no_first_project: !!opts.noFirstProject,
-          tags: opts.tag && opts.tag.length ? opts.tag : undefined,
-        });
-
-        return created;
-      });
-    },
-  );
-
-const account = program.command("account").description("account operations");
-const accountApiKey = account.command("api-key").description("manage account API keys");
-
-accountApiKey
-  .command("list")
-  .description("list account API keys")
-  .action(async (command: Command) => {
-    await withContext(command, "account api-key list", async (ctx) => {
-      const rows = (await ctx.hub.system.manageApiKeys({
-        action: "get",
-      })) as Array<{
-        id?: number;
-        name?: string;
-        trunc?: string;
-        created?: string | Date | null;
-        expire?: string | Date | null;
-        last_active?: string | Date | null;
-        project_id?: string | null;
-      }>;
-      return (rows ?? []).map((row) => ({
-        id: row.id,
-        name: row.name ?? "",
-        trunc: row.trunc ?? "",
-        created: toIso(row.created),
-        expire: toIso(row.expire),
-        last_active: toIso(row.last_active),
-        project_id: row.project_id ?? null,
-      }));
-    });
-  });
-
-accountApiKey
-  .command("create")
-  .description("create an account API key")
-  .option("--name <name>", "key label", `cocalc-cli-${Date.now().toString(36)}`)
-  .option("--expire-seconds <n>", "expire in n seconds")
-  .action(
-    async (
-      opts: {
-        name?: string;
-        expireSeconds?: string;
-      },
-      command: Command,
-    ) => {
-      await withContext(command, "account api-key create", async (ctx) => {
-        const expireSeconds =
-          opts.expireSeconds == null ? undefined : Number(opts.expireSeconds);
-        if (
-          expireSeconds != null &&
-          (!Number.isFinite(expireSeconds) || expireSeconds <= 0)
-        ) {
-          throw new Error("--expire-seconds must be a positive number");
-        }
-        const expire = expireSeconds
-          ? new Date(Date.now() + expireSeconds * 1000)
-          : undefined;
-        const rows = (await ctx.hub.system.manageApiKeys({
-          action: "create",
-          name: opts.name,
-          expire,
-        })) as Array<{
-          id?: number;
-          name?: string;
-          trunc?: string;
-          secret?: string;
-          created?: string | Date | null;
-          expire?: string | Date | null;
-          project_id?: string | null;
-        }>;
-        const key = rows?.[0];
-        if (!key?.id) {
-          throw new Error("failed to create api key");
-        }
-        return {
-          id: key.id,
-          name: key.name ?? opts.name ?? "",
-          trunc: key.trunc ?? "",
-          secret: key.secret ?? null,
-          created: toIso(key.created),
-          expire: toIso(key.expire),
-          project_id: key.project_id ?? null,
-        };
-      });
-    },
-  );
-
-accountApiKey
-  .command("delete <id>")
-  .description("delete an account API key by id")
-  .action(async (id: string, command: Command) => {
-    await withContext(command, "account api-key delete", async (ctx) => {
-      const keyId = Number(id);
-      if (!Number.isInteger(keyId) || keyId <= 0) {
-        throw new Error("id must be a positive integer");
-      }
-      await ctx.hub.system.manageApiKeys({
-        action: "delete",
-        id: keyId,
-      });
-      return {
-        id: keyId,
-        status: "deleted",
-      };
-    });
-  });
-
+registerAccountCommand(program, {
+  withContext,
+  toIso,
+});
 registerHostCommand(program, {
   withContext,
   listHosts,
