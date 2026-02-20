@@ -160,6 +160,7 @@ Implemented now:
 6. Deprecated notebook-level `set_cur_id` call removed.
 7. Separate experimental `jupyter-slate-top-level` frame with one Slate editor and canonical cell sync bridge.
 8. Separate experimental non-block single-editor frame (`jupyter-singledoc`) with canonical cell sync bridge and run shortcuts.
+9. Added a new Slate element type `jupyter_code_cell` (reusing code-block rendering/editor pipeline) to enable direct notebook-cell element projection.
 
 Still outstanding (high priority):
 

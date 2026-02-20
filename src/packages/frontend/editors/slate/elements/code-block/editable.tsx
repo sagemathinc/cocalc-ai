@@ -226,7 +226,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   if (element.type === "code_line") {
     return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
   }
-  if (element.type != "code_block") {
+  if (element.type != "code_block" && element.type != "jupyter_code_cell") {
     throw Error("bug");
   }
   const COLLAPSE_THRESHOLD_LINES = 6;
@@ -728,7 +728,7 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   );
 }
 
-function fromSlate({ node }) {
+export function fromSlate({ node }) {
   const value = getCodeBlockText(node as CodeBlock);
 
   // We always convert them to fenced, because otherwise collaborative editing just
