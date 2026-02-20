@@ -1061,8 +1061,8 @@ export class ChatStreamWriter {
     }
   }
 
-  // Persist the session/thread id into the thread root's acp_config so
-  // the frontend can display and reuse it across turns/refreshes.
+  // Persist the session/thread id into the dedicated thread-config record so
+  // finalize/recovery never mutates chat message rows.
   private async persistSessionId(sessionId: string): Promise<void> {
     await this.ready;
     if (this.closed || !this.syncdb) return;
@@ -1115,7 +1115,6 @@ export class ChatStreamWriter {
         });
       }
 
-      const sender_id = this.recordField<string>(current, "sender_id");
       if (candidates.length > 1) {
         logger.warn("persistSessionId found duplicate chat rows for root date", {
           chatKey: this.chatKey,
@@ -1123,11 +1122,11 @@ export class ChatStreamWriter {
           candidateSenders: candidates
             .map((row) => this.recordField<string>(row, "sender_id"))
             .filter((x) => typeof x === "string"),
-          selectedSender: sender_id,
+          selectedSender: this.recordField<string>(current, "sender_id"),
         });
       }
       const prevCfg = this.recordField<any>(current, "acp_config");
-      const cfg =
+      const rootCfg =
         prevCfg && typeof prevCfg.toJS === "function"
           ? prevCfg.toJS()
           : (prevCfg ?? {});
@@ -1141,27 +1140,10 @@ export class ChatStreamWriter {
         threadPrevCfg && typeof threadPrevCfg.toJS === "function"
           ? threadPrevCfg.toJS()
           : (threadPrevCfg ?? {});
-      if (cfg.sessionId === sessionId && threadCfg.sessionId === sessionId) return;
-      const currentDate = this.recordField<any>(current, "date");
-      const dateForSet =
-        currentDate instanceof Date
-          ? currentDate.toISOString()
-          : currentDate ?? threadRootIso;
-      const nextCfg = { ...cfg, sessionId };
-      if (sender_id) {
-        this.syncdb.set({
-          event: "chat",
-          date: dateForSet,
-          sender_id,
-          acp_config: nextCfg,
-        });
-      } else {
-        logger.warn("persistSessionId root sender missing; writing thread-config only", {
-          chatKey: this.chatKey,
-          threadRoot: threadRootIso,
-          candidates: candidates.length,
-        });
-      }
+      if (threadCfg.sessionId === sessionId) return;
+      const baseCfg =
+        threadCfg && Object.keys(threadCfg).length > 0 ? threadCfg : rootCfg;
+      const nextCfg = { ...baseCfg, sessionId };
       this.syncdb.set({
         event: THREAD_CONFIG_EVENT,
         sender_id: THREAD_CONFIG_SENDER,

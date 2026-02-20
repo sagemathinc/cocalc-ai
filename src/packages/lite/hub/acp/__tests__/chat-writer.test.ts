@@ -736,7 +736,7 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
-  it("persists session id onto the actual thread root sender row", async () => {
+  it("persists session id into thread-config without mutating root rows", async () => {
     const rootIso = new Date(100).toISOString();
     const turnIso = new Date(200).toISOString();
     const metadata = {
@@ -803,20 +803,15 @@ describe("ChatStreamWriter", () => {
     await writer.persistSessionId("session-123");
     await delay(0);
 
-    const rootUpdate = sets.find(
-      (x) => x.date === rootIso && x.sender_id === "user-1" && x.acp_config,
-    );
     const threadCfgUpdate = sets.find(
       (x) =>
         x.event === "chat-thread-config" &&
         x.sender_id === "__thread_config__" &&
         x.date === rootIso,
     );
-    expect(rootUpdate).toBeTruthy();
-    expect(rootUpdate.acp_config).toEqual({
-      model: "gpt-5.3-codex",
-      sessionId: "session-123",
-    });
+    expect(
+      sets.find((x) => x.event === "chat" && x.date === rootIso && x.acp_config),
+    ).toBeUndefined();
     expect(threadCfgUpdate?.acp_config).toEqual({
       model: "gpt-5.3-codex",
       sessionId: "session-123",
