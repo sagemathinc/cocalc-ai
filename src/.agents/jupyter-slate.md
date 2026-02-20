@@ -161,6 +161,7 @@ Implemented now:
 7. Separate experimental `jupyter-slate-top-level` frame with one Slate editor and canonical cell sync bridge.
 8. Separate experimental non-block single-editor frame (`jupyter-singledoc`) with canonical cell sync bridge and run shortcuts.
 9. Added a new Slate element type `jupyter_code_cell` (reusing code-block rendering/editor pipeline) to enable direct notebook-cell element projection.
+10. Added `value_slate` / `set_slate_value` path in `EditableMarkdown` so notebook frames can project canonical cells directly into Slate nodes (without markdown parse/serialize as the transport layer).
 
 Still outstanding (high priority):
 

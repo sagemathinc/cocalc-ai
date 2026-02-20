@@ -154,6 +154,7 @@ function debugSyncLog(type: string, data?: Record<string, unknown>): void {
 
 interface Props {
   value?: string;
+  value_slate?: Descendant[];
   placeholder?: string;
   actions?: Actions;
   read_only?: boolean;
@@ -247,6 +248,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     submitMentionsRef,
     unregisterEditor,
     value,
+    value_slate,
     controlRef,
     showEditBar,
     preserveBlankLines: preserveBlankLinesProp,
@@ -603,7 +605,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   }, [isFocused]);
 
   const [editorValue, setEditorValue] = useState<Descendant[]>(() => {
-    const doc = markdown_to_slate(value ?? "", false, editor.syncCache);
+    const doc =
+      value_slate != null
+        ? value_slate
+        : markdown_to_slate(value ?? "", false, editor.syncCache);
     return preserveBlankLines ? doc : stripBlankParagraphs(doc);
   });
   const bumpChangeRef = useRef<() => void>(() => {});
@@ -847,6 +852,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   }, []);
 
   useEffect(() => {
+    if (value_slate != null) {
+      allowFocusedValueUpdateRef.current = false;
+      setEditorToSlateValue(value_slate);
+      if (value != "Loading...") {
+        restoreScroll();
+      }
+      return;
+    }
     if (actions._syncstring == null) {
       const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
       if (
@@ -865,12 +878,18 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (value != "Loading...") {
       restoreScroll();
     }
-  }, [value, ignoreRemoteWhileFocused, updatePendingRemoteIndicator, isMergeFocused]);
+  }, [
+    value,
+    value_slate,
+    ignoreRemoteWhileFocused,
+    updatePendingRemoteIndicator,
+    isMergeFocused,
+  ]);
 
   const lastSetValueRef = useRef<string | null>(null);
 
   const setSyncstringFromSlateNOW = () => {
-    if (actions.set_value == null) {
+    if (actions.set_value == null && actions.set_slate_value == null) {
       // no way to save the value out (e.g., just beginning to test
       // using the component).
       return;
@@ -880,10 +899,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
+    if (actions.set_slate_value != null) {
+      actions.set_slate_value([...editor.children]);
+      actions.syncstring_commit?.();
+      editor.resetHasUnsavedChanges();
+      return;
+    }
+
     const markdown = editor.getMarkdownValue();
     lastSetValueRef.current = markdown;
     mergeHelperRef.current.noteSaved(markdown);
-    actions.set_value(markdown);
+    actions.set_value?.(markdown);
     actions.syncstring_commit?.();
 
     // Record that the syncstring's value is now equal to ours:
@@ -1004,6 +1030,24 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       }
     }
   }, [is_current]);
+
+  function setEditorToSlateValue(nextValueRaw: Descendant[]) {
+    if (nextValueRaw == null) return;
+    const nextEditorValue = preserveBlankLines
+      ? nextValueRaw
+      : stripBlankParagraphs(nextValueRaw);
+    if (isEqual(nextEditorValue, editor.children)) {
+      return;
+    }
+    const normalizedValue = slate_to_markdown(nextEditorValue, {
+      cache: editor.syncCache,
+      preserveBlankLines,
+    });
+    editor.syncCausedUpdate = true;
+    onChange(nextEditorValue);
+    editor.resetHasUnsavedChanges();
+    editor.markdownValue = normalizedValue;
+  }
 
   const setEditorToValue = (value) => {
     // console.log("setEditorToValue", { value, ed: editor.getMarkdownValue() });

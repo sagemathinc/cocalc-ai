@@ -5,13 +5,17 @@
 
 /*
 Frame for working with a Jupyter notebook in a single non-block Slate editor.
-This is a bridge mode: canonical cell model remains source of truth.
+Canonical Jupyter cells remain source of truth; Slate is the interaction layer.
 */
 
 import { List, Map } from "immutable";
 import React from "react";
+import { Element as SlateElement, type Descendant } from "slate";
 import { useRedux } from "@cocalc/frontend/app-framework";
 import { EditableMarkdown } from "@cocalc/frontend/editors/slate/editable-markdown";
+import { getCodeBlockText, toCodeLines } from "@cocalc/frontend/editors/slate/elements/code-block/utils";
+import { markdown_to_slate } from "@cocalc/frontend/editors/slate/markdown-to-slate";
+import { slate_to_markdown } from "@cocalc/frontend/editors/slate/slate-to-markdown";
 import { positionToIndex } from "@cocalc/frontend/editors/slate/sync";
 import type { Actions as SlateActions } from "@cocalc/frontend/editors/slate/types";
 import { CellOutput } from "@cocalc/frontend/jupyter/cell-output";
@@ -40,21 +44,11 @@ type ParsedTopLevelCell = {
   end: number;
 };
 
-function toCodeFence({
-  input,
-  kernel,
-}: {
+type ParsedSlateCell = {
+  cell_type: "markdown" | "code" | "raw";
   input: string;
-  kernel?: string | null;
-}): string {
-  let fence = "```";
-  while (input.includes(fence)) {
-    fence += "`";
-  }
-  const info = `${kernel ?? ""}`.trim().replace(/\s+/g, "");
-  const head = info ? `${fence}${info}` : fence;
-  return `${head}\n${input}\n${fence}`;
-}
+  cell_id?: string;
+};
 
 function normalizeCellSource(text: string): string {
   const source = text.split("\n").map((line) => `${line}\n`);
@@ -132,7 +126,7 @@ function parseTopLevelNotebookMarkdown(markdown: string): ParsedTopLevelCell[] {
   return ret;
 }
 
-function toTopLevelNotebookMarkdown({
+function cellsToSlateDocument({
   cell_list,
   cells,
   kernel,
@@ -140,24 +134,84 @@ function toTopLevelNotebookMarkdown({
   cell_list: List<string>;
   cells: Map<string, Map<string, any>>;
   kernel?: string;
-}): string {
-  const parts: string[] = [];
+}): Descendant[] {
+  const out: Descendant[] = [];
   for (const id of cell_list.toArray()) {
     const cell = cells.get(id);
     if (cell == null) continue;
     const cellType = `${cell.get("cell_type") ?? "code"}`;
     const input = `${cell.get("input") ?? ""}`;
-    if (cellType === "markdown") {
-      parts.push(input);
+    if (cellType === "code" || cellType === "raw") {
+      out.push({
+        type: "jupyter_code_cell",
+        fence: true,
+        info:
+          cellType === "raw"
+            ? "raw"
+            : `${cell.get("kernel") ?? kernel ?? ""}`,
+        cell_id: id,
+        cell_meta: { cell_type: cellType },
+        children: toCodeLines(input),
+      } as any);
       continue;
     }
-    if (cellType === "raw") {
-      parts.push(toCodeFence({ input, kernel: "raw" }));
-      continue;
+    const doc = markdown_to_slate(input, false, {});
+    for (const node of doc) {
+      out.push(node as Descendant);
     }
-    parts.push(toCodeFence({ input, kernel: `${cell.get("kernel") ?? kernel ?? ""}` }));
   }
-  return `${parts.join("\n\n")}\n`;
+  if (out.length === 0) {
+    return [{ type: "paragraph", children: [{ text: "" }] } as any];
+  }
+  return out;
+}
+
+function slateDocumentToCells(doc: Descendant[]): ParsedSlateCell[] {
+  const ret: ParsedSlateCell[] = [];
+  let markdownBuffer: Descendant[] = [];
+
+  const flushMarkdown = () => {
+    const markdown = normalizeCellSource(
+      slate_to_markdown(markdownBuffer, {
+        preserveBlankLines: false,
+      }),
+    );
+    markdownBuffer = [];
+    if (!markdown.trim()) {
+      return;
+    }
+    ret.push({
+      cell_type: "markdown",
+      input: markdown,
+    });
+  };
+
+  for (const node of doc) {
+    if (
+      SlateElement.isElement(node as any) &&
+      (node as any).type === "jupyter_code_cell"
+    ) {
+      flushMarkdown();
+      const input = getCodeBlockText(node as any);
+      const metaCellType = `${(node as any).cell_meta?.cell_type ?? ""}`;
+      const info = `${(node as any).info ?? ""}`.toLowerCase();
+      const cell_type: "code" | "raw" =
+        metaCellType === "raw" || info === "raw" ? "raw" : "code";
+      ret.push({
+        cell_type,
+        input,
+        cell_id: (node as any).cell_id,
+      });
+      continue;
+    }
+    markdownBuffer.push(node);
+  }
+  flushMarkdown();
+
+  if (ret.length === 0) {
+    ret.push({ cell_type: "markdown", input: "" });
+  }
+  return ret;
 }
 
 function SingleDocOutputs({
@@ -230,9 +284,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const controlRef = React.useRef<any>(null);
   const [error, setError] = React.useState<string>("");
 
-  const value = React.useMemo(() => {
-    if (cell_list == null || cells == null) return "";
-    return toTopLevelNotebookMarkdown({ cell_list, cells, kernel });
+  const slateValue = React.useMemo(() => {
+    if (cell_list == null || cells == null) return [] as Descendant[];
+    return cellsToSlateDocument({ cell_list, cells, kernel });
   }, [cell_list, cells, kernel]);
 
   const runCellAtCursor = React.useCallback(
@@ -263,12 +317,12 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     [frameActions, cell_list],
   );
 
-  const applyNotebookMarkdown = React.useCallback(
-    (markdown: string) => {
+  const applyNotebookSlate = React.useCallback(
+    (doc: Descendant[]) => {
       if (read_only || cell_list == null || cells == null) {
         return;
       }
-      const parsed = parseTopLevelNotebookMarkdown(markdown);
+      const parsed = slateDocumentToCells(doc);
       const ids = cell_list.toArray();
 
       while (ids.length < parsed.length) {
@@ -303,13 +357,16 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     if (read_only || cell_list == null || cells == null) {
       return;
     }
-    const proxy = Object.create(props.actions) as SlateActions;
-    proxy.set_value = (markdown: string) => {
+    const proxy = Object.create(props.actions) as SlateActions & {
+      _syncstring?: any;
+    };
+    proxy._syncstring = undefined;
+    proxy.set_slate_value = (doc: Descendant[]) => {
       try {
-        applyNotebookMarkdown(markdown);
+        applyNotebookSlate(doc);
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error("Failed to apply single-doc notebook markdown", err);
+        console.error("Failed to apply single-doc notebook slate", err);
         setError("Could not apply edits to notebook cells.");
       }
     };
@@ -318,7 +375,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     proxy.altEnter = (markdown: string) =>
       runCellAtCursor({ markdown, insertBelow: true });
     return proxy;
-  }, [props.actions, read_only, cell_list, cells, applyNotebookMarkdown, runCellAtCursor]);
+  }, [props.actions, read_only, cell_list, cells, applyNotebookSlate, runCellAtCursor]);
 
   if (cell_list == null || cells == null) {
     return <div style={{ padding: "12px" }}>Loading notebook...</div>;
@@ -352,7 +409,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         </div>
       ) : null}
       <EditableMarkdown
-        value={value}
+        value_slate={slateValue}
         actions={editorActions}
         read_only={!!read_only}
         hidePath

@@ -1,4 +1,5 @@
 import { Range } from "slate";
+import type { Descendant } from "slate";
 
 import type { SyncString } from "@cocalc/sync/editor/string/sync";
 import { ReactEditor } from "./slate-react";
@@ -42,6 +43,7 @@ export interface Actions {
   save_editor_state?: (id: string, new_editor_state?: any) => void;
   set_cursor_locs?: (locs: any[]) => void;
   set_value?: (value: string) => void;
+  set_slate_value?: (value: Descendant[]) => void;
   syncstring_commit?: () => void;
   get_syncstring?: () => SyncString;
   get_matching_frame?: (obj: object) => string | undefined;
