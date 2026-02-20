@@ -7,6 +7,8 @@ import { Alert, Button, Input, Modal, Radio, Space } from "antd";
 import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { R2CredentialsTestResult } from "@cocalc/conat/hub/api/system";
 import cloudflareApiTokenImg from "./assets/cloudflare-api-token.png";
 
 interface WizardProps {
@@ -38,6 +40,10 @@ export default function CloudflareConfigWizard({
   const [r2AccessKey, setR2AccessKey] = useState("");
   const [r2SecretKey, setR2SecretKey] = useState("");
   const [r2BucketPrefix, setR2BucketPrefix] = useState("");
+  const [r2Testing, setR2Testing] = useState(false);
+  const [r2TestError, setR2TestError] = useState("");
+  const [r2TestResult, setR2TestResult] =
+    useState<R2CredentialsTestResult | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -52,6 +58,9 @@ export default function CloudflareConfigWizard({
       setR2AccessKey("");
       setR2SecretKey("");
       setR2BucketPrefix("");
+      setR2Testing(false);
+      setR2TestError("");
+      setR2TestResult(null);
       setNotice("");
       return;
     }
@@ -76,6 +85,9 @@ export default function CloudflareConfigWizard({
     setR2AccessKey(trimOrEmpty(data.r2_access_key_id));
     setR2SecretKey(trimOrEmpty(data.r2_secret_access_key));
     setR2BucketPrefix(trimOrEmpty(data.r2_bucket_prefix));
+    setR2Testing(false);
+    setR2TestError("");
+    setR2TestResult(null);
   }, [open, data]);
 
   const showSelfConfig = mode === "self";
@@ -148,6 +160,22 @@ export default function CloudflareConfigWizard({
     await onApply(updates);
     setNotice("Settings applied and saved.");
     onClose();
+  }
+
+  async function testSavedR2Credentials() {
+    setR2Testing(true);
+    setR2TestError("");
+    setR2TestResult(null);
+    try {
+      const result = await webapp_client.conat_client.hub.system.testR2Credentials(
+        {},
+      );
+      setR2TestResult(result);
+    } catch (err) {
+      setR2TestError(`${err}`);
+    } finally {
+      setR2Testing(false);
+    }
   }
 
   return (
@@ -367,6 +395,81 @@ Required R2 token permissions:
                   value={r2BucketPrefix}
                   onChange={(e) => setR2BucketPrefix(e.target.value)}
                 />
+              </div>
+              <div style={{ marginTop: "12px" }}>
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                  <Button
+                    onClick={testSavedR2Credentials}
+                    loading={r2Testing}
+                    icon={<Icon name="check" />}
+                  >
+                    Test Saved R2 Credentials
+                  </Button>
+                  <div style={{ color: "#666" }}>
+                    Uses currently saved server settings (not unsaved edits in
+                    this wizard).
+                  </div>
+                  {r2TestError ? (
+                    <Alert
+                      type="error"
+                      showIcon
+                      title="R2 test failed"
+                      description={r2TestError}
+                    />
+                  ) : null}
+                  {r2TestResult ? (
+                    <Alert
+                      type={r2TestResult.ok ? "success" : "error"}
+                      showIcon
+                      title={
+                        r2TestResult.ok
+                          ? "R2 credentials look good"
+                          : "R2 credential test found problems"
+                      }
+                      description={
+                        <div style={{ display: "grid", rowGap: "4px" }}>
+                          <div>
+                            <b>Account:</b>{" "}
+                            <code>{r2TestResult.account_id || "(missing)"}</code>
+                          </div>
+                          <div>
+                            <b>Endpoint:</b>{" "}
+                            <code>{r2TestResult.endpoint || "(missing)"}</code>
+                          </div>
+                          <div>
+                            <b>Cloudflare API token:</b>{" "}
+                            {r2TestResult.api_token.ok
+                              ? `OK (visible buckets: ${r2TestResult.api_token.bucket_count ?? 0})`
+                              : `Failed (${r2TestResult.api_token.error ?? "unknown error"})`}
+                          </div>
+                          <div>
+                            <b>R2 S3 keys:</b>{" "}
+                            {r2TestResult.s3.ok
+                              ? `OK (visible buckets: ${r2TestResult.s3.bucket_count ?? 0})`
+                              : `Failed (${r2TestResult.s3.error ?? "unknown error"})`}
+                          </div>
+                          {r2TestResult.bucket_prefix ? (
+                            <div>
+                              <b>Bucket prefix:</b>{" "}
+                              <code>{r2TestResult.bucket_prefix}</code>
+                            </div>
+                          ) : null}
+                          {r2TestResult.bucket_prefix ? (
+                            <div>
+                              <b>Matching buckets:</b>{" "}
+                              {r2TestResult.matched_buckets.length > 0
+                                ? r2TestResult.matched_buckets.join(", ")
+                                : "(none yet)"}
+                            </div>
+                          ) : null}
+                          {r2TestResult.notes?.length ? (
+                            <div>{r2TestResult.notes.join(" ")}</div>
+                          ) : null}
+                        </div>
+                      }
+                    />
+                  ) : null}
+                </Space>
               </div>
             </div>
             <div>

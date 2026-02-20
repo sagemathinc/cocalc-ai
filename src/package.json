@@ -22,6 +22,7 @@
     "hub:daemon:status": "bash ./scripts/dev/hub-daemon.sh status",
     "hub:daemon:logs": "bash ./scripts/dev/hub-daemon.sh logs",
     "smoke:self-host": "bash ./scripts/dev/self-host-smoke.sh",
+    "smoke:cloud-host": "bash ./scripts/dev/cloud-host-smoke.sh",
     "static:watch": "cd packages/static && pnpm watch",
     "static": "cd packages/static && pnpm build",
     "version-check": "cd packages && pnpm check-deps",

@@ -76,6 +76,12 @@ a = require('../../dist/cloud/smoke-runner/project-host'); await a.runProjectHos
 
 
 */
+import { execFile as execFileCb } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, join } from "node:path";
+import { promisify } from "node:util";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { createProject } from "@cocalc/server/conat/api/projects";
@@ -103,6 +109,7 @@ import admins from "@cocalc/server/accounts/admins";
 import { getLro } from "@cocalc/server/lro/lro-db";
 
 const logger = getLogger("server:cloud:smoke-runner:project-host");
+const execFile = promisify(execFileCb);
 
 type WaitOptions = {
   intervalMs: number;
@@ -216,6 +223,213 @@ const DEFAULT_PROJECT_READY: WaitOptions = { intervalMs: 3000, attempts: 60 };
 const DEFAULT_BACKUP_READY: WaitOptions = { intervalMs: 5000, attempts: 180 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+type CliContext = {
+  nodePath: string;
+  cliPath: string;
+  apiUrl: string;
+  hubPassword?: string;
+  accountId?: string;
+  timeoutMs: number;
+  pollMs: number;
+};
+
+type CliEnvelope<T = any> = {
+  ok?: boolean;
+  data?: T;
+  meta?: {
+    account_id?: string;
+  };
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
+
+type RunCliOptions = {
+  timeoutSeconds?: number;
+  pollMs?: number;
+  commandTimeoutMs?: number;
+};
+
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function runCommand(
+  command: string,
+  args: string[],
+  opts: { timeoutMs?: number; cwd?: string } = {},
+): Promise<{ stdout: string; stderr: string }> {
+  try {
+    const { stdout, stderr } = await execFile(command, args, {
+      timeout: opts.timeoutMs,
+      cwd: opts.cwd,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return {
+      stdout: `${stdout ?? ""}`.trim(),
+      stderr: `${stderr ?? ""}`.trim(),
+    };
+  } catch (err: any) {
+    const stderr = `${err?.stderr ?? ""}`.trim();
+    const stdout = `${err?.stdout ?? ""}`.trim();
+    const parts = [
+      `${command} ${args.join(" ")}`.trim(),
+      err?.message ? `message=${err.message}` : undefined,
+      stdout ? `stdout=${stdout}` : undefined,
+      stderr ? `stderr=${stderr}` : undefined,
+    ].filter(Boolean);
+    throw new Error(parts.join(" | "));
+  }
+}
+
+function normalizeApiUrl(raw: string): string {
+  const value = raw.trim();
+  if (!value) {
+    throw new Error("empty api url");
+  }
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return value.replace(/\/+$/, "");
+  }
+  return `http://${value.replace(/\/+$/, "")}`;
+}
+
+function resolveApiUrl(pathHint?: string): string {
+  const explicit =
+    pathHint?.trim() || process.env.COCALC_API_URL || process.env.BASE_URL;
+  if (explicit) {
+    return normalizeApiUrl(explicit);
+  }
+  const port = process.env.PORT || "9100";
+  return `http://127.0.0.1:${port}`;
+}
+
+function resolveHubPassword(pathHint?: string): string | undefined {
+  const candidates = [
+    pathHint,
+    process.env.COCALC_HUB_PASSWORD,
+    process.env.SECRETS ? join(process.env.SECRETS, "conat-password") : undefined,
+    join(process.cwd(), "src", "data", "app", "postgres", "secrets", "conat-password"),
+    join(process.cwd(), "data", "app", "postgres", "secrets", "conat-password"),
+  ].filter((x): x is string => !!x && !!x.trim());
+
+  const first = candidates[0]?.trim();
+  for (const value of candidates) {
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (existsSync(trimmed)) {
+      return trimmed;
+    }
+    if (!trimmed.includes("/") && !trimmed.includes("\\")) {
+      return trimmed;
+    }
+  }
+  return first;
+}
+
+function resolveCliPath(pathHint?: string): string {
+  const candidates = [
+    pathHint,
+    process.env.COCALC_CLI_PATH,
+    join(process.cwd(), "src", "packages", "cli", "dist", "bin", "cocalc.js"),
+    join(process.cwd(), "packages", "cli", "dist", "bin", "cocalc.js"),
+    resolve(__dirname, "../../../../cli/dist/bin/cocalc.js"),
+  ].filter((x): x is string => !!x && !!x.trim());
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    `unable to find cocalc CLI binary; looked in: ${candidates.join(", ")}`,
+  );
+}
+
+function commandTimeoutMs(cli: CliContext): number {
+  return Math.max(cli.timeoutMs + 30_000, 120_000);
+}
+
+function parseCliEnvelope<T>(
+  stdout: string,
+  stderr: string,
+  command: string,
+): CliEnvelope<T> {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    throw new Error(
+      `empty CLI output for '${command}'${stderr ? ` (stderr: ${stderr})` : ""}`,
+    );
+  }
+  try {
+    return JSON.parse(trimmed) as CliEnvelope<T>;
+  } catch (err) {
+    throw new Error(
+      `invalid CLI JSON for '${command}': ${getErrorMessage(err)}${stderr ? ` (stderr: ${stderr})` : ""}`,
+    );
+  }
+}
+
+async function runCli<T>(
+  cli: CliContext,
+  args: string[],
+  options: RunCliOptions = {},
+): Promise<T> {
+  const timeoutSeconds = Math.max(
+    1,
+    options.timeoutSeconds ?? Math.ceil(cli.timeoutMs / 1000),
+  );
+  const pollMs = Math.max(50, options.pollMs ?? cli.pollMs);
+  const fullArgs = [
+    cli.cliPath,
+    "--json",
+    "--no-daemon",
+    "--api",
+    cli.apiUrl,
+    "--timeout",
+    `${timeoutSeconds}s`,
+    "--rpc-timeout",
+    `${Math.max(30, Math.min(timeoutSeconds, 300))}s`,
+    "--poll-ms",
+    `${pollMs}ms`,
+  ];
+
+  if (cli.accountId) {
+    fullArgs.push("--account-id", cli.accountId);
+  }
+  if (cli.hubPassword) {
+    fullArgs.push("--hub-password", cli.hubPassword);
+  }
+  fullArgs.push(...args);
+
+  const cmd = `cocalc ${args.join(" ")}`;
+  const computedCommandTimeoutMs =
+    options.commandTimeoutMs ??
+    (options.timeoutSeconds != null
+      ? Math.max((timeoutSeconds + 30) * 1000, 120_000)
+      : commandTimeoutMs(cli));
+  const { stdout, stderr } = await runCommand(cli.nodePath, fullArgs, {
+    timeoutMs: computedCommandTimeoutMs,
+  });
+  const envelope = parseCliEnvelope<T>(stdout, stderr, cmd);
+  const responseAccountId = envelope.meta?.account_id;
+  if (
+    !cli.accountId &&
+    typeof responseAccountId === "string" &&
+    responseAccountId.trim()
+  ) {
+    cli.accountId = responseAccountId;
+  }
+  if (!envelope.ok) {
+    throw new Error(
+      envelope.error?.message ||
+        `command failed (${cmd})${envelope.error?.code ? ` [${envelope.error.code}]` : ""}`,
+    );
+  }
+  return envelope.data as T;
+}
 
 async function resolveSmokeAccountId(account_id?: string): Promise<string> {
   if (account_id) return account_id;
@@ -521,6 +735,197 @@ async function waitForBackupVisible({
   throw new Error(
     `backup never became visible (indexed_backups=${lastIndexedCount}, total_backups=${lastAnyCount})`,
   );
+}
+
+async function waitForHostStatusViaCli({
+  cli,
+  host_id,
+  allowed,
+  wait,
+}: {
+  cli: CliContext;
+  host_id: string;
+  allowed: string[];
+  wait: WaitOptions;
+}): Promise<void> {
+  let lastStatus = "unknown";
+  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
+    try {
+      const host = await runCli<{ status?: string }>(cli, ["host", "get", host_id]);
+      const status = String(host?.status ?? "unknown");
+      lastStatus = status;
+      if (allowed.includes(status)) {
+        return;
+      }
+      if (status === "error") {
+        throw new Error("host status became error");
+      }
+    } catch (err) {
+      logger.debug("cloud smoke host status retry", {
+        host_id,
+        attempt,
+        err: getErrorMessage(err),
+      });
+    }
+    await sleep(wait.intervalMs);
+  }
+  throw new Error(
+    `timeout waiting for host status (${allowed.join(", ")}); last status=${lastStatus}`,
+  );
+}
+
+async function waitForBackupIndexedViaCli({
+  cli,
+  project_id,
+  wait,
+}: {
+  cli: CliContext;
+  project_id: string;
+  wait: WaitOptions;
+}): Promise<{ id: string; indexed: boolean }> {
+  let lastIndexedCount = 0;
+  let lastAnyCount = 0;
+  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
+    const indexedBackups = await runCli<
+      Array<{ backup_id?: string; time?: string | Date | null }>
+    >(cli, [
+      "workspace",
+      "backup",
+      "list",
+      "--workspace",
+      project_id,
+      "--indexed-only",
+      "--limit",
+      "100",
+    ]);
+    lastIndexedCount = indexedBackups.length;
+    if (indexedBackups.length > 0 && indexedBackups[0]?.backup_id) {
+      const sorted = [...indexedBackups].sort(
+        (a, b) =>
+          String(b?.time ?? "").localeCompare(String(a?.time ?? "")) ||
+          String(a?.backup_id ?? "").localeCompare(String(b?.backup_id ?? "")),
+      );
+      return { id: String(sorted[0].backup_id), indexed: true };
+    }
+
+    const backups = await runCli<
+      Array<{ backup_id?: string; time?: string | Date | null }>
+    >(cli, ["workspace", "backup", "list", "--workspace", project_id, "--limit", "100"]);
+    lastAnyCount = backups.length;
+    if (backups.length > 0 && backups[0]?.backup_id) {
+      const sorted = [...backups].sort(
+        (a, b) =>
+          String(b?.time ?? "").localeCompare(String(a?.time ?? "")) ||
+          String(a?.backup_id ?? "").localeCompare(String(b?.backup_id ?? "")),
+      );
+      return { id: String(sorted[0].backup_id), indexed: false };
+    }
+
+    await sleep(wait.intervalMs);
+  }
+  throw new Error(
+    `backup never appeared (indexed backups=${lastIndexedCount}, total backups=${lastAnyCount})`,
+  );
+}
+
+async function waitForProjectFileValueViaCli({
+  cli,
+  project_id,
+  path,
+  expected,
+  wait,
+}: {
+  cli: CliContext;
+  project_id: string;
+  path: string;
+  expected: string;
+  wait: WaitOptions;
+}): Promise<void> {
+  for (let attempt = 1; attempt <= wait.attempts; attempt += 1) {
+    try {
+      const out = await runCli<{ content?: string }>(
+        cli,
+        ["workspace", "file", "cat", "--workspace", project_id, path],
+        { timeoutSeconds: 45, commandTimeoutMs: 120_000 },
+      );
+      const value = String(out?.content ?? "").replace(/\r?\n$/, "");
+      if (value === expected) return;
+    } catch (err) {
+      logger.debug("cloud smoke project file retry", {
+        project_id,
+        path,
+        attempt,
+        err: getErrorMessage(err),
+      });
+    }
+    await sleep(wait.intervalMs);
+  }
+  throw new Error(`timeout waiting for workspace file '${path}'`);
+}
+
+function buildHostCreateCliArgs({
+  provider,
+  create,
+}: {
+  provider: ProviderId;
+  create: SmokeCreateSpec;
+}): string[] {
+  const region = `${create.region ?? ""}`.trim();
+  const size = `${create.size ?? ""}`.trim();
+  if (!region) {
+    throw new Error("smoke preset create spec missing region");
+  }
+  if (!size) {
+    throw new Error("smoke preset create spec missing size");
+  }
+  const args = [
+    "host",
+    "create",
+    `${create.name}`,
+    "--provider",
+    provider,
+    "--region",
+    region,
+    "--size",
+    size,
+  ];
+  if (create.gpu) {
+    args.push("--gpu");
+  }
+  const machine = { ...(create.machine ?? {}) } as Record<string, any>;
+  const machineType = `${machine.machine_type ?? ""}`.trim();
+  if (machineType) {
+    args.push("--machine-type", machineType);
+  }
+  const zone = `${machine.zone ?? ""}`.trim();
+  if (zone) {
+    args.push("--zone", zone);
+  }
+  const diskGbRaw = Number(machine.disk_gb);
+  if (Number.isFinite(diskGbRaw) && diskGbRaw > 0) {
+    args.push("--disk-gb", `${Math.floor(diskGbRaw)}`);
+  }
+  const diskType = `${machine.disk_type ?? ""}`.trim();
+  if (diskType) {
+    args.push("--disk-type", diskType);
+  }
+  const storageMode = `${machine.storage_mode ?? ""}`.trim();
+  if (storageMode) {
+    args.push("--storage-mode", storageMode);
+  }
+
+  delete machine.cloud;
+  delete machine.machine_type;
+  delete machine.zone;
+  delete machine.disk_gb;
+  delete machine.disk_type;
+  delete machine.storage_mode;
+  const machineJson = JSON.stringify(machine);
+  if (machineJson !== "{}") {
+    args.push("--machine-json", machineJson);
+  }
+  args.push("--wait");
+  return args;
 }
 
 type HostConnectionHints = {
@@ -1181,6 +1586,540 @@ async function runSmokeSteps({
   }
 }
 
+async function runSmokeStepsViaCli({
+  account_id,
+  provider,
+  host_id,
+  createSpec,
+  hostStatus,
+  update,
+  restart_after_stop,
+  wait,
+  cleanup_on_success,
+  cleanup_host,
+  verify_terminal,
+  verify_proxy,
+  verify_backup,
+  verify_provider_status,
+  proxy_port,
+  print_debug_hints,
+  log,
+}: {
+  account_id: string;
+  provider?: ProviderId;
+  host_id?: string;
+  createSpec?: Parameters<typeof createHost>[0];
+  hostStatus?: string;
+  update?: ProjectHostSmokeOptions["update"];
+  restart_after_stop?: boolean;
+  wait?: ProjectHostSmokeOptions["wait"];
+  cleanup_on_success?: ProjectHostSmokeOptions["cleanup_on_success"];
+  cleanup_host?: boolean;
+  verify_terminal?: boolean;
+  verify_proxy?: boolean;
+  verify_backup?: boolean;
+  verify_provider_status?: boolean;
+  proxy_port?: number;
+  print_debug_hints?: boolean;
+  log?: ProjectHostSmokeOptions["log"];
+}): Promise<ProjectHostSmokeResult> {
+  const steps: ProjectHostSmokeResult["steps"] = [];
+  const waitHostRunning = resolveWait(wait?.host_running, DEFAULT_HOST_RUNNING);
+  const waitHostStopped = resolveWait(wait?.host_stopped, DEFAULT_HOST_STOPPED);
+  const waitProjectReady = resolveWait(wait?.project_ready, DEFAULT_PROJECT_READY);
+  const waitBackupReady = resolveWait(wait?.backup_ready, DEFAULT_BACKUP_READY);
+  const verifyProviderStatus = verify_provider_status ?? false;
+  const strictProviderStatus =
+    process.env.COCALC_SMOKE_STRICT_PROVIDER_STATUS === "yes";
+  const emit =
+    log ??
+    ((event) => {
+      logger.info("smoke-runner", event);
+    });
+
+  const routedClient = conatWithProjectRouting();
+  const clientFactory = () => routedClient;
+  const sentinelPath = ".smoke/persist.txt";
+  const sentinelValue = `smoke:${Date.now()}`;
+  let createdHost = false;
+  let project_id: string | undefined;
+  let debugHints: HostConnectionHints | undefined;
+
+  const cli: CliContext = {
+    nodePath: process.execPath,
+    cliPath: resolveCliPath(),
+    apiUrl: resolveApiUrl(),
+    hubPassword: resolveHubPassword(),
+    accountId: account_id,
+    timeoutMs: Math.max(waitHostRunning.intervalMs * waitHostRunning.attempts, 600_000),
+    pollMs: 1000,
+  };
+
+  const runStep = async (name: string, fn: () => Promise<void>) => {
+    const startedAt = new Date();
+    emit({ step: name, status: "start" });
+    try {
+      await fn();
+      const finishedAt = new Date();
+      steps.push({
+        name,
+        status: "ok",
+        started_at: startedAt.toISOString(),
+        finished_at: finishedAt.toISOString(),
+      });
+      emit({ step: name, status: "ok" });
+      if (host_id && verifyProviderStatus) {
+        try {
+          await checkProviderStatus({ host_id, providerHint: provider });
+        } catch (err) {
+          if (strictProviderStatus) {
+            throw err;
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          logger.warn("smoke-runner provider status check skipped", {
+            host_id,
+            provider,
+            step: name,
+            err: message,
+          });
+          emit({
+            step: `${name}:provider_status`,
+            status: "ok",
+            message: `skipped provider status check: ${message}`,
+          });
+        }
+      }
+    } catch (err) {
+      const finishedAt = new Date();
+      const message = err instanceof Error ? err.message : String(err);
+      steps.push({
+        name,
+        status: "failed",
+        started_at: startedAt.toISOString(),
+        finished_at: finishedAt.toISOString(),
+        error: message,
+      });
+      emit({ step: name, status: "failed", message });
+      throw err;
+    }
+  };
+
+  try {
+    if (!host_id && createSpec) {
+      await runStep("create_host", async () => {
+        const normalizedProvider =
+          provider ?? normalizeProviderId(createSpec.machine?.cloud);
+        if (!normalizedProvider) {
+          throw new Error("unable to determine provider for smoke host create");
+        }
+        const host = await runCli<{ host_id?: string }>(
+          cli,
+          buildHostCreateCliArgs({
+            provider: normalizedProvider,
+            create: createSpec,
+          }),
+        );
+        host_id = `${host.host_id ?? ""}`.trim();
+        if (!host_id) {
+          throw new Error("host create did not return host_id");
+        }
+        createdHost = true;
+      });
+    }
+
+    if (host_id && !createSpec && hostStatus !== "running") {
+      await runStep("start_existing_host", async () => {
+        if (!host_id) throw new Error("missing host_id");
+        await runCli(cli, ["host", "start", host_id, "--wait"]);
+      });
+    }
+
+    await runStep("wait_host_running", async () => {
+      if (!host_id) throw new Error("missing host_id");
+      await waitForHostStatusViaCli({
+        cli,
+        host_id,
+        allowed: ["running", "active"],
+        wait: waitHostRunning,
+      });
+      debugHints = await loadHostConnectionHints(host_id);
+      if (print_debug_hints !== false) {
+        const parts = [
+          `host_id=${host_id}`,
+          debugHints.host_url ? `url=${debugHints.host_url}` : undefined,
+          debugHints.ssh_target ? `ssh=${debugHints.ssh_target}` : undefined,
+          debugHints.ssh_tail_log ? `tail='${debugHints.ssh_tail_log}'` : undefined,
+          debugHints.scp_log ? `scp='${debugHints.scp_log}'` : undefined,
+        ].filter(Boolean);
+        emit({
+          step: "debug_hints",
+          status: "ok",
+          message: parts.join(" "),
+        });
+      }
+    });
+
+    await runStep("create_project", async () => {
+      if (!host_id) throw new Error("missing host_id");
+      let lastErr: unknown;
+      for (
+        let attempt = 1;
+        attempt <= Math.max(3, Math.min(10, waitProjectReady.attempts));
+        attempt += 1
+      ) {
+        try {
+          const workspace = await runCli<{ workspace_id?: string }>(cli, [
+            "workspace",
+            "create",
+            `Smoke test ${host_id}`,
+            "--host",
+            host_id,
+          ]);
+          project_id = `${workspace.workspace_id ?? ""}`.trim();
+          if (!project_id) {
+            throw new Error("workspace create did not return workspace_id");
+          }
+          lastErr = undefined;
+          break;
+        } catch (err) {
+          lastErr = err;
+          const msg = getErrorMessage(err);
+          logger.warn("cloud smoke workspace create retry", {
+            host_id,
+            attempt,
+            err: msg,
+          });
+          if (
+            msg.includes("failed to initialize workspace on host") ||
+            msg.includes("calling remote function 'createProject': timeout") ||
+            msg.includes("request timed out") ||
+            msg.includes("websocket error")
+          ) {
+            await sleep(waitProjectReady.intervalMs);
+            continue;
+          }
+          throw err;
+        }
+      }
+      if (lastErr) {
+        throw lastErr;
+      }
+    });
+
+    await runStep("start_project", async () => {
+      if (!project_id) throw new Error("missing project_id");
+      let lastErr: unknown;
+      for (
+        let attempt = 1;
+        attempt <= Math.max(3, Math.min(12, waitProjectReady.attempts));
+        attempt += 1
+      ) {
+        try {
+          await runCli(cli, [
+            "workspace",
+            "start",
+            "--workspace",
+            project_id,
+            "--wait",
+          ]);
+          lastErr = undefined;
+          break;
+        } catch (err) {
+          lastErr = err;
+          const msg = getErrorMessage(err);
+          logger.warn("cloud smoke workspace start retry", {
+            project_id,
+            attempt,
+            err: msg,
+          });
+          if (
+            msg.includes("timeout waiting for hub response: projects.start") ||
+            msg.includes("no subscribers matching") ||
+            msg.includes("timeout waiting for start op")
+          ) {
+            await sleep(waitProjectReady.intervalMs);
+            continue;
+          }
+          throw err;
+        }
+      }
+      if (lastErr) {
+        throw lastErr;
+      }
+    });
+
+    await runStep("write_sentinel", async () => {
+      if (!project_id) throw new Error("missing project_id");
+      const tempDir = await mkdtemp(join(tmpdir(), "cocalc-cloud-smoke-"));
+      const srcPath = join(tempDir, "sentinel.txt");
+      try {
+        await writeFile(srcPath, sentinelValue, "utf8");
+        await runCli(cli, [
+          "workspace",
+          "file",
+          "put",
+          srcPath,
+          sentinelPath,
+          "--workspace",
+          project_id,
+        ]);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      }
+    });
+
+    await runStep("verify_sentinel_before_restart", async () => {
+      if (!project_id) throw new Error("missing project_id");
+      if (provider === "lambda") {
+        return;
+      }
+      await waitForProjectFileValueViaCli({
+        cli,
+        project_id,
+        path: sentinelPath,
+        expected: sentinelValue,
+        wait: waitProjectReady,
+      });
+    });
+
+    if ((verify_backup ?? true) && provider !== "lambda") {
+      await runStep("create_backup", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        await runCli<{ op_id?: string }>(cli, [
+          "workspace",
+          "backup",
+          "create",
+          "--workspace",
+          project_id,
+        ]);
+      });
+
+      await runStep("wait_backup_indexed", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        const backup = await waitForBackupIndexedViaCli({
+          cli,
+          project_id,
+          wait: waitBackupReady,
+        });
+        if (!backup?.id) {
+          throw new Error("backup lookup did not return backup id");
+        }
+      });
+
+      await runStep("verify_backup_index_contents", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        const backup = await waitForBackupIndexedViaCli({
+          cli,
+          project_id,
+          wait: waitBackupReady,
+        });
+        if (!backup.indexed) {
+          logger.warn("cloud smoke backup index check skipped: backup not indexed", {
+            project_id,
+            backup_id: backup.id,
+          });
+          return;
+        }
+        const children = await runCli<Array<{ name?: string }>>(cli, [
+          "workspace",
+          "backup",
+          "files",
+          "--workspace",
+          project_id,
+          "--backup-id",
+          backup.id,
+          "--path",
+          ".smoke",
+        ]);
+        const found = children.some((entry) =>
+          String(entry?.name ?? "").includes("persist.txt"),
+        );
+        if (!found) {
+          throw new Error("backup index did not include sentinel file");
+        }
+      });
+    }
+
+    if ((verify_terminal ?? true) && provider !== "lambda") {
+      await runStep("terminal_smoke", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        await runTerminalSmoke({
+          project_id,
+          clientFactory,
+          wait: waitProjectReady,
+        });
+      });
+    }
+
+    if ((verify_proxy ?? true) && provider !== "lambda") {
+      await runStep("proxy_smoke", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        if (!host_id) throw new Error("missing host_id");
+        await runProxySmoke({
+          account_id,
+          host_id,
+          project_id,
+          wait: waitProjectReady,
+          proxy_port: proxy_port ?? 33117,
+        });
+      });
+    }
+
+    await runStep("stop_host", async () => {
+      if (!host_id) throw new Error("missing host_id");
+      await runCli(cli, ["host", "stop", host_id, "--skip-backups", "--wait"]);
+      await waitForHostStatusViaCli({
+        cli,
+        host_id,
+        allowed: ["off", "deprovisioned", "stopped"],
+        wait: waitHostStopped,
+      });
+    });
+
+    const shouldRestart =
+      restart_after_stop ?? (update && Object.keys(update).length > 0);
+    if (shouldRestart) {
+      if (update && Object.keys(update).length > 0) {
+        await runStep("update_host", async () => {
+          if (!host_id) throw new Error("missing host_id");
+          await updateHostMachine({
+            ...(update as Record<string, any>),
+            account_id,
+            id: host_id,
+          });
+        });
+      }
+
+      await runStep("start_host", async () => {
+        if (!host_id) throw new Error("missing host_id");
+        await runCli(cli, ["host", "start", host_id, "--wait"]);
+      });
+
+      await runStep("start_project", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        let lastErr: unknown;
+        for (
+          let attempt = 1;
+          attempt <= Math.max(3, Math.min(12, waitProjectReady.attempts));
+          attempt += 1
+        ) {
+          try {
+            await runCli(cli, [
+              "workspace",
+              "start",
+              "--workspace",
+              project_id,
+              "--wait",
+            ]);
+            lastErr = undefined;
+            break;
+          } catch (err) {
+            lastErr = err;
+            const msg = getErrorMessage(err);
+            logger.warn("cloud smoke workspace restart retry", {
+              project_id,
+              attempt,
+              err: msg,
+            });
+            if (
+              msg.includes("timeout waiting for hub response: projects.start") ||
+              msg.includes("no subscribers matching") ||
+              msg.includes("timeout waiting for start op")
+            ) {
+              await sleep(waitProjectReady.intervalMs);
+              continue;
+            }
+            throw err;
+          }
+        }
+        if (lastErr) {
+          throw lastErr;
+        }
+      });
+
+      await runStep("verify_sentinel", async () => {
+        if (!project_id) throw new Error("missing project_id");
+        if (provider === "lambda") {
+          return;
+        }
+        await waitForProjectFileValueViaCli({
+          cli,
+          project_id,
+          path: sentinelPath,
+          expected: sentinelValue,
+          wait: waitProjectReady,
+        });
+      });
+    }
+
+    if (cleanup_on_success) {
+      await runStep("cleanup", async () => {
+        if (project_id) {
+          await runCli(cli, [
+            "workspace",
+            "delete",
+            "--workspace",
+            project_id,
+            "--hard",
+            "--purge-backups-now",
+            "--yes",
+            "--wait",
+          ]);
+        }
+        if (cleanup_host ?? createdHost) {
+          if (!host_id) throw new Error("missing host_id for cleanup");
+          await runCli(cli, ["host", "delete", host_id, "--skip-backups", "--wait"]);
+        }
+      });
+    }
+
+    return {
+      ok: true,
+      host_id,
+      project_id,
+      debug: debugHints
+        ? {
+            ssh_target: debugHints.ssh_target,
+            ssh_tail_log: debugHints.ssh_tail_log,
+            scp_log: debugHints.scp_log,
+            host_log_path: debugHints.host_log_path,
+            bootstrap_log_path: debugHints.bootstrap_log_path,
+            host_url: debugHints.host_url,
+          }
+        : {
+            host_log_path: "/mnt/cocalc/data/log",
+            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+          },
+      steps,
+    };
+  } catch (err) {
+    emit({
+      step: "run",
+      status: "failed",
+      message: `${err}`,
+    });
+    return {
+      ok: false,
+      host_id,
+      project_id,
+      debug: debugHints
+        ? {
+            ssh_target: debugHints.ssh_target,
+            ssh_tail_log: debugHints.ssh_tail_log,
+            scp_log: debugHints.scp_log,
+            host_log_path: debugHints.host_log_path,
+            bootstrap_log_path: debugHints.bootstrap_log_path,
+            host_url: debugHints.host_url,
+          }
+        : {
+            host_log_path: "/mnt/cocalc/data/log",
+            bootstrap_log_path: "/home/cocalc-host/cocalc-host/bootstrap/bootstrap.log",
+          },
+      steps,
+    };
+  }
+}
+
 export async function runProjectHostPersistenceSmokeTest(
   opts: ProjectHostSmokeOptions,
 ): Promise<ProjectHostSmokeResult> {
@@ -1533,9 +2472,11 @@ export async function runProjectHostPersistenceSmokePreset({
   provider,
   preset,
   cleanup_on_success = true,
+  verify_backup = true,
   verify_terminal = true,
   verify_proxy = true,
   verify_provider_status = false,
+  execution_mode = "cli",
   proxy_port,
   print_debug_hints = true,
 }: {
@@ -1543,9 +2484,11 @@ export async function runProjectHostPersistenceSmokePreset({
   provider: ProviderId | string;
   preset?: string;
   cleanup_on_success?: boolean;
+  verify_backup?: boolean;
   verify_terminal?: boolean;
   verify_proxy?: boolean;
   verify_provider_status?: boolean;
+  execution_mode?: "cli" | "direct";
   proxy_port?: number;
   print_debug_hints?: boolean;
 }): Promise<ProjectHostSmokeResult> {
@@ -1563,10 +2506,10 @@ export async function runProjectHostPersistenceSmokePreset({
   if (!selected) {
     throw new Error(`smoke preset ${preset} not found for ${provider}`);
   }
-  return await runProjectHostPersistenceSmokeTest({
+  const smokeInput = {
     account_id: resolvedAccountId,
     provider: normalizedProvider ?? undefined,
-    create: {
+    createSpec: {
       ...selected.create,
       account_id: resolvedAccountId,
     },
@@ -1574,28 +2517,39 @@ export async function runProjectHostPersistenceSmokePreset({
     restart_after_stop: selected.restart_after_stop,
     wait: selected.wait,
     cleanup_on_success,
+    cleanup_host: true,
+    verify_backup,
     verify_terminal,
     verify_proxy,
     verify_provider_status,
     proxy_port,
     print_debug_hints,
-  });
+  };
+
+  if (execution_mode === "direct") {
+    return await runSmokeSteps(smokeInput);
+  }
+  return await runSmokeStepsViaCli(smokeInput);
 }
 
 export async function runProjectHostGcpFlowSmoke({
   account_id,
   cleanup_on_success = false,
+  verify_backup = true,
   verify_terminal = true,
   verify_proxy = true,
   verify_provider_status = false,
+  execution_mode = "cli",
   proxy_port = 33117,
   print_debug_hints = true,
 }: {
   account_id?: string;
   cleanup_on_success?: boolean;
+  verify_backup?: boolean;
   verify_terminal?: boolean;
   verify_proxy?: boolean;
   verify_provider_status?: boolean;
+  execution_mode?: "cli" | "direct";
   proxy_port?: number;
   print_debug_hints?: boolean;
 }): Promise<ProjectHostSmokeResult> {
@@ -1604,9 +2558,11 @@ export async function runProjectHostGcpFlowSmoke({
     provider: "gcp",
     preset: "gcp-cpu",
     cleanup_on_success,
+    verify_backup,
     verify_terminal,
     verify_proxy,
     verify_provider_status,
+    execution_mode,
     proxy_port,
     print_debug_hints,
   });

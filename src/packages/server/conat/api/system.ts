@@ -25,6 +25,10 @@ import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { is_valid_email_address } from "@cocalc/util/misc";
 import { v4 as uuid } from "uuid";
 import { secureRandomString } from "@cocalc/backend/misc";
+import {
+  testR2Credentials as testR2Credentials0,
+  type R2CredentialsTestResult,
+} from "@cocalc/server/project-backup/r2";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -716,4 +720,48 @@ export async function getCodexPaymentSource({
     sharedHomeMode,
     project_id,
   };
+}
+
+function clean(v?: string): string | undefined {
+  const s = `${v ?? ""}`.trim();
+  return s.length > 0 ? s : undefined;
+}
+
+export async function testR2Credentials({
+  account_id,
+  overrides,
+}: {
+  account_id?: string;
+  overrides?: {
+    r2_account_id?: string;
+    r2_api_token?: string;
+    r2_access_key_id?: string;
+    r2_secret_access_key?: string;
+    r2_bucket_prefix?: string;
+    r2_endpoint?: string;
+  };
+}): Promise<R2CredentialsTestResult> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const settings = await getServerSettings();
+  const accountId =
+    clean(overrides?.r2_account_id) ??
+    clean(settings.r2_account_id) ??
+    clean(settings.project_hosts_cloudflare_tunnel_account_id);
+  const endpoint =
+    clean(overrides?.r2_endpoint) ??
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined);
+  return await testR2Credentials0({
+    accountId,
+    apiToken: clean(overrides?.r2_api_token) ?? clean(settings.r2_api_token),
+    accessKey:
+      clean(overrides?.r2_access_key_id) ?? clean(settings.r2_access_key_id),
+    secretKey:
+      clean(overrides?.r2_secret_access_key) ??
+      clean(settings.r2_secret_access_key),
+    bucketPrefix:
+      clean(overrides?.r2_bucket_prefix) ?? clean(settings.r2_bucket_prefix),
+    endpoint,
+  });
 }

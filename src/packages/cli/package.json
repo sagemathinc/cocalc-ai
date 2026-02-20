@@ -1,6 +1,6 @@
 {
   "name": "@cocalc/cli",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "CoCalc command line interface",
   "bin": {
     "cocalc": "./dist/bin/cocalc.js",

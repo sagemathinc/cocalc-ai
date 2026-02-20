@@ -1,4 +1,4 @@
-# Local Hub Daemon + Self-Host Smoke
+# Local Hub Daemon + Smoke Tests
 
 ## One-time setup (optional)
 
@@ -56,4 +56,41 @@ For smoke-only toggles, set environment variables when invoking, e.g.:
 
 ```bash
 SMOKE_VERIFY_COPY_BETWEEN_PROJECTS=0 pnpm --dir src smoke:self-host
+```
+
+## Cloud host smoke test (CLI flow)
+
+```bash
+pnpm --dir src smoke:cloud-host
+```
+
+This runs project-host cloud smoke via the CLI execution path and includes:
+
+1. Host create/start.
+2. Workspace create/start.
+3. Sentinel file write/read.
+4. Backup create/list/index verification (non-lambda providers).
+5. Host stop/start and persistence check.
+6. Cleanup (hard workspace delete with delayed backup purge + host delete by default).
+
+Before provisioning cloud resources, smoke now performs an R2 backup auth preflight
+when `SMOKE_CLOUD_VERIFY_BACKUP=1`:
+
+- validates `r2_api_token` against Cloudflare API,
+- validates S3 credentials against the latest recorded backup bucket (if one exists).
+
+Useful toggles:
+
+- `SMOKE_CLOUD_PROVIDERS`: provider list (`gcp,nebius,hyperstack,lambda`) or `all`.
+- `SMOKE_CLOUD_CONTINUE_ON_FAILURE=1`: keep running other providers after one fails.
+- `SMOKE_CLOUD_EXECUTION_MODE=cli|direct`: defaults to `cli`.
+- `SMOKE_CLOUD_VERIFY_BACKUP=1`: defaults to `1`.
+- `SMOKE_CLOUD_CLEANUP_SUCCESS=1`: defaults to `1`.
+- `SMOKE_CLOUD_BACKUP_PREFLIGHT=1`: defaults to `1` (set `0` to skip auth preflight).
+
+Examples:
+
+```bash
+SMOKE_CLOUD_PROVIDERS=gcp pnpm --dir src smoke:cloud-host
+SMOKE_CLOUD_PROVIDERS=all SMOKE_CLOUD_CONTINUE_ON_FAILURE=1 pnpm --dir src smoke:cloud-host
 ```

@@ -103,6 +103,7 @@ type GlobalOptions = GlobalAuthOptions & {
   daemon?: boolean;
   noDaemon?: boolean;
   timeout?: string;
+  rpcTimeout?: string;
   pollMs?: string;
 };
 
@@ -115,6 +116,7 @@ type CommandContext = {
   globals: GlobalOptions;
   accountId: string;
   timeoutMs: number;
+  rpcTimeoutMs: number;
   pollMs: number;
   apiBaseUrl: string;
   remote: RemoteConnection;
@@ -1082,6 +1084,10 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
   const effectiveGlobals = applied.globals as GlobalOptions;
 
   const timeoutMs = durationToMs(effectiveGlobals.timeout, 600_000);
+  const rpcTimeoutMs = Math.max(
+    1_000,
+    Math.min(timeoutMs, durationToMs(effectiveGlobals.rpcTimeout, MAX_TRANSPORT_TIMEOUT_MS)),
+  );
   const pollMs = durationToMs(effectiveGlobals.pollMs, 1_000);
   const apiBaseUrl = effectiveGlobals.api ? normalizeUrl(effectiveGlobals.api) : defaultApiBaseUrl();
   const remote = await connectRemote({ globals: effectiveGlobals, apiBaseUrl, timeoutMs });
@@ -1105,6 +1111,7 @@ async function contextForGlobals(globals: GlobalOptions): Promise<CommandContext
     globals: effectiveGlobals,
     accountId,
     timeoutMs,
+    rpcTimeoutMs,
     pollMs,
     apiBaseUrl,
     remote,
@@ -1176,7 +1183,7 @@ async function hubCallAccount<T>(
   timeout?: number,
 ): Promise<T> {
   const timeoutMs = timeout ?? ctx.timeoutMs;
-  const rpcTimeoutMs = Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
+  const rpcTimeoutMs = Math.max(1_000, Math.min(timeoutMs, ctx.rpcTimeoutMs));
   cliDebug("hubCallAccount", {
     name,
     timeoutMs,
@@ -1722,7 +1729,7 @@ async function projectHostHubCallAccount<T>(
     throw new Error(`internal error: routed client missing for host ${routed.host_id}`);
   }
   const timeoutMs = timeout ?? ctx.timeoutMs;
-  const rpcTimeoutMs = Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS);
+  const rpcTimeoutMs = Math.max(1_000, Math.min(timeoutMs, ctx.rpcTimeoutMs));
   cliDebug("projectHostHubCallAccount", {
     name,
     timeoutMs,
@@ -4428,6 +4435,7 @@ program
   .option("--account-id <uuid>", "account id to use for API calls")
   .option("--api <url>", "hub base URL")
   .option("--timeout <duration>", "wait timeout (default: 600s)", "600s")
+  .option("--rpc-timeout <duration>", "per-RPC timeout (default: 30s)", "30s")
   .option("--poll-ms <duration>", "poll interval (default: 1s)", "1s")
   .option("--api-key <key>", "account api key (also read from COCALC_API_KEY)")
   .option("--cookie <cookie>", "raw Cookie header value")
