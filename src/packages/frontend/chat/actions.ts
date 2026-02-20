@@ -895,15 +895,14 @@ export class ChatActions extends Actions<ChatState> {
     }
     const rootMs =
       getThreadRootDate({ date: date.valueOf(), messages }) || date.valueOf();
+    const cfg = this.getCodexConfig(new Date(rootMs));
+    if (cfg?.model && cfg.model.includes("codex")) {
+      return cfg.model;
+    }
     const entry = this.getThreadRootDoc(`${rootMs}`);
     const rootMessage = entry?.message;
     if (rootMessage == null) {
       return false;
-    }
-
-    const cfg = field<CodexThreadConfig>(rootMessage, "acp_config");
-    if (cfg?.model && cfg.model.includes("codex")) {
-      return cfg.model;
     }
 
     const thread = this.getMessagesInThread(
@@ -1093,6 +1092,39 @@ export class ChatActions extends Actions<ChatState> {
     });
     this.syncdb.commit();
     void this.saveSyncdb();
+  };
+
+  setThreadAgentMode = (
+    threadKey: string,
+    mode: "codex" | "none",
+    patch?: Partial<CodexThreadConfig>,
+  ): void => {
+    if (this.syncdb == null) return;
+    const dateNum = parseInt(threadKey, 10);
+    if (!dateNum || Number.isNaN(dateNum)) {
+      throw Error(`setThreadAgentMode: invalid threadKey ${threadKey}`);
+    }
+    if (mode === "none") {
+      const dateIso = new Date(dateNum).toISOString();
+      this.setSyncdb({
+        event: "chat",
+        date: dateIso,
+        acp_config: null,
+      });
+      this.setThreadConfigRecord(threadKey, {
+        acp_config: null,
+      });
+      this.syncdb.commit();
+      void this.saveSyncdb();
+      return;
+    }
+    const current = this.getCodexConfig(new Date(dateNum)) ?? {};
+    const next: CodexThreadConfig = {
+      ...current,
+      ...patch,
+      model: patch?.model ?? current.model ?? "gpt-5.3-codex",
+    };
+    this.setCodexConfig(threadKey, next);
   };
 
   forkThread = async ({
