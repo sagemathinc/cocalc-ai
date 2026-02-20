@@ -1,5 +1,7 @@
 import type { CodexThreadConfig } from "./acp";
 
+export const CHAT_SCHEMA_V2 = 2;
+
 export interface MessageHistory {
   author_id: string;
   content: string;
@@ -27,6 +29,10 @@ export interface ChatMessage {
   acp_usage?: any;
   acp_config?: CodexThreadConfig;
   acp_account_id?: string;
+  // schema-v2 fields (optional while migrating)
+  message_id?: string;
+  thread_id?: string;
+  reply_to_message_id?: string;
 }
 
 export interface HistoryEntryInput {
@@ -62,6 +68,9 @@ export interface BuildChatMessageOptions {
   historyAuthorId?: string;
   historyEntryDate?: string;
   acp_account_id?: string;
+  message_id?: string;
+  thread_id?: string;
+  reply_to_message_id?: string;
 }
 
 export function buildChatMessage(
@@ -88,6 +97,155 @@ export function buildChatMessage(
     acp_thread_id: options.acp_thread_id,
     acp_usage: options.acp_usage,
     acp_account_id: options.acp_account_id,
+    message_id: options.message_id,
+    thread_id: options.thread_id,
+    reply_to_message_id: options.reply_to_message_id,
+  };
+}
+
+function toISOStringDate(value?: Date | string): string {
+  if (value == null) {
+    return new Date().toISOString();
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return value.toISOString();
+}
+
+export interface ChatThreadRecord {
+  event: "chat-thread";
+  thread_id: string;
+  root_message_id: string;
+  created_at: string;
+  created_by: string;
+  schema_version: number;
+}
+
+export interface BuildThreadRecordOptions {
+  thread_id: string;
+  root_message_id: string;
+  created_by: string;
+  created_at?: Date | string;
+  schema_version?: number;
+}
+
+export function buildThreadRecord(
+  options: BuildThreadRecordOptions,
+): ChatThreadRecord {
+  return {
+    event: "chat-thread",
+    thread_id: options.thread_id,
+    root_message_id: options.root_message_id,
+    created_by: options.created_by,
+    created_at: toISOStringDate(options.created_at),
+    schema_version: options.schema_version ?? CHAT_SCHEMA_V2,
+  };
+}
+
+export interface ChatThreadConfigRecord {
+  event: "chat-thread-config";
+  thread_id: string;
+  name?: string;
+  thread_color?: string;
+  thread_icon?: string;
+  thread_image?: string;
+  pin?: boolean;
+  acp_config?: CodexThreadConfig;
+  updated_at: string;
+  updated_by: string;
+  schema_version: number;
+}
+
+export interface BuildThreadConfigRecordOptions {
+  thread_id: string;
+  updated_by: string;
+  updated_at?: Date | string;
+  name?: string;
+  thread_color?: string;
+  thread_icon?: string;
+  thread_image?: string;
+  pin?: boolean;
+  acp_config?: CodexThreadConfig;
+  schema_version?: number;
+}
+
+export function buildThreadConfigRecord(
+  options: BuildThreadConfigRecordOptions,
+): ChatThreadConfigRecord {
+  return {
+    event: "chat-thread-config",
+    thread_id: options.thread_id,
+    name: options.name,
+    thread_color: options.thread_color,
+    thread_icon: options.thread_icon,
+    thread_image: options.thread_image,
+    pin: options.pin,
+    acp_config: options.acp_config,
+    updated_at: toISOStringDate(options.updated_at),
+    updated_by: options.updated_by,
+    schema_version: options.schema_version ?? CHAT_SCHEMA_V2,
+  };
+}
+
+export interface ChatMessageRecordV2 extends ChatMessage {
+  event: "chat";
+  message_id: string;
+  thread_id: string;
+  schema_version: number;
+}
+
+export interface BuildChatMessageRecordV2Options
+  extends Omit<BuildChatMessageOptions, "schema_version"> {
+  message_id: string;
+  thread_id: string;
+  schema_version?: number;
+}
+
+export function buildChatMessageRecordV2(
+  options: BuildChatMessageRecordV2Options,
+): ChatMessageRecordV2 {
+  return buildChatMessage({
+    ...options,
+    schema_version: options.schema_version ?? CHAT_SCHEMA_V2,
+  }) as ChatMessageRecordV2;
+}
+
+export type ChatThreadRuntimeState =
+  | "idle"
+  | "queued"
+  | "running"
+  | "interrupted"
+  | "error"
+  | "complete";
+
+export interface ChatThreadStateRecord {
+  event: "chat-thread-state";
+  thread_id: string;
+  state: ChatThreadRuntimeState;
+  active_message_id?: string;
+  updated_at: string;
+  schema_version: number;
+}
+
+export interface BuildThreadStateRecordOptions {
+  thread_id: string;
+  state: ChatThreadRuntimeState;
+  active_message_id?: string;
+  updated_at?: Date | string;
+  schema_version?: number;
+}
+
+export function buildThreadStateRecord(
+  options: BuildThreadStateRecordOptions,
+): ChatThreadStateRecord {
+  return {
+    event: "chat-thread-state",
+    thread_id: options.thread_id,
+    state: options.state,
+    active_message_id: options.active_message_id,
+    updated_at: toISOStringDate(options.updated_at),
+    schema_version: options.schema_version ?? CHAT_SCHEMA_V2,
   };
 }
 
