@@ -4,7 +4,6 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdir as mkdirLocal, readFile as readFileLocal, writeFile as writeFileLocal } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { createServer as createNetServer, type Server as NetServer } from "node:net";
 import { homedir, hostname } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { dirname, join } from "node:path";
@@ -73,16 +72,19 @@ import {
   daemonLogPath,
   daemonPidPath,
   daemonRequestId,
-  daemonRequestWithAutoStart,
   daemonSocketPath,
   isDaemonTransportError,
   pingDaemon,
   readDaemonPid,
   sendDaemonRequest,
   startDaemonProcess,
-  type DaemonRequest,
-  type DaemonResponse,
 } from "./core/daemon-transport";
+import { createDaemonServerOps } from "./core/daemon-server";
+import {
+  PRODUCT_SPECS,
+  runProductCommand,
+  type ProductCommand,
+} from "./core/product-shortcuts";
 import {
   waitForLro as waitForLroCore,
   waitForProjectPlacement as waitForProjectPlacementCore,
@@ -298,31 +300,6 @@ function daemonContextKey(globals: GlobalOptions): string {
     hub_password: globals.hubPassword ?? null,
   });
 }
-
-type ProductCommand = "plus" | "launchpad";
-
-type ProductSpec = {
-  command: ProductCommand;
-  binary: string;
-  installUrl: string;
-};
-
-const PRODUCT_SPECS: Record<ProductCommand, ProductSpec> = {
-  plus: {
-    command: "plus",
-    binary: "cocalc-plus",
-    installUrl:
-      process.env.COCALC_PLUS_INSTALL_URL ??
-      "https://software.cocalc.ai/software/cocalc-plus/install.sh",
-  },
-  launchpad: {
-    command: "launchpad",
-    binary: "cocalc-launchpad",
-    installUrl:
-      process.env.COCALC_LAUNCHPAD_INSTALL_URL ??
-      "https://software.cocalc.ai/software/cocalc-launchpad/install.sh",
-  },
-};
 
 function defaultApiBaseUrl(): string {
   const raw =
@@ -2243,28 +2220,6 @@ async function terminateReflectForwards(forwardRefs: string[]): Promise<void> {
   await runReflectSyncCli(["forward", "terminate", ...forwardRefs]);
 }
 
-async function shouldInstallProduct(spec: ProductSpec): Promise<boolean> {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    return false;
-  }
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  try {
-    const answer = (
-      await rl.question(
-        `'${spec.binary}' is not installed. Install now from ${spec.installUrl}? [Y/n] `,
-      )
-    )
-      .trim()
-      .toLowerCase();
-    return answer === "" || answer === "y" || answer === "yes";
-  } finally {
-    rl.close();
-  }
-}
-
 async function confirmHardWorkspaceDelete({
   workspace_id,
   title,
@@ -2308,36 +2263,6 @@ async function confirmHardWorkspaceDelete({
     }
   } finally {
     rl.close();
-  }
-}
-
-async function ensureProductInstalled(spec: ProductSpec): Promise<void> {
-  if (commandExists(spec.binary)) {
-    return;
-  }
-
-  const approved = await shouldInstallProduct(spec);
-  if (!approved) {
-    throw new Error(
-      `'${spec.binary}' is required for 'cocalc ${spec.command}'. Install with: curl -fsSL ${spec.installUrl} | bash`,
-    );
-  }
-
-  console.error(`Installing ${spec.binary} ...`);
-  const code = await runCommand("bash", ["-lc", `curl -fsSL ${spec.installUrl} | bash`]);
-  if (code !== 0) {
-    throw new Error(`failed installing '${spec.binary}' (exit ${code})`);
-  }
-  if (!commandExists(spec.binary)) {
-    throw new Error(`installation completed but '${spec.binary}' is still not available in PATH`);
-  }
-}
-
-async function runProductCommand(spec: ProductSpec, args: string[]): Promise<void> {
-  await ensureProductInstalled(spec);
-  const code = await runCommand(spec.binary, args);
-  if (code !== 0) {
-    process.exitCode = code;
   }
 }
 
@@ -2465,384 +2390,25 @@ async function resolveProxyUrl({
   };
 }
 
-type DaemonServerState = {
-  startedAtMs: number;
-  socketPath: string;
-  pidPath: string;
-  contexts: Map<string, CommandContext>;
-  server?: NetServer;
-  closing: boolean;
-};
-
-function daemonContextMeta(ctx: CommandContext) {
-  return {
-    api: ctx.apiBaseUrl,
-    account_id: ctx.accountId,
-  };
-}
-
-async function getDaemonContext(
-  state: DaemonServerState,
-  globals: GlobalOptions,
-): Promise<CommandContext> {
-  const key = daemonContextKey(globals);
-  const existing = state.contexts.get(key);
-  if (existing) {
-    return existing;
-  }
-  const ctx = await contextForGlobals({ ...globals, noDaemon: true });
-  state.contexts.set(key, ctx);
-  return ctx;
-}
-
-function closeDaemonServerState(state: DaemonServerState): void {
-  for (const ctx of state.contexts.values()) {
-    closeCommandContext(ctx);
-  }
-  state.contexts.clear();
-  try {
-    state.server?.close();
-  } catch {
-    // ignore
-  }
-  try {
-    if (existsSync(state.socketPath)) unlinkSync(state.socketPath);
-  } catch {
-    // ignore
-  }
-  try {
-    if (existsSync(state.pidPath)) unlinkSync(state.pidPath);
-  } catch {
-    // ignore
-  }
-}
-
-async function handleDaemonAction(
-  state: DaemonServerState,
-  request: DaemonRequest,
-): Promise<DaemonResponse> {
-  const meta = {
-    pid: process.pid,
-    uptime_s: Math.max(0, Math.floor((Date.now() - state.startedAtMs) / 1000)),
-    started_at: new Date(state.startedAtMs).toISOString(),
-  };
-  try {
-    switch (request.action) {
-      case "ping":
-        return { id: request.id, ok: true, data: { status: "ok" }, meta };
-      case "shutdown":
-        state.closing = true;
-        setTimeout(() => {
-          closeDaemonServerState(state);
-          process.exit(0);
-        }, 10);
-        return { id: request.id, ok: true, data: { status: "shutting_down" }, meta };
-      case "workspace.file.list": {
-        const globals = request.globals ?? {};
-        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-        const ctx = await getDaemonContext(state, globals);
-        const data = await workspaceFileListData({
-          ctx,
-          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
-          path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
-          cwd,
-        });
-        return {
-          id: request.id,
-          ok: true,
-          data,
-          meta: {
-            ...meta,
-            ...daemonContextMeta(ctx),
-          },
-        };
-      }
-      case "workspace.file.cat": {
-        const globals = request.globals ?? {};
-        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-        const path = typeof request.payload?.path === "string" ? request.payload.path : "";
-        if (!path) {
-          throw new Error("workspace file cat requires path");
-        }
-        const ctx = await getDaemonContext(state, globals);
-        const data = await workspaceFileCatData({
-          ctx,
-          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
-          path,
-          cwd,
-        });
-        return {
-          id: request.id,
-          ok: true,
-          data,
-          meta: {
-            ...meta,
-            ...daemonContextMeta(ctx),
-          },
-        };
-      }
-      case "workspace.file.put": {
-        const globals = request.globals ?? {};
-        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-        const dest = typeof request.payload?.dest === "string" ? request.payload.dest : "";
-        const contentBase64 =
-          typeof request.payload?.content_base64 === "string"
-            ? request.payload.content_base64
-            : "";
-        if (!dest) {
-          throw new Error("workspace file put requires dest");
-        }
-        const data = Buffer.from(contentBase64, "base64");
-        const ctx = await getDaemonContext(state, globals);
-        const result = await workspaceFilePutData({
-          ctx,
-          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
-          dest,
-          data,
-          parents: request.payload?.parents !== false,
-          cwd,
-        });
-        return {
-          id: request.id,
-          ok: true,
-          data: result,
-          meta: {
-            ...meta,
-            ...daemonContextMeta(ctx),
-          },
-        };
-      }
-      case "workspace.file.get": {
-        const globals = request.globals ?? {};
-        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-        const src = typeof request.payload?.src === "string" ? request.payload.src : "";
-        if (!src) {
-          throw new Error("workspace file get requires src");
-        }
-        const ctx = await getDaemonContext(state, globals);
-        const data = await workspaceFileGetData({
-          ctx,
-          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
-          src,
-          cwd,
-        });
-        return {
-          id: request.id,
-          ok: true,
-          data,
-          meta: {
-            ...meta,
-            ...daemonContextMeta(ctx),
-          },
-        };
-      }
-      case "workspace.file.rm": {
-        const globals = request.globals ?? {};
-        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-        const path = typeof request.payload?.path === "string" ? request.payload.path : "";
-        if (!path) {
-          throw new Error("workspace file rm requires path");
-        }
-        const ctx = await getDaemonContext(state, globals);
-        const data = await workspaceFileRmData({
-          ctx,
-          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
-          path,
-          recursive: request.payload?.recursive === true,
-          force: request.payload?.force === true,
-          cwd,
-        });
-        return {
-          id: request.id,
-          ok: true,
-          data,
-          meta: {
-            ...meta,
-            ...daemonContextMeta(ctx),
-          },
-        };
-      }
-      case "workspace.file.mkdir": {
-        const globals = request.globals ?? {};
-        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-        const path = typeof request.payload?.path === "string" ? request.payload.path : "";
-        if (!path) {
-          throw new Error("workspace file mkdir requires path");
-        }
-        const ctx = await getDaemonContext(state, globals);
-        const data = await workspaceFileMkdirData({
-          ctx,
-          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
-          path,
-          parents: request.payload?.parents !== false,
-          cwd,
-        });
-        return {
-          id: request.id,
-          ok: true,
-          data,
-          meta: {
-            ...meta,
-            ...daemonContextMeta(ctx),
-          },
-        };
-      }
-      case "workspace.file.rg": {
-        const globals = request.globals ?? {};
-        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-        const pattern = typeof request.payload?.pattern === "string" ? request.payload.pattern : "";
-        if (!pattern) {
-          throw new Error("workspace file rg requires pattern");
-        }
-        const timeoutMs = Math.max(1, Number(request.payload?.timeout_ms ?? 30_000) || 30_000);
-        const maxBytes = Math.max(1024, Number(request.payload?.max_bytes ?? 20000000) || 20000000);
-        const rgOptions = Array.isArray(request.payload?.rg_options)
-          ? request.payload?.rg_options.filter((x): x is string => typeof x === "string")
-          : undefined;
-        const ctx = await getDaemonContext(state, globals);
-        const data = await workspaceFileRgData({
-          ctx,
-          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
-          pattern,
-          path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
-          timeoutMs,
-          maxBytes,
-          options: rgOptions,
-          cwd,
-        });
-        return {
-          id: request.id,
-          ok: true,
-          data,
-          meta: {
-            ...meta,
-            ...daemonContextMeta(ctx),
-          },
-        };
-      }
-      case "workspace.file.fd": {
-        const globals = request.globals ?? {};
-        const cwd = typeof request.cwd === "string" ? request.cwd : process.cwd();
-        const timeoutMs = Math.max(1, Number(request.payload?.timeout_ms ?? 30_000) || 30_000);
-        const maxBytes = Math.max(1024, Number(request.payload?.max_bytes ?? 20000000) || 20000000);
-        const fdOptions = Array.isArray(request.payload?.fd_options)
-          ? request.payload?.fd_options.filter((x): x is string => typeof x === "string")
-          : undefined;
-        const ctx = await getDaemonContext(state, globals);
-        const data = await workspaceFileFdData({
-          ctx,
-          workspaceIdentifier: typeof request.payload?.workspace === "string" ? request.payload.workspace : undefined,
-          pattern: typeof request.payload?.pattern === "string" ? request.payload.pattern : undefined,
-          path: typeof request.payload?.path === "string" ? request.payload.path : undefined,
-          timeoutMs,
-          maxBytes,
-          options: fdOptions,
-          cwd,
-        });
-        return {
-          id: request.id,
-          ok: true,
-          data,
-          meta: {
-            ...meta,
-            ...daemonContextMeta(ctx),
-          },
-        };
-      }
-      default:
-        throw new Error(`unsupported daemon action '${request.action}'`);
-    }
-  } catch (err) {
-    return {
-      id: request.id,
-      ok: false,
-      error: err instanceof Error ? err.message : `${err}`,
-      meta,
-    };
-  }
-}
-
-async function serveDaemon(socketPath = daemonSocketPath()): Promise<void> {
-  mkdirSync(dirname(socketPath), { recursive: true });
-  try {
-    if (existsSync(socketPath)) unlinkSync(socketPath);
-  } catch {
-    // ignore
-  }
-  const state: DaemonServerState = {
-    startedAtMs: Date.now(),
-    socketPath,
-    pidPath: daemonPidPath(),
-    contexts: new Map(),
-    closing: false,
-  };
-  writeFileSync(state.pidPath, `${process.pid}\n`, "utf8");
-
-  const server = createNetServer((socket) => {
-    let buffer = "";
-    socket.on("data", async (chunk) => {
-      buffer += chunk.toString("utf8");
-      while (true) {
-        const idx = buffer.indexOf("\n");
-        if (idx < 0) break;
-        const line = buffer.slice(0, idx).trim();
-        buffer = buffer.slice(idx + 1);
-        if (!line) continue;
-        let request: DaemonRequest;
-        try {
-          request = JSON.parse(line) as DaemonRequest;
-        } catch (err) {
-          const response: DaemonResponse = {
-            id: daemonRequestId(),
-            ok: false,
-            error: `invalid daemon request JSON: ${err instanceof Error ? err.message : `${err}`}`,
-            meta: { pid: process.pid },
-          };
-          socket.write(`${JSON.stringify(response)}\n`);
-          continue;
-        }
-        const response = await handleDaemonAction(state, request);
-        socket.write(`${JSON.stringify(response)}\n`);
-      }
-    });
+const { serveDaemon, runDaemonRequestFromCommand } =
+  createDaemonServerOps<CommandContext>({
+    daemonContextKey,
+    contextForGlobals,
+    closeCommandContext,
+    globalsFrom,
+    daemonContextMeta: (ctx) => ({
+      api: ctx.apiBaseUrl,
+      account_id: ctx.accountId,
+    }),
+    workspaceFileListData,
+    workspaceFileCatData,
+    workspaceFilePutData,
+    workspaceFileGetData,
+    workspaceFileRmData,
+    workspaceFileMkdirData,
+    workspaceFileRgData,
+    workspaceFileFdData,
   });
-  state.server = server;
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(socketPath, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-
-  const terminate = () => {
-    if (state.closing) return;
-    state.closing = true;
-    closeDaemonServerState(state);
-    process.exit(0);
-  };
-  process.on("SIGINT", terminate);
-  process.on("SIGTERM", terminate);
-
-  await new Promise<void>(() => {
-    // wait forever until signal/shutdown
-  });
-}
-
-async function runDaemonRequestFromCommand(
-  command: unknown,
-  request: Omit<DaemonRequest, "id" | "globals">,
-): Promise<DaemonResponse> {
-  const globals = globalsFrom(command);
-  return await daemonRequestWithAutoStart({
-    id: daemonRequestId(),
-    action: request.action,
-    payload: request.payload,
-    cwd: process.cwd(),
-    globals: { ...globals, noDaemon: true },
-  });
-}
 
 function shouldUseDaemonForFileOps(globals: GlobalOptions): boolean {
   if (process.env.COCALC_CLI_DAEMON_MODE === "1") return false;
@@ -2888,7 +2454,10 @@ for (const spec of Object.values(PRODUCT_SPECS)) {
     .allowExcessArguments(true)
     .action(async (args: string[] | undefined, command: Command) => {
       try {
-        await runProductCommand(spec, args ?? []);
+        await runProductCommand(spec, args ?? [], {
+          commandExists,
+          runCommand,
+        });
       } catch (error) {
         emitError(
           { globals: globalsFrom(command) },
@@ -3078,7 +2647,10 @@ async function main() {
     if (shortcut && (shortcut === "plus" || shortcut === "launchpad")) {
       const spec = PRODUCT_SPECS[shortcut];
       try {
-        await runProductCommand(spec, process.argv.slice(3));
+        await runProductCommand(spec, process.argv.slice(3), {
+          commandExists,
+          runCommand,
+        });
       } catch (error) {
         emitError(
           { globals: globalsFrom(program as unknown as Command) },
