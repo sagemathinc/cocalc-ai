@@ -27,7 +27,7 @@ import { CellNotebook } from "./cell-notebook/cell-notebook";
 import { Introspect } from "./introspect/introspect";
 import JSONIPynb from "./json-ipynb";
 import KernelMenuItem from "./kernel-menu-item";
-import { MarkdownNotebook } from "./markdown-notebook";
+import { MarkdownNotebook, MarkdownNotebookTopLevel } from "./markdown-notebook";
 import { RawIPynb } from "./raw-ipynb";
 import { search } from "./search";
 import { Slideshow } from "./slideshow-revealjs/slideshow";
@@ -114,6 +114,23 @@ const jupyter_slate_notebook: EditorDescription = {
   },
 } as const;
 
+const jupyter_slate_top_level_notebook: EditorDescription = {
+  type: "jupyter-slate-top-level",
+  short: "Slate Top (exp)",
+  name: "Jupyter Notebook (Slate top-level, experimental)",
+  icon: "markdown",
+  component: MarkdownNotebookTopLevel as any,
+  commands: jupyterSlateCommands,
+  buttons: set(["save", "time_travel", "halt_jupyter", "show_search"]),
+  customizeCommands: {
+    shell: {
+      label: jupyter.editor.console_label,
+      icon: "ipynb",
+      title: jupyter.editor.console_title,
+    },
+  },
+} as const;
+
 const jupyter_slideshow_revealjs: EditorDescription = {
   type: "slideshow-revealjs",
   short: "Slideshow",
@@ -163,6 +180,7 @@ const jupyter_raw: EditorDescription = {
 export const EDITOR_SPEC = {
   jupyter_cell_notebook,
   jupyter_slate_notebook,
+  jupyter_slate_top_level_notebook,
   jupyter_slideshow_revealjs,
   jupyter_table_of_contents,
   introspect,

@@ -40,7 +40,11 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
   private syncConsoleInFlight = false;
 
   private isNotebookFrameType = (type?: string): boolean => {
-    return type === "jupyter_cell_notebook" || type === "jupyter-slate";
+    return (
+      type === "jupyter_cell_notebook" ||
+      type === "jupyter-slate" ||
+      type === "jupyter-slate-top-level"
+    );
   };
 
   _raw_default_frame_tree(): FrameTree {

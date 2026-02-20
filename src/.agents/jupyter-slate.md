@@ -158,6 +158,7 @@ Implemented now:
 4. Shift+Enter/Alt+Enter bridge shortcut wiring.
 5. Selection and crash hardening patches.
 6. Deprecated notebook-level `set_cur_id` call removed.
+7. Separate experimental `jupyter-slate-top-level` frame with one Slate editor and canonical cell sync bridge.
 
 Still outstanding (high priority):
 
@@ -172,6 +173,7 @@ Still outstanding (high priority):
 - [x] Add crash/selection hardening needed for prototype viability.
 - [x] Remove deprecated notebook-level `set_cur_id` usage.
 - [ ] Implement single Slate editor with `jupyter_cell_*` top-level elements.
+- [x] Add separate experimental top-level Slate frame (`jupyter-slate-top-level`) as a bridge.
 - [ ] Attach prompt/output chrome to those elements.
 - [ ] Map structural edits to canonical insert/delete/move/type actions.
 - [ ] Reach run/interrupt/restart/halt parity in single-editor mode.
