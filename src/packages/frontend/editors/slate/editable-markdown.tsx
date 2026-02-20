@@ -965,6 +965,103 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
           [],
         );
 
+  const getTopLevelJupyterCell = useCallback(() => {
+    const path = editor.selection?.focus?.path;
+    if (path == null || path.length === 0) return;
+    const rawTopIndex = path[0];
+    if (typeof rawTopIndex !== "number") return;
+    const node = editor.children[rawTopIndex] as any;
+    if (!SlateElement.isElement(node)) return;
+    if (node.type !== "jupyter_code_cell" && node.type !== "jupyter_markdown_cell") {
+      return;
+    }
+    return { node, topIndex: rawTopIndex };
+  }, [editor]);
+
+  const insertJupyterCellBelow = useCallback(
+    (kind: "code" | "markdown"): boolean => {
+      const entry = getTopLevelJupyterCell();
+      if (entry == null) return false;
+      const { node, topIndex } = entry;
+      const info = node.type === "jupyter_code_cell" ? `${(node as any).info ?? ""}` : "";
+      const nextNode =
+        kind === "code"
+          ? ({
+              type: "jupyter_code_cell",
+              fence: true,
+              info,
+              cell_meta: { cell_type: "code" },
+              children: [{ type: "code_line", children: [{ text: "" }] }],
+            } as const)
+          : ({
+              type: "jupyter_markdown_cell",
+              cell_meta: { cell_type: "markdown" },
+              children: [{ type: "paragraph", children: [{ text: "" }] }],
+            } as const);
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.insertNodes(editor, nextNode as any, { at: [topIndex + 1] });
+      });
+      const path = [topIndex + 1, 0, 0];
+      Transforms.select(editor, {
+        anchor: { path, offset: 0 },
+        focus: { path, offset: 0 },
+      });
+      ReactEditor.focus(editor);
+      return true;
+    },
+    [editor, getTopLevelJupyterCell],
+  );
+
+  const splitJupyterCell = useCallback((): boolean => {
+    const entry = getTopLevelJupyterCell();
+    if (entry == null || editor.selection == null) return false;
+    const { node, topIndex } = entry;
+    const nodeType = node.type;
+    Editor.withoutNormalizing(editor, () => {
+      if (Range.isExpanded(editor.selection!)) {
+        Transforms.delete(editor);
+      }
+      Transforms.splitNodes(editor, {
+        at: editor.selection!,
+        match: (n, path) =>
+          SlateElement.isElement(n) && path.length === 1 && (n as any).type === nodeType,
+        always: true,
+      });
+    });
+    const path = [topIndex + 1, 0, 0];
+    Transforms.select(editor, {
+      anchor: { path, offset: 0 },
+      focus: { path, offset: 0 },
+    });
+    ReactEditor.focus(editor);
+    return true;
+  }, [editor, getTopLevelJupyterCell]);
+
+  const joinJupyterCell = useCallback(
+    (direction: "backward" | "forward"): boolean => {
+      const entry = getTopLevelJupyterCell();
+      if (entry == null) return false;
+      const { node, topIndex } = entry;
+      const otherIndex = direction === "backward" ? topIndex - 1 : topIndex + 1;
+      if (otherIndex < 0 || otherIndex >= editor.children.length) return false;
+      const other = editor.children[otherIndex] as any;
+      if (!SlateElement.isElement(other) || other.type !== node.type) {
+        return false;
+      }
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.mergeNodes(editor, {
+          at: [direction === "backward" ? topIndex : otherIndex],
+        });
+      });
+      const targetIndex = direction === "backward" ? otherIndex : topIndex;
+      const point = pointAtPath(editor, [targetIndex], undefined, "end");
+      Transforms.select(editor, { anchor: point, focus: point });
+      ReactEditor.focus(editor);
+      return true;
+    },
+    [editor, getTopLevelJupyterCell],
+  );
+
   function onKeyDown(e) {
     if (read_only) {
       e.preventDefault();
@@ -975,6 +1072,31 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     emojis.onKeyDown(e);
 
     if (e.defaultPrevented) return;
+
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.shiftKey && !e.altKey) {
+      const key = e.key.toLowerCase();
+      if (key === "b" && insertJupyterCellBelow("code")) {
+        e.preventDefault();
+        return;
+      }
+      if (key === "m" && insertJupyterCellBelow("markdown")) {
+        e.preventDefault();
+        return;
+      }
+      if ((key === "-" || e.code === "Minus") && splitJupyterCell()) {
+        e.preventDefault();
+        return;
+      }
+      if (key === "k" && joinJupyterCell("backward")) {
+        e.preventDefault();
+        return;
+      }
+      if (key === "j" && joinJupyterCell("forward")) {
+        e.preventDefault();
+        return;
+      }
+    }
 
     const isRunShortcut =
       e.key === "Enter" && (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey);
