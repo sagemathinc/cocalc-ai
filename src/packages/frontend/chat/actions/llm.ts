@@ -173,6 +173,9 @@ export async function processLLM({
         event: "chat",
         sender_id,
         reply_to: replyRoot,
+        message_id: (cur as any)?.message_id,
+        thread_id: (cur as any)?.thread_id,
+        reply_to_message_id: (cur as any)?.reply_to_message_id,
       });
     }
   }

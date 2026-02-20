@@ -31,7 +31,7 @@ import {
   toOllamaModel,
   type LanguageModel,
 } from "@cocalc/util/db-schema/llm-utils";
-import { cmp, history_path, isValidUUID } from "@cocalc/util/misc";
+import { cmp, history_path, isValidUUID, uuid } from "@cocalc/util/misc";
 import { getSortedDates, getUserName } from "./chat-log";
 import { message_to_markdown } from "./message";
 import { ChatState, ChatStore } from "./store";
@@ -255,6 +255,7 @@ export class ChatActions extends Actions<ChatState> {
     }
     const time_stamp: Date = webapp_client.server_time();
     const time_stamp_str = time_stamp.toISOString();
+    const message_id = uuid();
     const mentionsInput =
       submitMentionsRef?.current?.({ chat: `${time_stamp.valueOf()}` }) ?? "";
     if (extraInput != null) {
@@ -267,6 +268,41 @@ export class ChatActions extends Actions<ChatState> {
     if (!input) {
       // do not send when there is nothing to send.
       return "";
+    }
+    const messagesState = this.getAllMessages();
+    let thread_id: string;
+    let reply_to_message_id: string | undefined;
+    let rootThreadMs: number | undefined;
+    if (!reply_to) {
+      thread_id = uuid();
+    } else {
+      rootThreadMs =
+        getThreadRootDate({
+          date: reply_to.valueOf(),
+          messages: messagesState,
+        }) || reply_to.valueOf();
+      const rootMessage = messagesState.get(`${rootThreadMs}`);
+      const rootMessageId =
+        (rootMessage as any)?.message_id ?? `legacy-message-${rootThreadMs}`;
+      const rootThreadId =
+        (rootMessage as any)?.thread_id ?? `legacy-thread-${rootThreadMs}`;
+      reply_to_message_id = rootMessageId;
+      thread_id = rootThreadId;
+      // Backfill identity fields for legacy roots the first time we touch them.
+      if (
+        rootMessage &&
+        (!(rootMessage as any)?.message_id || !(rootMessage as any)?.thread_id)
+      ) {
+        const rootDateIso = toISOString(dateValue(rootMessage));
+        if (rootDateIso) {
+          this.setSyncdb({
+            event: "chat",
+            date: rootDateIso,
+            message_id: rootMessageId,
+            thread_id: rootThreadId,
+          });
+        }
+      }
     }
     const trimmedName = name?.trim();
     const message = {
@@ -282,6 +318,9 @@ export class ChatActions extends Actions<ChatState> {
       ],
       date: time_stamp_str,
       reply_to: toISOString(reply_to),
+      message_id,
+      thread_id,
+      reply_to_message_id,
       editing: {},
     } as ChatMessage;
     if (send_mode === "immediate") {
@@ -291,7 +330,6 @@ export class ChatActions extends Actions<ChatState> {
       (message as any).name = trimmedName;
     }
     this.setSyncdb(message);
-    const messagesState = this.getAllMessages();
     let selectedThreadKey: string;
     if (!reply_to) {
       this.deleteDraft(0);
@@ -312,11 +350,7 @@ export class ChatActions extends Actions<ChatState> {
       if (folding?.includes?.(sender_id)) {
         this.toggleFoldThread(reply_to);
       }
-      const root =
-        getThreadRootDate({
-          date: reply_to.valueOf(),
-          messages: messagesState,
-        }) ?? reply_to.valueOf();
+      const root = rootThreadMs ?? reply_to.valueOf();
       selectedThreadKey = `${root}`;
     }
     if (selectedThreadKey != "0" && !preserveSelectedThread) {
@@ -1062,6 +1096,8 @@ export class ChatActions extends Actions<ChatState> {
       sender_id,
       event: "chat",
       schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      message_id: uuid(),
+      thread_id: uuid(),
       history: [
         {
           author_id: sender_id,
