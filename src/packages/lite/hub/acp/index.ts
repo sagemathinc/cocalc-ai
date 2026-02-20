@@ -3,6 +3,7 @@ import { URL } from "node:url";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
 import {
@@ -67,6 +68,7 @@ import { akv, type AKV } from "@cocalc/conat/sync/akv";
 // so that everybody sees it.
 const COMMIT_INTERVAL = 2_000;
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
+const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 
 const logger = getLogger("lite:hub:acp");
 const ACP_INSTANCE_ID = randomUUID();
@@ -351,6 +353,16 @@ export class ChatStreamWriter {
       this.syncdbError = err;
       this.closed = true;
     });
+    const existing = chatWritersByChatKey.get(this.chatKey);
+    if (existing != null && existing !== this) {
+      logger.warn("duplicate chat writer detected; replacing existing writer", {
+        chatKey: this.chatKey,
+        existingClosed: existing.isClosed(),
+        existingThreadIds: existing.getKnownThreadIds(),
+        replacingSessionKey: sessionKey,
+      });
+      existing.dispose(true);
+    }
     chatWritersByChatKey.set(this.chatKey, this);
     logWriterCounts("create", { chatKey: this.chatKey });
     this.sessionKey = sessionKey;
@@ -493,6 +505,9 @@ export class ChatStreamWriter {
       // Ensure the final "generating: false" state hits SyncDB immediately,
       // even if the throttle window is large.
       this.commit.flush();
+      await this.ensureTerminalChatCommitApplied(
+        message.type === "error" ? "error" : "summary",
+      );
     }
   }
 
@@ -612,20 +627,7 @@ export class ChatStreamWriter {
     }
   }
 
-  private commit = throttle((generating: boolean): void => {
-    this.heartbeatLease();
-    logger.debug("commit", {
-      generating,
-      closed: this.closed,
-      content: this.content,
-      events: this.events.length,
-      metadata: this.metadata,
-    });
-    if (this.closed || this.syncdbError) return;
-    if (!this.syncdb) {
-      logger.warn("chat stream writer commit skipped: syncdb not ready");
-      return;
-    }
+  private buildChatUpdate(generating: boolean): Record<string, unknown> {
     const message = buildChatMessage({
       sender_id: this.metadata.sender_id,
       date: this.metadata.message_date,
@@ -643,15 +645,105 @@ export class ChatStreamWriter {
       update.acp_interrupted_reason = "interrupt";
       update.acp_interrupted_text = this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
     }
-    this.syncdb!.set(update);
-    this.syncdb!.commit();
+    return update;
+  }
+
+  private commitNow(
+    generating: boolean,
+    reason: "throttled" | "terminal-verify" | "dispose" = "throttled",
+  ): boolean {
+    if (this.closed || this.syncdbError) return false;
+    if (!this.syncdb) {
+      logger.warn("chat stream writer commit skipped: syncdb not ready", {
+        chatKey: this.chatKey,
+        reason,
+      });
+      return false;
+    }
+    try {
+      this.syncdb.set(this.buildChatUpdate(generating));
+      this.syncdb.commit();
+    } catch (err) {
+      logger.warn("chat syncdb commit failed", {
+        chatKey: this.chatKey,
+        reason,
+        generating,
+        err,
+      });
+      return false;
+    }
     (async () => {
       try {
         await this.syncdb!.save();
       } catch (err) {
-        logger.warn("chat syncdb save failed", err);
+        logger.warn("chat syncdb save failed", {
+          chatKey: this.chatKey,
+          reason,
+          generating,
+          err,
+        });
       }
     })();
+    return true;
+  }
+
+  private async ensureTerminalChatCommitApplied(
+    source: "summary" | "error",
+  ): Promise<void> {
+    if (this.closed || this.syncdbError || !this.syncdb) return;
+    let lastGenerating: boolean | undefined;
+    for (let i = 0; i < TERMINAL_CHAT_VERIFY_DELAYS_MS.length; i++) {
+      const delayMs = TERMINAL_CHAT_VERIFY_DELAYS_MS[i];
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
+      if (this.closed || this.syncdbError || !this.syncdb) return;
+      try {
+        const current = this.syncdb.get_one({
+          event: "chat",
+          date: this.metadata.message_date,
+        });
+        lastGenerating = this.recordField<boolean>(current, "generating");
+      } catch (err) {
+        logger.warn("chat syncdb readback failed during terminal verification", {
+          chatKey: this.chatKey,
+          source,
+          attempt: i + 1,
+          err,
+        });
+      }
+      if (lastGenerating === false) {
+        if (i > 0) {
+          logger.warn("chat terminal state recovered after verification retry", {
+            chatKey: this.chatKey,
+            source,
+            attempts: i + 1,
+          });
+        }
+        return;
+      }
+      this.commitNow(false, "terminal-verify");
+    }
+    logger.warn("chat terminal verification failed; chat remains generating", {
+      chatKey: this.chatKey,
+      source,
+      events: this.events.length,
+      finishedBy: this.finishedBy,
+      lastGenerating,
+      retries: TERMINAL_CHAT_VERIFY_DELAYS_MS.length,
+    });
+  }
+
+  private commit = throttle((generating: boolean): void => {
+    this.heartbeatLease();
+    logger.debug("commit", {
+      generating,
+      closed: this.closed,
+      content: this.content,
+      events: this.events.length,
+      metadata: this.metadata,
+    });
+    this.commitNow(generating, "throttled");
   }, COMMIT_INTERVAL);
 
   dispose(forceImmediate: boolean = false): void {
@@ -682,7 +774,7 @@ export class ChatStreamWriter {
       this.finalizeLease("aborted", reason);
     }
 
-    this.commit(false);
+    this.commitNow(false, "dispose");
     this.commit.flush();
     this.closed = true;
     this.startTimeTravelDispose();
