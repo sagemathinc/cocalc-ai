@@ -1,6 +1,15 @@
 import { Command } from "commander";
 
-export function registerOpCommand(program: Command, deps: any): Command {
+export type OpCommandDeps = {
+  withContext: any;
+  resolveWorkspace: any;
+  resolveHost: any;
+  parseLroScopeType: any;
+  serializeLroSummary: any;
+  waitForLro: any;
+};
+
+export function registerOpCommand(program: Command, deps: OpCommandDeps): Command {
   const {
     withContext,
     resolveWorkspace,

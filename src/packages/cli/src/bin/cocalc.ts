@@ -75,13 +75,13 @@ import {
   waitForProjectPlacement as waitForProjectPlacementCore,
   waitForWorkspaceNotRunning as waitForWorkspaceNotRunningCore,
 } from "./core/lro";
-import { registerOpCommand } from "./commands/op";
-import { registerHostCommand } from "./commands/host";
-import { registerWorkspaceCommand } from "./commands/workspace";
-import { registerAuthCommand } from "./commands/auth";
-import { registerDaemonCommand } from "./commands/daemon";
-import { registerAdminCommand } from "./commands/admin";
-import { registerAccountCommand } from "./commands/account";
+import { registerOpCommand, type OpCommandDeps } from "./commands/op";
+import { registerHostCommand, type HostCommandDeps } from "./commands/host";
+import { registerWorkspaceCommand, type WorkspaceCommandDeps } from "./commands/workspace";
+import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
+import { registerDaemonCommand, type DaemonCommandDeps } from "./commands/daemon";
+import { registerAdminCommand, type AdminCommandDeps } from "./commands/admin";
+import { registerAccountCommand, type AccountCommandDeps } from "./commands/account";
 
 const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
@@ -4201,7 +4201,7 @@ for (const spec of Object.values(PRODUCT_SPECS)) {
     });
 }
 
-registerDaemonCommand(program, {
+const daemonCommandDeps = {
   runLocalCommand,
   startDaemonProcess,
   daemonSocketPath,
@@ -4212,9 +4212,11 @@ registerDaemonCommand(program, {
   sendDaemonRequest,
   daemonRequestId,
   serveDaemon,
-});
+} satisfies DaemonCommandDeps;
 
-registerAuthCommand(program, {
+registerDaemonCommand(program, daemonCommandDeps);
+
+const authCommandDeps = {
   runLocalCommand,
   authConfigPath,
   loadAuthConfig,
@@ -4231,8 +4233,10 @@ registerAuthCommand(program, {
   sanitizeProfileName,
   profileFromGlobals,
   saveAuthConfig,
-});
-registerWorkspaceCommand(program, {
+} satisfies AuthCommandDeps;
+
+registerAuthCommand(program, authCommandDeps);
+const workspaceCommandDeps = {
   withContext,
   resolveHost,
   queryProjects,
@@ -4318,29 +4322,37 @@ registerWorkspaceCommand(program, {
   fetchWithTimeout,
   buildCookieHeader,
   PROJECT_HOST_HTTP_AUTH_QUERY_PARAM,
-});
-registerOpCommand(program, {
+} satisfies WorkspaceCommandDeps;
+
+registerWorkspaceCommand(program, workspaceCommandDeps);
+const opCommandDeps = {
   withContext,
   resolveWorkspace,
   resolveHost,
   parseLroScopeType,
   serializeLroSummary,
   waitForLro,
-});
+} satisfies OpCommandDeps;
 
-registerAdminCommand(program, {
+registerOpCommand(program, opCommandDeps);
+
+const adminCommandDeps = {
   withContext,
-});
+} satisfies AdminCommandDeps;
 
-registerAccountCommand(program, {
+registerAdminCommand(program, adminCommandDeps);
+
+const accountCommandDeps = {
   withContext,
   toIso,
-});
-registerHostCommand(program, {
+} satisfies AccountCommandDeps;
+
+registerAccountCommand(program, accountCommandDeps);
+
+const hostCommandDeps = {
   withContext,
   listHosts,
   resolveHost,
-  toIso,
   normalizeHostProviderValue,
   summarizeHostCatalogEntries,
   emitWorkspaceFileCatHumanContent,
@@ -4357,7 +4369,9 @@ registerHostCommand(program, {
   HOST_CREATE_STORAGE_MODES,
   waitForHostCreateReady,
   resolveWorkspace,
-});
+} satisfies HostCommandDeps;
+
+registerHostCommand(program, hostCommandDeps);
 
 async function main() {
   try {

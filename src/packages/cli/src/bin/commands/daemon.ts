@@ -1,6 +1,19 @@
 import { Command } from "commander";
 
-export function registerDaemonCommand(program: Command, deps: any): Command {
+export type DaemonCommandDeps = {
+  runLocalCommand: any;
+  startDaemonProcess: any;
+  daemonSocketPath: any;
+  daemonPidPath: any;
+  daemonLogPath: any;
+  readDaemonPid: any;
+  pingDaemon: any;
+  sendDaemonRequest: any;
+  daemonRequestId: any;
+  serveDaemon: any;
+};
+
+export function registerDaemonCommand(program: Command, deps: DaemonCommandDeps): Command {
   const {
     runLocalCommand,
     startDaemonProcess,

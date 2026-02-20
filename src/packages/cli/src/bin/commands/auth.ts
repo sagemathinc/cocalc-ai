@@ -1,6 +1,25 @@
 import { Command } from "commander";
 
-export function registerAuthCommand(program: Command, deps: any): Command {
+export type AuthCommandDeps = {
+  runLocalCommand: any;
+  authConfigPath: any;
+  loadAuthConfig: any;
+  selectedProfileName: any;
+  applyAuthProfile: any;
+  normalizeUrl: any;
+  defaultApiBaseUrl: any;
+  getExplicitAccountId: any;
+  durationToMs: any;
+  connectRemote: any;
+  resolveAccountIdFromRemote: any;
+  normalizeSecretValue: any;
+  maskSecret: any;
+  sanitizeProfileName: any;
+  profileFromGlobals: any;
+  saveAuthConfig: any;
+};
+
+export function registerAuthCommand(program: Command, deps: AuthCommandDeps): Command {
   const {
     runLocalCommand,
     authConfigPath,

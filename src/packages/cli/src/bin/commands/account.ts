@@ -1,6 +1,11 @@
 import { Command } from "commander";
 
-export function registerAccountCommand(program: Command, deps: any): Command {
+export type AccountCommandDeps = {
+  withContext: any;
+  toIso: any;
+};
+
+export function registerAccountCommand(program: Command, deps: AccountCommandDeps): Command {
   const { withContext, toIso } = deps;
 
   const account = program.command("account").description("account operations");

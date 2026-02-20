@@ -1,6 +1,10 @@
 import { Command } from "commander";
 
-export function registerAdminCommand(program: Command, deps: any): Command {
+export type AdminCommandDeps = {
+  withContext: any;
+};
+
+export function registerAdminCommand(program: Command, deps: AdminCommandDeps): Command {
   const { withContext } = deps;
 
   const admin = program.command("admin").description("site admin operations");

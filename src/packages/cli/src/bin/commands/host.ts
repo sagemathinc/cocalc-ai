@@ -8,7 +8,29 @@ type HostSshAuthorizedKeysRow = any;
 type HostMachine = any;
 type HostSoftwareChannel = any;
 
-export function registerHostCommand(program: Command, deps: any): Command {
+export type HostCommandDeps = {
+  withContext: any;
+  listHosts: any;
+  resolveHost: any;
+  normalizeHostProviderValue: any;
+  summarizeHostCatalogEntries: any;
+  emitWorkspaceFileCatHumanContent: any;
+  parseHostSoftwareArtifactsOption: any;
+  parseHostSoftwareChannelsOption: any;
+  waitForLro: any;
+  ensureSyncKeyPair: any;
+  resolveHostSshEndpoint: any;
+  expandUserPath: any;
+  parseHostMachineJson: any;
+  parseOptionalPositiveInteger: any;
+  inferRegionFromZone: any;
+  HOST_CREATE_DISK_TYPES: any;
+  HOST_CREATE_STORAGE_MODES: any;
+  waitForHostCreateReady: any;
+  resolveWorkspace: any;
+};
+
+export function registerHostCommand(program: Command, deps: HostCommandDeps): Command {
   const {
     withContext,
     listHosts,
