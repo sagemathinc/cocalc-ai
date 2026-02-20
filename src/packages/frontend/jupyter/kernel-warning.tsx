@@ -23,24 +23,26 @@ export default function KernelWarning({ name, actions }: Props) {
     kernelError = kernelError.slice(0, i);
   }
   return (
-    <Alert
-      banner
-      title={
-        <div>
-          <A
-            style={{ float: "right", marginLeft: "10px" }}
-            href="https://doc.cocalc.com/howto/jupyter-kernel-terminated.html"
-          >
-            Docs...
-          </A>
-          <StaticMarkdown value={kernelError} />
-        </div>
-      }
-      type="warning"
-      closable
-      onClose={() => {
-        actions.set_kernel_error("");
-      }}
-    />
+    <div cocalc-test="kernel-warning">
+      <Alert
+        banner
+        title={
+          <div>
+            <A
+              style={{ float: "right", marginLeft: "10px" }}
+              href="https://doc.cocalc.com/howto/jupyter-kernel-terminated.html"
+            >
+              Docs...
+            </A>
+            <StaticMarkdown value={kernelError} />
+          </div>
+        }
+        type="warning"
+        closable
+        onClose={() => {
+          actions.set_kernel_error("");
+        }}
+      />
+    </div>
   );
 }

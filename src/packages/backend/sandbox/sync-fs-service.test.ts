@@ -152,6 +152,26 @@ describe("SyncFsService", () => {
     svc.close();
   }, 10_000);
 
+  it("does not drop external edits during local-write suppression window", async () => {
+    const path = join(dir, "suppression.txt");
+    writeFileSync(path, "base");
+
+    const svc = new SyncFsService();
+    await svc.heartbeat(path);
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Simulate a local write that would normally set temporary suppression.
+    svc.recordLocalWrite(path, "local-value", true);
+    // An external actor immediately writes different content.
+    writeFileSync(path, "external-value");
+
+    const [evt] = (await once(svc, "event")) as any[];
+    expect(evt.path).toBe(path);
+    expect(evt.type).toBe("change");
+    expect(evt.change?.patch).toBeDefined();
+    svc.close();
+  }, 10_000);
+
   it("reuses persisted heads/lastSeq and resumes with start_seq", async () => {
     const dbPath = tmpNameSync({ prefix: "sync-fs-heads-", postfix: ".db" });
     const store1 = new SyncFsWatchStore(dbPath);
@@ -316,6 +336,36 @@ describe("SyncFsService", () => {
     // No extra publish is needed because disk content already matches stream.
     expect(fake.messages.length).toBe(1);
     expect((svc as any).store.get(path)?.content).toBe("stream-value");
+    svc.close();
+  }, 10_000);
+
+  it("falls back to disk reconciliation when stream baseline load fails", async () => {
+    const path = join(dir, "history-fallback.txt");
+    writeFileSync(path, "disk-new");
+
+    const dbPath = tmpNameSync({
+      prefix: "sync-fs-stream-fallback-",
+      postfix: ".db",
+    });
+    const store = new SyncFsWatchStore(dbPath);
+    store.setContent(path, "stale-cache");
+
+    const fake = new FakeAStream([
+      { mesg: { time: legacyPatchId(100), parents: [], version: 1 }, seq: 1 },
+    ]);
+    const svc = new SyncFsService(store);
+    (svc as any).getPatchWriter = async () => fake;
+    (svc as any).loadDocViaSyncDoc = async () => undefined;
+
+    await (svc as any).initPath(path, {
+      project_id: "p6",
+      relativePath: "history-fallback.txt",
+      string_id: "sid-history-fallback",
+    });
+
+    // Existing stream message + one published reconciliation patch.
+    expect(fake.messages.length).toBe(2);
+    expect((svc as any).store.get(path)?.content).toBe("disk-new");
     svc.close();
   }, 10_000);
 });

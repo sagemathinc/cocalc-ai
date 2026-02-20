@@ -9,7 +9,7 @@ React component that describes the output of a cell
 
 import { Alert } from "antd";
 import type { Map as ImmutableMap } from "immutable";
-import React from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { LLMTools } from "@cocalc/jupyter/types";
 import type { JupyterActions } from "./browser-actions";
 import { CellHiddenPart } from "./cell-hidden-part";
@@ -36,6 +36,10 @@ interface CellOutputProps {
   stdin?;
 }
 
+function isRunningState(state: string | undefined): boolean {
+  return state === "start" || state === "run" || state === "busy";
+}
+
 export function CellOutput({
   actions,
   name,
@@ -53,7 +57,59 @@ export function CellOutput({
   isDragging,
   stdin,
 }: CellOutputProps) {
-  const minHeight = complete ? "60vh" : undefined;
+  const outputRef = useRef<HTMLDivElement | null>(null);
+  const [stableOutputHeight, setStableOutputHeight] = useState<number>(0);
+  const running = isRunningState(cell.get("state"));
+  const outputCount = cell.get("output")?.size ?? 0;
+  const moreOutputCount = more_output?.get("mesg_list")?.size ?? 0;
+
+  const minHeight = complete
+    ? "60vh"
+    : running && stableOutputHeight > 0
+      ? `${stableOutputHeight}px`
+      : undefined;
+
+  const setOutputRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      outputRef.current = node;
+      if (typeof divRef === "function") {
+        divRef(node);
+      } else if (divRef && typeof divRef === "object") {
+        // @ts-ignore backward-compatible for existing ref style usage
+        divRef.current = node;
+      }
+    },
+    [divRef],
+  );
+
+  useEffect(() => {
+    if (!running) {
+      if (stableOutputHeight !== 0) {
+        setStableOutputHeight(0);
+      }
+      return;
+    }
+    const node = outputRef.current;
+    if (node == null) return;
+    const h = Math.ceil(node.getBoundingClientRect().height);
+    if (h > stableOutputHeight) {
+      setStableOutputHeight(h);
+    }
+  }, [running, outputCount, moreOutputCount, stableOutputHeight]);
+
+  useEffect(() => {
+    if (!running) return;
+    const node = outputRef.current;
+    if (node == null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const next = Math.ceil(entries[0]?.contentRect?.height ?? 0);
+      if (next > 0) {
+        setStableOutputHeight((prev) => (next > prev ? next : prev));
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [running]);
 
   if (cell.getIn(["metadata", "jupyter", "outputs_hidden"])) {
     return (
@@ -73,7 +129,7 @@ export function CellOutput({
 
   return (
     <div
-      ref={divRef}
+      ref={setOutputRef}
       key="out"
       style={{
         display: "flex",

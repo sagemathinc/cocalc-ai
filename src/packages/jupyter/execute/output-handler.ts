@@ -159,30 +159,43 @@ export class OutputHandler extends EventEmitter {
       return;
     }
 
-    if (mesg.content.comm_id != null) {
+    const content = mesg.content;
+    if (content == null) {
+      // e.g., run lifecycle messages and other transport markers that
+      // intentionally carry no content payload.
+      const lifecycle = mesg.msg_type ?? (mesg as any).lifecycle;
+      if (lifecycle === "cell_start") {
+        this.start();
+      } else if (lifecycle === "cell_done") {
+        this.done();
+      }
+      return;
+    }
+
+    if (content.comm_id != null) {
       // ignore any comm/widget related messages here
       return;
     }
 
-    if (mesg.content.execution_state === "busy") {
+    if (content.execution_state === "busy") {
       this.start();
     }
 
-    if (mesg.content.payload != null) {
-      if (mesg.content.payload.length > 0) {
+    if (content.payload != null) {
+      if (content.payload.length > 0) {
         // payload shell message:
         // Despite https://ipython.org/ipython-doc/3/development/messaging.html#payloads saying
         // ""Payloads are considered deprecated, though their replacement is not yet implemented."
         // we fully have to implement them, since they are used to implement (crazy, IMHO)
         // things like %load in the python2 kernel!
-        for (const p of mesg.content.payload) {
+        for (const p of content.payload) {
           this.payload(p);
         }
         return;
       }
     } else {
       // Normal iopub output message
-      this.message(mesg.content);
+      this.message(content);
     }
   };
 

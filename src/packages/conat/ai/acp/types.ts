@@ -7,6 +7,9 @@ export interface AcpChatContext {
   message_date: string;
   sender_id: string;
   reply_to?: string;
+  // Marks that this user message was sent via "Send Immediately" while an ACP
+  // turn was active, so the backend can preserve continue semantics.
+  send_mode?: "immediate";
 }
 
 export type AcpRequest = {

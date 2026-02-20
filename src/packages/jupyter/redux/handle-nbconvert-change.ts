@@ -57,24 +57,20 @@ export default async function handleChange(
   const { args } = newVal;
   if (!is_array(args)) {
     log.debug("invalid args -- must be an array");
-    actions.syncdb.set({
-      type: "nbconvert",
+    actions.set_runtime_nbconvert({
       state: "done",
       error: "args must be an array",
     });
-    actions.syncdb.commit();
     return;
   }
 
   log.debug("tell client that we started running");
   let error: any = null;
-  actions.syncdb.set({
-    type: "nbconvert",
+  actions.set_runtime_nbconvert({
     state: "run",
     start: new Date().getTime(),
     error,
   });
-  actions.syncdb.commit();
   actions.ensure_backend_kernel_setup();
 
   try {
@@ -96,11 +92,9 @@ export default async function handleChange(
     error = trunc(`${err}`, MAX_ERROR_LENGTH);
     log.debug("error", error);
   }
-  actions.syncdb.set({
-    type: "nbconvert",
+  actions.set_runtime_nbconvert({
     state: "done",
     error,
     time: new Date().getTime(),
   });
-  actions.syncdb.commit();
 }

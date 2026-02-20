@@ -31,7 +31,7 @@ import { deriveAcpLogRefs } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { getUserName } from "./chat-log";
 import { codexEventsToMarkdown } from "./codex-activity";
-import { cancelQueuedAcpTurn } from "./acp-api";
+import { cancelQueuedAcpTurn, resetAcpThreadState } from "./acp-api";
 import { History, HistoryFooter, HistoryTitle } from "./history";
 import ChatInput from "./input";
 import { FeedbackLLM } from "./llm-msg-feedback";
@@ -323,6 +323,59 @@ export default function Message({
     if (Number.isFinite(rootMs)) return rootMs as number;
     return Number.isFinite(date) ? date : undefined;
   }, [date, messages]);
+
+  const threadRootIso = useMemo(
+    () => (threadRootMs != null ? new Date(threadRootMs).toISOString() : undefined),
+    [threadRootMs],
+  );
+
+  const threadMessages = useMemo(() => {
+    if (!actions || !threadRootIso) return undefined;
+    return actions.getMessagesInThread(threadRootIso);
+  }, [actions, threadRootIso, messages]);
+
+  const isLastMessageInThread = useMemo(() => {
+    if (!threadMessages?.length) return false;
+    const latest = threadMessages[threadMessages.length - 1];
+    const latestMs = dateValue(latest)?.valueOf();
+    return latestMs != null && latestMs === date;
+  }, [threadMessages, date]);
+
+  const latestThreadMessage = useMemo(
+    () =>
+      threadMessages && threadMessages.length > 0
+        ? threadMessages[threadMessages.length - 1]
+        : undefined,
+    [threadMessages],
+  );
+
+  const latestThreadInterrupted = useMemo(() => {
+    if (!latestThreadMessage) return false;
+    return (
+      field<boolean>(latestThreadMessage, "acp_interrupted") === true &&
+      field<boolean>(latestThreadMessage, "generating") !== true
+    );
+  }, [latestThreadMessage]);
+
+  const acpInterrupted = useMemo(
+    () => field<boolean>(message, "acp_interrupted") === true,
+    [message],
+  );
+
+  useEffect(() => {
+    if (!actions?.store) return;
+    if (!acpInterrupted || generating === true) return;
+    if (acpState !== "running") return;
+    const msgDate = dateValue(message);
+    if (!msgDate) return;
+    const key = `${msgDate.valueOf()}`;
+    const acpMap = actions.store.get("acpState");
+    const current = acpMap?.get?.(key);
+    if (current !== "running") return;
+    actions.store.setState({
+      acpState: acpMap.set(key, ""),
+    });
+  }, [actions, acpInterrupted, generating, acpState, message]);
 
   // Resolve log identifiers deterministically (shared with backend) so we never
   // invent subjects/keys in multiple places.
@@ -979,6 +1032,51 @@ export default function Message({
     );
   }
 
+  function renderInterruptedControls() {
+    if (
+      actions == null ||
+      !acpInterrupted ||
+      generating === true ||
+      !isCodexThread ||
+      !isLastMessageInThread
+    ) {
+      return null;
+    }
+    const rootDateIso = replyTo(message) ?? threadRootIso;
+    if (!rootDateIso) return null;
+    return (
+      <div
+        style={{
+          marginTop: "8px",
+          display: "flex",
+          justifyContent: "flex-start",
+          alignItems: "center",
+          gap: "8px",
+          flexWrap: "wrap",
+        }}
+      >
+        <Button
+          size="small"
+          onClick={() => {
+            resetAcpThreadState({
+              actions,
+              threadRootDate: new Date(rootDateIso),
+            });
+            actions.sendReply({
+              message,
+              reply: "continue",
+              noNotification: true,
+              reply_to: new Date(rootDateIso),
+            });
+          }}
+          title="Ask Codex to continue from this interrupted turn"
+        >
+          <Icon name="step-forward" /> Continue
+        </Button>
+      </div>
+    );
+  }
+
   function renderForkNotice() {
     if (replyTo(message) != null) return null;
     const forkedFromRoot = field<string>(message, "forked_from_root_date");
@@ -1077,6 +1175,7 @@ export default function Message({
             : renderMessageBody({ message_class })}
           {renderEditingMeta()}
           {renderBottomControls()}
+          {renderInterruptedControls()}
         </div>
         {renderHistory()}
         {renderComposeReply()}
@@ -1360,9 +1459,12 @@ export default function Message({
     cancelQueuedAcpTurn({ actions, message });
   };
 
+  const acpStateToRender =
+    acpState === "running" && latestThreadInterrupted ? "" : acpState;
+
   const renderAcpState = () => {
-    if (!acpState) return null;
-    if (acpState === "queue") {
+    if (!acpStateToRender) return null;
+    if (acpStateToRender === "queue") {
       return (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
           <Tag color="gold">queued</Tag>
@@ -1372,7 +1474,7 @@ export default function Message({
         </span>
       );
     }
-    if (acpState === "not-sent") {
+    if (acpStateToRender === "not-sent") {
       return (
         <Button size="small" type="text" disabled>
           not sent
@@ -1381,7 +1483,8 @@ export default function Message({
     }
     return (
       <Tag color="blue">
-        {acpState == "running" ? <SyncOutlined spin /> : null} {acpState}
+        {acpStateToRender == "running" ? <SyncOutlined spin /> : null}{" "}
+        {acpStateToRender}
       </Tag>
     );
   };
@@ -1394,7 +1497,7 @@ export default function Message({
     >
       {renderCols()}
       {renderFoldedRow()}
-      {acpState ? (
+      {acpStateToRender ? (
         <div style={{ width: "100%" }}>
           <Divider>{renderAcpState()}</Divider>
         </div>

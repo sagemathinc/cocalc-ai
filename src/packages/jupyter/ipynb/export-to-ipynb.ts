@@ -13,6 +13,7 @@ import { isSha1 } from "@cocalc/util/misc";
 import { isJupyterBase64MimeType } from "@cocalc/jupyter/util/misc";
 
 type Tags = { [key: string]: boolean };
+const COCALC_LAST_RUNTIME_MS_KEY = "last_runtime_ms";
 
 export interface Cell {
   type?: "cell";
@@ -27,6 +28,7 @@ export interface Cell {
   output?: { [n: string]: OutputMessage } | null;
   metadata?: Metadata;
   exec_count?: number | null;
+  last?: number | null;
 
   start?: number | null;
   end?: number | null;
@@ -39,7 +41,9 @@ interface Metadata {
   collapsed?: boolean;
   scrolled?: boolean;
   cocalc?: {
-    outputs: { [n: string]: any };
+    outputs?: { [n: string]: any };
+    last_runtime_ms?: number;
+    [key: string]: any;
   };
   slideshow?;
   tags?: string[];
@@ -111,6 +115,7 @@ function cell_to_ipynb(id: string, opts: Options) {
   if (other_metadata != null) {
     processOtherMetadata(obj, other_metadata);
   }
+  processCocalcRuntimeMetadata(obj, cell);
 
   // consistenty with jupyter -- they explicitly give collapsed true or false state no matter what
   metadata.collapsed = !!cell.collapsed;
@@ -153,6 +158,9 @@ function cell_to_ipynb(id: string, opts: Options) {
       if (metadata.cocalc == null) {
         metadata.cocalc = { outputs: {} };
       }
+      if (metadata.cocalc.outputs == null) {
+        metadata.cocalc.outputs = {};
+      }
       metadata.cocalc.outputs[n] = x.cocalc;
       delete x.cocalc;
     }
@@ -178,6 +186,23 @@ function processOtherMetadata(obj, other_metadata) {
   if (other_metadata != null) {
     Object.assign(obj.metadata, other_metadata);
   }
+}
+
+function processCocalcRuntimeMetadata(obj: IPynbCell, cell: Cell): void {
+  const last =
+    typeof cell.last === "number" && Number.isFinite(cell.last) && cell.last >= 0
+      ? Math.round(cell.last)
+      : undefined;
+  if (last == null) {
+    return;
+  }
+  if (obj.metadata == null) {
+    obj.metadata = {};
+  }
+  if (obj.metadata.cocalc == null) {
+    obj.metadata.cocalc = {};
+  }
+  obj.metadata.cocalc[COCALC_LAST_RUNTIME_MS_KEY] = last;
 }
 
 function processAttachments(obj, attachments) {

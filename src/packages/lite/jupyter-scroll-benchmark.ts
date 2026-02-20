@@ -1,0 +1,2031 @@
+/*
+Playwright scroll benchmark for Jupyter notebook virtualization reliability.
+
+This targets a real running CoCalc Lite server and evaluates scrolling
+performance and stability on synthetic large notebooks.
+
+Examples:
+
+  pnpm -C src/packages/lite jupyter:bench:scroll -- --help
+  pnpm -C src/packages/lite jupyter:bench:scroll -- --profile quick
+  pnpm -C src/packages/lite jupyter:bench:scroll -- --profile full --headed
+*/
+
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
+import { AsciiTable3 } from "ascii-table3";
+import { encode_path } from "@cocalc/util/misc";
+import { project_id } from "@cocalc/project/data";
+import { connectionInfoPath } from "./connection-info";
+
+type Options = {
+  base_url?: string;
+  port?: number;
+  host?: string;
+  protocol?: "http" | "https";
+  auth_token?: string;
+  profile: "quick" | "full";
+  virtualization: "on" | "off" | "keep";
+  render_mode: "eager" | "lazy";
+  minimap_debug: boolean;
+  require_active_virtualization: boolean;
+  scenario?: string;
+  path_prefix: string;
+  cycles?: number;
+  scroll_steps: number;
+  typing_chars: number;
+  typing_timeout_ms: number;
+  timeout_ms: number;
+  headless: boolean;
+  json: boolean;
+  quiet: boolean;
+};
+
+type ConnectionInfo = {
+  pid?: number;
+  port?: number;
+  protocol?: string;
+  host?: string;
+  token?: string;
+};
+
+type ScenarioSpec = {
+  name: string;
+  description: string;
+  path_ipynb: string;
+  expected_cells: number;
+  top_marker: string;
+  bottom_marker: string;
+  cells: any[];
+};
+
+type FrameDeltaStats = {
+  min: number;
+  mean: number;
+  p95: number;
+  max: number;
+  count: number;
+};
+
+type ScrollMetrics = {
+  duration_ms: number;
+  phase_durations_ms: { [phase: string]: number };
+  max_scroll_px: number;
+  dom_cells_top: number;
+  dom_cells_mid: number;
+  dom_cells_bottom: number;
+  frame_delta_ms: FrameDeltaStats | null;
+  approx_fps: number | null;
+  longtask_count: number;
+  longtask_max_ms: number | null;
+  top_marker_visible_initial: boolean;
+  bottom_marker_visible_initial: boolean;
+  top_marker_visible_after: boolean;
+  bottom_marker_visible_after: boolean;
+  windowed_list_attr: boolean | null;
+  windowed_list_source:
+    | "runtime"
+    | "attr"
+    | "root-attr"
+    | "virtuoso"
+    | "unknown";
+  lazy_render_once_attr: boolean | null;
+  lazy_render_once_source: "runtime" | "root-attr" | "unknown";
+  minimap_present: boolean;
+  minimap_alignment_top_error_max_px: number | null;
+  minimap_alignment_height_error_max_px: number | null;
+  minimap_alignment_max_error_px: number | null;
+  minimap_alignment_ok: boolean | null;
+};
+
+type FrontendInstrumentationProbe = {
+  has_runtime: boolean;
+  has_root_attr: boolean;
+  has_mode_marker: boolean;
+  has_virtuoso: boolean;
+  has_lazy_runtime: boolean;
+  has_lazy_root_attr: boolean;
+};
+
+type OpenMetrics = {
+  goto_ms: number;
+  first_cell_ms: number;
+  first_input_ms: number;
+  ready_ms: number;
+};
+
+type TypingMetrics = {
+  chars: number;
+  samples: number;
+  timeout_count: number;
+  p50_ms: number | null;
+  p95_ms: number | null;
+  p99_ms: number | null;
+  mean_ms: number | null;
+  max_ms: number | null;
+};
+
+type ScenarioResult = {
+  name: string;
+  description: string;
+  profile: "quick" | "full";
+  path_ipynb: string;
+  expected_cells: number;
+  cycles: number;
+  scroll_steps: number;
+  metrics: ScrollMetrics;
+  virtualization_likely: boolean;
+  reliability_ok: boolean;
+  virtualization_mode: Options["virtualization"];
+  render_mode: Options["render_mode"];
+  virtualization_active: boolean | null;
+  lazy_render_once_active: boolean | null;
+  open_metrics: OpenMetrics;
+  typing_metrics: TypingMetrics;
+};
+
+type ScrollBenchmarkResult = {
+  ok: boolean;
+  base_url: string;
+  profile: "quick" | "full";
+  virtualization: Options["virtualization"];
+  render_mode: Options["render_mode"];
+  require_active_virtualization: boolean;
+  scenario_filter?: string;
+  cycles: number;
+  scroll_steps: number;
+  typing_chars: number;
+  typing_timeout_ms: number;
+  timeout_ms: number;
+  runs: ScenarioResult[];
+  started_at: string;
+  finished_at: string;
+};
+
+const DEFAULT_TIMEOUT_MS = 45_000;
+const DEFAULT_PROFILE: Options["profile"] = "quick";
+const DEFAULT_RENDER_MODE: Options["render_mode"] = "lazy";
+const DEFAULT_SCROLL_STEPS = 42;
+const DEFAULT_TYPING_CHARS = 40;
+const DEFAULT_TYPING_TIMEOUT_MS = 1_500;
+
+function requireHomeDir(): string {
+  const home = process.env.HOME;
+  if (!home) {
+    throw new Error("HOME must be set in lite mode");
+  }
+  return home;
+}
+
+const DEFAULT_PATH_PREFIX = `${requireHomeDir()}/jupyter-scroll-benchmark`;
+
+function trimTrailingSlash(url: string): string {
+  return url.endsWith("/") ? url.slice(0, -1) : url;
+}
+
+function isRunningPid(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    return err?.code === "EPERM";
+  }
+}
+
+function normalizeLiteHost(host: unknown): string {
+  if (typeof host !== "string") return "localhost";
+  const trimmed = host.trim();
+  if (
+    !trimmed ||
+    trimmed === "0.0.0.0" ||
+    trimmed === "::" ||
+    trimmed === "[::]"
+  ) {
+    return "localhost";
+  }
+  return trimmed;
+}
+
+function startLiteServerMessage(detail: string): Error {
+  return new Error(
+    `you must start a lite server running here -- 'pnpm app' (${detail})`,
+  );
+}
+
+async function readConnectionInfo(): Promise<ConnectionInfo | undefined> {
+  const path = connectionInfoPath();
+  try {
+    const raw = await readFile(path, "utf8");
+    return JSON.parse(raw);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") {
+      return undefined;
+    }
+    throw startLiteServerMessage(`unable to read ${path}: ${err?.message ?? err}`);
+  }
+}
+
+function validatedPort(value: unknown): number | undefined {
+  const n = Number(value);
+  if (!Number.isInteger(n)) return;
+  if (n < 1 || n > 65535) return;
+  return n;
+}
+
+async function resolveBaseUrl(opts: Options): Promise<{
+  base_url: string;
+  connection_info?: ConnectionInfo;
+}> {
+  if (opts.base_url) {
+    return { base_url: trimTrailingSlash(opts.base_url) };
+  }
+  const info = await readConnectionInfo();
+  if (opts.port != null) {
+    const protocol =
+      opts.protocol ?? (info?.protocol === "https" ? "https" : "http");
+    const host = opts.host ?? normalizeLiteHost(info?.host);
+    return { base_url: `${protocol}://${host}:${opts.port}`, connection_info: info };
+  }
+  if (!info) {
+    throw startLiteServerMessage(`missing ${connectionInfoPath()}`);
+  }
+  const pid = Number(info.pid);
+  const port = validatedPort(info.port);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw startLiteServerMessage(`invalid pid in ${connectionInfoPath()}`);
+  }
+  if (port == null) {
+    throw startLiteServerMessage(`invalid port in ${connectionInfoPath()}`);
+  }
+  if (!isRunningPid(pid)) {
+    throw startLiteServerMessage(
+      `pid ${pid} from ${connectionInfoPath()} is not running`,
+    );
+  }
+  const protocol = info.protocol === "https" ? "https" : "http";
+  const host = normalizeLiteHost(info.host);
+  return {
+    base_url: `${protocol}://${host}:${port}`,
+    connection_info: info,
+  };
+}
+
+function encodeNotebookPath(path: string): string {
+  if (path.startsWith("/")) {
+    return `%2F${encode_path(path.slice(1))}`;
+  }
+  return encode_path(path);
+}
+
+function notebookUrl({
+  base_url,
+  path_ipynb,
+  auth_token,
+  virtualization,
+  render_mode,
+}: {
+  base_url: string;
+  path_ipynb: string;
+  auth_token?: string;
+  virtualization: Options["virtualization"];
+  render_mode: Options["render_mode"];
+}): string {
+  const base = new URL(base_url.endsWith("/") ? base_url : `${base_url}/`);
+  const encodedPath = encodeNotebookPath(path_ipynb);
+  const url = new URL(`projects/${project_id}/files/${encodedPath}`, base);
+  if (auth_token) {
+    url.searchParams.set("auth_token", auth_token);
+  }
+  if (virtualization !== "keep") {
+    url.searchParams.set("jupyter_virtualization", virtualization);
+  }
+  url.searchParams.set("jupyter_lazy_render", render_mode === "lazy" ? "1" : "0");
+  return url.toString();
+}
+
+function markdownCell(source: string): any {
+  return {
+    cell_type: "markdown",
+    metadata: {},
+    source: [source],
+  };
+}
+
+function codeCell({
+  source,
+  outputs,
+  execution_count,
+}: {
+  source: string;
+  outputs: any[];
+  execution_count: number;
+}): any {
+  return {
+    cell_type: "code",
+    execution_count,
+    metadata: {},
+    outputs,
+    source: [source],
+  };
+}
+
+function streamOutput(text: string): any {
+  return {
+    output_type: "stream",
+    name: "stdout",
+    text: [text],
+  };
+}
+
+function htmlOutput(html: string, plain: string): any {
+  return {
+    output_type: "display_data",
+    data: {
+      "text/plain": [plain],
+      "text/html": [html],
+    },
+    metadata: {},
+  };
+}
+
+function markerAnchorOutput(marker: string): any {
+  const safe = marker.replace(/[^A-Za-z0-9_-]/g, "_");
+  return htmlOutput(
+    `<div id="jupyter-bench-marker-${safe}" data-jupyter-bench-marker="${safe}" style="height:0;overflow:hidden"></div>`,
+    marker,
+  );
+}
+
+function buildTextScenarioCells({
+  count,
+  topMarker,
+  bottomMarker,
+}: {
+  count: number;
+  topMarker: string;
+  bottomMarker: string;
+}): any[] {
+  const cells: any[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const marker =
+      i === 0 ? topMarker : i === count - 1 ? bottomMarker : `CELL-${i}`;
+    const source = `# ${marker}\nprint(${i})`;
+    const payload = `${marker} ${"x".repeat(200)}\n`;
+    const outputs = [streamOutput(payload)];
+    if (i === 0 || i === count - 1) {
+      outputs.push(markerAnchorOutput(marker));
+    }
+    cells.push(
+      codeCell({
+        source,
+        outputs,
+        execution_count: i + 1,
+      }),
+    );
+  }
+  return cells;
+}
+
+function buildMixedScenarioCells({
+  count,
+  topMarker,
+  bottomMarker,
+}: {
+  count: number;
+  topMarker: string;
+  bottomMarker: string;
+}): any[] {
+  const cells: any[] = [];
+  let execCount = 1;
+  for (let i = 0; i < count; i += 1) {
+    if (i === 0 || i === count - 1 || i % 6 !== 0) {
+      const marker =
+        i === 0 ? topMarker : i === count - 1 ? bottomMarker : `MIXED-${i}`;
+      if (i % 4 === 0 && i > 0 && i < count - 1) {
+        const outputs = [
+          htmlOutput(
+            `<div class=\"virt-html\"><b>${marker}</b><div style=\"height:40px\">row ${i}</div></div>`,
+            marker,
+          ),
+        ];
+        if (i === 0 || i === count - 1) {
+          outputs.push(markerAnchorOutput(marker));
+        }
+        cells.push(
+          codeCell({
+            source: `# ${marker}\n${i} + 1`,
+            outputs,
+            execution_count: execCount,
+          }),
+        );
+      } else {
+        const outputs = [streamOutput(`${marker} ${"y".repeat(120)}\n`)];
+        if (i === 0 || i === count - 1) {
+          outputs.push(markerAnchorOutput(marker));
+        }
+        cells.push(
+          codeCell({
+            source: `# ${marker}\n${i} + 1`,
+            outputs,
+            execution_count: execCount,
+          }),
+        );
+      }
+      execCount += 1;
+    } else {
+      cells.push(
+        markdownCell(
+          `### Section ${i}\nThis markdown cell is part of virtualization scroll testing.`,
+        ),
+      );
+    }
+  }
+  return cells;
+}
+
+function notebookTemplate(cells: any[]): string {
+  return JSON.stringify(
+    {
+      cells,
+      metadata: {
+        kernelspec: {
+          display_name: "Python 3 (ipykernel)",
+          language: "python",
+          name: "python3",
+        },
+        language_info: {
+          name: "python",
+        },
+      },
+      nbformat: 4,
+      nbformat_minor: 5,
+    },
+    null,
+    2,
+  );
+}
+
+function buildScenarios(opts: Options): ScenarioSpec[] {
+  const mkPath = (name: string) => `${opts.path_prefix}-${name}.ipynb`;
+
+  const quick: ScenarioSpec[] = [
+    {
+      name: "text_400",
+      description: "400 code cells with medium stream outputs",
+      path_ipynb: mkPath("text-400"),
+      expected_cells: 400,
+      top_marker: "SCROLL-TOP-TEXT-400",
+      bottom_marker: "SCROLL-BOTTOM-TEXT-400",
+      cells: buildTextScenarioCells({
+        count: 400,
+        topMarker: "SCROLL-TOP-TEXT-400",
+        bottomMarker: "SCROLL-BOTTOM-TEXT-400",
+      }),
+    },
+    {
+      name: "mixed_280",
+      description: "280 mixed markdown/stream/html cells",
+      path_ipynb: mkPath("mixed-280"),
+      expected_cells: 280,
+      top_marker: "SCROLL-TOP-MIXED-280",
+      bottom_marker: "SCROLL-BOTTOM-MIXED-280",
+      cells: buildMixedScenarioCells({
+        count: 280,
+        topMarker: "SCROLL-TOP-MIXED-280",
+        bottomMarker: "SCROLL-BOTTOM-MIXED-280",
+      }),
+    },
+  ];
+
+  const full: ScenarioSpec[] = [
+    {
+      name: "text_1200",
+      description: "1200 code cells with medium stream outputs",
+      path_ipynb: mkPath("text-1200"),
+      expected_cells: 1200,
+      top_marker: "SCROLL-TOP-TEXT-1200",
+      bottom_marker: "SCROLL-BOTTOM-TEXT-1200",
+      cells: buildTextScenarioCells({
+        count: 1200,
+        topMarker: "SCROLL-TOP-TEXT-1200",
+        bottomMarker: "SCROLL-BOTTOM-TEXT-1200",
+      }),
+    },
+    {
+      name: "mixed_700",
+      description: "700 mixed markdown/stream/html cells",
+      path_ipynb: mkPath("mixed-700"),
+      expected_cells: 700,
+      top_marker: "SCROLL-TOP-MIXED-700",
+      bottom_marker: "SCROLL-BOTTOM-MIXED-700",
+      cells: buildMixedScenarioCells({
+        count: 700,
+        topMarker: "SCROLL-TOP-MIXED-700",
+        bottomMarker: "SCROLL-BOTTOM-MIXED-700",
+      }),
+    },
+  ];
+
+  const base = opts.profile === "full" ? full : quick;
+  if (!opts.scenario) {
+    return base;
+  }
+  return base.filter((x) => x.name === opts.scenario);
+}
+
+async function ensureNotebook(path_ipynb: string, cells: any[]): Promise<void> {
+  await mkdir(dirname(path_ipynb), { recursive: true });
+  await writeFile(path_ipynb, notebookTemplate(cells), "utf8");
+}
+
+function monotonicNowMs(): number {
+  return Number(process.hrtime.bigint()) / 1e6;
+}
+
+async function withTimeout<T>({
+  promise,
+  timeout_ms,
+  label,
+}: {
+  promise: Promise<T>;
+  timeout_ms: number;
+  label: string;
+}): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return (await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`timeout after ${timeout_ms}ms during ${label}`));
+        }, timeout_ms);
+      }),
+    ])) as T;
+  } finally {
+    if (timer != null) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function openNotebookPage({
+  page,
+  url,
+  timeout_ms,
+}: {
+  page: any;
+  url: string;
+  timeout_ms: number;
+}): Promise<OpenMetrics> {
+  const t0 = monotonicNowMs();
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeout_ms });
+  const goto_ms = monotonicNowMs() - t0;
+  await page.waitForSelector('[cocalc-test="jupyter-cell"]', {
+    timeout: timeout_ms,
+  });
+  const first_cell_ms = monotonicNowMs() - t0;
+  await page.waitForSelector('[cocalc-test="cell-input"] .CodeMirror', {
+    timeout: timeout_ms,
+  });
+  const first_input_ms = monotonicNowMs() - t0;
+  await page.waitForTimeout(300);
+  const ready_ms = monotonicNowMs() - t0;
+  return { goto_ms, first_cell_ms, first_input_ms, ready_ms };
+}
+
+async function probeFrontendInstrumentation(
+  page: any,
+): Promise<FrontendInstrumentationProbe> {
+  return (await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    const hasLazyRuntime =
+      runtime != null && typeof runtime.lazy_render_once_enabled === "boolean";
+    return {
+      has_runtime: runtime != null,
+      has_root_attr: document.documentElement.hasAttribute(
+        "data-cocalc-jupyter-windowed-list",
+      ),
+      has_mode_marker:
+        document.querySelector('[cocalc-test="jupyter-cell-list-mode"]') != null,
+      has_virtuoso:
+        document.querySelector("[data-virtuoso-scroller]") != null ||
+        document.querySelector("[data-virtuoso-item-list]") != null,
+      has_lazy_runtime: hasLazyRuntime,
+      has_lazy_root_attr: document.documentElement.hasAttribute(
+        "data-cocalc-jupyter-lazy-render",
+      ),
+    };
+  })) as FrontendInstrumentationProbe;
+}
+
+function assertFrontendInstrumentation({
+  probe,
+  opts,
+  scenario_name,
+}: {
+  probe: FrontendInstrumentationProbe;
+  opts: Options;
+  scenario_name: string;
+}) {
+  const needsVirtualizationMarkers =
+    opts.virtualization !== "keep" || opts.require_active_virtualization;
+  if (needsVirtualizationMarkers) {
+    if (
+      probe.has_runtime ||
+      probe.has_root_attr ||
+      probe.has_mode_marker ||
+      probe.has_virtuoso
+    ) {
+      // ok
+    } else {
+      throw new Error(
+        `unable to detect jupyter virtualization instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build-dev' then 'pnpm -C src/packages/lite app'`,
+      );
+    }
+  }
+  if (opts.render_mode === "lazy") {
+    if (probe.has_lazy_runtime || probe.has_lazy_root_attr) {
+      return;
+    }
+    throw new Error(
+      `unable to detect jupyter lazy-render instrumentation in scenario '${scenario_name}'. Static assets are likely stale. Rebuild and restart: 'pnpm -C src/packages/static build-dev' then 'pnpm -C src/packages/lite app'`,
+    );
+  }
+}
+
+async function measureScrollScenario({
+  page,
+  cycles,
+  scroll_steps,
+  top_marker,
+  bottom_marker,
+  timeout_ms,
+}: {
+  page: any;
+  cycles: number;
+  scroll_steps: number;
+  top_marker: string;
+  bottom_marker: string;
+  timeout_ms: number;
+}): Promise<ScrollMetrics> {
+  const result = await page.evaluate(
+    async ({ cycles, scroll_steps, top_marker, bottom_marker, timeout_ms }) => {
+      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      function findScrollContainer(): HTMLElement | null {
+        const start = document.querySelector(
+          '[cocalc-test="jupyter-cell"]',
+        ) as HTMLElement | null;
+        if (start == null) return null;
+        let node: HTMLElement | null = start;
+        while (node != null) {
+          const style = getComputedStyle(node);
+          const oy = style.overflowY;
+          if (
+            (oy === "auto" || oy === "scroll" || oy === "overlay") &&
+            node.scrollHeight > node.clientHeight + 8
+          ) {
+            return node;
+          }
+          node = node.parentElement;
+        }
+        const candidates = Array.from(
+          document.querySelectorAll<HTMLElement>(".smc-vfill"),
+        );
+        for (const c of candidates) {
+          const style = getComputedStyle(c);
+          if (
+            (style.overflowY === "auto" || style.overflowY === "scroll") &&
+            c.scrollHeight > c.clientHeight + 8
+          ) {
+            return c;
+          }
+        }
+        return (document.scrollingElement as HTMLElement | null) ?? null;
+      }
+
+      function countVisibleCellDomNodes(scroller: HTMLElement): number {
+        const nodes = Array.from(
+          scroller.querySelectorAll<HTMLElement>('[cocalc-test="jupyter-cell"]'),
+        );
+        const ids = new Set<string>();
+        for (const node of nodes) {
+          const id = node.id?.trim();
+          if (id) {
+            ids.add(id);
+          }
+        }
+        if (ids.size > 0) {
+          return ids.size;
+        }
+        return nodes.length;
+      }
+
+      function markerVisible(marker: string, root?: ParentNode | null): boolean {
+        if (!marker) return false;
+        const scope = (root ?? document.body) as ParentNode;
+        const markerId = `jupyter-bench-marker-${marker.replace(
+          /[^A-Za-z0-9_-]/g,
+          "_",
+        )}`;
+        if (scope.querySelector?.(`#${markerId}`) != null) {
+          return true;
+        }
+        const text = scope.textContent;
+        if (!text) return false;
+        return text.includes(marker);
+      }
+
+      function clamp(value: number, min: number, max: number): number {
+        return Math.min(max, Math.max(min, value));
+      }
+
+      function computeNotebookContentHeight(scroller: HTMLElement): number {
+        // Scroll container geometry is the source of truth for viewport mapping.
+        // Using per-cell DOM boxes here can drift under lazy placeholders.
+        return Math.max(1, scroller.scrollHeight);
+      }
+
+      function sampleMinimapAlignment(scroller: HTMLElement) {
+        const rail = document.querySelector(
+          '[data-cocalc-jupyter-minimap-rail="1"]',
+        ) as HTMLElement | null;
+        const viewport = document.querySelector(
+          '[data-cocalc-jupyter-minimap-viewport="1"]',
+        ) as HTMLElement | null;
+        const track = document.querySelector(
+          '[data-cocalc-jupyter-minimap-track="1"]',
+        ) as HTMLElement | null;
+        if (rail == null || viewport == null || track == null) {
+          return {
+            present: false,
+            top_error_px: null as number | null,
+            height_error_px: null as number | null,
+            max_error_px: null as number | null,
+            alignment_ok: null as boolean | null,
+          };
+        }
+
+        const railHeight = Math.max(1, rail.clientHeight);
+        const contentHeight = Math.max(railHeight, track.scrollHeight);
+        const notebookContentHeight = computeNotebookContentHeight(scroller);
+        const maxNotebookScroll = Math.max(
+          1,
+          notebookContentHeight - scroller.clientHeight,
+        );
+        const notebookScrollTop = clamp(scroller.scrollTop, 0, maxNotebookScroll);
+        const notebookRatio = notebookScrollTop / maxNotebookScroll;
+        const maxMiniScroll = Math.max(0, contentHeight - railHeight);
+        const miniScrollTop = notebookRatio * maxMiniScroll;
+        const viewportHeightInTrack = Math.min(
+          contentHeight,
+          Math.max(16, (scroller.clientHeight / notebookContentHeight) * contentHeight),
+        );
+        const expectedThumbHeight = Math.min(railHeight, viewportHeightInTrack);
+        const viewportTravelInTrack = Math.max(0, contentHeight - viewportHeightInTrack);
+        const viewportTopInTrack = notebookRatio * viewportTravelInTrack;
+        const expectedThumbTop = clamp(
+          viewportTopInTrack - miniScrollTop,
+          0,
+          Math.max(0, railHeight - expectedThumbHeight),
+        );
+
+        const actualThumbTop = viewport.offsetTop;
+        const actualThumbHeight = viewport.clientHeight;
+        const topError = Math.abs(actualThumbTop - expectedThumbTop);
+        const heightError = Math.abs(actualThumbHeight - expectedThumbHeight);
+        const maxError = Math.max(topError, heightError);
+        const topTolerance = Math.max(5, railHeight * 0.03);
+        const heightTolerance = Math.max(6, expectedThumbHeight * 0.2);
+
+        return {
+          present: true,
+          top_error_px: topError,
+          height_error_px: heightError,
+          max_error_px: maxError,
+          alignment_ok: topError <= topTolerance && heightError <= heightTolerance,
+        };
+      }
+
+      function percentile(v: number[], p: number): number {
+        if (v.length === 0) return 0;
+        const sorted = [...v].sort((a, b) => a - b);
+        const i = Math.min(
+          sorted.length - 1,
+          Math.max(0, Math.floor(p * (sorted.length - 1))),
+        );
+        return sorted[i];
+      }
+
+      const startTs = performance.now();
+      const deadlineTs = startTs + timeout_ms;
+      const phaseDurations: { [phase: string]: number } = {};
+      const scroller = findScrollContainer();
+      if (scroller == null) {
+        throw new Error("failed to detect notebook scroll container");
+      }
+
+      const timeoutDetail = (
+        phase: string,
+        extra?: { [key: string]: number | string | boolean | null | undefined },
+      ): never => {
+        const payload = {
+          phase,
+          elapsed_ms: performance.now() - startTs,
+          deadline_ms: timeout_ms,
+          scroll_top: scroller.scrollTop,
+          scroll_height: scroller.scrollHeight,
+          client_height: scroller.clientHeight,
+          phase_durations_ms: phaseDurations,
+          ...(extra ?? {}),
+        };
+        throw new Error(`scroll timed out: ${JSON.stringify(payload)}`);
+      };
+
+      const assertBeforeDeadline = (
+        phase: string,
+        extra?: { [key: string]: number | string | boolean | null | undefined },
+      ) => {
+        if (performance.now() > deadlineTs) {
+          timeoutDetail(phase, extra);
+        }
+      };
+
+      const recordPhase = async <T>(
+        phase: string,
+        f: () => Promise<T>,
+      ): Promise<T> => {
+        assertBeforeDeadline(phase);
+        const t0 = performance.now();
+        const out = await f();
+        phaseDurations[phase] = performance.now() - t0;
+        assertBeforeDeadline(phase);
+        return out;
+      };
+
+      const sleepChecked = async (ms: number, phase: string) => {
+        assertBeforeDeadline(phase);
+        const remaining = Math.max(0, deadlineTs - performance.now());
+        await sleep(Math.min(ms, remaining));
+        assertBeforeDeadline(phase);
+      };
+
+      const longtasks: number[] = [];
+      let observer: PerformanceObserver | null = null;
+      if (typeof PerformanceObserver !== "undefined") {
+        try {
+          observer = new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) {
+              longtasks.push(entry.duration);
+            }
+          });
+          observer.observe({ type: "longtask", buffered: true } as any);
+        } catch {
+          observer = null;
+        }
+      }
+
+      const frameDeltas: number[] = [];
+      let prevFrame: number | null = null;
+      const tick = async (phase: string) => {
+        assertBeforeDeadline(phase);
+        const t = await new Promise<number>((resolve) => {
+          let done = false;
+          const fallback = window.setTimeout(() => {
+            if (done) return;
+            done = true;
+            resolve(performance.now());
+          }, 220);
+          requestAnimationFrame((rafTs) => {
+            if (done) return;
+            done = true;
+            window.clearTimeout(fallback);
+            resolve(rafTs);
+          });
+        });
+        assertBeforeDeadline(phase);
+        if (prevFrame != null) {
+          frameDeltas.push(t - prevFrame);
+        }
+        prevFrame = t;
+      };
+
+      const scrollTo = async ({
+        target,
+        steps,
+        phase,
+      }: {
+        target: number;
+        steps: number;
+        phase: string;
+      }) => {
+        const start = scroller.scrollTop;
+        for (let i = 1; i <= steps; i += 1) {
+          assertBeforeDeadline(phase, {
+            step: i,
+            steps,
+            target,
+          });
+          const x = start + ((target - start) * i) / steps;
+          scroller.scrollTop = x;
+          await tick(`${phase}.tick`);
+        }
+      };
+
+      await tick("init");
+      scroller.scrollTop = 0;
+      await sleepChecked(140, "init");
+      await tick("init");
+
+      let maxScrollSeen = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const refreshMaxScroll = () => {
+        const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+        if (max > maxScrollSeen) {
+          maxScrollSeen = max;
+        }
+        return max;
+      };
+      const runtimeWindowed = (window as any).__cocalcJupyterRuntime
+        ?.windowed_list_enabled;
+      const runtimeLazyRenderOnce = (window as any).__cocalcJupyterRuntime
+        ?.lazy_render_once_enabled;
+      const modeNode = document.querySelector(
+        '[cocalc-test="jupyter-cell-list-mode"]',
+      ) as HTMLElement | null;
+      const windowedAttrRaw =
+        modeNode?.getAttribute("data-jupyter-windowed-list") ??
+        scroller.getAttribute("data-jupyter-windowed-list");
+      const windowedListAttrFromMarker =
+        windowedAttrRaw === "1"
+          ? true
+          : windowedAttrRaw === "0"
+            ? false
+            : null;
+      const rootWindowedAttrRaw = document.documentElement.getAttribute(
+        "data-cocalc-jupyter-windowed-list",
+      );
+      const windowedListAttrFromRoot =
+        rootWindowedAttrRaw === "1"
+          ? true
+          : rootWindowedAttrRaw === "0"
+            ? false
+            : null;
+      const hasVirtuoso =
+        document.querySelector("[data-virtuoso-scroller]") != null ||
+        document.querySelector("[data-virtuoso-item-list]") != null;
+      const windowedListAttr = (() => {
+        if (typeof runtimeWindowed === "boolean") return runtimeWindowed;
+        if (windowedListAttrFromMarker != null) return windowedListAttrFromMarker;
+        if (windowedListAttrFromRoot != null) return windowedListAttrFromRoot;
+        if (hasVirtuoso) return true;
+        return false;
+      })();
+      const windowedListSource:
+        | "runtime"
+        | "attr"
+        | "root-attr"
+        | "virtuoso"
+        | "unknown" =
+        typeof runtimeWindowed === "boolean"
+          ? "runtime"
+          : windowedListAttrFromMarker != null
+            ? "attr"
+            : windowedListAttrFromRoot != null
+              ? "root-attr"
+            : hasVirtuoso
+              ? "virtuoso"
+              : "unknown";
+      const rootLazyRenderRaw = document.documentElement.getAttribute(
+        "data-cocalc-jupyter-lazy-render",
+      );
+      const lazyRenderFromRoot =
+        rootLazyRenderRaw === "1"
+          ? true
+          : rootLazyRenderRaw === "0"
+            ? false
+            : null;
+      const lazyRenderOnceAttr =
+        typeof runtimeLazyRenderOnce === "boolean"
+          ? runtimeLazyRenderOnce
+          : lazyRenderFromRoot;
+      const lazyRenderOnceSource: "runtime" | "root-attr" | "unknown" =
+        typeof runtimeLazyRenderOnce === "boolean"
+          ? "runtime"
+          : lazyRenderFromRoot != null
+            ? "root-attr"
+            : "unknown";
+      const settleEdge = async ({
+        edge,
+        marker,
+        attempts,
+        phase,
+      }: {
+        edge: "top" | "bottom";
+        marker: string;
+        attempts: number;
+        phase: string;
+      }): Promise<boolean> => {
+        for (let i = 0; i < attempts; i += 1) {
+          assertBeforeDeadline(phase, { edge, attempts, attempt: i + 1 });
+          const max = refreshMaxScroll();
+          scroller.scrollTop = edge === "top" ? 0 : max;
+          await sleepChecked(60 + i * 25, phase);
+          await tick(`${phase}.tick`);
+          const maxAfter = refreshMaxScroll();
+          const nearEdge =
+            edge === "top"
+              ? scroller.scrollTop <= 2
+              : maxAfter <= 2 || maxAfter - scroller.scrollTop <= 2;
+          const markerNow = markerVisible(marker, scroller);
+          if (markerNow && nearEdge) {
+            return true;
+          }
+          // Avoid false negatives when virtualization settles one frame later.
+          if (markerNow && i >= 1) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+      const topVisibleInitially = await recordPhase("settle_top_initial", () =>
+        settleEdge({
+          edge: "top",
+          marker: top_marker,
+          attempts: 4,
+          phase: "settle_top_initial",
+        }),
+      );
+      const domTop = await recordPhase("count_top_dom", async () => {
+        assertBeforeDeadline("count_top_dom");
+        return countVisibleCellDomNodes(scroller);
+      });
+      const minimapTopAlignment = sampleMinimapAlignment(scroller);
+
+      await recordPhase("scroll_mid", () =>
+        scrollTo({
+          target: refreshMaxScroll() * 0.5,
+          steps: Math.max(3, Math.floor(scroll_steps / 2)),
+          phase: "scroll_mid",
+        }),
+      );
+      await sleepChecked(90, "scroll_mid");
+      await tick("scroll_mid");
+      const domMid = await recordPhase("count_mid_dom", async () => {
+        assertBeforeDeadline("count_mid_dom");
+        return countVisibleCellDomNodes(scroller);
+      });
+      const minimapMidAlignment = sampleMinimapAlignment(scroller);
+
+      await recordPhase("settle_bottom_initial", () =>
+        settleEdge({
+          edge: "bottom",
+          marker: bottom_marker,
+          attempts: 12,
+          phase: "settle_bottom_initial",
+        }),
+      );
+      const domBottom = await recordPhase("count_bottom_dom", async () => {
+        assertBeforeDeadline("count_bottom_dom");
+        return countVisibleCellDomNodes(scroller);
+      });
+      const bottomVisibleInitially = markerVisible(bottom_marker, scroller);
+      const minimapBottomAlignment = sampleMinimapAlignment(scroller);
+
+      await recordPhase("scroll_cycles", async () => {
+        for (let i = 0; i < cycles; i += 1) {
+          const phase = `scroll_cycles.${i + 1}`;
+          await scrollTo({ target: 0, steps: scroll_steps, phase: `${phase}.up` });
+          await sleepChecked(60, `${phase}.pause_up`);
+          await scrollTo({
+            target: refreshMaxScroll(),
+            steps: scroll_steps,
+            phase: `${phase}.down`,
+          });
+          await sleepChecked(60, `${phase}.pause_down`);
+          assertBeforeDeadline("scroll_cycles", { cycle: i + 1, cycles });
+        }
+      });
+
+      const topVisibleAfter = await recordPhase("settle_top_final", () =>
+        settleEdge({
+          edge: "top",
+          marker: top_marker,
+          attempts: 6,
+          phase: "settle_top_final",
+        }),
+      );
+      const bottomVisibleAfter = await recordPhase("settle_bottom_final", () =>
+        settleEdge({
+          edge: "bottom",
+          marker: bottom_marker,
+          attempts: 14,
+          phase: "settle_bottom_final",
+        }),
+      );
+
+      observer?.disconnect();
+
+      const elapsed = performance.now() - startTs;
+      const frameCount = frameDeltas.length;
+      const sum = frameDeltas.reduce((acc, x) => acc + x, 0);
+      const frameMean = frameCount > 0 ? sum / frameCount : 0;
+      const frameMin = frameCount > 0 ? Math.min(...frameDeltas) : 0;
+      const frameMax = frameCount > 0 ? Math.max(...frameDeltas) : 0;
+      const frameP95 = frameCount > 0 ? percentile(frameDeltas, 0.95) : 0;
+
+      const minimapSamples = [
+        minimapTopAlignment,
+        minimapMidAlignment,
+        minimapBottomAlignment,
+      ].filter((sample) => sample.present);
+      const minimapPresent = minimapSamples.length > 0;
+      const minimapTopErrorMax = minimapPresent
+        ? Math.max(...minimapSamples.map((sample) => sample.top_error_px ?? 0))
+        : null;
+      const minimapHeightErrorMax = minimapPresent
+        ? Math.max(...minimapSamples.map((sample) => sample.height_error_px ?? 0))
+        : null;
+      const minimapErrorMax = minimapPresent
+        ? Math.max(...minimapSamples.map((sample) => sample.max_error_px ?? 0))
+        : null;
+      const minimapAlignmentOk = minimapPresent
+        ? minimapSamples.every((sample) => sample.alignment_ok === true)
+        : null;
+
+      return {
+        duration_ms: elapsed,
+        phase_durations_ms: phaseDurations,
+        max_scroll_px: maxScrollSeen,
+        dom_cells_top: domTop,
+        dom_cells_mid: domMid,
+        dom_cells_bottom: domBottom,
+        frame_delta_ms:
+          frameCount === 0
+            ? null
+            : {
+                min: frameMin,
+                mean: frameMean,
+                p95: frameP95,
+                max: frameMax,
+                count: frameCount,
+              },
+        approx_fps: frameMean > 0 ? 1000 / frameMean : null,
+        longtask_count: longtasks.length,
+        longtask_max_ms: longtasks.length > 0 ? Math.max(...longtasks) : null,
+        top_marker_visible_initial: topVisibleInitially,
+        bottom_marker_visible_initial: bottomVisibleInitially,
+        top_marker_visible_after: topVisibleAfter,
+        bottom_marker_visible_after: bottomVisibleAfter,
+        windowed_list_attr: windowedListAttr,
+        windowed_list_source: windowedListSource,
+        lazy_render_once_attr: lazyRenderOnceAttr,
+        lazy_render_once_source: lazyRenderOnceSource,
+        minimap_present: minimapPresent,
+        minimap_alignment_top_error_max_px: minimapTopErrorMax,
+        minimap_alignment_height_error_max_px: minimapHeightErrorMax,
+        minimap_alignment_max_error_px: minimapErrorMax,
+        minimap_alignment_ok: minimapAlignmentOk,
+      };
+    },
+    { cycles, scroll_steps, top_marker, bottom_marker, timeout_ms },
+  );
+
+  return result as ScrollMetrics;
+}
+
+function percentileValue(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const clamped = Math.min(1, Math.max(0, p));
+  const index = Math.max(0, Math.ceil(sorted.length * clamped) - 1);
+  return sorted[Math.min(sorted.length - 1, index)];
+}
+
+function meanValue(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sum = values.reduce((acc, x) => acc + x, 0);
+  return sum / values.length;
+}
+
+async function prepareTypingProbe(page: any): Promise<void> {
+  await page.evaluate(() => {
+    const g = window as any;
+    if (g.__cocalcTypingProbe != null) return;
+
+    const root = document.querySelector(
+      '[cocalc-test="cell-input"] .CodeMirror',
+    ) as HTMLElement | null;
+    if (root == null) {
+      throw new Error("unable to find CodeMirror for typing probe");
+    }
+    const target = (root.querySelector(".CodeMirror-code") as HTMLElement | null) ?? root;
+    const state: {
+      waiting: boolean;
+      keyTs: number;
+      resolve: ((value: number) => void) | null;
+      reject: ((reason: Error) => void) | null;
+      timeout: number | null;
+    } = {
+      waiting: false,
+      keyTs: 0,
+      resolve: null,
+      reject: null,
+      timeout: null,
+    };
+
+    const cleanup = () => {
+      if (state.timeout != null) {
+        clearTimeout(state.timeout);
+      }
+      state.waiting = false;
+      state.keyTs = 0;
+      state.resolve = null;
+      state.reject = null;
+      state.timeout = null;
+    };
+
+    root.addEventListener(
+      "keydown",
+      () => {
+        if (!state.waiting || state.keyTs !== 0) return;
+        state.keyTs = performance.now();
+      },
+      true,
+    );
+
+    const onDocumentChange = () => {
+      if (!state.waiting || state.keyTs === 0 || state.resolve == null) return;
+      const ms = performance.now() - state.keyTs;
+      const resolve = state.resolve;
+      cleanup();
+      resolve(ms);
+    };
+
+    const getCM = () => (root as any).CodeMirror;
+    const cmForEvents = getCM();
+    if (cmForEvents?.on) {
+      cmForEvents.on("changes", onDocumentChange);
+    } else {
+      const observer = new MutationObserver(onDocumentChange);
+      observer.observe(target, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+      });
+    }
+
+    g.__cocalcTypingProbe = {
+      focus() {
+        const cm = getCM();
+        cm?.focus?.();
+        const textarea = root.querySelector("textarea") as HTMLTextAreaElement | null;
+        textarea?.focus();
+      },
+      reset() {
+        const cm = getCM();
+        cm?.setValue?.("");
+        cm?.focus?.();
+      },
+      begin(timeoutMs: number): Promise<number> {
+        if (state.waiting) {
+          throw new Error("typing probe already waiting");
+        }
+        state.waiting = true;
+        state.keyTs = 0;
+        return new Promise<number>((resolve, reject) => {
+          state.resolve = resolve;
+          state.reject = reject;
+          state.timeout = window.setTimeout(() => {
+            const rejectFn = state.reject;
+            cleanup();
+            rejectFn?.(new Error("typing mutation timeout"));
+          }, timeoutMs);
+        });
+      },
+    };
+  });
+}
+
+async function measureTypingScenario({
+  page,
+  chars,
+  typing_timeout_ms,
+  action_timeout_ms,
+}: {
+  page: any;
+  chars: number;
+  typing_timeout_ms: number;
+  action_timeout_ms: number;
+}): Promise<TypingMetrics> {
+  if (chars <= 0) {
+    return {
+      chars: 0,
+      samples: 0,
+      timeout_count: 0,
+      p50_ms: null,
+      p95_ms: null,
+      p99_ms: null,
+      mean_ms: null,
+      max_ms: null,
+    };
+  }
+
+  await prepareTypingProbe(page);
+  await page.click('[cocalc-test="cell-input"] .CodeMirror', {
+    timeout: action_timeout_ms,
+  });
+  await page.evaluate(() => {
+    const probe = (window as any).__cocalcTypingProbe;
+    probe.reset();
+    probe.focus();
+  });
+
+  const samples: number[] = [];
+  let timeout_count = 0;
+  const started_ms = Date.now();
+  const typing_budget_ms = Math.max(
+    5_000,
+    Math.min(
+      Math.max(5_000, action_timeout_ms - 2_000),
+      chars * (typing_timeout_ms + 400),
+    ),
+  );
+
+  for (let i = 0; i < chars; i += 1) {
+    if (Date.now() - started_ms > typing_budget_ms) {
+      timeout_count += chars - i;
+      break;
+    }
+    try {
+      await page.evaluate(() => (window as any).__cocalcTypingProbe.focus());
+      const wait = page.evaluate((typingTimeoutMs) => {
+        return (window as any).__cocalcTypingProbe.begin(typingTimeoutMs);
+      }, typing_timeout_ms);
+      await page.keyboard.type("x");
+      const latency = (await wait) as number;
+      if (Number.isFinite(latency)) {
+        samples.push(latency);
+      }
+    } catch {
+      timeout_count += 1;
+      await page.evaluate(() => {
+        const probe = (window as any).__cocalcTypingProbe;
+        probe.reset();
+        probe.focus();
+      });
+    }
+  }
+
+  return {
+    chars,
+    samples: samples.length,
+    timeout_count,
+    p50_ms: percentileValue(samples, 0.5),
+    p95_ms: percentileValue(samples, 0.95),
+    p99_ms: percentileValue(samples, 0.99),
+    mean_ms: meanValue(samples),
+    max_ms: samples.length > 0 ? Math.max(...samples) : null,
+  };
+}
+
+function fmtMs(value: number): string {
+  return `${value.toFixed(1)} ms`;
+}
+
+function fmtMaybeMs(value: number | null): string {
+  return value == null ? "n/a" : `${value.toFixed(1)} ms`;
+}
+
+function fmtMaybeNum(value: number | null): string {
+  return value == null ? "n/a" : value.toFixed(1);
+}
+
+function yesNo(v: boolean): string {
+  return v ? "yes" : "no";
+}
+
+function printSummaryTable(result: ScrollBenchmarkResult) {
+  const table = new AsciiTable3("Jupyter Scroll Benchmark");
+  table.setHeading(
+    "Scenario",
+    "VirtMode",
+    "Render",
+    "Active",
+    "ActSrc",
+    "Lazy",
+    "LazySrc",
+    "Cells",
+    "Dur",
+    "FPS",
+    "Frame p95",
+    "LongTasks",
+    "DOM T/M/B",
+    "MiniMap",
+    "MiniErr",
+    "Virt?",
+    "Reliable?",
+  );
+  for (const run of result.runs) {
+    table.addRow(
+      run.name,
+      run.virtualization_mode,
+      run.render_mode,
+      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
+      run.metrics.windowed_list_source,
+      run.lazy_render_once_active == null
+        ? "n/a"
+        : yesNo(run.lazy_render_once_active),
+      run.metrics.lazy_render_once_source,
+      String(run.expected_cells),
+      fmtMs(run.metrics.duration_ms),
+      fmtMaybeNum(run.metrics.approx_fps),
+      run.metrics.frame_delta_ms
+        ? fmtMaybeMs(run.metrics.frame_delta_ms.p95)
+        : "n/a",
+      String(run.metrics.longtask_count),
+      `${run.metrics.dom_cells_top}/${run.metrics.dom_cells_mid}/${run.metrics.dom_cells_bottom}`,
+      run.metrics.minimap_alignment_ok == null
+        ? run.metrics.minimap_present
+          ? "n/a"
+          : "none"
+        : yesNo(run.metrics.minimap_alignment_ok),
+      run.metrics.minimap_alignment_max_error_px == null
+        ? "n/a"
+        : `${run.metrics.minimap_alignment_max_error_px.toFixed(1)} px`,
+      yesNo(run.virtualization_likely),
+      yesNo(run.reliability_ok),
+    );
+  }
+  table.setAlignLeft(0);
+  table.setAlignLeft(1);
+  table.setAlignLeft(2);
+  table.setAlignLeft(3);
+  table.setAlignLeft(4);
+  table.setAlignRight(5);
+  table.setAlignLeft(6);
+  table.setAlignRight(7);
+  table.setAlignRight(8);
+  table.setAlignRight(9);
+  table.setAlignRight(10);
+  table.setAlignRight(11);
+  table.setAlignRight(12);
+  table.setAlignRight(13);
+  table.setAlignRight(14);
+  table.setAlignRight(15);
+  table.setAlignRight(16);
+  console.log(table.toString());
+}
+
+function printReliabilityMatrix(result: ScrollBenchmarkResult) {
+  const table = new AsciiTable3("Virtualization Reliability Matrix");
+  table.setHeading(
+    "Scenario",
+    "VirtMode",
+    "Render",
+    "Active",
+    "ActSrc",
+    "Lazy",
+    "LazySrc",
+    "Description",
+    "Top Marker",
+    "Bottom Marker",
+    "MiniMap",
+    "Max Scroll",
+    "Status",
+  );
+  for (const run of result.runs) {
+    const top = run.metrics.top_marker_visible_after;
+    const bottom = run.metrics.bottom_marker_visible_after;
+    const scrolled = run.metrics.max_scroll_px > 0;
+    const minimapOk =
+      run.metrics.minimap_alignment_ok == null
+        ? true
+        : run.metrics.minimap_alignment_ok;
+    const status = top && bottom && scrolled && minimapOk ? "PASS" : "FAIL";
+    table.addRow(
+      run.name,
+      run.virtualization_mode,
+      run.render_mode,
+      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
+      run.metrics.windowed_list_source,
+      run.lazy_render_once_active == null
+        ? "n/a"
+        : yesNo(run.lazy_render_once_active),
+      run.metrics.lazy_render_once_source,
+      run.description,
+      yesNo(top),
+      yesNo(bottom),
+      run.metrics.minimap_alignment_ok == null
+        ? run.metrics.minimap_present
+          ? "n/a"
+          : "none"
+        : yesNo(run.metrics.minimap_alignment_ok),
+      `${Math.round(run.metrics.max_scroll_px)} px`,
+      status,
+    );
+  }
+  table.setAlignLeft(0);
+  table.setAlignLeft(1);
+  table.setAlignLeft(2);
+  table.setAlignLeft(3);
+  table.setAlignLeft(4);
+  table.setAlignLeft(5);
+  table.setAlignLeft(6);
+  table.setAlignLeft(7);
+  table.setAlignRight(8);
+  table.setAlignRight(9);
+  table.setAlignRight(10);
+  table.setAlignRight(11);
+  table.setAlignRight(12);
+  console.log(table.toString());
+}
+
+function printInteractionTable(result: ScrollBenchmarkResult) {
+  const table = new AsciiTable3("Notebook Interaction Metrics");
+  table.setHeading(
+    "Scenario",
+    "VirtMode",
+    "Render",
+    "Active",
+    "Open Cell",
+    "Open Input",
+    "Open Ready",
+    "Type p50",
+    "Type p95",
+    "Type p99",
+    "Type max",
+    "Timeouts",
+  );
+  for (const run of result.runs) {
+    table.addRow(
+      run.name,
+      run.virtualization_mode,
+      run.render_mode,
+      run.virtualization_active == null ? "n/a" : yesNo(run.virtualization_active),
+      fmtMs(run.open_metrics.first_cell_ms),
+      fmtMs(run.open_metrics.first_input_ms),
+      fmtMs(run.open_metrics.ready_ms),
+      fmtMaybeMs(run.typing_metrics.p50_ms),
+      fmtMaybeMs(run.typing_metrics.p95_ms),
+      fmtMaybeMs(run.typing_metrics.p99_ms),
+      fmtMaybeMs(run.typing_metrics.max_ms),
+      String(run.typing_metrics.timeout_count),
+    );
+  }
+  table.setAlignLeft(0);
+  table.setAlignLeft(1);
+  table.setAlignLeft(2);
+  table.setAlignLeft(3);
+  table.setAlignRight(4);
+  table.setAlignRight(5);
+  table.setAlignRight(6);
+  table.setAlignRight(7);
+  table.setAlignRight(8);
+  table.setAlignRight(9);
+  table.setAlignRight(10);
+  table.setAlignRight(11);
+  console.log(table.toString());
+}
+
+function printUsage() {
+  console.log(`Usage: pnpm -C src/packages/lite jupyter:bench:scroll -- [options]
+
+Options:
+  --base-url <url>          Full lite base URL (e.g. http://127.0.0.1:5173)
+  --port <n>                Lite server port (uses connection-info host/protocol if available)
+  --host <name>             Hostname with --port (default: localhost)
+  --protocol <http|https>   Protocol with --port (default: http)
+  --auth-token <token>      Auth token (default: from connection-info.json)
+  --profile <quick|full>    Scenario profile (default: quick)
+  --virtualization <mode>   Force notebook virtualization: on|off|keep (default: off)
+  --render-mode <mode>      Non-windowed render mode: lazy (default: lazy)
+  --minimap-debug           Add extra timeout budget for minimap diagnostics
+  --require-active-virtualization  Fail if requested virtualization mode is not active
+  --scenario <name>         Run one scenario from the selected profile
+  --path-prefix <path>      Notebook path prefix (default: $HOME/jupyter-scroll-benchmark)
+  --cycles <n>              Down/up scroll cycles per scenario (profile default)
+  --scroll-steps <n>        Steps per directional scroll sweep (default: 42)
+  --typing-chars <n>        Number of typed chars used for typing-latency metric; 0 disables typing probe (default: 40)
+  --typing-timeout-ms <n>   Per-keystroke typing timeout in ms (default: 1500)
+  --timeout-ms <n>          Per-scenario timeout in ms (default: 45000)
+  --headed                  Run browser with UI (default: headless)
+  --json                    Print raw JSON result
+  --quiet                   Do not print per-scenario logs
+  --help                    Show this help
+`);
+}
+
+function parseArgs(argv: string[]): Options {
+  const opts: Options = {
+    profile: DEFAULT_PROFILE,
+    virtualization: "off",
+    render_mode: DEFAULT_RENDER_MODE,
+    minimap_debug: false,
+    require_active_virtualization: false,
+    path_prefix: DEFAULT_PATH_PREFIX,
+    scroll_steps: DEFAULT_SCROLL_STEPS,
+    typing_chars: DEFAULT_TYPING_CHARS,
+    typing_timeout_ms: DEFAULT_TYPING_TIMEOUT_MS,
+    timeout_ms: DEFAULT_TIMEOUT_MS,
+    headless: true,
+    json: false,
+    quiet: false,
+  };
+
+  const args: string[] = [];
+  for (const raw of argv) {
+    const i = raw.indexOf("=");
+    if (i > 0 && raw.startsWith("--")) {
+      args.push(raw.slice(0, i), raw.slice(i + 1));
+    } else {
+      args.push(raw);
+    }
+  }
+
+  let i = 0;
+  const next = () => {
+    i += 1;
+    const v = args[i];
+    if (v == null) {
+      throw new Error(`missing value for ${args[i - 1]}`);
+    }
+    return v;
+  };
+
+  while (i < args.length) {
+    const a = args[i];
+    switch (a) {
+      case "--":
+        break;
+      case "-h":
+      case "--help":
+        printUsage();
+        process.exit(0);
+        break;
+      case "--base-url":
+        opts.base_url = trimTrailingSlash(next());
+        break;
+      case "--port":
+        opts.port = Number(next());
+        if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) {
+          throw new Error(`invalid --port '${opts.port}'`);
+        }
+        break;
+      case "--host":
+        opts.host = next();
+        break;
+      case "--protocol": {
+        const protocol = next();
+        if (protocol !== "http" && protocol !== "https") {
+          throw new Error(`--protocol must be http or https, got '${protocol}'`);
+        }
+        opts.protocol = protocol;
+        break;
+      }
+      case "--auth-token":
+        opts.auth_token = next();
+        break;
+      case "--profile": {
+        const profile = next();
+        if (profile !== "quick" && profile !== "full") {
+          throw new Error(`--profile must be quick or full, got '${profile}'`);
+        }
+        opts.profile = profile;
+        break;
+      }
+      case "--virtualization": {
+        const mode = next().toLowerCase();
+        if (mode !== "on" && mode !== "off" && mode !== "keep") {
+          throw new Error(
+            `--virtualization must be on, off, or keep, got '${mode}'`,
+          );
+        }
+        opts.virtualization = mode;
+        break;
+      }
+      case "--render-mode": {
+        const mode = next().toLowerCase();
+        if (mode !== "lazy") {
+          throw new Error(
+            `--render-mode only supports 'lazy' in this build, got '${mode}'`,
+          );
+        }
+        opts.render_mode = mode;
+        break;
+      }
+      case "--minimap-debug":
+        opts.minimap_debug = true;
+        break;
+      case "--require-active-virtualization":
+        opts.require_active_virtualization = true;
+        break;
+      case "--scenario":
+        opts.scenario = next();
+        break;
+      case "--path-prefix":
+        opts.path_prefix = next();
+        break;
+      case "--cycles":
+        opts.cycles = Number(next());
+        if (!Number.isInteger(opts.cycles) || opts.cycles < 1) {
+          throw new Error(`invalid --cycles '${opts.cycles}'`);
+        }
+        break;
+      case "--scroll-steps":
+        opts.scroll_steps = Number(next());
+        if (!Number.isInteger(opts.scroll_steps) || opts.scroll_steps < 2) {
+          throw new Error(`invalid --scroll-steps '${opts.scroll_steps}'`);
+        }
+        break;
+      case "--typing-chars":
+        opts.typing_chars = Number(next());
+        if (!Number.isInteger(opts.typing_chars) || opts.typing_chars < 0) {
+          throw new Error(`invalid --typing-chars '${opts.typing_chars}'`);
+        }
+        break;
+      case "--typing-timeout-ms":
+        opts.typing_timeout_ms = Number(next());
+        if (
+          !Number.isInteger(opts.typing_timeout_ms) ||
+          opts.typing_timeout_ms < 100
+        ) {
+          throw new Error(
+            `invalid --typing-timeout-ms '${opts.typing_timeout_ms}'`,
+          );
+        }
+        break;
+      case "--timeout-ms":
+        opts.timeout_ms = Number(next());
+        if (!Number.isInteger(opts.timeout_ms) || opts.timeout_ms < 2000) {
+          throw new Error(`invalid --timeout-ms '${opts.timeout_ms}'`);
+        }
+        break;
+      case "--headed":
+        opts.headless = false;
+        break;
+      case "--json":
+        opts.json = true;
+        break;
+      case "--quiet":
+        opts.quiet = true;
+        break;
+      default:
+        throw new Error(`unknown option '${a}'`);
+    }
+    i += 1;
+  }
+
+  return opts;
+}
+
+async function runScrollBenchmark(opts: Options): Promise<ScrollBenchmarkResult> {
+  const started_at = new Date().toISOString();
+  const { base_url, connection_info } = await resolveBaseUrl(opts);
+  const auth_token = opts.auth_token ?? connection_info?.token;
+
+  const scenarios = buildScenarios(opts);
+  if (scenarios.length === 0) {
+    throw new Error(
+      `no scenarios matched profile='${opts.profile}' scenario='${opts.scenario ?? "*"}'`,
+    );
+  }
+
+  const { chromium } = await import("@playwright/test");
+  const browser = await chromium.launch({ headless: opts.headless });
+  const context = await browser.newContext();
+  if (opts.virtualization !== "keep" || opts.render_mode === "lazy") {
+    await context.addInitScript(
+      ({
+        virtualizationMode,
+        renderMode,
+      }: {
+        virtualizationMode: "on" | "off" | "keep";
+        renderMode: "eager" | "lazy";
+      }) => {
+      try {
+        if (virtualizationMode !== "keep") {
+          localStorage.setItem("cocalc_jupyter_virtualization", virtualizationMode);
+          localStorage.setItem("jupyter_virtualization", virtualizationMode);
+        }
+        const lazyValue = renderMode === "lazy" ? "on" : "off";
+        localStorage.setItem("cocalc_jupyter_lazy_render", lazyValue);
+        localStorage.setItem("jupyter_lazy_render", lazyValue);
+      } catch {
+        // ignore storage failures in restricted contexts
+      }
+    },
+      {
+        virtualizationMode: opts.virtualization,
+        renderMode: opts.render_mode,
+      },
+    );
+  }
+  const page = await context.newPage();
+
+  const runs: ScenarioResult[] = [];
+  const expectedVirtualization =
+    opts.virtualization === "on"
+      ? true
+      : opts.virtualization === "off"
+        ? false
+        : null;
+  if (opts.require_active_virtualization && expectedVirtualization == null) {
+    throw new Error(
+      "--require-active-virtualization requires --virtualization on or off",
+    );
+  }
+  try {
+    for (const scenario of scenarios) {
+      await ensureNotebook(scenario.path_ipynb, scenario.cells);
+      const scenario_timeout_ms =
+        opts.timeout_ms +
+        (scenario.expected_cells >= 350 ? 240_000 : 0) +
+        (opts.minimap_debug ? 10_000 : 0);
+      const url = notebookUrl({
+        base_url,
+        path_ipynb: scenario.path_ipynb,
+        auth_token,
+        virtualization: opts.virtualization,
+        render_mode: opts.render_mode,
+      });
+      const open_metrics = await withTimeout({
+        promise: openNotebookPage({
+          page,
+          url,
+          timeout_ms: scenario_timeout_ms,
+        }),
+        timeout_ms: scenario_timeout_ms + 5_000,
+        label: `open scenario '${scenario.name}'`,
+      });
+      const instrumentationProbe = await probeFrontendInstrumentation(page);
+      assertFrontendInstrumentation({
+        probe: instrumentationProbe,
+        opts,
+        scenario_name: scenario.name,
+      });
+      let typing_metrics: TypingMetrics;
+      try {
+        typing_metrics = await withTimeout({
+          promise: measureTypingScenario({
+            page,
+            chars: opts.typing_chars,
+            typing_timeout_ms: opts.typing_timeout_ms,
+            action_timeout_ms: scenario_timeout_ms,
+          }),
+          timeout_ms: scenario_timeout_ms + 5_000,
+          label: `typing scenario '${scenario.name}'`,
+        });
+      } catch (err: any) {
+        typing_metrics = {
+          chars: opts.typing_chars,
+          samples: 0,
+          timeout_count: Math.max(0, opts.typing_chars),
+          p50_ms: null,
+          p95_ms: null,
+          p99_ms: null,
+          mean_ms: null,
+          max_ms: null,
+        };
+        if (!opts.quiet) {
+          console.warn(
+            `[jupyter-scroll-bench] typing scenario '${scenario.name}' failed: ${err?.message ?? err}`,
+          );
+        }
+      }
+      const cycles =
+        opts.cycles ??
+        (opts.profile === "full"
+          ? 4
+          : scenario.expected_cells >= 350
+            ? 0
+            : 2);
+      const scroll_steps =
+        scenario.expected_cells >= 350
+          ? Math.max(10, Math.floor(opts.scroll_steps * 0.3))
+          : opts.scroll_steps;
+      const metrics = await withTimeout({
+        promise: measureScrollScenario({
+          page,
+          cycles,
+          scroll_steps,
+          top_marker: scenario.top_marker,
+          bottom_marker: scenario.bottom_marker,
+          timeout_ms: scenario_timeout_ms,
+        }),
+        // Give in-page phase-level watchdog time to throw detailed diagnostics.
+        timeout_ms: scenario_timeout_ms + 30_000,
+        label: `scroll scenario '${scenario.name}'`,
+      });
+      const virtualization_likely =
+        metrics.windowed_list_attr ??
+        (metrics.dom_cells_mid < scenario.expected_cells * 0.6 ||
+          metrics.dom_cells_bottom < scenario.expected_cells * 0.6);
+      const virtualization_active = metrics.windowed_list_attr;
+      const lazy_render_once_active = metrics.lazy_render_once_attr;
+      const minimapAlignmentOk =
+        metrics.minimap_alignment_ok == null ? true : metrics.minimap_alignment_ok;
+      const reliability_ok =
+        metrics.top_marker_visible_after &&
+        metrics.bottom_marker_visible_after &&
+        metrics.max_scroll_px > 0 &&
+        minimapAlignmentOk;
+      const run: ScenarioResult = {
+        name: scenario.name,
+        description: scenario.description,
+        profile: opts.profile,
+        path_ipynb: scenario.path_ipynb,
+        expected_cells: scenario.expected_cells,
+        cycles,
+        scroll_steps,
+        metrics,
+        virtualization_likely,
+        reliability_ok,
+        virtualization_mode: opts.virtualization,
+        render_mode: opts.render_mode,
+        virtualization_active,
+        lazy_render_once_active,
+        open_metrics,
+        typing_metrics,
+      };
+      runs.push(run);
+      if (
+        opts.require_active_virtualization &&
+        expectedVirtualization != null &&
+        run.virtualization_active !== expectedVirtualization
+      ) {
+        throw new Error(
+          `virtualization mismatch in scenario '${scenario.name}': expected ${expectedVirtualization ? "active" : "inactive"}, got ${run.virtualization_active ? "active" : "inactive"} (source=${run.metrics.windowed_list_source})`,
+        );
+      }
+
+      if (!opts.quiet) {
+        const fps = metrics.approx_fps == null ? "n/a" : metrics.approx_fps.toFixed(1);
+        const typingP95 =
+          typing_metrics.p95_ms == null ? "n/a" : `${typing_metrics.p95_ms.toFixed(1)}ms`;
+        const mini = metrics.minimap_alignment_ok == null
+          ? "n/a"
+          : metrics.minimap_alignment_ok
+            ? `ok (${fmtMaybeNum(metrics.minimap_alignment_max_error_px)}px)`
+            : `fail (${fmtMaybeNum(metrics.minimap_alignment_max_error_px)}px)`;
+        const status = reliability_ok ? "PASS" : "FAIL";
+        console.log(
+          `[jupyter-scroll-bench] ${scenario.name} (virt=${opts.virtualization}, render=${opts.render_mode}): open=${fmtMs(open_metrics.first_input_ms)}, typing_p95=${typingP95}, dur=${fmtMs(metrics.duration_ms)}, fps=${fps}, longtasks=${metrics.longtask_count}, minimap=${mini}, status=${status}`,
+        );
+      }
+    }
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+
+  return {
+    ok: true,
+    base_url,
+    profile: opts.profile,
+    virtualization: opts.virtualization,
+    render_mode: opts.render_mode,
+    require_active_virtualization: opts.require_active_virtualization,
+    scenario_filter: opts.scenario,
+    cycles: opts.cycles ?? (opts.profile === "full" ? 4 : 2),
+    scroll_steps: opts.scroll_steps,
+    typing_chars: opts.typing_chars,
+    typing_timeout_ms: opts.typing_timeout_ms,
+    timeout_ms: opts.timeout_ms,
+    runs,
+    started_at,
+    finished_at: new Date().toISOString(),
+  };
+}
+
+async function main() {
+  try {
+    const opts = parseArgs(process.argv.slice(2));
+    const result = await runScrollBenchmark(opts);
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    printSummaryTable(result);
+    printInteractionTable(result);
+    printReliabilityMatrix(result);
+    console.log(`base_url: ${result.base_url}`);
+    console.log(`profile: ${result.profile}`);
+    console.log(`virtualization: ${result.virtualization}`);
+    console.log(`render_mode: ${result.render_mode}`);
+    console.log(
+      `require_active_virtualization: ${result.require_active_virtualization}`,
+    );
+    console.log(`typing_chars: ${result.typing_chars}`);
+    console.log(`typing_timeout_ms: ${result.typing_timeout_ms}`);
+    if (result.scenario_filter) {
+      console.log(`scenario: ${result.scenario_filter}`);
+    }
+  } catch (err: any) {
+    console.error(`jupyter scroll benchmark failed: ${err?.message ?? err}`);
+    process.exit(1);
+  }
+}
+
+void main();

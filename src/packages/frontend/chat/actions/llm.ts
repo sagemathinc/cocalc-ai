@@ -28,6 +28,14 @@ import { processAcpLLM } from "../acp-api";
 import { type ChatActions } from "../actions";
 
 const MAX_CHAT_STREAM = 10;
+const ACP_IMMEDIATE_MODE_PREFIX = [
+  "[CoCalc UI immediate-send note]",
+  "The user clicked 'Send Immediately' during an active run.",
+  "This message is additional context for the SAME task, not a cancellation.",
+  "Only stop/switch if the user explicitly says stop/cancel/switch.",
+  "If the new message is just acknowledgement (e.g. 'thanks'), briefly acknowledge and continue the in-progress task.",
+  "[/CoCalc UI immediate-send note]",
+].join(" ");
 
 export async function processLLM({
   actions,
@@ -37,6 +45,7 @@ export async function processLLM({
   llm,
   threadModel,
   dateLimit,
+  acpSendMode,
 }: {
   actions: ChatActions;
   message: ChatMessage;
@@ -45,6 +54,7 @@ export async function processLLM({
   llm?: LanguageModel;
   threadModel?: LanguageModel | false | null;
   dateLimit?: Date;
+  acpSendMode?: "immediate";
 }): Promise<void> {
   const { syncdb, store } = actions;
   if (!syncdb || !store) return;
@@ -52,6 +62,9 @@ export async function processLLM({
   const inputRaw = message.history?.[0]?.content as string | undefined;
   if (inputRaw == null) return;
   if (!inputRaw && tag !== "regenerate") return;
+  const messageAcpSendMode =
+    (message as any)?.acp_send_mode === "immediate" ? "immediate" : undefined;
+  const effectiveAcpSendMode = acpSendMode ?? messageAcpSendMode;
 
   const model = resolveLLMModel({ message, reply_to, tag, llm, threadModel });
   if (model === false || model == null) return;
@@ -60,12 +73,17 @@ export async function processLLM({
 
   // ACP agent branch
   if (typeof model === "string" && model.includes("codex")) {
+    const acpInput =
+      effectiveAcpSendMode === "immediate"
+        ? `${ACP_IMMEDIATE_MODE_PREFIX}\n\n${input}`
+        : input;
     await processAcpLLM({
       actions,
       message,
       reply_to,
       model,
-      input,
+      input: acpInput,
+      sendMode: effectiveAcpSendMode,
     });
     return;
   }

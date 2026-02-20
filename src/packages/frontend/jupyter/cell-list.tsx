@@ -16,11 +16,10 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
-import { VirtuosoHandle } from "react-virtuoso";
 import { CSS, React, useIsMountedRef } from "@cocalc/frontend/app-framework";
 import { Loading } from "@cocalc/frontend/components";
 import {
@@ -28,13 +27,13 @@ import {
   SortableItem,
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
-import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { FileContext, useFileContext } from "@cocalc/frontend/lib/file-context";
 import { LLMTools, NotebookMode, Scroll } from "@cocalc/jupyter/types";
 import { JupyterActions } from "./browser-actions";
 import { Cell } from "./cell";
 import HeadingTagComponent from "./heading-tag";
+import { useNotebookMinimap } from "./minimap";
 
 interface StableHtmlContextType {
   enabled?: boolean;
@@ -46,13 +45,8 @@ export const useStableHtmlContext: () => StableHtmlContextType = () => {
   return useContext(StableHtmlContext);
 };
 
-// 3 extra cells:
-//  - iframe cell  (hidden at top)
-//  - style cell   (hidden at top)
-//  - padding (at the bottom)
-const EXTRA_BOTTOM_CELLS = 1;
-
-const CELL_VISIBLE_THRESH = 50;
+const LAZY_RENDER_INITIAL_CELLS = 24;
+const LAZY_RENDER_PLACEHOLDER_MIN_HEIGHT = 96;
 
 // the extra bottom cell at the very end
 // See https://github.com/sagemathinc/cocalc/issues/6141 for a discussion
@@ -89,7 +83,6 @@ interface CellListProps {
   scrollTop?: any;
   sel_ids?: immutable.Set<string>; // set of selected cells
   trust?: boolean;
-  use_windowed_list?: boolean;
   llmTools?: LLMTools;
   read_only?: boolean;
   pendingCells?: immutable.Set<string>;
@@ -120,7 +113,6 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     scrollTop,
     sel_ids,
     trust,
-    use_windowed_list,
     llmTools,
     read_only,
     pendingCells,
@@ -171,7 +163,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     // scroll state may have changed
     if (scroll != null && lastScrollSeqRef.current < scroll_seq) {
       lastScrollSeqRef.current = scroll_seq;
-      scroll_cell_list(scroll);
+      scrollCellList(scroll);
     }
   }, [cur_id, scroll, scroll_seq]);
 
@@ -184,26 +176,69 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     return render_loading();
   }
 
-  const saveScroll = useCallback(() => {
-    if (use_windowed_list) {
-      // TODO -- virtuoso
-      // We don't actually need to do anything though since our virtuoso
-      // integration automatically solves this same problem.
-    } else {
-      if (cellListDivRef.current != null) {
-        frameActions.current?.set_scrollTop(cellListDivRef.current.scrollTop);
-      }
+  const lazyRenderEnabled = true;
+  const lazyHydratedIdsRef = useRef<Set<string>>(new Set());
+  const lazyHeightsRef = useRef<Record<string, number>>({});
+  const [lazyHydrationVersion, setLazyHydrationVersion] = useState<number>(0);
+  const lazyHeightRefreshScheduledRef = useRef<boolean>(false);
+
+  const scheduleLazyHeightRefresh = useCallback(() => {
+    if (lazyHeightRefreshScheduledRef.current) return;
+    lazyHeightRefreshScheduledRef.current = true;
+    const run = () => {
+      lazyHeightRefreshScheduledRef.current = false;
+      setLazyHydrationVersion((n) => n + 1);
+    };
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => run());
+      return;
     }
-  }, [use_windowed_list]);
+    setTimeout(run, 0);
+  }, []);
+
+  useEffect(() => {
+    if (!lazyRenderEnabled) return;
+    let changed = false;
+    const add = (id?: string) => {
+      if (id == null || lazyHydratedIdsRef.current.has(id)) return;
+      lazyHydratedIdsRef.current.add(id);
+      changed = true;
+    };
+    for (let i = 0; i < Math.min(LAZY_RENDER_INITIAL_CELLS, cell_list.size); i += 1) {
+      add(cell_list.get(i));
+    }
+    add(cur_id);
+    sel_ids?.forEach((id) => add(id));
+    md_edit_ids?.forEach((id) => add(id));
+    pendingCells?.forEach((id) => add(id));
+    if (changed) {
+      setLazyHydrationVersion((n) => n + 1);
+    }
+  }, [
+    lazyRenderEnabled,
+    cell_list,
+    cur_id,
+    sel_ids,
+    md_edit_ids,
+    pendingCells,
+  ]);
+
+  const saveScroll = useCallback(() => {
+    if (cellListDivRef.current != null) {
+      frameActions.current?.set_scrollTop(cellListDivRef.current.scrollTop);
+    }
+  }, []);
 
   const saveScrollDebounce = useMemo(() => {
     return debounce(saveScroll, 2000);
-  }, [use_windowed_list]);
+  }, [saveScroll]);
+
+  const cellListResize = useResizeObserver({ ref: cellListDivRef });
 
   const fileContext = useFileContext();
 
   async function restore_scroll(): Promise<void> {
-    if (scrollTop == null || use_windowed_list) return;
+    if (scrollTop == null) return;
     /* restore scroll state -- as rendering happens dynamically
        and asynchronously, and I have no idea how to know when
        we are done, we can't just do this once.  Instead, we
@@ -248,7 +283,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     }
   }
 
-  async function scrollCellListNotWindowed(scroll: Scroll): Promise<void> {
+  async function scrollCellList(scroll: Scroll): Promise<void> {
     const node = $(cellListDivRef.current);
     if (node.length == 0) return;
     if (typeof scroll === "number") {
@@ -281,113 +316,6 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
         // move scroll position of list up one page
         node.scrollTop(node.scrollTop() + node.height() * 0.9);
         break;
-    }
-  }
-
-  function scrollCellListVirtuoso(scroll: Scroll) {
-    if (typeof scroll == "number") {
-      // scroll to a number is not meaningful for virtuoso; it might
-      // be requested maybe (?) due to scroll restore and switching
-      // between windowed and non-windowed mode.
-      return;
-    }
-
-    if (scroll.startsWith("cell")) {
-      // find index of cur_id cell.
-      if (cur_id == null) return;
-      const cellList = actions?.store.get("cell_list");
-      const index = cellList?.indexOf(cur_id);
-      if (index == null) return;
-      if (scroll == "cell visible") {
-        // We ONLY scroll if the cell is not in the visible, since
-        // react-virtuoso's "scrollIntoView" aggressively scrolls, even
-        // if the item is in view.
-        const n = index;
-        let isNotVisible = false;
-        let align: "start" | "center" | "end" = "start";
-        if (n < virtuosoRangeRef.current.startIndex) {
-          // If not rendered at all then clearly it is NOT visible.
-          align = "start";
-          isNotVisible = true;
-        } else if (n > virtuosoRangeRef.current.endIndex) {
-          align = "end";
-          isNotVisible = true;
-        } else {
-          const scroller = $(cellListDivRef.current);
-          const cell = scroller.find(`#${cur_id}`);
-          if (scroller[0] == null) return;
-          if (cell[0] == null) return;
-          const scrollerRect = scroller[0].getBoundingClientRect();
-          const cellRect = cell[0].getBoundingClientRect();
-          const cellTop = cellRect.y;
-          const cellBottom = cellRect.y + cellRect.height;
-          if (cellBottom <= scrollerRect.y + CELL_VISIBLE_THRESH) {
-            // the cell is entirely above the visible window
-            align = "start";
-            isNotVisible = true;
-          } else if (
-            cellTop >=
-            scrollerRect.y + scrollerRect.height - CELL_VISIBLE_THRESH
-          ) {
-            // cell is completely below the visible window.
-            align = "end";
-            isNotVisible = true;
-          }
-        }
-        if (isNotVisible) {
-          virtuosoRef.current?.scrollIntoView({
-            index: n,
-            align,
-          });
-          // don't do the requestAnimationFrame hack as below here
-          // because that actually moves between top and bottom.
-        }
-      } else if (scroll == "cell top") {
-        virtuosoRef.current?.scrollToIndex({
-          index,
-        });
-        // hack which seems necessary for jupyter at least.
-        requestAnimationFrame(() =>
-          virtuosoRef.current?.scrollToIndex({
-            index,
-          }),
-        );
-      }
-    } else if (scroll.startsWith("list")) {
-      if (scroll == "list up") {
-        const index = virtuosoRangeRef.current?.startIndex;
-        virtuosoRef.current?.scrollToIndex({
-          index,
-          align: "end",
-        });
-        requestAnimationFrame(() =>
-          virtuosoRef.current?.scrollToIndex({
-            index,
-            align: "end",
-          }),
-        );
-      } else if (scroll == "list down") {
-        const index = virtuosoRangeRef.current?.endIndex;
-        virtuosoRef.current?.scrollToIndex({
-          index,
-          align: "start",
-        });
-        requestAnimationFrame(() =>
-          virtuosoRef.current?.scrollToIndex({
-            index,
-            align: "start",
-          }),
-        );
-      }
-    }
-  }
-
-  async function scroll_cell_list(scroll: Scroll): Promise<void> {
-    if (use_windowed_list) {
-      scrollCellListVirtuoso(scroll);
-    } else {
-      // scroll not using windowed list
-      scrollCellListNotWindowed(scroll);
     }
   }
 
@@ -487,48 +415,118 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
     );
   }
 
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const virtuosoRangeRef = useRef<{ startIndex: number; endIndex: number }>({
-    startIndex: 0,
-    endIndex: 0,
-  });
-  const lastScrollStateRef = useRef<{
-    id?: string;
+  function placeholderTextForCell(id: string, index: number): string {
+    const cell = cells.get(id);
+    const input = cell?.get?.("input");
+    if (typeof input === "string" && input.trim()) {
+      return input.trim().split("\n")[0].slice(0, 160);
+    }
+    const cellType = cell?.get?.("cell_type");
+    if (typeof cellType === "string") {
+      return `${cellType} cell ${index + 1}`;
+    }
+    return `cell ${index + 1}`;
+  }
+
+  function renderLazyCell({
+    id,
+    index,
+    isFirst,
+    isLast,
+  }: {
+    id: string;
     index: number;
-    offset: number;
-  }>({
-    index: 0,
-    offset: 0,
-    id: "",
-  });
-
-  const cellListRef = useRef<any>(cell_list);
-  cellListRef.current = cell_list;
-
-  useLayoutEffect(() => {
-    if (!use_windowed_list) return;
-    if (lastScrollStateRef.current == null) {
-      return;
-    }
-    const { offset, id } = lastScrollStateRef.current;
-    if (!id) {
-      return;
-    }
-    const index = cellListRef.current?.indexOf(id);
-    if (index == null) {
-      return;
-    }
-    virtuosoRef.current?.scrollToIndex({
-      index,
-      offset: offset + 1,
-    });
-    requestAnimationFrame(() => {
-      virtuosoRef.current?.scrollToIndex({
+    isFirst: boolean;
+    isLast: boolean;
+  }): React.JSX.Element | null {
+    if (!lazyRenderEnabled) {
+      return renderCell({
+        id,
+        isScrolling: false,
         index,
-        offset: offset + 1,
+        isFirst,
+        isLast,
       });
-    });
-  }, [cell_list]);
+    }
+
+    const hydrated = lazyHydratedIdsRef.current.has(id);
+    if (hydrated) {
+      return (
+        <div
+          data-jupyter-lazy-cell-id={id}
+          data-jupyter-lazy-cell-hydrated="1"
+          ref={(node) => {
+            if (node == null) return;
+            const h = node.getBoundingClientRect().height;
+            if (h > 0) {
+              const prev = lazyHeightsRef.current[id] ?? 0;
+              if (Math.abs(prev - h) > 1) {
+                lazyHeightsRef.current[id] = h;
+                scheduleLazyHeightRefresh();
+              }
+            }
+          }}
+        >
+          {renderCell({
+            id,
+            isScrolling: false,
+            index,
+            isFirst,
+            isLast,
+          })}
+        </div>
+      );
+    }
+
+    const h = lazyHeightsRef.current[id] ?? LAZY_RENDER_PLACEHOLDER_MIN_HEIGHT;
+    return (
+      <div
+        id={id}
+        data-jupyter-lazy-cell-id={id}
+        data-jupyter-lazy-placeholder="1"
+        style={{
+          minHeight: `${h}px`,
+          marginBottom: "10px",
+          borderLeft: "2px solid #e2e8f0",
+          padding: "8px 10px",
+          color: "#64748b",
+          background: "#f8fafc",
+          fontFamily:
+            "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
+          fontSize: `${Math.max(11, Math.floor(font_size * 0.85))}px`,
+          lineHeight: 1.35,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {placeholderTextForCell(id, index)}
+      </div>
+    );
+  }
+
+  const hydrateVisibleCells = useCallback(() => {
+    if (!lazyRenderEnabled) return;
+    const scroller = cellListDivRef.current as HTMLElement | null;
+    if (scroller == null) return;
+    const minY = scroller.scrollTop - 1200;
+    const maxY = scroller.scrollTop + scroller.clientHeight + 1200;
+    let changed = false;
+    for (const node of Array.from(
+      scroller.querySelectorAll<HTMLElement>("[data-jupyter-lazy-cell-id]"),
+    )) {
+      const id = node.getAttribute("data-jupyter-lazy-cell-id");
+      if (id == null || lazyHydratedIdsRef.current.has(id)) continue;
+      const top = node.offsetTop;
+      const bottom = top + Math.max(node.offsetHeight, 1);
+      if (bottom < minY || top > maxY) continue;
+      lazyHydratedIdsRef.current.add(id);
+      changed = true;
+    }
+    if (changed) {
+      setLazyHydrationVersion((n) => n + 1);
+    }
+  }, [lazyRenderEnabled]);
 
   const scrollOrResize = useMemo(() => {
     return {};
@@ -543,131 +541,88 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
 
   let body;
 
-  const virtuosoHeightsRef = useRef<{ [index: number]: number }>({});
-
-  const cellListResize = useResizeObserver({ ref: cellListDivRef });
   useEffect(() => {
     for (const key in scrollOrResize) {
       scrollOrResize[key]();
     }
   }, [cellListResize]);
 
-  if (use_windowed_list) {
-    body = (
-      <StableHtmlContext.Provider
-        value={{ cellListDivRef, scrollOrResize, enabled: true }}
-      >
-        <div ref={cellListDivRef} className="smc-vfill">
-          <StatefulVirtuoso
-            ref={virtuosoRef}
-            cacheId={
-              name != null && frameActions.current != null
-                ? `${name}${frameActions.current?.frame_id}`
-                : "jupyter-cell-list"
-            }
-            onClick={actions != null && complete != null ? on_click : undefined}
-            topItemCount={0}
-            style={{
-              fontSize: `${font_size}px`,
-              flex: 1,
-              overflowX: "hidden",
-            }}
-            initialTopMostItemIndex={scrollTop?.get?.("index") ?? 0}
-            initialScrollTop={
-              scrollTop?.get?.("offset") ?? scrollTop?.offset ?? undefined
-            }
-            totalCount={cell_list.size + EXTRA_BOTTOM_CELLS}
-            itemSize={(el) => {
-              // We capture measured heights -- see big coment above the
-              // the DivTempHeight component below for why this is needed
-              // for Jupyter notebooks (but not most things).
-              const h = el.getBoundingClientRect().height;
-              // WARNING: This uses perhaps an internal implementation detail of
-              //  virtuoso, which I hope they don't change, which is that the index of
-              // the elements whose height we're measuring is in the data-item-index
-              // attribute.
-              const data = el.getAttribute("data-item-index");
-              if (data != null) {
-                const index = parseInt(data);
-                virtuosoHeightsRef.current[index] = h;
-              }
-              return h;
-            }}
-            itemContent={(index) => {
-              if (index == cell_list.size) {
-                return BOTTOM_PADDING_CELL;
-              }
-              const id = cell_list.get(index);
-              if (id == null) return null;
-              const h = virtuosoHeightsRef.current[index];
-              if (actions == null) {
-                return renderCell({
-                  id,
-                  isScrolling: false,
-                  index,
-                });
-              }
-              return (
-                <SortableItem id={id} key={id}>
-                  <DivTempHeight height={h ? `${h}px` : undefined}>
-                    {renderCell({
-                      id,
-                      isScrolling: false,
-                      index,
-                      isFirst: id === cell_list.get(0),
-                      isLast: id === cell_list.get(-1),
-                    })}
-                  </DivTempHeight>
-                </SortableItem>
-              );
-            }}
-            rangeChanged={(visibleRange) => {
-              virtuosoRangeRef.current = visibleRange;
-            }}
-            scrollerRef={handleCellListRef}
-            onScroll={(e) => {
-              const offset =
-                (e?.currentTarget as HTMLElement | undefined)?.scrollTop ?? 0;
-              const index = virtuosoRangeRef.current.startIndex ?? 0;
-              lastScrollStateRef.current = {
-                offset,
-                index,
-                id: cellListRef.current?.get(index),
-              };
-              for (const key in scrollOrResize) {
-                scrollOrResize[key]();
-              }
-            }}
-          />
-        </div>
-      </StableHtmlContext.Provider>
-    );
-  } else {
-    // This is needed for **the share server**, which hasn't had
-    // windowing implemented/tested for yet and also for the
-    // non-windowed mode, which we will always support as an option.
-    const v: (React.JSX.Element | null)[] = [];
-    let index: number = 0;
-    let isFirst = true;
-    cell_list.forEach((id: string) => {
-      v.push(
-        <SortableItem id={id} key={id}>
-          {renderCell({
-            id,
-            isScrolling: false,
-            index,
-            isFirst,
-            isLast: cell_list.get(-1) == id,
-          })}
-        </SortableItem>,
+  useEffect(() => {
+    if (!lazyRenderEnabled) return;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const schedule = (ms: number) => {
+      timers.push(
+        setTimeout(() => {
+          hydrateVisibleCells();
+        }, ms),
       );
-      isFirst = false;
-      index += 1;
-    });
-    v.push(BOTTOM_PADDING_CELL);
+    };
+    // Hydrate what's initially visible plus a small overscan window.
+    schedule(0);
+    schedule(120);
+    schedule(500);
+    return () => {
+      for (const timer of timers) {
+        clearTimeout(timer);
+      }
+    };
+  }, [
+    lazyRenderEnabled,
+    lazyHydrationVersion,
+    cell_list,
+    cur_id,
+    cellListResize.width,
+    cellListResize.height,
+    hydrateVisibleCells,
+  ]);
 
-    body = (
-      <StableHtmlContext.Provider value={{ cellListDivRef, scrollOrResize }}>
+  const minimap = useNotebookMinimap({
+    cellList: cell_list,
+    cells,
+    curId: cur_id,
+    cellListDivRef,
+    cellListWidth: cellListResize.width,
+    cellListHeight: cellListResize.height,
+    lazyHydrationVersion,
+    lazyHeightsRef,
+    placeholderMinHeight: LAZY_RENDER_PLACEHOLDER_MIN_HEIGHT,
+    hydrateVisibleCells,
+    saveScrollDebounce,
+  });
+
+  const v: (React.JSX.Element | null)[] = [];
+  let index: number = 0;
+  let isFirst = true;
+  cell_list.forEach((id: string) => {
+    v.push(
+      <SortableItem id={id} key={id}>
+        {renderLazyCell({
+          id,
+          index,
+          isFirst,
+          isLast: cell_list.get(-1) == id,
+        })}
+      </SortableItem>,
+    );
+    isFirst = false;
+    index += 1;
+  });
+  v.push(BOTTOM_PADDING_CELL);
+
+  body = (
+    <StableHtmlContext.Provider value={{ cellListDivRef, scrollOrResize }}>
+      <div
+        className="smc-vfill"
+        cocalc-test="jupyter-cell-list-mode"
+        data-jupyter-windowed-list="0"
+        ref={minimap.layoutRef}
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "stretch",
+          minHeight: 0,
+        }}
+      >
         <div
           key="cells"
           className="smc-vfill"
@@ -675,21 +630,25 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
             fontSize: `${font_size}px`,
             paddingLeft: "5px",
             flex: 1,
+            minWidth: 0,
             overflowY: "auto",
             overflowX: "hidden",
           }}
-          ref={cellListDivRef}
+          ref={handleCellListRef}
           onClick={actions != null && complete != null ? on_click : undefined}
           onScroll={() => {
             updateScrollOrResize();
+            hydrateVisibleCells();
+            minimap.onNotebookScroll();
             saveScrollDebounce();
           }}
         >
           {v}
         </div>
-      </StableHtmlContext.Provider>
-    );
-  }
+        {minimap.minimapNode}
+      </div>
+    </StableHtmlContext.Provider>
+  );
 
   if (actions != null) {
     // only make sortable if not read only.
@@ -738,6 +697,7 @@ export const CellList: React.FC<CellListProps> = (props: CellListProps) => {
       }}
     >
       {body}
+      {minimap.settingsModal}
     </FileContext.Provider>
   );
 };

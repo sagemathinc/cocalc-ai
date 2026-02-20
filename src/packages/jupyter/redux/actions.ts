@@ -43,6 +43,7 @@ import { SyncDB } from "@cocalc/sync/editor/db/sync";
 import type { Client } from "@cocalc/sync/client/types";
 import latexEnvs from "@cocalc/util/latex-envs";
 import { type AKV, akv } from "@cocalc/conat/sync/akv";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import {
   JUPYTER_MIMETYPES,
   isJupyterBase64MimeType,
@@ -50,6 +51,22 @@ import {
 import { isSha1, sha1 } from "@cocalc/util/misc";
 import { shouldUseIframe } from "@cocalc/jupyter/util/iframe";
 import { join } from "path";
+import {
+  isJupyterRuntimeCellKey,
+  jupyterRuntimeCellIdFromKey,
+  jupyterRuntimeCellKey,
+  JUPYTER_RUNTIME_CELL_KEY_PREFIX,
+  JUPYTER_RUNTIME_LIMITS_KEY,
+  JUPYTER_RUNTIME_NBCONVERT_KEY,
+  JUPYTER_RUNTIME_SETTINGS_KEY,
+  JUPYTER_RUNTIME_USER_KEY,
+  openJupyterRuntimeState,
+  type JupyterRuntimeCellState,
+  type JupyterRuntimeLimits,
+  type JupyterRuntimeNbconvert,
+  type JupyterRuntimeSettings,
+  type JupyterRuntimeState,
+} from "./runtime-state";
 
 const { close, required, defaults } = misc;
 
@@ -63,6 +80,50 @@ const CellWriteProtectedException = new Error("CellWriteProtectedException");
 const CellDeleteProtectedException = new Error("CellDeleteProtectedException");
 
 type State = "init" | "load" | "ready" | "closed";
+
+const COCALC_LAST_RUNTIME_MS_KEY = "last_runtime_ms";
+
+function normalizeLastRuntimeMs(value: any): number | undefined {
+  if (value == null) {
+    return;
+  }
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    return;
+  }
+  return Math.round(n);
+}
+
+function patchCellMetadataWithLastRuntime(metadata: any, last: any): any {
+  let metadataPatch: any;
+  if (metadata == null) {
+    metadataPatch = {};
+  } else if (immutable.Map.isMap(metadata)) {
+    metadataPatch = metadata.toJS();
+  } else if (misc.is_object(metadata)) {
+    metadataPatch = { ...metadata };
+  } else {
+    metadataPatch = {};
+  }
+  const cocalc = misc.is_object(metadataPatch.cocalc)
+    ? { ...metadataPatch.cocalc }
+    : {};
+  cocalc[COCALC_LAST_RUNTIME_MS_KEY] = normalizeLastRuntimeMs(last) ?? null;
+  metadataPatch.cocalc = cocalc;
+  return metadataPatch;
+}
+
+function getCellMetadataLastRuntimeMs(cell: immutable.Map<string, any>): any {
+  const metadata = cell.get("metadata");
+  if (immutable.Map.isMap(metadata)) {
+    return metadata.getIn(["cocalc", COCALC_LAST_RUNTIME_MS_KEY]);
+  }
+  if (misc.is_object(metadata)) {
+    const md = metadata as any;
+    return md?.cocalc?.[COCALC_LAST_RUNTIME_MS_KEY];
+  }
+  return undefined;
+}
 
 export class JupyterActions extends Actions<JupyterStoreState> {
   public is_project: boolean;
@@ -79,6 +140,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
   public store: JupyterStore;
   public syncdb: SyncDB;
+  private runtimeState?: JupyterRuntimeState;
+  private runtimeStateInitStarted = false;
+  private pendingRuntimeRecords: Map<string, object> = new Map();
   private labels?: {
     math: { [label: string]: { tag: string; id: string } };
     fig: { [label: string]: { tag: string; id: string } };
@@ -135,6 +199,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     this.syncdb.on("close", this.close);
 
     this.asyncBlobStore = akv(this.blobStoreOptions());
+    this.initRuntimeState();
 
     // Hook for additional initialization.
     this.init2();
@@ -155,6 +220,352 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   protected init2(): void {
     // this can be overloaded in a derived class
   }
+
+  private getConatClient = (): ConatClient | undefined => {
+    const client = this._client as any;
+    try {
+      if (typeof client?.conat === "function") {
+        return client.conat();
+      }
+      if (typeof client?.conat_client?.conat === "function") {
+        return client.conat_client.conat();
+      }
+    } catch {
+      // best effort only
+    }
+    return;
+  };
+
+  private initRuntimeState = (): void => {
+    if (this.runtimeStateInitStarted || this.is_closed()) {
+      return;
+    }
+    this.runtimeStateInitStarted = true;
+    void (async () => {
+      try {
+        const runtimeState = await openJupyterRuntimeState({
+          project_id: this.project_id,
+          path: this.path,
+          client: this.getConatClient(),
+        });
+        if (this.is_closed()) {
+          await runtimeState.close();
+          return;
+        }
+        this.runtimeState = runtimeState;
+        this.runtimeState.on("change", this.runtimeStateChange);
+        this.flushPendingRuntimeRecords();
+        this.applyRuntimeStateSnapshot();
+      } catch (err) {
+        this.dbg("initRuntimeState")("failed to initialize runtime state", err);
+      }
+    })();
+  };
+
+  private runtimeStateChange = (change?: { key?: string }): void => {
+    if (this.is_closed()) {
+      return;
+    }
+    if (!change?.key) {
+      this.applyRuntimeStateSnapshot();
+      return;
+    }
+    if (isJupyterRuntimeCellKey(change.key)) {
+      this.applyRuntimeCellToStore(jupyterRuntimeCellIdFromKey(change.key));
+      return;
+    }
+    switch (change.key) {
+      case JUPYTER_RUNTIME_SETTINGS_KEY:
+        this.applyRuntimeSettingsToStore();
+        return;
+      case JUPYTER_RUNTIME_NBCONVERT_KEY:
+        this.applyRuntimeNbconvertToStore();
+        return;
+    }
+  };
+
+  private applyRuntimeStateSnapshot = (): void => {
+    this.applyRuntimeSettingsToStore();
+    this.applyRuntimeNbconvertToStore();
+    this.applyRuntimeCellsSnapshot();
+  };
+
+  private getRuntimeRecord<T extends object>(key: string): T | undefined {
+    const value = this.runtimeState?.get(key) ?? this.pendingRuntimeRecords.get(key);
+    if (value == null || typeof value !== "object") {
+      return;
+    }
+    return value as T;
+  }
+
+  private setRuntimeRecordValue = (key: string, value: object): void => {
+    if (this.runtimeState != null) {
+      this.runtimeState.set(key, value);
+      this.pendingRuntimeRecords.delete(key);
+    } else {
+      this.pendingRuntimeRecords.set(key, value);
+    }
+  };
+
+  private deleteRuntimeRecord = (key: string): void => {
+    if (this.runtimeState != null) {
+      this.runtimeState.delete(key);
+    }
+    this.pendingRuntimeRecords.delete(key);
+  };
+
+  private patchRuntimeRecord = (key: string, patch: object): void => {
+    const cur = this.getRuntimeRecord<object>(key) ?? {};
+    this.setRuntimeRecordValue(key, { ...cur, ...patch });
+  };
+
+  private setRuntimeRecord = (key: string, value: object): void => {
+    this.setRuntimeRecordValue(key, value);
+  };
+
+  private applyRuntimeCellsSnapshot = (): void => {
+    if (this.store.get("cells") == null) {
+      return;
+    }
+    if (this.runtimeState != null) {
+      for (const key of Object.keys(this.runtimeState.getAll())) {
+        if (!key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
+          continue;
+        }
+        this.applyRuntimeCellToStore(jupyterRuntimeCellIdFromKey(key));
+      }
+    }
+    for (const key of this.pendingRuntimeRecords.keys()) {
+      if (!key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
+        continue;
+      }
+      this.applyRuntimeCellToStore(jupyterRuntimeCellIdFromKey(key));
+    }
+  };
+
+  private getRuntimeCell = (id: string): JupyterRuntimeCellState | undefined => {
+    if (!id) {
+      return;
+    }
+    return this.getRuntimeRecord<JupyterRuntimeCellState>(jupyterRuntimeCellKey(id));
+  };
+
+  private withRuntimeCell = (id: string, cell: immutable.Map<string, any>) => {
+    let result = cell.remove("state").remove("start").remove("end").remove("done");
+    const runtimeCell = this.getRuntimeCell(id);
+    if (runtimeCell == null) {
+      return result;
+    }
+    for (const key of ["state", "start", "end"] as const) {
+      const value = runtimeCell[key];
+      if (value == null) {
+        result = result.remove(key);
+      } else {
+        result = result.set(key, value);
+      }
+    }
+    return result;
+  };
+
+  private withPersistentCellMetadata = (
+    cell: immutable.Map<string, any>,
+  ): immutable.Map<string, any> => {
+    const persisted = normalizeLastRuntimeMs(getCellMetadataLastRuntimeMs(cell));
+    const legacy = normalizeLastRuntimeMs(cell.get("last"));
+    const last = persisted ?? legacy;
+    if (last == null) {
+      return cell.remove("last");
+    }
+    if (cell.get("last") === last) {
+      return cell;
+    }
+    return cell.set("last", last);
+  };
+
+  private applyRuntimeCellToStore = (id?: string) => {
+    if (!id) {
+      return;
+    }
+    const cells: immutable.Map<string, immutable.Map<string, any>> =
+      this.store.get("cells");
+    if (cells == null) {
+      return;
+    }
+    const cell = cells.get(id);
+    if (cell == null) {
+      return;
+    }
+    const next = this.withRuntimeCell(id, cell);
+    if (next.equals(cell)) {
+      return;
+    }
+    this.setState({ cells: cells.set(id, next) });
+    this.store.emit("cell_change", id, next, cell);
+  };
+
+  private flushPendingRuntimeRecords = () => {
+    if (this.runtimeState == null || this.pendingRuntimeRecords.size === 0) {
+      return;
+    }
+    for (const [key, value] of this.pendingRuntimeRecords.entries()) {
+      this.runtimeState.set(key, value);
+    }
+    this.pendingRuntimeRecords.clear();
+  };
+
+  private clear_all_runtime_cell_state = () => {
+    if (this.runtimeState != null) {
+      for (const key of Object.keys(this.runtimeState.getAll())) {
+        if (key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
+          this.runtimeState.delete(key);
+        }
+      }
+    }
+    for (const key of [...this.pendingRuntimeRecords.keys()]) {
+      if (key.startsWith(JUPYTER_RUNTIME_CELL_KEY_PREFIX)) {
+        this.pendingRuntimeRecords.delete(key);
+      }
+    }
+  };
+
+  private applyRuntimeSettingsToStore = (): void => {
+    const runtimeSettings =
+      this.getRuntimeRecord<JupyterRuntimeSettings>(
+        JUPYTER_RUNTIME_SETTINGS_KEY,
+      ) ?? {};
+    const obj: Partial<JupyterRuntimeSettings> = {};
+    for (const key of [
+      "backend_state",
+      "kernel_state",
+      "last_backend_state",
+      "kernel_error",
+    ] as const) {
+      if (runtimeSettings[key] !== undefined) {
+        (obj as any)[key] = runtimeSettings[key];
+      }
+    }
+    if (misc.len(obj) == 0) {
+      return;
+    }
+    const prev_backend_state = this.store.get("backend_state");
+    this.setState(obj);
+    if (
+      !this.is_project &&
+      obj.backend_state === "running" &&
+      prev_backend_state !== "running"
+    ) {
+      this.set_cm_options();
+    }
+  };
+
+  private applyRuntimeNbconvertToStore = (): void => {
+    const runtimeNbconvert = this.getRuntimeRecord<JupyterRuntimeNbconvert>(
+      JUPYTER_RUNTIME_NBCONVERT_KEY,
+    );
+    if (runtimeNbconvert == null) {
+      return;
+    }
+    const currentState = this.store.getIn(["nbconvert", "state"]);
+    if (
+      this.is_project &&
+      runtimeNbconvert.state === "start" &&
+      currentState !== "start"
+    ) {
+      this.handle_nbconvert_change(
+        this.store.get("nbconvert"),
+        immutable.fromJS(runtimeNbconvert),
+      );
+    }
+    this.setState({ nbconvert: immutable.fromJS(runtimeNbconvert) });
+  };
+
+  public set_runtime_settings = (settings: JupyterRuntimeSettings): void => {
+    this.patchRuntimeRecord(JUPYTER_RUNTIME_SETTINGS_KEY, settings);
+    this.applyRuntimeSettingsToStore();
+  };
+
+  public get_runtime_setting = <K extends keyof JupyterRuntimeSettings>(
+    key: K,
+  ): JupyterRuntimeSettings[K] | undefined => {
+    const runtimeSettings = this.getRuntimeRecord<JupyterRuntimeSettings>(
+      JUPYTER_RUNTIME_SETTINGS_KEY,
+    );
+    if (runtimeSettings?.[key] !== undefined) {
+      return runtimeSettings[key];
+    }
+    return undefined;
+  };
+
+  public set_runtime_nbconvert = (nbconvert: JupyterRuntimeNbconvert): void => {
+    this.setRuntimeRecord(JUPYTER_RUNTIME_NBCONVERT_KEY, nbconvert);
+    this.applyRuntimeNbconvertToStore();
+  };
+
+  public get_runtime_nbconvert = (): JupyterRuntimeNbconvert | undefined => {
+    const runtimeNbconvert = this.getRuntimeRecord<JupyterRuntimeNbconvert>(
+      JUPYTER_RUNTIME_NBCONVERT_KEY,
+    );
+    if (runtimeNbconvert != null) {
+      return runtimeNbconvert;
+    }
+    return undefined;
+  };
+
+  public set_runtime_limits = (limits: JupyterRuntimeLimits): void => {
+    this.setRuntimeRecord(JUPYTER_RUNTIME_LIMITS_KEY, limits);
+  };
+
+  public get_runtime_limits = (): JupyterRuntimeLimits | undefined => {
+    const runtimeLimits = this.getRuntimeRecord<JupyterRuntimeLimits>(
+      JUPYTER_RUNTIME_LIMITS_KEY,
+    );
+    if (runtimeLimits != null) {
+      return runtimeLimits;
+    }
+    return undefined;
+  };
+
+  public set_runtime_user_state = (state: {
+    id?: number;
+    time?: number;
+  }): void => {
+    this.setRuntimeRecord(JUPYTER_RUNTIME_USER_KEY, state);
+  };
+
+  public set_runtime_cell_state = (
+    id: string,
+    patch: JupyterRuntimeCellState,
+  ): void => {
+    if (!id) {
+      return;
+    }
+    const key = jupyterRuntimeCellKey(id);
+    const cur = this.getRuntimeRecord<JupyterRuntimeCellState>(key) ?? {};
+    const next: JupyterRuntimeCellState = { ...cur, ...patch };
+    for (const key of ["state", "start", "end"] as const) {
+      if (next[key] == null) {
+        delete next[key];
+      }
+    }
+    const isEmpty =
+      next.state === undefined &&
+      next.start === undefined &&
+      next.end === undefined;
+    if (isEmpty) {
+      this.deleteRuntimeRecord(key);
+    } else {
+      this.setRuntimeRecord(key, next);
+    }
+    this.applyRuntimeCellToStore(id);
+  };
+
+  public clear_runtime_cell_state = (id: string): void => {
+    if (!id) {
+      return;
+    }
+    this.deleteRuntimeRecord(jupyterRuntimeCellKey(id));
+    this.applyRuntimeCellToStore(id);
+  };
 
   // Only use this on the frontend, of course.
   protected getFrameActions() {
@@ -195,6 +606,12 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         return;
       }
       this.syncdb?.close();
+      if (this.runtimeState != null) {
+        this.runtimeState.removeListener("change", this.runtimeStateChange);
+        void this.runtimeState.close();
+        delete this.runtimeState;
+      }
+      this.pendingRuntimeRecords.clear();
       this._file_watcher?.close();
       if (this.is_project) {
         this.close_project_only();
@@ -255,11 +672,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         type: "cell",
         id,
         input,
-        start: null,
-        end: null,
       },
       save,
     );
+    this.set_runtime_cell_state(id, { state: undefined, start: null, end: null });
   }
 
   set_cell_output = (id: string, output: any, save = true) => {
@@ -278,9 +694,23 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     if (cell == null) {
       return;
     }
+    const runtimeCell = this.getRuntimeCell(id);
+    if (Object.prototype.hasOwnProperty.call(cell, "last")) {
+      cell.metadata = patchCellMetadataWithLastRuntime(cell.metadata, cell.last);
+    }
     cell.id = newId;
+    delete cell.last;
+    delete cell.state;
+    delete cell.start;
+    delete cell.end;
+    delete cell.done;
     this.syncdb.delete({ type: "cell", id });
     this.syncdb.set(cell);
+    if (runtimeCell != null) {
+      this.deleteRuntimeRecord(jupyterRuntimeCellKey(id));
+      this.setRuntimeRecord(jupyterRuntimeCellKey(newId), runtimeCell);
+      this.applyRuntimeCellToStore(newId);
+    }
     if (save) {
       this.syncdb.commit();
     }
@@ -471,6 +901,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     let old_cell = cells.get(id);
     if (new_cell == null) {
       // delete cell
+      this.deleteRuntimeRecord(jupyterRuntimeCellKey(id));
       this.reset_more_output(id); // free up memory locally
       if (old_cell != null) {
         const cell_list = this.store.get_cell_list().filter((x) => x !== id);
@@ -479,12 +910,18 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     } else {
       // change or add cell
       old_cell = cells.get(id);
+      new_cell = this.withPersistentCellMetadata(new_cell);
+      new_cell = this.withRuntimeCell(id, new_cell);
       if (new_cell.equals(old_cell)) {
         return false; // nothing to do
       }
+      const newStart = new_cell.get("start");
+      const oldStart = old_cell?.get("start");
       if (
         old_cell != null &&
-        new_cell.get("start") > old_cell.get("start") &&
+        typeof newStart === "number" &&
+        typeof oldStart === "number" &&
+        newStart > oldStart &&
         !this.is_project
       ) {
         // cell re-evaluated so any more output is no longer valid -- clear frontend state
@@ -540,13 +977,16 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
       // this.syncdb.get() returns an immutable.List of all the records
       // in the syncdb database.   These look like, e.g.,
-      //    {type: "settings", backend_state: "running", trust: true, kernel: "python3", …}
-      //    {type: "cell", id: "22cc3e", pos: 0, input: "# small copy", state: "done"}
+      //    {type: "settings", trust: true, kernel: "python3", metadata: {...}}
+      //    {type: "cell", id: "22cc3e", pos: 0, input: "# small copy", output: {...}}
       let cells: immutable.Map<string, Cell> = immutable.Map();
       this.syncdb.get().forEach((record) => {
         switch (record.get("type")) {
           case "cell":
-            cells = cells.set(record.get("id"), record);
+            cells = cells.set(
+              record.get("id"),
+              this.withPersistentCellMetadata(record),
+            );
             break;
           case "settings":
             if (record == null) {
@@ -554,11 +994,18 @@ export class JupyterActions extends Actions<JupyterStoreState> {
             }
             const orig_kernel = this.store.get("kernel");
             const kernel = record.get("kernel");
+            const runtimeBackendState =
+              this.get_runtime_setting("backend_state");
+            const runtimeLastBackendState =
+              this.get_runtime_setting("last_backend_state");
+            const runtimeKernelState = this.get_runtime_setting("kernel_state");
+            const runtimeKernelError = this.get_runtime_setting("kernel_error");
             const obj: any = {
               trust: !!record.get("trust"), // case to boolean
-              backend_state: record.get("backend_state"),
-              last_backend_state: record.get("last_backend_state"),
-              kernel_state: record.get("kernel_state"),
+              backend_state: runtimeBackendState,
+              last_backend_state: runtimeLastBackendState,
+              kernel_state: runtimeKernelState,
+              kernel_error: runtimeKernelError,
               metadata: record.get("metadata"), // extra custom user-specified metadata
               max_output_length: bounded_integer(
                 record.get("max_output_length"),
@@ -593,41 +1040,24 @@ export class JupyterActions extends Actions<JupyterStoreState> {
               cell_list_needs_recompute = true;
             }
             break;
-          case "fatal":
-            const error = record != null ? record.get("error") : undefined;
-            this.setState({ fatal: error });
-            // This check can be deleted in a few weeks:
-            if (
-              error != null &&
-              error.indexOf("file is currently being read or written") !== -1
-            ) {
-              // No longer relevant -- see https://github.com/sagemathinc/cocalc/issues/1742
-              this.syncdb.delete({ type: "fatal" });
-              this.syncdb.commit();
-            }
-            break;
-
-          case "nbconvert":
-            if (this.is_project) {
-              // before setting in store, let backend start reacting to change
-              this.handle_nbconvert_change(this.store.get("nbconvert"), record);
-            }
-            // Now set in our store.
-            this.setState({ nbconvert: record });
-            break;
-
           case "settings":
             if (record == null) {
               return;
             }
             const orig_kernel = this.store.get("kernel", null);
             const kernel = record.get("kernel");
+            const runtimeBackendState =
+              this.get_runtime_setting("backend_state");
+            const runtimeLastBackendState =
+              this.get_runtime_setting("last_backend_state");
+            const runtimeKernelState = this.get_runtime_setting("kernel_state");
+            const runtimeKernelError = this.get_runtime_setting("kernel_error");
             const obj: any = {
               trust: !!record.get("trust"), // case to boolean
-              backend_state: record.get("backend_state"),
-              last_backend_state: record.get("last_backend_state"),
-              kernel_state: record.get("kernel_state"),
-              kernel_error: record.get("kernel_error"),
+              backend_state: runtimeBackendState,
+              last_backend_state: runtimeLastBackendState,
+              kernel_state: runtimeKernelState,
+              kernel_error: runtimeKernelError,
               metadata: record.get("metadata"), // extra custom user-specified metadata
               max_output_length: bounded_integer(
                 record.get("max_output_length"),
@@ -649,7 +1079,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
               // heuristic sets the values and we end up with "C" formatting for custom python kernels.
               // @see https://github.com/sagemathinc/cocalc/issues/5478
               const started_running =
-                record.get("backend_state") === "running" &&
+                obj.backend_state === "running" &&
                 prev_backend_state !== "running";
               if (orig_kernel !== kernel || started_running) {
                 this.set_cm_options();
@@ -661,6 +1091,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     }
     if (cell_list_needs_recompute) {
       this.set_cell_list();
+    }
+    if (doInit) {
+      this.applyRuntimeStateSnapshot();
     }
 
     this.__syncdb_change_post_hook(doInit);
@@ -705,6 +1138,28 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         }
       }
     }
+    if (obj.type === "cell" && obj.id != null) {
+      obj = { ...obj };
+      if (Object.prototype.hasOwnProperty.call(obj, "last")) {
+        obj.metadata = patchCellMetadataWithLastRuntime(obj.metadata, obj.last);
+        delete obj.last;
+      }
+      const runtimePatch: JupyterRuntimeCellState = {};
+      let hasRuntimePatch = false;
+      for (const key of ["state", "start", "end"] as const) {
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+          runtimePatch[key] = obj[key];
+          delete obj[key];
+          hasRuntimePatch = true;
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(obj, "done")) {
+        delete obj.done;
+      }
+      if (hasRuntimePatch) {
+        this.set_runtime_cell_state(obj.id, runtimePatch);
+      }
+    }
     this.syncdb.set(obj);
     if (save) {
       this.syncdb.commit();
@@ -727,6 +1182,9 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       }
     }
     this.syncdb.delete(obj);
+    if (obj.type === "cell" && obj.id != null) {
+      this.deleteRuntimeRecord(jupyterRuntimeCellKey(obj.id));
+    }
     if (save) {
       this.syncdb.commit();
     }
@@ -868,9 +1326,6 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       {
         type: "cell",
         id,
-        state: null,
-        start: null,
-        end: null,
         last:
           cell?.get("start") != null && cell?.get("end") != null
             ? cell?.get("end") - cell?.get("start")
@@ -881,6 +1336,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       },
       save,
     );
+    this.clear_runtime_cell_state(id);
   };
 
   runCells(_ids: string[], _opts?: { noHalt?: boolean }): Promise<void> {
@@ -906,14 +1362,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
     for (const id of store.get_cell_list()) {
       const state = cells.getIn([id, "state"]);
       if (state && state != "done") {
-        this._set(
-          {
-            type: "cell",
-            id,
-            state: "done",
-          },
-          false,
-        );
+        this.set_runtime_cell_state(id, { state: "done", end: Date.now() });
       }
     }
     this.save_asap();
@@ -1026,11 +1475,10 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         id: cell_id,
         input,
         output: output != null ? output : null,
-        start: null,
-        end: null,
       },
       save,
     );
+    this.set_runtime_cell_state(cell_id, { state: undefined, start: null, end: null });
   }
 
   // Merge the given cells into one cell, which replaces
@@ -1742,8 +2190,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
   }
 
   set_kernel_error = (err) => {
-    this._set({
-      type: "settings",
+    this.set_runtime_settings({
       kernel_error: `${err}`,
     });
     this.save_asap();
@@ -2036,16 +2483,22 @@ export class JupyterActions extends Actions<JupyterStoreState> {
         // clear the more output handler (only on backend)
       }
       // We delete all of the cells.
-      // We do NOT delete everything, namely the last_loaded and
-      // the settings entry in the database, because that would
-      // throw away important information, e.g., the current kernel
-      // and its state.  NOTe: Some of that extra info *should* be
-      // moved to a different ephemeral table, but I haven't got
-      // around to doing so.
+      // We do NOT delete everything, namely settings records that
+      // correspond directly to notebook/ipynb data (kernel/trust/metadata).
+      // Runtime-only state lives in the ephemeral runtime table.
       this.syncdb.delete({ type: "cell" });
+      this.clear_all_runtime_cell_state();
       // preserve trust state across file updates/loads
       trust = this.store.get("trust");
       set = (obj) => {
+        if (
+          obj?.type === "cell" &&
+          Object.prototype.hasOwnProperty.call(obj, "last")
+        ) {
+          obj = { ...obj };
+          obj.metadata = patchCellMetadataWithLastRuntime(obj.metadata, obj.last);
+          delete obj.last;
+        }
         this.syncdb.set(obj);
       };
     }

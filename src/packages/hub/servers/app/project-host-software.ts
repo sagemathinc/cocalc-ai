@@ -67,8 +67,22 @@ function resolveBundlePath(
     return existsSync(file) ? file : undefined;
   }
   if (!arch) return undefined;
-  const file = join(packagesRoot, "project", "build", `tools-${os}-${arch}.tar.xz`);
-  return existsSync(file) ? file : undefined;
+  const archAliases =
+    arch === "amd64"
+      ? ["amd64", "x64"]
+      : arch === "arm64"
+        ? ["arm64", "aarch64"]
+        : [arch];
+  const candidates: string[] = [];
+  for (const a of archAliases) {
+    candidates.push(`tools-${os}-${a}.tar.xz`);
+    candidates.push(`tools-minimal-${os}-${a}.tar.xz`);
+  }
+  for (const name of candidates) {
+    const file = join(packagesRoot, "project", "build", name);
+    if (existsSync(file)) return file;
+  }
+  return undefined;
 }
 
 function resolveBootstrapPath(packagesRoot: string): string | undefined {

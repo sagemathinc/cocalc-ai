@@ -47,6 +47,12 @@ const cm: EditorDescription = {
     "build",
     "build_on_save",
     "settings",
+    "toggle_minimap",
+    "show_minimap",
+    "hide_minimap",
+    "increase_minimap_width",
+    "decrease_minimap_width",
+    "minimap_settings",
   ]),
   buttons: set([
     "format-ai_formula",

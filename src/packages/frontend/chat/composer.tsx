@@ -41,9 +41,11 @@ export interface ChatRoomComposerProps {
   input: string;
   setInput: (value: string, sessionToken?: number) => void;
   on_send: (value?: string) => void;
+  on_send_immediately?: (value?: string) => void;
   submitMentionsRef: MutableRefObject<SubmitMentionsFn | undefined>;
   hasInput: boolean;
   isSelectedThreadAI: boolean;
+  hasActiveAcpTurn?: boolean;
   combinedFeedSelected: boolean;
   composerTargetKey: string | null;
   threads: ThreadMeta[];
@@ -64,9 +66,11 @@ export function ChatRoomComposer({
   input,
   setInput,
   on_send,
+  on_send_immediately,
   submitMentionsRef,
   hasInput,
   isSelectedThreadAI,
+  hasActiveAcpTurn = false,
   combinedFeedSelected,
   composerTargetKey,
   threads,
@@ -279,6 +283,22 @@ export function ChatRoomComposer({
       }
     },
     [input, isZenMode, on_send, toggleZenMode],
+  );
+
+  const handleSendImmediately = useCallback(
+    (value?: string | { preventDefault?: () => void }) => {
+      const effective = typeof value === "string" ? value : input;
+      if (!effective || !effective.trim()) return;
+      if (on_send_immediately) {
+        on_send_immediately(effective);
+      } else {
+        on_send(effective);
+      }
+      if (isZenMode) {
+        void toggleZenMode();
+      }
+    },
+    [input, isZenMode, on_send, on_send_immediately, toggleZenMode],
   );
 
   const composerStyle: CSSProperties = {
@@ -494,24 +514,53 @@ export function ChatRoomComposer({
             </Tooltip>
             <Tooltip
               title={
-                <FormattedMessage
-                  id="chatroom.chat_input.send_button.tooltip"
-                  defaultMessage={"Send message (shift+enter)"}
-                />
+                hasActiveAcpTurn && isSelectedThreadAI ? (
+                  <FormattedMessage
+                    id="chatroom.chat_input.queue_button.tooltip"
+                    defaultMessage={"Queue after current Codex turn (shift+enter)"}
+                  />
+                ) : (
+                  <FormattedMessage
+                    id="chatroom.chat_input.send_button.tooltip"
+                    defaultMessage={"Send message (shift+enter)"}
+                  />
+                )
               }
             >
               <Button
                 onClick={handleSend}
                 disabled={!hasInput}
-                type="primary"
+                type={hasActiveAcpTurn && isSelectedThreadAI ? "default" : "primary"}
                 icon={<Icon name="paper-plane" />}
               >
-                <FormattedMessage
-                  id="chatroom.chat_input.send_button.label"
-                  defaultMessage={"Send"}
-                />
+                {hasActiveAcpTurn && isSelectedThreadAI ? (
+                  <FormattedMessage
+                    id="chatroom.chat_input.queue_button.label"
+                    defaultMessage={"Queue"}
+                  />
+                ) : (
+                  <FormattedMessage
+                    id="chatroom.chat_input.send_button.label"
+                    defaultMessage={"Send"}
+                  />
+                )}
               </Button>
             </Tooltip>
+            {hasActiveAcpTurn && isSelectedThreadAI ? (
+              <>
+                <div style={{ height: "5px" }} />
+                <Tooltip title="Interrupt the current Codex turn and send now">
+                  <Button
+                    onClick={handleSendImmediately}
+                    disabled={!hasInput}
+                    type="primary"
+                    icon={<Icon name="bolt" />}
+                  >
+                    Send Immediately
+                  </Button>
+                </Tooltip>
+              </>
+            ) : null}
           </>
         )}
       </div>

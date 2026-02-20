@@ -79,6 +79,7 @@ import { DiffMatchPatch, decompressPatch } from "@cocalc/util/dmp";
 import { mark_open_phase } from "@cocalc/frontend/project/open-file";
 import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
 import { IPynbImporter } from "@cocalc/jupyter/ipynb/import-from-ipynb";
+import { decideInitialWatchSource } from "./watch-policy";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -152,6 +153,7 @@ export class JupyterActions extends JupyterActions0 {
     const pendingSize = this.store?.get("pendingCells")?.size ?? 0;
     const payload = {
       t: new Date().toISOString(),
+      perfNow: typeof performance !== "undefined" ? performance.now() : undefined,
       path: this.path,
       runningNow: this.runningNow,
       runQueue: this.runQueue.length,
@@ -357,12 +359,14 @@ export class JupyterActions extends JupyterActions0 {
         ipywidgets_state: ipywidgets_state!,
         actions: this,
       });
-      // Stupid hack for now -- this just causes some activity so
-      // that the syncdb syncs.
-      // This should not be necessary, and may indicate a bug in the sync layer?
-      // id has to be set here since it is a primary key
-      this.syncdb.set({ type: "user", id: 0, time: Date.now() });
-      this.syncdb.commit();
+      const rtcLastChangedMsAtReady = this.getRtcLastChangedMs();
+
+      // Start watch/bootstrap decision before local user heartbeat writes a
+      // metadata-only patch, which would otherwise make RTC appear spuriously
+      // "newer than disk" at open time.
+      this.watchIpynb(rtcLastChangedMsAtReady);
+
+      this.set_runtime_user_state({ id: 0, time: Date.now() });
 
       // If using nbgrader ensure document is fully updated.
       if (this.store.get("cell_toolbar") == "create_assignment") {
@@ -371,7 +375,6 @@ export class JupyterActions extends JupyterActions0 {
         // cell notebook that has nothing to do with nbgrader).
         this.nbgrader_actions.update_metadata();
       }
-      this.watchIpynb();
       this.refreshKernelStatus();
     };
 
@@ -860,13 +863,11 @@ export class JupyterActions extends JupyterActions0 {
       return;
     }
 
-    this.syncdb.set({
-      type: "nbconvert",
+    this.set_runtime_nbconvert({
       args,
       state: "start",
       error: null,
     });
-    this.syncdb.commit();
   }
 
   public show_about(): void {
@@ -1634,24 +1635,35 @@ export class JupyterActions extends JupyterActions0 {
     await api.stop(this.syncdbPath);
   };
 
-  private getOutputHandler = (cell) => {
+  private getOutputHandler = (cell, runId?: string) => {
     const handler = new OutputHandler({ cell });
 
-    // save first time, so that other clients know this cell is running.
     // Under heavy output we throttle updates, but on "done" we force an
     // immediate flush to avoid leaving the cell in a stale running state.
-    let first = true;
+    // The first visible output update is written immediately (local only)
+    // so the initiating browser sees feedback without waiting for throttle.
+    let wroteFirstChange = false;
     const writeCell = (save: boolean) => {
       // we ONLY set certain fields; e.g., setting the input would be
       // extremely annoying since the user can edit the input while the
       // cell is running.
       const { id, state, output, start, end, exec_count } = cell;
-      this._set({ id, state, output, start, end, exec_count }, save);
-      first = false;
+      this.set_runtime_cell_state(id, { state, start, end });
+      const patch: any = { type: "cell", id, output, exec_count };
+      if (
+        typeof start === "number" &&
+        Number.isFinite(start) &&
+        typeof end === "number" &&
+        Number.isFinite(end) &&
+        end >= start
+      ) {
+        patch.last = Math.round(end - start);
+      }
+      this._set(patch, save);
     };
     const writeCellThrottled = throttle(
       () => {
-        writeCell(first);
+        writeCell(false);
       },
       1000 / OUTPUT_FPS,
       {
@@ -1659,11 +1671,24 @@ export class JupyterActions extends JupyterActions0 {
         trailing: true,
       },
     );
-    handler.on("change", writeCellThrottled);
+    handler.on("change", (save?: boolean) => {
+      if (!wroteFirstChange) {
+        wroteFirstChange = true;
+        this.runDebug("runCells.output.first_write", {
+          runId,
+          id: cell.id,
+          save: !!save,
+        });
+        writeCell(!!save);
+        return;
+      }
+      writeCellThrottled();
+    });
     handler.on("done", () => {
       writeCellThrottled.flush();
       writeCell(true);
       this.runDebug("runCells.handler.done.flush", {
+        runId,
         id: cell.id,
         state: cell.state,
       });
@@ -1681,6 +1706,7 @@ export class JupyterActions extends JupyterActions0 {
     }
     this.store.setState({ pendingCells });
     this.runDebug("pending.add", { ids });
+    this.setQueuedCellState(ids);
 
     // to avoid ugly flicker, we don't clear output until
     // waiting a little while first (since often the output
@@ -1713,8 +1739,39 @@ export class JupyterActions extends JupyterActions0 {
     this.runDebug("pending.delete", { ids });
   };
 
+  private setQueuedCellState = (ids: string[]) => {
+    const cells = this.store.get("cells");
+    if (cells == null) {
+      return;
+    }
+    for (const id of ids) {
+      const state = cells.getIn([id, "state"]);
+      if (state === "busy" || state === "run") {
+        continue;
+      }
+      this.set_runtime_cell_state(id, { state: "run", start: null, end: null });
+    }
+  };
+
+  private clearQueuedCellState = (ids: string[]) => {
+    const cells = this.store.get("cells");
+    if (cells == null) {
+      return;
+    }
+    for (const id of ids) {
+      if (cells.getIn([id, "state"]) !== "run") {
+        continue;
+      }
+      this.set_runtime_cell_state(id, { state: "done", end: Date.now() });
+    }
+  };
+
   // uses inheritence so NOT arrow function
   protected clearRunQueue() {
+    const pending = this.store?.get("pendingCells");
+    if (pending != null && pending.size > 0) {
+      this.clearQueuedCellState(pending.toArray());
+    }
     this.runDebug("runQueue.clear", {
       queuedRuns: this.runQueue.length,
     });
@@ -1766,6 +1823,41 @@ export class JupyterActions extends JupyterActions0 {
 
   private runQueue: any[] = [];
   private runningNow = false;
+  private toPlainJs = (value: any) => {
+    if (value != null && typeof value.toJS == "function") {
+      return value.toJS();
+    }
+    return value;
+  };
+
+  private outputMessageCount = (output: any): number => {
+    if (output == null) {
+      return 0;
+    }
+    if (typeof output.size == "number") {
+      return output.size;
+    }
+    return Object.keys(output).length;
+  };
+
+  private outputPreviewFirstMessage = (output: any): { [n: string]: any } => {
+    if (output == null) {
+      return {};
+    }
+    if (typeof output.get == "function") {
+      const first = output.get("0") ?? output.get(0);
+      if (first == null) {
+        return {};
+      }
+      return { "0": this.toPlainJs(first) };
+    }
+    const first = output["0"] ?? output[0];
+    if (first == null) {
+      return {};
+    }
+    return { "0": first };
+  };
+
   runCells = async (
     ids: string[],
     opts: { noHalt?: boolean; limit?: number } = {},
@@ -1801,38 +1893,48 @@ export class JupyterActions extends JupyterActions0 {
 
       this.clearMoreOutput(ids);
       for (const id of ids) {
-        const cell = this.store.getIn(["cells", id])?.toJS() as InputCell;
-        if ((cell?.cell_type ?? "code") != "code") {
+        const cellMap = this.store.getIn(["cells", id]);
+        if (cellMap == null) {
+          continue;
+        }
+        if ((cellMap.get("cell_type") ?? "code") != "code") {
           // code is the default type
           continue;
         }
-        const last = cell.start && cell.end ? cell.end - cell.start : null;
-        if (!cell?.input?.trim()) {
+        const input = `${cellMap.get("input") ?? ""}`;
+        const start = cellMap.get("start");
+        const end = cellMap.get("end");
+        const last = start && end ? end - start : null;
+        const output = cellMap.get("output");
+        const outputCount = this.outputMessageCount(output);
+        if (!input.trim()) {
           // nothing to do but clear output
-          this._set({ id: cell.id, last, output: null });
+          this._set({ type: "cell", id, last, output: null });
           this.runDebug("runCells.cell.skip.empty_input", { runId, id });
 
           continue;
         }
         if (!kernel) {
-          this._set({ type: "cell", id, state: "done" });
+          this.set_runtime_cell_state(id, { state: "done", end: Date.now() });
           this.runDebug("runCells.cell.skip.no_kernel", { runId, id });
           continue;
         }
-        if (cell.output) {
+        if (outputCount > 0) {
+          const previewOutput = this.outputPreviewFirstMessage(output);
           // trick to avoid flicker
-          for (const n in cell.output) {
-            if (n == "0") continue;
-            cell.output[n] = null;
-          }
           // time last evaluation took
-          this._set({ id: cell.id, last, output: cell.output }, false);
+          this._set({ type: "cell", id, last, output: previewOutput }, false);
         }
+        const cell: InputCell & { pos?: number } = {
+          id,
+          input,
+          pos: cellMap.get("pos"),
+        };
         this.runDebug("runCells.cell.enqueue", {
           runId,
           id,
-          inputLen: cell.input?.length ?? 0,
-          outputCount: Object.keys(cell.output ?? {}).length,
+          inputLen: input.length,
+          outputCount,
         });
         cells.push(cell);
       }
@@ -1855,7 +1957,12 @@ export class JupyterActions extends JupyterActions0 {
         });
         return;
       }
-      const runner = await client.run(cells, { ...opts, limit, run_id: runId });
+      const runner = await client.run(cells, {
+        ...opts,
+        limit,
+        run_id: runId,
+        waitForAck: false,
+      });
       runnerStartedAt = Date.now();
       this.runDebug("runCells.runner.start", {
         runId,
@@ -1907,7 +2014,7 @@ export class JupyterActions extends JupyterActions0 {
             }
             cell.kernel = kernel;
             handler?.done();
-            handler = this.getOutputHandler(cell);
+            handler = this.getOutputHandler(cell, runId);
             this.runDebug("runCells.handler.switch", {
               runId,
               id,
@@ -2012,23 +2119,18 @@ export class JupyterActions extends JupyterActions0 {
       backend_state: BackendState;
       kernel_state: KernelState;
     };
-    this.syncdb.set({
-      type: "settings",
+    this.set_runtime_settings({
       backend_state: kernelStatus.backend_state,
       kernel_state: kernelStatus.kernel_state,
     });
-    this.syncdb.commit();
   };
 
   getMessageLimit = () => {
-    return (
-      this.syncdb.get_one({ type: "limits" })?.get("limit") ??
-      DEFAULT_OUTPUT_MESSAGE_LIMIT
-    );
+    return this.get_runtime_limits()?.limit ?? DEFAULT_OUTPUT_MESSAGE_LIMIT;
   };
 
   setMessageLimit = (limit: number) => {
-    this.syncdb.set({ type: "limits", limit });
+    this.set_runtime_limits({ limit });
   };
 
   private clearMoreOutput = (ids: string[]) => {
@@ -2320,10 +2422,9 @@ export class JupyterActions extends JupyterActions0 {
     await this.signal("SIGKILL");
     // Wait a little, since SIGKILL has to really happen on backend,
     // and server has to respond and change state.
-    const not_running = (s): boolean => {
+    const not_running = (): boolean => {
       if (this._state === "closed") return true;
-      const t = s.get_one({ type: "settings" });
-      return t != null && t.get("backend_state") != "running";
+      return this.get_runtime_setting("backend_state") != "running";
     };
     try {
       await this.syncdb.wait(not_running, 30);
@@ -2453,26 +2554,79 @@ export class JupyterActions extends JupyterActions0 {
   // and it seems to work very well.  After writing some more
   // tests, I should refactor it into a separate module that both use.
   private fileWatcher?: WatchIterator;
-  watchIpynb = async () => {
+  private getRtcLastChangedMs = (): number | undefined => {
+    try {
+      const value = this.syncdb?.last_changed?.();
+      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        return;
+      }
+      return value;
+    } catch {
+      return;
+    }
+  };
+
+  private getDiskMtimeMs = async (): Promise<number | undefined> => {
+    try {
+      const stats = await this.syncdb.fs.stat(this.path);
+      const value = (stats as any)?.mtimeMs;
+      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+        return;
+      }
+      return value;
+    } catch {
+      return;
+    }
+  };
+
+  watchIpynb = async (rtcLastChangedMsAtReady?: number) => {
     this.runDebug("watch.start");
     const done = () => this.isClosed();
     if (done()) return;
-    // one initial load right when we open the document
-    await until(
-      async () => {
-        if (this.isClosed()) return true;
-        try {
-          await this.watchLoadFromDisk();
-          this.runDebug("watch.initial_load.done");
-          return true;
-        } catch (err) {
-          this.runDebug("watch.initial_load.failed", { err: `${err}` });
-          console.warn(`Issue watching ipynb file`, err);
-          return false;
-        }
-      },
-      { min: 3000 },
-    );
+    const hasRtcCells = this.syncdb.get_one({ type: "cell" }) != null;
+    const rtcLastChangedMs =
+      typeof rtcLastChangedMsAtReady === "number" &&
+      Number.isFinite(rtcLastChangedMsAtReady) &&
+      rtcLastChangedMsAtReady > 0
+        ? rtcLastChangedMsAtReady
+        : this.getRtcLastChangedMs();
+    const diskMtimeMs = await this.getDiskMtimeMs();
+    const decision = decideInitialWatchSource({
+      hasRtcCells,
+      rtcLastChangedMs,
+      diskMtimeMs,
+    });
+    this.runDebug("watch.initial_load.decision", {
+      hasRtcCells,
+      rtcLastChangedMs,
+      diskMtimeMs,
+      loadFromDisk: decision.loadFromDisk,
+      reason: decision.reason,
+    });
+    if (decision.loadFromDisk) {
+      await until(
+        async () => {
+          if (this.isClosed()) return true;
+          try {
+            await this.watchLoadFromDisk();
+            this.runDebug("watch.initial_load.done");
+            return true;
+          } catch (err) {
+            this.runDebug("watch.initial_load.failed", { err: `${err}` });
+            console.warn(`Issue watching ipynb file`, err);
+            return false;
+          }
+        },
+        { min: 3000 },
+      );
+    } else {
+      this.runDebug("watch.initial_load.skipped", {
+        reason: decision.reason,
+        hasRtcCells,
+        rtcLastChangedMs,
+        diskMtimeMs,
+      });
+    }
     if (done()) return;
     // if no kernel, let use select one:
     this.initKernel();

@@ -18,6 +18,7 @@ import { JupyterActions as JupyterActions0 } from "@cocalc/jupyter/redux/actions
 import { kernel as createJupyterKernel } from "@cocalc/jupyter/kernel";
 import { getLogger } from "@cocalc/backend/logger";
 import { uuid } from "@cocalc/util/misc";
+import handleNbconvertChange from "./handle-nbconvert-change";
 
 const logger = getLogger("jupyter:project-actions");
 
@@ -51,6 +52,14 @@ export class JupyterActions extends JupyterActions0 {
   // not actually async...
   signal = async (signal = "SIGINT"): Promise<void> => {
     this.jupyter_kernel?.signal(signal);
+  };
+
+  handle_nbconvert_change = (oldVal, newVal): void => {
+    const oldValue = oldVal?.toJS != null ? oldVal.toJS() : oldVal;
+    const newValue = newVal?.toJS != null ? newVal.toJS() : newVal;
+    void handleNbconvertChange(this, oldValue, newValue).catch((err) =>
+      logger.debug("handle_nbconvert_change error", err),
+    );
   };
 
   ///////////////////////////

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { promises as fs } from "node:fs";
 
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { JSONValue } from "@cocalc/util/types";
@@ -21,6 +22,7 @@ class FakeSyncDoc extends EventEmitter {
   private readonly versionMap: Map<string, string>;
   private readonly versionList: string[];
   public commitCalls: CommitEntry[] = [];
+  public closeCalls = 0;
 
   constructor(opts: {
     content: string;
@@ -85,6 +87,7 @@ class FakeSyncDoc extends EventEmitter {
   }
 
   close() {
+    this.closeCalls += 1;
     return Promise.resolve();
   }
 }
@@ -123,13 +126,19 @@ describe("AgentTimeTravelRecorder", () => {
   };
 
   const originalHome = process.env.HOME;
+  let statMock: jest.SpyInstance;
 
   beforeEach(() => {
     process.env.HOME = homeRoot;
+    statMock = jest.spyOn(fs, "stat").mockResolvedValue({
+      isFile: () => true,
+      size: 1,
+    } as any);
   });
 
   afterEach(() => {
     process.env.HOME = originalHome;
+    statMock.mockRestore();
   });
 
   it("stores the latest patch id on read", async () => {
@@ -217,5 +226,96 @@ describe("AgentTimeTravelRecorder", () => {
 
     expect(syncDoc.commitCalls).toHaveLength(0);
     await recorder.dispose();
+  });
+
+  it("skips missing files without creating a syncdoc", async () => {
+    const syncFactory = jest.fn(async () =>
+      new FakeSyncDoc({
+        content: "",
+        versions: [],
+        versionMap: new Map(),
+      }),
+    );
+    const { map, store } = makeStore();
+    const recorder = new AgentTimeTravelRecorder({
+      ...baseOptions,
+      readStateStore: store,
+      syncFactory,
+    });
+    statMock.mockRejectedValueOnce(
+      Object.assign(new Error("ENOENT"), { code: "ENOENT" }),
+    );
+
+    await recorder.recordRead("src/missing.txt", turnDate);
+
+    expect(syncFactory).not.toHaveBeenCalled();
+    expect(map.size).toBe(0);
+    await recorder.dispose();
+  });
+
+  it("does not open or retain syncdocs after dispose starts", async () => {
+    let resolveFactory: ((doc: FakeSyncDoc) => void) | undefined;
+    const syncDoc = new FakeSyncDoc({
+      content: "late",
+      versions: ["p1"],
+      versionMap: new Map([["p1", "late"]]),
+    });
+    const syncFactory = jest.fn(
+      async () =>
+        new Promise<FakeSyncDoc>((resolve) => {
+          resolveFactory = resolve;
+        }),
+    );
+    const { store } = makeStore();
+    const recorder = new AgentTimeTravelRecorder({
+      ...baseOptions,
+      readStateStore: store,
+      syncFactory,
+      writeCommitWaitMs: 50,
+    });
+
+    const readPromise = recorder.recordRead("src/file.txt", turnDate);
+    const disposePromise = recorder.dispose();
+    resolveFactory?.(syncDoc);
+    await Promise.all([readPromise, disposePromise]);
+
+    expect(syncFactory.mock.calls.length).toBeLessThanOrEqual(1);
+    if (syncFactory.mock.calls.length > 0) {
+      expect(syncDoc.closeCalls).toBe(1);
+    } else {
+      expect(syncDoc.closeCalls).toBe(0);
+    }
+    expect(recorder.debugStats()).toMatchObject({
+      disposed: true,
+      syncDocs: 0,
+      inflightLoads: 0,
+      pendingOps: 0,
+    });
+  });
+
+  it("ignores reads after dispose", async () => {
+    const syncFactory = jest.fn(async () =>
+      new FakeSyncDoc({
+        content: "",
+        versions: [],
+        versionMap: new Map(),
+      }),
+    );
+    const { store } = makeStore();
+    const recorder = new AgentTimeTravelRecorder({
+      ...baseOptions,
+      readStateStore: store,
+      syncFactory,
+    });
+
+    await recorder.dispose();
+    await recorder.recordRead("src/file.txt", turnDate);
+
+    expect(syncFactory).not.toHaveBeenCalled();
+    expect(recorder.debugStats()).toMatchObject({
+      disposed: true,
+      pendingOps: 0,
+      syncDocs: 0,
+    });
   });
 });

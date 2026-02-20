@@ -39,6 +39,12 @@ const cm: EditorDescription = {
     "undo",
     "redo",
     "reload",
+    "toggle_minimap",
+    "show_minimap",
+    "hide_minimap",
+    "increase_minimap_width",
+    "decrease_minimap_width",
+    "minimap_settings",
   ]),
 } as const;
 

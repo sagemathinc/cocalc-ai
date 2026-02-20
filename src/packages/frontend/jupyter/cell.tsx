@@ -65,9 +65,63 @@ interface Props {
   name?: string;
 }
 
+function shouldLogRenderAudit(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    return window.localStorage?.getItem("jupyter_cell_render_audit") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function getRenderChangeReasons(props: Props, nextProps: Props): string[] {
+  const reasons: string[] = [];
+  if (nextProps.id !== props.id) reasons.push("id");
+  if (nextProps.stdin !== props.stdin) reasons.push("stdin");
+  if (nextProps.index !== props.index) reasons.push("index");
+  if (nextProps.cm_options !== props.cm_options) reasons.push("cm_options");
+  if (nextProps.cell !== props.cell) reasons.push("cell");
+  if (nextProps.is_current !== props.is_current) reasons.push("is_current");
+  if (nextProps.is_selected !== props.is_selected) reasons.push("is_selected");
+  if (nextProps.is_markdown_edit !== props.is_markdown_edit) {
+    reasons.push("is_markdown_edit");
+  }
+  if (nextProps.mode !== props.mode) reasons.push("mode");
+  if (nextProps.font_size !== props.font_size) reasons.push("font_size");
+  if (nextProps.is_focused !== props.is_focused) reasons.push("is_focused");
+  if (nextProps.is_visible !== props.is_visible) reasons.push("is_visible");
+  if (nextProps.more_output !== props.more_output) reasons.push("more_output");
+  if (nextProps.cell_toolbar !== props.cell_toolbar) reasons.push("cell_toolbar");
+  if (nextProps.trust !== props.trust) reasons.push("trust");
+  if (nextProps.is_scrolling !== props.is_scrolling) reasons.push("is_scrolling");
+  if (nextProps.height !== props.height) reasons.push("height");
+  if (nextProps.isFirst !== props.isFirst) reasons.push("isFirst");
+  if (nextProps.isLast !== props.isLast) reasons.push("isLast");
+  if ((nextProps.llmTools?.model ?? "") !== (props.llmTools?.model ?? "")) {
+    reasons.push("llmTools.model");
+  }
+  if (
+    nextProps.complete !== props.complete &&
+    (nextProps.is_current || props.is_current)
+  ) {
+    reasons.push("complete(current)");
+  }
+  if (
+    (nextProps.dragHandle == null) !== (props.dragHandle == null)
+  ) {
+    reasons.push("dragHandle.present");
+  }
+  if (nextProps.read_only !== props.read_only) reasons.push("read_only");
+  if (nextProps.isDragging !== props.isDragging) reasons.push("isDragging");
+  if (nextProps.isPending !== props.isPending) reasons.push("isPending");
+  return reasons;
+}
+
 function areEqual(props: Props, nextProps: Props): boolean {
   // note: we assume project_id and directory don't change
-  return !(
+  const changed =
     nextProps.id !== props.id ||
     nextProps.stdin !== props.stdin ||
     nextProps.index !== props.index ||
@@ -90,11 +144,22 @@ function areEqual(props: Props, nextProps: Props): boolean {
     (nextProps.llmTools?.model ?? "") !== (props.llmTools?.model ?? "") ||
     (nextProps.complete !== props.complete && // only worry about complete when editing this cell
       (nextProps.is_current || props.is_current)) ||
-    nextProps.dragHandle !== props.dragHandle ||
+    // dragHandle is re-created by CellList on each render.  We only care if
+    // presence changes, not reference identity.
+    (nextProps.dragHandle == null) !== (props.dragHandle == null) ||
     nextProps.read_only !== props.read_only ||
     nextProps.isDragging !== props.isDragging ||
-    nextProps.isPending !== props.isPending
-  );
+    nextProps.isPending !== props.isPending;
+
+  if (changed && shouldLogRenderAudit()) {
+    const id = nextProps.id ?? nextProps.cell?.get?.("id") ?? "unknown";
+    console.log("[jupyter-cell-render-audit]", {
+      id,
+      reasons: getRenderChangeReasons(props, nextProps),
+    });
+  }
+
+  return !changed;
 }
 
 export const Cell: React.FC<Props> = React.memo((props: Props) => {

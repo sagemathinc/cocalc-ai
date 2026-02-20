@@ -96,47 +96,70 @@ export async function run({ path, cells, noHalt, socket, run_id }: RunOptions) {
   }
   logger.debug("jupyterRun: running");
   async function* runCells() {
-    for (const cell of cells) {
-      actions.ensureKernelIsReady();
-      const kernel = actions.jupyter_kernel!;
-      const output = kernel.execute_code({
-        halt_on_error: !noHalt,
-        code: cell.input,
-        stdin: async (prompt: string, password: boolean) => {
-          try {
-            const resp = await socket.request(
-              {
-                type: "stdin",
-                id: cell.id,
-                prompt,
-                password,
-              },
-              // timeout
-              { timeout: 1000 * 60 * 15 },
-            );
-            return resp.data;
-          } catch (err) {
-            return `${err}`;
+    const lifecycle = (type: "run_start" | "run_done" | "cell_start" | "cell_done", id?: string) => {
+      return {
+        ...(id != null ? { id } : {}),
+        msg_type: type,
+        lifecycle: type,
+        run_id,
+      };
+    };
+    yield lifecycle("run_start");
+    try {
+      for (const cell of cells) {
+        yield lifecycle("cell_start", cell.id);
+        actions.ensureKernelIsReady();
+        const kernel = actions.jupyter_kernel!;
+        const output = kernel.execute_code({
+          halt_on_error: !noHalt,
+          code: cell.input,
+          stdin: async (prompt: string, password: boolean) => {
+            try {
+              const resp = await socket.request(
+                {
+                  type: "stdin",
+                  id: cell.id,
+                  prompt,
+                  password,
+                },
+                // timeout
+                { timeout: 1000 * 60 * 15 },
+              );
+              return resp.data;
+            } catch (err) {
+              return `${err}`;
+            }
+          },
+        });
+        let haltAfterCell = false;
+        try {
+          for await (const mesg0 of output.iter()) {
+            const content = mesg0?.content;
+            if (content != null) {
+              // this mutates content, removing large base64/svg, etc. images, pdf's, etc.
+              await actions.processOutput(content);
+            }
+            const mesg = { ...mesg0, id: cell.id, run_id };
+            yield mesg;
+            if (!noHalt && mesg.msg_type == "error") {
+              // done running code because there was an error.
+              haltAfterCell = true;
+              break;
+            }
           }
-        },
-      });
-      for await (const mesg0 of output.iter()) {
-        const content = mesg0?.content;
-        if (content != null) {
-          // this mutates content, removing large base64/svg, etc. images, pdf's, etc.
-          await actions.processOutput(content);
+        } finally {
+          yield lifecycle("cell_done", cell.id);
         }
-        const mesg = { ...mesg0, id: cell.id };
-        yield mesg;
-        if (!noHalt && mesg.msg_type == "error") {
-          // done running code because there was an error.
-          return;
+        if (kernel.failedError) {
+          // kernel failed during call
+          throw Error(kernel.failedError);
+        }
+        if (haltAfterCell) {
+          break;
         }
       }
-      if (kernel.failedError) {
-        // kernel failed during call
-        throw Error(kernel.failedError);
-      }
+    } finally {
+      yield lifecycle("run_done");
     }
   }
   return await runCells();
@@ -162,8 +185,9 @@ class MulticellOutputHandler {
       const f = throttle(
         () => {
           const { id, state, output, start, end, exec_count } = cell;
+          this.actions.set_runtime_cell_state(id, { state, start, end });
           this.actions._set(
-            { type: "cell", id, state, output, start, end, exec_count },
+            { type: "cell", id, output, exec_count },
             true,
           );
         },
