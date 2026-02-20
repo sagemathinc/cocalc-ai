@@ -39,6 +39,7 @@ import { debounce } from "lodash";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { close, path_split } from "@cocalc/util/misc";
 import { getLogger } from "./logger";
+import { trackBackendWatcher } from "./watcher-debug";
 
 const logger = getLogger("backend:path-watcher");
 
@@ -78,6 +79,8 @@ export class Watcher extends EventEmitter {
   private exists: boolean;
   private watchContents?;
   private watchExistence?;
+  private closeWatchContentsTracker?: () => void;
+  private closeWatchExistenceTracker?: () => void;
   private debounce_ms: number;
   private debouncedChange: any;
   private log: Function;
@@ -117,7 +120,18 @@ export class Watcher extends EventEmitter {
   }
 
   private initWatchContents(): void {
+    this.closeWatchContentsTracker?.();
     this.watchContents = watch(this.path, ChokidarOpts);
+    this.closeWatchContentsTracker = trackBackendWatcher({
+      source: "backend:path-watcher:contents",
+      type: "chokidar",
+      path: this.path,
+      info: {
+        usePolling: POLLING,
+        interval: DEFAULT_POLL_MS,
+        depth: ChokidarOpts.depth,
+      },
+    });
     this.watchContents.on("all", this.debouncedChange);
     this.watchContents.on("error", (err) => {
       this.log(`error watching listings -- ${err}`);
@@ -126,7 +140,18 @@ export class Watcher extends EventEmitter {
 
   private async initWatchExistence(): Promise<void> {
     const containing_path = path_split(this.path).head;
+    this.closeWatchExistenceTracker?.();
     this.watchExistence = watch(containing_path, ChokidarOpts);
+    this.closeWatchExistenceTracker = trackBackendWatcher({
+      source: "backend:path-watcher:existence",
+      type: "chokidar",
+      path: containing_path,
+      info: {
+        usePolling: POLLING,
+        interval: DEFAULT_POLL_MS,
+        depth: ChokidarOpts.depth,
+      },
+    });
     this.watchExistence.on("all", this.watchExistenceChange);
     this.watchExistence.on("error", (err) => {
       this.log(`error watching for existence of ${this.path} -- ${err}`);
@@ -146,6 +171,8 @@ export class Watcher extends EventEmitter {
       this.exists = e;
       if (this.watchContents != null) {
         this.watchContents.close();
+        this.closeWatchContentsTracker?.();
+        this.closeWatchContentsTracker = undefined;
         delete this.watchContents;
       }
 
@@ -158,6 +185,10 @@ export class Watcher extends EventEmitter {
   };
 
   public close(): void {
+    this.closeWatchExistenceTracker?.();
+    this.closeWatchExistenceTracker = undefined;
+    this.closeWatchContentsTracker?.();
+    this.closeWatchContentsTracker = undefined;
     this.watchExistence?.close();
     this.watchContents?.close();
     close(this);
