@@ -39,8 +39,17 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
   private syncConsoleTimer?: ReturnType<typeof setTimeout>;
   private syncConsoleInFlight = false;
 
+  private static NOTEBOOK_FRAME_TYPES = new Set<string>([
+    // Frame-tree node types are editor-spec keys (not EditorDescription.type).
+    "jupyter_cell_notebook",
+    "jupyter_slate_single_doc_notebook",
+    // Backward compatibility for any stale persisted state.
+    "jupyter-singledoc",
+    "jupyter",
+  ]);
+
   private isNotebookFrameType = (type?: string): boolean => {
-    return type === "jupyter_cell_notebook" || type === "jupyter-singledoc";
+    return type != null && JupyterEditorActions.NOTEBOOK_FRAME_TYPES.has(type);
   };
 
   _raw_default_frame_tree(): FrameTree {
@@ -48,7 +57,7 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
       try {
         const params = new URLSearchParams(window.location.search);
         if (params.get("cocalc-test-jupyter-frame") === "jupyter-singledoc") {
-          return { type: "jupyter-singledoc" };
+          return { type: "jupyter_slate_single_doc_notebook" };
         }
       } catch {
         // fall through to default
@@ -321,7 +330,7 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
     }
     setTimeout(() => {
       if (this.isClosed()) return;
-      this.replace_frame_tree({ type: "jupyter-singledoc" });
+      this.replace_frame_tree({ type: "jupyter_slate_single_doc_notebook" });
     }, 0);
   }
 

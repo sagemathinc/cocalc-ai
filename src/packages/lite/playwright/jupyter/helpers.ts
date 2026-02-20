@@ -265,9 +265,14 @@ export async function openSingleDocNotebookPage(
         activeId != null &&
         typeof actions[bestMatch]?.set_frame_type === "function"
       ) {
-        actions[bestMatch].set_frame_type(activeId, "jupyter-singledoc");
+        actions[bestMatch].set_frame_type(
+          activeId,
+          "jupyter_slate_single_doc_notebook",
+        );
       } else {
-        actions[bestMatch].set_frame_tree({ type: "jupyter-singledoc" });
+        actions[bestMatch].set_frame_tree({
+          type: "jupyter_slate_single_doc_notebook",
+        });
       }
       return { ok: true, mode: "switched", action: bestMatch };
     });
