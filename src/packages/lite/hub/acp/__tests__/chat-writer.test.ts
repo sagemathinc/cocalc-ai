@@ -760,6 +760,13 @@ describe("ChatStreamWriter", () => {
         history: [],
         reply_to: rootIso,
       },
+      {
+        event: "chat-thread-config",
+        sender_id: "__thread_config__",
+        date: rootIso,
+        thread_id: "legacy-thread-100",
+        acp_config: { model: "gpt-5.3-codex" },
+      },
     ];
     const sets: any[] = [];
     const syncdb: any = {

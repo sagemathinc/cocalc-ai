@@ -1136,12 +1136,6 @@ export class ChatStreamWriter {
       if (!Number.isFinite(d.valueOf())) return undefined;
       return d.toISOString();
     };
-    const toMs = (value: unknown): number | undefined => {
-      if (value == null) return undefined;
-      const d = value instanceof Date ? value : new Date(value as any);
-      const ms = d.valueOf();
-      return Number.isFinite(ms) ? ms : undefined;
-    };
     const threadRootIso = normalizeDate(threadRoot);
     if (!threadRootIso) {
       logger.warn("persistSessionId skipped: invalid thread root date", {
@@ -1151,48 +1145,6 @@ export class ChatStreamWriter {
       return;
     }
     try {
-      const threadRootMs = toMs(threadRootIso);
-      let candidates: any[] = [];
-      if (typeof (this.syncdb as any).get === "function") {
-        const rawRows = (this.syncdb as any).get();
-        if (Array.isArray(rawRows)) {
-          candidates = rawRows.filter((row) => {
-            if (this.recordField(row, "event") !== "chat") return false;
-            const ms = toMs(this.recordField(row, "date"));
-            return ms != null && threadRootMs != null && ms === threadRootMs;
-          });
-        }
-      }
-
-      let current =
-        candidates.find((row) => {
-          const reply_to = this.recordField<string | null>(row, "reply_to");
-          return reply_to == null || reply_to === "";
-        }) ??
-        (candidates.length === 1 ? candidates[0] : undefined);
-
-      if (!current) {
-        current = this.syncdb.get_one({
-          event: "chat",
-          date: threadRootIso,
-        });
-      }
-
-      if (candidates.length > 1) {
-        logger.warn("persistSessionId found duplicate chat rows for root date", {
-          chatKey: this.chatKey,
-          threadRoot: threadRootIso,
-          candidateSenders: candidates
-            .map((row) => this.recordField<string>(row, "sender_id"))
-            .filter((x) => typeof x === "string"),
-          selectedSender: this.recordField<string>(current, "sender_id"),
-        });
-      }
-      const prevCfg = this.recordField<any>(current, "acp_config");
-      const rootCfg =
-        prevCfg && typeof prevCfg.toJS === "function"
-          ? prevCfg.toJS()
-          : (prevCfg ?? {});
       const threadCfgCurrent = this.syncdb.get_one({
         event: THREAD_CONFIG_EVENT,
         sender_id: THREAD_CONFIG_SENDER,
@@ -1204,9 +1156,7 @@ export class ChatStreamWriter {
           ? threadPrevCfg.toJS()
           : (threadPrevCfg ?? {});
       if (threadCfg.sessionId === sessionId) return;
-      const baseCfg =
-        threadCfg && Object.keys(threadCfg).length > 0 ? threadCfg : rootCfg;
-      const nextCfg = { ...baseCfg, sessionId };
+      const nextCfg = { ...threadCfg, sessionId };
       this.syncdb.set({
         event: THREAD_CONFIG_EVENT,
         sender_id: THREAD_CONFIG_SENDER,
