@@ -61,6 +61,26 @@ import {
   normalizeUrl,
   parseSshServer,
 } from "../core/utils";
+import {
+  createHubApiForContext as createTypedHubApiForContext,
+  hubCallByName as hubCallByNameCore,
+  withTimeout,
+} from "./core/context";
+import {
+  listHosts as listHostsCore,
+  normalizeUserSearchName as normalizeUserSearchNameCore,
+  queryProjects as queryProjectsCore,
+  resolveAccountByIdentifier as resolveAccountByIdentifierCore,
+  resolveHost as resolveHostCore,
+  resolveWorkspace as resolveWorkspaceCore,
+  resolveWorkspaceFromArgOrContext as resolveWorkspaceFromArgOrContextCore,
+  workspaceState as workspaceStateCore,
+} from "./core/workspace-resolve";
+import {
+  waitForLro as waitForLroCore,
+  waitForProjectPlacement as waitForProjectPlacementCore,
+  waitForWorkspaceNotRunning as waitForWorkspaceNotRunningCore,
+} from "./core/lro";
 
 const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
@@ -242,12 +262,6 @@ type LroStatus = {
   status: string;
   error?: string | null;
   timedOut?: boolean;
-};
-
-type LroStatusSummary = {
-  op_id: string;
-  status: string;
-  error?: string | null;
 };
 
 const TERMINAL_LRO_STATUSES = new Set(["succeeded", "failed", "canceled", "expired"]);
@@ -1161,105 +1175,26 @@ async function withContext(
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  if (!(timeoutMs > 0)) {
-    return await promise;
-  }
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(label)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
-}
-
-type HubGroupName = Extract<keyof HubApi, string>;
-
-const HUB_API_GROUPS: HubGroupName[] = [
-  "system",
-  "projects",
-  "db",
-  "purchases",
-  "sync",
-  "org",
-  "messages",
-  "fileSync",
-  "hosts",
-  "software",
-  "controlAgent",
-  "lro",
-  "ssh",
-  "reflect",
-];
-
 async function hubCallByName<T>(
   ctx: CommandContext,
   name: string,
   args: any[] = [],
   timeout?: number,
 ): Promise<T> {
-  const timeoutMs = timeout ?? ctx.timeoutMs;
-  const rpcTimeoutMs = Math.max(1_000, Math.min(timeoutMs, ctx.rpcTimeoutMs));
-  cliDebug("hubCallAccount", {
+  return await hubCallByNameCore<T>({
+    ctx,
     name,
-    timeoutMs,
-    rpcTimeoutMs,
-    account_id: ctx.accountId,
+    args,
+    timeout,
+    callHub: (opts) => callHub(opts),
+    debug: cliDebug,
   });
-  return (await withTimeout(
-    callHub({
-      client: ctx.remote.client,
-      account_id: ctx.accountId,
-      name,
-      args,
-      timeout: rpcTimeoutMs,
-    }),
-    rpcTimeoutMs,
-    `timeout waiting for hub response: ${name} (${rpcTimeoutMs}ms)`,
-  )) as T;
 }
 
 function createHubApiForContext(ctx: CommandContext): HubApi {
-  const hub = {} as Record<HubGroupName, Record<string, (...args: any[]) => Promise<any>>>;
-  for (const group of HUB_API_GROUPS) {
-    hub[group] = new Proxy(
-      {},
-      {
-        get: (_target, property) => {
-          if (typeof property !== "string") {
-            return undefined;
-          }
-          return async (...args: any[]) =>
-            await hubCallByName(ctx, `${group}.${property}`, args);
-        },
-      },
-    );
-  }
-  return hub as unknown as HubApi;
-}
-
-async function userQueryTable<T>(
-  ctx: CommandContext,
-  table: string,
-  row: Record<string, unknown>,
-  options: any[] = [],
-): Promise<T[]> {
-  const query = {
-    [table]: [row],
-  };
-  const result = (await ctx.hub.db.userQuery({
-    query,
-    options,
-  })) as Record<string, T[]>;
-  const rows = result?.[table];
-  return Array.isArray(rows) ? rows : [];
+  return createTypedHubApiForContext((name, args = []) =>
+    hubCallByName(ctx, name, args),
+  );
 }
 
 function toIso(value: unknown): string | null {
@@ -1301,11 +1236,7 @@ function serializeLroSummary(summary: HubLroSummary): Record<string, unknown> {
 }
 
 function workspaceState(value: WorkspaceRow["state"]): string {
-  return typeof value?.state === "string" ? value.state : "";
-}
-
-function isDeleted(value: WorkspaceRow["deleted"]): boolean {
-  return value != null && value !== false;
+  return workspaceStateCore(value);
 }
 
 async function queryProjects({
@@ -1321,95 +1252,21 @@ async function queryProjects({
   host_id?: string | null;
   limit: number;
 }): Promise<WorkspaceRow[]> {
-  const row: Record<string, unknown> = {
-    project_id: null,
-    title: null,
-    host_id: null,
-    state: null,
-    last_edited: null,
-    deleted: null,
-  };
-  if (project_id != null) {
-    row.project_id = project_id;
-  }
-  if (title != null) {
-    row.title = title;
-  }
-  if (host_id != null) {
-    row.host_id = host_id;
-  }
-  const rows = await userQueryTable<WorkspaceRow>(ctx, "projects_all", row, [
-    { limit, order_by: "-last_edited" },
-  ]);
-  return rows.filter((x) => !isDeleted(x.deleted));
-}
-
-function workspaceCacheKey(identifier: string): string {
-  const value = identifier.trim();
-  if (isValidUUID(value)) {
-    return `id:${value.toLowerCase()}`;
-  }
-  return `title:${value}`;
-}
-
-function getCachedWorkspace(
-  ctx: CommandContext,
-  identifier: string,
-): WorkspaceRow | undefined {
-  const key = workspaceCacheKey(identifier);
-  const cached = ctx.workspaceCache.get(key);
-  if (!cached) return undefined;
-  if (Date.now() >= cached.expiresAt) {
-    ctx.workspaceCache.delete(key);
-    return undefined;
-  }
-  return cached.workspace;
-}
-
-function setCachedWorkspace(
-  ctx: CommandContext,
-  workspace: WorkspaceRow,
-): void {
-  const expiresAt = Date.now() + WORKSPACE_CACHE_TTL_MS;
-  ctx.workspaceCache.set(workspaceCacheKey(workspace.project_id), { workspace, expiresAt });
-  if (workspace.title) {
-    ctx.workspaceCache.set(workspaceCacheKey(workspace.title), { workspace, expiresAt });
-  }
+  return await queryProjectsCore<WorkspaceRow>({
+    ctx,
+    project_id,
+    title,
+    host_id,
+    limit,
+  });
 }
 
 async function resolveWorkspace(ctx: CommandContext, identifier: string): Promise<WorkspaceRow> {
-  const cached = getCachedWorkspace(ctx, identifier);
-  if (cached) {
-    return cached;
-  }
-
-  if (isValidUUID(identifier)) {
-    const rows = await queryProjects({
-      ctx,
-      project_id: identifier,
-      limit: 3,
-    });
-    if (rows[0]) {
-      setCachedWorkspace(ctx, rows[0]);
-      return rows[0];
-    }
-  }
-
-  const rows = await queryProjects({
+  return await resolveWorkspaceCore<WorkspaceRow>(
     ctx,
-    title: identifier,
-    limit: 25,
-  });
-  if (!rows.length) {
-    throw new Error(`workspace '${identifier}' not found`);
-  }
-  if (rows.length > 1) {
-    throw new Error(
-      `workspace name '${identifier}' is ambiguous: ${rows.map((x) => x.project_id).join(", ")}`,
-    );
-  }
-  setCachedWorkspace(ctx, rows[0]);
-  return rows[0];
+    identifier,
+    WORKSPACE_CACHE_TTL_MS,
+  );
 }
 
 async function resolveWorkspaceFromArgOrContext(
@@ -1417,69 +1274,25 @@ async function resolveWorkspaceFromArgOrContext(
   identifier?: string,
   cwd = process.cwd(),
 ): Promise<WorkspaceRow> {
-  const value = identifier?.trim();
-  if (value) {
-    return await resolveWorkspace(ctx, value);
-  }
-  const context = readWorkspaceContext(cwd);
-  if (!context?.workspace_id) {
-    throw new Error(
-      `missing --workspace and no workspace context is set at ${workspaceContextPath(cwd)}; run 'cocalc ws use --workspace <workspace>'`,
-    );
-  }
-  return await resolveWorkspace(ctx, context.workspace_id);
+  return await resolveWorkspaceFromArgOrContextCore<WorkspaceRow>({
+    ctx,
+    identifier,
+    cwd,
+    workspaceCacheTtlMs: WORKSPACE_CACHE_TTL_MS,
+    readWorkspaceContext,
+    workspaceContextPath,
+  });
 }
 
 function normalizeUserSearchName(row: UserSearchResult): string {
-  const first = `${row.first_name ?? ""}`.trim();
-  const last = `${row.last_name ?? ""}`.trim();
-  const full = `${first} ${last}`.trim();
-  return `${row.name ?? full}`.trim() || row.account_id;
+  return normalizeUserSearchNameCore(row);
 }
 
 async function resolveAccountByIdentifier(
   ctx: CommandContext,
   identifier: string,
 ): Promise<UserSearchResult> {
-  const value = `${identifier ?? ""}`.trim();
-  if (!value) {
-    throw new Error("user identifier must be non-empty");
-  }
-  if (isValidUUID(value)) {
-    return {
-      account_id: value,
-      name: value,
-    };
-  }
-
-  const queryIsEmail = value.includes("@");
-  const rows = await ctx.hub.system.userSearch({
-    query: value,
-    limit: 50,
-    ...(queryIsEmail ? { only_email: true } : undefined),
-  });
-  if (!rows?.length) {
-    throw new Error(`user '${value}' not found`);
-  }
-
-  const lowerValue = value.toLowerCase();
-  const exact = rows.filter((row) => {
-    if (`${row.account_id}`.toLowerCase() === lowerValue) return true;
-    if (`${row.email_address ?? ""}`.toLowerCase() === lowerValue) return true;
-    if (`${row.name ?? ""}`.toLowerCase() === lowerValue) return true;
-    const full = `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim().toLowerCase();
-    return full === lowerValue;
-  });
-
-  const candidates = exact.length ? exact : rows;
-  if (candidates.length > 1) {
-    const preview = candidates
-      .slice(0, 8)
-      .map((row) => `${normalizeUserSearchName(row)} (${row.account_id})`)
-      .join(", ");
-    throw new Error(`user '${value}' is ambiguous: ${preview}`);
-  }
-  return candidates[0];
+  return await resolveAccountByIdentifierCore(ctx, identifier);
 }
 
 function serializeInviteRow(invite: ProjectCollabInviteRow): Record<string, unknown> {
@@ -2888,43 +2701,14 @@ async function runWorkspaceFileCheckBench({
 }
 
 async function resolveHost(ctx: CommandContext, identifier: string): Promise<HostRow> {
-  const hosts = (await ctx.hub.hosts.listHosts({
-    include_deleted: false,
-    catalog: true,
-  })) as HostRow[];
-  if (!Array.isArray(hosts) || !hosts.length) {
-    throw new Error("no hosts are visible to this account");
-  }
-
-  if (isValidUUID(identifier)) {
-    const match = hosts.find((x) => x.id === identifier);
-    if (match) {
-      return match;
-    }
-    throw new Error(`host '${identifier}' not found`);
-  }
-
-  const matches = hosts.filter((x) => x.name === identifier);
-  if (!matches.length) {
-    throw new Error(`host '${identifier}' not found`);
-  }
-  if (matches.length > 1) {
-    throw new Error(`host name '${identifier}' is ambiguous: ${matches.map((x) => x.id).join(", ")}`);
-  }
-  return matches[0];
+  return await resolveHostCore<HostRow>(ctx, identifier);
 }
 
 async function listHosts(
   ctx: CommandContext,
   opts: { include_deleted?: boolean; catalog?: boolean; admin_view?: boolean } = {},
 ): Promise<HostRow[]> {
-  const hosts = (await ctx.hub.hosts.listHosts({
-    include_deleted: !!opts.include_deleted,
-    catalog: !!opts.catalog,
-    admin_view: !!opts.admin_view,
-  })) as HostRow[];
-  if (!Array.isArray(hosts)) return [];
-  return hosts;
+  return await listHostsCore<HostRow>(ctx, opts);
 }
 
 function normalizeHostSoftwareArtifactValue(value: string): HostSoftwareArtifact {
@@ -3182,29 +2966,13 @@ async function waitForLro(
     pollMs: number;
   },
 ): Promise<LroStatus> {
-  const started = Date.now();
-  let lastStatus = "unknown";
-  let lastError: string | null | undefined;
-
-  while (Date.now() - started <= timeoutMs) {
-    const summary = (await ctx.hub.lro.get({ op_id: opId })) as LroStatusSummary | undefined;
-    const status = summary?.status ?? "unknown";
-    lastStatus = status;
-    lastError = summary?.error;
-
-    if (TERMINAL_LRO_STATUSES.has(status)) {
-      return { op_id: opId, status, error: summary?.error ?? null };
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-
-  return {
-    op_id: opId,
-    status: lastStatus,
-    error: lastError,
-    timedOut: true,
-  };
+  return await waitForLroCore({
+    hub: ctx.hub,
+    opId,
+    timeoutMs,
+    pollMs,
+    terminalStatuses: TERMINAL_LRO_STATUSES,
+  });
 }
 
 async function waitForProjectPlacement(
@@ -3219,19 +2987,16 @@ async function waitForProjectPlacement(
     pollMs: number;
   },
 ): Promise<boolean> {
-  const started = Date.now();
-  while (Date.now() - started <= timeoutMs) {
-    const rows = await queryProjects({
-      ctx,
-      project_id: projectId,
-      limit: 1,
-    });
-    if (rows[0]?.host_id === hostId) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  return false;
+  return await waitForProjectPlacementCore({
+    projectId,
+    hostId,
+    timeoutMs,
+    pollMs,
+    getHostId: async (id) => {
+      const rows = await queryProjects({ ctx, project_id: id, limit: 1 });
+      return rows[0]?.host_id;
+    },
+  });
 }
 
 async function waitForWorkspaceNotRunning(
@@ -3245,22 +3010,15 @@ async function waitForWorkspaceNotRunning(
     pollMs: number;
   },
 ): Promise<{ ok: boolean; state: string }> {
-  const started = Date.now();
-  let lastState = "";
-  while (Date.now() - started <= timeoutMs) {
-    const rows = await queryProjects({
-      ctx,
-      project_id: projectId,
-      limit: 1,
-    });
-    const state = workspaceState(rows[0]?.state);
-    lastState = state;
-    if (state !== "running") {
-      return { ok: true, state };
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  return { ok: false, state: lastState };
+  return await waitForWorkspaceNotRunningCore({
+    projectId,
+    timeoutMs,
+    pollMs,
+    getState: async (id) => {
+      const rows = await queryProjects({ ctx, project_id: id, limit: 1 });
+      return workspaceState(rows[0]?.state);
+    },
+  });
 }
 
 async function runSsh(args: string[]): Promise<number> {
