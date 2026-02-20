@@ -12,6 +12,7 @@ import { type Hosts, hosts } from "./hosts";
 import { type Software, software } from "./software";
 import { type ControlAgent, controlAgent } from "./control-agent";
 import { type LroApi, lro } from "./lro";
+import { type Shares, shares } from "./shares";
 import { type Ssh, ssh } from "./ssh";
 import { type ReflectApi, reflect } from "./reflect";
 
@@ -28,6 +29,7 @@ export interface HubApi {
   software: Software;
   controlAgent: ControlAgent;
   lro: LroApi;
+  shares: Shares;
   ssh: Ssh;
   reflect: ReflectApi;
 }
@@ -45,6 +47,7 @@ const HubApiStructure = {
   software,
   controlAgent,
   lro,
+  shares,
   ssh,
   reflect,
 } as const;

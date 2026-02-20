@@ -94,6 +94,15 @@ function normalizeSoftwareBaseUrl(raw: string): string {
   return base.replace(/\/+$/, "");
 }
 
+function normalizeExternalDomainUrl(raw?: string): string | undefined {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return undefined;
+  const withScheme = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  return withScheme.replace(/\/+$/, "");
+}
+
 type SoftwareArch = "amd64" | "arm64";
 type SoftwareOs = "linux" | "darwin";
 
@@ -185,8 +194,10 @@ function resolveBootstrapSelector({
     typeof metadata.bootstrap_version === "string"
       ? metadata.bootstrap_version.trim()
       : "";
-  const settingsChannel = settings.project_hosts_bootstrap_channel?.trim() || "";
-  const settingsVersion = settings.project_hosts_bootstrap_version?.trim() || "";
+  const settingsChannel =
+    settings.project_hosts_bootstrap_channel?.trim() || "";
+  const settingsVersion =
+    settings.project_hosts_bootstrap_version?.trim() || "";
   if (metaVersion) return { selector: metaVersion, source: "host-version" };
   if (metaChannel) return { selector: metaChannel, source: "host-channel" };
   if (settingsVersion)
@@ -277,7 +288,7 @@ export async function buildBootstrapScripts(
   const isSelfHostDirect = isSelfHost && selfHostKind === "direct";
   const bootstrapUser = isSelfHostDirect
     ? "\${BOOTSTRAP_USER}"
-    : runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu";
+    : (runtime?.ssh_user ?? machine.metadata?.ssh_user ?? "ubuntu");
   const runtimeUser =
     `${process.env.COCALC_PROJECT_HOST_RUNTIME_USER || "cocalc-host"}`.trim() ||
     "cocalc-host";
@@ -296,6 +307,7 @@ export async function buildBootstrapScripts(
     project_hosts_software_base_url,
     project_hosts_bootstrap_channel,
     project_hosts_bootstrap_version,
+    dns,
   } = await getServerSettings();
   const forcedSoftwareBaseUrl =
     process.env.COCALC_PROJECT_HOST_SOFTWARE_BASE_URL_FORCE?.trim() || "";
@@ -382,14 +394,16 @@ export async function buildBootstrapScripts(
   const localConfig = useOnPremSettings
     ? getLaunchpadLocalConfig("local")
     : undefined;
-  const localConat =
-    localConfig?.http_port ? `http://127.0.0.1:${localConfig.http_port}` : "";
+  const localConat = localConfig?.http_port
+    ? `http://127.0.0.1:${localConfig.http_port}`
+    : "";
   const launchpadConat = useOnPremSettings
     ? localConat
-    : opts.launchpadBaseUrl ?? "";
+    : (opts.launchpadBaseUrl ?? "");
   const masterAddress =
     process.env.MASTER_CONAT_SERVER ??
     process.env.COCALC_MASTER_CONAT_SERVER ??
+    normalizeExternalDomainUrl(dns) ??
     launchpadConat;
   if (!masterAddress) {
     throw new Error("MASTER_CONAT_SERVER is not configured");
@@ -397,11 +411,11 @@ export async function buildBootstrapScripts(
 
   const tunnel = useOnPremSettings
     ? undefined
-    : opts.tunnel ??
+    : (opts.tunnel ??
       (await ensureCloudflareTunnelForHost({
         host_id: row.id,
         existing: metadata.cloudflare_tunnel,
-      }));
+      })));
   const tunnelEnabled = !!tunnel;
 
   const spec = await buildHostSpec(row);
@@ -626,7 +640,9 @@ fi
     "chrony",
   ]);
   const envLinesJson = JSON.stringify(scripts.envLines);
-  const cloudflaredJson = JSON.stringify(scripts.cloudflaredConfig ?? { enabled: false });
+  const cloudflaredJson = JSON.stringify(
+    scripts.cloudflaredConfig ?? { enabled: false },
+  );
   const preferredBootstrapUser =
     scripts.bootstrapUser && scripts.bootstrapUser !== "root"
       ? scripts.bootstrapUser

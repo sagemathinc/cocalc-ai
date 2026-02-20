@@ -195,7 +195,7 @@ CoCalc is organized as a monorepo with key packages:
 - When creating a new file, run `git add [filename]` to track the file.
 - Prefix git commits with the package and general area. e.g. 'frontend/latex: ...' if it concerns latex editor changes in the packages/frontend/... code.
 - When pushing a new branch to Github, track it upstream. e.g. `git push --set-upstream origin feature-foo` for branch "feature-foo".
-- Only automatically commit when I explicitly ask.  I will review ALL code before committing it.
+- Only automatically commit when I explicitly ask. I will review ALL code before committing it.
 
 ## React-intl / Internationalization (i18n)
 
@@ -218,7 +218,7 @@ Examples:
 - `account.sign-out.button.title` - for account sign-out dialog
 - `command.generic.force_build.label` - for command labels
 
-Also we use the term "project" most everywhere in the code for the containers 
+Also we use the term "project" most everywhere in the code for the containers
 users work in, but the word "workspace" in user facing text.
 
 ### Usage Patterns

@@ -119,6 +119,7 @@ export interface Customize {
   githubProjectId?: string;
   support?: string;
   supportVideoCall?: string;
+  shareDomain?: string;
   project_hosts_nebius_enabled?: boolean;
   "project_hosts_google-cloud_enabled"?: boolean;
   project_hosts_hyperstack_enabled?: boolean;

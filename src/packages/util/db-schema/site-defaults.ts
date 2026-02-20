@@ -52,6 +52,7 @@ export const TAGS = [
   "On-Prem",
   "I18N",
   "Security",
+  "R2",
   "SSH",
   "Support",
 ] as const;
@@ -109,6 +110,7 @@ export type SiteSettingsKeys =
   | "verify_emails"
   | "email_signup"
   | "share_server"
+  | "share_domain"
   | "landing_pages"
   | "project_hosts_google-cloud_enabled"
   | "project_hosts_hyperstack_enabled"
@@ -129,7 +131,6 @@ export type SiteSettingsKeys =
   | "project_rootfs_prepull_images"
   | "samesite_remember_me"
   | "user_tracking";
-
 
 type Mapping = { [key: string]: string | number | boolean };
 
@@ -305,8 +306,7 @@ export const displayJson = (conf) =>
 
 // TODO a cheap'n'dirty validation is good enough
 export const valid_dns_name = (val) => val.match(/^[a-zA-Z0-9.-]+$/g);
-export const valid_dns_name_or_empty = (val) =>
-  !val || valid_dns_name(val);
+export const valid_dns_name_or_empty = (val) => !val || valid_dns_name(val);
 
 export const split_iframe_comm_hosts: ToValFunc<string[]> = (hosts) =>
   (hosts ?? "").match(/[a-z0-9.-]+/g) || [];
@@ -399,9 +399,7 @@ export const site_settings_conf: SiteSettings = {
     group: "Networking",
     subgroup: "Domain",
     order: 10,
-    required_when: [
-      { key: "cloudflare_mode", equals: ["self", "managed"] },
-    ],
+    required_when: [{ key: "cloudflare_mode", equals: ["self", "managed"] }],
   },
   cloudflare_mode: {
     name: "Cloudflare Integration Mode",
@@ -815,6 +813,13 @@ export const site_settings_conf: SiteSettings = {
     to_val: to_bool,
     group: "Access & Identity",
     subgroup: "Sharing",
+  },
+  share_domain: {
+    name: "Share Domain",
+    desc: "Domain used for published share viewer content (e.g. `share.example.com`). **Must be different from the External Domain Name** to keep share content on a separate origin.",
+    default: "",
+    to_val: to_trimmed_str,
+    tags: ["Security"],
   },
   landing_pages: {
     name: "Landing pages",

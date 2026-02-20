@@ -52,6 +52,7 @@ import * as hosts from "./hosts";
 import * as software from "./software";
 import * as controlAgent from "../../ai/control-agent";
 import * as lro from "./lro";
+import * as shares from "./shares";
 
 import getLogger from "@cocalc/backend/logger";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
@@ -78,6 +79,7 @@ export const hubApi: HubApi = {
   software,
   controlAgent,
   lro,
+  shares,
   ssh,
   reflect,
 };

@@ -74,6 +74,35 @@ export interface FileTextPreview {
   mtime: number;
 }
 
+export interface ShareBucketConfig {
+  endpoint: string;
+  bucket: string;
+  region?: string;
+  access_key_id: string;
+  secret_access_key: string;
+  root?: string;
+}
+
+export interface SharePublishRequest {
+  project_id: string;
+  share_id: string;
+  path: string;
+  scope: "public" | "unlisted" | "authenticated" | "org";
+  indexing_opt_in: boolean;
+  org_id?: string | null;
+  latest_manifest_id?: string | null;
+  bucket: ShareBucketConfig;
+  lro?: LroRef;
+}
+
+export interface SharePublishResult {
+  manifest_id: string;
+  manifest_hash: string;
+  published_at: string;
+  size_bytes: number;
+  file_count: number;
+}
+
 export interface Fileserver {
   mount: (opts: {
     project_id: string;
@@ -256,6 +285,11 @@ export interface Fileserver {
     path: string;
     max_bytes?: number;
   }) => Promise<FileTextPreview>;
+
+  /////////////
+  // SHARES
+  /////////////
+  publishShare: (opts: SharePublishRequest) => Promise<SharePublishResult>;
 }
 
 export interface SnapshotUsage {

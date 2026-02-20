@@ -1443,6 +1443,9 @@ importers:
       micro-key-producer:
         specifier: ^0.8.2
         version: 0.8.2
+      mime-types:
+        specifier: ^3.0.1
+        version: 3.0.2
     devDependencies:
       '@types/express':
         specifier: ^4.17.23
@@ -1536,6 +1539,9 @@ importers:
       '@cocalc/server':
         specifier: workspace:*
         version: 'link:'
+      '@cocalc/static':
+        specifier: workspace:*
+        version: link:../static
       '@cocalc/util':
         specifier: workspace:*
         version: link:../util
@@ -1629,6 +1635,9 @@ importers:
       micro-key-producer:
         specifier: ^0.8.2
         version: 0.8.2
+      mime-types:
+        specifier: ^3.0.1
+        version: 3.0.2
       ms:
         specifier: 2.1.2
         version: 2.1.2
@@ -1738,6 +1747,8 @@ importers:
       expect:
         specifier: ^26.6.2
         version: 26.6.2
+
+  share-worker: {}
 
   static:
     devDependencies:
@@ -23028,7 +23039,6 @@ snapshots:
   mime-types@3.0.2:
     dependencies:
       mime-db: 1.54.0
-    optional: true
 
   mime@1.6.0: {}
 
