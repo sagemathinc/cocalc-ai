@@ -23,8 +23,32 @@ export function normalizeChatMessage(base: any): NormalizedChatMessage {
   if (!(x.date instanceof Date)) {
     x.date = new Date(x.date);
   }
+  const messageMs = x.date?.valueOf?.();
+  const rootMs = (() => {
+    if (x.reply_to != null) {
+      const d = new Date(x.reply_to);
+      if (!Number.isNaN(d.valueOf())) return d.valueOf();
+    }
+    return messageMs;
+  })();
+  if (x.message_id == null && Number.isFinite(messageMs)) {
+    x.message_id = `legacy-message-${messageMs}-${x.sender_id ?? "unknown"}`;
+    upgraded = true;
+  }
+  if (x.thread_id == null && Number.isFinite(rootMs)) {
+    x.thread_id = `legacy-thread-${rootMs}`;
+    upgraded = true;
+  }
+  if (
+    x.reply_to != null &&
+    x.reply_to_message_id == null &&
+    Number.isFinite(rootMs)
+  ) {
+    x.reply_to_message_id = `legacy-message-${rootMs}`;
+    upgraded = true;
+  }
   if (x.schema_version == CURRENT_CHAT_MESSAGE_VERSION) {
-    return { message: x as PlainChatMessage, upgraded: false };
+    return { message: x as PlainChatMessage, upgraded };
   }
 
   // Patch legacy payload/mesg shapes into history

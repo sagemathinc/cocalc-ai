@@ -40,8 +40,27 @@ describe("normalizeChatMessage", () => {
     expect(message?.history?.length).toBe(1);
     expect(message?.history?.[0]?.content).toBe("hello");
     expect(message?.schema_version).toBe(CURRENT_CHAT_MESSAGE_VERSION);
+    expect(message?.message_id).toMatch(/^legacy-message-/);
+    expect(message?.thread_id).toMatch(/^legacy-thread-/);
     // original object should remain untouched
     expect(raw.payload?.content).toBe("hello");
+  });
+
+  it("adds missing ids even when schema_version is already current", () => {
+    const raw = {
+      event: "chat",
+      sender_id: "user-1",
+      date: "2024-01-02T03:04:05.000Z",
+      schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+      history: [],
+      editing: {},
+      folding: [],
+      feedback: {},
+    };
+    const { message, upgraded } = normalizeChatMessage(raw);
+    expect(upgraded).toBe(true);
+    expect(message?.message_id).toMatch(/^legacy-message-/);
+    expect(message?.thread_id).toMatch(/^legacy-thread-/);
   });
 });
 
