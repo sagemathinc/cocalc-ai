@@ -29,6 +29,7 @@ const log = (..._args) => {};
 export class ChatMessageCache extends EventEmitter {
   private syncdb: ImmerDB;
   private messages: Map<string, PlainChatMessage> = new Map();
+  private messageIdIndex: Map<string, string> = new Map();
   private threadIndex: Map<string, ThreadIndexEntry> = new Map();
   private version = 0;
 
@@ -61,6 +62,17 @@ export class ChatMessageCache extends EventEmitter {
     return this.threadIndex;
   }
 
+  getMessageIdIndex(): Map<string, string> {
+    return this.messageIdIndex;
+  }
+
+  getByMessageId(messageId?: string): PlainChatMessage | undefined {
+    if (!messageId) return;
+    const key = this.messageIdIndex.get(messageId);
+    if (!key) return;
+    return this.messages.get(key);
+  }
+
   getVersion(): number {
     return this.version;
   }
@@ -68,6 +80,7 @@ export class ChatMessageCache extends EventEmitter {
   dispose() {
     this.syncdb.off("change", this.handleChange);
     this.messages = new Map();
+    this.messageIdIndex = new Map();
     this.removeAllListeners();
   }
 
@@ -93,6 +106,11 @@ export class ChatMessageCache extends EventEmitter {
     }
     const d = dateValue(message);
     return d ? `${d.valueOf()}` : undefined;
+  }
+
+  private getMessageId(message?: PlainChatMessage): string | undefined {
+    const id = (message as any)?.message_id;
+    return typeof id === "string" && id.length > 0 ? id : undefined;
   }
 
   private addToThreadIndex(
@@ -169,6 +187,7 @@ export class ChatMessageCache extends EventEmitter {
       }
     }
     const map = new Map<string, PlainChatMessage>();
+    const messageIdIndex = new Map<string, string>();
     const threadIndex = new Map<string, ThreadIndexEntry>();
     const rows = this.syncdb.get() ?? [];
     log("rebuildFromDoc: got rows", rows);
@@ -179,10 +198,15 @@ export class ChatMessageCache extends EventEmitter {
       if (!key) continue;
       const message = row0 as PlainChatMessage;
       map.set(key, message);
+      const messageId = this.getMessageId(message);
+      if (messageId) {
+        messageIdIndex.set(messageId, key);
+      }
       this.addToThreadIndex(threadIndex, message, key);
     }
     // Freeze the rebuilt Map for consistency with produce() updates.
     this.messages = produce(map, () => {});
+    this.messageIdIndex = produce(messageIdIndex, () => {});
     this.threadIndex = produce(threadIndex, () => {});
     this.bumpVersion();
   }
@@ -199,6 +223,7 @@ export class ChatMessageCache extends EventEmitter {
     const rows: Record<string, unknown>[] = Array.from(changes);
     const next = produce(this.messages, (draft) => {
       this.threadIndex = produce(this.threadIndex, (threadDraft) => {
+        this.messageIdIndex = produce(this.messageIdIndex, (idDraft) => {
         for (const row0 of rows) {
           if (row0?.event !== "chat") continue;
           if (!row0?.date) continue;
@@ -215,6 +240,10 @@ export class ChatMessageCache extends EventEmitter {
           const prev = draft.get(key);
           if (prev) {
             this.removeFromThreadIndex(threadDraft, prev, key, draft);
+            const prevId = this.getMessageId(prev);
+            if (prevId) {
+              idDraft.delete(prevId);
+            }
           }
 
           if (rec?.event !== "chat") {
@@ -224,8 +253,13 @@ export class ChatMessageCache extends EventEmitter {
 
           const nextMessage = rec as PlainChatMessage;
           draft.set(key, nextMessage);
+          const nextId = this.getMessageId(nextMessage);
+          if (nextId) {
+            idDraft.set(nextId, key);
+          }
           this.addToThreadIndex(threadDraft, nextMessage, key);
         }
+        });
       });
     });
     this.messages = next;

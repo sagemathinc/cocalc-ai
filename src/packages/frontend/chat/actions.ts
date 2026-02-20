@@ -114,6 +114,16 @@ export class ChatActions extends Actions<ChatState> {
     return new Map();
   };
 
+  getMessageById = (messageId?: string): ChatMessageTyped | undefined => {
+    if (!messageId || !this.messageCache) return;
+    return this.messageCache.getByMessageId(messageId) as ChatMessageTyped;
+  };
+
+  getMessageDateKeyById = (messageId?: string): string | undefined => {
+    if (!messageId || !this.messageCache) return;
+    return this.messageCache.getMessageIdIndex().get(messageId);
+  };
+
   private toImmutableRecord(record: any): any {
     if (record == null) return null;
     return typeof record?.get === "function" ? record : fromJS(record);
