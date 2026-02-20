@@ -368,6 +368,13 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         targetId = cell_list.get(Math.min(cellIndex, cell_list.size - 1));
       }
       if (targetId == null) {
+        // Helpful when debugging key-routing issues in this experimental editor.
+        // eslint-disable-next-line no-console
+        console.log("jupyter-singledoc: no target cell for run", {
+          fromSlate,
+          hasContext: context != null,
+          hasSelection: context?.selection != null,
+        });
         return;
       }
       frameActions.set_cur_id(targetId);
