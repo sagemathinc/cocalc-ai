@@ -106,6 +106,20 @@ function emptyJupyterMarkdownCell(): Element {
   } as Element;
 }
 
+function codeBlockToJupyterCodeCell(
+  node: Element,
+  cellId?: string,
+): Element {
+  return {
+    type: "jupyter_code_cell",
+    fence: true,
+    info: `${(node as any).info ?? ""}`,
+    cell_id: `${cellId ?? ""}`.trim() || newJupyterCellId(),
+    cell_meta: { cell_type: "code" },
+    children: toCodeLines(getCodeBlockText(node as any)),
+  } as Element;
+}
+
 export const withNormalize = (editor) => {
   const { normalizeNode } = editor;
 
@@ -181,6 +195,11 @@ NORMALIZERS.push(function ensureNotebookTopLevelCellStructure({
     if (isNotebookCellElement(child)) {
       flushMarkdown();
       nextTopLevel.push(child);
+      continue;
+    }
+    if (Element.isElement(child) && child.type === "code_block") {
+      flushMarkdown();
+      nextTopLevel.push(codeBlockToJupyterCodeCell(child));
       continue;
     }
     markdownChildren.push(toMarkdownCellChild(editor, child));
@@ -281,6 +300,41 @@ NORMALIZERS.push(function normalizeJupyterMarkdownCellChildren({
     if (!Element.isElement(child)) {
       Transforms.removeNodes(editor, { at: path.concat(i) });
       Transforms.insertNodes(editor, emptyParagraph(), { at: path.concat(i) });
+      return;
+    }
+    if (child.type === "code_block" && path.length === 1) {
+      const children = node.children ?? [];
+      const before = children
+        .slice(0, i)
+        .map((n) => toMarkdownCellChild(editor, n as Node));
+      const after = children
+        .slice(i + 1)
+        .map((n) => toMarkdownCellChild(editor, n as Node));
+      const originalId = `${(node as any).cell_id ?? ""}`.trim() || newJupyterCellId();
+      const replacement: Element[] = [];
+      if (before.length > 0) {
+        replacement.push({
+          type: "jupyter_markdown_cell",
+          cell_id: originalId,
+          cell_meta: { cell_type: "markdown" },
+          children: before,
+        } as Element);
+        replacement.push(codeBlockToJupyterCodeCell(child));
+      } else {
+        replacement.push(codeBlockToJupyterCodeCell(child, originalId));
+      }
+      if (after.length > 0) {
+        replacement.push({
+          type: "jupyter_markdown_cell",
+          cell_id: newJupyterCellId(),
+          cell_meta: { cell_type: "markdown" },
+          children: after,
+        } as Element);
+      }
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.removeNodes(editor, { at: path });
+        Transforms.insertNodes(editor, replacement, { at: path });
+      });
       return;
     }
     if (isNotebookCellElement(child)) {

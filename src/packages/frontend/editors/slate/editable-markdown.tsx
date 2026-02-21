@@ -97,6 +97,7 @@ import useUpload from "./upload";
 import { ChangeContext } from "./use-change";
 import { buildCodeBlockDecorations, getPrismGrammar } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
+import type { JupyterGapCursor } from "./jupyter-cell-context";
 
 export type { SlateEditor };
 
@@ -214,6 +215,8 @@ interface Props {
     value: Descendant[],
     opts: { onlySelectionOps: boolean; syncCausedUpdate: boolean },
   ) => void;
+  jupyterGapCursor?: JupyterGapCursor | null;
+  setJupyterGapCursor?: (cursor: JupyterGapCursor | null) => void;
 }
 
 const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
@@ -259,6 +262,8 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     showEditBar,
     preserveBlankLines: preserveBlankLinesProp,
     onSlateChange,
+    jupyterGapCursor,
+    setJupyterGapCursor,
   } = props;
   const { project_id, path, desc, isVisible } = useFrameContext();
   const isMountedRef = useIsMountedRef();
@@ -1024,6 +1029,50 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [editor, getTopLevelJupyterCell],
   );
 
+  const insertJupyterCellAtGap = useCallback(
+    (kind: "code" | "markdown", initialText?: string): boolean => {
+      const gap = jupyterGapCursor;
+      if (gap == null) return false;
+      const insertIndexRaw = gap.side === "before" ? gap.index : gap.index + 1;
+      const insertIndex = Math.max(
+        0,
+        Math.min(editor.children.length, insertIndexRaw),
+      );
+      const node =
+        kind === "code"
+          ? ({
+              type: "jupyter_code_cell",
+              fence: true,
+              info: "",
+              cell_meta: { cell_type: "code" },
+              children: [{ type: "code_line", children: [{ text: "" }] }],
+            } as const)
+          : ({
+              type: "jupyter_markdown_cell",
+              cell_meta: { cell_type: "markdown" },
+              children: [
+                {
+                  type: "paragraph",
+                  children: [{ text: initialText ?? "" }],
+                },
+              ],
+            } as const);
+      Editor.withoutNormalizing(editor, () => {
+        Transforms.insertNodes(editor, node as any, { at: [insertIndex] });
+      });
+      const focusPath = [insertIndex, 0, 0];
+      const focusOffset = kind === "markdown" ? (initialText ?? "").length : 0;
+      Transforms.select(editor, {
+        anchor: { path: focusPath, offset: focusOffset },
+        focus: { path: focusPath, offset: focusOffset },
+      });
+      ReactEditor.focus(editor);
+      setJupyterGapCursor?.(null);
+      return true;
+    },
+    [editor, jupyterGapCursor, setJupyterGapCursor],
+  );
+
   const splitJupyterCell = useCallback((): boolean => {
     const entry = getTopLevelJupyterCell();
     if (entry == null || editor.selection == null) return false;
@@ -1084,6 +1133,40 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     emojis.onKeyDown(e);
 
     if (e.defaultPrevented) return;
+
+    if (jupyterGapCursor != null) {
+      const isPlainChar =
+        e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+      const isCodeInsertShortcut =
+        e.key === "Enter" &&
+        (e.ctrlKey || e.metaKey) &&
+        e.shiftKey &&
+        !e.altKey;
+      if (e.key === "Escape") {
+        setJupyterGapCursor?.(null);
+        e.preventDefault();
+        return;
+      }
+      if (isCodeInsertShortcut && insertJupyterCellAtGap("code")) {
+        e.preventDefault();
+        return;
+      }
+      if (isPlainChar && insertJupyterCellAtGap("markdown", e.key)) {
+        e.preventDefault();
+        return;
+      }
+      if (
+        e.key === "Enter" &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        insertJupyterCellAtGap("markdown")
+      ) {
+        e.preventDefault();
+        return;
+      }
+    }
 
     const mod = e.ctrlKey || e.metaKey;
     const jupyterCellShortcutMode =

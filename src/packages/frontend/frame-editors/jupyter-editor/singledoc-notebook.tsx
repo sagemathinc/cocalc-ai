@@ -18,6 +18,7 @@ import { markdown_to_slate } from "@cocalc/frontend/editors/slate/markdown-to-sl
 import { slate_to_markdown } from "@cocalc/frontend/editors/slate/slate-to-markdown";
 import type { Actions as SlateActions } from "@cocalc/frontend/editors/slate/types";
 import { JupyterCellContext } from "@cocalc/frontend/editors/slate/jupyter-cell-context";
+import type { JupyterGapCursor } from "@cocalc/frontend/editors/slate/jupyter-cell-context";
 import { CellOutput } from "@cocalc/frontend/jupyter/cell-output";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import type { EditorState } from "../frame-tree/types";
@@ -324,6 +325,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   );
   const [hoveredCellId, setHoveredCellId] = React.useState<string | undefined>(
     undefined,
+  );
+  const [gapCursor, setGapCursor] = React.useState<JupyterGapCursor | null>(
+    null,
   );
   const applyNotebookSlateRef = React.useRef<
     (doc: Descendant[], opts?: ApplyNotebookSlateOpts) => void
@@ -872,10 +876,11 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   return (
     <div
       ref={containerRef}
+      className="smc-vfill"
       style={{
-        padding: "8px 12px 24px 12px",
-        overflow: "auto",
-        height: "100%",
+        padding: "8px 12px 8px 12px",
+        display: "flex",
+        flexDirection: "column",
         minHeight: 0,
       }}
       data-cocalc-jupyter-slate-single-doc="1"
@@ -897,48 +902,52 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           {error}
         </div>
       ) : null}
-      <JupyterCellContext.Provider
-        value={{
-          renderOutput: renderInlineOutput,
-          selectedCellId,
-          setSelectedCellId,
-          hoveredCellId,
-          setHoveredCellId,
-          runCell: runCellById,
-          getCellChromeInfo,
-        }}
-      >
-        <EditableMarkdown
-          value_slate={slateValue}
-          actions={editorActions}
-          onSlateChange={(doc, opts) => {
-            if (opts.onlySelectionOps || opts.syncCausedUpdate) {
-              return;
-            }
-            const root = containerRef.current;
-            const active =
-              typeof document === "undefined" ? null : document.activeElement;
-            if (root != null && active != null && !root.contains(active)) {
-              return;
-            }
-            if (cellsSignature(slateDocumentToCells(doc)) === notebookSignatureRef.current) {
-              return;
-            }
-            debugCountersRef.current.onSlateChangeCalls += 1;
-            scheduleApplyNotebookSlate(doc);
+      <div className="smc-vfill" style={{ minHeight: 0 }}>
+        <JupyterCellContext.Provider
+          value={{
+            renderOutput: renderInlineOutput,
+            selectedCellId,
+            setSelectedCellId,
+            hoveredCellId,
+            setHoveredCellId,
+            gapCursor,
+            setGapCursor,
+            runCell: runCellById,
+            getCellChromeInfo,
           }}
-          is_current={true}
-          read_only={!!read_only}
-          hidePath
-          minimal
-          noVfill
-          saveDebounceMs={SAVE_DEBOUNCE_MS}
-          height="auto"
-          ignoreRemoteMergesWhileFocused
-          style={{ backgroundColor: "transparent" }}
-          controlRef={controlRef}
-        />
-      </JupyterCellContext.Provider>
+        >
+          <EditableMarkdown
+            value_slate={slateValue}
+            actions={editorActions}
+            onSlateChange={(doc, opts) => {
+              if (opts.onlySelectionOps || opts.syncCausedUpdate) {
+                return;
+              }
+              const root = containerRef.current;
+              const active =
+                typeof document === "undefined" ? null : document.activeElement;
+              if (root != null && active != null && !root.contains(active)) {
+                return;
+              }
+              if (cellsSignature(slateDocumentToCells(doc)) === notebookSignatureRef.current) {
+                return;
+              }
+              debugCountersRef.current.onSlateChangeCalls += 1;
+              scheduleApplyNotebookSlate(doc);
+            }}
+            is_current={true}
+            read_only={!!read_only}
+            hidePath
+            minimal
+            saveDebounceMs={SAVE_DEBOUNCE_MS}
+            ignoreRemoteMergesWhileFocused
+            style={{ backgroundColor: "transparent", minHeight: 0 }}
+            controlRef={controlRef}
+            jupyterGapCursor={gapCursor}
+            setJupyterGapCursor={setGapCursor}
+          />
+        </JupyterCellContext.Provider>
+      </div>
     </div>
   );
 }

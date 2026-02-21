@@ -5,6 +5,7 @@
 
 import { Button, Input, Popover } from "antd";
 import {
+  CSSProperties,
   ReactNode,
   useCallback,
   useEffect,
@@ -223,6 +224,19 @@ function shouldPreferRichText(text: string): boolean {
   return hasMarkdown && !hasCode;
 }
 
+function gapCursorStyle(active: boolean): CSSProperties {
+  return {
+    height: "10px",
+    margin: "2px 0",
+    cursor: "text",
+    position: "relative",
+    zIndex: 2,
+    ...(active
+      ? { borderTop: "2px solid #1677ff" }
+      : { borderTop: "2px solid transparent" }),
+  };
+}
+
 export function CodeLikeEditor({ attributes, children, element }: RenderElementProps) {
   if (element.type === "code_line") {
     return <CodeLineElement attributes={attributes}>{children}</CodeLineElement>;
@@ -237,6 +251,8 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     setSelectedCellId,
     hoveredCellId,
     setHoveredCellId,
+    gapCursor,
+    setGapCursor,
     runCell,
     getCellChromeInfo,
   } = useJupyterCellContext();
@@ -257,6 +273,11 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     getHistory(editor, element) ?? [],
   );
   const elementPath = ReactEditor.findPath(editor, element);
+  const topIndex = elementPath[0];
+  const beforeGapActive =
+    isJupyterCodeCell && gapCursor?.index === topIndex && gapCursor.side === "before";
+  const afterGapActive =
+    isJupyterCodeCell && gapCursor?.index === topIndex && gapCursor.side === "after";
   const codeValue = getCodeBlockText(element as CodeBlock);
   const expandState =
     (editor as any).codeBlockExpandState ??
@@ -307,7 +328,14 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
   useEffect(() => {
     if (!isJupyterCodeCell || !selectionInBlock || !jupyterCellId) return;
     setSelectedCellId?.(jupyterCellId);
-  }, [isJupyterCodeCell, selectionInBlock, jupyterCellId, setSelectedCellId]);
+    setGapCursor?.(null);
+  }, [
+    isJupyterCodeCell,
+    selectionInBlock,
+    jupyterCellId,
+    setSelectedCellId,
+    setGapCursor,
+  ]);
   const syncSelectionFromDom = useCallback(() => {
     if (typeof window === "undefined") return;
     const domSelection = window.getSelection?.();
@@ -570,7 +598,25 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
       data-cocalc-cell-id={
         isJupyterCodeCell ? `${(element as any).cell_id ?? ""}` : undefined
       }
+      onMouseDown={() => {
+        if (isJupyterCodeCell) {
+          setGapCursor?.(null);
+        }
+      }}
     >
+      {isJupyterCodeCell ? (
+        <div
+          contentEditable={false}
+          data-cocalc-test="jupyter-singledoc-gap-before"
+          data-cocalc-cell-id={jupyterCellId}
+          style={gapCursorStyle(!!beforeGapActive)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setGapCursor?.({ index: topIndex, side: "before" });
+          }}
+        />
+      ) : null}
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1 }}>
           <div
@@ -876,6 +922,19 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
           </div>
         )}
       </div>
+      {isJupyterCodeCell ? (
+        <div
+          contentEditable={false}
+          data-cocalc-test="jupyter-singledoc-gap-after"
+          data-cocalc-cell-id={jupyterCellId}
+          style={gapCursorStyle(!!afterGapActive)}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setGapCursor?.({ index: topIndex, side: "after" });
+          }}
+        />
+      ) : null}
     </div>
   );
 }
