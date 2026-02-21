@@ -38,9 +38,21 @@ const BROWSER_EXEC_API_DECLARATION = `/**
  *   pnpm cli browser exec-api
  *   pnpm cli browser exec <workspace> 'const files = api.listOpenFiles(); return files;'
  *
+ * Useful snippets:
+ *   // Close all currently open markdown files in this workspace:
+ *   const md = api.listOpenFiles().filter((x) => x.path.endsWith(".md"));
+ *   await api.closeFiles(md.map((x) => x.path));
+ *
+ *   // Find notebooks containing "elliptic curve" and open the newest 3:
+ *   const out = await api.fs.ripgrep("/root", "elliptic curve", { options: ["-l"] });
+ *   const files = Buffer.from(out.stdout).toString().trim().split("\\n").filter(Boolean);
+ *   const stats = await Promise.all(files.map(async (p) => ({ p, s: await api.fs.stat(p) })));
+ *   stats.sort((a, b) => (b.s?.mtimeMs ?? 0) - (a.s?.mtimeMs ?? 0));
+ *   await api.openFiles(stats.slice(0, 3).map((x) => x.p));
+ *
  * Notes:
  * - paths are absolute (e.g. "/home/user/file.txt")
- * - api.projectId is the workspace/project id passed to browser exec
+ * - api.projectId is the workspace id passed to browser exec
  */
 export type BrowserOpenFileInfo = {
   project_id: string;
