@@ -275,6 +275,19 @@ export default function Message({
   );
   const isCodexThread =
     typeof isLLMThread === "string" && isLLMThread.includes("codex");
+  const acpStateActive = useMemo(
+    () =>
+      acpState === "running" ||
+      acpState === "sending" ||
+      acpState === "sent" ||
+      acpState === "queue",
+    [acpState],
+  );
+  const effectiveGenerating = useMemo(() => {
+    if (generating !== true) return false;
+    if (!isCodexThread) return true;
+    return acpStateActive;
+  }, [generating, isCodexThread, acpStateActive]);
 
   useEffect(() => {
     if (isEditing) return;
@@ -284,7 +297,7 @@ export default function Message({
   }, [isEditing, message]);
 
   useEffect(() => {
-    if (generating === true && date > 0) {
+    if (effectiveGenerating && date > 0) {
       const start = date;
       const update = () => {
         setElapsedMs(Date.now() - start);
@@ -295,7 +308,7 @@ export default function Message({
     } else {
       setElapsedMs(0);
     }
-  }, [generating, date]);
+  }, [effectiveGenerating, date]);
 
   const elapsedLabel = useMemo(() => {
     if (!elapsedMs || elapsedMs < 0) return "";
@@ -363,7 +376,7 @@ export default function Message({
 
   useEffect(() => {
     if (!actions?.store) return;
-    if (!acpInterrupted || generating === true) return;
+    if (!acpInterrupted || effectiveGenerating) return;
     if (acpState !== "running") return;
     const msgDate = dateValue(message);
     if (!msgDate) return;
@@ -387,7 +400,7 @@ export default function Message({
     actions.store.setState({
       acpState: next,
     });
-  }, [actions, acpInterrupted, generating, acpState, message, threadRootMs]);
+  }, [actions, acpInterrupted, effectiveGenerating, acpState, message, threadRootMs]);
 
   // Resolve log identifiers deterministically (shared with backend) so we never
   // invent subjects/keys in multiple places.
@@ -463,7 +476,7 @@ export default function Message({
     }
   }, [replying]);
 
-  const durationLabel = generating
+  const durationLabel = effectiveGenerating
     ? elapsedLabel
     : formatTurnDuration({
         startMs: date,
@@ -961,7 +974,7 @@ export default function Message({
         {renderForkNotice()}
         <AgentMessageStatus
           show={showCodexActivity}
-          generating={generating === true}
+          generating={effectiveGenerating}
           durationLabel={durationLabel}
           fontSize={font_size}
           project_id={project_id}
@@ -1003,7 +1016,7 @@ export default function Message({
   }
 
   function renderBottomControls() {
-    if (generating !== true || actions == null) {
+    if (!effectiveGenerating || actions == null) {
       return null;
     }
     const interruptLabel = isCodexThread ? "Interrupt" : "Stop Generating";
@@ -1056,7 +1069,7 @@ export default function Message({
     if (
       actions == null ||
       !acpInterrupted ||
-      generating === true ||
+      effectiveGenerating ||
       !isCodexThread ||
       !isLastMessageInThread
     ) {
