@@ -297,7 +297,6 @@ export async function processAcpLLM({
         reply_to_message_id,
         sendMode,
       });
-      console.log("Starting ACP turn for", { message, chatMetadata });
       const stream = await webapp_client.conat_client.streamAcp({
         project_id,
         prompt: workingInput,
@@ -313,18 +312,14 @@ export async function processAcpLLM({
         chat: chatMetadata,
       });
       setState("sent");
-      console.log("Sent ACP turn request for", message);
       for await (const response of stream) {
         setState("running");
-        // TODO: this is excess logging for development purposes
-        console.log("ACP message response", response);
         // when something goes wrong, the stream may send this sort of message:
         // {seq: 0, error: 'Error: ACP agent is already processing a request', type: 'error'}
         if (response?.type == "error") {
           throw Error(response.error);
         }
       }
-      console.log("ACP message responses done");
     } catch (err) {
       chatStreams.delete(id);
       console.error("ACP turn failed", err);
