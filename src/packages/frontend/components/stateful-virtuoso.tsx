@@ -9,10 +9,19 @@ interface CoreProps extends React.ComponentProps<typeof Virtuoso> {
 }
 
 const STORAGE_KEY = "cocalc-stateful-virtuoso-cache";
-const cache = new LRUCache<string, StateSnapshot>({ max: 500 });
+type SnapshotEnvelope = {
+  snapshot: StateSnapshot;
+  savedAt: number;
+  viewportHeight?: number;
+  scrollHeight?: number;
+};
+
+const cache = new LRUCache<string, SnapshotEnvelope>({ max: 500 });
 const SAVE_THROTTLE_MS = 50;
 const PERSIST_THROTTLE_MS = 1000;
 const DEFAULT_VIEWPORT = 1000;
+const MIN_SNAPSHOT_VIEWPORT_PX = 80;
+const MIN_SNAPSHOT_SCROLL_HEIGHT_PX = 120;
 
 const hasStorage =
   typeof window !== "undefined" &&
@@ -35,8 +44,25 @@ if (hasStorage) {
     if (raw) {
       const entries: [string, StateSnapshot][] = JSON.parse(raw);
       if (Array.isArray(entries)) {
-        for (const [k, v] of entries) {
-          cache.set(k, v);
+        for (const [k, v] of entries as any[]) {
+          if (v && typeof v === "object" && "snapshot" in v && v.snapshot) {
+            cache.set(k, {
+              snapshot: v.snapshot as StateSnapshot,
+              savedAt:
+                typeof v.savedAt === "number" ? v.savedAt : Date.now(),
+              viewportHeight:
+                typeof v.viewportHeight === "number"
+                  ? v.viewportHeight
+                  : undefined,
+              scrollHeight:
+                typeof v.scrollHeight === "number" ? v.scrollHeight : undefined,
+            });
+            continue;
+          }
+          cache.set(k, {
+            snapshot: v as StateSnapshot,
+            savedAt: Date.now(),
+          });
         }
       }
     }
@@ -75,13 +101,15 @@ function StatefulVirtuosoCore(
     if (!node) return true;
     const height = node.clientHeight ?? 0;
     const scrollHeight = node.scrollHeight ?? 0;
-    if (height <= 1 || scrollHeight <= 1) return false;
+    if (height < MIN_SNAPSHOT_VIEWPORT_PX) return false;
+    if (scrollHeight < MIN_SNAPSHOT_SCROLL_HEIGHT_PX) return false;
+    if (scrollHeight <= height + 8) return false;
     return true;
   };
 
   const cached = cacheId ? cache.get(cacheId) : undefined;
   if (cached && snapshotRef.current == null) {
-    snapshotRef.current = cached;
+    snapshotRef.current = cached.snapshot;
   } else if (!cached && snapshotRef.current == null) {
     snapshotRef.current = undefined;
   }
@@ -94,7 +122,13 @@ function StatefulVirtuosoCore(
       virtRef.current?.getState((snapshot) => {
         snapshotRef.current = snapshot;
         if (cacheId) {
-          cache.set(cacheId, snapshot);
+          const node = scrollerRef.current;
+          cache.set(cacheId, {
+            snapshot,
+            savedAt: Date.now(),
+            viewportHeight: node?.clientHeight ?? undefined,
+            scrollHeight: node?.scrollHeight ?? undefined,
+          });
           schedulePersist();
         }
         savingRef.current = false;
