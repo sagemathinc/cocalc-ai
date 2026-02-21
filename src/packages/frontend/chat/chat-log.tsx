@@ -682,11 +682,19 @@ export function MessageList({
             threadViewMode={singleThreadView}
             onForceScrollToBottom={forceScrollToBottom}
             acpState={
-              (field<string>(message, "thread_id")
-                ? acpState?.get(`thread:${field<string>(message, "thread_id")}`)
-                : undefined) ??
-              acpState?.get(date) ??
-              (currentThreadKey ? acpState?.get(currentThreadKey) : undefined)
+              (() => {
+                const messageId = field<string>(message, "message_id");
+                if (messageId) {
+                  const byMessageId = acpState?.get(`message:${messageId}`);
+                  if (byMessageId) return byMessageId;
+                }
+                const byDate = acpState?.get(date);
+                if (byDate) return byDate;
+                // Fall back to root-thread state only for the root message row.
+                return currentThreadKey && date === currentThreadKey
+                  ? acpState?.get(currentThreadKey)
+                  : undefined;
+              })()
             }
             dim={shouldDim}
           />

@@ -217,6 +217,21 @@ export async function processAcpLLM({
   const config = actions.getCodexConfig?.(threadRootDate);
   const normalizedModel =
     typeof model === "string" ? normalizeCodexMention(model) : undefined;
+  // If thread_config.sessionId has not been persisted yet, recover it from the
+  // most recent ACP assistant message in this thread so follow-up turns still
+  // resume the same Codex session.
+  const inferredSessionId = (() => {
+    const threadIso = threadRootDate.toISOString();
+    const threadMessages = actions.getMessagesInThread?.(threadIso) ?? [];
+    for (let i = threadMessages.length - 1; i >= 0; i--) {
+      const sessionId = field<string>(threadMessages[i], "acp_thread_id");
+      if (typeof sessionId === "string" && sessionId.trim().length > 0) {
+        return sessionId.trim();
+      }
+    }
+    return undefined;
+  })();
+  const effectiveSessionId = config?.sessionId ?? inferredSessionId;
   const threadRootMessage =
     actions.getMessageByDate?.(threadRootDate) ??
     actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
@@ -262,7 +277,7 @@ export async function processAcpLLM({
   const path = store.get("path");
 
   const threadToken = thread_id ?? threadKey;
-  const sessionKey = config?.sessionId ?? threadToken;
+  const sessionKey = effectiveSessionId ?? threadToken;
   const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
   const job = async (): Promise<void> => {
     try {
@@ -294,7 +309,10 @@ export async function processAcpLLM({
         session_id: sessionKey,
         config: buildAcpConfig({
           path,
-          config,
+          config:
+            effectiveSessionId != null
+              ? { ...(config ?? {}), sessionId: effectiveSessionId }
+              : config,
           model: normalizedModel,
         }),
         chat: chatMetadata,

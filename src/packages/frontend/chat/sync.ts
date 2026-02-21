@@ -20,6 +20,12 @@ function threadStateKey(record: any): string | undefined {
   return `thread:${threadId}`;
 }
 
+function threadStateActiveMessageKey(record: any): string | undefined {
+  const messageId = (record as any)?.active_message_id;
+  if (typeof messageId !== "string" || messageId.length === 0) return undefined;
+  return `message:${messageId}`;
+}
+
 export function initFromSyncDB({
   syncdb,
   store,
@@ -37,15 +43,22 @@ export function initFromSyncDB({
     if (!Number.isFinite(ms)) continue;
     const mapped = threadStateToAcpState((row as any)?.state);
     const byThreadId = threadStateKey(row);
+    const byMessageId = threadStateActiveMessageKey(row);
     if (mapped) {
       acpState = acpState.set(`${ms}`, mapped);
       if (byThreadId) {
         acpState = acpState.set(byThreadId, mapped);
       }
+      if (byMessageId) {
+        acpState = acpState.set(byMessageId, mapped);
+      }
     } else {
       acpState = acpState.delete(`${ms}`);
       if (byThreadId) {
         acpState = acpState.delete(byThreadId);
+      }
+      if (byMessageId) {
+        acpState = acpState.delete(byMessageId);
       }
     }
   }
@@ -119,10 +132,14 @@ export function handleSyncDBChange({
       const mapped = threadStateToAcpState((record as any)?.state);
       const key = `${ms}`;
       const byThreadId = threadStateKey(record ?? obj);
+      const byMessageId = threadStateActiveMessageKey(record ?? obj);
       const acpState = store.get("acpState") ?? iMap();
       let next = mapped ? acpState.set(key, mapped) : acpState.delete(key);
       if (byThreadId) {
         next = mapped ? next.set(byThreadId, mapped) : next.delete(byThreadId);
+      }
+      if (byMessageId) {
+        next = mapped ? next.set(byMessageId, mapped) : next.delete(byMessageId);
       }
       store.setState({
         acpState: next,
