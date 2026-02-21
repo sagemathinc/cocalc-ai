@@ -343,6 +343,9 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const debugCountersRef = React.useRef({
     applyNotebookSlateCalls: 0,
     applyNotebookSlateMutations: 0,
+    applyNotebookSlateStaleBase: 0,
+    rejectedStaleStructuralApplies: 0,
+    rejectedStaleCells: 0,
     onSlateChangeCalls: 0,
   });
 
@@ -557,19 +560,70 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       if (cellsSignature(parsed) === notebookSignatureRef.current) {
         return;
       }
-      const parsedToApply: ParsedSlateCell[] = [];
       const originalIds = cell_list.toArray();
-      const structuralChangeRequested = parsed.length !== originalIds.length;
-      if (
+      const staleBase =
         opts?.baseSignature != null &&
-        opts.baseSignature !== notebookSignatureRef.current &&
-        structuralChangeRequested
-      ) {
+        opts.baseSignature !== notebookSignatureRef.current;
+      if (staleBase) {
         // Canonical notebook changed since this local snapshot was taken.
-        // Reject stale structural transforms (create/delete/reorder) to avoid
-        // feedback-loop growth from delayed blur/debounce events.
+        // In stale mode, only apply edits to currently-existing ids and
+        // reject all structural transforms (create/delete/reorder).
+        debugCountersRef.current.applyNotebookSlateStaleBase += 1;
+        const transientIdMap = transientIdMapRef.current;
+        const existingIds = new Set(originalIds);
+        const parsedById = new globalThis.Map<string, ParsedSlateCell>();
+        let rejectedCells = 0;
+
+        for (const cell of parsed) {
+          const rawId = `${cell.cell_id ?? ""}`.trim();
+          if (!rawId) {
+            const meaningful = cell.cell_type !== "markdown" || cell.input.trim() !== "";
+            if (meaningful) rejectedCells += 1;
+            continue;
+          }
+          const mappedId = transientIdMap.get(rawId) ?? rawId;
+          if (!existingIds.has(mappedId) || parsedById.has(mappedId)) {
+            rejectedCells += 1;
+            continue;
+          }
+          parsedById.set(mappedId, cell);
+          if (mappedId !== rawId) {
+            transientIdMap.set(rawId, mappedId);
+          }
+        }
+
+        let didMutate = false;
+        for (const id of originalIds) {
+          const cell = parsedById.get(id);
+          if (cell == null) continue;
+          const currentCell = cells.get(id) ?? jupyter_actions.store.getIn(["cells", id]);
+          const currentType = `${currentCell?.get("cell_type") ?? "code"}`;
+          const nextType = cell.cell_type;
+          if (currentType !== nextType) {
+            jupyter_actions.set_cell_type(id, nextType, false);
+            didMutate = true;
+          }
+          const currentInput = `${currentCell?.get("input") ?? ""}`;
+          if (currentInput !== cell.input) {
+            jupyter_actions.set_cell_input(id, cell.input, false);
+            didMutate = true;
+          }
+        }
+
+        if (rejectedCells > 0) {
+          debugCountersRef.current.rejectedStaleStructuralApplies += 1;
+          debugCountersRef.current.rejectedStaleCells += rejectedCells;
+        }
+
+        if (didMutate) {
+          debugCountersRef.current.applyNotebookSlateMutations += 1;
+          (jupyter_actions as any)._sync?.();
+          (jupyter_actions as any).save_asap?.();
+        }
+        setError("");
         return;
       }
+      const parsedToApply: ParsedSlateCell[] = [];
       const ids = [...originalIds];
       let didMutate = false;
       const used = new Set<string>();
@@ -865,9 +919,21 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         }
         applyNotebookSlateRef.current(next);
       },
+      apply_single_doc_stale_structural_for_test: (input = "print('stale')") => {
+        const next = JSON.parse(JSON.stringify(slateValue)) as Descendant[];
+        next.push({
+          type: "jupyter_code_cell",
+          fence: true,
+          info: `${kernel ?? ""}`,
+          cell_id: `tmp-stale-${Date.now().toString(36)}`,
+          cell_meta: { cell_type: "code" },
+          children: toCodeLines(input),
+        } as any);
+        applyNotebookSlateRef.current(next, { baseSignature: "__stale__" });
+      },
       get_single_doc_debug_for_test: () => ({ ...debugCountersRef.current }),
     };
-  }, [slateValue]);
+  }, [slateValue, kernel]);
 
   if (cell_list == null || cells == null) {
     return <div style={{ padding: "12px" }}>Loading notebook...</div>;

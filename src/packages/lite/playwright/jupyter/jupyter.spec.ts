@@ -370,6 +370,55 @@ test("single-doc debounce sync settles without feedback-loop growth", async ({ p
   );
 });
 
+test("single-doc stale structural apply is rejected without creating cells", async ({
+  page,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-stale-structural-reject");
+  await ensureNotebook(path_ipynb, [codeCell("print('one')"), codeCell("print('two')")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const initialCount = await safeNotebookCellCount(page);
+  expect(initialCount).toBeGreaterThan(0);
+  const debugBefore = await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    return runtime?.get_single_doc_debug_for_test?.() ?? {};
+  });
+
+  await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    if (typeof runtime?.apply_single_doc_stale_structural_for_test !== "function") {
+      throw new Error("missing apply_single_doc_stale_structural_for_test runtime helper");
+    }
+    runtime.apply_single_doc_stale_structural_for_test("print('should-not-create')");
+  });
+
+  await expect
+    .poll(async () => await safeNotebookCellCount(page), {
+      timeout: 30_000,
+    })
+    .toBe(initialCount);
+
+  const debugAfter = await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    return runtime?.get_single_doc_debug_for_test?.() ?? {};
+  });
+  expect(Number(debugAfter.rejectedStaleStructuralApplies ?? 0)).toBeGreaterThan(
+    Number(debugBefore.rejectedStaleStructuralApplies ?? 0),
+  );
+  expect(Number(debugAfter.rejectedStaleCells ?? 0)).toBeGreaterThan(
+    Number(debugBefore.rejectedStaleCells ?? 0),
+  );
+});
+
 test("single-doc top-level text typing does not duplicate cells", async ({ page }) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-markdown-no-loop");
