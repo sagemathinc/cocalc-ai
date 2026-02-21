@@ -206,12 +206,14 @@ export async function processAcpLLM({
   const config = actions.getCodexConfig?.(threadRootDate);
   const normalizedModel =
     typeof model === "string" ? normalizeCodexMention(model) : undefined;
+  const threadRootMessage =
+    actions.getMessageByDate?.(threadRootDate) ??
+    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
   const thread_id =
-    (message as any)?.thread_id ??
-    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`)?.thread_id;
+    (message as any)?.thread_id ?? (threadRootMessage as any)?.thread_id;
   const message_id = (message as any)?.message_id;
   const reply_to_message_id =
-    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`)?.message_id;
+    (threadRootMessage as any)?.message_id;
 
   const id = uuid();
   chatStreams.add(id);

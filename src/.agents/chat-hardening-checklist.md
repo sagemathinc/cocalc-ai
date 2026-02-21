@@ -25,18 +25,18 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Add v2 record interfaces and constructors in [src/packages/chat/src/index.ts](./src/packages/chat/src/index.ts).
+- [x] Add v2 record interfaces and constructors in [src/packages/chat/src/index.ts](./src/packages/chat/src/index.ts).
 - [ ] Add helper constructors:
-  - [ ] `buildThreadRecord(...)`
-  - [ ] `buildThreadConfigRecord(...)`
-  - [ ] `buildMessageRecordV2(...)`
-  - [ ] `buildThreadStateRecord(...)`
-- [ ] Keep old exports intact so existing code compiles.
+  - [x] `buildThreadRecord(...)`
+  - [x] `buildThreadConfigRecord(...)`
+  - [x] `buildMessageRecordV2(...)`
+  - [x] `buildThreadStateRecord(...)`
+- [x] Keep old exports intact so existing code compiles.
 
 Validation:
 
-- [ ] Typecheck/build frontend + lite packages.
-- [ ] No runtime behavior changes yet.
+- [x] Typecheck/build frontend + lite packages.
+- [x] No runtime behavior changes yet.
 
 ## Commit 2: Introduce `message_id` and `thread_id` in write paths
 
@@ -46,13 +46,13 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Update send/reply creation flows in [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts).
-- [ ] Ensure every new message carries `message_id` and `thread_id`.
-- [ ] Keep existing date fields for ordering.
+- [x] Update send/reply creation flows in [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts).
+- [x] Ensure every new message carries `message_id` and `thread_id`.
+- [x] Keep existing date fields for ordering.
 
 Validation:
 
-- [ ] Add unit tests for ID presence on new root/reply messages.
+- [ ] Add unit tests for ID presence on new root/reply messages. (partially covered by existing chat/acp tests; explicit root/reply tests still pending)
 - [ ] Verify message creation still works in UI.
 
 ## Commit 3: Re-key frontend cache/index by `message_id`
@@ -64,15 +64,15 @@ Commit message suggestion:
 Checklist:
 
 - [ ] Refactor [src/packages/frontend/chat/message-cache.ts](./src/packages/frontend/chat/message-cache.ts):
-  - [ ] primary map key = `message_id`
-  - [ ] maintain secondary index by timestamp only for sorting/lookup utilities
+  - [x] primary map key = `message_id` (internal map; date-keyed compatibility map still exported)
+  - [x] maintain secondary index by timestamp only for sorting/lookup utilities
 - [ ] Update dependent selectors and helpers in:
-  - [ ] [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts)
-  - [ ] [src/packages/frontend/chat/utils.ts](./src/packages/frontend/chat/utils.ts)
+  - [ ] [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts) (partial: added date-key accessor; broader key-assumption cleanup pending)
+  - [ ] [src/packages/frontend/chat/utils.ts](./src/packages/frontend/chat/utils.ts) (partial: root/date helpers now tolerate non-date map keys)
 
 Validation:
 
-- [ ] Add/update tests for cache updates and thread indexing.
+- [ ] Add/update tests for cache updates and thread indexing. (partial: cache by-id/date-index coverage added)
 - [ ] Confirm thread rendering/scroll still works.
 
 ## Commit 4: Add `thread` and `thread_config` records (storage + accessors)
@@ -83,13 +83,13 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Add record creation/read/update helpers in `@cocalc/chat` and chat actions.
-- [ ] Move thread metadata ownership from root message to `thread_config`.
-- [ ] Include `thread_image` in `thread_config`.
+- [x] Add record creation/read/update helpers in `@cocalc/chat` and chat actions.
+- [x] Move thread metadata ownership from root message to `thread_config`.
+- [x] Include `thread_image` in `thread_config`.
 
 Validation:
 
-- [ ] Unit tests for thread config read/write and defaults.
+- [ ] Unit tests for thread config read/write and defaults. (partial coverage exists; dedicated tests still pending)
 - [ ] Ensure title/icon/color/pin still render and persist.
 
 ## Commit 5: Codex thread identity from `thread_config` + conversion action
@@ -100,11 +100,11 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Update codex-thread detection to prioritize `thread_config.acp_config`.
-- [ ] Add action(s) to convert a thread:
-  - [ ] normal -> codex
-  - [ ] codex -> normal
-- [ ] Keep existing UX controls functional.
+- [x] Update codex-thread detection to prioritize `thread_config.acp_config`.
+- [x] Add action(s) to convert a thread:
+  - [x] normal -> codex
+  - [x] codex -> normal
+- [x] Keep existing UX controls functional.
 
 Likely files:
 
@@ -124,14 +124,14 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Extend ACP chat metadata builder in [src/packages/frontend/chat/acp-api.ts](./src/packages/frontend/chat/acp-api.ts).
-- [ ] Include `thread_id`, `message_id` in requests.
-- [ ] Preserve current fallback fields while backend catches up.
+- [x] Extend ACP chat metadata builder in [src/packages/frontend/chat/acp-api.ts](./src/packages/frontend/chat/acp-api.ts).
+- [x] Include `thread_id`, `message_id` in requests.
+- [x] Preserve current fallback fields while backend catches up.
 
 Validation:
 
-- [ ] Update/add tests in frontend ACP tests.
-- [ ] Confirm stream requests include IDs.
+- [x] Update/add tests in frontend ACP tests.
+- [x] Confirm stream requests include IDs.
 
 ## Commit 7: ACP writer/finalizer/recovery target by IDs (backend)
 
@@ -141,9 +141,9 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Update writer init/finalize/recovery in [src/packages/lite/hub/acp/index.ts](./src/packages/lite/hub/acp/index.ts) to target records by IDs.
-- [ ] Make `persistSessionId` write thread config record only (not message rows).
-- [ ] Keep sender-qualified fallback only as temporary safety net.
+- [ ] Update writer init/finalize/recovery in [src/packages/lite/hub/acp/index.ts](./src/packages/lite/hub/acp/index.ts) to target records by IDs. (still PK-based targeting at runtime)
+- [x] Make `persistSessionId` write thread config record only (not message rows).
+- [x] Keep sender-qualified fallback only as temporary safety net.
 
 Validation:
 
@@ -158,7 +158,7 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Write `thread_state` transitions during send/queue/run/finalize/interrupt.
+- [x] Write `thread_state` transitions during send/queue/run/finalize/interrupt.
 - [ ] Read `thread_state` for spinner/status rendering instead of fragile inference.
 
 Validation:
@@ -174,19 +174,19 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Add script: `src/packages/chat/scripts/migrate-v1-to-v2.ts` (or `.js`).
-- [ ] Features:
-  - [ ] backup original file (`.bak`)
-  - [ ] deterministic ID mapping
-  - [ ] emit `thread`/`thread_config`/`message`/`thread_state`
-  - [ ] rewrite reply references to `reply_to_message_id`
-  - [ ] print integrity report
-- [ ] Document exact usage in script header/comments.
+- [x] Add script: `src/packages/chat/scripts/migrate-v1-to-v2.ts` (or `.js`).
+- [x] Features:
+  - [x] backup original file (`.bak`)
+  - [x] deterministic ID mapping
+  - [x] emit `thread`/`thread_config`/`message`/`thread_state`
+  - [x] rewrite reply references to `reply_to_message_id`
+  - [x] print integrity report
+- [x] Document exact usage in script header/comments.
 
 Validation:
 
-- [ ] Run script on fixture files.
-- [ ] Run script on `lite*.chat` targets manually.
+- [x] Run script on fixture files.
+- [x] Run script on `lite*.chat` targets manually.
 
 ## Commit 10: Remove remaining date-identity writes/reads
 
@@ -213,18 +213,18 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Add invariant checker utility callable from tests and debug paths.
-- [ ] Add counters/log fields:
-  - [ ] `chat.integrity.orphan_messages`
-  - [ ] `chat.integrity.duplicate_root_messages`
-  - [ ] `chat.integrity.missing_thread_config`
-  - [ ] `chat.integrity.invalid_reply_targets`
-  - [ ] `chat.acp.finalize_mismatch`
+- [x] Add invariant checker utility callable from tests and debug paths.
+- [x] Add counters/log fields:
+  - [x] `chat.integrity.orphan_messages`
+  - [x] `chat.integrity.duplicate_root_messages`
+  - [x] `chat.integrity.missing_thread_config`
+  - [x] `chat.integrity.invalid_reply_targets`
+  - [x] `chat.acp.finalize_mismatch`
 
 Validation:
 
-- [ ] Unit tests for invariant failures.
-- [ ] Confirm watchdog logs include top offending IDs.
+- [x] Unit tests for invariant failures.
+- [x] Confirm watchdog logs include top offending IDs.
 
 ## Commit 12: Cleanup + docs
 
@@ -271,4 +271,3 @@ Pause rollout if any occur:
 - [ ] Any codex thread loses config/controls after finalize/restart.
 - [ ] Any invariant checker critical violation (`orphan`, `missing_thread_config`, `invalid_reply_targets`) on normal usage.
 - [ ] ACP terminal state mismatch repeats in normal workflows.
-

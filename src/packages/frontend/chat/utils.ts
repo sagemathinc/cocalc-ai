@@ -155,12 +155,12 @@ export function getRootMessage({
   // we can't find the original message, if there is no reply_to
   if (!reply_to) {
     // the msssage itself is the root
-    const key = `${new Date(date ?? Date.now()).valueOf()}`;
-    return messages.get?.(key) as any;
+    const ms = new Date(date ?? Date.now()).valueOf();
+    return getMessageAtDate({ messages, date: ms });
   } else {
     // All messages in a thread have the same reply_to, which points to the root.
-    const key = `${new Date(reply_to).valueOf()}`;
-    return messages.get?.(key) as any;
+    const ms = new Date(reply_to).valueOf();
+    return getMessageAtDate({ messages, date: ms });
   }
 }
 
@@ -186,7 +186,7 @@ export function getThreadRootDate({
   if (messages == null) {
     return 0;
   }
-  const raw = messages.get?.(`${date}`);
+  const raw = getMessageAtDate({ messages, date });
   const message =
     raw && typeof (raw as any)?.toJS === "function"
       ? (raw as any).toJS()
@@ -196,6 +196,38 @@ export function getThreadRootDate({
   }
   const d = getReplyToRoot({ message, messages });
   return d?.valueOf() ?? 0;
+}
+
+export function getMessageByLookup({
+  messages,
+  key,
+}: {
+  messages?: ChatMessages;
+  key?: string;
+}): ChatMessageTyped | undefined {
+  if (!messages || !key) return undefined;
+  const direct = messages.get?.(key) as ChatMessageTyped | undefined;
+  if (direct != null) return direct;
+  const ms = Number(key);
+  if (!Number.isFinite(ms)) return undefined;
+  for (const candidate of messages.values?.() ?? []) {
+    const d = dateValue(candidate as any);
+    if (d?.valueOf() === ms) {
+      return candidate as ChatMessageTyped;
+    }
+  }
+  return undefined;
+}
+
+export function getMessageAtDate({
+  messages,
+  date,
+}: {
+  messages?: ChatMessages;
+  date: number;
+}): ChatMessageTyped | undefined {
+  if (!Number.isFinite(date)) return undefined;
+  return getMessageByLookup({ messages, key: `${date}` });
 }
 
 // Use heuristics to try to turn "date", whatever it might be,

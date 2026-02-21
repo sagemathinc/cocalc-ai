@@ -8,7 +8,9 @@ import { once } from "@cocalc/util/async-utils";
 /**
  * ChatMessageCache
  *
- * - Maintains a Map of chat messages keyed by ms timestamp (as string).
+ * - Maintains a primary Map of chat messages keyed by message_id.
+ * - Maintains a secondary Map of chat messages keyed by ms timestamp (as string)
+ *   for compatibility while date-keyed callsites are migrated.
  * - Listens to syncdb "change" events to update incrementally; one cache per syncdoc.
  * - Emits a monotonically increasing version so React and Actions can subscribe
  *   without recomputing the whole document.
@@ -28,8 +30,10 @@ const log = (..._args) => {};
 
 export class ChatMessageCache extends EventEmitter {
   private syncdb: ImmerDB;
-  private messages: Map<string, PlainChatMessage> = new Map();
+  private messagesById: Map<string, PlainChatMessage> = new Map();
+  private messagesByDate: Map<string, PlainChatMessage> = new Map();
   private messageIdIndex: Map<string, string> = new Map();
+  private dateIndex: Map<string, string> = new Map();
   private threadIndex: Map<string, ThreadIndexEntry> = new Map();
   private version = 0;
 
@@ -37,8 +41,9 @@ export class ChatMessageCache extends EventEmitter {
     super();
     this.syncdb = syncdb;
     log("constructor");
-    // Normalize the initial Map through produce so it is frozen consistently.
-    this.messages = produce(this.messages, () => {});
+    // Normalize initial Maps through produce so they are frozen consistently.
+    this.messagesById = produce(this.messagesById, () => {});
+    this.messagesByDate = produce(this.messagesByDate, () => {});
     this.syncdb.on("change", this.handleChange);
     if (
       this.syncdb.opts.ignoreInitialChanges ||
@@ -55,7 +60,11 @@ export class ChatMessageCache extends EventEmitter {
   }
 
   getMessages(): Map<string, PlainChatMessage> {
-    return this.messages;
+    return this.messagesByDate;
+  }
+
+  getMessagesById(): Map<string, PlainChatMessage> {
+    return this.messagesById;
   }
 
   getThreadIndex(): Map<string, ThreadIndexEntry> {
@@ -66,11 +75,18 @@ export class ChatMessageCache extends EventEmitter {
     return this.messageIdIndex;
   }
 
+  getDateIndex(): Map<string, string> {
+    return this.dateIndex;
+  }
+
   getByMessageId(messageId?: string): PlainChatMessage | undefined {
     if (!messageId) return;
-    const key = this.messageIdIndex.get(messageId);
-    if (!key) return;
-    return this.messages.get(key);
+    return this.messagesById.get(messageId);
+  }
+
+  getByDateKey(dateKey?: string): PlainChatMessage | undefined {
+    if (!dateKey) return;
+    return this.messagesByDate.get(dateKey);
   }
 
   getVersion(): number {
@@ -79,8 +95,10 @@ export class ChatMessageCache extends EventEmitter {
 
   dispose() {
     this.syncdb.off("change", this.handleChange);
-    this.messages = new Map();
+    this.messagesById = new Map();
+    this.messagesByDate = new Map();
     this.messageIdIndex = new Map();
+    this.dateIndex = new Map();
     this.removeAllListeners();
   }
 
@@ -108,9 +126,15 @@ export class ChatMessageCache extends EventEmitter {
     return d ? `${d.valueOf()}` : undefined;
   }
 
-  private getMessageId(message?: PlainChatMessage): string | undefined {
+  private getMessageId(
+    message?: PlainChatMessage,
+    dateKey?: string,
+  ): string | undefined {
     const id = (message as any)?.message_id;
-    return typeof id === "string" && id.length > 0 ? id : undefined;
+    if (typeof id === "string" && id.length > 0) return id;
+    if (!message || !dateKey) return undefined;
+    const sender = `${(message as any)?.sender_id ?? "unknown"}`;
+    return `legacy-message:${sender}:${dateKey}`;
   }
 
   private addToThreadIndex(
@@ -186,8 +210,10 @@ export class ChatMessageCache extends EventEmitter {
         return;
       }
     }
-    const map = new Map<string, PlainChatMessage>();
+    const mapById = new Map<string, PlainChatMessage>();
+    const mapByDate = new Map<string, PlainChatMessage>();
     const messageIdIndex = new Map<string, string>();
+    const dateIndex = new Map<string, string>();
     const threadIndex = new Map<string, ThreadIndexEntry>();
     const rows = this.syncdb.get() ?? [];
     log("rebuildFromDoc: got rows", rows);
@@ -197,16 +223,20 @@ export class ChatMessageCache extends EventEmitter {
       const key = this.getDateKey(row0);
       if (!key) continue;
       const message = row0 as PlainChatMessage;
-      map.set(key, message);
-      const messageId = this.getMessageId(message);
+      const messageId = this.getMessageId(message, key);
       if (messageId) {
+        mapById.set(messageId, message);
+        mapByDate.set(key, message);
         messageIdIndex.set(messageId, key);
+        dateIndex.set(key, messageId);
       }
       this.addToThreadIndex(threadIndex, message, key);
     }
-    // Freeze the rebuilt Map for consistency with produce() updates.
-    this.messages = produce(map, () => {});
+    // Freeze rebuilt Maps for consistency with produce() updates.
+    this.messagesById = produce(mapById, () => {});
+    this.messagesByDate = produce(mapByDate, () => {});
     this.messageIdIndex = produce(messageIdIndex, () => {});
+    this.dateIndex = produce(dateIndex, () => {});
     this.threadIndex = produce(threadIndex, () => {});
     this.bumpVersion();
   }
@@ -221,48 +251,56 @@ export class ChatMessageCache extends EventEmitter {
     log("handleChange", changes);
     if (this.syncdb.get_state() !== "ready") return;
     const rows: Record<string, unknown>[] = Array.from(changes);
-    const next = produce(this.messages, (draft) => {
-      this.threadIndex = produce(this.threadIndex, (threadDraft) => {
-        this.messageIdIndex = produce(this.messageIdIndex, (idDraft) => {
-        for (const row0 of rows) {
-          if (row0?.event !== "chat") continue;
-          if (!row0?.date) continue;
-          // SyncDoc.get_one requires only primary key fields so we make an object
-          // where that ONLY has those fields and no others.
-          const where: Record<string, unknown> = {};
-          if (row0?.event != null) where.event = row0.event;
-          if (row0?.sender_id != null) where.sender_id = row0.sender_id;
-          if (row0?.date != null) where.date = row0.date;
-          const rec = this.syncdb.get_one(where);
-          const key = this.getDateKey(rec ?? row0);
-          if (!key) continue;
+    const nextByDate = produce(this.messagesByDate, (dateDraft) => {
+      this.messagesById = produce(this.messagesById, (idMapDraft) => {
+        this.threadIndex = produce(this.threadIndex, (threadDraft) => {
+          this.messageIdIndex = produce(this.messageIdIndex, (idDraft) => {
+            this.dateIndex = produce(this.dateIndex, (dateIndexDraft) => {
+              for (const row0 of rows) {
+                if (row0?.event !== "chat") continue;
+                if (!row0?.date) continue;
+                // SyncDoc.get_one requires only primary key fields so we make an object
+                // where that ONLY has those fields and no others.
+                const where: Record<string, unknown> = {};
+                if (row0?.event != null) where.event = row0.event;
+                if (row0?.sender_id != null) where.sender_id = row0.sender_id;
+                if (row0?.date != null) where.date = row0.date;
+                const rec = this.syncdb.get_one(where);
+                const key = this.getDateKey(rec ?? row0);
+                if (!key) continue;
 
-          const prev = draft.get(key);
-          if (prev) {
-            this.removeFromThreadIndex(threadDraft, prev, key, draft);
-            const prevId = this.getMessageId(prev);
-            if (prevId) {
-              idDraft.delete(prevId);
-            }
-          }
+                const prev = dateDraft.get(key);
+                if (prev) {
+                  this.removeFromThreadIndex(threadDraft, prev, key, dateDraft);
+                  const prevId =
+                    dateIndexDraft.get(key) ?? this.getMessageId(prev, key);
+                  if (prevId) {
+                    idDraft.delete(prevId);
+                    idMapDraft.delete(prevId);
+                  }
+                  dateIndexDraft.delete(key);
+                }
 
-          if (rec?.event !== "chat") {
-            draft.delete(key);
-            continue;
-          }
+                if (rec?.event !== "chat") {
+                  dateDraft.delete(key);
+                  continue;
+                }
 
-          const nextMessage = rec as PlainChatMessage;
-          draft.set(key, nextMessage);
-          const nextId = this.getMessageId(nextMessage);
-          if (nextId) {
-            idDraft.set(nextId, key);
-          }
-          this.addToThreadIndex(threadDraft, nextMessage, key);
-        }
+                const nextMessage = rec as PlainChatMessage;
+                const nextId = this.getMessageId(nextMessage, key);
+                if (!nextId) continue;
+                dateDraft.set(key, nextMessage);
+                idMapDraft.set(nextId, nextMessage);
+                idDraft.set(nextId, key);
+                dateIndexDraft.set(key, nextId);
+                this.addToThreadIndex(threadDraft, nextMessage, key);
+              }
+            });
+          });
         });
       });
     });
-    this.messages = next;
+    this.messagesByDate = nextByDate;
     this.bumpVersion();
   };
 }

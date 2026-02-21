@@ -29,7 +29,11 @@ import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
 import type { ChatState } from "./store";
 import type { ChatMessages, SubmitMentionsFn } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
-import { markChatAsReadIfUnseen, toMsString } from "./utils";
+import {
+  getMessageByLookup,
+  markChatAsReadIfUnseen,
+  toMsString,
+} from "./utils";
 import { COMBINED_FEED_KEY, useThreadSections } from "./threads";
 import { ChatDocProvider, useChatDoc } from "./doc-context";
 import { useChatComposerDraft } from "./use-chat-composer-draft";
@@ -61,7 +65,7 @@ function pickNewestMessageKeys(
   if (!messages || limit <= 0) return [];
   const newest: MessageKeyWithTime[] = [];
   for (const key of entry.messageKeys) {
-    const message = messages.get(key);
+    const message = getMessageByLookup({ messages, key });
     if (!message) continue;
     const d = dateValue(message);
     if (!d) continue;

@@ -47,7 +47,13 @@ import type {
   MessageHistory,
 } from "./types";
 import { CHAT_SCHEMA_V2, addToHistory, type CodexThreadConfig } from "@cocalc/chat";
-import { getThreadRootDate, toISOString, toMsString, newest_content } from "./utils";
+import {
+  getMessageAtDate,
+  getThreadRootDate,
+  toISOString,
+  toMsString,
+  newest_content,
+} from "./utils";
 import type { AcpChatContext } from "@cocalc/conat/ai/acp/types";
 import {
   field,
@@ -130,6 +136,14 @@ export class ChatActions extends Actions<ChatState> {
   getMessageDateKeyById = (messageId?: string): string | undefined => {
     if (!messageId || !this.messageCache) return;
     return this.messageCache.getMessageIdIndex().get(messageId);
+  };
+
+  getMessageByDate = (
+    date?: Date | string | number,
+  ): ChatMessageTyped | undefined => {
+    if (!this.messageCache || date == null) return;
+    const key = toMsString(date);
+    return this.messageCache.getByDateKey(key) as ChatMessageTyped | undefined;
   };
 
   private toImmutableRecord(record: any): any {
@@ -314,7 +328,10 @@ export class ChatActions extends Actions<ChatState> {
           date: reply_to.valueOf(),
           messages: messagesState,
         }) || reply_to.valueOf();
-      const rootMessage = messagesState.get(`${rootThreadMs}`);
+      const rootMessage = getMessageAtDate({
+        messages: messagesState,
+        date: rootThreadMs,
+      });
       const rootMessageId =
         (rootMessage as any)?.message_id ?? `legacy-message-${rootThreadMs}`;
       const rootThreadId =
@@ -706,8 +723,7 @@ export class ChatActions extends Actions<ChatState> {
     if (!/^\d+$/.test(threadKey)) {
       return null;
     }
-    const messages = this.getAllMessages();
-    const message = messages.get(threadKey);
+    const message = this.getMessageByDate(parseInt(threadKey, 10));
     if (!message) return null;
     const dateIso = toISOString(dateValue(message));
     if (!dateIso) return null;
@@ -865,7 +881,7 @@ export class ChatActions extends Actions<ChatState> {
     const { dates } = getSortedDates(messages, account_id);
     const v: string[] = [];
     for (const date of dates) {
-      const message = messages.get(date);
+      const message = this.getMessageByDate(parseFloat(date));
       if (message == null) continue;
       v.push(message_to_markdown(message));
     }

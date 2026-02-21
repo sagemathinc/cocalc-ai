@@ -7,7 +7,7 @@ import type { Map as ImmutableMap } from "immutable";
 
 import type { ChatMessageTyped, ChatMessages } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
-import { newest_content } from "./utils";
+import { getMessageByLookup, newest_content } from "./utils";
 import { field } from "./access";
 import type { ChatActions } from "./actions";
 
@@ -66,7 +66,7 @@ export function useThreadList(
     for (const entry of threadIndex.values()) {
       let rootMessage = entry.rootMessage;
       if (!rootMessage && messages) {
-        rootMessage = messages.get(entry.key);
+        rootMessage = getMessageByLookup({ messages, key: entry.key });
       }
       items.push({
         key: entry.key,

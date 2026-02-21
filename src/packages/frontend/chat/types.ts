@@ -55,7 +55,10 @@ export type ChatMessage = SharedChatMessage | PlainChatMessage;
 
 export type ChatMessageTyped = PlainChatMessage;
 
-// Map keyed by millisecond timestamp (stringified) to message.
+// Map of messages used throughout chat rendering/actions.
+// Historically keyed by millisecond timestamp (stringified).
+// During schema-v2 hardening we are transitioning internals toward message_id keys,
+// so callers should avoid assuming the key shape unless explicitly documented.
 export type ChatMessages = Map<string, ChatMessageTyped>;
 
 // this type isn't explicitly used anywhere yet, but the actual structure is and I just

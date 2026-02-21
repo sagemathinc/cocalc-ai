@@ -57,6 +57,10 @@ describe("ChatMessageCache message_id index", () => {
 
     expect(cache.getByMessageId("msg-1")?.sender_id).toBe("user-1");
     expect(cache.getByMessageId("msg-2")?.sender_id).toBe("user-2");
+    expect(cache.getMessagesById().get("msg-1")?.sender_id).toBe("user-1");
+    expect(cache.getDateIndex().get(`${new Date(rows[0].date).valueOf()}`)).toBe(
+      "msg-1",
+    );
 
     const updated = {
       event: "chat",
@@ -70,7 +74,7 @@ describe("ChatMessageCache message_id index", () => {
 
     expect(cache.getByMessageId("msg-2")).toBeUndefined();
     expect(cache.getByMessageId("msg-2b")?.sender_id).toBe("user-2");
+    expect(cache.getMessagesById().has("msg-2")).toBe(false);
     cache.dispose();
   });
 });
-
