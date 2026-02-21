@@ -21,6 +21,7 @@ import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { ConatService } from "@cocalc/conat/service";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import { client_db } from "@cocalc/util/db-schema/client-db";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
@@ -30,6 +31,7 @@ const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
 type BrowserNotifyType = "error" | "default" | "success" | "info" | "warning";
+type BrowserSyncDocType = "string" | "db" | "immer";
 
 const BROWSER_EXEC_API_DECLARATION = `/**
  * Browser exec API available via 'cocalc browser exec'.
@@ -950,6 +952,217 @@ export function createBrowserSessionAutomation({
     string,
     BrowserExecOperation & { code: string }
   >();
+  const managedSyncDocs = new Map<
+    string,
+    {
+      refcount: number;
+      syncdoc?: any;
+      opening?: Promise<any>;
+    }
+  >();
+
+  const closeManagedSyncDoc = async (key: string): Promise<void> => {
+    const entry = managedSyncDocs.get(key);
+    if (!entry) return;
+    if (entry.opening != null) {
+      try {
+        await entry.opening;
+      } catch {
+        // ignore open errors on close path
+      }
+    }
+    managedSyncDocs.delete(key);
+    try {
+      await entry.syncdoc?.close?.();
+    } catch {
+      // ignore close errors
+    }
+  };
+
+  const closeAllManagedSyncDocs = async (): Promise<void> => {
+    const keys = [...managedSyncDocs.keys()];
+    for (const key of keys) {
+      await closeManagedSyncDoc(key);
+    }
+  };
+
+  const parseDocTypeFromSyncstring = (raw: unknown): {
+    type: BrowserSyncDocType;
+    opts?: Record<string, unknown>;
+  } => {
+    if (typeof raw !== "string" || raw.trim() === "") {
+      return { type: "string" };
+    }
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { type: "string" };
+    }
+    const typeRaw = `${parsed?.type ?? "string"}`.toLowerCase();
+    const type: BrowserSyncDocType =
+      typeRaw === "db" ? "db" : typeRaw.includes("immer") ? "immer" : "string";
+    const opts =
+      parsed?.opts != null && typeof parsed.opts === "object"
+        ? (parsed.opts as Record<string, unknown>)
+        : undefined;
+    return { type, opts };
+  };
+
+  const toStringArray = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+      return value.map((x) => `${x ?? ""}`).filter((x) => x.length > 0);
+    }
+    if (value instanceof Set) {
+      return [...value].map((x) => `${x ?? ""}`).filter((x) => x.length > 0);
+    }
+    return [];
+  };
+
+  const getSyncDocTypeForPath = async ({
+    project_id,
+    path,
+  }: {
+    project_id: string;
+    path: string;
+  }): Promise<{ type: BrowserSyncDocType; opts?: Record<string, unknown> }> => {
+    const string_id = client_db.sha1(project_id, path);
+    const syncstrings = await conat().sync.synctable({
+      query: {
+        syncstrings: [{ project_id, path, string_id, doctype: null }],
+      },
+      stream: false,
+      atomic: false,
+      immutable: false,
+      noInventory: true,
+    });
+    try {
+      const getOne =
+        (syncstrings as any).get_one ?? (syncstrings as any).getOne;
+      const row =
+        typeof getOne === "function" ? getOne.call(syncstrings) : undefined;
+      return parseDocTypeFromSyncstring(row?.doctype);
+    } finally {
+      try {
+        syncstrings?.close?.();
+      } catch {
+        // ignore close errors
+      }
+    }
+  };
+
+  const openSyncDocDirectly = async ({
+    project_id,
+    path,
+  }: {
+    project_id: string;
+    path: string;
+  }): Promise<any> => {
+    const cleanPath = requireAbsolutePath(path);
+    const { type, opts } = await getSyncDocTypeForPath({
+      project_id,
+      path: cleanPath,
+    });
+    const commonOpts = {
+      project_id,
+      path: cleanPath,
+      noSaveToDisk: true,
+      noAutosave: true,
+      firstReadLockTimeout: 1,
+    };
+    const primary_keys = toStringArray((opts as any)?.primary_keys ?? (opts as any)?.primaryKeys);
+    const string_cols = toStringArray((opts as any)?.string_cols ?? (opts as any)?.stringCols);
+    const sync = conat().sync;
+    const syncdoc =
+      type === "immer" && primary_keys.length > 0
+        ? sync.immer({ ...commonOpts, primary_keys, string_cols })
+        : type === "db" && primary_keys.length > 0
+          ? sync.db({ ...commonOpts, primary_keys, string_cols })
+          : sync.string(commonOpts);
+    const started = Date.now();
+    while (Date.now() - started < 15_000) {
+      const state =
+        typeof syncdoc?.get_state === "function"
+          ? syncdoc.get_state()
+          : "ready";
+      if (state === "ready") {
+        return syncdoc;
+      }
+      if (state === "closed") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    try {
+      await syncdoc?.close?.();
+    } catch {
+      // ignore close errors
+    }
+    throw Error(`syncdoc not ready for ${cleanPath}`);
+  };
+
+  const acquireManagedSyncDoc = async ({
+    project_id,
+    path,
+    isCanceled,
+  }: {
+    project_id: string;
+    path: string;
+    isCanceled?: () => boolean;
+  }): Promise<{ syncdoc: any; release: () => Promise<void> }> => {
+    const cleanPath = requireAbsolutePath(path);
+    const key = `${project_id}:${cleanPath}`;
+    let entry = managedSyncDocs.get(key);
+    if (!entry) {
+      entry = { refcount: 0 };
+      managedSyncDocs.set(key, entry);
+    }
+    entry.refcount += 1;
+
+    if (!entry.syncdoc) {
+      if (!entry.opening) {
+        entry.opening = (async () => {
+          const doc = await openSyncDocDirectly({
+            project_id,
+            path: cleanPath,
+          });
+          entry!.syncdoc = doc;
+          return doc;
+        })().finally(() => {
+          if (entry != null) {
+            delete entry.opening;
+          }
+        });
+      }
+      try {
+        await entry.opening;
+      } catch (err) {
+        entry.refcount = Math.max(0, entry.refcount - 1);
+        if (entry.refcount <= 0) {
+          managedSyncDocs.delete(key);
+        }
+        throw err;
+      }
+    }
+
+    let released = false;
+    const release = async (): Promise<void> => {
+      if (released) return;
+      released = true;
+      const current = managedSyncDocs.get(key);
+      if (!current) return;
+      current.refcount = Math.max(0, current.refcount - 1);
+      if (current.refcount <= 0 && !current.opening) {
+        await closeManagedSyncDoc(key);
+      }
+    };
+
+    if (isCanceled?.()) {
+      await release();
+      throw Error("execution canceled");
+    }
+    return { syncdoc: entry.syncdoc, release };
+  };
 
   const pruneExecOps = () => {
     const now = Date.now();
@@ -1095,8 +1308,12 @@ export function createBrowserSessionAutomation({
   const createExecApi = (
     project_id: string,
     isCanceled?: () => boolean,
-  ): BrowserExecApi => {
+  ): { api: BrowserExecApi; cleanup: () => Promise<void> } => {
     const fsApi = conat().fs({ project_id });
+    const heldSyncDocs = new Map<
+      string,
+      { syncdoc: any; release: () => Promise<void> }
+    >();
 
     const notify = (
       forcedType: BrowserNotifyType | undefined,
@@ -1150,52 +1367,6 @@ export function createBrowserSessionAutomation({
       return asPlain(result) as BrowserExecOutput;
     };
 
-    const getEditorActionsForPath = async (path: string): Promise<any> => {
-      const cleanPath = requireAbsolutePath(path);
-      await openFileInProject({
-        project_id,
-        path: cleanPath,
-        foreground: false,
-        foreground_project: false,
-      });
-      const started = Date.now();
-      while (Date.now() - started < 15_000) {
-        assertExecNotCanceled(isCanceled);
-        const editorActions = redux.getEditorActions(project_id, cleanPath) as any;
-        if (editorActions != null) {
-          return editorActions;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      throw Error(`editor actions unavailable for ${cleanPath}`);
-    };
-
-    const getSyncDocForPath = async (path: string): Promise<any> => {
-      const cleanPath = requireAbsolutePath(path);
-      const editorActions = await getEditorActionsForPath(cleanPath);
-      const syncdoc =
-        cleanPath.endsWith(".course")
-          ? editorActions?.course_actions?.syncdb
-          : (editorActions?._syncstring ?? editorActions?.jupyter_actions?.syncdb);
-      if (syncdoc == null) {
-        throw Error(`syncdoc unavailable for ${cleanPath}`);
-      }
-      const started = Date.now();
-      while (Date.now() - started < 15_000) {
-        assertExecNotCanceled(isCanceled);
-        const state =
-          typeof syncdoc.get_state === "function" ? syncdoc.get_state() : "ready";
-        if (state === "ready") {
-          return syncdoc;
-        }
-        if (state === "closed") {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      throw Error(`syncdoc not ready for ${cleanPath}`);
-    };
-
     const runGit = async (
       path: string,
       args: string[],
@@ -1216,7 +1387,35 @@ export function createBrowserSessionAutomation({
       };
     };
 
-    return {
+    const getHeldSyncDoc = async (path: string): Promise<any> => {
+      const cleanPath = requireAbsolutePath(path);
+      const key = `${project_id}:${cleanPath}`;
+      const existing = heldSyncDocs.get(key);
+      if (existing?.syncdoc != null) {
+        return existing.syncdoc;
+      }
+      const lease = await acquireManagedSyncDoc({
+        project_id,
+        path: cleanPath,
+        isCanceled,
+      });
+      heldSyncDocs.set(key, lease);
+      return lease.syncdoc;
+    };
+
+    const cleanup = async (): Promise<void> => {
+      const releases = [...heldSyncDocs.values()].map((x) => x.release);
+      heldSyncDocs.clear();
+      for (const release of releases) {
+        try {
+          await release();
+        } catch {
+          // ignore release failures during cleanup
+        }
+      }
+    };
+
+    const api: BrowserExecApi = {
       projectId: project_id,
       workspaceId: project_id,
       listOpenFiles: (): BrowserOpenFileInfo[] => {
@@ -1622,7 +1821,7 @@ export function createBrowserSessionAutomation({
           > => {
             assertExecNotCanceled(isCanceled);
             const cleanPath = requireAbsolutePath(path);
-            const syncdoc = await getSyncDocForPath(cleanPath);
+            const syncdoc = await getHeldSyncDoc(cleanPath);
             const versions = Array.isArray(syncdoc?.versions?.())
               ? syncdoc.versions()
               : [];
@@ -1678,7 +1877,7 @@ export function createBrowserSessionAutomation({
             if (!cleanVersion) {
               throw Error("version must be specified");
             }
-            const syncdoc = await getSyncDocForPath(cleanPath);
+            const syncdoc = await getHeldSyncDoc(cleanPath);
             const doc = syncdoc.version?.(cleanVersion);
             if (doc == null) {
               throw Error(`unknown patchflow version '${cleanVersion}'`);
@@ -1915,6 +2114,7 @@ export function createBrowserSessionAutomation({
         },
       },
     };
+    return { api, cleanup };
   };
 
   const executeBrowserScript = async ({
@@ -1939,14 +2139,18 @@ export function createBrowserSessionAutomation({
       );
     }
     assertExecNotCanceled(isCanceled);
-    const api = createExecApi(project_id, isCanceled);
+    const { api, cleanup } = createExecApi(project_id, isCanceled);
     const evaluator = new Function(
       "api",
       `"use strict"; return (async () => { ${script}\n})();`,
     ) as (api: BrowserExecApi) => Promise<unknown>;
-    const result = await evaluator(api);
-    assertExecNotCanceled(isCanceled);
-    return toSerializableValue(result);
+    try {
+      const result = await evaluator(api);
+      assertExecNotCanceled(isCanceled);
+      return toSerializableValue(result);
+    } finally {
+      await cleanup();
+    }
   };
 
   const clearTimer = () => {
@@ -2124,6 +2328,7 @@ export function createBrowserSessionAutomation({
         return;
       }
       await Promise.resolve().then(async () => {
+        await closeAllManagedSyncDocs();
         if (service) {
           service.close();
           service = undefined;
@@ -2149,6 +2354,7 @@ export function createBrowserSessionAutomation({
       closed = true;
       clearTimer();
       execOps.clear();
+      await closeAllManagedSyncDocs();
       if (service) {
         service.close();
         service = undefined;
