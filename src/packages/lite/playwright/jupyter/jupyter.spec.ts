@@ -18,6 +18,7 @@ import {
   notebookUrl,
   openNotebookPage,
   openSingleDocNotebookPage,
+  pressSingleDocShortcut,
   pressSingleDocRunShortcut,
   readSingleDocCellText,
   readSingleDocOutputText,
@@ -28,6 +29,7 @@ import {
   resolveBaseUrl,
   setKernelErrorForE2E,
   setCellInputCode,
+  setSingleDocCellCode,
   setSingleDocCellCodeViaRuntime,
   uniqueNotebookPath,
 } from "./helpers";
@@ -445,6 +447,80 @@ test("single-doc shows chrome for at most one selected code cell", async ({ page
   expect(
     await page.locator('[data-cocalc-test="jupyter-singledoc-cell-chrome"]').count(),
   ).toBeLessThanOrEqual(1);
+});
+
+test.skip("single-doc + classic cross-view run does not create extra trailing cells", async ({
+  browser,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-classic-no-extra");
+  await ensureNotebook(path_ipynb, [codeCell("pass")]);
+  const classicUrl = notebookUrl({
+    base_url: conn.base_url,
+    path_ipynb,
+    auth_token: conn.auth_token,
+  });
+  const singleDocUrl = notebookUrl({
+    base_url: conn.base_url,
+    path_ipynb,
+    auth_token: conn.auth_token,
+    frame_type: "jupyter-singledoc",
+  });
+
+  const context = await browser.newContext();
+  const classicPage = await context.newPage();
+  const singleDocPage = await context.newPage();
+  try {
+    await openNotebookPage(classicPage, classicUrl);
+    await openSingleDocNotebookPage(singleDocPage, singleDocUrl);
+
+    await ensureKernelReadyOrSkip(classicPage, 0);
+    await setCellInputCode(classicPage, 0, "a = 5\nb = 10");
+    await clickRunButton(classicPage, 0);
+
+    await expect
+      .poll(async () => await readSingleDocCellText(singleDocPage, 0), {
+        timeout: 45_000,
+      })
+      .toContain("a = 5");
+
+    await pressSingleDocShortcut(singleDocPage, 0, "Alt+B");
+    await expect
+      .poll(async () => await countSingleDocCodeCells(singleDocPage), {
+        timeout: 30_000,
+      })
+      .toBeGreaterThanOrEqual(2);
+
+    await setSingleDocCellCode(singleDocPage, 1, "a*b");
+    await singleDocPage.keyboard.press("Shift+Enter");
+    await expect
+      .poll(async () => await countSingleDocCodeCells(singleDocPage), {
+        timeout: 45_000,
+      })
+      .toBeGreaterThanOrEqual(3);
+
+    const expectedCount = 3; // first code cell, second a*b, and trailing blank
+    await expect
+      .poll(async () => await countCells(classicPage), { timeout: 30_000 })
+      .toBe(expectedCount);
+
+    await blurSingleDocEditor(singleDocPage);
+    await singleDocPage.waitForTimeout(2_000);
+
+    await expect
+      .poll(async () => await countCells(classicPage), { timeout: 30_000 })
+      .toBe(expectedCount);
+
+    const n = await countCells(classicPage);
+    const texts: string[] = [];
+    for (let i = 0; i < n; i++) {
+      texts.push(await readCellText(classicPage, i));
+    }
+    const abCount = texts.filter((x) => x.includes("a*b")).length;
+    expect(abCount).toBe(1);
+  } finally {
+    await context.close();
+  }
 });
 
 test("single-doc local+external concurrent edits converge without duplication", async ({ page }) => {

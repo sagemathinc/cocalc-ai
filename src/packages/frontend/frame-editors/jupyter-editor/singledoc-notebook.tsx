@@ -48,6 +48,10 @@ type RunContext = {
   slateValue?: Descendant[];
 };
 
+type ApplyNotebookSlateOpts = {
+  baseSignature?: string;
+};
+
 // Keep this noticeably higher than per-keystroke cadence so focus is not
 // disrupted by immediate round-trips back through canonical notebook state.
 const SAVE_DEBOUNCE_MS = 800;
@@ -321,9 +325,12 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   const [hoveredCellId, setHoveredCellId] = React.useState<string | undefined>(
     undefined,
   );
-  const applyNotebookSlateRef = React.useRef<(doc: Descendant[]) => void>(() => {});
+  const applyNotebookSlateRef = React.useRef<
+    (doc: Descendant[], opts?: ApplyNotebookSlateOpts) => void
+  >(() => {});
   const pendingSlateSyncTimerRef = React.useRef<number | null>(null);
   const pendingSlateDocRef = React.useRef<Descendant[] | null>(null);
+  const pendingSlateBaseSignatureRef = React.useRef<string | undefined>(undefined);
   const pendingFocusCellIdRef = React.useRef<string | undefined>(undefined);
   const transientIdMapRef = React.useRef<globalThis.Map<string, string>>(
     new globalThis.Map(),
@@ -399,13 +406,16 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       if (pendingSlateSyncTimerRef.current != null) {
         window.clearTimeout(pendingSlateSyncTimerRef.current);
         pendingSlateSyncTimerRef.current = null;
+        pendingSlateBaseSignatureRef.current = undefined;
       }
       if (context?.slateValue != null) {
         pendingSlateDocRef.current = null;
+        pendingSlateBaseSignatureRef.current = undefined;
         applyNotebookSlateRef.current(context.slateValue);
       } else if (pendingSlateDocRef.current != null) {
         const pending = pendingSlateDocRef.current;
         pendingSlateDocRef.current = null;
+        pendingSlateBaseSignatureRef.current = undefined;
         applyNotebookSlateRef.current(pending);
       }
       const frameActions = props.actions.get_frame_actions(props.id);
@@ -496,10 +506,12 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       if (pendingSlateSyncTimerRef.current != null) {
         window.clearTimeout(pendingSlateSyncTimerRef.current);
         pendingSlateSyncTimerRef.current = null;
+        pendingSlateBaseSignatureRef.current = undefined;
       }
       if (pendingSlateDocRef.current != null) {
         const pending = pendingSlateDocRef.current;
         pendingSlateDocRef.current = null;
+        pendingSlateBaseSignatureRef.current = undefined;
         applyNotebookSlateRef.current(pending);
       }
       const frameActions = props.actions.get_frame_actions(props.id);
@@ -532,7 +544,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   );
 
   const applyNotebookSlate = React.useCallback(
-    (doc: Descendant[]) => {
+    (doc: Descendant[], opts?: ApplyNotebookSlateOpts) => {
       debugCountersRef.current.applyNotebookSlateCalls += 1;
       if (read_only || cell_list == null || cells == null) {
         return;
@@ -543,6 +555,17 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       }
       const parsedToApply: ParsedSlateCell[] = [];
       const originalIds = cell_list.toArray();
+      const structuralChangeRequested = parsed.length !== originalIds.length;
+      if (
+        opts?.baseSignature != null &&
+        opts.baseSignature !== notebookSignatureRef.current &&
+        structuralChangeRequested
+      ) {
+        // Canonical notebook changed since this local snapshot was taken.
+        // Reject stale structural transforms (create/delete/reorder) to avoid
+        // feedback-loop growth from delayed blur/debounce events.
+        return;
+      }
       const ids = [...originalIds];
       let didMutate = false;
       const used = new Set<string>();
@@ -693,15 +716,18 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     (doc: Descendant[]) => {
       if (read_only) return;
       pendingSlateDocRef.current = doc;
+      pendingSlateBaseSignatureRef.current = notebookSignatureRef.current;
       if (pendingSlateSyncTimerRef.current != null) {
         window.clearTimeout(pendingSlateSyncTimerRef.current);
       }
       pendingSlateSyncTimerRef.current = window.setTimeout(() => {
         pendingSlateSyncTimerRef.current = null;
         const pending = pendingSlateDocRef.current;
+        const baseSignature = pendingSlateBaseSignatureRef.current;
         pendingSlateDocRef.current = null;
+        pendingSlateBaseSignatureRef.current = undefined;
         if (pending != null) {
-          applyNotebookSlateRef.current(pending);
+          applyNotebookSlateRef.current(pending, { baseSignature });
         }
       }, SAVE_DEBOUNCE_MS);
     },
@@ -715,6 +741,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       }
       pendingSlateSyncTimerRef.current = null;
       pendingSlateDocRef.current = null;
+      pendingSlateBaseSignatureRef.current = undefined;
     };
   }, []);
 
