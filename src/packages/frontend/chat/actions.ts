@@ -913,14 +913,22 @@ export class ChatActions extends Actions<ChatState> {
       return undefined;
     };
     const pin = parsePin(field<any>(cfg, "pin"));
-    const agent_kind = normalizeAgentKind(field<string>(cfg, "agent_kind"));
-    const agent_mode = normalizeAgentMode(field<string>(cfg, "agent_mode"));
-    const agent_model_raw = field<string>(cfg, "agent_model");
+    let agent_kind = normalizeAgentKind(field<string>(cfg, "agent_kind"));
+    let agent_mode = normalizeAgentMode(field<string>(cfg, "agent_mode"));
+    const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
+    const agent_model_raw =
+      field<string>(cfg, "agent_model") ??
+      (typeof acp_config?.model === "string" ? acp_config.model : undefined);
     const agent_model =
       typeof agent_model_raw === "string" && agent_model_raw.trim().length > 0
         ? (agent_model_raw as LanguageModel)
         : undefined;
-    const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
+    if (agent_kind == null && acp_config) {
+      agent_kind = "acp";
+    }
+    if (agent_mode == null && acp_config) {
+      agent_mode = "interactive";
+    }
     return {
       name: readString("name"),
       thread_color: readString("thread_color"),
@@ -1090,20 +1098,6 @@ export class ChatActions extends Actions<ChatState> {
       metadata.agent_model.trim().length > 0
     ) {
       return metadata.agent_model;
-    }
-    const cfg = this.getCodexConfig(new Date(rootMs));
-    if (typeof cfg?.model === "string" && cfg.model.trim().length > 0) {
-      const model = cfg.model.trim() as LanguageModel;
-      const { agent_kind, agent_mode } = identityFromModel(model);
-      if (this.syncdb != null) {
-        this.setThreadConfigRecord(threadKey, {
-          agent_kind,
-          agent_model: model,
-          agent_mode,
-        });
-        this.syncdb.commit();
-      }
-      return model;
     }
     return false;
   };

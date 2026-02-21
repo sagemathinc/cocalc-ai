@@ -198,7 +198,7 @@ Checklist:
 
 - [x] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code. (frontend chat + lite/acp syncdb chat ops now sender-qualified)
 - [ ] Keep date only for sort/time display. (partial: thread grouping + ACP queue/session identity now prefer `thread_id`; date remains for ordering/UI keys and selected legacy updates)
-- [ ] Delete transitional fallback code introduced in earlier commits where safe. (partial: thread metadata no longer auto-copies root message fields into `thread_config`; interrupt/autoscroll flows now require active ACP thread-state for codex turns; thread list rendering no longer reads root `name/thread_color/thread_icon`; language-model thread detection no longer uses root/history mention heuristics)
+- [ ] Delete transitional fallback code introduced in earlier commits where safe. (partial: thread metadata no longer auto-copies root message fields into `thread_config`; interrupt/autoscroll flows now require active ACP thread-state for codex turns; thread list rendering no longer reads root `name/thread_color/thread_icon`; language-model thread detection is thread-config driven and no longer performs side-effect writeback inference)
 
 Validation:
 
