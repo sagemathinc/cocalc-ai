@@ -273,6 +273,8 @@ export default function Message({
     () => actions?.isLanguageModelThread(dateValue(message)),
     [message, actions],
   );
+  // TODO: once thread identity is fully thread_config-driven, derive this
+  // directly from thread metadata (agent kind/model) rather than heuristics.
   const isCodexThread =
     typeof isLLMThread === "string" && isLLMThread.includes("codex");
   const acpStateActive = useMemo(

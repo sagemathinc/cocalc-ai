@@ -1057,6 +1057,10 @@ export class ChatActions extends Actions<ChatState> {
 
   /**
    * This checks a thread of messages to see if it is a language model thread and if so, returns it.
+   *
+   * NOTE: We intentionally prefer thread_config metadata first. The remaining
+   * root/history mention heuristics are legacy fallback and should be removed
+   * once all active chats carry explicit thread_config model metadata.
    */
   isLanguageModelThread = (date?: Date): false | LanguageModel => {
     if (date == null || this.store == null) {
@@ -1069,8 +1073,8 @@ export class ChatActions extends Actions<ChatState> {
     const rootMs =
       getThreadRootDate({ date: date.valueOf(), messages }) || date.valueOf();
     const cfg = this.getCodexConfig(new Date(rootMs));
-    if (cfg?.model && cfg.model.includes("codex")) {
-      return cfg.model;
+    if (typeof cfg?.model === "string" && cfg.model.trim().length > 0) {
+      return cfg.model as LanguageModel;
     }
     const entry = this.getThreadRootDoc(`${rootMs}`);
     const rootMessage = entry?.message;

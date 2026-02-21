@@ -70,6 +70,8 @@ import { akv, type AKV } from "@cocalc/conat/sync/akv";
 const COMMIT_INTERVAL = 2_000;
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
 const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
+const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
+const MESSAGE_ID_LOOKUP_WARN_EVERY = 100;
 
 const logger = getLogger("lite:hub:acp");
 const ACP_INSTANCE_ID = randomUUID();
@@ -94,6 +96,9 @@ let acpFinalizeRecoveredAfterRetryCount = 0;
 let acpLookupByMessageIdScans = 0;
 let acpLookupByMessageIdHits = 0;
 let acpLookupByMessageIdMisses = 0;
+let acpLookupByMessageIdRowsScanned = 0;
+let acpLookupByMessageIdRowsScannedMax = 0;
+let acpLookupByMessageIdLargeScanWarnings = 0;
 
 export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const top = Math.max(1, topN);
@@ -197,6 +202,11 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       "chat.acp.lookup_message_id_scans": acpLookupByMessageIdScans,
       "chat.acp.lookup_message_id_hits": acpLookupByMessageIdHits,
       "chat.acp.lookup_message_id_misses": acpLookupByMessageIdMisses,
+      "chat.acp.lookup_message_id_rows_scanned": acpLookupByMessageIdRowsScanned,
+      "chat.acp.lookup_message_id_rows_scanned_max":
+        acpLookupByMessageIdRowsScannedMax,
+      "chat.acp.lookup_message_id_large_scan_warnings":
+        acpLookupByMessageIdLargeScanWarnings,
     },
     topWritersByEvents,
   };
@@ -1271,8 +1281,30 @@ function syncdbRows(syncdb: any, where: Record<string, unknown>): any[] {
 
 function findChatRowByMessageId(syncdb: any, message_id?: string): any {
   if (!message_id) return undefined;
+  // WARNING: O(n) fallback path. This is an emergency recovery shim only.
+  // Long term this must become an indexed lookup by message_id.
   acpLookupByMessageIdScans += 1;
   const rows = syncdbRows(syncdb, { event: "chat" });
+  const rowCount = rows.length;
+  acpLookupByMessageIdRowsScanned += rowCount;
+  acpLookupByMessageIdRowsScannedMax = Math.max(
+    acpLookupByMessageIdRowsScannedMax,
+    rowCount,
+  );
+  if (
+    rowCount >= MESSAGE_ID_LOOKUP_WARN_ROWS &&
+    (acpLookupByMessageIdScans <= 3 ||
+      acpLookupByMessageIdScans % MESSAGE_ID_LOOKUP_WARN_EVERY === 0)
+  ) {
+    acpLookupByMessageIdLargeScanWarnings += 1;
+    logger.warn("chat message_id fallback using O(n) scan; add indexed lookup", {
+      rowCount,
+      scans: acpLookupByMessageIdScans,
+      project_id: syncdb?.metadata?.project_id,
+      path: syncdb?.metadata?.path,
+      message_id_prefix: `${message_id}`.slice(0, 12),
+    });
+  }
   for (const row of rows) {
     if (syncdbField<string>(row, "message_id") === message_id) {
       acpLookupByMessageIdHits += 1;
