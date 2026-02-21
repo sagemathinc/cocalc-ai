@@ -235,8 +235,8 @@ Commit message suggestion:
 Checklist:
 
 - [ ] Remove dead legacy compatibility code. (partial: new forked threads no longer duplicate `acp_config` onto root chat rows)
-- [ ] Update developer docs and comments.
-- [ ] Add troubleshooting note for migration and integrity checker.
+- [x] Update developer docs and comments.
+- [x] Add troubleshooting note for migration and integrity checker.
 
 Validation:
 
