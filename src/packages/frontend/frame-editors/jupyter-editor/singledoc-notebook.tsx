@@ -931,9 +931,31 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         } as any);
         applyNotebookSlateRef.current(next, { baseSignature: "__stale__" });
       },
+      duplicate_single_doc_code_cell_with_same_id_for_test: (cellIndex: number = 0) => {
+        if (!Number.isInteger(cellIndex) || cellIndex < 0) {
+          throw new Error(`invalid cellIndex: ${cellIndex}`);
+        }
+        const next = JSON.parse(JSON.stringify(slateValue)) as Descendant[];
+        const codeTopLevelIndexes: number[] = [];
+        for (let i = 0; i < next.length; i++) {
+          const node = next[i] as any;
+          if (SlateElement.isElement(node) && node.type === "jupyter_code_cell") {
+            codeTopLevelIndexes.push(i);
+          }
+        }
+        const topLevelIndex = codeTopLevelIndexes[cellIndex];
+        if (!Number.isInteger(topLevelIndex)) {
+          throw new Error(`single-doc code cell ${cellIndex} not found`);
+        }
+        const copy = JSON.parse(JSON.stringify(next[topLevelIndex])) as Descendant;
+        next.splice(topLevelIndex + 1, 0, copy);
+        applyNotebookSlateRef.current(next);
+      },
+      get_single_doc_canonical_cell_ids_for_test: () =>
+        cell_list != null ? cell_list.toArray() : [],
       get_single_doc_debug_for_test: () => ({ ...debugCountersRef.current }),
     };
-  }, [slateValue, kernel]);
+  }, [slateValue, kernel, cell_list]);
 
   if (cell_list == null || cells == null) {
     return <div style={{ padding: "12px" }}>Loading notebook...</div>;
