@@ -194,15 +194,10 @@ export function useThreadSections({
     return rawThreads.map((thread) => {
       const rootMessage = thread.rootMessage;
       const threadMeta = actions?.getThreadMetadata?.(thread.key);
-      const storedName =
-        threadMeta?.name ?? field<string>(rootMessage, "name")?.trim();
+      const storedName = threadMeta?.name;
       const hasCustomName = !!storedName;
-      const threadColor =
-        threadMeta?.thread_color ??
-        field<string>(rootMessage, "thread_color")?.trim();
-      const threadIcon =
-        threadMeta?.thread_icon ??
-        field<string>(rootMessage, "thread_icon")?.trim();
+      const threadColor = threadMeta?.thread_color;
+      const threadIcon = threadMeta?.thread_icon;
       const hasCustomAppearance = Boolean(threadColor || threadIcon);
       const displayLabel = storedName || thread.label;
       const isPinned = threadMeta?.pin ?? false;
