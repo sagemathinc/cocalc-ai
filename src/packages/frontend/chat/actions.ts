@@ -1400,19 +1400,10 @@ export class ChatActions extends Actions<ChatState> {
 
   getCodexConfig = (reply_to?: Date): CodexThreadConfig | undefined => {
     if (reply_to == null || this.store == null) return;
-    const messages = this.getAllMessages();
-    if (!messages) return;
     const rootMessage = this.getMessageByDate(reply_to);
-    const threadId = field<string>(rootMessage, "thread_id");
-    if (threadId) {
-      const threadConfig = this.getThreadConfigRecordById(threadId);
-      const cfgFromThread = field<CodexThreadConfig>(threadConfig, "acp_config");
-      if (cfgFromThread != null) return cfgFromThread;
-    }
-    const rootMs =
-      getThreadRootDate({ date: reply_to.valueOf(), messages }) ||
-      reply_to.valueOf();
-    const threadConfig = this.getThreadConfigRecord(`${rootMs}`);
+    const threadId = field<string>(rootMessage, "thread_id")?.trim();
+    if (!threadId) return;
+    const threadConfig = this.getThreadConfigRecordById(threadId);
     const cfgFromThread = field<CodexThreadConfig>(threadConfig, "acp_config");
     if (cfgFromThread == null) return;
     return cfgFromThread;
@@ -1423,16 +1414,18 @@ export class ChatActions extends Actions<ChatState> {
     model: LanguageModel,
   ): void => {
     if (reply_to == null || this.syncdb == null) return;
-    const messages = this.getAllMessages();
-    if (!messages) return;
     const rootMessage = this.getMessageByDate(reply_to);
-    const threadId = field<string>(rootMessage, "thread_id");
-    const rootMs =
-      getThreadRootDate({ date: reply_to.valueOf(), messages }) ||
-      reply_to.valueOf();
+    const threadId = field<string>(rootMessage, "thread_id")?.trim();
+    if (!threadId) {
+      console.warn(
+        "chat recordThreadAgentModel skipped: missing thread_id for thread root",
+        { reply_to: toISOString(reply_to) },
+      );
+      return;
+    }
     const { agent_kind, agent_mode } = identityFromModel(model);
     this.setThreadConfigRecord(
-      threadId ?? `${rootMs}`,
+      threadId,
       {
         agent_kind,
         agent_model: model,
@@ -1440,7 +1433,6 @@ export class ChatActions extends Actions<ChatState> {
       },
       {
         threadId,
-        date: reply_to,
       },
     );
     this.syncdb.commit();

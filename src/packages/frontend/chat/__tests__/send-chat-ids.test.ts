@@ -36,6 +36,17 @@ function makeActions(messages: Map<string, any> = new Map()): any {
     getByMessageId: () => undefined,
     getMessageIdIndex: () => new Map(),
     getByDateKey: (key: string) => messages.get(key),
+    getThreadKeyByThreadId: (threadId: string) => {
+      const trimmed = `${threadId ?? ""}`.trim();
+      if (!trimmed) return undefined;
+      let fallbackKey: string | undefined;
+      for (const [key, msg] of messages) {
+        if (`${msg?.thread_id ?? ""}`.trim() !== trimmed) continue;
+        if (msg?.reply_to == null) return key;
+        if (!fallbackKey) fallbackKey = key;
+      }
+      return fallbackKey;
+    },
   };
   actions.deleteDraft = jest.fn();
   actions.clearAllFilters = jest.fn();
