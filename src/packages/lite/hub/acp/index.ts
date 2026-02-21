@@ -73,6 +73,7 @@ const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 const MESSAGE_ID_LOOKUP_WARN_ROWS = 2_000;
 const MESSAGE_ID_LOOKUP_WARN_EVERY = 100;
 const ENABLE_MESSAGE_ID_LINEAR_SCAN_FALLBACK = false;
+const ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK = false;
 
 const logger = getLogger("lite:hub:acp");
 const ACP_INSTANCE_ID = randomUUID();
@@ -334,11 +335,17 @@ export class ChatStreamWriter {
   private findChatRow(): any {
     if (!this.syncdb) return undefined;
     if (this.metadata.message_id) {
-      const byMessageId = findChatRowByMessageId(this.syncdb, this.metadata.message_id);
+      const byMessageId = findChatRowByMessageId(
+        this.syncdb,
+        this.metadata.message_id,
+      );
       if (byMessageId != null) {
         this.setResolvedChatKey(byMessageId);
         return byMessageId;
       }
+    }
+    if (!ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK && this.metadata.message_id) {
+      return undefined;
     }
     const current = this.syncdb.get_one(this.chatPrimaryWhere());
     if (current != null) {
@@ -1357,6 +1364,9 @@ function findRecoverableChatRow(
   if (context.message_id) {
     const byMessageId = findChatRowByMessageId(syncdb, context.message_id);
     if (byMessageId != null) return byMessageId;
+  }
+  if (!ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK && context.message_id) {
+    return undefined;
   }
   const byDate = syncdb?.get_one?.({
     event: "chat",
