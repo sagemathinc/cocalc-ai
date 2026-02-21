@@ -354,3 +354,44 @@ describe("deleteThread identity targeting", () => {
     expect(chatDeletes).toHaveLength(2);
   });
 });
+
+describe("markThreadRead with UUID keys", () => {
+  it("updates read marker on the UUID-thread root row", () => {
+    const threadId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const d1 = new Date("2026-02-21T21:00:00.000Z");
+    const d2 = new Date("2026-02-21T21:01:00.000Z");
+    const messages = new Map<string, any>([
+      [
+        `${d1.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: d1,
+          thread_id: threadId,
+          message_id: "root",
+          history: [],
+        },
+      ],
+      [
+        `${d2.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: d2,
+          thread_id: threadId,
+          message_id: "reply",
+          reply_to: d1.toISOString(),
+          history: [],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+    const ok = actions.markThreadRead(threadId, 7);
+    expect(ok).toBe(true);
+    expect(actions.syncdb.commit).toHaveBeenCalled();
+    const row = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find((x: any) => x?.event === "chat" && x?.message_id === "root");
+    expect(row?.["read-00000000-1000-4000-8000-000000000001"]).toBe(7);
+  });
+});
