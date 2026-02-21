@@ -208,6 +208,7 @@ export async function processLLM({
       syncdb.delete({
         event: "chat",
         date: dateIso ?? date,
+        sender_id: (cur as any)?.sender_id ?? message.sender_id,
       });
       syncdb.set({
         date: dateIso ?? date,

@@ -330,6 +330,7 @@ export class ChatActions extends Actions<ChatState> {
     let thread_id: string;
     let reply_to_message_id: string | undefined;
     let rootThreadMs: number | undefined;
+    let rootMessage: ChatMessageTyped | undefined;
     if (!reply_to) {
       thread_id = uuid();
     } else {
@@ -338,7 +339,7 @@ export class ChatActions extends Actions<ChatState> {
           date: reply_to.valueOf(),
           messages: messagesState,
         }) || reply_to.valueOf();
-      const rootMessage = getMessageAtDate({
+      rootMessage = getMessageAtDate({
         messages: messagesState,
         date: rootThreadMs,
       });
@@ -402,10 +403,7 @@ export class ChatActions extends Actions<ChatState> {
       // our reply won't be visible
       // If the replied-to thread is folded, ensure it's expanded. In the
       // new flow we rely on the live sync doc and foldingList handles plain data.
-      const replyMsg = this.syncdb?.get_one({
-        event: "chat",
-        date: reply_to,
-      });
+      const replyMsg = rootMessage ?? this.getMessageByDate(reply_to);
       const folding = foldingList(replyMsg);
       if (folding?.includes?.(sender_id)) {
         this.toggleFoldThread(reply_to);

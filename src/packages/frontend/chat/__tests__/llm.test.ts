@@ -189,6 +189,47 @@ describe("processLLM guards", () => {
     emitter?.emit("token", "A");
     expect(actions.chatStreams.size).toBe(0);
   });
+
+  it("uses sender-qualified delete when regenerating with a different model sender", async () => {
+    const { actions, syncdb } = makeActions();
+    const message = makeMessage();
+    message.sender_id = "legacy-assistant";
+    message.history[0].content = "regenerate this";
+
+    syncdb.get_one.mockImplementation((where: any) => ({
+      event: "chat",
+      date: where?.date,
+      sender_id: where?.sender_id ?? "legacy-assistant",
+      history: [],
+      reply_to: new Date("2025-02-02T01:00:00.000Z").toISOString(),
+      generating: true,
+    }));
+    actions.getLLMHistory.mockReturnValue([
+      {
+        role: "user",
+        content: "previous prompt",
+        date: new Date("2025-02-02T00:59:00.000Z"),
+      },
+      {
+        role: "assistant",
+        content: "previous answer",
+        date: new Date("2025-02-02T00:59:30.000Z"),
+      },
+    ]);
+
+    await processLLM({
+      actions,
+      message,
+      reply_to: new Date("2025-02-02T01:00:00.000Z"),
+      tag: "regenerate",
+      llm: "gpt-4",
+    });
+
+    expect(syncdb.delete).toHaveBeenCalled();
+    const deleteArg = syncdb.delete.mock.calls[0]?.[0];
+    expect(deleteArg?.event).toBe("chat");
+    expect(deleteArg?.sender_id).toBe("legacy-assistant");
+  });
 });
 
 describe("processLLM model resolution and Codex dispatch", () => {

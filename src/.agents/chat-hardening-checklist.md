@@ -197,7 +197,7 @@ Commit message suggestion:
 Checklist:
 
 - [ ] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code.
-- [ ] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code. (partial: frontend chat lookup/delete paths now avoid date-only identity)
+- [ ] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code. (partial: frontend chat actions + llm regenerate paths now avoid date-only identity)
 - [ ] Keep date only for sort/time display.
 - [ ] Delete transitional fallback code introduced in earlier commits where safe.
 
