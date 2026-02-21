@@ -3,6 +3,54 @@
 import { collectThreadMessages, resolveThreadAgentModel } from "../actions";
 
 describe("ChatActions.getMessagesInThread", () => {
+  it("supports UUID thread_id keys directly", () => {
+    const rootDate = new Date("2026-01-01T00:00:00.000Z");
+    const threadId = "45d731ef-8dd5-4d24-b188-e33351a9c8b5";
+    const messages = new Map<string, any>([
+      [
+        `${rootDate.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "user-1",
+          date: rootDate,
+          thread_id: threadId,
+          message_id: "root-1",
+          history: [],
+        },
+      ],
+      [
+        `${rootDate.valueOf() + 1}`,
+        {
+          event: "chat",
+          sender_id: "user-1",
+          date: new Date(rootDate.valueOf() + 1),
+          thread_id: threadId,
+          message_id: "reply-1",
+          reply_to: rootDate.toISOString(),
+          history: [],
+        },
+      ],
+      [
+        `${rootDate.valueOf() + 2}`,
+        {
+          event: "chat",
+          sender_id: "user-2",
+          date: new Date(rootDate.valueOf() + 2),
+          thread_id: "8def0000-8dd5-4d24-b188-e33351a9c8b5",
+          message_id: "noise",
+          history: [],
+        },
+      ],
+    ]);
+    const result =
+      collectThreadMessages({
+        messages: messages as any,
+        dateStr: threadId,
+        getMessageByDate: (date: number) => messages.get(`${date}`),
+      }) ?? [];
+    expect(result.map((m: any) => m.message_id)).toEqual(["root-1", "reply-1"]);
+  });
+
   it("prefers thread_id grouping when present", () => {
     const rootDate = new Date("2026-01-01T00:00:00.000Z");
     const rootIso = rootDate.toISOString();

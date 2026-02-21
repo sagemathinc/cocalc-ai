@@ -112,10 +112,21 @@ export function collectThreadMessages({
   getMessageByDate: (date: number) => ChatMessageTyped | undefined;
 }): ChatMessageTyped[] | undefined {
   if (!messages || messages.size === 0) return undefined;
+  const trimmed = typeof dateStr === "string" ? dateStr.trim() : "";
+  if (isValidUUID(trimmed)) {
+    const list: ChatMessageTyped[] = [];
+    for (const msg of messages.values()) {
+      if (field<string>(msg, "thread_id") === trimmed) {
+        list.push(msg);
+      }
+    }
+    list.sort((a, b) => cmp(dateValue(a)?.valueOf?.(), dateValue(b)?.valueOf?.()));
+    return list.length > 0 ? list : undefined;
+  }
   const parsedMs = (() => {
-    const asNumber = Number(dateStr);
+    const asNumber = Number(trimmed || dateStr);
     if (Number.isFinite(asNumber)) return asNumber;
-    const asDate = new Date(dateStr).valueOf();
+    const asDate = new Date(trimmed || dateStr).valueOf();
     return Number.isFinite(asDate) ? asDate : undefined;
   })();
   const rootMessage = parsedMs != null ? getMessageByDate(parsedMs) : undefined;
