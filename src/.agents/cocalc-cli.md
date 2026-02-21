@@ -296,22 +296,513 @@ cocalc config list
 cocalc version
 ```
 
-### 10) Browser session automation (future)
+### 10) Browser session automation (active roadmap)
 
 ```bash
 cocalc browser session list
 cocalc browser use <session-id>
 cocalc browser files
-cocalc browser open <path>
-cocalc browser exec <script.js|->
+cocalc browser open <workspace> <path...>
+cocalc browser close <workspace> <path...>
+cocalc browser exec-api
+cocalc browser exec <workspace> [code...]
+cocalc browser exec <workspace> --file <script.js>
+cocalc browser exec <workspace> --stdin
+cocalc browser exec --async --wait ...
+cocalc browser exec-get <exec-id>
+cocalc browser exec-wait <exec-id>
+cocalc browser exec-cancel <exec-id>
 ```
 
 Notes:
 
 - This is for agent/human collaboration workflows where a turn is associated with a browser session id.
 - `browser exec` should run in a constrained frontend API sandbox (e.g., restricted Redux helpers with approval boundaries).
+- The API should be expanded systematically by capability domain so agents can compose reliable automations.
 
-### 11) Notebook operations (future)
+### 11) Browser exec API expansion plan (agent-first)
+
+Goal:
+
+- Make browser automation powerful enough that a user can ask for real end-to-end help ("create notebook, run, explain, notify me"), and an agent can do it with deterministic scriptable primitives.
+
+Design rule:
+
+- Prefer a small number of composable primitives over many one-off commands.
+- Every state-changing primitive should support approval hooks and clear audit events.
+- Return data should be stable, typed, and easy for LLMs to consume.
+- Design for multiple CoCalc products/environments, not Launchpad-only behavior.
+
+#### 11.0 Product mode compatibility (`cocalc-plus` / lite vs Launchpad)
+
+The browser exec architecture must be mode-aware:
+
+- `launchpad` mode:
+  - rich host-backed functionality
+  - timetravel providers: `patchflow`, `snapshots`, `backups`, `git`
+- `lite` mode (`cocalc-plus`):
+  - no host backup/snapshot infrastructure
+  - timetravel providers: typically `patchflow`, optionally `git`
+
+Agent-facing implication:
+
+- Never hardcode provider assumptions in scripts.
+- Scripts should discover capabilities first, then branch.
+
+Required primitives:
+
+- `api.system.getCapabilities()`:
+  - `{ product_mode: "launchpad" | "lite" | "unknown", features: {...} }`
+- `api.timetravel.listProviders(path)`:
+  - authoritative provider list for a file in the current environment
+- `api.exec.getApiVersion()`:
+  - compatibility/version negotiation for script portability
+
+CLI implication:
+
+- `cocalc browser exec-api` should include:
+  - API version
+  - product-mode notes
+  - capability discovery snippet
+
+#### 11.1 Core domains and API shape
+
+`api.session`
+
+- `getInfo()` browser/session/workspace context metadata
+- `listOpenWorkspaces()`
+- `listOpenFiles({ workspaceId? })`
+- `focusWorkspace(workspaceId)`
+- `focusFile(workspaceId, path)`
+
+`api.files`
+
+- `list({ path, depth?, hidden? })`
+- `readText(path, { start?, end? })`
+- `writeText(path, content, { create?, overwrite? })`
+- `patchText(path, edits)`
+- `mkdir(path, { parents? })`
+- `remove(path, { recursive?, trash? })`
+- `move(src, dest, { overwrite? })`
+- `copy(src, dest, { overwrite? })`
+
+`api.fs` (node-compatible filesystem API + safe power tools)
+
+- Expose the existing async node-style filesystem surface from [src/packages/conat/files/fs.ts](./src/packages/conat/files/fs.ts) as directly as possible.
+- This gives agents a familiar API from training data, including binary-safe reads/writes.
+- Key methods:
+  - `readFile(path, encoding?)`
+  - `writeFile(path, data)`
+  - `readdir(path, opts?)`
+  - `stat(path)`, `lstat(path)`, `exists(path)`
+  - `mkdir`, `rm`, `rename`, `copyFile`, `cp`, `move`
+  - `watch`, `find`, `fd`, `ripgrep`, `dust`
+- Important behavior:
+  - Works even when workspace runtime is not running (through file service backend).
+  - Supports `Buffer` payloads for binary workflows.
+  - Includes resource-limited, argument-whitelisted command wrappers for safety.
+- Return normalization guidance:
+  - Keep raw `stdout`/`stderr` buffers available.
+  - Provide optional helper decoding for agent ergonomics (`utf8`, JSON lines parsing).
+
+`api.editor`
+
+- `open(paths, opts)`
+- `close(paths)`
+- `getSelection(path?)`
+- `setSelection(path, range)`
+- `reveal(path, { line, column })`
+- `save(path?)`
+- `saveAll()`
+
+`api.notebook`
+
+- `listCells(path)`
+- `getCells(path, { ids?, includeOutputs? })`
+- `setCells(path, updates)`
+- `insertCells(path, inserts)`
+- `deleteCells(path, ids)`
+- `moveCells(path, moves)`
+- `runCells(path, ids?)`
+- `runAll(path)`
+- `interruptKernel(path)`
+- `restartKernel(path, { runAll? })`
+- `getKernelStatus(path)`
+
+`api.timetravel` (unified history API across providers)
+
+- `listProviders(path)` -> `["patchflow", "snapshots", "backups", "git"]` subset per file
+- `listVersions(path, opts)` where `opts` includes:
+  - `provider?: "patchflow" | "snapshots" | "backups" | "git"`
+  - `from_ms?`, `to_ms?`
+  - `limit?`, `order?`
+  - `query?` (provider-specific search text / metadata filter)
+- `getVersion(path, { provider, version_id })`
+- `getVersionText(path, { provider, version_id })`
+- `diffVersions(path, { from, to, provider? })`
+- `restoreVersion(path, { provider, version_id, dest_path?, mode? })`
+- `search(path, opts)` unified search over one or more providers
+- `summarize(path, opts)` compact activity summary over a time range
+
+Provider helpers for agent ergonomics:
+
+- `api.timetravel.patchflow.*`
+- `api.timetravel.snapshots.*`
+- `api.timetravel.backups.*`
+- `api.timetravel.git.*`
+
+Notes:
+
+- Keep one top-level `api.timetravel` namespace for composability.
+- Expose provider-specific helpers underneath it, rather than four disconnected top-level APIs.
+- This matches how users think ("history of this file"), while still allowing explicit source control.
+
+`api.bash` (workspace command execution with async/streaming control)
+
+- Expose a focused bash execution API in browser exec for composability inside larger scripts.
+- Back it directly by the existing execute-code contract in [src/packages/util/types/execute-code.ts](./src/packages/util/types/execute-code.ts).
+- Core methods:
+  - `run(opts)` blocking execution (returns stdout/stderr/exit_code)
+  - `start(opts)` async execution (returns job metadata quickly)
+  - `get(jobId, opts?)` poll job status/output
+  - `await(jobId, opts?)` wait until completion
+  - `kill(jobId)` terminate running job
+  - `stream(jobId, onEvent)` optional realtime events (`stdout`, `stderr`, `stats`, `done`, `error`)
+- Key options (aligned with existing execute-code options):
+  - `command`, `args?`, `bash?`, `cwd?`, `path?`
+  - `env?`, `timeout?`, `max_output?`
+  - `err_on_exit?`, `ulimit_timeout?`, `filesystem?`
+- Why this belongs in browser exec API:
+  - agents can call bash in the middle of a larger browser-side workflow without extra RPC round trips
+  - enables one-shot workflows like search -> transform -> open -> notify in a single script
+  - leverages tooling agents are extremely strong at
+
+`api.terminal` (high-value, carefully gated)
+
+- `listSessions()`
+- `openSession(opts)`
+- `exec(command, opts)` non-interactive convenience
+- `write(sessionId, input)`
+- `read(sessionId, { maxBytes? })`
+- `interrupt(sessionId)`
+- `close(sessionId)`
+
+`api.chatroom`
+
+- `listThreads(path)`
+- `createThread(path, opts)`
+- `pinThread(path, threadId)`
+- `listMessages(path, opts)`
+- `postMessage(path, opts)`
+- `deleteMessages(path, opts)` destructive + approval
+
+`api.ui`
+
+- `notify.show/info/success/warning/error(...)` (already started)
+- `confirm(prompt, opts)` explicit user prompt/approval
+- `modal(opts)` rich interaction surface
+- `status(text)` transient progress indicator
+- `copyToClipboard(text)`
+
+`api.search`
+
+- `rg(pattern, opts)` scoped ripgrep abstraction
+- `findFiles(glob, opts)`
+- `findSymbols(query, opts)` where available
+
+`api.workspace`
+
+- `start(workspaceId?)`
+- `stop(workspaceId?)`
+- `restart(workspaceId?)`
+- `setTitle(workspaceId, title)`
+- `openInNewTab(workspaceId, path?)`
+
+#### 11.2 What users ask vs required primitives
+
+"Summarize files I have open"
+
+- Needs `api.session.listOpenFiles` + `api.files.readText`.
+
+"Open notebooks mentioning elliptic curves, newest first"
+
+- Needs `api.fs.ripgrep` + `api.fs.stat` + `api.editor.open`.
+
+"Open matching notebooks and run all cells so they are ready"
+
+- Needs `api.fs.ripgrep` + `api.editor.open` + `api.notebook.runAll`.
+
+"Convert notebooks to .py and combine into a library"
+
+- Needs `api.fs.find/fd` + notebook conversion helpers + `api.fs.writeFile`.
+
+"Run workspace-level transformations in the middle of a browser script"
+
+- Needs `api.bash.run/start/get/await` + `api.fs` + `api.editor`/`api.notebook`.
+
+"Create a notebook to analyze X and run all cells"
+
+- Needs `api.notebook.insert/set/runAll` + `api.ui.notify`.
+
+"Close all markdown files"
+
+- Needs `api.session.listOpenFiles` + `api.editor.close`.
+
+"Fix this workspace and show me what changed"
+
+- Needs `api.search`, `api.files`, `api.terminal.exec` (or backend tools), `api.ui.modal/notify`.
+
+"Notify me when done"
+
+- Needs `api.ui.notify` + long-running exec lifecycle.
+
+"Restore the file a.tex from the last backup"
+
+- Needs `api.timetravel.listVersions({ provider: "backups" })` + `api.timetravel.restoreVersion`.
+
+"Search snapshots of a.ipynb for the last version that ran without errors and copy it to a-working.ipynb"
+
+- Needs `api.timetravel.listVersions({ provider: "snapshots" })` + `api.timetravel.getVersion` + `api.notebook.listCells`/output checks + `api.timetravel.restoreVersion({ dest_path })`.
+
+"Summarize activity on a.txt over the last two days"
+
+- Needs `api.timetravel.search` + `api.timetravel.summarize`.
+
+#### 11.3 Approval and safety model
+
+Policy levels:
+
+- `read`: metadata + text reads
+- `write`: file/editor/notebook edits
+- `exec`: terminal command execution
+- `bash_exec`: workspace bash command execution
+- `destructive`: deletes/resets/kernel restarts
+- `ui_prompt`: user-facing modal/confirm interactions
+
+Mutation safety policy (snapshot-first by default):
+
+- Default in Launchpad: `snapshot_before_mutation` for any `write`, `bash_exec`, or `destructive` action.
+- Optional stricter policy: `snapshot_before_turn` (one snapshot at turn start) plus per-mutation checkpoints for high-risk flows.
+- Optional recovery policy: `snapshot_and_auto_rollback_on_failure` for scripted workflows.
+- Opt-out policy for advanced users: `no_auto_snapshot` with explicit warning.
+- For lite mode (no host snapshot provider), degrade gracefully:
+  - `required` snapshot policy blocks mutation with a clear error.
+  - `preferred` snapshot policy warns and continues.
+
+Policy hooks:
+
+- `api.safety.beginTurn({ snapshot: "if_available" | "required" | "none" })`
+- `api.safety.beforeMutation({ reason, paths? })`
+- `api.safety.endTurn({ summarize_changes?: boolean })`
+
+Execution flow:
+
+- Preflight permission plan from script (or dynamic prompts).
+- Per-call approval where policy requires it.
+- Every mutating call logged with timestamp, actor, workspace, args summary.
+- Support dry-run for destructive families when feasible.
+
+#### 11.4 Data contracts and ergonomics
+
+- Paths are absolute everywhere.
+- IDs are stable (`workspace_id`, `cell.id`, `thread.id`, etc.).
+- Internal compatibility note: browser API can map `workspace_id` to backend `project_id` in adapters.
+- Optional output simplification knobs:
+  - notebook outputs: `raw|summary|text`
+  - terminal output: bounded windows
+- Return objects should include:
+  - `ok`
+  - `changed` counts
+  - `warnings`
+  - deterministic identifiers
+
+#### 11.5 Operational model for agents
+
+- Keep current async LRO-style exec (`start/get/wait/cancel`) as the primary control plane.
+- Add optional event streaming later (`exec-stream`) for progress and approvals.
+- Add script source options (inline/file/stdin) for robust agent invocation.
+- Keep `exec-api` as canonical discoverability endpoint (TS declaration output).
+
+#### 11.6 Phased implementation
+
+Phase A (near-term)
+
+- Make `cocalc browser ...` work in lite mode by wiring against [src/packages/lite/hub](./src/packages/lite/hub) (parallel lightweight API surface to server conat API), so browser automation can be used during ongoing development.
+- Expand `api.session`, `api.files` (read/write text), `api.editor` save/focus.
+- Expose `api.fs` node-compatible baseline (`readFile/writeFile/readdir/stat/rm/mkdir/rename`) plus safe `ripgrep/find/fd`.
+- Harden `api.notebook` with insert/delete/move + kernel status.
+- Add `api.ui.confirm` and richer notify variants.
+- Add `api.timetravel` MVP (`listProviders`, `listVersions`, `getVersionText`, `restoreVersion`) with `patchflow` + `snapshots` first.
+
+Phase B
+
+- Add `api.chatroom` primitives.
+- Add `api.search` primitives.
+- Add better notebook output modes and size controls.
+- Extend `api.timetravel` with `backups` + `git` providers and unified `search/summarize`.
+
+Phase C
+
+- Add `api.terminal` safe subset with approval gating.
+- Add `api.bash` with async job lifecycle + optional stream events.
+- Add event stream support for long interactive automations.
+
+Phase D
+
+- Advanced UI automation:
+  - modal forms
+  - guided workflows
+  - richer progress/status surfaces.
+
+#### 11.7 Concrete extension API spec (proposed)
+
+Purpose:
+
+- Let agents deliver repeatable, user-scoped frontend functionality by shipping extension bundles, not one-off ad hoc scripts.
+- Reuse CoCalc's runtime editor registration model in a controlled, capability-gated way.
+
+High-level model:
+
+- Agent builds extension bundle (single JS file + manifest).
+- Agent installs extension via browser API (`api.extensions.install`).
+- Extension activates in current browser session and can register editors/panels/actions.
+- User can open extension-backed files (e.g., `browser.gitview`) or panels.
+
+TypeScript-style manifest:
+
+```ts
+export type ExtensionCapability =
+  | "read_files"
+  | "write_files"
+  | "read_timetravel"
+  | "restore_timetravel"
+  | "read_git"
+  | "exec_terminal"
+  | "bash_exec"
+  | "ui_notify"
+  | "ui_modal"
+  | "network_fetch";
+
+export type ExtensionManifest = {
+  id: string;                  // e.g. "com.cocalc.gitview"
+  name: string;
+  version: string;             // semver
+  description?: string;
+  entry: string;               // entry module symbol/path in bundle
+  capabilities: ExtensionCapability[];
+  compatibility?: {
+    api_min?: string;
+    api_max?: string;
+    product_modes?: ("launchpad" | "lite")[];
+  };
+};
+```
+
+Browser API surface:
+
+```ts
+api.extensions = {
+  list(): Promise<ExtensionSummary[]>;
+  get(id: string): Promise<ExtensionDetails>;
+  install(opts: {
+    manifest: ExtensionManifest;
+    bundle_js: string;
+    replace?: boolean;
+    scope?: "session" | "user" | "workspace";
+  }): Promise<{ ok: true; id: string; version: string }>;
+  enable(id: string): Promise<{ ok: true }>;
+  disable(id: string): Promise<{ ok: true }>;
+  uninstall(id: string): Promise<{ ok: true }>;
+  invoke(id: string, command: string, args?: unknown): Promise<unknown>;
+};
+```
+
+Extension runtime context:
+
+```ts
+export type ExtensionContext = {
+  extension: { id: string; version: string };
+  api: {
+    session: ...;
+    files: ...;
+    notebook: ...;
+    timetravel: ...;
+    ui: ...;
+  };
+  registerEditor(spec: {
+    id: string;
+    name: string;
+    file_extensions: string[];              // e.g. [".gitview"]
+    can_open?: (path: string) => boolean;
+    open: (path: string, opts?: unknown) => Promise<EditorHandle>;
+  }): () => void;
+  registerPanel(spec: {
+    id: string;
+    name: string;
+    open: (opts?: unknown) => Promise<PanelHandle>;
+  }): () => void;
+  registerAction(spec: {
+    id: string;
+    label: string;
+    run: (args?: unknown) => Promise<unknown>;
+  }): () => void;
+  onDispose(fn: () => void): void;
+};
+
+export async function activate(ctx: ExtensionContext): Promise<void>;
+export async function deactivate?(): Promise<void>;
+```
+
+Editor registration behavior:
+
+- Extension editors are user-scoped and hot-loadable.
+- Registration is reversible (returns disposer).
+- Opening a matching file extension dispatches to extension editor implementation.
+- Extensions must render via approved UI host primitives (no unrestricted DOM ownership).
+
+Capability + approval policy:
+
+- Install requires explicit approval when capabilities include `write_files`, `exec_terminal`, `bash_exec`, `network_fetch`, or destructive history restore.
+- Runtime calls are capability-checked per API method.
+- All extension-originated mutating actions are audit logged with extension id + version.
+
+Persistence and sharing:
+
+- Scope options:
+  - `session`: current browser session only
+  - `user`: persists for user account
+  - `workspace`: stored in workspace config (shareable with collaborators)
+- Initial implementation can support `session` first, then `user`, then `workspace`.
+
+Suggested CLI surface:
+
+```bash
+cocalc browser ext list
+cocalc browser ext install --manifest ./ext.json --bundle ./ext.js [--scope session|user|workspace]
+cocalc browser ext enable <id>
+cocalc browser ext disable <id>
+cocalc browser ext uninstall <id>
+cocalc browser ext invoke <id> <command> [--arg-json ...]
+```
+
+Target example:
+
+- `com.cocalc.gitview` extension registers `.gitview` editor.
+- Opening `browser.gitview` shows recent commits/diffs for current repo.
+- Agent iterates quickly by replacing bundle version via `install --replace`.
+
+Mode compatibility guidance:
+
+- Extensions should branch on `api.system.getCapabilities()` + `api.timetravel.listProviders(path)`.
+- In lite mode, hide snapshot/backup UI paths automatically when those providers are unavailable.
+
+Success metrics:
+
+- Median user request can be resolved with <=2 browser exec calls.
+- >90% of common notebook/file/chat tasks handled without bespoke backend changes.
+- Low timeout/cancellation failure rates on async exec operations.
+
+### 12) Notebook operations (future standalone commands)
 
 ```bash
 cocalc workspace jupyter --path <ipynb> run <cell-id...>
@@ -326,7 +817,7 @@ Notes:
 - Cell-id-addressable operations are preferred for deterministic agent workflows.
 - Follow-up can add execution result streaming and kernel state inspection.
 
-### 12) Chatroom operations (future)
+### 13) Chatroom operations (future standalone commands)
 
 ```bash
 cocalc workspace chatroom --path <chat-path> thread list
@@ -347,7 +838,7 @@ Notes:
 - Destructive operations (e.g., message deletion) should require explicit confirmation flags (`--yes`) and support dry-run previews where possible.
 - Chatroom APIs should be exposed in a way that supports both human workflows and agent automation.
 
-### 13) Product launcher subcommands (future)
+### 14) Product launcher subcommands (future)
 
 ```bash
 cocalc plus [args...]
