@@ -37,12 +37,6 @@ const ACP_IMMEDIATE_MODE_PREFIX = [
   "[/CoCalc UI immediate-send note]",
 ].join(" ");
 
-function recordField<T = unknown>(record: any, key: string): T | undefined {
-  if (record == null) return undefined;
-  if (typeof record.get === "function") return record.get(key) as T;
-  return (record as any)[key] as T;
-}
-
 function findChatRecord({
   actions,
   syncdb,
@@ -59,21 +53,6 @@ function findChatRecord({
   if (messageId) {
     const cached = actions.getMessageById(messageId);
     if (cached) return cached;
-    if (typeof syncdb?.get === "function") {
-      try {
-        const rows = syncdb.get();
-        if (Array.isArray(rows)) {
-          const found = rows.find(
-            (row) =>
-              recordField<string>(row, "event") === "chat" &&
-              recordField<string>(row, "message_id") === messageId,
-          );
-          if (found) return found;
-        }
-      } catch {
-        // fallback below
-      }
-    }
   }
   if (!dateIso || !senderId) return undefined;
   return syncdb.get_one({

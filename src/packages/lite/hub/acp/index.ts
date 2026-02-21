@@ -303,27 +303,6 @@ export class ChatStreamWriter {
 
   private findChatRow(): any {
     if (!this.syncdb) return undefined;
-    const messageId = this.metadata.message_id;
-    if (messageId && typeof (this.syncdb as any).get === "function") {
-      try {
-        const rows = (this.syncdb as any).get();
-        if (Array.isArray(rows)) {
-          const found = rows.find(
-            (row) =>
-              this.recordField(row, "event") === "chat" &&
-              this.recordField(row, "sender_id") === this.metadata.sender_id &&
-              this.recordField(row, "message_id") === messageId,
-          );
-          if (found) return found;
-        }
-      } catch (err) {
-        logger.debug("chat row lookup by message_id failed", {
-          chatKey: this.chatKey,
-          messageId,
-          err,
-        });
-      }
-    }
     return this.syncdb.get_one(this.chatPrimaryWhere());
   }
 
@@ -1315,32 +1294,11 @@ export async function recoverOrphanedAcpTurns(
           await once(syncdb, "ready");
         }
         const senderId = turn.sender_id ?? "openai-codex-agent";
-        let current: any;
-        if (turn.message_id && typeof (syncdb as any).get === "function") {
-          try {
-            const rows = (syncdb as any).get();
-            if (Array.isArray(rows)) {
-              current = rows.find(
-                (row) =>
-                  syncdbField<string>(row, "event") === "chat" &&
-                  syncdbField<string>(row, "message_id") === turn.message_id &&
-                  syncdbField<string>(row, "sender_id") === senderId,
-              );
-            }
-          } catch (err) {
-            logger.debug("recovery lookup by message_id failed", {
-              turn,
-              err,
-            });
-          }
-        }
-        if (current == null) {
-          current = syncdb.get_one({
-            event: "chat",
-            date: turn.message_date,
-            sender_id: senderId,
-          });
-        }
+        const current = syncdb.get_one({
+          event: "chat",
+          date: turn.message_date,
+          sender_id: senderId,
+        });
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
           const history = appendRestartNotice(syncdbField(current, "history"));

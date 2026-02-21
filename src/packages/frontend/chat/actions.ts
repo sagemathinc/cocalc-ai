@@ -220,31 +220,11 @@ export class ChatActions extends Actions<ChatState> {
     if (!dateIso) return;
     const account_id = this.redux.getStore("account").get_account_id();
     const messageId = field<string>(message, "message_id");
-    let cur: any;
-    if (messageId) {
-      cur = this.getMessageById(messageId);
-      if (cur == null && typeof (this.syncdb as any).get === "function") {
-        try {
-          const rows = (this.syncdb as any).get();
-          if (Array.isArray(rows)) {
-            cur = rows.find(
-              (row) =>
-                field<string>(row, "event") === "chat" &&
-                field<string>(row, "message_id") === messageId,
-            );
-          }
-        } catch {
-          // fallback below
-        }
-      }
-    }
-    if (cur == null) {
-      cur = this.syncdb.get_one({
-        event: "chat",
-        date: dateIso,
-        sender_id: senderId(message),
-      });
-    }
+    const cur = this.syncdb.get_one({
+      event: "chat",
+      date: dateIso,
+      sender_id: senderId(message),
+    });
     const feedbacksRaw = field<any>(cur, "feedback");
     const feedbacks =
       typeof (feedbacksRaw as any)?.toJS === "function"
