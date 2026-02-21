@@ -33,6 +33,10 @@ type BrowserNotifyType = "error" | "default" | "success" | "info" | "warning";
 const BROWSER_EXEC_API_DECLARATION = `/**
  * Browser exec API available via 'cocalc browser exec'.
  *
+ * Quick start:
+ *   pnpm cli browser exec-api
+ *   pnpm cli browser exec <workspace> 'const files = api.listOpenFiles(); return files;'
+ *
  * Notes:
  * - paths are absolute (e.g. "/home/user/file.txt")
  * - api.projectId is the workspace/project id passed to browser exec

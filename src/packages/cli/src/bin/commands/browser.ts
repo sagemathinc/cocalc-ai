@@ -448,7 +448,7 @@ export function registerBrowserCommand(
   browser
     .command("exec <workspace> <code...>")
     .description(
-      "execute javascript in the target browser session with a limited browser API",
+      "execute javascript in the target browser session with a limited browser API (use 'cocalc browser exec-api' to inspect the API)",
     )
     .option("--browser <id>", "browser id (or unique prefix)")
     .option(
