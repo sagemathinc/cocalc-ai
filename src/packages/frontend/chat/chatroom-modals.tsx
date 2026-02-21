@@ -10,7 +10,13 @@ import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { Icon } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { capitalize } from "@cocalc/util/misc";
-import { DEFAULT_CODEX_MODELS } from "@cocalc/util/ai/codex";
+import type { CodexThreadConfig } from "@cocalc/chat";
+import {
+  DEFAULT_CODEX_MODELS,
+  resolveCodexSessionMode,
+  type CodexReasoningId,
+  type CodexSessionMode,
+} from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
 
 export interface ChatRoomModalHandlers {
@@ -33,6 +39,11 @@ interface ChatRoomModalsProps {
 
 type ThreadAgentMode = "codex" | "human" | "model";
 const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.3-codex";
+const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
+  { value: "read-only", label: "Read only" },
+  { value: "workspace-write", label: "Workspace write" },
+  { value: "full-access", label: "Full access" },
+];
 
 export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProps) {
   const [renamingThread, setRenamingThread] = useState<string | null>(null);
@@ -43,6 +54,13 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
   const [renameAgentMode, setRenameAgentMode] =
     useState<ThreadAgentMode>("codex");
   const [renameModel, setRenameModel] = useState<string>(DEFAULT_CODEX_MODEL);
+  const [renameCodexConfig, setRenameCodexConfig] = useState<
+    Partial<CodexThreadConfig>
+  >({
+    model: DEFAULT_CODEX_MODEL,
+    sessionMode: "workspace-write",
+    workingDirectory: defaultWorkingDir(path),
+  });
   const [exportThread, setExportThread] = useState<{
     key: string;
     label: string;
@@ -87,6 +105,18 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     setRenameImage(metadata?.thread_image?.trim() || "");
     setRenameAgentMode(agentMode);
     setRenameModel(currentModel);
+    const savedConfig = metadata?.acp_config ?? {};
+    setRenameCodexConfig({
+      ...savedConfig,
+      model: currentModel,
+      workingDirectory:
+        savedConfig.workingDirectory?.trim() || defaultWorkingDir(path),
+      sessionMode: resolveCodexSessionMode(savedConfig as CodexThreadConfig),
+      reasoning: getReasoningForModel({
+        modelValue: currentModel,
+        desired: savedConfig.reasoning,
+      }),
+    });
   };
 
   const closeRenameModal = () => {
@@ -97,6 +127,12 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     setRenameImage("");
     setRenameAgentMode("codex");
     setRenameModel(DEFAULT_CODEX_MODEL);
+    setRenameCodexConfig({
+      model: DEFAULT_CODEX_MODEL,
+      sessionMode: "workspace-write",
+      workingDirectory: defaultWorkingDir(path),
+      reasoning: getReasoningForModel({ modelValue: DEFAULT_CODEX_MODEL }),
+    });
   };
 
   const handleRenameSave = () => {
@@ -118,8 +154,25 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     if (renameAgentMode === "human") {
       actions.setThreadAgentMode?.(renamingThread, "none");
     } else if (renameAgentMode === "codex") {
-      actions.setThreadAgentMode?.(renamingThread, "codex", {
-        model: renameModel.trim() || DEFAULT_CODEX_MODEL,
+      const model = renameCodexConfig.model?.trim() || DEFAULT_CODEX_MODEL;
+      const sessionMode: CodexSessionMode = resolveCodexSessionMode(
+        renameCodexConfig as CodexThreadConfig,
+      );
+      actions.setCodexConfig?.(renamingThread, {
+        ...renameCodexConfig,
+        model,
+        reasoning: getReasoningForModel({
+          modelValue: model,
+          desired: renameCodexConfig.reasoning,
+        }),
+        sessionMode,
+        allowWrite: sessionMode !== "read-only",
+        workingDirectory:
+          renameCodexConfig.workingDirectory?.trim() ||
+          defaultWorkingDir(path),
+        sessionId: renameCodexConfig.sessionId?.trim(),
+        envHome: renameCodexConfig.envHome?.trim(),
+        envPath: renameCodexConfig.envPath?.trim(),
       });
     } else {
       const threadMs = parseInt(renamingThread, 10);
@@ -227,6 +280,17 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
   const iconOptions = THREAD_ICON_OPTIONS.map((icon) => ({
     value: icon,
     label: icon,
+  }));
+  const codexModelOptions = DEFAULT_CODEX_MODELS.map((model) => ({
+    value: model.name,
+    label: model.name,
+  }));
+  const reasoningOptions = (
+    DEFAULT_CODEX_MODELS.find((model) => model.name === renameCodexConfig.model)
+      ?.reasoning ?? []
+  ).map((r) => ({
+    value: r.id,
+    label: r.label,
   }));
 
   return (
@@ -352,17 +416,142 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
               ]}
             />
           </div>
-          {renameAgentMode !== "human" && (
+          {renameAgentMode === "codex" && (
+            <div>
+              <Space
+                orientation="vertical"
+                size={10}
+                style={{ width: "100%" }}
+              >
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Codex model
+                  </div>
+                  <Select
+                    value={renameCodexConfig.model ?? DEFAULT_CODEX_MODEL}
+                    style={{ width: "100%" }}
+                    options={codexModelOptions}
+                    showSearch
+                    optionFilterProp="label"
+                    onChange={(value) => {
+                      const model = String(value);
+                      setRenameModel(model);
+                      setRenameCodexConfig((prev) => ({
+                        ...prev,
+                        model,
+                        reasoning: getReasoningForModel({
+                          modelValue: model,
+                          desired: prev.reasoning,
+                        }),
+                      }));
+                    }}
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Reasoning
+                  </div>
+                  <Select
+                    allowClear
+                    value={renameCodexConfig.reasoning}
+                    style={{ width: "100%" }}
+                    options={reasoningOptions}
+                    onChange={(value) =>
+                      setRenameCodexConfig((prev) => ({
+                        ...prev,
+                        reasoning: value as CodexReasoningId,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Execution mode
+                  </div>
+                  <Select
+                    value={resolveCodexSessionMode(
+                      renameCodexConfig as CodexThreadConfig,
+                    )}
+                    style={{ width: "100%" }}
+                    options={MODE_OPTIONS}
+                    onChange={(value) =>
+                      setRenameCodexConfig((prev) => ({
+                        ...prev,
+                        sessionMode: value as CodexSessionMode,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Working directory
+                  </div>
+                  <Input
+                    value={renameCodexConfig.workingDirectory ?? ""}
+                    placeholder={defaultWorkingDir(path)}
+                    onChange={(e) =>
+                      setRenameCodexConfig((prev) => ({
+                        ...prev,
+                        workingDirectory: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Session ID
+                  </div>
+                  <Input
+                    value={renameCodexConfig.sessionId ?? ""}
+                    placeholder="Optional"
+                    onChange={(e) =>
+                      setRenameCodexConfig((prev) => ({
+                        ...prev,
+                        sessionId: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Environment HOME
+                  </div>
+                  <Input
+                    value={renameCodexConfig.envHome ?? ""}
+                    placeholder="Optional"
+                    onChange={(e) =>
+                      setRenameCodexConfig((prev) => ({
+                        ...prev,
+                        envHome: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                    Environment PATH
+                  </div>
+                  <Input
+                    value={renameCodexConfig.envPath ?? ""}
+                    placeholder="Optional"
+                    onChange={(e) =>
+                      setRenameCodexConfig((prev) => ({
+                        ...prev,
+                        envPath: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </Space>
+            </div>
+          )}
+          {renameAgentMode === "model" && (
             <div>
               <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
                 Default model
               </div>
               <Input
-                placeholder={
-                  renameAgentMode === "codex"
-                    ? DEFAULT_CODEX_MODEL
-                    : "e.g. gpt-4o"
-                }
+                placeholder="e.g. gpt-4o"
                 value={renameModel}
                 onChange={(e) => setRenameModel(e.target.value)}
               />
@@ -429,6 +618,29 @@ export const THREAD_ICON_OPTIONS: IconName[] = [
   "cube",
   "dot-circle",
 ];
+
+function getReasoningForModel({
+  modelValue,
+  desired,
+}: {
+  modelValue?: string;
+  desired?: CodexReasoningId;
+}): CodexReasoningId | undefined {
+  const model =
+    DEFAULT_CODEX_MODELS.find((m) => m.name === modelValue) ??
+    DEFAULT_CODEX_MODELS[0];
+  const options = model?.reasoning ?? [];
+  if (!options.length) return undefined;
+  const match = options.find((r) => r.id === desired);
+  return match?.id ?? options.find((r) => r.default)?.id ?? options[0]?.id;
+}
+
+function defaultWorkingDir(chatPath: string): string {
+  if (!chatPath) return ".";
+  const i = chatPath.lastIndexOf("/");
+  if (i <= 0) return ".";
+  return chatPath.slice(0, i);
+}
 
 function buildThreadExportPath(
   chatPath: string | undefined,
