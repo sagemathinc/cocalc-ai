@@ -239,3 +239,118 @@ describe("thread-config by thread_id", () => {
     expect(pin).toBeTruthy();
   });
 });
+
+describe("deleteThread identity targeting", () => {
+  it("deletes by UUID thread_id and removes thread config/state rows", () => {
+    const threadA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const threadB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const d1 = new Date("2026-02-21T19:00:00.000Z");
+    const d2 = new Date("2026-02-21T19:01:00.000Z");
+    const d3 = new Date("2026-02-21T19:02:00.000Z");
+    const messages = new Map<string, any>([
+      [
+        `${d1.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: d1,
+          thread_id: threadA,
+          message_id: "m1",
+          history: [],
+        },
+      ],
+      [
+        `${d2.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: d2,
+          thread_id: threadA,
+          message_id: "m2",
+          reply_to: d1.toISOString(),
+          history: [],
+        },
+      ],
+      [
+        `${d3.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u2",
+          date: d3,
+          thread_id: threadB,
+          message_id: "m3",
+          history: [],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+    const deleted = actions.deleteThread(threadA);
+    expect(deleted).toBe(2);
+    expect(actions.syncdb.commit).toHaveBeenCalled();
+
+    const deletes = actions.syncdb.delete.mock.calls.map((x) => x[0]);
+    const chatDeletes = deletes.filter((row: any) => row?.event === "chat");
+    expect(chatDeletes).toHaveLength(2);
+    expect(
+      deletes.find(
+        (row: any) =>
+          row?.event === "chat-thread-config" && row?.thread_id === threadA,
+      ),
+    ).toBeTruthy();
+    expect(
+      deletes.find(
+        (row: any) => row?.event === "chat-thread-state" && row?.thread_id === threadA,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps timestamp-key delete compatibility", () => {
+    const thread = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const root = new Date("2026-02-21T20:00:00.000Z");
+    const reply = new Date("2026-02-21T20:01:00.000Z");
+    const other = new Date("2026-02-21T20:02:00.000Z");
+    const messages = new Map<string, any>([
+      [
+        `${root.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: root,
+          thread_id: thread,
+          message_id: "root",
+          history: [],
+        },
+      ],
+      [
+        `${reply.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: reply,
+          thread_id: thread,
+          message_id: "reply",
+          reply_to: root.toISOString(),
+          history: [],
+        },
+      ],
+      [
+        `${other.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u2",
+          date: other,
+          thread_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          message_id: "other",
+          history: [],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+    const deleted = actions.deleteThread(`${root.valueOf()}`);
+    expect(deleted).toBe(2);
+    const chatDeletes = actions.syncdb.delete.mock.calls
+      .map((x) => x[0])
+      .filter((row: any) => row?.event === "chat");
+    expect(chatDeletes).toHaveLength(2);
+  });
+});

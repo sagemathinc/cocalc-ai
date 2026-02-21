@@ -795,17 +795,19 @@ export class ChatActions extends Actions<ChatState> {
   });
 
   // returns number of deleted messages
-  // threadKey = iso timestamp root of thread.
+  // threadKey = iso timestamp root of thread OR thread_id (UUID).
   deleteThread = (threadKey: string): number => {
     if (this.syncdb == null) {
       return 0;
     }
     const messages = this.getAllMessages();
+    const threadIdTarget = isValidUUID(threadKey) ? threadKey : undefined;
     const rootTarget = parseInt(`${threadKey}`);
-    if (!isFinite(rootTarget)) {
+    if (!threadIdTarget && !isFinite(rootTarget)) {
       return 0;
     }
     let deleted = 0;
+    const deletedThreadIds = new Set<string>();
     for (const [_, message] of messages) {
       if (message == null) continue;
       const d = dateValue(message);
@@ -814,17 +816,37 @@ export class ChatActions extends Actions<ChatState> {
       if (dateValueMs == null || dateIso == null) {
         continue;
       }
-      const rootDate =
-        getThreadRootDate({ date: dateValueMs, messages }) || dateValueMs;
-      if (rootDate !== rootTarget) {
-        continue;
+      const messageThreadId = field<string>(message, "thread_id");
+      if (threadIdTarget) {
+        if (messageThreadId !== threadIdTarget) {
+          continue;
+        }
+      } else {
+        const rootDate =
+          getThreadRootDate({ date: dateValueMs, messages }) || dateValueMs;
+        if (rootDate !== rootTarget) {
+          continue;
+        }
       }
       this.syncdb.delete({
         event: "chat",
         date: dateIso,
         sender_id: senderId(message),
       });
+      if (typeof messageThreadId === "string" && messageThreadId.length > 0) {
+        deletedThreadIds.add(messageThreadId);
+      }
       deleted++;
+    }
+    for (const threadId of deletedThreadIds) {
+      this.syncdb.delete({
+        event: THREAD_CONFIG_EVENT,
+        thread_id: threadId,
+      });
+      this.syncdb.delete({
+        event: "chat-thread-state",
+        thread_id: threadId,
+      });
     }
     if (deleted > 0) {
       this.syncdb.commit();
