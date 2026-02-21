@@ -20,6 +20,7 @@ import {
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { ConatService } from "@cocalc/conat/service";
+import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
@@ -167,6 +168,60 @@ export type BrowserExecApi = {
       options?: { async_stats?: boolean; timeout?: number },
     ) => Promise<BrowserExecOutput>;
   };
+  timetravel: {
+    providers: () => Promise<{
+      patchflow: boolean;
+      snapshots: boolean;
+      backups: boolean;
+      git: boolean;
+    }>;
+    patchflow: {
+      listVersions: (path: string) => Promise<
+        {
+          id: string;
+          patch_time?: number;
+          wall_time?: number;
+          version_number?: number;
+          account_id?: string;
+          user_id?: number;
+        }[]
+      >;
+      getText: (path: string, version: string) => Promise<string>;
+    };
+    snapshots: {
+      listVersions: (path: string) => Promise<
+        {
+          id: string;
+          wall_time?: number;
+          mtime_ms?: number;
+        }[]
+      >;
+      getText: (path: string, snapshot: string) => Promise<string>;
+    };
+    backups: {
+      listVersions: (path: string) => Promise<
+        {
+          id: string;
+          wall_time?: number;
+          mtime?: number;
+          size?: number;
+        }[]
+      >;
+      getText: (path: string, backup_id: string) => Promise<string>;
+    };
+    git: {
+      listVersions: (path: string) => Promise<
+        {
+          hash: string;
+          wall_time?: number;
+          author_name?: string;
+          author_email?: string;
+          subject?: string;
+        }[]
+      >;
+      getText: (path: string, commit: string) => Promise<string>;
+    };
+  };
 };`;
 
 function asStringArray(value: any): string[] {
@@ -288,6 +343,37 @@ function requireAbsolutePathOrList(
     return value.map((x, i) => requireAbsolutePath(x, `${label}[${i}]`));
   }
   return requireAbsolutePath(value, label);
+}
+
+function splitAbsolutePath(path: string): { dir: string; base: string } {
+  const cleanPath = requireAbsolutePath(path);
+  if (cleanPath === "/") {
+    throw Error("path cannot be '/'");
+  }
+  const i = cleanPath.lastIndexOf("/");
+  if (i < 0) {
+    throw Error("path must be absolute");
+  }
+  const dir = i === 0 ? "/" : cleanPath.slice(0, i);
+  const base = cleanPath.slice(i + 1);
+  if (!base) {
+    throw Error("path must reference a file");
+  }
+  return { dir, base };
+}
+
+function asText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value == null) {
+    return "";
+  }
+  try {
+    return Buffer.from(value as any).toString();
+  } catch {
+    return `${value}`;
+  }
 }
 
 function sanitizeBashOptions(opts: unknown): BrowserBashOptions {
@@ -532,6 +618,60 @@ type BrowserExecApi = {
       job_id: string,
       options?: { async_stats?: boolean; timeout?: number },
     ) => Promise<BrowserExecOutput>;
+  };
+  timetravel: {
+    providers: () => Promise<{
+      patchflow: boolean;
+      snapshots: boolean;
+      backups: boolean;
+      git: boolean;
+    }>;
+    patchflow: {
+      listVersions: (path: string) => Promise<
+        {
+          id: string;
+          patch_time?: number;
+          wall_time?: number;
+          version_number?: number;
+          account_id?: string;
+          user_id?: number;
+        }[]
+      >;
+      getText: (path: string, version: string) => Promise<string>;
+    };
+    snapshots: {
+      listVersions: (path: string) => Promise<
+        {
+          id: string;
+          wall_time?: number;
+          mtime_ms?: number;
+        }[]
+      >;
+      getText: (path: string, snapshot: string) => Promise<string>;
+    };
+    backups: {
+      listVersions: (path: string) => Promise<
+        {
+          id: string;
+          wall_time?: number;
+          mtime?: number;
+          size?: number;
+        }[]
+      >;
+      getText: (path: string, backup_id: string) => Promise<string>;
+    };
+    git: {
+      listVersions: (path: string) => Promise<
+        {
+          hash: string;
+          wall_time?: number;
+          author_name?: string;
+          author_email?: string;
+          subject?: string;
+        }[]
+      >;
+      getText: (path: string, commit: string) => Promise<string>;
+    };
   };
 };
 
@@ -842,6 +982,72 @@ export function createBrowserSessionAutomation({
       });
       assertExecNotCanceled(isCanceled);
       return asPlain(result) as BrowserExecOutput;
+    };
+
+    const getEditorActionsForPath = async (path: string): Promise<any> => {
+      const cleanPath = requireAbsolutePath(path);
+      await openFileInProject({
+        project_id,
+        path: cleanPath,
+        foreground: false,
+        foreground_project: false,
+      });
+      const started = Date.now();
+      while (Date.now() - started < 15_000) {
+        assertExecNotCanceled(isCanceled);
+        const editorActions = redux.getEditorActions(project_id, cleanPath) as any;
+        if (editorActions != null) {
+          return editorActions;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw Error(`editor actions unavailable for ${cleanPath}`);
+    };
+
+    const getSyncDocForPath = async (path: string): Promise<any> => {
+      const cleanPath = requireAbsolutePath(path);
+      const editorActions = await getEditorActionsForPath(cleanPath);
+      const syncdoc =
+        cleanPath.endsWith(".course")
+          ? editorActions?.course_actions?.syncdb
+          : (editorActions?._syncstring ?? editorActions?.jupyter_actions?.syncdb);
+      if (syncdoc == null) {
+        throw Error(`syncdoc unavailable for ${cleanPath}`);
+      }
+      const started = Date.now();
+      while (Date.now() - started < 15_000) {
+        assertExecNotCanceled(isCanceled);
+        const state =
+          typeof syncdoc.get_state === "function" ? syncdoc.get_state() : "ready";
+        if (state === "ready") {
+          return syncdoc;
+        }
+        if (state === "closed") {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw Error(`syncdoc not ready for ${cleanPath}`);
+    };
+
+    const runGit = async (
+      path: string,
+      args: string[],
+    ): Promise<{ stdout: string; stderr: string }> => {
+      const { dir } = splitAbsolutePath(path);
+      const result = await client.project_client.exec({
+        project_id,
+        command: "git",
+        args,
+        bash: false,
+        path: dir,
+        timeout: 30,
+        err_on_exit: true,
+      });
+      return {
+        stdout: asText((result as any)?.stdout),
+        stderr: asText((result as any)?.stderr),
+      };
     };
 
     return {
@@ -1180,6 +1386,331 @@ export function createBrowserSessionAutomation({
           });
           assertExecNotCanceled(isCanceled);
           return asPlain(result) as BrowserExecOutput;
+        },
+      },
+      timetravel: {
+        providers: async (): Promise<{
+          patchflow: boolean;
+          snapshots: boolean;
+          backups: boolean;
+          git: boolean;
+        }> => {
+          assertExecNotCanceled(isCanceled);
+          const projectsApi = (client.conat_client as any)?.hub?.projects ?? {};
+          return {
+            patchflow: true,
+            snapshots: typeof projectsApi.getSnapshotFileText === "function",
+            backups:
+              typeof projectsApi.findBackupFiles === "function" &&
+              typeof projectsApi.getBackupFileText === "function",
+            git: true,
+          };
+        },
+        patchflow: {
+          listVersions: async (
+            path: string,
+          ): Promise<
+            {
+              id: string;
+              patch_time?: number;
+              wall_time?: number;
+              version_number?: number;
+              account_id?: string;
+              user_id?: number;
+            }[]
+          > => {
+            assertExecNotCanceled(isCanceled);
+            const cleanPath = requireAbsolutePath(path);
+            const syncdoc = await getSyncDocForPath(cleanPath);
+            const versions = Array.isArray(syncdoc?.versions?.())
+              ? syncdoc.versions()
+              : [];
+            const out: {
+              id: string;
+              patch_time?: number;
+              wall_time?: number;
+              version_number?: number;
+              account_id?: string;
+              user_id?: number;
+            }[] = [];
+            for (const raw of versions) {
+              const id = `${raw ?? ""}`.trim();
+              if (!id) continue;
+              const row: {
+                id: string;
+                patch_time?: number;
+                wall_time?: number;
+                version_number?: number;
+                account_id?: string;
+                user_id?: number;
+              } = { id };
+              try {
+                const t = Number(syncdoc.patchTime?.(id));
+                if (Number.isFinite(t)) row.patch_time = t;
+              } catch {}
+              try {
+                const t = Number(syncdoc.wallTime?.(id));
+                if (Number.isFinite(t)) row.wall_time = t;
+              } catch {}
+              try {
+                const n = Number(syncdoc.historyVersionNumber?.(id));
+                if (Number.isFinite(n)) row.version_number = n;
+              } catch {}
+              try {
+                const account_id = syncdoc.account_id?.(id);
+                if (typeof account_id === "string" && account_id.trim()) {
+                  row.account_id = account_id;
+                }
+              } catch {}
+              try {
+                const user_id = Number(syncdoc.user_id?.(id));
+                if (Number.isFinite(user_id)) row.user_id = user_id;
+              } catch {}
+              out.push(row);
+            }
+            return out;
+          },
+          getText: async (path: string, version: string): Promise<string> => {
+            assertExecNotCanceled(isCanceled);
+            const cleanPath = requireAbsolutePath(path);
+            const cleanVersion = `${version ?? ""}`.trim();
+            if (!cleanVersion) {
+              throw Error("version must be specified");
+            }
+            const syncdoc = await getSyncDocForPath(cleanPath);
+            const doc = syncdoc.version?.(cleanVersion);
+            if (doc == null) {
+              throw Error(`unknown patchflow version '${cleanVersion}'`);
+            }
+            if (typeof doc.to_str === "function") {
+              return `${doc.to_str()}`;
+            }
+            return `${doc}`;
+          },
+        },
+        snapshots: {
+          listVersions: async (
+            path: string,
+          ): Promise<
+            {
+              id: string;
+              wall_time?: number;
+              mtime_ms?: number;
+            }[]
+          > => {
+            assertExecNotCanceled(isCanceled);
+            const cleanPath = requireAbsolutePath(path);
+            const { base } = splitAbsolutePath(cleanPath);
+            const docDepth = cleanPath.split("/").filter(Boolean).length + 1;
+            const { stdout } = await fsApi.find(SNAPSHOTS, {
+              options: [
+                "-mindepth",
+                `${docDepth}`,
+                "-maxdepth",
+                `${docDepth}`,
+                "-type",
+                "f",
+                "-name",
+                base,
+                "-printf",
+                "%T@\t%P\n",
+              ],
+            });
+            const latestMtimeBySnapshot = new Map<string, number>();
+            for (const row of asText(stdout).split("\n")) {
+              if (!row) continue;
+              const i = row.indexOf("\t");
+              if (i <= 0) continue;
+              const mtime = Number(row.slice(0, i));
+              if (!Number.isFinite(mtime)) continue;
+              const rel = row.slice(i + 1);
+              const j = rel.indexOf("/");
+              if (j <= 0) continue;
+              const snapshot = rel.slice(0, j).trim();
+              const docpath = rel.slice(j + 1);
+              if (!snapshot || docpath !== cleanPath) continue;
+              const mtimeMs = Math.round(mtime * 1000);
+              const prev = latestMtimeBySnapshot.get(snapshot);
+              if (prev == null || mtimeMs > prev) {
+                latestMtimeBySnapshot.set(snapshot, mtimeMs);
+              }
+            }
+            const ordered = Array.from(latestMtimeBySnapshot.entries())
+              .map(([id, mtime_ms]) => ({ id, mtime_ms }))
+              .sort((a, b) => a.id.localeCompare(b.id));
+            const filtered: { id: string; mtime_ms: number }[] = [];
+            let lastMtimeMs: number | undefined = undefined;
+            for (const row of ordered) {
+              if (lastMtimeMs !== row.mtime_ms) {
+                filtered.push(row);
+                lastMtimeMs = row.mtime_ms;
+              }
+            }
+            return filtered.map((row) => {
+              const wall_time = Date.parse(row.id);
+              return {
+                id: row.id,
+                ...(Number.isFinite(wall_time) ? { wall_time } : {}),
+                mtime_ms: row.mtime_ms,
+              };
+            });
+          },
+          getText: async (path: string, snapshot: string): Promise<string> => {
+            assertExecNotCanceled(isCanceled);
+            const cleanPath = requireAbsolutePath(path);
+            const cleanSnapshot = `${snapshot ?? ""}`.trim();
+            if (!cleanSnapshot) {
+              throw Error("snapshot must be specified");
+            }
+            const getSnapshotFileText = (client.conat_client as any)?.hub?.projects
+              ?.getSnapshotFileText;
+            if (typeof getSnapshotFileText !== "function") {
+              throw Error("snapshot provider unavailable");
+            }
+            const resp = await getSnapshotFileText({
+              project_id,
+              snapshot: cleanSnapshot,
+              path: cleanPath,
+            });
+            return `${resp?.content ?? ""}`;
+          },
+        },
+        backups: {
+          listVersions: async (
+            path: string,
+          ): Promise<
+            {
+              id: string;
+              wall_time?: number;
+              mtime?: number;
+              size?: number;
+            }[]
+          > => {
+            assertExecNotCanceled(isCanceled);
+            const cleanPath = requireAbsolutePath(path);
+            const findBackupFiles = (client.conat_client as any)?.hub?.projects
+              ?.findBackupFiles;
+            if (typeof findBackupFiles !== "function") {
+              throw Error("backup provider unavailable");
+            }
+            const raw = await findBackupFiles({
+              project_id,
+              glob: [cleanPath],
+            });
+            const rows = (Array.isArray(raw) ? raw : [])
+              .filter((x: any) => !x?.isDir && x?.path === cleanPath)
+              .map((x: any) => {
+                const t = new Date(x?.time as any).getTime();
+                return {
+                  id: `${x?.id ?? ""}`.trim(),
+                  wall_time: Number.isFinite(t) ? t : 0,
+                  mtime: Number(x?.mtime ?? 0),
+                  size: Number(x?.size ?? 0),
+                };
+              })
+              .filter((x: any) => x.id.length > 0)
+              .sort((a: any, b: any) =>
+                a.wall_time !== b.wall_time
+                  ? a.wall_time - b.wall_time
+                  : a.id.localeCompare(b.id),
+              );
+            const filtered: {
+              id: string;
+              wall_time: number;
+              mtime: number;
+              size: number;
+            }[] = [];
+            let lastSig: string | undefined = undefined;
+            for (const row of rows) {
+              const sig = `${row.mtime}:${row.size}`;
+              if (sig === lastSig) continue;
+              lastSig = sig;
+              filtered.push(row);
+            }
+            return filtered;
+          },
+          getText: async (path: string, backup_id: string): Promise<string> => {
+            assertExecNotCanceled(isCanceled);
+            const cleanPath = requireAbsolutePath(path);
+            const cleanBackupId = `${backup_id ?? ""}`.trim();
+            if (!cleanBackupId) {
+              throw Error("backup_id must be specified");
+            }
+            const getBackupFileText = (client.conat_client as any)?.hub?.projects
+              ?.getBackupFileText;
+            if (typeof getBackupFileText !== "function") {
+              throw Error("backup provider unavailable");
+            }
+            const resp = await getBackupFileText({
+              project_id,
+              id: cleanBackupId,
+              path: cleanPath,
+            });
+            return `${resp?.content ?? ""}`;
+          },
+        },
+        git: {
+          listVersions: async (
+            path: string,
+          ): Promise<
+            {
+              hash: string;
+              wall_time?: number;
+              author_name?: string;
+              author_email?: string;
+              subject?: string;
+            }[]
+          > => {
+            assertExecNotCanceled(isCanceled);
+            const cleanPath = requireAbsolutePath(path);
+            const { base } = splitAbsolutePath(cleanPath);
+            const { stdout } = await runGit(cleanPath, [
+              "log",
+              "--follow",
+              "--date=raw",
+              "--pretty=format:%H%x1f%at%x1f%an%x1f%ae%x1f%s",
+              "--",
+              base,
+            ]);
+            const out: {
+              hash: string;
+              wall_time?: number;
+              author_name?: string;
+              author_email?: string;
+              subject?: string;
+            }[] = [];
+            for (const line of stdout.split("\n")) {
+              if (!line) continue;
+              const [hash, ts, author_name, author_email, subject] =
+                line.split("\x1f");
+              const cleanHash = `${hash ?? ""}`.trim();
+              if (!cleanHash) continue;
+              const seconds = Number(ts);
+              const wall_time = Number.isFinite(seconds) ? seconds * 1000 : undefined;
+              out.push({
+                hash: cleanHash,
+                ...(wall_time != null ? { wall_time } : {}),
+                ...(author_name ? { author_name } : {}),
+                ...(author_email ? { author_email } : {}),
+                ...(subject ? { subject } : {}),
+              });
+            }
+            return out;
+          },
+          getText: async (path: string, commit: string): Promise<string> => {
+            assertExecNotCanceled(isCanceled);
+            const cleanPath = requireAbsolutePath(path);
+            const { base } = splitAbsolutePath(cleanPath);
+            const cleanCommit = `${commit ?? ""}`.trim();
+            if (!cleanCommit) {
+              throw Error("commit must be specified");
+            }
+            const { stdout } = await runGit(cleanPath, [
+              "show",
+              `${cleanCommit}:./${base}`,
+            ]);
+            return stdout;
+          },
         },
       },
     };
