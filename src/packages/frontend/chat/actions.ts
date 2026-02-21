@@ -1357,6 +1357,13 @@ export class ChatActions extends Actions<ChatState> {
     if (reply_to == null || this.store == null) return;
     const messages = this.getAllMessages();
     if (!messages) return;
+    const rootMessage = this.getMessageByDate(reply_to);
+    const threadId = field<string>(rootMessage, "thread_id");
+    if (threadId) {
+      const threadConfig = this.getThreadConfigRecordById(threadId);
+      const cfgFromThread = field<CodexThreadConfig>(threadConfig, "acp_config");
+      if (cfgFromThread != null) return cfgFromThread;
+    }
     const rootMs =
       getThreadRootDate({ date: reply_to.valueOf(), messages }) ||
       reply_to.valueOf();
@@ -1373,15 +1380,24 @@ export class ChatActions extends Actions<ChatState> {
     if (reply_to == null || this.syncdb == null) return;
     const messages = this.getAllMessages();
     if (!messages) return;
+    const rootMessage = this.getMessageByDate(reply_to);
+    const threadId = field<string>(rootMessage, "thread_id");
     const rootMs =
       getThreadRootDate({ date: reply_to.valueOf(), messages }) ||
       reply_to.valueOf();
     const { agent_kind, agent_mode } = identityFromModel(model);
-    this.setThreadConfigRecord(`${rootMs}`, {
-      agent_kind,
-      agent_model: model,
-      agent_mode,
-    });
+    this.setThreadConfigRecord(
+      threadId ?? `${rootMs}`,
+      {
+        agent_kind,
+        agent_model: model,
+        agent_mode,
+      },
+      {
+        threadId,
+        date: reply_to,
+      },
+    );
     this.syncdb.commit();
   };
 
