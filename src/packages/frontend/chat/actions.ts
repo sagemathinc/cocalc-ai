@@ -924,7 +924,9 @@ export class ChatActions extends Actions<ChatState> {
 
   private getThreadConfigRecord = (threadKey: string): any | null => {
     if (this.syncdb == null) return null;
-    const threadId = this.resolveThreadIdForKey(threadKey);
+    const threadId =
+      this.resolveThreadIdForKey(threadKey) ||
+      (isValidUUID(threadKey) ? threadKey : undefined);
     return this.getThreadConfigRecordById(threadId);
   };
 
@@ -951,17 +953,13 @@ export class ChatActions extends Actions<ChatState> {
   private setThreadConfigRecord = (
     threadKey: string,
     patch: Record<string, unknown>,
-    opts?: { threadId?: string },
+    opts?: { threadId?: string; date?: Date | string | number },
   ): boolean => {
     if (this.syncdb == null) return false;
-    const dateIso = threadKeyToIso(threadKey);
-    if (!dateIso) return false;
-    const current = this.getThreadConfigRecord(threadKey);
-    const currentObj =
-      current && typeof current.toJS === "function" ? current.toJS() : current;
-    const updated_by =
-      this.redux.getStore("account").get_account_id() || "__thread_config__";
-    const thread_id = opts?.threadId ?? this.resolveThreadIdForKey(threadKey);
+    const thread_id =
+      opts?.threadId ??
+      this.resolveThreadIdForKey(threadKey) ??
+      (isValidUUID(threadKey) ? threadKey : undefined);
     if (!thread_id) {
       if (!warnedMissingThreadIds.has(threadKey)) {
         warnedMissingThreadIds.add(threadKey);
@@ -972,6 +970,23 @@ export class ChatActions extends Actions<ChatState> {
       }
       return false;
     }
+    const current =
+      this.getThreadConfigRecordById(thread_id) ?? this.getThreadConfigRecord(threadKey);
+    const currentObj =
+      current && typeof current.toJS === "function" ? current.toJS() : current;
+    const dateIso =
+      asIsoDateString(opts?.date) ??
+      threadKeyToIso(threadKey) ??
+      asIsoDateString(field<string>(currentObj, "date"));
+    if (!dateIso) {
+      console.warn("chat thread-config write skipped: missing valid date", {
+        threadKey,
+        thread_id,
+      });
+      return false;
+    }
+    const updated_by =
+      this.redux.getStore("account").get_account_id() || "__thread_config__";
     this.setSyncdb({
       ...(currentObj ?? {}),
       event: THREAD_CONFIG_EVENT,
@@ -1351,17 +1366,23 @@ export class ChatActions extends Actions<ChatState> {
 
   setCodexConfig = (threadKey: string, config: CodexThreadConfig): void => {
     if (this.syncdb == null) return;
-    const dateNum = parseInt(threadKey, 10);
-    if (!dateNum || Number.isNaN(dateNum)) {
+    const threadId =
+      this.resolveThreadIdForKey(threadKey) ||
+      (isValidUUID(threadKey) ? threadKey : undefined);
+    if (!threadId) {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
     const model = config.model ?? "gpt-5.3-codex";
-    this.setThreadConfigRecord(threadKey, {
-      acp_config: config,
-      agent_kind: "acp",
-      agent_model: model,
-      agent_mode: "interactive",
-    });
+    this.setThreadConfigRecord(
+      threadKey,
+      {
+        acp_config: config,
+        agent_kind: "acp",
+        agent_model: model,
+        agent_mode: "interactive",
+      },
+      { threadId },
+    );
     this.syncdb.commit();
     void this.saveSyncdb();
   };
@@ -1372,22 +1393,28 @@ export class ChatActions extends Actions<ChatState> {
     patch?: Partial<CodexThreadConfig>,
   ): void => {
     if (this.syncdb == null) return;
-    const dateNum = parseInt(threadKey, 10);
-    if (!dateNum || Number.isNaN(dateNum)) {
+    const threadId =
+      this.resolveThreadIdForKey(threadKey) ||
+      (isValidUUID(threadKey) ? threadKey : undefined);
+    if (!threadId) {
       throw Error(`setThreadAgentMode: invalid threadKey ${threadKey}`);
     }
     if (mode === "none") {
-      this.setThreadConfigRecord(threadKey, {
-        acp_config: null,
-        agent_kind: "none",
-        agent_model: null,
-        agent_mode: null,
-      });
+      this.setThreadConfigRecord(
+        threadKey,
+        {
+          acp_config: null,
+          agent_kind: "none",
+          agent_model: null,
+          agent_mode: null,
+        },
+        { threadId },
+      );
       this.syncdb.commit();
       void this.saveSyncdb();
       return;
     }
-    const current = this.getCodexConfig(new Date(dateNum)) ?? {};
+    const current = this.getThreadMetadata(threadKey, { threadId }).acp_config ?? {};
     const next: CodexThreadConfig = {
       ...current,
       ...patch,
@@ -1704,16 +1731,40 @@ export class ChatActions extends Actions<ChatState> {
 }
 
 function threadKeyToIso(threadKey: string): string | null {
-  if (!threadKey) return null;
-  const ms = Number(threadKey);
-  if (Number.isFinite(ms)) {
+  return asIsoDateString(threadKey) ?? null;
+}
+
+function asIsoDateString(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.valueOf())) return undefined;
+    return value.toISOString();
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return undefined;
     try {
-      return new Date(ms).toISOString();
+      return new Date(value).toISOString();
     } catch {
-      return null;
+      return undefined;
     }
   }
-  return typeof threadKey === "string" ? threadKey : null;
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (!s) return undefined;
+    if (/^\d+$/.test(s)) {
+      const ms = Number(s);
+      if (!Number.isFinite(ms)) return undefined;
+      try {
+        return new Date(ms).toISOString();
+      } catch {
+        return undefined;
+      }
+    }
+    const d = new Date(s);
+    if (Number.isNaN(d.valueOf())) return undefined;
+    return d.toISOString();
+  }
+  return undefined;
 }
 
 // We strip out any cased version of the string @chatgpt and also all mentions.
