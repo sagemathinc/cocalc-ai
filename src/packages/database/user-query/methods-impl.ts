@@ -817,16 +817,26 @@ export function _parse_set_query_opts(
           query[field] = misc.uuid();
           break;
         case "project_write":
+          if (!(field in query)) {
+            break;
+          }
           if (query[field] == null) {
             return { err: `FATAL: must specify ${opts.table}.${field}` };
           }
           r.require_project_ids_write_access = [query[field]];
           break;
         case "project_owner":
-          if (query[field] == null) {
+          if (!(field in query)) {
+            break;
+          }
+          const owner_project_id =
+            typeof query[field] === "string" && query[field].length > 0
+              ? query[field]
+              : query.project_id;
+          if (owner_project_id == null) {
             return { err: `FATAL: must specify ${opts.table}.${field}` };
           }
-          r.require_project_ids_owner = [query[field]];
+          r.require_project_ids_owner = [owner_project_id];
           break;
       }
     }
