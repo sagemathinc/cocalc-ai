@@ -1031,8 +1031,7 @@ export class ChatActions extends Actions<ChatState> {
       }
       return false;
     }
-    const current =
-      this.getThreadConfigRecordById(thread_id) ?? this.getThreadConfigRecord(threadKey);
+    const current = this.getThreadConfigRecordById(thread_id);
     const currentObj =
       current && typeof current.toJS === "function" ? current.toJS() : current;
     const dateIso =
