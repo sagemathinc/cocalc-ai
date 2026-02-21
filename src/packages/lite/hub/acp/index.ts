@@ -801,7 +801,7 @@ export class ChatStreamWriter {
       thread_id: this.metadata.thread_id,
       reply_to_message_id: this.metadata.reply_to_message_id,
     });
-    const update: any = { ...message, reply_to2: this.metadata.reply_to };
+    const update: any = { ...message };
     if (this.interruptNotified) {
       update.acp_interrupted = true;
       update.acp_interrupted_reason = "interrupt";
