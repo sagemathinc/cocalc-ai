@@ -1,6 +1,7 @@
 import type { PlainChatMessage } from "./types";
+import { CHAT_SCHEMA_V2 } from "@cocalc/chat";
 
-export const CURRENT_CHAT_MESSAGE_VERSION = 1;
+export const CURRENT_CHAT_MESSAGE_VERSION = CHAT_SCHEMA_V2;
 
 export interface NormalizedChatMessage {
   message?: PlainChatMessage;
