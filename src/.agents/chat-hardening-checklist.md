@@ -52,7 +52,7 @@ Checklist:
 
 Validation:
 
-- [ ] Add unit tests for ID presence on new root/reply messages. (partially covered by existing chat/acp tests; explicit root/reply tests still pending)
+- [x] Add unit tests for ID presence on new root/reply messages. ([src/packages/frontend/chat/__tests__/send-chat-ids.test.ts](./src/packages/frontend/chat/__tests__/send-chat-ids.test.ts))
 - [ ] Verify message creation still works in UI.
 
 ## Commit 3: Re-key frontend cache/index by `message_id`
