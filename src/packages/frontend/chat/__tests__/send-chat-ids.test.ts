@@ -123,3 +123,75 @@ describe("sendChat identity fields", () => {
     expect(replySet.message_id.length).toBeGreaterThan(0);
   });
 });
+
+describe("thread-config by thread_id", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest
+      .spyOn(webapp_client as any, "server_time")
+      .mockReturnValue(new Date("2026-02-21T18:00:00.000Z"));
+    jest
+      .spyOn(webapp_client as any, "mark_file")
+      .mockImplementation(async () => {});
+  });
+
+  it("reads thread metadata from thread-config using explicit thread_id", () => {
+    const threadId = "11111111-1111-4111-8111-111111111111";
+    const actions = makeActions();
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+        return {
+          event: "chat-thread-config",
+          sender_id: "__thread_config__",
+          date: "2026-02-21T18:00:00.000Z",
+          thread_id: threadId,
+          name: "  Thread Name  ",
+          thread_color: "#ff9800",
+          thread_icon: "thumbs-up",
+          thread_image: "https://example.com/x.png",
+          pin: "true",
+          acp_config: { model: "gpt-5.3-codex" },
+        };
+      }
+      return undefined;
+    });
+
+    const meta = actions.getThreadMetadata("not-a-date-key", { threadId });
+    expect(meta.name).toBe("Thread Name");
+    expect(meta.thread_color).toBe("#ff9800");
+    expect(meta.thread_icon).toBe("thumbs-up");
+    expect(meta.thread_image).toBe("https://example.com/x.png");
+    expect(meta.pin).toBe(true);
+    expect(meta.agent_kind).toBe("acp");
+    expect(meta.agent_mode).toBe("interactive");
+    expect(meta.agent_model).toBe("gpt-5.3-codex");
+  });
+
+  it("updates thread-config by UUID thread key without timestamp keying", () => {
+    const threadId = "22222222-2222-4222-8222-222222222222";
+    const existing = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: "2026-02-21T18:30:00.000Z",
+      thread_id: threadId,
+      name: "Before",
+    };
+    const actions = makeActions();
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+        return existing;
+      }
+      return undefined;
+    });
+
+    const ok = actions.setThreadAppearance(threadId, { name: "After" });
+    expect(ok).toBe(true);
+    expect(actions.syncdb.commit).toHaveBeenCalled();
+    const setRow = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find((row: any) => row?.event === "chat-thread-config" && row?.thread_id === threadId);
+    expect(setRow).toBeTruthy();
+    expect(setRow.date).toBe("2026-02-21T18:30:00.000Z");
+    expect(setRow.name).toBe("After");
+  });
+});
