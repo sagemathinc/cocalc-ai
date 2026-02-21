@@ -159,7 +159,7 @@ Commit message suggestion:
 Checklist:
 
 - [x] Write `thread_state` transitions during send/queue/run/finalize/interrupt.
-- [ ] Read `thread_state` for spinner/status rendering instead of fragile inference.
+- [ ] Read `thread_state` for spinner/status rendering instead of fragile inference. (partial: frontend now maps/reads both date and `thread_id`-keyed state)
 
 Validation:
 

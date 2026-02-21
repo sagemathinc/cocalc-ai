@@ -255,21 +255,30 @@ export function ChatPanel({
   );
   const hasActiveAcpTurn = useMemo(() => {
     if (!isSelectedThreadAI) return false;
+    const activeStates = new Set(["queue", "sending", "sent", "running"]);
+    const selectedThreadId = field<string>(selectedThread?.rootMessage, "thread_id");
+    if (selectedThreadId) {
+      const byThread = acpState?.get?.(`thread:${selectedThreadId}`);
+      if (typeof byThread === "string" && activeStates.has(byThread)) {
+        return true;
+      }
+    }
     if (selectedThread?.key) {
       const rootState = acpState?.get?.(selectedThread.key);
-      if (
-        typeof rootState === "string" &&
-        new Set(["queue", "sending", "sent", "running"]).has(rootState)
-      ) {
+      if (typeof rootState === "string" && activeStates.has(rootState)) {
         return true;
       }
     }
     if (!selectedThreadMessages.length) return false;
-    const activeStates = new Set(["queue", "sending", "sent", "running"]);
     for (const msg of selectedThreadMessages) {
       const d = dateValue(msg);
       if (!d) continue;
       if (field<boolean>(msg, "generating") === true) return true;
+      const threadId = field<string>(msg, "thread_id");
+      if (threadId) {
+        const threadState = acpState?.get?.(`thread:${threadId}`);
+        if (threadState && activeStates.has(threadState)) return true;
+      }
       const state = acpState?.get?.(`${d.valueOf()}`);
       if (state && activeStates.has(state)) return true;
     }

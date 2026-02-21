@@ -121,6 +121,7 @@ describe("handleSyncDBChange", () => {
       event: "chat-thread-state",
       sender_id: "__thread_state__",
       date,
+      thread_id: "thread-1",
       state: "running",
     };
     const syncdb = new MockSyncDB([threadState]);
@@ -131,6 +132,7 @@ describe("handleSyncDBChange", () => {
       changes: [{ event: "chat-thread-state", sender_id: "__thread_state__", date }],
     });
     expect(store.state.acpState?.get(`${date.valueOf()}`)).toBe("running");
+    expect(store.state.acpState?.get("thread:thread-1")).toBe("running");
   });
 });
 
@@ -145,18 +147,21 @@ describe("initFromSyncDB", () => {
         event: "chat-thread-state",
         sender_id: "__thread_state__",
         date: runningDate,
+        thread_id: "thread-running",
         state: "running",
       },
       {
         event: "chat-thread-state",
         sender_id: "__thread_state__",
         date: queuedDate,
+        thread_id: "thread-queued",
         state: "queued",
       },
       {
         event: "chat-thread-state",
         sender_id: "__thread_state__",
         date: completeDate,
+        thread_id: "thread-complete",
         state: "complete",
       },
     ]);
@@ -165,5 +170,8 @@ describe("initFromSyncDB", () => {
     expect(store.state.acpState?.get(`${runningDate.valueOf()}`)).toBe("running");
     expect(store.state.acpState?.get(`${queuedDate.valueOf()}`)).toBe("queue");
     expect(store.state.acpState?.get(`${completeDate.valueOf()}`)).toBeUndefined();
+    expect(store.state.acpState?.get("thread:thread-running")).toBe("running");
+    expect(store.state.acpState?.get("thread:thread-queued")).toBe("queue");
+    expect(store.state.acpState?.get("thread:thread-complete")).toBeUndefined();
   });
 });

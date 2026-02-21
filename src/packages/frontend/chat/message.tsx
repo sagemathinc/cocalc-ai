@@ -371,6 +371,10 @@ export default function Message({
     if (threadRootMs != null) {
       keys.add(`${threadRootMs}`);
     }
+    const threadId = field<string>(message, "thread_id");
+    if (threadId) {
+      keys.add(`thread:${threadId}`);
+    }
     const acpMap = actions.store.get("acpState");
     const hasRunning = Array.from(keys).some(
       (key) => acpMap?.get?.(key) === "running",

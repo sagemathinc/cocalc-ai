@@ -660,6 +660,9 @@ export function MessageList({
             threadViewMode={singleThreadView}
             onForceScrollToBottom={forceScrollToBottom}
             acpState={
+              (field<string>(message, "thread_id")
+                ? acpState?.get(`thread:${field<string>(message, "thread_id")}`)
+                : undefined) ??
               acpState?.get(date) ??
               (currentThreadKey ? acpState?.get(currentThreadKey) : undefined)
             }

@@ -8,7 +8,7 @@ import {
 import { uuid } from "@cocalc/util/misc";
 import type { ChatMessage } from "./types";
 import type { CodexThreadConfig } from "@cocalc/chat";
-import { dateValue } from "./access";
+import { dateValue, field } from "./access";
 import { type ChatActions } from "./actions";
 
 type QueueKey = string;
@@ -122,7 +122,12 @@ export function resetAcpThreadState({
     const d = dateValue(msg);
     if (!d) continue;
     nextState = nextState.delete(`${d.valueOf()}`);
+    const threadId = field<string>(msg, "thread_id");
+    if (threadId) {
+      nextState = nextState.delete(`thread:${threadId}`);
+    }
   }
+  nextState = nextState.delete(`${threadRootDate.valueOf()}`);
   store.setState({ acpState: nextState });
 }
 
@@ -227,11 +232,18 @@ export async function processAcpLLM({
   const setState = (state) => {
     const rootKey = `${threadRootDate.valueOf()}`;
     const messageKey = `${messageDate.valueOf()}`;
+    const threadStateKey = thread_id ? `thread:${thread_id}` : undefined;
     let next = store.get("acpState");
     if (state) {
       next = next.set(messageKey, state).set(rootKey, state);
+      if (threadStateKey) {
+        next = next.set(threadStateKey, state);
+      }
     } else {
       next = next.delete(messageKey).delete(rootKey);
+      if (threadStateKey) {
+        next = next.delete(threadStateKey);
+      }
     }
     store.setState({
       acpState: next,
@@ -359,10 +371,17 @@ export function cancelQueuedAcpTurn({
     turnQueues.delete(queueKey);
   }
   store.setState({
-    acpState: store
-      .get("acpState")
-      .set(`${messageDate.valueOf()}`, "not-sent")
-      .set(`${threadKey}`, "not-sent"),
+    acpState: (() => {
+      let next = store
+        .get("acpState")
+        .set(`${messageDate.valueOf()}`, "not-sent")
+        .set(`${threadKey}`, "not-sent");
+      const threadId = field<string>(message, "thread_id");
+      if (threadId) {
+        next = next.set(`thread:${threadId}`, "not-sent");
+      }
+      return next;
+    })(),
   });
   return true;
 }

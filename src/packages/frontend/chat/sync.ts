@@ -14,6 +14,12 @@ function threadStateToAcpState(state: unknown): string | undefined {
   }
 }
 
+function threadStateKey(record: any): string | undefined {
+  const threadId = (record as any)?.thread_id;
+  if (typeof threadId !== "string" || threadId.length === 0) return undefined;
+  return `thread:${threadId}`;
+}
+
 export function initFromSyncDB({
   syncdb,
   store,
@@ -30,10 +36,17 @@ export function initFromSyncDB({
     const ms = new Date((row as any)?.date).valueOf();
     if (!Number.isFinite(ms)) continue;
     const mapped = threadStateToAcpState((row as any)?.state);
+    const byThreadId = threadStateKey(row);
     if (mapped) {
       acpState = acpState.set(`${ms}`, mapped);
+      if (byThreadId) {
+        acpState = acpState.set(byThreadId, mapped);
+      }
     } else {
       acpState = acpState.delete(`${ms}`);
+      if (byThreadId) {
+        acpState = acpState.delete(byThreadId);
+      }
     }
   }
   store.setState({ acpState });
@@ -105,9 +118,14 @@ export function handleSyncDBChange({
       const record = syncdb.get_one(where);
       const mapped = threadStateToAcpState((record as any)?.state);
       const key = `${ms}`;
+      const byThreadId = threadStateKey(record ?? obj);
       const acpState = store.get("acpState") ?? iMap();
+      let next = mapped ? acpState.set(key, mapped) : acpState.delete(key);
+      if (byThreadId) {
+        next = mapped ? next.set(byThreadId, mapped) : next.delete(byThreadId);
+      }
       store.setState({
-        acpState: mapped ? acpState.set(key, mapped) : acpState.delete(key),
+        acpState: next,
       });
       continue;
     }
