@@ -18,7 +18,15 @@ import { getLogger } from "@cocalc/conat/client";
 
 const logger = getLogger("chat:server");
 
-export const CHAT_PRIMARY_KEYS = ["date", "sender_id", "event"];
+// Keep legacy keys first, but include v2 identity keys so we can do indexed
+// lookups by message_id/thread_id without O(n) scans.
+export const CHAT_PRIMARY_KEYS = [
+  "date",
+  "sender_id",
+  "event",
+  "message_id",
+  "thread_id",
+];
 export const CHAT_STRING_COLS = ["input"];
 
 export interface CreateChatSyncDBOptions
