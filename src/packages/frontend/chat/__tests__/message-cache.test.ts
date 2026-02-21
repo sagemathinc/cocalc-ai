@@ -150,6 +150,35 @@ describe("ChatMessageCache message_id index", () => {
     expect(entry?.messageCount).toBe(2);
     const staleKey = `${new Date(staleReplyTarget).valueOf()}`;
     expect(cache.getThreadIndex().get(staleKey)).toBeUndefined();
+    expect(cache.getThreadKeyByThreadId("thread-2")).toBe(rootKey);
+    expect(cache.getThreadKeyByThreadId(" thread-2 ")).toBe(rootKey);
+    cache.dispose();
+  });
+
+  it("drops thread_id mapping when the thread root is removed", async () => {
+    const rootDate = "2026-01-04T00:00:00.000Z";
+    const rows = [
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: rootDate,
+        message_id: "root-thread-3",
+        thread_id: "thread-3",
+        history: [],
+      },
+    ];
+    const syncdb = new MockSyncdb(rows);
+    const cache = new ChatMessageCache(syncdb as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(cache.getThreadKeyByThreadId("thread-3")).toBe(
+      `${new Date(rootDate).valueOf()}`,
+    );
+
+    syncdb.replaceRows([]);
+    syncdb.emit("change", new Set([rows[0]]));
+
+    expect(cache.getThreadKeyByThreadId("thread-3")).toBeUndefined();
     cache.dispose();
   });
 });

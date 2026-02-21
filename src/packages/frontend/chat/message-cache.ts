@@ -80,6 +80,13 @@ export class ChatMessageCache extends EventEmitter {
     return this.dateIndex;
   }
 
+  getThreadKeyByThreadId(threadId?: string): string | undefined {
+    if (!threadId) return;
+    const trimmed = threadId.trim();
+    if (!trimmed) return;
+    return this.threadKeyByThreadId.get(trimmed);
+  }
+
   getByMessageId(messageId?: string): PlainChatMessage | undefined {
     if (!messageId) return;
     return this.messagesById.get(messageId);

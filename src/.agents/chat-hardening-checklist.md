@@ -67,7 +67,7 @@ Checklist:
   - [x] primary map key = `message_id` (internal map; date-keyed compatibility map still exported)
   - [x] maintain secondary index by timestamp only for sorting/lookup utilities
 - [ ] Update dependent selectors and helpers in:
-  - [ ] [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts) (partial: added date-key accessor and UUID thread-key support in thread collection; broader key-assumption cleanup pending)
+  - [ ] [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts) (partial: added date-key accessor, UUID thread-key support in thread collection, and thread-root lookup now prefers message-cache thread_id index; broader key-assumption cleanup pending)
   - [x] [src/packages/frontend/chat/utils.ts](./src/packages/frontend/chat/utils.ts) (root/date helpers now tolerate non-date map keys and stale reply_to via thread_id fallback)
 
 Validation:

@@ -946,27 +946,38 @@ export class ChatActions extends Actions<ChatState> {
     if (/^\d+$/.test(threadKey)) {
       message = this.getMessageByDate(parseInt(threadKey, 10));
     } else if (isValidUUID(threadKey)) {
-      const messages = this.getAllMessages();
-      let rootCandidate: ChatMessageTyped | undefined;
-      let earliestCandidate: ChatMessageTyped | undefined;
-      for (const msg of messages.values()) {
-        if (field<string>(msg, "thread_id") !== threadKey) continue;
-        if (!earliestCandidate) {
-          earliestCandidate = msg;
-        } else {
-          const currentMs = dateValue(msg)?.valueOf() ?? Number.POSITIVE_INFINITY;
-          const earliestMs =
-            dateValue(earliestCandidate)?.valueOf() ?? Number.POSITIVE_INFINITY;
-          if (currentMs < earliestMs) {
+      // Fast path: map thread_id -> root key from message cache index.
+      const mappedKey = this.messageCache?.getThreadKeyByThreadId(threadKey);
+      const mappedRoot =
+        mappedKey != null ? this.messageCache?.getByDateKey(mappedKey) : undefined;
+      if (mappedRoot && field<string>(mappedRoot, "thread_id") === threadKey) {
+        message = mappedRoot as ChatMessageTyped;
+      }
+      // Fallback: scan current messages to support legacy/unindexed edge cases.
+      if (!message) {
+        const messages = this.getAllMessages();
+        let rootCandidate: ChatMessageTyped | undefined;
+        let earliestCandidate: ChatMessageTyped | undefined;
+        for (const msg of messages.values()) {
+          if (field<string>(msg, "thread_id") !== threadKey) continue;
+          if (!earliestCandidate) {
             earliestCandidate = msg;
+          } else {
+            const currentMs =
+              dateValue(msg)?.valueOf() ?? Number.POSITIVE_INFINITY;
+            const earliestMs =
+              dateValue(earliestCandidate)?.valueOf() ?? Number.POSITIVE_INFINITY;
+            if (currentMs < earliestMs) {
+              earliestCandidate = msg;
+            }
+          }
+          if (!replyTo(msg)) {
+            rootCandidate = msg;
+            break;
           }
         }
-        if (!replyTo(msg)) {
-          rootCandidate = msg;
-          break;
-        }
+        message = rootCandidate ?? earliestCandidate;
       }
-      message = rootCandidate ?? earliestCandidate;
     } else {
       return null;
     }
