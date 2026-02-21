@@ -184,3 +184,147 @@ Still outstanding (high priority):
 - [ ] Reach run/interrupt/restart/halt parity in single-editor mode.
 - [ ] Add Playwright + unit tests for Slate Jupyter mode.
 - [ ] Document user-facing behavior differences and shortcuts.
+
+## 2026-02-21 Strategy Refresh (Execution Plan)
+
+This section supersedes tactical prioritization above for current work.
+
+### Core Strategy
+
+Treat canonical Jupyter state as the source of truth and enforce one strict projection rule:
+
+1. Every top-level Slate node is exactly one notebook cell wrapper:
+   - `jupyter_markdown_cell`
+   - `jupyter_code_cell`
+2. Every wrapper has stable `cell_id`.
+3. Sync is projection/reconciliation between:
+   - canonical notebook cells (`cell_list` + `cells`)
+   - top-level Slate cell wrappers
+4. No other top-level node types are allowed after normalization.
+
+### Sync Invariants ("must always hold")
+
+1. No structural mutation from stale local snapshots.
+2. No new cell creation unless a user edit explicitly requires it.
+3. No duplicate `cell_id` in Slate or canonical projection.
+4. Canonical and Slate converge after debounce window.
+5. Running a cell always uses latest canonical input (flush pending Slate first).
+
+### Phased Checklist
+
+#### Phase 1: Correctness Guardrails
+
+Goal: eliminate feedback loops and phantom-cell creation under mixed edits.
+
+Tasks:
+
+1. Add explicit sync assertions/counters in single-doc reconciliation path.
+2. Keep stale-structural-apply reject logic; tighten metrics and logs.
+3. Add deterministic mapping checks for create/delete/reorder paths.
+4. Ensure copy/paste always remaps duplicated `cell_id` values.
+
+Acceptance:
+
+1. No uncontrolled cell growth in classic+slate split tests.
+2. No duplicate `cell_id` after random edit/paste sequences.
+3. Convergence proven by automated tests (below).
+
+#### Phase 2: Selection + Navigation Model
+
+Goal: make editing feel like normal Slate while preserving cell semantics.
+
+Tasks:
+
+1. Harden top-level gap cursor behavior and keyboard transitions.
+2. Complete arrow/home/end boundary behavior between cell wrappers.
+3. Preserve continuous range selection across cell boundaries.
+4. Remove focus-jitter from debounced sync and run-cell actions.
+
+Acceptance:
+
+1. Cursor movement is deterministic across many cells.
+2. No frequent focus loss while typing.
+3. Selection operations do not trigger structural surprises.
+
+#### Phase 3: Cell UX Parity
+
+Goal: make single-doc behavior equivalent to practical notebook workflows.
+
+Tasks:
+
+1. Solidify run shortcuts (`Shift+Enter`, `Alt/Mod+Enter`) including next-cell focus behavior.
+2. Finalize keyboard/new-cell semantics at gap cursor.
+3. Keep code output anchored under the matching code cell.
+4. Keep per-cell chrome state consistent (one active chrome at a time).
+
+Acceptance:
+
+1. User can author and run notebooks end-to-end in single-doc mode.
+2. Visual/runtime state matches classic notebook expectations.
+
+#### Phase 4: Cross-View Robustness
+
+Goal: guarantee safe coexistence of classic jupyter and slate single-doc views.
+
+Tasks:
+
+1. Exercise simultaneous edits in classic/slate frames and separate browsers.
+2. Validate conflict behavior under blur/focus/debounce timing races.
+3. Ensure no stale selection/state API calls in classic frame actions.
+
+Acceptance:
+
+1. Long mixed editing sessions converge with no duplication/loss.
+2. Classic view remains stable while slate edits stream in.
+
+#### Phase 5: Cell-Type and Metadata Hardening
+
+Goal: avoid breaking notebooks with non-standard content.
+
+Tasks:
+
+1. Preserve and round-trip `raw` and uncommon cell metadata safely.
+2. Clarify unsupported cell-type rendering policy in single-doc.
+3. Verify metadata retention through structural edits and paste.
+
+Acceptance:
+
+1. No silent metadata loss in save/load/sync workflows.
+2. Unsupported types degrade safely (not crashy/destructive).
+
+### Playwright-First Verification Plan
+
+Primary policy: implement feature + deterministic test in the same change whenever possible.
+
+Test suites to maintain in [src/packages/lite/playwright/jupyter/jupyter.spec.ts](./src/packages/lite/playwright/jupyter/jupyter.spec.ts):
+
+1. Typing sync:
+   - slate typing persists to canonical without duplication
+   - debounce convergence with no feedback loops
+2. Structural sync:
+   - insert/delete/move from slate converges in classic view
+   - classic structural edits converge in slate view
+3. Cross-view run semantics:
+   - run from slate executes latest canonical source
+   - next-cell insertion/focus behavior is deterministic
+4. Clipboard/id safety:
+   - copied/pasted cells get unique ids
+   - bulk paste does not clone ids
+5. Selection/navigation:
+   - gap cursor insertion flows
+   - boundary arrow/home/end behavior
+
+### Manual QA Gate (after Playwright pass)
+
+Before marking any phase complete, run manual split-view checks:
+
+1. Classic + slate in one browser (split frame).
+2. Classic + slate in two browsers on same notebook.
+3. Medium/large notebook (200-600 cells) typing and run behavior.
+4. Randomized mixed edit stress for 2-5 minutes with no structural drift.
+
+### Execution Notes
+
+1. Prefer small commits per phase objective, each with matching tests.
+2. Keep drag-and-drop work parked unless explicitly prioritized.
+3. If a regression is found, add a failing Playwright case before patching.
