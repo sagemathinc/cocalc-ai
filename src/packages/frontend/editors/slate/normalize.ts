@@ -382,7 +382,9 @@ SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 NORMALIZERS.push(function ensureUniqueJupyterCellIds({ editor, path }) {
   if (path.length !== 0) return;
   const seen = new Set<string>();
-  for (const [node, nodePath] of Node.nodes(editor)) {
+  const children = editor.children ?? [];
+  for (let i = 0; i < children.length; i += 1) {
+    const node = children[i] as Node;
     if (!isNotebookCellElement(node)) {
       continue;
     }
@@ -396,7 +398,7 @@ NORMALIZERS.push(function ensureUniqueJupyterCellIds({ editor, path }) {
       next = newJupyterCellId();
     }
     seen.add(next);
-    Transforms.setNodes(editor, { cell_id: next } as any, { at: nodePath });
+    Transforms.setNodes(editor, { cell_id: next } as any, { at: [i] });
     return;
   }
 });

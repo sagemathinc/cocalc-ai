@@ -919,22 +919,19 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
           <EditableMarkdown
             value_slate={slateValue}
             actions={editorActions}
-            onSlateChange={(doc, opts) => {
-              if (opts.onlySelectionOps || opts.syncCausedUpdate) {
-                return;
-              }
-              const root = containerRef.current;
+          onSlateChange={(doc, opts) => {
+            if (opts.onlySelectionOps || opts.syncCausedUpdate) {
+              return;
+            }
+            const root = containerRef.current;
               const active =
                 typeof document === "undefined" ? null : document.activeElement;
               if (root != null && active != null && !root.contains(active)) {
                 return;
               }
-              if (cellsSignature(slateDocumentToCells(doc)) === notebookSignatureRef.current) {
-                return;
-              }
-              debugCountersRef.current.onSlateChangeCalls += 1;
-              scheduleApplyNotebookSlate(doc);
-            }}
+            debugCountersRef.current.onSlateChangeCalls += 1;
+            scheduleApplyNotebookSlate(doc);
+          }}
             is_current={true}
             read_only={!!read_only}
             hidePath
