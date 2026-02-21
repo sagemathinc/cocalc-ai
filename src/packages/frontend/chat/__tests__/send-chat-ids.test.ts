@@ -194,4 +194,48 @@ describe("thread-config by thread_id", () => {
     expect(setRow.date).toBe("2026-02-21T18:30:00.000Z");
     expect(setRow.name).toBe("After");
   });
+
+  it("persists appearance and pin settings for UUID thread keys", () => {
+    const threadId = "33333333-3333-4333-8333-333333333333";
+    const existing = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: "2026-02-21T18:40:00.000Z",
+      thread_id: threadId,
+      name: "Thread",
+    };
+    const actions = makeActions();
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+        return existing;
+      }
+      return undefined;
+    });
+
+    expect(
+      actions.setThreadAppearance(threadId, {
+        color: "#ff9800",
+        icon: "thumbs-up",
+        image: "https://example.com/img.png",
+      }),
+    ).toBe(true);
+    expect(actions.setThreadPin(threadId, true)).toBe(true);
+
+    const rows = actions.syncdb.set.mock.calls.map((x) => x[0]);
+    const appearance = rows.find(
+      (row: any) =>
+        row?.event === "chat-thread-config" &&
+        row?.thread_id === threadId &&
+        row?.thread_color === "#ff9800",
+    );
+    const pin = rows.find(
+      (row: any) =>
+        row?.event === "chat-thread-config" &&
+        row?.thread_id === threadId &&
+        row?.pin === true,
+    );
+    expect(appearance?.thread_icon).toBe("thumbs-up");
+    expect(appearance?.thread_image).toBe("https://example.com/img.png");
+    expect(pin).toBeTruthy();
+  });
 });

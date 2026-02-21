@@ -90,7 +90,7 @@ Checklist:
 Validation:
 
 - [x] Unit tests for thread config read/write and defaults. ([src/packages/frontend/chat/__tests__/send-chat-ids.test.ts](./src/packages/frontend/chat/__tests__/send-chat-ids.test.ts))
-- [ ] Ensure title/icon/color/pin still render and persist.
+- [ ] Ensure title/icon/color/pin still render and persist. (persistence via `thread_config` now covered by [src/packages/frontend/chat/__tests__/send-chat-ids.test.ts](./src/packages/frontend/chat/__tests__/send-chat-ids.test.ts); UI render validation still manual)
 
 ## Commit 5: Codex thread identity from `thread_config` + conversion action
 
