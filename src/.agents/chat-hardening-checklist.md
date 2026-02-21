@@ -68,7 +68,7 @@ Checklist:
   - [x] maintain secondary index by timestamp only for sorting/lookup utilities
 - [ ] Update dependent selectors and helpers in:
   - [ ] [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts) (partial: added date-key accessor; broader key-assumption cleanup pending)
-  - [ ] [src/packages/frontend/chat/utils.ts](./src/packages/frontend/chat/utils.ts) (partial: root/date helpers now tolerate non-date map keys)
+  - [x] [src/packages/frontend/chat/utils.ts](./src/packages/frontend/chat/utils.ts) (root/date helpers now tolerate non-date map keys and stale reply_to via thread_id fallback)
 
 Validation:
 
