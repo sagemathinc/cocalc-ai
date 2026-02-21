@@ -164,7 +164,7 @@ Checklist:
 Validation:
 
 - [x] Integration test: restart during run -> thread becomes interrupted.
-- [ ] Verify no stale spinner after restart/interrupt.
+- [ ] Verify no stale spinner after restart/interrupt. (partial automated coverage for per-message queued/running tag gating in [src/packages/frontend/chat/__tests__/message-status.test.ts](./src/packages/frontend/chat/__tests__/message-status.test.ts))
 
 ## Commit 9: One-off migration script (v1 -> v2)
 

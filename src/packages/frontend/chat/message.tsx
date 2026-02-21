@@ -104,6 +104,34 @@ const MARGIN_TOP_VIEWER = "17px";
 const AVATAR_MARGIN_LEFTRIGHT = "15px";
 
 const VIEWER_MESSAGE_LEFT_MARGIN = "clamp(12px, 15%, 150px)";
+const NON_RUNNING_USER_ONLY_STATES = new Set([
+  "queue",
+  "sending",
+  "sent",
+  "not-sent",
+]);
+
+export function computeAcpStateToRender({
+  acpState,
+  latestThreadInterrupted,
+  isViewersMessage,
+  generating,
+}: {
+  acpState?: string;
+  latestThreadInterrupted: boolean;
+  isViewersMessage: boolean;
+  generating?: boolean;
+}): string {
+  const state = acpState === "running" && latestThreadInterrupted ? "" : acpState;
+  if (!state) return "";
+  if (NON_RUNNING_USER_ONLY_STATES.has(state) && !isViewersMessage) {
+    return "";
+  }
+  if (state === "running" && !isViewersMessage && generating !== true) {
+    return "";
+  }
+  return state;
+}
 
 interface Props {
   index: number;
@@ -1491,21 +1519,12 @@ export default function Message({
   };
 
   const acpStateToRender = useMemo(() => {
-    const state = acpState === "running" && latestThreadInterrupted ? "" : acpState;
-    if (!state) return "";
-    const nonRunningUserOnlyStates = new Set([
-      "queue",
-      "sending",
-      "sent",
-      "not-sent",
-    ]);
-    if (nonRunningUserOnlyStates.has(state) && !is_viewers_message) {
-      return "";
-    }
-    if (state === "running" && !is_viewers_message && generating !== true) {
-      return "";
-    }
-    return state;
+    return computeAcpStateToRender({
+      acpState,
+      latestThreadInterrupted,
+      isViewersMessage: is_viewers_message,
+      generating,
+    });
   }, [acpState, latestThreadInterrupted, is_viewers_message, generating]);
 
   const renderAcpState = () => {
