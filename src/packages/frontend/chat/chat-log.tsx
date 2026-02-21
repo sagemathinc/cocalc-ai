@@ -46,6 +46,7 @@ import { COMBINED_FEED_KEY } from "./threads";
 // you can use this to quickly disabled virtuoso, but rendering large chatrooms will
 // become basically impossible.
 const USE_VIRTUOSO = true;
+const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 
 function stripHtml(value: string): string {
   if (!value) return "";
@@ -220,12 +221,33 @@ export function ChatLog({
     if (!messages) return false;
     for (const date of sortedDates) {
       const msg = getMessageAtDate({ messages, date: parseFloat(date) });
-      if (field(msg, "generating") === true) {
+      if (field(msg, "generating") !== true) continue;
+      const isAcpTurn = !!field<string>(msg, "acp_account_id");
+      if (!isAcpTurn) return true;
+      const msgDate = dateValue(msg);
+      if (!msgDate) continue;
+      const threadId = field<string>(msg, "thread_id");
+      const byThread =
+        threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
+      const byMessage = acpState?.get?.(`${msgDate.valueOf()}`);
+      const rootMs = getThreadRootDate({
+        date: msgDate.valueOf(),
+        messages,
+      });
+      const byRoot =
+        rootMs != null && Number.isFinite(rootMs)
+          ? acpState?.get?.(`${rootMs}`)
+          : undefined;
+      if (
+        ACP_ACTIVE_STATES.has(byThread) ||
+        ACP_ACTIVE_STATES.has(byMessage) ||
+        ACP_ACTIVE_STATES.has(byRoot)
+      ) {
         return true;
       }
     }
     return false;
-  }, [messages, sortedDates]);
+  }, [messages, sortedDates, acpState]);
 
   useEffect(() => {
     if (!generating) return;

@@ -895,57 +895,14 @@ export class ChatActions extends Actions<ChatState> {
 
   getThreadMetadata = (threadKey: string): ThreadMetadataSnapshot => {
     const cfgRow = this.getThreadConfigRecord(threadKey);
-    let cfg =
+    const cfg =
       cfgRow && typeof cfgRow.toJS === "function" ? cfgRow.toJS() : cfgRow;
-    const root = this.getThreadRootDoc(threadKey)?.message;
     const parsePin = (value: any): boolean | undefined =>
       value === true || value === "true" || value === 1 || value === "1"
         ? true
         : value === false || value === "false" || value === 0 || value === "0"
           ? false
           : undefined;
-    if (root && this.syncdb != null) {
-      const patch: Record<string, unknown> = {};
-      const copyString = (
-        key: "name" | "thread_color" | "thread_icon" | "thread_image",
-      ) => {
-        const cfgValue = field<string>(cfg, key);
-        if (typeof cfgValue === "string" && cfgValue.trim()) return;
-        const rootValue = field<string>(root, key);
-        if (typeof rootValue === "string" && rootValue.trim()) {
-          patch[key] = rootValue.trim();
-        }
-      };
-      copyString("name");
-      copyString("thread_color");
-      copyString("thread_icon");
-      copyString("thread_image");
-      if (field<any>(cfg, "pin") == null) {
-        const rootPin = parsePin(field<any>(root, "pin"));
-        if (rootPin != null) patch.pin = rootPin;
-      }
-      const cfgAcp = field<CodexThreadConfig | null>(cfg, "acp_config");
-      if (
-        typeof field<string>(cfg, "agent_model") !== "string" &&
-        typeof cfgAcp?.model === "string" &&
-        cfgAcp.model.trim()
-      ) {
-        patch.agent_model = cfgAcp.model.trim();
-      }
-      if (normalizeAgentKind(field<string>(cfg, "agent_kind")) == null && cfgAcp) {
-        patch.agent_kind = "acp";
-      }
-      if (normalizeAgentMode(field<string>(cfg, "agent_mode")) == null && cfgAcp) {
-        patch.agent_mode = "interactive";
-      }
-      if (Object.keys(patch).length > 0) {
-        this.setThreadConfigRecord(threadKey, patch, {
-          threadId: field<string>(root, "thread_id"),
-        });
-        this.syncdb.commit();
-        cfg = { ...(cfg ?? {}), ...patch };
-      }
-    }
     const readString = (
       key: "name" | "thread_color" | "thread_icon" | "thread_image",
     ): string | undefined => {

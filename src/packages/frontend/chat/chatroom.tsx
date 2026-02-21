@@ -54,6 +54,7 @@ const GRID_STYLE: React.CSSProperties = {
 
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const COMBINED_FEED_MAX_PER_THREAD = 5;
+const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
 
 type MessageKeyWithTime = { key: string; time: number };
 
@@ -426,13 +427,25 @@ export function ChatPanel({
     const threadMessages = actions.getMessagesInThread(rootIso) ?? [];
     const sessionId =
       actions.getCodexConfig(reply_to)?.sessionId ?? `${reply_to.valueOf()}`;
+    const rootState = acpState?.get?.(`${reply_to.valueOf()}`);
+    const rootActive = typeof rootState === "string" && ACP_ACTIVE_STATES.has(rootState);
     for (const msg of threadMessages) {
       if (field<boolean>(msg, "generating") !== true) continue;
       const msgDate = dateValue(msg);
       if (!msgDate) continue;
-      const threadId = field<string>(msg, "acp_thread_id") ?? sessionId;
+      const threadId = field<string>(msg, "thread_id");
+      const threadState =
+        threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
+      const msgState = acpState?.get?.(`${msgDate.valueOf()}`);
+      const isActive =
+        rootActive ||
+        (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) ||
+        (typeof msgState === "string" && ACP_ACTIVE_STATES.has(msgState));
+      if (!isActive) continue;
+      const interruptTargetThreadId =
+        field<string>(msg, "acp_thread_id") ?? sessionId;
       actions.languageModelStopGenerating(new Date(msgDate.valueOf()), {
-        threadId,
+        threadId: interruptTargetThreadId,
         replyTo: reply_to,
         senderId: field<string>(msg, "sender_id"),
       });
