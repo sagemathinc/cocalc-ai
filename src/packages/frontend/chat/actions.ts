@@ -862,25 +862,53 @@ export class ChatActions extends Actions<ChatState> {
 
   getThreadMetadata = (threadKey: string): ThreadMetadataSnapshot => {
     const cfgRow = this.getThreadConfigRecord(threadKey);
-    const cfg =
+    let cfg =
       cfgRow && typeof cfgRow.toJS === "function" ? cfgRow.toJS() : cfgRow;
     const root = this.getThreadRootDoc(threadKey)?.message;
+    const parsePin = (value: any): boolean | undefined =>
+      value === true || value === "true" || value === 1 || value === "1"
+        ? true
+        : value === false || value === "false" || value === 0 || value === "0"
+          ? false
+          : undefined;
+    if (root && this.syncdb != null) {
+      const patch: Record<string, unknown> = {};
+      const copyString = (
+        key: "name" | "thread_color" | "thread_icon" | "thread_image",
+      ) => {
+        const cfgValue = field<string>(cfg, key);
+        if (typeof cfgValue === "string" && cfgValue.trim()) return;
+        const rootValue = field<string>(root, key);
+        if (typeof rootValue === "string" && rootValue.trim()) {
+          patch[key] = rootValue.trim();
+        }
+      };
+      copyString("name");
+      copyString("thread_color");
+      copyString("thread_icon");
+      copyString("thread_image");
+      if (field<any>(cfg, "pin") == null) {
+        const rootPin = parsePin(field<any>(root, "pin"));
+        if (rootPin != null) patch.pin = rootPin;
+      }
+      if (Object.keys(patch).length > 0) {
+        this.setThreadConfigRecord(threadKey, patch, {
+          threadId: field<string>(root, "thread_id"),
+        });
+        this.syncdb.commit();
+        cfg = { ...(cfg ?? {}), ...patch };
+      }
+    }
     const readString = (
       key: "name" | "thread_color" | "thread_icon" | "thread_image",
     ): string | undefined => {
       const fromCfg = field<string>(cfg, key);
-      if (typeof fromCfg === "string" && fromCfg.trim()) return fromCfg.trim();
-      const fromRoot = field<string>(root, key);
-      if (typeof fromRoot === "string" && fromRoot.trim()) return fromRoot.trim();
+      if (typeof fromCfg === "string" && fromCfg.trim()) {
+        return fromCfg.trim();
+      }
       return undefined;
     };
-    const pinRaw = field<any>(cfg, "pin") ?? field<any>(root, "pin");
-    const pin =
-      pinRaw === true || pinRaw === "true" || pinRaw === 1 || pinRaw === "1"
-        ? true
-        : pinRaw === false || pinRaw === "false" || pinRaw === 0 || pinRaw === "0"
-          ? false
-          : undefined;
+    const pin = parsePin(field<any>(cfg, "pin"));
     const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
     return {
       name: readString("name"),
