@@ -5,7 +5,11 @@ import type {
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import { ChatStreamWriter, recoverOrphanedAcpTurns } from "../index";
+import {
+  ChatStreamWriter,
+  getAcpWatchdogStats,
+  recoverOrphanedAcpTurns,
+} from "../index";
 import * as queue from "../../sqlite/acp-queue";
 import * as turns from "../../sqlite/acp-turns";
 import * as chatServer from "@cocalc/chat/server";
@@ -117,6 +121,35 @@ async function flush(writer: ChatStreamWriter) {
 }
 
 describe("ChatStreamWriter", () => {
+  it("tracks thread-id fallback usage in watchdog stats", async () => {
+    const before =
+      getAcpWatchdogStats().integrityTotals?.[
+        "chat.acp.missing_thread_id_fallbacks"
+      ] ?? 0;
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        message_id: "msg-watchdog-1",
+        thread_id: undefined,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady?.();
+    const after =
+      getAcpWatchdogStats().integrityTotals?.[
+        "chat.acp.missing_thread_id_fallbacks"
+      ] ?? 0;
+    expect(after).toBeGreaterThanOrEqual(before + 1);
+    writer.dispose?.(true);
+  });
+
   it("clears generating on summary", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({
