@@ -838,24 +838,11 @@ export class ChatActions extends Actions<ChatState> {
   private getThreadConfigRecord = (threadKey: string): any | null => {
     if (this.syncdb == null) return null;
     const threadId = this.resolveThreadIdForKey(threadKey);
-    if (threadId) {
-      try {
-        const byThreadId = this.syncdb.get_one({
-          event: THREAD_CONFIG_EVENT,
-          thread_id: threadId,
-        });
-        if (byThreadId != null) return byThreadId;
-      } catch {
-        // Fallback to legacy date+sender lookup for older synced docs.
-      }
-    }
-    const dateIso = threadKeyToIso(threadKey);
-    if (!dateIso) return null;
+    if (!threadId) return null;
     return (
       this.syncdb.get_one({
         event: THREAD_CONFIG_EVENT,
-        sender_id: THREAD_CONFIG_SENDER,
-        date: dateIso,
+        thread_id: threadId,
       }) ?? null
     );
   };
