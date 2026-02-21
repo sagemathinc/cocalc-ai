@@ -85,11 +85,21 @@ Rule: keep one API surface and expose runtime capability checks so scripts can b
 ```mermaid
 flowchart TD
   A[Interpret user intent] --> B[Inspect API via exec-api]
-  B --> C[Write single JS script using composed primitives]
-  C --> D[Run with browser exec/async]
-  D --> E[If needed: poll/cancel/report progress]
-  E --> F[Return concise summary + next action]
+  B --> C[Write JS script #1]
+  C --> D[Run browser exec]
+  D --> E[Inspect result / errors]
+  E --> F{Need another step?}
+  F -->|Yes| G[Use LLM reasoning to classify/plan next transform]
+  G --> H[Write JS script #N]
+  H --> D
+  F -->|No| I[Return concise summary + next action]
 ```
+
+Notes:
+
+- A single user turn can involve multiple `browser exec` calls.
+- Common pattern: gather raw data with exec, classify/summarize in the LLM, then run another exec to materialize reports/edits/UI changes.
+- Optimize for minimum round-trips, not strictly one round-trip.
 
 ## Near-Term Roadmap
 
@@ -137,7 +147,7 @@ api.terminal.destroy(session_path): Promise<{ ok: true }>;
 ## Notes for New Codex Sessions
 
 - Start from `browser exec-api` output before coding scripts.
-- Prefer one composed `browser exec` script over many CLI round-trips.
+- Prefer as few `browser exec` calls as practical, but use multiple calls in one turn when analysis/iteration improves quality.
 - Use feature detection for provider-specific behavior.
 - Keep scripts idempotent when possible.
 - For expensive history/sync analysis, reuse session-scoped resources and release them in cleanup.
