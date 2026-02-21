@@ -35,6 +35,7 @@ export class ChatMessageCache extends EventEmitter {
   private messageIdIndex: Map<string, string> = new Map();
   private dateIndex: Map<string, string> = new Map();
   private threadIndex: Map<string, ThreadIndexEntry> = new Map();
+  private threadKeyByThreadId: Map<string, string> = new Map();
   private version = 0;
 
   constructor(syncdb: ImmerDB) {
@@ -99,6 +100,7 @@ export class ChatMessageCache extends EventEmitter {
     this.messagesByDate = new Map();
     this.messageIdIndex = new Map();
     this.dateIndex = new Map();
+    this.threadKeyByThreadId = new Map();
     this.removeAllListeners();
   }
 
@@ -116,7 +118,16 @@ export class ChatMessageCache extends EventEmitter {
     return `${date.valueOf()}`;
   }
 
-  private getThreadKey(message: PlainChatMessage): string | undefined {
+  private getThreadId(message: PlainChatMessage): string | undefined {
+    const id = (message as any)?.thread_id;
+    if (typeof id !== "string") return undefined;
+    const trimmed = id.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  private getThreadKeyFromReplyOrDate(
+    message: PlainChatMessage,
+  ): string | undefined {
     const root = replyTo(message);
     if (root) {
       const d = new Date(root);
@@ -124,6 +135,22 @@ export class ChatMessageCache extends EventEmitter {
     }
     const d = dateValue(message);
     return d ? `${d.valueOf()}` : undefined;
+  }
+
+  private getThreadKey(message: PlainChatMessage): string | undefined {
+    const threadId = this.getThreadId(message);
+    if (threadId) {
+      const mapped = this.threadKeyByThreadId.get(threadId);
+      if (mapped) return mapped;
+    }
+    const key = this.getThreadKeyFromReplyOrDate(message);
+    if (!key) return undefined;
+    // Only establish mapping from root messages; replies can have stale/malformed
+    // reply_to values during migrations or races.
+    if (threadId && !replyTo(message)) {
+      this.threadKeyByThreadId.set(threadId, key);
+    }
+    return key;
   }
 
   private getMessageId(
@@ -183,6 +210,10 @@ export class ChatMessageCache extends EventEmitter {
     }
     if (thread.messageCount === 0) {
       draft.delete(threadKey);
+      const threadId = this.getThreadId(message);
+      if (threadId && this.threadKeyByThreadId.get(threadId) === threadKey) {
+        this.threadKeyByThreadId.delete(threadId);
+      }
       return;
     }
     const msgDate = dateValue(message);
@@ -215,8 +246,21 @@ export class ChatMessageCache extends EventEmitter {
     const messageIdIndex = new Map<string, string>();
     const dateIndex = new Map<string, string>();
     const threadIndex = new Map<string, ThreadIndexEntry>();
+    this.threadKeyByThreadId = new Map<string, string>();
     const rows = this.syncdb.get() ?? [];
     log("rebuildFromDoc: got rows", rows);
+
+    // Build thread_id -> root-date-key mapping first so thread grouping can be
+    // thread-id-driven even when reply_to is stale/malformed.
+    for (const row0 of rows ?? []) {
+      if (row0?.event !== "chat") continue;
+      const message = row0 as PlainChatMessage;
+      if (replyTo(message)) continue;
+      const threadId = this.getThreadId(message);
+      const dateKey = this.getDateKey(message);
+      if (!threadId || !dateKey) continue;
+      this.threadKeyByThreadId.set(threadId, dateKey);
+    }
 
     for (const row0 of rows ?? []) {
       if (row0?.event !== "chat") continue;

@@ -63,7 +63,7 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Refactor [src/packages/frontend/chat/message-cache.ts](./src/packages/frontend/chat/message-cache.ts):
+- [x] Refactor [src/packages/frontend/chat/message-cache.ts](./src/packages/frontend/chat/message-cache.ts):
   - [x] primary map key = `message_id` (internal map; date-keyed compatibility map still exported)
   - [x] maintain secondary index by timestamp only for sorting/lookup utilities
 - [ ] Update dependent selectors and helpers in:
@@ -72,7 +72,7 @@ Checklist:
 
 Validation:
 
-- [ ] Add/update tests for cache updates and thread indexing. (partial: cache by-id/date-index coverage added)
+- [x] Add/update tests for cache updates and thread indexing. ([src/packages/frontend/chat/__tests__/message-cache.test.ts](./src/packages/frontend/chat/__tests__/message-cache.test.ts))
 - [ ] Confirm thread rendering/scroll still works.
 
 ## Commit 4: Add `thread` and `thread_config` records (storage + accessors)

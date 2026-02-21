@@ -116,4 +116,40 @@ describe("ChatMessageCache message_id index", () => {
     expect(entryAfter?.messageCount).toBe(1);
     cache.dispose();
   });
+
+  it("groups replies by thread_id even if reply_to is stale", async () => {
+    const rootDate = "2026-01-03T00:00:00.000Z";
+    const staleReplyTarget = "2026-01-01T00:00:00.000Z";
+    const replyDate = "2026-01-03T00:00:01.000Z";
+    const rows = [
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: rootDate,
+        message_id: "root-thread-2",
+        thread_id: "thread-2",
+        history: [],
+      },
+      {
+        event: "chat",
+        sender_id: "user-2",
+        date: replyDate,
+        message_id: "reply-thread-2",
+        thread_id: "thread-2",
+        // Intentionally stale/incorrect; grouping should still follow thread_id.
+        reply_to: staleReplyTarget,
+        history: [],
+      },
+    ];
+    const syncdb = new MockSyncdb(rows);
+    const cache = new ChatMessageCache(syncdb as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const rootKey = `${new Date(rootDate).valueOf()}`;
+    const entry = cache.getThreadIndex().get(rootKey);
+    expect(entry?.messageCount).toBe(2);
+    const staleKey = `${new Date(staleReplyTarget).valueOf()}`;
+    expect(cache.getThreadIndex().get(staleKey)).toBeUndefined();
+    cache.dispose();
+  });
 });
