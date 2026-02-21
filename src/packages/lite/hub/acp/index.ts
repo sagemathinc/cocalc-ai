@@ -91,6 +91,9 @@ const chatWritersByChatKey = new Map<string, ChatStreamWriter>();
 const chatWritersByThreadId = new Map<string, ChatStreamWriter>();
 let acpFinalizeMismatchCount = 0;
 let acpFinalizeRecoveredAfterRetryCount = 0;
+let acpLookupByMessageIdScans = 0;
+let acpLookupByMessageIdHits = 0;
+let acpLookupByMessageIdMisses = 0;
 
 export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const top = Math.max(1, topN);
@@ -191,6 +194,9 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       "chat.acp.finalize_mismatch": acpFinalizeMismatchCount,
       "chat.acp.finalize_recovered_after_retry":
         acpFinalizeRecoveredAfterRetryCount,
+      "chat.acp.lookup_message_id_scans": acpLookupByMessageIdScans,
+      "chat.acp.lookup_message_id_hits": acpLookupByMessageIdHits,
+      "chat.acp.lookup_message_id_misses": acpLookupByMessageIdMisses,
     },
     topWritersByEvents,
   };
@@ -239,6 +245,8 @@ export class ChatStreamWriter {
   private metadata: AcpChatContext;
   private readonly chatKey: string;
   private threadKeys = new Set<string>();
+  private resolvedChatKey?: { date: string; sender_id: string };
+  private attemptedMessageIdLookup = false;
   private prevHistory: MessageHistory[] = [];
   private ready: Promise<void>;
   private closed = false;
@@ -296,14 +304,34 @@ export class ChatStreamWriter {
   private chatPrimaryWhere(): Record<string, unknown> {
     return {
       event: "chat",
-      date: this.metadata.message_date,
-      sender_id: this.metadata.sender_id,
+      date: this.resolvedChatKey?.date ?? this.metadata.message_date,
+      sender_id: this.resolvedChatKey?.sender_id ?? this.metadata.sender_id,
     };
+  }
+
+  private setResolvedChatKey(record: any): void {
+    const date = normalizeIsoDateString(syncdbField(record, "date"));
+    const sender_id = syncdbField<string>(record, "sender_id");
+    if (!date || !sender_id) return;
+    this.resolvedChatKey = { date, sender_id };
   }
 
   private findChatRow(): any {
     if (!this.syncdb) return undefined;
-    return this.syncdb.get_one(this.chatPrimaryWhere());
+    const current = this.syncdb.get_one(this.chatPrimaryWhere());
+    if (current != null) {
+      this.setResolvedChatKey(current);
+      return current;
+    }
+    if (this.metadata.message_id && !this.attemptedMessageIdLookup) {
+      this.attemptedMessageIdLookup = true;
+      const byMessageId = findChatRowByMessageId(this.syncdb, this.metadata.message_id);
+      if (byMessageId != null) {
+        this.setResolvedChatKey(byMessageId);
+        return byMessageId;
+      }
+    }
+    return undefined;
   }
 
   private threadRootIso(): string {
@@ -736,9 +764,11 @@ export class ChatStreamWriter {
   }
 
   private buildChatUpdate(generating: boolean): Record<string, unknown> {
+    const rowDate = this.resolvedChatKey?.date ?? this.metadata.message_date;
+    const rowSender = this.resolvedChatKey?.sender_id ?? this.metadata.sender_id;
     const message = buildChatMessage({
-      sender_id: this.metadata.sender_id,
-      date: this.metadata.message_date,
+      sender_id: rowSender,
+      date: rowDate,
       prevHistory: this.prevHistory,
       content: this.content,
       generating,
@@ -1216,6 +1246,60 @@ function syncdbField<T = unknown>(record: any, key: string): T | undefined {
   return (record as any)[key] as T;
 }
 
+function normalizeIsoDateString(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.valueOf())) return undefined;
+    return value.toISOString();
+  }
+  if (typeof value === "string") {
+    const d = new Date(value);
+    if (Number.isNaN(d.valueOf())) return value;
+    return d.toISOString();
+  }
+  return undefined;
+}
+
+function syncdbRows(syncdb: any, where: Record<string, unknown>): any[] {
+  if (syncdb == null || typeof syncdb.get !== "function") return [];
+  const rows = syncdb.get(where);
+  if (rows == null) return [];
+  if (Array.isArray(rows)) return rows;
+  if (typeof rows.toJS === "function") return rows.toJS();
+  return [];
+}
+
+function findChatRowByMessageId(syncdb: any, message_id?: string): any {
+  if (!message_id) return undefined;
+  acpLookupByMessageIdScans += 1;
+  const rows = syncdbRows(syncdb, { event: "chat" });
+  for (const row of rows) {
+    if (syncdbField<string>(row, "message_id") === message_id) {
+      acpLookupByMessageIdHits += 1;
+      return row;
+    }
+  }
+  acpLookupByMessageIdMisses += 1;
+  return undefined;
+}
+
+function findRecoverableChatRow(
+  syncdb: any,
+  context: {
+    message_date: string;
+    sender_id: string;
+    message_id?: string;
+  },
+): any {
+  const byDate = syncdb?.get_one?.({
+    event: "chat",
+    date: context.message_date,
+    sender_id: context.sender_id,
+  });
+  if (byDate != null) return byDate;
+  return findChatRowByMessageId(syncdb, context.message_id);
+}
+
 function historyToArray(value: any): MessageHistory[] {
   if (value == null) return [];
   if (Array.isArray(value)) return value as MessageHistory[];
@@ -1294,18 +1378,23 @@ export async function recoverOrphanedAcpTurns(
           await once(syncdb, "ready");
         }
         const senderId = turn.sender_id ?? "openai-codex-agent";
-        const current = syncdb.get_one({
-          event: "chat",
-          date: turn.message_date,
+        const current = findRecoverableChatRow(syncdb, {
+          message_date: turn.message_date,
           sender_id: senderId,
+          message_id: turn.message_id ?? undefined,
         });
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
           const history = appendRestartNotice(syncdbField(current, "history"));
+          const rowDate =
+            normalizeIsoDateString(syncdbField(current, "date")) ??
+            normalizeIsoDateString(turn.message_date) ??
+            turn.message_date;
+          const rowSender = syncdbField<string>(current, "sender_id") ?? senderId;
           const update: any = {
             event: "chat",
-            date: turn.message_date,
-            sender_id: senderId,
+            date: rowDate,
+            sender_id: rowSender,
             generating: false,
             acp_interrupted: true,
             acp_interrupted_reason: "server_restart",
@@ -1325,9 +1414,9 @@ export async function recoverOrphanedAcpTurns(
           }
           syncdb.set(update);
           const threadRootIso = (() => {
-            const raw = turn.reply_to ?? turn.message_date;
+            const raw = turn.reply_to ?? rowDate;
             const d = new Date(raw);
-            if (Number.isNaN(d.valueOf())) return turn.message_date;
+            if (Number.isNaN(d.valueOf())) return rowDate;
             return d.toISOString();
           })();
           const threadId =

@@ -736,6 +736,77 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("resolves chat row by message_id when sender/date changed", async () => {
+    const rowDate = new Date("2026-02-21T10:11:12.000Z").toISOString();
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: rowDate,
+        sender_id: "legacy-codex",
+        history: [],
+        generating: true,
+        message_id: "msg-lookup-1",
+      },
+    ];
+    const sets: any[] = [];
+    const syncdb: any = {
+      metadata: baseMetadata,
+      isReady: () => true,
+      get: (where: any) =>
+        rows.filter((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        sets.push(val);
+        const idx = rows.findIndex(
+          (row) =>
+            row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        message_date: new Date("2026-02-21T10:11:13.000Z").toISOString(),
+        sender_id: "new-codex-sender",
+        message_id: "msg-lookup-1",
+      } as any,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const final = sets[sets.length - 1] as any;
+    expect(final.date).toBe(rowDate);
+    expect(final.sender_id).toBe("legacy-codex");
+    writer.dispose?.(true);
+  });
+
   it("persists session id into thread-config without mutating root rows", async () => {
     const rootIso = new Date(100).toISOString();
     const turnIso = new Date(200).toISOString();
@@ -882,6 +953,76 @@ describe("recoverOrphanedAcpTurns", () => {
         ],
       ]),
     );
+  });
+
+  it("recovers by message_id when lease sender/date are stale", async () => {
+    const rowDate = new Date("2026-02-21T11:00:00.000Z").toISOString();
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: rowDate,
+        sender_id: "legacy-codex",
+        generating: true,
+        message_id: "msg-stale-1",
+        history: [
+          {
+            author_id: "codex-agent",
+            content: "partial answer",
+            date: rowDate,
+          },
+        ],
+      },
+    ];
+    const sets: any[] = [];
+    const syncdb: any = {
+      metadata: baseMetadata,
+      isReady: () => true,
+      get: (where: any) =>
+        rows.filter((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where ?? {}).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        sets.push(val);
+        const idx = rows.findIndex(
+          (row) =>
+            row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        // intentionally stale identity:
+        message_date: new Date("2026-02-21T11:00:10.000Z").toISOString(),
+        sender_id: "new-codex",
+        message_id: "msg-stale-1",
+      },
+    ]);
+
+    const recovered = await recoverOrphanedAcpTurns(makeFakeClient() as any);
+    expect(recovered).toBe(1);
+    const final = sets.find(
+      (row: any) => row.event === "chat" && row.generating === false,
+    ) as any;
+    expect(final.date).toBe(rowDate);
+    expect(final.sender_id).toBe("legacy-codex");
+    expect(final.acp_interrupted).toBe(true);
   });
 
   it("does not mutate thread-config session metadata during restart recovery", async () => {
