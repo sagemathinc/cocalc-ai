@@ -106,6 +106,7 @@ export type BrowserBashOptions = {
 
 export type BrowserExecApi = {
   projectId: string;
+  workspaceId: string;
   listOpenFiles: () => BrowserOpenFileInfo[];
   listOpenFilesAll: () => BrowserOpenFileInfo[];
   openFiles: (
@@ -548,6 +549,7 @@ type BrowserBashOptions = {
 
 type BrowserExecApi = {
   projectId: string;
+  workspaceId: string;
   listOpenFiles: () => BrowserOpenFileInfo[];
   listOpenFilesAll: () => BrowserOpenFileInfo[];
   openFiles: (
@@ -1064,6 +1066,7 @@ export function createBrowserSessionAutomation({
 
     return {
       projectId: project_id,
+      workspaceId: project_id,
       listOpenFiles: (): BrowserOpenFileInfo[] => {
         assertExecNotCanceled(isCanceled);
         const snapshot = buildSessionSnapshot(client);
