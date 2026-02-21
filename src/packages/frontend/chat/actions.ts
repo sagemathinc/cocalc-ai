@@ -357,6 +357,7 @@ export class ChatActions extends Actions<ChatState> {
     send_mode,
     name,
     threadAgent,
+    threadAppearance,
     preserveSelectedThread,
   }: {
     input?: string;
@@ -373,6 +374,12 @@ export class ChatActions extends Actions<ChatState> {
     threadAgent?: {
       mode: "codex" | "human" | "model";
       model?: string;
+    };
+    // optional thread-level appearance defaults for new root threads
+    threadAppearance?: {
+      color?: string;
+      icon?: string;
+      image?: string;
     };
     // if true, don't switch selected thread (e.g., combined feed)
     preserveSelectedThread?: boolean;
@@ -469,6 +476,18 @@ export class ChatActions extends Actions<ChatState> {
       const threadConfigPatch: Record<string, unknown> = {};
       if (trimmedName) {
         threadConfigPatch.name = trimmedName;
+      }
+      const threadColor = threadAppearance?.color?.trim();
+      const threadIcon = threadAppearance?.icon?.trim();
+      const threadImage = threadAppearance?.image?.trim();
+      if (threadColor) {
+        threadConfigPatch.thread_color = threadColor;
+      }
+      if (threadIcon) {
+        threadConfigPatch.thread_icon = threadIcon;
+      }
+      if (threadImage) {
+        threadConfigPatch.thread_image = threadImage;
       }
       const agentMode = threadAgent?.mode;
       const agentModel = threadAgent?.model?.trim();
@@ -872,6 +891,11 @@ export class ChatActions extends Actions<ChatState> {
   private getThreadConfigRecord = (threadKey: string): any | null => {
     if (this.syncdb == null) return null;
     const threadId = this.resolveThreadIdForKey(threadKey);
+    return this.getThreadConfigRecordById(threadId);
+  };
+
+  private getThreadConfigRecordById = (threadId?: string): any | null => {
+    if (this.syncdb == null) return null;
     if (!threadId) return null;
     return (
       this.syncdb.get_one({
@@ -928,8 +952,13 @@ export class ChatActions extends Actions<ChatState> {
     return true;
   };
 
-  getThreadMetadata = (threadKey: string): ThreadMetadataSnapshot => {
-    const cfgRow = this.getThreadConfigRecord(threadKey);
+  getThreadMetadata = (
+    threadKey: string,
+    opts?: { threadId?: string },
+  ): ThreadMetadataSnapshot => {
+    const cfgRow =
+      this.getThreadConfigRecordById(opts?.threadId) ??
+      this.getThreadConfigRecord(threadKey);
     const cfg =
       cfgRow && typeof cfgRow.toJS === "function" ? cfgRow.toJS() : cfgRow;
     const parsePin = (value: any): boolean | undefined =>
@@ -1116,7 +1145,10 @@ export class ChatActions extends Actions<ChatState> {
    * Returns the configured model for a thread. Thread identity comes from
    * thread_config metadata, not root-message heuristics.
    */
-  isLanguageModelThread = (date?: Date): false | LanguageModel => {
+  isLanguageModelThread = (
+    date?: Date,
+    threadId?: string,
+  ): false | LanguageModel => {
     if (date == null || this.store == null) {
       return false;
     }
@@ -1127,7 +1159,9 @@ export class ChatActions extends Actions<ChatState> {
     const rootMs =
       getThreadRootDate({ date: date.valueOf(), messages }) || date.valueOf();
     const threadKey = `${rootMs}`;
-    const metadata = this.getThreadMetadata(threadKey);
+    const metadata = this.getThreadMetadata(threadKey, {
+      threadId: threadId?.trim() || undefined,
+    });
     if (
       typeof metadata.agent_model === "string" &&
       metadata.agent_model.trim().length > 0
@@ -1174,7 +1208,12 @@ export class ChatActions extends Actions<ChatState> {
       return;
     }
 
-    const threadModel = reply_to ? this.isLanguageModelThread(reply_to) : null;
+    const threadModel = reply_to
+      ? this.isLanguageModelThread(
+          reply_to,
+          field<string>(message, "thread_id") ?? undefined,
+        )
+      : null;
 
     await processLLMExternal({
       actions: this,

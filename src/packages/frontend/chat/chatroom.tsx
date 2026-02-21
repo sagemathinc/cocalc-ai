@@ -497,6 +497,14 @@ export function ChatPanel({
               model: newThreadSetup.model?.trim(),
             }
           : undefined,
+      threadAppearance:
+        !reply_to
+          ? {
+              color: newThreadSetup.color?.trim(),
+              icon: newThreadSetup.icon?.trim(),
+              image: newThreadSetup.image?.trim(),
+            }
+          : undefined,
       preserveSelectedThread: isCombinedFeedSelected,
     });
     const threadKey = timeStamp ? toMsString(timeStamp) ?? timeStamp : null;
