@@ -59,7 +59,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
   const openRenameModal = (
     threadKey: string,
     currentLabel: string,
-    useCurrentLabel: boolean,
+    _useCurrentLabel: boolean,
     currentColor?: string,
     currentIcon?: string,
   ) => {

@@ -64,7 +64,6 @@ const MARKDOWN_STYLE = undefined;
 
 const BORDER = "2px solid #ccc";
 
-const SHOW_EDIT_BUTTON_MS = 15000;
 
 const THREAD_STYLE_SINGLE: CSS = {
   marginLeft: "15px",
@@ -239,8 +238,6 @@ export default function Message({
     return dateValue(message)?.valueOf() ?? 0;
   }, [message]);
 
-  const showEditButton = Date.now() - date < SHOW_EDIT_BUTTON_MS;
-
   const generating = field<boolean>(message, "generating");
 
   const history_size = historyEntries.length;
@@ -249,6 +246,8 @@ export default function Message({
     () => is_editing(message, account_id),
     [message, account_id],
   );
+  const showEditButton =
+    project_id != null && path != null && actions != null && !isEditing;
 
   const editor_name = useMemo(() => {
     return get_user_name(firstHistoryEntry?.author_id);
@@ -900,9 +899,8 @@ export default function Message({
           key="edit"
           title={
             <>
-              Edit this message. You can edit <b>any</b> past message at any
-              time by double clicking on it. Fix other people's typos. All
-              versions are stored.
+              Edit this message. You can edit <b>any</b> past message using
+              this button. Fix other people's typos. All versions are stored.
             </>
           }
           placement="bottom"
@@ -911,7 +909,7 @@ export default function Message({
             size="small"
             type="text"
             style={{ color: COLORS.GRAY_M }}
-            onClick={() => actions?.setEditing(message, true)}
+            onClick={edit_message}
           >
             <Icon name="pencil" /> Edit
           </Button>
@@ -1226,7 +1224,6 @@ export default function Message({
         <div
           style={messageStyle}
           className="smc-chat-message"
-          onDoubleClick={edit_message}
         >
           {renderMessageHeader(lighten)}
           {isEditing
