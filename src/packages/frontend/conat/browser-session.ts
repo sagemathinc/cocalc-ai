@@ -104,6 +104,43 @@ export type BrowserBashOptions = {
   filesystem?: boolean;
 };
 
+export type BrowserFsExecOutput = {
+  stdout: Buffer | string;
+  stderr: Buffer | string;
+  code: number | null;
+  truncated?: boolean;
+};
+
+export type BrowserFsFindOptions = {
+  timeout?: number;
+  options?: string[];
+  darwin?: string[];
+  linux?: string[];
+  maxSize?: number;
+};
+
+export type BrowserFsFdOptions = BrowserFsFindOptions & {
+  pattern?: string;
+};
+
+export type BrowserFsRipgrepOptions = BrowserFsFindOptions;
+export type BrowserFsDustOptions = BrowserFsFindOptions;
+
+export type BrowserFsDirent = {
+  name: string;
+  parentPath: string;
+  path: string;
+  type?: number;
+};
+
+export type BrowserFsStat = {
+  size?: number;
+  mtimeMs?: number;
+  ctimeMs?: number;
+  atimeMs?: number;
+  mode?: number;
+};
+
 export type BrowserExecApi = {
   projectId: string;
   workspaceId: string;
@@ -147,27 +184,70 @@ export type BrowserExecApi = {
       opts?: Omit<BrowserNotifyOptions, "type">,
     ) => { ok: true; type: BrowserNotifyType; message: string };
   };
+  /**
+   * File API closely mirrors CoCalc's async Node-like fs client.
+   *
+   * Notes:
+   * - readFile(path, encoding) returns string if encoding is provided; otherwise Buffer.
+   * - find/fd/ripgrep/dust return command-style output
+   *   with stdout, stderr, code and optional truncated fields.
+   */
   fs: {
     exists: (path: string) => Promise<boolean>;
-    readFile: (path: string, encoding?: string, lock?: number) => Promise<unknown>;
-    writeFile: (path: string, data: unknown, saveLast?: boolean) => Promise<void>;
-    readdir: (path: string, options?: unknown) => Promise<unknown>;
-    stat: (path: string) => Promise<unknown>;
-    lstat: (path: string) => Promise<unknown>;
-    mkdir: (path: string, options?: unknown) => Promise<void>;
-    rm: (path: string | string[], options?: unknown) => Promise<void>;
+    readFile: (
+      path: string,
+      encoding?: string,
+      lock?: number,
+    ) => Promise<string | Buffer>;
+    writeFile: (path: string, data: string | Buffer, saveLast?: boolean) => Promise<void>;
+    readdir: (
+      path: string,
+      options?: { withFileTypes?: boolean },
+    ) => Promise<string[] | BrowserFsDirent[]>;
+    stat: (path: string) => Promise<BrowserFsStat>;
+    lstat: (path: string) => Promise<BrowserFsStat>;
+    mkdir: (
+      path: string,
+      options?: { recursive?: boolean; mode?: string | number },
+    ) => Promise<void>;
+    rm: (
+      path: string | string[],
+      options?: {
+        recursive?: boolean;
+        force?: boolean;
+        maxRetries?: number;
+        retryDelay?: number;
+      },
+    ) => Promise<void>;
     rename: (oldPath: string, newPath: string) => Promise<void>;
     copyFile: (src: string, dest: string) => Promise<void>;
-    cp: (src: string | string[], dest: string, options?: unknown) => Promise<void>;
-    move: (src: string | string[], dest: string, options?: unknown) => Promise<void>;
-    find: (path: string, options?: unknown) => Promise<unknown>;
-    fd: (path: string, options?: unknown) => Promise<unknown>;
+    cp: (
+      src: string | string[],
+      dest: string,
+      options?: {
+        dereference?: boolean;
+        errorOnExist?: boolean;
+        force?: boolean;
+        preserveTimestamps?: boolean;
+        recursive?: boolean;
+        verbatimSymlinks?: boolean;
+        reflink?: boolean;
+        timeout?: number;
+      },
+    ) => Promise<void>;
+    move: (
+      src: string | string[],
+      dest: string,
+      options?: { overwrite?: boolean },
+    ) => Promise<void>;
+    find: (path: string, options?: BrowserFsFindOptions) => Promise<BrowserFsExecOutput>;
+    fd: (path: string, options?: BrowserFsFdOptions) => Promise<BrowserFsExecOutput>;
     ripgrep: (
       path: string,
       pattern: string,
-      options?: unknown,
-    ) => Promise<unknown>;
-    dust: (path: string, options?: unknown) => Promise<unknown>;
+      options?: BrowserFsRipgrepOptions,
+    ) => Promise<BrowserFsExecOutput>;
+    dust: (path: string, options?: BrowserFsDustOptions) => Promise<BrowserFsExecOutput>;
   };
   bash: {
     run: (script: string, options?: BrowserBashOptions) => Promise<BrowserExecOutput>;
@@ -547,6 +627,43 @@ type BrowserBashOptions = {
   filesystem?: boolean;
 };
 
+type BrowserFsExecOutput = {
+  stdout: Buffer | string;
+  stderr: Buffer | string;
+  code: number | null;
+  truncated?: boolean;
+};
+
+type BrowserFsFindOptions = {
+  timeout?: number;
+  options?: string[];
+  darwin?: string[];
+  linux?: string[];
+  maxSize?: number;
+};
+
+type BrowserFsFdOptions = BrowserFsFindOptions & {
+  pattern?: string;
+};
+
+type BrowserFsRipgrepOptions = BrowserFsFindOptions;
+type BrowserFsDustOptions = BrowserFsFindOptions;
+
+type BrowserFsDirent = {
+  name: string;
+  parentPath: string;
+  path: string;
+  type?: number;
+};
+
+type BrowserFsStat = {
+  size?: number;
+  mtimeMs?: number;
+  ctimeMs?: number;
+  atimeMs?: number;
+  mode?: number;
+};
+
 type BrowserExecApi = {
   projectId: string;
   workspaceId: string;
@@ -601,25 +718,60 @@ type BrowserExecApi = {
   };
   fs: {
     exists: (path: string) => Promise<boolean>;
-    readFile: (path: string, encoding?: string, lock?: number) => Promise<unknown>;
-    writeFile: (path: string, data: unknown, saveLast?: boolean) => Promise<void>;
-    readdir: (path: string, options?: unknown) => Promise<unknown>;
-    stat: (path: string) => Promise<unknown>;
-    lstat: (path: string) => Promise<unknown>;
-    mkdir: (path: string, options?: unknown) => Promise<void>;
-    rm: (path: string | string[], options?: unknown) => Promise<void>;
+    readFile: (
+      path: string,
+      encoding?: string,
+      lock?: number,
+    ) => Promise<string | Buffer>;
+    writeFile: (path: string, data: string | Buffer, saveLast?: boolean) => Promise<void>;
+    readdir: (
+      path: string,
+      options?: { withFileTypes?: boolean },
+    ) => Promise<string[] | BrowserFsDirent[]>;
+    stat: (path: string) => Promise<BrowserFsStat>;
+    lstat: (path: string) => Promise<BrowserFsStat>;
+    mkdir: (
+      path: string,
+      options?: { recursive?: boolean; mode?: string | number },
+    ) => Promise<void>;
+    rm: (
+      path: string | string[],
+      options?: {
+        recursive?: boolean;
+        force?: boolean;
+        maxRetries?: number;
+        retryDelay?: number;
+      },
+    ) => Promise<void>;
     rename: (oldPath: string, newPath: string) => Promise<void>;
     copyFile: (src: string, dest: string) => Promise<void>;
-    cp: (src: string | string[], dest: string, options?: unknown) => Promise<void>;
-    move: (src: string | string[], dest: string, options?: unknown) => Promise<void>;
-    find: (path: string, options?: unknown) => Promise<unknown>;
-    fd: (path: string, options?: unknown) => Promise<unknown>;
+    cp: (
+      src: string | string[],
+      dest: string,
+      options?: {
+        dereference?: boolean;
+        errorOnExist?: boolean;
+        force?: boolean;
+        preserveTimestamps?: boolean;
+        recursive?: boolean;
+        verbatimSymlinks?: boolean;
+        reflink?: boolean;
+        timeout?: number;
+      },
+    ) => Promise<void>;
+    move: (
+      src: string | string[],
+      dest: string,
+      options?: { overwrite?: boolean },
+    ) => Promise<void>;
+    find: (path: string, options?: BrowserFsFindOptions) => Promise<BrowserFsExecOutput>;
+    fd: (path: string, options?: BrowserFsFdOptions) => Promise<BrowserFsExecOutput>;
     ripgrep: (
       path: string,
       pattern: string,
-      options?: unknown,
-    ) => Promise<unknown>;
-    dust: (path: string, options?: unknown) => Promise<unknown>;
+      options?: BrowserFsRipgrepOptions,
+    ) => Promise<BrowserFsExecOutput>;
+    dust: (path: string, options?: BrowserFsDustOptions) => Promise<BrowserFsExecOutput>;
   };
   bash: {
     run: (script: string, options?: BrowserBashOptions) => Promise<BrowserExecOutput>;
@@ -1218,55 +1370,71 @@ export function createBrowserSessionAutomation({
           path: string,
           encoding?: string,
           lock?: number,
-        ): Promise<unknown> => {
+        ): Promise<string | Buffer> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
           const lockMs = asFiniteNonNegative(lock);
-          const data = await fsApi.readFile(cleanPath, encoding, lockMs);
+          const data = await fsApi.readFile(cleanPath, encoding, lockMs) as
+            | string
+            | Buffer;
           assertExecNotCanceled(isCanceled);
           return data;
         },
         writeFile: async (
           path: string,
-          data: unknown,
+          data: string | Buffer,
           saveLast?: boolean,
         ): Promise<void> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
-          await fsApi.writeFile(cleanPath, data as any, saveLast);
+          await fsApi.writeFile(cleanPath, data, saveLast);
           assertExecNotCanceled(isCanceled);
         },
-        readdir: async (path: string, options?: unknown): Promise<unknown> => {
+        readdir: async (
+          path: string,
+          options?: { withFileTypes?: boolean },
+        ): Promise<string[] | BrowserFsDirent[]> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
-          const value = await fsApi.readdir(cleanPath, options as any);
+          const value = await fsApi.readdir(cleanPath, options);
+          assertExecNotCanceled(isCanceled);
+          return value as string[] | BrowserFsDirent[];
+        },
+        stat: async (path: string): Promise<BrowserFsStat> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const value = await fsApi.stat(cleanPath) as BrowserFsStat;
           assertExecNotCanceled(isCanceled);
           return value;
         },
-        stat: async (path: string): Promise<unknown> => {
+        lstat: async (path: string): Promise<BrowserFsStat> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
-          const value = await fsApi.stat(cleanPath);
+          const value = await fsApi.lstat(cleanPath) as BrowserFsStat;
           assertExecNotCanceled(isCanceled);
           return value;
         },
-        lstat: async (path: string): Promise<unknown> => {
+        mkdir: async (
+          path: string,
+          options?: { recursive?: boolean; mode?: string | number },
+        ): Promise<void> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
-          const value = await fsApi.lstat(cleanPath);
-          assertExecNotCanceled(isCanceled);
-          return value;
-        },
-        mkdir: async (path: string, options?: unknown): Promise<void> => {
-          assertExecNotCanceled(isCanceled);
-          const cleanPath = requireAbsolutePath(path);
-          await fsApi.mkdir(cleanPath, options as any);
+          await fsApi.mkdir(cleanPath, options);
           assertExecNotCanceled(isCanceled);
         },
-        rm: async (path: string | string[], options?: unknown): Promise<void> => {
+        rm: async (
+          path: string | string[],
+          options?: {
+            recursive?: boolean;
+            force?: boolean;
+            maxRetries?: number;
+            retryDelay?: number;
+          },
+        ): Promise<void> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePathOrList(path);
-          await fsApi.rm(cleanPath, options as any);
+          await fsApi.rm(cleanPath, options);
           assertExecNotCanceled(isCanceled);
         },
         rename: async (oldPath: string, newPath: string): Promise<void> => {
@@ -1286,60 +1454,78 @@ export function createBrowserSessionAutomation({
         cp: async (
           src: string | string[],
           dest: string,
-          options?: unknown,
+          options?: {
+            dereference?: boolean;
+            errorOnExist?: boolean;
+            force?: boolean;
+            preserveTimestamps?: boolean;
+            recursive?: boolean;
+            verbatimSymlinks?: boolean;
+            reflink?: boolean;
+            timeout?: number;
+          },
         ): Promise<void> => {
           assertExecNotCanceled(isCanceled);
           const cleanSrc = requireAbsolutePathOrList(src, "src");
           const cleanDest = requireAbsolutePath(dest, "dest");
-          await fsApi.cp(cleanSrc, cleanDest, options as any);
+          await fsApi.cp(cleanSrc, cleanDest, options);
           assertExecNotCanceled(isCanceled);
         },
         move: async (
           src: string | string[],
           dest: string,
-          options?: unknown,
+          options?: { overwrite?: boolean },
         ): Promise<void> => {
           assertExecNotCanceled(isCanceled);
           const cleanSrc = requireAbsolutePathOrList(src, "src");
           const cleanDest = requireAbsolutePath(dest, "dest");
-          await fsApi.move(cleanSrc, cleanDest, options as any);
+          await fsApi.move(cleanSrc, cleanDest, options);
           assertExecNotCanceled(isCanceled);
         },
-        find: async (path: string, options?: unknown): Promise<unknown> => {
+        find: async (
+          path: string,
+          options?: BrowserFsFindOptions,
+        ): Promise<BrowserFsExecOutput> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
-          const value = await fsApi.find(cleanPath, options as any);
+          const value = await fsApi.find(cleanPath, options);
           assertExecNotCanceled(isCanceled);
-          return value;
+          return value as BrowserFsExecOutput;
         },
-        fd: async (path: string, options?: unknown): Promise<unknown> => {
+        fd: async (
+          path: string,
+          options?: BrowserFsFdOptions,
+        ): Promise<BrowserFsExecOutput> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
-          const value = await fsApi.fd(cleanPath, options as any);
+          const value = await fsApi.fd(cleanPath, options);
           assertExecNotCanceled(isCanceled);
-          return value;
+          return value as BrowserFsExecOutput;
         },
         ripgrep: async (
           path: string,
           pattern: string,
-          options?: unknown,
-        ): Promise<unknown> => {
+          options?: BrowserFsRipgrepOptions,
+        ): Promise<BrowserFsExecOutput> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
           const cleanPattern = `${pattern ?? ""}`.trim();
           if (!cleanPattern) {
             throw Error("pattern must be specified");
           }
-          const value = await fsApi.ripgrep(cleanPath, cleanPattern, options as any);
+          const value = await fsApi.ripgrep(cleanPath, cleanPattern, options);
           assertExecNotCanceled(isCanceled);
-          return value;
+          return value as BrowserFsExecOutput;
         },
-        dust: async (path: string, options?: unknown): Promise<unknown> => {
+        dust: async (
+          path: string,
+          options?: BrowserFsDustOptions,
+        ): Promise<BrowserFsExecOutput> => {
           assertExecNotCanceled(isCanceled);
           const cleanPath = requireAbsolutePath(path);
-          const value = await fsApi.dust(cleanPath, options as any);
+          const value = await fsApi.dust(cleanPath, options);
           assertExecNotCanceled(isCanceled);
-          return value;
+          return value as BrowserFsExecOutput;
         },
       },
       bash: {
