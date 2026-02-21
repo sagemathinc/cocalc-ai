@@ -17,6 +17,25 @@ export type BrowserOpenFileInfo = {
   path: string;
 };
 
+export type BrowserExecStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "canceled";
+
+export type BrowserExecOperation = {
+  exec_id: string;
+  project_id: string;
+  status: BrowserExecStatus;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  cancel_requested?: boolean;
+  error?: string;
+  result?: unknown;
+};
+
 export interface BrowserSessionServiceApi {
   getExecApiDeclaration: () => Promise<string>;
   getSessionInfo: () => Promise<{
@@ -41,6 +60,16 @@ export interface BrowserSessionServiceApi {
     project_id: string;
     code: string;
   }) => Promise<{ ok: true; result: unknown }>;
+  startExec: (opts: {
+    project_id: string;
+    code: string;
+  }) => Promise<{ exec_id: string; status: BrowserExecStatus }>;
+  getExec: (opts: {
+    exec_id: string;
+  }) => Promise<BrowserExecOperation>;
+  cancelExec: (opts: {
+    exec_id: string;
+  }) => Promise<{ ok: true; exec_id: string; status: BrowserExecStatus }>;
 }
 
 const SERVICE = "browser-session";

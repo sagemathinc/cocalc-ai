@@ -12,6 +12,7 @@ import type { HubApi } from "@cocalc/conat/hub/api";
 import type { BrowserOpenProjectState } from "@cocalc/conat/hub/api/system";
 import {
   createBrowserSessionService,
+  type BrowserExecOperation,
   type BrowserOpenFileInfo,
   type BrowserSessionServiceApi,
 } from "@cocalc/conat/service/browser-session";
@@ -24,6 +25,8 @@ const HEARTBEAT_RETRY_MS = 4_000;
 const MAX_OPEN_PROJECTS = 64;
 const MAX_OPEN_FILES_PER_PROJECT = 256;
 const MAX_EXEC_CODE_LENGTH = 100_000;
+const MAX_EXEC_OPS = 256;
+const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
 const BROWSER_EXEC_API_DECLARATION = `/**
  * Browser exec API available via 'cocalc browser exec'.
  *
@@ -303,6 +306,13 @@ function sanitizeCellUpdates(
   return updates;
 }
 
+function createExecId(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } };
+  const uuid = g?.crypto?.randomUUID?.();
+  if (uuid) return uuid;
+  return `exec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function createBrowserSessionAutomation({
   client,
   hub,
@@ -317,6 +327,43 @@ export function createBrowserSessionAutomation({
   let timer: NodeJS.Timeout | undefined;
   let closed = false;
   let inFlight: Promise<void> | undefined;
+  const execOps = new Map<
+    string,
+    BrowserExecOperation & { code: string }
+  >();
+
+  const pruneExecOps = () => {
+    const now = Date.now();
+    for (const [exec_id, op] of execOps.entries()) {
+      if (
+        op.finished_at != null &&
+        now - new Date(op.finished_at).getTime() > EXEC_OP_TTL_MS
+      ) {
+        execOps.delete(exec_id);
+      }
+    }
+    if (execOps.size <= MAX_EXEC_OPS) return;
+    const ordered = [...execOps.values()].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+    for (const op of ordered) {
+      if (execOps.size <= MAX_EXEC_OPS) break;
+      execOps.delete(op.exec_id);
+    }
+  };
+
+  const getExecOp = (exec_id: string): BrowserExecOperation & { code: string } => {
+    const clean = `${exec_id ?? ""}`.trim();
+    if (!clean) {
+      throw Error("exec_id must be specified");
+    }
+    const op = execOps.get(clean);
+    if (!op) {
+      throw Error(`exec operation '${clean}' not found`);
+    }
+    return op;
+  };
 
   const openFileInProject = async ({
     project_id,
@@ -420,6 +467,181 @@ export function createBrowserSessionAutomation({
     throw Error(`jupyter actions unavailable for ${cleanPath}`);
   };
 
+  const assertExecNotCanceled = (isCanceled?: () => boolean) => {
+    if (isCanceled?.()) {
+      throw Error("execution canceled");
+    }
+  };
+
+  const createExecApi = (
+    project_id: string,
+    isCanceled?: () => boolean,
+  ): BrowserExecApi => {
+    return {
+      projectId: project_id,
+      listOpenFiles: (): BrowserOpenFileInfo[] => {
+        assertExecNotCanceled(isCanceled);
+        const snapshot = buildSessionSnapshot(client);
+        return flattenOpenFiles(snapshot.open_projects).filter(
+          (file) => file.project_id === project_id,
+        );
+      },
+      listOpenFilesAll: (): BrowserOpenFileInfo[] => {
+        assertExecNotCanceled(isCanceled);
+        const snapshot = buildSessionSnapshot(client);
+        return flattenOpenFiles(snapshot.open_projects);
+      },
+      openFiles: async (
+        paths: unknown,
+        opts?: { background?: boolean },
+      ): Promise<{ opened: number; paths: string[] }> => {
+        assertExecNotCanceled(isCanceled);
+        const cleanPaths = sanitizePathList(paths);
+        for (const [index, path] of cleanPaths.entries()) {
+          assertExecNotCanceled(isCanceled);
+          const foreground = !opts?.background && index === 0;
+          await openFileInProject({
+            project_id,
+            path,
+            foreground,
+            foreground_project: foreground,
+          });
+        }
+        return { opened: cleanPaths.length, paths: cleanPaths };
+      },
+      closeFiles: async (
+        paths: unknown,
+      ): Promise<{ closed: number; paths: string[] }> => {
+        assertExecNotCanceled(isCanceled);
+        const cleanPaths = sanitizePathList(paths);
+        for (const path of cleanPaths) {
+          assertExecNotCanceled(isCanceled);
+          await closeFileInProject({ project_id, path });
+        }
+        return { closed: cleanPaths.length, paths: cleanPaths };
+      },
+      notebook: {
+        listCells: async (
+          path: string,
+        ): Promise<
+          {
+            id: string;
+            cell_type: string;
+            input: string;
+            output: unknown;
+          }[]
+        > => {
+          assertExecNotCanceled(isCanceled);
+          const jupyterActions = await getJupyterActionsForPath({
+            project_id,
+            path,
+          });
+          assertExecNotCanceled(isCanceled);
+          const store = jupyterActions.store;
+          const cellIds = asStringArray(store.get("cell_list"));
+          return cellIds.map((id) => {
+            const cell = store.getIn(["cells", id]);
+            return {
+              id,
+              cell_type: `${cell?.get("cell_type") ?? "code"}`,
+              input: `${cell?.get("input") ?? ""}`,
+              output: simplifyNotebookOutput(cell?.get("output")),
+            };
+          });
+        },
+        runCells: async (
+          path: string,
+          ids?: unknown,
+        ): Promise<{ ran: number; mode: "all" | "selected"; ids: string[] }> => {
+          assertExecNotCanceled(isCanceled);
+          const jupyterActions = await getJupyterActionsForPath({
+            project_id,
+            path,
+          });
+          assertExecNotCanceled(isCanceled);
+          const store = jupyterActions.store;
+          const existingCellIds = new Set(asStringArray(store.get("cell_list")));
+          const wanted = sanitizeCellIdList(ids);
+          if (wanted.length === 0) {
+            const all = asStringArray(store.get("cell_list"));
+            await jupyterActions.runCells(all);
+            return { ran: all.length, mode: "all", ids: all };
+          }
+          for (const id of wanted) {
+            if (!existingCellIds.has(id)) {
+              throw Error(`no cell with id '${id}'`);
+            }
+          }
+          await jupyterActions.runCells(wanted);
+          return { ran: wanted.length, mode: "selected", ids: wanted };
+        },
+        setCells: async (
+          path: string,
+          updates: unknown,
+        ): Promise<{ updated: number; ids: string[] }> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanUpdates = sanitizeCellUpdates(updates);
+          if (cleanUpdates.length === 0) {
+            return { updated: 0, ids: [] };
+          }
+          const jupyterActions = await getJupyterActionsForPath({
+            project_id,
+            path,
+          });
+          assertExecNotCanceled(isCanceled);
+          const store = jupyterActions.store;
+          const existingCellIds = new Set(asStringArray(store.get("cell_list")));
+          for (const update of cleanUpdates) {
+            if (!existingCellIds.has(update.id)) {
+              throw Error(`no cell with id '${update.id}'`);
+            }
+          }
+          for (const update of cleanUpdates) {
+            assertExecNotCanceled(isCanceled);
+            jupyterActions.set_cell_input(update.id, update.input, false);
+          }
+          jupyterActions.syncdb?.commit?.();
+          return {
+            updated: cleanUpdates.length,
+            ids: cleanUpdates.map((x) => x.id),
+          };
+        },
+      },
+    };
+  };
+
+  const executeBrowserScript = async ({
+    project_id,
+    code,
+    isCanceled,
+  }: {
+    project_id: string;
+    code: string;
+    isCanceled?: () => boolean;
+  }): Promise<unknown> => {
+    if (!isValidUUID(project_id)) {
+      throw Error("project_id must be a UUID");
+    }
+    const script = `${code ?? ""}`;
+    if (!script.trim()) {
+      throw Error("code must be specified");
+    }
+    if (script.length > MAX_EXEC_CODE_LENGTH) {
+      throw Error(
+        `code is too long (${script.length} chars); max ${MAX_EXEC_CODE_LENGTH}`,
+      );
+    }
+    assertExecNotCanceled(isCanceled);
+    const api = createExecApi(project_id, isCanceled);
+    const evaluator = new Function(
+      "api",
+      `"use strict"; return (async () => { ${script}\n})();`,
+    ) as (api: BrowserExecApi) => Promise<unknown>;
+    const result = await evaluator(api);
+    assertExecNotCanceled(isCanceled);
+    return toSerializableValue(result);
+  };
+
   const clearTimer = () => {
     if (timer) {
       clearTimeout(timer);
@@ -462,6 +684,67 @@ export function createBrowserSessionAutomation({
     }, delayMs);
   };
 
+  const toPublicExecOp = (
+    op: BrowserExecOperation & { code: string },
+  ): BrowserExecOperation => {
+    const {
+      exec_id,
+      project_id,
+      status,
+      created_at,
+      started_at,
+      finished_at,
+      cancel_requested,
+      error,
+      result,
+    } = op;
+    return {
+      exec_id,
+      project_id,
+      status,
+      created_at,
+      ...(started_at ? { started_at } : {}),
+      ...(finished_at ? { finished_at } : {}),
+      ...(cancel_requested ? { cancel_requested } : {}),
+      ...(error ? { error } : {}),
+      ...(result !== undefined ? { result } : {}),
+    };
+  };
+
+  const runExecOperation = async (op: BrowserExecOperation & { code: string }) => {
+    if (op.status !== "pending") return;
+    op.status = "running";
+    op.started_at = new Date().toISOString();
+    try {
+      const result = await executeBrowserScript({
+        project_id: op.project_id,
+        code: op.code,
+        isCanceled: () => !!op.cancel_requested,
+      });
+      if (op.cancel_requested) {
+        op.status = "canceled";
+        delete op.result;
+      } else {
+        op.status = "succeeded";
+        op.result = result;
+      }
+      delete op.error;
+    } catch (err) {
+      if (op.cancel_requested) {
+        op.status = "canceled";
+        delete op.result;
+        delete op.error;
+      } else {
+        op.status = "failed";
+        op.error = `${err}`;
+        delete op.result;
+      }
+    } finally {
+      op.finished_at = new Date().toISOString();
+      pruneExecOps();
+    }
+  };
+
   const impl: BrowserSessionServiceApi = {
     getExecApiDeclaration: async () => BROWSER_EXEC_API_DECLARATION,
     getSessionInfo: async () => buildSessionSnapshot(client),
@@ -478,10 +761,11 @@ export function createBrowserSessionAutomation({
       }),
     closeFile: async ({ project_id, path }) =>
       await closeFileInProject({ project_id, path }),
-    exec: async ({ project_id, code }) => {
-      if (!isValidUUID(project_id)) {
-        throw Error("project_id must be a UUID");
-      }
+    exec: async ({ project_id, code }) => ({
+      ok: true,
+      result: await executeBrowserScript({ project_id, code }),
+    }),
+    startExec: async ({ project_id, code }) => {
       const script = `${code ?? ""}`;
       if (!script.trim()) {
         throw Error("code must be specified");
@@ -491,135 +775,36 @@ export function createBrowserSessionAutomation({
           `code is too long (${script.length} chars); max ${MAX_EXEC_CODE_LENGTH}`,
         );
       }
-
-      const api: BrowserExecApi = {
-        projectId: project_id,
-        listOpenFiles: (): BrowserOpenFileInfo[] => {
-          const snapshot = buildSessionSnapshot(client);
-          return flattenOpenFiles(snapshot.open_projects).filter(
-            (file) => file.project_id === project_id,
-          );
-        },
-        listOpenFilesAll: (): BrowserOpenFileInfo[] => {
-          const snapshot = buildSessionSnapshot(client);
-          return flattenOpenFiles(snapshot.open_projects);
-        },
-        openFiles: async (
-          paths: unknown,
-          opts?: { background?: boolean },
-        ): Promise<{ opened: number; paths: string[] }> => {
-          const cleanPaths = sanitizePathList(paths);
-          for (const [index, path] of cleanPaths.entries()) {
-            const foreground = !opts?.background && index === 0;
-            await openFileInProject({
-              project_id,
-              path,
-              foreground,
-              foreground_project: foreground,
-            });
-          }
-          return { opened: cleanPaths.length, paths: cleanPaths };
-        },
-        closeFiles: async (
-          paths: unknown,
-        ): Promise<{ closed: number; paths: string[] }> => {
-          const cleanPaths = sanitizePathList(paths);
-          for (const path of cleanPaths) {
-            await closeFileInProject({ project_id, path });
-          }
-          return { closed: cleanPaths.length, paths: cleanPaths };
-        },
-        notebook: {
-          listCells: async (
-            path: string,
-          ): Promise<
-            {
-              id: string;
-              cell_type: string;
-              input: string;
-              output: unknown;
-            }[]
-          > => {
-            const jupyterActions = await getJupyterActionsForPath({
-              project_id,
-              path,
-            });
-            const store = jupyterActions.store;
-            const cellIds = asStringArray(store.get("cell_list"));
-            return cellIds.map((id) => {
-              const cell = store.getIn(["cells", id]);
-              return {
-                id,
-                cell_type: `${cell?.get("cell_type") ?? "code"}`,
-                input: `${cell?.get("input") ?? ""}`,
-                output: simplifyNotebookOutput(cell?.get("output")),
-              };
-            });
-          },
-          runCells: async (
-            path: string,
-            ids?: unknown,
-          ): Promise<{ ran: number; mode: "all" | "selected"; ids: string[] }> => {
-            const jupyterActions = await getJupyterActionsForPath({
-              project_id,
-              path,
-            });
-            const store = jupyterActions.store;
-            const existingCellIds = new Set(asStringArray(store.get("cell_list")));
-            const wanted = sanitizeCellIdList(ids);
-            if (wanted.length === 0) {
-              await jupyterActions.runCells(asStringArray(store.get("cell_list")));
-              return {
-                ran: asStringArray(store.get("cell_list")).length,
-                mode: "all",
-                ids: asStringArray(store.get("cell_list")),
-              };
-            }
-            for (const id of wanted) {
-              if (!existingCellIds.has(id)) {
-                throw Error(`no cell with id '${id}'`);
-              }
-            }
-            await jupyterActions.runCells(wanted);
-            return { ran: wanted.length, mode: "selected", ids: wanted };
-          },
-          setCells: async (
-            path: string,
-            updates: unknown,
-          ): Promise<{ updated: number; ids: string[] }> => {
-            const cleanUpdates = sanitizeCellUpdates(updates);
-            if (cleanUpdates.length === 0) {
-              return { updated: 0, ids: [] };
-            }
-            const jupyterActions = await getJupyterActionsForPath({
-              project_id,
-              path,
-            });
-            const store = jupyterActions.store;
-            const existingCellIds = new Set(asStringArray(store.get("cell_list")));
-            for (const update of cleanUpdates) {
-              if (!existingCellIds.has(update.id)) {
-                throw Error(`no cell with id '${update.id}'`);
-              }
-            }
-            for (const update of cleanUpdates) {
-              jupyterActions.set_cell_input(update.id, update.input, false);
-            }
-            jupyterActions.syncdb?.commit?.();
-            return {
-              updated: cleanUpdates.length,
-              ids: cleanUpdates.map((x) => x.id),
-            };
-          },
-        },
+      if (!isValidUUID(project_id)) {
+        throw Error("project_id must be a UUID");
+      }
+      const exec_id = createExecId();
+      const op: BrowserExecOperation & { code: string } = {
+        exec_id,
+        project_id,
+        status: "pending",
+        created_at: new Date().toISOString(),
+        code: script,
       };
-
-      const evaluator = new Function(
-        "api",
-        `"use strict"; return (async () => { ${script}\n})();`,
-      ) as (api: BrowserExecApi) => Promise<unknown>;
-      const result = await evaluator(api);
-      return { ok: true, result: toSerializableValue(result) };
+      execOps.set(exec_id, op);
+      pruneExecOps();
+      void runExecOperation(op);
+      return { exec_id, status: op.status };
+    },
+    getExec: async ({ exec_id }) => {
+      pruneExecOps();
+      return toPublicExecOp(getExecOp(exec_id));
+    },
+    cancelExec: async ({ exec_id }) => {
+      const op = getExecOp(exec_id);
+      op.cancel_requested = true;
+      if (op.status === "pending") {
+        op.status = "canceled";
+        op.finished_at = new Date().toISOString();
+        delete op.result;
+        delete op.error;
+      }
+      return { ok: true, exec_id: op.exec_id, status: op.status };
     },
   };
 
@@ -656,6 +841,7 @@ export function createBrowserSessionAutomation({
     stop: async () => {
       closed = true;
       clearTimer();
+      execOps.clear();
       if (service) {
         service.close();
         service = undefined;

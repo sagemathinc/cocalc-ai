@@ -12,6 +12,16 @@ import { durationToMs } from "../../core/utils";
 
 type BrowserSessionClient = {
   getExecApiDeclaration: () => Promise<string>;
+  startExec: (opts: {
+    project_id: string;
+    code: string;
+  }) => Promise<{ exec_id: string; status: BrowserExecStatus }>;
+  getExec: (opts: {
+    exec_id: string;
+  }) => Promise<BrowserExecOperation>;
+  cancelExec: (opts: {
+    exec_id: string;
+  }) => Promise<{ ok: true; exec_id: string; status: BrowserExecStatus }>;
   listOpenFiles: () => Promise<
     {
       project_id: string;
@@ -33,6 +43,25 @@ type BrowserSessionClient = {
     project_id: string;
     code: string;
   }) => Promise<{ ok: true; result: unknown }>;
+};
+
+type BrowserExecStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "canceled";
+
+type BrowserExecOperation = {
+  exec_id: string;
+  project_id: string;
+  status: BrowserExecStatus;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  cancel_requested?: boolean;
+  error?: string;
+  result?: unknown;
 };
 
 export type BrowserCommandDeps = {
@@ -156,6 +185,34 @@ async function chooseBrowserSession({
   throw new Error(
     `multiple active browser sessions found (${active.length}); use --browser <id> or 'cocalc browser session use <id>'`,
   );
+}
+
+function isExecTerminal(status: BrowserExecStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "canceled";
+}
+
+async function waitForExecOperation({
+  browserClient,
+  exec_id,
+  pollMs,
+  timeoutMs,
+}: {
+  browserClient: BrowserSessionClient;
+  exec_id: string;
+  pollMs: number;
+  timeoutMs: number;
+}): Promise<BrowserExecOperation> {
+  const started = Date.now();
+  for (;;) {
+    const op = await browserClient.getExec({ exec_id });
+    if (isExecTerminal(op.status)) {
+      return op;
+    }
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(`timed out waiting for browser exec ${exec_id}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
 }
 
 export function registerBrowserCommand(
@@ -395,18 +452,113 @@ export function registerBrowserCommand(
     )
     .option("--browser <id>", "browser id (or unique prefix)")
     .option(
+      "--async",
+      "start execution asynchronously and return an exec id",
+    )
+    .option(
+      "--wait",
+      "when used with --async, wait for completion and return final status/result",
+    )
+    .option(
+      "--poll-ms <duration>",
+      "poll interval for async wait mode (e.g. 250ms, 2s)",
+      "1s",
+    )
+    .option(
       "--timeout <duration>",
-      "rpc timeout for this browser exec call (e.g. 30s, 5m, 1h)",
+      "timeout for synchronous exec, or total wait timeout in async wait mode (e.g. 30s, 5m, 1h)",
     )
     .action(
       async (
         workspace: string,
         code: string[],
-        opts: { browser?: string; timeout?: string },
+        opts: {
+          browser?: string;
+          timeout?: string;
+          async?: boolean;
+          wait?: boolean;
+          pollMs?: string;
+        },
         command: Command,
       ) => {
         await deps.withContext(command, "browser exec", async (ctx) => {
           const workspaceRow = await deps.resolveWorkspace(ctx, workspace);
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: opts.browser,
+            fallbackBrowserId: profileSelection.browser_id,
+          });
+          const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: timeoutMs,
+          }) as BrowserSessionClient;
+          const script = (code ?? []).join(" ").trim();
+          if (!script) {
+            throw new Error("javascript code must be specified");
+          }
+          if (opts.async) {
+            const started = await browserClient.startExec({
+              project_id: workspaceRow.project_id,
+              code: script,
+            });
+            if (!opts.wait) {
+              return {
+                browser_id: sessionInfo.browser_id,
+                project_id: workspaceRow.project_id,
+                ...started,
+              };
+            }
+            const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
+            const op = await waitForExecOperation({
+              browserClient,
+              exec_id: started.exec_id,
+              pollMs,
+              timeoutMs,
+            });
+            if (op.status === "failed") {
+              throw new Error(op.error ?? `browser exec ${op.exec_id} failed`);
+            }
+            if (op.status === "canceled") {
+              throw new Error(`browser exec ${op.exec_id} was canceled`);
+            }
+            return {
+              browser_id: sessionInfo.browser_id,
+              ...op,
+            };
+          }
+          const response = await browserClient.exec({
+            project_id: workspaceRow.project_id,
+            code: script,
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id: workspaceRow.project_id,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
+          };
+        });
+      },
+    );
+
+  browser
+    .command("exec-get <exec_id>")
+    .description("get status/result for an async browser exec operation")
+    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--timeout <duration>",
+      "rpc timeout per status request (e.g. 30s, 5m)",
+    )
+    .action(
+      async (
+        exec_id: string,
+        opts: { browser?: string; timeout?: string },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser exec-get", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
           const sessionInfo = await chooseBrowserSession({
             ctx,
@@ -419,19 +571,100 @@ export function registerBrowserCommand(
             client: ctx.remote.client,
             timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
           }) as BrowserSessionClient;
-          const script = (code ?? []).join(" ").trim();
-          if (!script) {
-            throw new Error("javascript code must be specified");
-          }
-          const response = await browserClient.exec({
-            project_id: workspaceRow.project_id,
-            code: script,
-          });
+          const op = await browserClient.getExec({ exec_id });
           return {
             browser_id: sessionInfo.browser_id,
-            project_id: workspaceRow.project_id,
-            ok: !!response?.ok,
-            result: response?.result ?? null,
+            ...op,
+          };
+        });
+      },
+    );
+
+  browser
+    .command("exec-wait <exec_id>")
+    .description("wait for completion of an async browser exec operation")
+    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--poll-ms <duration>",
+      "poll interval while waiting (e.g. 250ms, 2s)",
+      "1s",
+    )
+    .option(
+      "--timeout <duration>",
+      "maximum total wait duration (e.g. 30s, 5m, 1h)",
+    )
+    .action(
+      async (
+        exec_id: string,
+        opts: { browser?: string; pollMs?: string; timeout?: string },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser exec-wait", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: opts.browser,
+            fallbackBrowserId: profileSelection.browser_id,
+          });
+          const timeoutMs = Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs));
+          const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: timeoutMs,
+          }) as BrowserSessionClient;
+          const op = await waitForExecOperation({
+            browserClient,
+            exec_id,
+            pollMs,
+            timeoutMs,
+          });
+          if (op.status === "failed") {
+            throw new Error(op.error ?? `browser exec ${op.exec_id} failed`);
+          }
+          if (op.status === "canceled") {
+            throw new Error(`browser exec ${op.exec_id} was canceled`);
+          }
+          return {
+            browser_id: sessionInfo.browser_id,
+            ...op,
+          };
+        });
+      },
+    );
+
+  browser
+    .command("exec-cancel <exec_id>")
+    .description("request cancellation of an async browser exec operation")
+    .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--timeout <duration>",
+      "rpc timeout for cancel request (e.g. 30s, 5m)",
+    )
+    .action(
+      async (
+        exec_id: string,
+        opts: { browser?: string; timeout?: string },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser exec-cancel", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: opts.browser,
+            fallbackBrowserId: profileSelection.browser_id,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
+          }) as BrowserSessionClient;
+          const canceled = await browserClient.cancelExec({ exec_id });
+          return {
+            browser_id: sessionInfo.browser_id,
+            ...canceled,
           };
         });
       },
