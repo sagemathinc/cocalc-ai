@@ -29,6 +29,22 @@ import { AsciiTable3 } from "ascii-table3";
 
 export const INVENTORY_UPDATE_INTERVAL = 90000;
 export const INVENTORY_NAME = "CoCalc-Inventory";
+export const DISABLE_INVENTORY_UPDATES_ENV =
+  "COCALC_DISABLE_CONAT_INVENTORY_UPDATES";
+
+export function inventoryUpdatesDisabled(): boolean {
+  try {
+    const v =
+      typeof process !== "undefined"
+        ? (process as any)?.env?.[DISABLE_INVENTORY_UPDATES_ENV]
+        : undefined;
+    if (v == null) return false;
+    const s = `${v}`.trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes" || s === "on";
+  } catch {
+    return false;
+  }
+}
 
 type Sort =
   | "last"
