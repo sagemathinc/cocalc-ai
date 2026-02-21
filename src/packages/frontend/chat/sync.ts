@@ -1,12 +1,47 @@
 import { Map as iMap, fromJS } from "immutable";
 import { normalizeChatMessage } from "./normalize";
 
-export function initFromSyncDB({}: { syncdb: any; store: any }) {}
+const THREAD_STATE_EVENT = "chat-thread-state";
+
+function threadStateToAcpState(state: unknown): string | undefined {
+  switch (state) {
+    case "queued":
+      return "queue";
+    case "running":
+      return "running";
+    default:
+      return undefined;
+  }
+}
+
+export function initFromSyncDB({
+  syncdb,
+  store,
+}: {
+  syncdb: any;
+  store: any;
+}) {
+  if (!syncdb || !store || typeof syncdb.get !== "function") return;
+  const rows = syncdb.get();
+  if (!Array.isArray(rows)) return;
+  let acpState = store.get("acpState") ?? iMap();
+  for (const row of rows) {
+    if ((row as any)?.event !== THREAD_STATE_EVENT) continue;
+    const ms = new Date((row as any)?.date).valueOf();
+    if (!Number.isFinite(ms)) continue;
+    const mapped = threadStateToAcpState((row as any)?.state);
+    if (mapped) {
+      acpState = acpState.set(`${ms}`, mapped);
+    } else {
+      acpState = acpState.delete(`${ms}`);
+    }
+  }
+  store.setState({ acpState });
+}
 
 const ignoredChatEvents = new Set([
   "chat-thread",
   "chat-thread-config",
-  "chat-thread-state",
 ]);
 const warnedUnknownEvents = new Set<string>();
 
@@ -61,6 +96,19 @@ export function handleSyncDBChange({
       const now = Date.now();
       const activity = (store.get("activity") ?? iMap()).set(key, now);
       store.setState({ activity });
+      continue;
+    }
+
+    if (event === THREAD_STATE_EVENT) {
+      const ms = new Date(date).valueOf();
+      if (!Number.isFinite(ms)) continue;
+      const record = syncdb.get_one(where);
+      const mapped = threadStateToAcpState((record as any)?.state);
+      const key = `${ms}`;
+      const acpState = store.get("acpState") ?? iMap();
+      store.setState({
+        acpState: mapped ? acpState.set(key, mapped) : acpState.delete(key),
+      });
       continue;
     }
 

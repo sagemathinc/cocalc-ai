@@ -255,6 +255,15 @@ export function ChatPanel({
   );
   const hasActiveAcpTurn = useMemo(() => {
     if (!isSelectedThreadAI) return false;
+    if (selectedThread?.key) {
+      const rootState = acpState?.get?.(selectedThread.key);
+      if (
+        typeof rootState === "string" &&
+        new Set(["queue", "sending", "sent", "running"]).has(rootState)
+      ) {
+        return true;
+      }
+    }
     if (!selectedThreadMessages.length) return false;
     const activeStates = new Set(["queue", "sending", "sent", "running"]);
     for (const msg of selectedThreadMessages) {
@@ -265,7 +274,7 @@ export function ChatPanel({
       if (state && activeStates.has(state)) return true;
     }
     return false;
-  }, [isSelectedThreadAI, selectedThreadMessages, acpState]);
+  }, [isSelectedThreadAI, selectedThreadMessages, acpState, selectedThread]);
 
   const {
     paymentSource: codexPaymentSource,

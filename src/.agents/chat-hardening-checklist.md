@@ -159,7 +159,7 @@ Commit message suggestion:
 Checklist:
 
 - [x] Write `thread_state` transitions during send/queue/run/finalize/interrupt.
-- [ ] Read `thread_state` for spinner/status rendering instead of fragile inference.
+- [ ] Read `thread_state` for spinner/status rendering instead of fragile inference. (partial: thread-state now hydrates/updates `acpState`; full UI cutover still pending)
 
 Validation:
 

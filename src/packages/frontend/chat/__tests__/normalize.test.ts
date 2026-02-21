@@ -4,7 +4,7 @@ import {
   normalizeChatMessage,
   CURRENT_CHAT_MESSAGE_VERSION,
 } from "../normalize";
-import { handleSyncDBChange } from "../sync";
+import { handleSyncDBChange, initFromSyncDB } from "../sync";
 
 class MockStore {
   state: any = {};
@@ -18,6 +18,9 @@ class MockStore {
 
 class MockSyncDB {
   constructor(private records: any[]) {}
+  get() {
+    return this.records;
+  }
   get_one(where: any) {
     return this.records.find((r) =>
       Object.entries(where).every(([k, v]) => r[k] === v),
@@ -109,5 +112,58 @@ describe("handleSyncDBChange", () => {
     });
     const draftKey = `${draftRecord.sender_id}:${draftRecord.date}`;
     expect(store.state.drafts?.get(draftKey)?.input).toBe("draft text");
+  });
+
+  it("maps thread-state records into acpState", () => {
+    const store = new MockStore();
+    const date = new Date("2024-01-02T03:04:05.000Z");
+    const threadState = {
+      event: "chat-thread-state",
+      sender_id: "__thread_state__",
+      date,
+      state: "running",
+    };
+    const syncdb = new MockSyncDB([threadState]);
+
+    handleSyncDBChange({
+      syncdb,
+      store,
+      changes: [{ event: "chat-thread-state", sender_id: "__thread_state__", date }],
+    });
+    expect(store.state.acpState?.get(`${date.valueOf()}`)).toBe("running");
+  });
+});
+
+describe("initFromSyncDB", () => {
+  it("hydrates acpState from persisted thread-state rows", () => {
+    const store = new MockStore();
+    const runningDate = new Date("2024-01-02T03:04:05.000Z");
+    const queuedDate = new Date("2024-01-03T03:04:05.000Z");
+    const completeDate = new Date("2024-01-04T03:04:05.000Z");
+    const syncdb = new MockSyncDB([
+      {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: runningDate,
+        state: "running",
+      },
+      {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: queuedDate,
+        state: "queued",
+      },
+      {
+        event: "chat-thread-state",
+        sender_id: "__thread_state__",
+        date: completeDate,
+        state: "complete",
+      },
+    ]);
+
+    initFromSyncDB({ syncdb, store });
+    expect(store.state.acpState?.get(`${runningDate.valueOf()}`)).toBe("running");
+    expect(store.state.acpState?.get(`${queuedDate.valueOf()}`)).toBe("queue");
+    expect(store.state.acpState?.get(`${completeDate.valueOf()}`)).toBeUndefined();
   });
 });

@@ -659,7 +659,10 @@ export function MessageList({
             }
             threadViewMode={singleThreadView}
             onForceScrollToBottom={forceScrollToBottom}
-            acpState={acpState?.get(date)}
+            acpState={
+              acpState?.get(date) ??
+              (currentThreadKey ? acpState?.get(currentThreadKey) : undefined)
+            }
             dim={shouldDim}
           />
         </DivTempHeight>

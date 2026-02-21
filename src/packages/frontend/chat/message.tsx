@@ -367,14 +367,23 @@ export default function Message({
     if (acpState !== "running") return;
     const msgDate = dateValue(message);
     if (!msgDate) return;
-    const key = `${msgDate.valueOf()}`;
+    const keys = new Set<string>([`${msgDate.valueOf()}`]);
+    if (threadRootMs != null) {
+      keys.add(`${threadRootMs}`);
+    }
     const acpMap = actions.store.get("acpState");
-    const current = acpMap?.get?.(key);
-    if (current !== "running") return;
+    const hasRunning = Array.from(keys).some(
+      (key) => acpMap?.get?.(key) === "running",
+    );
+    if (!hasRunning) return;
+    let next = acpMap;
+    for (const key of keys) {
+      next = next.set(key, "");
+    }
     actions.store.setState({
-      acpState: acpMap.set(key, ""),
+      acpState: next,
     });
-  }, [actions, acpInterrupted, generating, acpState, message]);
+  }, [actions, acpInterrupted, generating, acpState, message, threadRootMs]);
 
   // Resolve log identifiers deterministically (shared with backend) so we never
   // invent subjects/keys in multiple places.

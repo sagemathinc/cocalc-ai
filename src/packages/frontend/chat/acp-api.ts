@@ -28,10 +28,12 @@ function nextAcpMessageDate({
   actions: ChatActions;
   minMs: number;
 }): Date {
-  const messages = actions.getAllMessages?.();
   let candidate = Math.max(Date.now(), minMs, lastGeneratedAcpMessageMs + 1);
   let collisions = 0;
-  while (messages?.has(`${candidate}`)) {
+  while (
+    actions.getMessageByDate?.(candidate) ??
+    actions.getAllMessages?.().has(`${candidate}`)
+  ) {
     collisions += 1;
     candidate += 1;
   }
@@ -223,8 +225,10 @@ export async function processAcpLLM({
   setTimeout(() => chatStreams.delete(id), 3 * 60 * 1000);
 
   const setState = (state) => {
+    const rootKey = `${threadRootDate.valueOf()}`;
+    const messageKey = `${messageDate.valueOf()}`;
     store.setState({
-      acpState: store.get("acpState").set(`${messageDate.valueOf()}`, state),
+      acpState: store.get("acpState").set(messageKey, state).set(rootKey, state),
     });
   };
 
@@ -349,7 +353,10 @@ export function cancelQueuedAcpTurn({
     turnQueues.delete(queueKey);
   }
   store.setState({
-    acpState: store.get("acpState").set(`${messageDate.valueOf()}`, "not-sent"),
+    acpState: store
+      .get("acpState")
+      .set(`${messageDate.valueOf()}`, "not-sent")
+      .set(`${threadKey}`, "not-sent"),
   });
   return true;
 }
