@@ -8,6 +8,8 @@ import { useEffect, useMemo, useState } from "@cocalc/frontend/app-framework";
 import { COLORS } from "@cocalc/util/theme";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { Icon } from "@cocalc/frontend/components";
+import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
+import { BlobUpload } from "@cocalc/frontend/file-upload";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { capitalize } from "@cocalc/util/misc";
 import type { CodexThreadConfig } from "@cocalc/chat";
@@ -46,6 +48,7 @@ const MODE_OPTIONS: { value: CodexSessionMode; label: string }[] = [
 ];
 
 export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProps) {
+  const { project_id } = useFrameContext();
   const [renamingThread, setRenamingThread] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
   const [renameColor, setRenameColor] = useState<string | undefined>(undefined);
@@ -73,6 +76,10 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     isAI: boolean;
   } | null>(null);
   const [forkName, setForkName] = useState<string>("");
+  const renameImageUploadClass = useMemo(
+    () => `thread-image-upload-${Math.random().toString(36).slice(2)}`,
+    [],
+  );
 
   const openRenameModal = (
     threadKey: string,
@@ -386,20 +393,45 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
               Thread image URL
             </div>
-            <Input
-              placeholder="Paste or drag an image URL (optional)"
-              value={renameImage}
-              onChange={(e) => setRenameImage(e.target.value)}
-              onDrop={(e) => {
-                const uri =
-                  e.dataTransfer.getData("text/uri-list") ||
-                  e.dataTransfer.getData("text/plain");
-                if (uri?.trim()) {
-                  e.preventDefault();
-                  setRenameImage(uri.trim());
-                }
-              }}
-            />
+            <Space style={{ width: "100%" }}>
+              <Input
+                style={{ flex: 1 }}
+                placeholder="Paste or drag an image URL (optional)"
+                value={renameImage}
+                onChange={(e) => setRenameImage(e.target.value)}
+                onDrop={(e) => {
+                  const uri =
+                    e.dataTransfer.getData("text/uri-list") ||
+                    e.dataTransfer.getData("text/plain");
+                  if (uri?.trim()) {
+                    e.preventDefault();
+                    setRenameImage(uri.trim());
+                  }
+                }}
+              />
+              {project_id ? (
+                <BlobUpload
+                  project_id={project_id}
+                  show_upload={false}
+                  config={{
+                    clickable: `.${renameImageUploadClass}`,
+                    acceptedFiles: "image/*",
+                    maxFiles: 1,
+                  }}
+                  event_handlers={{
+                    complete: (file) => {
+                      if (file?.url) {
+                        setRenameImage(file.url);
+                      } else {
+                        antdMessage.error("Image upload failed.");
+                      }
+                    },
+                  }}
+                >
+                  <Button className={renameImageUploadClass}>Upload</Button>
+                </BlobUpload>
+              ) : null}
+            </Space>
           </div>
           <div>
             <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>

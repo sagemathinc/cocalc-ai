@@ -8,6 +8,7 @@ import { React } from "@cocalc/frontend/app-framework";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { Icon } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
+import { BlobUpload } from "@cocalc/frontend/file-upload";
 import { COLORS } from "@cocalc/util/theme";
 import { DEFAULT_CODEX_MODELS } from "@cocalc/util/ai/codex";
 import { ChatLog } from "./chat-log";
@@ -110,6 +111,7 @@ export function ChatRoomThreadPanel({
       value: icon,
       label: icon,
     }));
+    const imageUploadClass = "chat-new-thread-image-upload";
     return (
       <div
         className="smc-vfill"
@@ -233,20 +235,43 @@ export function ChatRoomThreadPanel({
               <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
                 Thread image URL
               </div>
-              <Input
-                placeholder="Paste or drag image URL (optional)"
-                value={newThreadSetup.image}
-                onChange={(e) => update({ image: e.target.value })}
-                onDrop={(e) => {
-                  const uri =
-                    e.dataTransfer.getData("text/uri-list") ||
-                    e.dataTransfer.getData("text/plain");
-                  if (uri?.trim()) {
-                    e.preventDefault();
-                    update({ image: uri.trim() });
-                  }
-                }}
-              />
+              <Space style={{ width: "100%" }}>
+                <Input
+                  style={{ flex: 1 }}
+                  placeholder="Paste or drag image URL (optional)"
+                  value={newThreadSetup.image}
+                  onChange={(e) => update({ image: e.target.value })}
+                  onDrop={(e) => {
+                    const uri =
+                      e.dataTransfer.getData("text/uri-list") ||
+                      e.dataTransfer.getData("text/plain");
+                    if (uri?.trim()) {
+                      e.preventDefault();
+                      update({ image: uri.trim() });
+                    }
+                  }}
+                />
+                {project_id ? (
+                  <BlobUpload
+                    project_id={project_id}
+                    show_upload={false}
+                    config={{
+                      clickable: `.${imageUploadClass}`,
+                      acceptedFiles: "image/*",
+                      maxFiles: 1,
+                    }}
+                    event_handlers={{
+                      complete: (file) => {
+                        if (file?.url) {
+                          update({ image: file.url });
+                        }
+                      },
+                    }}
+                  >
+                    <Button className={imageUploadClass}>Upload</Button>
+                  </BlobUpload>
+                ) : null}
+              </Space>
             </div>
           </div>
           <div
@@ -297,6 +322,7 @@ export function ChatRoomThreadPanel({
   const compactThreadColor = threadMeta?.threadColor;
   const compactThreadImage = threadMeta?.threadImage;
   const compactThreadHasAppearance = threadMeta?.hasCustomAppearance ?? false;
+  const threadImagePreview = compactThreadImage?.trim();
 
   return (
     <div
@@ -323,6 +349,27 @@ export function ChatRoomThreadPanel({
           </Space>
         </div>
       )}
+      {threadImagePreview ? (
+        <div
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            zIndex: 10,
+            borderRadius: 10,
+            overflow: "hidden",
+            border: "1px solid #ddd",
+            background: "white",
+            boxShadow: "0 1px 8px rgba(0,0,0,0.12)",
+          }}
+        >
+          <img
+            src={threadImagePreview}
+            alt="Thread image"
+            style={{ width: 84, height: 84, objectFit: "cover", display: "block" }}
+          />
+        </div>
+      ) : null}
       {variant === "compact" && compactThreadLabel && (
         <div
           style={{
