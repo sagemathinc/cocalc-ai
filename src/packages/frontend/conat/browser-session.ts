@@ -352,6 +352,9 @@ export function createBrowserSessionAutomation({
     if (!cleanPath) {
       throw Error("notebook path must be specified");
     }
+    if (!cleanPath.startsWith("/")) {
+      throw Error("notebook path must be absolute");
+    }
     if (!cleanPath.toLowerCase().endsWith(".ipynb")) {
       throw Error("notebook path must end with .ipynb");
     }
