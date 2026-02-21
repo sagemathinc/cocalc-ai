@@ -7,6 +7,7 @@ specific live browser session.
 */
 
 import { redux, project_redux_name } from "@cocalc/frontend/app-framework";
+import { alert_message } from "@cocalc/frontend/alerts";
 import type { WebappClient } from "@cocalc/frontend/client/client";
 import type { HubApi } from "@cocalc/conat/hub/api";
 import type { BrowserOpenProjectState } from "@cocalc/conat/hub/api/system";
@@ -27,6 +28,8 @@ const MAX_OPEN_FILES_PER_PROJECT = 256;
 const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
+type BrowserNotifyType = "error" | "default" | "success" | "info" | "warning";
+
 const BROWSER_EXEC_API_DECLARATION = `/**
  * Browser exec API available via 'cocalc browser exec'.
  *
@@ -45,6 +48,20 @@ export type BrowserNotebookCell = {
   cell_type: string;
   input: string;
   output: unknown;
+};
+
+export type BrowserNotifyType =
+  | "error"
+  | "default"
+  | "success"
+  | "info"
+  | "warning";
+
+export type BrowserNotifyOptions = {
+  type?: BrowserNotifyType;
+  title?: string;
+  timeout?: number;
+  block?: boolean;
 };
 
 export type BrowserExecApi = {
@@ -66,6 +83,28 @@ export type BrowserExecApi = {
       path: string,
       updates: unknown,
     ) => Promise<{ updated: number; ids: string[] }>;
+  };
+  notify: {
+    show: (
+      message: unknown,
+      opts?: BrowserNotifyOptions,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
+    info: (
+      message: unknown,
+      opts?: Omit<BrowserNotifyOptions, "type">,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
+    success: (
+      message: unknown,
+      opts?: Omit<BrowserNotifyOptions, "type">,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
+    warning: (
+      message: unknown,
+      opts?: Omit<BrowserNotifyOptions, "type">,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
+    error: (
+      message: unknown,
+      opts?: Omit<BrowserNotifyOptions, "type">,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
   };
 };`;
 
@@ -152,6 +191,66 @@ function sanitizePathList(paths: unknown): string[] {
     .filter((path) => path.length > 0);
 }
 
+function toNotifyMessage(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof Error) {
+    return `${value}`;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return `${value ?? ""}`;
+  }
+}
+
+function asOptionalFiniteNumber(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
+  const n =
+    typeof value === "number" ? value : Number.parseFloat(`${value ?? ""}`);
+  if (!Number.isFinite(n)) return undefined;
+  return n;
+}
+
+function sanitizeNotifyOptions(
+  opts: unknown,
+): {
+  type?: BrowserNotifyType;
+  title?: string;
+  timeout?: number;
+  block?: boolean;
+} {
+  if (opts == null || typeof opts !== "object") {
+    return {};
+  }
+  const row = opts as {
+    type?: unknown;
+    title?: unknown;
+    timeout?: unknown;
+    block?: unknown;
+  };
+  const maybeType = `${row.type ?? ""}`.trim() as BrowserNotifyType;
+  const type: BrowserNotifyType | undefined =
+    maybeType === "error" ||
+    maybeType === "default" ||
+    maybeType === "success" ||
+    maybeType === "info" ||
+    maybeType === "warning"
+      ? maybeType
+      : undefined;
+  const title =
+    row.title == null ? undefined : `${row.title}`.trim() || undefined;
+  const timeout = asOptionalFiniteNumber(row.timeout);
+  const block = row.block == null ? undefined : !!row.block;
+  return {
+    ...(type ? { type } : {}),
+    ...(title ? { title } : {}),
+    ...(timeout != null ? { timeout } : {}),
+    ...(block != null ? { block } : {}),
+  };
+}
+
 function toSerializableValue(value: unknown): unknown {
   if (value === undefined) {
     return null;
@@ -219,6 +318,28 @@ type BrowserExecApi = {
       path: string,
       updates: unknown,
     ) => Promise<{ updated: number; ids: string[] }>;
+  };
+  notify: {
+    show: (
+      message: unknown,
+      opts?: unknown,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
+    info: (
+      message: unknown,
+      opts?: unknown,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
+    success: (
+      message: unknown,
+      opts?: unknown,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
+    warning: (
+      message: unknown,
+      opts?: unknown,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
+    error: (
+      message: unknown,
+      opts?: unknown,
+    ) => { ok: true; type: BrowserNotifyType; message: string };
   };
 };
 
@@ -477,6 +598,28 @@ export function createBrowserSessionAutomation({
     project_id: string,
     isCanceled?: () => boolean,
   ): BrowserExecApi => {
+    const notify = (
+      forcedType: BrowserNotifyType | undefined,
+      message: unknown,
+      opts?: unknown,
+    ): { ok: true; type: BrowserNotifyType; message: string } => {
+      assertExecNotCanceled(isCanceled);
+      const cleanMessage = toNotifyMessage(message).trim();
+      if (!cleanMessage) {
+        throw Error("notification message must be non-empty");
+      }
+      const cleanOpts = sanitizeNotifyOptions(opts);
+      const type = forcedType ?? cleanOpts.type ?? "default";
+      alert_message({
+        type,
+        message: cleanMessage,
+        ...(cleanOpts.title ? { title: cleanOpts.title } : {}),
+        ...(cleanOpts.timeout != null ? { timeout: cleanOpts.timeout } : {}),
+        ...(cleanOpts.block != null ? { block: cleanOpts.block } : {}),
+      });
+      return { ok: true, type, message: cleanMessage };
+    };
+
     return {
       projectId: project_id,
       listOpenFiles: (): BrowserOpenFileInfo[] => {
@@ -606,6 +749,17 @@ export function createBrowserSessionAutomation({
             ids: cleanUpdates.map((x) => x.id),
           };
         },
+      },
+      notify: {
+        show: (message: unknown, opts?: unknown) =>
+          notify(undefined, message, opts),
+        info: (message: unknown, opts?: unknown) => notify("info", message, opts),
+        success: (message: unknown, opts?: unknown) =>
+          notify("success", message, opts),
+        warning: (message: unknown, opts?: unknown) =>
+          notify("warning", message, opts),
+        error: (message: unknown, opts?: unknown) =>
+          notify("error", message, opts),
       },
     };
   };
