@@ -43,6 +43,7 @@ import {
   Editor,
   Element as SlateElement,
   Node,
+  Point,
   Range,
   Text,
   Transforms,
@@ -1125,6 +1126,49 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     [editor, getTopLevelJupyterCell],
   );
 
+  const moveAcrossJupyterCellBoundary = useCallback(
+    (direction: "left" | "right"): boolean => {
+      const entry = getTopLevelJupyterCell();
+      if (entry == null || editor.selection == null) return false;
+      if (!Range.isCollapsed(editor.selection)) return false;
+      const topPath = [entry.topIndex];
+      let atBoundary = false;
+      try {
+        if (direction === "left") {
+          const anchor = editor.selection.anchor;
+          const canonicalStart = Editor.start(editor, topPath);
+          const nestedStartPath =
+            anchor.path.length >= 2 &&
+            anchor.path[0] === entry.topIndex &&
+            anchor.offset === 0 &&
+            anchor.path.slice(1).every((x) => x === 0);
+          atBoundary = Point.equals(anchor, canonicalStart) || nestedStartPath;
+        } else {
+          const boundaryPoint = Editor.end(editor, topPath);
+          atBoundary = Point.equals(editor.selection.anchor, boundaryPoint);
+        }
+      } catch {
+        atBoundary =
+          direction === "left"
+            ? control.isAtBeginningOfBlock(editor, { mode: "highest" })
+            : control.isAtEndOfBlock(editor, { mode: "highest" });
+      }
+      if (!atBoundary) return false;
+      const targetIndex =
+        direction === "left" ? entry.topIndex - 1 : entry.topIndex + 1;
+      if (targetIndex < 0 || targetIndex >= editor.children.length) return false;
+      const targetPath = [targetIndex];
+      const point =
+        direction === "left"
+          ? pointAtPath(editor, targetPath, undefined, "end")
+          : pointAtPath(editor, targetPath, undefined, "start");
+      Transforms.select(editor, { anchor: point, focus: point });
+      ReactEditor.focus(editor);
+      return true;
+    },
+    [editor, getTopLevelJupyterCell],
+  );
+
   function onKeyDown(e) {
     if (read_only) {
       e.preventDefault();
@@ -1272,6 +1316,30 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       (e.key === "v" || e.key === "V")
     ) {
       (editor as any).__forcePlainTextPaste = true;
+    }
+
+    if (
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.shiftKey &&
+      e.key === "ArrowLeft" &&
+      moveAcrossJupyterCellBoundary("left")
+    ) {
+      e.preventDefault();
+      return;
+    }
+
+    if (
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.shiftKey &&
+      e.key === "ArrowRight" &&
+      moveAcrossJupyterCellBoundary("right")
+    ) {
+      e.preventDefault();
+      return;
     }
 
     const handler = getKeyboardHandler(e);

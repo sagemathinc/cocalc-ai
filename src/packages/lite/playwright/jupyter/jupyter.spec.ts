@@ -57,6 +57,21 @@ function execCountAdvanced(
   return after > before;
 }
 
+async function readSingleDocCodeInput(page: Page, index: number): Promise<string> {
+  return await page.evaluate((targetIndex: number) => {
+    const cells = Array.from(
+      document.querySelectorAll('[data-cocalc-test="jupyter-singledoc-code-cell"]'),
+    );
+    const cell = cells[targetIndex] as HTMLElement | undefined;
+    if (!cell) return "";
+    const lines = Array.from(cell.querySelectorAll(".cocalc-slate-code-line"));
+    return lines
+      .map((line) => ((line as HTMLElement).innerText ?? "").replace(/\r/g, ""))
+      .join("\n")
+      .trim();
+  }, index);
+}
+
 async function primeKernel(
   page: Page,
   cellIndex = 0,
@@ -489,10 +504,23 @@ test("single-doc typing keeps focus and caret in active cell across debounce syn
   await page.keyboard.type(" # focus-nav");
 
   await page.waitForTimeout(1_300); // pass debounce threshold
-  const state1 = await page.evaluate(() => {
-    const runtime = (window as any).__cocalcJupyterRuntime;
-    return runtime?.get_single_doc_selection_for_test?.() ?? null;
-  });
+  const state1 = await page.evaluate((expectedCellId: string) => {
+    const root = document.querySelector('[data-cocalc-jupyter-slate-single-doc="1"]');
+    const active = document.activeElement as HTMLElement | null;
+    const sel = window.getSelection();
+    const anchor =
+      sel?.anchorNode instanceof Node
+        ? sel.anchorNode.parentElement?.closest(
+            '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+          )
+        : null;
+    return {
+      focusedInRoot: !!(root && active && root.contains(active)),
+      cellId: `${(anchor as HTMLElement | null)?.getAttribute?.("data-cocalc-cell-id") ?? ""}`.trim(),
+      offset: Number(sel?.anchorOffset ?? 0),
+      expectedCellId,
+    };
+  }, firstCellId);
   expect(state1?.focusedInRoot).toBe(true);
   expect(state1?.cellId).toBe(firstCellId);
   expect(typeof state1?.offset).toBe("number");
@@ -500,8 +528,20 @@ test("single-doc typing keeps focus and caret in active cell across debounce syn
 
   await page.waitForTimeout(1_300); // ensure no post-debounce jump
   const state2 = await page.evaluate(() => {
-    const runtime = (window as any).__cocalcJupyterRuntime;
-    return runtime?.get_single_doc_selection_for_test?.() ?? null;
+    const root = document.querySelector('[data-cocalc-jupyter-slate-single-doc="1"]');
+    const active = document.activeElement as HTMLElement | null;
+    const sel = window.getSelection();
+    const anchor =
+      sel?.anchorNode instanceof Node
+        ? sel.anchorNode.parentElement?.closest(
+            '[data-cocalc-test="jupyter-singledoc-code-cell"]',
+          )
+        : null;
+    return {
+      focusedInRoot: !!(root && active && root.contains(active)),
+      cellId: `${(anchor as HTMLElement | null)?.getAttribute?.("data-cocalc-cell-id") ?? ""}`.trim(),
+      offset: Number(sel?.anchorOffset ?? 0),
+    };
   });
   expect(state2?.focusedInRoot).toBe(true);
   expect(state2?.cellId).toBe(firstCellId);
@@ -512,6 +552,78 @@ test("single-doc typing keeps focus and caret in active cell across debounce syn
       timeout: 30_000,
     })
     .toContain("focus-nav");
+});
+
+test("single-doc ArrowRight at code-cell end moves caret to next code cell", async ({
+  page,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-arrow-right-next-cell");
+  await ensureNotebook(path_ipynb, [codeCell("aaa"), codeCell("bbb")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const first = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').first();
+  await first.locator(".cocalc-slate-code-line").last().click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.type("X");
+  await blurSingleDocEditor(page);
+  await page.waitForTimeout(1_300);
+
+  await expect
+    .poll(async () => await readSingleDocCodeInput(page, 0), {
+      timeout: 30_000,
+    })
+    .toBe("aaa");
+  await expect
+    .poll(async () => await readSingleDocCodeInput(page, 1), {
+      timeout: 30_000,
+    })
+    .toBe("Xbbb");
+});
+
+test("single-doc ArrowLeft at code-cell start moves caret to previous code cell", async ({
+  page,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-arrow-left-prev-cell");
+  await ensureNotebook(path_ipynb, [codeCell("aaa"), codeCell("bbb")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const second = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').nth(1);
+  await second.locator(".cocalc-slate-code-line").last().click();
+  await page.keyboard.press("ControlOrMeta+ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.type("Y");
+  await blurSingleDocEditor(page);
+  await page.waitForTimeout(1_300);
+
+  await expect
+    .poll(async () => await readSingleDocCodeInput(page, 0), {
+      timeout: 30_000,
+    })
+    .toBe("aaaY");
+  await expect
+    .poll(async () => await readSingleDocCodeInput(page, 1), {
+      timeout: 30_000,
+    })
+    .toBe("bbb");
 });
 
 test("single-doc top-level text typing does not duplicate cells", async ({ page }) => {
