@@ -85,6 +85,7 @@ export function ChatRoomComposer({
   const ZEN_MAX_VH = 1.0;
   const DRAG_MAX_VH = 0.9;
   const MIN_DRAG_HEIGHT = 60;
+  const IDLE_COLLAPSED_HEIGHT = 60;
 
   const stripHtml = (value: string): string =>
     value.replace(/<[^>]*>/g, "").trim();
@@ -124,6 +125,7 @@ export function ChatRoomComposer({
   const [isZenMode, setIsZenMode] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [isInputFocused, setIsInputFocused] = useState<boolean>(false);
   const zenContainerRef = useRef<HTMLDivElement | null>(null);
   const inputContainerRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ startY: number; startHeight: number } | null>(
@@ -241,14 +243,19 @@ export function ChatRoomComposer({
     [IS_MOBILE, clampHeight, defaultMaxHeight, isZenMode, manualHeightPx],
   );
 
+  const collapseWhenIdle = !isZenMode && !hasInput && !isInputFocused;
   const chatInputHeight = isZenMode
     ? `${zenHeight}px`
-    : manualHeightPx != null
-      ? `${manualHeightPx}px`
-      : INPUT_HEIGHT;
-  const autoGrowMaxHeight = isZenMode
-    ? zenHeight
-    : Math.max(defaultMaxHeight, manualHeightPx ?? 0);
+    : collapseWhenIdle
+      ? `${IDLE_COLLAPSED_HEIGHT}px`
+      : manualHeightPx != null
+        ? `${manualHeightPx}px`
+        : INPUT_HEIGHT;
+  const autoGrowMaxHeight = collapseWhenIdle
+    ? IDLE_COLLAPSED_HEIGHT
+    : isZenMode
+      ? zenHeight
+      : Math.max(defaultMaxHeight, manualHeightPx ?? 0);
 
   const toggleZenMode = useCallback(async () => {
     if (isZenMode) {
@@ -414,8 +421,14 @@ export function ChatRoomComposer({
             onChange={(value) => {
               setInput(value, composerSession);
             }}
-            onFocus={() => onComposerFocusChange(true)}
-            onBlur={() => onComposerFocusChange(false)}
+            onFocus={() => {
+              setIsInputFocused(true);
+              onComposerFocusChange(true);
+            }}
+            onBlur={() => {
+              setIsInputFocused(false);
+              onComposerFocusChange(false);
+            }}
             submitMentionsRef={submitMentionsRef}
             syncdb={actions.syncdb}
             date={composerDraftKey}

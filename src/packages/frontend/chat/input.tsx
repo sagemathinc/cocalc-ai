@@ -229,6 +229,19 @@ export default function ChatInput({
         if (isStaleSessionCallback(sessionToken)) {
           return;
         }
+        if (value === input) {
+          if (!applyingHistoryRef.current) {
+            const history = historyRef.current;
+            const idx = historyIndexRef.current;
+            const current = history[idx];
+            if (current) {
+              current.cursor = controlRef.current?.getMarkdownPositionForSelection?.();
+              current.at = Date.now();
+            }
+          }
+          savePresence(value);
+          return;
+        }
         setInput(value);
         onChange(value, sessionToken);
         savePresence(value);
