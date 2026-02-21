@@ -141,7 +141,7 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Update writer init/finalize/recovery in [src/packages/lite/hub/acp/index.ts](./src/packages/lite/hub/acp/index.ts) to target records by IDs. (still PK-based targeting at runtime)
+- [ ] Update writer init/finalize/recovery in [src/packages/lite/hub/acp/index.ts](./src/packages/lite/hub/acp/index.ts) to target records by IDs. (partial: `message_id` fallback resolution is implemented with one-scan lookup + watchdog counters; primary-key-only ID targeting is still pending)
 - [x] Make `persistSessionId` write thread config record only (not message rows).
 - [x] Keep sender-qualified fallback only as temporary safety net.
 
@@ -163,7 +163,7 @@ Checklist:
 
 Validation:
 
-- [ ] Integration test: restart during run -> thread becomes interrupted.
+- [x] Integration test: restart during run -> thread becomes interrupted.
 - [ ] Verify no stale spinner after restart/interrupt.
 
 ## Commit 9: One-off migration script (v1 -> v2)
@@ -198,7 +198,7 @@ Checklist:
 
 - [x] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code. (frontend chat + lite/acp syncdb chat ops now sender-qualified)
 - [ ] Keep date only for sort/time display. (partial: thread grouping + ACP queue/session identity now prefer `thread_id`; date remains for ordering/UI keys)
-- [ ] Delete transitional fallback code introduced in earlier commits where safe. (partial: thread metadata + interrupt flows no longer read root-message `acp_config`)
+- [ ] Delete transitional fallback code introduced in earlier commits where safe. (partial: thread metadata + interrupt flows no longer read root-message `acp_config`; thread list rendering no longer reads root `name/thread_color/thread_icon`)
 
 Validation:
 
@@ -234,7 +234,7 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Remove dead legacy compatibility code. (partial: new root/fork threads now always create thread-config rows; runtime no longer relies on root-message `acp_config`)
+- [ ] Remove dead legacy compatibility code. (partial: new root/fork threads now always create thread-config rows; runtime no longer relies on root-message `acp_config`; thread list metadata no longer falls back to root chat rows)
 - [x] Update developer docs and comments.
 - [x] Add troubleshooting note for migration and integrity checker.
 
