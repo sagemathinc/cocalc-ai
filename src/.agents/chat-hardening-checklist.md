@@ -198,7 +198,7 @@ Checklist:
 
 - [x] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code. (frontend chat + lite/acp syncdb chat ops now sender-qualified)
 - [ ] Keep date only for sort/time display. (partial: thread message grouping now prefers `thread_id` over root-date/reply-to)
-- [ ] Delete transitional fallback code introduced in earlier commits where safe.
+- [ ] Delete transitional fallback code introduced in earlier commits where safe. (partial: thread metadata + interrupt flows no longer read root-message `acp_config`)
 
 Validation:
 
@@ -234,7 +234,7 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Remove dead legacy compatibility code. (partial: new forked threads no longer duplicate `acp_config` onto root chat rows)
+- [ ] Remove dead legacy compatibility code. (partial: forked threads + metadata/interrupt flows no longer rely on root-message `acp_config`)
 - [x] Update developer docs and comments.
 - [x] Add troubleshooting note for migration and integrity checker.
 

@@ -872,9 +872,7 @@ export class ChatActions extends Actions<ChatState> {
         : pinRaw === false || pinRaw === "false" || pinRaw === 0 || pinRaw === "0"
           ? false
           : undefined;
-    const acp_config =
-      field<CodexThreadConfig | null>(cfg, "acp_config") ??
-      field<CodexThreadConfig | null>(root, "acp_config");
+    const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
     return {
       name: readString("name"),
       thread_color: readString("thread_color"),

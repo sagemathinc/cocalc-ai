@@ -425,8 +425,7 @@ export function ChatPanel({
     const rootIso = reply_to.toISOString();
     const threadMessages = actions.getMessagesInThread(rootIso) ?? [];
     const sessionId =
-      field<any>(selectedThread?.rootMessage, "acp_config")?.sessionId ??
-      `${reply_to.valueOf()}`;
+      actions.getCodexConfig(reply_to)?.sessionId ?? `${reply_to.valueOf()}`;
     for (const msg of threadMessages) {
       if (field<boolean>(msg, "generating") !== true) continue;
       const msgDate = dateValue(msg);
