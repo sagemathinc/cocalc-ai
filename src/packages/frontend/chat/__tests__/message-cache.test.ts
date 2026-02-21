@@ -77,4 +77,43 @@ describe("ChatMessageCache message_id index", () => {
     expect(cache.getMessagesById().has("msg-2")).toBe(false);
     cache.dispose();
   });
+
+  it("maintains thread index counts when replies are added/removed", async () => {
+    const rootDate = "2026-01-01T00:00:00.000Z";
+    const replyDate = "2026-01-01T00:00:01.000Z";
+    const rows = [
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: rootDate,
+        message_id: "root-1",
+        thread_id: "thread-1",
+        history: [],
+      },
+      {
+        event: "chat",
+        sender_id: "user-2",
+        date: replyDate,
+        message_id: "reply-1",
+        thread_id: "thread-1",
+        reply_to: rootDate,
+        reply_to_message_id: "root-1",
+        history: [],
+      },
+    ];
+    const syncdb = new MockSyncdb(rows);
+    const cache = new ChatMessageCache(syncdb as any);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const threadKey = `${new Date(rootDate).valueOf()}`;
+    const entry = cache.getThreadIndex().get(threadKey);
+    expect(entry?.messageCount).toBe(2);
+
+    // Remove reply row and emit a change for that PK.
+    syncdb.replaceRows([rows[0]]);
+    syncdb.emit("change", new Set([rows[1]]));
+    const entryAfter = cache.getThreadIndex().get(threadKey);
+    expect(entryAfter?.messageCount).toBe(1);
+    cache.dispose();
+  });
 });
