@@ -65,6 +65,7 @@ import { processLLM as processLLMExternal } from "./actions/llm";
 const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_CONFIG_SENDER = "__thread_config__";
+const warnedMissingThreadIds = new Set<string>();
 
 export type ThreadAgentKind = "acp" | "llm" | "none";
 export type ThreadAgentMode = "interactive" | "single_turn";
@@ -847,10 +848,13 @@ export class ChatActions extends Actions<ChatState> {
     );
   };
 
-  private resolveThreadIdForKey = (threadKey: string): string => {
+  private resolveThreadIdForKey = (threadKey: string): string | undefined => {
     const entry = this.getThreadRootDoc(threadKey);
     const existing = field<string>(entry?.message, "thread_id");
-    return existing || threadKey;
+    if (typeof existing === "string" && existing.trim().length > 0) {
+      return existing.trim();
+    }
+    return undefined;
   };
 
   private setThreadConfigRecord = (
@@ -866,12 +870,23 @@ export class ChatActions extends Actions<ChatState> {
       current && typeof current.toJS === "function" ? current.toJS() : current;
     const updated_by =
       this.redux.getStore("account").get_account_id() || "__thread_config__";
+    const thread_id = opts?.threadId ?? this.resolveThreadIdForKey(threadKey);
+    if (!thread_id) {
+      if (!warnedMissingThreadIds.has(threadKey)) {
+        warnedMissingThreadIds.add(threadKey);
+        console.warn(
+          "chat thread-config write skipped: missing thread_id (migrate legacy chat)",
+          { threadKey },
+        );
+      }
+      return false;
+    }
     this.setSyncdb({
       ...(currentObj ?? {}),
       event: THREAD_CONFIG_EVENT,
       sender_id: THREAD_CONFIG_SENDER,
       date: dateIso,
-      thread_id: opts?.threadId ?? this.resolveThreadIdForKey(threadKey),
+      thread_id,
       updated_at: new Date().toISOString(),
       updated_by,
       schema_version: CHAT_SCHEMA_V2,
