@@ -182,7 +182,18 @@ export class ChatActions extends Actions<ChatState> {
   toggleFoldThread = (reply_to: Date, messageIndex?: number) => {
     if (this.syncdb == null) return;
     const account_id = this.redux.getStore("account").get_account_id();
-    const cur = this.syncdb.get_one({ event: "chat", date: reply_to });
+    const rootMessage = this.getMessageByDate(reply_to);
+    const replyToIso = toISOString(reply_to);
+    const cur =
+      (replyToIso &&
+        rootMessage &&
+        this.syncdb.get_one({
+          event: "chat",
+          date: replyToIso,
+          sender_id: senderId(rootMessage),
+        })) ??
+      rootMessage ??
+      this.syncdb.get_one({ event: "chat", date: reply_to });
     const folding = foldingList(cur);
     const folded = folding.includes(account_id);
     const next = folded
@@ -637,7 +648,11 @@ export class ChatActions extends Actions<ChatState> {
       if (rootDate !== rootTarget) {
         continue;
       }
-      this.syncdb.delete({ event: "chat", date: dateIso });
+      this.syncdb.delete({
+        event: "chat",
+        date: dateIso,
+        sender_id: senderId(message),
+      });
       deleted++;
     }
     if (deleted > 0) {
@@ -1412,16 +1427,12 @@ export class ChatActions extends Actions<ChatState> {
 
   regenerateLLMResponse = async (date0: Date, llm?: LanguageModel) => {
     if (this.syncdb == null) return;
-    const date = toISOString(date0);
-    const obj = this.toImmutableRecord(
-      this.syncdb.get_one({ event: "chat", date }),
-    );
-    if (obj == null) {
+    const raw = this.getMessageByDate(date0);
+    if (raw == null) {
       return;
     }
-    const { message } = normalizeChatMessage(
-      (obj.toJS?.() ?? obj) as ChatMessage,
-    );
+    const obj = this.toImmutableRecord(raw);
+    const { message } = normalizeChatMessage((obj.toJS?.() ?? obj) as ChatMessage);
     if (message == null) {
       return;
     }
