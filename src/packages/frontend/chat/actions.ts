@@ -1034,10 +1034,13 @@ export class ChatActions extends Actions<ChatState> {
     const current = this.getThreadConfigRecordById(thread_id);
     const currentObj =
       current && typeof current.toJS === "function" ? current.toJS() : current;
+    const rootDoc = this.getThreadRootDoc(threadKey);
     const dateIso =
       asIsoDateString(opts?.date) ??
-      threadKeyToIso(threadKey) ??
-      asIsoDateString(field<string>(currentObj, "date"));
+      asIsoDateString(field<string>(currentObj, "date")) ??
+      asIsoDateString(field<string>(rootDoc?.doc, "date")) ??
+      asIsoDateString(dateValue(rootDoc?.message)) ??
+      threadKeyToIso(threadKey);
     if (!dateIso) {
       console.warn("chat thread-config write skipped: missing valid date", {
         threadKey,

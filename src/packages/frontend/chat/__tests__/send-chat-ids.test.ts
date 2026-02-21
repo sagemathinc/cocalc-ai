@@ -287,6 +287,48 @@ describe("thread-config by thread_id", () => {
     expect(appearance?.thread_image).toBe("https://example.com/img.png");
     expect(pin).toBeTruthy();
   });
+
+  it("creates thread-config for UUID thread keys using root message date", () => {
+    const threadId = "44444444-4444-4444-8444-444444444444";
+    const rootDate = new Date("2026-02-21T18:45:00.000Z");
+    const messages = new Map<string, any>([
+      [
+        `${rootDate.valueOf()}`,
+        {
+          event: "chat",
+          sender_id: "u1",
+          date: rootDate,
+          thread_id: threadId,
+          message_id: "root-msg-1",
+          history: [
+            {
+              author_id: "u1",
+              content: "root",
+              date: rootDate.toISOString(),
+            },
+          ],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+        return undefined;
+      }
+      return undefined;
+    });
+
+    const ok = actions.setThreadAppearance(threadId, { name: "Thread title" });
+    expect(ok).toBe(true);
+    expect(actions.syncdb.commit).toHaveBeenCalled();
+    const setRow = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find((row: any) => row?.event === "chat-thread-config" && row?.thread_id === threadId);
+    expect(setRow).toBeTruthy();
+    expect(setRow.date).toBe(rootDate.toISOString());
+    expect(setRow.name).toBe("Thread title");
+  });
 });
 
 describe("deleteThread identity targeting", () => {

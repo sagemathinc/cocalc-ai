@@ -75,9 +75,15 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
       agentMode = "model";
     }
     setRenamingThread(threadKey);
-    setRenameValue(useCurrentLabel ? currentLabel : "");
-    setRenameColor(currentColor?.trim() || undefined);
-    setRenameIcon((currentIcon as IconName) || undefined);
+    setRenameValue(metadata?.name?.trim() || currentLabel || "");
+    setRenameColor(
+      metadata?.thread_color?.trim() || currentColor?.trim() || undefined,
+    );
+    setRenameIcon(
+      (metadata?.thread_icon?.trim() as IconName) ||
+        (currentIcon as IconName) ||
+        undefined,
+    );
     setRenameImage(metadata?.thread_image?.trim() || "");
     setRenameAgentMode(agentMode);
     setRenameModel(currentModel);
