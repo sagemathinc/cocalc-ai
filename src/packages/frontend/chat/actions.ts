@@ -121,17 +121,16 @@ export function collectThreadMessages({
   const rootMessage = parsedMs != null ? getMessageByDate(parsedMs) : undefined;
   const threadId = field<string>(rootMessage, "thread_id");
   const list: ChatMessageTyped[] = [];
-  if (threadId) {
-    for (const msg of messages.values()) {
-      if (field<string>(msg, "thread_id") === threadId) {
-        list.push(msg);
-      }
+  if (!threadId) {
+    if (rootMessage) {
+      list.push(rootMessage);
     }
-  } else {
-    for (const msg of messages.values()) {
-      if (replyTo(msg) === dateStr || toISOString(dateValue(msg)) === dateStr) {
-        list.push(msg);
-      }
+    list.sort((a, b) => cmp(dateValue(a)?.valueOf?.(), dateValue(b)?.valueOf?.()));
+    return list;
+  }
+  for (const msg of messages.values()) {
+    if (field<string>(msg, "thread_id") === threadId) {
+      list.push(msg);
     }
   }
   list.sort((a, b) => cmp(dateValue(a)?.valueOf?.(), dateValue(b)?.valueOf?.()));
