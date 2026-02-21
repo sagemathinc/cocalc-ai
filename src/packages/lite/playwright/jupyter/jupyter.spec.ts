@@ -157,9 +157,10 @@ test("single-doc editor handles Shift+Enter and Alt+Enter", async ({ page }) => 
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-run-shortcuts");
   const marker = `single-doc-${Date.now()}`;
+  const marker2 = `single-doc-next-${Date.now()}`;
   await ensureNotebook(path_ipynb, [
     codeCell(`print("${marker}")`),
-    codeCell("pass"),
+    codeCell(`print("${marker2}")`),
   ]);
 
   await openSingleDocNotebookPage(
@@ -180,6 +181,14 @@ test("single-doc editor handles Shift+Enter and Alt+Enter", async ({ page }) => 
         timeout: 60_000,
       })
       .toContain(marker);
+
+    // Shift+Enter should move to next cell in single-doc mode.
+    await page.keyboard.press("Shift+Enter");
+    await expect
+      .poll(async () => await readSingleDocOutputText(page, 1), {
+        timeout: 60_000,
+      })
+      .toContain(marker2);
 
     await pressSingleDocRunShortcut(page, 0, "Alt+Enter");
     await expect
@@ -410,6 +419,32 @@ test("single-doc top-level text typing does not duplicate cells", async ({ page 
 
   await page.waitForTimeout(2_000);
   expect(await safeNotebookCellCount(page)).toBe(initialCount);
+});
+
+test("single-doc shows chrome for at most one selected code cell", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-chrome-hover");
+  await ensureNotebook(path_ipynb, [codeCell("print('a')"), codeCell("print('b')")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const cells = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]');
+  await expect(cells).toHaveCount(2);
+  await cells.nth(0).click();
+  expect(
+    await page.locator('[data-cocalc-test="jupyter-singledoc-cell-chrome"]').count(),
+  ).toBeLessThanOrEqual(1);
+  await cells.nth(1).click();
+  expect(
+    await page.locator('[data-cocalc-test="jupyter-singledoc-cell-chrome"]').count(),
+  ).toBeLessThanOrEqual(1);
 });
 
 test("single-doc local+external concurrent edits converge without duplication", async ({ page }) => {

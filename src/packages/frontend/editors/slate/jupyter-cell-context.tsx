@@ -15,6 +15,8 @@ export interface JupyterCellContextValue {
   renderOutput?: (cellId: string) => React.ReactNode;
   selectedCellId?: string;
   setSelectedCellId?: (cellId?: string) => void;
+  hoveredCellId?: string;
+  setHoveredCellId?: (cellId?: string) => void;
   runCell?: (cellId: string, opts?: { insertBelow?: boolean }) => void;
   getCellChromeInfo?: (cellId: string) => JupyterCellChromeInfo;
 }

@@ -235,6 +235,8 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     renderOutput: renderJupyterOutput,
     selectedCellId,
     setSelectedCellId,
+    hoveredCellId,
+    setHoveredCellId,
     runCell,
     getCellChromeInfo,
   } = useJupyterCellContext();
@@ -298,6 +300,10 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     isJupyterCodeCell &&
     !!jupyterCellId &&
     `${selectedCellId ?? ""}`.trim() === jupyterCellId;
+  const isHoveredJupyterCell =
+    isJupyterCodeCell &&
+    !!jupyterCellId &&
+    `${hoveredCellId ?? ""}`.trim() === jupyterCellId;
   useEffect(() => {
     if (!isJupyterCodeCell || !selectionInBlock || !jupyterCellId) return;
     setSelectedCellId?.(jupyterCellId);
@@ -340,7 +346,9 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
     isJupyterCodeCell && jupyterCellId ? getCellChromeInfo?.(jupyterCellId) : undefined;
   const showJupyterChrome =
     isJupyterCodeCell &&
-    (selectionInBlock || menuHovered || menuFocused || isSelectedJupyterCell);
+    !!jupyterCellId &&
+    (isHoveredJupyterCell ||
+      (!hoveredCellId && (selectionInBlock || menuFocused || isSelectedJupyterCell)));
   const setExpandedState = useCallback(
     (next: boolean, focus: boolean) => {
       expandState.set(collapseKey, next);
@@ -578,10 +586,24 @@ export function CodeLikeEditor({ attributes, children, element }: RenderElementP
               background: isJupyterCodeCell ? "#fff" : undefined,
             }}
             onMouseEnter={() => {
-              if (!IS_TOUCH) setMenuHovered(true);
+              if (!IS_TOUCH) {
+                setMenuHovered(true);
+                if (isJupyterCodeCell && jupyterCellId) {
+                  setHoveredCellId?.(jupyterCellId);
+                }
+              }
             }}
             onMouseLeave={() => {
-              if (!IS_TOUCH) setMenuHovered(false);
+              if (!IS_TOUCH) {
+                setMenuHovered(false);
+                if (
+                  isJupyterCodeCell &&
+                  jupyterCellId &&
+                  `${hoveredCellId ?? ""}`.trim() === jupyterCellId
+                ) {
+                  setHoveredCellId?.(undefined);
+                }
+              }
             }}
             onFocusCapture={() => {
               if (!IS_TOUCH) setMenuFocused(true);
