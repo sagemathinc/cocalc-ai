@@ -24,6 +24,47 @@ const HEARTBEAT_RETRY_MS = 4_000;
 const MAX_OPEN_PROJECTS = 64;
 const MAX_OPEN_FILES_PER_PROJECT = 256;
 const MAX_EXEC_CODE_LENGTH = 100_000;
+const BROWSER_EXEC_API_DECLARATION = `/**
+ * Browser exec API available via 'cocalc browser exec'.
+ *
+ * Notes:
+ * - paths are absolute (e.g. "/home/user/file.txt")
+ * - api.projectId is the workspace/project id passed to browser exec
+ */
+export type BrowserOpenFileInfo = {
+  project_id: string;
+  title?: string;
+  path: string;
+};
+
+export type BrowserNotebookCell = {
+  id: string;
+  cell_type: string;
+  input: string;
+  output: unknown;
+};
+
+export type BrowserExecApi = {
+  projectId: string;
+  listOpenFiles: () => BrowserOpenFileInfo[];
+  listOpenFilesAll: () => BrowserOpenFileInfo[];
+  openFiles: (
+    paths: unknown,
+    opts?: { background?: boolean },
+  ) => Promise<{ opened: number; paths: string[] }>;
+  closeFiles: (paths: unknown) => Promise<{ closed: number; paths: string[] }>;
+  notebook: {
+    listCells: (path: string) => Promise<BrowserNotebookCell[]>;
+    runCells: (
+      path: string,
+      ids?: unknown,
+    ) => Promise<{ ran: number; mode: "all" | "selected"; ids: string[] }>;
+    setCells: (
+      path: string,
+      updates: unknown,
+    ) => Promise<{ updated: number; ids: string[] }>;
+  };
+};`;
 
 function asStringArray(value: any): string[] {
   if (!value) return [];
@@ -422,6 +463,7 @@ export function createBrowserSessionAutomation({
   };
 
   const impl: BrowserSessionServiceApi = {
+    getExecApiDeclaration: async () => BROWSER_EXEC_API_DECLARATION,
     getSessionInfo: async () => buildSessionSnapshot(client),
     listOpenFiles: async () => {
       const snapshot = buildSessionSnapshot(client);

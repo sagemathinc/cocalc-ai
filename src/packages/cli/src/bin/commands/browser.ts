@@ -8,8 +8,10 @@ or opening files in that browser session.
 
 import { Command } from "commander";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
+import { durationToMs } from "../../core/utils";
 
 type BrowserSessionClient = {
+  getExecApiDeclaration: () => Promise<string>;
   listOpenFiles: () => Promise<
     {
       project_id: string;
@@ -241,6 +243,29 @@ export function registerBrowserCommand(
     });
 
   browser
+    .command("exec-api")
+    .description(
+      "print the TypeScript declaration for the browser exec API supported by the selected browser session",
+    )
+    .option("--browser <id>", "browser id (or unique prefix)")
+    .action(async (opts: { browser?: string }, command: Command) => {
+      await deps.withContext(command, "browser exec-api", async (ctx) => {
+        const profileSelection = loadProfileSelection(deps, command);
+        const sessionInfo = await chooseBrowserSession({
+          ctx,
+          browserHint: opts.browser,
+          fallbackBrowserId: profileSelection.browser_id,
+        });
+        const browserClient = deps.createBrowserSessionClient({
+          account_id: ctx.accountId,
+          browser_id: sessionInfo.browser_id,
+          client: ctx.remote.client,
+        }) as BrowserSessionClient;
+        return await browserClient.getExecApiDeclaration();
+      });
+    });
+
+  browser
     .command("files")
     .description("list files currently open in a browser session")
     .option("--browser <id>", "browser id (or unique prefix)")
@@ -369,11 +394,15 @@ export function registerBrowserCommand(
       "execute javascript in the target browser session with a limited browser API",
     )
     .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--timeout <duration>",
+      "rpc timeout for this browser exec call (e.g. 30s, 5m, 1h)",
+    )
     .action(
       async (
         workspace: string,
         code: string[],
-        opts: { browser?: string },
+        opts: { browser?: string; timeout?: string },
         command: Command,
       ) => {
         await deps.withContext(command, "browser exec", async (ctx) => {
@@ -388,6 +417,7 @@ export function registerBrowserCommand(
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
+            timeout: Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs)),
           }) as BrowserSessionClient;
           const script = (code ?? []).join(" ").trim();
           if (!script) {

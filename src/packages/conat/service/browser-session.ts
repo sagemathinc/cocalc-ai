@@ -18,6 +18,7 @@ export type BrowserOpenFileInfo = {
 };
 
 export interface BrowserSessionServiceApi {
+  getExecApiDeclaration: () => Promise<string>;
   getSessionInfo: () => Promise<{
     browser_id: string;
     session_name?: string;
