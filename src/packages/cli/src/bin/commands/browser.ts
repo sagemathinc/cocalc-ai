@@ -15,7 +15,6 @@ type BrowserSessionClient = {
       project_id: string;
       title?: string;
       path: string;
-      absolute_path: string;
     }[]
   >;
   openFile: (opts: {
@@ -264,7 +263,6 @@ export function registerBrowserCommand(
           project_id: row.project_id,
           title: row.title ?? "",
           path: row.path,
-          absolute_path: row.absolute_path,
         }));
       });
     });

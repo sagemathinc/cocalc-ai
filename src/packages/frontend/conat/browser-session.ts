@@ -91,8 +91,8 @@ function flattenOpenFiles(open_projects: BrowserOpenProjectState[]): BrowserOpen
       files.push({
         project_id: project.project_id,
         ...(project.title ? { title: project.title } : {}),
-        path: absolute_path.startsWith("/") ? absolute_path.slice(1) : absolute_path,
-        absolute_path,
+        // path is now absolute across frontend/backend/cli.
+        path: absolute_path,
       });
     }
   }
@@ -149,13 +149,118 @@ export type BrowserSessionAutomation = {
 
 type BrowserExecApi = {
   projectId: string;
-  listOpenFiles: () => Promise<BrowserOpenFileInfo[]>;
+  listOpenFiles: () => BrowserOpenFileInfo[];
+  listOpenFilesAll: () => BrowserOpenFileInfo[];
   openFiles: (
     paths: unknown,
     opts?: { background?: boolean },
   ) => Promise<{ opened: number; paths: string[] }>;
   closeFiles: (paths: unknown) => Promise<{ closed: number; paths: string[] }>;
+  notebook: {
+    listCells: (
+      path: string,
+    ) => Promise<
+      {
+        id: string;
+        cell_type: string;
+        input: string;
+        output: unknown;
+      }[]
+    >;
+    runCells: (
+      path: string,
+      ids?: unknown,
+    ) => Promise<{ ran: number; mode: "all" | "selected"; ids: string[] }>;
+    setCells: (
+      path: string,
+      updates: unknown,
+    ) => Promise<{ updated: number; ids: string[] }>;
+  };
 };
+
+function asPlain(value: any): any {
+  if (value != null && typeof value.toJS === "function") {
+    return value.toJS();
+  }
+  return value;
+}
+
+function trunc(value: string, max = 4000): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}...`;
+}
+
+function simplifyNotebookOutputMessage(message: any): Record<string, unknown> {
+  const obj = asPlain(message) ?? {};
+  const data = asPlain(obj.data) ?? {};
+  const plainText = (() => {
+    if (typeof obj.text === "string" && obj.text.length > 0) return obj.text;
+    const textPlain = data["text/plain"];
+    if (typeof textPlain === "string" && textPlain.length > 0) return textPlain;
+    if (Array.isArray(textPlain) && textPlain.length > 0) {
+      return textPlain.join("");
+    }
+    if (Array.isArray(obj.traceback) && obj.traceback.length > 0) {
+      return obj.traceback.join("\n");
+    }
+    return undefined;
+  })();
+
+  const out: Record<string, unknown> = {};
+  if (obj.output_type != null) out.output_type = obj.output_type;
+  if (obj.msg_type != null) out.msg_type = obj.msg_type;
+  if (obj.name != null) out.name = obj.name;
+  if (obj.execution_count != null) out.execution_count = obj.execution_count;
+  if (obj.ename != null) out.ename = obj.ename;
+  if (obj.evalue != null) out.evalue = obj.evalue;
+  if (plainText != null) out.text = trunc(`${plainText}`);
+  if (data != null && typeof data === "object") {
+    const dataTypes = Object.keys(data);
+    if (dataTypes.length > 0) out.data_types = dataTypes;
+  }
+  if (obj.metadata != null) out.metadata = asPlain(obj.metadata);
+  return out;
+}
+
+function simplifyNotebookOutput(output: any): unknown {
+  const obj = asPlain(output);
+  if (obj == null) return null;
+  if (typeof obj !== "object") {
+    return { count: 1, messages: [{ text: trunc(`${obj}`) }] };
+  }
+  const entries = Object.entries(obj);
+  const messages = entries
+    .sort((a, b) => Number.parseInt(a[0], 10) - Number.parseInt(b[0], 10))
+    .map(([, value]) => simplifyNotebookOutputMessage(value));
+  return { count: messages.length, messages };
+}
+
+function sanitizeCellIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((x) => `${x ?? ""}`.trim())
+    .filter((x) => x.length > 0);
+}
+
+function sanitizeCellUpdates(
+  value: unknown,
+): {
+  id: string;
+  input: string;
+}[] {
+  if (!Array.isArray(value)) return [];
+  const updates: { id: string; input: string }[] = [];
+  for (const item of value) {
+    const row = item as { id?: unknown; input?: unknown };
+    const id = `${row?.id ?? ""}`.trim();
+    if (!id) {
+      continue;
+    }
+    const input = `${row?.input ?? ""}`;
+    updates.push({ id, input });
+  }
+  return updates;
+}
 
 export function createBrowserSessionAutomation({
   client,
@@ -233,6 +338,44 @@ export function createBrowserSessionAutomation({
     return { ok: true };
   };
 
+  const getJupyterActionsForPath = async ({
+    project_id,
+    path,
+  }: {
+    project_id: string;
+    path: string;
+  }): Promise<any> => {
+    if (!isValidUUID(project_id)) {
+      throw Error("project_id must be a UUID");
+    }
+    const cleanPath = `${path ?? ""}`.trim();
+    if (!cleanPath) {
+      throw Error("notebook path must be specified");
+    }
+    if (!cleanPath.toLowerCase().endsWith(".ipynb")) {
+      throw Error("notebook path must end with .ipynb");
+    }
+    await openFileInProject({
+      project_id,
+      path: cleanPath,
+      foreground: false,
+      foreground_project: false,
+    });
+    const started = Date.now();
+    while (Date.now() - started < 15_000) {
+      const editorActions = redux.getEditorActions(project_id, cleanPath) as any;
+      const jupyterActions = editorActions?.jupyter_actions;
+      if (jupyterActions != null) {
+        if (typeof jupyterActions.wait_until_ready === "function") {
+          await jupyterActions.wait_until_ready();
+        }
+        return jupyterActions;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw Error(`jupyter actions unavailable for ${cleanPath}`);
+  };
+
   const clearTimer = () => {
     if (timer) {
       clearTimeout(timer);
@@ -306,7 +449,13 @@ export function createBrowserSessionAutomation({
 
       const api: BrowserExecApi = {
         projectId: project_id,
-        listOpenFiles: async (): Promise<BrowserOpenFileInfo[]> => {
+        listOpenFiles: (): BrowserOpenFileInfo[] => {
+          const snapshot = buildSessionSnapshot(client);
+          return flattenOpenFiles(snapshot.open_projects).filter(
+            (file) => file.project_id === project_id,
+          );
+        },
+        listOpenFilesAll: (): BrowserOpenFileInfo[] => {
           const snapshot = buildSessionSnapshot(client);
           return flattenOpenFiles(snapshot.open_projects);
         },
@@ -334,6 +483,89 @@ export function createBrowserSessionAutomation({
             await closeFileInProject({ project_id, path });
           }
           return { closed: cleanPaths.length, paths: cleanPaths };
+        },
+        notebook: {
+          listCells: async (
+            path: string,
+          ): Promise<
+            {
+              id: string;
+              cell_type: string;
+              input: string;
+              output: unknown;
+            }[]
+          > => {
+            const jupyterActions = await getJupyterActionsForPath({
+              project_id,
+              path,
+            });
+            const store = jupyterActions.store;
+            const cellIds = asStringArray(store.get("cell_list"));
+            return cellIds.map((id) => {
+              const cell = store.getIn(["cells", id]);
+              return {
+                id,
+                cell_type: `${cell?.get("cell_type") ?? "code"}`,
+                input: `${cell?.get("input") ?? ""}`,
+                output: simplifyNotebookOutput(cell?.get("output")),
+              };
+            });
+          },
+          runCells: async (
+            path: string,
+            ids?: unknown,
+          ): Promise<{ ran: number; mode: "all" | "selected"; ids: string[] }> => {
+            const jupyterActions = await getJupyterActionsForPath({
+              project_id,
+              path,
+            });
+            const store = jupyterActions.store;
+            const existingCellIds = new Set(asStringArray(store.get("cell_list")));
+            const wanted = sanitizeCellIdList(ids);
+            if (wanted.length === 0) {
+              await jupyterActions.runCells(asStringArray(store.get("cell_list")));
+              return {
+                ran: asStringArray(store.get("cell_list")).length,
+                mode: "all",
+                ids: asStringArray(store.get("cell_list")),
+              };
+            }
+            for (const id of wanted) {
+              if (!existingCellIds.has(id)) {
+                throw Error(`no cell with id '${id}'`);
+              }
+            }
+            await jupyterActions.runCells(wanted);
+            return { ran: wanted.length, mode: "selected", ids: wanted };
+          },
+          setCells: async (
+            path: string,
+            updates: unknown,
+          ): Promise<{ updated: number; ids: string[] }> => {
+            const cleanUpdates = sanitizeCellUpdates(updates);
+            if (cleanUpdates.length === 0) {
+              return { updated: 0, ids: [] };
+            }
+            const jupyterActions = await getJupyterActionsForPath({
+              project_id,
+              path,
+            });
+            const store = jupyterActions.store;
+            const existingCellIds = new Set(asStringArray(store.get("cell_list")));
+            for (const update of cleanUpdates) {
+              if (!existingCellIds.has(update.id)) {
+                throw Error(`no cell with id '${update.id}'`);
+              }
+            }
+            for (const update of cleanUpdates) {
+              jupyterActions.set_cell_input(update.id, update.input, false);
+            }
+            jupyterActions.syncdb?.commit?.();
+            return {
+              updated: cleanUpdates.length,
+              ids: cleanUpdates.map((x) => x.id),
+            };
+          },
         },
       };
 

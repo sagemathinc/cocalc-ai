@@ -13,8 +13,8 @@ import type { BrowserOpenProjectState } from "@cocalc/conat/hub/api/system";
 export type BrowserOpenFileInfo = {
   project_id: string;
   title?: string;
+  // Absolute path.
   path: string;
-  absolute_path: string;
 };
 
 export interface BrowserSessionServiceApi {
