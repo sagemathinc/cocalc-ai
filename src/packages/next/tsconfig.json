@@ -31,7 +31,6 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    "software-inventory/*.json",
     "components/landing/*.json",
     "locales/*/*.json",
     "locales/en/common.ts"

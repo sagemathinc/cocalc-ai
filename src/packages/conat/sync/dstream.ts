@@ -37,6 +37,7 @@ import { delay, map as awaitMap } from "awaiting";
 import { asyncThrottle, until } from "@cocalc/util/async-utils";
 import {
   inventory,
+  inventoryUpdatesDisabled,
   type Inventory,
   INVENTORY_UPDATE_INTERVAL,
 } from "./inventory";
@@ -458,7 +459,12 @@ export class DStream<T = any> extends EventEmitter {
 
   private updateInventory = asyncThrottle(
     async () => {
-      if (this.isClosed() || this.opts == null || this.opts.noInventory) {
+      if (
+        this.isClosed() ||
+        this.opts == null ||
+        this.opts.noInventory ||
+        inventoryUpdatesDisabled()
+      ) {
         return;
       }
       await delay(500);

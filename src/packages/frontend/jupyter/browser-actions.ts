@@ -80,6 +80,7 @@ import { mark_open_phase } from "@cocalc/frontend/project/open-file";
 import * as cell_utils from "@cocalc/jupyter/util/cell-utils";
 import { IPynbImporter } from "@cocalc/jupyter/ipynb/import-from-ipynb";
 import { decideInitialWatchSource } from "./watch-policy";
+import { classifyRunStreamMessage } from "./run-protocol";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -1973,8 +1974,50 @@ export class JupyterActions extends JupyterActions0 {
         this.set_trust_notebook(true);
       }
       if (this.isClosed()) return;
-      let handler: null | OutputHandler = null;
-      let id: null | string = null;
+      const handlers = new globalThis.Map<string, OutputHandler>();
+      const finalizedCells = new Set<string>();
+      const getHandlerForId = (id: string): OutputHandler => {
+        const existing = handlers.get(id);
+        if (existing != null) {
+          return existing;
+        }
+        this.deletePendingCells([id]);
+        let cell = this.store.getIn(["cells", id])?.toJS();
+        if (cell == null) {
+          // cell removed?
+          cell = { id };
+        }
+        cell.kernel = kernel;
+        const created = this.getOutputHandler(cell, runId);
+        handlers.set(id, created);
+        this.runDebug("runCells.handler.open", {
+          runId,
+          id,
+          hadOutput: Object.keys(cell.output ?? {}).length > 0,
+        });
+        return created;
+      };
+      const finalizeHandler = (
+        id: string,
+        reason: "cell_done" | "run_done" | "stream_end",
+        alreadyDone = false,
+      ) => {
+        finalizedCells.add(id);
+        const existing = handlers.get(id);
+        if (existing == null) {
+          return;
+        }
+        handlers.delete(id);
+        if (!alreadyDone) {
+          existing.done();
+        }
+        this.runDebug("runCells.handler.finalize", {
+          runId,
+          id,
+          reason,
+          remainingHandlers: handlers.size,
+        });
+      };
       for await (const mesgs of runner) {
         totalChunks += 1;
         totalMesgs += mesgs.length;
@@ -1990,6 +2033,73 @@ export class JupyterActions extends JupyterActions0 {
         }));
         if (this.isClosed()) return;
         for (const mesg of mesgs) {
+          const decision = classifyRunStreamMessage({
+            message: mesg,
+            activeRunId: runId,
+            finalizedCells,
+          });
+          if (decision.kind == "drop_stale_run_id") {
+            this.runDebug("runCells.runner.skip.stale_run_id", {
+              runId,
+              staleRunId: decision.mesgRunId,
+              mesg: this.summarizeMesg(mesg),
+            });
+            continue;
+          }
+          if (decision.kind == "drop_missing_id") {
+            this.runDebug("runCells.runner.skip.missing_id", {
+              runId,
+              source: decision.source,
+              mesg: this.summarizeMesg(mesg),
+            });
+            continue;
+          }
+          if (decision.kind == "drop_after_finalize") {
+            this.runDebug("runCells.runner.skip.after_finalize", {
+              runId,
+              id: decision.id,
+              mesg: this.summarizeMesg(mesg),
+            });
+            continue;
+          }
+          if (decision.kind == "lifecycle") {
+            if (decision.lifecycle == "run_start") {
+              this.runDebug("runCells.runner.lifecycle.run_start", { runId });
+              continue;
+            }
+            if (decision.lifecycle == "run_done") {
+              this.runDebug("runCells.runner.lifecycle.run_done", {
+                runId,
+                openHandlers: handlers.size,
+              });
+              for (const id of Array.from(handlers.keys())) {
+                finalizeHandler(id, "run_done");
+              }
+              continue;
+            }
+            const lifecycleId = decision.id;
+            if (lifecycleId == null) {
+              this.runDebug("runCells.runner.skip.missing_lifecycle_id", {
+                runId,
+                lifecycle: decision.lifecycle,
+                mesg: this.summarizeMesg(mesg),
+              });
+              continue;
+            }
+            if (!opts.noHalt && mesg.msg_type == "error") {
+              this.runDebug("runCells.runner.error_msg", {
+                runId,
+                mesg: this.summarizeMesg(mesg),
+              });
+              this.clearRunQueue();
+            }
+            const handler = getHandlerForId(lifecycleId);
+            handler.process(mesg);
+            if (decision.lifecycle == "cell_done") {
+              finalizeHandler(lifecycleId, "cell_done", true);
+            }
+            continue;
+          }
           if (!opts.noHalt && mesg.msg_type == "error") {
             this.runDebug("runCells.runner.error_msg", {
               runId,
@@ -1997,34 +2107,13 @@ export class JupyterActions extends JupyterActions0 {
             });
             this.clearRunQueue();
           }
-          if (mesg.id !== id || handler == null) {
-            id = mesg.id;
-            if (id == null) {
-              this.runDebug("runCells.runner.skip.missing_id", {
-                runId,
-                mesg: this.summarizeMesg(mesg),
-              });
-              continue;
-            }
-            this.deletePendingCells([id]);
-            let cell = this.store.getIn(["cells", mesg.id])?.toJS();
-            if (cell == null) {
-              // cell removed?
-              cell = { id };
-            }
-            cell.kernel = kernel;
-            handler?.done();
-            handler = this.getOutputHandler(cell, runId);
-            this.runDebug("runCells.handler.switch", {
-              runId,
-              id,
-              hadOutput: Object.keys(cell.output ?? {}).length > 0,
-            });
-          }
+          const handler = getHandlerForId(decision.id);
           handler.process(mesg);
         }
       }
-      handler?.done();
+      for (const id of Array.from(handlers.keys())) {
+        finalizeHandler(id, "stream_end");
+      }
       this.runDebug("runCells.runner.done", {
         runId,
         chunkNo: totalChunks,

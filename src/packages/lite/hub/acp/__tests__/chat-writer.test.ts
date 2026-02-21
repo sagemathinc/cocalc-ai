@@ -152,6 +152,63 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("retries terminal commit verification when generating looks stale", async () => {
+    const sets: RecordedSet[] = [];
+    let commits = 0;
+    let saves = 0;
+    let staleReads = 2;
+    let current: any = {};
+    const syncdb: any = {
+      metadata: baseMetadata,
+      isReady: () => true,
+      get_one: () => {
+        if (staleReads > 0) {
+          staleReads -= 1;
+          return {
+            generating: true,
+            get: (key: string) => (key === "generating" ? true : undefined),
+          };
+        }
+        return current;
+      },
+      set: (val: any) => {
+        sets.push(val);
+        current = { ...(current ?? {}), ...val };
+      },
+      commit: () => {
+        commits += 1;
+      },
+      save: async () => {
+        saves += 1;
+      },
+      close: async () => {},
+    };
+
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+
+    await (writer as any).handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer);
+
+    const final = sets[sets.length - 1];
+    expect(final.generating).toBe(false);
+    expect(commits).toBeGreaterThan(1);
+    expect(saves).toBeGreaterThan(1);
+    (writer as any).dispose?.(true);
+  });
+
   it("keeps usage but commits final state", async () => {
     const { syncdb, sets } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
@@ -398,6 +455,50 @@ describe("ChatStreamWriter", () => {
     (writer as any).dispose?.(true);
   });
 
+  it("replaces an existing writer for the same chat key", async () => {
+    const { syncdb: syncdb1 } = makeFakeSyncDB();
+    const { syncdb: syncdb2, sets } = makeFakeSyncDB();
+
+    const writer1: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb1 as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer1.waitUntilReady();
+    expect(writer1.isClosed()).toBe(false);
+
+    const writer2: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb2 as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer2.waitUntilReady();
+
+    expect(writer1.isClosed()).toBe(true);
+
+    await writer2.handle({
+      type: "summary",
+      finalResponse: "done",
+      seq: 0,
+    } as AcpStreamMessage);
+    await flush(writer2);
+
+    const final = sets[sets.length - 1];
+    expect(final.generating).toBe(false);
+    writer1.dispose?.(true);
+    writer2.dispose?.(true);
+  });
+
   it("tracks lease lifecycle from running to completed", async () => {
     const { syncdb } = makeFakeSyncDB();
     const writer: any = new ChatStreamWriter({
@@ -602,6 +703,82 @@ describe("ChatStreamWriter", () => {
     expect((writer as any).content).toContain("world");
     (writer as any).dispose?.(true);
   });
+
+  it("persists session id onto the actual thread root sender row", async () => {
+    const metadata = {
+      ...baseMetadata,
+      message_date: "200",
+      sender_id: "codex-agent",
+      reply_to: "100",
+    } as AcpChatContext;
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: "100",
+        sender_id: "user-1",
+        history: [],
+        acp_config: { model: "gpt-5.3-codex" },
+      },
+      {
+        event: "chat",
+        date: "100",
+        sender_id: "codex-agent",
+        history: [],
+        reply_to: "100",
+      },
+    ];
+    const sets: any[] = [];
+    const syncdb: any = {
+      metadata,
+      isReady: () => true,
+      get: () => rows,
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        sets.push(val);
+        const idx = rows.findIndex(
+          (row) =>
+            row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+
+    const writer: any = new ChatStreamWriter({
+      metadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady();
+    await writer.persistSessionId("session-123");
+    await delay(0);
+
+    const rootUpdate = sets.find(
+      (x) => x.date === "100" && x.sender_id === "user-1" && x.acp_config,
+    );
+    expect(rootUpdate).toBeTruthy();
+    expect(rootUpdate.acp_config).toEqual({
+      model: "gpt-5.3-codex",
+      sessionId: "session-123",
+    });
+    writer.dispose?.(true);
+  });
 });
 
 describe("recoverOrphanedAcpTurns", () => {
@@ -635,6 +812,7 @@ describe("recoverOrphanedAcpTurns", () => {
     expect(recovered).toBe(1);
     const final = sets[sets.length - 1] as any;
     expect(final.generating).toBe(false);
+    expect(final.sender_id).toBe("codex-agent");
     expect(final.acp_interrupted).toBe(true);
     expect(final.acp_interrupted_reason).toBe("server_restart");
     expect(final.history?.[0]?.content).toContain(

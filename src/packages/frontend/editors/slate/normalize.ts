@@ -18,11 +18,16 @@ likely break this assumption and things will go to hell.  Be careful.""
 
 import { Editor, Element, Node, Path, Range, Text, Transforms } from "slate";
 import { isEqual } from "lodash";
+import { uuid } from "@cocalc/util/misc";
 
 import { getNodeAt } from "./slate-util";
 import { emptyParagraph, isWhitespaceParagraph } from "./padding";
 import { isListElement } from "./elements/list";
-import { getCodeBlockText, toCodeLines } from "./elements/code-block/utils";
+import {
+  getCodeBlockText,
+  isCodeLikeBlockType,
+  toCodeLines,
+} from "./elements/code-block/utils";
 
 interface NormalizeInputs {
   editor?: Editor;
@@ -41,6 +46,10 @@ function spacerParagraph(): Element {
     spacer: true,
     children: [{ text: "" }],
   } as Element;
+}
+
+function newJupyterCellId(): string {
+  return uuid().slice(0, 6);
 }
 
 export const withNormalize = (editor) => {
@@ -141,12 +150,12 @@ NORMALIZERS.push(function ensureBlockHasChild({ editor, node, path }) {
 
 // Normalize code blocks to use code_line children instead of legacy value.
 NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
-  if (!(Element.isElement(node) && node.type === "code_block")) return;
+  if (!(Element.isElement(node) && isCodeLikeBlockType(node.type))) return;
   const children = node.children ?? [];
   const hasOnlyCodeLines = children.every(
     (child) => Element.isElement(child) && child.type === "code_line"
   );
-  if (hasOnlyCodeLines && node.value == null) return;
+  if (hasOnlyCodeLines && (node as any).value == null) return;
 
   const code = getCodeBlockText(node as any);
   const nextLines = toCodeLines(code);
@@ -156,6 +165,30 @@ NORMALIZERS.push(function normalizeCodeBlockChildren({ editor, node, path }) {
   });
   Transforms.insertNodes(editor, nextLines, { at: path.concat(0) });
   Transforms.setNodes(editor, { value: undefined, isVoid: false }, { at: path });
+});
+SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
+
+// Ensure every jupyter_code_cell has a non-empty unique id.
+NORMALIZERS.push(function ensureUniqueJupyterCellIds({ editor, path }) {
+  if (path.length !== 0) return;
+  const seen = new Set<string>();
+  for (const [node, nodePath] of Node.nodes(editor)) {
+    if (!(Element.isElement(node) && (node as any).type === "jupyter_code_cell")) {
+      continue;
+    }
+    const id = `${(node as any).cell_id ?? ""}`.trim();
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      continue;
+    }
+    let next = newJupyterCellId();
+    while (seen.has(next)) {
+      next = newJupyterCellId();
+    }
+    seen.add(next);
+    Transforms.setNodes(editor, { cell_id: next } as any, { at: nodePath });
+    return;
+  }
 });
 SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 
@@ -182,6 +215,7 @@ SKIP_ON_SELECTION.add(NORMALIZERS[NORMALIZERS.length - 1]);
 
 const SPACER_BLOCK_TYPES = new Set<string>([
   "code_block",
+  "jupyter_code_cell",
   "blockquote",
   "html_block",
   "meta",
@@ -247,7 +281,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
       codePath = Path.next(path);
       if ((editor as any).__autoformatDidBlock) {
         const nextNode = getNodeAt(editor, codePath);
-        if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+        if (Element.isElement(nextNode) && isCodeLikeBlockType(nextNode.type)) {
           const focus = Editor.start(editor, codePath);
           Transforms.setSelection(editor, { anchor: focus, focus });
           (editor as any).__autoformatSelection = { anchor: focus, focus };
@@ -265,7 +299,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
     codePath = Path.next(path);
     if ((editor as any).__autoformatDidBlock) {
       const nextNode = getNodeAt(editor, codePath);
-      if (Element.isElement(nextNode) && nextNode.type === "code_block") {
+      if (Element.isElement(nextNode) && isCodeLikeBlockType(nextNode.type)) {
         const focus = Editor.start(editor, codePath);
         Transforms.setSelection(editor, { anchor: focus, focus });
         (editor as any).__autoformatSelection = { anchor: focus, focus };
@@ -281,7 +315,7 @@ NORMALIZERS.push(function ensureBlockVoidSpacers({ editor, node, path }) {
   if (!(Element.isElement(nextNode) && nextNode.type === "paragraph")) {
     Transforms.insertNodes(editor, spacerParagraph(), { at: nextPath });
   }
-  if ((editor as any).__autoformatDidBlock && node.type === "code_block") {
+  if ((editor as any).__autoformatDidBlock && isCodeLikeBlockType(node.type)) {
     (editor as any).__autoformatDidBlock = false;
   }
 });

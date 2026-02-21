@@ -1,6 +1,7 @@
 import fs from "fs";
 import fsp from "fs/promises";
 import path from "path";
+import { trackBackendWatcher } from "./watcher-debug";
 
 export type Message = Record<string, unknown>;
 export type Handler = (msg: Message, filePath: string) => Promise<void> | void;
@@ -22,6 +23,7 @@ export class SpoolWatcher {
   private readonly handle: Handler;
   private watching = false;
   private watcher?: fs.FSWatcher;
+  private stopTrackingWatcher?: () => void;
   private scanScheduled = false;
   private inFlight = new Set<string>(); // basenames
   private closed = false;
@@ -49,6 +51,12 @@ export class SpoolWatcher {
         }, 10);
       }
     });
+    this.stopTrackingWatcher = trackBackendWatcher({
+      source: "backend:spool-watcher",
+      type: "fs.watch",
+      path: this.dir,
+      info: { persistent: true },
+    });
 
     this.watcher.on("error", () => {
       // If the dir vanished temporarily, try to recreate and resume.
@@ -69,6 +77,8 @@ export class SpoolWatcher {
   async close(): Promise<void> {
     this.closed = true;
     this.watching = false;
+    this.stopTrackingWatcher?.();
+    this.stopTrackingWatcher = undefined;
     try {
       this.watcher?.close();
     } catch {}
@@ -86,6 +96,8 @@ export class SpoolWatcher {
       try {
         this.watcher?.close();
       } catch {}
+      this.stopTrackingWatcher?.();
+      this.stopTrackingWatcher = undefined;
       this.watcher = fs.watch(this.dir, { persistent: true }, () => {
         if (!this.scanScheduled) {
           this.scanScheduled = true;
@@ -94,6 +106,12 @@ export class SpoolWatcher {
             void this.scanAndQueue();
           }, 10);
         }
+      });
+      this.stopTrackingWatcher = trackBackendWatcher({
+        source: "backend:spool-watcher",
+        type: "fs.watch",
+        path: this.dir,
+        info: { persistent: true, recovered: true },
       });
     } catch {
       // Delay and retry

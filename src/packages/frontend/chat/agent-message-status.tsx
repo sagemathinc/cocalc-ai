@@ -34,6 +34,7 @@ interface AgentMessageStatusProps {
   fontSize?: number;
   project_id?: string;
   path?: string;
+  activityBasePath?: string;
   date: number;
   fallbackLogRefs: LogRefs;
   activityContext: ActivityLogContext;
@@ -46,6 +47,7 @@ export function AgentMessageStatus({
   fontSize,
   project_id,
   path,
+  activityBasePath,
   date,
   fallbackLogRefs,
   activityContext,
@@ -202,7 +204,7 @@ export function AgentMessageStatus({
             generating={generating === true}
             fontSize={fontSize}
             persistKey={persistKey}
-            basePath={undefined}
+            basePath={activityBasePath}
             logStore={fallbackLogRefs.store}
             logKey={fallbackLogRefs.key}
             logSubject={fallbackLogRefs.subject}

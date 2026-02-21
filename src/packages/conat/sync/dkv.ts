@@ -87,6 +87,7 @@ import { conat } from "@cocalc/conat/client";
 import { asyncThrottle, until } from "@cocalc/util/async-utils";
 import {
   inventory,
+  inventoryUpdatesDisabled,
   type Inventory,
   INVENTORY_UPDATE_INTERVAL,
 } from "./inventory";
@@ -812,7 +813,12 @@ export class DKV<T = any> extends EventEmitter {
 
   private updateInventory = asyncThrottle(
     async () => {
-      if (this.isClosed() || this.opts == null || this.opts.noInventory) {
+      if (
+        this.isClosed() ||
+        this.opts == null ||
+        this.opts.noInventory ||
+        inventoryUpdatesDisabled()
+      ) {
         return;
       }
       await delay(500);

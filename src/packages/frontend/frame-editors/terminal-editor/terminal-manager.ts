@@ -15,6 +15,26 @@ import * as tree_ops from "../frame-tree/tree-ops";
 import { close, len } from "@cocalc/util/misc";
 import { Terminal } from "./connected-terminal";
 
+function normalizeTerminalCommand(command: any): string | undefined {
+  return typeof command === "string" ? command : undefined;
+}
+
+function normalizeTerminalArgs(args: any): string[] | undefined {
+  if (args == null) {
+    return undefined;
+  }
+  const plain =
+    typeof args?.toJS === "function"
+      ? args.toJS()
+      : Array.isArray(args)
+        ? args
+        : undefined;
+  if (!Array.isArray(plain)) {
+    return undefined;
+  }
+  return plain.map((x) => `${x}`);
+}
+
 export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
   private terminals: { [key: string]: Terminal<T> } = {};
   private actions: Actions<T>;
@@ -79,8 +99,8 @@ export class TerminalManager<T extends CodeEditorState = CodeEditorState> {
       let command: string | undefined = undefined;
       let args: string[] | undefined = undefined;
       if (node != null) {
-        command = node.get("command");
-        args = node.get("args");
+        command = normalizeTerminalCommand(node.get("command"));
+        args = normalizeTerminalArgs(node.get("args"));
       }
       this.terminals[id] = new Terminal<T>(
         this.actions,

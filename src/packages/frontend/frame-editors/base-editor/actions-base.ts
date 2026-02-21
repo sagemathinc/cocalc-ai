@@ -1780,15 +1780,24 @@ export class BaseEditorActions<
     command?: string,
     args?: string[],
   ): string | undefined => {
+    const normalizeArgs = (value: any): string[] => {
+      const raw =
+        typeof value?.toJS === "function"
+          ? value.toJS()
+          : Array.isArray(value)
+            ? value
+            : [];
+      return raw.map((x) => `${x}`);
+    };
     return this._get_most_recent_active_frame_id((node) => {
       if (node.get("type").slice(0, 8) != "terminal") {
         return false;
       }
       const c = node.get("command") ?? "";
-      const a = node.get("args") ?? [];
+      const a = normalizeArgs(node.get("args"));
       const c2 = command ?? "";
-      const a2 = args ?? [];
-      if (!c && !a) {
+      const a2 = normalizeArgs(args);
+      if (!c && a.length == 0) {
         return true;
       }
       if (c == c2 && isEqual(a, a2)) {
@@ -2990,10 +2999,17 @@ export class BaseEditorActions<
         command,
         args,
       });
+      const beforeArgsRaw = before?.get("args");
+      const beforeArgs =
+        typeof beforeArgsRaw?.toJS === "function"
+          ? beforeArgsRaw.toJS()
+          : Array.isArray(beforeArgsRaw)
+            ? beforeArgsRaw
+            : [];
       if (
         before &&
         (before.get("command") != command ||
-          !isEqual(before.get("args")?.toJS(), args))
+          !isEqual(beforeArgs, args ?? []))
       ) {
         // reset it if there was something before so it doesn't
         // have the wrong command/args running

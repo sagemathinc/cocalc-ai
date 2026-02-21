@@ -163,6 +163,13 @@ export interface CustomizeState {
   // we expect this to follow "ISO 3166-1 Alpha 2" + K1 (Tor network) + XX (unknown)
   // use a lib like https://github.com/michaelwittig/node-i18n-iso-countries
   country: string;
+  cloudflare_region?: string;
+  cloudflare_region_code?: string;
+  cloudflare_city?: string;
+  cloudflare_continent?: string;
+  cloudflare_timezone?: string;
+  cloudflare_latitude?: string;
+  cloudflare_longitude?: string;
   // flag to signal data stored in the Store.
   software: SoftwareEnvironments;
   _is_configured: boolean;

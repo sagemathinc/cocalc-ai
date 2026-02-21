@@ -21,7 +21,17 @@ register({ key: "Enter", shift: true }, ({ editor, extra }) => {
     if (editorAny._hasUnsavedChanges === false) {
       editorAny._hasUnsavedChanges = undefined;
     }
-    shiftEnter(editor.getMarkdownValue());
+    // eslint-disable-next-line no-console
+    console.log("slate shift+enter handler", {
+      selection: editor.selection ?? null,
+      topPath: editor.selection?.focus?.path?.[0],
+      topNodeType: (editor.children?.[editor.selection?.focus?.path?.[0] ?? -1] as any)
+        ?.type,
+    });
+    shiftEnter(editor.getMarkdownValue(), {
+      selection: editor.selection ?? null,
+      slateValue: [...editor.children] as any,
+    });
     return true;
   }
   return softBreak({ editor });

@@ -9,8 +9,33 @@ import {
   cleanupFileservers,
 } from "@cocalc/backend/conat/files/test/util";
 import { TextDecoder } from "node:util";
+import { getBackendWatcherDebugStats } from "@cocalc/backend/watcher-debug";
 
 beforeAll(before);
+
+const SANDBOX_WATCH_SOURCE = "backend:sandbox/watch";
+
+function sandboxWatchersActive(): number {
+  const stats = getBackendWatcherDebugStats({ topN: 256 });
+  return (
+    stats.activeBySourceTop.find(({ source }) => source === SANDBOX_WATCH_SOURCE)
+      ?.count ?? 0
+  );
+}
+
+async function waitForSandboxWatchers(
+  expected: number,
+  timeoutMs: number = 3000,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (sandboxWatchersActive() === expected) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  expect(sandboxWatchersActive()).toBe(expected);
+}
 
 describe("use all the standard api functions of fs", () => {
   let server;
@@ -352,6 +377,7 @@ describe("use all the standard api functions of fs", () => {
       done: false,
       value: { event: "change", filename: "" },
     });
+    w.end();
   });
 
   it("watch a directory", async () => {
@@ -383,6 +409,36 @@ describe("use all the standard api functions of fs", () => {
       done: false,
       value: { event: "unlink", filename: "z" },
     });
+    w.end();
+  });
+
+  it("dedupes repeated non-unique watch subscriptions and closes cleanly", async () => {
+    const path = `watch-dedupe-${randomId()}.txt`;
+    await fs.writeFile(path, "x");
+    const before = sandboxWatchersActive();
+
+    const w1 = await fs.watch(path);
+    await waitForSandboxWatchers(before + 1);
+
+    const w2 = await fs.watch(path);
+    await waitForSandboxWatchers(before + 1);
+
+    await fs.appendFile(path, "y");
+    const [e1, e2] = await Promise.all([w1.next(), w2.next()]);
+    expect(e1).toEqual({
+      done: false,
+      value: { event: "change", filename: "" },
+    });
+    expect(e2).toEqual({
+      done: false,
+      value: { event: "change", filename: "" },
+    });
+
+    w1.end();
+    await waitForSandboxWatchers(before + 1);
+
+    w2.end();
+    await waitForSandboxWatchers(before);
   });
 });
 

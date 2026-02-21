@@ -1,10 +1,14 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import {
-  canSetKernelErrorForE2E,
   clearKernelErrorForE2E,
   clickRunButton,
   codeCell,
+  countSingleDocCodeCells,
   countCells,
+  blurSingleDocEditor,
+  readKernelWarningText,
+  readKernelWarningVisible,
   readCellTimingLastMs,
   readCellTimingState,
   ensureNotebook,
@@ -12,6 +16,10 @@ import {
   mutateNotebookOnDisk,
   notebookUrl,
   openNotebookPage,
+  openSingleDocNotebookPage,
+  pressSingleDocRunShortcut,
+  readSingleDocCellText,
+  readSingleDocOutputText,
   readCellOutputText,
   readCellText,
   readInputExecCount,
@@ -19,6 +27,7 @@ import {
   resolveBaseUrl,
   setKernelErrorForE2E,
   setCellInputCode,
+  setSingleDocCellCodeViaRuntime,
   uniqueNotebookPath,
 } from "./helpers";
 
@@ -47,8 +56,7 @@ function execCountAdvanced(
 }
 
 async function primeKernel(
-  // @ts-ignore
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   cellIndex = 0,
 ) {
   const marker = `warmup-${Date.now()}`;
@@ -74,9 +82,17 @@ async function primeKernel(
   }
 }
 
+async function readAllSingleDocCodeText(page: Page): Promise<string> {
+  const n = await countSingleDocCodeCells(page);
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(await readSingleDocCellText(page, i));
+  }
+  return parts.join("\n---\n");
+}
+
 async function ensureKernelReadyOrSkip(
-  // @ts-ignore
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   cellIndex = 0,
 ) {
   try {
@@ -113,6 +129,166 @@ test("runs a cell and shows output", async ({ page }) => {
   );
 
   await ensureKernelReadyOrSkip(page, 0);
+});
+
+test("single-doc editor handles Shift+Enter and Alt+Enter", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-run-shortcuts");
+  const marker = `single-doc-${Date.now()}`;
+  await ensureNotebook(path_ipynb, [
+    codeCell(`print("${marker}")`),
+    codeCell("pass"),
+  ]);
+
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  try {
+    const beforeCount = await countSingleDocCodeCells(page);
+    await pressSingleDocRunShortcut(page, 0, "Shift+Enter");
+    await expect
+      .poll(async () => await readSingleDocOutputText(page, 0), {
+        timeout: 60_000,
+      })
+      .toContain(marker);
+
+    await pressSingleDocRunShortcut(page, 0, "Alt+Enter");
+    await expect
+      .poll(async () => await countSingleDocCodeCells(page), {
+        timeout: 45_000,
+      })
+      .toBeGreaterThan(beforeCount);
+  } catch (err: any) {
+    if (REQUIRE_KERNEL) {
+      throw new Error(
+        `single-doc run shortcuts unavailable in strict mode: ${
+          err?.message ?? `${err}`
+        }`,
+      );
+    }
+    test.skip(
+      true,
+      `single-doc run shortcuts unavailable in current session: ${
+        err?.message ?? `${err}`
+      }`,
+    );
+  }
+});
+
+test("single-doc typing syncs into canonical notebook cell input", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-sync");
+  await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
+  const singleDocUrl = notebookUrl({
+    base_url: conn.base_url,
+    path_ipynb,
+    auth_token: conn.auth_token,
+    frame_type: "jupyter-singledoc",
+  });
+
+  await openSingleDocNotebookPage(page, singleDocUrl);
+
+  const marker = `single-doc-sync-${Date.now()}`;
+  await setSingleDocCellCodeViaRuntime(page, 0, `print('base')\nprint("${marker}")`);
+
+  await expect
+    .poll(async () => await readSingleDocCellText(page, 0), {
+      timeout: 30_000,
+    })
+    .toContain(marker);
+
+  const reopened = await page.context().newPage();
+  try {
+    await openSingleDocNotebookPage(reopened, singleDocUrl);
+    await expect
+      .poll(async () => await readAllSingleDocCodeText(reopened), {
+        timeout: 45_000,
+      })
+      .toContain(marker);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test("single-doc local edits and external disk edits merge without loss", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-merge");
+  await ensureNotebook(path_ipynb, [codeCell("print('base')")]);
+
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const localMarker = `local-${Date.now()}`;
+  await setSingleDocCellCodeViaRuntime(
+    page,
+    0,
+    `print('base')\nprint("${localMarker}")`,
+  );
+  await expect
+    .poll(async () => await readSingleDocCellText(page, 0), {
+      timeout: 30_000,
+    })
+    .toContain(localMarker);
+
+  // Confirm local edit is durably synced before introducing external mutation.
+  const preMergeReopen = await page.context().newPage();
+  try {
+    await openSingleDocNotebookPage(
+      preMergeReopen,
+      notebookUrl({
+        base_url: conn.base_url,
+        path_ipynb,
+        auth_token: conn.auth_token,
+        frame_type: "jupyter-singledoc",
+      }),
+    );
+    await expect
+      .poll(async () => await readAllSingleDocCodeText(preMergeReopen), {
+        timeout: 45_000,
+      })
+      .toContain(localMarker);
+  } finally {
+    await preMergeReopen.close();
+  }
+
+  const diskCode = `print("disk-added-${Date.now()}")`;
+  await mutateNotebookOnDisk(path_ipynb, (ipynb) => {
+    ipynb.cells.push(codeCell(diskCode));
+  });
+  await blurSingleDocEditor(page);
+
+  await expect
+    .poll(async () => await countSingleDocCodeCells(page), {
+      timeout: 45_000,
+    })
+    .toBeGreaterThanOrEqual(2);
+
+  await expect
+    .poll(async () => await readAllSingleDocCodeText(page), {
+      timeout: 45_000,
+    })
+    .toContain(localMarker);
+
+  await expect
+    .poll(async () => await readAllSingleDocCodeText(page), {
+      timeout: 45_000,
+    })
+    .toContain(diskCode);
+
 });
 
 test("running cell execution syncs across tabs", async ({ browser }) => {
@@ -322,39 +498,18 @@ test("kernel warning banner can be surfaced and cleared", async ({ page }) => {
     }),
   );
 
-  const canInjectWarning = await canSetKernelErrorForE2E(page);
-  test.skip(
-    !canInjectWarning,
-    "kernel warning injection hook unavailable in current frontend bundle",
-  );
-
   const warningText = "Kernel terminated unexpectedly (test)";
   await setKernelErrorForE2E(page, warningText);
   await expect
-    .poll(
-      async () =>
-        await page.evaluate(
-          (text: string) => document.body.innerText.includes(text),
-          warningText,
-        ),
-      {
-        timeout: 20_000,
-      },
-    )
+    .poll(async () => await readKernelWarningVisible(page), { timeout: 20_000 })
     .toBe(true);
+  await expect
+    .poll(async () => await readKernelWarningText(page), { timeout: 20_000 })
+    .toContain(warningText);
 
   await clearKernelErrorForE2E(page);
   await expect
-    .poll(
-      async () =>
-        await page.evaluate(
-          (text: string) => document.body.innerText.includes(text),
-          warningText,
-        ),
-      {
-        timeout: 20_000,
-      },
-    )
+    .poll(async () => await readKernelWarningVisible(page), { timeout: 20_000 })
     .toBe(false);
 });
 
@@ -378,12 +533,6 @@ test("reads metadata.cocalc.last_runtime_ms and shows it in UI", async ({ page }
       path_ipynb,
       auth_token: conn.auth_token,
     }),
-  );
-
-  const hasRuntimeSurface = await canSetKernelErrorForE2E(page);
-  test.skip(
-    !hasRuntimeSurface,
-    "runtime metadata UI assertions require current frontend bundle",
   );
 
   await expect

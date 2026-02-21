@@ -3,6 +3,7 @@ import { URL } from "node:url";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
 import { data } from "@cocalc/backend/data";
 import {
@@ -67,6 +68,7 @@ import { akv, type AKV } from "@cocalc/conat/sync/akv";
 // so that everybody sees it.
 const COMMIT_INTERVAL = 2_000;
 const LEASE_HEARTBEAT_INTERVAL = 2_000;
+const TERMINAL_CHAT_VERIFY_DELAYS_MS = [0, 100, 250, 500, 1_000] as const;
 
 const logger = getLogger("lite:hub:acp");
 const ACP_INSTANCE_ID = randomUUID();
@@ -351,6 +353,16 @@ export class ChatStreamWriter {
       this.syncdbError = err;
       this.closed = true;
     });
+    const existing = chatWritersByChatKey.get(this.chatKey);
+    if (existing != null && existing !== this) {
+      logger.warn("duplicate chat writer detected; replacing existing writer", {
+        chatKey: this.chatKey,
+        existingClosed: existing.isClosed(),
+        existingThreadIds: existing.getKnownThreadIds(),
+        replacingSessionKey: sessionKey,
+      });
+      existing.dispose(true);
+    }
     chatWritersByChatKey.set(this.chatKey, this);
     logWriterCounts("create", { chatKey: this.chatKey });
     this.sessionKey = sessionKey;
@@ -431,6 +443,7 @@ export class ChatStreamWriter {
     let current = db.get_one({
       event: "chat",
       date: this.metadata.message_date,
+      sender_id: this.metadata.sender_id,
     });
     if (current == null) {
       // Create a placeholder chat row so backend-owned updates don’t race with a missing record.
@@ -452,6 +465,7 @@ export class ChatStreamWriter {
       current = db.get_one({
         event: "chat",
         date: this.metadata.message_date,
+        sender_id: this.metadata.sender_id,
       });
     }
     const history = this.recordField(current, "history");
@@ -493,6 +507,9 @@ export class ChatStreamWriter {
       // Ensure the final "generating: false" state hits SyncDB immediately,
       // even if the throttle window is large.
       this.commit.flush();
+      await this.ensureTerminalChatCommitApplied(
+        message.type === "error" ? "error" : "summary",
+      );
     }
   }
 
@@ -612,20 +629,7 @@ export class ChatStreamWriter {
     }
   }
 
-  private commit = throttle((generating: boolean): void => {
-    this.heartbeatLease();
-    logger.debug("commit", {
-      generating,
-      closed: this.closed,
-      content: this.content,
-      events: this.events.length,
-      metadata: this.metadata,
-    });
-    if (this.closed || this.syncdbError) return;
-    if (!this.syncdb) {
-      logger.warn("chat stream writer commit skipped: syncdb not ready");
-      return;
-    }
+  private buildChatUpdate(generating: boolean): Record<string, unknown> {
     const message = buildChatMessage({
       sender_id: this.metadata.sender_id,
       date: this.metadata.message_date,
@@ -643,15 +647,106 @@ export class ChatStreamWriter {
       update.acp_interrupted_reason = "interrupt";
       update.acp_interrupted_text = this.interruptedMessage ?? INTERRUPT_STATUS_TEXT;
     }
-    this.syncdb!.set(update);
-    this.syncdb!.commit();
+    return update;
+  }
+
+  private commitNow(
+    generating: boolean,
+    reason: "throttled" | "terminal-verify" | "dispose" = "throttled",
+  ): boolean {
+    if (this.closed || this.syncdbError) return false;
+    if (!this.syncdb) {
+      logger.warn("chat stream writer commit skipped: syncdb not ready", {
+        chatKey: this.chatKey,
+        reason,
+      });
+      return false;
+    }
+    try {
+      this.syncdb.set(this.buildChatUpdate(generating));
+      this.syncdb.commit();
+    } catch (err) {
+      logger.warn("chat syncdb commit failed", {
+        chatKey: this.chatKey,
+        reason,
+        generating,
+        err,
+      });
+      return false;
+    }
     (async () => {
       try {
         await this.syncdb!.save();
       } catch (err) {
-        logger.warn("chat syncdb save failed", err);
+        logger.warn("chat syncdb save failed", {
+          chatKey: this.chatKey,
+          reason,
+          generating,
+          err,
+        });
       }
     })();
+    return true;
+  }
+
+  private async ensureTerminalChatCommitApplied(
+    source: "summary" | "error",
+  ): Promise<void> {
+    if (this.closed || this.syncdbError || !this.syncdb) return;
+    let lastGenerating: boolean | undefined;
+    for (let i = 0; i < TERMINAL_CHAT_VERIFY_DELAYS_MS.length; i++) {
+      const delayMs = TERMINAL_CHAT_VERIFY_DELAYS_MS[i];
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
+      if (this.closed || this.syncdbError || !this.syncdb) return;
+      try {
+        const current = this.syncdb.get_one({
+          event: "chat",
+          date: this.metadata.message_date,
+          sender_id: this.metadata.sender_id,
+        });
+        lastGenerating = this.recordField<boolean>(current, "generating");
+      } catch (err) {
+        logger.warn("chat syncdb readback failed during terminal verification", {
+          chatKey: this.chatKey,
+          source,
+          attempt: i + 1,
+          err,
+        });
+      }
+      if (lastGenerating === false) {
+        if (i > 0) {
+          logger.warn("chat terminal state recovered after verification retry", {
+            chatKey: this.chatKey,
+            source,
+            attempts: i + 1,
+          });
+        }
+        return;
+      }
+      this.commitNow(false, "terminal-verify");
+    }
+    logger.warn("chat terminal verification failed; chat remains generating", {
+      chatKey: this.chatKey,
+      source,
+      events: this.events.length,
+      finishedBy: this.finishedBy,
+      lastGenerating,
+      retries: TERMINAL_CHAT_VERIFY_DELAYS_MS.length,
+    });
+  }
+
+  private commit = throttle((generating: boolean): void => {
+    this.heartbeatLease();
+    logger.debug("commit", {
+      generating,
+      closed: this.closed,
+      content: this.content,
+      events: this.events.length,
+      metadata: this.metadata,
+    });
+    this.commitNow(generating, "throttled");
   }, COMMIT_INTERVAL);
 
   dispose(forceImmediate: boolean = false): void {
@@ -682,7 +777,7 @@ export class ChatStreamWriter {
       this.finalizeLease("aborted", reason);
     }
 
-    this.commit(false);
+    this.commitNow(false, "dispose");
     this.commit.flush();
     this.closed = true;
     this.startTimeTravelDispose();
@@ -909,17 +1004,88 @@ export class ChatStreamWriter {
     await this.ready;
     if (this.closed || !this.syncdb) return;
     const threadRoot = this.metadata.reply_to ?? this.metadata.message_date;
-    try {
-      const current = this.syncdb.get_one({
-        event: "chat",
-        date: threadRoot,
+    const normalizeDate = (value: unknown): string | undefined => {
+      if (value == null) return undefined;
+      const d = value instanceof Date ? value : new Date(value as any);
+      if (!Number.isFinite(d.valueOf())) return undefined;
+      return d.toISOString();
+    };
+    const toMs = (value: unknown): number | undefined => {
+      if (value == null) return undefined;
+      const d = value instanceof Date ? value : new Date(value as any);
+      const ms = d.valueOf();
+      return Number.isFinite(ms) ? ms : undefined;
+    };
+    const threadRootIso = normalizeDate(threadRoot);
+    if (!threadRootIso) {
+      logger.warn("persistSessionId skipped: invalid thread root date", {
+        chatKey: this.chatKey,
+        threadRoot,
       });
+      return;
+    }
+    try {
+      const threadRootMs = toMs(threadRootIso);
+      let candidates: any[] = [];
+      if (typeof (this.syncdb as any).get === "function") {
+        const rawRows = (this.syncdb as any).get();
+        if (Array.isArray(rawRows)) {
+          candidates = rawRows.filter((row) => {
+            if (this.recordField(row, "event") !== "chat") return false;
+            const ms = toMs(this.recordField(row, "date"));
+            return ms != null && threadRootMs != null && ms === threadRootMs;
+          });
+        }
+      }
+
+      let current =
+        candidates.find((row) => {
+          const reply_to = this.recordField<string | null>(row, "reply_to");
+          return reply_to == null || reply_to === "";
+        }) ??
+        (candidates.length === 1 ? candidates[0] : undefined);
+
+      if (!current) {
+        current = this.syncdb.get_one({
+          event: "chat",
+          date: threadRootIso,
+        });
+      }
+
+      const sender_id = this.recordField<string>(current, "sender_id");
+      if (!sender_id) {
+        logger.warn("persistSessionId skipped: unable to resolve root sender", {
+          chatKey: this.chatKey,
+          threadRoot: threadRootIso,
+          candidates: candidates.length,
+        });
+        return;
+      }
+      if (candidates.length > 1) {
+        logger.warn("persistSessionId found duplicate chat rows for root date", {
+          chatKey: this.chatKey,
+          threadRoot: threadRootIso,
+          candidateSenders: candidates
+            .map((row) => this.recordField<string>(row, "sender_id"))
+            .filter((x) => typeof x === "string"),
+          selectedSender: sender_id,
+        });
+      }
       const prevCfg = this.recordField<any>(current, "acp_config");
-      const cfg = prevCfg ?? {};
+      const cfg =
+        prevCfg && typeof prevCfg.toJS === "function"
+          ? prevCfg.toJS()
+          : (prevCfg ?? {});
       if (cfg.sessionId === sessionId) return;
+      const currentDate = this.recordField<any>(current, "date");
+      const dateForSet =
+        currentDate instanceof Date
+          ? currentDate.toISOString()
+          : currentDate ?? threadRootIso;
       this.syncdb.set({
         event: "chat",
-        date: threadRoot,
+        date: dateForSet,
+        sender_id,
         acp_config: { ...cfg, sessionId },
       });
       this.syncdb.commit();
@@ -1043,9 +1209,11 @@ export async function recoverOrphanedAcpTurns(
         if (!syncdb.isReady()) {
           await once(syncdb, "ready");
         }
+        const senderId = turn.sender_id ?? "openai-codex-agent";
         const current = syncdb.get_one({
           event: "chat",
           date: turn.message_date,
+          sender_id: senderId,
         });
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
@@ -1053,6 +1221,7 @@ export async function recoverOrphanedAcpTurns(
           const update: any = {
             event: "chat",
             date: turn.message_date,
+            sender_id: senderId,
             generating: false,
             acp_interrupted: true,
             acp_interrupted_reason: "server_restart",

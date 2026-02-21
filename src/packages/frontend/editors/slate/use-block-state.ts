@@ -13,16 +13,21 @@ import {
 interface UseBlockStateOptions {
   initialValue: string;
   valueRef: React.MutableRefObject<string>;
+  blockChunkTargetChars?: number;
 }
 
-export function useBlockState({ initialValue, valueRef }: UseBlockStateOptions) {
+export function useBlockState({
+  initialValue,
+  valueRef,
+  blockChunkTargetChars,
+}: UseBlockStateOptions) {
   const nextBlockIdRef = useRef<number>(1);
   const newBlockId = useCallback(
     () => `b${nextBlockIdRef.current++}`,
     [],
   );
   const [blocks, setBlocks] = useState<string[]>(() =>
-    splitMarkdownToBlocks(initialValue),
+    splitMarkdownToBlocks(initialValue, { targetChars: blockChunkTargetChars }),
   );
   const blocksRef = useRef<string[]>(blocks);
   const [blockIds, setBlockIds] = useState<string[]>(() =>
@@ -99,14 +104,18 @@ export function useBlockState({ initialValue, valueRef }: UseBlockStateOptions) 
       valueRef.current = markdown;
       const nextBlocks =
         prevBlocks.length > 0 && prevMarkdown.length > 0
-          ? splitMarkdownToBlocksIncremental(prevMarkdown, markdown, prevBlocks)
-          : splitMarkdownToBlocks(markdown);
+          ? splitMarkdownToBlocksIncremental(prevMarkdown, markdown, prevBlocks, {
+              targetChars: blockChunkTargetChars,
+            })
+          : splitMarkdownToBlocks(markdown, {
+              targetChars: blockChunkTargetChars,
+            });
       bumpRemoteVersions(nextBlocks);
       blocksRef.current = nextBlocks;
       setBlocks(nextBlocks);
       updateBlockIdsForRemote(nextBlocks);
     },
-    [bumpRemoteVersions, updateBlockIdsForRemote, valueRef],
+    [bumpRemoteVersions, blockChunkTargetChars, updateBlockIdsForRemote, valueRef],
   );
 
   return {

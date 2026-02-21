@@ -124,9 +124,9 @@ export default function Footer() {
           hide: !enabledPages?.share,
         },
         {
-          text: "Software",
-          url: "/software",
-          hide: !enabledPages?.software,
+          text: "Linux Environment",
+          url: "/features/linux",
+          hide: !enabledPages?.features,
         },
         {
           text: "Support",

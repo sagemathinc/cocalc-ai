@@ -154,6 +154,7 @@ function debugSyncLog(type: string, data?: Record<string, unknown>): void {
 
 interface Props {
   value?: string;
+  value_slate?: Descendant[];
   placeholder?: string;
   actions?: Actions;
   read_only?: boolean;
@@ -247,6 +248,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     submitMentionsRef,
     unregisterEditor,
     value,
+    value_slate,
     controlRef,
     showEditBar,
     preserveBlankLines: preserveBlankLinesProp,
@@ -355,7 +357,11 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       if (!force && !editor.hasUnsavedChanges()) {
         return;
       }
-      setSyncstringFromSlate();
+      if (force) {
+        setSyncstringFromSlateNOW();
+      } else {
+        setSyncstringFromSlate();
+      }
       actions.ensure_syncstring_is_saved?.();
     };
 
@@ -603,7 +609,10 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   }, [isFocused]);
 
   const [editorValue, setEditorValue] = useState<Descendant[]>(() => {
-    const doc = markdown_to_slate(value ?? "", false, editor.syncCache);
+    const doc =
+      value_slate != null
+        ? value_slate
+        : markdown_to_slate(value ?? "", false, editor.syncCache);
     return preserveBlankLines ? doc : stripBlankParagraphs(doc);
   });
   const bumpChangeRef = useRef<() => void>(() => {});
@@ -759,6 +768,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
         match: (n) =>
           SlateElement.isElement(n) &&
           (n.type === "code_block" ||
+            n.type === "jupyter_code_cell" ||
             n.type === "html_block" ||
             n.type === "meta"),
       });
@@ -768,7 +778,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       const cache = codeBlockCacheRef.current;
       const text = block.children.map((line) => Node.string(line)).join("\n");
       const info =
-        block.type === "code_block"
+        block.type === "code_block" || block.type === "jupyter_code_cell"
           ? (block as CodeBlock).info ?? ""
           : block.type === "html_block"
             ? "html"
@@ -847,6 +857,14 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   }, []);
 
   useEffect(() => {
+    if (value_slate != null) {
+      allowFocusedValueUpdateRef.current = false;
+      setEditorToSlateValue(value_slate);
+      if (value != "Loading...") {
+        restoreScroll();
+      }
+      return;
+    }
     if (actions._syncstring == null) {
       const allowFocusedValueUpdate = allowFocusedValueUpdateRef.current;
       if (
@@ -865,12 +883,18 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
     if (value != "Loading...") {
       restoreScroll();
     }
-  }, [value, ignoreRemoteWhileFocused, updatePendingRemoteIndicator, isMergeFocused]);
+  }, [
+    value,
+    value_slate,
+    ignoreRemoteWhileFocused,
+    updatePendingRemoteIndicator,
+    isMergeFocused,
+  ]);
 
   const lastSetValueRef = useRef<string | null>(null);
 
   const setSyncstringFromSlateNOW = () => {
-    if (actions.set_value == null) {
+    if (actions.set_value == null && actions.set_slate_value == null) {
       // no way to save the value out (e.g., just beginning to test
       // using the component).
       return;
@@ -880,10 +904,17 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       return;
     }
 
+    if (actions.set_slate_value != null) {
+      actions.set_slate_value([...editor.children]);
+      actions.syncstring_commit?.();
+      editor.resetHasUnsavedChanges();
+      return;
+    }
+
     const markdown = editor.getMarkdownValue();
     lastSetValueRef.current = markdown;
     mergeHelperRef.current.noteSaved(markdown);
-    actions.set_value(markdown);
+    actions.set_value?.(markdown);
     actions.syncstring_commit?.();
 
     // Record that the syncstring's value is now equal to ours:
@@ -926,7 +957,23 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
 
     if (e.defaultPrevented) return;
 
-    if (!ReactEditor.isFocused(editor)) {
+    const isRunShortcut =
+      e.key === "Enter" && (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey);
+    const isFocused = ReactEditor.isFocused(editor);
+    if (isRunShortcut) {
+      // eslint-disable-next-line no-console
+      console.log("slate onKeyDown enter shortcut", {
+        key: e.key,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        isFocused,
+        selection: editor.selection ?? null,
+      });
+    }
+
+    if (!isFocused && !isRunShortcut) {
       // E.g., when typing into a codemirror editor embedded
       // in slate, we get the keystrokes, but at the same time
       // the (contenteditable) editor itself is not focused.
@@ -1004,6 +1051,24 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       }
     }
   }, [is_current]);
+
+  function setEditorToSlateValue(nextValueRaw: Descendant[]) {
+    if (nextValueRaw == null) return;
+    const nextEditorValue = preserveBlankLines
+      ? nextValueRaw
+      : stripBlankParagraphs(nextValueRaw);
+    if (isEqual(nextEditorValue, editor.children)) {
+      return;
+    }
+    const normalizedValue = slate_to_markdown(nextEditorValue, {
+      cache: editor.syncCache,
+      preserveBlankLines,
+    });
+    editor.syncCausedUpdate = true;
+    onChange(nextEditorValue);
+    editor.resetHasUnsavedChanges();
+    editor.markdownValue = normalizedValue;
+  }
 
   const setEditorToValue = (value) => {
     // console.log("setEditorToValue", { value, ed: editor.getMarkdownValue() });
@@ -1434,9 +1499,19 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       editor.lastSelection = ensureRange(editor, editor.lastSelection);
     }
 
-    if (editorValue === newEditorValue) {
-      // Editor didn't actually change value so nothing to do.
+    const onlySelectionOps =
+      editor.operations.length > 0 &&
+      editor.operations.every((op) => op.type === "set_selection");
+    if (editorValue === newEditorValue && onlySelectionOps) {
+      // Selection-only update with no value change.
       return;
+    }
+
+    // Slate can mutate the same top-level children array in place (notably for
+    // custom elements), which breaks pointer-based dirty checks. Mark local
+    // content edits as dirty explicitly so debounced save always persists them.
+    if (!onlySelectionOps && !editor.syncCausedUpdate) {
+      editor._hasUnsavedChanges = {};
     }
 
     if (!editor.syncCausedUpdate) {
@@ -1585,7 +1660,7 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
                 }
           }
           onBlur={() => {
-            editor.saveValue();
+            editor.saveValue(true);
             updateMarks();
             if (ignoreRemoteWhileFocused) {
               if (blurMergeTimerRef.current != null) {
