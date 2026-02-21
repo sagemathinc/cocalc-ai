@@ -147,6 +147,7 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       acc.duplicate_root_messages += counters.duplicate_root_messages ?? 0;
       acc.missing_thread_config += counters.missing_thread_config ?? 0;
       acc.invalid_reply_targets += counters.invalid_reply_targets ?? 0;
+      acc.missing_identity_fields += counters.missing_identity_fields ?? 0;
       return acc;
     },
     {
@@ -154,6 +155,7 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       duplicate_root_messages: 0,
       missing_thread_config: 0,
       invalid_reply_targets: 0,
+      missing_identity_fields: 0,
     },
   );
   const integrityChatsWithViolations = snapshots.filter((snapshot) => {
@@ -163,7 +165,8 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       (counters.orphan_messages ?? 0) > 0 ||
       (counters.duplicate_root_messages ?? 0) > 0 ||
       (counters.missing_thread_config ?? 0) > 0 ||
-      (counters.invalid_reply_targets ?? 0) > 0
+      (counters.invalid_reply_targets ?? 0) > 0 ||
+      (counters.missing_identity_fields ?? 0) > 0
     );
   }).length;
   const topWritersByEvents = [...snapshots]
@@ -202,6 +205,8 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
         integrityTotals.missing_thread_config,
       "chat.integrity.invalid_reply_targets":
         integrityTotals.invalid_reply_targets,
+      "chat.integrity.missing_identity_fields":
+        integrityTotals.missing_identity_fields,
       "chat.acp.finalize_mismatch": acpFinalizeMismatchCount,
       "chat.acp.finalize_recovered_after_retry":
         acpFinalizeRecoveredAfterRetryCount,

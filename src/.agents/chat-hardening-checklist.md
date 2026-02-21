@@ -219,6 +219,7 @@ Checklist:
   - [x] `chat.integrity.duplicate_root_messages`
   - [x] `chat.integrity.missing_thread_config`
   - [x] `chat.integrity.invalid_reply_targets`
+  - [x] `chat.integrity.missing_identity_fields`
   - [x] `chat.acp.finalize_mismatch`
   - [x] `chat.acp.missing_thread_id_fallbacks`
   - [x] `chat.acp.date_sender_lookup_fallbacks`

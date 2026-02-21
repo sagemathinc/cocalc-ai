@@ -37,6 +37,7 @@ describe("computeChatIntegrityReport", () => {
       duplicate_root_messages: 0,
       missing_thread_config: 0,
       invalid_reply_targets: 0,
+      missing_identity_fields: 0,
     });
   });
 
@@ -93,6 +94,22 @@ describe("computeChatIntegrityReport", () => {
     expect(report.counters.missing_thread_config).toBe(1);
     expect(report.examples.missing_thread_config_thread_ids).toContain(
       "t-codex",
+    );
+  });
+
+  it("detects rows missing message/thread identity fields", () => {
+    const rows = [
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: "2026-02-20T00:00:00.000Z",
+        history: [],
+      },
+    ];
+    const report = computeChatIntegrityReport(rows);
+    expect(report.counters.missing_identity_fields).toBe(1);
+    expect(report.examples.missing_identity_rows).toContain(
+      "2026-02-20T00:00:00.000Z:user-1",
     );
   });
 });

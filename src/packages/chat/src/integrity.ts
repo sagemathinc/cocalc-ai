@@ -3,6 +3,7 @@ export interface ChatIntegrityCounters {
   duplicate_root_messages: number;
   missing_thread_config: number;
   invalid_reply_targets: number;
+  missing_identity_fields: number;
 }
 
 export interface ChatIntegrityExamples {
@@ -10,6 +11,7 @@ export interface ChatIntegrityExamples {
   duplicate_root_thread_ids: string[];
   missing_thread_config_thread_ids: string[];
   invalid_reply_message_ids: string[];
+  missing_identity_rows: string[];
 }
 
 export interface ChatIntegrityReport {
@@ -78,12 +80,14 @@ export function computeChatIntegrityReport(
     duplicate_root_messages: 0,
     missing_thread_config: 0,
     invalid_reply_targets: 0,
+    missing_identity_fields: 0,
   };
   const examples: ChatIntegrityExamples = {
     orphan_message_ids: [],
     duplicate_root_thread_ids: [],
     missing_thread_config_thread_ids: [],
     invalid_reply_message_ids: [],
+    missing_identity_rows: [],
   };
   if (!Array.isArray(rows) || rows.length === 0) {
     return {
@@ -130,6 +134,14 @@ export function computeChatIntegrityReport(
       (typeof row?.thread_id === "string" && row.thread_id.length > 0
         ? row.thread_id
         : undefined) ?? fallbackThreadId;
+    if (
+      !(typeof row?.message_id === "string" && row.message_id.length > 0) ||
+      !(typeof row?.thread_id === "string" && row.thread_id.length > 0)
+    ) {
+      counters.missing_identity_fields += 1;
+      const ref = `${dateIso ?? "no-date"}:${row?.sender_id ?? "unknown"}`;
+      pushExample(examples.missing_identity_rows, ref);
+    }
     if (!messageId || !threadId) continue;
 
     const message: NormalizedMessage = {
