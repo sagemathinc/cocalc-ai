@@ -28,6 +28,10 @@ type BrowserSessionClient = {
     project_id: string;
     path: string;
   }) => Promise<{ ok: true }>;
+  exec: (opts: {
+    project_id: string;
+    code: string;
+  }) => Promise<{ ok: true; result: unknown }>;
 };
 
 export type BrowserCommandDeps = {
@@ -356,6 +360,50 @@ export function registerBrowserCommand(
             project_id: workspaceRow.project_id,
             paths: cleanPaths,
             closed: cleanPaths.length,
+          };
+        });
+      },
+    );
+
+  browser
+    .command("exec <workspace> <code...>")
+    .description(
+      "execute javascript in the target browser session with a limited browser API",
+    )
+    .option("--browser <id>", "browser id (or unique prefix)")
+    .action(
+      async (
+        workspace: string,
+        code: string[],
+        opts: { browser?: string },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser exec", async (ctx) => {
+          const workspaceRow = await deps.resolveWorkspace(ctx, workspace);
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: opts.browser,
+            fallbackBrowserId: profileSelection.browser_id,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+          }) as BrowserSessionClient;
+          const script = (code ?? []).join(" ").trim();
+          if (!script) {
+            throw new Error("javascript code must be specified");
+          }
+          const response = await browserClient.exec({
+            project_id: workspaceRow.project_id,
+            code: script,
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id: workspaceRow.project_id,
+            ok: !!response?.ok,
+            result: response?.result ?? null,
           };
         });
       },

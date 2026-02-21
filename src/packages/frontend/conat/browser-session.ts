@@ -23,6 +23,7 @@ const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
 const MAX_OPEN_PROJECTS = 64;
 const MAX_OPEN_FILES_PER_PROJECT = 256;
+const MAX_EXEC_CODE_LENGTH = 100_000;
 
 function asStringArray(value: any): string[] {
   if (!value) return [];
@@ -98,6 +99,26 @@ function flattenOpenFiles(open_projects: BrowserOpenProjectState[]): BrowserOpen
   return files;
 }
 
+function sanitizePathList(paths: unknown): string[] {
+  if (!Array.isArray(paths)) {
+    return [];
+  }
+  return paths
+    .map((path) => `${path ?? ""}`.trim())
+    .filter((path) => path.length > 0);
+}
+
+function toSerializableValue(value: unknown): unknown {
+  if (value === undefined) {
+    return null;
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return `${value}`;
+  }
+}
+
 function buildSessionSnapshot(client: WebappClient): {
   browser_id: string;
   session_name?: string;
@@ -126,6 +147,16 @@ export type BrowserSessionAutomation = {
   stop: () => Promise<void>;
 };
 
+type BrowserExecApi = {
+  projectId: string;
+  listOpenFiles: () => Promise<BrowserOpenFileInfo[]>;
+  openFiles: (
+    paths: unknown,
+    opts?: { background?: boolean },
+  ) => Promise<{ opened: number; paths: string[] }>;
+  closeFiles: (paths: unknown) => Promise<{ closed: number; paths: string[] }>;
+};
+
 export function createBrowserSessionAutomation({
   client,
   hub,
@@ -140,6 +171,67 @@ export function createBrowserSessionAutomation({
   let timer: NodeJS.Timeout | undefined;
   let closed = false;
   let inFlight: Promise<void> | undefined;
+
+  const openFileInProject = async ({
+    project_id,
+    path,
+    foreground = true,
+    foreground_project = true,
+  }: {
+    project_id: string;
+    path: string;
+    foreground?: boolean;
+    foreground_project?: boolean;
+  }): Promise<{ ok: true }> => {
+    if (!isValidUUID(project_id)) {
+      throw Error("project_id must be a UUID");
+    }
+    const cleanPath = `${path ?? ""}`.trim();
+    if (!cleanPath) {
+      throw Error("path must be specified");
+    }
+    const projectsActions = redux.getActions("projects") as any;
+    if (!projectsActions?.open_project) {
+      throw Error("projects actions unavailable");
+    }
+    await projectsActions.open_project({
+      project_id,
+      switch_to: !!foreground_project,
+      restore_session: false,
+    });
+    const projectActions = redux.getProjectActions(project_id) as any;
+    if (!projectActions?.open_file) {
+      throw Error(`project actions unavailable for ${project_id}`);
+    }
+    await projectActions.open_file({
+      path: cleanPath,
+      foreground: !!foreground,
+      foreground_project: !!foreground_project,
+    });
+    return { ok: true };
+  };
+
+  const closeFileInProject = async ({
+    project_id,
+    path,
+  }: {
+    project_id: string;
+    path: string;
+  }): Promise<{ ok: true }> => {
+    if (!isValidUUID(project_id)) {
+      throw Error("project_id must be a UUID");
+    }
+    const cleanPath = `${path ?? ""}`.trim();
+    if (!cleanPath) {
+      throw Error("path must be specified");
+    }
+    const projectActions = redux.getProjectActions(project_id) as any;
+    if (!projectActions?.close_file) {
+      throw Error(`project actions unavailable for ${project_id}`);
+    }
+    projectActions.close_file(cleanPath);
+    return { ok: true };
+  };
 
   const clearTimer = () => {
     if (timer) {
@@ -189,53 +281,68 @@ export function createBrowserSessionAutomation({
       const snapshot = buildSessionSnapshot(client);
       return flattenOpenFiles(snapshot.open_projects);
     },
-    openFile: async ({
-      project_id,
-      path,
-      foreground = true,
-      foreground_project = true,
-    }) => {
-      if (!isValidUUID(project_id)) {
-        throw Error("project_id must be a UUID");
-      }
-      const cleanPath = `${path ?? ""}`.trim();
-      if (!cleanPath) {
-        throw Error("path must be specified");
-      }
-      const projectsActions = redux.getActions("projects") as any;
-      if (!projectsActions?.open_project) {
-        throw Error("projects actions unavailable");
-      }
-      await projectsActions.open_project({
+    openFile: async ({ project_id, path, foreground = true, foreground_project = true }) =>
+      await openFileInProject({
         project_id,
-        switch_to: !!foreground_project,
-        restore_session: false,
-      });
-      const projectActions = redux.getProjectActions(project_id) as any;
-      if (!projectActions?.open_file) {
-        throw Error(`project actions unavailable for ${project_id}`);
-      }
-      await projectActions.open_file({
-        path: cleanPath,
-        foreground: !!foreground,
-        foreground_project: !!foreground_project,
-      });
-      return { ok: true };
-    },
-    closeFile: async ({ project_id, path }) => {
+        path,
+        foreground,
+        foreground_project,
+      }),
+    closeFile: async ({ project_id, path }) =>
+      await closeFileInProject({ project_id, path }),
+    exec: async ({ project_id, code }) => {
       if (!isValidUUID(project_id)) {
         throw Error("project_id must be a UUID");
       }
-      const cleanPath = `${path ?? ""}`.trim();
-      if (!cleanPath) {
-        throw Error("path must be specified");
+      const script = `${code ?? ""}`;
+      if (!script.trim()) {
+        throw Error("code must be specified");
       }
-      const projectActions = redux.getProjectActions(project_id) as any;
-      if (!projectActions?.close_file) {
-        throw Error(`project actions unavailable for ${project_id}`);
+      if (script.length > MAX_EXEC_CODE_LENGTH) {
+        throw Error(
+          `code is too long (${script.length} chars); max ${MAX_EXEC_CODE_LENGTH}`,
+        );
       }
-      projectActions.close_file(cleanPath);
-      return { ok: true };
+
+      const api: BrowserExecApi = {
+        projectId: project_id,
+        listOpenFiles: async (): Promise<BrowserOpenFileInfo[]> => {
+          const snapshot = buildSessionSnapshot(client);
+          return flattenOpenFiles(snapshot.open_projects);
+        },
+        openFiles: async (
+          paths: unknown,
+          opts?: { background?: boolean },
+        ): Promise<{ opened: number; paths: string[] }> => {
+          const cleanPaths = sanitizePathList(paths);
+          for (const [index, path] of cleanPaths.entries()) {
+            const foreground = !opts?.background && index === 0;
+            await openFileInProject({
+              project_id,
+              path,
+              foreground,
+              foreground_project: foreground,
+            });
+          }
+          return { opened: cleanPaths.length, paths: cleanPaths };
+        },
+        closeFiles: async (
+          paths: unknown,
+        ): Promise<{ closed: number; paths: string[] }> => {
+          const cleanPaths = sanitizePathList(paths);
+          for (const path of cleanPaths) {
+            await closeFileInProject({ project_id, path });
+          }
+          return { closed: cleanPaths.length, paths: cleanPaths };
+        },
+      };
+
+      const evaluator = new Function(
+        "api",
+        `"use strict"; return (async () => { ${script}\n})();`,
+      ) as (api: BrowserExecApi) => Promise<unknown>;
+      const result = await evaluator(api);
+      return { ok: true, result: toSerializableValue(result) };
     },
   };
 

@@ -36,6 +36,10 @@ export interface BrowserSessionServiceApi {
     project_id: string;
     path: string;
   }) => Promise<{ ok: true }>;
+  exec: (opts: {
+    project_id: string;
+    code: string;
+  }) => Promise<{ ok: true; result: unknown }>;
 }
 
 const SERVICE = "browser-session";
