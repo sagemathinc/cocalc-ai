@@ -138,6 +138,37 @@ export function collectThreadMessages({
   return list;
 }
 
+export function resolveThreadAgentModel({
+  date,
+  messages,
+  threadId,
+  getThreadMetadata,
+}: {
+  date: Date;
+  messages?: Map<string, ChatMessageTyped>;
+  threadId?: string;
+  getThreadMetadata: (
+    threadKey: string,
+    opts?: { threadId?: string },
+  ) => ThreadMetadataSnapshot;
+}): false | LanguageModel {
+  const rootMs =
+    messages != null && messages.size > 0
+      ? getThreadRootDate({ date: date.valueOf(), messages }) || date.valueOf()
+      : date.valueOf();
+  const threadKey = `${rootMs}`;
+  const metadata = getThreadMetadata(threadKey, {
+    threadId: threadId?.trim() || undefined,
+  });
+  if (
+    typeof metadata.agent_model === "string" &&
+    metadata.agent_model.trim().length > 0
+  ) {
+    return metadata.agent_model;
+  }
+  return false;
+}
+
 export class ChatActions extends Actions<ChatState> {
   public syncdb?: ImmerDB;
   public store?: ChatStore;
@@ -540,6 +571,8 @@ export class ChatActions extends Actions<ChatState> {
     if (trimmedName && reply_to) {
       this.renameThread(selectedThreadKey, trimmedName);
     }
+    // Ensure root message + thread_config are durable before async model dispatch.
+    this.syncdb.commit();
 
     const project_id = this.store?.get("project_id");
     const path = this.store?.get("path");
@@ -551,7 +584,7 @@ export class ChatActions extends Actions<ChatState> {
     if (
       noNotification ||
       mentionsLanguageModel(input) ||
-      this.isLanguageModelThread(reply_to)
+      this.isLanguageModelThread(reply_to, thread_id)
     ) {
       // Note: don't mark it is a chat if it is with chatgpt,
       // since no point in notifying all collaborators of this.
@@ -1152,23 +1185,13 @@ export class ChatActions extends Actions<ChatState> {
     if (date == null || this.store == null) {
       return false;
     }
-    const messages = this.getAllMessages();
-    if (messages == null || messages.size === 0) {
-      return false;
-    }
-    const rootMs =
-      getThreadRootDate({ date: date.valueOf(), messages }) || date.valueOf();
-    const threadKey = `${rootMs}`;
-    const metadata = this.getThreadMetadata(threadKey, {
-      threadId: threadId?.trim() || undefined,
+    return resolveThreadAgentModel({
+      date,
+      messages: this.getAllMessages(),
+      threadId,
+      getThreadMetadata: (threadKey, opts) =>
+        this.getThreadMetadata(threadKey, opts),
     });
-    if (
-      typeof metadata.agent_model === "string" &&
-      metadata.agent_model.trim().length > 0
-    ) {
-      return metadata.agent_model;
-    }
-    return false;
   };
 
   isCodexThread = (date?: Date): boolean => {

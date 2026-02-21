@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { collectThreadMessages } from "../actions";
+import { collectThreadMessages, resolveThreadAgentModel } from "../actions";
 
 describe("ChatActions.getMessagesInThread", () => {
   it("prefers thread_id grouping when present", () => {
@@ -117,5 +117,34 @@ describe("ChatActions.getMessagesInThread", () => {
       "legacy-root",
       "legacy-reply",
     ]);
+  });
+});
+
+describe("resolveThreadAgentModel", () => {
+  it("resolves metadata by thread_id even when message cache is empty", () => {
+    const date = new Date("2026-02-21T00:00:00.000Z");
+    const getThreadMetadata = jest.fn().mockReturnValue({
+      agent_model: "gpt-5.3-codex",
+    });
+    const model = resolveThreadAgentModel({
+      date,
+      messages: new Map(),
+      threadId: " thread-abc ",
+      getThreadMetadata,
+    });
+    expect(model).toBe("gpt-5.3-codex");
+    expect(getThreadMetadata).toHaveBeenCalledWith(`${date.valueOf()}`, {
+      threadId: "thread-abc",
+    });
+  });
+
+  it("returns false when thread metadata has no model", () => {
+    const model = resolveThreadAgentModel({
+      date: new Date("2026-02-21T00:00:00.000Z"),
+      messages: new Map(),
+      threadId: "thread-xyz",
+      getThreadMetadata: () => ({}),
+    });
+    expect(model).toBe(false);
   });
 });
