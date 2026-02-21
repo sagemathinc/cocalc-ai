@@ -226,22 +226,15 @@ export function ChatLog({
       if (!isAcpTurn) return true;
       const msgDate = dateValue(msg);
       if (!msgDate) continue;
+      const messageId = field<string>(msg, "message_id");
       const threadId = field<string>(msg, "thread_id");
       const byThread =
         threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
-      const byMessage = acpState?.get?.(`${msgDate.valueOf()}`);
-      const rootMs = getThreadRootDate({
-        date: msgDate.valueOf(),
-        messages,
-      });
-      const byRoot =
-        rootMs != null && Number.isFinite(rootMs)
-          ? acpState?.get?.(`${rootMs}`)
-          : undefined;
       if (
         ACP_ACTIVE_STATES.has(byThread) ||
-        ACP_ACTIVE_STATES.has(byMessage) ||
-        ACP_ACTIVE_STATES.has(byRoot)
+        ACP_ACTIVE_STATES.has(
+          messageId != null ? acpState?.get?.(`message:${messageId}`) : undefined,
+        )
       ) {
         return true;
       }
@@ -684,12 +677,8 @@ export function MessageList({
             acpState={
               (() => {
                 const messageId = field<string>(message, "message_id");
-                if (messageId) {
-                  const byMessageId = acpState?.get(`message:${messageId}`);
-                  if (byMessageId) return byMessageId;
-                }
-                // Legacy fallback when message_id is unavailable.
-                return messageId ? undefined : acpState?.get(date);
+                if (!messageId) return undefined;
+                return acpState?.get(`message:${messageId}`);
               })()
             }
             dim={shouldDim}

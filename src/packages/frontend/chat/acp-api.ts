@@ -13,7 +13,7 @@ import { type ChatActions } from "./actions";
 
 type QueueKey = string;
 type QueueItem = {
-  messageDateMs: number;
+  messageId: string;
   run: () => Promise<void>;
   canceled: boolean;
 };
@@ -80,11 +80,10 @@ function resolveThreadQueueRef({
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return undefined;
-  const threadKey = actions.computeThreadKey(threadRootDate.valueOf());
   const rootMessage =
     actions.getMessageByDate?.(threadRootDate) ??
     actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
-  const threadToken = field<string>(rootMessage, "thread_id") ?? threadKey;
+  const threadToken = field<string>(rootMessage, "thread_id");
   if (!threadToken) return undefined;
   return {
     queueKey: makeQueueKey({ project_id, path, threadKey: threadToken }),
@@ -123,15 +122,15 @@ export function resetAcpThreadState({
   const threadMessages = actions.getMessagesInThread(threadIso) ?? [];
   let nextState = store.get("acpState");
   for (const msg of threadMessages) {
-    const d = dateValue(msg);
-    if (!d) continue;
-    nextState = nextState.delete(`${d.valueOf()}`);
+    const messageId = field<string>(msg, "message_id");
+    if (messageId) {
+      nextState = nextState.delete(`message:${messageId}`);
+    }
     const threadId = field<string>(msg, "thread_id");
     if (threadId) {
       nextState = nextState.delete(`thread:${threadId}`);
     }
   }
-  nextState = nextState.delete(`${threadRootDate.valueOf()}`);
   store.setState({ acpState: nextState });
 }
 
@@ -184,32 +183,18 @@ export async function processAcpLLM({
     return;
   }
 
-  let baseDate: number;
-  if (reply_to) {
-    baseDate = reply_to.valueOf();
-  } else {
-    baseDate =
-      message.date instanceof Date
-        ? message.date.valueOf()
-        : new Date(message.date ?? Date.now()).valueOf();
-  }
-  const threadKey: string | undefined = actions.computeThreadKey(baseDate);
-  if (!threadKey) {
-    return;
-  }
-
   const sender_id = model || "openai-codex-agent";
 
   // Determine the thread root date from the message itself.
   // - For replies, `message.reply_to` is the thread root (ISO string).
-  // - For a root message, the thread root is `message.date`.
+  // - Otherwise use explicit caller context, then fallback to `message.date`.
   const messageDate = dateValue(message);
   if (!messageDate) {
     throw Error("invalid message");
   }
   const threadRootDate = message.reply_to
     ? new Date(message.reply_to)
-    : messageDate;
+    : reply_to ?? messageDate;
   if (Number.isNaN(threadRootDate?.valueOf())) {
     throw new Error("ACP turn missing thread root date");
   }
@@ -235,9 +220,27 @@ export async function processAcpLLM({
   const threadRootMessage =
     actions.getMessageByDate?.(threadRootDate) ??
     actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
+  const project_id = store.get("project_id");
+  const path = store.get("path");
   const thread_id =
     (message as any)?.thread_id ?? (threadRootMessage as any)?.thread_id;
   const user_message_id = (message as any)?.message_id;
+  if (!user_message_id) {
+    console.warn("ACP turn missing user message_id; skipping", {
+      project_id,
+      path,
+      message_date: messageDate.toISOString(),
+    });
+    return;
+  }
+  if (!thread_id) {
+    console.warn("ACP turn missing thread_id; skipping", {
+      project_id,
+      path,
+      message_id: user_message_id,
+    });
+    return;
+  }
   // Backend chat writer must own a distinct assistant row for this turn.
   // Reusing the user's message_id can cause backend updates to overwrite the
   // input message history instead of writing assistant output.
@@ -253,38 +256,22 @@ export async function processAcpLLM({
   setTimeout(() => chatStreams.delete(id), 3 * 60 * 1000);
 
   const setState = (state) => {
-    const messageKey = `${messageDate.valueOf()}`;
-    const messageIdKey = user_message_id
-      ? `message:${user_message_id}`
-      : undefined;
-    const threadStateKey = thread_id ? `thread:${thread_id}` : undefined;
+    const messageIdKey = `message:${user_message_id}`;
+    const threadStateKey = `thread:${thread_id}`;
     let next = store.get("acpState");
     if (state) {
-      next = next.set(messageKey, state);
-      if (messageIdKey) {
-        next = next.set(messageIdKey, state);
-      }
-      if (threadStateKey) {
-        next = next.set(threadStateKey, state);
-      }
+      next = next.set(messageIdKey, state);
+      next = next.set(threadStateKey, state);
     } else {
-      next = next.delete(messageKey);
-      if (messageIdKey) {
-        next = next.delete(messageIdKey);
-      }
-      if (threadStateKey) {
-        next = next.delete(threadStateKey);
-      }
+      next = next.delete(messageIdKey);
+      next = next.delete(threadStateKey);
     }
     store.setState({
       acpState: next,
     });
   };
 
-  const project_id = store.get("project_id");
-  const path = store.get("path");
-
-  const threadToken = thread_id ?? threadKey;
+  const threadToken = thread_id;
   const sessionKey = effectiveSessionId ?? threadToken;
   const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
   const job = async (): Promise<void> => {
@@ -367,7 +354,7 @@ export async function processAcpLLM({
 
   const q = getQueue(queueKey);
   q.items.push({
-    messageDateMs: messageDate.valueOf(),
+    messageId: user_message_id,
     run: job,
     canceled: false,
   });
@@ -386,10 +373,9 @@ export function cancelQueuedAcpTurn({
 }): boolean {
   const { store } = actions;
   if (!store) return false;
-  const messageDate = dateValue(message);
-  if (!messageDate) return false;
-  const legacyThreadKey = actions.computeThreadKey(messageDate.valueOf());
-  const threadToken = field<string>(message, "thread_id") ?? legacyThreadKey;
+  const messageId = field<string>(message, "message_id");
+  if (!messageId) return false;
+  const threadToken = field<string>(message, "thread_id");
   if (!threadToken) return false;
   const project_id = store.get("project_id");
   const path = store.get("path");
@@ -398,7 +384,7 @@ export function cancelQueuedAcpTurn({
   const q = turnQueues.get(queueKey);
   if (!q) return false;
   const targetIndex = q.items.findIndex(
-    (item) => item.messageDateMs === messageDate.valueOf(),
+    (item) => item.messageId === messageId,
   );
   if (targetIndex < 0) return false;
   const [item] = q.items.splice(targetIndex, 1);
@@ -408,11 +394,7 @@ export function cancelQueuedAcpTurn({
   }
   store.setState({
     acpState: (() => {
-      let next = store.get("acpState").set(`${messageDate.valueOf()}`, "not-sent");
-      const messageId = field<string>(message, "message_id");
-      if (messageId) {
-        next = next.set(`message:${messageId}`, "not-sent");
-      }
+      let next = store.get("acpState").set(`message:${messageId}`, "not-sent");
       const threadId = field<string>(message, "thread_id");
       if (threadId) {
         next = next.set(`thread:${threadId}`, "not-sent");
