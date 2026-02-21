@@ -19,16 +19,11 @@ import track from "@cocalc/frontend/user-tracking";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import {
-  CUSTOM_OPENAI_PREFIX,
   LANGUAGE_MODEL_PREFIXES,
-  OLLAMA_PREFIX,
   USER_LLM_PREFIX,
   isLanguageModel,
   isLanguageModelService,
   model2service,
-  service2model,
-  toCustomOpenAIModel,
-  toOllamaModel,
   type LanguageModel,
 } from "@cocalc/util/db-schema/llm-utils";
 import { cmp, history_path, isValidUUID, uuid } from "@cocalc/util/misc";
@@ -1118,11 +1113,8 @@ export class ChatActions extends Actions<ChatState> {
   };
 
   /**
-   * This checks a thread of messages to see if it is a language model thread and if so, returns it.
-   *
-   * NOTE: We intentionally prefer thread_config metadata first. The remaining
-   * root/history mention heuristics are legacy fallback and should be removed
-   * once all active chats carry explicit thread_config model metadata.
+   * Returns the configured model for a thread. Thread identity comes from
+   * thread_config metadata, not root-message heuristics.
    */
   isLanguageModelThread = (date?: Date): false | LanguageModel => {
     if (date == null || this.store == null) {
@@ -1153,57 +1145,6 @@ export class ChatActions extends Actions<ChatState> {
           agent_mode,
         });
         this.syncdb.commit();
-      }
-      return model;
-    }
-    const entry = this.getThreadRootDoc(`${rootMs}`);
-    const rootMessage = entry?.message;
-    if (rootMessage == null) {
-      return false;
-    }
-
-    const thread = this.getMessagesInThread(
-      toISOString(dateValue(rootMessage)) ?? `${rootMs}`,
-    );
-    if (thread == null || thread.length === 0) {
-      return false;
-    }
-
-    const firstMessage = thread[0];
-    if (firstMessage == null) {
-      return false;
-    }
-    const firstHistory = historyArray(firstMessage)[0];
-    if (firstHistory == null) {
-      return false;
-    }
-    const sender_id = firstHistory.author_id;
-    if (isLanguageModelService(sender_id)) {
-      const model = service2model(sender_id);
-      const { agent_kind, agent_mode } = identityFromModel(model);
-      if (this.syncdb != null) {
-        this.setThreadConfigRecord(threadKey, {
-          agent_kind,
-          agent_model: model,
-          agent_mode,
-        });
-        this.syncdb.commit();
-      }
-      return model;
-    }
-    const input = firstHistory.content?.toLowerCase();
-    if (mentionsLanguageModel(input)) {
-      const model = getLanguageModel(input);
-      if (model) {
-        const { agent_kind, agent_mode } = identityFromModel(model);
-        if (this.syncdb != null) {
-          this.setThreadConfigRecord(threadKey, {
-            agent_kind,
-            agent_model: model,
-            agent_mode,
-          });
-          this.syncdb.commit();
-        }
       }
       return model;
     }
@@ -1336,21 +1277,8 @@ export class ChatActions extends Actions<ChatState> {
       reply_to.valueOf();
     const threadConfig = this.getThreadConfigRecord(`${rootMs}`);
     const cfgFromThread = field<CodexThreadConfig>(threadConfig, "acp_config");
-    if (cfgFromThread != null) {
-      return cfgFromThread;
-    }
-    const entry = this.getThreadRootDoc(`${rootMs}`);
-    const rootMessage = entry?.message;
-    if (!rootMessage) return;
-    const cfg = field<CodexThreadConfig>(rootMessage, "acp_config");
-    if (cfg != null && this.syncdb != null) {
-      // One-time self-heal for legacy/root-only configs.
-      this.setThreadConfigRecord(`${rootMs}`, {
-        acp_config: cfg,
-      });
-      this.syncdb.commit();
-    }
-    return cfg;
+    if (cfgFromThread == null) return;
+    return cfgFromThread;
   };
 
   recordThreadAgentModel = (
@@ -1774,43 +1702,5 @@ function mentionsLanguageModel(input?: string): boolean {
   );
   if (sys || x.includes(`account-id=${USER_LLM_PREFIX}`)) return true;
   if (x.includes("openai-codex-agent") || x.includes("@codex")) return true;
-  return false;
-}
-
-/**
- * For the given content of a message, this tries to extract a mentioned language model.
- */
-function getLanguageModel(input?: string): false | LanguageModel {
-  if (!input) return false;
-  const x = input.toLowerCase();
-  if (x.includes("openai-codex-agent") || x.includes("@codex")) {
-    return "codex-agent";
-  }
-  if (x.includes("account-id=chatgpt4")) {
-    return "gpt-4";
-  }
-  if (x.includes("account-id=chatgpt")) {
-    return "gpt-3.5-turbo";
-  }
-  // these prefixes should come from util/db-schema/openai::model2service
-  for (const vendorPrefix of LANGUAGE_MODEL_PREFIXES) {
-    const prefix = `account-id=${vendorPrefix}`;
-    const i = x.indexOf(prefix);
-    if (i != -1) {
-      const j = x.indexOf(">", i);
-      const model = x.slice(i + prefix.length, j).trim() as LanguageModel;
-      // for now, ollama must be prefixed – in the future, all model names should have a vendor prefix!
-      if (vendorPrefix === OLLAMA_PREFIX) {
-        return toOllamaModel(model);
-      }
-      if (vendorPrefix === CUSTOM_OPENAI_PREFIX) {
-        return toCustomOpenAIModel(model);
-      }
-      if (vendorPrefix === USER_LLM_PREFIX) {
-        return `${USER_LLM_PREFIX}${model}`;
-      }
-      return model;
-    }
-  }
   return false;
 }
