@@ -458,13 +458,6 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       const transientIdMap = transientIdMapRef.current;
       const existingIdSet = new Set(ids);
 
-      // Drop stale temporary id mappings that no longer point to existing cells.
-      for (const [tempId, mappedId] of transientIdMap) {
-        if (!existingIdSet.has(mappedId)) {
-          transientIdMap.delete(tempId);
-        }
-      }
-
       const getCellType = (id: string): string => `${cells.getIn([id, "cell_type"]) ?? "code"}`;
       const takeExistingIdByType = (cellType: ParsedSlateCell["cell_type"]): string | undefined => {
         for (const id of ids) {
@@ -512,16 +505,19 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
             continue;
           }
         }
+        const reused = takeExistingIdByType(cell.cell_type);
+        if (reused != null) {
+          resolvedIds.push(reused);
+          parsedToApply.push(cell);
+          if (rawId && reused !== requestedId) {
+            transientIdMap.set(rawId, reused);
+          }
+          continue;
+        }
         if (rawId) {
           // Explicit/duplicated/temporary code cell id: allocate a fresh canonical cell id.
           const newId = makeNewCell(cell.cell_type);
           transientIdMap.set(rawId, newId);
-          parsedToApply.push(cell);
-          continue;
-        }
-        const reused = takeExistingIdByType(cell.cell_type);
-        if (reused != null) {
-          resolvedIds.push(reused);
           parsedToApply.push(cell);
           continue;
         }

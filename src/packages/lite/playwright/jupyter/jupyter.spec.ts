@@ -100,6 +100,19 @@ async function safeNotebookCellCount(page: Page): Promise<number> {
     .count();
 }
 
+async function appendSingleDocPlainTextNearTop(
+  page: Page,
+  text: string,
+): Promise<void> {
+  const leaf = page
+    .locator('[data-cocalc-jupyter-slate-single-doc="1"] [data-slate-string]')
+    .first();
+  await leaf.scrollIntoViewIfNeeded();
+  await leaf.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(text);
+}
+
 async function ensureKernelReadyOrSkip(
   page: Page,
   cellIndex = 0,
@@ -344,6 +357,59 @@ test("single-doc debounce sync settles without feedback-loop growth", async ({ p
   expect(Number(debug2.applyNotebookSlateMutations ?? 0)).toBe(
     Number(debug1.applyNotebookSlateMutations ?? 0),
   );
+});
+
+test("single-doc top-level text typing does not duplicate cells", async ({ page }) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-markdown-no-loop");
+  await ensureNotebook(path_ipynb, [
+    { cell_type: "markdown", metadata: {}, source: ["alpha"] },
+    codeCell("print('two')"),
+  ]);
+  const singleDocUrl = notebookUrl({
+    base_url: conn.base_url,
+    path_ipynb,
+    auth_token: conn.auth_token,
+    frame_type: "jupyter-singledoc",
+  });
+
+  await openSingleDocNotebookPage(page, singleDocUrl);
+  let initialCount = 0;
+  await expect
+    .poll(
+      async () => {
+        const n = await safeNotebookCellCount(page);
+        if (n > 0) initialCount = n;
+        return n;
+      },
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0);
+
+  const marker = `md-${Date.now()}`;
+  await appendSingleDocPlainTextNearTop(page, ` ${marker}`);
+  await blurSingleDocEditor(page);
+
+  await expect
+    .poll(
+      async () =>
+        (
+          (await page
+            .locator('[data-cocalc-jupyter-slate-single-doc="1"]')
+            .first()
+            .textContent()) ?? ""
+        ).replace(/\s+/g, " "),
+      { timeout: 30_000 },
+    )
+    .toContain(marker);
+  await expect
+    .poll(async () => await safeNotebookCellCount(page), {
+      timeout: 30_000,
+    })
+    .toBe(initialCount);
+
+  await page.waitForTimeout(2_000);
+  expect(await safeNotebookCellCount(page)).toBe(initialCount);
 });
 
 test("single-doc local+external concurrent edits converge without duplication", async ({ page }) => {
