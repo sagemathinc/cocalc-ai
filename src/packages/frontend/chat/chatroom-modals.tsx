@@ -182,9 +182,8 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         envPath: renameCodexConfig.envPath?.trim(),
       });
     } else {
-      const threadMs = parseInt(renamingThread, 10);
-      if (Number.isFinite(threadMs) && renameModel.trim()) {
-        actions.recordThreadAgentModel?.(new Date(threadMs), renameModel.trim() as any);
+      if (renameModel.trim()) {
+        actions.setThreadModel?.(renamingThread, renameModel.trim() as any);
       } else {
         actions.setThreadAgentMode?.(renamingThread, "none");
       }

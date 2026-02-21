@@ -318,6 +318,35 @@ describe("thread-config by thread_id", () => {
     expect(row).toBeTruthy();
   });
 
+  it("updates non-codex agent model for UUID thread keys", () => {
+    const threadId = "35333333-3333-4333-8333-333333333333";
+    const existing = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: "2026-02-21T18:40:00.000Z",
+      thread_id: threadId,
+      name: "Thread",
+    };
+    const actions = makeActions();
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+        return existing;
+      }
+      return undefined;
+    });
+    actions.setThreadModel(threadId, "gpt-4o" as any);
+    const row = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (x: any) =>
+          x?.event === "chat-thread-config" &&
+          x?.thread_id === threadId &&
+          x?.agent_model === "gpt-4o",
+      );
+    expect(row?.agent_kind).toBe("llm");
+    expect(row?.agent_mode).toBe("single_turn");
+  });
+
   it("creates thread-config for UUID thread keys using root message date", () => {
     const threadId = "44444444-4444-4444-8444-444444444444";
     const rootDate = new Date("2026-02-21T18:45:00.000Z");

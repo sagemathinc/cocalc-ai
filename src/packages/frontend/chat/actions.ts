@@ -1453,6 +1453,29 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb.commit();
   };
 
+  setThreadModel = (threadKey: string, model: LanguageModel): void => {
+    if (this.syncdb == null) return;
+    const threadId =
+      this.resolveThreadIdForKey(threadKey) ||
+      (isValidUUID(threadKey) ? threadKey : undefined);
+    if (!threadId) {
+      throw Error(`setThreadModel: invalid threadKey ${threadKey}`);
+    }
+    const { agent_kind, agent_mode } = identityFromModel(model);
+    this.setThreadConfigRecord(
+      threadKey,
+      {
+        acp_config: null,
+        agent_kind,
+        agent_model: model,
+        agent_mode,
+      },
+      { threadId },
+    );
+    this.syncdb.commit();
+    void this.saveSyncdb();
+  };
+
   setCodexConfig = (threadKey: string, config: CodexThreadConfig): void => {
     if (this.syncdb == null) return;
     const threadId =
