@@ -7,6 +7,7 @@ or opening files in that browser session.
 */
 
 import { Command } from "commander";
+import { readFile } from "node:fs/promises";
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 import { durationToMs } from "../../core/utils";
 
@@ -213,6 +214,18 @@ async function waitForExecOperation({
     }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
+}
+
+async function readExecScriptFromStdin(): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      data += chunk;
+    });
+    process.stdin.on("end", () => resolve(data));
+    process.stdin.on("error", reject);
+  });
 }
 
 export function registerBrowserCommand(
@@ -446,11 +459,16 @@ export function registerBrowserCommand(
     );
 
   browser
-    .command("exec <workspace> <code...>")
+    .command("exec <workspace> [code...]")
     .description(
-      "execute javascript in the target browser session with a limited browser API (use 'cocalc browser exec-api' to inspect the API)",
+      "execute javascript in the target browser session with a limited browser API (use 'cocalc browser exec-api' to inspect the API); provide code inline, with --file, or with --stdin",
     )
     .option("--browser <id>", "browser id (or unique prefix)")
+    .option(
+      "--file <path>",
+      "read javascript from a file path (use '-' to read from stdin)",
+    )
+    .option("--stdin", "read javascript from stdin")
     .option(
       "--async",
       "start execution asynchronously and return an exec id",
@@ -474,6 +492,8 @@ export function registerBrowserCommand(
         code: string[],
         opts: {
           browser?: string;
+          file?: string;
+          stdin?: boolean;
           timeout?: string;
           async?: boolean;
           wait?: boolean;
@@ -496,7 +516,29 @@ export function registerBrowserCommand(
             client: ctx.remote.client,
             timeout: timeoutMs,
           }) as BrowserSessionClient;
-          const script = (code ?? []).join(" ").trim();
+          const inlineScript = (code ?? []).join(" ").trim();
+          const filePath = `${opts.file ?? ""}`.trim();
+          const readFromStdin = !!opts.stdin || filePath === "-";
+          const readFromFile = filePath.length > 0 && filePath !== "-";
+          const sourceCount =
+            (inlineScript.length > 0 ? 1 : 0) +
+            (readFromFile ? 1 : 0) +
+            (readFromStdin ? 1 : 0);
+          if (sourceCount === 0) {
+            throw new Error(
+              "javascript code must be provided inline, with --file <path>, or with --stdin",
+            );
+          }
+          if (sourceCount > 1) {
+            throw new Error(
+              "choose exactly one script source: inline code, --file <path>, or --stdin",
+            );
+          }
+          const script = readFromFile
+            ? await readFile(filePath, "utf8")
+            : readFromStdin
+              ? await readExecScriptFromStdin()
+              : inlineScript;
           if (!script) {
             throw new Error("javascript code must be specified");
           }
