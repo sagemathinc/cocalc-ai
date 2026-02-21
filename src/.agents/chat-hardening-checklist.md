@@ -197,7 +197,7 @@ Commit message suggestion:
 Checklist:
 
 - [x] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code. (frontend chat + lite/acp syncdb chat ops now sender-qualified)
-- [ ] Keep date only for sort/time display. (partial: thread message grouping now prefers `thread_id` over root-date/reply-to)
+- [ ] Keep date only for sort/time display. (partial: thread grouping + ACP queue/session identity now prefer `thread_id`; date remains for ordering/UI keys)
 - [ ] Delete transitional fallback code introduced in earlier commits where safe. (partial: thread metadata + interrupt flows no longer read root-message `acp_config`)
 
 Validation:

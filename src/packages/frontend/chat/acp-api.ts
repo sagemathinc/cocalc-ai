@@ -63,7 +63,7 @@ function makeQueueKey({ project_id, path, threadKey }): QueueKey {
 
 type ThreadQueueRef = {
   queueKey: QueueKey;
-  threadKey: string;
+  threadToken: string;
   project_id: string;
   path: string;
 };
@@ -81,10 +81,14 @@ function resolveThreadQueueRef({
   const path = store.get("path");
   if (!project_id || !path) return undefined;
   const threadKey = actions.computeThreadKey(threadRootDate.valueOf());
-  if (!threadKey) return undefined;
+  const rootMessage =
+    actions.getMessageByDate?.(threadRootDate) ??
+    actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
+  const threadToken = field<string>(rootMessage, "thread_id") ?? threadKey;
+  if (!threadToken) return undefined;
   return {
-    queueKey: makeQueueKey({ project_id, path, threadKey }),
-    threadKey,
+    queueKey: makeQueueKey({ project_id, path, threadKey: threadToken }),
+    threadToken,
     project_id,
     path,
   };
@@ -253,8 +257,9 @@ export async function processAcpLLM({
   const project_id = store.get("project_id");
   const path = store.get("path");
 
-  const sessionKey = config?.sessionId ?? threadKey;
-  const queueKey = makeQueueKey({ project_id, path, threadKey });
+  const threadToken = thread_id ?? threadKey;
+  const sessionKey = config?.sessionId ?? threadToken;
+  const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
   const job = async (): Promise<void> => {
     try {
       setState("sending");
@@ -353,12 +358,13 @@ export function cancelQueuedAcpTurn({
   if (!store) return false;
   const messageDate = dateValue(message);
   if (!messageDate) return false;
-  const threadKey = actions.computeThreadKey(messageDate.valueOf());
-  if (!threadKey) return false;
+  const legacyThreadKey = actions.computeThreadKey(messageDate.valueOf());
+  const threadToken = field<string>(message, "thread_id") ?? legacyThreadKey;
+  if (!threadToken) return false;
   const project_id = store.get("project_id");
   const path = store.get("path");
   if (!project_id || !path) return false;
-  const queueKey = makeQueueKey({ project_id, path, threadKey });
+  const queueKey = makeQueueKey({ project_id, path, threadKey: threadToken });
   const q = turnQueues.get(queueKey);
   if (!q) return false;
   const targetIndex = q.items.findIndex(
@@ -374,8 +380,10 @@ export function cancelQueuedAcpTurn({
     acpState: (() => {
       let next = store
         .get("acpState")
-        .set(`${messageDate.valueOf()}`, "not-sent")
-        .set(`${threadKey}`, "not-sent");
+        .set(`${messageDate.valueOf()}`, "not-sent");
+      if (legacyThreadKey) {
+        next = next.set(`${legacyThreadKey}`, "not-sent");
+      }
       const threadId = field<string>(message, "thread_id");
       if (threadId) {
         next = next.set(`thread:${threadId}`, "not-sent");

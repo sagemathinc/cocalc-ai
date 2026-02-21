@@ -108,5 +108,6 @@ describe("processAcpLLM", () => {
     expect(arg.chat.message_id).toBe("user-msg-1");
     expect(arg.chat.thread_id).toBe("thread-1");
     expect(arg.chat.reply_to_message_id).toBe("root-msg-1");
+    expect(arg.session_id).toBe("thread-1");
   });
 });
