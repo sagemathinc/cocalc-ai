@@ -19,6 +19,11 @@ import {
   history as syncHistory,
   purgeHistory as syncPurgeHistory,
 } from "@cocalc/conat/hub/api/sync-impl";
+import {
+  listBrowserSessionsForAccount,
+  removeBrowserSessionRecord,
+  upsertBrowserSessionRecord,
+} from "./browser-sessions";
 
 const logger = getLogger("lite:hub:api");
 
@@ -156,10 +161,63 @@ async function webappError(_opts?: object) {
   // No-op in lite mode.
 }
 
+async function upsertBrowserSession(opts?: {
+  account_id?: string;
+  browser_id: string;
+  session_name?: string;
+  url?: string;
+  active_project_id?: string;
+  open_projects?: any[];
+}): Promise<{ browser_id: string; created_at: string; updated_at: string }> {
+  const account_id = `${opts?.account_id ?? ACCOUNT_ID}`;
+  return upsertBrowserSessionRecord({
+    account_id,
+    browser_id: `${opts?.browser_id ?? ""}`,
+    session_name: opts?.session_name,
+    url: opts?.url,
+    active_project_id: opts?.active_project_id,
+    open_projects: opts?.open_projects,
+  });
+}
+
+async function listBrowserSessions(opts?: {
+  account_id?: string;
+  max_age_ms?: number;
+  include_stale?: boolean;
+}) {
+  const account_id = `${opts?.account_id ?? ACCOUNT_ID}`;
+  return listBrowserSessionsForAccount({
+    account_id,
+    max_age_ms: opts?.max_age_ms,
+    include_stale: opts?.include_stale,
+  });
+}
+
+async function removeBrowserSession(opts?: {
+  account_id?: string;
+  browser_id: string;
+}): Promise<{ removed: boolean }> {
+  const account_id = `${opts?.account_id ?? ACCOUNT_ID}`;
+  return {
+    removed: removeBrowserSessionRecord({
+      account_id,
+      browser_id: `${opts?.browser_id ?? ""}`,
+    }),
+  };
+}
+
 // NOTE: Consumers (e.g., project-host) may extend this object in-place to add
 // host-specific implementations of hub APIs. Keep the defaults minimal here.
 export const hubApi: HubApi = {
-  system: { getNames, logClientError, userTracking, webappError },
+  system: {
+    getNames,
+    logClientError,
+    userTracking,
+    webappError,
+    upsertBrowserSession,
+    listBrowserSessions,
+    removeBrowserSession,
+  },
   projects: {},
   db: { touch: () => {}, userQuery },
   purchases: {},
