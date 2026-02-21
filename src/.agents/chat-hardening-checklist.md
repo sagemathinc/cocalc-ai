@@ -241,7 +241,7 @@ Checklist:
 Validation:
 
 - [ ] End-to-end manual smoke test checklist passes.
-- [ ] All relevant tests pass.
+- [x] All relevant tests pass.
 
 ## Manual Smoke Test Checklist (run after commits 7, 10, and 12)
 
