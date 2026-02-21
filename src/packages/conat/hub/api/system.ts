@@ -32,6 +32,9 @@ export const system = {
   getOpenAiApiKeyStatus: authFirst,
   getCodexPaymentSource: authFirst,
   testR2Credentials: authFirst,
+  upsertBrowserSession: authFirst,
+  listBrowserSessions: authFirst,
+  removeBrowserSession: authFirst,
 
   adminSalesloftSync: authFirst,
   userSalesloftSync: authFirst,
@@ -90,6 +93,23 @@ export interface R2CredentialsTestResult {
   s3: R2CredentialCheck;
   matched_buckets: string[];
   notes: string[];
+}
+
+export interface BrowserOpenProjectState {
+  project_id: string;
+  title?: string;
+  open_files: string[];
+}
+
+export interface BrowserSessionInfo {
+  browser_id: string;
+  session_name?: string;
+  url?: string;
+  active_project_id?: string;
+  open_projects: BrowserOpenProjectState[];
+  created_at: string;
+  updated_at: string;
+  stale: boolean;
 }
 
 export interface System {
@@ -284,4 +304,28 @@ export interface System {
       r2_endpoint?: string;
     };
   }) => Promise<R2CredentialsTestResult>;
+
+  upsertBrowserSession: (opts: {
+    account_id?: string;
+    browser_id: string;
+    session_name?: string;
+    url?: string;
+    active_project_id?: string;
+    open_projects?: BrowserOpenProjectState[];
+  }) => Promise<{
+    browser_id: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+
+  listBrowserSessions: (opts?: {
+    account_id?: string;
+    max_age_ms?: number;
+    include_stale?: boolean;
+  }) => Promise<BrowserSessionInfo[]>;
+
+  removeBrowserSession: (opts: {
+    account_id?: string;
+    browser_id: string;
+  }) => Promise<{ removed: boolean }>;
 }

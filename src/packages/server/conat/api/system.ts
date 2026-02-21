@@ -29,6 +29,11 @@ import {
   testR2Credentials as testR2Credentials0,
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
+import {
+  listBrowserSessionsForAccount,
+  removeBrowserSessionRecord,
+  upsertBrowserSessionRecord,
+} from "./browser-sessions";
 
 const logger = getLogger("server:conat:api:system");
 
@@ -719,6 +724,71 @@ export async function getCodexPaymentSource({
     hasSiteApiKey,
     sharedHomeMode,
     project_id,
+  };
+}
+
+export async function upsertBrowserSession({
+  account_id,
+  browser_id,
+  session_name,
+  url,
+  active_project_id,
+  open_projects,
+}: {
+  account_id?: string;
+  browser_id: string;
+  session_name?: string;
+  url?: string;
+  active_project_id?: string;
+  open_projects?: unknown;
+}): Promise<{ browser_id: string; created_at: string; updated_at: string }> {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  return upsertBrowserSessionRecord({
+    account_id,
+    browser_id,
+    session_name,
+    url,
+    active_project_id,
+    open_projects,
+  });
+}
+
+export async function listBrowserSessions({
+  account_id,
+  max_age_ms,
+  include_stale,
+}: {
+  account_id?: string;
+  max_age_ms?: number;
+  include_stale?: boolean;
+}) {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  return listBrowserSessionsForAccount({
+    account_id,
+    max_age_ms,
+    include_stale,
+  });
+}
+
+export async function removeBrowserSession({
+  account_id,
+  browser_id,
+}: {
+  account_id?: string;
+  browser_id: string;
+}): Promise<{ removed: boolean }> {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  return {
+    removed: removeBrowserSessionRecord({
+      account_id,
+      browser_id,
+    }),
   };
 }
 

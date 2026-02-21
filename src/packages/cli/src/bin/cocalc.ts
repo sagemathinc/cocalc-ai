@@ -24,6 +24,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import { fsClient, fsSubject, type FilesystemClient } from "@cocalc/conat/files/fs";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
+import { createBrowserSessionClient } from "@cocalc/conat/service/browser-session";
 import { FALLBACK_ACCOUNT_UUID, basePathCookieName, isValidUUID } from "@cocalc/util/misc";
 import {
   applyAuthProfile,
@@ -115,6 +116,10 @@ import { registerAuthCommand, type AuthCommandDeps } from "./commands/auth";
 import { registerDaemonCommand, type DaemonCommandDeps } from "./commands/daemon";
 import { registerAdminCommand, type AdminCommandDeps } from "./commands/admin";
 import { registerAccountCommand, type AccountCommandDeps } from "./commands/account";
+import {
+  registerBrowserCommand,
+  type BrowserCommandDeps,
+} from "./commands/browser";
 
 const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
@@ -1700,6 +1705,19 @@ const accountCommandDeps = {
 } satisfies AccountCommandDeps;
 
 registerAccountCommand(program, accountCommandDeps);
+
+const browserCommandDeps = {
+  withContext,
+  authConfigPath,
+  loadAuthConfig,
+  saveAuthConfig,
+  selectedProfileName,
+  globalsFrom,
+  resolveWorkspace,
+  createBrowserSessionClient,
+} satisfies BrowserCommandDeps;
+
+registerBrowserCommand(program, browserCommandDeps);
 
 const hostCommandDeps = {
   withContext,

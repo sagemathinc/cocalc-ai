@@ -9,6 +9,7 @@ export type AuthProfile = {
   cookie?: string;
   bearer?: string;
   hub_password?: string;
+  browser_id?: string;
 };
 
 export type AuthConfig = {
