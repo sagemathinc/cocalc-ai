@@ -68,6 +68,29 @@ export type BrowserNotifyOptions = {
   block?: boolean;
 };
 
+export type BrowserExecOutput = {
+  stdout: unknown;
+  stderr: unknown;
+  exit_code?: number;
+  code?: number | null;
+  status?: string;
+  job_id?: string;
+  pid?: number;
+  elapsed_s?: number;
+  stats?: unknown;
+  truncated?: boolean;
+};
+
+export type BrowserBashOptions = {
+  cwd?: string;
+  path?: string;
+  timeout?: number;
+  max_output?: number;
+  err_on_exit?: boolean;
+  env?: Record<string, string>;
+  filesystem?: boolean;
+};
+
 export type BrowserExecApi = {
   projectId: string;
   listOpenFiles: () => BrowserOpenFileInfo[];
@@ -109,6 +132,40 @@ export type BrowserExecApi = {
       message: unknown,
       opts?: Omit<BrowserNotifyOptions, "type">,
     ) => { ok: true; type: BrowserNotifyType; message: string };
+  };
+  fs: {
+    exists: (path: string) => Promise<boolean>;
+    readFile: (path: string, encoding?: string, lock?: number) => Promise<unknown>;
+    writeFile: (path: string, data: unknown, saveLast?: boolean) => Promise<void>;
+    readdir: (path: string, options?: unknown) => Promise<unknown>;
+    stat: (path: string) => Promise<unknown>;
+    lstat: (path: string) => Promise<unknown>;
+    mkdir: (path: string, options?: unknown) => Promise<void>;
+    rm: (path: string | string[], options?: unknown) => Promise<void>;
+    rename: (oldPath: string, newPath: string) => Promise<void>;
+    copyFile: (src: string, dest: string) => Promise<void>;
+    cp: (src: string | string[], dest: string, options?: unknown) => Promise<void>;
+    move: (src: string | string[], dest: string, options?: unknown) => Promise<void>;
+    find: (path: string, options?: unknown) => Promise<unknown>;
+    fd: (path: string, options?: unknown) => Promise<unknown>;
+    ripgrep: (
+      path: string,
+      pattern: string,
+      options?: unknown,
+    ) => Promise<unknown>;
+    dust: (path: string, options?: unknown) => Promise<unknown>;
+  };
+  bash: {
+    run: (script: string, options?: BrowserBashOptions) => Promise<BrowserExecOutput>;
+    start: (script: string, options?: BrowserBashOptions) => Promise<BrowserExecOutput>;
+    get: (
+      job_id: string,
+      options?: { async_stats?: boolean; async_await?: boolean; timeout?: number },
+    ) => Promise<BrowserExecOutput>;
+    wait: (
+      job_id: string,
+      options?: { async_stats?: boolean; timeout?: number },
+    ) => Promise<BrowserExecOutput>;
   };
 };`;
 
@@ -193,6 +250,80 @@ function sanitizePathList(paths: unknown): string[] {
   return paths
     .map((path) => `${path ?? ""}`.trim())
     .filter((path) => path.length > 0);
+}
+
+function asFinitePositive(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
+  const num = typeof value === "number" ? value : Number(`${value}`);
+  if (!Number.isFinite(num) || num <= 0) return undefined;
+  return num;
+}
+
+function asFiniteNonNegative(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
+  const num = typeof value === "number" ? value : Number(`${value}`);
+  if (!Number.isFinite(num) || num < 0) return undefined;
+  return num;
+}
+
+function requireAbsolutePath(path: unknown, label = "path"): string {
+  const cleanPath = `${path ?? ""}`.trim();
+  if (!cleanPath) {
+    throw Error(`${label} must be specified`);
+  }
+  if (!cleanPath.startsWith("/")) {
+    throw Error(`${label} must be absolute`);
+  }
+  return cleanPath;
+}
+
+function requireAbsolutePathOrList(
+  value: unknown,
+  label = "path",
+): string | string[] {
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      throw Error(`${label} must be a non-empty array`);
+    }
+    return value.map((x, i) => requireAbsolutePath(x, `${label}[${i}]`));
+  }
+  return requireAbsolutePath(value, label);
+}
+
+function sanitizeBashOptions(opts: unknown): BrowserBashOptions {
+  if (opts == null || typeof opts !== "object") {
+    return {};
+  }
+  const row = opts as {
+    cwd?: unknown;
+    path?: unknown;
+    timeout?: unknown;
+    max_output?: unknown;
+    err_on_exit?: unknown;
+    env?: unknown;
+    filesystem?: unknown;
+  };
+  const cwd = row.cwd == null ? undefined : requireAbsolutePath(row.cwd, "cwd");
+  const path = row.path == null ? undefined : requireAbsolutePath(row.path, "path");
+  const timeout = asFinitePositive(row.timeout);
+  const max_output = asFinitePositive(row.max_output);
+  const env =
+    row.env != null && typeof row.env === "object"
+      ? (row.env as Record<string, string>)
+      : undefined;
+  const err_on_exit =
+    row.err_on_exit == null ? undefined : !!row.err_on_exit;
+  const filesystem =
+    row.filesystem == null ? undefined : !!row.filesystem;
+  return {
+    ...(cwd != null ? { cwd } : {}),
+    ...(path != null ? { path } : {}),
+    ...(timeout != null ? { timeout } : {}),
+    ...(max_output != null ? { max_output } : {}),
+    ...(err_on_exit != null ? { err_on_exit } : {}),
+    ...(env != null ? { env } : {}),
+    ...(filesystem != null ? { filesystem } : {}),
+  };
 }
 
 function toNotifyMessage(value: unknown): string {
@@ -294,6 +425,29 @@ export type BrowserSessionAutomation = {
   stop: () => Promise<void>;
 };
 
+type BrowserExecOutput = {
+  stdout: unknown;
+  stderr: unknown;
+  exit_code?: number;
+  code?: number | null;
+  status?: string;
+  job_id?: string;
+  pid?: number;
+  elapsed_s?: number;
+  stats?: unknown;
+  truncated?: boolean;
+};
+
+type BrowserBashOptions = {
+  cwd?: string;
+  path?: string;
+  timeout?: number;
+  max_output?: number;
+  err_on_exit?: boolean;
+  env?: Record<string, string>;
+  filesystem?: boolean;
+};
+
 type BrowserExecApi = {
   projectId: string;
   listOpenFiles: () => BrowserOpenFileInfo[];
@@ -344,6 +498,40 @@ type BrowserExecApi = {
       message: unknown,
       opts?: unknown,
     ) => { ok: true; type: BrowserNotifyType; message: string };
+  };
+  fs: {
+    exists: (path: string) => Promise<boolean>;
+    readFile: (path: string, encoding?: string, lock?: number) => Promise<unknown>;
+    writeFile: (path: string, data: unknown, saveLast?: boolean) => Promise<void>;
+    readdir: (path: string, options?: unknown) => Promise<unknown>;
+    stat: (path: string) => Promise<unknown>;
+    lstat: (path: string) => Promise<unknown>;
+    mkdir: (path: string, options?: unknown) => Promise<void>;
+    rm: (path: string | string[], options?: unknown) => Promise<void>;
+    rename: (oldPath: string, newPath: string) => Promise<void>;
+    copyFile: (src: string, dest: string) => Promise<void>;
+    cp: (src: string | string[], dest: string, options?: unknown) => Promise<void>;
+    move: (src: string | string[], dest: string, options?: unknown) => Promise<void>;
+    find: (path: string, options?: unknown) => Promise<unknown>;
+    fd: (path: string, options?: unknown) => Promise<unknown>;
+    ripgrep: (
+      path: string,
+      pattern: string,
+      options?: unknown,
+    ) => Promise<unknown>;
+    dust: (path: string, options?: unknown) => Promise<unknown>;
+  };
+  bash: {
+    run: (script: string, options?: BrowserBashOptions) => Promise<BrowserExecOutput>;
+    start: (script: string, options?: BrowserBashOptions) => Promise<BrowserExecOutput>;
+    get: (
+      job_id: string,
+      options?: { async_stats?: boolean; async_await?: boolean; timeout?: number },
+    ) => Promise<BrowserExecOutput>;
+    wait: (
+      job_id: string,
+      options?: { async_stats?: boolean; timeout?: number },
+    ) => Promise<BrowserExecOutput>;
   };
 };
 
@@ -602,6 +790,8 @@ export function createBrowserSessionAutomation({
     project_id: string,
     isCanceled?: () => boolean,
   ): BrowserExecApi => {
+    const fsApi = conat().fs({ project_id });
+
     const notify = (
       forcedType: BrowserNotifyType | undefined,
       message: unknown,
@@ -622,6 +812,36 @@ export function createBrowserSessionAutomation({
         ...(cleanOpts.block != null ? { block: cleanOpts.block } : {}),
       });
       return { ok: true, type, message: cleanMessage };
+    };
+
+    const runBash = async (
+      script: unknown,
+      options?: unknown,
+      async_call?: boolean,
+    ): Promise<BrowserExecOutput> => {
+      assertExecNotCanceled(isCanceled);
+      const command = `${script ?? ""}`;
+      if (!command.trim()) {
+        throw Error("script must be specified");
+      }
+      const clean = sanitizeBashOptions(options);
+      if (clean.cwd && clean.path && clean.cwd !== clean.path) {
+        throw Error("if both cwd and path are set, they must match");
+      }
+      const result = await client.project_client.exec({
+        project_id,
+        command,
+        bash: true,
+        timeout: clean.timeout ?? 30,
+        max_output: clean.max_output,
+        err_on_exit: clean.err_on_exit ?? false,
+        env: clean.env,
+        filesystem: clean.filesystem,
+        path: clean.path ?? clean.cwd,
+        ...(async_call ? { async_call: true } : {}),
+      });
+      assertExecNotCanceled(isCanceled);
+      return asPlain(result) as BrowserExecOutput;
     };
 
     return {
@@ -764,6 +984,203 @@ export function createBrowserSessionAutomation({
           notify("warning", message, opts),
         error: (message: unknown, opts?: unknown) =>
           notify("error", message, opts),
+      },
+      fs: {
+        exists: async (path: string): Promise<boolean> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const exists = await fsApi.exists(cleanPath);
+          assertExecNotCanceled(isCanceled);
+          return !!exists;
+        },
+        readFile: async (
+          path: string,
+          encoding?: string,
+          lock?: number,
+        ): Promise<unknown> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const lockMs = asFiniteNonNegative(lock);
+          const data = await fsApi.readFile(cleanPath, encoding, lockMs);
+          assertExecNotCanceled(isCanceled);
+          return data;
+        },
+        writeFile: async (
+          path: string,
+          data: unknown,
+          saveLast?: boolean,
+        ): Promise<void> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          await fsApi.writeFile(cleanPath, data as any, saveLast);
+          assertExecNotCanceled(isCanceled);
+        },
+        readdir: async (path: string, options?: unknown): Promise<unknown> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const value = await fsApi.readdir(cleanPath, options as any);
+          assertExecNotCanceled(isCanceled);
+          return value;
+        },
+        stat: async (path: string): Promise<unknown> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const value = await fsApi.stat(cleanPath);
+          assertExecNotCanceled(isCanceled);
+          return value;
+        },
+        lstat: async (path: string): Promise<unknown> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const value = await fsApi.lstat(cleanPath);
+          assertExecNotCanceled(isCanceled);
+          return value;
+        },
+        mkdir: async (path: string, options?: unknown): Promise<void> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          await fsApi.mkdir(cleanPath, options as any);
+          assertExecNotCanceled(isCanceled);
+        },
+        rm: async (path: string | string[], options?: unknown): Promise<void> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePathOrList(path);
+          await fsApi.rm(cleanPath, options as any);
+          assertExecNotCanceled(isCanceled);
+        },
+        rename: async (oldPath: string, newPath: string): Promise<void> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanOld = requireAbsolutePath(oldPath, "oldPath");
+          const cleanNew = requireAbsolutePath(newPath, "newPath");
+          await fsApi.rename(cleanOld, cleanNew);
+          assertExecNotCanceled(isCanceled);
+        },
+        copyFile: async (src: string, dest: string): Promise<void> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanSrc = requireAbsolutePath(src, "src");
+          const cleanDest = requireAbsolutePath(dest, "dest");
+          await fsApi.copyFile(cleanSrc, cleanDest);
+          assertExecNotCanceled(isCanceled);
+        },
+        cp: async (
+          src: string | string[],
+          dest: string,
+          options?: unknown,
+        ): Promise<void> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanSrc = requireAbsolutePathOrList(src, "src");
+          const cleanDest = requireAbsolutePath(dest, "dest");
+          await fsApi.cp(cleanSrc, cleanDest, options as any);
+          assertExecNotCanceled(isCanceled);
+        },
+        move: async (
+          src: string | string[],
+          dest: string,
+          options?: unknown,
+        ): Promise<void> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanSrc = requireAbsolutePathOrList(src, "src");
+          const cleanDest = requireAbsolutePath(dest, "dest");
+          await fsApi.move(cleanSrc, cleanDest, options as any);
+          assertExecNotCanceled(isCanceled);
+        },
+        find: async (path: string, options?: unknown): Promise<unknown> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const value = await fsApi.find(cleanPath, options as any);
+          assertExecNotCanceled(isCanceled);
+          return value;
+        },
+        fd: async (path: string, options?: unknown): Promise<unknown> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const value = await fsApi.fd(cleanPath, options as any);
+          assertExecNotCanceled(isCanceled);
+          return value;
+        },
+        ripgrep: async (
+          path: string,
+          pattern: string,
+          options?: unknown,
+        ): Promise<unknown> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const cleanPattern = `${pattern ?? ""}`.trim();
+          if (!cleanPattern) {
+            throw Error("pattern must be specified");
+          }
+          const value = await fsApi.ripgrep(cleanPath, cleanPattern, options as any);
+          assertExecNotCanceled(isCanceled);
+          return value;
+        },
+        dust: async (path: string, options?: unknown): Promise<unknown> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const value = await fsApi.dust(cleanPath, options as any);
+          assertExecNotCanceled(isCanceled);
+          return value;
+        },
+      },
+      bash: {
+        run: async (
+          script: string,
+          options?: BrowserBashOptions,
+        ): Promise<BrowserExecOutput> => {
+          return await runBash(script, options, false);
+        },
+        start: async (
+          script: string,
+          options?: BrowserBashOptions,
+        ): Promise<BrowserExecOutput> => {
+          return await runBash(script, options, true);
+        },
+        get: async (
+          job_id: string,
+          options?: {
+            async_stats?: boolean;
+            async_await?: boolean;
+            timeout?: number;
+          },
+        ): Promise<BrowserExecOutput> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanJobId = `${job_id ?? ""}`.trim();
+          if (!cleanJobId) {
+            throw Error("job_id must be specified");
+          }
+          const timeout = asFinitePositive(options?.timeout);
+          const result = await client.project_client.exec({
+            project_id,
+            async_get: cleanJobId,
+            async_stats: options?.async_stats,
+            async_await: options?.async_await,
+            ...(timeout != null ? { timeout } : {}),
+          });
+          assertExecNotCanceled(isCanceled);
+          return asPlain(result) as BrowserExecOutput;
+        },
+        wait: async (
+          job_id: string,
+          options?: {
+            async_stats?: boolean;
+            timeout?: number;
+          },
+        ): Promise<BrowserExecOutput> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanJobId = `${job_id ?? ""}`.trim();
+          if (!cleanJobId) {
+            throw Error("job_id must be specified");
+          }
+          const timeout = asFinitePositive(options?.timeout);
+          const result = await client.project_client.exec({
+            project_id,
+            async_get: cleanJobId,
+            async_stats: options?.async_stats,
+            async_await: true,
+            ...(timeout != null ? { timeout } : {}),
+          });
+          assertExecNotCanceled(isCanceled);
+          return asPlain(result) as BrowserExecOutput;
+        },
       },
     };
   };
