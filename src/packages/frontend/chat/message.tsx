@@ -910,8 +910,8 @@ export default function Message({
             type="text"
             style={{ color: COLORS.GRAY_M }}
             onClick={edit_message}
+            icon={<Icon name="pencil" />}
           >
-            <Icon name="pencil" /> Edit
           </Button>
         </Tip>,
       );

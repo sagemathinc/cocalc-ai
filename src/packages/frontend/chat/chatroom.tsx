@@ -108,6 +108,7 @@ export interface ChatPanelProps {
   path: string;
   messages?: ChatMessages;
   threadIndex?: Map<string, ThreadIndexEntry>;
+  docVersion?: number;
   fontSize?: number;
   desc?: NodeDesc;
   variant?: "default" | "compact";
@@ -128,6 +129,7 @@ export function ChatPanel({
   path,
   messages,
   threadIndex,
+  docVersion,
   fontSize = 13,
   desc,
   variant = "default",
@@ -179,6 +181,7 @@ export function ChatPanel({
     activity,
     accountId: account_id,
     actions,
+    version: docVersion,
   });
 
   const {
@@ -683,7 +686,7 @@ function ChatRoomInner({
   font_size,
   desc,
 }: EditorComponentProps) {
-  const { messages, threadIndex } = useChatDoc();
+  const { messages, threadIndex, version } = useChatDoc();
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   // subscribe to syncdbReady to force re-render when sync attaches
   useEditor("syncdbReady");
@@ -694,6 +697,7 @@ function ChatRoomInner({
       path={path}
       messages={messages}
       threadIndex={threadIndex}
+      docVersion={version}
       fontSize={font_size}
       desc={desc}
       variant="default"

@@ -58,6 +58,7 @@ const COMBINED_FEED_LABEL = "Combined feed";
 export function useThreadList(
   messages?: ChatMessages,
   threadIndex?: Map<string, ThreadIndexEntry>,
+  version?: number,
 ): ThreadListItem[] {
   return React.useMemo(() => {
     if (threadIndex == null) {
@@ -81,7 +82,7 @@ export function useThreadList(
 
     items.sort((a, b) => b.newestTime - a.newestTime);
     return items;
-  }, [threadIndex, messages]);
+  }, [threadIndex, messages, version]);
 }
 
 export function deriveThreadLabel(
@@ -176,6 +177,7 @@ interface ThreadDerivationOptions {
   activity?: ImmutableMap<string, number>;
   accountId?: string;
   actions?: ChatActions;
+  version?: number;
 }
 
 export function useThreadSections({
@@ -184,14 +186,14 @@ export function useThreadSections({
   activity,
   accountId,
   actions,
+  version,
 }: ThreadDerivationOptions): {
   threads: ThreadMeta[];
   archivedThreads: ThreadMeta[];
   combinedThread?: ThreadMeta;
   threadSections: ThreadSectionWithUnread[];
 } {
-  const rawThreads = useThreadList(messages, threadIndex);
-  const llmCacheRef = React.useRef<Map<string, boolean>>(new Map());
+  const rawThreads = useThreadList(messages, threadIndex, version);
 
   const threads = React.useMemo<ThreadMeta[]>(() => {
     return rawThreads.map((thread) => {
@@ -219,17 +221,16 @@ export function useThreadSections({
       const readCount =
         Number.isFinite(readValue) && readValue > 0 ? readValue : 0;
       const unreadCount = Math.max(thread.messageCount - readCount, 0);
-      let isAI = llmCacheRef.current.get(thread.key);
-      if (isAI == null) {
-        if (actions?.isLanguageModelThread) {
-          const result = actions.isLanguageModelThread(
-            new Date(parseInt(thread.key, 10)),
-          );
-          isAI = result !== false;
-        } else {
-          isAI = false;
-        }
-        llmCacheRef.current.set(thread.key, isAI);
+      const metadataIsAI =
+        threadMeta?.agent_kind === "acp" ||
+        threadMeta?.agent_kind === "llm" ||
+        threadMeta?.acp_config != null;
+      let isAI = metadataIsAI;
+      if (!isAI && actions?.isLanguageModelThread) {
+        const result = actions.isLanguageModelThread(
+          new Date(parseInt(thread.key, 10)),
+        );
+        isAI = result !== false;
       }
       const lastActivityAt = activity?.get(thread.key);
       return {
@@ -248,7 +249,7 @@ export function useThreadSections({
         lastActivityAt,
       };
     });
-  }, [rawThreads, accountId, actions, activity]);
+  }, [rawThreads, accountId, actions, activity, version]);
 
   const visibleThreads = React.useMemo(
     () => threads.filter((thread) => !thread.isArchived),

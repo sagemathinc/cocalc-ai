@@ -235,43 +235,71 @@ export function ChatRoomThreadPanel({
               <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
                 Thread image URL
               </div>
-              <Space style={{ width: "100%" }}>
-                <Input
-                  style={{ flex: 1 }}
-                  placeholder="Paste or drag image URL (optional)"
-                  value={newThreadSetup.image}
-                  onChange={(e) => update({ image: e.target.value })}
-                  onDrop={(e) => {
-                    const uri =
-                      e.dataTransfer.getData("text/uri-list") ||
-                      e.dataTransfer.getData("text/plain");
-                    if (uri?.trim()) {
-                      e.preventDefault();
-                      update({ image: uri.trim() });
-                    }
+              <Input
+                style={{ width: "100%", marginBottom: 8 }}
+                placeholder="Paste or drag image URL (optional)"
+                value={newThreadSetup.image}
+                onChange={(e) => update({ image: e.target.value })}
+                onDrop={(e) => {
+                  const uri =
+                    e.dataTransfer.getData("text/uri-list") ||
+                    e.dataTransfer.getData("text/plain");
+                  if (uri?.trim()) {
+                    e.preventDefault();
+                    update({ image: uri.trim() });
+                  }
+                }}
+              />
+              {project_id ? (
+                <BlobUpload
+                  project_id={project_id}
+                  show_upload={false}
+                  config={{
+                    clickable: `.${imageUploadClass}`,
+                    acceptedFiles: "image/*",
+                    maxFiles: 1,
                   }}
-                />
-                {project_id ? (
-                  <BlobUpload
-                    project_id={project_id}
-                    show_upload={false}
-                    config={{
-                      clickable: `.${imageUploadClass}`,
-                      acceptedFiles: "image/*",
-                      maxFiles: 1,
-                    }}
-                    event_handlers={{
-                      complete: (file) => {
-                        if (file?.url) {
-                          update({ image: file.url });
-                        }
-                      },
+                  event_handlers={{
+                    complete: (file) => {
+                      if (file?.url) {
+                        update({ image: file.url });
+                      }
+                    },
+                  }}
+                >
+                  <div
+                    className={imageUploadClass}
+                    style={{
+                      border: "1px dashed #cfcfcf",
+                      borderRadius: 8,
+                      padding: "10px 12px",
+                      color: "#666",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
                     }}
                   >
-                    <Button className={imageUploadClass}>Upload</Button>
-                  </BlobUpload>
-                ) : null}
-              </Space>
+                    <span>
+                      <Icon name="upload" /> Click or drag image here to upload
+                    </span>
+                    {newThreadSetup.image ? (
+                      <img
+                        src={newThreadSetup.image}
+                        alt="Thread image preview"
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 6,
+                          objectFit: "cover",
+                          border: "1px solid #ddd",
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                </BlobUpload>
+              ) : null}
             </div>
           </div>
           <div
