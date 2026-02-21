@@ -883,4 +883,93 @@ describe("recoverOrphanedAcpTurns", () => {
       ]),
     );
   });
+
+  it("does not mutate thread-config session metadata during restart recovery", async () => {
+    const rootIso = new Date("2026-01-01T00:00:00.000Z").toISOString();
+    const turnIso = new Date("2026-01-01T00:01:00.000Z").toISOString();
+    const rows: any[] = [
+      {
+        event: "chat",
+        date: turnIso,
+        sender_id: "codex-agent",
+        generating: true,
+        history: [
+          {
+            author_id: "codex-agent",
+            content: "partial output",
+            date: turnIso,
+          },
+        ],
+        message_id: "msg-1",
+        thread_id: "thread-1",
+      },
+      {
+        event: "chat-thread-config",
+        sender_id: "__thread_config__",
+        date: rootIso,
+        thread_id: "thread-1",
+        acp_config: {
+          model: "gpt-5.3-codex",
+          sessionId: "session-keep",
+        },
+      },
+    ];
+    const sets: any[] = [];
+    const syncdb: any = {
+      metadata: baseMetadata,
+      isReady: () => true,
+      get: () => rows,
+      get_one: (where: any) =>
+        rows.find((row) =>
+          Object.entries(where).every(([k, v]) => row[k] === v),
+        ),
+      set: (val: any) => {
+        sets.push(val);
+        const idx = rows.findIndex(
+          (row) =>
+            row.event === val.event &&
+            row.date === val.date &&
+            row.sender_id === val.sender_id,
+        );
+        if (idx >= 0) {
+          rows[idx] = { ...rows[idx], ...val };
+        } else {
+          rows.push({ ...val });
+        }
+      },
+      commit: jest.fn(),
+      save: jest.fn(async () => {}),
+      close: async () => {},
+    };
+
+    (chatServer.acquireChatSyncDB as any).mockResolvedValue(syncdb);
+    (turns.listRunningAcpTurnLeases as any).mockReturnValue([
+      {
+        project_id: "p",
+        path: "chat",
+        message_date: turnIso,
+        sender_id: "codex-agent",
+        reply_to: rootIso,
+        message_id: "msg-1",
+        thread_id: "thread-1",
+      },
+    ]);
+
+    const recovered = await recoverOrphanedAcpTurns(makeFakeClient() as any);
+
+    expect(recovered).toBe(1);
+    expect(
+      sets.find((row) => row.event === "chat-thread-config"),
+    ).toBeUndefined();
+    const cfg = rows.find(
+      (row) =>
+        row.event === "chat-thread-config" &&
+        row.sender_id === "__thread_config__" &&
+        row.date === rootIso,
+    );
+    expect(cfg?.acp_config).toEqual({
+      model: "gpt-5.3-codex",
+      sessionId: "session-keep",
+    });
+  });
 });

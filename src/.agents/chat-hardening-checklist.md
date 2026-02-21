@@ -147,8 +147,8 @@ Checklist:
 
 Validation:
 
-- [ ] Extend [src/packages/lite/hub/acp/__tests__/chat-writer.test.ts](./src/packages/lite/hub/acp/__tests__/chat-writer.test.ts).
-- [ ] Verify restart recovery keeps codex config intact.
+- [x] Extend [src/packages/lite/hub/acp/__tests__/chat-writer.test.ts](./src/packages/lite/hub/acp/__tests__/chat-writer.test.ts).
+- [x] Verify restart recovery keeps codex config intact.
 
 ## Commit 8: Persisted `thread_state` for robust restart UX
 
