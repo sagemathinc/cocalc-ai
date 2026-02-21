@@ -67,12 +67,12 @@ Checklist:
   - [x] primary map key = `message_id` (internal map; date-keyed compatibility map still exported)
   - [x] maintain secondary index by timestamp only for sorting/lookup utilities
 - [ ] Update dependent selectors and helpers in:
-  - [x] [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts)
-  - [x] [src/packages/frontend/chat/utils.ts](./src/packages/frontend/chat/utils.ts)
+  - [ ] [src/packages/frontend/chat/actions.ts](./src/packages/frontend/chat/actions.ts) (partial: added date-key accessor; broader key-assumption cleanup pending)
+  - [ ] [src/packages/frontend/chat/utils.ts](./src/packages/frontend/chat/utils.ts) (partial: root/date helpers now tolerate non-date map keys)
 
 Validation:
 
-- [ ] Add/update tests for cache updates and thread indexing. (partial: cache by-id/date-index coverage added; broader thread-index behavior still needs explicit tests)
+- [ ] Add/update tests for cache updates and thread indexing. (partial: cache by-id/date-index coverage added)
 - [ ] Confirm thread rendering/scroll still works.
 
 ## Commit 4: Add `thread` and `thread_config` records (storage + accessors)
@@ -159,7 +159,7 @@ Commit message suggestion:
 Checklist:
 
 - [x] Write `thread_state` transitions during send/queue/run/finalize/interrupt.
-- [ ] Read `thread_state` for spinner/status rendering instead of fragile inference. (partial: thread-state now hydrates/updates `acpState`; full UI cutover still pending)
+- [ ] Read `thread_state` for spinner/status rendering instead of fragile inference.
 
 Validation:
 
@@ -197,7 +197,7 @@ Commit message suggestion:
 Checklist:
 
 - [ ] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code.
-- [ ] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code. (partial: frontend chat actions + llm regenerate paths now avoid date-only identity)
+- [ ] Audit and remove date-only `get_one/set/delete` callsites in chat/acp code. (partial: frontend chat actions/llm now sender-qualify get/set/delete in active paths)
 - [ ] Keep date only for sort/time display.
 - [ ] Delete transitional fallback code introduced in earlier commits where safe.
 

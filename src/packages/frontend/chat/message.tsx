@@ -1033,6 +1033,7 @@ export default function Message({
             actions?.languageModelStopGenerating(new Date(date), {
               threadId: sessionIdForInterrupt,
               replyTo: replyTo(message),
+              senderId: field<string>(message, "sender_id"),
             });
           }}
         >

@@ -426,6 +426,7 @@ export function ChatPanel({
       actions.languageModelStopGenerating(new Date(msgDate.valueOf()), {
         threadId,
         replyTo: reply_to,
+        senderId: field<string>(msg, "sender_id"),
       });
     }
   }

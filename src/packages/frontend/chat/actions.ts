@@ -203,7 +203,13 @@ export class ChatActions extends Actions<ChatState> {
     if (!d) {
       return;
     }
+    const targetSenderId = senderId(cur ?? rootMessage);
+    if (!targetSenderId) {
+      return;
+    }
     this.setSyncdb({
+      event: "chat",
+      sender_id: targetSenderId,
       folding: next,
       date: d,
     });
@@ -229,6 +235,8 @@ export class ChatActions extends Actions<ChatState> {
       const folded = folding.includes(account_id);
       if (!folded) {
         this.setSyncdb({
+          event: "chat",
+          sender_id: senderId(message),
           folding: [...folding, account_id],
           date: toISOString(date),
         });
@@ -359,6 +367,7 @@ export class ChatActions extends Actions<ChatState> {
           this.setSyncdb({
             event: "chat",
             date: rootDateIso,
+            sender_id: senderId(rootMessage),
             message_id: rootMessageId,
             thread_id: rootThreadId,
           });
@@ -480,6 +489,9 @@ export class ChatActions extends Actions<ChatState> {
       return;
     }
     this.setSyncdb({
+      event: "chat",
+      sender_id: senderId(message),
+      message_id: field<string>(message, "message_id"),
       history: historyArray(message),
       editing: Array.from(editingIds),
       date: d,
@@ -506,6 +518,9 @@ export class ChatActions extends Actions<ChatState> {
       return;
     }
     this.setSyncdb({
+      event: "chat",
+      sender_id: senderId(message),
+      message_id: field<string>(message, "message_id"),
       history: addToHistory(historyArray(message) as MessageHistory[], {
         author_id,
         content,
@@ -521,7 +536,14 @@ export class ChatActions extends Actions<ChatState> {
   };
 
   saveHistory = (
-    message: { date: string | Date; history?: MessageHistory[] },
+    message: {
+      date: string | Date;
+      history?: MessageHistory[];
+      sender_id?: string;
+      message_id?: string;
+      thread_id?: string;
+      reply_to_message_id?: string;
+    },
     content: string,
     author_id: string,
     generating: boolean = false,
@@ -538,6 +560,11 @@ export class ChatActions extends Actions<ChatState> {
     }
     const prevHistory: MessageHistory[] = message.history ?? [];
     this.setSyncdb({
+      event: "chat",
+      sender_id: message.sender_id ?? author_id,
+      message_id: message.message_id,
+      thread_id: message.thread_id,
+      reply_to_message_id: message.reply_to_message_id,
       history: addToHistory(prevHistory, {
         author_id,
         content,
@@ -1293,12 +1320,20 @@ export class ChatActions extends Actions<ChatState> {
 
   languageModelStopGenerating = (
     date: Date,
-    options?: { threadId?: string; replyTo?: Date | string | null },
+    options?: {
+      threadId?: string;
+      replyTo?: Date | string | null;
+      senderId?: string;
+    },
   ) => {
     if (this.syncdb == null) return;
+    const targetSenderId =
+      options?.senderId ?? senderId(this.getMessageByDate(date));
+    if (!targetSenderId) return;
     this.setSyncdb({
       event: "chat",
       date: toISOString(date),
+      sender_id: targetSenderId,
       generating: false,
     });
     this.syncdb.commit();
