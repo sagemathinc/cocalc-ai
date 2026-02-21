@@ -12,10 +12,10 @@ Goals:
 ## Pre-Flight (before commit 1)
 
 - [ ] Create branch `chat-v2-hardening`.
-- [ ] Confirm current tests pass for touched packages:
-  - [ ] `pnpm --dir src/packages/frontend test -- src/packages/frontend/chat`
-  - [ ] `pnpm --dir src/packages/lite test -- src/packages/lite/hub/acp`
-- [ ] Keep current production hardening in place (no rollback of existing ACP collision/sender guards).
+- [x] Confirm current tests pass for touched packages:
+  - [x] `pnpm --dir src/packages/frontend test -- src/packages/frontend/chat`
+  - [x] `pnpm --dir src/packages/lite test -- src/packages/lite/hub/acp`
+- [x] Keep current production hardening in place (no rollback of existing ACP collision/sender guards).
 
 ## Commit 1: Add v2 shared types and constructors
 
@@ -26,7 +26,7 @@ Commit message suggestion:
 Checklist:
 
 - [x] Add v2 record interfaces and constructors in [src/packages/chat/src/index.ts](./src/packages/chat/src/index.ts).
-- [ ] Add helper constructors:
+- [x] Add helper constructors:
   - [x] `buildThreadRecord(...)`
   - [x] `buildThreadConfigRecord(...)`
   - [x] `buildMessageRecordV2(...)`
