@@ -293,15 +293,38 @@ export class ChatStreamWriter {
     return (record as any)[key] as T;
   }
 
-  private chatRowWhere(): Record<string, unknown> {
-    const where: Record<string, unknown> = { event: "chat" };
-    if (this.metadata.message_id) {
-      where.message_id = this.metadata.message_id;
-      return where;
+  private chatPrimaryWhere(): Record<string, unknown> {
+    return {
+      event: "chat",
+      date: this.metadata.message_date,
+      sender_id: this.metadata.sender_id,
+    };
+  }
+
+  private findChatRow(): any {
+    if (!this.syncdb) return undefined;
+    const messageId = this.metadata.message_id;
+    if (messageId && typeof (this.syncdb as any).get === "function") {
+      try {
+        const rows = (this.syncdb as any).get();
+        if (Array.isArray(rows)) {
+          const found = rows.find(
+            (row) =>
+              this.recordField(row, "event") === "chat" &&
+              this.recordField(row, "sender_id") === this.metadata.sender_id &&
+              this.recordField(row, "message_id") === messageId,
+          );
+          if (found) return found;
+        }
+      } catch (err) {
+        logger.debug("chat row lookup by message_id failed", {
+          chatKey: this.chatKey,
+          messageId,
+          err,
+        });
+      }
     }
-    where.date = this.metadata.message_date;
-    where.sender_id = this.metadata.sender_id;
-    return where;
+    return this.syncdb.get_one(this.chatPrimaryWhere());
   }
 
   private threadRootIso(): string {
@@ -542,7 +565,7 @@ export class ChatStreamWriter {
         throw err;
       }
     }
-    let current = db.get_one(this.chatRowWhere());
+    let current = this.findChatRow();
     if (current == null) {
       // Create a placeholder chat row so backend-owned updates don’t race with a missing record.
       const placeholder = buildChatMessage({
@@ -563,7 +586,7 @@ export class ChatStreamWriter {
       } catch (err) {
         logger.warn("chat syncdb save failed during init", err);
       }
-      current = db.get_one(this.chatRowWhere());
+      current = this.findChatRow();
     }
     const history = this.recordField(current, "history");
     const arr = this.historyToArray(history);
@@ -808,7 +831,7 @@ export class ChatStreamWriter {
       }
       if (this.closed || this.syncdbError || !this.syncdb) return;
       try {
-        const current = this.syncdb.get_one(this.chatRowWhere());
+        const current = this.findChatRow();
         lastGenerating = this.recordField<boolean>(current, "generating");
       } catch (err) {
         logger.warn("chat syncdb readback failed during terminal verification", {
@@ -1292,10 +1315,32 @@ export async function recoverOrphanedAcpTurns(
           await once(syncdb, "ready");
         }
         const senderId = turn.sender_id ?? "openai-codex-agent";
-        const where = turn.message_id
-          ? { event: "chat", message_id: turn.message_id }
-          : { event: "chat", date: turn.message_date, sender_id: senderId };
-        const current = syncdb.get_one(where);
+        let current: any;
+        if (turn.message_id && typeof (syncdb as any).get === "function") {
+          try {
+            const rows = (syncdb as any).get();
+            if (Array.isArray(rows)) {
+              current = rows.find(
+                (row) =>
+                  syncdbField<string>(row, "event") === "chat" &&
+                  syncdbField<string>(row, "message_id") === turn.message_id &&
+                  syncdbField<string>(row, "sender_id") === senderId,
+              );
+            }
+          } catch (err) {
+            logger.debug("recovery lookup by message_id failed", {
+              turn,
+              err,
+            });
+          }
+        }
+        if (current == null) {
+          current = syncdb.get_one({
+            event: "chat",
+            date: turn.message_date,
+            sender_id: senderId,
+          });
+        }
         const generating = syncdbField<boolean>(current, "generating");
         if (current != null && generating === true) {
           const history = appendRestartNotice(syncdbField(current, "history"));
