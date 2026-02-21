@@ -41,6 +41,9 @@ describe("migrateChatRows", () => {
     expect(thread?.root_message_id).toBe(chats[0].message_id);
     expect(config?.thread_id).toBe(chats[0].thread_id);
     expect(config?.name).toBe("Thread name");
+    expect(config?.agent_kind).toBe("acp");
+    expect(config?.agent_model).toBe("gpt-5.3-codex");
+    expect(config?.agent_mode).toBe("interactive");
     expect(state?.thread_id).toBe(chats[0].thread_id);
     expect(draft).toBeTruthy();
     expect(report.invalid_chat_rows_skipped).toBe(0);
@@ -67,5 +70,25 @@ describe("migrateChatRows", () => {
     expect(chat?.name).toBeUndefined();
     expect(chat?.thread_color).toBeUndefined();
     expect(chat?.thread_icon).toBeUndefined();
+  });
+
+  it("preserves explicit legacy agent identity fields on thread-config", () => {
+    const rootIso = "2026-02-20T12:00:00.000Z";
+    const rows = [
+      {
+        event: "chat",
+        sender_id: "user-1",
+        date: rootIso,
+        history: [{ author_id: "user-1", content: "hello", date: rootIso }],
+        agent_kind: "llm",
+        agent_model: "gpt-4o",
+        agent_mode: "single_turn",
+      },
+    ];
+    const { rows: out } = migrateChatRows(rows);
+    const config = out.find((x) => x.event === "chat-thread-config");
+    expect(config?.agent_kind).toBe("llm");
+    expect(config?.agent_model).toBe("gpt-4o");
+    expect(config?.agent_mode).toBe("single_turn");
   });
 });
