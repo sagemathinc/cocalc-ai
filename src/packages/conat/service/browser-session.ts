@@ -32,6 +32,10 @@ export interface BrowserSessionServiceApi {
     foreground?: boolean;
     foreground_project?: boolean;
   }) => Promise<{ ok: true }>;
+  closeFile: (opts: {
+    project_id: string;
+    path: string;
+  }) => Promise<{ ok: true }>;
 }
 
 const SERVICE = "browser-session";

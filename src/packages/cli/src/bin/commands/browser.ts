@@ -24,6 +24,10 @@ type BrowserSessionClient = {
     foreground?: boolean;
     foreground_project?: boolean;
   }) => Promise<{ ok: true }>;
+  closeFile: (opts: {
+    project_id: string;
+    path: string;
+  }) => Promise<{ ok: true }>;
 };
 
 export type BrowserCommandDeps = {
@@ -262,8 +266,8 @@ export function registerBrowserCommand(
     });
 
   browser
-    .command("open <workspace> <path>")
-    .description("open a workspace file in a target browser session")
+    .command("open <workspace> <paths...>")
+    .description("open one or more workspace files in a target browser session")
     .option("--browser <id>", "browser id (or unique prefix)")
     .option(
       "--background",
@@ -272,7 +276,7 @@ export function registerBrowserCommand(
     .action(
       async (
         workspace: string,
-        path: string,
+        paths: string[],
         opts: { browser?: string; background?: boolean },
         command: Command,
       ) => {
@@ -289,18 +293,69 @@ export function registerBrowserCommand(
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
           }) as BrowserSessionClient;
-          await browserClient.openFile({
-            project_id: workspaceRow.project_id,
-            path,
-            foreground: !opts.background,
-            foreground_project: !opts.background,
-          });
+          const cleanPaths = (paths ?? []).map((p) => `${p ?? ""}`.trim()).filter((p) => p.length > 0);
+          if (!cleanPaths.length) {
+            throw new Error("at least one path must be specified");
+          }
+          for (const [index, path] of cleanPaths.entries()) {
+            const foreground = !opts.background && index === 0;
+            await browserClient.openFile({
+              project_id: workspaceRow.project_id,
+              path,
+              foreground,
+              foreground_project: foreground,
+            });
+          }
           return {
             browser_id: sessionInfo.browser_id,
             project_id: workspaceRow.project_id,
-            path,
-            opened: true,
+            paths: cleanPaths,
+            opened: cleanPaths.length,
             background: !!opts.background,
+          };
+        });
+      },
+    );
+
+  browser
+    .command("close <workspace> <paths...>")
+    .description("close one or more open workspace files in a target browser session")
+    .option("--browser <id>", "browser id (or unique prefix)")
+    .action(
+      async (
+        workspace: string,
+        paths: string[],
+        opts: { browser?: string },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser close", async (ctx) => {
+          const workspaceRow = await deps.resolveWorkspace(ctx, workspace);
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: opts.browser,
+            fallbackBrowserId: profileSelection.browser_id,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+          }) as BrowserSessionClient;
+          const cleanPaths = (paths ?? []).map((p) => `${p ?? ""}`.trim()).filter((p) => p.length > 0);
+          if (!cleanPaths.length) {
+            throw new Error("at least one path must be specified");
+          }
+          for (const path of cleanPaths) {
+            await browserClient.closeFile({
+              project_id: workspaceRow.project_id,
+              path,
+            });
+          }
+          return {
+            browser_id: sessionInfo.browser_id,
+            project_id: workspaceRow.project_id,
+            paths: cleanPaths,
+            closed: cleanPaths.length,
           };
         });
       },

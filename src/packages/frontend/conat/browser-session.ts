@@ -222,6 +222,21 @@ export function createBrowserSessionAutomation({
       });
       return { ok: true };
     },
+    closeFile: async ({ project_id, path }) => {
+      if (!isValidUUID(project_id)) {
+        throw Error("project_id must be a UUID");
+      }
+      const cleanPath = `${path ?? ""}`.trim();
+      if (!cleanPath) {
+        throw Error("path must be specified");
+      }
+      const projectActions = redux.getProjectActions(project_id) as any;
+      if (!projectActions?.close_file) {
+        throw Error(`project actions unavailable for ${project_id}`);
+      }
+      projectActions.close_file(cleanPath);
+      return { ok: true };
+    },
   };
 
   return {
