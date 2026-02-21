@@ -103,6 +103,7 @@ let acpLookupByMessageIdRowsScannedMax = 0;
 let acpLookupByMessageIdLargeScanWarnings = 0;
 let acpLookupByMessageIdIndexHits = 0;
 let acpLookupByMessageIdIndexMisses = 0;
+let acpMissingThreadIdFallbacks = 0;
 
 export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const top = Math.max(1, topN);
@@ -214,6 +215,7 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
         acpLookupByMessageIdRowsScannedMax,
       "chat.acp.lookup_message_id_large_scan_warnings":
         acpLookupByMessageIdLargeScanWarnings,
+      "chat.acp.missing_thread_id_fallbacks": acpMissingThreadIdFallbacks,
     },
     topWritersByEvents,
   };
@@ -369,6 +371,18 @@ export class ChatStreamWriter {
     if (this.threadId) return this.threadId;
     if (this.sessionKey) return this.sessionKey;
     const root = this.threadRootIso();
+    acpMissingThreadIdFallbacks += 1;
+    if (
+      acpMissingThreadIdFallbacks <= 3 ||
+      acpMissingThreadIdFallbacks % 100 === 0
+    ) {
+      logger.warn("acp chat metadata missing thread_id; using legacy fallback", {
+        chatKey: this.chatKey,
+        message_id: this.metadata.message_id,
+        message_date: this.metadata.message_date,
+        fallbackCount: acpMissingThreadIdFallbacks,
+      });
+    }
     return `legacy-thread-${root}`;
   }
 

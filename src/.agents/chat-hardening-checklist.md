@@ -220,6 +220,7 @@ Checklist:
   - [x] `chat.integrity.missing_thread_config`
   - [x] `chat.integrity.invalid_reply_targets`
   - [x] `chat.acp.finalize_mismatch`
+  - [x] `chat.acp.missing_thread_id_fallbacks`
 
 Validation:
 
