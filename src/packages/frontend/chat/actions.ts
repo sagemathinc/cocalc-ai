@@ -463,28 +463,23 @@ export class ChatActions extends Actions<ChatState> {
         messages: messagesState,
         date: rootThreadMs,
       });
-      const rootMessageId =
-        (rootMessage as any)?.message_id ?? `legacy-message-${rootThreadMs}`;
-      const rootThreadId =
-        (rootMessage as any)?.thread_id ?? `legacy-thread-${rootThreadMs}`;
+      const rootMessageId = (rootMessage as any)?.message_id;
+      const rootThreadId = (rootMessage as any)?.thread_id;
+      if (!rootMessage || !rootMessageId || !rootThreadId) {
+        console.warn(
+          "chat sendChat reply skipped: root message is missing v2 identity fields",
+          {
+            reply_to: toISOString(reply_to),
+            rootThreadMs,
+            hasRootMessage: !!rootMessage,
+            hasRootMessageId: !!rootMessageId,
+            hasRootThreadId: !!rootThreadId,
+          },
+        );
+        return "";
+      }
       reply_to_message_id = rootMessageId;
       thread_id = rootThreadId;
-      // Backfill identity fields for legacy roots the first time we touch them.
-      if (
-        rootMessage &&
-        (!(rootMessage as any)?.message_id || !(rootMessage as any)?.thread_id)
-      ) {
-        const rootDateIso = toISOString(dateValue(rootMessage));
-        if (rootDateIso) {
-          this.setSyncdb({
-            event: "chat",
-            date: rootDateIso,
-            sender_id: senderId(rootMessage),
-            message_id: rootMessageId,
-            thread_id: rootThreadId,
-          });
-        }
-      }
     }
     const trimmedName = name?.trim();
     const message = {

@@ -133,6 +133,44 @@ describe("sendChat identity fields", () => {
     expect(typeof replySet.message_id).toBe("string");
     expect(replySet.message_id.length).toBeGreaterThan(0);
   });
+
+  it("refuses replies when root message lacks v2 identity fields", async () => {
+    const rootDate = new Date("2026-02-21T17:59:00.000Z");
+    const rootMs = rootDate.valueOf();
+    const messages = new Map<string, any>([
+      [
+        `${rootMs}`,
+        {
+          event: "chat",
+          sender_id: "00000000-1000-4000-8000-000000000001",
+          date: rootDate,
+          history: [
+            {
+              author_id: "00000000-1000-4000-8000-000000000001",
+              content: "legacy root",
+              date: rootDate.toISOString(),
+            },
+          ],
+        },
+      ],
+    ]);
+    const actions = makeActions(messages);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    const sent = actions.sendChat({
+      input: "reply content",
+      reply_to: rootDate,
+    });
+    await Promise.resolve();
+
+    expect(sent).toBe("");
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      "chat sendChat reply skipped: root message is missing v2 identity fields",
+      expect.any(Object),
+    );
+    warn.mockRestore();
+  });
 });
 
 describe("thread-config by thread_id", () => {
