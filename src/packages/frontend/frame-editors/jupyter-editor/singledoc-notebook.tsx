@@ -307,6 +307,19 @@ function findCellStartPathInSlateDoc(doc: Descendant[], cellId: string): number[
   return;
 }
 
+function selectedTopCellIdInSlateDoc(doc: Descendant[], selection: any): string | undefined {
+  if (!selection) return;
+  const focusPath = selection?.focus?.path;
+  const anchorPath = selection?.anchor?.path;
+  const path = Array.isArray(focusPath) ? focusPath : anchorPath;
+  const topIndex = Array.isArray(path) ? path[0] : undefined;
+  if (!Number.isInteger(topIndex)) return;
+  const node = doc[topIndex as number] as any;
+  if (!SlateElement.isElement(node)) return;
+  const cellId = `${(node as any).cell_id ?? ""}`.trim();
+  return cellId || undefined;
+}
+
 export function SingleDocNotebook(props: Props): React.JSX.Element {
   const jupyter_actions: JupyterActions = props.actions.jupyter_actions;
   const name = jupyter_actions.name;
@@ -346,6 +359,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
     applyNotebookSlateStaleBase: 0,
     rejectedStaleStructuralApplies: 0,
     rejectedStaleCells: 0,
+    pendingFocusSkips: 0,
     onSlateChangeCalls: 0,
   });
 
@@ -380,6 +394,14 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
   React.useEffect(() => {
     const targetId = pendingFocusCellIdRef.current;
     if (!targetId) return;
+    const getSelection = controlRef.current?.getSelection;
+    const currentSelection =
+      typeof getSelection === "function" ? getSelection() : undefined;
+    if (selectedTopCellIdInSlateDoc(slateValue, currentSelection) === targetId) {
+      pendingFocusCellIdRef.current = undefined;
+      debugCountersRef.current.pendingFocusSkips += 1;
+      return;
+    }
     const path = findCellStartPathInSlateDoc(slateValue, targetId);
     if (path == null) return;
     const setSelection = controlRef.current?.setSelection;
@@ -953,6 +975,29 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
       },
       get_single_doc_canonical_cell_ids_for_test: () =>
         cell_list != null ? cell_list.toArray() : [],
+      get_single_doc_selection_for_test: () => {
+        const getSelection = controlRef.current?.getSelection;
+        const selection = typeof getSelection === "function" ? getSelection() : null;
+        const topCellId = selectedTopCellIdInSlateDoc(slateValue, selection);
+        const focus = selection?.focus;
+        const anchor = selection?.anchor;
+        const offset = Number.isFinite(focus?.offset)
+          ? focus.offset
+          : Number.isFinite(anchor?.offset)
+            ? anchor.offset
+            : null;
+        const active =
+          typeof document === "undefined" ? null : document.activeElement;
+        const focusedInRoot =
+          containerRef.current != null &&
+          active != null &&
+          containerRef.current.contains(active);
+        return {
+          cellId: topCellId ?? null,
+          offset,
+          focusedInRoot,
+        };
+      },
       get_single_doc_debug_for_test: () => ({ ...debugCountersRef.current }),
     };
   }, [slateValue, kernel, cell_list]);

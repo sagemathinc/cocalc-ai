@@ -465,6 +465,55 @@ test("single-doc duplicate cell-id insert remaps to unique canonical ids", async
   expect(new Set(ids).size).toBe(ids.length);
 });
 
+test("single-doc typing keeps focus and caret in active cell across debounce sync", async ({
+  page,
+}) => {
+  const conn = await resolveBaseUrl();
+  const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-focus-stable");
+  await ensureNotebook(path_ipynb, [codeCell("x = 1"), codeCell("y = 2")]);
+  await openSingleDocNotebookPage(
+    page,
+    notebookUrl({
+      base_url: conn.base_url,
+      path_ipynb,
+      auth_token: conn.auth_token,
+      frame_type: "jupyter-singledoc",
+    }),
+  );
+
+  const firstCell = page.locator('[data-cocalc-test="jupyter-singledoc-code-cell"]').first();
+  await firstCell.scrollIntoViewIfNeeded();
+  const firstCellId = `${(await firstCell.getAttribute("data-cocalc-cell-id")) ?? ""}`.trim();
+  expect(firstCellId.length).toBeGreaterThan(0);
+  await firstCell.locator(".cocalc-slate-code-line").last().click();
+  await page.keyboard.type(" # focus-nav");
+
+  await page.waitForTimeout(1_300); // pass debounce threshold
+  const state1 = await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    return runtime?.get_single_doc_selection_for_test?.() ?? null;
+  });
+  expect(state1?.focusedInRoot).toBe(true);
+  expect(state1?.cellId).toBe(firstCellId);
+  expect(typeof state1?.offset).toBe("number");
+  expect(Number(state1?.offset ?? 0)).toBeGreaterThan(0);
+
+  await page.waitForTimeout(1_300); // ensure no post-debounce jump
+  const state2 = await page.evaluate(() => {
+    const runtime = (window as any).__cocalcJupyterRuntime;
+    return runtime?.get_single_doc_selection_for_test?.() ?? null;
+  });
+  expect(state2?.focusedInRoot).toBe(true);
+  expect(state2?.cellId).toBe(firstCellId);
+  expect(Number(state2?.offset ?? 0)).toBeGreaterThan(0);
+
+  await expect
+    .poll(async () => await readSingleDocCellText(page, 0), {
+      timeout: 30_000,
+    })
+    .toContain("focus-nav");
+});
+
 test("single-doc top-level text typing does not duplicate cells", async ({ page }) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-markdown-no-loop");
