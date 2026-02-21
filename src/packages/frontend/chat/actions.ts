@@ -192,8 +192,7 @@ export class ChatActions extends Actions<ChatState> {
           date: replyToIso,
           sender_id: senderId(rootMessage),
         })) ??
-      rootMessage ??
-      this.syncdb.get_one({ event: "chat", date: reply_to });
+      rootMessage;
     const folding = foldingList(cur);
     const folded = folding.includes(account_id);
     const next = folded
