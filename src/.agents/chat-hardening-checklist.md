@@ -234,7 +234,7 @@ Commit message suggestion:
 
 Checklist:
 
-- [ ] Remove dead legacy compatibility code. (partial: forked threads + metadata/interrupt flows no longer rely on root-message `acp_config`)
+- [ ] Remove dead legacy compatibility code. (partial: new root/fork threads now always create thread-config rows; runtime no longer relies on root-message `acp_config`)
 - [x] Update developer docs and comments.
 - [x] Add troubleshooting note for migration and integrity checker.
 

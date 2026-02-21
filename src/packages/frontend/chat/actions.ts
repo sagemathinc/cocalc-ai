@@ -436,6 +436,14 @@ export class ChatActions extends Actions<ChatState> {
       (message as any).name = trimmedName;
     }
     this.setSyncdb(message);
+    if (!reply_to) {
+      const threadKey = `${time_stamp.valueOf()}`;
+      this.setThreadConfigRecord(
+        threadKey,
+        trimmedName ? { name: trimmedName } : {},
+        { threadId: thread_id },
+      );
+    }
     let selectedThreadKey: string;
     if (!reply_to) {
       this.deleteDraft(0);
@@ -828,6 +836,7 @@ export class ChatActions extends Actions<ChatState> {
   private setThreadConfigRecord = (
     threadKey: string,
     patch: Record<string, unknown>,
+    opts?: { threadId?: string },
   ): boolean => {
     if (this.syncdb == null) return false;
     const dateIso = threadKeyToIso(threadKey);
@@ -842,7 +851,7 @@ export class ChatActions extends Actions<ChatState> {
       event: THREAD_CONFIG_EVENT,
       sender_id: THREAD_CONFIG_SENDER,
       date: dateIso,
-      thread_id: this.resolveThreadIdForKey(threadKey),
+      thread_id: opts?.threadId ?? this.resolveThreadIdForKey(threadKey),
       updated_at: new Date().toISOString(),
       updated_by,
       schema_version: CHAT_SCHEMA_V2,
@@ -1335,11 +1344,14 @@ export class ChatActions extends Actions<ChatState> {
     }
     const newKey = `${now.valueOf()}`;
     this.setSyncdb(newMessage);
-    if (nextConfig) {
-      this.setThreadConfigRecord(newKey, {
-        acp_config: nextConfig,
-      });
-    }
+    this.setThreadConfigRecord(
+      newKey,
+      {
+        name: title,
+        ...(nextConfig ? { acp_config: nextConfig } : {}),
+      },
+      { threadId: field<string>(newMessage, "thread_id") },
+    );
     this.syncdb.commit();
     void this.saveSyncdb();
 
