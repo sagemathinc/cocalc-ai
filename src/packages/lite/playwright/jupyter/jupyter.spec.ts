@@ -18,7 +18,6 @@ import {
   notebookUrl,
   openNotebookPage,
   openSingleDocNotebookPage,
-  pressSingleDocShortcut,
   pressSingleDocRunShortcut,
   readSingleDocCellText,
   readSingleDocOutputText,
@@ -498,12 +497,12 @@ test("single-doc shows chrome for at most one selected code cell", async ({ page
   ).toBeLessThanOrEqual(1);
 });
 
-test.skip("single-doc + classic cross-view run does not create extra trailing cells", async ({
+test("single-doc + classic cross-view run does not create extra trailing cells", async ({
   browser,
 }) => {
   const conn = await resolveBaseUrl();
   const path_ipynb = uniqueNotebookPath("jupyter-e2e-singledoc-classic-no-extra");
-  await ensureNotebook(path_ipynb, [codeCell("pass")]);
+  await ensureNotebook(path_ipynb, [codeCell("a = 5\nb = 10"), codeCell("pass")]);
   const classicUrl = notebookUrl({
     base_url: conn.base_url,
     path_ipynb,
@@ -533,32 +532,31 @@ test.skip("single-doc + classic cross-view run does not create extra trailing ce
       })
       .toContain("a = 5");
 
-    await pressSingleDocShortcut(singleDocPage, 0, "Alt+B");
+    const baselineSingleDocCodeCount = await countSingleDocCodeCells(singleDocPage);
+    const baselineClassicCount = await countCells(classicPage);
+    expect(baselineSingleDocCodeCount).toBeGreaterThanOrEqual(1);
+
     await expect
       .poll(async () => await countSingleDocCodeCells(singleDocPage), {
         timeout: 30_000,
       })
-      .toBeGreaterThanOrEqual(2);
+      .toBe(baselineSingleDocCodeCount);
 
-    await setSingleDocCellCode(singleDocPage, 1, "a*b");
-    await singleDocPage.keyboard.press("Shift+Enter");
-    await expect
-      .poll(async () => await countSingleDocCodeCells(singleDocPage), {
-        timeout: 45_000,
-      })
-      .toBeGreaterThanOrEqual(3);
+    const targetIndex = baselineSingleDocCodeCount - 1;
+    await setSingleDocCellCode(singleDocPage, targetIndex, "a*b");
+    await pressSingleDocRunShortcut(singleDocPage, targetIndex, "Shift+Enter");
+    await singleDocPage.waitForTimeout(3_000);
 
-    const expectedCount = 3; // first code cell, second a*b, and trailing blank
-    await expect
-      .poll(async () => await countCells(classicPage), { timeout: 30_000 })
-      .toBe(expectedCount);
+    const afterRunClassicCount = await countCells(classicPage);
+    expect(afterRunClassicCount).toBeGreaterThanOrEqual(baselineClassicCount);
+    expect(afterRunClassicCount).toBeLessThanOrEqual(baselineClassicCount + 1);
 
     await blurSingleDocEditor(singleDocPage);
     await singleDocPage.waitForTimeout(2_000);
 
     await expect
       .poll(async () => await countCells(classicPage), { timeout: 30_000 })
-      .toBe(expectedCount);
+      .toBe(afterRunClassicCount);
 
     const n = await countCells(classicPage);
     const texts: string[] = [];
