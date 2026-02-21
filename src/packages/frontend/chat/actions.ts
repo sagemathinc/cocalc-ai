@@ -76,6 +76,7 @@ export interface ThreadMetadataSnapshot {
   thread_icon?: string;
   thread_image?: string;
   pin?: boolean;
+  archived?: boolean;
   agent_kind?: ThreadAgentKind;
   agent_model?: LanguageModel;
   agent_mode?: ThreadAgentMode;
@@ -910,6 +911,21 @@ export class ChatActions extends Actions<ChatState> {
     return true;
   };
 
+  setThreadArchived = (threadKey: string, archived: boolean): boolean => {
+    if (this.syncdb == null) {
+      return false;
+    }
+    if (
+      !this.setThreadConfigRecord(threadKey, {
+        archived,
+      })
+    ) {
+      return false;
+    }
+    this.syncdb.commit();
+    return true;
+  };
+
   markThreadRead = (
     threadKey: string,
     count: number,
@@ -1089,6 +1105,7 @@ export class ChatActions extends Actions<ChatState> {
       return undefined;
     };
     const pin = parsePin(field<any>(cfg, "pin"));
+    const archived = parsePin(field<any>(cfg, "archived"));
     let agent_kind = normalizeAgentKind(field<string>(cfg, "agent_kind"));
     let agent_mode = normalizeAgentMode(field<string>(cfg, "agent_mode"));
     const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
@@ -1111,6 +1128,7 @@ export class ChatActions extends Actions<ChatState> {
       thread_icon: readString("thread_icon"),
       thread_image: readString("thread_image"),
       pin,
+      archived,
       agent_kind,
       agent_model,
       agent_mode,

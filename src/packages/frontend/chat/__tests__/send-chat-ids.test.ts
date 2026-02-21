@@ -199,6 +199,7 @@ describe("thread-config by thread_id", () => {
           thread_icon: "thumbs-up",
           thread_image: "https://example.com/x.png",
           pin: "true",
+          archived: 1,
           acp_config: { model: "gpt-5.3-codex" },
         };
       }
@@ -211,6 +212,7 @@ describe("thread-config by thread_id", () => {
     expect(meta.thread_icon).toBe("thumbs-up");
     expect(meta.thread_image).toBe("https://example.com/x.png");
     expect(meta.pin).toBe(true);
+    expect(meta.archived).toBe(true);
     expect(meta.agent_kind).toBe("acp");
     expect(meta.agent_mode).toBe("interactive");
     expect(meta.agent_model).toBe("gpt-5.3-codex");
@@ -286,6 +288,34 @@ describe("thread-config by thread_id", () => {
     expect(appearance?.thread_icon).toBe("thumbs-up");
     expect(appearance?.thread_image).toBe("https://example.com/img.png");
     expect(pin).toBeTruthy();
+  });
+
+  it("updates archived state for UUID thread keys", () => {
+    const threadId = "34333333-3333-4333-8333-333333333333";
+    const existing = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: "2026-02-21T18:40:00.000Z",
+      thread_id: threadId,
+      name: "Thread",
+    };
+    const actions = makeActions();
+    actions.syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat-thread-config" && where?.thread_id === threadId) {
+        return existing;
+      }
+      return undefined;
+    });
+    expect(actions.setThreadArchived(threadId, true)).toBe(true);
+    const row = actions.syncdb.set.mock.calls
+      .map((x) => x[0])
+      .find(
+        (x: any) =>
+          x?.event === "chat-thread-config" &&
+          x?.thread_id === threadId &&
+          x?.archived === true,
+      );
+    expect(row).toBeTruthy();
   });
 
   it("creates thread-config for UUID thread keys using root message date", () => {

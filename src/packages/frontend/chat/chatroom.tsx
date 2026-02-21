@@ -173,7 +173,7 @@ export function ChatPanel({
     });
   }, [sidebarWidth, actions?.frameTreeActions, actions?.frameId]);
 
-  const { threads, combinedThread, threadSections } = useThreadSections({
+  const { threads, archivedThreads, combinedThread, threadSections } = useThreadSections({
     messages,
     threadIndex,
     activity,
@@ -636,6 +636,7 @@ export function ChatPanel({
             setAllowAutoSelectThread={setAllowAutoSelectThread}
             setSidebarVisible={setSidebarVisible}
             threadSections={threadSections}
+            archivedThreads={archivedThreads}
             combinedThread={combinedThread}
             openRenameModal={
               modalHandlers?.openRenameModal ??
