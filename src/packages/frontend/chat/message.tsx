@@ -1493,8 +1493,23 @@ export default function Message({
     cancelQueuedAcpTurn({ actions, message });
   };
 
-  const acpStateToRender =
-    acpState === "running" && latestThreadInterrupted ? "" : acpState;
+  const acpStateToRender = useMemo(() => {
+    const state = acpState === "running" && latestThreadInterrupted ? "" : acpState;
+    if (!state) return "";
+    const nonRunningUserOnlyStates = new Set([
+      "queue",
+      "sending",
+      "sent",
+      "not-sent",
+    ]);
+    if (nonRunningUserOnlyStates.has(state) && !is_viewers_message) {
+      return "";
+    }
+    if (state === "running" && !is_viewers_message && generating !== true) {
+      return "";
+    }
+    return state;
+  }, [acpState, latestThreadInterrupted, is_viewers_message, generating]);
 
   const renderAcpState = () => {
     if (!acpStateToRender) return null;

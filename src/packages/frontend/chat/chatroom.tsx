@@ -270,12 +270,6 @@ export function ChatPanel({
         return true;
       }
     }
-    if (selectedThread?.key) {
-      const rootState = acpState?.get?.(selectedThread.key);
-      if (typeof rootState === "string" && activeStates.has(rootState)) {
-        return true;
-      }
-    }
     if (!selectedThreadMessages.length) return false;
     for (const msg of selectedThreadMessages) {
       const d = dateValue(msg);
@@ -286,7 +280,10 @@ export function ChatPanel({
         const threadState = acpState?.get?.(`thread:${threadId}`);
         if (threadState && activeStates.has(threadState)) return true;
       }
-      const state = acpState?.get?.(`${d.valueOf()}`);
+      const messageId = field<string>(msg, "message_id");
+      const state =
+        (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
+        acpState?.get?.(`${d.valueOf()}`);
       if (state && activeStates.has(state)) return true;
     }
     return false;
@@ -433,8 +430,6 @@ export function ChatPanel({
     const threadMessages = actions.getMessagesInThread(rootIso) ?? [];
     const sessionId =
       actions.getCodexConfig(reply_to)?.sessionId ?? `${reply_to.valueOf()}`;
-    const rootState = acpState?.get?.(`${reply_to.valueOf()}`);
-    const rootActive = typeof rootState === "string" && ACP_ACTIVE_STATES.has(rootState);
     for (const msg of threadMessages) {
       if (field<boolean>(msg, "generating") !== true) continue;
       const msgDate = dateValue(msg);
@@ -442,9 +437,11 @@ export function ChatPanel({
       const threadId = field<string>(msg, "thread_id");
       const threadState =
         threadId != null ? acpState?.get?.(`thread:${threadId}`) : undefined;
-      const msgState = acpState?.get?.(`${msgDate.valueOf()}`);
+      const messageId = field<string>(msg, "message_id");
+      const msgState =
+        (messageId ? acpState?.get?.(`message:${messageId}`) : undefined) ??
+        acpState?.get?.(`${msgDate.valueOf()}`);
       const isActive =
-        rootActive ||
         (typeof threadState === "string" && ACP_ACTIVE_STATES.has(threadState)) ||
         (typeof msgState === "string" && ACP_ACTIVE_STATES.has(msgState));
       if (!isActive) continue;

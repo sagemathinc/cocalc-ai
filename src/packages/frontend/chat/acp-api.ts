@@ -253,17 +253,25 @@ export async function processAcpLLM({
   setTimeout(() => chatStreams.delete(id), 3 * 60 * 1000);
 
   const setState = (state) => {
-    const rootKey = `${threadRootDate.valueOf()}`;
     const messageKey = `${messageDate.valueOf()}`;
+    const messageIdKey = user_message_id
+      ? `message:${user_message_id}`
+      : undefined;
     const threadStateKey = thread_id ? `thread:${thread_id}` : undefined;
     let next = store.get("acpState");
     if (state) {
-      next = next.set(messageKey, state).set(rootKey, state);
+      next = next.set(messageKey, state);
+      if (messageIdKey) {
+        next = next.set(messageIdKey, state);
+      }
       if (threadStateKey) {
         next = next.set(threadStateKey, state);
       }
     } else {
-      next = next.delete(messageKey).delete(rootKey);
+      next = next.delete(messageKey);
+      if (messageIdKey) {
+        next = next.delete(messageIdKey);
+      }
       if (threadStateKey) {
         next = next.delete(threadStateKey);
       }
@@ -400,11 +408,10 @@ export function cancelQueuedAcpTurn({
   }
   store.setState({
     acpState: (() => {
-      let next = store
-        .get("acpState")
-        .set(`${messageDate.valueOf()}`, "not-sent");
-      if (legacyThreadKey) {
-        next = next.set(`${legacyThreadKey}`, "not-sent");
+      let next = store.get("acpState").set(`${messageDate.valueOf()}`, "not-sent");
+      const messageId = field<string>(message, "message_id");
+      if (messageId) {
+        next = next.set(`message:${messageId}`, "not-sent");
       }
       const threadId = field<string>(message, "thread_id");
       if (threadId) {

@@ -688,12 +688,8 @@ export function MessageList({
                   const byMessageId = acpState?.get(`message:${messageId}`);
                   if (byMessageId) return byMessageId;
                 }
-                const byDate = acpState?.get(date);
-                if (byDate) return byDate;
-                // Fall back to root-thread state only for the root message row.
-                return currentThreadKey && date === currentThreadKey
-                  ? acpState?.get(currentThreadKey)
-                  : undefined;
+                // Legacy fallback when message_id is unavailable.
+                return messageId ? undefined : acpState?.get(date);
               })()
             }
             dim={shouldDim}

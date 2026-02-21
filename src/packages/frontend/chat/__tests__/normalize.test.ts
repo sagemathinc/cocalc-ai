@@ -132,7 +132,7 @@ describe("handleSyncDBChange", () => {
       store,
       changes: [{ event: "chat-thread-state", sender_id: "__thread_state__", date }],
     });
-    expect(store.state.acpState?.get(`${date.valueOf()}`)).toBe("running");
+    expect(store.state.acpState?.get(`${date.valueOf()}`)).toBeUndefined();
     expect(store.state.acpState?.get("thread:thread-1")).toBe("running");
     expect(store.state.acpState?.get("message:msg-1")).toBe("running");
   });
@@ -172,8 +172,8 @@ describe("initFromSyncDB", () => {
     ]);
 
     initFromSyncDB({ syncdb, store });
-    expect(store.state.acpState?.get(`${runningDate.valueOf()}`)).toBe("running");
-    expect(store.state.acpState?.get(`${queuedDate.valueOf()}`)).toBe("queue");
+    expect(store.state.acpState?.get(`${runningDate.valueOf()}`)).toBeUndefined();
+    expect(store.state.acpState?.get(`${queuedDate.valueOf()}`)).toBeUndefined();
     expect(store.state.acpState?.get(`${completeDate.valueOf()}`)).toBeUndefined();
     expect(store.state.acpState?.get("thread:thread-running")).toBe("running");
     expect(store.state.acpState?.get("thread:thread-queued")).toBe("queue");
