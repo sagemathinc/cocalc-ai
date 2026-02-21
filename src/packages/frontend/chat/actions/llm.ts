@@ -53,6 +53,11 @@ function findChatRecord({
   if (messageId) {
     const cached = actions.getMessageById(messageId);
     if (cached) return cached;
+    const byId = syncdb?.get_one?.({
+      event: "chat",
+      message_id: messageId,
+    });
+    if (byId) return byId;
   }
   if (!dateIso || !senderId) return undefined;
   return syncdb.get_one({

@@ -69,6 +69,7 @@ function makeActions(): {
     },
     chatStreams: new Set<string>(),
     getAllMessages: () => new Map(),
+    getMessageById: jest.fn(() => undefined),
     sendReply,
     saveHistory: jest.fn((message) => ({
       date: "2025-01-01T00:00:00.000Z",
@@ -189,6 +190,42 @@ describe("processLLM guards", () => {
     expect(emitter).toBeDefined();
     emitter?.emit("token", "A");
     expect(actions.chatStreams.size).toBe(0);
+  });
+
+  it("looks up active record by message_id before date/sender fallback", async () => {
+    const { actions, syncdb } = makeActions();
+    const message = {
+      ...makeMessage(),
+      message_id: "msg-stream-1",
+      thread_id: "thread-stream-1",
+    } as any;
+    syncdb.get_one.mockImplementation((where: any) => {
+      if (where?.event === "chat" && where?.message_id === "msg-stream-1") {
+        return {
+          event: "chat",
+          message_id: "msg-stream-1",
+          generating: true,
+        };
+      }
+      return undefined;
+    });
+
+    await processLLM({
+      actions,
+      message,
+      reply_to: new Date("2025-02-02T01:00:00.000Z"),
+      threadModel: "gpt-4",
+    });
+
+    emitter?.emit("token", "A");
+    expect(syncdb.get_one).toHaveBeenCalledWith({
+      event: "chat",
+      message_id: "msg-stream-1",
+    });
+    expect(syncdb.get_one.mock.calls[0]?.[0]).toEqual({
+      event: "chat",
+      message_id: "msg-stream-1",
+    });
   });
 
   it("uses sender-qualified delete when regenerating with a different model sender", async () => {
