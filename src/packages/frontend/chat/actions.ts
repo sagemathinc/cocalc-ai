@@ -1305,15 +1305,16 @@ export class ChatActions extends Actions<ChatState> {
     if (latestIso) {
       (newMessage as any).forked_from_latest_message_date = latestIso;
     }
-    if (nextConfig) {
-      (newMessage as any).acp_config = nextConfig;
-    }
-
+    const newKey = `${now.valueOf()}`;
     this.setSyncdb(newMessage);
+    if (nextConfig) {
+      this.setThreadConfigRecord(newKey, {
+        acp_config: nextConfig,
+      });
+    }
     this.syncdb.commit();
     void this.saveSyncdb();
 
-    const newKey = `${now.valueOf()}`;
     this.setSelectedThread(newKey);
     return newKey;
   };
