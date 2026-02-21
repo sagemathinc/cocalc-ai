@@ -356,6 +356,7 @@ export class ChatActions extends Actions<ChatState> {
     extraInput,
     send_mode,
     name,
+    threadAgent,
     preserveSelectedThread,
   }: {
     input?: string;
@@ -368,6 +369,11 @@ export class ChatActions extends Actions<ChatState> {
     send_mode?: "immediate";
     // if name is given, rename thread to have that name
     name?: string;
+    // optional thread-level AI behavior for new root threads
+    threadAgent?: {
+      mode: "codex" | "human" | "model";
+      model?: string;
+    };
     // if true, don't switch selected thread (e.g., combined feed)
     preserveSelectedThread?: boolean;
   }): string => {
@@ -460,9 +466,32 @@ export class ChatActions extends Actions<ChatState> {
     this.setSyncdb(message);
     if (!reply_to) {
       const threadKey = `${time_stamp.valueOf()}`;
+      const threadConfigPatch: Record<string, unknown> = {};
+      if (trimmedName) {
+        threadConfigPatch.name = trimmedName;
+      }
+      const agentMode = threadAgent?.mode;
+      const agentModel = threadAgent?.model?.trim();
+      if (agentMode === "human") {
+        threadConfigPatch.acp_config = null;
+        threadConfigPatch.agent_kind = "none";
+        threadConfigPatch.agent_model = null;
+        threadConfigPatch.agent_mode = null;
+      } else if (agentMode === "codex") {
+        const model = agentModel || "gpt-5.3-codex";
+        threadConfigPatch.acp_config = { model };
+        threadConfigPatch.agent_kind = "acp";
+        threadConfigPatch.agent_model = model;
+        threadConfigPatch.agent_mode = "interactive";
+      } else if (agentMode === "model" && agentModel) {
+        threadConfigPatch.acp_config = null;
+        threadConfigPatch.agent_kind = "llm";
+        threadConfigPatch.agent_model = agentModel;
+        threadConfigPatch.agent_mode = "single_turn";
+      }
       this.setThreadConfigRecord(
         threadKey,
-        trimmedName ? { name: trimmedName } : {},
+        threadConfigPatch,
         { threadId: thread_id },
       );
     }
@@ -757,7 +786,7 @@ export class ChatActions extends Actions<ChatState> {
 
   setThreadAppearance = (
     threadKey: string,
-    opts: { name?: string; color?: string; icon?: string },
+    opts: { name?: string; color?: string; icon?: string; image?: string },
   ): boolean => {
     if (this.syncdb == null) {
       return false;
@@ -774,6 +803,10 @@ export class ChatActions extends Actions<ChatState> {
     if ("icon" in opts) {
       const trimmed = (opts.icon ?? "").trim();
       configPatch.thread_icon = trimmed || null;
+    }
+    if ("image" in opts) {
+      const trimmed = (opts.image ?? "").trim();
+      configPatch.thread_image = trimmed || null;
     }
     if (!this.setThreadConfigRecord(threadKey, configPatch)) {
       return false;
