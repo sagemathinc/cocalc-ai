@@ -103,7 +103,6 @@ export function computeChatIntegrityReport(
   const messageById = new Map<string, NormalizedMessage>();
   const messageByDateIso = new Map<string, NormalizedMessage>();
   const threadConfigByThreadId = new Set<string>();
-  const threadConfigByDateIso = new Set<string>();
 
   for (const row of rows) {
     const event = row?.event;
@@ -111,10 +110,6 @@ export function computeChatIntegrityReport(
       const threadId = row?.thread_id;
       if (typeof threadId === "string" && threadId.length > 0) {
         threadConfigByThreadId.add(threadId);
-      }
-      const dateIso = normalizeDate(row?.date);
-      if (dateIso) {
-        threadConfigByDateIso.add(dateIso);
       }
       continue;
     }
@@ -203,9 +198,7 @@ export function computeChatIntegrityReport(
   for (const [threadId, root] of rootByThread.entries()) {
     if (!isCodexConfig(root.acp_config)) continue;
     const hasThreadConfigById = threadConfigByThreadId.has(threadId);
-    const hasThreadConfigByDate =
-      root.date_iso != null && threadConfigByDateIso.has(root.date_iso);
-    if (!hasThreadConfigById && !hasThreadConfigByDate) {
+    if (!hasThreadConfigById) {
       counters.missing_thread_config += 1;
       pushExample(examples.missing_thread_config_thread_ids, threadId);
     }
@@ -214,7 +207,7 @@ export function computeChatIntegrityReport(
   return {
     total_messages: messages.length,
     total_threads: rootCountByThread.size,
-    total_thread_configs: threadConfigByThreadId.size + threadConfigByDateIso.size,
+    total_thread_configs: threadConfigByThreadId.size,
     counters,
     examples,
   };
