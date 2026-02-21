@@ -378,7 +378,7 @@ export default function Message({
     if (!hasRunning) return;
     let next = acpMap;
     for (const key of keys) {
-      next = next.set(key, "");
+      next = next.delete(key);
     }
     actions.store.setState({
       acpState: next,

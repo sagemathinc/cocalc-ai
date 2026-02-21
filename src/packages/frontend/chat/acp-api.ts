@@ -227,8 +227,14 @@ export async function processAcpLLM({
   const setState = (state) => {
     const rootKey = `${threadRootDate.valueOf()}`;
     const messageKey = `${messageDate.valueOf()}`;
+    let next = store.get("acpState");
+    if (state) {
+      next = next.set(messageKey, state).set(rootKey, state);
+    } else {
+      next = next.delete(messageKey).delete(rootKey);
+    }
     store.setState({
-      acpState: store.get("acpState").set(messageKey, state).set(rootKey, state),
+      acpState: next,
     });
   };
 
