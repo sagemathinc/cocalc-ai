@@ -10,6 +10,7 @@ import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { Icon } from "@cocalc/frontend/components";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { capitalize } from "@cocalc/util/misc";
+import { DEFAULT_CODEX_MODELS } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "./actions";
 
 export interface ChatRoomModalHandlers {
@@ -30,11 +31,18 @@ interface ChatRoomModalsProps {
   onHandlers?: (handlers: ChatRoomModalHandlers) => void;
 }
 
+type ThreadAgentMode = "codex" | "human" | "model";
+const DEFAULT_CODEX_MODEL = DEFAULT_CODEX_MODELS[0]?.name ?? "gpt-5.3-codex";
+
 export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProps) {
   const [renamingThread, setRenamingThread] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
   const [renameColor, setRenameColor] = useState<string | undefined>(undefined);
   const [renameIcon, setRenameIcon] = useState<IconName | undefined>(undefined);
+  const [renameImage, setRenameImage] = useState<string>("");
+  const [renameAgentMode, setRenameAgentMode] =
+    useState<ThreadAgentMode>("codex");
+  const [renameModel, setRenameModel] = useState<string>(DEFAULT_CODEX_MODEL);
   const [exportThread, setExportThread] = useState<{
     key: string;
     label: string;
@@ -55,10 +63,24 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     currentColor?: string,
     currentIcon?: string,
   ) => {
+    const metadata = actions?.getThreadMetadata?.(threadKey);
+    const currentModel =
+      metadata?.agent_model?.trim() ||
+      metadata?.acp_config?.model?.trim() ||
+      DEFAULT_CODEX_MODEL;
+    let agentMode: ThreadAgentMode = "human";
+    if (metadata?.agent_kind === "acp" || metadata?.acp_config != null) {
+      agentMode = "codex";
+    } else if (metadata?.agent_kind === "llm") {
+      agentMode = "model";
+    }
     setRenamingThread(threadKey);
     setRenameValue(useCurrentLabel ? currentLabel : "");
     setRenameColor(currentColor?.trim() || undefined);
     setRenameIcon((currentIcon as IconName) || undefined);
+    setRenameImage(metadata?.thread_image?.trim() || "");
+    setRenameAgentMode(agentMode);
+    setRenameModel(currentModel);
   };
 
   const closeRenameModal = () => {
@@ -66,26 +88,42 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
     setRenameValue("");
     setRenameColor(undefined);
     setRenameIcon(undefined);
+    setRenameImage("");
+    setRenameAgentMode("codex");
+    setRenameModel(DEFAULT_CODEX_MODEL);
   };
 
   const handleRenameSave = () => {
     if (!renamingThread) return;
     if (actions?.setThreadAppearance == null) {
-      antdMessage.error("Renaming chats is not available.");
+      antdMessage.error("Thread settings are not available.");
       return;
     }
     const success = actions.setThreadAppearance(renamingThread, {
       name: renameValue.trim(),
       color: renameColor,
       icon: renameIcon,
+      image: renameImage.trim(),
     });
     if (!success) {
-      antdMessage.error("Unable to rename chat.");
+      antdMessage.error("Unable to save thread settings.");
       return;
     }
-    antdMessage.success(
-      renameValue.trim() ? "Chat renamed." : "Chat name reset to default.",
-    );
+    if (renameAgentMode === "human") {
+      actions.setThreadAgentMode?.(renamingThread, "none");
+    } else if (renameAgentMode === "codex") {
+      actions.setThreadAgentMode?.(renamingThread, "codex", {
+        model: renameModel.trim() || DEFAULT_CODEX_MODEL,
+      });
+    } else {
+      const threadMs = parseInt(renamingThread, 10);
+      if (Number.isFinite(threadMs) && renameModel.trim()) {
+        actions.recordThreadAgentModel?.(new Date(threadMs), renameModel.trim() as any);
+      } else {
+        actions.setThreadAgentMode?.(renamingThread, "none");
+      }
+    }
+    antdMessage.success("Thread settings saved.");
     closeRenameModal();
   };
 
@@ -213,7 +251,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
         </Space>
       </Modal>
       <Modal
-        title="Rename chat"
+        title="Thread settings"
         open={renamingThread != null}
         onCancel={closeRenameModal}
         onOk={handleRenameSave}
@@ -274,6 +312,59 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
               </Button>
             </Space>
           </div>
+          <div>
+            <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+              Thread image URL
+            </div>
+            <Input
+              placeholder="Paste or drag an image URL (optional)"
+              value={renameImage}
+              onChange={(e) => setRenameImage(e.target.value)}
+              onDrop={(e) => {
+                const uri =
+                  e.dataTransfer.getData("text/uri-list") ||
+                  e.dataTransfer.getData("text/plain");
+                if (uri?.trim()) {
+                  e.preventDefault();
+                  setRenameImage(uri.trim());
+                }
+              }}
+            />
+          </div>
+          <div>
+            <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+              Thread behavior
+            </div>
+            <Select
+              value={renameAgentMode}
+              style={{ width: "100%" }}
+              onChange={(value) => setRenameAgentMode(value as ThreadAgentMode)}
+              options={[
+                { value: "codex", label: "Codex (agent)" },
+                { value: "human", label: "Human only" },
+                { value: "model", label: "Other model" },
+              ]}
+            />
+          </div>
+          {renameAgentMode !== "human" && (
+            <div>
+              <div style={{ marginBottom: 4, color: COLORS.GRAY_D }}>
+                Default model
+              </div>
+              <Input
+                placeholder={
+                  renameAgentMode === "codex"
+                    ? DEFAULT_CODEX_MODEL
+                    : "e.g. gpt-4o"
+                }
+                value={renameModel}
+                onChange={(e) => setRenameModel(e.target.value)}
+              />
+            </div>
+          )}
+          <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
+            All settings here can be changed later.
+          </div>
         </Space>
       </Modal>
       <Modal
@@ -306,7 +397,7 @@ export function ChatRoomModals({ actions, path, onHandlers }: ChatRoomModalsProp
   );
 }
 
-const THREAD_ICON_OPTIONS: IconName[] = [
+export const THREAD_ICON_OPTIONS: IconName[] = [
   "thumbs-up",
   "thumbs-down",
   "question-circle",

@@ -100,6 +100,7 @@ export function ChatRoomComposer({
   const threadLabel = selectedThread?.displayLabel ?? selectedThread?.label;
   const threadColor = selectedThread?.threadColor;
   const threadIcon = selectedThread?.threadIcon;
+  const threadImage = selectedThread?.threadImage;
   const hasCustomAppearance = selectedThread?.hasCustomAppearance ?? false;
   const presenceThreadKey = useMemo(() => {
     if (combinedFeedSelected) {
@@ -390,7 +391,12 @@ export function ChatRoomComposer({
               marginBottom: 6,
             }}
           >
-            <ThreadBadge icon={threadIcon} color={threadColor} size={18} />
+            <ThreadBadge
+              icon={threadIcon}
+              color={threadColor}
+              image={threadImage}
+              size={18}
+            />
             <span>{stripHtml(threadLabel)}</span>
           </div>
         )}

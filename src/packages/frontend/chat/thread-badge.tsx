@@ -12,6 +12,7 @@ import { COLORS } from "@cocalc/util/theme";
 interface ThreadBadgeProps {
   icon?: string;
   color?: string;
+  image?: string;
   size?: number;
   fallbackIcon?: IconName;
   style?: CSSProperties;
@@ -20,10 +21,41 @@ interface ThreadBadgeProps {
 export function ThreadBadge({
   icon,
   color,
+  image,
   size = 22,
   fallbackIcon,
   style,
 }: ThreadBadgeProps) {
+  const hasImage = typeof image === "string" && image.trim().length > 0;
+  if (hasImage) {
+    return (
+      <span
+        style={{
+          width: size,
+          height: size,
+          borderRadius: "50%",
+          border: `1px solid ${COLORS.GRAY_L}`,
+          overflow: "hidden",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flex: "0 0 auto",
+          background: COLORS.GRAY_L0,
+          ...style,
+        }}
+      >
+        {/* eslint-disable-next-line jsx-a11y/alt-text */}
+        <img
+          src={image.trim()}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        />
+      </span>
+    );
+  }
   const hasCustom = Boolean(icon || color);
   const resolvedIcon = (icon as IconName) ?? fallbackIcon ?? (hasCustom ? ("dot-circle" as IconName) : undefined);
   if (!resolvedIcon) return null;

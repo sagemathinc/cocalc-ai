@@ -201,7 +201,7 @@ export function ChatRoomSidebarContent({
     items: [
       {
         key: "rename",
-        label: "Rename chat",
+        label: "Thread settings",
       },
       {
         key: isPinned ? "unpin" : "pin",
@@ -281,6 +281,7 @@ export function ChatRoomSidebarContent({
       isPinned,
       threadColor,
       threadIcon,
+      threadImage,
       hasCustomAppearance,
     } = thread;
     const plainLabel = stripHtml(displayLabel);
@@ -316,7 +317,12 @@ export function ChatRoomSidebarContent({
           }
         >
           {hasCustomAppearance ? (
-            <ThreadBadge icon={threadIcon} color={threadColor} size={22} />
+            <ThreadBadge
+              icon={threadIcon}
+              color={threadColor}
+              image={threadImage}
+              size={22}
+            />
           ) : (
             <Tooltip title={iconTooltip}>
               <Icon name={isAI ? "robot" : "users"} style={{ color: "#888" }} />

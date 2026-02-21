@@ -39,6 +39,7 @@ export type ThreadMeta = ThreadListItem & {
   hasCustomName: boolean;
   threadColor?: string;
   threadIcon?: string;
+  threadImage?: string;
   hasCustomAppearance: boolean;
   readCount: number;
   unreadCount: number;
@@ -198,7 +199,8 @@ export function useThreadSections({
       const hasCustomName = !!storedName;
       const threadColor = threadMeta?.thread_color;
       const threadIcon = threadMeta?.thread_icon;
-      const hasCustomAppearance = Boolean(threadColor || threadIcon);
+      const threadImage = threadMeta?.thread_image;
+      const hasCustomAppearance = Boolean(threadColor || threadIcon || threadImage);
       const displayLabel = storedName || thread.label;
       const isPinned = threadMeta?.pin ?? false;
       const readField =
@@ -233,6 +235,7 @@ export function useThreadSections({
         hasCustomName,
         threadColor,
         threadIcon,
+        threadImage,
         hasCustomAppearance,
         readCount,
         unreadCount,
@@ -274,6 +277,7 @@ export function useThreadSections({
       hasCustomName: false,
       threadColor: undefined,
       threadIcon: undefined,
+      threadImage: undefined,
       hasCustomAppearance: false,
       readCount,
       unreadCount,

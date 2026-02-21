@@ -26,6 +26,10 @@ import { ChatRoomModals } from "./chatroom-modals";
 import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
+import {
+  DEFAULT_NEW_THREAD_SETUP,
+  type NewThreadSetup,
+} from "./chatroom-thread-panel";
 import type { ChatState } from "./store";
 import type { ChatMessages, SubmitMentionsFn } from "./types";
 import type { ThreadIndexEntry } from "./message-cache";
@@ -196,6 +200,8 @@ export function ChatPanel({
   const [composerTargetKey, setComposerTargetKey] = useState<string | null>(null);
   const [composerFocused, setComposerFocused] = useState(false);
   const [composerSession, setComposerSession] = useState(0);
+  const [newThreadSetup, setNewThreadSetup] =
+    useState<NewThreadSetup>(DEFAULT_NEW_THREAD_SETUP);
 
   const composerDraftKey = useMemo(() => {
     if (
@@ -480,9 +486,33 @@ export function ChatPanel({
       reply_to,
       extraInput,
       send_mode: opts?.immediate ? "immediate" : undefined,
+      name:
+        !reply_to && newThreadSetup.title.trim()
+          ? newThreadSetup.title.trim()
+          : undefined,
+      threadAgent:
+        !reply_to && newThreadSetup.agentMode
+          ? {
+              mode: newThreadSetup.agentMode,
+              model: newThreadSetup.model?.trim(),
+            }
+          : undefined,
       preserveSelectedThread: isCombinedFeedSelected,
     });
     const threadKey = timeStamp ? toMsString(timeStamp) ?? timeStamp : null;
+    if (!reply_to && threadKey) {
+      if (
+        newThreadSetup.color?.trim() ||
+        newThreadSetup.icon?.trim() ||
+        newThreadSetup.image?.trim()
+      ) {
+        actions.setThreadAppearance?.(threadKey, {
+          color: newThreadSetup.color?.trim(),
+          icon: newThreadSetup.icon?.trim(),
+          image: newThreadSetup.image?.trim(),
+        });
+      }
+    }
     if (!reply_to && threadKey && !isCombinedFeedSelected) {
       setSelectedThreadKey(threadKey);
       setTimeout(() => {
@@ -510,6 +540,7 @@ export function ChatPanel({
     void clearComposerDraft(0);
     setAllowAutoSelectThread(false);
     setSelectedThreadKey(null);
+    setNewThreadSetup(DEFAULT_NEW_THREAD_SETUP);
   }
 
   const renderChatContent = () => (
@@ -539,6 +570,8 @@ export function ChatPanel({
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
         refreshCodexPaymentSource={refreshCodexPaymentSource}
+        newThreadSetup={newThreadSetup}
+        onNewThreadSetupChange={setNewThreadSetup}
       />
       <ChatRoomComposer
         actions={actions}
