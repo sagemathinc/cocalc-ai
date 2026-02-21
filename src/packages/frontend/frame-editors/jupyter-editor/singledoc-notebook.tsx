@@ -449,6 +449,7 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         return;
       }
       const parsed = slateDocumentToCells(doc);
+      const parsedToApply: ParsedSlateCell[] = [];
       const originalIds = cell_list.toArray();
       const ids = [...originalIds];
       let didMutate = false;
@@ -492,41 +493,55 @@ export function SingleDocNotebook(props: Props): React.JSX.Element {
         return newId;
       };
 
+      const allowDropTransientBlankMarkdown = parsed.length > 1;
       for (const cell of parsed) {
         const rawId = `${cell.cell_id ?? ""}`.trim();
         const mappedFromTemp = rawId ? transientIdMap.get(rawId) : undefined;
         const requestedId = mappedFromTemp ?? rawId;
+        const emptyMarkdown = cell.cell_type === "markdown" && !cell.input.trim();
         if (requestedId && existingIdSet.has(requestedId) && !used.has(requestedId)) {
           used.add(requestedId);
           resolvedIds.push(requestedId);
+          parsedToApply.push(cell);
           continue;
+        }
+        if (allowDropTransientBlankMarkdown && emptyMarkdown) {
+          // Slate can expose transient empty markdown wrappers while editing near
+          // boundaries; avoid turning those into persistent new notebook cells.
+          if (!rawId || !existingIdSet.has(requestedId) || used.has(requestedId)) {
+            continue;
+          }
         }
         if (rawId) {
           // Explicit/duplicated/temporary code cell id: allocate a fresh canonical cell id.
           const newId = makeNewCell(cell.cell_type);
           transientIdMap.set(rawId, newId);
+          parsedToApply.push(cell);
           continue;
         }
         const reused = takeExistingIdByType(cell.cell_type);
         if (reused != null) {
           resolvedIds.push(reused);
+          parsedToApply.push(cell);
           continue;
         }
         makeNewCell(cell.cell_type);
+        parsedToApply.push(cell);
       }
 
-      for (let i = 0; i < parsed.length; i++) {
+      for (let i = 0; i < parsedToApply.length; i++) {
         const id = resolvedIds[i];
+        const cell = parsedToApply[i];
         const currentCell = cells.get(id) ?? jupyter_actions.store.getIn(["cells", id]);
         const currentType = `${currentCell?.get("cell_type") ?? "code"}`;
-        const nextType = parsed[i].cell_type;
+        const nextType = cell.cell_type;
         if (currentType !== nextType) {
           jupyter_actions.set_cell_type(id, nextType, false);
           didMutate = true;
         }
         const currentInput = `${currentCell?.get("input") ?? ""}`;
-        if (currentInput !== parsed[i].input) {
-          jupyter_actions.set_cell_input(id, parsed[i].input, false);
+        if (currentInput !== cell.input) {
+          jupyter_actions.set_cell_input(id, cell.input, false);
           didMutate = true;
         }
       }

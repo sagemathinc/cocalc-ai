@@ -248,6 +248,9 @@ export class NotebookFrameActions {
    ***/
 
   public setState(obj: object): void {
+    if (this._is_closed || this.store == null) {
+      return;
+    }
     this.store.setState(obj);
   }
 
