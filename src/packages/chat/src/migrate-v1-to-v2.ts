@@ -286,6 +286,24 @@ export function migrateChatRows(
     }
     if (pin != null) threadCfg.pin = pin;
     if (source.acp_config != null) threadCfg.acp_config = source.acp_config;
+    if (typeof source.agent_kind === "string" && source.agent_kind.trim()) {
+      threadCfg.agent_kind = source.agent_kind.trim();
+    }
+    if (typeof source.agent_model === "string" && source.agent_model.trim()) {
+      threadCfg.agent_model = source.agent_model.trim();
+    }
+    if (typeof source.agent_mode === "string" && source.agent_mode.trim()) {
+      threadCfg.agent_mode = source.agent_mode.trim();
+    }
+    if (
+      source.acp_config != null &&
+      typeof source.acp_config?.model === "string" &&
+      !threadCfg.agent_model
+    ) {
+      threadCfg.agent_kind = "acp";
+      threadCfg.agent_model = source.acp_config.model;
+      threadCfg.agent_mode = "interactive";
+    }
     threadConfigRows.push(threadCfg);
     reportBase.thread_config_records_created += 1;
 
@@ -315,6 +333,9 @@ export function migrateChatRows(
         "thread_icon",
         "thread_image",
         "pin",
+        "agent_kind",
+        "agent_model",
+        "agent_mode",
         "acp_config",
       ]) {
         delete root.row[key];

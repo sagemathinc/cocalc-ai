@@ -71,13 +71,39 @@ const AUTOSAVE_INTERVAL = 15_000;
 const THREAD_CONFIG_EVENT = "chat-thread-config";
 const THREAD_CONFIG_SENDER = "__thread_config__";
 
+export type ThreadAgentKind = "acp" | "llm" | "none";
+export type ThreadAgentMode = "interactive" | "single_turn";
+
 export interface ThreadMetadataSnapshot {
   name?: string;
   thread_color?: string;
   thread_icon?: string;
   thread_image?: string;
   pin?: boolean;
+  agent_kind?: ThreadAgentKind;
+  agent_model?: LanguageModel;
+  agent_mode?: ThreadAgentMode;
   acp_config?: CodexThreadConfig | null;
+}
+
+function normalizeAgentKind(value: unknown): ThreadAgentKind | undefined {
+  if (value === "acp" || value === "llm" || value === "none") return value;
+  return undefined;
+}
+
+function normalizeAgentMode(value: unknown): ThreadAgentMode | undefined {
+  if (value === "interactive" || value === "single_turn") return value;
+  return undefined;
+}
+
+function identityFromModel(model: string): {
+  agent_kind: Exclude<ThreadAgentKind, "none">;
+  agent_mode: ThreadAgentMode;
+} {
+  if (model.includes("codex")) {
+    return { agent_kind: "acp", agent_mode: "interactive" };
+  }
+  return { agent_kind: "llm", agent_mode: "single_turn" };
 }
 
 export function collectThreadMessages({
@@ -891,6 +917,20 @@ export class ChatActions extends Actions<ChatState> {
         const rootPin = parsePin(field<any>(root, "pin"));
         if (rootPin != null) patch.pin = rootPin;
       }
+      const cfgAcp = field<CodexThreadConfig | null>(cfg, "acp_config");
+      if (
+        typeof field<string>(cfg, "agent_model") !== "string" &&
+        typeof cfgAcp?.model === "string" &&
+        cfgAcp.model.trim()
+      ) {
+        patch.agent_model = cfgAcp.model.trim();
+      }
+      if (normalizeAgentKind(field<string>(cfg, "agent_kind")) == null && cfgAcp) {
+        patch.agent_kind = "acp";
+      }
+      if (normalizeAgentMode(field<string>(cfg, "agent_mode")) == null && cfgAcp) {
+        patch.agent_mode = "interactive";
+      }
       if (Object.keys(patch).length > 0) {
         this.setThreadConfigRecord(threadKey, patch, {
           threadId: field<string>(root, "thread_id"),
@@ -909,6 +949,13 @@ export class ChatActions extends Actions<ChatState> {
       return undefined;
     };
     const pin = parsePin(field<any>(cfg, "pin"));
+    const agent_kind = normalizeAgentKind(field<string>(cfg, "agent_kind"));
+    const agent_mode = normalizeAgentMode(field<string>(cfg, "agent_mode"));
+    const agent_model_raw = field<string>(cfg, "agent_model");
+    const agent_model =
+      typeof agent_model_raw === "string" && agent_model_raw.trim().length > 0
+        ? (agent_model_raw as LanguageModel)
+        : undefined;
     const acp_config = field<CodexThreadConfig | null>(cfg, "acp_config");
     return {
       name: readString("name"),
@@ -916,6 +963,9 @@ export class ChatActions extends Actions<ChatState> {
       thread_icon: readString("thread_icon"),
       thread_image: readString("thread_image"),
       pin,
+      agent_kind,
+      agent_model,
+      agent_mode,
       acp_config,
     };
   };
@@ -1072,9 +1122,27 @@ export class ChatActions extends Actions<ChatState> {
     }
     const rootMs =
       getThreadRootDate({ date: date.valueOf(), messages }) || date.valueOf();
+    const threadKey = `${rootMs}`;
+    const metadata = this.getThreadMetadata(threadKey);
+    if (
+      typeof metadata.agent_model === "string" &&
+      metadata.agent_model.trim().length > 0
+    ) {
+      return metadata.agent_model;
+    }
     const cfg = this.getCodexConfig(new Date(rootMs));
     if (typeof cfg?.model === "string" && cfg.model.trim().length > 0) {
-      return cfg.model as LanguageModel;
+      const model = cfg.model.trim() as LanguageModel;
+      const { agent_kind, agent_mode } = identityFromModel(model);
+      if (this.syncdb != null) {
+        this.setThreadConfigRecord(threadKey, {
+          agent_kind,
+          agent_model: model,
+          agent_mode,
+        });
+        this.syncdb.commit();
+      }
+      return model;
     }
     const entry = this.getThreadRootDoc(`${rootMs}`);
     const rootMessage = entry?.message;
@@ -1099,11 +1167,33 @@ export class ChatActions extends Actions<ChatState> {
     }
     const sender_id = firstHistory.author_id;
     if (isLanguageModelService(sender_id)) {
-      return service2model(sender_id);
+      const model = service2model(sender_id);
+      const { agent_kind, agent_mode } = identityFromModel(model);
+      if (this.syncdb != null) {
+        this.setThreadConfigRecord(threadKey, {
+          agent_kind,
+          agent_model: model,
+          agent_mode,
+        });
+        this.syncdb.commit();
+      }
+      return model;
     }
     const input = firstHistory.content?.toLowerCase();
     if (mentionsLanguageModel(input)) {
-      return getLanguageModel(input);
+      const model = getLanguageModel(input);
+      if (model) {
+        const { agent_kind, agent_mode } = identityFromModel(model);
+        if (this.syncdb != null) {
+          this.setThreadConfigRecord(threadKey, {
+            agent_kind,
+            agent_model: model,
+            agent_mode,
+          });
+          this.syncdb.commit();
+        }
+      }
+      return model;
     }
     return false;
   };
@@ -1251,14 +1341,37 @@ export class ChatActions extends Actions<ChatState> {
     return cfg;
   };
 
+  recordThreadAgentModel = (
+    reply_to: Date | undefined,
+    model: LanguageModel,
+  ): void => {
+    if (reply_to == null || this.syncdb == null) return;
+    const messages = this.getAllMessages();
+    if (!messages) return;
+    const rootMs =
+      getThreadRootDate({ date: reply_to.valueOf(), messages }) ||
+      reply_to.valueOf();
+    const { agent_kind, agent_mode } = identityFromModel(model);
+    this.setThreadConfigRecord(`${rootMs}`, {
+      agent_kind,
+      agent_model: model,
+      agent_mode,
+    });
+    this.syncdb.commit();
+  };
+
   setCodexConfig = (threadKey: string, config: CodexThreadConfig): void => {
     if (this.syncdb == null) return;
     const dateNum = parseInt(threadKey, 10);
     if (!dateNum || Number.isNaN(dateNum)) {
       throw Error(`setCodexConfig: invalid threadKey ${threadKey}`);
     }
+    const model = config.model ?? "gpt-5.3-codex";
     this.setThreadConfigRecord(threadKey, {
       acp_config: config,
+      agent_kind: "acp",
+      agent_model: model,
+      agent_mode: "interactive",
     });
     this.syncdb.commit();
     void this.saveSyncdb();
@@ -1277,6 +1390,9 @@ export class ChatActions extends Actions<ChatState> {
     if (mode === "none") {
       this.setThreadConfigRecord(threadKey, {
         acp_config: null,
+        agent_kind: "none",
+        agent_model: null,
+        agent_mode: null,
       });
       this.syncdb.commit();
       void this.saveSyncdb();
@@ -1380,7 +1496,14 @@ export class ChatActions extends Actions<ChatState> {
       newKey,
       {
         name: title,
-        ...(nextConfig ? { acp_config: nextConfig } : {}),
+        ...(nextConfig
+          ? {
+              acp_config: nextConfig,
+              agent_kind: "acp",
+              agent_model: nextConfig.model ?? "gpt-5.3-codex",
+              agent_mode: "interactive",
+            }
+          : {}),
       },
       { threadId: field<string>(newMessage, "thread_id") },
     );

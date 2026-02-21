@@ -171,6 +171,9 @@ export interface ChatThreadConfigRecord {
   thread_icon?: string;
   thread_image?: string;
   pin?: boolean;
+  agent_kind?: "acp" | "llm" | "none";
+  agent_model?: string;
+  agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
   updated_at: string;
   updated_by: string;
@@ -188,6 +191,9 @@ export interface BuildThreadConfigRecordOptions {
   thread_icon?: string;
   thread_image?: string;
   pin?: boolean;
+  agent_kind?: "acp" | "llm" | "none";
+  agent_model?: string;
+  agent_mode?: "interactive" | "single_turn";
   acp_config?: CodexThreadConfig;
   schema_version?: number;
 }
@@ -207,6 +213,9 @@ export function buildThreadConfigRecord(
     thread_icon: options.thread_icon,
     thread_image: options.thread_image,
     pin: options.pin,
+    agent_kind: options.agent_kind,
+    agent_model: options.agent_model,
+    agent_mode: options.agent_mode,
     acp_config: options.acp_config,
     updated_at: updatedAt,
     updated_by: options.updated_by,

@@ -93,6 +93,9 @@ export async function processLLM({
 
   const model = resolveLLMModel({ message, reply_to, tag, llm, threadModel });
   if (model === false || model == null) return;
+  if (reply_to) {
+    actions.recordThreadAgentModel(reply_to, model);
+  }
 
   let input = stripMentions(inputRaw);
 

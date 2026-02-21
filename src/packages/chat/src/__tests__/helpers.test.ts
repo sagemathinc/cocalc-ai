@@ -59,6 +59,9 @@ describe("chat helpers", () => {
       thread_color: "#123456",
       thread_image: "https://example.com/image.png",
       pin: true,
+      agent_kind: "acp",
+      agent_model: "gpt-5.3-codex",
+      agent_mode: "interactive",
       acp_config: { model: "gpt-5.3-codex", sessionId: "session-1" },
     });
     expect(cfg.event).toBe("chat-thread-config");
@@ -67,6 +70,9 @@ describe("chat helpers", () => {
     expect(cfg.thread_id).toBe("thread-1");
     expect(cfg.thread_image).toBe("https://example.com/image.png");
     expect(cfg.pin).toBe(true);
+    expect(cfg.agent_kind).toBe("acp");
+    expect(cfg.agent_model).toBe("gpt-5.3-codex");
+    expect(cfg.agent_mode).toBe("interactive");
     expect(cfg.acp_config?.model).toBe("gpt-5.3-codex");
   });
 

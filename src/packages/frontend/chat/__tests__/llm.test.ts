@@ -76,6 +76,7 @@ function makeActions(): {
     })),
     getLLMHistory: jest.fn(() => []),
     getCodexConfig: jest.fn(),
+    recordThreadAgentModel: jest.fn(),
     setCodexConfig: jest.fn(),
     computeThreadKey: jest.fn(() => "1700000000000"),
     project_id: "proj",
@@ -242,15 +243,17 @@ describe("processLLM model resolution and Codex dispatch", () => {
     const { actions } = makeActions();
     const message = makeMessage();
     message.history[0].content = "please do something";
+    const reply_to = new Date("2025-02-02T01:00:00.000Z");
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
+      reply_to,
       threadModel: "gpt-4",
     });
     expect(mockQueryStream).toHaveBeenCalled();
     const args = mockQueryStream.mock.calls[0][0];
     expect(args.model).toBe("gpt-4");
+    expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(reply_to, "gpt-4");
   });
 
   it("routes codex models through processAcpLLM", async () => {
@@ -258,13 +261,18 @@ describe("processLLM model resolution and Codex dispatch", () => {
     const message = makeMessage();
     message.history[0].content = "@codex do something";
     const { processAcpLLM } = require("../acp-api");
+    const reply_to = new Date("2025-02-02T01:00:00.000Z");
     await processLLM({
       actions,
       message,
-      reply_to: new Date("2025-02-02T01:00:00.000Z"),
+      reply_to,
       threadModel: "codex-agent",
     });
     expect(processAcpLLM).toHaveBeenCalled();
+    expect(actions.recordThreadAgentModel).toHaveBeenCalledWith(
+      reply_to,
+      "codex-agent",
+    );
   });
 
   it("adds immediate-send guidance for Codex turns", async () => {
