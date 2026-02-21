@@ -18,10 +18,15 @@ import {
   type BrowserSessionServiceApi,
 } from "@cocalc/conat/service/browser-session";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import {
+  terminalClient,
+  type TerminalClient as ProjectTerminalClient,
+} from "@cocalc/conat/project/terminal";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { ConatService } from "@cocalc/conat/service";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { client_db } from "@cocalc/util/db-schema/client-db";
+import { termPath } from "@cocalc/util/terminal/names";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_RETRY_MS = 4_000;
@@ -143,6 +148,42 @@ export type BrowserFsStat = {
   mode?: number;
 };
 
+export type BrowserTerminalSpawnOptions = {
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  env0?: Record<string, string>;
+  rows?: number;
+  cols?: number;
+  timeout?: number;
+  handleFlowControl?: boolean;
+};
+
+export type BrowserTerminalHistoryOptions = {
+  max_chars?: number;
+};
+
+export type BrowserTerminalFrameInfo = {
+  parent_path: string;
+  frame_id: string;
+  type: string;
+  active: boolean;
+  number?: number;
+  command?: string;
+  args?: string[];
+  title?: string;
+  session_path?: string;
+};
+
+export type BrowserTerminalSessionInfo = {
+  session_path: string;
+  command: string;
+  args: string[];
+  pid?: number;
+  history_chars?: number;
+};
+
 export type BrowserExecApi = {
   projectId: string;
   workspaceId: string;
@@ -262,6 +303,40 @@ export type BrowserExecApi = {
       job_id: string,
       options?: { async_stats?: boolean; timeout?: number },
     ) => Promise<BrowserExecOutput>;
+  };
+  terminal: {
+    listOpen: () => Promise<BrowserTerminalFrameInfo[]>;
+    openSplit: (
+      path: string,
+      opts?: {
+        direction?: "row" | "col";
+        anchor_frame_id?: string;
+        command?: string;
+        args?: string[];
+        no_focus?: boolean;
+        first?: boolean;
+      },
+    ) => Promise<BrowserTerminalFrameInfo>;
+    spawn: (
+      session_path: string,
+      options?: BrowserTerminalSpawnOptions,
+    ) => Promise<BrowserTerminalSessionInfo>;
+    write: (
+      session_path: string,
+      data: string,
+      opts?: { kind?: "user" | "auto" },
+    ) => Promise<{ ok: true }>;
+    history: (
+      session_path: string,
+      opts?: BrowserTerminalHistoryOptions,
+    ) => Promise<string>;
+    state: (session_path: string) => Promise<"running" | "off">;
+    cwd: (session_path: string) => Promise<string | undefined>;
+    resize: (
+      session_path: string,
+      opts: { rows: number; cols: number },
+    ) => Promise<{ ok: true }>;
+    destroy: (session_path: string) => Promise<{ ok: true }>;
   };
   timetravel: {
     providers: () => Promise<{
@@ -507,6 +582,81 @@ function sanitizeBashOptions(opts: unknown): BrowserBashOptions {
   };
 }
 
+function sanitizeTerminalSpawnOptions(
+  options: unknown,
+): BrowserTerminalSpawnOptions {
+  if (options == null || typeof options !== "object") {
+    return {};
+  }
+  const row = options as {
+    command?: unknown;
+    args?: unknown;
+    cwd?: unknown;
+    env?: unknown;
+    env0?: unknown;
+    rows?: unknown;
+    cols?: unknown;
+    timeout?: unknown;
+    handleFlowControl?: unknown;
+  };
+  const command =
+    row.command == null ? undefined : `${row.command ?? ""}`.trim() || undefined;
+  const args = Array.isArray(row.args)
+    ? row.args.map((x) => `${x ?? ""}`)
+    : undefined;
+  const cwd = row.cwd == null ? undefined : requireAbsolutePath(row.cwd, "cwd");
+  const env =
+    row.env != null && typeof row.env === "object"
+      ? (row.env as Record<string, string>)
+      : undefined;
+  const env0 =
+    row.env0 != null && typeof row.env0 === "object"
+      ? (row.env0 as Record<string, string>)
+      : undefined;
+  const rows = asFinitePositive(row.rows);
+  const cols = asFinitePositive(row.cols);
+  const timeout = asFinitePositive(row.timeout);
+  const handleFlowControl =
+    row.handleFlowControl == null ? undefined : !!row.handleFlowControl;
+  return {
+    ...(command ? { command } : {}),
+    ...(args != null ? { args } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(env ? { env } : {}),
+    ...(env0 ? { env0 } : {}),
+    ...(rows != null ? { rows: Math.max(2, Math.floor(rows)) } : {}),
+    ...(cols != null ? { cols: Math.max(2, Math.floor(cols)) } : {}),
+    ...(timeout != null ? { timeout } : {}),
+    ...(handleFlowControl != null ? { handleFlowControl } : {}),
+  };
+}
+
+function sanitizeTerminalHistoryOptions(
+  options: unknown,
+): BrowserTerminalHistoryOptions {
+  if (options == null || typeof options !== "object") {
+    return {};
+  }
+  const row = options as { max_chars?: unknown };
+  const max_chars = asFinitePositive(row.max_chars);
+  return {
+    ...(max_chars != null ? { max_chars: Math.floor(max_chars) } : {}),
+  };
+}
+
+function normalizeTerminalFrameCommand(value: unknown): string | undefined {
+  const command = `${value ?? ""}`.trim();
+  return command.length > 0 ? command : undefined;
+}
+
+function normalizeTerminalFrameArgs(value: unknown): string[] {
+  return asStringArray(value);
+}
+
+function terminalCommandSuffix(command?: string): string {
+  return command ? `-${command.replace(/\//g, "-")}` : "";
+}
+
 function toNotifyMessage(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -666,6 +816,42 @@ type BrowserFsStat = {
   mode?: number;
 };
 
+type BrowserTerminalSpawnOptions = {
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  env0?: Record<string, string>;
+  rows?: number;
+  cols?: number;
+  timeout?: number;
+  handleFlowControl?: boolean;
+};
+
+type BrowserTerminalHistoryOptions = {
+  max_chars?: number;
+};
+
+type BrowserTerminalFrameInfo = {
+  parent_path: string;
+  frame_id: string;
+  type: string;
+  active: boolean;
+  number?: number;
+  command?: string;
+  args?: string[];
+  title?: string;
+  session_path?: string;
+};
+
+type BrowserTerminalSessionInfo = {
+  session_path: string;
+  command: string;
+  args: string[];
+  pid?: number;
+  history_chars?: number;
+};
+
 type BrowserExecApi = {
   projectId: string;
   workspaceId: string;
@@ -786,6 +972,40 @@ type BrowserExecApi = {
       job_id: string,
       options?: { async_stats?: boolean; timeout?: number },
     ) => Promise<BrowserExecOutput>;
+  };
+  terminal: {
+    listOpen: () => Promise<BrowserTerminalFrameInfo[]>;
+    openSplit: (
+      path: string,
+      opts?: {
+        direction?: "row" | "col";
+        anchor_frame_id?: string;
+        command?: string;
+        args?: string[];
+        no_focus?: boolean;
+        first?: boolean;
+      },
+    ) => Promise<BrowserTerminalFrameInfo>;
+    spawn: (
+      session_path: string,
+      options?: BrowserTerminalSpawnOptions,
+    ) => Promise<BrowserTerminalSessionInfo>;
+    write: (
+      session_path: string,
+      data: string,
+      opts?: { kind?: "user" | "auto" },
+    ) => Promise<{ ok: true }>;
+    history: (
+      session_path: string,
+      opts?: BrowserTerminalHistoryOptions,
+    ) => Promise<string>;
+    state: (session_path: string) => Promise<"running" | "off">;
+    cwd: (session_path: string) => Promise<string | undefined>;
+    resize: (
+      session_path: string,
+      opts: { rows: number; cols: number },
+    ) => Promise<{ ok: true }>;
+    destroy: (session_path: string) => Promise<{ ok: true }>;
   };
   timetravel: {
     providers: () => Promise<{
@@ -1258,6 +1478,40 @@ export function createBrowserSessionAutomation({
     return { ok: true };
   };
 
+  const getEditorActionsForPath = async ({
+    project_id,
+    path,
+    foreground = false,
+    foreground_project = false,
+    timeout_ms = 15_000,
+  }: {
+    project_id: string;
+    path: string;
+    foreground?: boolean;
+    foreground_project?: boolean;
+    timeout_ms?: number;
+  }): Promise<any> => {
+    if (!isValidUUID(project_id)) {
+      throw Error("project_id must be a UUID");
+    }
+    const cleanPath = requireAbsolutePath(path);
+    await openFileInProject({
+      project_id,
+      path: cleanPath,
+      foreground,
+      foreground_project,
+    });
+    const started = Date.now();
+    while (Date.now() - started < timeout_ms) {
+      const editorActions = redux.getEditorActions(project_id, cleanPath) as any;
+      if (editorActions != null) {
+        return editorActions;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw Error(`editor actions unavailable for ${cleanPath}`);
+  };
+
   const getJupyterActionsForPath = async ({
     project_id,
     path,
@@ -1278,25 +1532,20 @@ export function createBrowserSessionAutomation({
     if (!cleanPath.toLowerCase().endsWith(".ipynb")) {
       throw Error("notebook path must end with .ipynb");
     }
-    await openFileInProject({
+    const editorActions = await getEditorActionsForPath({
       project_id,
       path: cleanPath,
       foreground: false,
       foreground_project: false,
     });
-    const started = Date.now();
-    while (Date.now() - started < 15_000) {
-      const editorActions = redux.getEditorActions(project_id, cleanPath) as any;
-      const jupyterActions = editorActions?.jupyter_actions;
-      if (jupyterActions != null) {
-        if (typeof jupyterActions.wait_until_ready === "function") {
-          await jupyterActions.wait_until_ready();
-        }
-        return jupyterActions;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    const jupyterActions = editorActions?.jupyter_actions;
+    if (jupyterActions == null) {
+      throw Error(`jupyter actions unavailable for ${cleanPath}`);
     }
-    throw Error(`jupyter actions unavailable for ${cleanPath}`);
+    if (typeof jupyterActions.wait_until_ready === "function") {
+      await jupyterActions.wait_until_ready();
+    }
+    return jupyterActions;
   };
 
   const assertExecNotCanceled = (isCanceled?: () => boolean) => {
@@ -1314,6 +1563,7 @@ export function createBrowserSessionAutomation({
       string,
       { syncdoc: any; release: () => Promise<void> }
     >();
+    const heldTerminalClients = new Map<string, ProjectTerminalClient>();
 
     const notify = (
       forcedType: BrowserNotifyType | undefined,
@@ -1403,6 +1653,122 @@ export function createBrowserSessionAutomation({
       return lease.syncdoc;
     };
 
+    const toTerminalSessionPath = ({
+      parentPath,
+      node,
+    }: {
+      parentPath: string;
+      node: any;
+    }): string | undefined => {
+      const number = Number(node?.get?.("number"));
+      if (!Number.isFinite(number) || number < 0) {
+        return undefined;
+      }
+      const command = normalizeTerminalFrameCommand(node?.get?.("command"));
+      const cmd = terminalCommandSuffix(command);
+      return termPath({
+        path: requireAbsolutePath(parentPath),
+        number: Math.floor(number),
+        cmd,
+      });
+    };
+
+    const listOpenTerminalFramesForPath = async (
+      path: string,
+    ): Promise<BrowserTerminalFrameInfo[]> => {
+      assertExecNotCanceled(isCanceled);
+      const cleanPath = requireAbsolutePath(path);
+      const editorActions = redux.getEditorActions(project_id, cleanPath) as any;
+      if (
+        editorActions == null ||
+        typeof editorActions._get_leaf_ids !== "function" ||
+        typeof editorActions._get_frame_node !== "function"
+      ) {
+        return [];
+      }
+      const leafs = editorActions._get_leaf_ids() as Record<string, unknown>;
+      const activeFrameId =
+        typeof editorActions._get_active_id === "function"
+          ? `${editorActions._get_active_id() ?? ""}`.trim()
+          : "";
+      const out: BrowserTerminalFrameInfo[] = [];
+      for (const frame_id in leafs) {
+        const node = editorActions._get_frame_node(frame_id);
+        const type = `${node?.get?.("type") ?? ""}`;
+        if (!type.startsWith("terminal")) continue;
+        const command = normalizeTerminalFrameCommand(node?.get?.("command"));
+        const args = normalizeTerminalFrameArgs(node?.get?.("args"));
+        const title = `${node?.get?.("title") ?? ""}`.trim() || undefined;
+        const number = Number(node?.get?.("number"));
+        const session_path = toTerminalSessionPath({ parentPath: cleanPath, node });
+        out.push({
+          parent_path: cleanPath,
+          frame_id,
+          type,
+          active: activeFrameId === frame_id,
+          ...(Number.isFinite(number) ? { number: Math.floor(number) } : {}),
+          ...(command ? { command } : {}),
+          ...(args.length > 0 ? { args } : {}),
+          ...(title ? { title } : {}),
+          ...(session_path ? { session_path } : {}),
+        });
+      }
+      return out;
+    };
+
+    const sanitizeTerminalDirection = (
+      value: unknown,
+    ): "row" | "col" => {
+      return `${value ?? "col"}`.trim() === "row" ? "row" : "col";
+    };
+
+    const getHeldTerminalClient = async (
+      session_path: string,
+      options?: BrowserTerminalSpawnOptions,
+    ): Promise<{
+      session_path: string;
+      client: ProjectTerminalClient;
+      command: string;
+      args: string[];
+      history: string;
+      pid?: number;
+    }> => {
+      assertExecNotCanceled(isCanceled);
+      const cleanSessionPath = requireAbsolutePath(session_path, "session_path");
+      const clean = sanitizeTerminalSpawnOptions(options);
+      const command = clean.command ?? "bash";
+      const args = clean.args ?? [];
+      let entry = heldTerminalClients.get(cleanSessionPath);
+      if (!entry) {
+        entry = terminalClient({
+          project_id,
+          client: conat(),
+        });
+        heldTerminalClients.set(cleanSessionPath, entry);
+      }
+      const history = await entry.spawn(command, args, {
+        id: cleanSessionPath,
+        ...(clean.cwd ? { cwd: clean.cwd } : {}),
+        ...(clean.env ? { env: clean.env } : {}),
+        ...(clean.env0 ? { env0: clean.env0 } : {}),
+        ...(clean.rows != null ? { rows: clean.rows } : {}),
+        ...(clean.cols != null ? { cols: clean.cols } : {}),
+        ...(clean.timeout != null ? { timeout: clean.timeout } : {}),
+        ...(clean.handleFlowControl != null
+          ? { handleFlowControl: clean.handleFlowControl }
+          : {}),
+      });
+      assertExecNotCanceled(isCanceled);
+      return {
+        session_path: cleanSessionPath,
+        client: entry,
+        command,
+        args,
+        history: `${history ?? ""}`,
+        ...(Number.isFinite(entry.pid) ? { pid: entry.pid } : {}),
+      };
+    };
+
     const cleanup = async (): Promise<void> => {
       const releases = [...heldSyncDocs.values()].map((x) => x.release);
       heldSyncDocs.clear();
@@ -1411,6 +1777,15 @@ export function createBrowserSessionAutomation({
           await release();
         } catch {
           // ignore release failures during cleanup
+        }
+      }
+      const terminals = [...heldTerminalClients.values()];
+      heldTerminalClients.clear();
+      for (const terminal of terminals) {
+        try {
+          terminal.close();
+        } catch {
+          // ignore terminal close failures during cleanup
         }
       }
     };
@@ -1786,6 +2161,178 @@ export function createBrowserSessionAutomation({
           });
           assertExecNotCanceled(isCanceled);
           return asPlain(result) as BrowserExecOutput;
+        },
+      },
+      terminal: {
+        listOpen: async (): Promise<BrowserTerminalFrameInfo[]> => {
+          assertExecNotCanceled(isCanceled);
+          const snapshot = buildSessionSnapshot(client);
+          const openFiles = flattenOpenFiles(snapshot.open_projects).filter(
+            (file) => file.project_id === project_id,
+          );
+          const seen = new Set<string>();
+          const out: BrowserTerminalFrameInfo[] = [];
+          for (const file of openFiles) {
+            const path = requireAbsolutePath(file.path);
+            if (seen.has(path)) continue;
+            seen.add(path);
+            const rows = await listOpenTerminalFramesForPath(path);
+            out.push(...rows);
+          }
+          return out;
+        },
+        openSplit: async (
+          path: string,
+          opts?: {
+            direction?: "row" | "col";
+            anchor_frame_id?: string;
+            command?: string;
+            args?: string[];
+            no_focus?: boolean;
+            first?: boolean;
+          },
+        ): Promise<BrowserTerminalFrameInfo> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanPath = requireAbsolutePath(path);
+          const direction = sanitizeTerminalDirection(opts?.direction);
+          const command = normalizeTerminalFrameCommand(opts?.command);
+          const args = Array.isArray(opts?.args)
+            ? opts.args.map((x) => `${x ?? ""}`)
+            : undefined;
+          const editorActions = await getEditorActionsForPath({
+            project_id,
+            path: cleanPath,
+            foreground: true,
+            foreground_project: true,
+          });
+          const anchor_frame_id = `${opts?.anchor_frame_id ?? ""}`.trim();
+          const targetId =
+            anchor_frame_id ||
+            (typeof editorActions?._get_active_id === "function"
+              ? `${editorActions._get_active_id() ?? ""}`.trim()
+              : "");
+          if (!targetId) {
+            throw Error("unable to determine anchor frame for split");
+          }
+          const frame_id = editorActions.split_frame(
+            direction,
+            targetId,
+            "terminal",
+            {
+              ...(command ? { command } : {}),
+              ...(args != null ? { args } : {}),
+            },
+            !!opts?.first,
+            !!opts?.no_focus,
+          );
+          if (!frame_id) {
+            throw Error(`unable to create terminal split for ${cleanPath}`);
+          }
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          const rows = await listOpenTerminalFramesForPath(cleanPath);
+          const row = rows.find((x) => x.frame_id === frame_id);
+          if (row != null) {
+            return row;
+          }
+          return {
+            parent_path: cleanPath,
+            frame_id,
+            type: "terminal",
+            active: !opts?.no_focus,
+          };
+        },
+        spawn: async (
+          session_path: string,
+          options?: BrowserTerminalSpawnOptions,
+        ): Promise<BrowserTerminalSessionInfo> => {
+          assertExecNotCanceled(isCanceled);
+          const attached = await getHeldTerminalClient(session_path, options);
+          return {
+            session_path: attached.session_path,
+            command: attached.command,
+            args: attached.args,
+            ...(attached.pid != null ? { pid: attached.pid } : {}),
+            history_chars: attached.history.length,
+          };
+        },
+        write: async (
+          session_path: string,
+          data: string,
+          opts?: { kind?: "user" | "auto" },
+        ): Promise<{ ok: true }> => {
+          assertExecNotCanceled(isCanceled);
+          const payload = `${data ?? ""}`;
+          if (!payload.length) {
+            throw Error("data must be specified");
+          }
+          const attached = await getHeldTerminalClient(session_path);
+          const kind = opts?.kind === "auto" ? "auto" : "user";
+          attached.client.socket.write(
+            kind === "auto" ? { data: payload, kind } : payload,
+          );
+          return { ok: true };
+        },
+        history: async (
+          session_path: string,
+          opts?: BrowserTerminalHistoryOptions,
+        ): Promise<string> => {
+          assertExecNotCanceled(isCanceled);
+          const attached = await getHeldTerminalClient(session_path);
+          const history = `${await attached.client.history()}`;
+          const cleanOpts = sanitizeTerminalHistoryOptions(opts);
+          if (
+            cleanOpts.max_chars != null &&
+            cleanOpts.max_chars > 0 &&
+            history.length > cleanOpts.max_chars
+          ) {
+            return history.slice(history.length - cleanOpts.max_chars);
+          }
+          return history;
+        },
+        state: async (session_path: string): Promise<"running" | "off"> => {
+          assertExecNotCanceled(isCanceled);
+          const attached = await getHeldTerminalClient(session_path);
+          return await attached.client.state();
+        },
+        cwd: async (session_path: string): Promise<string | undefined> => {
+          assertExecNotCanceled(isCanceled);
+          const attached = await getHeldTerminalClient(session_path);
+          const cwd = await attached.client.cwd();
+          const clean = `${cwd ?? ""}`.trim();
+          return clean.length > 0 ? clean : undefined;
+        },
+        resize: async (
+          session_path: string,
+          opts: { rows: number; cols: number },
+        ): Promise<{ ok: true }> => {
+          assertExecNotCanceled(isCanceled);
+          const rows = asFinitePositive(opts?.rows);
+          const cols = asFinitePositive(opts?.cols);
+          if (rows == null || cols == null) {
+            throw Error("rows and cols must be positive numbers");
+          }
+          const attached = await getHeldTerminalClient(session_path);
+          await attached.client.resize({
+            rows: Math.floor(rows),
+            cols: Math.floor(cols),
+          });
+          return { ok: true };
+        },
+        destroy: async (session_path: string): Promise<{ ok: true }> => {
+          assertExecNotCanceled(isCanceled);
+          const cleanSessionPath = requireAbsolutePath(
+            session_path,
+            "session_path",
+          );
+          const attached = await getHeldTerminalClient(cleanSessionPath);
+          await attached.client.destroy();
+          try {
+            attached.client.close();
+          } catch {
+            // ignore close race
+          }
+          heldTerminalClients.delete(cleanSessionPath);
+          return { ok: true };
         },
       },
       timetravel: {
