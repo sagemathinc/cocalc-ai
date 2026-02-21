@@ -571,7 +571,8 @@ export class ChatActions extends Actions<ChatState> {
     if (trimmedName && reply_to) {
       this.renameThread(selectedThreadKey, trimmedName);
     }
-    // Ensure root message + thread_config are durable before async model dispatch.
+    // Commit locally before async model dispatch. This does NOT wait for
+    // backend/client propagation; it just finalizes the local patchflow state.
     this.syncdb.commit();
 
     const project_id = this.store?.get("project_id");

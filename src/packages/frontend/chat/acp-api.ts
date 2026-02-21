@@ -222,9 +222,13 @@ export async function processAcpLLM({
     actions.getAllMessages?.().get(`${threadRootDate.valueOf()}`);
   const thread_id =
     (message as any)?.thread_id ?? (threadRootMessage as any)?.thread_id;
-  const message_id = (message as any)?.message_id;
+  const user_message_id = (message as any)?.message_id;
+  // Backend chat writer must own a distinct assistant row for this turn.
+  // Reusing the user's message_id can cause backend updates to overwrite the
+  // input message history instead of writing assistant output.
+  const message_id = uuid();
   const reply_to_message_id =
-    (threadRootMessage as any)?.message_id;
+    (threadRootMessage as any)?.message_id ?? user_message_id;
 
   const id = uuid();
   chatStreams.add(id);
