@@ -104,6 +104,7 @@ let acpLookupByMessageIdLargeScanWarnings = 0;
 let acpLookupByMessageIdIndexHits = 0;
 let acpLookupByMessageIdIndexMisses = 0;
 let acpMissingThreadIdFallbacks = 0;
+let acpDateSenderLookupFallbacks = 0;
 
 export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
   const top = Math.max(1, topN);
@@ -216,6 +217,7 @@ export function getAcpWatchdogStats({ topN = 5 }: { topN?: number } = {}) {
       "chat.acp.lookup_message_id_large_scan_warnings":
         acpLookupByMessageIdLargeScanWarnings,
       "chat.acp.missing_thread_id_fallbacks": acpMissingThreadIdFallbacks,
+      "chat.acp.date_sender_lookup_fallbacks": acpDateSenderLookupFallbacks,
     },
     topWritersByEvents,
   };
@@ -349,6 +351,7 @@ export class ChatStreamWriter {
     if (!ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK && this.metadata.message_id) {
       return undefined;
     }
+    acpDateSenderLookupFallbacks += 1;
     const current = this.syncdb.get_one(this.chatPrimaryWhere());
     if (current != null) {
       this.setResolvedChatKey(current);
@@ -1382,6 +1385,7 @@ function findRecoverableChatRow(
   if (!ENABLE_DATE_SENDER_CHAT_LOOKUP_FALLBACK && context.message_id) {
     return undefined;
   }
+  acpDateSenderLookupFallbacks += 1;
   const byDate = syncdb?.get_one?.({
     event: "chat",
     date: context.message_date,

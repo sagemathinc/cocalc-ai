@@ -150,6 +150,41 @@ describe("ChatStreamWriter", () => {
     writer.dispose?.(true);
   });
 
+  it("tracks date+sender lookup fallback usage when message_id is missing", async () => {
+    const before =
+      getAcpWatchdogStats().integrityTotals?.[
+        "chat.acp.date_sender_lookup_fallbacks"
+      ] ?? 0;
+    const { syncdb, setCurrent } = makeFakeSyncDB();
+    setCurrent({
+      event: "chat",
+      date: "123",
+      sender_id: "u",
+      generating: true,
+      history: [],
+    });
+    const writer: any = new ChatStreamWriter({
+      metadata: {
+        ...baseMetadata,
+        message_id: undefined,
+      },
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () =>
+        ({
+          set: async () => {},
+        }) as any,
+    });
+    await writer.waitUntilReady?.();
+    const after =
+      getAcpWatchdogStats().integrityTotals?.[
+        "chat.acp.date_sender_lookup_fallbacks"
+      ] ?? 0;
+    expect(after).toBeGreaterThanOrEqual(before + 1);
+    writer.dispose?.(true);
+  });
+
   it("clears generating on summary", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({
