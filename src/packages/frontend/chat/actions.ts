@@ -80,6 +80,42 @@ export interface ThreadMetadataSnapshot {
   acp_config?: CodexThreadConfig | null;
 }
 
+export function collectThreadMessages({
+  messages,
+  dateStr,
+  getMessageByDate,
+}: {
+  messages: Map<string, ChatMessageTyped>;
+  dateStr: string;
+  getMessageByDate: (date: number) => ChatMessageTyped | undefined;
+}): ChatMessageTyped[] | undefined {
+  if (!messages || messages.size === 0) return undefined;
+  const parsedMs = (() => {
+    const asNumber = Number(dateStr);
+    if (Number.isFinite(asNumber)) return asNumber;
+    const asDate = new Date(dateStr).valueOf();
+    return Number.isFinite(asDate) ? asDate : undefined;
+  })();
+  const rootMessage = parsedMs != null ? getMessageByDate(parsedMs) : undefined;
+  const threadId = field<string>(rootMessage, "thread_id");
+  const list: ChatMessageTyped[] = [];
+  if (threadId) {
+    for (const msg of messages.values()) {
+      if (field<string>(msg, "thread_id") === threadId) {
+        list.push(msg);
+      }
+    }
+  } else {
+    for (const msg of messages.values()) {
+      if (replyTo(msg) === dateStr || toISOString(dateValue(msg)) === dateStr) {
+        list.push(msg);
+      }
+    }
+  }
+  list.sort((a, b) => cmp(dateValue(a)?.valueOf?.(), dateValue(b)?.valueOf?.()));
+  return list;
+}
+
 export class ChatActions extends Actions<ChatState> {
   public syncdb?: ImmerDB;
   public store?: ChatStore;
@@ -1090,17 +1126,11 @@ export class ChatActions extends Actions<ChatState> {
    */
   getMessagesInThread = (dateStr: string): ChatMessageTyped[] | undefined => {
     const messages = this.getAllMessages();
-    if (!messages || messages.size === 0) return undefined;
-    const list: ChatMessageTyped[] = [];
-    for (const msg of messages.values()) {
-      if (replyTo(msg) === dateStr || toISOString(dateValue(msg)) === dateStr) {
-        list.push(msg);
-      }
-    }
-    list.sort((a, b) =>
-      cmp(dateValue(a)?.valueOf?.(), dateValue(b)?.valueOf?.()),
-    );
-    return list;
+    return collectThreadMessages({
+      messages,
+      dateStr,
+      getMessageByDate: (date: number) => this.getMessageByDate(date),
+    });
   };
 
   private saveSyncdb = async (): Promise<void> => {
